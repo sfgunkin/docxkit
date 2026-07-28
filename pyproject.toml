@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docxkit"
+version = "0.1.0"
+description = "Shared toolkit for working with Word .docx manuscripts: surgical XML editing, multi-layer diffing, tracked-changes deliverables, and author-edit ingestion."
+requires-python = ">=3.12"
+dependencies = [
+    "python-docx>=1.1",
+    "lxml>=5.0",
+]
+
+[project.optional-dependencies]
+# Word automation: Windows only, and only needed for the COM-backed features
+# (redline via CompareDocuments, PDF export, page counts).
+word = ["pywin32>=306"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+docxkit = "docxkit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "PL", "FURB",
+          "ISC", "PIE", "RUF"]
+ignore = [
+    "PLR0912",  # branch count: the XML passes are legitimately branchy
+    "PLR0913",  # argument count: keyword-only options read better than dicts
+    "PLR0915",  # statement count: ditto for the report renderers
+    "PLR2004",  # magic values: OOXML constants are clearer inline
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Verbatim ports of the tools that lived in C:\Users\Ezhik\tools. They are
+# working, well-tested code carried over unchanged on purpose; reformatting
+# ~2000 lines to a new line-length would risk behaviour for no benefit.
+# New code in this package is held to the full ruleset above.
+"src/docxkit/compare.py" = ["ALL"]
+"src/docxkit/citations.py" = ["ALL"]
+"src/docxkit/word_edits.py" = ["ALL"]
+# Lazy imports are deliberate: pywin32 is an optional extra, so the rest of
+# the toolkit must import on any platform.
+"src/docxkit/word.py" = ["PLC0415"]
+"src/docxkit/cli.py" = ["PLC0415"]
+# The glyph table is *about* look-alike characters; flagging them is noise.
+"src/docxkit/ingest.py" = ["RUF001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

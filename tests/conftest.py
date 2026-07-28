@@ -1,0 +1,128 @@
+"""Synthetic .docx fixtures.
+
+Built from XML rather than copied from a paper: the tests then run on any
+machine, need no Word, and can assert on exact bytes. Real manuscripts go
+in tests/corpus/ (gitignored) for the optional round-trip tests.
+"""
+from __future__ import annotations
+
+import zipfile
+
+import pytest
+
+NS = (
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+    'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+    'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+    'xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" '
+    'xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex"'
+)
+
+
+def run(text: str, *, style: str | None = None, preserve: bool = False) -> str:
+    rpr = f'<w:rPr><w:rStyle w:val="{style}"/></w:rPr>' if style else ""
+    space = ' xml:space="preserve"' if preserve else ""
+    return f"<w:r>{rpr}<w:t{space}>{text}</w:t></w:r>"
+
+
+def para(*runs: str, pid: str = "11111111") -> str:
+    return f'<w:p w14:paraId="{pid}" w14:textId="{pid}">{"".join(runs)}</w:p>'
+
+
+def document(body: str) -> str:
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f"<w:document {NS}><w:body>{body}</w:body></w:document>")
+
+
+def comments(*items: str) -> str:
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f"<w:comments {NS}>{''.join(items)}</w:comments>")
+
+
+def comment(cid: int, text: str, para_id: str = "AAAA0001") -> str:
+    return (f'<w:comment w:id="{cid}" w:author="Tester" '
+            f'w:date="2026-07-29T00:00:00Z" w:initials="T">'
+            f'<w:p w14:paraId="{para_id}" w14:textId="{para_id}">'
+            f'<w:pPr><w:pStyle w:val="CommentText"/></w:pPr>'
+            f"{run(text)}</w:p></w:comment>")
+
+
+def table(*rows: str) -> str:
+    return f"<w:tbl>{''.join(rows)}</w:tbl>"
+
+
+def row(*cells: str) -> str:
+    return "<w:tr>" + "".join(f"<w:tc>{para(run(c))}</w:tc>"
+                              for c in cells) + "</w:tr>"
+
+
+def ins(text: str, rid: int = 90) -> str:
+    return (f'<w:ins w:id="{rid}" w:author="Revision" '
+            f'w:date="2026-07-29T00:00:00Z">{run(text)}</w:ins>')
+
+
+def dele(text: str, rid: int = 91) -> str:
+    return (f'<w:del w:id="{rid}" w:author="Revision" '
+            f'w:date="2026-07-29T00:00:00Z">'
+            f"<w:r><w:delText>{text}</w:delText></w:r></w:del>")
+
+
+def para_mark_ins(rid: int = 92) -> str:
+    """A property-level (self-closing) revision: an inserted paragraph mark."""
+    return (f'<w:p w14:paraId="22222222"><w:pPr><w:rPr>'
+            f'<w:ins w:id="{rid}" w:author="Revision" '
+            f'w:date="2026-07-29T00:00:00Z"/></w:rPr></w:pPr>'
+            f"{run('tail')}</w:p>")
+
+
+def make_parts(body: str, *, comment_items: tuple[str, ...] = (),
+               footnotes: str | None = None) -> dict[str, bytes]:
+    parts = {
+        "[Content_Types].xml": b"<Types/>",
+        "word/document.xml": document(body).encode("utf-8"),
+    }
+    if comment_items:
+        parts["word/comments.xml"] = comments(*comment_items).encode("utf-8")
+        parts["word/commentsExtended.xml"] = (
+            f'<w15:commentsEx {NS}><w15:commentEx w15:paraId="AAAA0001" '
+            f'w15:done="0"/></w15:commentsEx>').encode("utf-8")
+        parts["word/commentsIds.xml"] = (
+            f'<w16cid:commentsIds {NS}><w16cid:commentId '
+            f'w16cid:paraId="AAAA0001" w16cid:durableId="0000AAAA"/>'
+            f"</w16cid:commentsIds>").encode("utf-8")
+        parts["word/commentsExtensible.xml"] = (
+            f'<w16cex:commentsExtensible {NS}><w16cex:commentExtensible '
+            f'w16cex:durableId="0000AAAA" '
+            f'w16cex:dateUtc="2026-07-29T00:00:00Z"/>'
+            f"</w16cex:commentsExtensible>").encode("utf-8")
+    if footnotes is not None:
+        parts["word/footnotes.xml"] = footnotes.encode("utf-8")
+    return parts
+
+
+def write(path, parts: dict[str, bytes]) -> str:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, blob in parts.items():
+            z.writestr(name, blob)
+    return str(path)
+
+
+@pytest.fixture
+def simple_docx(tmp_path):
+    """Two paragraphs and a two-row table."""
+    body = (para(run("Intro paragraph about age-friendly work."))
+            + para(run("Second paragraph mentioning Figure 1."))
+            + table(row("Country", "AFI"), row("Poland", "0.31")))
+    return write(tmp_path / "simple.docx", make_parts(body))
+
+
+@pytest.fixture
+def tracked_docx(tmp_path):
+    """A redline: two run-level revisions plus one property-level mark."""
+    body = (para(run("Kept text "), ins("inserted"), dele("removed"),
+                 run(" tail."))
+            + para_mark_ins()
+            + table(row("Country", "Dif."), row("Poland", "0.02")))
+    return write(tmp_path / "tracked.docx",
+                 make_parts(body, comment_items=(comment(1, "seed comment"),)))
