@@ -7,6 +7,7 @@ import pytest
 from conftest import make_parts, para, run, write
 
 from docxkit.ingest import (
+    _cat,
     apply_overrides,
     build_overrides,
     load_paragraphs,
@@ -23,7 +24,6 @@ def _docx(tmp_path, name, *texts, footnotes=None, pids=None):
 
 
 def _texts(overrides):
-    from docxkit.ingest import _cat
     return [(_cat(o), _cat(n)) for o, n in overrides]
 
 

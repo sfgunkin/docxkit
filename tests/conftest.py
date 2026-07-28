@@ -86,16 +86,16 @@ def make_parts(body: str, *, comment_items: tuple[str, ...] = (),
         parts["word/comments.xml"] = comments(*comment_items).encode("utf-8")
         parts["word/commentsExtended.xml"] = (
             f'<w15:commentsEx {NS}><w15:commentEx w15:paraId="AAAA0001" '
-            f'w15:done="0"/></w15:commentsEx>').encode("utf-8")
+            f'w15:done="0"/></w15:commentsEx>').encode()
         parts["word/commentsIds.xml"] = (
             f'<w16cid:commentsIds {NS}><w16cid:commentId '
             f'w16cid:paraId="AAAA0001" w16cid:durableId="0000AAAA"/>'
-            f"</w16cid:commentsIds>").encode("utf-8")
+            f"</w16cid:commentsIds>").encode()
         parts["word/commentsExtensible.xml"] = (
             f'<w16cex:commentsExtensible {NS}><w16cex:commentExtensible '
             f'w16cex:durableId="0000AAAA" '
             f'w16cex:dateUtc="2026-07-29T00:00:00Z"/>'
-            f"</w16cex:commentsExtensible>").encode("utf-8")
+            f"</w16cex:commentsExtensible>").encode()
     if footnotes is not None:
         parts["word/footnotes.xml"] = footnotes.encode("utf-8")
     return parts

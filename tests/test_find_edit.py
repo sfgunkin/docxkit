@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import document, para, run, table, row
+from conftest import document, para, row, run, table
 
 from docxkit import (
     para_slice,
@@ -95,7 +95,8 @@ def test_replace_in_para_spans_fragmented_runs():
 
 def test_replace_in_para_preserves_other_runs():
     """Only the matched span changes; neighbouring runs keep their markup."""
-    p = para(run("see "), run("Table 3", style="Hyperlink"), run(" for detail"))
+    p = para(run("see "), run("Table 3", style="Hyperlink"),
+             run(" for detail"))
     out = replace_in_para(p, "for detail", "for details")
     assert 'w:val="Hyperlink"' in out
     assert text_of(out) == "see Table 3 for details"

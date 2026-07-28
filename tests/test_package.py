@@ -89,7 +89,8 @@ def test_backup_numbers_sequentially(tmp_path):
     second = backup(src, "user_edited")
     assert first.name == "paper_user_edited1.docx"
     assert second.name == "paper_user_edited2.docx"
-    assert next_backup_path(src, "user_edited").name == "paper_user_edited3.docx"
+    assert (next_backup_path(src, "user_edited").name
+            == "paper_user_edited3.docx")
 
 
 def test_is_locked_false_for_closed_file(simple_docx):
