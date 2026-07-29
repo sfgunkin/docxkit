@@ -34,6 +34,28 @@ put a paper's vocabulary into docxkit, it is on the wrong side of the seam.
 - **Run `preserve_space` as the last build step.** An unprotected edge
   space in a bare `<w:t>` is eaten by Word and ships in the deliverable.
 
+## A modified table is hundreds of revisions
+
+Word's Compare makes every changed **cell** its own revision — AFI's R2
+round had 153 in one table, 105 in another, 281 of 368 in total. So
+`comments.annotate` coalesces by default: one balloon per distinct
+comment text per table (`tables=COALESCE`).
+
+Coalescing on the comment TEXT, not on "the first revision in the
+table", is deliberate — AFI's Table 4 carries both a columns-removed
+comment and a header-relabel one, and keeping only the first would drop
+whichever came second. Prose is never coalesced: two paragraphs
+answering one referee point are two places the reader must be shown.
+
+`unclassified` counts **comments**, not revisions, for the same reason.
+A table whose cells match no rule needs one signature, so it reports 1.
+Counting revisions made AFI's "add a signature to SIG_MAP" warning fire
+272 times for cells that were deliberately bare.
+
+Pass `tables=comments.ALL` only to reproduce a deliverable built before
+this existed — AFI's R1 round is pinned that way because the author
+reviewed it with per-cell balloons.
+
 ## The cross-reference convention
 
 Figures and tables are linked in both directions, and the bookmark names

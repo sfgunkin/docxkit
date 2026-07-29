@@ -110,7 +110,8 @@ class BuildReport:
         return "\n".join(lines)
 
 
-def _resolve_math(doc: Any, classify: Classifier | None, generic: str) -> int:
+def _resolve_math(doc: Any, classify: Classifier | None,
+                  generic: str | None) -> int:
     """Comment (if the paper annotates) and accept every math revision.
 
     Word cannot serialize a compare result containing tracked math, so
@@ -152,7 +153,7 @@ def _accept_math_via_equations(doc: Any) -> int:
 
 
 def _comment_and_accept_math_revisions(
-        doc: Any, classify: Classifier, generic: str) -> int:
+        doc: Any, classify: Classifier, generic: str | None) -> int:
     """Comment then accept each revision that CONTAINS math.
 
     Scans the revisions rather than the equations — see
@@ -176,7 +177,7 @@ def _comment_and_accept_math_revisions(
 
 
 def _comment_revision(doc: Any, rev: Any, classify: Classifier,
-                      generic: str) -> None:
+                      generic: str | None) -> None:
     """Attach the paper's comment to one revision, through Word."""
     rng = rev.Range
     text = para = ""
@@ -187,12 +188,15 @@ def _comment_revision(doc: Any, rev: Any, classify: Classifier,
     comment = classify(RevisionContext(
         text=text, para=para, window=para, table_index=None,
         start=-1, end=-1))
+    # The fallback matters even when the paper passes generic=None: this
+    # comment is also the scaffold the XML pass clones, and Word cannot
+    # add one with no text, so the build would fail with ScaffoldMissing.
     with contextlib.suppress(Exception):
-        doc.Comments.Add(rng, comment or generic)
+        doc.Comments.Add(rng, comment or generic or _comments.GENERIC)
 
 
 def _seed_scaffold(doc: Any, classify: Classifier | None,
-                   generic: str) -> int:
+                   generic: str | None) -> int:
     """Ensure ONE Word-made comment exists, for the XML pass to clone.
 
     The comment parts, styles and relationships have to come from Word
@@ -211,6 +215,7 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
+          tables: str = _comments.COALESCE,
           whitespace: bool = True, formatting: bool = True,
           verify_in_word: bool = True, force: bool = False,
           progress: Callable[[str], None] | None = None,
@@ -222,8 +227,13 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     redline with no comments at all — not every paper annotates, and 1300
     "unclassified" balloons would be worse than silence. Pass
     ``generic=None`` to keep the matched comments but leave unmatched
-    revisions bare, which is what you want when a revision inserts a whole
-    table: comment its caption, not each of its cells.
+    revisions bare.
+
+    `tables` handles the case a modified table creates: Word makes every
+    changed cell its own revision, so a regenerated table arrives as
+    hundreds of them. The default coalesces those to one balloon per
+    distinct comment per table. Pass ``tables=comments.ALL`` only to
+    reproduce a deliverable built before that existed.
 
     `verify_in_word` reopens the result and fails the build if Word had to
     repair it. `force` overrides the refusal to overwrite a deliverable
@@ -268,7 +278,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     parts = read_parts(out)
     if classify is not None:
         added, unclassified = _comments.annotate(parts, classify,
-                                                 generic=generic)
+                                                 generic=generic,
+                                                 tables=tables)
         _comments.reclassify(parts, classify, generic=generic)
         report.comments_added, report.unclassified = added, unclassified
         report.mark(f"annotated {added} revisions in XML")

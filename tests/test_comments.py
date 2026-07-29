@@ -18,7 +18,13 @@ from conftest import (
     table,
 )
 
-from docxkit.comments import GENERIC, RevisionContext, annotate, reclassify
+from docxkit.comments import (
+    ALL,
+    GENERIC,
+    RevisionContext,
+    annotate,
+    reclassify,
+)
 from docxkit.errors import ScaffoldMissing
 from docxkit.revisions import spans as revision_spans
 
@@ -73,9 +79,10 @@ def test_annotate_comments_every_revision():
 def test_annotate_generic_none_leaves_unmatched_revisions_bare():
     """generic=None comments only what a rule matched.
 
-    Inserting a table makes every cell its own run-level revision; repeating one
-    balloon on all of them buries the ones that carry meaning. The caller
-    comments the caption and lets the cells pass.
+    Distinct from the `tables` policy: this suppresses the fallback
+    everywhere, including in prose. Use it when a paper wants no
+    placeholder balloons at all, not to tame a modified table — that is
+    what coalescing is for.
     """
     parts = make_parts(para(run("keep "), ins("matched"), ins("skipme")),
                        comment_items=(comment(1, "seed"),))
@@ -215,3 +222,86 @@ def test_reclassify_is_a_noop_when_nothing_is_generic():
     parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
     annotate(parts, always("R1"))
     assert reclassify(parts, always("other")) == (0, [])
+
+
+# --- a modified table: one balloon per meaning, not per cell ------------
+
+def _table_doc(n_cells: int, prose: str = "Prose changed too.") -> str:
+    """A table whose cells are all revisions, plus one prose revision."""
+    cells = "".join(f"<w:tc>{para(ins(str(i), rid=500 + i))}</w:tc>"
+                    for i in range(n_cells))
+    return (para(run("Table 2. Employment"))
+            + f"<w:tbl><w:tr>{cells}</w:tr></w:tbl>"
+            + para(run("Before. "), ins(prose, rid=900)))
+
+
+def test_table_cells_coalesce_to_one_comment():
+    """Word makes every changed cell a revision; one balloon says it."""
+    parts = make_parts(_table_doc(40), comment_items=(comment(1, "seed"),))
+    added, unclassified = annotate(parts, always("R7: table regenerated"))
+    # 40 cells + 1 prose revision -> 1 table balloon + 1 prose balloon
+    assert added == 2
+    assert unclassified == 0
+    assert _doc(parts).count("<w:commentRangeStart") == 2
+
+
+def test_tables_all_restores_the_per_cell_behaviour():
+    parts = make_parts(_table_doc(40), comment_items=(comment(1, "seed"),))
+    added, _ = annotate(parts, always("R7: table regenerated"),
+                        tables=ALL)
+    assert added == 41
+
+
+def test_coalescing_keeps_each_distinct_comment_in_a_table():
+    """AFI's Table 4 carries both a columns-removed and a header comment.
+
+    Taking merely the FIRST revision per table would drop one of them.
+    """
+    def classify(ctx):
+        return ("R7: header relabelled" if ctx.text == "7"
+                else "R6: columns removed")
+
+    parts = make_parts(_table_doc(40), comment_items=(comment(1, "seed"),))
+    added, _ = annotate(parts, classify)
+    texts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", _com(parts))
+    assert "R7: header relabelled" in texts
+    assert "R6: columns removed" in texts
+    assert added == 3          # two table comments + the prose one
+
+
+def test_prose_is_never_coalesced():
+    """Two paragraphs answering one referee point are two places to show."""
+    body = (para(run("a "), ins("first", rid=1))
+            + para(run("b "), ins("second", rid=2)))
+    parts = make_parts(body, comment_items=(comment(1, "seed"),))
+    added, _ = annotate(parts, always("R3: same point, both places"))
+    assert added == 2
+
+
+def test_unclassified_counts_comments_not_cells():
+    """A table with no rule needs ONE signature, so it reports 1.
+
+    Counting revisions instead made AFI's "add a signature to SIG_MAP"
+    warning fire 272 times for cells that were deliberately bare.
+    """
+    parts = make_parts(_table_doc(40), comment_items=(comment(1, "seed"),))
+    added, unclassified = annotate(parts, lambda ctx: None)
+    assert unclassified == 2       # the table, and the prose revision
+    assert added == 2
+
+
+def test_separate_tables_each_keep_their_comment():
+    body = (f"<w:tbl><w:tr><w:tc>{para(ins('a', rid=1))}</w:tc>"
+            f"<w:tc>{para(ins('b', rid=2))}</w:tc></w:tr></w:tbl>"
+            + para(run("between"))
+            + f"<w:tbl><w:tr><w:tc>{para(ins('c', rid=3))}</w:tc>"
+            f"<w:tc>{para(ins('d', rid=4))}</w:tc></w:tr></w:tbl>")
+    parts = make_parts(body, comment_items=(comment(1, "seed"),))
+    added, _ = annotate(parts, always("R9: both tables regenerated"))
+    assert added == 2, "each table keeps its own balloon"
+
+
+def test_annotate_rejects_an_unknown_table_policy():
+    parts = make_parts(_table_doc(4), comment_items=(comment(1, "seed"),))
+    with pytest.raises(ValueError, match="tables must be"):
+        annotate(parts, always("x"), tables="every-other-one")

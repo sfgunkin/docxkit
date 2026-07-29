@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from . import revisions as _revisions
 from ._xml import delta_text, set_run_text
@@ -25,6 +26,8 @@ from .errors import PackageError, ScaffoldMissing
 from .find import para_text_at, table_index_at, table_spans
 
 __all__ = [
+    "ALL",
+    "COALESCE",
     "GENERIC",
     "RevisionContext",
     "annotate",
@@ -34,6 +37,10 @@ __all__ = [
 ]
 
 GENERIC = "Revision (unclassified)"
+
+#: `tables` policies for :func:`annotate`.
+COALESCE = "coalesce"   # one balloon per distinct comment text per table
+ALL = "all"             # comment every changed cell (pre-coalescing builds)
 
 _COMMENT_RE = re.compile(
     r'(<w:comment [^>]*w:id="(\d+)"[^>]*>)(.*?)(</w:comment>)', re.DOTALL)
@@ -62,6 +69,15 @@ class RevisionContext:
     def haystack(self) -> str:
         """Everything searchable, for simple substring rules."""
         return f"{self.para} {self.window} {self.text}"
+
+
+class _Planned(NamedTuple):
+    """One revision, the comment decided for it, and the table it sits in."""
+
+    start: int
+    end: int
+    comment: str | None
+    table: int | None
 
 
 def _context(doc: str, start: int, end: int,
@@ -105,67 +121,118 @@ def _anchor(cid: int) -> tuple[str, str]:
     return start, end
 
 
-def annotate(parts: dict[str, bytes],
-             classify: Callable[[RevisionContext], str | None],
-             *, generic: str | None = GENERIC) -> tuple[int, int]:
-    """Comment every run-level revision in ``document.xml``.
+def _plan(doc: str, classify: Callable[[RevisionContext], str | None],
+          spans: list[tuple[int, int]]) -> list[_Planned]:
+    """Every revision that still needs a comment, with its verdict."""
+    return [_Planned(s, e, classify(_context(doc, s, e, spans)),
+                     table_index_at(spans, s))
+            for s, e in _revisions.spans(doc)
+            if not _already_anchored(doc, s, e)]
 
-    The package must already carry Word's comment scaffold — at least one
-    comment Word itself created — so the parts, styles and relationships
-    are Word's own rather than hand-rolled. :func:`docxkit.tracked.build`
-    arranges that.
 
-    ``generic`` is the comment for revisions no rule matched. Pass ``None`` to
-    leave those revisions **uncommented** instead. That matters when a revision
-    inserts a large table: every cell is its own run-level revision, and
-    repeating one comment on all of them buries the few that carry meaning.
-    Comment the caption (a paragraph outside the table) and let the cells pass.
+def _coalesce_tables(planned: list[_Planned]) -> list[_Planned]:
+    """Keep one comment per distinct text per table; leave prose alone.
 
-    Returns (comments added, revisions no rule matched). Idempotent:
-    revisions that already carry an anchor are skipped.
+    Word emits a separate revision for every changed CELL, so a
+    regenerated table arrives as hundreds of revisions that all mean the
+    same thing — AFI's R2 round had 153 in one table and 105 in another,
+    281 of its 368 revisions in total. Commenting each one costs almost
+    nothing to store (the repetition compresses away) but buries the
+    handful of balloons that carry meaning.
+
+    Coalescing on the comment TEXT rather than simply taking the first
+    revision matters: AFI's Table 4 has both a columns-removed comment
+    and a different one for the header relabel, and keeping only the
+    first would silently drop whichever came second.
+
+    Prose is never coalesced. Two paragraphs answering the same referee
+    point are two places the reader has to be shown.
     """
-    doc = parts["word/document.xml"].decode("utf-8")
-    com = parts["word/comments.xml"].decode("utf-8")
-    tm = re.search(r"<w:comment .*?</w:comment>", com, re.DOTALL)
-    if not tm:
-        raise ScaffoldMissing(
-            "no comment scaffold - Word must create at least one comment "
-            "before the XML pass can clone it")
-    template = tm.group(0)
-    utc = re.search(r'w16cex:dateUtc="([^"]+)"',
-                    parts.get("word/commentsExtensible.xml", b"").decode(
-                        "utf-8") or "")
-    next_id = 1 + max(int(i) for i in
-                      re.findall(r'<w:comment w:id="(\d+)"', com))
-    spans = table_spans(doc)
+    seen: set[tuple[int, str | None]] = set()
+    kept = []
+    for entry in planned:
+        if entry.table is None:
+            kept.append(entry)
+            continue
+        key = (entry.table, entry.comment)
+        if key not in seen:
+            seen.add(key)
+            kept.append(entry)
+    return kept
 
-    planned = [(s, e, classify(_context(doc, s, e, spans)))
-               for s, e in _revisions.spans(doc)
-               if not _already_anchored(doc, s, e)]
-    unclassified = sum(1 for *_, c in planned if c is None)
-    if generic is None:
-        planned = [p for p in planned if p[2] is not None]
 
+class _Scaffold(NamedTuple):
+    """Word's own comment parts, which new comments are cloned from.
+
+    The template, author, date, styles and namespace prefixes have to come
+    from a comment Word created; hand-writing them is how a package ends
+    up "repaired" on open.
+    """
+
+    comments_xml: str
+    template: str
+    next_id: int
+    date_utc: str | None
+
+    @classmethod
+    def read(cls, parts: dict[str, bytes]) -> _Scaffold:
+        com = parts["word/comments.xml"].decode("utf-8")
+        tm = re.search(r"<w:comment .*?</w:comment>", com, re.DOTALL)
+        if not tm:
+            raise ScaffoldMissing(
+                "no comment scaffold - Word must create at least one comment "
+                "before the XML pass can clone it")
+        extensible = parts.get("word/commentsExtensible.xml", b"")
+        utc = re.search(r'w16cex:dateUtc="([^"]+)"',
+                        extensible.decode("utf-8") or "")
+        return cls(
+            comments_xml=com,
+            template=tm.group(0),
+            next_id=1 + max(int(i) for i in
+                            re.findall(r'<w:comment w:id="(\d+)"', com)),
+            date_utc=utc.group(1) if utc else None)
+
+
+def _decide(planned: list[_Planned],
+            generic: str | None) -> list[tuple[int, int, str]]:
+    """Settle each revision's final text, dropping what stays bare.
+
+    Resolving the fallback once here rather than at each insertion is what
+    lets `generic=None` mean "leave it uncommented" without the write step
+    having to know about it.
+    """
+    return [(p.start, p.end, p.comment or generic or GENERIC)
+            for p in planned
+            if p.comment is not None or generic is not None]
+
+
+def _write(parts: dict[str, bytes], doc: str,
+           decided: list[tuple[int, int, str]],
+           scaffold: _Scaffold) -> None:
+    """Anchor each comment in the body and add its four part entries."""
     elements, exts, ids, exls = [], [], [], []
-    # insert back-to-front so the earlier offsets stay valid
-    for i, (start, end, comment) in reversed(list(enumerate(planned))):
-        cid = next_id + i
+    # back-to-front, so the offsets of the earlier anchors stay valid
+    for i, (start, end, comment) in reversed(list(enumerate(decided))):
+        cid = scaffold.next_id + i
         para_id = f"{_PARA_ID_BASE + cid:08X}"
         durable = f"{_DURABLE_ID_BASE + cid:08X}"
         open_tag, close_tag = _anchor(cid)
         doc = doc[:start] + open_tag + doc[start:end] + close_tag + doc[end:]
-        elements.append(_clone_comment(template, cid, para_id,
-                                       comment or generic))
+        elements.append(_clone_comment(scaffold.template, cid, para_id,
+                                       comment))
         exts.append(f'<w15:commentEx w15:paraId="{para_id}" w15:done="0"/>')
         ids.append(f'<w16cid:commentId w16cid:paraId="{para_id}" '
                    f'w16cid:durableId="{durable}"/>')
-        if utc:
+        if scaffold.date_utc:
             exls.append('<w16cex:commentExtensible w16cex:durableId='
-                        f'"{durable}" w16cex:dateUtc="{utc.group(1)}"/>')
+                        f'"{durable}" w16cex:dateUtc="{scaffold.date_utc}"/>')
 
     parts["word/document.xml"] = doc.encode("utf-8")
     parts["word/comments.xml"] = _append_before_close(
-        com, "</w:comments>", "".join(elements)).encode("utf-8")
+        scaffold.comments_xml, "</w:comments>",
+        "".join(elements)).encode("utf-8")
+    # The three side parts must stay in step with comments.xml or Word
+    # reports unreadable content.
     for name, close, add in (
             ("word/commentsExtended.xml", "</w15:commentsEx>", exts),
             ("word/commentsIds.xml", "</w16cid:commentsIds>", ids),
@@ -175,7 +242,53 @@ def annotate(parts: dict[str, bytes],
             parts[name] = _append_before_close(
                 parts[name].decode("utf-8"), close, "".join(add)
             ).encode("utf-8")
-    return len(planned), unclassified
+
+
+def annotate(parts: dict[str, bytes],
+             classify: Callable[[RevisionContext], str | None],
+             *, generic: str | None = GENERIC,
+             tables: str = COALESCE) -> tuple[int, int]:
+    """Comment the run-level revisions in ``document.xml``.
+
+    The package must already carry Word's comment scaffold — at least one
+    comment Word itself created — so the parts, styles and relationships
+    are Word's own rather than hand-rolled. :func:`docxkit.tracked.build`
+    arranges that.
+
+    ``generic`` is the comment for revisions no rule matched. Pass ``None``
+    to leave those **uncommented** instead.
+
+    ``tables`` decides what happens inside a table, where Word makes every
+    changed cell its own revision:
+
+    ``COALESCE`` (default)
+        One balloon per distinct comment text per table.
+    ``ALL``
+        Comment every cell. Reproduces a deliverable built before
+        coalescing existed; not what you want for a new round.
+
+    Returns (comments added, comments that fell back to `generic`). The
+    second number counts COMMENTS, not revisions, so a table whose cells
+    match no rule reports 1 — one missing rule — instead of 153. Getting
+    that wrong made AFI's "add a signature to SIG_MAP" warning fire 272
+    times for cells that were deliberately bare.
+
+    Idempotent: revisions that already carry an anchor are skipped.
+    """
+    if tables not in (COALESCE, ALL):
+        raise ValueError(f"tables must be {COALESCE!r} or {ALL!r}, "
+                         f"not {tables!r}")
+    doc = parts["word/document.xml"].decode("utf-8")
+    scaffold = _Scaffold.read(parts)
+
+    planned = _plan(doc, classify, table_spans(doc))
+    if tables == COALESCE:
+        planned = _coalesce_tables(planned)
+    unclassified = sum(1 for p in planned if p.comment is None)
+    decided = _decide(planned, generic)
+
+    _write(parts, doc, decided, scaffold)
+    return len(decided), unclassified
 
 
 def _set_comment_text(com: str, cid: str, new_text: str) -> str:
