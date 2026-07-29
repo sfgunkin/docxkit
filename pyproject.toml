@@ -44,7 +44,7 @@ ignore = [
 # ~2000 lines to a new line-length would risk behaviour for no benefit.
 # New code in this package is held to the full ruleset above.
 "src/docxkit/compare.py" = ["ALL"]
-"src/docxkit/citations.py" = ["ALL"]
+"src/docxkit/_citation_audit.py" = ["ALL"]
 "src/docxkit/word_edits.py" = ["ALL"]
 # Lazy imports are deliberate: pywin32 is an optional extra, so the rest of
 # the toolkit must import on any platform.
@@ -57,6 +57,7 @@ ignore = [
 # pandas, latex2mathml, lxml and pytest must not be needed to import
 # the toolkit.
 "src/docxkit/tables.py" = ["RUF001", "PLC0415"]
+"src/docxkit/citations.py" = ["RUF001"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 "src/docxkit/equations.py" = ["PLC0415"]
 "src/docxkit/lint.py" = ["PLC0415"]
@@ -98,7 +99,8 @@ ignore_missing_imports = true
 # they are exempted from the lint config: they are working, well-exercised
 # code carried over unchanged, and their errors are all python-docx's
 # untyped Document() rather than anything actionable here.
-module = ["docxkit.compare", "docxkit.citations", "docxkit.word_edits"]
+module = ["docxkit.compare", "docxkit._citation_audit",
+          "docxkit.word_edits"]
 ignore_errors = true
 
 [tool.pytest.ini_options]

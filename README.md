@@ -48,7 +48,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry (Word's customXml) |
-| `citations` | citation ↔ reference back-link audit |
+| `citations` | find citations in prose, parse the reference section, build the link XML; plus the back-link audit |
 | `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
 | `comments` | attach a comment to every tracked revision, in XML |
 | `tracked` | build a tracked-changes deliverable end to end |
