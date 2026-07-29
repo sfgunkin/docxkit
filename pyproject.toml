@@ -65,20 +65,27 @@ ignore = [
 "tests/*" = ["RUF001", "PLC2701"]
 
 [tool.mypy]
-files = ["src/docxkit"]
+files = ["src/docxkit", "tests"]
 python_version = "3.12"
 # Stricter than the defaults where it catches real mistakes, but short of
 # --strict: the XML passes hand back plain str/dict, and demanding full
 # annotations on them would add noise without finding bugs.
 check_untyped_defs = true
 disallow_any_generics = true
-disallow_untyped_defs = true
+# Enabled for the package below, not for the tests: annotating
+# 135 test functions as returning None is not information, and
+# their bodies are still checked via check_untyped_defs.
+disallow_untyped_defs = false
 no_implicit_optional = true
 strict_equality = true
 warn_redundant_casts = true
 warn_return_any = true
 warn_unused_ignores = true
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["docxkit.*"]
+disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # No stubs published for any of these.

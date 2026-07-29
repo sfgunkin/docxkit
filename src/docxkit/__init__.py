@@ -14,6 +14,7 @@ Word automation lives in :mod:`docxkit.word` and is imported lazily, so the
 rest of the toolkit works anywhere; only the COM-backed features need
 Windows and ``pip install docxkit[word]``.
 """
+from .console import utf8_stdout
 from .edit import preserve_space, rep, replace_in_para
 from .find import (
     edit_para,
@@ -49,5 +50,6 @@ __all__ = [
     "replace_in_para",
     "table_spans",
     "text_of",
+    "utf8_stdout",
     "write_docx",
 ]

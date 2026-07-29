@@ -12,28 +12,15 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import re
 import sys
 import zipfile
 from pathlib import Path
 
+from .console import utf8_stdout
 from .errors import DocxKitError
 from .find import P_RE, text_of
-
-
-def _print_utf8() -> None:
-    """Force UTF-8 on stdout — Windows consoles default to cp1252, which
-    cannot encode the typographic glyphs these reports print (minus sign,
-    asterisk operator, arrows, curly quotes).
-
-    Guarded because stdout is not always a real console stream: under
-    pytest capture, or when piped through a wrapper, it may be an object
-    with no ``reconfigure`` at all.
-    """
-    if isinstance(sys.stdout, io.TextIOWrapper):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -152,7 +139,7 @@ def cmd_pages(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    _print_utf8()
+    utf8_stdout()
     ap = argparse.ArgumentParser(
         prog="docxkit", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)

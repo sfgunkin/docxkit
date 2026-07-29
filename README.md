@@ -53,6 +53,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `ingest` | fold the author's Word edits back into the build source |
 | `word_edits` | docx-vs-python-docx-script change table (secondary) |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |
+| `console` | UTF-8 stdout, guarded — a bare reconfigure crashes off-console |
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 
@@ -116,7 +117,7 @@ they do.
 ```
 python -m pytest        # 66 tests, synthetic fixtures, no Word required
 python -m ruff check .
-python -m mypy          # config in pyproject; ported modules exempt
+python -m mypy          # package + tests; ported modules exempt
 ```
 
 `_xml.py` exists because the primitives had already started to drift: the

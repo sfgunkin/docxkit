@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, overload
 
 from ._xml import PARA_RE, set_run_text, visible_text
 from .errors import AnchorError
@@ -99,6 +99,14 @@ def _cell_text(tc_xml: str) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+@overload
+def find(tables: list[Table], header: list[str],
+         *, required: Literal[True] = ...) -> Table: ...
+@overload
+def find(tables: list[Table], header: list[str],
+         *, required: Literal[False]) -> Table | None: ...
+
+
 def find(tables: list[Table], header: list[str],
          *, required: bool = True) -> Table | None:
     """The table whose header row matches `header`.
@@ -106,6 +114,10 @@ def find(tables: list[Table], header: list[str],
     Each entry is matched as a SUBSTRING of the corresponding cell, so
     ``["Country", "AFI (initial)"]`` finds the table regardless of a
     trailing footnote marker or a line break in the cell.
+
+    Raises when nothing matches; pass ``required=False`` to get None
+    instead. The overloads mean callers of the default form get a
+    ``Table``, not an ``Optional`` they would have to keep unwrapping.
     """
     for t in tables:
         cells = t.header
@@ -118,6 +130,14 @@ def find(tables: list[Table], header: list[str],
             f"no table with header {header}; saw "
             f"{[t.header[:3] for t in tables]}")
     return None
+
+
+@overload
+def by_caption(xml: str, caption: str, *, view: str = ...,
+               required: Literal[True] = ...) -> Table: ...
+@overload
+def by_caption(xml: str, caption: str, *, view: str = ...,
+               required: Literal[False]) -> Table | None: ...
 
 
 def by_caption(xml: str, caption: str, *, view: str = FINAL,
