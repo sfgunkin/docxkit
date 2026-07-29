@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, overload
 
-from ._xml import PARA_RE, set_run_text, visible_text
+from ._xml import PARA_RE, matching_close, set_run_text, visible_text
 from .errors import AnchorError
 from .revisions import FINAL, ORIGINAL, accept, reject
 
@@ -34,7 +34,6 @@ __all__ = [
     "tolerance_for",
 ]
 
-_TBL_RE = re.compile(r"<w:tbl>.*?</w:tbl>", re.DOTALL)
 _TR_RE = re.compile(r"<w:tr\b[^>]*>.*?</w:tr>", re.DOTALL)
 _TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
 # a leading signed number, tolerating the typographic minus and separators
@@ -81,15 +80,31 @@ def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
         raise ValueError(f"view must be {FINAL!r} or {ORIGINAL!r}")
     transform = accept if view == FINAL else reject
     out = []
-    for i, m in enumerate(_TBL_RE.finditer(xml)):
-        body = transform(m.group(0))
+    for i, (start, end) in enumerate(_table_spans(xml)):
+        body = transform(xml[start:end])
         rows = []
         for tr in _TR_RE.finditer(body):
             cells = [_cell_text(tc.group(0)) for tc in _TC_RE.finditer(
                 tr.group(0))]
             rows.append(cells)
-        out.append(Table(index=i, start=m.start(), end=m.end(), rows=rows))
+        out.append(Table(index=i, start=start, end=end, rows=rows))
     return out
+
+
+def _table_spans(xml: str) -> list[tuple[int, int]]:
+    """(start, end) of every TOP-LEVEL table, nesting respected.
+
+    A non-greedy ``<w:tbl>.*?</w:tbl>`` closes on the first end tag it
+    meets, which for a table containing another table is the INNER one —
+    the fragment then ends mid-cell. Questionnaires nest tables freely,
+    and that is where this first bit.
+    """
+    spans, pos = [], 0
+    while (at := xml.find("<w:tbl>", pos)) != -1:
+        end = matching_close(xml, at + len("<w:tbl>"), "tbl")
+        spans.append((at, end))
+        pos = end                      # nested tables ride along inside
+    return spans
 
 
 def _cell_text(tc_xml: str) -> str:

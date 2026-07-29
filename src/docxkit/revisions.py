@@ -58,6 +58,16 @@ _NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
        ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
        ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"')
 _WRAPPER = "docxkitFragment"
+# Prefixes used by a fragment but declared on the document root, which the
+# fragment does not carry: wp14, w16du, o, v, w10, mc and friends. The set
+# is open-ended -- Word adds new ones with each version -- so rather than
+# chase it, any prefix the fragment uses and the map below does not know
+# gets a placeholder URI. Text extraction does not care what the URI is,
+# and this is what stopped tables.read_all working on the papers' own
+# tracked deliverables.
+_ELEMENT_PREFIX_RE = re.compile(r"</?([A-Za-z][\w.-]*):")
+_ATTR_PREFIX_RE = re.compile(r"\s([A-Za-z][\w.-]*):[\w.-]+=")
+_PLACEHOLDER = "urn:docxkit:undeclared:"
 _RANGE_MARKERS = ("moveFromRangeStart", "moveFromRangeEnd",
                   "moveToRangeStart", "moveToRangeEnd")
 
@@ -91,14 +101,33 @@ def counts(xml: str) -> tuple[int, int]:
             len(re.findall(r"<w:del ", xml)))
 
 
+def _fragment_declarations(xml: str) -> str:
+    """xmlns declarations covering every prefix the fragment uses."""
+    declared = set(re.findall(r'xmlns:([\w.-]+)=', _NS))
+    used = {m.group(1) for m in _ELEMENT_PREFIX_RE.finditer(xml)}
+    used |= {m.group(1) for m in _ATTR_PREFIX_RE.finditer(xml)}
+    used -= {"xmlns", "xml"}
+    extra = "".join(f' xmlns:{p}="{_PLACEHOLDER}{p}"'
+                    for p in sorted(used - declared))
+    return _NS + extra
+
+
 def _parse(xml: str) -> tuple[Any, bool]:
-    """Parse a document or a bare fragment; True if it was wrapped."""
+    """Parse a document or a bare fragment; True if it was wrapped.
+
+    The BOM matters: ``str.lstrip()`` does not remove U+FEFF, so a
+    document written with one looked like a fragment, got wrapped, and
+    then had an XML declaration in the middle of an element.
+    """
     from lxml import etree
 
-    stripped = xml.lstrip()
+    # str.lstrip() does not remove U+FEFF, so a document written with
+    # a BOM looked like a fragment: it got wrapped, and then had an XML
+    # declaration in the middle of an element.
+    stripped = xml.lstrip("\ufeff \t\r\n")
     if stripped.startswith(("<?xml", "<w:document")):
-        return etree.fromstring(xml.encode("utf-8")), False
-    wrapped = f"<{_WRAPPER} {_NS}>{xml}</{_WRAPPER}>"
+        return etree.fromstring(stripped.encode("utf-8")), False
+    wrapped = f"<{_WRAPPER} {_fragment_declarations(xml)}>{xml}</{_WRAPPER}>"
     return etree.fromstring(wrapped.encode("utf-8")), True
 
 
@@ -160,7 +189,19 @@ def _merge_into_next(para: Any) -> None:
     parent.remove(para)
 
 
+def _has_revisions(xml: str) -> bool:
+    return any(marker in xml for marker in
+               ("<w:ins ", "<w:del ", "<w:ins/", "<w:del/",
+                "w:moveFrom", "w:moveTo"))
+
+
 def _simulate(xml: str, mode: str) -> str:
+    # A document with no revisions is its own accepted AND rejected view,
+    # so there is nothing to simulate. Worth checking first: most
+    # manuscripts are clean, and parsing a 1.7MB part to discover that
+    # costs ~20ms every time — per table, in tables.read_all.
+    if not _has_revisions(xml):
+        return xml
     root, wrapped = _parse(xml)
     vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \
         if mode == FINAL else (("ins", "moveTo"), ("del", "moveFrom"))
