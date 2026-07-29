@@ -44,6 +44,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `tables` | locate/read/rewrite manuscript tables, on either side of a redline |
 | `equations` | LaTeX→OMML via Word's own XSL, harvest existing equations, formula fingerprints |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
+| `figures` | find figures by caption, replace images safely, extents, landscape sections |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `citations` | citation ↔ reference back-link audit |
 | `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
@@ -111,6 +112,11 @@ they do.
   and deepcopy it — the only way to guarantee it renders identically.
 - **A rebuild must not overwrite a deliverable someone reviewed in Word.**
   `tracked.build` stamps what it produced and refuses if the file changed.
+- **A figure caption sits ABOVE its image**, one figure can be several
+  images (AFI's Figure 5 is three Lorenz curves), and replacing image
+  bytes changes *every* drawing sharing that relationship — AFI's Figures
+  8/11/12 all pointed at `image10`. `figures.replace_image` refuses until
+  you say whether to isolate.
 
 ## Tests
 
