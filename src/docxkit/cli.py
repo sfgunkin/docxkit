@@ -103,11 +103,20 @@ def cmd_verify(args: argparse.Namespace) -> int:
           f"{pkg['comments']} comments")
     print(f"  Word    : {wrd['revisions']} revisions / {wrd['comments']} "
           f"comments / {wrd['paragraphs']} paragraphs")
-    if report["comments_match"]:
-        print("  VERDICT : clean - Word reads back what the package holds")
+    if not report["comments_match"]:
+        print("  VERDICT : MISMATCH - Word altered the file on open")
+        return 1
+    if pkg["comments"] == 0:
+        # Word merges adjacent revisions, so its revision count legitimately
+        # differs from the element count; comments are the one exact
+        # cross-check, and with none there is nothing to compare.
+        print("  VERDICT : opened without error (no comments to cross-check; "
+              "revision counts differ legitimately - Word merges adjacent "
+              "revisions)")
         return 0
-    print("  VERDICT : MISMATCH - Word altered the file on open")
-    return 1
+    print("  VERDICT : clean - Word reads back every comment the package "
+          "holds")
+    return 0
 
 
 def cmd_pdf(args: argparse.Namespace) -> int:
