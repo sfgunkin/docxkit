@@ -6,7 +6,7 @@ the papers' own tracked deliverables.
 """
 from __future__ import annotations
 
-from conftest import document, para, run
+from conftest import document, ins, para, run
 
 from docxkit.revisions import FINAL, ORIGINAL, accept, text
 from docxkit.tables import read_all
@@ -68,7 +68,6 @@ def test_a_clean_document_short_circuits_the_transform():
 
 
 def test_the_short_circuit_does_not_skip_real_revisions():
-    from conftest import ins
     xml = document(para(run("keep "), ins("added")))
     assert accept(xml) is not xml
     assert text(xml, ORIGINAL) == ["keep "]
