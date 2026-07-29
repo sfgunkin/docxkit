@@ -211,6 +211,7 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
           *, author: str = "Revision", generic: str = _comments.GENERIC,
+          whitespace: bool = True, formatting: bool = True,
           verify_in_word: bool = True, force: bool = False,
           progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
@@ -237,7 +238,9 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     with _word.session() as word, \
             _word.open_doc(word, original) as orig, \
             _word.open_doc(word, revised) as rev:
-        cmp_ = _word.compare_documents(word, orig, rev, author=author)
+        cmp_ = _word.compare_documents(
+            word, orig, rev, author=author,
+            whitespace=whitespace, formatting=formatting)
         report.revisions = cmp_.Revisions.Count
         report.mark("compared")
         say(f"revisions: {report.revisions}")

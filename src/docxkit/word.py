@@ -142,18 +142,28 @@ def draft_view(doc: Any) -> None:
 
 
 def compare_documents(word: Any, original: Any, revised: Any, *,
-                      author: str = "Revision") -> Any:
+                      author: str = "Revision",
+                      whitespace: bool = True,
+                      formatting: bool = True) -> Any:
     """``CompareDocuments`` into a new tracked-changes document.
 
     Fast (a few seconds even on a book-length manuscript) — if a redline
     build is slow, the cost is in what you do with the revisions, not here.
+
+    `whitespace` and `formatting` are exposed because they change the
+    deliverable, not just its speed, and papers disagree: the Life
+    Expectancy recipe compares with whitespace OFF, so that respacing at
+    an edit boundary is not shown to an editor as a revision. Two routes
+    built with different settings produce different redlines from the
+    same pair of documents.
     """
     return word.CompareDocuments(
         original, revised,
         Destination=WD_COMPARE_TO_NEW,
         Granularity=1,                 # word level
-        CompareFormatting=True, CompareCaseChanges=True,
-        CompareWhitespace=True, CompareTables=True, CompareHeaders=True,
+        CompareFormatting=formatting, CompareCaseChanges=True,
+        CompareWhitespace=whitespace, CompareTables=True,
+        CompareHeaders=True,
         CompareFootnotes=True, CompareTextboxes=True, CompareFields=True,
         CompareComments=True, CompareMoves=True,
         RevisedAuthor=author, IgnoreAllComparisonWarnings=True)
