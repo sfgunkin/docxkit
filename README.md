@@ -51,6 +51,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `tracked` | build a tracked-changes deliverable end to end |
 | `ingest` | fold the author's Word edits back into the build source |
 | `word_edits` | docx-vs-python-docx-script change table (secondary) |
+| `lint` | structural checks for the markup Word refuses to open (ported from DSI) |
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 

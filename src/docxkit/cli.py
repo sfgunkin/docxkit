@@ -4,6 +4,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit citations PAPER.docx
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit text PAPER.docx [--tracked final|original]
+    docxkit lint PAPER.docx
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
     docxkit pages PAPER.docx
@@ -93,6 +94,20 @@ def cmd_text(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lint(args: argparse.Namespace) -> int:
+    """Structural checks for the markup Word refuses to open."""
+    from .lint import lint_parts
+    from .package import read_parts
+    problems = lint_parts(read_parts(args.docx))
+    print(f"{Path(args.docx).name}")
+    if not problems:
+        print("  clean - no structural problems found")
+        return 0
+    for problem in problems:
+        print(f"  - {problem}")
+    return 1
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """Does Word read this file back as written, or repair it on open?"""
     from .tracked import verify
@@ -166,6 +181,11 @@ def main() -> None:
                    default="final",
                    help="which side of tracked changes to show")
     p.set_defaults(fn=cmd_text)
+
+    p = sub.add_parser("lint",
+                       help="structural checks (no Word needed)")
+    p.add_argument("docx")
+    p.set_defaults(fn=cmd_lint)
 
     p = sub.add_parser("verify",
                        help="does Word read this back unchanged? (needs Word)")

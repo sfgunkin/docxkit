@@ -32,7 +32,8 @@ from typing import Any
 from . import comments as _comments
 from . import word as _word
 from .comments import RevisionContext
-from .errors import DeliverableModified
+from .errors import DeliverableModified, PackageError
+from .lint import lint_parts
 from .package import backup as _backup
 from .package import read_parts, write_docx
 
@@ -253,6 +254,13 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     parts = read_parts(out)
     added, unclassified = _comments.annotate(parts, classify, generic=generic)
     _comments.reclassify(parts, classify, generic=generic)
+    # catch the "Word says unreadable content" classes offline, before the
+    # file is written and long before anyone opens it
+    if problems := lint_parts(parts):
+        listed = "\n  - ".join(problems)
+        raise PackageError(
+            f"the annotated package would not open cleanly in Word:\n"
+            f"  - {listed}")
     write_docx(out, parts)
     report.comments_added = added
     report.unclassified = unclassified
