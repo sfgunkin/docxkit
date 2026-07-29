@@ -67,7 +67,7 @@ ignore = [
 "tests/*" = ["RUF001", "PLC2701"]
 
 [tool.mypy]
-files = ["src/docxkit", "tests"]
+files = ["src/docxkit", "tests", "tools"]
 python_version = "3.12"
 # Stricter than the defaults where it catches real mistakes, but short of
 # --strict: the XML passes hand back plain str/dict, and demanding full

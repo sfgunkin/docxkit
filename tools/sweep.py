@@ -26,6 +26,7 @@ import time
 import traceback
 import zipfile
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -48,7 +49,10 @@ SKIP = re.compile(r"~\$|backup|_old|_pre_|\.tmp|userbackup|bak_",
                   re.IGNORECASE)
 
 
-def routines(blob: bytes) -> dict[str, object]:
+Routine = Callable[[], object]
+
+
+def routines(blob: bytes) -> dict[str, Routine]:
     """Every read-only routine, as name -> callable."""
     with zipfile.ZipFile(io.BytesIO(blob)) as z:
         names = set(z.namelist())
