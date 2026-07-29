@@ -18,7 +18,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from .errors import DocumentLocked, PackageError
 
@@ -79,7 +79,8 @@ def read_bytes(path: str | Path, *, skip_if_locked: bool = True) -> bytes:
         return tmp.read_bytes()
 
 
-def _skip_or_raise(message: str, allow_skip: bool, error: type) -> None:
+def _skip_or_raise(message: str, allow_skip: bool,
+                   error: type) -> NoReturn:
     if allow_skip:
         try:
             import pytest

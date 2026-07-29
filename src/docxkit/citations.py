@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 
 from ._citation_audit import check_citations
+from ._xml import escape
 
 __all__ = [
     "Citation",
@@ -233,7 +234,7 @@ def hyperlink_field(anchor: str, label: str, *, style: str = "Hyperlink",
             f'<w:r><w:instrText>HYPERLINK \\l "{anchor}" \\h</w:instrText>'
             "</w:r>"
             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
-            f"<w:r>{props}<w:t>{_esc(label)}</w:t></w:r>"
+            f"<w:r>{props}<w:t>{escape(label)}</w:t></w:r>"
             '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
 
 
@@ -247,6 +248,3 @@ def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:
     return (f'<w:bookmarkStart w:id="{bookmark_id}" w:name="{name}"/>'
             f'{inner}<w:bookmarkEnd w:id="{bookmark_id}"/>')
 
-
-def _esc(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

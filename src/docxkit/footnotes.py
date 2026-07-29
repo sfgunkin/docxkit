@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from ._xml import PARA_RE, visible_text
+from ._xml import PARA_RE, escape, visible_text
 from .errors import AnchorError
 
 __all__ = ["Footnote", "append", "find", "find_all", "remap", "renumber_map"]
@@ -77,7 +77,7 @@ def append(footnotes_xml: str, contains: str, text: str) -> str:
     if not paras:
         raise AnchorError(f"footnote {note.id} has no paragraph to append to")
     last = paras[-1]
-    run = f'<w:r><w:t xml:space="preserve">{_esc(text)}</w:t></w:r>'
+    run = f'<w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r>'
     patched = (note.xml[:last.end() - len("</w:p>")] + run
                + note.xml[last.end() - len("</w:p>"):])
     return (footnotes_xml[:note.start] + patched
@@ -106,6 +106,3 @@ def remap(xml: str, mapping: dict[str, str]) -> str:
         lambda m: m.group(1) + mapping.get(m.group(2), m.group(2))
         + m.group(3), xml)
 
-
-def _esc(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

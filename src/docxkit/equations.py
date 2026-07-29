@@ -24,6 +24,7 @@ not.
 from __future__ import annotations
 
 import copy
+import html
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -139,9 +140,7 @@ def equations(xml: str) -> list[Equation]:
 
 def tokens(omml: str) -> str:
     """The symbol stream of an equation."""
-    import html
-
-    return str(html.unescape("".join(_MT_RE.findall(omml))))
+    return html.unescape("".join(_MT_RE.findall(omml)))
 
 
 def skeleton(omml: str) -> str:

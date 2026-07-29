@@ -48,23 +48,17 @@ ORIGINAL = "original"  # revisions rejected: what it was before
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _OPEN_RE = re.compile(r"<w:(ins|del)\b[^>]*?(/?)>")
+# Only these two need their real URIs: they are the namespaces this
+# module looks elements up by. Every other prefix a fragment might use —
+# wp14 on a drawing, w16du on a revision date, o and v on the survey
+# questionnaires' VML — is opaque here, and the list of them is
+# open-ended because Word adds more with each version. Chasing that list
+# is what broke tables.read_all on the papers' own tracked deliverables,
+# so unknown prefixes now get a placeholder URI instead: the element
+# names survive serialization, which is all the text passes need.
 _NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
-       ' xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
-       ' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
-       ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
-       'relationships"'
-       ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
-       'wordprocessingDrawing"'
-       ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
-       ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"')
+       ' xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"')
 _WRAPPER = "docxkitFragment"
-# Prefixes used by a fragment but declared on the document root, which the
-# fragment does not carry: wp14, w16du, o, v, w10, mc and friends. The set
-# is open-ended -- Word adds new ones with each version -- so rather than
-# chase it, any prefix the fragment uses and the map below does not know
-# gets a placeholder URI. Text extraction does not care what the URI is,
-# and this is what stopped tables.read_all working on the papers' own
-# tracked deliverables.
 _ELEMENT_PREFIX_RE = re.compile(r"</?([A-Za-z][\w.-]*):")
 _ATTR_PREFIX_RE = re.compile(r"\s([A-Za-z][\w.-]*):[\w.-]+=")
 _PLACEHOLDER = "urn:docxkit:undeclared:"
