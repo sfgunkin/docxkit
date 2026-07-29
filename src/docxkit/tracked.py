@@ -21,6 +21,8 @@ The pipeline:
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import tempfile
 import time
 from collections.abc import Callable
@@ -30,9 +32,61 @@ from typing import Any
 from . import comments as _comments
 from . import word as _word
 from .comments import RevisionContext
+from .errors import DeliverableModified
+from .package import backup as _backup
 from .package import read_parts, write_docx
 
-__all__ = ["BuildReport", "build"]
+__all__ = ["BuildReport", "build", "guard_deliverable"]
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _stamp_path(out: Path) -> Path:
+    return out.with_name(out.name + ".buildinfo.json")
+
+
+def guard_deliverable(out: Path, *, force: bool = False,
+                      backup_tag: str = "user_edited") -> Path | None:
+    """Refuse to overwrite a deliverable someone has edited since the build.
+
+    The tracked file is derived, but it is also what the author opens in
+    Word to review — accepting revisions, leaving some pending, fixing a
+    word. Rebuilding over that destroys the review with no trace, which is
+    exactly what happened on the AFI paper on 2026-07-29.
+
+    A stamp written next to the file records the hash of what the build
+    produced. If the file no longer matches, it was edited: back it up and
+    stop. Returns the backup path when one was taken.
+    """
+    if not out.exists():
+        return None
+    stamp = _stamp_path(out)
+    if stamp.exists():
+        try:
+            recorded = json.loads(stamp.read_text(encoding="utf-8"))["sha256"]
+        except (ValueError, KeyError):
+            recorded = None
+        if recorded == _sha256(out):
+            return None                      # untouched since we built it
+    # Either edited, or built before stamping existed: keep a copy either way.
+    saved = _backup(out, backup_tag)
+    if force:
+        return saved
+    raise DeliverableModified(
+        f"{out.name} has changed since docxkit built it — someone edited it "
+        f"in Word. Backed up to {saved.name}; rebuilding would discard those "
+        "edits. Fold them into the build source first, then re-run with "
+        "force=True (CLI: --force).")
+
+
+def _write_stamp(out: Path, original: Path, revised: Path) -> None:
+    _stamp_path(out).write_text(json.dumps({
+        "sha256": _sha256(out),
+        "original": original.name,
+        "revised": revised.name,
+    }, indent=1), encoding="utf-8")
 
 
 class BuildReport:
@@ -116,17 +170,22 @@ def _seed_math_comments(
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Callable[[RevisionContext], str | None],
           *, author: str = "Revision", generic: str = _comments.GENERIC,
-          verify: bool = True, progress: Callable[[str], None] | None = None,
+          verify: bool = True, force: bool = False,
+          progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
 
     `classify` receives each revision and returns its comment text (or None
     to fall back to `generic`). `verify` reopens the result in Word and
-    fails the build if Word had to repair it.
+    fails the build if Word had to repair it. `force` overrides the refusal
+    to overwrite a deliverable that has been edited since it was built.
     """
     original, revised, out = Path(original), Path(revised), Path(out)
     report = BuildReport()
     say = progress or (lambda _: None)
+
+    if (saved := guard_deliverable(out, force=force)) is not None:
+        say(f"note: previous deliverable backed up to {saved.name}")
 
     td = Path(tempfile.mkdtemp(prefix="docxkit_tracked_"))
     flat = td / "tracked_flat.xml"
@@ -175,6 +234,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"{report.comments_total} - the file was repaired on open")
         report.mark("verified in Word")
         say(f"verified in Word: {got} comments, {revs} revisions")
+
+    _write_stamp(out, original, revised)
     return report
 
 

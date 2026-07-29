@@ -14,6 +14,7 @@ from __future__ import annotations
 
 __all__ = [
     "AnchorError",
+    "DeliverableModified",
     "DocumentLocked",
     "DocxKitError",
     "PackageError",
@@ -39,6 +40,16 @@ class AnchorError(DocxKitError, AssertionError):
 
     Silence here is the dangerous outcome: a replace that matches nothing
     lets a build keep "succeeding" while quietly dropping an edit.
+    """
+
+
+class DeliverableModified(DocxKitError):
+    """The output file changed since docxkit last built it.
+
+    A tracked-changes deliverable is derived, but it is also a document
+    someone reads and reviews in Word — accepting revisions, leaving
+    others pending. Rebuilding over that silently destroys the review.
+    The build stops instead, having first taken a backup.
     """
 
 
