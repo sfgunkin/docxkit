@@ -58,7 +58,7 @@ ignore = [
 # the toolkit.
 "src/docxkit/tables.py" = ["RUF001", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
-"src/docxkit/math.py" = ["PLC0415"]
+"src/docxkit/equations.py" = ["PLC0415"]
 "src/docxkit/lint.py" = ["PLC0415"]
 # Tests assert on the very glyphs Word normalizes, and reach
 # for private helpers deliberately.

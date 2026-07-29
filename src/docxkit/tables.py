@@ -30,6 +30,7 @@ __all__ = [
     "parse_number",
     "read_all",
     "set_cell",
+    "to_frame",
     "tolerance_for",
 ]
 

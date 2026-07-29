@@ -18,6 +18,7 @@ __all__ = [
     "accept",
     "counts",
     "reject",
+    "revision_text",
     "spans",
     "text",
 ]

@@ -36,6 +36,7 @@ from .errors import PackageError
 
 __all__ = [
     "compare_documents",
+    "draft_view",
     "export_pdf",
     "extract_flat_opc",
     "flat_opc_to_docx",

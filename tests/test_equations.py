@@ -4,8 +4,7 @@ from __future__ import annotations
 import pytest
 from conftest import document, para, run
 
-from docxkit.errors import AnchorError, PackageError
-from docxkit.math import (
+from docxkit.equations import (
     clone,
     display_equations,
     equations,
@@ -16,6 +15,7 @@ from docxkit.math import (
     skeleton,
     tokens,
 )
+from docxkit.errors import AnchorError, PackageError
 
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 

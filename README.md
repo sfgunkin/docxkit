@@ -24,7 +24,7 @@ from docxkit import read_parts, write_docx, edit_in_place, backup
 from docxkit import text_of, para_slice, rep, replace_in_para
 
 from docxkit.tables import read_all, find, by_caption   # manuscript tables
-from docxkit.math import latex_to_omml, harvest   # equations
+from docxkit.equations import latex_to_omml, harvest   # equations
 from docxkit.testing import latest_version, load_xml  # value-test scaffolding
 from docxkit.compare import compare, render      # multi-layer diff
 from docxkit.revisions import text, counts       # read either side of a redline
@@ -42,13 +42,14 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `edit` | anchor-asserting replace, run-aware replace, `xml:space` repair |
 | `revisions` | read tracked changes: spans, counts, accepted/rejected views |
 | `tables` | locate/read/rewrite manuscript tables, on either side of a redline |
-| `math` | LaTeX→OMML via Word's own XSL, harvest existing equations, formula fingerprints |
+| `equations` | LaTeX→OMML via Word's own XSL, harvest existing equations, formula fingerprints |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `citations` | citation ↔ reference back-link audit |
 | `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
 | `comments` | attach a comment to every tracked revision, in XML |
 | `tracked` | build a tracked-changes deliverable end to end |
+| `guard` | stop a rebuild discarding a review someone made in Word |
 | `ingest` | fold the author's Word edits back into the build source |
 | `word_edits` | docx-vs-python-docx-script change table (secondary) |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |

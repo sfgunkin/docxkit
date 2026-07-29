@@ -1,28 +1,32 @@
 r"""Building a tracked-changes deliverable from two clean documents.
 
-The journal wants a redline: the original, the revision, and a comment on
-every change saying why. The reliable way to produce one is Word's own
-``CompareDocuments`` — hand-authored ``w:ins``/``w:del`` markup has failed
-to open in Word repeatedly across these papers, so it is not attempted here.
+The journal wants a redline: the original, the revision, and — when the
+paper works that way — a comment on every change saying why. The reliable
+way to produce one is Word's own ``CompareDocuments``; hand-authored
+``w:ins``/``w:del`` markup has failed to open in Word repeatedly across
+these papers, so it is not attempted here.
+
+Generating the redline from the two clean documents also means the two
+deliverables cannot disagree: accepting every revision reproduces the
+revised document by construction. Hand-authoring does not give that, and
+on the Life Expectancy paper the tracked and clean files had silently
+drifted apart in three paragraphs.
 
 The pipeline:
 
 1. Word compares the two documents (seconds).
-2. Word comments and accepts the MATH revisions. It cannot serialize a
-   compare result containing tracked math at all, so those must go — and
-   they must be commented first, while they still exist. This also leaves
-   behind Word's own comment scaffold for step 4.
+2. The MATH revisions are resolved — Word cannot serialize a compare
+   result that contains tracked math at all, so they must be accepted,
+   and commented first if the paper annotates. This also leaves behind
+   Word's own comment scaffold for step 4.
 3. The package is extracted as Flat OPC, bypassing Word's save path.
-4. Every remaining revision is commented in XML (``docxkit.comments``).
-5. The result is reopened in Word and checked: it must read back exactly
-   the comment count the package contains, or the file was repaired on
-   open and the build fails.
+4. Every remaining revision is commented in XML (:mod:`docxkit.comments`).
+5. The result is linted, then reopened in Word: it must read back exactly
+   the comment count the package holds, or Word repaired it on open.
 """
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import json
 import tempfile
 import time
 from collections.abc import Callable
@@ -30,14 +34,16 @@ from pathlib import Path
 from typing import Any
 
 from . import comments as _comments
+from . import guard as _guard
 from . import word as _word
 from .comments import RevisionContext
-from .errors import DeliverableModified, PackageError
+from .errors import PackageError
 from .lint import lint_parts
-from .package import backup as _backup
 from .package import read_parts, write_docx
 
-__all__ = ["BuildReport", "build", "guard_deliverable", "verify"]
+__all__ = ["BuildReport", "build", "verify"]
+
+Classifier = Callable[[RevisionContext], str | None]
 
 
 def verify(path: str | Path) -> dict[str, Any]:
@@ -45,10 +51,7 @@ def verify(path: str | Path) -> dict[str, Any]:
 
     The check that matters for any tracked-changes file, however it was
     produced: Word silently "repairs" markup it dislikes, and the damage
-    only shows up when the editor opens the deliverable. Hand-authored
-    ``w:ins``/``w:del`` has failed this way repeatedly across these
-    papers, so a file built that way should be run through here before it
-    is sent anywhere.
+    only shows up when the editor opens the deliverable.
 
     Returns the counts Word reports alongside the counts the package
     contains; when they disagree, Word altered the file on open.
@@ -76,62 +79,12 @@ def verify(path: str | Path) -> dict[str, Any]:
     }
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _stamp_path(out: Path) -> Path:
-    return out.with_name(out.name + ".buildinfo.json")
-
-
-def guard_deliverable(out: Path, *, force: bool = False,
-                      backup_tag: str = "user_edited") -> Path | None:
-    """Refuse to overwrite a deliverable someone has edited since the build.
-
-    The tracked file is derived, but it is also what the author opens in
-    Word to review — accepting revisions, leaving some pending, fixing a
-    word. Rebuilding over that destroys the review with no trace, which is
-    exactly what happened on the AFI paper on 2026-07-29.
-
-    A stamp written next to the file records the hash of what the build
-    produced. If the file no longer matches, it was edited: back it up and
-    stop. Returns the backup path when one was taken.
-    """
-    if not out.exists():
-        return None
-    stamp = _stamp_path(out)
-    if stamp.exists():
-        try:
-            recorded = json.loads(stamp.read_text(encoding="utf-8"))["sha256"]
-        except (ValueError, KeyError):
-            recorded = None
-        if recorded == _sha256(out):
-            return None                      # untouched since we built it
-    # Either edited, or built before stamping existed: keep a copy either way.
-    saved = _backup(out, backup_tag)
-    if force:
-        return saved
-    raise DeliverableModified(
-        f"{out.name} has changed since docxkit built it — someone edited it "
-        f"in Word. Backed up to {saved.name}; rebuilding would discard those "
-        "edits. Fold them into the build source first, then re-run with "
-        "force=True (CLI: --force).")
-
-
-def _write_stamp(out: Path, original: Path, revised: Path) -> None:
-    _stamp_path(out).write_text(json.dumps({
-        "sha256": _sha256(out),
-        "original": original.name,
-        "revised": revised.name,
-    }, indent=1), encoding="utf-8")
-
-
 class BuildReport:
     """What a redline build did, and how long each phase took."""
 
     def __init__(self) -> None:
         self.revisions = 0
-        self.math_seeded = 0
+        self.math_resolved = 0
         self.comments_added = 0
         self.unclassified = 0
         self.comments_total = 0
@@ -157,16 +110,53 @@ class BuildReport:
         return "\n".join(lines)
 
 
-def _seed_math_comments(
-        doc: Any,
-        classify: Callable[[RevisionContext], str | None],
-        generic: str) -> int:
-    """Comment then accept every revision containing math.
+def _resolve_math(doc: Any, classify: Classifier | None, generic: str) -> int:
+    """Comment (if the paper annotates) and accept every math revision.
 
-    Word cannot serialize tracked math, so these have to be accepted before
-    extraction — which erases them from the XML. Commenting them here is
-    the only chance to explain an equation change, and it creates the
-    comment scaffold the XML pass clones.
+    Word cannot serialize a compare result containing tracked math, so
+    these have to go regardless. Commenting them is the only chance to
+    explain an equation change, and it leaves the comment scaffold the
+    XML pass clones.
+
+    The two routes below look like duplicates and are NOT: they select
+    different revisions. Walking the equations finds revisions that
+    INTERSECT a math range; asking each revision whether it contains math
+    finds revisions that CONTAIN one. Substituting the first for the
+    second on the AFI paper left 41 extra revisions un-accepted (291
+    annotated became 332), so each path keeps the scan it was verified
+    with. The equation walk is much cheaper — ~15ms per equation against
+    ~20ms per revision, which was 27s of a 1359-revision compare — and is
+    used where no comments are needed and it was validated.
+    """
+    if classify is None:
+        return _accept_math_via_equations(doc)
+    return _comment_and_accept_math_revisions(doc, classify, generic)
+
+
+def _accept_math_via_equations(doc: Any) -> int:
+    """Accept revisions touching math, found by walking ``doc.OMaths``."""
+    with contextlib.suppress(Exception):
+        if not doc.OMaths.Count:
+            return 0
+    accepted = 0
+    for i in range(doc.OMaths.Count, 0, -1):   # backwards: accepting shifts
+        try:
+            revisions = doc.OMaths(i).Range.Revisions
+        except Exception:
+            continue
+        for j in range(revisions.Count, 0, -1):
+            with contextlib.suppress(Exception):
+                revisions(j).Accept()
+                accepted += 1
+    return accepted
+
+
+def _comment_and_accept_math_revisions(
+        doc: Any, classify: Classifier, generic: str) -> int:
+    """Comment then accept each revision that CONTAINS math.
+
+    Scans the revisions rather than the equations — see
+    :func:`_resolve_math` for why the cheaper walk is not a substitute.
     """
     math_revs = []
     for rev in _word.revisions(doc):      # enumerator: indexing is O(i)
@@ -178,84 +168,71 @@ def _seed_math_comments(
 
     seeded = 0
     for rev in reversed(math_revs):       # last first: accepting shifts rest
-        rng = rev.Range
-        text = para = ""
-        with contextlib.suppress(Exception):
-            text = rng.Text or ""
-        with contextlib.suppress(Exception):
-            para = rng.Paragraphs(1).Range.Text or ""
-        comment = classify(RevisionContext(
-            text=text, para=para, window=para, table_index=None,
-            start=-1, end=-1))
-        with contextlib.suppress(Exception):
-            doc.Comments.Add(rng, comment or generic)
-            seeded += 1
+        _comment_revision(doc, rev, classify, generic)
+        seeded += 1
         with contextlib.suppress(Exception):
             rev.Accept()
-
-    if not seeded and doc.Revisions.Count:
-        # no math this time - still need one Word-made comment as scaffold
-        rng = doc.Revisions(1).Range
-        with contextlib.suppress(Exception):
-            ctx = RevisionContext(text=rng.Text or "", para="", window="",
-                                  table_index=None, start=-1, end=-1)
-            doc.Comments.Add(rng, classify(ctx) or generic)
-            seeded += 1
-    return seeded
+    return seeded or _seed_scaffold(doc, classify, generic)
 
 
-def _accept_math(doc: Any) -> int:
-    """Accept every revision that touches math, commenting none.
-
-    Word cannot serialize a compare result that still contains tracked
-    math, so this has to happen whether or not the paper annotates.
-
-    Driven from ``doc.OMaths`` rather than from the revisions: asking
-    every revision whether it contains math costs ~20ms each, which is 27s
-    on a 1359-revision compare, while walking the equations is ~15ms each
-    and there are far fewer of them. Same shape as the Revisions(i)
-    lesson — pick the collection that is small.
-    """
-    accepted = 0
+def _comment_revision(doc: Any, rev: Any, classify: Classifier,
+                      generic: str) -> None:
+    """Attach the paper's comment to one revision, through Word."""
+    rng = rev.Range
+    text = para = ""
     with contextlib.suppress(Exception):
-        if not doc.OMaths.Count:
+        text = rng.Text or ""
+    with contextlib.suppress(Exception):
+        para = rng.Paragraphs(1).Range.Text or ""
+    comment = classify(RevisionContext(
+        text=text, para=para, window=para, table_index=None,
+        start=-1, end=-1))
+    with contextlib.suppress(Exception):
+        doc.Comments.Add(rng, comment or generic)
+
+
+def _seed_scaffold(doc: Any, classify: Classifier | None,
+                   generic: str) -> int:
+    """Ensure ONE Word-made comment exists, for the XML pass to clone.
+
+    The comment parts, styles and relationships have to come from Word
+    itself; hand-rolling them is how a file ends up repaired on open.
+    """
+    if classify is None:
+        return 0
+    with contextlib.suppress(Exception):
+        if not doc.Revisions.Count:
             return 0
-    for i in range(doc.OMaths.Count, 0, -1):   # backwards: accepting shifts
-        try:
-            revisions = doc.OMaths(i).Range.Revisions
-            for j in range(revisions.Count, 0, -1):
-                revisions(j).Accept()
-                accepted += 1
-        except Exception:
-            pass
-    return accepted
+        _comment_revision(doc, doc.Revisions(1), classify, generic)
+        return 1
+    return 0
 
 
 def build(original: str | Path, revised: str | Path, out: str | Path,
-          classify: Callable[[RevisionContext], str | None] | None = None,
+          classify: Classifier | None = None,
           *, author: str = "Revision", generic: str = _comments.GENERIC,
-          verify: bool = True, force: bool = False,
+          verify_in_word: bool = True, force: bool = False,
           progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
 
     `classify` receives each revision and returns its comment text (or
     None to fall back to `generic`). Pass ``classify=None`` for a plain
-    redline with no comments at all — not every paper annotates its
-    revisions, and 1300 "unclassified" balloons would be worse than
-    silence. `verify` reopens the result in Word and fails the build if
-    Word had to repair it. `force` overrides the refusal to overwrite a
-    deliverable that has been edited since it was built.
+    redline with no comments at all — not every paper annotates, and 1300
+    "unclassified" balloons would be worse than silence.
+
+    `verify_in_word` reopens the result and fails the build if Word had to
+    repair it. `force` overrides the refusal to overwrite a deliverable
+    that has been edited since it was built.
     """
     original, revised, out = Path(original), Path(revised), Path(out)
     report = BuildReport()
     say = progress or (lambda _: None)
 
-    if (saved := guard_deliverable(out, force=force)) is not None:
+    if (saved := _guard.check(out, force=force)) is not None:
         say(f"note: previous deliverable backed up to {saved.name}")
 
-    td = Path(tempfile.mkdtemp(prefix="docxkit_tracked_"))
-    flat = td / "tracked_flat.xml"
+    flat = Path(tempfile.mkdtemp(prefix="docxkit_tracked_")) / "flat.xml"
 
     with _word.session() as word, \
             _word.open_doc(word, original) as orig, \
@@ -266,19 +243,12 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         say(f"revisions: {report.revisions}")
         _word.draft_view(cmp_)
 
-        if classify is not None:
-            report.math_seeded = _seed_math_comments(cmp_, classify, generic)
-            report.mark("seeded math comments")
-            say(f"seeded {report.math_seeded} math-revision comments")
-        else:
-            # Word still cannot serialize tracked math, so those revisions
-            # have to be accepted even when nothing is being commented.
-            report.math_seeded = _accept_math(cmp_)
-            report.mark("accepted math revisions")
-            say(f"accepted {report.math_seeded} math revisions "
-                "(Word cannot serialize tracked math)")
+        report.math_resolved = _resolve_math(cmp_, classify, generic)
+        report.mark("resolved math revisions")
+        say(f"resolved {report.math_resolved} math revisions "
+            "(Word cannot serialize tracked math)")
 
-        # NOTE: keep orig/rev OPEN until after extraction - the compare
+        # NOTE: keep orig/rev OPEN until after the extraction — the compare
         # result lazily references their parts, and closing them first
         # makes Content.WordOpenXML raise "A file error has occurred".
         _word.extract_flat_opc(cmp_, flat)
@@ -294,38 +264,32 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         added, unclassified = _comments.annotate(parts, classify,
                                                  generic=generic)
         _comments.reclassify(parts, classify, generic=generic)
-    else:
-        added = unclassified = 0
+        report.comments_added, report.unclassified = added, unclassified
+        report.mark(f"annotated {added} revisions in XML")
+        say(f"comments: {added} added, unclassified: {unclassified}")
+
     # catch the "Word says unreadable content" classes offline, before the
     # file is written and long before anyone opens it
     if problems := lint_parts(parts):
         listed = "\n  - ".join(problems)
         raise PackageError(
-            f"the annotated package would not open cleanly in Word:\n"
-            f"  - {listed}")
+            f"the package would not open cleanly in Word:\n  - {listed}")
     write_docx(out, parts)
-    report.comments_added = added
-    report.unclassified = unclassified
     report.comments_total = parts.get("word/comments.xml", b"").decode(
         "utf-8").count("<w:comment w:id=")
-    report.mark(f"annotated {added} revisions in XML")
-    say(f"comments: {added} added, unclassified: {unclassified}")
 
-    if verify:
-        got, revs = _verify(out)
-        report.verified_comments, report.verified_revisions = got, revs
-        if got != report.comments_total:
-            raise AssertionError(
-                f"Word read back {got} comments, package has "
-                f"{report.comments_total} - the file was repaired on open")
+    if verify_in_word:
+        checked = verify(out)
+        report.verified_comments = checked["word"]["comments"]
+        report.verified_revisions = checked["word"]["revisions"]
+        if not checked["comments_match"]:
+            raise PackageError(
+                f"Word read back {report.verified_comments} comments, the "
+                f"package holds {report.comments_total} — it was repaired "
+                "on open")
         report.mark("verified in Word")
-        say(f"verified in Word: {got} comments, {revs} revisions")
+        say(f"verified in Word: {report.verified_comments} comments, "
+            f"{report.verified_revisions} revisions")
 
-    _write_stamp(out, original, revised)
+    _guard.stamp(out, original=original.name, revised=revised.name)
     return report
-
-
-def _verify(path: Path) -> tuple[int, int]:
-    """Reopen in Word and report what it actually reads back."""
-    with _word.session() as word, _word.open_doc(word, path) as doc:
-        return int(doc.Comments.Count), int(doc.Revisions.Count)

@@ -13,8 +13,10 @@ import pytest
 from conftest import make_parts, para, run, write
 
 from docxkit.errors import DeliverableModified
+from docxkit.guard import check as guard_deliverable
+from docxkit.guard import stamp as _write_stamp
+from docxkit.guard import stamp_path as _stamp_path
 from docxkit.package import read_parts
-from docxkit.tracked import _stamp_path, _write_stamp, guard_deliverable
 
 
 @pytest.fixture
@@ -26,7 +28,7 @@ def built(tmp_path):
     revised = tmp_path / "v12_clean.docx"
     write(original, make_parts(para(run("before"))))
     write(revised, make_parts(para(run("after"))))
-    _write_stamp(out, original, revised)
+    _write_stamp(out, original=original.name, revised=revised.name)
     return out
 
 
