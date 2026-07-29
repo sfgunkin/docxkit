@@ -204,18 +204,48 @@ def _seed_math_comments(
     return seeded
 
 
+def _accept_math(doc: Any) -> int:
+    """Accept every revision that touches math, commenting none.
+
+    Word cannot serialize a compare result that still contains tracked
+    math, so this has to happen whether or not the paper annotates.
+
+    Driven from ``doc.OMaths`` rather than from the revisions: asking
+    every revision whether it contains math costs ~20ms each, which is 27s
+    on a 1359-revision compare, while walking the equations is ~15ms each
+    and there are far fewer of them. Same shape as the Revisions(i)
+    lesson — pick the collection that is small.
+    """
+    accepted = 0
+    with contextlib.suppress(Exception):
+        if not doc.OMaths.Count:
+            return 0
+    for i in range(doc.OMaths.Count, 0, -1):   # backwards: accepting shifts
+        try:
+            revisions = doc.OMaths(i).Range.Revisions
+            for j in range(revisions.Count, 0, -1):
+                revisions(j).Accept()
+                accepted += 1
+        except Exception:
+            pass
+    return accepted
+
+
 def build(original: str | Path, revised: str | Path, out: str | Path,
-          classify: Callable[[RevisionContext], str | None],
+          classify: Callable[[RevisionContext], str | None] | None = None,
           *, author: str = "Revision", generic: str = _comments.GENERIC,
           verify: bool = True, force: bool = False,
           progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
 
-    `classify` receives each revision and returns its comment text (or None
-    to fall back to `generic`). `verify` reopens the result in Word and
-    fails the build if Word had to repair it. `force` overrides the refusal
-    to overwrite a deliverable that has been edited since it was built.
+    `classify` receives each revision and returns its comment text (or
+    None to fall back to `generic`). Pass ``classify=None`` for a plain
+    redline with no comments at all — not every paper annotates its
+    revisions, and 1300 "unclassified" balloons would be worse than
+    silence. `verify` reopens the result in Word and fails the build if
+    Word had to repair it. `force` overrides the refusal to overwrite a
+    deliverable that has been edited since it was built.
     """
     original, revised, out = Path(original), Path(revised), Path(out)
     report = BuildReport()
@@ -236,9 +266,17 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         say(f"revisions: {report.revisions}")
         _word.draft_view(cmp_)
 
-        report.math_seeded = _seed_math_comments(cmp_, classify, generic)
-        report.mark("seeded math comments")
-        say(f"seeded {report.math_seeded} math-revision comments")
+        if classify is not None:
+            report.math_seeded = _seed_math_comments(cmp_, classify, generic)
+            report.mark("seeded math comments")
+            say(f"seeded {report.math_seeded} math-revision comments")
+        else:
+            # Word still cannot serialize tracked math, so those revisions
+            # have to be accepted even when nothing is being commented.
+            report.math_seeded = _accept_math(cmp_)
+            report.mark("accepted math revisions")
+            say(f"accepted {report.math_seeded} math revisions "
+                "(Word cannot serialize tracked math)")
 
         # NOTE: keep orig/rev OPEN until after extraction - the compare
         # result lazily references their parts, and closing them first
@@ -252,8 +290,12 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     report.mark(f"packed {n_parts} parts")
 
     parts = read_parts(out)
-    added, unclassified = _comments.annotate(parts, classify, generic=generic)
-    _comments.reclassify(parts, classify, generic=generic)
+    if classify is not None:
+        added, unclassified = _comments.annotate(parts, classify,
+                                                 generic=generic)
+        _comments.reclassify(parts, classify, generic=generic)
+    else:
+        added = unclassified = 0
     # catch the "Word says unreadable content" classes offline, before the
     # file is written and long before anyone opens it
     if problems := lint_parts(parts):
@@ -264,7 +306,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     write_docx(out, parts)
     report.comments_added = added
     report.unclassified = unclassified
-    report.comments_total = parts["word/comments.xml"].decode(
+    report.comments_total = parts.get("word/comments.xml", b"").decode(
         "utf-8").count("<w:comment w:id=")
     report.mark(f"annotated {added} revisions in XML")
     say(f"comments: {added} added, unclassified: {unclassified}")
