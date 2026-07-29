@@ -2,6 +2,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
 
     docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json R.json]
     docxkit citations PAPER.docx
+    docxkit crossrefs PAPER.docx [--write] [--audit]
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit text PAPER.docx [--tracked final|original]
     docxkit lint PAPER.docx
@@ -36,6 +37,45 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
     return 1 if check_citations(args.docx) > 0 else 0
+
+
+def cmd_crossrefs(args: argparse.Namespace) -> int:
+    """Link every figure and table to its first mention, and back."""
+    from . import crossrefs
+    from .lint import lint_parts
+    from .package import backup, read_parts, write_docx
+
+    parts = read_parts(args.docx)
+    doc = parts["word/document.xml"].decode("utf-8")
+    name = Path(args.docx).name
+
+    if args.audit:
+        state = crossrefs.audit(doc)
+        print(name)
+        for key in ("linked", "caption_only", "mention_only", "dangling"):
+            found = state[key]
+            print(f"  {key:<13} {len(found):>3}"
+                  f"{'  ' + ', '.join(found) if found else ''}")
+        return 1 if state["dangling"] else 0
+
+    linked, report = crossrefs.link(doc)
+    print(name)
+    print("  " + report.format().replace("\n", "\n  "))
+
+    if not args.write:
+        print("  (dry run - pass --write to save)")
+        return 0 if report.complete else 1
+
+    parts["word/document.xml"] = linked.encode("utf-8")
+    if problems := lint_parts(parts):
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    # this writes over the author's file, so snapshot it first
+    kept = backup(args.docx, tag="pre_crossrefs")
+    write_docx(args.docx, parts)
+    print(f"  written; previous version kept at {kept.name}")
+    return 0 if report.complete else 1
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -155,6 +195,16 @@ def main() -> None:
     p = sub.add_parser("citations", help="citation / reference link audit")
     p.add_argument("docx")
     p.set_defaults(fn=cmd_citations)
+
+    p = sub.add_parser(
+        "crossrefs",
+        help="link figures/tables to their first mention (and back)")
+    p.add_argument("docx")
+    p.add_argument("--write", action="store_true",
+                   help="save the result; without it this is a dry run")
+    p.add_argument("--audit", action="store_true",
+                   help="report the current state and change nothing")
+    p.set_defaults(fn=cmd_crossrefs)
 
     p = sub.add_parser("inspect", help="structural summary")
     p.add_argument("docx")

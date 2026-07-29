@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from docxkit import (
     citations,
     comments,
+    crossrefs,
     equations,
     figures,
     footnotes,
@@ -77,6 +78,10 @@ def routines(blob: bytes) -> dict[str, Routine]:
             for p in revisions.text(doc, revisions.FINAL)),
         "citations.refs": lambda: len(
             citations.references(revisions.text(doc, revisions.FINAL))),
+        "crossrefs.captions": lambda: len(crossrefs.find_captions(doc)),
+        "crossrefs.linked": lambda: len(crossrefs.audit(doc)["linked"]),
+        "crossrefs.dangling": lambda: len(
+            crossrefs.audit(doc)["dangling"]),
         "comments.read_all": lambda: len(comments.read_all(dict(raw))),
         "footnotes.find_all": lambda: len(footnotes.find_all(foot))
         if foot else 0,

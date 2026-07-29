@@ -9,6 +9,7 @@ an empty paragraph).
     from docxkit.compare import compare, render      # multi-layer diff
     from docxkit.tracked import build                # redline deliverable
     from docxkit.ingest import build_overrides       # author-edit round
+    from docxkit.crossrefs import link               # figure/table links
 
 Word automation lives in :mod:`docxkit.word` and is imported lazily, so the
 rest of the toolkit works anywhere; only the COM-backed features need

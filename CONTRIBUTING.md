@@ -34,6 +34,25 @@ put a paper's vocabulary into docxkit, it is on the wrong side of the seam.
 - **Run `preserve_space` as the last build step.** An unprotected edge
   space in a bare `<w:t>` is eaten by Word and ships in the deliverable.
 
+## The cross-reference convention
+
+Figures and tables are linked in both directions, and the bookmark names
+are house style — `docxkit.crossrefs` implements it, papers do not
+reinvent it:
+
+| where | bookmark | links to |
+|---|---|---|
+| first in-text mention | `Table1` + `txt` → `Table1txt` | `Table1` |
+| the caption | `Table1` | `Table1txt` |
+
+So "as shown in Table 1" jumps to the table, and the table's caption
+label jumps back to that sentence. The same `<name>txt` suffix marks the
+in-text end of a **citation** link (`Halliday2020txt`), so anything
+scanning for mentions must filter on the caption label — matching every
+bookmark ending in "txt" reported 48 citations as missing figures.
+
+Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
+
 ## Testing
 
 Three gates, all of which must pass:
