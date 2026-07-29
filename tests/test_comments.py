@@ -70,6 +70,43 @@ def test_annotate_comments_every_revision():
     assert doc.count("<w:commentReference") == 2
 
 
+def test_annotate_generic_none_leaves_unmatched_revisions_bare():
+    """generic=None comments only what a rule matched.
+
+    Inserting a table makes every cell its own run-level revision; repeating one
+    balloon on all of them buries the ones that carry meaning. The caller
+    comments the caption and lets the cells pass.
+    """
+    parts = make_parts(para(run("keep "), ins("matched"), ins("skipme")),
+                       comment_items=(comment(1, "seed"),))
+
+    def only_matched(ctx):
+        return "A11: reason" if "matched" in ctx.text else None
+
+    added, unclassified = annotate(parts, only_matched, generic=None)
+    assert (added, unclassified) == (1, 1)
+    assert _n_comments(parts) == 2          # seed + the one matched
+    doc = _doc(parts)
+    assert doc.count("<w:commentRangeStart") == 1
+    assert "skipme" in doc                  # the revision itself survives
+    for name in ("word/comments.xml", "word/commentsExtended.xml",
+                 "word/commentsIds.xml"):
+        MD.parseString(parts[name].decode("utf-8"))
+
+
+def test_annotate_generic_string_still_comments_everything():
+    """The default is unchanged: unmatched revisions get the generic text."""
+    parts = make_parts(para(run("keep "), ins("matched"), ins("skipme")),
+                       comment_items=(comment(1, "seed"),))
+
+    def only_matched(ctx):
+        return "A11: reason" if "matched" in ctx.text else None
+
+    added, unclassified = annotate(parts, only_matched, generic="fallback")
+    assert (added, unclassified) == (2, 1)
+    assert "fallback" in parts["word/comments.xml"].decode("utf-8")
+
+
 def test_annotate_output_is_well_formed_everywhere():
     parts = make_parts(para(run("keep "), ins("added"), dele("gone")),
                        comment_items=(comment(1, "seed"),))

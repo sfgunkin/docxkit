@@ -107,13 +107,19 @@ def _anchor(cid: int) -> tuple[str, str]:
 
 def annotate(parts: dict[str, bytes],
              classify: Callable[[RevisionContext], str | None],
-             *, generic: str = GENERIC) -> tuple[int, int]:
+             *, generic: str | None = GENERIC) -> tuple[int, int]:
     """Comment every run-level revision in ``document.xml``.
 
     The package must already carry Word's comment scaffold — at least one
     comment Word itself created — so the parts, styles and relationships
     are Word's own rather than hand-rolled. :func:`docxkit.tracked.build`
     arranges that.
+
+    ``generic`` is the comment for revisions no rule matched. Pass ``None`` to
+    leave those revisions **uncommented** instead. That matters when a revision
+    inserts a large table: every cell is its own run-level revision, and
+    repeating one comment on all of them buries the few that carry meaning.
+    Comment the caption (a paragraph outside the table) and let the cells pass.
 
     Returns (comments added, revisions no rule matched). Idempotent:
     revisions that already carry an anchor are skipped.
@@ -137,6 +143,8 @@ def annotate(parts: dict[str, bytes],
                for s, e in _revisions.spans(doc)
                if not _already_anchored(doc, s, e)]
     unclassified = sum(1 for *_, c in planned if c is None)
+    if generic is None:
+        planned = [p for p in planned if p[2] is not None]
 
     elements, exts, ids, exls = [], [], [], []
     # insert back-to-front so the earlier offsets stay valid
@@ -185,12 +193,18 @@ def _set_comment_text(com: str, cid: str, new_text: str) -> str:
 
 def reclassify(parts: dict[str, bytes],
                classify: Callable[[RevisionContext], str | None],
-               *, generic: str = GENERIC) -> tuple[int, list[str]]:
+               *, generic: str | None = GENERIC) -> tuple[int, list[str]]:
     """Re-derive the text of comments still carrying the generic marker.
 
     Repairs comments written without full context — one Word added on a
     math-only paragraph, or an older build. Idempotent.
+
+    With ``generic=None`` there is no marker to look for — unmatched revisions
+    were left uncommented rather than given a placeholder — so there is nothing
+    to repair.
     """
+    if generic is None:
+        return 0, []
     doc = parts["word/document.xml"].decode("utf-8")
     com = parts["word/comments.xml"].decode("utf-8")
     stale = [m.group(2) for m in _COMMENT_RE.finditer(com)

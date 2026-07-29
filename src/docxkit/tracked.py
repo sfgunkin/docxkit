@@ -210,7 +210,7 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
 
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
-          *, author: str = "Revision", generic: str = _comments.GENERIC,
+          *, author: str = "Revision", generic: str | None = _comments.GENERIC,
           whitespace: bool = True, formatting: bool = True,
           verify_in_word: bool = True, force: bool = False,
           progress: Callable[[str], None] | None = None,
@@ -220,7 +220,10 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     `classify` receives each revision and returns its comment text (or
     None to fall back to `generic`). Pass ``classify=None`` for a plain
     redline with no comments at all — not every paper annotates, and 1300
-    "unclassified" balloons would be worse than silence.
+    "unclassified" balloons would be worse than silence. Pass
+    ``generic=None`` to keep the matched comments but leave unmatched
+    revisions bare, which is what you want when a revision inserts a whole
+    table: comment its caption, not each of its cells.
 
     `verify_in_word` reopens the result and fails the build if Word had to
     repair it. `force` overrides the refusal to overwrite a deliverable
