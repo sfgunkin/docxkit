@@ -10,6 +10,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
@@ -21,24 +22,34 @@ from .find import P_RE, text_of
 
 
 def _print_utf8() -> None:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    """Force UTF-8 on stdout — Windows consoles default to cp1252, which
+    cannot encode the typographic glyphs these reports print (minus sign,
+    asterisk operator, arrows, curly quotes).
+
+    Guarded because stdout is not always a real console stream: under
+    pytest capture, or when piped through a wrapper, it may be an object
+    with no ``reconfigure`` at all.
+    """
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-def cmd_compare(args) -> int:
+def cmd_compare(args: argparse.Namespace) -> int:
     from .compare import compare, render
     rep = compare(args.built, args.edited)
     if args.json:
         Path(args.json).write_text(
             json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
-    return render(rep, args.expect_clean)
+    # compare is a verbatim port and untyped; render returns the exit code
+    return int(render(rep, args.expect_clean))
 
 
-def cmd_citations(args) -> int:
+def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
     return 1 if check_citations(args.docx) > 0 else 0
 
 
-def cmd_inspect(args) -> int:
+def cmd_inspect(args: argparse.Namespace) -> int:
     with zipfile.ZipFile(args.docx) as z:
         names = z.namelist()
         doc = z.read("word/document.xml").decode("utf-8")
@@ -71,7 +82,7 @@ def cmd_inspect(args) -> int:
     return 0
 
 
-def cmd_text(args) -> int:
+def cmd_text(args: argparse.Namespace) -> int:
     """Dump visible text from one side of the tracked changes."""
     from .revisions import text
     with zipfile.ZipFile(args.docx) as z:
@@ -81,7 +92,7 @@ def cmd_text(args) -> int:
     return 0
 
 
-def cmd_pdf(args) -> int:
+def cmd_pdf(args: argparse.Namespace) -> int:
     from .word import export_pdf
     first = last = None
     if args.pages:
@@ -92,7 +103,7 @@ def cmd_pdf(args) -> int:
     return 0
 
 
-def cmd_pages(args) -> int:
+def cmd_pages(args: argparse.Namespace) -> int:
     from .word import page_count
     print(page_count(args.docx))
     return 0

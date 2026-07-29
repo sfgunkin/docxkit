@@ -9,6 +9,7 @@ silently misses it. Everything here works on the concatenation of the
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from ._xml import PARA_RE, delta_text, visible_text
 from .errors import AnchorError
@@ -31,7 +32,7 @@ text_of = visible_text
 delta_text_of = delta_text
 
 
-def paragraphs(xml: str) -> list[re.Match]:
+def paragraphs(xml: str) -> list[re.Match[str]]:
     """Every ``<w:p>`` as a match, so callers keep the offsets."""
     return list(PARA_RE.finditer(xml))
 
@@ -52,13 +53,14 @@ def para_slice(xml: str, sig: str, also: str | None = None) -> tuple[int, int]:
     return hits[0]
 
 
-def edit_para(xml: str, sig: str, fn) -> str:
+def edit_para(xml: str, sig: str,
+              fn: Callable[[str], str]) -> str:
     """Apply `fn` to the single paragraph whose visible text contains `sig`."""
     s, e = para_slice(xml, sig)
     return xml[:s] + fn(xml[s:e]) + xml[e:]
 
 
-def find_para(xml: str, sig: str) -> re.Match | None:
+def find_para(xml: str, sig: str) -> re.Match[str] | None:
     """First paragraph whose visible text contains `sig`, or None."""
     return next((m for m in PARA_RE.finditer(xml)
                  if sig in visible_text(m.group(0))), None)

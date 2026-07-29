@@ -25,6 +25,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from . import comments as _comments
 from . import word as _word
@@ -65,7 +66,10 @@ class BuildReport:
         return "\n".join(lines)
 
 
-def _seed_math_comments(doc, classify, generic: str) -> int:
+def _seed_math_comments(
+        doc: Any,
+        classify: Callable[[RevisionContext], str | None],
+        generic: str) -> int:
     """Comment then accept every revision containing math.
 
     Word cannot serialize tracked math, so these have to be accepted before

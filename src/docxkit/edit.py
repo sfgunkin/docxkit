@@ -47,7 +47,7 @@ def preserve_space(xml: str) -> tuple[str, int]:
     """
     fixed = 0
 
-    def sub(m: re.Match) -> str:
+    def sub(m: re.Match[str]) -> str:
         nonlocal fixed
         body = m.group(1)
         if body != body.strip():

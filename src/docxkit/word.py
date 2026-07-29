@@ -28,6 +28,7 @@ import tempfile
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from lxml import etree
 
@@ -65,7 +66,7 @@ _FAST_OPTIONS = {
 
 
 @contextlib.contextmanager
-def session(*, fast: bool = True) -> Iterator:
+def session(*, fast: bool = True) -> Iterator[Any]:
     """A private, invisible Word instance, always quit on the way out.
 
     Uses DispatchEx so an interactive Word the user has open is neither
@@ -98,8 +99,9 @@ def session(*, fast: bool = True) -> Iterator:
 
 
 @contextlib.contextmanager
-def open_doc(word, path: str | Path, *, read_only: bool = True,
-             local: bool = True) -> Iterator:
+def open_doc(word: Any, path: str | Path, *,
+             read_only: bool = True,
+             local: bool = True) -> Iterator[Any]:
     """Open `path`, yielding the Document; closed without saving.
 
     `local` stages the file through TEMP first (the default) because COM
@@ -121,7 +123,7 @@ def open_doc(word, path: str | Path, *, read_only: bool = True,
             shutil.rmtree(td, ignore_errors=True)
 
 
-def revisions(doc) -> Iterator:
+def revisions(doc: Any) -> Iterator[Any]:
     """Iterate revisions through the enumerator, never by index.
 
     Indexing ``Revisions(i)`` is O(i); a full indexed scan of a
@@ -130,7 +132,7 @@ def revisions(doc) -> Iterator:
     yield from doc.Revisions
 
 
-def draft_view(doc) -> None:
+def draft_view(doc: Any) -> None:
     """Draft view with markup hidden — balloon layout is pure cost."""
     with contextlib.suppress(Exception):
         view = doc.ActiveWindow.View
@@ -138,7 +140,8 @@ def draft_view(doc) -> None:
         view.ShowRevisionsAndComments = False
 
 
-def compare_documents(word, original, revised, *, author: str = "Revision"):
+def compare_documents(word: Any, original: Any, revised: Any, *,
+                      author: str = "Revision") -> Any:
     """``CompareDocuments`` into a new tracked-changes document.
 
     Fast (a few seconds even on a book-length manuscript) — if a redline
@@ -155,7 +158,7 @@ def compare_documents(word, original, revised, *, author: str = "Revision"):
         RevisedAuthor=author, IgnoreAllComparisonWarnings=True)
 
 
-def extract_flat_opc(doc, out_xml: str | Path) -> Path:
+def extract_flat_opc(doc: Any, out_xml: str | Path) -> Path:
     """Write ``Content.WordOpenXML`` — the save-hang / tracked-math bypass.
 
     Word cannot SaveAs2 a compare result containing tracked math, and its

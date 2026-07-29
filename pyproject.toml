@@ -16,7 +16,7 @@ dependencies = [
 # Word automation: Windows only, and only needed for the COM-backed features
 # (redline via CompareDocuments, PDF export, page counts).
 word = ["pywin32>=306"]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]
 docxkit = "docxkit.cli:main"
@@ -55,6 +55,35 @@ ignore = [
 # Tests assert on the very glyphs Word normalizes, and reach
 # for private helpers deliberately.
 "tests/*" = ["RUF001", "PLC2701"]
+
+[tool.mypy]
+files = ["src/docxkit"]
+python_version = "3.12"
+# Stricter than the defaults where it catches real mistakes, but short of
+# --strict: the XML passes hand back plain str/dict, and demanding full
+# annotations on them would add noise without finding bugs.
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# No stubs published for any of these.
+module = ["lxml.*", "win32com.*", "pythoncom", "docx.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Verbatim ports from C:\Users\Ezhik\tools, exempted for the same reason
+# they are exempted from the lint config: they are working, well-exercised
+# code carried over unchanged, and their errors are all python-docx's
+# untyped Document() rather than anything actionable here.
+module = ["docxkit.compare", "docxkit.citations", "docxkit.word_edits"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

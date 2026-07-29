@@ -97,6 +97,8 @@ they do.
 
 ```
 python -m pytest        # 66 tests, synthetic fixtures, no Word required
+python -m ruff check .
+python -m mypy          # config in pyproject; ported modules exempt
 ```
 
 `_xml.py` exists because the primitives had already started to drift: the

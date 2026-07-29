@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from . import revisions as _revisions
 from ._xml import delta_text, set_run_text
-from .errors import ScaffoldMissing
+from .errors import PackageError, ScaffoldMissing
 from .find import para_text_at, table_index_at, table_spans
 
 __all__ = [
@@ -172,6 +172,10 @@ def _set_comment_text(com: str, cid: str, new_text: str) -> str:
     m = re.search(
         f'(<w:comment [^>]*w:id="{cid}"[^>]*>)(.*?)(</w:comment>)',
         com, re.DOTALL)
+    if m is None:
+        raise PackageError(
+            f"comment {cid} is anchored in the document but has no "
+            "definition in comments.xml")
     # set_run_text escapes; passing pre-escaped text would double-encode
     body = set_run_text(m.group(2), new_text)
     return com[:m.start()] + m.group(1) + body + m.group(3) + com[m.end():]
