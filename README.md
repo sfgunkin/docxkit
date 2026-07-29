@@ -46,6 +46,8 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
+| `footnotes` | locate/append, and remap ids Word renumbered on save |
+| `hygiene` | drop part-trees a manuscript should not carry (Word's customXml) |
 | `citations` | citation ↔ reference back-link audit |
 | `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
 | `comments` | attach a comment to every tracked revision, in XML |
@@ -102,6 +104,12 @@ they do.
   cannot be spliced raw — `ingest` remaps ids by definition text.
 - **A self-closing `<w:ins/>` is a property-level mark** (paragraph mark,
   table row), not a text range, and cannot carry a comment anchor.
+- **A paragraph-mark revision MERGES paragraphs**, and Compare also emits
+  `w:moveFrom`/`w:moveTo`. Simulating accept/reject without those gives
+  wrong answers on a good deliverable — on LE it made a bibliography
+  entry look truncated and the paragraph counts 928 vs 926.
+- **A comment lives in six parts**, chained id→paraId→durableId. Deleting
+  only the definition leaves dangling anchors: `comments.remove`.
 - **Reading a redline's tables through python-docx silently loses every
   changed cell** — it returns `''` where the text is an insertion. On the
   AFI paper, Table 4's revised header reads `''` via python-docx and

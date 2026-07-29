@@ -1,14 +1,34 @@
-r"""Reading tracked changes.
+r"""Reading tracked changes, with Word's own accept/reject semantics.
 
 Two things python-docx cannot do at all, because it only walks runs that
 are direct children of a paragraph and a tracked insertion is nested
 inside ``<w:ins>``: see the text of an insertion, and show either side of
 a redline. A "blank" cell in a tracked document read through python-docx
 is almost always this, not a real problem.
+
+Simulating accept/reject correctly needs more than dropping ``w:ins`` and
+``w:del`` blocks, and a naive version gives wrong answers on a perfectly
+good deliverable:
+
+* **A paragraph-mark revision MERGES paragraphs.** Compare encodes a
+  split paragraph as an inserted mark, so rejecting it must join the
+  remnant to the next paragraph rather than leave it standing. On the LE
+  paper this made a bibliography entry look like it had lost its author
+  and the paragraph counts come out 928 against 926 — both artifacts.
+* **The mark flags live inside ``w:rPr`` and are NOT content.** Removing
+  them as if they were is the bug that breaks naive handlers.
+* **Moves are their own pair.** Compare writes ``w:moveFrom`` /
+  ``w:moveTo``, which behave like del/ins but are invisible to code that
+  only knows the latter.
+
+The semantics here follow ``verify_tracked.py`` from the Life Expectancy
+paper, which was written against Word's actual behaviour after a COM
+accept-all hung for 25 minutes.
 """
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from ._xml import PARA_RE, delta_text, matching_close, visible_text
 
@@ -26,18 +46,28 @@ __all__ = [
 FINAL = "final"        # revisions accepted: what the document becomes
 ORIGINAL = "original"  # revisions rejected: what it was before
 
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _OPEN_RE = re.compile(r"<w:(ins|del)\b[^>]*?(/?)>")
-_INS_BLOCK_RE = re.compile(r"<w:ins\b[^>]*?>.*?</w:ins>", re.DOTALL)
-_DEL_BLOCK_RE = re.compile(r"<w:del\b[^>]*?>.*?</w:del>", re.DOTALL)
-_DELTEXT_OPEN_RE = re.compile(r"<w:delText([^>]*)>")
+_NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+       ' xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
+       ' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+       ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+       'relationships"'
+       ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+       'wordprocessingDrawing"'
+       ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+       ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"')
+_WRAPPER = "docxkitFragment"
+_RANGE_MARKERS = ("moveFromRangeStart", "moveFromRangeEnd",
+                  "moveToRangeStart", "moveToRangeEnd")
 
 
 def spans(xml: str) -> list[tuple[int, int]]:
     """(start, end) of every run-level ``w:ins`` / ``w:del``, outermost only.
 
     Self-closing marks are skipped. A ``<w:ins/>`` with no content is a
-    property-level revision — an inserted paragraph mark, table row, or
-    run property — which is not a text range and cannot carry a comment
+    property-level revision — a paragraph mark, table row, or run
+    properties — which is not a text range and cannot carry a comment
     anchor. That one test is what separates the two kinds.
     """
     out, pos = [], 0
@@ -61,9 +91,101 @@ def counts(xml: str) -> tuple[int, int]:
             len(re.findall(r"<w:del ", xml)))
 
 
+def _parse(xml: str) -> tuple[Any, bool]:
+    """Parse a document or a bare fragment; True if it was wrapped."""
+    from lxml import etree
+
+    stripped = xml.lstrip()
+    if stripped.startswith(("<?xml", "<w:document")):
+        return etree.fromstring(xml.encode("utf-8")), False
+    wrapped = f"<{_WRAPPER} {_NS}>{xml}</{_WRAPPER}>"
+    return etree.fromstring(wrapped.encode("utf-8")), True
+
+
+def _serialize(root: Any, was_wrapped: bool) -> str:
+    from lxml import etree
+
+    if not was_wrapped:
+        return str(etree.tostring(root, encoding="unicode"))
+    return "".join(etree.tostring(child, encoding="unicode")
+                   for child in root)
+
+
+def _content_elements(root: Any, tag: str) -> list[Any]:
+    """Elements of `tag` that wrap CONTENT, not the paragraph-mark flag.
+
+    The flag inside ``w:rPr`` shares the element name; treating it as
+    content is what breaks naive handlers.
+    """
+    return [el for el in root.iter(W + tag)
+            if el.getparent() is not None
+            and el.getparent().tag != W + "rPr"]
+
+
+def _unwrap(el: Any) -> None:
+    parent = el.getparent()
+    at = list(parent).index(el)
+    for child in list(el):
+        parent.insert(at, child)
+        at += 1
+    parent.remove(el)
+
+
+def _has_mark_flag(para: Any, tags: tuple[str, ...]) -> bool:
+    ppr = para.find(W + "pPr")
+    rpr = None if ppr is None else ppr.find(W + "rPr")
+    if rpr is None:
+        return False
+    return any(rpr.find(W + t) is not None for t in tags)
+
+
+def _merge_into_next(para: Any) -> None:
+    """Word: losing a paragraph mark joins this paragraph to the next."""
+    parent = para.getparent()
+    nxt = para.getnext()
+    while nxt is not None and nxt.tag not in (W + "p", W + "tbl"):
+        nxt = nxt.getnext()
+    if nxt is None or nxt.tag != W + "p":
+        parent.remove(para)
+        return
+    at = 0
+    nxt_ppr = nxt.find(W + "pPr")
+    if nxt_ppr is not None:
+        at = list(nxt).index(nxt_ppr) + 1
+    for child in list(para):
+        if child.tag == W + "pPr":
+            continue                    # the surviving paragraph's own wins
+        nxt.insert(at, child)
+        at += 1
+    parent.remove(para)
+
+
+def _simulate(xml: str, mode: str) -> str:
+    root, wrapped = _parse(xml)
+    vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \
+        if mode == FINAL else (("ins", "moveTo"), ("del", "moveFrom"))
+
+    for tag in vanish:
+        for el in _content_elements(root, tag):
+            el.getparent().remove(el)
+    for tag in keep:
+        for el in _content_elements(root, tag):
+            _unwrap(el)
+    if mode == ORIGINAL:
+        for dt in list(root.iter(W + "delText")):
+            dt.tag = W + "t"
+    for tag in _RANGE_MARKERS:
+        for el in list(root.iter(W + tag)):
+            el.getparent().remove(el)
+    for para in list(root.iter(W + "p")):
+        if _has_mark_flag(para, vanish):
+            _merge_into_next(para)
+    return _serialize(root, wrapped)
+
+
 def accept(xml: str) -> str:
-    """The document with every revision accepted (deletions removed)."""
-    return _DEL_BLOCK_RE.sub("", xml)
+    """The document with every revision accepted."""
+    return _simulate(xml, FINAL)
 
 
 def reject(xml: str) -> str:
@@ -72,20 +194,16 @@ def reject(xml: str) -> str:
     Insertions are dropped and deleted text is restored to ordinary runs,
     which is what makes the result readable as normal text.
     """
-    xml = _INS_BLOCK_RE.sub("", xml)
-    xml = _DELTEXT_OPEN_RE.sub(r"<w:t\1>", xml)
-    return xml.replace("</w:delText>", "</w:t>")
+    return _simulate(xml, ORIGINAL)
 
 
 def text(xml: str, view: str = FINAL) -> list[str]:
     """Visible text per paragraph, on one side of the tracked changes."""
     if view not in (FINAL, ORIGINAL):
         raise ValueError(f"view must be {FINAL!r} or {ORIGINAL!r}")
-    transform = accept if view == FINAL else reject
     out = []
-    for m in PARA_RE.finditer(xml):
-        para = transform(m.group(0))
-        if (t := visible_text(para)).strip():
+    for m in PARA_RE.finditer(_simulate(xml, view)):
+        if (t := visible_text(m.group(0))).strip():
             out.append(t)
     return out
 

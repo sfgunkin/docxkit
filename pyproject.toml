@@ -60,6 +60,7 @@ ignore = [
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 "src/docxkit/equations.py" = ["PLC0415"]
 "src/docxkit/lint.py" = ["PLC0415"]
+"src/docxkit/revisions.py" = ["PLC0415"]
 # Tests assert on the very glyphs Word normalizes, and reach
 # for private helpers deliberately.
 "tests/*" = ["RUF001", "PLC2701"]

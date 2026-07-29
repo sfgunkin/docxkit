@@ -16,7 +16,7 @@ get :class:`RevisionContext` for each revision.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from . import revisions as _revisions
@@ -28,7 +28,9 @@ __all__ = [
     "GENERIC",
     "RevisionContext",
     "annotate",
+    "read_all",
     "reclassify",
+    "remove",
 ]
 
 GENERIC = "Revision (unclassified)"
@@ -215,3 +217,115 @@ def reclassify(parts: dict[str, bytes],
             done += 1
     parts["word/comments.xml"] = com.encode("utf-8")
     return done, still
+
+
+# ------------------------------------------------------------- removal ------
+# A comment lives in SIX places, chained comment-id -> paraId -> durableId.
+# Deleting it from comments.xml alone leaves anchors pointing at nothing,
+# which Word reports as unreadable content. Worked out on the DSI paper
+# when the author resolved five review comments.
+
+_PARA_ID_RE = re.compile(r'<w:p [^>]*w14:paraId="([0-9A-Fa-f]+)"')
+
+
+_RUN_START_RE = re.compile(r"<w:r(?:\s[^>]*)?>")
+
+
+def _drop_reference_run(doc: str, cid: str) -> str:
+    """Remove the run carrying comment `cid`'s reference mark.
+
+    Walks to the enclosing run boundaries rather than matching a run
+    pattern around the mark: a regex written that way clipped the run
+    short and left `Reference w:id="1"/></w:r>` behind in the document.
+    """
+    needle = f'<w:commentReference w:id="{cid}"/>'
+    out, pos = [], 0
+    while (at := doc.find(needle, pos)) != -1:
+        starts = [m.start() for m in _RUN_START_RE.finditer(doc, pos, at)]
+        if not starts:
+            out.append(doc[pos:at + len(needle)])
+            pos = at + len(needle)
+            continue
+        close = doc.find("</w:r>", at)
+        if close == -1:
+            break
+        out.append(doc[pos:starts[-1]])
+        pos = close + len("</w:r>")
+    out.append(doc[pos:])
+    return "".join(out)
+
+
+def read_all(parts: dict[str, bytes]) -> list[tuple[str, str, str]]:
+    """(id, author, text) for every comment, in document order."""
+    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    out = []
+    for m in re.finditer(r"<w:comment ([^>]*)>(.*?)</w:comment>", com,
+                         re.DOTALL):
+        cid = re.search(r'w:id="(\d+)"', m.group(1))
+        author = re.search(r'w:author="([^"]*)"', m.group(1))
+        out.append((cid.group(1) if cid else "",
+                    author.group(1) if author else "",
+                    delta_text(m.group(2)).strip()))
+    return out
+
+
+def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
+    """Delete comments by id from ALL the parts that reference them.
+
+    Six places: the range start/end and the reference run in
+    document.xml, the definition in comments.xml, and the extension
+    entries in commentsExtended (by paraId), commentsIds (by paraId) and
+    commentsExtensible (by durableId). Removing only the definition
+    leaves dangling anchors, which Word calls unreadable content.
+
+    Returns how many were removed.
+    """
+    wanted = {str(i) for i in ids}
+    if not wanted:
+        return 0
+    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    doc = parts["word/document.xml"].decode("utf-8")
+
+    para_ids, durable_ids, removed = set(), set(), 0
+    for m in list(re.finditer(r"<w:comment [^>]*w:id=\"(\d+)\"[^>]*>.*?"
+                              r"</w:comment>", com, re.DOTALL)):
+        if m.group(1) not in wanted:
+            continue
+        removed += 1
+        if pid := _PARA_ID_RE.search(m.group(0)):
+            para_ids.add(pid.group(1))
+        com = com.replace(m.group(0), "", 1)
+
+    ids_xml = parts.get("word/commentsIds.xml", b"").decode("utf-8")
+    for para_id in para_ids:
+        dm = re.search(rf'<w16cid:commentId w16cid:paraId="{para_id}"[^>]*'
+                       r'w16cid:durableId="([0-9A-Fa-f]+)"[^>]*/>', ids_xml)
+        if dm:
+            durable_ids.add(dm.group(1))
+
+    for cid in wanted:
+        doc = doc.replace(f'<w:commentRangeStart w:id="{cid}"/>', "")
+        doc = doc.replace(f'<w:commentRangeEnd w:id="{cid}"/>', "")
+        doc = _drop_reference_run(doc, cid)
+    parts["word/document.xml"] = doc.encode("utf-8")
+    parts["word/comments.xml"] = com.encode("utf-8")
+
+    for name, pattern in (
+            ("word/commentsExtended.xml",
+             r'<w15:commentEx w15:paraId="{key}"[^>]*/>'),
+            ("word/commentsIds.xml",
+             r'<w16cid:commentId w16cid:paraId="{key}"[^>]*/>')):
+        if name in parts:
+            xml = parts[name].decode("utf-8")
+            for key in para_ids:
+                xml = re.sub(pattern.format(key=key), "", xml)
+            parts[name] = xml.encode("utf-8")
+
+    if "word/commentsExtensible.xml" in parts:
+        xml = parts["word/commentsExtensible.xml"].decode("utf-8")
+        for key in durable_ids:
+            xml = re.sub(
+                rf'<w16cex:commentExtensible w16cex:durableId="{key}"[^>]*/>',
+                "", xml)
+        parts["word/commentsExtensible.xml"] = xml.encode("utf-8")
+    return removed
