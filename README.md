@@ -23,6 +23,9 @@ package parts dict, so untouched parts survive byte-for-byte.
 from docxkit import read_parts, write_docx, edit_in_place, backup
 from docxkit import text_of, para_slice, rep, replace_in_para
 
+from docxkit.tables import read_all, find, by_caption   # manuscript tables
+from docxkit.math import latex_to_omml, harvest   # equations
+from docxkit.testing import latest_version, load_xml  # value-test scaffolding
 from docxkit.compare import compare, render      # multi-layer diff
 from docxkit.revisions import text, counts       # read either side of a redline
 from docxkit.tracked import build                # redline deliverable
@@ -38,6 +41,9 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `find` | locate paragraphs, tables, captions **by visible text** |
 | `edit` | anchor-asserting replace, run-aware replace, `xml:space` repair |
 | `revisions` | read tracked changes: spans, counts, accepted/rejected views |
+| `tables` | locate/read/rewrite manuscript tables, on either side of a redline |
+| `math` | LaTeX→OMML via Word's own XSL, harvest existing equations, formula fingerprints |
+| `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `citations` | citation ↔ reference back-link audit |
 | `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
@@ -92,6 +98,16 @@ they do.
   cannot be spliced raw — `ingest` remaps ids by definition text.
 - **A self-closing `<w:ins/>` is a property-level mark** (paragraph mark,
   table row), not a text range, and cannot carry a comment anchor.
+- **Reading a redline's tables through python-docx silently loses every
+  changed cell** — it returns `''` where the text is an insertion. On the
+  AFI paper, Table 4's revised header reads `''` via python-docx and
+  `Difference` via `tables.read_all`. Use `tables`, and pick a `view`.
+- **Never hand-assemble OMML from LaTeX.** Go through `latex2mathml` then
+  Word's own `MML2OMML.XSL` (`math.latex_to_omml`). When an equation
+  reuses symbols already in the document, `math.harvest` the live element
+  and deepcopy it — the only way to guarantee it renders identically.
+- **A rebuild must not overwrite a deliverable someone reviewed in Word.**
+  `tracked.build` stamps what it produced and refuses if the file changed.
 
 ## Tests
 
