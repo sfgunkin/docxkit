@@ -36,7 +36,43 @@ from .errors import DeliverableModified
 from .package import backup as _backup
 from .package import read_parts, write_docx
 
-__all__ = ["BuildReport", "build", "guard_deliverable"]
+__all__ = ["BuildReport", "build", "guard_deliverable", "verify"]
+
+
+def verify(path: str | Path) -> dict[str, Any]:
+    """Open a document in Word and report what Word actually reads back.
+
+    The check that matters for any tracked-changes file, however it was
+    produced: Word silently "repairs" markup it dislikes, and the damage
+    only shows up when the editor opens the deliverable. Hand-authored
+    ``w:ins``/``w:del`` has failed this way repeatedly across these
+    papers, so a file built that way should be run through here before it
+    is sent anywhere.
+
+    Returns the counts Word reports alongside the counts the package
+    contains; when they disagree, Word altered the file on open.
+    """
+    path = Path(path)
+    parts = read_parts(path)
+    doc_xml = parts["word/document.xml"].decode("utf-8")
+    com_xml = parts.get("word/comments.xml", b"").decode("utf-8")
+    in_package = {
+        "insertions": doc_xml.count("<w:ins "),
+        "deletions": doc_xml.count("<w:del "),
+        "comments": com_xml.count("<w:comment w:id="),
+    }
+    with _word.session() as word, _word.open_doc(word, path) as opened:
+        in_word = {
+            "revisions": int(opened.Revisions.Count),
+            "comments": int(opened.Comments.Count),
+            "paragraphs": int(opened.Paragraphs.Count),
+        }
+    return {
+        "path": str(path),
+        "package": in_package,
+        "word": in_word,
+        "comments_match": in_word["comments"] == in_package["comments"],
+    }
 
 
 def _sha256(path: Path) -> str:
