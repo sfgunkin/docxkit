@@ -19,33 +19,39 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .find import delta_text_of, para_text_at, table_index_at, table_spans
+from . import revisions as _revisions
+from ._xml import delta_text, set_run_text
+from .errors import ScaffoldMissing
+from .find import para_text_at, table_index_at, table_spans
 
 __all__ = [
     "GENERIC",
     "RevisionContext",
     "annotate",
     "reclassify",
-    "revision_spans",
 ]
 
 GENERIC = "Revision (unclassified)"
 
-_REV_OPEN_RE = re.compile(r"<w:(ins|del)\b[^>]*?(/?)>")
-_T_RUN_RE = re.compile(r"(<w:t[^>]*>)[^<]*(</w:t>)")
 _COMMENT_RE = re.compile(
     r'(<w:comment [^>]*w:id="(\d+)"[^>]*>)(.*?)(</w:comment>)', re.DOTALL)
 _ANCHOR_SLACK = 60          # chars scanned either side for an existing range
 _WINDOW_BACK = 3000         # context behind the anchor, in chars of markup
+
+# Word writes four parts per comment; the last three are extensions keyed
+# by paraId/durableId. Ids are derived from the comment id in reserved
+# high ranges so they cannot collide with Word's own.
+_PARA_ID_BASE = 0x5A000000
+_DURABLE_ID_BASE = 0x6B000000
 
 
 @dataclass(frozen=True)
 class RevisionContext:
     """What a classifier gets to decide a revision's comment."""
 
-    text: str               # the revision's own text, deletions included
-    para: str               # visible text of the containing paragraph
-    window: str             # surrounding prose, tags stripped
+    text: str                # the revision's own text, deletions included
+    para: str                # visible text of the containing paragraph
+    window: str              # surrounding prose, tags stripped
     table_index: int | None  # which manuscript table, if any
     start: int
     end: int
@@ -56,42 +62,14 @@ class RevisionContext:
         return f"{self.para} {self.window} {self.text}"
 
 
-def _matching_close(xml: str, pos: int, tag: str) -> int:
-    """End offset of the ``</w:tag>`` closing the element opened before pos."""
-    open_re = re.compile(rf"<w:{tag}\b[^>]*?(/?)>")
-    close = f"</w:{tag}>"
-    depth = 1
-    while depth:
-        nxt = xml.index(close, pos)
-        m = open_re.search(xml, pos, nxt)
-        while m and m.group(1) == "/":      # property marks don't nest
-            m = open_re.search(xml, m.end(), nxt)
-        if m:
-            depth += 1
-            pos = m.end()
-        else:
-            depth -= 1
-            pos = nxt + len(close)
-    return pos
-
-
-def revision_spans(doc: str) -> list[tuple[int, int]]:
-    """(start, end) of every run-level ``w:ins`` / ``w:del``, outermost only.
-
-    Self-closing marks are skipped. A ``<w:ins/>`` with no content is a
-    property-level revision — an inserted paragraph mark, table row, or run
-    property — which is not a text range and cannot carry a comment anchor.
-    That one test is what separates the two kinds.
-    """
-    spans, pos = [], 0
-    while (m := _REV_OPEN_RE.search(doc, pos)):
-        if m.group(2) == "/":
-            pos = m.end()
-            continue
-        end = _matching_close(doc, m.end(), m.group(1))
-        spans.append((m.start(), end))
-        pos = end                           # nested revisions ride along
-    return spans
+def _context(doc: str, start: int, end: int,
+             spans: list[tuple[int, int]]) -> RevisionContext:
+    return RevisionContext(
+        text=delta_text(doc[start:end]),
+        para=para_text_at(doc, start),
+        window=re.sub("<[^>]+>", "", doc[max(0, start - _WINDOW_BACK):end]),
+        table_index=table_index_at(spans, start),
+        start=start, end=end)
 
 
 def _already_anchored(doc: str, start: int, end: int) -> bool:
@@ -99,42 +77,30 @@ def _already_anchored(doc: str, start: int, end: int) -> bool:
             and "commentRangeEnd" in doc[end:end + _ANCHOR_SLACK])
 
 
-def _esc(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _context(doc: str, start: int, end: int,
-             spans: list[tuple[int, int]]) -> RevisionContext:
-    return RevisionContext(
-        text=delta_text_of(doc[start:end]),
-        para=para_text_at(doc, start),
-        window=re.sub("<[^>]+>", "", doc[max(0, start - _WINDOW_BACK):end]),
-        table_index=table_index_at(spans, start),
-        start=start, end=end)
-
-
-def _comment_element(template: str, cid: int, para_id: str, text: str) -> str:
+def _clone_comment(template: str, cid: int, para_id: str, text: str) -> str:
     """A copy of Word's own comment element carrying `text`.
 
-    Cloning Word's element rather than hand-writing one keeps the author,
-    date, style and namespace prefixes exactly as Word wrote them.
+    Cloning rather than hand-writing keeps the author, date, style and
+    namespace prefixes exactly as Word wrote them.
     """
     x = re.sub(r'w:id="\d+"', f'w:id="{cid}"', template, count=1)
     x = re.sub(r'w14:paraId="[0-9A-Fa-f]{8}"', f'w14:paraId="{para_id}"',
                x, count=1)
-    runs = list(_T_RUN_RE.finditer(x))
-    if not runs:
-        raise AssertionError("comment template has no text run")
-    for i, tm in enumerate(reversed(runs)):
-        idx = len(runs) - 1 - i
-        body = _esc(text) if idx == 0 else ""
-        x = x[:tm.start()] + tm.group(1) + body + tm.group(2) + x[tm.end():]
-    return x
+    return set_run_text(x, text)
 
 
 def _append_before_close(xml: str, close_tag: str, addition: str) -> str:
     i = xml.rindex(close_tag)
     return xml[:i] + addition + xml[i:]
+
+
+def _anchor(cid: int) -> tuple[str, str]:
+    """(range start, range end + reference run) for comment `cid`."""
+    start = f'<w:commentRangeStart w:id="{cid}"/>'
+    end = (f'<w:commentRangeEnd w:id="{cid}"/>'
+           '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+           f'<w:commentReference w:id="{cid}"/></w:r>')
+    return start, end
 
 
 def annotate(parts: dict[str, bytes],
@@ -147,13 +113,14 @@ def annotate(parts: dict[str, bytes],
     are Word's own rather than hand-rolled. :func:`docxkit.tracked.build`
     arranges that.
 
-    Returns (comments added, revisions no rule matched).
+    Returns (comments added, revisions no rule matched). Idempotent:
+    revisions that already carry an anchor are skipped.
     """
     doc = parts["word/document.xml"].decode("utf-8")
     com = parts["word/comments.xml"].decode("utf-8")
     tm = re.search(r"<w:comment .*?</w:comment>", com, re.DOTALL)
     if not tm:
-        raise AssertionError(
+        raise ScaffoldMissing(
             "no comment scaffold - Word must create at least one comment "
             "before the XML pass can clone it")
     template = tm.group(0)
@@ -165,7 +132,7 @@ def annotate(parts: dict[str, bytes],
     spans = table_spans(doc)
 
     planned = [(s, e, classify(_context(doc, s, e, spans)))
-               for s, e in revision_spans(doc)
+               for s, e in _revisions.spans(doc)
                if not _already_anchored(doc, s, e)]
     unclassified = sum(1 for *_, c in planned if c is None)
 
@@ -173,13 +140,12 @@ def annotate(parts: dict[str, bytes],
     # insert back-to-front so the earlier offsets stay valid
     for i, (start, end, comment) in reversed(list(enumerate(planned))):
         cid = next_id + i
-        para_id, durable = f"{0x5A000000 + cid:08X}", f"{0x6B000000 + cid:08X}"
-        doc = (doc[:start] + f'<w:commentRangeStart w:id="{cid}"/>'
-               + doc[start:end] + f'<w:commentRangeEnd w:id="{cid}"/>'
-               '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
-               f'<w:commentReference w:id="{cid}"/></w:r>' + doc[end:])
-        elements.append(_comment_element(template, cid, para_id,
-                                         comment or generic))
+        para_id = f"{_PARA_ID_BASE + cid:08X}"
+        durable = f"{_DURABLE_ID_BASE + cid:08X}"
+        open_tag, close_tag = _anchor(cid)
+        doc = doc[:start] + open_tag + doc[start:end] + close_tag + doc[end:]
+        elements.append(_clone_comment(template, cid, para_id,
+                                       comment or generic))
         exts.append(f'<w15:commentEx w15:paraId="{para_id}" w15:done="0"/>')
         ids.append(f'<w16cid:commentId w16cid:paraId="{para_id}" '
                    f'w16cid:durableId="{durable}"/>')
@@ -206,12 +172,8 @@ def _set_comment_text(com: str, cid: str, new_text: str) -> str:
     m = re.search(
         f'(<w:comment [^>]*w:id="{cid}"[^>]*>)(.*?)(</w:comment>)',
         com, re.DOTALL)
-    body = m.group(2)
-    runs = list(_T_RUN_RE.finditer(body))
-    for i, tm in enumerate(reversed(runs)):
-        idx = len(runs) - 1 - i
-        repl = tm.group(1) + (_esc(new_text) if idx == 0 else "") + tm.group(2)
-        body = body[:tm.start()] + repl + body[tm.end():]
+    # set_run_text escapes; passing pre-escaped text would double-encode
+    body = set_run_text(m.group(2), new_text)
     return com[:m.start()] + m.group(1) + body + m.group(3) + com[m.end():]
 
 
@@ -220,13 +182,13 @@ def reclassify(parts: dict[str, bytes],
                *, generic: str = GENERIC) -> tuple[int, list[str]]:
     """Re-derive the text of comments still carrying the generic marker.
 
-    Repairs comments written without full context — a comment Word added
-    on a math-only paragraph, or an older build. Idempotent.
+    Repairs comments written without full context — one Word added on a
+    math-only paragraph, or an older build. Idempotent.
     """
     doc = parts["word/document.xml"].decode("utf-8")
     com = parts["word/comments.xml"].decode("utf-8")
     stale = [m.group(2) for m in _COMMENT_RE.finditer(com)
-             if generic in delta_text_of(m.group(3))]
+             if generic in delta_text(m.group(3))]
     if not stale:
         return 0, []
 
@@ -234,15 +196,14 @@ def reclassify(parts: dict[str, bytes],
     done, still = 0, []
     for cid in stale:
         # anchor on the range START, not the reference run: for a revision
-        # spanning a table row Word puts the reference past the table, which
-        # would classify it by the following paragraph instead of the table
+        # spanning a table row Word puts the reference past the table,
+        # which would classify it by the following paragraph
         m = (re.search(f'<w:commentRangeStart w:id="{cid}"/>', doc)
              or re.search(f'<w:commentReference w:id="{cid}"/>', doc))
         if not m:
             still.append(cid)
             continue
-        end = m.end()
-        new = classify(_context(doc, m.start(), end, spans))
+        new = classify(_context(doc, m.start(), m.end(), spans))
         if new is None:
             still.append(cid)
         else:

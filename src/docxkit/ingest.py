@@ -17,16 +17,14 @@ links and fixes the pipeline already applied. ``new: ""`` deletes.
 """
 from __future__ import annotations
 
-import html
 import json
 import re
 import zipfile
-from collections.abc import Callable
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .package import assert_unlocked
-from .package import backup as _backup
+from ._xml import PARA_RE, normalize_glyphs, visible_text
+from .errors import AnchorError
 
 __all__ = [
     "apply_overrides",
@@ -35,23 +33,19 @@ __all__ = [
     "update_overrides",
 ]
 
-_P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
-_WT_RE = re.compile(r"<[wm]:t[^>]*>([^<]*)</[wm]:t>")
 _FN_RE = re.compile(r'(w:footnoteReference w:id=")(\d+)(")')
-# Word normalizes these on save; they are artifacts, not author intent
-_GLYPH = {"−": "-", "∗": "*", "’": "'", "‘": "'",
-          "“": '"', "”": '"', "–": "-", "—": "-"}
 
-
-def _cat(p: str) -> str:
-    return html.unescape("".join(_WT_RE.findall(p)))
+_cat = visible_text
 
 
 def _norm(p: str) -> str:
-    s = _cat(p)
-    for a, b in _GLYPH.items():
-        s = s.replace(a, b)
-    return s.strip()
+    """Paragraph text with Word's save-time glyph substitutions folded.
+
+    Shares one glyph table with `docxkit.compare`: when they diverged,
+    `--expect-clean` called a non-breaking-space change an artifact while
+    this function called it an author edit and wrote it into the source.
+    """
+    return normalize_glyphs(_cat(p)).strip()
 
 
 def _ratio(a: str, b: str) -> float:
@@ -66,7 +60,7 @@ def load_paragraphs(path: str | Path) -> tuple[list[str], str]:
             foot = z.read("word/footnotes.xml").decode("utf-8")
         except KeyError:
             foot = ""
-    return _P_RE.findall(doc), foot
+    return PARA_RE.findall(doc), foot
 
 
 def _footnote_remap(user_foot: str, build_foot: str) -> dict[str, str]:
@@ -145,7 +139,7 @@ def build_overrides(baseline: str | Path,
             elif extra and overrides:
                 overrides[-1] = (overrides[-1][0], overrides[-1][1] + extra)
             elif extra:
-                raise AssertionError(
+                raise AnchorError(
                     "leading insert with no anchor paragraph: "
                     f"{_cat(user_paras[j1])[:60]!r}")
     return overrides
@@ -200,34 +194,7 @@ def apply_overrides(doc_xml: str, overrides: list[dict[str, str]],
         doc_xml = doc_xml.replace(old, new, 1)
         applied += 1
     if strict and missed:
-        raise AssertionError(
+        raise AnchorError(
             f"{len(missed)} override anchor(s) not found - the build moved "
             f"under them: {missed[:3]}")
     return doc_xml, applied, missed
-
-
-def round_trip(edited: str | Path, build: Callable[[Path], None],
-               overrides_path: str | Path, *, baseline: str | Path,
-               backup_tag: str = "user_edited") -> dict:
-    """One integration round: back up, baseline, derive overrides, rebuild.
-
-    `build` is the project's build function, called with an output path.
-    The author's file is backed up FIRST — the build usually writes to the
-    same path they edited, so it would otherwise clobber their work, and
-    from that moment the backup is the source of truth.
-
-    Gate the result yourself with ``docxkit compare <rebuilt> <backup>
-    --expect-clean``; this returns the numbers, not a verdict.
-    """
-    edited = Path(edited)
-    assert_unlocked(edited)
-    snapshot = _backup(edited, backup_tag)
-
-    baseline = Path(baseline)
-    build(baseline)
-    fresh, chained, appended, total = update_overrides(
-        baseline, snapshot, overrides_path)
-    baseline.unlink(missing_ok=True)
-    build(edited)
-    return {"backup": snapshot, "overrides": fresh, "chained": chained,
-            "appended": appended, "total": total}

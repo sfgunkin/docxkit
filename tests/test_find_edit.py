@@ -13,6 +13,7 @@ from docxkit import (
     text_of,
 )
 from docxkit.edit import replace_in_para
+from docxkit.errors import AnchorError
 from docxkit.find import para_text_at, table_index_at
 
 
@@ -27,13 +28,13 @@ def test_para_slice_requires_exactly_one_match():
     xml = document(para(run("alpha")) + para(run("beta")))
     s, e = para_slice(xml, "alpha")
     assert text_of(xml[s:e]) == "alpha"
-    with pytest.raises(AssertionError, match="0 hits"):
+    with pytest.raises(AnchorError, match="0 hits"):
         para_slice(xml, "gamma")
 
 
 def test_para_slice_rejects_ambiguous_anchor():
     xml = document(para(run("the gap")) + para(run("the gap again")))
-    with pytest.raises(AssertionError, match="2 hits"):
+    with pytest.raises(AnchorError, match="2 hits"):
         para_slice(xml, "the gap")
 
 
@@ -47,7 +48,7 @@ def test_para_slice_also_disambiguates():
 def test_table_spans_counts_and_expect_guard():
     xml = document(para(run("x")) + table(row("a", "b")) + table(row("c")))
     assert len(table_spans(xml)) == 2
-    with pytest.raises(AssertionError, match="expected 3"):
+    with pytest.raises(AnchorError, match="expected 3"):
         table_spans(xml, expect=3)
 
 
@@ -66,9 +67,9 @@ def test_para_text_at_returns_containing_paragraph():
 
 def test_rep_asserts_the_anchor_count():
     assert rep("a b a", "b", "B") == "a B a"
-    with pytest.raises(AssertionError, match="0x"):
+    with pytest.raises(AnchorError, match="0x"):
         rep("a b", "zzz", "!", tag="T1")
-    with pytest.raises(AssertionError, match="2x"):
+    with pytest.raises(AnchorError, match="2x"):
         rep("a a", "a", "!", tag="T2")
 
 
@@ -106,7 +107,7 @@ def test_replace_in_para_refuses_to_bleed_into_a_hyperlink():
     """The bug this guards: the replacement lands in the link run and turns
     the whole sentence into a hyperlink, invisible to any text diff."""
     p = para(run("see "), run("Table 3", style="Hyperlink"), run(" now"))
-    with pytest.raises(AssertionError, match="hyperlink"):
+    with pytest.raises(AnchorError, match="hyperlink"):
         replace_in_para(p, "Table 3", "Table 4")
     # explicit opt-in still works, for editing the label itself
     out = replace_in_para(p, "Table 3", "Table 4", allow_hyperlink=True)
@@ -115,9 +116,9 @@ def test_replace_in_para_refuses_to_bleed_into_a_hyperlink():
 
 def test_replace_in_para_rejects_missing_or_ambiguous():
     p = para(run("alpha beta alpha"))
-    with pytest.raises(AssertionError, match="not in paragraph"):
+    with pytest.raises(AnchorError, match="not in paragraph"):
         replace_in_para(p, "gamma", "x")
-    with pytest.raises(AssertionError, match="twice"):
+    with pytest.raises(AnchorError, match="twice"):
         replace_in_para(p, "alpha", "x")
 
 

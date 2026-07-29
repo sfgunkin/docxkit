@@ -51,7 +51,7 @@ ignore = [
 "src/docxkit/word.py" = ["PLC0415"]
 "src/docxkit/cli.py" = ["PLC0415"]
 # The glyph table is *about* look-alike characters; flagging them is noise.
-"src/docxkit/ingest.py" = ["RUF001"]
+"src/docxkit/_xml.py" = ["RUF001"]
 # Tests assert on the very glyphs Word normalizes, and reach
 # for private helpers deliberately.
 "tests/*" = ["RUF001", "PLC2701"]

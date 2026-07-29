@@ -24,10 +24,12 @@ from docxkit import read_parts, write_docx, edit_in_place, backup
 from docxkit import text_of, para_slice, rep, replace_in_para
 
 from docxkit.compare import compare, render      # multi-layer diff
+from docxkit.revisions import text, counts       # read either side of a redline
 from docxkit.tracked import build                # redline deliverable
 from docxkit.ingest import build_overrides       # author-edit round
 from docxkit.comments import annotate            # comment every revision
 from docxkit.word import session, export_pdf     # Word automation
+from docxkit.errors import DocxKitError          # everything catchable
 ```
 
 | Module | What it is for |
@@ -35,6 +37,7 @@ from docxkit.word import session, export_pdf     # Word automation
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
 | `find` | locate paragraphs, tables, captions **by visible text** |
 | `edit` | anchor-asserting replace, run-aware replace, `xml:space` repair |
+| `revisions` | read tracked changes: spans, counts, accepted/rejected views |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `citations` | citation ↔ reference back-link audit |
 | `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
@@ -42,6 +45,8 @@ from docxkit.word import session, export_pdf     # Word automation
 | `tracked` | build a tracked-changes deliverable end to end |
 | `ingest` | fold the author's Word edits back into the build source |
 | `word_edits` | docx-vs-python-docx-script change table (secondary) |
+| `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
+| `_xml` | internal: the WordprocessingML primitives, defined once |
 
 ## CLI
 
@@ -91,8 +96,14 @@ they do.
 ## Tests
 
 ```
-python -m pytest        # synthetic fixtures, no Word required
+python -m pytest        # 66 tests, synthetic fixtures, no Word required
 ```
+
+`_xml.py` exists because the primitives had already started to drift: the
+glyph table lived in both `compare` and `ingest` and disagreed about
+U+00A0, so `--expect-clean` called a non-breaking-space change a Word
+artifact while `build_overrides` wrote it into the source as an author
+edit. One table now, one `visible_text`, one run-text writer.
 
 Word-dependent paths (`tracked.build`, `word.export_pdf`, `word.pages`)
 are exercised against real manuscripts rather than in the unit suite.

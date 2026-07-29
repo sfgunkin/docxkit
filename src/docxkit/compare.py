@@ -47,6 +47,12 @@ import zipfile
 from collections import Counter
 from difflib import SequenceMatcher
 
+# One glyph table for the whole toolkit. While compare and ingest
+# each kept their own copy they drifted apart on U+00A0, so this
+# gate called a non-breaking-space change a Word artifact while
+# ingest treated the same change as an author edit.
+from ._xml import GLYPH_MAP, normalize_glyphs
+
 # ----------------------------------------------------------------- extraction
 P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
 WT_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
@@ -60,16 +66,7 @@ OMML_STRUCT = ("sSub", "sSup", "sSubSup", "nary", "f", "d", "rad", "func",
                "acc", "bar", "groupChr", "limLow", "limUpp", "m", "eqArr", "box")
 OMML_STRUCT_RE = re.compile(r"<m:(" + "|".join(OMML_STRUCT) + r")\b")
 
-# glyph normalizations that are usually Word artifacts, not user intent
-GLYPH_MAP = {"−": "-", "∗": "*", "’": "'", "‘": "'",
-             "“": '"', "”": '"', "–": "-", "—": "-",
-             " ": " "}
-
-
-def _norm_glyph(s: str) -> str:
-    for a, b in GLYPH_MAP.items():
-        s = s.replace(a, b)
-    return s
+_norm_glyph = normalize_glyphs
 
 
 def _flags(rpr: str | None) -> frozenset:

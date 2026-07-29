@@ -8,8 +8,10 @@ silently misses it. Everything here works on the concatenation of the
 """
 from __future__ import annotations
 
-import html
 import re
+
+from ._xml import PARA_RE, delta_text, visible_text
+from .errors import AnchorError
 
 __all__ = [
     "P_RE",
@@ -23,30 +25,15 @@ __all__ = [
     "text_of",
 ]
 
-P_RE = re.compile(r"<w:p\b[^>]*>.*?</w:p>", re.DOTALL)
-_T_RE = re.compile(r"<(?:w|m):t[^>]*>([^<]*)</(?:w|m):t>")
-# includes deleted text, for reading a revision's full before/after
-_T_DEL_RE = re.compile(
-    r"<(?:w|m):(?:t|delText)[^>]*>([^<]*)</(?:w|m):(?:t|delText)>")
-
-
-def text_of(xml: str) -> str:
-    """Visible text of a fragment (``w:t`` + ``m:t``), deletions excluded.
-
-    Entities are unescaped, so anchors read the way the document reads:
-    ``"R&D spending"`` matches a paragraph stored as ``R&amp;D spending``.
-    """
-    return html.unescape("".join(_T_RE.findall(xml)))
-
-
-def delta_text_of(xml: str) -> str:
-    """Visible text INCLUDING ``w:delText`` — what a revision spans."""
-    return html.unescape("".join(_T_DEL_RE.findall(xml)))
+# kept as an alias: several paper scripts import P_RE from here
+P_RE = PARA_RE
+text_of = visible_text
+delta_text_of = delta_text
 
 
 def paragraphs(xml: str) -> list[re.Match]:
     """Every ``<w:p>`` as a match, so callers keep the offsets."""
-    return list(P_RE.finditer(xml))
+    return list(PARA_RE.finditer(xml))
 
 
 def para_slice(xml: str, sig: str, also: str | None = None) -> tuple[int, int]:
@@ -56,11 +43,11 @@ def para_slice(xml: str, sig: str, also: str | None = None) -> tuple[int, int]:
     is a latent bug that would otherwise edit whichever came first. Pass
     `also` to disambiguate (e.g. the equation number).
     """
-    hits = [(m.start(), m.end()) for m in P_RE.finditer(xml)
-            if sig in (t := text_of(m.group(0)))
+    hits = [(m.start(), m.end()) for m in PARA_RE.finditer(xml)
+            if sig in (t := visible_text(m.group(0)))
             and (also is None or also in t)]
     if len(hits) != 1:
-        raise AssertionError(
+        raise AnchorError(
             f"para_slice({sig!r}, also={also!r}): {len(hits)} hits, need 1")
     return hits[0]
 
@@ -71,11 +58,17 @@ def edit_para(xml: str, sig: str, fn) -> str:
     return xml[:s] + fn(xml[s:e]) + xml[e:]
 
 
+def find_para(xml: str, sig: str) -> re.Match | None:
+    """First paragraph whose visible text contains `sig`, or None."""
+    return next((m for m in PARA_RE.finditer(xml)
+                 if sig in visible_text(m.group(0))), None)
+
+
 def para_text_at(xml: str, pos: int) -> str:
     """Visible text of the paragraph containing offset `pos`."""
-    for m in P_RE.finditer(xml):
+    for m in PARA_RE.finditer(xml):
         if m.start() <= pos < m.end():
-            return text_of(m.group(0))
+            return visible_text(m.group(0))
     return ""
 
 
@@ -86,13 +79,13 @@ def table_spans(xml: str, expect: int | None = None) -> list[tuple[int, int]]:
     `expect` asserts the count, so a table added or lost upstream fails
     loudly here instead of silently shifting every later index.
     """
-    spans = []
+    out = []
     for m in re.finditer(r"<w:tbl>", xml):
         s = m.start()
-        spans.append((s, xml.index("</w:tbl>", s) + len("</w:tbl>")))
-    if expect is not None and len(spans) != expect:
-        raise AssertionError(f"{len(spans)} tables, expected {expect}")
-    return spans
+        out.append((s, xml.index("</w:tbl>", s) + len("</w:tbl>")))
+    if expect is not None and len(out) != expect:
+        raise AnchorError(f"{len(out)} tables, expected {expect}")
+    return out
 
 
 def table_index_at(spans: list[tuple[int, int]], pos: int) -> int | None:

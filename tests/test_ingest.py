@@ -6,6 +6,7 @@ import json
 import pytest
 from conftest import make_parts, para, run, write
 
+from docxkit.errors import AnchorError
 from docxkit.ingest import (
     _cat,
     apply_overrides,
@@ -132,7 +133,7 @@ def test_apply_overrides_raises_when_an_anchor_moved():
     the author's edit is being dropped - that must never pass silently."""
     doc = "<w:body>" + para(run("current")) + "</w:body>"
     stale = {"old": para(run("stale anchor")), "new": para(run("x"))}
-    with pytest.raises(AssertionError, match="not found"):
+    with pytest.raises(AnchorError, match="not found"):
         apply_overrides(doc, [stale])
     out, applied, missed = apply_overrides(doc, [stale], strict=False)
     assert applied == 0 and len(missed) == 1 and out == doc

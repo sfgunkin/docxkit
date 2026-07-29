@@ -18,13 +18,9 @@ from conftest import (
     table,
 )
 
-from docxkit.comments import (
-    GENERIC,
-    RevisionContext,
-    annotate,
-    reclassify,
-    revision_spans,
-)
+from docxkit.comments import GENERIC, RevisionContext, annotate, reclassify
+from docxkit.errors import ScaffoldMissing
+from docxkit.revisions import spans as revision_spans
 
 
 def _doc(parts):
@@ -128,7 +124,7 @@ def test_annotate_reports_unclassified_and_uses_generic():
 def test_annotate_requires_a_word_made_scaffold():
     parts = make_parts(para(ins("a")))
     parts["word/comments.xml"] = b"<w:comments/>"
-    with pytest.raises(AssertionError, match="scaffold"):
+    with pytest.raises(ScaffoldMissing, match="scaffold"):
         annotate(parts, always("R1"))
 
 

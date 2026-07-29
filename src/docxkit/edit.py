@@ -1,24 +1,26 @@
 r"""Editing ``document.xml`` as text, with the anchors asserted.
 
-House rule across the papers: raw string surgery on WordprocessingML, never
-python-docx, and every anchor asserted so a drifted source fails loudly
-instead of producing a subtly wrong manuscript. The helpers here are the
-ones that kept being re-implemented per paper.
+House rule across the papers: raw string surgery on WordprocessingML,
+never python-docx, and every anchor asserted so a drifted source fails
+loudly instead of producing a subtly wrong manuscript.
 """
 from __future__ import annotations
 
 import re
 
-from .find import P_RE, text_of
+from ._xml import RUN_RE, T_RUN_RE, set_run_text, visible_text
+from .errors import AnchorError
 
 __all__ = [
+    # re-exported: callers building a run from scratch need the same rule
+    "T_RUN_RE",
     "preserve_space",
     "rep",
     "replace_in_para",
+    "set_run_text",
 ]
 
-_T_OPEN_RE = re.compile(r"<w:t>([^<]*)</w:t>")
-_RUN_RE = re.compile(r"<w:r\b[^>]*>.*?</w:r>", re.DOTALL)
+_BARE_T_RE = re.compile(r"<w:t>([^<]*)</w:t>")
 _HYPERLINK_RUN = 'w:val="Hyperlink"'
 
 
@@ -30,7 +32,7 @@ def rep(xml: str, old: str, new: str, n: int = 1, tag: str = "") -> str:
     """
     count = xml.count(old)
     if count != n:
-        raise AssertionError(
+        raise AnchorError(
             f"[{tag}] anchor found {count}x (need {n}): {old[:90]!r}")
     return xml.replace(old, new)
 
@@ -53,7 +55,7 @@ def preserve_space(xml: str) -> tuple[str, int]:
             return f'<w:t xml:space="preserve">{body}</w:t>'
         return m.group(0)
 
-    return _T_OPEN_RE.sub(sub, xml), fixed
+    return _BARE_T_RE.sub(sub, xml), fixed
 
 
 def replace_in_para(para_xml: str, old: str, new: str,
@@ -70,69 +72,44 @@ def replace_in_para(para_xml: str, old: str, new: str,
     Refuses when the receiving run is hyperlink-styled: the replacement
     would land inside the link and turn the whole sentence into a
     hyperlink, and no text-level diff would ever show it. Anchor on plain
-    text outside the link, or edit the link's label separately.
+    text outside the link, or edit the link's label separately with
+    ``allow_hyperlink=True``.
     """
-    runs = list(_RUN_RE.finditer(para_xml))
-    spans, cursor = [], 0
-    for r in runs:
-        body = text_of(r.group(0))
-        spans.append((cursor, cursor + len(body), r))
+    runs, spans, cursor = [], [], 0
+    for r in RUN_RE.finditer(para_xml):
+        body = visible_text(r.group(0))
+        runs.append(r)
+        spans.append((cursor, cursor + len(body)))
         cursor += len(body)
 
-    visible = "".join(text_of(r.group(0)) for r in runs)
+    visible = "".join(visible_text(r.group(0)) for r in runs)
     at = visible.find(old)
     if at < 0:
-        raise AssertionError(f"replace_in_para: {old[:60]!r} not in paragraph")
+        raise AnchorError(f"replace_in_para: {old[:60]!r} not in paragraph")
     if visible.find(old, at + 1) >= 0:
-        raise AssertionError(f"replace_in_para: {old[:60]!r} occurs twice")
+        raise AnchorError(f"replace_in_para: {old[:60]!r} occurs twice")
     end = at + len(old)
 
-    out, consumed = para_xml, None
-    edits = []
-    for start, stop, run in spans:
+    edits, first = [], True
+    for (start, stop), run in zip(spans, runs, strict=True):
         if stop <= at or start >= end:
             continue
         run_xml = run.group(0)
-        if consumed is None:
+        body = visible_text(run_xml)
+        tail = body[end - start:] if stop > end else ""
+        if first:
             if not allow_hyperlink and _HYPERLINK_RUN in run_xml:
-                raise AssertionError(
-                    "replace_in_para: the match starts inside a hyperlink run "
-                    "-- the replacement would bleed into the link. Anchor on "
-                    "plain text outside the link.")
-            head = text_of(run_xml)[:at - start]
-            tail = text_of(run_xml)[end - start:] if stop > end else ""
-            edits.append((run, _set_run_text(run_xml, head + new + tail)))
-            consumed = True
+                raise AnchorError(
+                    "replace_in_para: the match starts inside a hyperlink "
+                    "run -- the replacement would bleed into the link. "
+                    "Anchor on plain text outside the link.")
+            edits.append((run, set_run_text(run_xml, body[:at - start] + new
+                                            + tail)))
+            first = False
         else:
-            keep = text_of(run_xml)[end - start:] if stop > end else ""
-            edits.append((run, _set_run_text(run_xml, keep)))
+            edits.append((run, set_run_text(run_xml, tail)))
 
+    out = para_xml
     for run, replacement in reversed(edits):
         out = out[:run.start()] + replacement + out[run.end():]
     return out
-
-
-def _set_run_text(run_xml: str, text: str) -> str:
-    """Put `text` in the run's first ``<w:t>``, blanking any others."""
-    ts = list(re.finditer(r"(<w:t[^>]*>)([^<]*)(</w:t>)", run_xml))
-    if not ts:
-        return run_xml
-    for i, m in enumerate(reversed(ts)):
-        idx = len(ts) - 1 - i
-        body = text if idx == 0 else ""
-        open_tag = m.group(1)
-        if body != body.strip() and "xml:space" not in open_tag:
-            open_tag = '<w:t xml:space="preserve">'
-        run_xml = (run_xml[:m.start()] + open_tag + _esc(body) + m.group(3)
-                   + run_xml[m.end():])
-    return run_xml
-
-
-def _esc(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def find_para(xml: str, sig: str) -> re.Match | None:
-    """First paragraph match whose visible text contains `sig`."""
-    return next((m for m in P_RE.finditer(xml) if sig in text_of(m.group(0))),
-                None)

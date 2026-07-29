@@ -31,6 +31,8 @@ from pathlib import Path
 
 from lxml import etree
 
+from .errors import PackageError
+
 __all__ = [
     "compare_documents",
     "export_pdf",
@@ -170,7 +172,8 @@ def flat_opc_to_docx(flat_path: str | Path, out_path: str | Path) -> int:
     tree = etree.parse(str(flat_path))
     parts = tree.getroot().findall(PKG + "part")
     if not parts:
-        raise SystemExit("no pkg:part elements - not a Flat OPC package?")
+        raise PackageError(
+            "no pkg:part elements - not a Flat OPC package?")
 
     ct_root = etree.Element(f"{{{CT_NS}}}Types", nsmap={None: CT_NS})
     for ext, ctype in (
@@ -196,7 +199,7 @@ def flat_opc_to_docx(flat_path: str | Path, out_path: str | Path) -> int:
         if xml_data is not None:
             children = list(xml_data)
             if len(children) != 1:
-                raise SystemExit(
+                raise PackageError(
                     f"{name}: expected 1 xmlData child, got {len(children)}")
             payload = (b'<?xml version="1.0" encoding="UTF-8" '
                        b'standalone="yes"?>\r\n'
@@ -204,7 +207,7 @@ def flat_opc_to_docx(flat_path: str | Path, out_path: str | Path) -> int:
         elif bin_data is not None:
             payload = base64.b64decode(bin_data.text or "")
         else:
-            raise SystemExit(f"{name}: neither xmlData nor binaryData")
+            raise PackageError(f"{name}: neither xmlData nor binaryData")
         entries.append((name.lstrip("/"), payload))
         if not ctype.endswith("relationships+xml"):
             ov = etree.SubElement(ct_root, f"{{{CT_NS}}}Override")

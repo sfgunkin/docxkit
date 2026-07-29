@@ -16,6 +16,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+from .errors import DocxKitError
 from .find import P_RE, text_of
 
 
@@ -43,8 +44,8 @@ def cmd_inspect(args) -> int:
         doc = z.read("word/document.xml").decode("utf-8")
         com = (z.read("word/comments.xml").decode("utf-8")
                if "word/comments.xml" in names else "")
-    ins = len(re.findall(r"<w:ins ", doc))
-    dele = len(re.findall(r"<w:del ", doc))
+    from .revisions import counts
+    ins, dele = counts(doc)
     starts = re.findall(r'<w:bookmarkStart w:id="(\d+)"', doc)
     ends = re.findall(r'<w:bookmarkEnd w:id="(\d+)"', doc)
     omath = len(re.findall(r"<m:oMath>", doc))
@@ -63,38 +64,20 @@ def cmd_inspect(args) -> int:
                              re.DOTALL):
             print(f"    - {text_of(m.group(1)).strip()[:110]}")
     if args.revisions:
-        from .comments import revision_spans
-        from .find import delta_text_of
-        for s, e in revision_spans(doc)[:200]:
-            kind = "ins" if doc[s:s + 6] == "<w:ins" else "del"
-            print(f"    [{kind}] {delta_text_of(doc[s:e])[:100]!r}")
+        from .revisions import revision_text, spans
+        for span in spans(doc)[:200]:
+            kind = "ins" if doc[span[0]:span[0] + 6] == "<w:ins" else "del"
+            print(f"    [{kind}] {revision_text(doc, span)[:100]!r}")
     return 0
 
 
-_INS_RE = re.compile(r"<w:ins\b[^>]*?>.*?</w:ins>", re.DOTALL)
-_DEL_RE = re.compile(r"<w:del\b[^>]*?>.*?</w:del>", re.DOTALL)
-_DELTEXT_RE = re.compile(r"<w:delText([^>]*)>")
-
-
 def cmd_text(args) -> int:
-    """Dump visible text, choosing a side of any tracked changes.
-
-    `final` accepts the revisions (drop deletions), `original` rejects them
-    (drop insertions, restore deleted text) -- python-docx can do neither,
-    since it never sees runs nested inside w:ins.
-    """
+    """Dump visible text from one side of the tracked changes."""
+    from .revisions import text
     with zipfile.ZipFile(args.docx) as z:
         doc = z.read("word/document.xml").decode("utf-8")
-    for m in P_RE.finditer(doc):
-        para = m.group(0)
-        if args.tracked == "final":
-            para = _DEL_RE.sub("", para)
-        else:
-            para = _INS_RE.sub("", para)
-            para = _DELTEXT_RE.sub(r"<w:t\1>", para).replace("</w:delText>",
-                                                             "</w:t>")
-        if (t := text_of(para)).strip():
-            print(t)
+    for line in text(doc, args.tracked):
+        print(line)
     return 0
 
 
@@ -157,7 +140,10 @@ def main() -> None:
     p.set_defaults(fn=cmd_pages)
 
     args = ap.parse_args()
-    sys.exit(args.fn(args))
+    try:
+        sys.exit(args.fn(args))
+    except DocxKitError as exc:
+        sys.exit(f"docxkit: {exc}")
 
 
 if __name__ == "__main__":

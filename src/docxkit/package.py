@@ -14,6 +14,8 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+from .errors import DocumentLocked, PackageError
+
 __all__ = [
     "assert_unlocked",
     "backup",
@@ -44,7 +46,7 @@ def assert_unlocked(path: str | Path) -> None:
     used to be.
     """
     if is_locked(path):
-        raise SystemExit(
+        raise DocumentLocked(
             f"{Path(path).name} is locked (open in Word). Close it and retry.")
 
 
@@ -86,7 +88,7 @@ def edit_in_place(path: str | Path,
     """
     path = Path(path)
     if not path.exists():
-        raise SystemExit(f"Target docx missing: {path}")
+        raise PackageError(f"Target docx missing: {path}")
     assert_unlocked(path)
     with tempfile.TemporaryDirectory(prefix="docxkit_") as td:
         work = Path(td) / "in.docx"
