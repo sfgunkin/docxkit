@@ -121,7 +121,7 @@ def match(rules: Iterable[tuple[str, str]],
             for sig, comment in folded:
                 if sig in hay:
                     return comment
-        if tables:
+        if tables and ctx.table_index is not None:
             return tables.get(ctx.table_index)
         return None
 

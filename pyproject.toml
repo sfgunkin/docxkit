@@ -16,7 +16,8 @@ dependencies = [
 # Word automation: Windows only, and only needed for the COM-backed features
 # (redline via CompareDocuments, PDF export, page counts).
 word = ["pywin32>=306"]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pyright>=1.1",
+       "lxml-stubs>=0.5"]
 
 [project.scripts]
 docxkit = "docxkit.cli:main"
@@ -90,8 +91,9 @@ module = ["docxkit.*"]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-# No stubs published for any of these.
-module = ["lxml.*", "win32com.*", "pythoncom", "docx.*"]
+# No stubs published for any of these (lxml has lxml-stubs, installed via
+# the dev extra, so it is typed for real and not listed here).
+module = ["win32com.*", "pythoncom", "docx.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -102,6 +104,20 @@ ignore_missing_imports = true
 module = ["docxkit.compare", "docxkit._citation_audit",
           "docxkit.word_edits"]
 ignore_errors = true
+
+[tool.pyright]
+# Pinned so the CLI and Pylance in the editor agree with each other.
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+# The same verbatim ports mypy and ruff exempt (see their sections above):
+# working, well-exercised code carried over unchanged on purpose. `ignore`
+# rather than `exclude`, so the files still resolve as imports but report
+# no diagnostics, matching mypy's ignore_errors.
+ignore = [
+    "src/docxkit/compare.py",
+    "src/docxkit/_citation_audit.py",
+    "src/docxkit/word_edits.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -77,13 +77,20 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Three gates, all of which must pass:
+Four gates, all of which must pass:
 
 ```
 python -m pytest        # synthetic fixtures, no Word required
 python -m ruff check .
 python -m mypy
+python -m pyright       # what Pylance shows in the editor
 ```
+
+mypy and pyright disagree just enough to be worth running both: only the
+stubs told either of them that `part.get()` can return None, and only
+pyright saw it through `lxml-stubs` before the mypy override list was
+trimmed. Keep `lxml-stubs` installed (it is in the `dev` extra) — without
+it both checkers go quiet on every lxml call.
 
 And one that matters more than any of them:
 

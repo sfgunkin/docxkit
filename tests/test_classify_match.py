@@ -8,6 +8,8 @@ reviewer reads next to the change.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from docxkit.comments import RevisionContext, match
 
 RULES = (
@@ -22,22 +24,34 @@ def ctx(text: str, para: str = "", window: str = "",
                            table_index=table, start=0, end=0)
 
 
+def point(classify: Callable[[RevisionContext], str | None],
+          c: RevisionContext) -> str:
+    """The comment `classify` gives `c`, asserted present.
+
+    Every caller here is checking WHICH point was named, so an unmatched
+    revision is a failure of the test's premise, not the assertion.
+    """
+    out = classify(c)
+    assert out is not None, f"no rule matched {c.text[:40]!r}"
+    return out
+
+
 def test_revision_text_wins_over_a_neighbour_in_the_same_paragraph():
     """The failure this exists to stop: A7 and A9 edit one paragraph, so a
     haystack match gives the A9 revision A7's comment."""
     shared = ("Whether this unused capacity translates ... "
               "the growth slowdown that")
     c = ctx(text="growth slowdown that", para=shared, window=shared)
-    assert match(RULES)(c).startswith("A9")
+    assert point(match(RULES), c).startswith("A9")
     # and the wide scope is exactly what would have got it wrong
     assert next(cm for sig, cm in RULES if sig in c.haystack).startswith("A7")
 
 
 def test_falls_back_to_paragraph_then_window():
-    by_para = match(RULES)(ctx(text="0.42", para="the growth slowdown"))
+    by_para = point(match(RULES), ctx(text="0.42", para="the growth slowdown"))
     assert by_para.startswith("A9")
-    by_window = match(RULES)(
-        ctx(text="0.42", para="0.42", window="unused capacity"))
+    by_window = point(
+        match(RULES), ctx(text="0.42", para="0.42", window="unused capacity"))
     assert by_window.startswith("A7")
 
 
@@ -53,13 +67,13 @@ def test_unmatched_returns_none():
 def test_table_fallback_labels_bare_cells():
     """A regenerated table's cells are numbers no prose signature can match."""
     classify = match(RULES, {8: "A11: new Table A3."})
-    assert classify(ctx("-0.037", table=8)).startswith("A11")
+    assert point(classify, ctx("-0.037", table=8)).startswith("A11")
     assert classify(ctx("-0.037", table=None)) is None
 
 
 def test_prose_rules_take_precedence_over_the_table_fallback():
     classify = match(RULES, {8: "A11: new Table A3."})
-    assert classify(ctx("growth slowdown", table=8)).startswith("A9")
+    assert point(classify, ctx("growth slowdown", table=8)).startswith("A9")
 
 
 def test_signatures_match_through_typography():
