@@ -32,6 +32,7 @@ from docxkit.tracked import build                # redline deliverable
 from docxkit.ingest import build_overrides       # author-edit round
 from docxkit.comments import annotate            # comment every revision
 from docxkit.word import session, export_pdf     # Word automation
+from docxkit.word import locate                  # page/line of a phrase
 from docxkit.errors import DocxKitError          # everything catchable
 ```
 
@@ -49,7 +50,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry (Word's customXml) |
 | `citations` | find citations in prose, parse the reference section, build the link XML; plus the back-link audit |
-| `word` | Word COM: compare, PDF export, page counts, Flat OPC bypass |
+| `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass |
 | `comments` | attach a comment to every tracked revision, in XML |
 | `tracked` | build a tracked-changes deliverable end to end |
 | `guard` | stop a rebuild discarding a review someone made in Word |
@@ -66,6 +67,8 @@ from docxkit.errors import DocxKitError          # everything catchable
 docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json report.json]
 docxkit citations PAPER.docx
 docxkit inspect PAPER.docx [--comments] [--revisions]
+docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
+docxkit locate PAPER.docx --revisions [--limit N]
 docxkit text PAPER.docx [--tracked final|original]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx
@@ -91,6 +94,31 @@ they do.
   (comment them while they still exist), then extract.
 - **Word's save path can hang** outright, on any drive. `extract_flat_opc`
   + `flat_opc_to_docx` bypass it. `ExportAsFixedFormat` (PDF) still works.
+- **A page number belongs to the file it was measured in.** A redline
+  paginates longer than its clean twin, because the deleted text is still
+  laid out — le14: 47 pages against 41 — and no markup setting changes
+  that (`ShowRevisionsAndComments=False`, `RevisionsFilter.Markup=0` and
+  `RevisionsView=Final` all still measured 47). Page numbers for a
+  response letter come from the clean build.
+- **Page numbers need `Repaginate()` first, and a collapsed range.**
+  `session(fast=True)` switches background pagination off, so an untouched
+  document answers from a stale layout (le14_clean's end reported page 3
+  before repaginating, 41 after), and `Information()` answers for a
+  range's ACTIVE END — ask a whole document and you get its last page.
+  `word.locate` handles both.
+- **Word's Find raises rather than misses**: an unescaped `^` is "not a
+  valid special character" and anything over 255 characters is "String
+  parameter too long". It also cannot match across a paragraph mark, and
+  a revision's text often STARTS with the paragraph mark it inserted.
+  `word.search_text` normalizes an anchor into what Find accepts (first
+  non-blank line, carets escaped, cut to 255 as Word counts it).
+- **The COM cost is fresh objects, not dynamic name lookup.** makepy
+  static binding measured no gain at all over win32com's dynamic dispatch
+  (5.8s vs 5.9s per 150 revisions, identical results) — but a Find
+  configured from scratch on a new Range costs ~105 ms per anchor against
+  ~52 ms through one reused Range/Find pair re-aimed with `SetRange`.
+  `locate` keeps one pair; the per-revision walk was measured both ways
+  and does not care (~55 ms/revision either way — that cost is Word's).
 - **Hand-authored `w:ins`/`w:del` has repeatedly failed to open in Word.**
   Produce redlines with `CompareDocuments`, not by writing the markup.
 - **Anchor on visible text, never raw XML.** Word fragments runs at rsid
@@ -133,6 +161,7 @@ python -m pytest        # synthetic fixtures, no Word required
 python tools/sweep.py <project-root> ...   # every routine over real papers
 python -m ruff check .
 python -m mypy          # package + tests; ported modules exempt
+python -m pyright       # what Pylance shows in the editor; same exemptions
 ```
 
 `_xml.py` exists because the primitives had already started to drift: the

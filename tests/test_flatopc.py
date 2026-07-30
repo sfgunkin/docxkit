@@ -106,6 +106,15 @@ def test_rejects_something_that_is_not_a_flat_opc_package(tmp_path):
         flat_opc_to_docx(p, tmp_path / "out.docx")
 
 
+def test_rejects_a_part_with_no_name(flat_file, tmp_path):
+    # Without the explicit check this crashed as AttributeError on
+    # None.lstrip, not as a PackageError naming the actual problem.
+    flat = flat_file(f'<pkg:part pkg:contentType="{DOC_CT}">'
+                     f"<pkg:xmlData>{DOC_XML}</pkg:xmlData></pkg:part>")
+    with pytest.raises(PackageError, match="missing its pkg:name"):
+        flat_opc_to_docx(flat, tmp_path / "out.docx")
+
+
 def test_rejects_a_part_with_neither_payload(flat_file, tmp_path):
     flat = flat_file('<pkg:part pkg:name="/word/document.xml" '
                      f'pkg:contentType="{DOC_CT}"/>')

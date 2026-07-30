@@ -4,6 +4,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit citations PAPER.docx
     docxkit crossrefs PAPER.docx [--write] [--audit]
     docxkit inspect PAPER.docx [--comments] [--revisions]
+    docxkit locate PAPER.docx ANCHOR... | --revisions
     docxkit text PAPER.docx [--tracked final|original]
     docxkit lint PAPER.docx
     docxkit verify PAPER.docx
@@ -111,6 +112,70 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+_LocateRows = tuple[list[dict[str, object]], list[str], list[str]]
+
+
+def _revision_rows(doc: object, limit: int | None) -> _LocateRows:
+    """(json rows, report lines, misses) for every tracked revision."""
+    from .word import revision_locations
+    rows: list[dict[str, object]] = []
+    lines = []
+    for rev in revision_locations(doc, limit=limit):
+        rows.append(rev._asdict())
+        text = " ".join(rev.text.split())[:60]
+        lines.append(f"  {rev.number:>4}  p.{rev.page:>4}  l.{rev.line:>3}  "
+                     f"[{rev.kind}] {text}")
+    return rows, lines, []
+
+
+def _anchor_rows(doc: object, anchors: list[str], ordered: bool
+                 ) -> _LocateRows:
+    """(json rows, report lines, misses) for the anchors the user gave."""
+    from .word import locate_in
+    located = locate_in(doc, anchors, ordered=ordered, strict=False)
+    rows: list[dict[str, object]] = []
+    lines = []
+    for loc in located:
+        rows.append(loc._asdict())
+        note = "  (repeats)" if loc.repeats else ""
+        lines.append(f"  p.{loc.page:>4}  l.{loc.line:>3}  "
+                     f"{' '.join(loc.anchor.split())[:60]}{note}")
+    hit = {loc.anchor for loc in located}
+    return rows, lines, [a for a in anchors if a not in hit]
+
+
+def cmd_locate(args: argparse.Namespace) -> int:
+    """Which page (and line) does this text land on, once Word lays it out?"""
+    from .word import WD_STATISTIC_PAGES, open_doc, session
+
+    anchors = list(args.anchor)
+    if args.anchors_from:
+        anchors += [ln.strip() for ln
+                    in Path(args.anchors_from).read_text(
+                        encoding="utf-8").splitlines() if ln.strip()]
+    if not anchors and not args.revisions:
+        print("docxkit locate: give an anchor, --anchors-from or --revisions")
+        return 2
+
+    # One session for both the lookups and the page total, so the file is
+    # opened once rather than once per question.
+    with session() as word, open_doc(word, args.docx) as doc:
+        rows, lines, missing = (
+            _revision_rows(doc, args.limit) if args.revisions
+            else _anchor_rows(doc, anchors, args.ordered))
+        pages = int(doc.ComputeStatistics(WD_STATISTIC_PAGES))
+
+    print(f"{Path(args.docx).name}  ({pages} pages)")
+    for line in lines:
+        print(line)
+    for anchor in missing:
+        print(f"  NOT FOUND  {anchor[:60]!r}")
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    return 1 if missing else 0
+
+
 def cmd_text(args: argparse.Namespace) -> int:
     """Dump visible text from one side of the tracked changes."""
     from .revisions import text
@@ -211,6 +276,25 @@ def main() -> None:
     p.add_argument("--comments", action="store_true")
     p.add_argument("--revisions", action="store_true")
     p.set_defaults(fn=cmd_inspect)
+
+    p = sub.add_parser(
+        "locate", help="page/line of a phrase, laid out (needs Word)")
+    p.add_argument("docx")
+    p.add_argument("anchor", nargs="*",
+                   help="visible text to find; repeatable")
+    p.add_argument("--anchors-from", metavar="FILE",
+                   help="read anchors from a file, one per line")
+    p.add_argument("--revisions", action="store_true",
+                   help="locate every tracked revision instead "
+                        "(the redline's own pages)")
+    p.add_argument("--limit", type=int, metavar="N",
+                   help="stop after N revisions")
+    p.add_argument("--ordered", action="store_true",
+                   help="anchors are in document order: search forward from "
+                        "the last hit, which is faster and picks the right "
+                        "occurrence of a repeated phrase")
+    p.add_argument("--json", metavar="PATH")
+    p.set_defaults(fn=cmd_locate)
 
     p = sub.add_parser("text", help="dump the visible text")
     p.add_argument("docx")
