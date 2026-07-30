@@ -18,6 +18,7 @@ __all__ = ["lint", "lint_parts"]
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 # Containers that may hold only block-level children.
 _BLOCK_CONTAINERS = ("footnote", "endnote", "body", "tc", "comment")
@@ -74,6 +75,22 @@ def lint(*roots: Any) -> list[str]:
         for element in root.iter(W + "del"):
             if element.find(".//" + W + "t") is not None:
                 problems.append("w:del contains w:t (should be w:delText)")
+
+        # 3b. A w:t carrying edge whitespace without xml:space="preserve".
+        #     OOXML trims it, so the space survives in the tooling that wrote
+        #     it but is dropped by every conforming reader — Word on open,
+        #     Word on save, and CompareDocuments. On the LE paper this
+        #     masqueraded as recurring "Word damage" for seven author rounds
+        #     and shipped four typos into the journal's copy. `preserve_space`
+        #     fixes it; this is what makes running it non-optional.
+        for element in root.iter(W + "t"):
+            text = element.text or ""
+            if text != text.strip() and element.get(XML_SPACE) != "preserve":
+                problems.append(
+                    'w:t has edge whitespace without '
+                    'xml:space="preserve" '
+                    f"({text.strip()[:30]!r}) - run "
+                    "docxkit.edit.preserve_space as the last build step")
 
         # 4. A block element inside a run-level revision.
         for tag in ("ins", "del"):

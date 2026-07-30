@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from ._xml import PARA_RE, delta_text, visible_text
+from ._xml import PARA_RE, delta_text, normalize_glyphs, visible_text
 from .errors import AnchorError
 
 __all__ = [
@@ -37,15 +37,22 @@ def paragraphs(xml: str) -> list[re.Match[str]]:
     return list(PARA_RE.finditer(xml))
 
 
-def para_slice(xml: str, sig: str, also: str | None = None) -> tuple[int, int]:
+def para_slice(xml: str, sig: str, also: str | None = None,
+               *, normalize: bool = False) -> tuple[int, int]:
     """(start, end) of the ONE paragraph whose visible text contains `sig`.
 
     Raises unless exactly one matches: an anchor that hits two paragraphs
     is a latent bug that would otherwise edit whichever came first. Pass
     `also` to disambiguate (e.g. the equation number).
+
+    `normalize` folds Word's typographic substitutions before matching, so
+    an anchor written with a straight apostrophe still finds a paragraph
+    Word autocorrected to a curly one.
     """
+    fold = normalize_glyphs if normalize else (lambda s: s)
+    sig, also = fold(sig), (None if also is None else fold(also))
     hits = [(m.start(), m.end()) for m in PARA_RE.finditer(xml)
-            if sig in (t := visible_text(m.group(0)))
+            if sig in (t := fold(visible_text(m.group(0))))
             and (also is None or also in t)]
     if len(hits) != 1:
         raise AnchorError(
@@ -53,10 +60,10 @@ def para_slice(xml: str, sig: str, also: str | None = None) -> tuple[int, int]:
     return hits[0]
 
 
-def edit_para(xml: str, sig: str,
-              fn: Callable[[str], str]) -> str:
+def edit_para(xml: str, sig: str, fn: Callable[[str], str],
+              *, normalize: bool = False) -> str:
     """Apply `fn` to the single paragraph whose visible text contains `sig`."""
-    s, e = para_slice(xml, sig)
+    s, e = para_slice(xml, sig, normalize=normalize)
     return xml[:s] + fn(xml[s:e]) + xml[e:]
 
 

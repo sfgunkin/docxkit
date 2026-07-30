@@ -4,6 +4,8 @@ from __future__ import annotations
 import pytest
 from conftest import NS, dele, ins, make_parts, para, run
 
+from docxkit.body import para as bpara
+from docxkit.body import run as brun
 from docxkit.lint import lint_parts
 
 lxml_etree = pytest.importorskip("lxml.etree")
@@ -18,6 +20,28 @@ def _parts(body: str, **extra: str) -> dict[str, bytes]:
 
 def test_clean_document_reports_nothing():
     assert lint_parts(_parts(para(run("ordinary prose")))) == []
+
+
+def test_bare_w_t_with_edge_whitespace_is_flagged():
+    """OOXML trims it, so the space survives in the tool that wrote it but is
+    dropped by Word and by CompareDocuments. On the LE paper this looked like
+    recurring "Word damage" for seven author rounds and shipped four typos."""
+    problems = lint_parts(_parts(para(run(" Only after the citation"))))
+    assert any("edge whitespace" in p for p in problems), problems
+
+
+def test_edge_whitespace_is_fine_when_preserved():
+    parts = _parts(para(run(" Only after the citation", preserve=True)))
+    assert lint_parts(parts) == []
+
+
+def test_interior_whitespace_is_not_flagged():
+    assert lint_parts(_parts(para(run("two words")))) == []
+
+
+def test_the_builder_output_passes_the_rule():
+    """docxkit.body must not emit markup its own linter rejects."""
+    assert lint_parts(_parts(bpara(brun(" leading space")))) == []
 
 
 def test_run_level_child_directly_in_a_block_container():

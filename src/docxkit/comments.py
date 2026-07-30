@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import revisions as _revisions
-from ._xml import delta_text, set_run_text
+from ._xml import delta_text, normalize_glyphs, set_run_text
 from .errors import PackageError, ScaffoldMissing
 from .find import para_text_at, table_index_at, table_spans
 
@@ -31,6 +31,7 @@ __all__ = [
     "GENERIC",
     "RevisionContext",
     "annotate",
+    "match",
     "read_all",
     "reclassify",
     "remove",
@@ -67,7 +68,15 @@ class RevisionContext:
 
     @property
     def haystack(self) -> str:
-        """Everything searchable, for simple substring rules."""
+        """Everything searchable, widest scope — a LAST resort.
+
+        Matching a rule table straight against this labels a revision by
+        whatever signature appears anywhere nearby, so when two points edit
+        the same paragraph the first rule in the table wins both. On the AFI
+        r2 round that mislabelled 4 of 19 points, and a comment naming the
+        wrong point is worse than none: it is what the reviewer reads.
+        Prefer :func:`match`, which tries the revision's own text first.
+        """
         return f"{self.para} {self.window} {self.text}"
 
 
@@ -78,6 +87,45 @@ class _Planned(NamedTuple):
     end: int
     comment: str | None
     table: int | None
+
+
+def match(rules: Iterable[tuple[str, str]],
+          tables: dict[int, str] | None = None,
+          *, normalize: bool = True
+          ) -> Callable[[RevisionContext], str | None]:
+    """A classifier that tries the narrowest scope first.
+
+    `rules` is (signature, comment) in priority order, as papers already
+    write them. Each scope is searched in turn — the revision's own text,
+    then its paragraph, then the surrounding window — so a revision is
+    labelled by the point that produced it rather than by a neighbour's
+    signature that happens to sit in the same paragraph.
+
+    `tables` maps a table index to the comment for revisions inside it.
+    Cells of a regenerated table are bare numbers that no prose signature
+    can match, and without this they fall through to the generic balloon.
+
+    Keep signatures SHORT. Word splits a long insertion into fragments
+    ("growth slowdown that" / "is projected to cause..."), and a needle
+    spanning the split matches neither.
+    """
+    rules = list(rules)
+    fold = normalize_glyphs if normalize else (lambda s: s)
+    folded = [(fold(sig), comment) for sig, comment in rules]
+
+    def classify(ctx: RevisionContext) -> str | None:
+        for scope in (ctx.text, ctx.para, ctx.window):
+            if not scope:
+                continue
+            hay = fold(scope)
+            for sig, comment in folded:
+                if sig in hay:
+                    return comment
+        if tables:
+            return tables.get(ctx.table_index)
+        return None
+
+    return classify
 
 
 def _context(doc: str, start: int, end: int,
