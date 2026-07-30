@@ -149,3 +149,18 @@ def test_insert_after_requires_a_unique_anchor():
     xml = document(fpara(frun("same")) + fpara(frun("same")))
     with pytest.raises(AnchorError):
         insert_after(xml, "same", para(run("X")))
+
+
+def test_insert_helpers_can_match_through_typography():
+    """Anchors written with a straight apostrophe must find the curly one."""
+    xml = document(fpara(frun("workers’ productivity")) + fpara(frun("next")))
+    with pytest.raises(AnchorError):
+        insert_after(xml, "workers' productivity", para(run("X")))
+    out = insert_after(xml, "workers' productivity", para(run("X")),
+                       normalize=True)
+    assert "X" in out
+
+
+def test_table_applies_cell_paragraph_properties():
+    t = table(["a"], [["1"]], cell_ppr='<w:pPr><w:jc w:val="left"/></w:pPr>')
+    assert t.count('<w:jc w:val="left"/>') == 2      # header + body cell

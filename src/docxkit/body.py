@@ -105,7 +105,8 @@ def table(headers: list[str], rows: list[list[str]], *,
           extra_header: str = "",
           tblpr: str = DEFAULT_TBLPR,
           header_rpr: str = "<w:rPr><w:b/></w:rPr>",
-          cell_rpr: str = "") -> str:
+          cell_rpr: str = "",
+          cell_ppr: str = "") -> str:
     """A complete ``<w:tbl>`` from a header list and rows of text.
 
     `spans` gives each header cell's column span, for grouped headings
@@ -129,9 +130,10 @@ def table(headers: list[str], rows: list[list[str]], *,
 
     width = _TOTAL_WIDTH // columns
     grid = "".join(f'<w:gridCol w:w="{width}"/>' for _ in range(columns))
-    head = row([cell(h, span=s, tcpr=_HDR_TCPR, rpr=header_rpr)
+    head = row([cell(h, span=s, tcpr=_HDR_TCPR, rpr=header_rpr, ppr=cell_ppr)
                 for h, s in zip(headers, spans, strict=True)], header=True)
-    body = "".join(row([cell(c, rpr=cell_rpr) for c in r]) for r in rows)
+    body = "".join(row([cell(c, rpr=cell_rpr, ppr=cell_ppr) for c in r])
+                   for r in rows)
     return (f"<w:tbl>{tblpr}<w:tblGrid>{grid}</w:tblGrid>"
             f"{extra_header}{head}{body}</w:tbl>")
 
@@ -142,7 +144,7 @@ _HDR_TCPR = ('<w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcBorders>'
 
 
 def insert_after(xml: str, sig: str, content: str, *,
-                 allow_colon: bool = False) -> str:
+                 allow_colon: bool = False, normalize: bool = False) -> str:
     """Insert `content` immediately after the paragraph containing `sig`.
 
     Refuses when that paragraph ends in a colon, unless `allow_colon`: a
@@ -151,7 +153,7 @@ def insert_after(xml: str, sig: str, content: str, *,
     or list. Anchor on the equation paragraph instead — which is where a
     definition of its symbols belongs anyway.
     """
-    start, end = para_slice(xml, sig)
+    start, end = para_slice(xml, sig, normalize=normalize)
     if not allow_colon and visible_text(xml[start:end]).rstrip().endswith(":"):
         raise AnchorError(
             f"insert_after({sig[:40]!r}): that paragraph ends in a colon, so "
@@ -160,7 +162,8 @@ def insert_after(xml: str, sig: str, content: str, *,
     return xml[:end] + content + xml[end:]
 
 
-def insert_before(xml: str, sig: str, content: str) -> str:
+def insert_before(xml: str, sig: str, content: str, *,
+                  normalize: bool = False) -> str:
     """Insert `content` immediately before the paragraph containing `sig`."""
-    start, _ = para_slice(xml, sig)
+    start, _ = para_slice(xml, sig, normalize=normalize)
     return xml[:start] + content + xml[start:]
