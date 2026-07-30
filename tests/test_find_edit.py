@@ -82,6 +82,16 @@ def test_preserve_space_protects_edge_whitespace():
     assert "<w:t>solid</w:t>" in fixed
 
 
+def test_preserve_space_ignores_nbsp():
+    """Only XML whitespace is trimmed by a conforming reader. Marking a
+    non-breaking space would add an attribute to every empty table cell
+    Word produces, for no protection."""
+    xml = "<w:t> </w:t><w:t> leading</w:t>"
+    fixed, n = preserve_space(xml)
+    assert n == 0
+    assert fixed == xml
+
+
 def test_preserve_space_is_idempotent():
     once, _ = preserve_space("<w:t> Only</w:t>")
     twice, n = preserve_space(once)

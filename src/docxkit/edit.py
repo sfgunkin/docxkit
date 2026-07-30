@@ -11,6 +11,7 @@ import re
 from ._xml import (
     RUN_RE,
     T_RUN_RE,
+    XML_WS,
     normalize_glyphs,
     set_run_text,
     visible_text,
@@ -84,13 +85,17 @@ def preserve_space(xml: str) -> tuple[str, int]:
     it on every open+save, so the space vanishes ("work. Only" becomes
     "work.Only") and reappears as a phantom author edit every round. Run
     this as the last step of a build.
+
+    Only real XML whitespace counts (:data:`XML_WS`) — a leading NBSP is
+    not trimmed by anything and marking it would add noise, notably to the
+    NBSP-filled empty table cells Word produces.
     """
     fixed = 0
 
     def sub(m: re.Match[str]) -> str:
         nonlocal fixed
         body = m.group(1)
-        if body != body.strip():
+        if body != body.strip(XML_WS):
             fixed += 1
             return f'<w:t xml:space="preserve">{body}</w:t>'
         return m.group(0)

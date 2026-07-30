@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._xml import XML_WS
+
 __all__ = ["lint", "lint_parts"]
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -83,13 +85,16 @@ def lint(*roots: Any) -> list[str]:
         #     masqueraded as recurring "Word damage" for seven author rounds
         #     and shipped four typos into the journal's copy. `preserve_space`
         #     fixes it; this is what makes running it non-optional.
+        #     Only real XML whitespace is trimmed: a leading NBSP is safe,
+        #     and Word puts one in every empty table cell.
         for element in root.iter(W + "t"):
             text = element.text or ""
-            if text != text.strip() and element.get(XML_SPACE) != "preserve":
+            if (text != text.strip(XML_WS)
+                    and element.get(XML_SPACE) != "preserve"):
                 problems.append(
                     'w:t has edge whitespace without '
                     'xml:space="preserve" '
-                    f"({text.strip()[:30]!r}) - run "
+                    f"({text[:30]!r}) - run "
                     "docxkit.edit.preserve_space as the last build step")
 
         # 4. A block element inside a run-level revision.

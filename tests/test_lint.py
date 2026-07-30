@@ -39,6 +39,14 @@ def test_interior_whitespace_is_not_flagged():
     assert lint_parts(_parts(para(run("two words")))) == []
 
 
+def test_nbsp_is_not_edge_whitespace():
+    """U+00A0 is an ordinary character to XML: nothing trims it, so it needs
+    no xml:space="preserve". Word fills empty table cells with one, and
+    flagging those buried the real hits in noise."""
+    assert lint_parts(_parts(para(run(" ")))) == []
+    assert lint_parts(_parts(para(run(" leading")))) == []
+
+
 def test_the_builder_output_passes_the_rule():
     """docxkit.body must not emit markup its own linter rejects."""
     assert lint_parts(_parts(bpara(brun(" leading space")))) == []

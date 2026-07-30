@@ -21,6 +21,7 @@ __all__ = [
     "T_DEL_RE",
     "T_RE",
     "T_RUN_RE",
+    "XML_WS",
     "delta_text",
     "escape",
     "matching_close",
@@ -28,6 +29,13 @@ __all__ = [
     "set_run_text",
     "visible_text",
 ]
+
+# The whitespace XML actually trims: space, tab, CR, LF. NOT Python's
+# str.strip() set, which also eats U+00A0 and the other Unicode spaces —
+# those are ordinary characters to a conforming XML reader, so a leading
+# NBSP needs no xml:space="preserve" and flagging one is a false positive.
+# (Word fills empty table cells with NBSP, so this is not a rare case.)
+XML_WS = " \t\r\n"
 
 # A paragraph. Non-greedy, so nested content stops at the first close.
 PARA_RE = re.compile(r"<w:p\b[^>]*>.*?</w:p>", re.DOTALL)
