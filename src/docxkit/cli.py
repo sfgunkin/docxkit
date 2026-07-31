@@ -47,7 +47,6 @@ def cmd_citations(args: argparse.Namespace) -> int:
 def cmd_crossrefs(args: argparse.Namespace) -> int:
     """Link every figure and table to its first mention, and back."""
     from . import crossrefs
-    from .lint import lint_parts
     from .package import read_parts
 
     parts = read_parts(args.docx)
@@ -71,13 +70,8 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
         print("  (dry run - pass --write to save)")
         return 0 if report.complete else 1
 
-    parts["word/document.xml"] = linked.encode("utf-8")
-    if problems := lint_parts(parts):
-        for problem in problems:
-            print(f"  - {problem}")
+    if not _write_document(args.docx, parts, linked, "pre_crossrefs"):
         return 1
-    kept = _write_back(args.docx, parts, "pre_crossrefs")
-    print(f"  written; previous version kept at {kept}")
     return 0 if report.complete else 1
 
 
@@ -91,7 +85,9 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     ins, dele = counts(doc)
     starts = re.findall(r'<w:bookmarkStart w:id="(\d+)"', doc)
     ends = re.findall(r'<w:bookmarkEnd w:id="(\d+)"', doc)
-    omath = len(re.findall(r"<m:oMath>", doc))
+    # \b, not ">": an oMath can carry attributes, and the bare-tag form
+    # undercounted AFI v13 by two
+    omath = len(re.findall(r"<m:oMath[ >]", doc))
     n_com = len(re.findall(r"<w:comment w:id=", com))
     print(f"{Path(args.docx).name}")
     print(f"  parts       {len(names)}")
@@ -201,6 +197,32 @@ def _write_back(path: str, parts: dict[str, bytes], tag: str) -> str:
     return kept.name
 
 
+def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
+                    tag: str) -> bool:
+    """The save path for a command that edited ``document.xml``.
+
+    Runs ``preserve_space`` first — the mandatory last build step, and
+    without it a PRE-EXISTING fragile edge space blocks an unrelated
+    write at the lint gate (found by smartening le14, whose references
+    carried four) — then lints, backs up and writes. Returns False when
+    the lint refused and nothing was written.
+    """
+    from .edit import preserve_space
+    from .lint import lint_parts
+    doc_xml, protected = preserve_space(doc_xml)
+    if protected:
+        print(f"  protected {protected} edge-whitespace run(s) "
+              f"(preserve_space)")
+    parts["word/document.xml"] = doc_xml.encode("utf-8")
+    if problems := lint_parts(parts):
+        for problem in problems:
+            print(f"  - {problem}")
+        return False
+    kept = _write_back(path, parts, tag)
+    print(f"  written; previous version kept at {kept}")
+    return True
+
+
 def cmd_tasks(args: argparse.Namespace) -> int:
     """The margin comments as a work list; --check gates a submission."""
     from .comments import set_done, threads
@@ -300,7 +322,6 @@ def cmd_figures(args: argparse.Namespace) -> int:
 def cmd_smarten(args: argparse.Namespace) -> int:
     """Straight quotes to typographic ones; dry run unless --write."""
     from .hygiene import smarten
-    from .lint import lint_parts
     from .package import read_parts
 
     parts = read_parts(args.docx)
@@ -314,14 +335,8 @@ def cmd_smarten(args: argparse.Namespace) -> int:
     if fixed == doc:
         print("  nothing to write")
         return 0
-    parts["word/document.xml"] = fixed.encode("utf-8")
-    if problems := lint_parts(parts):
-        for problem in problems:
-            print(f"  - {problem}")
-        return 1
-    kept = _write_back(args.docx, parts, "pre_smarten")
-    print(f"  written; previous version kept at {kept}")
-    return 0
+    return 0 if _write_document(args.docx, parts, fixed, "pre_smarten") \
+        else 1
 
 
 def cmd_lint(args: argparse.Namespace) -> int:

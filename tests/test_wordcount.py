@@ -113,6 +113,15 @@ def test_russian_zone_headings_switch_too():
     assert (counts.prose, counts.references) == (2, 3)
 
 
+def test_annex_opens_the_appendix_zone():
+    # the World Bank / European heading style — HCW's appendix bucket
+    # read zero until "Annex A." was taught to the pattern
+    body = p("Body text.") + p("Annex A. Full Regression Results") \
+        + p("More annex words here.")
+    counts = count(make_parts(body))
+    assert (counts.prose, counts.appendix) == (2, 9)
+
+
 def test_para_fixture_from_conftest_is_compatible():
     # guard against the two test harnesses drifting apart
     counts = count(make_parts(para(run("three plain words"))))

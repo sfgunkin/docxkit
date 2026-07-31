@@ -40,7 +40,8 @@ REFERENCES_RE = re.compile(
     r"^(References|Bibliography|Works Cited|"
     r"Список литературы|Литература)\s*:?$", re.IGNORECASE)
 APPENDIX_RE = re.compile(
-    r"^(Online\s+)?Appendi(x|ces)\b|^Приложени[ея]\b", re.IGNORECASE)
+    r"^(Online\s+)?Appendi(x|ces)\b|^Annex(es)?\b|^Приложени[ея]\b",
+    re.IGNORECASE)
 
 # the shared caption definition, plus the abbreviated form
 _CAPTION_RE = caption_re((*DEFAULT_LABELS, "Fig."))
