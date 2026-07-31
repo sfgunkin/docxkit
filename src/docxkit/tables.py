@@ -16,14 +16,16 @@ accepted or the original side.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from typing import Any, Literal, NamedTuple, overload
 
 from ._xml import PARA_RE, matching_close, set_run_text, visible_text
 from .errors import AnchorError
-from .revisions import FINAL, ORIGINAL, accept, reject
+from .revisions import FINAL, _has_revisions, view_transform
 
 __all__ = [
+    "CellChange",
     "Table",
     "by_caption",
     "find",
@@ -32,6 +34,7 @@ __all__ = [
     "set_cell",
     "to_frame",
     "tolerance_for",
+    "update",
 ]
 
 _TR_RE = re.compile(r"<w:tr\b[^>]*>.*?</w:tr>", re.DOTALL)
@@ -76,9 +79,7 @@ def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
     `view` picks the side of any tracked changes: ``final`` accepts the
     revisions, ``original`` rejects them.
     """
-    if view not in (FINAL, ORIGINAL):
-        raise ValueError(f"view must be {FINAL!r} or {ORIGINAL!r}")
-    transform = accept if view == FINAL else reject
+    transform = view_transform(view)
     out = []
     for i, (start, end) in enumerate(_table_spans(xml)):
         body = transform(xml[start:end])
@@ -244,3 +245,134 @@ def to_frame(table: Table, *, header_row: int = 0) -> Any:
     width = len(head)
     padded = [row[:width] + [""] * (width - len(row)) for row in data]
     return pd.DataFrame(padded, columns=head)
+
+
+# ------------------------------------------------- rebuild from data --------
+# The inverse of to_frame: results tables are regenerated from Stata or
+# Python output every revision round, and each paper had its own splice
+# script for it. The engine half — write the values, keep the formatting,
+# refuse what does not fit, report what moved — is the same everywhere;
+# WHICH table and WHICH decimals are the paper's business.
+
+
+class CellChange(NamedTuple):
+    """One cell :func:`update` rewrote.
+
+    `moved` compares the incoming DATA against the old printed value, so
+    it sizes the jump before rounding. There is deliberately no
+    within-tolerance flag: a numeric cell's text only changes when the
+    data crossed a rounding boundary, which by construction exceeds
+    :func:`tolerance_for` — so "changed but within tolerance" is a
+    near-empty class, and a flag that is almost always true reads as
+    information while carrying none. The report being non-empty when you
+    expected identical data IS the finding; `moved` tells you which
+    jumps deserve reading.
+    """
+
+    row: int
+    col: int
+    old: str
+    new: str
+    moved: float | None      # |data - old printed value|, None if either
+    #                          side holds no number
+
+
+def _render_value(old: str, value: object) -> str:
+    """`value` as this cell prints it.
+
+    A number takes the OLD text's printed shape — decimal places,
+    thousands separators, the typographic minus, and any suffix after the
+    number (significance stars, ``%``, a bracketed standard error) — so a
+    regenerated 0.3171 lands in a cell showing "0.32**" as "0.32**", not
+    as a 16-digit float that torpedoes the layout. Strings are written
+    verbatim; None empties the cell.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, int | float):
+        raise TypeError(f"cell value must be str, number or None, "
+                        f"not {type(value).__name__}")
+    m = _NUM_RE.match(old.strip())
+    if m is None:
+        # the old cell shows no number to copy the shape of
+        return f"{value:g}"
+    shown = m.group(0)
+    decimals = len(shown.split(".")[1]) if "." in shown else 0
+    comma = "," if "," in shown else ""
+    text = f"{value:{comma}.{decimals}f}"
+    if "−" in shown:
+        text = text.replace("-", "−")
+    return text + old.strip()[m.end():]
+
+
+def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
+           row0: int = 1, col0: int = 0
+           ) -> tuple[str, list[CellChange]]:
+    """Rewrite a block of `table` from `rows`, preserving formatting.
+
+    `rows` is anything rectangular — lists of lists, or a pandas
+    DataFrame directly (its ``.values`` are taken). The block lands with
+    its top-left cell at (`row0`, `col0`); the default writes the data
+    region under a one-row header. Each value is rendered by
+    :func:`_render_value`, so printed precision, separators and
+    significance stars survive a regeneration.
+
+    Refuses what silent code would get wrong: a block that overruns the
+    table (a vanished row means the data and the manuscript disagree —
+    that is a finding, not something to pad over) and a table containing
+    tracked changes (the first ``w:t`` of a revised cell can sit inside
+    ``w:ins``, so the write would land inside the revision; update the
+    clean build and rebuild the redline instead).
+
+    Returns the new XML and a :class:`CellChange` per cell whose text
+    actually changed. An update you expected to be a no-op (same data,
+    regenerated) returning a non-empty report is the data and the paper
+    disagreeing — read it before shipping.
+    """
+    values = getattr(rows, "values", None)      # a DataFrame, duck-typed
+    if values is not None and hasattr(values, "tolist"):
+        rows = values.tolist()
+    grid: list[list[object]] = [list(r) for r in rows]
+    if not grid:
+        raise AnchorError("update: no rows given")
+
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - update the "
+            f"clean build and rebuild the redline from it")
+    trs = list(_TR_RE.finditer(body))
+    if row0 + len(grid) > len(trs):
+        raise AnchorError(
+            f"block of {len(grid)} rows at row {row0} overruns table "
+            f"{table.index}, which has {len(trs)} rows")
+
+    changes: list[CellChange] = []
+    edits: list[tuple[int, int, str]] = []      # (start, end) within body
+    for i, incoming in enumerate(grid):
+        tr = trs[row0 + i]
+        tcs = list(_TC_RE.finditer(tr.group(0)))
+        if col0 + len(incoming) > len(tcs):
+            raise AnchorError(
+                f"row {row0 + i} of table {table.index} has {len(tcs)} "
+                f"cells; {len(incoming)} values at column {col0} overrun it")
+        for j, value in enumerate(incoming):
+            tc = tcs[col0 + j]
+            old = _cell_text(tc.group(0))
+            new = _render_value(old, value)
+            if new == old:
+                continue
+            raw = float(value) if isinstance(value, int | float) \
+                else parse_number(new)
+            was = parse_number(old)
+            moved = abs(raw - was) if raw is not None and was is not None \
+                else None
+            changes.append(CellChange(row0 + i, col0 + j, old, new, moved))
+            edits.append((tr.start() + tc.start(), tr.start() + tc.end(),
+                          set_run_text(tc.group(0), new)))
+
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return xml[:table.start] + body + xml[table.end:], changes

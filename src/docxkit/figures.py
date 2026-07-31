@@ -29,13 +29,16 @@ from .errors import AnchorError, PackageError
 
 __all__ = [
     "EMU_PER_INCH",
+    "AltText",
     "Figure",
+    "alt_texts",
     "find",
     "find_all",
     "landscape",
     "replace_image",
     "scale_to_width",
     "section_properties",
+    "set_alt_text",
     "set_extent",
     "shared_relationships",
 ]
@@ -204,6 +207,109 @@ def replace_image(parts: dict[str, bytes], caption_prefix: str,
         doc = _rescale_drawing(doc, rid, blob)
     parts["word/document.xml"] = doc.encode("utf-8")
     return target
+
+
+# ------------------------------------------------------------ alt text ------
+# Journals have started requiring alternative text on every figure
+# (Elsevier's accessibility checks bounce a submission without it), and
+# it is invisible in Word's normal view, so it is exactly the kind of
+# thing to audit mechanically. Alt text lives in the drawing's
+# ``wp:docPr descr`` attribute — per DRAWING, not per image part, so
+# setting it is safe even for figures sharing a relationship.
+
+_DRAWING_RE = re.compile(r"<w:drawing>.*?</w:drawing>", re.DOTALL)
+_DOCPR_RE = re.compile(r"<wp:docPr\b[^>]*?/?>")
+_DESCR_RE = re.compile(r'\sdescr="([^"]*)"')
+_NAME_ATTR_RE = re.compile(r'\sname="([^"]*)"')
+
+
+@dataclass(frozen=True)
+class AltText:
+    """One drawing's accessibility state."""
+
+    caption: str | None      # the figure caption it belongs to, if any
+    name: str                # wp:docPr name ("Picture 3")
+    embed: str | None        # relationship id of the image
+    descr: str | None        # the alt text; None or "" is the finding
+
+    @property
+    def missing(self) -> bool:
+        return not (self.descr or "").strip()
+
+
+def alt_texts(doc_xml: str) -> list[AltText]:
+    """Every drawing's alt text, in document order.
+
+    Drawings are attributed to the figure whose caption window they sit
+    in (the same window :func:`find_all` uses); a drawing outside any
+    window — a logo in a header paragraph, an inline scheme — reports
+    ``caption=None`` but is still listed, because the accessibility
+    check applies to it all the same.
+    """
+    paras = list(PARA_RE.finditer(doc_xml))
+    texts = [visible_text(p.group(0)).strip() for p in paras]
+    owner: dict[int, str] = {}
+    for i, text in enumerate(texts):
+        if _CAPTION_RE.match(text):
+            for j in range(i + 1, min(i + 1 + _DRAWING_WINDOW, len(paras))):
+                if _CAPTION_RE.match(texts[j]):
+                    break            # the next figure's window starts here
+                owner[j] = text
+    out = []
+    for j, p in enumerate(paras):
+        for dm in _DRAWING_RE.finditer(p.group(0)):
+            block = dm.group(0)
+            docpr = _DOCPR_RE.search(block)
+            name = descr = None
+            if docpr is not None:
+                if (nm := _NAME_ATTR_RE.search(docpr.group(0))) is not None:
+                    name = nm.group(1)
+                if (dm2 := _DESCR_RE.search(docpr.group(0))) is not None:
+                    descr = dm2.group(1)
+            embed = _EMBED_RE.search(block)
+            out.append(AltText(caption=owner.get(j), name=name or "",
+                               embed=embed.group(1) if embed else None,
+                               descr=descr))
+    return out
+
+
+def set_alt_text(doc_xml: str, caption_prefix: str, text: str, *,
+                 image_index: int = 0) -> str:
+    """Set one drawing's alt text, addressed by its figure caption.
+
+    `image_index` picks the drawing within a multi-image figure (AFI's
+    Figure 5 is three Lorenz curves — each needs its own description).
+    The attribute is per drawing, so figures sharing an image part do
+    not inherit each other's text.
+    """
+    figure = find(doc_xml, caption_prefix)
+    paras = list(PARA_RE.finditer(doc_xml))
+    blocks: list[tuple[int, int, str]] = []
+    stop = min(figure.caption_index + 1 + _DRAWING_WINDOW, len(paras))
+    for p in paras[figure.caption_index + 1:stop]:
+        for dm in _DRAWING_RE.finditer(p.group(0)):
+            blocks.append((p.start() + dm.start(), p.start() + dm.end(),
+                           dm.group(0)))
+    if image_index >= len(blocks):
+        raise AnchorError(
+            f"{caption_prefix!r} has {len(blocks)} drawing(s); no "
+            f"image_index {image_index}")
+    start, end, block = blocks[image_index]
+    docpr = _DOCPR_RE.search(block)
+    if docpr is None:
+        raise PackageError(f"drawing under {caption_prefix!r} has no "
+                           f"wp:docPr to carry alt text")
+    safe = (text.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+    el = docpr.group(0)
+    if _DESCR_RE.search(el):
+        new_el = _DESCR_RE.sub(lambda _: f' descr="{safe}"', el, count=1)
+    elif el.endswith("/>"):
+        new_el = el[:-2] + f' descr="{safe}"/>'
+    else:
+        new_el = el[:-1] + f' descr="{safe}">'
+    new_block = block.replace(el, new_el, 1)
+    return doc_xml[:start] + new_block + doc_xml[end:]
 
 
 def _new_media_part(parts: dict[str, bytes], blob: bytes) -> str:

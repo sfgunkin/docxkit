@@ -39,19 +39,24 @@ from docxkit.errors import DocxKitError          # everything catchable
 | Module | What it is for |
 |---|---|
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
-| `find` | locate paragraphs, tables, captions **by visible text** |
+| `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk |
 | `edit` | anchor-asserting replace, run-aware replace, `xml:space` repair |
-| `revisions` | read tracked changes: spans, counts, accepted/rejected views |
-| `tables` | locate/read/rewrite manuscript tables, on either side of a redline |
-| `equations` | LaTeX→OMML via Word's own XSL, harvest existing equations, formula fingerprints |
+| `revisions` | read tracked changes; accept/reject, wholesale or by predicate (`by_author`, `whitespace_only`) |
+| `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved |
+| `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
-| `figures` | find figures by caption, replace images safely, extents, landscape sections |
+| `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
-| `hygiene` | drop part-trees a manuscript should not carry (Word's customXml) |
+| `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
 | `citations` | find citations in prose, parse the reference section, build the link XML; plus the back-link audit |
+| `crossrefs` | bidirectional figure/table links, the bookmark convention |
+| `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass |
+| `wordcount` | words per bucket (prose/tables/captions/footnotes/references/appendix) for journal caps |
+| `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes |
+| `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
 | `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass |
-| `comments` | attach a comment to every tracked revision, in XML |
+| `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
 | `tracked` | build a tracked-changes deliverable end to end |
 | `guard` | stop a rebuild discarding a review someone made in Word |
 | `ingest` | fold the author's Word edits back into the build source |
@@ -69,7 +74,11 @@ docxkit citations PAPER.docx
 docxkit inspect PAPER.docx [--comments] [--revisions]
 docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
 docxkit locate PAPER.docx --revisions [--limit N]
-docxkit text PAPER.docx [--tracked final|original]
+docxkit text PAPER.docx [--tracked final|original] [--md]
+docxkit count PAPER.docx [--exclude references,tables,...] [--limit N]
+docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
+docxkit figures PAPER.docx [--check]
+docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx
 ```

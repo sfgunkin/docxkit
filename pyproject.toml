@@ -60,12 +60,19 @@ ignore = [
 "src/docxkit/tables.py" = ["RUF001", "PLC0415"]
 "src/docxkit/citations.py" = ["RUF001"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
-"src/docxkit/equations.py" = ["PLC0415"]
+# equations maps the Unicode math glyphs themselves to LaTeX commands,
+# and renumber/hygiene document en dashes and curly quotes by showing
+# them; every "ambiguous" character in those files is the subject matter.
+"src/docxkit/equations.py" = ["PLC0415", "RUF001", "RUF002", "RUF003"]
+"src/docxkit/renumber.py" = ["RUF001", "RUF002"]
+"src/docxkit/wordcount.py" = ["RUF001"]
+"src/docxkit/hygiene.py" = ["RUF001", "RUF002"]
 "src/docxkit/lint.py" = ["PLC0415"]
 "src/docxkit/revisions.py" = ["PLC0415"]
-# Tests assert on the very glyphs Word normalizes, and reach
-# for private helpers deliberately.
-"tests/*" = ["RUF001", "PLC2701"]
+# Tests assert on the very glyphs Word normalizes, reach for private
+# helpers deliberately, and import optional deps inside the tests that
+# skip without them.
+"tests/*" = ["RUF001", "RUF002", "RUF003", "PLC2701", "PLC0415"]
 
 [tool.mypy]
 files = ["src/docxkit", "tests", "tools"]

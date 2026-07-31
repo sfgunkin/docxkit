@@ -14,6 +14,7 @@ from __future__ import annotations
 
 __all__ = [
     "AnchorError",
+    "ConversionGap",
     "DeliverableModified",
     "DocumentLocked",
     "DocxKitError",
@@ -50,6 +51,14 @@ class DeliverableModified(DocxKitError):
     someone reads and reviews in Word — accepting revisions, leaving
     others pending. Rebuilding over that silently destroys the review.
     The build stops instead, having first taken a backup.
+    """
+
+
+class ConversionGap(DocxKitError):
+    """A conversion met a construct it has no faithful rendering for.
+
+    Raised only under ``strict``; the default is to mark the gap inline
+    so one exotic element does not hide the rest of the equation.
     """
 
 

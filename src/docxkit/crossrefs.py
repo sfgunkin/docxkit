@@ -52,6 +52,7 @@ __all__ = [
     "LinkReport",
     "anchor_names",
     "audit",
+    "caption_re",
     "find_captions",
     "link",
     "unlink",
@@ -148,8 +149,14 @@ class LinkReport:
         return "\n".join(lines)
 
 
-def _caption_re(labels: tuple[str, ...]) -> re.Pattern[str]:
-    """Label + number + separator. The separator is what makes it a caption."""
+def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
+    """Label + number + separator. The separator is what makes it a caption.
+
+    THE caption definition — wordcount and export classify by it too.
+    It briefly existed in three copies that already disagreed about
+    whether "Table" counts, which is the same drift that once split the
+    glyph table between compare and ingest.
+    """
     alt = "|".join(re.escape(w) for w in labels)
     return re.compile(rf"^\s*({alt})\s+([\w.]+?)\s*[.:]\s")
 
@@ -172,7 +179,7 @@ def _next_bookmark_id(xml: str) -> int:
 def find_captions(xml: str, *,
                   labels: tuple[str, ...] = DEFAULT_LABELS) -> list[Caption]:
     """Every caption paragraph, in document order."""
-    pattern = _caption_re(labels)
+    pattern = caption_re(labels)
     out = []
     for p in PARA_RE.finditer(xml):
         text = visible_text(p.group(0)).strip()

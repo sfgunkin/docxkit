@@ -5,7 +5,11 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit crossrefs PAPER.docx [--write] [--audit]
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit locate PAPER.docx ANCHOR... | --revisions
-    docxkit text PAPER.docx [--tracked final|original]
+    docxkit text PAPER.docx [--tracked final|original] [--md]
+    docxkit count PAPER.docx [--exclude references,tables] [--limit N]
+    docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
+    docxkit figures PAPER.docx [--check]
+    docxkit smarten PAPER.docx [--write]
     docxkit lint PAPER.docx
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
@@ -44,7 +48,7 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     """Link every figure and table to its first mention, and back."""
     from . import crossrefs
     from .lint import lint_parts
-    from .package import backup, read_parts, write_docx
+    from .package import read_parts
 
     parts = read_parts(args.docx)
     doc = parts["word/document.xml"].decode("utf-8")
@@ -72,10 +76,8 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    # this writes over the author's file, so snapshot it first
-    kept = backup(args.docx, tag="pre_crossrefs")
-    write_docx(args.docx, parts)
-    print(f"  written; previous version kept at {kept.name}")
+    kept = _write_back(args.docx, parts, "pre_crossrefs")
+    print(f"  written; previous version kept at {kept}")
     return 0 if report.complete else 1
 
 
@@ -178,11 +180,147 @@ def cmd_locate(args: argparse.Namespace) -> int:
 
 def cmd_text(args: argparse.Namespace) -> int:
     """Dump visible text from one side of the tracked changes."""
+    if args.md:
+        from .export import to_markdown
+        from .package import read_parts
+        print(to_markdown(read_parts(args.docx), view=args.tracked), end="")
+        return 0
     from .revisions import text
     with zipfile.ZipFile(args.docx) as z:
         doc = z.read("word/document.xml").decode("utf-8")
     for line in text(doc, args.tracked):
         print(line)
+    return 0
+
+
+def _write_back(path: str, parts: dict[str, bytes], tag: str) -> str:
+    """Backup, then save — the one way an in-place command writes."""
+    from .package import backup, write_docx
+    kept = backup(path, tag=tag)
+    write_docx(path, parts)
+    return kept.name
+
+
+def cmd_tasks(args: argparse.Namespace) -> int:
+    """The margin comments as a work list; --check gates a submission."""
+    from .comments import set_done, threads
+    from .package import read_parts
+
+    parts = read_parts(args.docx)
+    if args.done:
+        n = set_done(parts, [i.strip() for i in args.done.split(",")])
+        if n == 0:
+            print("no comment matched those ids; nothing written")
+            return 1
+        kept = _write_back(args.docx, parts, "pre_tasks")
+        print(f"marked {n} comment(s) done; previous version kept at "
+              f"{kept}")
+        return 0
+
+    found = threads(parts)
+    open_threads = [t for t in found if not t.done]
+    print(f"{Path(args.docx).name}  ({len(found)} thread(s), "
+          f"{len(open_threads)} open)")
+    for t in found:
+        if t.done and not args.all:
+            continue
+        box = "x" if t.done else " "
+        head = f"  [{box}] #{t.comment.cid} {t.comment.author}: "
+        line = " ".join(t.comment.text.split())[:70]
+        print(head + line)
+        if t.comment.anchor:
+            print(f"        on: {' '.join(t.comment.anchor.split())[:60]!r}")
+        for r in t.replies:
+            print(f"        re: {r.author}: "
+                  f"{' '.join(r.text.split())[:60]}")
+    if args.json:
+        rows = [{
+            "cid": t.comment.cid, "author": t.comment.author,
+            "date": t.comment.date, "text": t.comment.text,
+            "anchor": t.comment.anchor, "done": t.done,
+            "replies": [{"cid": r.cid, "author": r.author, "text": r.text}
+                        for r in t.replies],
+        } for t in found]
+        Path(args.json).write_text(
+            json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.check and open_threads:
+        print(f"CHECK FAILED: {len(open_threads)} open comment thread(s) - "
+              f"a submission should carry none")
+        return 1
+    return 0
+
+
+def cmd_count(args: argparse.Namespace) -> int:
+    """Bucketed word count — the number a journal cap is phrased in."""
+    from .package import read_parts
+    from .wordcount import count
+    counts = count(read_parts(args.docx), view=args.tracked)
+    print(Path(args.docx).name)
+    for name, n in counts.as_dict().items():
+        print(f"  {name:<11}{n:>8,}")
+    print(f"  {'total':<11}{counts.total():>8,}")
+    drop = [e.strip() for e in (args.exclude or "").split(",") if e.strip()]
+    counted = counts.total(exclude=drop)
+    if drop:
+        print(f"  {'counted':<11}{counted:>8,}  "
+              f"(excluding {', '.join(drop)})")
+    # the cap applies to whatever is being counted: the exclusion set if
+    # one was given, the full total otherwise
+    if args.limit and counted > args.limit:
+        print(f"  OVER the {args.limit:,}-word limit by "
+              f"{counted - args.limit:,}")
+        return 1
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps(counts.as_dict(), indent=2), encoding="utf-8")
+    return 0
+
+
+def cmd_figures(args: argparse.Namespace) -> int:
+    """Figures and their alt text; --check gates on missing descriptions."""
+    from .figures import alt_texts
+    with zipfile.ZipFile(args.docx) as z:
+        doc = z.read("word/document.xml").decode("utf-8")
+    drawings = alt_texts(doc)
+    missing = [d for d in drawings if d.missing]
+    print(f"{Path(args.docx).name}  ({len(drawings)} drawing(s), "
+          f"{len(missing)} without alt text)")
+    for d in drawings:
+        mark = " " if not d.missing else "!"
+        where = d.caption or "(no caption window)"
+        has_alt = (d.descr or "").strip()
+        alt = f" alt: {(d.descr or '')[:50]!r}" if has_alt else ""
+        print(f"  {mark} {where[:56]}  [{d.name or d.embed or '?'}]{alt}")
+    if args.check and missing:
+        print(f"CHECK FAILED: {len(missing)} drawing(s) without alt text")
+        return 1
+    return 0
+
+
+def cmd_smarten(args: argparse.Namespace) -> int:
+    """Straight quotes to typographic ones; dry run unless --write."""
+    from .hygiene import smarten
+    from .lint import lint_parts
+    from .package import read_parts
+
+    parts = read_parts(args.docx)
+    doc = parts["word/document.xml"].decode("utf-8")
+    fixed, report = smarten(doc)
+    print(Path(args.docx).name)
+    print("  " + report.format().replace("\n", "\n  "))
+    if not args.write:
+        print("  (dry run - pass --write to save)")
+        return 0
+    if fixed == doc:
+        print("  nothing to write")
+        return 0
+    parts["word/document.xml"] = fixed.encode("utf-8")
+    if problems := lint_parts(parts):
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    kept = _write_back(args.docx, parts, "pre_smarten")
+    print(f"  written; previous version kept at {kept}")
     return 0
 
 
@@ -301,12 +439,57 @@ def main() -> None:
     p.add_argument("--tracked", choices=("final", "original"),
                    default="final",
                    help="which side of tracked changes to show")
+    p.add_argument("--md", action="store_true",
+                   help="structured markdown: headings, pipe tables, "
+                        "LaTeX equations, footnotes")
     p.set_defaults(fn=cmd_text)
+
+    p = sub.add_parser(
+        "tasks", help="margin comments as a checklist")
+    p.add_argument("docx")
+    p.add_argument("--all", action="store_true",
+                   help="show resolved threads too")
+    p.add_argument("--check", action="store_true",
+                   help="exit 1 while any thread is open (submission gate)")
+    p.add_argument("--done", metavar="ID,ID,...",
+                   help="mark these comment ids resolved and save "
+                        "(a backup is taken first)")
+    p.add_argument("--json", metavar="PATH")
+    p.set_defaults(fn=cmd_tasks)
+
+    p = sub.add_parser(
+        "count", help="word count by bucket, journal-cap style")
+    p.add_argument("docx")
+    p.add_argument("--exclude", metavar="A,B,...",
+                   help="buckets to leave out of the counted total, e.g. "
+                        "references,tables,captions,footnotes,appendix")
+    p.add_argument("--limit", type=int, metavar="N",
+                   help="with --exclude: exit 1 if the counted total "
+                        "exceeds N words")
+    p.add_argument("--tracked", choices=("final", "original"),
+                   default="final",
+                   help="which side of tracked changes to count")
+    p.add_argument("--json", metavar="PATH")
+    p.set_defaults(fn=cmd_count)
 
     p = sub.add_parser("lint",
                        help="structural checks (no Word needed)")
     p.add_argument("docx")
     p.set_defaults(fn=cmd_lint)
+
+    p = sub.add_parser(
+        "figures", help="figures and their alt text")
+    p.add_argument("docx")
+    p.add_argument("--check", action="store_true",
+                   help="exit 1 if any drawing lacks alt text")
+    p.set_defaults(fn=cmd_figures)
+
+    p = sub.add_parser(
+        "smarten", help="straight quotes -> typographic, the safe cases")
+    p.add_argument("docx")
+    p.add_argument("--write", action="store_true",
+                   help="save the result; without it this is a dry run")
+    p.set_defaults(fn=cmd_smarten)
 
     p = sub.add_parser("verify",
                        help="does Word read this back unchanged? (needs Word)")

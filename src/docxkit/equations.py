@@ -28,9 +28,11 @@ import html
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ._xml import PARA_RE, visible_text
 from .errors import AnchorError, PackageError
+from .revisions import _fragment_declarations
 
 __all__ = [
     "OMATH_RE",
@@ -43,6 +45,7 @@ __all__ = [
     "is_display",
     "latex_to_omml",
     "skeleton",
+    "to_latex",
     "tokens",
 ]
 
@@ -51,11 +54,15 @@ M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 # root and the tag is bare, but a harvested element serialized on its own
 # carries xmlns:m, and both have to match
 OMATH_RE = re.compile(r"<m:oMath\b[^>]*>.*?</m:oMath>", re.DOTALL)
-_MT_RE = re.compile(r"<m:t[^>]*>([^<]*)</m:t>")
+# public: wordcount counts equation tokens with the SAME matcher
+MT_RE = re.compile(r"<m:t[^>]*>([^<]*)</m:t>")
 # structural OMML elements — the ones that change a formula's shape
 _STRUCT = ("sSub", "sSup", "sSubSup", "nary", "f", "d", "rad", "func",
            "acc", "bar", "groupChr", "limLow", "limUpp", "m", "eqArr", "box")
 _STRUCT_RE = re.compile(r"<m:(" + "|".join(_STRUCT) + r")\b")
+# "(5)" / "(A.2)" — what a display equation carries besides its math;
+# is_display strips it and the markdown export turns it into a \tag
+EQ_NUMBER_RE = re.compile(r"\(\s*([A-Z]?\.?\d+)\s*\)")
 
 # Word ships the transform with Office; the version folder varies.
 _XSL_CANDIDATES = (
@@ -140,7 +147,7 @@ def equations(xml: str) -> list[Equation]:
 
 def tokens(omml: str) -> str:
     """The symbol stream of an equation."""
-    return html.unescape("".join(_MT_RE.findall(omml)))
+    return html.unescape("".join(MT_RE.findall(omml)))
 
 
 def skeleton(omml: str) -> str:
@@ -176,6 +183,324 @@ def clone(omml: str) -> str:
                               encoding="unicode"))
 
 
+# -------------------------------------------------------- OMML -> LaTeX -----
+# The inverse of latex_to_omml, for READING: markdown export, semantic
+# formula diffs, and loading a manuscript's math into places that speak
+# LaTeX. It does not have to be the inverse bijection — Word's XSL covers
+# constructs no manuscript here uses — but it must never drop content
+# silently: an element the walker does not know is rendered as an inline
+# [?m:tag] marker (or raises, under strict), so a gap is visible in the
+# output instead of missing from it.
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+_GREEK = {
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
+    "ε": r"\varepsilon", "ϵ": r"\epsilon", "ζ": r"\zeta", "η": r"\eta",
+    "θ": r"\theta", "ϑ": r"\vartheta", "ι": r"\iota", "κ": r"\kappa",
+    "λ": r"\lambda", "μ": r"\mu", "ν": r"\nu", "ξ": r"\xi", "π": r"\pi",
+    "ϖ": r"\varpi", "ρ": r"\rho", "ϱ": r"\varrho", "σ": r"\sigma",
+    "ς": r"\varsigma", "τ": r"\tau", "υ": r"\upsilon", "φ": r"\varphi",
+    "ϕ": r"\phi", "χ": r"\chi", "ψ": r"\psi", "ω": r"\omega",
+    "Γ": r"\Gamma", "Δ": r"\Delta", "Θ": r"\Theta", "Λ": r"\Lambda",
+    "Ξ": r"\Xi", "Π": r"\Pi", "Σ": r"\Sigma", "Υ": r"\Upsilon",
+    "Φ": r"\Phi", "Ψ": r"\Psi", "Ω": r"\Omega",
+}
+
+_SYMBOLS = {
+    "×": r"\times", "⋅": r"\cdot", "∗": r"\ast", "±": r"\pm",
+    "∓": r"\mp", "÷": r"\div", "∘": r"\circ",
+    "≤": r"\le", "≥": r"\ge", "≠": r"\ne", "≈": r"\approx",
+    "≃": r"\simeq", "≅": r"\cong", "≡": r"\equiv", "∝": r"\propto",
+    "∼": r"\sim", "≪": r"\ll", "≫": r"\gg",
+    "∞": r"\infty", "∂": r"\partial", "∇": r"\nabla",
+    "→": r"\to", "⟶": r"\longrightarrow", "←": r"\leftarrow",
+    "↔": r"\leftrightarrow", "⇒": r"\Rightarrow", "⇐": r"\Leftarrow",
+    "⇔": r"\Leftrightarrow", "↦": r"\mapsto",
+    "∈": r"\in", "∉": r"\notin", "∋": r"\ni", "⊂": r"\subset",
+    "⊆": r"\subseteq", "⊃": r"\supset", "⊇": r"\supseteq",
+    "∪": r"\cup", "∩": r"\cap", "∅": r"\emptyset", "∖": r"\setminus",
+    "∀": r"\forall", "∃": r"\exists", "¬": r"\neg",
+    "∧": r"\wedge", "∨": r"\vee", "⊕": r"\oplus", "⊗": r"\otimes",
+    "⋯": r"\cdots", "…": r"\dots", "⋮": r"\vdots", "⋱": r"\ddots",
+    "ℝ": r"\mathbb{R}", "ℤ": r"\mathbb{Z}", "ℕ": r"\mathbb{N}",
+    "ℚ": r"\mathbb{Q}", "ℂ": r"\mathbb{C}", "𝔼": r"\mathbb{E}",
+    "ℓ": r"\ell", "ℏ": r"\hbar", "°": r"^{\circ}", "′": "'", "″": "''",
+    # TeX specials that appear as literal characters in m:t
+    "%": r"\%", "&": r"\&", "#": r"\#", "$": r"\$", "_": r"\_",
+    "{": r"\{", "}": r"\}",
+    # Word's glyphs for plain operators
+    "−": "-", "‐": "-", "–": "-",
+    # invisible operators (times, function application, plus) and NBSP
+    "⁢": "", "⁡": "", "⁤": "", " ": " ",
+}
+
+_KNOWN_FUNCS = {
+    "sin", "cos", "tan", "cot", "sec", "csc", "sinh", "cosh", "tanh",
+    "coth", "arcsin", "arccos", "arctan", "exp", "ln", "log", "lim",
+    "min", "max", "arg", "det", "dim", "gcd", "sup", "inf", "Pr",
+}
+
+_NARY = {"∑": r"\sum", "∏": r"\prod", "∐": r"\coprod", "∫": r"\int",
+         "∬": r"\iint", "∭": r"\iiint", "∮": r"\oint", "⋃": r"\bigcup",
+         "⋂": r"\bigcap", "⋁": r"\bigvee", "⋀": r"\bigwedge",
+         "⨁": r"\bigoplus", "⨂": r"\bigotimes"}
+
+_FENCES = {"(": "(", ")": ")", "[": "[", "]": "]",
+           "{": r"\{", "}": r"\}", "|": "|", "‖": r"\|",
+           "⟨": r"\langle", "⟩": r"\rangle", "⌊": r"\lfloor",
+           "⌋": r"\rfloor", "⌈": r"\lceil", "⌉": r"\rceil", "": "."}
+
+_ACCENTS = {"̂": r"\hat", "̃": r"\tilde", "̄": r"\bar",
+            "¯": r"\bar", "̅": r"\bar", "̇": r"\dot",
+            "̈": r"\ddot", "̆": r"\breve", "̌": r"\check",
+            "⃗": r"\vec", "→": r"\vec", "̀": r"\grave",
+            "́": r"\acute"}
+
+
+def _char(ch: str) -> str:
+    if ch in _SYMBOLS:
+        sym = _SYMBOLS[ch]
+        # a trailing space stops "\le x" fusing into the command "\lex"
+        return sym + " " if sym.startswith("\\") and sym[-1].isalpha() \
+            else sym
+    if ch in _GREEK:
+        return _GREEK[ch] + " "
+    if ord(ch) >= 0x1d400:
+        # a math-alphanumeric glyph (𝑥, 𝛽): Unicode records what letter
+        # it styles, so decompose and map the base letter instead
+        import unicodedata
+        decomp = unicodedata.decomposition(ch)
+        if decomp.startswith("<font> "):
+            return _char(chr(int(decomp.split()[1], 16)))
+    return ch
+
+
+def _text(raw: str) -> str:
+    return "".join(_char(c) for c in raw)
+
+
+def _local(el: Any) -> str:
+    tag = str(el.tag)
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _mval(el: Any, path: str) -> str | None:
+    """The ``m:val`` of a property child, or None if absent."""
+    hit = el.find("/".join(f"{{{M_NS}}}{p}" for p in path.split("/")))
+    return None if hit is None else hit.get(f"{{{M_NS}}}val")
+
+
+class _Walker:
+    def __init__(self) -> None:
+        self.gaps: list[str] = []
+
+    def children(self, el: Any) -> str:
+        return "".join(self.walk(child) for child in el)
+
+    def arg(self, el: Any, name: str) -> str:
+        hit = el.find(f"{{{M_NS}}}{name}")
+        return "{" + (self.children(hit) if hit is not None else "") + "}"
+
+    def bare(self, el: Any, name: str) -> str:
+        hit = el.find(f"{{{M_NS}}}{name}")
+        return self.children(hit) if hit is not None else ""
+
+    def walk(self, el: Any) -> str:
+        name = _local(el)
+        ns = el.tag.rsplit("}", 1)[0].lstrip("{") if "}" in el.tag else ""
+        if ns == _W_NS:
+            # a redline's equation wraps math in w:ins/w:del: render the
+            # FINAL view (insertions kept, deletions dropped) rather than
+            # silently losing whatever sat inside the wrapper
+            if name == "t":
+                return _text(el.text or "")
+            if name in ("ins", "moveTo", "r", "p", "smartTag"):
+                return self.children(el)
+            return ""              # del/moveFrom, bookmarks, proofErr...
+        method = getattr(self, "e_" + name, None)
+        if method is not None:
+            return str(method(el))
+        if name.endswith("Pr") or name == "ctrlPr":
+            return ""                          # properties are not content
+        self.gaps.append(name)
+        return rf"\text{{[?m:{name}]}}" + self.children(el)
+
+    # --- leaves ------------------------------------------------------------
+    def e_t(self, el: Any) -> str:
+        return _text(el.text or "")
+
+    def e_r(self, el: Any) -> str:
+        body = "".join(_text(t.text or "")
+                       for t in el.findall(f"{{{M_NS}}}t"))
+        rpr = el.find(f"{{{M_NS}}}rPr")
+        upright = rpr is not None and (
+            rpr.find(f"{{{M_NS}}}nor") is not None
+            or _mval(el, "rPr/sty") == "p")
+        if upright and body.strip():
+            return rf"\text{{{body}}}"
+        return body
+
+    # --- structures --------------------------------------------------------
+    def e_oMath(self, el: Any) -> str:
+        return self.children(el)
+
+    def e_oMathPara(self, el: Any) -> str:
+        return self.children(el)
+
+    def e_f(self, el: Any) -> str:
+        kind = _mval(el, "fPr/type")
+        num, den = self.arg(el, "num"), self.arg(el, "den")
+        if kind in ("lin", "skw"):
+            return f"{num}/{den}"
+        if kind == "noBar":
+            return f"{{{num[1:-1]} \\atop {den[1:-1]}}}"
+        return rf"\frac{num}{den}"
+
+    def e_sSup(self, el: Any) -> str:
+        return self.arg(el, "e") + "^" + self.arg(el, "sup")
+
+    def e_sSub(self, el: Any) -> str:
+        return self.arg(el, "e") + "_" + self.arg(el, "sub")
+
+    def e_sSubSup(self, el: Any) -> str:
+        return (self.arg(el, "e") + "_" + self.arg(el, "sub")
+                + "^" + self.arg(el, "sup"))
+
+    def e_sPre(self, el: Any) -> str:
+        return ("{}_" + self.arg(el, "sub") + "^" + self.arg(el, "sup")
+                + self.arg(el, "e"))
+
+    def e_rad(self, el: Any) -> str:
+        hide = _mval(el, "radPr/degHide")
+        deg = self.bare(el, "deg")
+        e = self.arg(el, "e")
+        if hide == "1" or not deg.strip():
+            return rf"\sqrt{e}"
+        return rf"\sqrt[{deg}]{e}"
+
+    def e_nary(self, el: Any) -> str:
+        op = _NARY.get(_mval(el, "naryPr/chr") or "∫", r"\int")
+        sub, sup = self.bare(el, "sub"), self.bare(el, "sup")
+        out = op
+        if sub.strip() and _mval(el, "naryPr/subHide") != "1":
+            out += f"_{{{sub}}}"
+        if sup.strip() and _mval(el, "naryPr/supHide") != "1":
+            out += f"^{{{sup}}}"
+        return out + " " + self.arg(el, "e")
+
+    def e_d(self, el: Any) -> str:
+        # an unmapped fence renders as itself: possibly odd TeX, but
+        # visibly odd, where a silent "(" would claim a bracket the
+        # equation never had
+        raw_beg = _mval(el, "dPr/begChr") or "("
+        raw_end = _mval(el, "dPr/endChr") or ")"
+        beg = _FENCES.get(raw_beg, raw_beg)
+        end = _FENCES.get(raw_end, raw_end)
+        sep = _mval(el, "dPr/sepChr") or "|"
+        inner = rf" \middle{sep} ".join(
+            self.children(e) for e in el.findall(f"{{{M_NS}}}e")) \
+            if len(el.findall(f"{{{M_NS}}}e")) > 1 \
+            else self.bare(el, "e")
+        return rf"\left{beg} {inner} \right{end}"
+
+    def e_func(self, el: Any) -> str:
+        fname = self.bare(el, "fName").strip()
+        if fname in _KNOWN_FUNCS:
+            fname = "\\" + fname
+        elif fname and re.fullmatch(r"[A-Za-z]+", fname):
+            fname = rf"\operatorname{{{fname}}}"
+        return fname + " " + self.arg(el, "e")
+
+    def e_acc(self, el: Any) -> str:
+        mark = _ACCENTS.get(_mval(el, "accPr/chr") or "̂", r"\hat")
+        return mark + self.arg(el, "e")
+
+    def e_bar(self, el: Any) -> str:
+        pos = _mval(el, "barPr/pos")
+        cmd = r"\overline" if pos == "top" else r"\underline"
+        return cmd + self.arg(el, "e")
+
+    def e_groupChr(self, el: Any) -> str:
+        chr_ = _mval(el, "groupChrPr/chr") or "⏟"
+        if chr_ == "⏟":
+            return r"\underbrace" + self.arg(el, "e")
+        if chr_ == "⏞":
+            return r"\overbrace" + self.arg(el, "e")
+        pos = _mval(el, "groupChrPr/pos")
+        cmd = r"\overset" if pos == "top" else r"\underset"
+        return f"{cmd}{{{_text(chr_)}}}" + self.arg(el, "e")
+
+    def e_limLow(self, el: Any) -> str:
+        base = self.bare(el, "e").strip()
+        low = self.bare(el, "lim")
+        # "lim" under "n -> inf" is the operator taking its limit, which
+        # LaTeX writes as \lim_{...}; anything else is a generic underset
+        if base.lstrip("\\") in _KNOWN_FUNCS:
+            return rf"\{base.lstrip(chr(92))}_{{{low}}}"
+        return rf"\underset{{{low}}}{{{base}}}"
+
+    def e_limUpp(self, el: Any) -> str:
+        return (rf"\overset{{{self.bare(el, 'lim')}}}"
+                f"{{{self.bare(el, 'e')}}}")
+
+    def e_m(self, el: Any) -> str:
+        rows = []
+        for mr in el.findall(f"{{{M_NS}}}mr"):
+            rows.append(" & ".join(self.children(e)
+                                   for e in mr.findall(f"{{{M_NS}}}e")))
+        body = r" \\ ".join(rows)
+        return rf"\begin{{matrix}} {body} \end{{matrix}}"
+
+    def e_eqArr(self, el: Any) -> str:
+        lines = [self.children(e) for e in el.findall(f"{{{M_NS}}}e")]
+        body = r" \\ ".join(lines)
+        return rf"\begin{{aligned}} {body} \end{{aligned}}"
+
+    def e_box(self, el: Any) -> str:
+        return self.bare(el, "e")
+
+    def e_borderBox(self, el: Any) -> str:
+        return r"\boxed" + self.arg(el, "e")
+
+    def e_phant(self, el: Any) -> str:
+        return r"\phantom" + self.arg(el, "e")
+
+    def e_e(self, el: Any) -> str:
+        return self.children(el)
+
+
+def to_latex(omml: str, *, strict: bool = False) -> str:
+    """Render an ``m:oMath`` (or a whole equation slice) as LaTeX.
+
+    Built for reading — markdown export, formula diffs — not for a
+    guaranteed round-trip. A construct with no rendering becomes an
+    inline ``[?m:tag]`` marker so it cannot vanish silently; `strict`
+    raises :class:`~docxkit.errors.ConversionGap` instead. Regular
+    ``w:r`` runs inside the math (comment anchors, bookmarks) contribute
+    nothing, matching how Word renders them.
+    """
+    from lxml import etree
+
+    from .errors import ConversionGap
+
+    # a slice out of document.xml declares no namespaces of its own, and
+    # a redline's math carries prefixes like w16du that even a full list
+    # would chase forever — the placeholder-URI trick from revisions
+    # covers whatever the fragment actually uses
+    wrapped = f"<x {_fragment_declarations(omml)}>{omml}</x>"
+    root = etree.fromstring(wrapped.encode("utf-8"))
+    walker = _Walker()
+    out = walker.children(root)
+    if strict and walker.gaps:
+        raise ConversionGap(
+            f"no LaTeX rendering for m:{', m:'.join(sorted(set(walker.gaps)))}"
+            f" in equation {tokens(omml)[:60]!r}")
+    out = re.sub(r"  +", " ", out)
+    # the guard space a command needs before a letter is noise before }
+    return re.sub(r" +}", "}", out).strip()
+
+
 def is_display(para_xml: str) -> bool:
     """True if a paragraph is a display equation.
 
@@ -188,7 +513,7 @@ def is_display(para_xml: str) -> bool:
     # strip the maths first: visible_text includes m:t, so leaving it in
     # would make every display equation look like a paragraph of prose
     prose = visible_text(OMATH_RE.sub("", para_xml))
-    without_number = re.sub(r"\(\s*[A-Z]?\.?\d+\s*\)", "", prose)
+    without_number = EQ_NUMBER_RE.sub("", prose)
     return not without_number.strip()
 
 

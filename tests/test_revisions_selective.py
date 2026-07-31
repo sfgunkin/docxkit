@@ -1,0 +1,105 @@
+"""Selective accept/reject: apply the noise, keep the substance tracked."""
+from __future__ import annotations
+
+from conftest import NS, para, para_mark_ins, run
+
+from docxkit.revisions import (
+    accept,
+    by_author,
+    counts,
+    reject,
+    whitespace_only,
+)
+
+
+def doc(body: str) -> str:
+    return f"<w:document {NS}><w:body>{body}</w:body></w:document>"
+
+
+def ins_by(author: str, text: str, rid: int) -> str:
+    return (f'<w:ins w:id="{rid}" w:author="{author}" '
+            f'w:date="2026-07-30T00:00:00Z">{run(text)}</w:ins>')
+
+
+def del_by(author: str, text: str, rid: int) -> str:
+    return (f'<w:del w:id="{rid}" w:author="{author}" '
+            f'w:date="2026-07-30T00:00:00Z">'
+            f"<w:r><w:delText>{text}</w:delText></w:r></w:del>")
+
+
+MIXED = doc(para(run("Base "),
+                 ins_by("Alice", "hers ", 1),
+                 ins_by("Bob", "his ", 2),
+                 del_by("Alice", "gone", 3),
+                 run(" tail.")))
+
+
+def test_accept_by_author_leaves_the_other_tracked():
+    out = accept(MIXED, where=by_author("Alice"))
+    # Alice's insertion is now plain text, her deletion applied
+    assert "hers" in out and "<w:delText>gone" not in out
+    # Bob's insertion is STILL tracked
+    assert counts(out) == (1, 0)
+    assert 'w:author="Bob"' in out
+
+
+def test_reject_by_author_drops_hers_and_keeps_his_pending():
+    out = reject(MIXED, where=by_author("Alice"))
+    assert "hers" not in out
+    assert "gone" in out and "<w:delText>" not in out   # restored to w:t
+    assert counts(out) == (1, 0)                        # Bob still pending
+
+
+def test_unselected_deletions_keep_their_deltext_on_reject():
+    # the global delText->t conversion would de-track Bob's deletion
+    # even though the predicate left it pending
+    body = doc(para(run("A "), del_by("Alice", "hers", 1),
+                    del_by("Bob", "his", 2)))
+    out = reject(body, where=by_author("Alice"))
+    assert "hers" in out and "<w:delText>his</w:delText>" in out
+
+
+def test_whitespace_only_accepts_respacing_and_nothing_else():
+    body = doc(para(run("Word"),
+                    ins_by("R1", " ", 1),          # respacing noise
+                    ins_by("R1", "substance", 2),
+                    del_by("R1", " ", 3)))
+    out = accept(body, where=whitespace_only)
+    assert counts(out) == (1, 0)
+    assert "substance" in out and 'w:author="R1"' in out
+
+
+def test_a_paragraph_mark_is_not_whitespace():
+    # accepting an inserted paragraph mark merges paragraphs — never a
+    # trivial change, so whitespace_only must not select it
+    body = doc(para(run("First")) + para_mark_ins())
+    out = accept(body, where=whitespace_only)
+    assert out.count("<w:p ") + out.count("<w:p>") == 2
+    assert "<w:ins " in out or "<w:ins/" in out         # still pending
+
+
+def test_paragraph_mark_merges_when_its_author_is_selected():
+    body = doc(para(run("First")) + para_mark_ins())
+    out = reject(body, where=by_author("Revision"))
+    # rejecting the inserted mark joins the paragraphs back together
+    assert out.count("<w:p ") + out.count("<w:p>") == 1
+
+
+def test_moves_are_never_touched_under_a_predicate():
+    body = doc(
+        para('<w:moveFrom w:id="1" w:author="Alice" '
+             'w:date="2026-07-30T00:00:00Z">'
+             "<w:r><w:delText>moved text</w:delText></w:r></w:moveFrom>")
+        + para('<w:moveTo w:id="2" w:author="Alice" '
+               'w:date="2026-07-30T00:00:00Z">'
+               + run("moved text") + "</w:moveTo>"))
+    out = accept(body, where=by_author("Alice"))
+    assert "<w:moveFrom" in out and "<w:moveTo" in out
+    # the full pass still applies them
+    full = accept(body)
+    assert "<w:moveFrom" not in full and "<w:moveTo" not in full
+
+
+def test_no_predicate_is_the_old_full_pass():
+    assert accept(MIXED) == accept(MIXED, where=None)
+    assert counts(accept(MIXED)) == (0, 0)

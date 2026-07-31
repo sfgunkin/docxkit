@@ -28,6 +28,8 @@ accept-all hung for 25 minutes.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from ._xml import PARA_RE, delta_text, matching_close, visible_text
@@ -35,12 +37,16 @@ from ._xml import PARA_RE, delta_text, matching_close, visible_text
 __all__ = [
     "FINAL",
     "ORIGINAL",
+    "Revision",
     "accept",
+    "by_author",
     "counts",
     "reject",
     "revision_text",
     "spans",
     "text",
+    "view_transform",
+    "whitespace_only",
 ]
 
 FINAL = "final"        # revisions accepted: what the document becomes
@@ -145,6 +151,47 @@ def _content_elements(root: Any, tag: str) -> list[Any]:
             and el.getparent().tag != W + "rPr"]
 
 
+@dataclass(frozen=True)
+class Revision:
+    """What a selective accept/reject predicate gets to decide on."""
+
+    kind: str      # "ins" | "del" | "paragraph-mark"
+    author: str
+    date: str
+    text: str      # the text the revision spans; "" for a paragraph mark
+
+
+Where = Callable[[Revision], bool]
+
+_M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+
+
+def _info(el: Any, kind: str) -> Revision:
+    text = "".join(t.text or "" for t in el.iter(
+        W + "t", W + "delText", _M + "t"))
+    return Revision(kind=kind,
+                    author=el.get(W + "author", ""),
+                    date=el.get(W + "date", ""),
+                    text=text)
+
+
+def by_author(*names: str) -> Where:
+    """Predicate: the revision was made by one of `names`."""
+    wanted = set(names)
+    return lambda r: r.author in wanted
+
+
+def whitespace_only(r: Revision) -> bool:
+    """Predicate: an ins/del whose entire text is whitespace.
+
+    The respacing noise a Compare with whitespace ON produces — safe to
+    accept in bulk so the author reviews only substance. A paragraph
+    mark is NOT whitespace by this rule: accepting one merges paragraphs,
+    which is never a trivial change.
+    """
+    return r.kind in ("ins", "del") and r.text != "" and r.text.strip() == ""
+
+
 def _unwrap(el: Any) -> None:
     parent = el.getparent()
     at = list(parent).index(el)
@@ -154,12 +201,14 @@ def _unwrap(el: Any) -> None:
     parent.remove(el)
 
 
-def _has_mark_flag(para: Any, tags: tuple[str, ...]) -> bool:
+def _mark_flag(para: Any, tags: tuple[str, ...]) -> Any | None:
+    """The paragraph-mark revision element inside ``pPr/rPr``, if any."""
     ppr = para.find(W + "pPr")
     rpr = None if ppr is None else ppr.find(W + "rPr")
     if rpr is None:
-        return False
-    return any(rpr.find(W + t) is not None for t in tags)
+        return None
+    return next((el for t in tags
+                 if (el := rpr.find(W + t)) is not None), None)
 
 
 def _merge_into_next(para: Any) -> None:
@@ -189,7 +238,7 @@ def _has_revisions(xml: str) -> bool:
                 "w:moveFrom", "w:moveTo"))
 
 
-def _simulate(xml: str, mode: str) -> str:
+def _simulate(xml: str, mode: str, where: Where | None = None) -> str:
     # A document with no revisions is its own accepted AND rejected view,
     # so there is nothing to simulate. Worth checking first: most
     # manuscripts are clean, and parsing a 1.7MB part to discover that
@@ -200,42 +249,81 @@ def _simulate(xml: str, mode: str) -> str:
     vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \
         if mode == FINAL else (("ins", "moveTo"), ("del", "moveFrom"))
 
+    def wants(el: Any, kind: str) -> bool:
+        return where is None or where(_info(el, kind))
+
     for tag in vanish:
         for el in _content_elements(root, tag):
-            el.getparent().remove(el)
+            if where is not None and tag in ("moveFrom", "moveTo"):
+                continue               # moves are a pair; see accept()
+            if wants(el, tag):
+                el.getparent().remove(el)
     for tag in keep:
         for el in _content_elements(root, tag):
+            if where is not None and tag in ("moveFrom", "moveTo"):
+                continue
+            if not wants(el, tag):
+                continue
+            if mode == ORIGINAL:
+                # restore this deletion's text to ordinary runs; global
+                # conversion would also de-track the deletions a
+                # predicate chose to LEAVE
+                for dt in list(el.iter(W + "delText")):
+                    dt.tag = W + "t"
             _unwrap(el)
-    if mode == ORIGINAL:
-        for dt in list(root.iter(W + "delText")):
-            dt.tag = W + "t"
-    for tag in _RANGE_MARKERS:
-        for el in list(root.iter(W + tag)):
-            el.getparent().remove(el)
+    if where is None:
+        for tag in _RANGE_MARKERS:
+            for el in list(root.iter(W + tag)):
+                el.getparent().remove(el)
     for para in list(root.iter(W + "p")):
-        if _has_mark_flag(para, vanish):
+        flag = _mark_flag(para, vanish)
+        if flag is not None and wants(flag, "paragraph-mark"):
             _merge_into_next(para)
     return _serialize(root, wrapped)
 
 
-def accept(xml: str) -> str:
-    """The document with every revision accepted."""
-    return _simulate(xml, FINAL)
+def accept(xml: str, *, where: Where | None = None) -> str:
+    """The document with revisions accepted.
+
+    `where` accepts selectively: only revisions the predicate approves
+    are applied and the rest stay tracked, which is the author-round
+    workflow — accept the noise (:func:`whitespace_only`, or one
+    author's edits via :func:`by_author`), leave the substance pending
+    for a human. Under a predicate MOVES are never touched: a
+    ``moveFrom`` and its ``moveTo`` are one revision in two places, and
+    applying one side alone rewrites the document into something neither
+    version says. Accept or reject moves with the full pass.
+    """
+    return _simulate(xml, FINAL, where)
 
 
-def reject(xml: str) -> str:
-    """The document with every revision rejected.
+def reject(xml: str, *, where: Where | None = None) -> str:
+    """The document with revisions rejected.
 
     Insertions are dropped and deleted text is restored to ordinary runs,
-    which is what makes the result readable as normal text.
+    which is what makes the result readable as normal text. `where`
+    rejects selectively, with the same move caveat as :func:`accept`.
     """
-    return _simulate(xml, ORIGINAL)
+    return _simulate(xml, ORIGINAL, where)
+
+
+def view_transform(view: str) -> Callable[[str], str]:
+    """:func:`accept` for ``final``, :func:`reject` for ``original``.
+
+    The one place the view names are validated — four modules used to
+    carry their own copy of this dispatch, which is one modules'-worth
+    of drift per error message.
+    """
+    if view == FINAL:
+        return accept
+    if view == ORIGINAL:
+        return reject
+    raise ValueError(f"view must be {FINAL!r} or {ORIGINAL!r}")
 
 
 def text(xml: str, view: str = FINAL) -> list[str]:
     """Visible text per paragraph, on one side of the tracked changes."""
-    if view not in (FINAL, ORIGINAL):
-        raise ValueError(f"view must be {FINAL!r} or {ORIGINAL!r}")
+    view_transform(view)                # validates; _simulate takes the name
     out = []
     for m in PARA_RE.finditer(_simulate(xml, view)):
         if (t := visible_text(m.group(0))).strip():

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import revisions as _revisions
-from ._xml import delta_text, normalize_glyphs, set_run_text
+from ._xml import delta_text, normalize_glyphs, set_run_text, visible_text
 from .errors import PackageError, ScaffoldMissing
 from .find import para_text_at, table_index_at, table_spans
 
@@ -29,12 +29,16 @@ __all__ = [
     "ALL",
     "COALESCE",
     "GENERIC",
+    "Comment",
     "RevisionContext",
+    "Thread",
     "annotate",
     "match",
     "read_all",
     "reclassify",
     "remove",
+    "set_done",
+    "threads",
 ]
 
 GENERIC = "Revision (unclassified)"
@@ -430,18 +434,180 @@ def _drop_reference_run(doc: str, cid: str) -> str:
     return "".join(out)
 
 
-def read_all(parts: dict[str, bytes]) -> list[tuple[str, str, str]]:
-    """(id, author, text) for every comment, in document order."""
-    com = parts.get("word/comments.xml", b"").decode("utf-8")
+# ----------------------------------------------------- threads / tasks ------
+# An author round arrives as margin comments; working through them means
+# reading each one next to what it anchors, and knowing which are already
+# resolved. The pieces live in three parts, chained the same way removal
+# has to walk them: the definition in comments.xml, the done flag and the
+# reply link in commentsExtended (keyed by the LAST paragraph's paraId of
+# the comment body, not by the comment id), and the anchor range in
+# document.xml.
+
+
+@dataclass(frozen=True)
+class Comment:
+    """One comment, with everything the checklist view needs."""
+
+    cid: str
+    author: str
+    initials: str
+    date: str
+    text: str
+    done: bool
+    para_id: str             # last body paragraph's w14:paraId
+    parent_cid: str | None   # the comment this one replies to
+    anchor: str              # visible text of the anchored range, "" if a
+    #                          point comment
+
+
+@dataclass(frozen=True)
+class Thread:
+    """A root comment and its replies, in document order."""
+
+    comment: Comment
+    replies: tuple[Comment, ...]
+
+    @property
+    def done(self) -> bool:
+        """Resolved means the ROOT is marked done — how Word's UI works;
+        replies carry flags too but the thread's state is the root's."""
+        return self.comment.done
+
+
+_EXT_RE = re.compile(r"<w15:commentEx [^/>]*/>")
+_W15_ATTR = {
+    "para": re.compile(r'w15:paraId="([0-9A-Fa-f]+)"'),
+    "parent": re.compile(r'w15:paraIdParent="([0-9A-Fa-f]+)"'),
+    "done": re.compile(r'w15:done="(\d)"'),
+}
+
+
+def _comment_records(com: str) -> list[dict[str, str]]:
     out = []
     for m in re.finditer(r"<w:comment ([^>]*)>(.*?)</w:comment>", com,
                          re.DOTALL):
-        cid = re.search(r'w:id="(\d+)"', m.group(1))
-        author = re.search(r'w:author="([^"]*)"', m.group(1))
-        out.append((cid.group(1) if cid else "",
-                    author.group(1) if author else "",
-                    delta_text(m.group(2)).strip()))
+        def attr(name: str, head: str = m.group(1)) -> str:
+            a = re.search(rf'w:{name}="([^"]*)"', head)
+            return a.group(1) if a else ""
+        para_ids = _PARA_ID_RE.findall(m.group(2))
+        out.append({
+            "cid": attr("id"), "author": attr("author"),
+            "initials": attr("initials"), "date": attr("date"),
+            "text": delta_text(m.group(2)).strip(),
+            "para_id": para_ids[-1] if para_ids else "",
+        })
     return out
+
+
+def threads(parts: dict[str, bytes]) -> list[Thread]:
+    """Every comment thread, roots in document order.
+
+    The anchor text is read from the range between
+    ``commentRangeStart/End`` in the document — a comment placed at a
+    point has no range and reads back with an empty anchor. Roots are
+    ordered by where their anchor sits in the document, which is the
+    order a reader works through them, not the id order Word assigned.
+    """
+    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    if not com:
+        return []
+    doc = parts["word/document.xml"].decode("utf-8")
+    ext = parts.get("word/commentsExtended.xml", b"").decode("utf-8")
+
+    flags: dict[str, tuple[bool, str | None]] = {}
+    for m in _EXT_RE.finditer(ext):
+        pid = _W15_ATTR["para"].search(m.group(0))
+        if pid is None:
+            continue
+        parent = _W15_ATTR["parent"].search(m.group(0))
+        done_m = _W15_ATTR["done"].search(m.group(0))
+        flags[pid.group(1)] = (bool(done_m and done_m.group(1) == "1"),
+                               parent.group(1) if parent else None)
+
+    records = _comment_records(com)
+    by_para = {r["para_id"]: r["cid"] for r in records if r["para_id"]}
+
+    comments: dict[str, Comment] = {}
+    position: dict[str, int] = {}
+    for r in records:
+        done, parent_pid = flags.get(r["para_id"], (False, None))
+        cid = r["cid"]
+        anchor_m = re.search(f'<w:commentRangeStart w:id="{cid}"/>', doc)
+        anchor = ""
+        if anchor_m:
+            close = doc.find(f'<w:commentRangeEnd w:id="{cid}"/>',
+                             anchor_m.end())
+            if close != -1:
+                anchor = visible_text(doc[anchor_m.end():close]).strip()
+            position[cid] = anchor_m.start()
+        else:
+            ref = re.search(f'<w:commentReference w:id="{cid}"/>', doc)
+            position[cid] = ref.start() if ref else len(doc)
+        comments[cid] = Comment(
+            cid=cid, author=r["author"], initials=r["initials"],
+            date=r["date"], text=r["text"], done=done,
+            para_id=r["para_id"],
+            parent_cid=by_para.get(parent_pid or ""), anchor=anchor)
+
+    roots = [c for c in comments.values() if c.parent_cid is None]
+    roots.sort(key=lambda c: position.get(c.cid, len(doc)))
+    out = []
+    for root in roots:
+        replies = tuple(sorted(
+            (c for c in comments.values() if c.parent_cid == root.cid),
+            key=lambda c: (c.date, int(c.cid) if c.cid.isdigit() else 0)))
+        out.append(Thread(comment=root, replies=replies))
+    return out
+
+
+def set_done(parts: dict[str, bytes], ids: Iterable[str],
+             *, done: bool = True) -> int:
+    """Mark comments resolved (or reopen them) by comment id.
+
+    Writes the ``w15:done`` flag in commentsExtended — the same bit
+    Word's Resolve button sets — so the file opens in Word with the
+    threads greyed out. Returns how many entries changed.
+    """
+    wanted = {str(i) for i in ids}
+    if not wanted:
+        return 0
+    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    if "word/commentsExtended.xml" not in parts:
+        raise PackageError(
+            "no commentsExtended.xml - the package carries no done flags "
+            "to set (Word writes that part with the first comment)")
+    ext = parts["word/commentsExtended.xml"].decode("utf-8")
+
+    para_ids = {r["para_id"] for r in _comment_records(com)
+                if r["cid"] in wanted and r["para_id"]}
+    value = "1" if done else "0"
+    changed = 0
+
+    def sub(m: re.Match[str]) -> str:
+        nonlocal changed
+        el = m.group(0)
+        pid = _W15_ATTR["para"].search(el)
+        if pid is None or pid.group(1) not in para_ids:
+            return el
+        changed += 1
+        if _W15_ATTR["done"].search(el):
+            return _W15_ATTR["done"].sub(f'w15:done="{value}"', el)
+        return el[:-2] + f' w15:done="{value}"/>'
+
+    parts["word/commentsExtended.xml"] = _EXT_RE.sub(sub, ext).encode("utf-8")
+    return changed
+
+
+def read_all(parts: dict[str, bytes]) -> list[tuple[str, str, str]]:
+    """(id, author, text) for every comment, in part order.
+
+    The compact view; :func:`threads` gives replies, done flags and
+    anchors. Both read through the same parser, so they cannot disagree
+    about what a comment's text is.
+    """
+    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    return [(r["cid"], r["author"], r["text"])
+            for r in _comment_records(com)]
 
 
 def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:

@@ -11,13 +11,21 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from ._xml import PARA_RE, delta_text, normalize_glyphs, visible_text
+from ._xml import (
+    PARA_RE,
+    delta_text,
+    matching_close,
+    normalize_glyphs,
+    visible_text,
+)
 from .errors import AnchorError
 
 __all__ = [
     "P_RE",
+    "body_elements",
     "delta_text_of",
     "edit_para",
+    "heading_level",
     "para_slice",
     "para_text_at",
     "paragraphs",
@@ -100,3 +108,59 @@ def table_spans(xml: str, expect: int | None = None) -> list[tuple[int, int]]:
 def table_index_at(spans: list[tuple[int, int]], pos: int) -> int | None:
     """Index of the table containing `pos`, or None if outside every table."""
     return next((i for i, (s, e) in enumerate(spans) if s <= pos < e), None)
+
+
+_OUTLINE_RE = re.compile(r'<w:outlineLvl w:val="(\d+)"')
+_PSTYLE_RE = re.compile(r'<w:pStyle w:val="([^"]+)"')
+# Heading1..9 and the German ids Word writes as berschrift1..9 (the
+# style id drops the umlaut); a digitless Heading-family style still IS
+# a heading, just an unlevelled one
+_HEADING_STYLE_RE = re.compile(r"^(?:Heading|berschrift)(\d*)")
+
+
+def heading_level(para_xml: str) -> int | None:
+    """1..6 if the paragraph is a heading, else None — decided ONCE.
+
+    ``outlineLvl`` wins when present (it is what Word's navigation pane
+    believes); otherwise the paragraph style: Title is 1, Subtitle 2,
+    Heading*N* is N. Both the word-count buckets and the markdown
+    ``#`` depth answer this question, and two detectors drifting apart
+    would count a paragraph as a heading while rendering it as prose.
+    """
+    if (m := _OUTLINE_RE.search(para_xml)) is not None:
+        return min(int(m.group(1)) + 1, 6)
+    if (m := _PSTYLE_RE.search(para_xml)) is not None:
+        style = m.group(1)
+        if style == "Title":
+            return 1
+        if style == "Subtitle":
+            return 2
+        if (h := _HEADING_STYLE_RE.match(style)) is not None:
+            return min(int(h.group(1) or 1), 6)
+    return None
+
+
+def body_elements(xml: str) -> list[tuple[str, int, int]]:
+    """``("p" | "tbl", start, end)`` for the body, in document order.
+
+    The walk anything reading a document linearly needs: top-level tables
+    as single units, paragraphs OUTSIDE tables individually. Iterating
+    ``PARA_RE`` alone double-counts, because a table's cells are made of
+    paragraphs too — the word-count and markdown passes both need this
+    and must not disagree about it.
+
+    Spans are depth-counted (unlike :func:`table_spans`, kept as-is for
+    offset lookups), so a nested table rides along inside its outer one
+    rather than truncating it.
+    """
+    tables: list[tuple[int, int]] = []
+    pos = 0
+    while (at := xml.find("<w:tbl>", pos)) != -1:
+        end = matching_close(xml, at + len("<w:tbl>"), "tbl")
+        tables.append((at, end))
+        pos = end
+    out: list[tuple[str, int, int]] = [("tbl", s, e) for s, e in tables]
+    out += [("p", m.start(), m.end()) for m in PARA_RE.finditer(xml)
+            if table_index_at(tables, m.start()) is None]
+    out.sort(key=lambda el: el[1])
+    return out
