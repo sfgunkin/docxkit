@@ -286,21 +286,25 @@ def _fold(surname: str) -> str:
 def _entry_keys(r: Reference) -> set[str]:
     """Every citation key this entry can answer to.
 
-    Beyond the canonical key, an entry licenses (all found on LE le15):
+    Beyond the canonical key, an entry licenses (found on LE le15 and
+    API10):
 
     - the acronym it names itself by — "Health Promotion Board (HPB).
       (2023)." is what "(HPB 2023)" cites;
     - its all-caps lead token — "UNDP (United Nations Development
       Programme). (2025)." files under the acronym itself;
-    - every word-boundary suffix of a multi-word institutional name,
-      because the citation grammar refuses free capitalised adjacency
-      (or "As Smith" would be a surname), so a narrative "World Bank
-      (2025a)" is captured as "Bank (2025a)" and "the National Bank of
-      Kazakhstan (2021)" as "Bank of Kazakhstan (2021)".
+    - its own initialism — "United Nations, Department of..." is cited
+      "(UN 2024)" and "World Health Organization" "(WHO 2015)"; the
+      reader connects those without a map, so the audit must too;
+    - every word RUN of a multi-word institutional name, because the
+      citation grammar refuses free capitalised adjacency (or "As
+      Smith" would be a surname): a narrative "World Bank (2025a)" is
+      captured as "Bank (2025a)", and "(World Bank 2024)" must find
+      the entry filed under "World Bank Group".
 
-    An acronym the entry does NOT name ("(WHO 2015)" against "World
-    Health Organization...") stays a finding — that map is the paper's,
-    passed via ``aliases``.
+    An abbreviation that is neither named nor an initialism — a paper
+    citing "(GoK 2021)" for "Government of Kazakhstan" — stays a
+    finding; that map is the paper's, passed via ``aliases``.
     """
     keys = {r.key}
     m = _ENTRY_YEAR_RE.search(r.text)
@@ -310,8 +314,13 @@ def _entry_keys(r: Reference) -> set[str]:
     words = r.surname.split()
     if len(words[0]) >= 2 and words[0].isupper():
         keys.add(key_for(words[0], r.year))
-    for i in range(1, len(words)):
-        keys.add(key_for(" ".join(words[i:]), r.year))
+    if len(words) > 1:
+        for i in range(len(words)):
+            for j in range(i + 1, len(words) + 1):
+                keys.add(key_for(" ".join(words[i:j]), r.year))
+        initials = "".join(w[0] for w in words if w[0].isupper())
+        if len(initials) >= 2:
+            keys.add(key_for(initials, r.year))
     return keys
 
 

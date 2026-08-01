@@ -60,7 +60,12 @@ _NAME = rf"[A-ZÀ-ÿĀ-ſ][{_NAME_CHAR}]*"
 # word only; :mod:`docxkit.refstyle` reconciles that against the entry.
 _PREFIX = r"(?:Da|De|Del|Della|Der|Des|Di|Du|La|Le|Ten|Ter|Van|Von)"
 _PARTICLE = r"(?:da|de|del|den|der|des|di|du|la|le|of|ten|ter|van|von)"
-_SURNAME = (rf"(?:{_PREFIX}\s+)*{_NAME}"
+# The lowercase particles may also LEAD a surname — "J. van Ours" is
+# cited "(Picchio and van Ours 2013)" — except "of", which only joins
+# ("Bank of England"): were it allowed to lead, "the work of Smith
+# (2020)" would file under "of Smith".
+_LEAD = r"(?:da|de|del|den|der|des|di|du|la|le|ten|ter|van|von)"
+_SURNAME = (rf"(?:{_PREFIX}\s+|{_LEAD}\s+)*{_NAME}"
             rf"(?:\s+{_PARTICLE}(?:\s+{_PARTICLE})*\s+{_NAME})*")
 # "Surname", "Surname et al.", "First and Second",
 # "First, Second and Third", "First, Second, and Third"
@@ -104,8 +109,10 @@ _DEFAULT_STOPS = ("Appendix", "Appendices", "Figures", "Tables",
 _CAPTION_START_RE = re.compile(
     r"^(?:Figure|Table|Рисунок|Таблица)\s+\S+[.:]")
 # A repeated-author entry: "———. 2019." or "____. 2019." stands in for the
-# author named on the entry above.
-_CONTINUATION_RE = re.compile(r"^[-—–_—–]{2,}[.,]?\s")
+# author named on the entry above. The space is optional after the
+# punctuation — API10 writes "________.(2024)." with none, and missing
+# it files the entry under a row of underscores.
+_CONTINUATION_RE = re.compile(r"^[-—–_—–]{2,}(?:[.,]\s*|\s)")
 
 # Public names for the grammar and the section markers:
 # :mod:`docxkit.refstyle` builds its format checks on the SAME patterns

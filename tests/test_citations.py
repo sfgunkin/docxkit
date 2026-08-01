@@ -96,6 +96,16 @@ def test_prefix_particle_surnames():
     assert find_citations("Van Reenen (2012) shows")[0].surname == "Van Reenen"
 
 
+def test_a_lowercase_particle_can_lead_a_joined_surname():
+    """'(Picchio and van Ours 2013)' — the join must accept 'van Ours',
+    or the citation is captured as just 'Ours 2013' (API10 ¶54). But
+    'of' must not lead: 'the work of Smith (2020)' files under Smith."""
+    cites = find_citations("(Picchio and van Ours 2013)")
+    assert [(c.surname, c.authors) for c in cites] == [
+        ("Picchio", "Picchio and van Ours")]
+    assert find_citations("the work of Smith (2020)")[0].surname == "Smith"
+
+
 def test_a_lowercase_join_carries_the_institution():
     """'Bank of England (2019)' is one author; plain adjacency is not
     joined — 'As Smith (2020)' must still file under Smith."""
@@ -230,6 +240,16 @@ def test_a_repeated_author_entry_inherits_the_name():
     under a row of dashes and reads as never cited."""
     repeated = next(r for r in references(BODY) if r.year == "2021")
     assert repeated.surname == "Maestas"
+
+
+def test_a_repeated_author_entry_without_a_space_still_inherits():
+    """API10 writes '________.(2024).' — no space after the period; the
+    entry filed under a row of underscores and read as never cited."""
+    doc = ["References",
+           "World Bank Group. (2022). Charting a Course. Washington, DC.",
+           "________.(2024). Women, Business and the Law. Washington, DC."]
+    assert [r.surname for r in references(doc)] == [
+        "World Bank Group", "World Bank Group"]
 
 
 def test_captions_below_the_references_end_the_list():

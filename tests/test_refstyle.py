@@ -386,18 +386,45 @@ def test_style_derived_italics_count_as_italics():
     assert not any(i.code == "italics" for i in audit(parts).issues)
 
 
-def test_aliases_reconcile_acronym_citations():
-    """AFI cites '(WHO 2015)' but lists 'World Health Organization';
-    the alias map is the paper's, the hook is the audit's."""
+def test_an_entrys_initialism_licenses_the_acronym_citation():
+    """AFI cites '(WHO 2015)' for 'World Health Organization' and API10
+    '(UN 2024)' for 'United Nations, Department of...' — the reader
+    connects an initialism without a map, so the audit must too."""
     body = (para(run("Healthy ageing is defined broadly (WHO 2015)."))
             + para(run("References"))
             + para(run("World Health Organization. (2015). "),
                    irun("World Report on Ageing and Health"),
                    run(". Geneva: WHO.")))
+    report = audit(make_parts(body))
+    assert not any(i.code in ("missing-ref", "uncited-ref")
+                   for i in report.issues)
+
+
+def test_a_word_run_of_the_institution_licenses_the_citation():
+    """API10 ¶183 cites '(World Bank 2024)' — captured as 'Bank 2024' —
+    against an entry filed under 'World Bank Group'."""
+    body = (para(run("Implementation gaps persist (World Bank 2024)."))
+            + para(run("References"))
+            + para(run("World Bank Group. (2024). "),
+                   irun("Women, Business and the Law"),
+                   run(". Washington, DC.")))
+    report = audit(make_parts(body))
+    assert not any(i.code in ("missing-ref", "uncited-ref")
+                   for i in report.issues)
+
+
+def test_aliases_reconcile_abbreviations_the_entry_cannot_derive():
+    """'(GoK 2021)' for 'Government of Kazakhstan' is neither named in
+    the entry nor its initialism — the map stays with the paper, the
+    hook is the audit's."""
+    body = (para(run("Pensions were indexed (GoK 2021)."))
+            + para(run("References"))
+            + para(run("Government of Kazakhstan. (2021). "),
+                   irun("Social Protection Strategy"), run(". Astana.")))
     bare = audit(make_parts(body))
     assert any(i.code == "missing-ref" for i in bare.issues)
     aliased = audit(make_parts(body),
-                    aliases={"WHO": "World Health Organization"})
+                    aliases={"GoK": "Government of Kazakhstan"})
     assert not any(i.code in ("missing-ref", "uncited-ref")
                    for i in aliased.issues)
 
