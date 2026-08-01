@@ -51,9 +51,17 @@ def assert_unlocked(path: str | Path) -> None:
 
 
 def read_parts(path: str | Path) -> dict[str, bytes]:
-    """Every member of the package, in stored order."""
-    with zipfile.ZipFile(path) as z:
-        return {n: z.read(n) for n in z.namelist()}
+    """Every member of the package, in stored order.
+
+    A missing path or a non-zip file raises :class:`PackageError` — the
+    CLI turns that into a message, where a raw ``FileNotFoundError``
+    walked straight through it as a traceback.
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            return {n: z.read(n) for n in z.namelist()}
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise PackageError(f"cannot read {path}: {exc}") from exc
 
 
 def write_docx(path: str | Path, parts: dict[str, bytes],
