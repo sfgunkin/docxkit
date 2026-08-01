@@ -421,3 +421,29 @@ def test_check_citations_prints_and_counts(tmp_path, capsys):
     out = capsys.readouterr().out
     assert n == 1
     assert "BROKEN LINK" in out and "FOUND 1 ISSUE(S)" in out
+
+
+# --------------------------------------------------------- link_in_para ---
+
+def test_link_in_para_wraps_the_span_in_an_element_link():
+    from docxkit._xml import internal_links
+    from docxkit.citations import link_in_para
+    p = P(R("as shown by UN 2024 and others."))
+    out = link_in_para(p, "UN 2024", "UN2024")
+    from docxkit._xml import visible_text
+    assert visible_text(out) == "as shown by UN 2024 and others."
+    assert internal_links(out) == [("UN2024", "UN 2024")]
+    assert 'w:val="Hyperlink"' in out
+    assert "as shown by " in out and " and others." in out
+
+
+def test_link_in_para_asserts_and_refuses_fragmented_spans():
+    import pytest as _pytest
+
+    from docxkit.citations import link_in_para
+    from docxkit.errors import AnchorError
+    with _pytest.raises(AnchorError):
+        link_in_para(P(R("no citation here")), "UN 2024", "UN2024")
+    split = P(R("as shown by UN ") + R("2024 and others."))
+    with _pytest.raises(AnchorError, match="spans several runs"):
+        link_in_para(split, "UN 2024", "UN2024")

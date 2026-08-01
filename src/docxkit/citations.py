@@ -28,7 +28,9 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from ._xml import PARA_RE, escape, internal_links, visible_text
+from ._xml import PARA_RE, escape, internal_links, set_run_text, visible_text
+from .edit import _locate
+from .errors import AnchorError
 from .package import read_parts
 
 __all__ = [
@@ -46,6 +48,7 @@ __all__ = [
     "find_citations",
     "hyperlink_field",
     "key_for",
+    "link_in_para",
     "parse_reference",
     "references",
 ]
@@ -319,6 +322,51 @@ def hyperlink_field(anchor: str, label: str, *, style: str = "Hyperlink",
             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
             f"<w:r>{props}<w:t>{escape(label)}</w:t></w:r>"
             '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def link_in_para(para_xml: str, text: str, anchor: str, *,
+                 style: str = "Hyperlink") -> str:
+    """Wrap exactly `text` in a ``<w:hyperlink w:anchor=...>`` element.
+
+    The repair form for a citation that LOST its link: Word converts
+    field links to elements on every save anyway, so a repair writes the
+    element directly. The span must sit inside ONE run — citation labels
+    are single runs in these papers, and a fragmented span should be
+    looked at rather than guessed at.
+    """
+    runs, spans, at, end = _locate(para_xml, text)
+    for (start, stop), run in zip(spans, runs, strict=True):
+        if stop <= at or start >= end:
+            continue
+        if not (start <= at and end <= stop):
+            raise AnchorError(
+                f"link_in_para: {text[:40]!r} spans several runs")
+        run_xml = run.group(0)
+        body = visible_text(run_xml)
+        lo, hi = at - start, end - start
+        before = set_run_text(run_xml, body[:lo]) if lo else ""
+        after = set_run_text(run_xml, body[hi:]) if hi < len(body) else ""
+        label = _styled_run(run_xml, body[lo:hi], style)
+        linked = (f'<w:hyperlink w:anchor="{escape(anchor)}">'
+                  f"{label}</w:hyperlink>")
+        return (para_xml[:run.start()] + before + linked + after
+                + para_xml[run.end():])
+    raise AnchorError(  # pragma: no cover — _locate already raised
+        f"link_in_para: {text[:40]!r} not found")
+
+
+def _styled_run(run_xml: str, text: str, style: str) -> str:
+    """The run with `text` and a character style added (rStyle is FIRST
+    in the rPr sequence, so insertion is unambiguous)."""
+    out = set_run_text(run_xml, text)
+    tag = f'<w:rStyle w:val="{style}"/>'
+    if "<w:rStyle" in out:
+        return out
+    if "<w:rPr>" in out:
+        return out.replace("<w:rPr>", f"<w:rPr>{tag}", 1)
+    m = re.search(r"<w:r\b[^>]*>", out)
+    assert m is not None
+    return out[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + out[m.end():]
 
 
 def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:
