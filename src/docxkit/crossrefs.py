@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 from ._xml import PARA_RE, T_RE, escape, visible_text
+from .citations import next_bookmark_id
 from .errors import AnchorError
 
 __all__ = [
@@ -174,8 +175,8 @@ def _mention_re(label: str, number: str) -> re.Pattern[str]:
 
 
 def _next_bookmark_id(xml: str) -> int:
-    ids = [int(m.group(1)) for m in _BOOKMARK_RE.finditer(xml)]
-    return max(ids, default=0) + 1
+    # the shared allocator; kept as a thin alias for this module's callers
+    return next_bookmark_id(xml)
 
 
 def find_captions(xml: str, *,

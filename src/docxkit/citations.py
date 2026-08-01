@@ -31,6 +31,7 @@ from pathlib import Path
 from ._xml import PARA_RE, escape, internal_links, set_run_text, visible_text
 from .edit import _locate
 from .errors import AnchorError
+from .find import para_slice
 from .package import read_parts
 
 __all__ = [
@@ -45,12 +46,16 @@ __all__ = [
     "audit_links",
     "bookmark",
     "check_citations",
+    "delete_bookmark",
     "find_citations",
     "hyperlink_field",
     "key_for",
     "link_in_para",
+    "marker_bookmark",
+    "next_bookmark_id",
     "parse_reference",
     "references",
+    "wrap_link_in_bookmark",
 ]
 
 # A surname starts with a capital — including accented (U+00C0..U+00FF)
@@ -389,6 +394,89 @@ def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:
             f'{inner}<w:bookmarkEnd w:id="{bookmark_id}"/>')
 
 
+# ------------------------------------------------- link/bookmark repair ---
+# Grown in the API10 and LE link-repair rounds, where each paper script
+# carried its own copy — the second use is what moved them here.
+
+_BOOKMARK_ID_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
+
+
+def next_bookmark_id(*xmls: str) -> int:
+    """One above the highest bookmark id across the given parts.
+
+    Ids must be unique across the WHOLE document, so pass every part you
+    will write bookmarks into — a footnote bookmark clashing with a body
+    id is the same "unreadable content" failure as a body duplicate.
+    """
+    ids = [int(m) for xml in xmls for m in _BOOKMARK_ID_RE.findall(xml)]
+    return max(ids, default=0) + 1
+
+
+def marker_bookmark(xml: str, sig: str, name: str, bid: int) -> str:
+    """A zero-length bookmark at the head of the ONE paragraph matching
+    `sig` — INSIDE the paragraph, so it travels with any future move.
+
+    Body-level markers between paragraphs do NOT travel: reordering
+    API10's reference list stranded thirteen of them one entry off,
+    because a paragraph cut takes the ``<w:p>`` and nothing beside it.
+    """
+    s, e = para_slice(xml, sig)
+    para = xml[s:e]
+    m = re.match(r"<w:p\b[^>]*>(<w:pPr>.*?</w:pPr>)?", para, re.DOTALL)
+    assert m is not None
+    return (xml[:s] + para[:m.end()] + bookmark(name, bid) + para[m.end():]
+            + xml[e:])
+
+
+def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
+                          bid: int) -> str:
+    """Recreate `name` around the ONE link that points at `anchor`.
+
+    The ``<key>txt`` convention's in-text end, rebuilt exactly where the
+    surviving hyperlink sits — element form, or a complete fldChar
+    field whose instruction carries the anchor.
+    """
+    start = f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
+    end = f'<w:bookmarkEnd w:id="{bid}"/>'
+
+    el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*>'
+                    r".*?</w:hyperlink>", re.DOTALL)
+    hits = list(el.finditer(xml))
+    if len(hits) == 1:
+        m = hits[0]
+        return xml[:m.start()] + start + m.group(0) + end + xml[m.end():]
+    if hits:
+        raise AnchorError(
+            f"wrap_link_in_bookmark: {anchor} matched {len(hits)} elements")
+
+    spans = []
+    for bm in re.finditer(r'<w:fldChar\b[^>]*w:fldCharType="begin"', xml):
+        r_start = xml.rfind("<w:r", 0, bm.start())
+        e_off = xml.find('w:fldCharType="end"', bm.end())
+        if r_start < 0 or e_off < 0:
+            continue
+        r_end = xml.find("</w:r>", e_off) + len("</w:r>")
+        if f'"{anchor}"' in xml[r_start:r_end]:
+            spans.append((r_start, r_end))
+    if len(spans) != 1:
+        raise AnchorError(
+            f"wrap_link_in_bookmark: {anchor} found {len(spans)} fields")
+    s, e = spans[0]
+    return xml[:s] + start + xml[s:e] + end + xml[e:]
+
+
+def delete_bookmark(xml: str, name: str) -> str:
+    """Remove the Start/End pair `name` (id read off the Start)."""
+    m = re.search(rf'<w:bookmarkStart w:id="(\d+)" w:name="{name}"/>', xml)
+    if m is None:
+        raise AnchorError(f"delete_bookmark: {name} not found")
+    xml = xml[:m.start()] + xml[m.end():]
+    endtag = f'<w:bookmarkEnd w:id="{m.group(1)}"/>'
+    if xml.count(endtag) != 1:
+        raise AnchorError(f"delete_bookmark: end of {name} not unique")
+    return xml.replace(endtag, "")
+
+
 # ------------------------------------------------------ the link audit ---
 
 _BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
@@ -427,14 +515,14 @@ def audit_links(parts: dict[str, bytes], *,
         for anchor, label in internal_links(m.group(0)):
             links[anchor].append((i, label))
     for name in _BOOKMARK_NAME_RE.findall(doc):
-        bookmarks.setdefault(name, -1)      # between-paragraph definitions
+        bookmarks.setdefault(name, -1)      # BODY-LEVEL, between paragraphs
     foot = parts.get("word/footnotes.xml")
     if foot:
         ftext = foot.decode("utf-8")
         for name in _BOOKMARK_NAME_RE.findall(ftext):
-            bookmarks.setdefault(name, -1)
+            bookmarks.setdefault(name, -2)  # defined in a footnote
         for anchor, label in internal_links(ftext):
-            links[anchor].append((-1, label))
+            links[anchor].append((-2, label))
 
     cite_marks = {n: i for n, i in bookmarks.items()
                   if not n.startswith("_") and n.endswith("txt")}
@@ -445,7 +533,10 @@ def audit_links(parts: dict[str, bytes], *,
                  and n not in eq_marks}
 
     def where(i: int) -> str:
-        return "fn" if i < 0 else f"¶{i + 1}"
+        # "body" = a body-level definition between paragraphs. The first
+        # audit round printed those as "fn" and the API repair went
+        # hunting in footnotes.xml for bookmarks that were never there.
+        return {-1: "body", -2: "fn"}.get(i) or f"¶{i + 1}"
 
     issues: list[str] = []
     for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):

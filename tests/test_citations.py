@@ -1,6 +1,8 @@
 """Citation detection, reference parsing and the link XML."""
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from docxkit.citations import (
@@ -447,3 +449,72 @@ def test_link_in_para_asserts_and_refuses_fragmented_spans():
     split = P(R("as shown by UN ") + R("2024 and others."))
     with _pytest.raises(AnchorError, match="spans several runs"):
         link_in_para(split, "UN 2024", "UN2024")
+
+
+# ---------------------------------------------- link/bookmark repair ---
+
+def test_next_bookmark_id_spans_all_parts():
+    from docxkit.citations import next_bookmark_id
+    doc = P(bookmark("a", 7) + R("body"))
+    foot = P(bookmark("b", 91) + R("note"))
+    assert next_bookmark_id(doc, foot) == 92
+    assert next_bookmark_id("") == 1
+
+
+def test_marker_bookmark_travels_inside_the_paragraph():
+    """Body-level markers between paragraphs do NOT travel with a
+    paragraph move — reordering API10's reference list stranded 13 of
+    them one entry off. The marker goes INSIDE the paragraph head."""
+    from docxkit.citations import marker_bookmark
+    xml = P(R("Smith, J. (2020). A title.")) + P(R("Other entry."))
+    out = marker_bookmark(xml, "Smith, J.", "Smith2020", 5)
+    pm = re.search(r"<w:p>.*?</w:p>", out, re.DOTALL)
+    assert pm is not None
+    para = pm.group(0)
+    assert '<w:bookmarkStart w:id="5" w:name="Smith2020"/>' in para
+    from docxkit.errors import AnchorError
+    with pytest.raises(AnchorError):
+        marker_bookmark(xml, "no such entry", "X", 6)
+
+
+def test_wrap_link_in_bookmark_handles_both_forms():
+    from docxkit._xml import internal_links
+    from docxkit.citations import wrap_link_in_bookmark
+    element = P(R("see ") + '<w:hyperlink w:anchor="Smith2020">'
+                + R("Smith 2020") + "</w:hyperlink>")
+    out = wrap_link_in_bookmark(element, "Smith2020", "Smith2020txt", 9)
+    assert out.index('w:name="Smith2020txt"') < out.index("<w:hyperlink")
+    field = P(R("see ") + hfield("Jones2021", "Jones 2021"))
+    out = wrap_link_in_bookmark(field, "Jones2021", "Jones2021txt", 10)
+    assert 'w:name="Jones2021txt"' in out
+    assert internal_links(out) == [("Jones2021", "Jones 2021")]
+    from docxkit.errors import AnchorError
+    with pytest.raises(AnchorError):
+        wrap_link_in_bookmark(P(R("no link")), "Nowhere", "X", 11)
+
+
+def test_delete_bookmark_removes_the_pair():
+    from docxkit.citations import delete_bookmark
+    xml = P(bookmark("gone", 3) + R("text"))
+    out = delete_bookmark(xml, "gone")
+    assert "bookmarkStart" not in out and "bookmarkEnd" not in out
+    assert "text" in out
+    from docxkit.errors import AnchorError
+    with pytest.raises(AnchorError):
+        delete_bookmark(out, "gone")
+
+
+def test_audit_distinguishes_body_level_from_footnote_bookmarks():
+    """The first audit round printed body-level definitions as "(fn)"
+    and the API repair went hunting in footnotes.xml for bookmarks that
+    were never there."""
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + bookmark("Ghost2019", 30)          # between paragraphs
+            + P(R("Ghost, A. (2019). Unseen.")))
+    parts = {"word/document.xml":
+             ("<w:document><w:body>" + body + "</w:body></w:document>"
+              ).encode("utf-8")}
+    issues, _ = audit_links(parts)
+    orphan = next(i for i in issues if i.startswith("ORPHAN REF"))
+    assert "(body)" in orphan and "(fn)" not in orphan
