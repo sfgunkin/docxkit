@@ -128,8 +128,16 @@ def _snippet(text: str, start: int, end: int, margin: int = 20) -> str:
 
 def check_prose(text: str, style: Style = HOUSE) -> list[Issue]:
     """Style departures in one paragraph of body prose."""
+    return _check_prose(text, style, find_citations(text))
+
+
+def _check_prose(text: str, style: Style,
+                 cites: list[Citation]) -> list[Issue]:
+    # audit() already holds the paragraph's citations for its
+    # cross-check; taking them here keeps the grammar from running twice
+    # on every paragraph of every document.
     issues: list[Issue] = []
-    for found in find_citations(text):
+    for found in cites:
         c = replace(found, authors=_strip_lead(found.authors))
         cite = text[c.start:c.end]
         if "&" in c.authors:
@@ -389,9 +397,9 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     cited: dict[str, tuple[str, str]] = {}    # key -> (where, snippet)
 
     def prose(text: str, where: str) -> None:
-        for issue in check_prose(text, style):
-            report.issues.append(replace(issue, where=where))
         cites = find_citations(text)
+        for issue in _check_prose(text, style, cites):
+            report.issues.append(replace(issue, where=where))
         if not cites and (m := _BARE_CITE_RE.fullmatch(text.strip())):
             cites = [Citation(authors=m.group(1), year=m.group(2),
                               start=0, end=len(text), narrative=False)]

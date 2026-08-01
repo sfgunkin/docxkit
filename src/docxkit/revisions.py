@@ -30,6 +30,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from ._xml import PARA_RE, delta_text, matching_close, visible_text
@@ -239,6 +240,23 @@ def _has_revisions(xml: str) -> bool:
 
 
 def _simulate(xml: str, mode: str, where: Where | None = None) -> str:
+    # The predicate-free views are CACHED: the audits and the sweep ask
+    # for the same view of the same document several times in a row, and
+    # simulating a 1,400-revision redline costs ~50ms each time. CPython
+    # caches a str's hash, so repeat lookups on the same object are
+    # near-free; maxsize stays small because each entry is a
+    # megabyte-scale string.
+    if where is None:
+        return _simulate_clean(xml, mode)
+    return _simulate_where(xml, mode, where)
+
+
+@lru_cache(maxsize=4)
+def _simulate_clean(xml: str, mode: str) -> str:
+    return _simulate_where(xml, mode, None)
+
+
+def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     # A document with no revisions is its own accepted AND rejected view,
     # so there is nothing to simulate. Worth checking first: most
     # manuscripts are clean, and parsing a 1.7MB part to discover that
@@ -324,11 +342,20 @@ def view_transform(view: str) -> Callable[[str], str]:
 def text(xml: str, view: str = FINAL) -> list[str]:
     """Visible text per paragraph, on one side of the tracked changes."""
     view_transform(view)                # validates; _simulate takes the name
+    return list(_text_cached(xml, view))
+
+
+@lru_cache(maxsize=8)
+def _text_cached(xml: str, view: str) -> tuple[str, ...]:
+    # Cached for the same reason as _simulate_clean; the walk over ~900
+    # paragraphs costs ~7ms per call and callers repeat it. The public
+    # function copies to a list so a caller mutating its result cannot
+    # poison the cache.
     out = []
     for m in PARA_RE.finditer(_simulate(xml, view)):
         if (t := visible_text(m.group(0))).strip():
             out.append(t)
-    return out
+    return tuple(out)
 
 
 def revision_text(xml: str, span: tuple[int, int]) -> str:

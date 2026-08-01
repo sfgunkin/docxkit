@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from ._xml import PARA_RE, T_RE, escape, visible_text
 from .errors import AnchorError
@@ -149,6 +150,7 @@ class LinkReport:
         return "\n".join(lines)
 
 
+@lru_cache(maxsize=8)
 def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
     """Label + number + separator. The separator is what makes it a caption.
 
@@ -178,7 +180,19 @@ def _next_bookmark_id(xml: str) -> int:
 
 def find_captions(xml: str, *,
                   labels: tuple[str, ...] = DEFAULT_LABELS) -> list[Caption]:
-    """Every caption paragraph, in document order."""
+    """Every caption paragraph, in document order.
+
+    Cached: audit() runs on top of this and callers ask for both in the
+    same breath, which re-walked every paragraph of the document.
+    Caption is frozen, so sharing instances is safe; the public list is
+    a copy so a caller mutating it cannot poison the cache.
+    """
+    return list(_find_captions(xml, labels))
+
+
+@lru_cache(maxsize=8)
+def _find_captions(xml: str,
+                   labels: tuple[str, ...]) -> tuple[Caption, ...]:
     pattern = caption_re(labels)
     out = []
     for p in PARA_RE.finditer(xml):
@@ -186,7 +200,7 @@ def find_captions(xml: str, *,
         if (m := pattern.match(text)) is not None:
             out.append(Caption(label=m.group(1), number=m.group(2),
                                text=text, start=p.start(), end=p.end()))
-    return out
+    return tuple(out)
 
 
 def _with_hyperlink_style(rpr: str) -> str:

@@ -221,6 +221,13 @@ def anchor_names(key: str) -> tuple[str, str]:
     return f"cite_{key}", f"ref_{key}"
 
 
+# Every citation form carries a four-digit year. One C-speed scan
+# rejects the ~90% of paragraphs that cannot cite before the expensive
+# author grammar runs — the audits call this on every paragraph of
+# every document they touch.
+_YEAR_HINT_RE = re.compile(r"[12]\d{3}")
+
+
 def find_citations(text: str) -> list[Citation]:
     """Every in-text citation in a paragraph's visible text.
 
@@ -232,6 +239,8 @@ def find_citations(text: str) -> list[Citation]:
     cannot double-report, because a segment's text can hold no
     parenthesis and a narrative match must hold its "(year)".
     """
+    if _YEAR_HINT_RE.search(text) is None:
+        return []
     found: list[Citation] = []
     for pm in _PAREN_RE.finditer(text):
         base = pm.start(1)
