@@ -54,6 +54,56 @@ def test_a_narrative_inside_a_parenthetical_is_reported_once():
     assert len(find_citations(text)) == 1
 
 
+def test_a_semicolon_list_yields_each_work():
+    """'(Bernheim and Rangel 2009; Chetty 2015)' — a whole-group pattern
+    found neither, and the LE audit read both entries as uncited."""
+    assert _found("(Bernheim and Rangel 2009; Chetty 2015)") == [
+        ("Bernheim and Rangel", "2009", False),
+        ("Chetty", "2015", False)]
+
+
+def test_a_comma_list_yields_each_work():
+    """'(Cameron et al. 2008, Roodman et al. 2019)' — LE fn7."""
+    assert _found("(Cameron et al. 2008, Roodman et al. 2019)") == [
+        ("Cameron et al.", "2008", False),
+        ("Roodman et al.", "2019", False)]
+
+
+def test_a_prefixed_aside_is_still_a_citation():
+    """'(e.g., Cahill et al. 2015)' — the lowercase prefix is skipped."""
+    assert _found("(e.g., Cahill et al. 2015)") == [
+        ("Cahill et al.", "2015", False)]
+    assert _found("(see also Chetty 2015)") == [("Chetty", "2015", False)]
+
+
+def test_a_page_suffix_does_not_hide_the_citation():
+    assert _found("(Smith 2020, p. 45)") == [("Smith", "2020", False)]
+    assert _found("Maestas et al. (2023, p. 45) estimate") == [
+        ("Maestas et al.", "2023", True)]
+
+
+def test_a_year_mid_phrase_does_not_cite():
+    """The year must close its segment: '(in Almaty 2005 the reform...)'
+    is prose, not a citation."""
+    assert find_citations("(established in Almaty 2005 by decree)") == []
+
+
+def test_prefix_particle_surnames():
+    """'(Apicella and De Giorgi 2024)' — 'De Giorgi' is one surname, and
+    the citation files under Apicella (LE le15 ¶28)."""
+    cites = find_citations("(Apicella and De Giorgi 2024)")
+    assert [c.surname for c in cites] == ["Apicella"]
+    assert find_citations("Van Reenen (2012) shows")[0].surname == "Van Reenen"
+
+
+def test_a_lowercase_join_carries_the_institution():
+    """'Bank of England (2019)' is one author; plain adjacency is not
+    joined — 'As Smith (2020)' must still file under Smith."""
+    assert find_citations("Bank of England (2019) warns")[0].surname == \
+        "Bank of England"
+    assert find_citations("As Smith (2020) shows")[0].surname == "Smith"
+
+
 def test_surname_is_the_first_author():
     for text, want in [("(Smith and Jones 2020)", "Smith"),
                        ("(Smith et al. 2020)", "Smith"),

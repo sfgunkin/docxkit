@@ -15,8 +15,11 @@ Two forms occur and both must be handled, because a paper mixes them:
 
 The detection is deliberately conservative about what a surname looks
 like — accented and Latin-Extended capitals included, since these papers
-cite Mühlbach and Türkiye — and it recognises the Oxford comma, "&", and
-"et al." with or without the final period.
+cite Mühlbach and Türkiye — and it recognises the Oxford comma, "&",
+"et al." with or without the final period, prefix particles ("De
+Giorgi", "Van Reenen"), several works in one parenthesis ("(Cameron et
+al. 2008; Roodman et al. 2019)"), a prefixed aside ("(e.g., Cahill et
+al. 2015)") and a page suffix ("(Smith 2020, p. 45)").
 """
 from __future__ import annotations
 
@@ -27,6 +30,10 @@ from ._citation_audit import check_citations
 from ._xml import escape
 
 __all__ = [
+    "AUTHORS_PATTERN",
+    "REF_HEADINGS",
+    "REF_STOPS",
+    "YEAR_PATTERN",
     "Citation",
     "Reference",
     "anchor_names",
@@ -45,15 +52,35 @@ __all__ = [
 # (straight or typographic) or period.
 _NAME_CHAR = r"\w\-'.’"
 _NAME = rf"[A-ZÀ-ÿĀ-ſ][{_NAME_CHAR}]*"
+# A surname can span tokens two ways: a capitalised prefix particle
+# ("De Giorgi", "Van Reenen", "La Porta") and a lowercase join ("Bank of
+# England", "Ministry of Health"). Free capitalised adjacency is NOT
+# allowed — "As Smith (2020) shows" would file under "As Smith" — so a
+# plain multi-word institution ("World Bank") is captured from its last
+# word only; :mod:`docxkit.refstyle` reconciles that against the entry.
+_PREFIX = r"(?:Da|De|Del|Della|Der|Des|Di|Du|La|Le|Ten|Ter|Van|Von)"
+_PARTICLE = r"(?:da|de|del|den|der|des|di|du|la|le|of|ten|ter|van|von)"
+_SURNAME = (rf"(?:{_PREFIX}\s+)*{_NAME}"
+            rf"(?:\s+{_PARTICLE}(?:\s+{_PARTICLE})*\s+{_NAME})*")
 # "Surname", "Surname et al.", "First and Second",
 # "First, Second and Third", "First, Second, and Third"
-_AUTHORS = (rf"{_NAME}"
+_AUTHORS = (rf"{_SURNAME}"
             r"(?:\s+et\s+al\.?)?"
-            rf"(?:(?:,\s+|,?\s+(?:and|&)\s+){_NAME})*")
+            rf"(?:(?:,\s+|,?\s+(?:and|&)\s+){_SURNAME})*")
 _YEAR = r"\d{4}[a-z]?"
-_PARENTHETICAL_RE = re.compile(
-    rf"\(({_AUTHORS})(?:\s+\(\d{{4}}\))?\s+({_YEAR})\)")
-_NARRATIVE_RE = re.compile(rf"({_AUTHORS})\s+\(({_YEAR})\)")
+# In-text citations hide inside parenthesis GROUPS, which real papers
+# fill with more than one work: "(Bernheim and Rangel 2009; Chetty
+# 2015)", "(Cameron et al. 2008, Roodman et al. 2019)", "(e.g., Cahill
+# et al. 2015)", "(Smith 2020, p. 45)". A whole-group pattern found none
+# of these — the LE audit read ten cited entries as uncited. So the
+# group is scanned for citation SEGMENTS, each anchored so its year
+# CLOSES it (the group's end, a semicolon, or a comma) — "in Almaty
+# 2005 the" does not cite.
+_PAREN_RE = re.compile(r"\(([^()]*)\)")
+_SEGMENT_RE = re.compile(rf"({_AUTHORS})\s+({_YEAR})(?=\s*(?:[;,]|$))")
+# The narrative parens may carry a locator: "Maestas et al. (2023, p. 45)".
+_NARRATIVE_RE = re.compile(
+    rf"({_AUTHORS})\s+\(({_YEAR})(?:,\s+pp?\.[^)]*)?\)")
 # The year that dates a reference entry. Both house styles occur across
 # these papers and a parser that knows only one finds almost nothing:
 #     Maestas, Nicole, ... 2023. "Title."      (AFI)
@@ -79,6 +106,14 @@ _CAPTION_START_RE = re.compile(
 # A repeated-author entry: "———. 2019." or "____. 2019." stands in for the
 # author named on the entry above.
 _CONTINUATION_RE = re.compile(r"^[-—–_—–]{2,}[.,]?\s")
+
+# Public names for the grammar and the section markers:
+# :mod:`docxkit.refstyle` builds its format checks on the SAME patterns
+# rather than defining a second citation grammar that would drift.
+AUTHORS_PATTERN = _AUTHORS
+YEAR_PATTERN = _YEAR
+REF_HEADINGS = _DEFAULT_HEADINGS
+REF_STOPS = _DEFAULT_STOPS
 
 
 @dataclass(frozen=True)
@@ -141,19 +176,22 @@ def anchor_names(key: str) -> tuple[str, str]:
 def find_citations(text: str) -> list[Citation]:
     """Every in-text citation in a paragraph's visible text.
 
-    Both forms, in document order. A narrative citation that sits inside
-    a parenthetical one — "(see Maestas et al. (2023))" — is reported
-    once, as the parenthetical.
+    Both forms, in document order. A parenthesis group holding several
+    works — "(Bernheim and Rangel 2009; Chetty 2015)" — yields one
+    :class:`Citation` per work, each with its own span. A narrative
+    citation inside a parenthetical aside — "(see Maestas et al.
+    (2023))" — is reported once, as the narrative form; the two loops
+    cannot double-report, because a segment's text can hold no
+    parenthesis and a narrative match must hold its "(year)".
     """
     found: list[Citation] = []
-    taken: list[tuple[int, int]] = []
-    for m in _PARENTHETICAL_RE.finditer(text):
-        found.append(Citation(authors=m.group(1), year=m.group(2),
-                              start=m.start(), end=m.end(), narrative=False))
-        taken.append((m.start(), m.end()))
+    for pm in _PAREN_RE.finditer(text):
+        base = pm.start(1)
+        for m in _SEGMENT_RE.finditer(pm.group(1)):
+            found.append(Citation(authors=m.group(1), year=m.group(2),
+                                  start=base + m.start(),
+                                  end=base + m.end(), narrative=False))
     for m in _NARRATIVE_RE.finditer(text):
-        if any(s <= m.start() and m.end() <= e for s, e in taken):
-            continue
         found.append(Citation(authors=m.group(1), year=m.group(2),
                               start=m.start(), end=m.end(), narrative=True))
     return sorted(found, key=lambda c: c.start)
