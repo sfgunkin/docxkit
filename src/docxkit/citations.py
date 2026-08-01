@@ -24,19 +24,23 @@ al. 2015)") and a page suffix ("(Smith 2020, p. 45)").
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, replace
+from pathlib import Path
 
-from ._citation_audit import check_citations
-from ._xml import escape
+from ._xml import PARA_RE, escape, internal_links, visible_text
+from .package import read_parts
 
 __all__ = [
     "AUTHORS_PATTERN",
+    "IGNORED_LEADS",
     "REF_HEADINGS",
     "REF_STOPS",
     "YEAR_PATTERN",
     "Citation",
     "Reference",
     "anchor_names",
+    "audit_links",
     "bookmark",
     "check_citations",
     "find_citations",
@@ -121,6 +125,40 @@ AUTHORS_PATTERN = _AUTHORS
 YEAR_PATTERN = _YEAR
 REF_HEADINGS = _DEFAULT_HEADINGS
 REF_STOPS = _DEFAULT_STOPS
+
+# Capitalised words that look like a citation's lead author but are not
+# one — "Table (2020)", "in March (2020)". Grown from real false
+# positives; used by the link audit here and the format audit in
+# :mod:`docxkit.refstyle`.
+IGNORED_LEADS = frozenset({
+    "Section", "Table", "Figure", "Appendix", "Proposition", "Corollary",
+    "Equation", "Step", "Part", "Band", "Index", "Panel", "Model", "Wave",
+    "Round", "Vol", "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+})
+
+# A sentence adverb the grammar swallowed as a first author:
+# "Similarly, Liebman and Luttmer (2015) show..." reads as a three-author
+# citation led by "Similarly". Both audits strip the lead rather than
+# drop the citation — the citation itself is real. Found on LE le15 ¶30.
+DISCOURSE_LEADS = frozenset({
+    "Accordingly", "Additionally", "Alternatively", "Also", "Consequently",
+    "Conversely", "Finally", "First", "Fourth", "Further", "Furthermore",
+    "Hence", "However", "Importantly", "Indeed", "Instead", "Likewise",
+    "Meanwhile", "Moreover", "Nevertheless", "Nonetheless", "Notably",
+    "Overall", "Recently", "Relatedly", "Second", "Similarly",
+    "Specifically", "Third", "Thus", "Yet",
+})
+_LEAD_ADVERB_RE = re.compile(r"^([A-ZÀ-ÿĀ-ſ][a-zà-ÿā-ſ]+),\s+(.+)$",
+                             re.DOTALL)
+
+
+def strip_lead(authors: str) -> str:
+    """Drop a leading discourse adverb the grammar mistook for an author."""
+    m = _LEAD_ADVERB_RE.match(authors)
+    if m and m.group(1) in DISCOURSE_LEADS:
+        return m.group(2)
+    return authors
 
 
 @dataclass(frozen=True)
@@ -292,4 +330,155 @@ def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:
     """
     return (f'<w:bookmarkStart w:id="{bookmark_id}" w:name="{name}"/>'
             f'{inner}<w:bookmarkEnd w:id="{bookmark_id}"/>')
+
+
+# ------------------------------------------------------ the link audit ---
+
+_BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
+
+
+def audit_links(parts: dict[str, bytes], *,
+                heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+                ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+                ) -> tuple[list[str], dict[str, int]]:
+    """Audit the bidirectional citation-link convention; (issues, stats).
+
+    The papers' bookmark shape: the reference entry carries ``<name>``
+    and the in-text mention ``<name>txt`` (``Halliday2020`` /
+    ``Halliday2020txt``), each end hyperlinking to the other; figure and
+    table first-mention links follow the same shape, so they audit
+    identically. Documents built on :func:`anchor_names`'s
+    ``cite_``/``ref_`` naming still get the orphan, broken-link and
+    cross-reference checks — only the ``txt``-pairing checks are
+    specific to the suffix shape.
+
+    Anchors resolve against EVERY bookmark in the document — including
+    Word's own ``_Toc``/``_Heading`` names. The audit this replaces
+    excluded underscore names from its index and then reported links to
+    them as broken; LE le15 shipped an audit round with nine of those
+    false positives before the cause was found.
+    """
+    doc = parts["word/document.xml"].decode("utf-8")
+    paras = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in paras]
+
+    bookmarks: dict[str, int] = {}          # first definition wins
+    links: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for i, m in enumerate(paras):
+        for name in _BOOKMARK_NAME_RE.findall(m.group(0)):
+            bookmarks.setdefault(name, i)
+        for anchor, label in internal_links(m.group(0)):
+            links[anchor].append((i, label))
+    for name in _BOOKMARK_NAME_RE.findall(doc):
+        bookmarks.setdefault(name, -1)      # between-paragraph definitions
+    foot = parts.get("word/footnotes.xml")
+    if foot:
+        ftext = foot.decode("utf-8")
+        for name in _BOOKMARK_NAME_RE.findall(ftext):
+            bookmarks.setdefault(name, -1)
+        for anchor, label in internal_links(ftext):
+            links[anchor].append((-1, label))
+
+    cite_marks = {n: i for n, i in bookmarks.items()
+                  if not n.startswith("_") and n.endswith("txt")}
+    eq_marks = {n: i for n, i in bookmarks.items()
+                if not n.startswith("_") and n.startswith("Eq")}
+    ref_marks = {n: i for n, i in bookmarks.items()
+                 if not n.startswith("_") and n not in cite_marks
+                 and n not in eq_marks}
+
+    def where(i: int) -> str:
+        return "fn" if i < 0 else f"¶{i + 1}"
+
+    issues: list[str] = []
+    for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
+        if not links.get(key):
+            issues.append(f"ORPHAN REF: bookmark '{key}' ({where(idx)}) "
+                          "has no in-text hyperlink pointing to it")
+    for name, idx in sorted(cite_marks.items(), key=lambda kv: kv[1]):
+        if not links.get(name):
+            issues.append(f"NO BACK-LINK: in-text bookmark '{name}' "
+                          f"({where(idx)}) has no reference back-link")
+        if name[:-3] not in ref_marks:
+            issues.append(f"MISSING REF: in-text citation '{name}' "
+                          f"({where(idx)}) links to '{name[:-3]}' but no "
+                          "reference bookmark exists")
+    broken = 0
+    for anchor, sites in sorted(links.items()):
+        if anchor not in bookmarks:
+            for i, label in sites:
+                issues.append(f"BROKEN LINK: hyperlink to '{anchor}' "
+                              f'({where(i)}, "{label[:40]}") '
+                              "— no such bookmark")
+                broken += 1
+
+    # Unlinked citation-like text, on the shared grammar. Only body
+    # prose before the reference list; the first five paragraphs are the
+    # title block, where author names read as citations.
+    wanted = {h.casefold()
+              for h in ((heading,) if isinstance(heading, str) else heading)}
+    head_idx = next((i for i, t in enumerate(texts)
+                     if t.strip().rstrip(":").casefold() in wanted),
+                    len(texts))
+    ignored = {s.casefold() for s in ignore}
+    labels = {lb.strip() for sites in links.values() for _, lb in sites}
+    unlinked = 0
+    for i, text in enumerate(texts[:head_idx]):
+        if i < 5:
+            continue
+        for found in find_citations(text):
+            c = replace(found, authors=strip_lead(found.authors))
+            if c.surname.casefold() in ignored:
+                continue
+            cite = text[c.start:c.end].strip()
+            cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
+            if any(cite in lb or cores[0] in lb or cores[1] in lb
+                   for lb in labels):
+                continue
+            issues.append(f'UNLINKED: "{cite}" (¶{i + 1}) — looks like a '
+                          "citation but is not hyperlinked")
+            unlinked += 1
+
+    cited_keys = {n[:-3] for n in cite_marks}
+    cited_keys |= {a for a in links if a in ref_marks}
+    for key in sorted(cited_keys - ref_marks.keys()):
+        issues.append(f"CITE WITHOUT REF: '{key}' cited in text but no "
+                      "reference bookmark")
+    for key in sorted(ref_marks.keys() - cited_keys):
+        issues.append(f"REF WITHOUT CITE: '{key}' "
+                      f"({where(ref_marks[key])}) in references but never "
+                      "cited in text")
+
+    stats = {"paragraphs": len(paras), "bookmarks": len(bookmarks),
+             "cite_bookmarks": len(cite_marks),
+             "ref_bookmarks": len(ref_marks), "eq_bookmarks": len(eq_marks),
+             "links": sum(len(v) for v in links.values()),
+             "broken": broken, "unlinked": unlinked}
+    return issues, stats
+
+
+def check_citations(docx_path: str | Path) -> int:
+    """Print the link audit for a manuscript; the count of issues found.
+
+    The CLI entry (``docxkit citations``) and the drop-in replacement for
+    the ported ``check_citation_links.py``: same contract (report to
+    stdout, 0 issues means clean), same issue prefixes.
+    """
+    issues, stats = audit_links(read_parts(docx_path))
+    print(f"Document: {docx_path}")
+    print(f"Paragraphs: {stats['paragraphs']}")
+    print(f"Bookmarks: {stats['bookmarks']} ({stats['cite_bookmarks']} "
+          f"in-text, {stats['ref_bookmarks']} reference, "
+          f"{stats['eq_bookmarks']} equation)")
+    print(f"Hyperlinks: {stats['links']} total "
+          f"({stats['broken']} broken, {stats['unlinked']} unlinked "
+          "citation-like mentions)")
+    print("=" * 60)
+    if not issues:
+        print("ALL CHECKS PASSED — no issues found.")
+    else:
+        print(f"FOUND {len(issues)} ISSUE(S):\n")
+        for issue in issues:
+            print(f"  - {issue}")
+    return len(issues)
 

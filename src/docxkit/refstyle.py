@@ -32,6 +32,8 @@ from dataclasses import dataclass, field, replace
 from ._xml import PARA_RE, visible_text
 from .citations import (
     AUTHORS_PATTERN,
+    DISCOURSE_LEADS,
+    IGNORED_LEADS,
     REF_HEADINGS,
     REF_STOPS,
     YEAR_PATTERN,
@@ -40,6 +42,9 @@ from .citations import (
     find_citations,
     key_for,
     references,
+)
+from .citations import (
+    strip_lead as _strip_lead,
 )
 
 __all__ = [
@@ -79,33 +84,10 @@ class Issue:
     snippet: str = ""
 
 
-# Capitalised words that look like a citation's lead author but are not
-# one — "Table (2020)", "in March (2020)". Grown from the false-positive
-# list the linked-citation audit uses; filtering happens on the CITED /
-# LISTED cross-check only, never on the style checks.
-IGNORED_LEADS = frozenset({
-    "Section", "Table", "Figure", "Appendix", "Proposition", "Corollary",
-    "Equation", "Step", "Part", "Band", "Index", "Panel", "Model", "Wave",
-    "Round", "Vol", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-})
-
-# A sentence adverb the citation grammar swallowed as a first author:
-# "Similarly, Liebman and Luttmer (2015) show..." reads as a three-author
-# citation by "Similarly" — which then files as et-al advice ("write
-# Similarly et al.") AND a missing reference, while the real Liebman
-# entry reads as never cited. The lead is stripped, not the citation
-# dropped: the citation itself is real. Found on LE le15 ¶30.
-DISCOURSE_LEADS = frozenset({
-    "Accordingly", "Additionally", "Alternatively", "Also", "Consequently",
-    "Conversely", "Finally", "First", "Fourth", "Further", "Furthermore",
-    "Hence", "However", "Importantly", "Indeed", "Instead", "Likewise",
-    "Meanwhile", "Moreover", "Nevertheless", "Nonetheless", "Notably",
-    "Overall", "Recently", "Relatedly", "Second", "Similarly",
-    "Specifically", "Third", "Thus", "Yet",
-})
-_LEAD_ADVERB_RE = re.compile(r"^([A-ZÀ-ÿĀ-ſ][a-zà-ÿā-ſ]+),\s+(.+)$",
-                             re.DOTALL)
+# IGNORED_LEADS, DISCOURSE_LEADS and the lead strip live in
+# :mod:`docxkit.citations` now — the link audit uses the same lists, and
+# two copies would grow apart. Re-exported here because this module's
+# callers pass them (grown) as ``ignore=``.
 
 # The entry's own year: the first year-shaped token followed by
 # punctuation, with the parentheses captured so the style check can see
@@ -142,14 +124,6 @@ _NO_ITALICS_MARKERS = ("http", "www.", "retrieved", "published online",
 def _snippet(text: str, start: int, end: int, margin: int = 20) -> str:
     lo, hi = max(0, start - margin), min(len(text), end + margin)
     return " ".join(text[lo:hi].split())
-
-
-def _strip_lead(authors: str) -> str:
-    """Drop a leading discourse adverb the grammar mistook for an author."""
-    m = _LEAD_ADVERB_RE.match(authors)
-    if m and m.group(1) in DISCOURSE_LEADS:
-        return m.group(2)
-    return authors
 
 
 def check_prose(text: str, style: Style = HOUSE) -> list[Issue]:

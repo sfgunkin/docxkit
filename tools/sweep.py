@@ -79,6 +79,7 @@ def routines(blob: bytes) -> dict[str, Routine]:
             for p in revisions.text(doc, revisions.FINAL)),
         "citations.refs": lambda: len(
             citations.references(revisions.text(doc, revisions.FINAL))),
+        "citations.audit": lambda: len(citations.audit_links(dict(raw))[0]),
         "refstyle.audit": lambda: len(refstyle.audit(dict(raw)).issues),
         "crossrefs.captions": lambda: len(crossrefs.find_captions(doc)),
         "crossrefs.linked": lambda: len(crossrefs.audit(doc)["linked"]),

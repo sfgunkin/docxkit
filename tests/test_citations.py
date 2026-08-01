@@ -5,7 +5,9 @@ import pytest
 
 from docxkit.citations import (
     anchor_names,
+    audit_links,
     bookmark,
+    check_citations,
     find_citations,
     hyperlink_field,
     key_for,
@@ -276,3 +278,146 @@ def test_the_body_citations_and_the_entries_agree():
     cited = {c.key for p in BODY[:3] for c in find_citations(p)}
     listed = {r.key for r in references(BODY)}
     assert cited <= listed, f"cited but not listed: {cited - listed}"
+
+
+# ------------------------------------------------------ the link audit ---
+
+hfield = hyperlink_field
+
+
+def _linked_cite(key: str, label: str) -> str:
+    """An in-text citation on the papers' convention: <key>txt bookmark
+    wrapping a field link to the <key> entry bookmark."""
+    return bookmark(f"{key}txt", 10, hfield(key, label))
+
+
+def _entry(key: str, text: str) -> str:
+    """A reference entry: <key> bookmark + back-link to <key>txt."""
+    return bookmark(key, 20, hfield(f"{key}txt", text))
+
+
+def _codes_of(issues):
+    return {i.split(":", 1)[0] for i in issues}
+
+
+def make_doc(*paras: str) -> dict[str, bytes]:
+    from conftest import make_parts
+    filler = "".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                     for i in range(5))
+    return make_parts(filler + "".join(paras))
+
+
+def P(inner: str) -> str:
+    return f"<w:p>{inner}</w:p>"
+
+
+def R(text: str) -> str:
+    return f"<w:r><w:t>{text}</w:t></w:r>"
+
+
+def test_internal_links_reads_both_forms():
+    """The builds write fldChar HYPERLINK fields; Word converts them to
+    w:hyperlink elements on save. An audit reading one form misses half
+    the links depending on who saved last."""
+    from docxkit._xml import internal_links
+    xml = (P(hfield("Smith2020", "Smith 2020"))
+           + P('<w:hyperlink w:anchor="Jones2021"><w:r><w:t>Jones '
+               "2021</w:t></w:r></w:hyperlink>"))
+    assert internal_links(xml) == [("Jones2021", "Jones 2021"),
+                                   ("Smith2020", "Smith 2020")] or \
+           internal_links(xml) == [("Smith2020", "Smith 2020"),
+                                   ("Jones2021", "Jones 2021")]
+
+
+def test_a_fully_linked_document_audits_clean():
+    parts = make_doc(
+        P(R("Robots displace workers (") + _linked_cite("Smith2020",
+            "Smith 2020") + R(").")),
+        P(R("References")),
+        P(_entry("Smith2020", "Smith, J. (2020). Robots. JPE.")))
+    issues, stats = audit_links(parts)
+    assert issues == []
+    assert stats["ref_bookmarks"] == 1 and stats["cite_bookmarks"] == 1
+
+
+def test_a_link_to_words_own_heading_bookmark_is_not_broken():
+    """THE regression: the ported audit excluded underscore names from
+    its index and reported links to them as BROKEN — LE le15 shipped an
+    audit round with nine '_Heading' false positives."""
+    parts = make_doc(
+        P(bookmark("_Heading1", 3) + R("Introduction")),
+        P(R("See the ")
+          + '<w:hyperlink w:anchor="_Heading1"><w:r><w:t>intro'
+            "</w:t></w:r></w:hyperlink>" + R(" above.")))
+    issues, _ = audit_links(parts)
+    assert not any(i.startswith("BROKEN LINK") for i in issues)
+    # and the heading bookmark is not dragged into the citation checks
+    assert not any(i.startswith("REF WITHOUT CITE") for i in issues)
+
+
+def test_a_link_to_a_missing_bookmark_is_broken():
+    parts = make_doc(
+        P(R("See ") + hfield("Nowhere2020", "Nowhere 2020") + R(".")))
+    issues, stats = audit_links(parts)
+    assert any(i.startswith("BROKEN LINK") and "Nowhere2020" in i
+               for i in issues)
+    assert stats["broken"] == 1
+
+
+def test_an_entry_nobody_links_to_is_an_orphan():
+    parts = make_doc(
+        P(R("Prose without the citation.")),
+        P(R("References")),
+        P(bookmark("Ghost2019", 30) + R("Ghost, A. (2019). Unseen.")))
+    issues, _ = audit_links(parts)
+    assert any(i.startswith("ORPHAN REF") and "Ghost2019" in i
+               for i in issues)
+    assert any(i.startswith("REF WITHOUT CITE") for i in issues)
+
+
+def test_a_cite_mark_without_entry_or_backlink_reports_both():
+    parts = make_doc(
+        P(bookmark("Lost2020txt", 40)
+          + hfield("Lost2020", "Lost 2020")))
+    issues, _ = audit_links(parts)
+    codes = _codes_of(issues)
+    assert "NO BACK-LINK" in codes       # nothing links to Lost2020txt
+    assert "MISSING REF" in codes        # Lost2020 bookmark absent
+    assert "BROKEN LINK" in codes        # the forward link dangles too
+
+
+def test_unlinked_citation_text_is_reported_on_the_shared_grammar():
+    parts = make_doc(
+        P(R("Ranges shift with age (Mühlbach 2022).")),
+        P(R("Shown in Table (2020) format.")),   # IGNORED_LEADS
+        P(R("References")))
+    issues, _ = audit_links(parts)
+    unlinked = [i for i in issues if i.startswith("UNLINKED")]
+    assert len(unlinked) == 1
+    assert "Mühlbach 2022" in unlinked[0]
+
+
+def test_a_footnote_link_keeps_the_entry_cited():
+    from conftest import NS, make_parts, para, run
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("References"))
+            + P(_entry("Card1999", "Card, D. (1999). Education.")))
+    foot = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:footnotes {NS}><w:footnote w:id="2">'
+            f"{para(run('See '), hfield('Card1999', 'Card 1999'))}"
+            f"</w:footnote></w:footnotes>")
+    issues, _ = audit_links(make_parts(body, footnotes=foot))
+    assert not any(i.startswith("ORPHAN REF") for i in issues)
+    assert not any(i.startswith("REF WITHOUT CITE") for i in issues)
+
+
+def test_check_citations_prints_and_counts(tmp_path, capsys):
+    from conftest import write
+    parts = make_doc(
+        P(R("See ") + hfield("Nowhere2020", "Nowhere 2020") + R(".")))
+    path = write(tmp_path / "audit.docx", parts)
+    n = check_citations(path)
+    out = capsys.readouterr().out
+    assert n == 1
+    assert "BROKEN LINK" in out and "FOUND 1 ISSUE(S)" in out

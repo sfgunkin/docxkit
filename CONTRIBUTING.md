@@ -123,8 +123,16 @@ person reverting it.
 
 ## The ported modules
 
-`compare.py`, `citations.py`'s audit half (`_citation_audit.py`) and
-`word_edits.py` came over from `C:\Users\Ezhik\tools` unchanged. They are
-exempt from lint and type checking on purpose: they are working,
-well-exercised code, and reformatting ~2000 lines would risk behaviour
-for no benefit. New code is held to the full ruleset.
+`compare.py` and `word_edits.py` came over from `C:\Users\Ezhik\tools`
+unchanged. They are exempt from lint and type checking on purpose: they
+are working, well-exercised code, and reformatting ~2000 lines would
+risk behaviour for no benefit. New code is held to the full ruleset.
+`compare.py` now has characterization tests (`tests/test_compare.py`)
+pinning its behavior — extend them before changing it.
+
+The third port, `_citation_audit.py`, was REWRITTEN onto the shared
+grammar (2026-08-01) and folded into `citations.py`: the old audit read
+only element-form links, so on a fresh build (field-form links) it
+reported every entry orphaned — 127 of AFI v13's 127 findings were that
+false positive — and its underscore-name filter reported Word's own
+`_Heading` bookmarks as broken links.

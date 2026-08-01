@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Shared toolkit for working with Word .docx manuscripts: surgical XML editing, multi-layer diffing, tracked-changes deliverables, and author-edit ingestion."
 requires-python = ">=3.12"
 dependencies = [
-    "python-docx>=1.1",
     "lxml>=5.0",
 ]
 
@@ -45,8 +44,6 @@ ignore = [
 # ~2000 lines to a new line-length would risk behaviour for no benefit.
 # New code in this package is held to the full ruleset above.
 "src/docxkit/compare.py" = ["ALL"]
-"src/docxkit/_citation_audit.py" = ["ALL"]
-"src/docxkit/word_edits.py" = ["ALL"]
 # Lazy imports are deliberate: pywin32 is an optional extra, so the rest of
 # the toolkit must import on any platform.
 "src/docxkit/word.py" = ["PLC0415"]
@@ -111,8 +108,7 @@ ignore_missing_imports = true
 # they are exempted from the lint config: they are working, well-exercised
 # code carried over unchanged, and their errors are all python-docx's
 # untyped Document() rather than anything actionable here.
-module = ["docxkit.compare", "docxkit._citation_audit",
-          "docxkit.word_edits"]
+module = ["docxkit.compare"]
 ignore_errors = true
 
 [tool.pyright]
@@ -125,8 +121,6 @@ typeCheckingMode = "standard"
 # no diagnostics, matching mypy's ignore_errors.
 ignore = [
     "src/docxkit/compare.py",
-    "src/docxkit/_citation_audit.py",
-    "src/docxkit/word_edits.py",
 ]
 
 [tool.pytest.ini_options]

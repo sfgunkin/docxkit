@@ -24,6 +24,7 @@ __all__ = [
     "XML_WS",
     "delta_text",
     "escape",
+    "internal_links",
     "matching_close",
     "normalize_glyphs",
     "set_run_text",
@@ -110,6 +111,44 @@ def set_run_text(xml: str, text: str) -> str:
         xml = xml[:m.start()] + open_tag + escape(body) + m.group(2) \
             + xml[m.end():]
     return xml
+
+
+_HYPERLINK_EL_RE = re.compile(
+    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*>(.*?)</w:hyperlink>',
+    re.DOTALL)
+_FIELD_RE = re.compile(
+    r'<w:fldChar\b[^>]*w:fldCharType="begin"[^>]*/>(.*?)'
+    r'<w:fldChar\b[^>]*w:fldCharType="end"[^>]*/>', re.DOTALL)
+_INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
+_INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
+_SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
+
+
+def internal_links(xml: str) -> list[tuple[str, str]]:
+    """``(anchor, visible label)`` for every internal link, in BOTH forms.
+
+    The builds write cross-references as fldChar ``HYPERLINK \\l`` fields
+    (that is what Word itself produces), but Word converts them to
+    ``<w:hyperlink>`` elements whenever the author saves — "form churn",
+    documented on the LE rounds. An audit that reads one form misses half
+    the links depending on who saved the file last, so this reads both.
+
+    Field spans are matched begin-to-end non-greedily, which mispairs
+    NESTED fields; a citation or cross-reference link never nests, so
+    that stays out of scope here.
+    """
+    out: list[tuple[str, str]] = []
+    for m in _HYPERLINK_EL_RE.finditer(xml):
+        out.append((html.unescape(m.group(1)), visible_text(m.group(2))))
+    for m in _FIELD_RE.finditer(xml):
+        instr = html.unescape("".join(_INSTR_RE.findall(m.group(1))))
+        am = _INSTR_ANCHOR_RE.search(instr)
+        if am is None:
+            continue                       # PAGEREF, REF, external link...
+        sep = _SEPARATE_RE.search(m.group(1))
+        label = visible_text(m.group(1)[sep.end():]) if sep else ""
+        out.append((am.group(1), label))
+    return out
 
 
 def matching_close(xml: str, pos: int, tag: str) -> int:
