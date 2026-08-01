@@ -144,3 +144,52 @@ def test_paragraphs_returns_offsets():
     ms = paragraphs(xml)
     assert [text_of(m.group(0)) for m in ms] == ["one", "two"]
     assert ms[0].start() < ms[1].start()
+
+
+# ----------------------------------------------------------- italicize ---
+
+def test_italicize_splits_the_run_at_the_span():
+    """Only the title takes <w:i/>; the visible text never changes."""
+    from docxkit.edit import italicize
+    p = para(run("Altman, D. (2006). Cost of dichotomising. "
+                 "British Medical Journal, 332:1080."))
+    out = italicize(p, "British Medical Journal")
+    assert text_of(out) == text_of(p)
+    assert out.count("<w:i/>") == 1
+    import re
+    ital = next(r for r in re.finditer(r"<w:r>.*?</w:r>", out)
+                if "<w:i/>" in r.group(0))
+    assert "British Medical Journal" in ital.group(0)
+    assert "Altman" not in ital.group(0)
+    assert "332:1080" not in ital.group(0)
+
+
+def test_italicize_spans_fragmented_runs():
+    from docxkit.edit import italicize
+    p = para(run("See the "), run("British Medical"), run(" Journal here."))
+    out = italicize(p, "British Medical Journal")
+    assert text_of(out) == "See the British Medical Journal here."
+    assert out.count("<w:i/>") == 2      # both covered runs, split edges
+    assert "here." in out
+
+
+def test_italicize_is_idempotent_on_an_italic_run():
+    from docxkit.edit import italicize
+    p = ('<w:p><w:r><w:rPr><w:i/></w:rPr>'
+         "<w:t>Journal of Things</w:t></w:r></w:p>")
+    assert italicize(p, "Journal of Things").count("<w:i/>") == 1
+
+
+def test_italicize_respects_run_property_order():
+    """<w:i/> must follow rStyle/rFonts/b per the schema sequence."""
+    from docxkit.edit import italicize
+    p = ('<w:p><w:r><w:rPr><w:rStyle w:val="X"/><w:b/></w:rPr>'
+         "<w:t>Title</w:t></w:r></w:p>")
+    out = italicize(p, "Title")
+    assert '<w:rStyle w:val="X"/><w:b/><w:i/>' in out
+
+
+def test_italicize_asserts_its_anchor():
+    from docxkit.edit import italicize
+    with pytest.raises(AnchorError):
+        italicize(para(run("no such title")), "Journal")

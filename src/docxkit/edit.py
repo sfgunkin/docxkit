@@ -22,6 +22,7 @@ __all__ = [
     # re-exported: callers building a run from scratch need the same rule
     "T_RUN_RE",
     "find_normalized",
+    "italicize",
     "preserve_space",
     "rep",
     "replace_in_para",
@@ -101,6 +102,91 @@ def preserve_space(xml: str) -> tuple[str, int]:
         return m.group(0)
 
     return _BARE_T_RE.sub(sub, xml), fixed
+
+
+def _locate(para_xml: str, old: str, *, normalize: bool = False,
+            ) -> tuple[list[re.Match[str]], list[tuple[int, int]], int, int]:
+    """The paragraph's runs, their visible spans, and `old`'s ONE span."""
+    runs, spans, cursor = [], [], 0
+    for r in RUN_RE.finditer(para_xml):
+        body = visible_text(r.group(0))
+        runs.append(r)
+        spans.append((cursor, cursor + len(body)))
+        cursor += len(body)
+
+    visible = "".join(visible_text(r.group(0)) for r in runs)
+    if normalize:
+        hits = find_normalized(visible, old)
+    else:
+        hits = []
+        at = visible.find(old)
+        while at >= 0:
+            hits.append((at, at + len(old)))
+            at = visible.find(old, at + 1)
+    if not hits:
+        raise AnchorError(f"{old[:60]!r} not in paragraph")
+    if len(hits) > 1:
+        raise AnchorError(f"{old[:60]!r} occurs twice in paragraph")
+    return runs, spans, hits[0][0], hits[0][1]
+
+
+# EG_RPrBase orders run properties; italics goes after these.
+_RPR_HEAD_RE = re.compile(
+    r"<w:rPr>(?:<w:rStyle [^>]*/>)?(?:<w:rFonts [^>]*/>)?"
+    r"(?:<w:b/>)?(?:<w:bCs/>)?")
+_ITALIC_OFF_RE = re.compile(r'<w:i w:val="(?:0|false|none)"/>')
+_RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*>")
+
+
+def _run_italic(run_xml: str) -> str:
+    """The same run with italics ON, schema order respected."""
+    if _ITALIC_OFF_RE.search(run_xml):
+        return _ITALIC_OFF_RE.sub("<w:i/>", run_xml, count=1)
+    if re.search(r"<w:i[/ >]", run_xml):
+        return run_xml                       # already italic
+    if "<w:rPr>" in run_xml:
+        m = _RPR_HEAD_RE.search(run_xml)
+        assert m is not None
+        return run_xml[:m.end()] + "<w:i/>" + run_xml[m.end():]
+    m = _RUN_OPEN_RE.search(run_xml)
+    assert m is not None
+    return run_xml[:m.end()] + "<w:rPr><w:i/></w:rPr>" + run_xml[m.end():]
+
+
+def italicize(para_xml: str, text: str, *, normalize: bool = False) -> str:
+    """Set italics on exactly `text` inside one paragraph.
+
+    The runs covering the span are split at its edges and only the
+    inside pieces gain ``<w:i/>``; surrounding formatting, hyperlinks,
+    bookmarks and fields survive, and the visible text is unchanged.
+    Built for the refstyle "italics" finding — a reference entry whose
+    journal or book title lost its italics (six entries on API10, and
+    the same class on LE).
+    """
+    runs, spans, at, end = _locate(para_xml, text, normalize=normalize)
+
+    edits = []
+    for (start, stop), run in zip(spans, runs, strict=True):
+        if stop <= at or start >= end:
+            continue
+        run_xml = run.group(0)
+        body = visible_text(run_xml)
+        lo, hi = max(at - start, 0), min(end - start, len(body))
+        if lo == 0 and hi == len(body):
+            edits.append((run, _run_italic(run_xml)))
+            continue
+        pieces = [(body[:lo], False), (body[lo:hi], True),
+                  (body[hi:], False)]
+        built = "".join(
+            _run_italic(set_run_text(run_xml, part)) if italic
+            else set_run_text(run_xml, part)
+            for part, italic in pieces if part)
+        edits.append((run, built))
+
+    out = para_xml
+    for run, replacement in reversed(edits):
+        out = out[:run.start()] + replacement + out[run.end():]
+    return out
 
 
 def replace_in_para(para_xml: str, old: str, new: str,
