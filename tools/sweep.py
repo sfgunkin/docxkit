@@ -40,6 +40,7 @@ from docxkit import (
     footnotes,
     hygiene,
     lint,
+    refstyle,
     revisions,
     tables,
 )
@@ -78,6 +79,7 @@ def routines(blob: bytes) -> dict[str, Routine]:
             for p in revisions.text(doc, revisions.FINAL)),
         "citations.refs": lambda: len(
             citations.references(revisions.text(doc, revisions.FINAL))),
+        "refstyle.audit": lambda: len(refstyle.audit(dict(raw)).issues),
         "crossrefs.captions": lambda: len(crossrefs.find_captions(doc)),
         "crossrefs.linked": lambda: len(crossrefs.audit(doc)["linked"]),
         "crossrefs.dangling": lambda: len(

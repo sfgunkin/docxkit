@@ -2,6 +2,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
 
     docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json R.json]
     docxkit citations PAPER.docx
+    docxkit refstyle PAPER.docx [--chicago] [--json R.json]
     docxkit crossrefs PAPER.docx [--write] [--audit]
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit locate PAPER.docx ANCHOR... | --revisions
@@ -42,6 +43,26 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
     return 1 if check_citations(args.docx) > 0 else 0
+
+
+def cmd_refstyle(args: argparse.Namespace) -> int:
+    """Citation and reference FORMAT, against the house author-date style.
+
+    ``citations`` audits the links; this audits the writing — initials,
+    "and" not "&", "(2020).", en-dashes, alphabetical order, and the
+    cited/listed cross-check.
+    """
+    from .package import read_parts
+    from .refstyle import CHICAGO, HOUSE, audit
+    report = audit(read_parts(args.docx),
+                   CHICAGO if args.chicago else HOUSE)
+    print(Path(args.docx).name)
+    print("  " + report.format().replace("\n", "\n  "))
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps(report.as_rows(), ensure_ascii=False, indent=2),
+            encoding="utf-8")
+    return 1 if report.issues else 0
 
 
 def cmd_crossrefs(args: argparse.Namespace) -> int:
@@ -413,6 +434,16 @@ def main() -> None:
     p = sub.add_parser("citations", help="citation / reference link audit")
     p.add_argument("docx")
     p.set_defaults(fn=cmd_citations)
+
+    p = sub.add_parser(
+        "refstyle",
+        help="citation / reference FORMAT audit (house author-date style)")
+    p.add_argument("docx")
+    p.add_argument("--chicago", action="store_true",
+                   help="AFI's variant: full names, bare year, "
+                        "et al. from 4 authors")
+    p.add_argument("--json", metavar="PATH")
+    p.set_defaults(fn=cmd_refstyle)
 
     p = sub.add_parser(
         "crossrefs",

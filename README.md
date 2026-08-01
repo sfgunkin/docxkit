@@ -50,6 +50,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
 | `citations` | find citations in prose, parse the reference section, build the link XML; plus the back-link audit |
+| `refstyle` | reference/citation FORMAT audit against the house author-date style (initials, "(2020).", en-dashes, order, cited↔listed); `HOUSE` and `CHICAGO` presets |
 | `crossrefs` | bidirectional figure/table links, the bookmark convention |
 | `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass |
 | `wordcount` | words per bucket (prose/tables/captions/footnotes/references/appendix) for journal caps |
@@ -71,6 +72,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 ```
 docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json report.json]
 docxkit citations PAPER.docx
+docxkit refstyle PAPER.docx [--chicago] [--json R.json]
 docxkit inspect PAPER.docx [--comments] [--revisions]
 docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
 docxkit locate PAPER.docx --revisions [--limit N]

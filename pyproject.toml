@@ -65,6 +65,9 @@ ignore = [
 # them; every "ambiguous" character in those files is the subject matter.
 "src/docxkit/equations.py" = ["PLC0415", "RUF001", "RUF002", "RUF003"]
 "src/docxkit/renumber.py" = ["RUF001", "RUF002"]
+# refstyle's whole subject is the en dash and the curly apostrophe: its
+# messages must SHOW the wanted glyph ("pp. 45–48"), not describe it.
+"src/docxkit/refstyle.py" = ["RUF001", "RUF002"]
 "src/docxkit/wordcount.py" = ["RUF001"]
 "src/docxkit/hygiene.py" = ["RUF001", "RUF002"]
 "src/docxkit/lint.py" = ["PLC0415"]
