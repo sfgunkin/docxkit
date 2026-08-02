@@ -272,8 +272,16 @@ def parse_reference(text: str, index: int = -1) -> Reference | None:
     if not m:
         return None
     lead = text[:m.start()].rstrip(" .,")
-    surname = (lead.split(",", 1)[0] if "," in lead
-               else lead.split(".", 1)[0])
+    if "," in lead:
+        surname = lead.split(",", 1)[0]
+    else:
+        # The institutional split stops at a SENTENCE period, not at a
+        # dotted acronym's: "U.S. Census Bureau. (2023)" must file under
+        # the full name — splitting at the first period filed it under
+        # "U", which broke the order check and the cited/listed pairing
+        # on LI7. A period preceded by a single capital is the acronym's.
+        m2 = re.search(r"(?<!\b[A-Z])\.(?=\s)", lead)
+        surname = lead[:m2.start()] if m2 else lead
     surname = surname.strip()
     if not surname:
         return None

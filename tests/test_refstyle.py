@@ -436,3 +436,17 @@ def test_report_format_reads_as_a_checklist():
     assert "missing-ref" in text
     rows = report.as_rows()
     assert all({"code", "where", "message", "snippet"} <= set(r) for r in rows)
+
+
+def test_dotted_acronyms_order_without_their_periods():
+    """"U.S." files as "US" — after "United", which is where the style
+    manuals and LI7's own list put it; comparing the dot against the
+    letters flagged the correct order as broken."""
+    body = (para(run("Cited (United Nations 2019) and (Bureau 2023)."))
+            + para(run("References"))
+            + para(run("United Nations (2019). "), irun("World Population"),
+                   run(". New York: UN."))
+            + para(run('U.S. Census Bureau. (2023). '), irun("Age Heaping"),
+                   run(". Washington, DC.")))
+    report = audit(make_parts(body))
+    assert not any(i.code == "order" for i in report.issues)

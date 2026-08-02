@@ -518,3 +518,13 @@ def test_audit_distinguishes_body_level_from_footnote_bookmarks():
     issues, _ = audit_links(parts)
     orphan = next(i for i in issues if i.startswith("ORPHAN REF"))
     assert "(body)" in orphan and "(fn)" not in orphan
+
+
+def test_a_dotted_acronym_lead_keeps_its_full_name():
+    """'U.S. Census Bureau. (2023)' filed under "U" — the first-period
+    split read the acronym's dot as a sentence end (LI7 fn6/¶184), which
+    broke the order check and the cited/listed pairing."""
+    ref = parse_reference('U.S. Census Bureau. (2023). "Age Heaping in '
+                          'the 2020 Census of Population."')
+    assert ref is not None
+    assert ref.surname == "U.S. Census Bureau"

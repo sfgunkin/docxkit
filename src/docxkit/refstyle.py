@@ -260,9 +260,12 @@ def check_entry(text: str, style: Style = HOUSE) -> list[Issue]:
 
 
 def _fold(surname: str) -> str:
-    """Alphabetisation key: diacritics folded so Mühlbach files at Mu."""
+    """Alphabetisation key: diacritics folded so Mühlbach files at Mu,
+    punctuation dropped so "U.S." files as "US" — after "United", which
+    is where the style manuals and LI7's list actually put it."""
     flat = unicodedata.normalize("NFKD", surname)
-    return "".join(c for c in flat if not unicodedata.combining(c)).casefold()
+    return "".join(c for c in flat
+                   if c.isalnum() or c.isspace()).casefold()
 
 
 def _entry_keys(r: Reference) -> set[str]:
