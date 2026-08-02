@@ -28,7 +28,14 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from ._xml import PARA_RE, escape, internal_links, set_run_text, visible_text
+from ._xml import (
+    PARA_RE,
+    RUN_RE,
+    escape,
+    internal_links,
+    set_run_text,
+    visible_text,
+)
 from .edit import _locate
 from .errors import AnchorError
 from .find import para_slice
@@ -352,43 +359,55 @@ def link_in_para(para_xml: str, text: str, anchor: str, *,
 
     The repair form for a citation that LOST its link: Word converts
     field links to elements on every save anyway, so a repair writes the
-    element directly. The span must sit inside ONE run — citation labels
-    are single runs in these papers, and a fragmented span should be
-    looked at rather than guessed at.
+    element directly. A span fragmented across runs (Word splits entry
+    heads at rsid boundaries — LI7's Hudiyana entry) is wrapped whole:
+    the edge runs are split at the span's edges, every covered run gains
+    the character style, and anything sitting between runs (a bookmark,
+    a proof-error mark) rides along inside the link.
     """
     runs, spans, at, end = _locate(para_xml, text)
-    for (start, stop), run in zip(spans, runs, strict=True):
-        if stop <= at or start >= end:
-            continue
-        if not (start <= at and end <= stop):
-            raise AnchorError(
-                f"link_in_para: {text[:40]!r} spans several runs")
-        run_xml = run.group(0)
-        body = visible_text(run_xml)
-        lo, hi = at - start, end - start
-        before = set_run_text(run_xml, body[:lo]) if lo else ""
-        after = set_run_text(run_xml, body[hi:]) if hi < len(body) else ""
-        label = _styled_run(run_xml, body[lo:hi], style)
-        linked = (f'<w:hyperlink w:anchor="{escape(anchor)}">'
-                  f"{label}</w:hyperlink>")
-        return (para_xml[:run.start()] + before + linked + after
-                + para_xml[run.end():])
-    raise AnchorError(  # pragma: no cover — _locate already raised
-        f"link_in_para: {text[:40]!r} not found")
+    covered = [(sp, r) for sp, r in zip(spans, runs, strict=True)
+               if sp[1] > at and sp[0] < end]
+    if not covered:  # pragma: no cover — _locate already raised
+        raise AnchorError(f"link_in_para: {text[:40]!r} not found")
+    (fs, _fe), first = covered[0]
+    (ls, le), last = covered[-1]
+
+    fbody = visible_text(first.group(0))
+    lbody = visible_text(last.group(0))
+    before = set_run_text(first.group(0), fbody[:at - fs]) if at > fs else ""
+    after = set_run_text(last.group(0), lbody[end - ls:]) if end < le else ""
+
+    if first is last:
+        inner = _styled_run(first.group(0), fbody[at - fs:end - fs], style)
+    else:
+        head = _styled_run(first.group(0), fbody[at - fs:], style)
+        tail = _styled_run(last.group(0), lbody[:end - ls], style)
+        middle = RUN_RE.sub(lambda m: _add_style(m.group(0), style),
+                            para_xml[first.end():last.start()])
+        inner = head + middle + tail
+
+    linked = f'<w:hyperlink w:anchor="{escape(anchor)}">{inner}</w:hyperlink>'
+    return (para_xml[:first.start()] + before + linked + after
+            + para_xml[last.end():])
 
 
 def _styled_run(run_xml: str, text: str, style: str) -> str:
-    """The run with `text` and a character style added (rStyle is FIRST
+    """The run with `text` and a character style added."""
+    return _add_style(set_run_text(run_xml, text), style)
+
+
+def _add_style(run_xml: str, style: str) -> str:
+    """Add a character style to a run, text untouched (rStyle is FIRST
     in the rPr sequence, so insertion is unambiguous)."""
-    out = set_run_text(run_xml, text)
     tag = f'<w:rStyle w:val="{style}"/>'
-    if "<w:rStyle" in out:
-        return out
-    if "<w:rPr>" in out:
-        return out.replace("<w:rPr>", f"<w:rPr>{tag}", 1)
-    m = re.search(r"<w:r\b[^>]*>", out)
+    if "<w:rStyle" in run_xml:
+        return run_xml
+    if "<w:rPr>" in run_xml:
+        return run_xml.replace("<w:rPr>", f"<w:rPr>{tag}", 1)
+    m = re.search(r"<w:r\b[^>]*>", run_xml)
     assert m is not None
-    return out[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + out[m.end():]
+    return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
 
 
 def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:

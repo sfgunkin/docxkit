@@ -439,16 +439,29 @@ def test_link_in_para_wraps_the_span_in_an_element_link():
     assert "as shown by " in out and " and others." in out
 
 
-def test_link_in_para_asserts_and_refuses_fragmented_spans():
+def test_link_in_para_asserts_its_anchor():
     import pytest as _pytest
 
     from docxkit.citations import link_in_para
     from docxkit.errors import AnchorError
     with _pytest.raises(AnchorError):
         link_in_para(P(R("no citation here")), "UN 2024", "UN2024")
-    split = P(R("as shown by UN ") + R("2024 and others."))
-    with _pytest.raises(AnchorError, match="spans several runs"):
-        link_in_para(split, "UN 2024", "UN2024")
+
+
+def test_link_in_para_wraps_a_fragmented_span_whole():
+    """Word splits entry heads at rsid boundaries (LI7's Hudiyana entry)
+    — the wrap covers every fragment, splits the edge runs, and carries
+    anything between runs (a bookmark) along inside the link."""
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import link_in_para
+    split = P(R("as shown by UN ") + bookmark("mid", 77)
+              + R("2024 and others."))
+    out = link_in_para(split, "UN 2024", "UN2024")
+    assert visible_text(out) == "as shown by UN 2024 and others."
+    assert internal_links(out) == [("UN2024", "UN 2024")]
+    assert "as shown by " in out and " and others." in out
+    hl = out[out.index("<w:hyperlink"):out.index("</w:hyperlink>")]
+    assert 'w:name="mid"' in hl          # the bookmark rides inside
 
 
 # ---------------------------------------------- link/bookmark repair ---
