@@ -949,6 +949,95 @@ def _dedup_name(name: str, taken: set[str]) -> str:
     return f"{name}_{n}"
 
 
+# --------------------------------------------- the repair-plan writer ---
+
+def repair_plan(parts: dict[str, bytes]) -> str:
+    """Classify the audit's findings into PROPOSED repairs, for a human.
+
+    The LE, API10 and LI7 rounds ran the same forensic loop three times;
+    the damage classes repeat, so the classification is mechanical even
+    though the REPAIR must never be: every proposal names the evidence
+    and the helper call a per-paper script would make, and the header
+    says what the three rounds proved — anchors get verified by a
+    person, because two of three Lutz diagnoses were wrong before the
+    right one.
+    """
+    doc = parts["word/document.xml"].decode("utf-8")
+    issues, _stats = audit_links(parts)
+    bookmarks = set(_BOOKMARK_NAME_RE.findall(doc))
+    foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
+    bookmarks |= set(_BOOKMARK_NAME_RE.findall(foot))
+    anchors = {a for a, _ in internal_links(doc)}
+    anchors |= {a for a, _ in internal_links(foot)}
+    texts = [visible_text(m.group(0)) for m in PARA_RE.finditer(doc)]
+    cited_text = {c.key for t in texts for c in find_citations(t)}
+
+    buckets: dict[str, list[str]] = {
+        "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],
+        "investigate": []}
+    for issue in issues:
+        kind = issue.split(":", 1)[0]
+        if kind == "BROKEN LINK":
+            m = re.search(r"hyperlink to '([^']+)'", issue)
+            target = m.group(1) if m else ""
+            base = target.removesuffix("txt")
+            if target.endswith("txt") and base in anchors:
+                buckets["wrap"].append(
+                    f'wrap_link_in_bookmark(doc, "{base}", "{target}", '
+                    f"bid)   # {issue}")
+            elif target.endswith("txt") and base in bookmarks:
+                buckets["relink"].append(
+                    f'link_in_para(para, CITE_TEXT, "{base}") + wrap '
+                    f'"{target}"   # find the citation first; {issue}')
+            else:
+                buckets["investigate"].append(issue)
+        elif kind in ("ORPHAN REF", "REF WITHOUT CITE"):
+            m = re.search(r"'([^']+)'", issue)
+            name = m.group(1) if m else ""
+            km = _KEY_SHAPE_RE.match(name)
+            key = (key_for(km.group(1), km.group(2)) if km else "?")
+            if km and key not in cited_text and name + "txt" not in \
+                    bookmarks:
+                buckets["debris"].append(
+                    f'delete_bookmark(doc, "{name}")   # VERIFY the entry '
+                    f"text is truly gone; {issue}")
+            elif kind == "ORPHAN REF":
+                buckets["relink"].append(
+                    f'link_in_para(para, CITE_TEXT, "{name}")   # first '
+                    f"mention, then wrap {name}txt; {issue}")
+        elif kind == "MISPLACED MARKER":
+            m = re.search(r"'([^']+)'", issue)
+            buckets["moved"].append(
+                f'delete_bookmark(doc, "{m.group(1) if m else "?"}") then '
+                f'marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}')
+        elif kind == "DOUBLED LINK":
+            buckets["nested"].append(
+                f"retarget or terminate the outer field BY HAND   # {issue}")
+        elif kind not in ("NO BACK-LINK", "MISSING REF", "UNLINKED",
+                          "CITE WITHOUT REF"):
+            buckets["investigate"].append(issue)
+        else:
+            buckets["investigate"].append(issue)
+
+    lines = [f"REPAIR PLAN — {len(issues)} audit issue(s). Review EVERY "
+             "anchor: the classification is mechanical, the repair is not.",
+             ""]
+    titles = {"wrap": "wrap the surviving link in its txt bookmark",
+              "relink": "recreate the lost link (locate the citation)",
+              "debris": "debris of a deleted entry — remove",
+              "moved": "marker stranded by a paragraph move — re-place",
+              "nested": "doubled link — untangle by hand",
+              "investigate": "no mechanical reading — investigate"}
+    for key, title in titles.items():
+        if buckets[key]:
+            lines.append(f"== {title} ({len(buckets[key])})")
+            lines += [f"  {x}" for x in buckets[key]]
+            lines.append("")
+    if len(issues) == 0:
+        lines = ["nothing to repair — the audit is clean"]
+    return "\n".join(lines).rstrip()
+
+
 def check_citations(docx_path: str | Path) -> int:
     """Print the link audit for a manuscript; the count of issues found.
 

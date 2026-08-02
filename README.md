@@ -73,6 +73,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json report.json]
 docxkit citations PAPER.docx
 docxkit link PAPER.docx [--write] [--alias "WHO=World Health Organization"]
+docxkit linkfix PAPER.docx                 # audit findings -> proposed repair plan
 docxkit refstyle PAPER.docx [--chicago] [--json R.json]
 docxkit inspect PAPER.docx [--comments] [--revisions]
 docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]

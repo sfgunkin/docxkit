@@ -662,3 +662,38 @@ def test_a_lead_particle_needs_a_word_boundary():
     and produced surname 'le Yang' on the Missing Market dry run."""
     assert find_citations("worthwhile Yang (2018) results")[0].surname \
         == "Yang"
+
+
+# ---------------------------------------------------------- repair_plan ---
+
+def test_repair_plan_classifies_the_known_damage_classes():
+    from docxkit.citations import repair_plan
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Cites (Aksoy 2026) here."))
+            + P(R("References"))
+            + P(bookmark("Ghost2019", 71)          # entry text deleted
+                + bookmark("Aksoy2026", 72)
+                + hfield("Aksoy2026txt", "Aksoy, C. (2026)")   # back-link
+                + R("Aksoy, C. (2026). Working from home. JEP."))
+            )
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    plan = repair_plan(parts)
+    assert "debris of a deleted entry" in plan and "Ghost2019" in plan
+    assert "recreate the lost link" in plan       # Aksoy cited, unlinked
+    assert "Review EVERY anchor" in plan
+
+
+def test_repair_plan_on_a_clean_document():
+    from docxkit.citations import repair_plan
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Nothing cited here."))
+            + P(R("References"))
+            + P(R("Aksoy, C. (2026). Working from home. JEP.")))
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    assert "investigate" in repair_plan(parts) or         "nothing to repair" in repair_plan(parts)

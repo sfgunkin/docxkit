@@ -67,6 +67,15 @@ def cmd_link(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_linkfix(args: argparse.Namespace) -> int:
+    """The audit's findings classified into proposed repairs — a plan
+    for a human to review, never an edit."""
+    from .citations import repair_plan
+    from .package import read_parts
+    print(repair_plan(read_parts(args.docx)))
+    return 0
+
+
 def cmd_refstyle(args: argparse.Namespace) -> int:
     """Citation and reference FORMAT, against the house author-date style.
 
@@ -465,6 +474,12 @@ def main() -> None:
     p.add_argument("--alias", action="append", metavar="CITED=FILED",
                    help='e.g. --alias "WHO=World Health Organization"')
     p.set_defaults(fn=cmd_link)
+
+    p = sub.add_parser(
+        "linkfix",
+        help="classify link-audit findings into a proposed repair plan")
+    p.add_argument("docx")
+    p.set_defaults(fn=cmd_linkfix)
 
     p = sub.add_parser(
         "refstyle",

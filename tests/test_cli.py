@@ -44,6 +44,7 @@ def paper(tmp_path):
 @pytest.mark.parametrize("argv", [
     ("citations",),
     ("link",),
+    ("linkfix",),
     ("refstyle",),
     ("refstyle", "--chicago"),
     ("crossrefs",),               # dry run: report, no write
