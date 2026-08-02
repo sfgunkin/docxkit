@@ -59,13 +59,19 @@ __all__ = [
     "find_citations",
     "hyperlink_field",
     "key_for",
+    "link_all",
     "link_in_para",
+    "link_rest",
+    "LinkRestReport",
     "marker_bookmark",
+    "masked_visible_text",
     "next_bookmark_id",
     "parse_reference",
     "references",
     "remove_outer_field",
+    "unlink_by_anchor",
     "wrap_link_in_bookmark",
+    "wrap_visible_span",
 ]
 
 # A surname starts with a capital — including accented (U+00C0..U+00FF)
@@ -368,11 +374,30 @@ def link_in_para(para_xml: str, text: str, anchor: str, *,
     the character style, and anything sitting between runs (a bookmark,
     a proof-error mark) rides along inside the link.
     """
-    runs, spans, at, end = _locate(para_xml, text)
+    _, _, at, end = _locate(para_xml, text)
+    return wrap_visible_span(para_xml, at, end, anchor, style=style)
+
+
+def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
+                      style: str = "Hyperlink") -> str:
+    """Wrap the visible-text span ``[at, end)`` in an internal hyperlink.
+
+    The positional core of :func:`link_in_para`, public because the
+    every-mention passes (:func:`link_rest` here and
+    :func:`docxkit.crossrefs.link_more`) target a SPECIFIC occurrence —
+    "(Doepke et al. 2019)" cited twice in one paragraph is exactly the
+    case a unique-anchor locate cannot express.
+    """
+    runs, spans, cursor = [], [], 0
+    for r in RUN_RE.finditer(para_xml):
+        body = visible_text(r.group(0))
+        runs.append(r)
+        spans.append((cursor, cursor + len(body)))
+        cursor += len(body)
     covered = [(sp, r) for sp, r in zip(spans, runs, strict=True)
                if sp[1] > at and sp[0] < end]
-    if not covered:  # pragma: no cover — _locate already raised
-        raise AnchorError(f"link_in_para: {text[:40]!r} not found")
+    if not covered:
+        raise AnchorError(f"wrap_visible_span: span {at}..{end} is empty")
     (fs, _fe), first = covered[0]
     (ls, le), last = covered[-1]
 
@@ -393,6 +418,29 @@ def link_in_para(para_xml: str, text: str, anchor: str, *,
     linked = f'<w:hyperlink w:anchor="{escape(anchor)}">{inner}</w:hyperlink>'
     return (para_xml[:first.start()] + before + linked + after
             + para_xml[last.end():])
+
+
+def masked_visible_text(para_xml: str) -> str:
+    """The paragraph's visible text with already-linked characters masked.
+
+    Characters inside a ``<w:hyperlink>`` element or a ``HYPERLINK`` field
+    span come back as ``\\x00``, so a scanner can find the occurrences of
+    a phrase that are still PLAIN — the only ones an every-mention pass
+    may touch. Same node walk as :func:`_xml.visible_text`, so offsets
+    line up with :func:`wrap_visible_span`.
+    """
+    from ._xml import _FIELD_RE, _HYPERLINK_EL_RE, T_RE
+    regions = [(m.start(), m.end())
+               for m in _HYPERLINK_EL_RE.finditer(para_xml)]
+    regions += [(m.start(), m.end()) for m in _FIELD_RE.finditer(para_xml)]
+    out = []
+    for tm in T_RE.finditer(para_xml):
+        txt = html.unescape(tm.group(1))
+        if any(s <= tm.start() < e for s, e in regions):
+            out.append("\x00" * len(txt))
+        else:
+            out.append(txt)
+    return "".join(out)
 
 
 def _styled_run(run_xml: str, text: str, style: str) -> str:
@@ -545,7 +593,13 @@ def remove_outer_field(xml: str, outer: str, inner: str) -> str:
 # ------------------------------------------------------ the link audit ---
 
 _BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
-_KEY_SHAPE_RE = re.compile(r"^([A-Za-z][A-Za-z.]*?)(\d{4}[a-z]?)(?:txt)?$")
+# The optional _N is :func:`_dedup_name`'s collision suffix. Without it a
+# deduped entry bookmark (minted when a STALE bookmark held the plain
+# name) was invisible to the own-name scan, so every link_all run minted
+# another _N and re-wrapped the citation — the Parental Style Kazenin
+# spiral, nested four links deep before the audit caught it.
+_KEY_SHAPE_RE = re.compile(
+    r"^([A-Za-z][A-Za-z.]*?)(\d{4}[a-z]?)(?:_\d+)?(?:txt)?$")
 _LINK_TOKEN_RE = re.compile(
     r'<w:fldChar\b[^>]*w:fldCharType="(begin|separate|end)"'
     r"|<w:instrText[^>]*>([^<]*)</w:instrText>"
@@ -1021,6 +1075,212 @@ def _dedup_name(name: str, taken: set[str]) -> str:
     while f"{name}_{n}" in taken:
         n += 1
     return f"{name}_{n}"
+
+
+@dataclass
+class LinkRestReport:
+    """What :func:`link_rest` did with the later mentions."""
+
+    linked: list[str] = field(default_factory=list)      # "name @ ¶n"
+    unmatched: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+    def format(self) -> str:
+        lines = [f"further mentions linked {len(self.linked)}, unmatched "
+                 f"{len(self.unmatched)}, skipped {len(self.skipped)}"]
+        for tag, items in (("UNMATCHED", self.unmatched),
+                           ("SKIPPED", self.skipped)):
+            lines += [f"  {tag}: {x}" for x in items]
+        return "\n".join(lines)
+
+
+def _entry_names_from_document(doc: str, entries: list[Reference],
+                               paras: list[re.Match[str]],
+                               ) -> dict[str, str]:
+    """entry key -> the bookmark name its paragraph actually carries.
+
+    :func:`link_all` bookmarks every entry, so after it has run the
+    document itself is the authority on anchor names; re-deriving them
+    from surnames would silently diverge on a deduplicated name.
+    """
+    names: dict[str, str] = {}
+    for r in entries:
+        own = next((n for n in _BOOKMARK_NAME_RE.findall(
+                        paras[r.index].group(0))
+                    if (km := _KEY_SHAPE_RE.match(n)) and not
+                    n.endswith("txt") and km.group(2) == r.year), None)
+        if own:
+            names[r.key] = own
+    return names
+
+
+def link_rest(parts: dict[str, bytes], *,
+              aliases: dict[str, str] | None = None,
+              heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+              ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+              ) -> LinkRestReport:
+    """Hyperlink every citation :func:`link_all` left plain.
+
+    :func:`link_all` links each work's FIRST mention and bookmarks it;
+    house style for later mentions differs by paper, so this second pass
+    is separate and optional: every remaining plain citation gets a
+    forward hyperlink to its entry — no bookmark, no back-link. Run it
+    AFTER :func:`link_all` (it resolves anchor names from the entry
+    bookmarks link_all wrote) and it is idempotent, because a linked
+    citation is masked out of the next scan.
+    """
+    doc = parts["word/document.xml"].decode("utf-8")
+    foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
+    report = LinkRestReport()
+    filed_as = aliases or {}
+    ignored = {s.casefold() for s in ignore}
+
+    paras = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in paras]
+    entries = references(texts, heading=heading)
+    if not entries:
+        report.skipped.append("no reference section found")
+        return report
+    names = _entry_names_from_document(doc, entries, paras)
+    if not names:
+        report.skipped.append("entries carry no bookmarks — run link_all first")
+        return report
+    answers: dict[str, str] = {}
+    for r in entries:
+        for k in _entry_keys(r):
+            answers.setdefault(k, r.key)
+    head_idx = min(r.index for r in entries)
+    last_idx = max(r.index for r in entries)
+
+    def rewrite(part: str, matches: list[re.Match[str]],
+                skip: tuple[int, int] | None, where: str) -> str:
+        for i in range(len(matches) - 1, -1, -1):
+            if skip and skip[0] <= i <= skip[1]:
+                continue
+            para = matches[i].group(0)
+            masked = masked_visible_text(para)
+            text = visible_text(para)
+            todo: list[tuple[int, int, str]] = []
+            for found in find_citations(text):
+                c = replace(found, authors=strip_lead(found.authors))
+                if c.surname.casefold() in ignored:
+                    continue
+                if "\x00" in masked[c.start:c.end]:
+                    continue                      # already inside a link
+                key = answers.get(
+                    key_for(filed_as.get(c.surname, c.surname), c.year))
+                if key is None:
+                    report.unmatched.append(
+                        f"{text[c.start:c.end]!r} ({where}{i + 1})")
+                    continue
+                name = names.get(key)
+                if name is None:
+                    report.skipped.append(
+                        f"{text[c.start:c.end]!r} ({where}{i + 1}): entry "
+                        "has no bookmark")
+                    continue
+                todo.append((c.start, c.end, name))
+            for at, end, name in sorted(todo, reverse=True):
+                try:
+                    para = wrap_visible_span(para, at, end, name)
+                    report.linked.append(f"{name} @ {where}{i + 1}")
+                except AnchorError as exc:
+                    report.skipped.append(f"{where}{i + 1}: {exc}")
+            m = matches[i]
+            part = part[:m.start()] + para + part[m.end():]
+        return part
+
+    doc = rewrite(doc, paras, (head_idx, last_idx), "¶")
+    if foot:
+        fparas = list(PARA_RE.finditer(foot))
+        foot = rewrite(foot, fparas, None, "fn¶")
+        parts["word/footnotes.xml"] = foot.encode("utf-8")
+    parts["word/document.xml"] = doc.encode("utf-8")
+    return report
+
+
+def unlink_by_anchor(xml: str, pattern: str) -> tuple[str, int, int]:
+    """Unwrap internal links whose anchor matches `pattern`; drop the
+    matching bookmarks.
+
+    The normalisation opener: a document arrives with a legacy linking
+    scheme (Google Docs exports anchor citations at ``bookmark=id.…``)
+    and the clean scheme should replace it wholesale, dead anchors
+    included. BOTH link forms are handled — a Google export writes some
+    of its links as ``fldChar HYPERLINK`` fields (the reference entries,
+    on Parental Style), and an element-only pass leaves those in place,
+    where they silently veto :func:`link_all`'s entry back-links.
+    Returns ``(xml, links_unwrapped, bookmarks_removed)``. Run
+    properties are left as they are — stripping a legacy link's explicit
+    colouring is a formatting decision, not a linking one.
+    """
+    anchor_re = re.compile(pattern)
+    from ._xml import (
+        _FIELD_RE,
+        _HYPERLINK_EL_RE,
+        _HYPERLINK_GHOST_RE,
+        _INSTR_ANCHOR_RE,
+        _INSTR_RE,
+    )
+    unwrapped = 0
+
+    def _unwrap(m: re.Match[str]) -> str:
+        nonlocal unwrapped
+        if not anchor_re.search(html.unescape(m.group(1))):
+            return m.group(0)
+        unwrapped += 1
+        return m.group(2)
+
+    def _drop_ghost(m: re.Match[str]) -> str:
+        # a self-closing empty hyperlink: nothing visible, pure junk
+        nonlocal unwrapped
+        if not anchor_re.search(html.unescape(m.group(1))):
+            return m.group(0)
+        unwrapped += 1
+        return ""
+
+    xml = _HYPERLINK_EL_RE.sub(_unwrap, xml)
+    xml = _HYPERLINK_GHOST_RE.sub(_drop_ghost, xml)
+
+    # field form: widen each matching span to whole runs, then drop the
+    # scaffolding runs (fldChar, instrText) and keep the label runs
+    out: list[str] = []
+    pos = 0
+    for m in _FIELD_RE.finditer(xml):
+        instr = html.unescape("".join(_INSTR_RE.findall(m.group(1))))
+        am = _INSTR_ANCHOR_RE.search(instr)
+        if am is None or not anchor_re.search(am.group(1)):
+            continue
+        s = _run_open_before(xml, m.start())
+        e = xml.find("</w:r>", m.end())
+        if s < 0 or e < 0 or s < pos:      # pragma: no cover - defensive
+            continue
+        e += len("</w:r>")
+        span = RUN_RE.sub(
+            lambda rm: ("" if ("<w:fldChar" in rm.group(0)
+                               or "<w:instrText" in rm.group(0))
+                        else rm.group(0)),
+            xml[s:e])
+        out.append(xml[pos:s])
+        out.append(span)
+        pos = e
+        unwrapped += 1
+    out.append(xml[pos:])
+    xml = "".join(out)
+
+    removed = 0
+    for bm in list(re.finditer(
+            r'<w:bookmarkStart[^>]*w:name="([^"]+)"[^>]*/>', xml)):
+        if not anchor_re.search(html.unescape(bm.group(1))):
+            continue
+        bid = re.search(r'w:id="(\d+)"', bm.group(0))
+        xml = xml.replace(bm.group(0), "", 1)
+        if bid is not None:
+            xml = re.sub(
+                rf'<w:bookmarkEnd[^>]*w:id="{bid.group(1)}"[^>]*/>',
+                "", xml, count=1)
+        removed += 1
+    return xml, unwrapped, removed
 
 
 # --------------------------------------------- the repair-plan writer ---

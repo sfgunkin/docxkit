@@ -98,6 +98,21 @@ def test_preserve_space_is_idempotent():
     assert n == 0 and twice == once
 
 
+def test_preserve_space_sees_through_attributes_and_junk_namespace():
+    """<w:t w:space="preserve"> is a wrong-namespace no-op Word ignores —
+    one misplaced set() ate ten reference-list spaces on Parental Style.
+    The check must look through attributes, honour only a real xml:space,
+    and strip the junk attribute so it cannot mask the fragility again."""
+    xml = ('<w:t w:space="preserve">tail </w:t>'
+           '<w:t xml:space="preserve">kept </w:t>'
+           '<w:t w:val="x">solid</w:t>')
+    fixed, n = preserve_space(xml)
+    assert n == 1
+    assert '<w:t xml:space="preserve">tail </w:t>' in fixed
+    assert '<w:t xml:space="preserve">kept </w:t>' in fixed
+    assert '<w:t w:val="x">solid</w:t>' in fixed
+
+
 def test_replace_in_para_spans_fragmented_runs():
     p = para(run("The ECA average rose from "), run("0.15"), run(" in 2014."))
     out = replace_in_para(p, "0.15", "0.17")

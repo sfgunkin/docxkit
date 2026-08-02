@@ -756,3 +756,145 @@ def test_repair_plan_names_the_unnest_call():
                     for i in range(5)) + P(fld))
     plan = repair_plan(xml_parts(body))
     assert 'remove_outer_field(doc, "Old2020", "New2021")' in plan
+
+
+# --- link_rest: every later citation, forward only ---------------------
+
+def test_link_rest_links_every_later_citation_forward_only():
+    parts = make_doc(
+        P(R("Maestas et al. (2023) estimate willingness to pay.")),
+        P(R("Later work concurs (Maestas et al. 2023).")),
+        P(R("References")),
+        P(R("Maestas, N., and K. Mullen. (2023). Willingness to pay.")),
+    )
+    from docxkit import citations as C
+    C.link_all(parts)
+    rep = C.link_rest(parts)
+    assert len(rep.linked) == 1, rep.format()
+    body = parts["word/document.xml"].decode("utf-8")
+    assert body.count('"Maestas2023"') >= 2      # entry + both mentions
+    later = [p for p in re.findall(r"<w:p\b.*?</w:p>", body, re.DOTALL)
+             if "concurs" in p][0]
+    assert 'w:anchor="Maestas2023"' in later
+    assert "Maestas2023txt" not in later         # no second bookmark
+    rep2 = C.link_rest(parts)
+    assert rep2.linked == [], rep2.format()      # idempotent
+
+
+def test_link_rest_handles_repeats_within_one_paragraph():
+    # link_all's unique-anchor locate cannot place a citation that
+    # repeats inside one paragraph; the positional pass can.
+    parts = make_doc(
+        P(R("One (Chetty 2015). Two (Chetty 2015). Three (Chetty 2015).")),
+        P(R("References")),
+        P(R("Chetty, R. (2015). Behavioral economics.")),
+    )
+    from docxkit import citations as C
+    C.link_all(parts)
+    rep = C.link_rest(parts)
+    body = parts["word/document.xml"].decode("utf-8")
+    assert body.count('w:anchor="Chetty2015"') == 3
+    assert len(rep.skipped) == 0, rep.format()
+
+
+def test_unlink_by_anchor_removes_a_legacy_scheme():
+    xml = ('<w:document><w:body><w:p>'
+           '<w:hyperlink w:anchor="bookmark=id.abc123">'
+           "<w:r><w:t>(Smith 2020)</w:t></w:r></w:hyperlink>"
+           "<w:r><w:t> stays; </w:t></w:r>"
+           '<w:hyperlink w:anchor="Table1">'
+           "<w:r><w:t>Table 1</w:t></w:r></w:hyperlink>"
+           "</w:p>"
+           '<w:p><w:bookmarkStart w:id="4" w:name="bookmark=id.abc123"/>'
+           '<w:bookmarkEnd w:id="4"/>'
+           "<w:r><w:t>Smith, J. (2020). Title.</w:t></w:r></w:p>"
+           "</w:body></w:document>")
+    from docxkit import citations as C
+    out, links, marks = C.unlink_by_anchor(xml, r"^bookmark=id\.")
+    assert links == 1 and marks == 1
+    assert "bookmark=id.abc123" not in out
+    assert 'w:anchor="Table1"' in out
+    assert "(Smith 2020)" in out
+
+
+def test_masked_visible_text_masks_both_link_forms():
+    para_xml = ('<w:p><w:hyperlink w:anchor="a">'
+                "<w:r><w:t>linked</w:t></w:r></w:hyperlink>"
+                "<w:r><w:t> plain </w:t></w:r>"
+                '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                r'<w:r><w:instrText>HYPERLINK \l "b" \h</w:instrText></w:r>'
+                '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                "<w:r><w:t>field</w:t></w:r>"
+                '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+    from docxkit import citations as C
+    masked = C.masked_visible_text(para_xml)
+    assert masked == "\x00" * 6 + " plain " + "\x00" * 5
+
+
+def test_unlink_by_anchor_removes_field_form_links_too():
+    # A Google export writes reference-entry links as fldChar fields;
+    # leaving them vetoes link_all's entry back-links.
+    from docxkit import citations as C
+    xml = ("<w:document><w:body><w:p>"
+           '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           + r'<w:r><w:instrText>HYPERLINK \l "bookmark=id.zzz" \h'
+           "</w:instrText></w:r>"
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           "<w:r><w:rPr><w:u w:val=\"single\"/></w:rPr>"
+           "<w:t>Smith, J. (2020)</w:t></w:r>"
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+           "<w:r><w:t>. Title.</w:t></w:r>"
+           "</w:p></w:body></w:document>")
+    out, links, marks = C.unlink_by_anchor(xml, r"^bookmark=id\.")
+    assert links == 1 and marks == 0
+    assert "fldChar" not in out and "instrText" not in out
+    assert "Smith, J. (2020)" in out and ". Title." in out
+
+
+def test_link_all_is_idempotent_after_a_deduped_name():
+    # A stale bookmark holds the plain name, so the entry's bookmark is
+    # minted as Surname2023_2; the own-name scan must recognise the _N
+    # suffix or every later run mints another and re-wraps the citation
+    # (the Parental Style Kazenin spiral).
+    from docxkit import citations as C
+    body = ('<w:p><w:bookmarkStart w:id="1" w:name="Kazenin2023txt"/>'
+            '<w:bookmarkEnd w:id="1"/>'
+            "<w:r><w:t>Old round left this bookmark elsewhere.</w:t></w:r>"
+            "</w:p>"
+            "<w:p><w:r><w:t>Fertility changed (Kazenin 2023).</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>References</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>Kazenin, K. (2023). Son preference. "
+            "Asian Population Studies.</w:t></w:r></w:p>")
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>").encode()}
+    C.link_all(parts)
+    rep2 = C.link_all(parts)
+    assert rep2.linked == [], rep2.format()
+    doc = parts["word/document.xml"].decode()
+    import re as _re
+    minted = set(_re.findall(r'w:name="(Kazenin2023_\d+)"', doc))
+    assert len(minted) <= 1, minted
+
+
+def test_self_closing_hyperlink_ghost_does_not_eat_a_later_close():
+    # Word leaves empty <w:hyperlink .../> ghosts behind; treating one as
+    # an open tag pairs it with the NEXT </w:hyperlink> anywhere
+    # downstream — 14 paragraphs on Parental Style — and an unwrap then
+    # deletes a close tag belonging to another link entirely.
+    from docxkit import citations as C
+    from docxkit._xml import internal_links
+    xml = ("<w:document><w:body>"
+           '<w:p><w:hyperlink w:anchor="bookmark=id.ghost"/>'
+           "<w:r><w:t>twins are rare.</w:t></w:r></w:p>"
+           '<w:p><w:hyperlink w:anchor="bookmark=id.real">'
+           "<w:r><w:t>Agostinelli (2024)</w:t></w:r></w:hyperlink>"
+           "<w:r><w:t> tail.</w:t></w:r></w:p>"
+           "</w:body></w:document>")
+    # the reader must see exactly one real link
+    assert internal_links(xml) == [("bookmark=id.real", "Agostinelli (2024)")]
+    out, links, marks = C.unlink_by_anchor(xml, r"^bookmark=id\.")
+    assert links == 2                      # one unwrap + one ghost dropped
+    opens = out.count("<w:hyperlink")
+    closes = out.count("</w:hyperlink>")
+    assert opens == closes == 0, (opens, closes)
+    assert "Agostinelli (2024)" in out and "twins are rare." in out

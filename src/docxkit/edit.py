@@ -29,7 +29,16 @@ __all__ = [
     "set_run_text",
 ]
 
-_BARE_T_RE = re.compile(r"<w:t>([^<]*)</w:t>")
+# any <w:t ...> that does NOT carry a real xml:space="preserve". The
+# attribute-tolerant form matters: a wrong-namespace w:space="preserve"
+# (one misplaced set() in a build script) is meaningless to Word — which
+# trims the edge space on save — while an attribute-blind regex here made
+# the tag invisible to the check, so the same typo caused the fragility
+# AND hid it. Found on Parental Style: ten reference-list spaces eaten in
+# one author round.
+_ANY_T_RE = re.compile(r"<w:t((?:\s+[^<>]*?)?)>([^<]*)</w:t>")
+_XML_SPACE_RE = re.compile(r"""xml:space\s*=\s*["']preserve["']""")
+_JUNK_SPACE_RE = re.compile(r"""\s+w:space\s*=\s*["']preserve["']""")
 _HYPERLINK_RUN = 'w:val="Hyperlink"'
 
 
@@ -95,13 +104,21 @@ def preserve_space(xml: str) -> tuple[str, int]:
 
     def sub(m: re.Match[str]) -> str:
         nonlocal fixed
-        body = m.group(1)
+        attrs, body = m.group(1), m.group(2)
+        if _XML_SPACE_RE.search(attrs):
+            return m.group(0)
+        # w:space="preserve" is a wrong-namespace no-op Word ignores;
+        # strip it so it cannot mask an unprotected edge space again
+        attrs = _JUNK_SPACE_RE.sub("", attrs)
         if body != body.strip(XML_WS):
             fixed += 1
-            return f'<w:t xml:space="preserve">{body}</w:t>'
+            return f'<w:t{attrs} xml:space="preserve">{body}</w:t>'
+        if attrs != m.group(1):
+            fixed += 1
+            return f"<w:t{attrs}>{body}</w:t>"
         return m.group(0)
 
-    return _BARE_T_RE.sub(sub, xml), fixed
+    return _ANY_T_RE.sub(sub, xml), fixed
 
 
 def _locate(para_xml: str, old: str, *, normalize: bool = False,

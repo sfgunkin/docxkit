@@ -390,3 +390,54 @@ def test_a_misnumbered_caption_bookmark_reports():
            + "</w:body></w:document>")
     report = audit(xml)
     assert report["misnamed"] == ["Figure6 on the 'Figure 5' caption"]
+
+
+# --- link_more: every later mention, forward only ----------------------
+
+def test_link_more_links_every_later_mention_forward_only():
+    xml = doc(
+        para(run("Table 1 shows levels.")),
+        para(run("As Table 1 confirms, and Table 1 again.")),
+        para(run("Table 1. Employment")),
+    )
+    xml, report = crossrefs.link(xml)
+    assert report.linked == ["Table1"]
+    xml, counts = crossrefs.link_more(xml)
+    assert counts == {"Table1": 2}
+    later = paragraph_holding(xml, "confirms")
+    assert later.count('w:anchor="Table1"') == 2
+    assert "Table1txt" not in later          # forward only, no back-link
+    xml2, counts2 = crossrefs.link_more(xml)
+    assert counts2 == {} and xml2 == xml     # idempotent
+
+
+def test_link_more_links_range_and_list_continuations():
+    xml = doc(
+        para(run("Table 3 shows one thing.")),
+        para(run("Table 4 shows another.")),
+        para(run("Table 5 shows a third.")),
+        para(run("Results appear in Tables 3 to 5, as noted, and in "
+                 "Tables 3, 4 and 5 alike.")),
+        para(run("Table 3. First")),
+        para(run("Table 4. Second")),
+        para(run("Table 5. Third")),
+    )
+    xml, _ = crossrefs.link(xml)
+    xml, counts = crossrefs.link_more(xml)
+    p = paragraph_holding(xml, "as noted")
+    assert p.count('w:anchor="Table3"') == 2   # both "Tables 3" heads
+    assert 'w:anchor="Table4"' in p            # the bare "4"
+    assert p.count('w:anchor="Table5"') == 2   # both bare "5"s
+
+
+def test_link_more_does_not_link_prose_ranges():
+    # "age 3 to 5" is not a table list; words between the label's number
+    # and the candidate break the continuation.
+    xml = doc(
+        para(run("Table 3 shows children age 3 to 5 by cohort.")),
+        para(run("Table 3. First")),
+        para(run("Table 5. Second")),
+    )
+    xml, _ = crossrefs.link(xml)
+    xml, counts = crossrefs.link_more(xml)
+    assert counts.get("Table5", 0) == 0

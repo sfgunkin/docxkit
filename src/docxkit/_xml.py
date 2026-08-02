@@ -113,9 +113,16 @@ def set_run_text(xml: str, text: str) -> str:
     return xml
 
 
+# (?<!/)> — a SELF-CLOSING <w:hyperlink w:anchor=".."/> (Word leaves these
+# behind as empty ghosts) must not read as an open tag: pairing one with
+# the next </w:hyperlink> anywhere downstream spanned 14 paragraphs on
+# Parental Style and an unwrap built on the match deleted a close tag that
+# belonged to another link entirely.
 _HYPERLINK_EL_RE = re.compile(
-    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*>(.*?)</w:hyperlink>',
+    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>(.*?)</w:hyperlink>',
     re.DOTALL)
+_HYPERLINK_GHOST_RE = re.compile(
+    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*/>')
 _FIELD_RE = re.compile(
     r'<w:fldChar\b[^>]*w:fldCharType="begin"[^>]*/>(.*?)'
     r'<w:fldChar\b[^>]*w:fldCharType="end"[^>]*/>', re.DOTALL)

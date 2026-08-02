@@ -78,7 +78,10 @@ LABEL_FORMS = {
 
 _SUFFIX = "txt"
 _BOOKMARK_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
-_HYPERLINK_RE = re.compile(r"<w:hyperlink\b[^>]*>.*?</w:hyperlink>", re.DOTALL)
+# (?<!/)> — a self-closing empty hyperlink must not read as an open tag;
+# see the twin note on _xml._HYPERLINK_EL_RE.
+_HYPERLINK_RE = re.compile(r"<w:hyperlink\b[^>]*(?<!/)>.*?</w:hyperlink>",
+                           re.DOTALL)
 _PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
 _P_OPEN_RE = re.compile(r"<w:p\b[^>]*>")
 _RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)
@@ -534,6 +537,76 @@ def audit(xml: str, *,
         "dangling": sorted(a for a in anchors if a not in names),
         "misnamed": sorted(misnamed),
     }
+
+
+def _continuation_re(label: str, number: str) -> re.Pattern[str]:
+    """The bare number of a range or list mention: the "5" of "Tables 3
+    to 5", "Tables 3–5" or "Tables 3, 4 and 5".
+
+    Anchored to a nearby plural-capable label so "age 3 to 5" cannot
+    match; the window between the label's own number and the target is
+    kept short and clause-bound for the same reason.
+    """
+    form = LABEL_FORMS.get(label, re.escape(label) + "s?")
+    return re.compile(
+        rf"\b{form}\s+[\wА-я.]+[^.;:()]{{0,30}}?"
+        rf"(?:\band\b|\bto\b|[–—,-])\s*({re.escape(number)})(?!\d)",
+        re.IGNORECASE)
+
+
+def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
+              ) -> tuple[str, dict[str, int]]:
+    """Forward-link every exhibit mention :func:`link` left plain.
+
+    :func:`link` bookmarks and back-links only the FIRST mention; house
+    style for the rest is a forward hyperlink to the caption and nothing
+    pointing back, so this pass wraps each remaining plain mention —
+    range and list continuations included ("Tables 3 to 5" links the 3
+    under Table3 and the 5 under Table5). Caption paragraphs are
+    skipped, already-linked spans are masked out, and a second run is a
+    no-op. Run it AFTER :func:`link`.
+
+    Returns ``(xml, {caption name: mentions linked})``.
+    """
+    from .citations import masked_visible_text, wrap_visible_span
+
+    captions = find_captions(xml, labels=labels)
+    counts: dict[str, int] = {}
+    caption_spans = {(c.start, c.end) for c in captions}
+    patterns = [(cap, _mention_re(cap.label, cap.number),
+                 _continuation_re(cap.label, cap.number))
+                for cap in captions]
+
+    paras = list(PARA_RE.finditer(xml))
+    for pm in reversed(paras):
+        if (pm.start(), pm.end()) in caption_spans:
+            continue
+        para = pm.group(0)
+        masked = masked_visible_text(para)
+        if not masked.strip("\x00 \t"):
+            continue
+        todo: list[tuple[int, int, str]] = []
+        claimed: set[tuple[int, int]] = set()
+        for cap, main, cont in patterns:
+            for m in main.finditer(masked):
+                span = (m.start(), m.end())
+                if "\x00" in masked[span[0]:span[1]] or span in claimed:
+                    continue
+                claimed.add(span)
+                todo.append((span[0], span[1], cap.name))
+            for m in cont.finditer(masked):
+                span = (m.start(1), m.end(1))
+                if "\x00" in masked[span[0]:span[1]] or span in claimed:
+                    continue
+                claimed.add(span)
+                todo.append((span[0], span[1], cap.name))
+        if not todo:
+            continue
+        for at, end, anchor in sorted(todo, reverse=True):
+            para = wrap_visible_span(para, at, end, anchor)
+            counts[anchor] = counts.get(anchor, 0) + 1
+        xml = xml[:pm.start()] + para + xml[pm.end():]
+    return xml, counts
 
 
 def unlink(xml: str, *,
