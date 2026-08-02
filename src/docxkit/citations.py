@@ -50,6 +50,7 @@ __all__ = [
     "REF_STOPS",
     "YEAR_PATTERN",
     "Citation",
+    "LinkRestReport",
     "Reference",
     "anchor_names",
     "audit_links",
@@ -62,7 +63,6 @@ __all__ = [
     "link_all",
     "link_in_para",
     "link_rest",
-    "LinkRestReport",
     "marker_bookmark",
     "masked_visible_text",
     "next_bookmark_id",
@@ -1086,8 +1086,9 @@ class LinkRestReport:
     skipped: list[str] = field(default_factory=list)
 
     def format(self) -> str:
-        lines = [f"further mentions linked {len(self.linked)}, unmatched "
-                 f"{len(self.unmatched)}, skipped {len(self.skipped)}"]
+        lines = [(f"further mentions linked {len(self.linked)}, "
+                  f"unmatched {len(self.unmatched)}, "
+                  f"skipped {len(self.skipped)}")]
         for tag, items in (("UNMATCHED", self.unmatched),
                            ("SKIPPED", self.skipped)):
             lines += [f"  {tag}: {x}" for x in items]
@@ -1143,7 +1144,8 @@ def link_rest(parts: dict[str, bytes], *,
         return report
     names = _entry_names_from_document(doc, entries, paras)
     if not names:
-        report.skipped.append("entries carry no bookmarks — run link_all first")
+        report.skipped.append(
+            "entries carry no bookmarks — run link_all first")
         return report
     answers: dict[str, str] = {}
     for r in entries:
@@ -1346,8 +1348,8 @@ def repair_plan(parts: dict[str, bytes]) -> str:
         else:
             buckets["investigate"].append(issue)
 
-    lines = [f"REPAIR PLAN — {len(findings)} audit issue(s). Review EVERY "
-             "anchor: the classification is mechanical, the repair is not.",
+    lines = [(f"REPAIR PLAN — {len(findings)} audit issue(s). Review EVERY "
+              "anchor: the classification is mechanical, the repair is not."),
              ""]
     titles = {"wrap": "wrap the surviving link in its txt bookmark",
               "relink": "recreate the lost link (locate the citation)",

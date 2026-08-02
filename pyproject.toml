@@ -55,7 +55,8 @@ ignore = [
 # pandas, latex2mathml, lxml and pytest must not be needed to import
 # the toolkit.
 "src/docxkit/tables.py" = ["RUF001", "PLC0415"]
-"src/docxkit/citations.py" = ["RUF001"]
+"src/docxkit/citations.py" = ["RUF001", "PLC0415"]
+"src/docxkit/crossrefs.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 # equations maps the Unicode math glyphs themselves to LaTeX commands,
 # and renumber/hygiene document en dashes and curly quotes by showing

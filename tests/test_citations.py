@@ -689,7 +689,8 @@ def test_repair_plan_on_a_clean_document():
             + P(R("References"))
             + P(R("Aksoy, C. (2026). Working from home. JEP.")))
     parts = xml_parts(body)
-    assert "investigate" in repair_plan(parts) or         "nothing to repair" in repair_plan(parts)
+    plan = repair_plan(parts)
+    assert "investigate" in plan or "nothing to repair" in plan
 
 
 def test_wrap_link_survives_a_styled_field_run():
@@ -773,8 +774,8 @@ def test_link_rest_links_every_later_citation_forward_only():
     assert len(rep.linked) == 1, rep.format()
     body = parts["word/document.xml"].decode("utf-8")
     assert body.count('"Maestas2023"') >= 2      # entry + both mentions
-    later = [p for p in re.findall(r"<w:p\b.*?</w:p>", body, re.DOTALL)
-             if "concurs" in p][0]
+    later = next(p for p in re.findall(r"<w:p\b.*?</w:p>", body, re.DOTALL)
+                 if "concurs" in p)
     assert 'w:anchor="Maestas2023"' in later
     assert "Maestas2023txt" not in later         # no second bookmark
     rep2 = C.link_rest(parts)
@@ -837,7 +838,7 @@ def test_unlink_by_anchor_removes_field_form_links_too():
     from docxkit import citations as C
     xml = ("<w:document><w:body><w:p>"
            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
-           + r'<w:r><w:instrText>HYPERLINK \l "bookmark=id.zzz" \h'
+            r'<w:r><w:instrText>HYPERLINK \l "bookmark=id.zzz" \h'
            "</w:instrText></w:r>"
            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
            "<w:r><w:rPr><w:u w:val=\"single\"/></w:rPr>"
@@ -861,7 +862,8 @@ def test_link_all_is_idempotent_after_a_deduped_name():
             '<w:bookmarkEnd w:id="1"/>'
             "<w:r><w:t>Old round left this bookmark elsewhere.</w:t></w:r>"
             "</w:p>"
-            "<w:p><w:r><w:t>Fertility changed (Kazenin 2023).</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>Fertility changed (Kazenin 2023).</w:t>"
+            "</w:r></w:p>"
             "<w:p><w:r><w:t>References</w:t></w:r></w:p>"
             "<w:p><w:r><w:t>Kazenin, K. (2023). Son preference. "
             "Asian Population Studies.</w:t></w:r></w:p>")
@@ -892,7 +894,7 @@ def test_self_closing_hyperlink_ghost_does_not_eat_a_later_close():
            "</w:body></w:document>")
     # the reader must see exactly one real link
     assert internal_links(xml) == [("bookmark=id.real", "Agostinelli (2024)")]
-    out, links, marks = C.unlink_by_anchor(xml, r"^bookmark=id\.")
+    out, links, _marks = C.unlink_by_anchor(xml, r"^bookmark=id\.")
     assert links == 2                      # one unwrap + one ghost dropped
     opens = out.count("<w:hyperlink")
     closes = out.count("</w:hyperlink>")

@@ -423,7 +423,7 @@ def test_link_more_links_range_and_list_continuations():
         para(run("Table 5. Third")),
     )
     xml, _ = crossrefs.link(xml)
-    xml, counts = crossrefs.link_more(xml)
+    xml, _counts = crossrefs.link_more(xml)
     p = paragraph_holding(xml, "as noted")
     assert p.count('w:anchor="Table3"') == 2   # both "Tables 3" heads
     assert 'w:anchor="Table4"' in p            # the bare "4"
