@@ -23,6 +23,7 @@ al. 2015)") and a page suffix ("(Smith 2020, p. 45)").
 """
 from __future__ import annotations
 
+import html
 import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
@@ -507,6 +508,60 @@ def delete_bookmark(xml: str, name: str) -> str:
 # ------------------------------------------------------ the link audit ---
 
 _BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
+_KEY_SHAPE_RE = re.compile(r"^([A-Za-z][A-Za-z.]*?)(\d{4}[a-z]?)(?:txt)?$")
+_LINK_TOKEN_RE = re.compile(
+    r'<w:fldChar\b[^>]*w:fldCharType="(begin|separate|end)"'
+    r"|<w:instrText[^>]*>([^<]*)</w:instrText>"
+    r'|<w:hyperlink\b[^>]*w:anchor="([^"]+)"'
+    r"|</w:hyperlink>")
+
+
+def _doubled_links(para_xml: str) -> list[tuple[str, str]]:
+    """(outer, inner) target pairs where one link nests inside another
+    WITH A DIFFERENT TARGET — the click goes to the outer one.
+
+    Two real shapes: a field starting inside another field's result
+    (API10 P30: "Finsel et al. 2023; Wöhrmann et al. 2018" rendered as
+    ONE link because the first field never ends), and an element link
+    inside a field's result (the WHO-2019 back-link nested inside a
+    dead absolute-URL field Word had written around it). Same-target
+    nesting is form churn caught mid-flight and stays quiet.
+    """
+    out: list[tuple[str, str]] = []
+    stack: list[list[str]] = []      # open links: [kind, target-or-""]
+
+    def newly_known(inner: str) -> None:
+        for _kind, target in stack:
+            if target and target != inner:
+                out.append((target, inner))
+
+    for m in _LINK_TOKEN_RE.finditer(para_xml):
+        fld, instr, el_anchor = m.group(1), m.group(2), m.group(3)
+        if fld == "begin":
+            stack.append(["field", ""])
+        elif fld == "end":
+            for i in range(len(stack) - 1, -1, -1):
+                if stack[i][0] == "field":
+                    del stack[i]
+                    break
+        elif instr is not None and "HYPERLINK" in instr:
+            am = re.search(r'HYPERLINK\s+(?:\\l\s+)?"([^"]+)"',
+                           html.unescape(instr))
+            target = am.group(1) if am else instr.strip()
+            open_fields = [f for f in stack if f[0] == "field"]
+            if open_fields:
+                newly_known(target)
+                open_fields[-1][1] = target
+        elif el_anchor is not None:
+            inner = html.unescape(el_anchor)
+            newly_known(inner)
+            stack.append(["element", inner])
+        elif fld is None and instr is None and el_anchor is None:
+            for i in range(len(stack) - 1, -1, -1):   # </w:hyperlink>
+                if stack[i][0] == "element":
+                    del stack[i]
+                    break
+    return out
 
 
 def audit_links(parts: dict[str, bytes], *,
@@ -586,6 +641,41 @@ def audit_links(parts: dict[str, bytes], *,
                               f'({where(i)}, "{label[:40]}") '
                               "— no such bookmark")
                 broken += 1
+    for i, m in enumerate(paras):
+        for outer, inner in _doubled_links(m.group(0)):
+            issues.append(f"DOUBLED LINK: '{inner}' is nested inside a "
+                          f"link to '{outer}' (¶{i + 1}) — the click goes "
+                          "to the outer one")
+
+    # A marker that no longer sits at its own entry: paragraph moves take
+    # the <w:p> and nothing beside it, so a reorder strands body-level
+    # markers one entry off (13 of them on API10). Only CONFIDENT
+    # mismatches report: the key must parse as name+year and match
+    # exactly one entry by surname prefix and year.
+    entries = references(texts, heading=heading)
+    if entries:
+        starts = {r.index: r for r in entries}
+        for name in ref_marks:
+            km = _KEY_SHAPE_RE.match(name)
+            if km is None:
+                continue
+            alpha, year = km.group(1).casefold(), km.group(2)
+            owners = [r for r in entries
+                      if re.sub(r"[^\w]", "", r.surname).casefold()
+                      .startswith(alpha) and r.year == year]
+            if len(owners) != 1:
+                continue
+            pos = doc.find(f'w:name="{name}"')
+            at = next((r for i, r in starts.items()
+                       if paras[i].start() <= pos < paras[i].end()), None)
+            if at is None:                    # body-level: next entry down
+                at = next((starts[i] for i in sorted(starts)
+                           if paras[i].start() >= pos), None)
+            if at is not None and at.index != owners[0].index:
+                issues.append(
+                    f"MISPLACED MARKER: '{name}' sits at "
+                    f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
+                    f"is ¶{owners[0].index + 1}")
 
     # Unlinked citation-like text, on the shared grammar. Only body
     # prose before the reference list; the first five paragraphs are the

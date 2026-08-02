@@ -541,3 +541,60 @@ def test_a_dotted_acronym_lead_keeps_its_full_name():
                           'the 2020 Census of Population."')
     assert ref is not None
     assert ref.surname == "U.S. Census Bureau"
+
+
+def test_a_nested_link_with_a_different_target_is_doubled():
+    """API10 P30: the Finsel field never ends, so the Wöhrmann field
+    renders inside it — ONE link, to Finsel. Same-target nesting (form
+    churn caught mid-flight) stays quiet."""
+    fld = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           r'<w:r><w:instrText>HYPERLINK \l "{a}"</w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>')
+    end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+    nested = P(fld.format(a="Finsel2023") + R("Finsel et al. 2023; ")
+               + fld.format(a="Wohrmann2018") + R("Wöhrmann et al. 2018")
+               + end + end)
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + nested + "</w:body></w:document>"
+        ).encode("utf-8")}
+    issues, _ = audit_links(parts)
+    doubled = [i for i in issues if i.startswith("DOUBLED LINK")]
+    assert len(doubled) == 1 and "Wohrmann2018" in doubled[0]
+
+    hybrid = P(fld.format(a="Nardo2008")
+               + '<w:hyperlink w:anchor="Nardo2008">' + R("Nardo 2008")
+               + "</w:hyperlink>" + end)
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + hybrid + "</w:body></w:document>"
+        ).encode("utf-8")}
+    issues, _ = audit_links(parts)
+    assert not any(i.startswith("DOUBLED LINK") for i in issues)
+
+
+def test_a_marker_stranded_at_the_wrong_entry_reports():
+    """Reordering entry paragraphs strands body-level markers one entry
+    off (13 of them on API10). Only confident mismatches report."""
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Cited (Buys 2012) and (Burnes 2019)."))
+            + P(R("References"))
+            + P(R("Burnes, D. (2019). Interventions. J, 1(1): 1-2."))
+            + bookmark("Buys2012", 41)            # stranded: Buys moved
+            + P(R("Buys, L. (2012). Active ageing. J, 1(1): 3-4.")))
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    issues, _ = audit_links(parts)
+    mis = [i for i in issues if i.startswith("MISPLACED MARKER")]
+    assert not mis            # marker precedes the RIGHT entry: quiet
+    body = body.replace('w:name="Buys2012"', 'w:name="stranded_x"')
+    body = body.replace("Burnes, D. (2019). Interventions",
+                        '</w:t></w:r><w:bookmarkStart w:id="42" '
+                        'w:name="Buys2012"/><w:bookmarkEnd w:id="42"/>'
+                        '<w:r><w:t>Burnes, D. (2019). Interventions')
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    issues, _ = audit_links(parts)
+    mis = [i for i in issues if i.startswith("MISPLACED MARKER")]
+    assert len(mis) == 1 and "'Buys2012'" in mis[0] and "Burnes" in mis[0]

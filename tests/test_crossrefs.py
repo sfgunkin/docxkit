@@ -374,3 +374,19 @@ def test_link_reports_a_mention_whose_caption_is_gone():
     _, report = crossrefs.link(xml)
     assert report.no_caption == ["Table8"]
     assert not report.complete
+
+
+def test_a_misnumbered_caption_bookmark_reports():
+    """LI7's 'Figure 5' caption carries bookmark Figure6 — every link
+    works, one renumbering behind; existence checks cannot see it."""
+    from conftest import make_parts, para, run, write  # noqa: F401
+
+    from docxkit.crossrefs import audit
+    xml = ("<w:document><w:body>"
+           + para(run("Figure 5 shows the trend."))
+           + para('<w:bookmarkStart w:id="9" w:name="Figure6"/>'
+                  '<w:bookmarkEnd w:id="9"/>'
+                  + run("Figure 5: The trend over time"))
+           + "</w:body></w:document>")
+    report = audit(xml)
+    assert report["misnamed"] == ["Figure6 on the 'Figure 5' caption"]

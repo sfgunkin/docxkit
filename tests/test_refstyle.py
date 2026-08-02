@@ -450,3 +450,15 @@ def test_dotted_acronyms_order_without_their_periods():
                    run(". Washington, DC.")))
     report = audit(make_parts(body))
     assert not any(i.code == "order" for i in report.issues)
+
+
+def test_same_author_entries_run_oldest_first():
+    """API10's WHO block ran 2002, 2019, 2018, 2021, 2015 and nothing
+    flagged it."""
+    body = (para(run("Cited (WHO 2019) and (WHO 2018)."))
+            + para(run("References"))
+            + para(run("WHO. (2019). "), irun("Estimates"), run(". Geneva."))
+            + para(run("———. (2018). "), irun("Network"), run(". Geneva.")))
+    report = audit(make_parts(body))
+    orders = [i for i in report.issues if i.code == "year-order"]
+    assert len(orders) == 1 and "(2018)" in orders[0].message

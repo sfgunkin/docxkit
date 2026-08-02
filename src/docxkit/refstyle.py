@@ -445,6 +445,15 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
                 "order",
                 f'"{r.surname}" is filed after "{prev.surname}" — '
                 "the list is not alphabetical", where=where))
+        if (prev is not None and _fold(prev.surname) == _fold(r.surname)
+                and r.year[:4] < prev.year[:4]):
+            # API10's WHO block ran 2002, 2019, 2018, 2021, 2015 and
+            # nothing flagged it: same-author entries run oldest first.
+            report.issues.append(Issue(
+                "year-order",
+                f"same-author entries run oldest first: ({r.year}) "
+                f"follows ({prev.year})", where=where,
+                snippet=r.text[:50]))
         prev = r
 
     report.entries = len(entries)

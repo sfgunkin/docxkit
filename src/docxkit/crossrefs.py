@@ -499,14 +499,19 @@ def audit(xml: str, *,
     """Report the cross-reference state without changing anything.
 
     Keys: ``linked`` (both bookmarks present), ``caption_only``,
-    ``mention_only``, and ``dangling`` — hyperlinks pointing at a
-    bookmark no longer in the document, which is what a deleted figure
-    leaves behind.
+    ``mention_only``, ``dangling`` — hyperlinks pointing at a bookmark
+    no longer in the document, which is what a deleted figure leaves
+    behind — and ``misnamed``: a caption carrying an exhibit bookmark
+    whose NUMBER is not the caption's, which is what a renumbering
+    leaves behind (LI7's "Figure 5" caption carries bookmark Figure6;
+    every link still works, one renumbering behind).
     """
     names = set(re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"', xml))
     anchors = set(re.findall(r'<w:hyperlink[^>]*w:anchor="([^"]+)"', xml))
 
-    linked, caption_only, mention_only = [], [], []
+    exhibit_re = re.compile(
+        rf"^({'|'.join(re.escape(w) for w in labels)})(\d+)$")
+    linked, caption_only, mention_only, misnamed = [], [], [], []
     for cap in find_captions(xml, labels=labels):
         has_cap = cap.name in names
         has_txt = cap.mention_name in names
@@ -516,11 +521,18 @@ def audit(xml: str, *,
             caption_only.append(cap.name)
         elif has_txt:
             mention_only.append(cap.name)
+        for nm in re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"',
+                             xml[cap.start:cap.end]):
+            em = exhibit_re.match(nm)
+            if em and (em.group(1) != cap.label
+                       or em.group(2) != cap.number):
+                misnamed.append(f"{nm} on the '{cap.prefix}' caption")
     return {
         "linked": sorted(linked),
         "caption_only": sorted(caption_only),
         "mention_only": sorted(mention_only),
         "dangling": sorted(a for a in anchors if a not in names),
+        "misnamed": sorted(misnamed),
     }
 
 
