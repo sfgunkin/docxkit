@@ -298,6 +298,13 @@ def _entry(key: str, text: str) -> str:
     return bookmark(key, 20, hfield(f"{key}txt", text))
 
 
+def xml_parts(body: str) -> dict[str, bytes]:
+    """A one-part package around a body — the audit fixtures' shape."""
+    return {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+
+
 def _codes_of(issues):
     return {i.split(":", 1)[0] for i in issues}
 
@@ -581,9 +588,7 @@ def test_a_marker_stranded_at_the_wrong_entry_reports():
             + P(R("Burnes, D. (2019). Interventions. J, 1(1): 1-2."))
             + bookmark("Buys2012", 41)            # stranded: Buys moved
             + P(R("Buys, L. (2012). Active ageing. J, 1(1): 3-4.")))
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     issues, _ = audit_links(parts)
     mis = [i for i in issues if i.startswith("MISPLACED MARKER")]
     assert not mis            # marker precedes the RIGHT entry: quiet
@@ -592,9 +597,7 @@ def test_a_marker_stranded_at_the_wrong_entry_reports():
                         '</w:t></w:r><w:bookmarkStart w:id="42" '
                         'w:name="Buys2012"/><w:bookmarkEnd w:id="42"/>'
                         '<w:r><w:t>Burnes, D. (2019). Interventions')
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     issues, _ = audit_links(parts)
     mis = [i for i in issues if i.startswith("MISPLACED MARKER")]
     assert len(mis) == 1 and "'Buys2012'" in mis[0] and "Burnes" in mis[0]
@@ -613,9 +616,7 @@ def test_link_all_builds_the_full_apparatus_and_is_idempotent():
             + P(R("Aksoy, C. (2026). Working from home. JEP, 1(1): 1-2."))
             + P(R("Maestas, N., Mullen, K., and D. Powell. (2023). "
                   "The effect of population aging. AEJ, 15(2): 306-32.")))
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     report = link_all(parts)
     assert len(report.linked) == 2 and len(report.backlinked) == 2
     issues, stats = audit_links(parts)
@@ -634,9 +635,7 @@ def test_link_all_reuses_an_entrys_existing_bookmark_name():
             + P(R("References"))
             + P(bookmark("SmithJ2020", 60)
                 + R("Smith, J. (2020). A title. J, 1(1): 1-2.")))
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     report = link_all(parts)
     assert report.linked == ["SmithJ2020 @ ¶6"]
     issues, _ = audit_links(parts)
@@ -650,9 +649,7 @@ def test_link_all_reports_rather_than_guesses():
             + P(R("An orphan citation (Ghost 2019)."))
             + P(R("References"))
             + P(R("Aksoy, C. (2026). Working from home. JEP.")))
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     report = link_all(parts)
     assert any("Ghost 2019" in u for u in report.unmatched)
 
@@ -677,9 +674,7 @@ def test_repair_plan_classifies_the_known_damage_classes():
                 + hfield("Aksoy2026txt", "Aksoy, C. (2026)")   # back-link
                 + R("Aksoy, C. (2026). Working from home. JEP."))
             )
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     plan = repair_plan(parts)
     assert "debris of a deleted entry" in plan and "Ghost2019" in plan
     assert "recreate the lost link" in plan       # Aksoy cited, unlinked
@@ -693,7 +688,5 @@ def test_repair_plan_on_a_clean_document():
             + P(R("Nothing cited here."))
             + P(R("References"))
             + P(R("Aksoy, C. (2026). Working from home. JEP.")))
-    parts = {"word/document.xml": (
-        "<w:document><w:body>" + body + "</w:body></w:document>"
-        ).encode("utf-8")}
+    parts = xml_parts(body)
     assert "investigate" in repair_plan(parts) or         "nothing to repair" in repair_plan(parts)

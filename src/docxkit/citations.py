@@ -28,6 +28,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import NamedTuple
 
 from ._xml import (
     PARA_RE,
@@ -449,11 +450,7 @@ def marker_bookmark(xml: str, sig: str, name: str, bid: int) -> str:
     because a paragraph cut takes the ``<w:p>`` and nothing beside it.
     """
     s, e = para_slice(xml, sig)
-    para = xml[s:e]
-    m = re.match(r"<w:p\b[^>]*>(<w:pPr>.*?</w:pPr>)?", para, re.DOTALL)
-    assert m is not None
-    return (xml[:s] + para[:m.end()] + bookmark(name, bid) + para[m.end():]
-            + xml[e:])
+    return xml[:s] + _mark_para_head(xml[s:e], name, bid) + xml[e:]
 
 
 def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
@@ -564,11 +561,22 @@ def _doubled_links(para_xml: str) -> list[tuple[str, str]]:
     return out
 
 
+class _Finding(NamedTuple):
+    """One audit finding, structured: repair_plan classifies on `kind`
+    and `subject` instead of re-parsing its own audit's message strings
+    — the coupling that made the first plan writer fragile."""
+
+    kind: str          # "BROKEN LINK", "ORPHAN REF", ...
+    subject: str       # the bookmark / anchor / citation concerned
+    message: str       # the full rendered line, "KIND: ..."
+
+
 def audit_links(parts: dict[str, bytes], *,
                 heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                 ignore: frozenset[str] | set[str] = IGNORED_LEADS,
                 ) -> tuple[list[str], dict[str, int]]:
     """Audit the bidirectional citation-link convention; (issues, stats).
+    The rendered-string face of :func:`_audit_findings`.
 
     The papers' bookmark shape: the reference entry carries ``<name>``
     and the in-text mention ``<name>txt`` (``Halliday2020`` /
@@ -585,6 +593,14 @@ def audit_links(parts: dict[str, bytes], *,
     them as broken; LE le15 shipped an audit round with nine of those
     false positives before the cause was found.
     """
+    findings, stats = _audit_findings(parts, heading=heading, ignore=ignore)
+    return [f.message for f in findings], stats
+
+
+def _audit_findings(parts: dict[str, bytes], *,
+                    heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+                    ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+                    ) -> tuple[list[_Finding], dict[str, int]]:
     doc = parts["word/document.xml"].decode("utf-8")
     paras = list(PARA_RE.finditer(doc))
     texts = [visible_text(m.group(0)) for m in paras]
@@ -620,32 +636,42 @@ def audit_links(parts: dict[str, bytes], *,
         # hunting in footnotes.xml for bookmarks that were never there.
         return {-1: "body", -2: "fn"}.get(i) or f"¶{i + 1}"
 
-    issues: list[str] = []
+    issues: list[_Finding] = []
     for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
         if not links.get(key):
-            issues.append(f"ORPHAN REF: bookmark '{key}' ({where(idx)}) "
-                          "has no in-text hyperlink pointing to it")
+            issues.append(_Finding(
+                "ORPHAN REF", key,
+                f"ORPHAN REF: bookmark '{key}' ({where(idx)}) "
+                "has no in-text hyperlink pointing to it"))
     for name, idx in sorted(cite_marks.items(), key=lambda kv: kv[1]):
         if not links.get(name):
-            issues.append(f"NO BACK-LINK: in-text bookmark '{name}' "
-                          f"({where(idx)}) has no reference back-link")
+            issues.append(_Finding(
+                "NO BACK-LINK", name,
+                f"NO BACK-LINK: in-text bookmark '{name}' "
+                f"({where(idx)}) has no reference back-link"))
         if name[:-3] not in ref_marks:
-            issues.append(f"MISSING REF: in-text citation '{name}' "
-                          f"({where(idx)}) links to '{name[:-3]}' but no "
-                          "reference bookmark exists")
+            issues.append(_Finding(
+                "MISSING REF", name,
+                f"MISSING REF: in-text citation '{name}' "
+                f"({where(idx)}) links to '{name[:-3]}' but no "
+                "reference bookmark exists"))
     broken = 0
     for anchor, sites in sorted(links.items()):
         if anchor not in bookmarks:
             for i, label in sites:
-                issues.append(f"BROKEN LINK: hyperlink to '{anchor}' "
-                              f'({where(i)}, "{label[:40]}") '
-                              "— no such bookmark")
+                issues.append(_Finding(
+                    "BROKEN LINK", anchor,
+                    f"BROKEN LINK: hyperlink to '{anchor}' "
+                    f'({where(i)}, "{label[:40]}") '
+                    "— no such bookmark"))
                 broken += 1
     for i, m in enumerate(paras):
         for outer, inner in _doubled_links(m.group(0)):
-            issues.append(f"DOUBLED LINK: '{inner}' is nested inside a "
-                          f"link to '{outer}' (¶{i + 1}) — the click goes "
-                          "to the outer one")
+            issues.append(_Finding(
+                "DOUBLED LINK", inner,
+                f"DOUBLED LINK: '{inner}' is nested inside a "
+                f"link to '{outer}' (¶{i + 1}) — the click goes "
+                "to the outer one"))
 
     # A marker that no longer sits at its own entry: paragraph moves take
     # the <w:p> and nothing beside it, so a reorder strands body-level
@@ -672,10 +698,11 @@ def audit_links(parts: dict[str, bytes], *,
                 at = next((starts[i] for i in sorted(starts)
                            if paras[i].start() >= pos), None)
             if at is not None and at.index != owners[0].index:
-                issues.append(
+                issues.append(_Finding(
+                    "MISPLACED MARKER", name,
                     f"MISPLACED MARKER: '{name}' sits at "
                     f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
-                    f"is ¶{owners[0].index + 1}")
+                    f"is ¶{owners[0].index + 1}"))
 
     # Unlinked citation-like text, on the shared grammar. Only body
     # prose before the reference list; the first five paragraphs are the
@@ -700,19 +727,25 @@ def audit_links(parts: dict[str, bytes], *,
             if any(cite in lb or cores[0] in lb or cores[1] in lb
                    for lb in labels):
                 continue
-            issues.append(f'UNLINKED: "{cite}" (¶{i + 1}) — looks like a '
-                          "citation but is not hyperlinked")
+            issues.append(_Finding(
+                "UNLINKED", cite,
+                f'UNLINKED: "{cite}" (¶{i + 1}) — looks like a '
+                "citation but is not hyperlinked"))
             unlinked += 1
 
     cited_keys = {n[:-3] for n in cite_marks}
     cited_keys |= {a for a in links if a in ref_marks}
     for key in sorted(cited_keys - ref_marks.keys()):
-        issues.append(f"CITE WITHOUT REF: '{key}' cited in text but no "
-                      "reference bookmark")
+        issues.append(_Finding(
+            "CITE WITHOUT REF", key,
+            f"CITE WITHOUT REF: '{key}' cited in text but no "
+            "reference bookmark"))
     for key in sorted(ref_marks.keys() - cited_keys):
-        issues.append(f"REF WITHOUT CITE: '{key}' "
-                      f"({where(ref_marks[key])}) in references but never "
-                      "cited in text")
+        issues.append(_Finding(
+            "REF WITHOUT CITE", key,
+            f"REF WITHOUT CITE: '{key}' "
+            f"({where(ref_marks[key])}) in references but never "
+            "cited in text"))
 
     stats = {"paragraphs": len(paras), "bookmarks": len(bookmarks),
              "cite_bookmarks": len(cite_marks),
@@ -963,7 +996,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     right one.
     """
     doc = parts["word/document.xml"].decode("utf-8")
-    issues, _stats = audit_links(parts)
+    findings, _stats = _audit_findings(parts)
     bookmarks = set(_BOOKMARK_NAME_RE.findall(doc))
     foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
     bookmarks |= set(_BOOKMARK_NAME_RE.findall(foot))
@@ -975,25 +1008,21 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     buckets: dict[str, list[str]] = {
         "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],
         "investigate": []}
-    for issue in issues:
-        kind = issue.split(":", 1)[0]
-        if kind == "BROKEN LINK":
-            m = re.search(r"hyperlink to '([^']+)'", issue)
-            target = m.group(1) if m else ""
-            base = target.removesuffix("txt")
-            if target.endswith("txt") and base in anchors:
+    for f in findings:
+        issue, name = f.message, f.subject
+        if f.kind == "BROKEN LINK":
+            base = name.removesuffix("txt")
+            if name.endswith("txt") and base in anchors:
                 buckets["wrap"].append(
-                    f'wrap_link_in_bookmark(doc, "{base}", "{target}", '
+                    f'wrap_link_in_bookmark(doc, "{base}", "{name}", '
                     f"bid)   # {issue}")
-            elif target.endswith("txt") and base in bookmarks:
+            elif name.endswith("txt") and base in bookmarks:
                 buckets["relink"].append(
                     f'link_in_para(para, CITE_TEXT, "{base}") + wrap '
-                    f'"{target}"   # find the citation first; {issue}')
+                    f'"{name}"   # find the citation first; {issue}')
             else:
                 buckets["investigate"].append(issue)
-        elif kind in ("ORPHAN REF", "REF WITHOUT CITE"):
-            m = re.search(r"'([^']+)'", issue)
-            name = m.group(1) if m else ""
+        elif f.kind in ("ORPHAN REF", "REF WITHOUT CITE"):
             km = _KEY_SHAPE_RE.match(name)
             key = (key_for(km.group(1), km.group(2)) if km else "?")
             if km and key not in cited_text and name + "txt" not in \
@@ -1001,25 +1030,21 @@ def repair_plan(parts: dict[str, bytes]) -> str:
                 buckets["debris"].append(
                     f'delete_bookmark(doc, "{name}")   # VERIFY the entry '
                     f"text is truly gone; {issue}")
-            elif kind == "ORPHAN REF":
+            elif f.kind == "ORPHAN REF":
                 buckets["relink"].append(
                     f'link_in_para(para, CITE_TEXT, "{name}")   # first '
                     f"mention, then wrap {name}txt; {issue}")
-        elif kind == "MISPLACED MARKER":
-            m = re.search(r"'([^']+)'", issue)
+        elif f.kind == "MISPLACED MARKER":
             buckets["moved"].append(
-                f'delete_bookmark(doc, "{m.group(1) if m else "?"}") then '
+                f'delete_bookmark(doc, "{name}") then '
                 f'marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}')
-        elif kind == "DOUBLED LINK":
+        elif f.kind == "DOUBLED LINK":
             buckets["nested"].append(
                 f"retarget or terminate the outer field BY HAND   # {issue}")
-        elif kind not in ("NO BACK-LINK", "MISSING REF", "UNLINKED",
-                          "CITE WITHOUT REF"):
-            buckets["investigate"].append(issue)
         else:
             buckets["investigate"].append(issue)
 
-    lines = [f"REPAIR PLAN — {len(issues)} audit issue(s). Review EVERY "
+    lines = [f"REPAIR PLAN — {len(findings)} audit issue(s). Review EVERY "
              "anchor: the classification is mechanical, the repair is not.",
              ""]
     titles = {"wrap": "wrap the surviving link in its txt bookmark",
@@ -1033,7 +1058,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
             lines.append(f"== {title} ({len(buckets[key])})")
             lines += [f"  {x}" for x in buckets[key]]
             lines.append("")
-    if len(issues) == 0:
+    if not findings:
         lines = ["nothing to repair — the audit is clean"]
     return "\n".join(lines).rstrip()
 
