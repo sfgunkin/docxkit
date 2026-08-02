@@ -38,7 +38,7 @@ from ._xml import (
     set_run_text,
     visible_text,
 )
-from .edit import _locate
+from .edit import _RUN_OPEN_RE, _locate
 from .errors import AnchorError
 from .find import para_slice
 from .package import read_parts
@@ -64,6 +64,7 @@ __all__ = [
     "next_bookmark_id",
     "parse_reference",
     "references",
+    "remove_outer_field",
     "wrap_link_in_bookmark",
 ]
 
@@ -457,11 +458,8 @@ def marker_bookmark(xml: str, sig: str, name: str, bid: int) -> str:
 # carries run properties lands on the rPr and the cut leaves mismatched
 # tags — LI7's round-2 field removal produced XML Word refuses before
 # this. (lint caught it; the audit and compare are regex-blind to it.)
-_RUN_OPEN_RE2 = re.compile(r"<w:r[ >]")
-
-
 def _run_open_before(xml: str, pos: int) -> int:
-    starts = [m.start() for m in _RUN_OPEN_RE2.finditer(xml, 0, pos)]
+    starts = [m.start() for m in _RUN_OPEN_RE.finditer(xml, 0, pos)]
     return starts[-1] if starts else -1
 
 
@@ -512,6 +510,36 @@ def delete_bookmark(xml: str, name: str) -> str:
     if xml.count(endtag) != 1:
         raise AnchorError(f"delete_bookmark: end of {name} not unique")
     return xml.replace(endtag, "")
+
+
+def remove_outer_field(xml: str, outer: str, inner: str) -> str:
+    """Remove the ONE field targeting `outer` whose result wraps the
+    element link to `inner`; the element survives, un-nested.
+
+    The DOUBLED LINK repair: a stale or mistargeted field wrapping the
+    correct link, so the click goes to the wrong place — API10's WHO
+    back-link buried in a dead OneDrive-URL field, LI7's Hudiyana
+    back-link inside a typo'd predecessor and its OECD source note
+    inside a link to the WRONG entry. Third paper's need moved it here.
+    """
+    spans = []
+    for bm in re.finditer(r'<w:fldChar\b[^>]*w:fldCharType="begin"', xml):
+        r_start = _run_open_before(xml, bm.start())
+        e_off = xml.find('w:fldCharType="end"', bm.end())
+        if r_start < 0 or e_off < 0:
+            continue
+        r_end = xml.find("</w:r>", e_off) + len("</w:r>")
+        body = xml[r_start:r_end]
+        if f'"{outer}"' in body and f'w:anchor="{inner}"' in body:
+            spans.append((r_start, r_end, body))
+    if len(spans) != 1:
+        raise AnchorError(
+            f"remove_outer_field: {outer}>{inner}: {len(spans)} fields")
+    s, e, body = spans[0]
+    m = re.search(rf'<w:hyperlink\b[^>]*w:anchor="{inner}"[^>]*>'
+                  r".*?</w:hyperlink>", body, re.DOTALL)
+    assert m is not None
+    return xml[:s] + m.group(0) + xml[e:]
 
 
 # ------------------------------------------------------ the link audit ---
@@ -581,6 +609,7 @@ class _Finding(NamedTuple):
     kind: str          # "BROKEN LINK", "ORPHAN REF", ...
     subject: str       # the bookmark / anchor / citation concerned
     message: str       # the full rendered line, "KIND: ..."
+    extra: str = ""    # DOUBLED LINK carries the OUTER target here
 
 
 def audit_links(parts: dict[str, bytes], *,
@@ -680,8 +709,8 @@ def _audit_findings(parts: dict[str, bytes], *,
     for i, m in enumerate(paras):
         for outer, inner in _doubled_links(m.group(0)):
             issues.append(_Finding(
-                "DOUBLED LINK", inner,
-                f"DOUBLED LINK: '{inner}' is nested inside a "
+                "DOUBLED LINK", inner, extra=outer,
+                message=f"DOUBLED LINK: '{inner}' is nested inside a "
                 f"link to '{outer}' (¶{i + 1}) — the click goes "
                 "to the outer one"))
 
@@ -1052,7 +1081,8 @@ def repair_plan(parts: dict[str, bytes]) -> str:
                 f'marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}')
         elif f.kind == "DOUBLED LINK":
             buckets["nested"].append(
-                f"retarget or terminate the outer field BY HAND   # {issue}")
+                f'remove_outer_field(doc, "{f.extra}", "{name}")   '
+                f"# VERIFY which target is the stale one first; {issue}")
         else:
             buckets["investigate"].append(issue)
 

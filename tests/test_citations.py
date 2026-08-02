@@ -713,3 +713,46 @@ def test_wrap_link_survives_a_styled_field_run():
         'wordprocessingml/2006/main"><w:body>' + out
         + "</w:body></w:document>")
     assert out.index('w:name="Smith2020txt"') < out.index("noProof")
+
+
+def test_remove_outer_field_unnests_and_still_parses():
+    """The DOUBLED LINK repair: the stale outer field goes, the correct
+    element link survives — and the result must PARSE (the first field
+    surgery shipped malformed XML that only lint caught)."""
+    from lxml import etree
+
+    from docxkit.citations import remove_outer_field
+    outer = (
+        '<w:r><w:rPr><w:noProof/></w:rPr>'
+        '<w:fldChar w:fldCharType="begin"/></w:r>'
+        r'<w:r><w:instrText>HYPERLINK \l "Stale2021txt"</w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        '<w:hyperlink w:anchor="Fresh2022txt">' + R("Head. (2022)")
+        + "</w:hyperlink>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    out = remove_outer_field(P(outer), "Stale2021txt", "Fresh2022txt")
+    etree.fromstring(
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+        'wordprocessingml/2006/main"><w:body>' + out
+        + "</w:body></w:document>")
+    from docxkit._xml import internal_links
+    assert internal_links(out) == [("Fresh2022txt", "Head. (2022)")]
+    import pytest as _pytest
+
+    from docxkit.errors import AnchorError
+    with _pytest.raises(AnchorError):
+        remove_outer_field(out, "Stale2021txt", "Fresh2022txt")
+
+
+def test_repair_plan_names_the_unnest_call():
+    from docxkit.citations import repair_plan
+    fld = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           r'<w:r><w:instrText>HYPERLINK \l "Old2020"</w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           '<w:hyperlink w:anchor="New2021">' + R("New 2021")
+           + "</w:hyperlink>"
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5)) + P(fld))
+    plan = repair_plan(xml_parts(body))
+    assert 'remove_outer_field(doc, "Old2020", "New2021")' in plan
