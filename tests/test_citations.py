@@ -690,3 +690,26 @@ def test_repair_plan_on_a_clean_document():
             + P(R("Aksoy, C. (2026). Working from home. JEP.")))
     parts = xml_parts(body)
     assert "investigate" in repair_plan(parts) or         "nothing to repair" in repair_plan(parts)
+
+
+def test_wrap_link_survives_a_styled_field_run():
+    """A begin-fldChar run carrying <w:rPr>: rfind("<w:r") landed on the
+    rPr and the wrap cut mid-run — LI7 round 2 shipped malformed XML
+    before the fix. The result must PARSE, not just look right."""
+    from lxml import etree
+
+    from docxkit.citations import wrap_link_in_bookmark
+    styled_field = (
+        '<w:r><w:rPr><w:noProof/></w:rPr>'
+        '<w:fldChar w:fldCharType="begin"/></w:r>'
+        r'<w:r><w:instrText>HYPERLINK \l "Smith2020"</w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        + R("Smith 2020")
+        + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    out = wrap_link_in_bookmark(P(R("see ") + styled_field),
+                                "Smith2020", "Smith2020txt", 9)
+    etree.fromstring(
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+        'wordprocessingml/2006/main"><w:body>' + out
+        + "</w:body></w:document>")
+    assert out.index('w:name="Smith2020txt"') < out.index("noProof")

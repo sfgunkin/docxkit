@@ -453,6 +453,18 @@ def marker_bookmark(xml: str, sig: str, name: str, bid: int) -> str:
     return xml[:s] + _mark_para_head(xml[s:e], name, bid) + xml[e:]
 
 
+# The run OPEN tag, never <w:rPr>: rfind("<w:r") inside a run that
+# carries run properties lands on the rPr and the cut leaves mismatched
+# tags — LI7's round-2 field removal produced XML Word refuses before
+# this. (lint caught it; the audit and compare are regex-blind to it.)
+_RUN_OPEN_RE2 = re.compile(r"<w:r[ >]")
+
+
+def _run_open_before(xml: str, pos: int) -> int:
+    starts = [m.start() for m in _RUN_OPEN_RE2.finditer(xml, 0, pos)]
+    return starts[-1] if starts else -1
+
+
 def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
                           bid: int) -> str:
     """Recreate `name` around the ONE link that points at `anchor`.
@@ -476,7 +488,7 @@ def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
 
     spans = []
     for bm in re.finditer(r'<w:fldChar\b[^>]*w:fldCharType="begin"', xml):
-        r_start = xml.rfind("<w:r", 0, bm.start())
+        r_start = _run_open_before(xml, bm.start())
         e_off = xml.find('w:fldCharType="end"', bm.end())
         if r_start < 0 or e_off < 0:
             continue
