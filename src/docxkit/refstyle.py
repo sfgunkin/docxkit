@@ -31,6 +31,7 @@ from dataclasses import dataclass, field, replace
 
 from ._xml import PARA_RE, visible_text
 from .citations import (
+    _ACRONYM_RE,
     AUTHORS_PATTERN,
     DISCOURSE_LEADS,
     IGNORED_LEADS,
@@ -39,6 +40,7 @@ from .citations import (
     YEAR_PATTERN,
     Citation,
     Reference,
+    _entry_keys,
     find_citations,
     key_for,
     references,
@@ -171,9 +173,6 @@ def _check_prose(text: str, style: Style,
     return issues
 
 
-_ACRONYM_RE = re.compile(r"\(([A-Z]{2,})\)")
-
-
 def _institutional(authors: str) -> bool:
     """An organisation, not a personal name list — exempt from name rules."""
     return bool(_ACRONYM_RE.search(authors)) or " of " in authors
@@ -266,47 +265,6 @@ def _fold(surname: str) -> str:
     flat = unicodedata.normalize("NFKD", surname)
     return "".join(c for c in flat
                    if c.isalnum() or c.isspace()).casefold()
-
-
-def _entry_keys(r: Reference) -> set[str]:
-    """Every citation key this entry can answer to.
-
-    Beyond the canonical key, an entry licenses (found on LE le15 and
-    API10):
-
-    - the acronym it names itself by — "Health Promotion Board (HPB).
-      (2023)." is what "(HPB 2023)" cites;
-    - its all-caps lead token — "UNDP (United Nations Development
-      Programme). (2025)." files under the acronym itself;
-    - its own initialism — "United Nations, Department of..." is cited
-      "(UN 2024)" and "World Health Organization" "(WHO 2015)"; the
-      reader connects those without a map, so the audit must too;
-    - every word RUN of a multi-word institutional name, because the
-      citation grammar refuses free capitalised adjacency (or "As
-      Smith" would be a surname): a narrative "World Bank (2025a)" is
-      captured as "Bank (2025a)", and "(World Bank 2024)" must find
-      the entry filed under "World Bank Group".
-
-    An abbreviation that is neither named nor an initialism — a paper
-    citing "(GoK 2021)" for "Government of Kazakhstan" — stays a
-    finding; that map is the paper's, passed via ``aliases``.
-    """
-    keys = {r.key}
-    m = _ENTRY_YEAR_RE.search(r.text)
-    head = r.text[:m.start()] if m else r.text
-    for acro in _ACRONYM_RE.findall(head):
-        keys.add(key_for(acro, r.year))
-    words = r.surname.split()
-    if len(words[0]) >= 2 and words[0].isupper():
-        keys.add(key_for(words[0], r.year))
-    if len(words) > 1:
-        for i in range(len(words)):
-            for j in range(i + 1, len(words) + 1):
-                keys.add(key_for(" ".join(words[i:j]), r.year))
-        initials = "".join(w[0] for w in words if w[0].isupper())
-        if len(initials) >= 2:
-            keys.add(key_for(initials, r.year))
-    return keys
 
 
 def _italic_styles(styles_xml: bytes | None) -> frozenset[str]:

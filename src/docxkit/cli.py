@@ -45,6 +45,28 @@ def cmd_citations(args: argparse.Namespace) -> int:
     return 1 if check_citations(args.docx) > 0 else 0
 
 
+def cmd_link(args: argparse.Namespace) -> int:
+    """Build the bidirectional citation-link apparatus document-wide.
+
+    Dry by default: reports what it WOULD do. ``--write`` applies, with
+    a numbered backup beside the manuscript.
+    """
+    from .citations import link_all
+    from .package import backup, edit_in_place, read_parts
+    aliases = dict(kv.split("=", 1) for kv in (args.alias or []))
+    if not args.write:
+        report = link_all(read_parts(args.docx), aliases=aliases)
+        print(report.format())
+        print("(dry run — nothing written; pass --write to apply)")
+        return 0
+    print(backup(args.docx, "pre_link"))
+    out: list[str] = []
+    edit_in_place(args.docx,
+                  lambda p: out.append(link_all(p, aliases=aliases).format()))
+    print(out[0])
+    return 0
+
+
 def cmd_refstyle(args: argparse.Namespace) -> int:
     """Citation and reference FORMAT, against the house author-date style.
 
@@ -434,6 +456,15 @@ def main() -> None:
     p = sub.add_parser("citations", help="citation / reference link audit")
     p.add_argument("docx")
     p.set_defaults(fn=cmd_citations)
+
+    p = sub.add_parser(
+        "link",
+        help="build citation<->entry links document-wide (dry by default)")
+    p.add_argument("docx")
+    p.add_argument("--write", action="store_true")
+    p.add_argument("--alias", action="append", metavar="CITED=FILED",
+                   help='e.g. --alias "WHO=World Health Organization"')
+    p.set_defaults(fn=cmd_link)
 
     p = sub.add_parser(
         "refstyle",

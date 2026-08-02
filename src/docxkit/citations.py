@@ -26,7 +26,7 @@ from __future__ import annotations
 import html
 import re
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ._xml import (
@@ -85,7 +85,7 @@ _PARTICLE = r"(?:da|de|del|den|der|des|di|du|la|le|of|ten|ter|van|von)"
 # ("Bank of England"): were it allowed to lead, "the work of Smith
 # (2020)" would file under "of Smith".
 _LEAD = r"(?:da|de|del|den|der|des|di|du|la|le|ten|ter|van|von)"
-_SURNAME = (rf"(?:{_PREFIX}\s+|{_LEAD}\s+)*{_NAME}"
+_SURNAME = (rf"\b(?:{_PREFIX}\s+|{_LEAD}\s+)*{_NAME}"
             rf"(?:\s+{_PARTICLE}(?:\s+{_PARTICLE})*\s+{_NAME})*")
 # "Surname", "Surname et al.", "First and Second",
 # "First, Second and Third", "First, Second, and Third"
@@ -720,6 +720,233 @@ def audit_links(parts: dict[str, bytes], *,
              "links": sum(len(v) for v in links.values()),
              "broken": broken, "unlinked": unlinked}
     return issues, stats
+
+
+# --------------------------------------------------- the link BUILDER ---
+
+_HEAD_RE = re.compile(r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]")
+
+
+_ACRONYM_RE = re.compile(r"\(([A-Z]{2,})\)")
+
+
+def _entry_keys(r: Reference) -> set[str]:
+    """Every citation key this entry can answer to.
+
+    Beyond the canonical key, an entry licenses (found on LE le15 and
+    API10):
+
+    - the acronym it names itself by — "Health Promotion Board (HPB).
+      (2023)." is what "(HPB 2023)" cites;
+    - its all-caps lead token — "UNDP (United Nations Development
+      Programme). (2025)." files under the acronym itself;
+    - its own initialism — "United Nations, Department of..." is cited
+      "(UN 2024)" and "World Health Organization" "(WHO 2015)"; the
+      reader connects those without a map, so the audit must too;
+    - every word RUN of a multi-word institutional name, because the
+      citation grammar refuses free capitalised adjacency (or "As
+      Smith" would be a surname): a narrative "World Bank (2025a)" is
+      captured as "Bank (2025a)", and "(World Bank 2024)" must find
+      the entry filed under "World Bank Group".
+
+    An abbreviation that is neither named nor an initialism — a paper
+    citing "(GoK 2021)" for "Government of Kazakhstan" — stays a
+    finding; that map is the paper's, passed via ``aliases``.
+    """
+    keys = {r.key}
+    m = _REF_YEAR_RE.search(r.text)
+    head = r.text[:m.start()] if m else r.text
+    for acro in _ACRONYM_RE.findall(head):
+        keys.add(key_for(acro, r.year))
+    words = r.surname.split()
+    if len(words[0]) >= 2 and words[0].isupper():
+        keys.add(key_for(words[0], r.year))
+    if len(words) > 1:
+        for i in range(len(words)):
+            for j in range(i + 1, len(words) + 1):
+                keys.add(key_for(" ".join(words[i:j]), r.year))
+        initials = "".join(w[0] for w in words if w[0].isupper())
+        if len(initials) >= 2:
+            keys.add(key_for(initials, r.year))
+    return keys
+
+
+@dataclass
+class LinkAllReport:
+    """What :func:`link_all` did, and what it left for a human."""
+
+    linked: list[str] = field(default_factory=list)      # "name @ ¶n"
+    already: list[str] = field(default_factory=list)     # linked before
+    backlinked: list[str] = field(default_factory=list)
+    unmatched: list[str] = field(default_factory=list)   # cite, no entry
+    skipped: list[str] = field(default_factory=list)     # anchor trouble
+
+    def format(self) -> str:
+        lines = [(f"linked {len(self.linked)}, already linked "
+                  f"{len(self.already)}, back-links added "
+                  f"{len(self.backlinked)}, unmatched "
+                  f"{len(self.unmatched)}, skipped {len(self.skipped)}")]
+        for tag, items in (("UNMATCHED", self.unmatched),
+                           ("SKIPPED", self.skipped)):
+            lines += [f"  {tag}: {x}" for x in items]
+        return "\n".join(lines)
+
+
+def _mark_para_head(para: str, name: str, bid: int) -> str:
+    """A zero-length bookmark at the paragraph's head (after pPr)."""
+    m = re.match(r"<w:p\b[^>]*>(<w:pPr>.*?</w:pPr>)?", para, re.DOTALL)
+    assert m is not None
+    return para[:m.end()] + bookmark(name, bid) + para[m.end():]
+
+
+def link_all(parts: dict[str, bytes], *,
+             aliases: dict[str, str] | None = None,
+             heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+             ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+             ) -> LinkAllReport:
+    """Build the bidirectional citation-link apparatus document-wide.
+
+    The v2 scope docxkit deferred at birth: for every reference entry, a
+    ``<SurnameYear>`` bookmark on the entry (an entry's own key-shaped
+    bookmark is REUSED, so an existing convention wins) and a back-link
+    from its author-year head; for every work's FIRST in-text mention
+    (body first, then footnotes), a hyperlink to the entry wrapped in
+    the ``<name>txt`` bookmark. Later mentions stay unlinked — the
+    papers' convention — and anything already linked is left exactly as
+    found, so a partially-linked paper is topped up, not rebuilt, and a
+    second run is a no-op.
+
+    Anchors that cannot be resolved safely (a citation repeated inside
+    one paragraph, an unfindable head) are REPORTED and skipped, never
+    guessed at. Exhibits are :func:`docxkit.crossrefs.link`'s job.
+    """
+    doc = parts["word/document.xml"].decode("utf-8")
+    foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
+    report = LinkAllReport()
+    filed_as = aliases or {}
+    ignored = {s.casefold() for s in ignore}
+
+    paras = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in paras]
+    entries = references(texts, heading=heading)
+    if not entries:
+        report.skipped.append("no reference section found")
+        return report
+    bid = next_bookmark_id(doc, foot)
+    taken = set(_BOOKMARK_NAME_RE.findall(doc))
+    linked_anchors = {a for m in paras for a, _ in internal_links(m.group(0))}
+    linked_anchors |= {a for a, _ in internal_links(foot)} if foot else set()
+
+    # Names: reuse an entry's own key-shaped bookmark; mint otherwise.
+    names: dict[str, str] = {}
+    answers: dict[str, str] = {}
+    for r in entries:
+        own = next((n for n in _BOOKMARK_NAME_RE.findall(
+                        paras[r.index].group(0))
+                    if (km := _KEY_SHAPE_RE.match(n)) and not
+                    n.endswith("txt") and km.group(2) == r.year), None)
+        name = own or _dedup_name(
+            re.sub(r"[^0-9A-Za-z]", "", r.surname) + r.year, taken)
+        taken.add(name)
+        names[r.key] = name
+        for k in _entry_keys(r):
+            answers.setdefault(k, r.key)
+
+    # First mentions: body prose (outside the reference block), then
+    # footnotes. Planned per paragraph, applied bottom-up so earlier
+    # offsets stay valid.
+    head_idx = min(r.index for r in entries)
+    last_idx = max(r.index for r in entries)
+    claimed: set[str] = set()
+    plan: dict[int, list[tuple[str, str]]] = {}       # para -> [(cite, name)]
+    fn_plan: dict[int, list[tuple[str, str]]] = {}
+
+    def scan(texts_in: list[str], into: dict[int, list[tuple[str, str]]],
+             skip: tuple[int, int] | None) -> None:
+        for i, text in enumerate(texts_in):
+            if skip and skip[0] <= i <= skip[1]:
+                continue
+            for found in find_citations(text):
+                c = replace(found, authors=strip_lead(found.authors))
+                if c.surname.casefold() in ignored:
+                    continue
+                key = answers.get(
+                    key_for(filed_as.get(c.surname, c.surname), c.year))
+                if key is None:
+                    report.unmatched.append(
+                        f"{text[c.start:c.end]!r} (¶{i + 1})")
+                    continue
+                if key in claimed:
+                    continue
+                claimed.add(key)
+                name = names[key]
+                if name in linked_anchors:
+                    report.already.append(name)
+                    continue
+                into.setdefault(i, []).append((text[c.start:c.end], name))
+
+    scan(texts, plan, (head_idx, last_idx))
+    fparas = list(PARA_RE.finditer(foot)) if foot else []
+    scan([visible_text(m.group(0)) for m in fparas], fn_plan, None)
+
+    # ONE bottom-up pass per part: earlier offsets stay valid however
+    # much a later paragraph grows (table notes can sit BELOW the
+    # reference block, so entry and prose edits interleave).
+    by_entry = {r.index: r for r in entries}
+    bids = iter(range(bid, bid + 4096))
+
+    def rebuild(i: int, para: str, where: str) -> str:
+        if (r := by_entry.get(i)) is not None and where == "¶":
+            name = names[r.key]
+            if name not in set(_BOOKMARK_NAME_RE.findall(para)):
+                para = _mark_para_head(para, name, next(bids))
+            # Back-link only entries whose in-text end exists or is being
+            # built: back-linking an UNCITED entry writes a dangling
+            # <name>txt target — 19 of them on the Missing Market dry
+            # run before this guard.
+            if (r.key in claimed or name + "txt" in taken) \
+                    and not internal_links(para):
+                head = _HEAD_RE.match(texts[i])
+                if head is None:
+                    report.skipped.append(f"no head on entry ¶{i + 1}")
+                else:
+                    try:
+                        para = link_in_para(para, head.group(1),
+                                            name + "txt")
+                        report.backlinked.append(name)
+                    except AnchorError as exc:
+                        report.skipped.append(f"back-link ¶{i + 1}: {exc}")
+        for cite, name in (plan if where == "¶" else fn_plan).get(i, []):
+            try:
+                para = link_in_para(para, cite, name)
+                para = wrap_link_in_bookmark(para, name, name + "txt",
+                                             next(bids))
+                report.linked.append(f"{name} @ {where}{i + 1}")
+            except AnchorError as exc:
+                report.skipped.append(f"{cite!r} {where}{i + 1}: {exc}")
+        return para
+
+    todo = sorted(set(plan) | set(by_entry), reverse=True)
+    for i in todo:
+        m = paras[i]
+        doc = doc[:m.start()] + rebuild(i, m.group(0), "¶") + doc[m.end():]
+    for i in sorted(fn_plan, reverse=True):
+        m = fparas[i]
+        foot = (foot[:m.start()] + rebuild(i, m.group(0), "fn¶")
+                + foot[m.end():])
+    if fn_plan:
+        parts["word/footnotes.xml"] = foot.encode("utf-8")
+    parts["word/document.xml"] = doc.encode("utf-8")
+    return report
+
+
+def _dedup_name(name: str, taken: set[str]) -> str:
+    if name not in taken and name + "txt" not in taken:
+        return name
+    n = 2
+    while f"{name}_{n}" in taken:
+        n += 1
+    return f"{name}_{n}"
 
 
 def check_citations(docx_path: str | Path) -> int:

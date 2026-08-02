@@ -598,3 +598,67 @@ def test_a_marker_stranded_at_the_wrong_entry_reports():
     issues, _ = audit_links(parts)
     mis = [i for i in issues if i.startswith("MISPLACED MARKER")]
     assert len(mis) == 1 and "'Buys2012'" in mis[0] and "Burnes" in mis[0]
+
+
+# ------------------------------------------------------------ link_all ---
+
+def test_link_all_builds_the_full_apparatus_and_is_idempotent():
+    from docxkit.citations import link_all
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Robots displace workers (Maestas et al. 2023)."))
+            + P(R("Aksoy (2026) reports; see also (Maestas et al. "
+                  "2023)."))
+            + P(R("References"))
+            + P(R("Aksoy, C. (2026). Working from home. JEP, 1(1): 1-2."))
+            + P(R("Maestas, N., Mullen, K., and D. Powell. (2023). "
+                  "The effect of population aging. AEJ, 15(2): 306-32.")))
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    report = link_all(parts)
+    assert len(report.linked) == 2 and len(report.backlinked) == 2
+    issues, stats = audit_links(parts)
+    assert issues == [], issues
+    assert stats["links"] == 4          # 2 in-text + 2 back-links
+    again = link_all(parts)
+    assert not again.linked and not again.backlinked
+    assert len(again.already) == 2
+
+
+def test_link_all_reuses_an_entrys_existing_bookmark_name():
+    from docxkit.citations import link_all
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("As shown (Smith 2020)."))
+            + P(R("References"))
+            + P(bookmark("SmithJ2020", 60)
+                + R("Smith, J. (2020). A title. J, 1(1): 1-2.")))
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    report = link_all(parts)
+    assert report.linked == ["SmithJ2020 @ ¶6"]
+    issues, _ = audit_links(parts)
+    assert issues == []
+
+
+def test_link_all_reports_rather_than_guesses():
+    from docxkit.citations import link_all
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("An orphan citation (Ghost 2019)."))
+            + P(R("References"))
+            + P(R("Aksoy, C. (2026). Working from home. JEP.")))
+    parts = {"word/document.xml": (
+        "<w:document><w:body>" + body + "</w:body></w:document>"
+        ).encode("utf-8")}
+    report = link_all(parts)
+    assert any("Ghost 2019" in u for u in report.unmatched)
+
+
+def test_a_lead_particle_needs_a_word_boundary():
+    """'...whiLE Yang's (2018)' — the lowercase lead matched mid-word
+    and produced surname 'le Yang' on the Missing Market dry run."""
+    assert find_citations("worthwhile Yang (2018) results")[0].surname \
+        == "Yang"

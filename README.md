@@ -50,7 +50,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
-| `citations` | find citations in prose, parse the reference section, build the link XML; plus the back-link audit |
+| `citations` | the grammar, the link audit, and `link_all` — build the whole citation<->entry apparatus document-wide |
 | `refstyle` | reference/citation FORMAT audit against the house author-date style (initials, "(2020).", en-dashes, order, cited↔listed); `HOUSE` and `CHICAGO` presets |
 | `crossrefs` | bidirectional figure/table links, the bookmark convention |
 | `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass |
@@ -72,6 +72,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 ```
 docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json report.json]
 docxkit citations PAPER.docx
+docxkit link PAPER.docx [--write] [--alias "WHO=World Health Organization"]
 docxkit refstyle PAPER.docx [--chicago] [--json R.json]
 docxkit inspect PAPER.docx [--comments] [--revisions]
 docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
