@@ -22,10 +22,11 @@ from docxkit.comments import (
     ALL,
     GENERIC,
     RevisionContext,
+    add_at,
     annotate,
     reclassify,
 )
-from docxkit.errors import ScaffoldMissing
+from docxkit.errors import AnchorError, ScaffoldMissing
 from docxkit.revisions import spans as revision_spans
 
 
@@ -305,3 +306,42 @@ def test_annotate_rejects_an_unknown_table_policy():
     parts = make_parts(_table_doc(4), comment_items=(comment(1, "seed"),))
     with pytest.raises(ValueError, match="tables must be"):
         annotate(parts, always("x"), tables="every-other-one")
+
+
+# --------------------------------------------------------------- add_at ------
+# annotate() can only reach text a revision touched. A round that needs to say
+# "unchanged, but look at this" has nothing to attach to, which is what add_at
+# exists for.
+
+
+def _scaffolded(*paragraphs):
+    return make_parts("".join(paragraphs),
+                      comment_items=(comment(1, "seed"),))
+
+
+def test_add_at_comments_an_unchanged_paragraph():
+    parts = _scaffolded(para(run("the sorting gap is unchanged here")),
+                        para(run("another paragraph")))
+    cid = add_at(parts, "sorting gap", "please re-read this")
+    doc = parts["word/document.xml"].decode("utf-8")
+    com = parts["word/comments.xml"].decode("utf-8")
+    assert f'<w:commentRangeStart w:id="{cid}"/>' in doc
+    assert f'<w:commentRangeEnd w:id="{cid}"/>' in doc
+    assert "please re-read this" in com
+    # the anchor wraps the paragraph that matched, not its neighbour
+    first = doc.index("sorting gap")
+    assert (doc.index("commentRangeStart") < first
+            < doc.index("commentRangeEnd"))
+    MD.parseString(doc)
+
+
+def test_add_at_needs_an_unambiguous_anchor():
+    parts = _scaffolded(para(run("repeated text")), para(run("repeated text")))
+    with pytest.raises(AnchorError, match="2 paragraphs"):
+        add_at(parts, "repeated text", "which one?")
+
+
+def test_add_at_rejects_a_missing_anchor():
+    parts = _scaffolded(para(run("something")))
+    with pytest.raises(AnchorError, match="no paragraph"):
+        add_at(parts, "absent phrase", "nope")

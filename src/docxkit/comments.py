@@ -21,8 +21,14 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import revisions as _revisions
-from ._xml import delta_text, normalize_glyphs, set_run_text, visible_text
-from .errors import PackageError, ScaffoldMissing
+from ._xml import (
+    PARA_RE,
+    delta_text,
+    normalize_glyphs,
+    set_run_text,
+    visible_text,
+)
+from .errors import AnchorError, PackageError, ScaffoldMissing
 from .find import para_text_at, table_index_at, table_spans
 
 __all__ = [
@@ -32,6 +38,7 @@ __all__ = [
     "Comment",
     "RevisionContext",
     "Thread",
+    "add_at",
     "annotate",
     "match",
     "read_all",
@@ -341,6 +348,51 @@ def annotate(parts: dict[str, bytes],
 
     _write(parts, doc, decided, scaffold)
     return len(decided), unclassified
+
+
+def add_at(parts: dict[str, bytes], anchor: str, comment: str, *,
+           normalize: bool = True) -> int:
+    """Comment the paragraph containing `anchor`. Returns its comment id.
+
+    :func:`annotate` can only reach text that a revision touched, so a
+    paragraph the round left ALONE cannot be flagged with it — and
+    "unchanged, but the author needs to look at this" is exactly the case
+    a review round has to be able to express. This anchors on visible
+    text instead, so the paragraph needs no revision.
+
+    The whole paragraph is the anchor range: a comment on an unchanged
+    paragraph is about the paragraph, and a sub-span would need offset
+    arithmetic across the run fragmentation Word applies at rsid
+    boundaries.
+
+    Like the rest of this module it needs Word's own comment scaffold
+    already in the package (see :class:`_Scaffold`).
+    """
+    doc = parts["word/document.xml"].decode("utf-8")
+    fold = normalize_glyphs if normalize else (lambda s: s)
+    needle = fold(anchor)
+    hits = [m for m in PARA_RE.finditer(doc)
+            if needle in fold(visible_text(m.group(0)))]
+    if not hits:
+        raise AnchorError(f"no paragraph contains {anchor!r}")
+    if len(hits) > 1:
+        raise AnchorError(
+            f"{len(hits)} paragraphs contain {anchor!r} - narrow the anchor")
+
+    para = hits[0]
+    body = para.group(0)
+    # after <w:pPr>...</w:pPr> if present, else straight after <w:p ...>
+    # `<w:p(?: ...)?>` rather than a word boundary: the latter would also
+    # match the `<w:pPr>` this is trying to step over.
+    ppr = re.match(r"<w:p(?: [^>]*)?>(?:<w:pPr>.*?</w:pPr>)?", body,
+                   re.DOTALL)
+    assert ppr is not None      # PARA_RE guarantees the <w:p opens
+    start = para.start() + ppr.end()
+    end = para.end() - len("</w:p>")
+
+    scaffold = _Scaffold.read(parts)
+    _write(parts, doc, [(start, end, comment)], scaffold)
+    return scaffold.next_id
 
 
 def _set_comment_text(com: str, cid: str, new_text: str) -> str:
