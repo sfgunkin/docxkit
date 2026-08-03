@@ -808,11 +808,6 @@ _STARRED_CELL_RE = re.compile(rf"^{_NUM_RE.pattern}\*{{1,3}}$")
 _RUN_T_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
 
 
-def _run_retext(run_xml: str, text: str) -> str:
-    return _RUN_T_RE.sub(lambda m: m.group(1) + text + m.group(3),
-                         run_xml, count=1)
-
-
 def _run_superscripted(run_xml: str) -> str:
     tag = '<w:vertAlign w:val="superscript"/>'
     if "<w:vertAlign" in run_xml:
@@ -864,9 +859,9 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
             if m is None or "<w:vertAlign" in last.group(0):
                 continue                 # stars already split and raised
             head, stars = m.group(1), m.group(2)
-            star_run = _run_superscripted(_run_retext(last.group(0), stars))
+            star_run = _run_superscripted(set_run_text(last.group(0), stars))
             new = star_run if not head \
-                else _run_retext(last.group(0), head) + star_run
+                else set_run_text(last.group(0), head) + star_run
             at = tr.start() + tc.start() + last.start()
             edits.append((at, at + len(last.group(0)), new))
             count += 1
