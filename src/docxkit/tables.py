@@ -438,11 +438,20 @@ _ARIAL = _widths({
     611: "FTZ", 667: "ABESVXY&", 722: "CDHKNRUw", 778: "GOQ",
     833: "Mm", 889: "%", 944: "W", 1000: "—", 1015: "@",
 })
+# Arial Narrow is a true narrow design, not a geometric scaling of
+# Arial: measured from a Word PDF render, its letters run ~0.835 of
+# Arial but its digits are 501/1000 em (0.90) — a uniform 0.82 scale
+# under-provides every numeric column by ~9%.
+_ARIAL_NARROW = {ch: round(w * 0.835) for ch, w in _ARIAL.items()}
+_ARIAL_NARROW.update(_widths({
+    501: "0123456789", 250: ",.", 284: "-", 300: "()",
+    329: "*", 500: "−–",
+}))
 _FONT_ALIASES: dict[str, tuple[dict[str, int], float]] = {
     "times new roman": (_TIMES, 1.0), "cambria": (_TIMES, 1.02),
     "georgia": (_TIMES, 1.08), "garamond": (_TIMES, 0.92),
     "arial": (_ARIAL, 1.0), "helvetica": (_ARIAL, 1.0),
-    "arial narrow": (_ARIAL, 0.82), "calibri": (_ARIAL, 0.915),
+    "arial narrow": (_ARIAL_NARROW, 1.0), "calibri": (_ARIAL, 0.915),
     "segoe ui": (_ARIAL, 0.98), "tahoma": (_ARIAL, 1.0),
     "verdana": (_ARIAL, 1.10),
 }
@@ -493,6 +502,15 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
         for ch, w in chars:
             line += w
             if ch in " \t":
+                cluster = 0.0
+            elif ch == "/":
+                # Word breaks AFTER a slash — "Professional/vocational"
+                # wraps gracefully, and the label column may count on it.
+                # A hyphen also breaks in Word but is NOT split here: a
+                # negative coefficient's sign must never be a licensed
+                # break, or the dangling-minus wrap returns.
+                cluster += w
+                hard = max(hard, cluster)
                 cluster = 0.0
             else:
                 cluster += w

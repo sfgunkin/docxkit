@@ -151,15 +151,15 @@ def test_empty_spacer_column_keeps_its_width():
 def test_shortfall_is_taken_from_the_wrappable_label_column():
     # a narrow table: numeric needs are non-negotiable, the label wraps
     d = doc(tbl(
-        [1400, 700, 700],
+        [1500, 750, 750],
         "<w:tr>" + cell(frun("Professional and vocational education "
-                             "of the household head"), w=1400)
-        + cell(frun("-0.250***"), w=700) + cell(frun("0.047"), w=700)
+                             "of the household head"), w=1500)
+        + cell(frun("-0.250***"), w=750) + cell(frun("0.047"), w=750)
         + "</w:tr>"))
     out, rep = fit_columns(d, read_all(d)[0])
     label, coef, se = grid_of(out)
-    assert label + coef + se == 2800
-    assert label < 1400               # the label column paid for the fit
+    assert label + coef + se == 3000
+    assert label < 1500               # the label column paid for the fit
     assert coef > se
     assert not rep.cramped
 
@@ -333,6 +333,28 @@ def test_page_break_before_inserts_and_is_idempotent():
     once = page_break_before(d, "Table 3:")
     assert ('<w:pStyle w:val="Caption"/><w:pageBreakBefore/>') in once
     assert page_break_before(once, "Table 3:") == once
+
+
+def test_slash_is_a_break_opportunity_but_hyphen_is_not():
+    def label_hard(text: str) -> int:
+        d = doc(tbl(
+            [900, 700, 700],
+            "<w:tr>" + cell(frun(text), w=900)
+            + cell(frun("-0.250***"), w=700) + cell(frun("0.047"), w=700)
+            + "</w:tr>"))
+        out, _ = fit_columns(d, read_all(d)[0])
+        return grid_of(out)[0]
+    # the slash splits the cluster; the hyphen must not (a negative
+    # coefficient's sign is never a licensed break), so the slashed
+    # variant needs far less width than the hyphenated one
+    assert label_hard("Professional/vocational") \
+        < label_hard("Professional-vocational") - 200
+
+
+def test_arial_narrow_digits_are_not_a_uniform_scaling():
+    from docxkit.tables import _ARIAL, _ARIAL_NARROW
+    assert _ARIAL_NARROW["0"] == 501          # measured, 0.90 x Arial
+    assert _ARIAL_NARROW["o"] == round(_ARIAL["o"] * 0.835)
 
 
 def test_page_break_before_creates_ppr_when_missing():
