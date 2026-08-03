@@ -26,6 +26,7 @@ __all__ = [
     "delta_text_of",
     "edit_para",
     "heading_level",
+    "page_break_before",
     "para_slice",
     "para_text_at",
     "paragraphs",
@@ -73,6 +74,29 @@ def edit_para(xml: str, sig: str, fn: Callable[[str], str],
     """Apply `fn` to the single paragraph whose visible text contains `sig`."""
     s, e = para_slice(xml, sig, normalize=normalize)
     return xml[:s] + fn(xml[s:e]) + xml[e:]
+
+
+def page_break_before(xml: str, sig: str) -> str:
+    """Start the paragraph matching `sig` on a fresh page.
+
+    The exhibit convention: give every table caption a
+    ``w:pageBreakBefore`` and the table opens its own page wherever the
+    prose ends up. Idempotent — a paragraph that already breaks is left
+    alone. (In the pPr schema the flag sorts after ``pStyle``.)
+    """
+    def add(para: str) -> str:
+        if "<w:pageBreakBefore/>" in para:
+            return para
+        if "<w:pPr>" in para:
+            style = re.search(r'<w:pStyle w:val="[^"]*"/>', para)
+            at = style.end() if style else \
+                para.find("<w:pPr>") + len("<w:pPr>")
+            return para[:at] + "<w:pageBreakBefore/>" + para[at:]
+        m = re.match(r"<w:p\b[^>]*>", para)
+        assert m is not None
+        return (para[:m.end()] + "<w:pPr><w:pageBreakBefore/></w:pPr>"
+                + para[m.end():])
+    return edit_para(xml, sig, add)
 
 
 def find_para(xml: str, sig: str) -> re.Match[str] | None:

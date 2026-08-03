@@ -14,7 +14,12 @@ import pytest
 from conftest import NS
 
 from docxkit.errors import AnchorError
-from docxkit.tables import fit_columns, read_all, superscript_stars
+from docxkit.tables import (
+    bottom_border,
+    fit_columns,
+    read_all,
+    superscript_stars,
+)
 
 FONT = "Arial Narrow"
 
@@ -248,4 +253,92 @@ def test_superscript_stars_result_parses():
     from lxml import etree
     out, _ = superscript_stars(regression_doc(),
                                read_all(regression_doc())[0])
+    etree.fromstring(out.encode("utf-8"))
+
+
+# ------------------------------------------------- closing rule ------------
+
+
+def test_bottom_border_rules_off_the_last_row():
+    d = regression_doc()
+    out, n = bottom_border(d, read_all(d)[0])
+    assert n == 3
+    last_tr = re.findall(r"<w:tr>.*?</w:tr>", out, re.DOTALL)[-1]
+    assert last_tr.count('<w:bottom w:val="double" w:sz="4" '
+                         'w:space="0" w:color="auto"/>') == 3
+    first_tr = re.findall(r"<w:tr>.*?</w:tr>", out, re.DOTALL)[0]
+    assert "double" not in first_tr          # only the last row
+
+
+def test_bottom_border_replaces_an_existing_nil_edge():
+    d = regression_doc().replace(
+        '<w:tcPr><w:tcW w:w="832" w:type="dxa"/></w:tcPr>',
+        '<w:tcPr><w:tcW w:w="832" w:type="dxa"/><w:tcBorders>'
+        '<w:top w:val="nil"/><w:bottom w:val="nil"/></w:tcBorders></w:tcPr>')
+    out, _ = bottom_border(d, read_all(d)[0])
+    last_tr = re.findall(r"<w:tr>.*?</w:tr>", out, re.DOTALL)[-1]
+    assert '<w:bottom w:val="nil"/>' not in last_tr
+    assert '<w:top w:val="nil"/>' in last_tr     # other edges untouched
+
+
+def test_bottom_border_is_idempotent():
+    d = regression_doc()
+    once, n1 = bottom_border(d, read_all(d)[0])
+    twice, n2 = bottom_border(once, read_all(once)[0])
+    assert (n1, n2) == (3, 0)
+    assert twice == once
+
+
+def test_bottom_border_result_parses():
+    from lxml import etree
+    out, _ = bottom_border(regression_doc(), read_all(regression_doc())[0])
+    etree.fromstring(out.encode("utf-8"))
+
+
+# ------------------------------------------------- margins -----------------
+
+
+def test_margin_shrinks_the_padding_and_is_written_to_the_table():
+    d = doc(tbl(
+        [1000, 700, 700],
+        "<w:tr>" + cell(frun("Some label here"), w=1000)
+        + cell(frun("-0.250***"), w=700) + cell(frun("0.047"), w=700)
+        + "</w:tr>"))
+    wide, _ = fit_columns(d, read_all(d)[0])
+    tight, rep = fit_columns(d, read_all(d)[0], margin=30)
+    assert ('<w:tblCellMar><w:left w:w="30" w:type="dxa"/>'
+            '<w:right w:w="30" w:type="dxa"/></w:tblCellMar>') in tight
+    # 156 dxa less padding per column frees width for the label
+    assert grid_of(tight)[0] > grid_of(wide)[0]
+
+
+def test_margin_can_rescue_a_cramped_table():
+    d = doc(tbl(
+        [700, 600, 600, 600, 600],
+        "<w:tr>" + cell(frun("Labels wrap fine"), w=700)
+        + "".join(cell(frun("14.000"), w=600) for _ in range(4))
+        + "</w:tr>"))
+    _, default_rep = fit_columns(d, read_all(d)[0])
+    _, tight_rep = fit_columns(d, read_all(d)[0], margin=20)
+    assert default_rep.cramped and not tight_rep.cramped
+
+
+# ------------------------------------------------- page break --------------
+
+
+def test_page_break_before_inserts_and_is_idempotent():
+    from docxkit.find import page_break_before
+    d = doc("<w:p><w:pPr><w:pStyle w:val=\"Caption\"/></w:pPr>"
+            "<w:r><w:t>Table 3: Results</w:t></w:r></w:p>")
+    once = page_break_before(d, "Table 3:")
+    assert ('<w:pStyle w:val="Caption"/><w:pageBreakBefore/>') in once
+    assert page_break_before(once, "Table 3:") == once
+
+
+def test_page_break_before_creates_ppr_when_missing():
+    from docxkit.find import page_break_before
+    from lxml import etree
+    d = doc("<w:p><w:r><w:t>Table 4: More results</w:t></w:r></w:p>")
+    out = page_break_before(d, "Table 4:")
+    assert "<w:pPr><w:pageBreakBefore/></w:pPr><w:r>" in out
     etree.fromstring(out.encode("utf-8"))

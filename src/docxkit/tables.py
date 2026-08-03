@@ -31,6 +31,7 @@ __all__ = [
     "ColumnFit",
     "FitReport",
     "Table",
+    "bottom_border",
     "by_caption",
     "find",
     "fit_columns",
@@ -549,7 +550,8 @@ class FitReport(NamedTuple):
 
 
 def fit_columns(xml: str, table: Table, *, total: int | None = None,
-                pad: float = 1.05) -> tuple[str, FitReport]:
+                pad: float = 1.05, margin: int | None = None
+                ) -> tuple[str, FitReport]:
     """Re-divide `table`'s width by what each column actually holds.
 
     Every column gets the width of its widest content (so coefficient
@@ -562,9 +564,13 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
 
     `total` overrides the table's width in dxa — needed when the table
     declares itself in pct units; otherwise the current width is kept.
-    The table is rewritten as fixed-layout dxa throughout (grid, tblW,
-    every tcW), which is what makes Word honor the division. Offsets in
-    other Table objects are stale after this; re-read them.
+    `margin` rewrites the table's cell side margins (Word's default is
+    108 dxa a side, which across a 16-column table is a third of an
+    inch of pure padding) — the lever that rescues a wide table the
+    default margins leave cramped. The table is rewritten as
+    fixed-layout dxa throughout (grid, tblW, every tcW), which is what
+    makes Word honor the division. Offsets in other Table objects are
+    stale after this; re-read them.
 
     Check the result visually once (PDF render) — the width model
     approximates Word's layout engine, `pad` covering its error.
@@ -588,7 +594,8 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
             if e:
                 return int(e.group(1))
         return 108                       # Word's default cell margin
-    side = _mar("left", "start") + _mar("right", "end")
+    side = 2 * margin if margin is not None \
+        else _mar("left", "start") + _mar("right", "end")
 
     fonts = Counter(_ASCII_RE.findall(body))
     sizes = Counter(_SZ_RE.findall(body))
@@ -684,6 +691,19 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
             body = (body[:pr.start() + at]
                     + '<w:tblLayout w:type="fixed"/>'
                     + body[pr.start() + at:])
+    if margin is not None:
+        cellmar = (f'<w:tblCellMar>'
+                   f'<w:left w:w="{margin}" w:type="dxa"/>'
+                   f'<w:right w:w="{margin}" w:type="dxa"/>'
+                   f'</w:tblCellMar>')
+        if "<w:tblCellMar>" in body:
+            body = re.sub(r"<w:tblCellMar>.*?</w:tblCellMar>",
+                          lambda _: cellmar, body, count=1,
+                          flags=re.DOTALL)
+        else:                       # schema slot: right after tblLayout
+            body = body.replace('<w:tblLayout w:type="fixed"/>',
+                                '<w:tblLayout w:type="fixed"/>' + cellmar,
+                                1)
 
     edits: list[tuple[int, int, str]] = []
     for tr in _TR_RE.finditer(body):
@@ -789,4 +809,56 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
             count += 1
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
+    return xml[:table.start] + body + xml[table.end:], count
+
+
+# ------------------------------------------------- closing rule ------------
+
+
+def bottom_border(xml: str, table: Table, *, val: str = "double",
+                  sz: int = 4) -> tuple[str, int]:
+    """Rule off `table`'s last row with a `val` bottom border.
+
+    The exhibit convention: a table closes with a double line under its
+    final row. Every cell of the last row gets the border (an existing
+    bottom edge — usually ``nil`` — is replaced), so the rule runs the
+    full width. Returns (xml, cells changed); idempotent once applied.
+    """
+    body = xml[table.start:table.end]
+    trs = list(_TR_RE.finditer(body))
+    if not trs:
+        raise AnchorError(f"table {table.index} has no rows")
+    last = trs[-1]
+    edge = f'<w:bottom w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+    count = 0
+    row = last.group(0)
+    out: list[str] = []
+    pos = 0
+    for tc in _TC_RE.finditer(row):
+        cell = tc.group(0)
+        if f"<w:tcBorders>{edge}" in cell or edge in cell:
+            continue
+        if "<w:tcBorders>" in cell:
+            new, n = re.subn(r"<w:bottom [^>]*/>", lambda _: edge,
+                             cell, count=1)
+            if not n:
+                b = cell.find("</w:tcBorders>")
+                new = cell[:b] + edge + cell[b:]
+        elif "<w:tcPr>" in cell:
+            at = min((p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
+                                  cell.find("<w:vAlign"),
+                                  cell.find("</w:tcPr>")) if p != -1))
+            new = (cell[:at] + f"<w:tcBorders>{edge}</w:tcBorders>"
+                   + cell[at:])
+        else:
+            new = cell.replace(
+                "<w:tc>",
+                f"<w:tc><w:tcPr><w:tcBorders>{edge}</w:tcBorders></w:tcPr>",
+                1)
+        out.append(row[pos:tc.start()] + new)
+        pos = tc.end()
+        count += 1
+    if count:
+        row = "".join(out) + row[pos:]
+        body = body[:last.start()] + row + body[last.end():]
     return xml[:table.start] + body + xml[table.end:], count
