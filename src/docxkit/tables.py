@@ -625,7 +625,13 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
               for c in range(n)]
     need_f = [math.ceil(full[c] * pad) + side if filled[c] else 0
               for c in range(n)]
-    for c0, k, h, f in spans:
+    # A spanning cell is almost always a group header, and a header
+    # wraps for one line per TABLE where a body label wraps for one
+    # line per ROW — so spans constrain only by their unbreakable
+    # minimum, never by their full one-line width. Forcing "Non-violent
+    # discipline" onto one line above a coefficient/SE pair was
+    # measured to steal ~250 dxa per pair from the label column.
+    for c0, k, h, _f in spans:
         cols = [c for c in range(c0, min(c0 + k, n)) if filled[c]]
         if not cols:
             continue
@@ -634,9 +640,7 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
         _bump(need_h, cols,
               math.ceil(h * pad) + side - fixed - sum(need_h[c]
                                                       for c in cols))
-        _bump(need_f, cols,
-              math.ceil(f * pad) + side - fixed - sum(need_f[c]
-                                                      for c in cols))
+    need_f = [max(need_f[c], need_h[c]) for c in range(n)]
 
     if total is None:
         w_m = re.search(r'<w:tblW w:w="(\d+)" w:type="dxa"/>', body)
