@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple, overload
 
@@ -569,6 +569,17 @@ class FitReport(NamedTuple):
     cramped: bool
 
 
+def _const(text: str) -> Callable[[re.Match[str]], str]:
+    """An ``re`` replacement inserting `text` literally.
+
+    Always the callable form, never the string one: ``re`` expands
+    backslash escapes in a replacement string, so a generated ``\\1``
+    would land as a control character — a bug this codebase has shipped
+    more than once.
+    """
+    return lambda _: text
+
+
 def _cell_walk(body: str, n: int) -> Iterable[
         tuple[re.Match[str], re.Match[str], int, int]]:
     """(row, cell, first grid column, span) for every cell in `body`.
@@ -741,10 +752,10 @@ def _apply_widths(body: str, widths: list[int], total: int,
     """Write the division back: grid, tblW, fixed layout, margins, tcWs."""
     new_grid = "<w:tblGrid>" + "".join(
         f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
-    body = re.sub(r"<w:tblGrid>.*?</w:tblGrid>", lambda _: new_grid, body,
+    body = re.sub(r"<w:tblGrid>.*?</w:tblGrid>", _const(new_grid), body,
                   count=1, flags=re.DOTALL)
     body = re.sub(r'<w:tblW w:w="[^"]*" w:type="\w+"/>',
-                  lambda _: f'<w:tblW w:w="{total}" w:type="dxa"/>',
+                  _const(f'<w:tblW w:w="{total}" w:type="dxa"/>'),
                   body, count=1)
     if "<w:tblLayout" in body:
         body = re.sub(r'<w:tblLayout w:type="\w+"/>',
@@ -765,7 +776,7 @@ def _apply_widths(body: str, widths: list[int], total: int,
                    f'</w:tblCellMar>')
         if "<w:tblCellMar>" in body:
             body = re.sub(r"<w:tblCellMar>.*?</w:tblCellMar>",
-                          lambda _: cellmar, body, count=1,
+                          _const(cellmar), body, count=1,
                           flags=re.DOTALL)
         else:                       # schema slot: right after tblLayout
             body = body.replace('<w:tblLayout w:type="fixed"/>',
@@ -775,8 +786,7 @@ def _apply_widths(body: str, widths: list[int], total: int,
     edits: list[tuple[int, int, str]] = []
     for tr, tc, c, k in _cell_walk(body, len(widths)):
         tcw = f'<w:tcW w:w="{sum(widths[c:c + k])}" w:type="dxa"/>'
-        new_tc, hits = _TCW_RE.subn(lambda _, t=tcw: t,  # type: ignore[misc]
-                                    tc.group(0), count=1)
+        new_tc, hits = _TCW_RE.subn(_const(tcw), tc.group(0), count=1)
         if not hits:
             if "<w:tcPr>" in new_tc:
                 new_tc = new_tc.replace("<w:tcPr>", f"<w:tcPr>{tcw}", 1)
@@ -889,7 +899,7 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
         if edge in cell:
             continue
         if "<w:tcBorders>" in cell:
-            new, n = re.subn(r"<w:bottom [^>]*/>", lambda _: edge,
+            new, n = re.subn(r"<w:bottom [^>]*/>", _const(edge),
                              cell, count=1)
             if not n:
                 b = cell.find("</w:tcBorders>")

@@ -24,6 +24,13 @@ docxkit = "docxkit.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# PEP 561: the package is fully annotated (mypy + pyright green), and
+# without this marker a consumer's type checker treats every docxkit
+# import as an error AND every docxkit call as Any — so the paper
+# scripts got no checking of the API they lean on hardest.
+[tool.setuptools.package-data]
+docxkit = ["py.typed"]
+
 [tool.ruff]
 line-length = 79
 target-version = "py312"
