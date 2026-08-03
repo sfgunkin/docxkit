@@ -37,6 +37,7 @@ __all__ = [
     "parse_number",
     "read_all",
     "set_cell",
+    "superscript_stars",
     "to_frame",
     "tolerance_for",
     "update",
@@ -712,3 +713,76 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
                  for c in range(n)],
         total=total, cramped=cramped)
     return xml[:table.start] + body + xml[table.end:], report
+
+
+# ------------------------------------------------- superscript stars -------
+
+_STARRED_CELL_RE = re.compile(r"^[-−+]?\d[\d.,  ]*(?:\.\d+)?\*{1,3}$")
+_RUN_T_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
+
+
+def _run_retext(run_xml: str, text: str) -> str:
+    return _RUN_T_RE.sub(lambda m: m.group(1) + text + m.group(3),
+                         run_xml, count=1)
+
+
+def _run_superscripted(run_xml: str) -> str:
+    tag = '<w:vertAlign w:val="superscript"/>'
+    if "<w:vertAlign" in run_xml:
+        return run_xml
+    if "<w:rPr>" in run_xml:
+        # vertAlign sorts after sz/szCs and before w:lang in the schema
+        at = run_xml.find("<w:lang")
+        if at == -1:
+            at = run_xml.find("</w:rPr>")
+        return run_xml[:at] + tag + run_xml[at:]
+    m = re.match(r"<w:r\b[^>]*>", run_xml)
+    assert m is not None
+    return (run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>"
+            + run_xml[m.end():])
+
+
+def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
+    """Raise the significance stars of `table`'s cells into superscript.
+
+    House style for results tables — and it narrows the coefficient
+    columns, because superscript renders at roughly two-thirds size and
+    :func:`fit_columns` prices that in. Only cells that are exactly a
+    number with trailing stars are touched (a note paragraph explaining
+    the stars never matches), the star run clones the number run's
+    formatting, and cells whose stars are already superscript are left
+    alone, so the pass is idempotent. Returns (xml, cells converted);
+    other Table objects' offsets are stale afterwards.
+    """
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - convert the "
+            f"clean build and rebuild the redline from it")
+    count = 0
+    edits: list[tuple[int, int, str]] = []
+    for tr in _TR_RE.finditer(body):
+        for tc in _TC_RE.finditer(tr.group(0)):
+            if not _STARRED_CELL_RE.match(_cell_text(tc.group(0))):
+                continue
+            last = None
+            for r in _RUN_RE.finditer(tc.group(0)):
+                t = _RUN_T_RE.search(r.group(0))
+                if t and t.group(2):
+                    last = r
+            if last is None:
+                continue
+            text = _RUN_T_RE.search(last.group(0)).group(2)  # type: ignore[union-attr]
+            m = re.match(r"^(.*?)(\*{1,3})$", text)
+            if m is None or "<w:vertAlign" in last.group(0):
+                continue                 # stars already split and raised
+            head, stars = m.group(1), m.group(2)
+            star_run = _run_superscripted(_run_retext(last.group(0), stars))
+            new = star_run if not head \
+                else _run_retext(last.group(0), head) + star_run
+            at = tr.start() + tc.start() + last.start()
+            edits.append((at, at + len(last.group(0)), new))
+            count += 1
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return xml[:table.start] + body + xml[table.end:], count

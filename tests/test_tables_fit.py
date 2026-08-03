@@ -14,7 +14,7 @@ import pytest
 from conftest import NS
 
 from docxkit.errors import AnchorError
-from docxkit.tables import fit_columns, read_all
+from docxkit.tables import fit_columns, read_all, superscript_stars
 
 FONT = "Arial Narrow"
 
@@ -197,4 +197,55 @@ def test_refuses_a_tracked_table():
 def test_result_still_parses_as_xml():
     from lxml import etree
     out, _ = fit_columns(regression_doc(), read_all(regression_doc())[0])
+    etree.fromstring(out.encode("utf-8"))
+
+
+# ------------------------------------------------- superscript stars -------
+
+
+def test_superscript_stars_splits_and_raises_the_stars():
+    d = regression_doc()
+    out, n = superscript_stars(d, read_all(d)[0])
+    assert n == 1
+    assert read_all(out)[0].rows[1][1] == "-0.250***"   # text unchanged
+    star_run = re.search(r"<w:r>(?:(?!</w:r>).)*vertAlign(?:(?!</w:r>).)*"
+                         r"</w:r>", out, re.DOTALL)
+    assert star_run and ">***<" in star_run.group(0)
+    assert 'w:ascii="Arial Narrow"' in star_run.group(0)   # rPr cloned
+    assert re.search(r'<w:szCs w:val="20"/><w:vertAlign', star_run.group(0)
+                     ) or "<w:vertAlign" in star_run.group(0)
+
+
+def test_superscript_stars_is_idempotent():
+    d = regression_doc()
+    once, n1 = superscript_stars(d, read_all(d)[0])
+    twice, n2 = superscript_stars(once, read_all(once)[0])
+    assert (n1, n2) == (1, 0)
+    assert twice == once
+
+
+def test_superscript_stars_ignores_prose_and_bare_numbers():
+    d = doc(tbl(
+        [3000, 1000],
+        "<w:tr>" + cell(frun("*** significant at the 1% level"), w=3000)
+        + cell(frun("0.047"), w=1000) + "</w:tr>"))
+    out, n = superscript_stars(d, read_all(d)[0])
+    assert n == 0
+    assert out == d
+
+
+def test_superscript_stars_then_fit_narrows_the_coefficient_column():
+    d = regression_doc()
+    plain, _ = fit_columns(d, read_all(d)[0])
+    raised, n = superscript_stars(d, read_all(d)[0])
+    raised, _ = fit_columns(raised, read_all(raised)[0])
+    assert n == 1
+    assert grid_of(raised)[1] < grid_of(plain)[1]
+    assert grid_of(raised)[0] > grid_of(plain)[0]   # label got the width
+
+
+def test_superscript_stars_result_parses():
+    from lxml import etree
+    out, _ = superscript_stars(regression_doc(),
+                               read_all(regression_doc())[0])
     etree.fromstring(out.encode("utf-8"))
