@@ -503,18 +503,16 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
             line += w
             if ch in " \t":
                 cluster = 0.0
-            elif ch == "/":
+                continue
+            cluster += w
+            hard = max(hard, cluster)
+            if ch == "/":
                 # Word breaks AFTER a slash — "Professional/vocational"
-                # wraps gracefully, and the label column may count on it.
-                # A hyphen also breaks in Word but is NOT split here: a
-                # negative coefficient's sign must never be a licensed
-                # break, or the dangling-minus wrap returns.
-                cluster += w
-                hard = max(hard, cluster)
+                # wraps gracefully, and the label column may count on
+                # it. A hyphen also breaks in Word but is NOT split
+                # here: a negative coefficient's sign must never be a
+                # licensed break, or the dangling-minus wrap returns.
                 cluster = 0.0
-            else:
-                cluster += w
-                hard = max(hard, cluster)
         full = max(full, line)
         if chars:
             texts.append("".join(ch for ch, _ in chars))
@@ -558,13 +556,35 @@ class FitReport(NamedTuple):
     """What :func:`fit_columns` did.
 
     `cramped` means even the unbreakable minima exceed the table width —
-    widths were scaled down and mid-word wraps remain; the table needs a
-    smaller font or fewer columns, not a better division.
+    widths were scaled down and mid-word wraps remain. Before reaching
+    for a smaller font or fewer columns, check the width itself: a
+    table in a LANDSCAPE section fit to the portrait text width reads
+    as cramped when it merely got a page's worth less room than it has
+    (`margin` is the other lever — Word's default padding across many
+    columns adds up to real inches).
     """
 
     columns: list[ColumnFit]
     total: int
     cramped: bool
+
+
+def _cell_walk(body: str, n: int) -> Iterable[
+        tuple[re.Match[str], re.Match[str], int, int]]:
+    """(row, cell, first grid column, span) for every cell in `body`.
+
+    Rows wider than the `n`-column grid are truncated — a malformed
+    row's overflow cells are not mapped onto columns that do not exist.
+    """
+    for tr in _TR_RE.finditer(body):
+        c = 0
+        for tc in _TC_RE.finditer(tr.group(0)):
+            if c >= n:
+                break
+            s = _SPAN_RE.search(tc.group(0))
+            k = int(s.group(1)) if s else 1
+            yield tr, tc, c, k
+            c += k
 
 
 def fit_columns(xml: str, table: Table, *, total: int | None = None,
@@ -599,22 +619,49 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
             f"table {table.index} contains tracked changes - fit the "
             f"clean build and rebuild the redline from it")
     grid = [int(m.group(1)) for m in _GRIDCOL_RE.finditer(body)]
-    n = len(grid)
-    if not n:
+    if not grid:
         raise AnchorError(f"table {table.index} has no tblGrid")
 
-    mar_m = re.search(r"<w:tblCellMar>.*?</w:tblCellMar>", body, re.DOTALL)
+    side = 2 * margin if margin is not None else _side_margins(body)
+    need_h, need_f, driver, filled = _column_needs(body, grid, side, pad)
+    if not any(filled):
+        raise AnchorError(f"table {table.index} has no cell content to fit")
+    if total is None:
+        w_m = re.search(r'<w:tblW w:w="(\d+)" w:type="dxa"/>', body)
+        total = int(w_m.group(1)) if w_m else sum(grid)
 
-    def _mar(*names: str) -> int:
+    widths, cramped = _divide(grid, need_h, need_f, filled, total)
+    body = _apply_widths(body, widths, total, margin)
+    report = FitReport(
+        columns=[ColumnFit(old, new, drv)
+                 for old, new, drv in zip(grid, widths, driver,
+                                          strict=True)],
+        total=total, cramped=cramped)
+    return xml[:table.start] + body + xml[table.end:], report
+
+
+def _side_margins(body: str) -> int:
+    """Left + right cell margin of the table, in dxa."""
+    mar = re.search(r"<w:tblCellMar>.*?</w:tblCellMar>", body, re.DOTALL)
+
+    def one(*names: str) -> int:
         for nm in names:
             e = re.search(rf'<w:{nm} w:w="(\d+)" w:type="dxa"/>',
-                          mar_m.group(0)) if mar_m else None
+                          mar.group(0)) if mar else None
             if e:
                 return int(e.group(1))
         return 108                       # Word's default cell margin
-    side = 2 * margin if margin is not None \
-        else _mar("left", "start") + _mar("right", "end")
+    return one("left", "start") + one("right", "end")
 
+
+def _column_needs(body: str, grid: list[int], side: int, pad: float
+                  ) -> tuple[list[int], list[int], list[str], list[bool]]:
+    """Measure every column: (hard needs, full needs, drivers, filled).
+
+    Needs are dxa including margins and `pad`; a column no single-span
+    cell writes into is unfilled (a spacer) and needs nothing.
+    """
+    n = len(grid)
     fonts = Counter(_ASCII_RE.findall(body))
     sizes = Counter(_SZ_RE.findall(body))
     fallback = (fonts.most_common(1)[0][0] if fonts else "Times New Roman",
@@ -624,27 +671,18 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     full = [0.0] * n
     driver = [""] * n
     filled = [False] * n
-    spans: list[tuple[int, int, float, float]] = []
-    for tr in _TR_RE.finditer(body):
-        c = 0
-        for tc in _TC_RE.finditer(tr.group(0)):
-            if c >= n:
-                break
-            s = _SPAN_RE.search(tc.group(0))
-            k = int(s.group(1)) if s else 1
-            h, f, text = _cell_extents(tc.group(0), fallback)
-            if text:
-                if k == 1:
-                    filled[c] = True
-                    if h > hard[c]:
-                        hard[c], driver[c] = h, text
-                    full[c] = max(full[c], f)
-                else:
-                    spans.append((c, k, h, f))
-            c += k
-
-    if not any(filled):
-        raise AnchorError(f"table {table.index} has no cell content to fit")
+    spans: list[tuple[int, int, float]] = []
+    for _tr, tc, c, k in _cell_walk(body, n):
+        h, f, text = _cell_extents(tc.group(0), fallback)
+        if not text:
+            continue
+        if k == 1:
+            filled[c] = True
+            if h > hard[c]:
+                hard[c], driver[c] = h, text
+            full[c] = max(full[c], f)
+        else:
+            spans.append((c, k, h))
 
     need_h = [math.ceil(hard[c] * pad) + side if filled[c] else 0
               for c in range(n)]
@@ -656,7 +694,7 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     # minimum, never by their full one-line width. Forcing "Non-violent
     # discipline" onto one line above a coefficient/SE pair was
     # measured to steal ~250 dxa per pair from the label column.
-    for c0, k, h, _f in spans:
+    for c0, k, h in spans:
         cols = [c for c in range(c0, min(c0 + k, n)) if filled[c]]
         if not cols:
             continue
@@ -666,19 +704,25 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
               math.ceil(h * pad) + side - fixed - sum(need_h[c]
                                                       for c in cols))
     need_f = [max(need_f[c], need_h[c]) for c in range(n)]
+    return need_h, need_f, driver, filled
 
-    if total is None:
-        w_m = re.search(r'<w:tblW w:w="(\d+)" w:type="dxa"/>', body)
-        total = int(w_m.group(1)) if w_m else sum(grid)
-    avail = total - sum(grid[c] for c in range(n) if not filled[c])
-    live = [c for c in range(n) if filled[c]]
+
+def _divide(grid: list[int], need_h: list[int], need_f: list[int],
+            filled: list[bool], total: int) -> tuple[list[int], bool]:
+    """Divide `total` over the filled columns; spacers keep their width.
+
+    Full needs when they fit; otherwise the wrap-tolerant columns are
+    shaved toward their hard minima; past that everything scales down
+    and the division is cramped.
+    """
+    live = [c for c in range(len(grid)) if filled[c]]
+    avail = total - sum(grid[c] for c in range(len(grid)) if not filled[c])
     sum_h = sum(need_h[c] for c in live)
     sum_f = sum(need_f[c] for c in live)
     cramped = False
     if sum_f <= avail:
         alloc = _round_to(avail, [need_f[c] for c in live])
     elif sum_h <= avail:
-        # shave the wrap-tolerant columns toward their hard minima
         room = [need_f[c] - need_h[c] for c in live]
         cut = _round_to(sum_f - avail, [r if sum(room) else 1
                                         for r in room])
@@ -689,7 +733,12 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     widths = list(grid)
     for c, w in zip(live, alloc, strict=True):
         widths[c] = w
+    return widths, cramped
 
+
+def _apply_widths(body: str, widths: list[int], total: int,
+                  margin: int | None) -> str:
+    """Write the division back: grid, tblW, fixed layout, margins, tcWs."""
     new_grid = "<w:tblGrid>" + "".join(
         f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
     body = re.sub(r"<w:tblGrid>.*?</w:tblGrid>", lambda _: new_grid, body,
@@ -703,9 +752,9 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     else:
         pr = re.search(r"<w:tblPr>.*?</w:tblPr>", body, re.DOTALL)
         if pr:
-            at = min((pr.group(0).find(t) for t in
-                      ("<w:tblCellMar", "<w:tblLook", "</w:tblPr>")
-                      if pr.group(0).find(t) != -1), default=-1)
+            at = min(pr.group(0).find(t) for t in
+                     ("<w:tblCellMar", "<w:tblLook", "</w:tblPr>")
+                     if pr.group(0).find(t) != -1)
             body = (body[:pr.start() + at]
                     + '<w:tblLayout w:type="fixed"/>'
                     + body[pr.start() + at:])
@@ -724,42 +773,28 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
                                 1)
 
     edits: list[tuple[int, int, str]] = []
-    for tr in _TR_RE.finditer(body):
-        c = 0
-        for tc in _TC_RE.finditer(tr.group(0)):
-            if c >= n:
-                break
-            s = _SPAN_RE.search(tc.group(0))
-            k = int(s.group(1)) if s else 1
-            w = sum(widths[c:c + k])
-            tcw = f'<w:tcW w:w="{w}" w:type="dxa"/>'
-
-            def _to_tcw(_: re.Match[str], t: str = tcw) -> str:
-                return t
-            new_tc, hits = _TCW_RE.subn(_to_tcw, tc.group(0), count=1)
-            if not hits:
-                if "<w:tcPr>" in new_tc:
-                    new_tc = new_tc.replace("<w:tcPr>", f"<w:tcPr>{tcw}", 1)
-                else:
-                    new_tc = new_tc.replace(
-                        "<w:tc>", f"<w:tc><w:tcPr>{tcw}</w:tcPr>", 1)
-            if new_tc != tc.group(0):
-                edits.append((tr.start() + tc.start(),
-                              tr.start() + tc.end(), new_tc))
-            c += k
+    for tr, tc, c, k in _cell_walk(body, len(widths)):
+        tcw = f'<w:tcW w:w="{sum(widths[c:c + k])}" w:type="dxa"/>'
+        new_tc, hits = _TCW_RE.subn(lambda _, t=tcw: t,  # type: ignore[misc]
+                                    tc.group(0), count=1)
+        if not hits:
+            if "<w:tcPr>" in new_tc:
+                new_tc = new_tc.replace("<w:tcPr>", f"<w:tcPr>{tcw}", 1)
+            else:
+                new_tc = new_tc.replace(
+                    "<w:tc>", f"<w:tc><w:tcPr>{tcw}</w:tcPr>", 1)
+        if new_tc != tc.group(0):
+            edits.append((tr.start() + tc.start(),
+                          tr.start() + tc.end(), new_tc))
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
-
-    report = FitReport(
-        columns=[ColumnFit(grid[c], widths[c], driver[c])
-                 for c in range(n)],
-        total=total, cramped=cramped)
-    return xml[:table.start] + body + xml[table.end:], report
+    return body
 
 
 # ------------------------------------------------- superscript stars -------
 
-_STARRED_CELL_RE = re.compile(r"^[-−+]?\d[\d.,  ]*(?:\.\d+)?\*{1,3}$")
+# exactly a number (the shared cell grammar) with trailing stars
+_STARRED_CELL_RE = re.compile(rf"^{_NUM_RE.pattern}\*{{1,3}}$")
 _RUN_T_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
 
 
@@ -848,13 +883,10 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
         raise AnchorError(f"table {table.index} has no rows")
     last = trs[-1]
     edge = f'<w:bottom w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
-    count = 0
-    row = last.group(0)
-    out: list[str] = []
-    pos = 0
-    for tc in _TC_RE.finditer(row):
+    edits: list[tuple[int, int, str]] = []
+    for tc in _TC_RE.finditer(last.group(0)):
         cell = tc.group(0)
-        if f"<w:tcBorders>{edge}" in cell or edge in cell:
+        if edge in cell:
             continue
         if "<w:tcBorders>" in cell:
             new, n = re.subn(r"<w:bottom [^>]*/>", lambda _: edge,
@@ -863,9 +895,10 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
                 b = cell.find("</w:tcBorders>")
                 new = cell[:b] + edge + cell[b:]
         elif "<w:tcPr>" in cell:
+            # tcBorders sorts before shd/tcMar/vAlign in the tcPr schema
             at = min(p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
-                                  cell.find("<w:vAlign"),
-                                  cell.find("</w:tcPr>")) if p != -1)
+                                 cell.find("<w:vAlign"),
+                                 cell.find("</w:tcPr>")) if p != -1)
             new = (cell[:at] + f"<w:tcBorders>{edge}</w:tcBorders>"
                    + cell[at:])
         else:
@@ -873,10 +906,8 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
                 "<w:tc>",
                 f"<w:tc><w:tcPr><w:tcBorders>{edge}</w:tcBorders></w:tcPr>",
                 1)
-        out.append(row[pos:tc.start()] + new)
-        pos = tc.end()
-        count += 1
-    if count:
-        row = "".join(out) + row[pos:]
-        body = body[:last.start()] + row + body[last.end():]
-    return xml[:table.start] + body + xml[table.end:], count
+        edits.append((last.start() + tc.start(),
+                      last.start() + tc.end(), new))
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return xml[:table.start] + body + xml[table.end:], len(edits)
