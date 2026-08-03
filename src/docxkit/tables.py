@@ -845,9 +845,9 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
                 b = cell.find("</w:tcBorders>")
                 new = cell[:b] + edge + cell[b:]
         elif "<w:tcPr>" in cell:
-            at = min((p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
+            at = min(p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
                                   cell.find("<w:vAlign"),
-                                  cell.find("</w:tcPr>")) if p != -1))
+                                  cell.find("</w:tcPr>")) if p != -1)
             new = (cell[:at] + f"<w:tcBorders>{edge}</w:tcBorders>"
                    + cell[at:])
         else:

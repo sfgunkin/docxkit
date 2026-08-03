@@ -305,7 +305,7 @@ def test_margin_shrinks_the_padding_and_is_written_to_the_table():
         + cell(frun("-0.250***"), w=700) + cell(frun("0.047"), w=700)
         + "</w:tr>"))
     wide, _ = fit_columns(d, read_all(d)[0])
-    tight, rep = fit_columns(d, read_all(d)[0], margin=30)
+    tight, _rep = fit_columns(d, read_all(d)[0], margin=30)
     assert ('<w:tblCellMar><w:left w:w="30" w:type="dxa"/>'
             '<w:right w:w="30" w:type="dxa"/></w:tblCellMar>') in tight
     # 156 dxa less padding per column frees width for the label
@@ -336,8 +336,9 @@ def test_page_break_before_inserts_and_is_idempotent():
 
 
 def test_page_break_before_creates_ppr_when_missing():
-    from docxkit.find import page_break_before
     from lxml import etree
+
+    from docxkit.find import page_break_before
     d = doc("<w:p><w:r><w:t>Table 4: More results</w:t></w:r></w:p>")
     out = page_break_before(d, "Table 4:")
     assert "<w:pPr><w:pageBreakBefore/></w:pPr><w:r>" in out
