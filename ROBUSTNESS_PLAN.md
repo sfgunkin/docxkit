@@ -116,13 +116,20 @@ paragraph".)*
 
 The goal: make the invariants unbreakable rather than remembered.
 
-**V1 — One well-formedness gate, applied by construction.**
-Today only `tracked.build` and two CLI paths lint. Add a
-`docxkit.guard.validated()` decorator/context that every library
-mutator passes its result through in debug/test mode (env-gated so
-production builds stay fast). *Acceptance:* a mutation that returns
-mismatched tags fails a test in every mutator module, not just the two
-that happen to lint.
+> **Status: V1 and V3 done (`1e127fe`).** V1 landed in a better place
+> than planned — see below. V2 and V4 remain.
+
+**V1 — One well-formedness gate, applied by construction. DONE.**
+Implemented at `package.write_docx` rather than as a per-mutator
+decorator: every editing path in the toolkit lands there before
+anything reaches disk, so one gate covers them all — including
+`edit_in_place`, the CLI and `tracked.build` — with no per-function
+opt-in to forget. It refuses to write a package whose XML does not
+parse, and stays well-formedness-only so a fixture or an intermediate
+state can still break a *structural* rule (the separate `lint` gate)
+without being blocked. Finding the boundary between "never legitimate"
+(a parse failure) and "sometimes legitimate" (a schema-order oddity)
+is what made a default-on gate safe.
 
 **V2 — Property tests for the whole mutator family.** Every public
 mutator shares three invariants worth pinning as properties over
@@ -136,13 +143,22 @@ bottom_border, set_cell, update, shift, smarten, link, link_more,
 annotate, apply_template]` replaces a dozen hand-written near-duplicates
 and covers combinations nobody wrote by hand.
 
-**V3 — A shared corpus fixture.** The synthetic fixtures in
-`conftest.py` are clean in ways real manuscripts never are. Build a
-small set of *pathological* fixtures from real shapes already
-encountered — self-closing hyperlink ghost, nested table, gridSpan row,
-run with two `w:t`, footnote-only citation, endnote part, tracked cell —
-and run the property suite over all of them. Every past incident becomes
-a permanent fixture.
+**V3 — A shared corpus fixture. DONE** (`tests/test_pathological.py`).
+Eight specimens, each reproducing a structure that has broken something
+here; every mutator runs over all of them asserting parse-survival,
+text-preservation and idempotence. It immediately earned its keep by
+catching a live instance of the ghost-hyperlink bug in `citations`'
+`_LINK_TOKEN_RE`.
+
+Two lessons worth keeping from building it:
+* **A pathological fixture is only pathological in context.** The first
+  ghost-hyperlink specimen had no real link after it, so nothing could
+  be swallowed and the mutation survived. The incident's shape —
+  ghost, then prose, then a real link — is what makes it bite.
+* **A surviving mutation is not always a gap.** `crossrefs.unlink`
+  shrugged off the same mutation because its anchor filter rejects a
+  span whose first anchor is not one of its own. That is a genuine
+  second line of defence, not a missing test.
 
 **V4 — Calibrate the width model against a real render.** `_ARIAL_NARROW`
 (`tables.py:527`) was hand-tuned from one Word PDF. Nothing would catch a
@@ -243,8 +259,8 @@ Cheap, and they close the loops that keep reopening:
 
 | Phase | Content | Gate |
 |---|---|---|
-| 0 | P0-1…P0-5 | Each with a regression test; full suite + all three papers' build gates |
-| 1 | V1 validation gate, V3 pathological corpus | Every mutator refuses malformed output |
+| 0 | P0-1…P0-5 | **DONE** `1739a8c` — P0-4 withdrawn; tracked.py 0→58% |
+| 1 | V1 validation gate, V3 pathological corpus | **DONE** `1e127fe` — no path can write unparseable XML |
 | 2 | COM seam + `tracked.py` tests | `tracked.py` ≥75% without Word |
 | 3 | R1 walks, R2 types, R3 offsets | mypy rejects a swapped-coordinate call |
 | 4 | V2 property suite, mutation CI | Survivor budget met |
