@@ -1,0 +1,293 @@
+"""The link AUDIT: what is wrong with a document's citations.
+
+Reports, never repairs. Every check is deliberately conservative —
+MISPLACED MARKER only speaks when a key resolves to exactly one entry —
+because a false positive in an audit costs more than a missed one: it
+sends a human hunting for a defect that was never there.
+"""
+from __future__ import annotations
+
+import html
+import re
+from collections import defaultdict
+from dataclasses import replace
+from typing import NamedTuple
+
+from ._cite_grammar import (
+    _DEFAULT_HEADINGS,
+    IGNORED_LEADS,
+    find_citations,
+    references,
+    strip_lead,
+)
+from ._xml import (
+    PARA_RE,
+    internal_links,
+    visible_text,
+)
+
+# ------------------------------------------------------ the link audit ---
+
+_BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
+# The optional _N is :func:`_dedup_name`'s collision suffix. Without it a
+# deduped entry bookmark (minted when a STALE bookmark held the plain
+# name) was invisible to the own-name scan, so every link_all run minted
+# another _N and re-wrapped the citation — the Parental Style Kazenin
+# spiral, nested four links deep before the audit caught it.
+_KEY_SHAPE_RE = re.compile(
+    r"^([A-Za-z][A-Za-z.]*?)(\d{4}[a-z]?)(?:_\d+)?(?:txt)?$")
+_LINK_TOKEN_RE = re.compile(
+    r'<w:fldChar\b[^>]*w:fldCharType="(begin|separate|end)"'
+    r"|<w:instrText[^>]*>([^<]*)</w:instrText>"
+    # (?<!/)> — a SELF-CLOSING <w:hyperlink .../> wraps nothing, so it
+    # must not open a frame here: it would never be popped, and every
+    # later link in the paragraph would be reported as nested inside it.
+    # Word leaves these ghosts behind on save; one on the Parental Style
+    # manuscript is what made the twin guard in _xml necessary.
+    r'|<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>'
+    r"|</w:hyperlink>")
+
+
+def _doubled_links(para_xml: str) -> list[tuple[str, str]]:
+    """(outer, inner) target pairs where one link nests inside another
+    WITH A DIFFERENT TARGET — the click goes to the outer one.
+
+    Two real shapes: a field starting inside another field's result
+    (API10 P30: "Finsel et al. 2023; Wöhrmann et al. 2018" rendered as
+    ONE link because the first field never ends), and an element link
+    inside a field's result (the WHO-2019 back-link nested inside a
+    dead absolute-URL field Word had written around it). Same-target
+    nesting is form churn caught mid-flight and stays quiet.
+    """
+    out: list[tuple[str, str]] = []
+    stack: list[list[str]] = []      # open links: [kind, target-or-""]
+
+    def newly_known(inner: str) -> None:
+        for _kind, target in stack:
+            if target and target != inner:
+                out.append((target, inner))
+
+    for m in _LINK_TOKEN_RE.finditer(para_xml):
+        fld, instr, el_anchor = m.group(1), m.group(2), m.group(3)
+        if fld == "begin":
+            stack.append(["field", ""])
+        elif fld == "end":
+            for i in range(len(stack) - 1, -1, -1):
+                if stack[i][0] == "field":
+                    del stack[i]
+                    break
+        elif instr is not None and "HYPERLINK" in instr:
+            am = re.search(r'HYPERLINK\s+(?:\\l\s+)?"([^"]+)"',
+                           html.unescape(instr))
+            target = am.group(1) if am else instr.strip()
+            open_fields = [f for f in stack if f[0] == "field"]
+            if open_fields:
+                newly_known(target)
+                open_fields[-1][1] = target
+        elif el_anchor is not None:
+            inner = html.unescape(el_anchor)
+            newly_known(inner)
+            stack.append(["element", inner])
+        elif fld is None and instr is None and el_anchor is None:
+            for i in range(len(stack) - 1, -1, -1):   # </w:hyperlink>
+                if stack[i][0] == "element":
+                    del stack[i]
+                    break
+    return out
+
+
+class _Finding(NamedTuple):
+    """One audit finding, structured: repair_plan classifies on `kind`
+    and `subject` instead of re-parsing its own audit's message strings
+    — the coupling that made the first plan writer fragile."""
+
+    kind: str          # "BROKEN LINK", "ORPHAN REF", ...
+    subject: str       # the bookmark / anchor / citation concerned
+    message: str       # the full rendered line, "KIND: ..."
+    extra: str = ""    # DOUBLED LINK carries the OUTER target here
+
+
+def audit_links(parts: dict[str, bytes], *,
+                heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+                ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+                ) -> tuple[list[str], dict[str, int]]:
+    """Audit the bidirectional citation-link convention; (issues, stats).
+    The rendered-string face of :func:`_audit_findings`.
+
+    The papers' bookmark shape: the reference entry carries ``<name>``
+    and the in-text mention ``<name>txt`` (``Halliday2020`` /
+    ``Halliday2020txt``), each end hyperlinking to the other; figure and
+    table first-mention links follow the same shape, so they audit
+    identically. Documents built on :func:`anchor_names`'s
+    ``cite_``/``ref_`` naming still get the orphan, broken-link and
+    cross-reference checks — only the ``txt``-pairing checks are
+    specific to the suffix shape.
+
+    Anchors resolve against EVERY bookmark in the document — including
+    Word's own ``_Toc``/``_Heading`` names. The audit this replaces
+    excluded underscore names from its index and then reported links to
+    them as broken; LE le15 shipped an audit round with nine of those
+    false positives before the cause was found.
+    """
+    findings, stats = _audit_findings(parts, heading=heading, ignore=ignore)
+    return [f.message for f in findings], stats
+
+
+def _audit_findings(parts: dict[str, bytes], *,
+                    heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+                    ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+                    ) -> tuple[list[_Finding], dict[str, int]]:
+    doc = parts["word/document.xml"].decode("utf-8")
+    paras = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in paras]
+
+    bookmarks: dict[str, int] = {}          # first definition wins
+    links: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for i, m in enumerate(paras):
+        for name in _BOOKMARK_NAME_RE.findall(m.group(0)):
+            bookmarks.setdefault(name, i)
+        for anchor, label in internal_links(m.group(0)):
+            links[anchor].append((i, label))
+    for name in _BOOKMARK_NAME_RE.findall(doc):
+        bookmarks.setdefault(name, -1)      # BODY-LEVEL, between paragraphs
+    foot = parts.get("word/footnotes.xml")
+    if foot:
+        ftext = foot.decode("utf-8")
+        for name in _BOOKMARK_NAME_RE.findall(ftext):
+            bookmarks.setdefault(name, -2)  # defined in a footnote
+        for anchor, label in internal_links(ftext):
+            links[anchor].append((-2, label))
+
+    cite_marks = {n: i for n, i in bookmarks.items()
+                  if not n.startswith("_") and n.endswith("txt")}
+    eq_marks = {n: i for n, i in bookmarks.items()
+                if not n.startswith("_") and n.startswith("Eq")}
+    ref_marks = {n: i for n, i in bookmarks.items()
+                 if not n.startswith("_") and n not in cite_marks
+                 and n not in eq_marks}
+
+    def where(i: int) -> str:
+        # "body" = a body-level definition between paragraphs. The first
+        # audit round printed those as "fn" and the API repair went
+        # hunting in footnotes.xml for bookmarks that were never there.
+        return {-1: "body", -2: "fn"}.get(i) or f"¶{i + 1}"
+
+    issues: list[_Finding] = []
+    for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
+        if not links.get(key):
+            issues.append(_Finding(
+                "ORPHAN REF", key,
+                f"ORPHAN REF: bookmark '{key}' ({where(idx)}) "
+                "has no in-text hyperlink pointing to it"))
+    for name, idx in sorted(cite_marks.items(), key=lambda kv: kv[1]):
+        if not links.get(name):
+            issues.append(_Finding(
+                "NO BACK-LINK", name,
+                f"NO BACK-LINK: in-text bookmark '{name}' "
+                f"({where(idx)}) has no reference back-link"))
+        if name[:-3] not in ref_marks:
+            issues.append(_Finding(
+                "MISSING REF", name,
+                f"MISSING REF: in-text citation '{name}' "
+                f"({where(idx)}) links to '{name[:-3]}' but no "
+                "reference bookmark exists"))
+    broken = 0
+    for anchor, sites in sorted(links.items()):
+        if anchor not in bookmarks:
+            for i, label in sites:
+                issues.append(_Finding(
+                    "BROKEN LINK", anchor,
+                    f"BROKEN LINK: hyperlink to '{anchor}' "
+                    f'({where(i)}, "{label[:40]}") '
+                    "— no such bookmark"))
+                broken += 1
+    for i, m in enumerate(paras):
+        for outer, inner in _doubled_links(m.group(0)):
+            issues.append(_Finding(
+                "DOUBLED LINK", inner, extra=outer,
+                message=f"DOUBLED LINK: '{inner}' is nested inside a "
+                f"link to '{outer}' (¶{i + 1}) — the click goes "
+                "to the outer one"))
+
+    # A marker that no longer sits at its own entry: paragraph moves take
+    # the <w:p> and nothing beside it, so a reorder strands body-level
+    # markers one entry off (13 of them on API10). Only CONFIDENT
+    # mismatches report: the key must parse as name+year and match
+    # exactly one entry by surname prefix and year.
+    entries = references(texts, heading=heading)
+    if entries:
+        starts = {r.index: r for r in entries}
+        for name in ref_marks:
+            km = _KEY_SHAPE_RE.match(name)
+            if km is None:
+                continue
+            alpha, year = km.group(1).casefold(), km.group(2)
+            owners = [r for r in entries
+                      if re.sub(r"[^\w]", "", r.surname).casefold()
+                      .startswith(alpha) and r.year == year]
+            if len(owners) != 1:
+                continue
+            pos = doc.find(f'w:name="{name}"')
+            at = next((r for i, r in starts.items()
+                       if paras[i].start() <= pos < paras[i].end()), None)
+            if at is None:                    # body-level: next entry down
+                at = next((starts[i] for i in sorted(starts)
+                           if paras[i].start() >= pos), None)
+            if at is not None and at.index != owners[0].index:
+                issues.append(_Finding(
+                    "MISPLACED MARKER", name,
+                    f"MISPLACED MARKER: '{name}' sits at "
+                    f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
+                    f"is ¶{owners[0].index + 1}"))
+
+    # Unlinked citation-like text, on the shared grammar. Only body
+    # prose before the reference list; the first five paragraphs are the
+    # title block, where author names read as citations.
+    wanted = {h.casefold()
+              for h in ((heading,) if isinstance(heading, str) else heading)}
+    head_idx = next((i for i, t in enumerate(texts)
+                     if t.strip().rstrip(":").casefold() in wanted),
+                    len(texts))
+    ignored = {s.casefold() for s in ignore}
+    labels = {lb.strip() for sites in links.values() for _, lb in sites}
+    unlinked = 0
+    for i, text in enumerate(texts[:head_idx]):
+        if i < 5:
+            continue
+        for found in find_citations(text):
+            c = replace(found, authors=strip_lead(found.authors))
+            if c.surname.casefold() in ignored:
+                continue
+            cite = text[c.start:c.end].strip()
+            cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
+            if any(cite in lb or cores[0] in lb or cores[1] in lb
+                   for lb in labels):
+                continue
+            issues.append(_Finding(
+                "UNLINKED", cite,
+                f'UNLINKED: "{cite}" (¶{i + 1}) — looks like a '
+                "citation but is not hyperlinked"))
+            unlinked += 1
+
+    cited_keys = {n[:-3] for n in cite_marks}
+    cited_keys |= {a for a in links if a in ref_marks}
+    for key in sorted(cited_keys - ref_marks.keys()):
+        issues.append(_Finding(
+            "CITE WITHOUT REF", key,
+            f"CITE WITHOUT REF: '{key}' cited in text but no "
+            "reference bookmark"))
+    for key in sorted(ref_marks.keys() - cited_keys):
+        issues.append(_Finding(
+            "REF WITHOUT CITE", key,
+            f"REF WITHOUT CITE: '{key}' "
+            f"({where(ref_marks[key])}) in references but never "
+            "cited in text"))
+
+    stats = {"paragraphs": len(paras), "bookmarks": len(bookmarks),
+             "cite_bookmarks": len(cite_marks),
+             "ref_bookmarks": len(ref_marks), "eq_bookmarks": len(eq_marks),
+             "links": sum(len(v) for v in links.values()),
+             "broken": broken, "unlinked": unlinked}
+    return issues, stats
+
+

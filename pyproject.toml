@@ -65,7 +65,18 @@ ignore = [
 # lxml is a hard dep but the parse-gate imports it lazily so package.py
 # stays importable in the minimal environments the CLI runs in
 "src/docxkit/package.py" = ["PLC0415"]
-"src/docxkit/citations.py" = ["RUF001", "PLC0415"]
+# citations.py is a FACADE: `from x import y as y` is the PEP 484
+# signal for a deliberate re-export, which is exactly what every
+# line of its import block is. Without this, `ruff --fix` strips
+# the names refstyle and the tests import through it.
+"src/docxkit/citations.py" = ["RUF001", "PLC0415", "PLC0414"]
+# The citation layers, split out of citations.py. The grammar is
+# ABOUT look-alike characters (long s, en dash, curly apostrophe);
+# the others defer imports to keep the layering acyclic.
+"src/docxkit/_cite_grammar.py" = ["RUF001", "RUF002", "PLC0415"]
+"src/docxkit/_cite_repair.py" = ["RUF001", "PLC0415"]
+"src/docxkit/_cite_audit.py" = ["RUF001", "PLC0415"]
+"src/docxkit/_cite_build.py" = ["RUF001", "PLC0415"]
 "src/docxkit/crossrefs.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 # equations maps the Unicode math glyphs themselves to LaTeX commands,

@@ -900,3 +900,50 @@ def test_self_closing_hyperlink_ghost_does_not_eat_a_later_close():
     closes = out.count("</w:hyperlink>")
     assert opens == closes == 0, (opens, closes)
     assert "Agostinelli (2024)" in out and "twins are rare." in out
+
+
+def test_the_facade_still_offers_every_name_it_ever_did():
+    """citations.py was split into layers; the import path is the API.
+
+    Every paper's build script imports from `docxkit.citations`, so a
+    split that moved a name would be a split that broke a build. This
+    pins the contract rather than trusting that nobody noticed.
+    """
+    import docxkit.citations as C
+    for name in C.__all__:
+        assert hasattr(C, name), f"{name} vanished from the facade"
+
+    # the private names other modules and tests reach through it
+    for name in ("_ACRONYM_RE", "_entry_keys", "strip_lead",
+                 "_doubled_links", "_KEY_SHAPE_RE", "_BOOKMARK_NAME_RE",
+                 "_audit_findings", "DISCOURSE_LEADS", "link_rest",
+                 "unlink_by_anchor", "masked_visible_text",
+                 "wrap_visible_span", "next_bookmark_id"):
+        assert hasattr(C, name), f"{name} vanished from the facade"
+
+
+def test_the_citation_layers_stay_acyclic():
+    """Each layer may import only from the ones below it.
+
+    grammar <- repair <- audit <- build.  The one back-edge the split
+    had to remove was marker_bookmark reaching forward for a helper
+    that lived with the builder; letting one back in would make the
+    layering a fiction.
+    """
+    import ast
+    from pathlib import Path
+
+    import docxkit
+    src = Path(docxkit.__file__).parent
+    order = ["_cite_grammar", "_cite_repair", "_cite_audit", "_cite_build"]
+    for i, mod in enumerate(order):
+        tree = ast.parse((src / f"{mod}.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            if node.module in order:
+                assert order.index(node.module) < i, (
+                    f"{mod} imports from {node.module}, which is not "
+                    "below it")
+            assert node.module != "citations", (
+                f"{mod} imports the facade — that is a cycle")

@@ -62,7 +62,7 @@ MUTATIONS = [
              "    if problems := malformed_parts(parts):",
              "    if False:"),
     # --- the XML walks --------------------------------------------------
-    Mutation("citations.py",
+    Mutation("_cite_audit.py",
              "a self-closing hyperlink opens a doubled-link frame",
              r"""    r'|<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>'""",
              r"""    r'|<w:hyperlink\b[^>]*w:anchor="([^"]+)"'"""),
