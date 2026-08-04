@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import NS, document, para, run
@@ -45,10 +46,40 @@ document.main+xml">
 """
 
 
+#: Word's own comment part. The XML pass CLONES a real Word comment for
+#: its template, author, date and namespace prefixes; hand-writing one is
+#: how a package ends up "repaired" on open, so a build that annotates
+#: needs this to exist before it starts.
+COMMENTS_PART = """
+  <pkg:part pkg:name="/word/comments.xml" pkg:contentType=\
+"application/vnd.openxmlformats-officedocument.wordprocessingml.\
+comments+xml">
+    <pkg:xmlData>
+      <w:comments xmlns:w=\
+"http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:comment w:id="0" w:author="Revision" w:initials="R" \
+w:date="2026-01-01T00:00:00Z"><w:p><w:r><w:t>scaffold</w:t></w:r></w:p>\
+</w:comment>
+      </w:comments>
+    </pkg:xmlData>
+  </pkg:part>
+"""
+
+
 def _clean_document() -> str:
     # no XML prolog: the part is embedded inside <pkg:xmlData>
     xml = document(para(run("The revised sentence.")))
     return xml[xml.index("<w:document"):]
+
+
+def _revised_document() -> str:
+    """A document carrying a real tracked insertion to comment on."""
+    body = ('<w:p><w:r><w:t xml:space="preserve">Employment rises </w:t>'
+            "</w:r>"
+            '<w:ins w:id="101" w:author="Revision" '
+            'w:date="2026-01-01T00:00:00Z">'
+            "<w:r><w:t>sharply</w:t></w:r></w:ins></w:p>")
+    return f"<w:document {NS}><w:body>{body}</w:body></w:document>"
 
 
 def _broken_document() -> str:
@@ -72,10 +103,12 @@ class _Revisions:
 
 class _FakeDoc:
     def __init__(self) -> None:
-        self.Revisions = _Revisions()
-        self.Comments = _Revisions()
-        self.Paragraphs = _Revisions()
-        self.OMaths = _Revisions()     # a real Document always has one
+        # typed loosely on purpose: tests rebind these with richer
+        # collections, and COM objects are duck-typed anyway
+        self.Revisions: Any = _Revisions()
+        self.Comments: Any = _Revisions()
+        self.Paragraphs: Any = _Revisions()
+        self.OMaths: Any = _Revisions()   # a real Document always has one
         self.closed = False
 
     def Close(self, SaveChanges=0):
@@ -85,8 +118,9 @@ class _FakeDoc:
 class _FakeWordModule:
     """Only what tracked.build actually calls."""
 
-    def __init__(self, body: str) -> None:
+    def __init__(self, body: str, *, scaffold: bool = False) -> None:
         self.body = body
+        self.scaffold = scaffold          # Word's own comment, to clone
         self.compared: dict[str, object] = {}
 
     @contextlib.contextmanager
@@ -108,8 +142,11 @@ class _FakeWordModule:
         return iter(())
 
     def extract_flat_opc(self, doc, flat: Path) -> None:
-        Path(flat).write_text(FLAT_TEMPLATE.format(body=self.body),
-                              encoding="utf-8")
+        text = FLAT_TEMPLATE.format(body=self.body)
+        if self.scaffold:
+            text = text.replace("</pkg:package>",
+                                COMMENTS_PART + "</pkg:package>")
+        Path(flat).write_text(text, encoding="utf-8")
 
     def flat_opc_to_docx(self, flat, out) -> int:
         from docxkit.word import flat_opc_to_docx
@@ -232,3 +269,343 @@ def test_build_report_formats_its_phases(monkeypatch, sources):
     assert "compared" in text and "packed" in text
     assert "revisions 0" in text
     assert report.seconds >= 0
+
+
+# ------------------------------------------------------ package counts ----
+
+
+def test_package_counts_reads_what_the_file_holds():
+    from docxkit.tracked import package_counts
+    parts = {
+        "word/document.xml": (
+            b'<w:document><w:body><w:ins w:id="1"><w:r><w:t>a</w:t></w:r>'
+            b'</w:ins><w:del w:id="2"><w:r><w:delText>b</w:delText></w:r>'
+            b"</w:del></w:body></w:document>"),
+        "word/comments.xml": (
+            b'<w:comments><w:comment w:id="0"/><w:comment w:id="1"/>'
+            b"</w:comments>"),
+    }
+    assert package_counts(parts) == {"insertions": 1, "deletions": 1,
+                                     "comments": 2}
+
+
+def test_package_counts_treats_a_missing_comments_part_as_zero():
+    from docxkit.tracked import package_counts
+    parts = {"word/document.xml": _clean_document().encode("utf-8")}
+    assert package_counts(parts)["comments"] == 0
+
+
+# --------------------------------------------------- the math resolution --
+
+
+class _Count:
+    """A COM-ish collection: .Count, callable 1-based indexing, and
+    iteration — `word.revisions` deliberately uses the enumerator
+    because indexing Revisions(i) is O(i)."""
+
+    def __init__(self, items=()):
+        self._items = list(items)
+        self.Count = len(self._items)
+
+    def __call__(self, i):
+        return self._items[i - 1]
+
+    def __iter__(self):
+        return iter(self._items)
+
+
+class _MathRange:
+    def __init__(self, text="", omaths=0, revisions=()):
+        self.Text = text
+        self.OMaths = _Count([object()] * omaths)
+        self.Revisions = _Count(revisions)
+
+    def Paragraphs(self, i):
+        return type("P", (), {"Range": type("R", (), {"Text": self.Text})})
+
+
+class _Rev:
+    def __init__(self, text="", omaths=0):
+        self.Range = _MathRange(text, omaths=omaths)
+        self.accepted = False
+
+    def Accept(self):
+        self.accepted = True
+
+
+class _OMath:
+    """doc.OMaths(i) is an OMath OBJECT carrying a .Range, not a range."""
+
+    def __init__(self, revisions=()):
+        self.Range = _MathRange(revisions=revisions)
+
+
+class _MathDoc:
+    """A document where the two math scans see DIFFERENT revisions.
+
+    One equation whose range INTERSECTS two revisions, and three
+    revisions of which only one CONTAINS math — the shape that made
+    substituting one scan for the other drop 41 revisions on AFI.
+    """
+
+    def __init__(self):
+        self.intersecting = [_Rev("dropped-1"), _Rev("dropped-2")]
+        self.containing = _Rev("has math", omaths=1)
+        self.all_revisions = [_Rev("prose a"), self.containing,
+                              _Rev("prose b")]
+        self.OMaths = _Count([_OMath(revisions=self.intersecting)])
+        self.Revisions = _Count(self.all_revisions)
+        self.added: list[str] = []
+        self.Comments = type("C", (), {
+            "Add": lambda _s, rng, text: self.added.append(text),
+            "Count": 0})()
+
+
+def test_the_two_math_scans_select_different_revisions():
+    """The AFI regression, pinned.
+
+    The equation walk finds revisions INTERSECTING a math range; the
+    revision scan finds revisions CONTAINING math. They are not
+    substitutes — swapping them left 41 revisions un-accepted, and the
+    counts here differ for exactly that reason.
+    """
+    from docxkit.tracked import (
+        _accept_math_via_equations,
+        _comment_and_accept_math_revisions,
+    )
+
+    via_equations = _accept_math_via_equations(_MathDoc())
+
+    doc = _MathDoc()
+    via_revisions = _comment_and_accept_math_revisions(
+        doc, lambda ctx: "R1: equation revised", None)
+
+    assert via_equations == 2          # both revisions touching the math
+    assert via_revisions == 1          # only the one that contains math
+    assert via_equations != via_revisions, "the scans must not coincide"
+    assert doc.containing.accepted
+    assert doc.added == ["R1: equation revised"]
+
+
+def test_resolve_math_picks_the_cheap_walk_when_nothing_is_commented(
+        monkeypatch):
+    from docxkit import tracked as T
+    seen = []
+    def _equations(doc):
+        seen.append("equations")
+        return 7
+
+    def _revisions(*args):
+        seen.append("revisions")
+        return 3
+
+    monkeypatch.setattr(T, "_accept_math_via_equations", _equations)
+    monkeypatch.setattr(T, "_comment_and_accept_math_revisions", _revisions)
+    assert T._resolve_math(_MathDoc(), None, None) == 7
+    assert T._resolve_math(_MathDoc(), lambda ctx: "x", None) == 3
+    assert seen == ["equations", "revisions"]
+
+
+def test_a_document_with_no_equations_resolves_nothing():
+    from docxkit.tracked import _accept_math_via_equations
+
+    class NoMath:
+        OMaths = _Count()
+    assert _accept_math_via_equations(NoMath()) == 0
+
+
+def test_the_scaffold_comment_is_seeded_when_no_math_revision_exists(
+        monkeypatch):
+    """comments.annotate clones a Word-made comment; without one the
+    build fails later with ScaffoldMissing, far from the cause."""
+    from docxkit import tracked as T
+
+    doc = _MathDoc()
+    doc.Revisions = _Count([_Rev("prose only")])       # no math anywhere
+    monkeypatch.setattr(T._word, "revisions", lambda d: iter(()),
+                        raising=False)
+    seeded = T._comment_and_accept_math_revisions(
+        doc, lambda ctx: "generic note", None)
+    assert seeded == 1
+    assert doc.added == ["generic note"]
+
+
+def test_no_scaffold_is_seeded_for_an_unannotated_build():
+    from docxkit.tracked import _seed_scaffold
+    doc = _MathDoc()
+    assert _seed_scaffold(doc, None, None) == 0
+    assert doc.added == []
+
+
+# ------------------------------------------------------------- verify ----
+
+
+class _WordSaying:
+    """A fake Word that reads back whatever counts the test dictates."""
+
+    def __init__(self, comments: int, revisions: int = 0, paras: int = 1):
+        self.doc = _FakeDoc()
+        self.doc.Comments = _Count([object()] * comments)
+        self.doc.Revisions = _Count([object()] * revisions)
+        self.doc.Paragraphs = _Count([object()] * paras)
+
+    @contextlib.contextmanager
+    def session(self):
+        yield object()
+
+    @contextlib.contextmanager
+    def open_doc(self, word, path, **kw):
+        yield self.doc
+
+
+def _redline(path: Path, *, comments: int) -> Path:
+    """A package holding `comments` comments and one insertion."""
+    from docxkit.package import write_docx
+    body = ('<w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z">'
+            "<w:r><w:t>new</w:t></w:r></w:ins>")
+    com = "".join(f'<w:comment w:id="{i}"><w:p/></w:comment>'
+                  for i in range(comments))
+    write_docx(path, {
+        "word/document.xml": (f"<w:document {NS}><w:body><w:p>{body}</w:p>"
+                              "</w:body></w:document>").encode(),
+        "word/comments.xml": (f"<w:comments {NS}>{com}</w:comments>"
+                              ).encode()})
+    return path
+
+
+def test_verify_reports_agreement_between_word_and_the_package(
+        monkeypatch, tmp_path):
+    path = _redline(tmp_path / "r.docx", comments=3)
+    monkeypatch.setattr(tracked, "_word", _WordSaying(comments=3,
+                                                      revisions=1))
+    got = tracked.verify(path)
+    assert got["package"] == {"insertions": 1, "deletions": 0,
+                              "comments": 3}
+    assert got["word"]["comments"] == 3
+    assert got["comments_match"] is True
+
+
+def test_verify_reports_the_disagreement_word_repair_causes(
+        monkeypatch, tmp_path):
+    """Word silently drops markup it dislikes; the count is the tell."""
+    path = _redline(tmp_path / "r.docx", comments=5)
+    monkeypatch.setattr(tracked, "_word", _WordSaying(comments=2))
+    got = tracked.verify(path)
+    assert got["package"]["comments"] == 5
+    assert got["word"]["comments"] == 2
+    assert got["comments_match"] is False
+
+
+def test_a_build_word_repairs_raises_and_keeps_the_old_deliverable(
+        monkeypatch, sources):
+    """The other half of the P0-1 property: a verify mismatch must not
+    publish either, and the previous deliverable must survive."""
+    out = sources[2]
+    out.write_bytes(b"PREVIOUS GOOD DELIVERABLE")
+    tracked._guard.stamp(out)
+    before = out.read_bytes()
+
+    # the package will hold 0 comments; Word claims 99 -> repaired
+    saying = _WordSaying(comments=99)
+    fake = _FakeWordModule(_clean_document())
+    fake.session = saying.session                            # type: ignore
+    fake.open_doc = saying.open_doc                          # type: ignore
+    monkeypatch.setattr(tracked, "_word", fake)
+
+    with pytest.raises(PackageError, match="repaired on open"):
+        tracked.build(sources[0], sources[1], out, verify_in_word=True)
+    assert out.read_bytes() == before
+    assert not list(out.parent.glob("~*.building*"))
+
+
+# ------------------------------------------- the annotate path, for real --
+
+
+def test_a_build_that_annotates_comments_every_revision(monkeypatch,
+                                                        sources):
+    """The heart of the pipeline, with comments.annotate running for
+    real: the Flat OPC carries Word's scaffold comment, the XML pass
+    clones it, and the package must hold both comments afterwards."""
+    fake = _FakeWordModule(_revised_document(), scaffold=True)
+    monkeypatch.setattr(tracked, "_word", fake)
+    out = sources[2]
+
+    report = tracked.build(sources[0], sources[1], out,
+                           classify=lambda ctx: "R1: sharpened",
+                           verify_in_word=False)
+
+    from docxkit.package import read_parts
+    from docxkit.tracked import package_counts
+    counts = package_counts(read_parts(out))
+    assert counts["insertions"] == 1
+    assert counts["comments"] == report.comments_total >= 1
+    assert report.comments_added >= 1
+
+
+def test_a_successful_verify_is_recorded_on_the_report(monkeypatch,
+                                                       sources):
+    saying = _WordSaying(comments=0, revisions=4)
+    fake = _FakeWordModule(_revised_document())
+    fake.session = saying.session                            # type: ignore
+    fake.open_doc = saying.open_doc                          # type: ignore
+    monkeypatch.setattr(tracked, "_word", fake)
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           verify_in_word=True)
+    assert report.verified_comments == 0
+    assert report.verified_revisions == 4
+    assert "verified in Word" in [label for label, _ in report.phases]
+
+
+def test_the_progress_callback_reports_a_forced_overwrite(monkeypatch,
+                                                          sources):
+    """force=True proceeds over a hand-edited deliverable, but the
+    backup it took has to be announced — silently discarding an author's
+    review is the incident guard.py exists for."""
+    out = sources[2]
+    out.write_bytes(b"AUTHOR REVIEWED THIS")          # unstamped
+    said: list[str] = []
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+
+    tracked.build(sources[0], sources[1], out, verify_in_word=False,
+                  force=True, progress=said.append)
+    assert any("backed up" in line for line in said), said
+    assert any(p.read_bytes() == b"AUTHOR REVIEWED THIS"
+               for p in out.parent.glob("*user_edited*"))
+
+
+# --------------------------------------------- a COM object that raises ---
+
+
+class _Exploding:
+    """A collection whose members raise, as COM members do."""
+
+    Count = 1
+
+    def __call__(self, i):
+        raise RuntimeError("Call was rejected by callee")
+
+
+def test_one_unreachable_equation_does_not_abort_the_math_pass():
+    from docxkit.tracked import _accept_math_via_equations
+
+    class Doc:
+        OMaths = _Exploding()
+    assert _accept_math_via_equations(Doc()) == 0    # skipped, not raised
+
+
+def test_a_revision_that_raises_is_skipped_not_fatal(monkeypatch):
+    from docxkit import tracked as T
+
+    class Hostile:
+        @property
+        def Range(self):
+            raise RuntimeError("Call was rejected by callee")
+
+    doc = _MathDoc()
+    monkeypatch.setattr(T._word, "revisions",
+                        lambda d: iter([Hostile(), doc.containing]),
+                        raising=False)
+    assert T._comment_and_accept_math_revisions(
+        doc, lambda ctx: "note", None) == 1

@@ -42,9 +42,27 @@ from .errors import PackageError
 from .lint import lint_parts
 from .package import read_parts, write_docx
 
-__all__ = ["BuildReport", "build", "verify"]
+__all__ = ["BuildReport", "build", "package_counts", "verify"]
 
 Classifier = Callable[[RevisionContext], str | None]
+
+
+def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
+    """What the PACKAGE holds: insertions, deletions, comments.
+
+    Half of the "did Word repair this file?" check, and the half that
+    actually detects the damage — Word's side is just a number it hands
+    back. Pure, so it can be tested without Word, which is why it lives
+    here instead of inline in :func:`verify` and :func:`build`, where it
+    had been written twice.
+    """
+    doc_xml = parts["word/document.xml"].decode("utf-8")
+    com_xml = parts.get("word/comments.xml", b"").decode("utf-8")
+    return {
+        "insertions": doc_xml.count("<w:ins "),
+        "deletions": doc_xml.count("<w:del "),
+        "comments": com_xml.count("<w:comment w:id="),
+    }
 
 
 def verify(path: str | Path) -> dict[str, Any]:
@@ -59,13 +77,7 @@ def verify(path: str | Path) -> dict[str, Any]:
     """
     path = Path(path)
     parts = read_parts(path)
-    doc_xml = parts["word/document.xml"].decode("utf-8")
-    com_xml = parts.get("word/comments.xml", b"").decode("utf-8")
-    in_package = {
-        "insertions": doc_xml.count("<w:ins "),
-        "deletions": doc_xml.count("<w:del "),
-        "comments": com_xml.count("<w:comment w:id="),
-    }
+    in_package = package_counts(parts)
     with _word.session() as word, _word.open_doc(word, path) as opened:
         in_word = {
             "revisions": int(opened.Revisions.Count),
@@ -304,8 +316,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             raise PackageError(
                 f"the package would not open cleanly in Word:\n  - {listed}")
         write_docx(building, parts)
-        report.comments_total = parts.get("word/comments.xml", b"").decode(
-            "utf-8").count("<w:comment w:id=")
+        report.comments_total = package_counts(parts)["comments"]
 
         if verify_in_word:
             checked = verify(building)
