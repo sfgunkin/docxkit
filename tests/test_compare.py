@@ -131,9 +131,11 @@ def test_a_field_end_run_with_rpr_does_not_bleed_the_label(tmp_path):
     """
     from docxkit.citations import hyperlink_field
 
-    body = (para(run("As ") + hyperlink_field("Baumrind1991", "Baumrind (1991)")
+    cite_a = hyperlink_field("Baumrind1991", "Baumrind (1991)")
+    cite_b = hyperlink_field("Hao2008", "Hao et al. (2008)")
+    body = (para(run("As ") + cite_a
                  + run(" conceptualized parental style as demandingness."))
-            + para(run("Also ") + hyperlink_field("Hao2008", "Hao et al. (2008)")
+            + para(run("Also ") + cite_b
                    + run(" propose a game-theoretic explanation.")))
     worded = body.replace(
         '<w:r><w:fldChar w:fldCharType="end"/></w:r>',

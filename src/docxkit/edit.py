@@ -7,6 +7,7 @@ loudly instead of producing a subtly wrong manuscript.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from ._xml import (
     RUN_OPEN_RE,
@@ -28,6 +29,8 @@ __all__ = [
     "rep",
     "replace_in_para",
     "set_run_text",
+    "subscript",
+    "superscript",
 ]
 
 # any <w:t ...> that does NOT carry a real xml:space="preserve". The
@@ -122,9 +125,26 @@ def preserve_space(xml: str) -> tuple[str, int]:
     return _ANY_T_RE.sub(sub, xml), fixed
 
 
+def _hits(visible: str, old: str, normalize: bool) -> list[tuple[int, int]]:
+    if normalize:
+        return find_normalized(visible, old)
+    hits, at = [], visible.find(old)
+    while at >= 0:
+        hits.append((at, at + len(old)))
+        at = visible.find(old, at + 1)
+    return hits
+
+
 def _locate(para_xml: str, old: str, *, normalize: bool = False,
+            within: str | None = None,
             ) -> tuple[list[re.Match[str]], list[tuple[int, int]], int, int]:
-    """The paragraph's runs, their visible spans, and `old`'s ONE span."""
+    """The paragraph's runs, their visible spans, and `old`'s ONE span.
+
+    `within` scopes the search to the ONE span of a longer anchor, so a
+    target that is not unique in the paragraph — a single letter, a
+    repeated word — can still be addressed unambiguously. Both anchors
+    are asserted: ambiguity is an error, never a silent first-match.
+    """
     runs, spans, cursor = [], [], 0
     for r in RUN_RE.finditer(para_xml):
         body = visible_text(r.group(0))
@@ -133,19 +153,24 @@ def _locate(para_xml: str, old: str, *, normalize: bool = False,
         cursor += len(body)
 
     visible = "".join(visible_text(r.group(0)) for r in runs)
-    if normalize:
-        hits = find_normalized(visible, old)
-    else:
-        hits = []
-        at = visible.find(old)
-        while at >= 0:
-            hits.append((at, at + len(old)))
-            at = visible.find(old, at + 1)
+    base = 0
+    if within is not None:
+        scope = _hits(visible, within, normalize)
+        if not scope:
+            raise AnchorError(f"within={within[:60]!r} not in paragraph")
+        if len(scope) > 1:
+            raise AnchorError(f"within={within[:60]!r} occurs twice in "
+                              "paragraph")
+        base = scope[0][0]
+        visible = visible[base:scope[0][1]]
+
+    hits = _hits(visible, old, normalize)
+    where = "paragraph" if within is None else f"within={within[:40]!r}"
     if not hits:
-        raise AnchorError(f"{old[:60]!r} not in paragraph")
+        raise AnchorError(f"{old[:60]!r} not in {where}")
     if len(hits) > 1:
-        raise AnchorError(f"{old[:60]!r} occurs twice in paragraph")
-    return runs, spans, hits[0][0], hits[0][1]
+        raise AnchorError(f"{old[:60]!r} occurs twice in {where}")
+    return runs, spans, base + hits[0][0], base + hits[0][1]
 
 
 # EG_RPrBase orders run properties; italics goes after these.
@@ -171,17 +196,31 @@ def _run_italic(run_xml: str) -> str:
     return run_xml[:m.end()] + "<w:rPr><w:i/></w:rPr>" + run_xml[m.end():]
 
 
-def italicize(para_xml: str, text: str, *, normalize: bool = False) -> str:
-    """Set italics on exactly `text` inside one paragraph.
+_VERT_ALIGN_RE = re.compile(r'<w:vertAlign w:val="[^"]*"/>')
+# vertAlign sorts late in EG_RPrBase: after sz/szCs, before rtl and lang.
+_RPR_TAIL_RE = re.compile(r"(?=(?:<w:rtl[/ >]|<w:lang[ /]|</w:rPr>))")
 
-    The runs covering the span are split at its edges and only the
-    inside pieces gain ``<w:i/>``; surrounding formatting, hyperlinks,
-    bookmarks and fields survive, and the visible text is unchanged.
-    Built for the refstyle "italics" finding — a reference entry whose
-    journal or book title lost its italics (six entries on API10, and
-    the same class on LE).
-    """
-    runs, spans, at, end = _locate(para_xml, text, normalize=normalize)
+
+def _run_vert_align(run_xml: str, val: str) -> str:
+    """The same run raised or lowered, schema order respected."""
+    tag = f'<w:vertAlign w:val="{val}"/>'
+    if _VERT_ALIGN_RE.search(run_xml):
+        return _VERT_ALIGN_RE.sub(tag, run_xml, count=1)
+    if "<w:rPr>" in run_xml:
+        m = _RPR_TAIL_RE.search(run_xml, run_xml.find("<w:rPr>"))
+        assert m is not None                 # the rPr has a close tag
+        return run_xml[:m.start()] + tag + run_xml[m.start():]
+    m = _RUN_OPEN_RE.search(run_xml)
+    assert m is not None
+    return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
+
+
+def _restyle(para_xml: str, text: str, style: Callable[[str], str],
+             *, normalize: bool = False, within: str | None = None) -> str:
+    """Apply `style` to the runs covering exactly `text`, splitting the
+    runs at the span's edges so nothing outside it is touched."""
+    runs, spans, at, end = _locate(para_xml, text, normalize=normalize,
+                                   within=within)
 
     edits = []
     for (start, stop), run in zip(spans, runs, strict=True):
@@ -191,20 +230,60 @@ def italicize(para_xml: str, text: str, *, normalize: bool = False) -> str:
         body = visible_text(run_xml)
         lo, hi = max(at - start, 0), min(end - start, len(body))
         if lo == 0 and hi == len(body):
-            edits.append((run, _run_italic(run_xml)))
+            edits.append((run, style(run_xml)))
             continue
         pieces = [(body[:lo], False), (body[lo:hi], True),
                   (body[hi:], False)]
         built = "".join(
-            _run_italic(set_run_text(run_xml, part)) if italic
+            style(set_run_text(run_xml, part)) if inside
             else set_run_text(run_xml, part)
-            for part, italic in pieces if part)
+            for part, inside in pieces if part)
         edits.append((run, built))
 
     out = para_xml
     for run, replacement in reversed(edits):
         out = out[:run.start()] + replacement + out[run.end():]
     return out
+
+
+def italicize(para_xml: str, text: str, *, normalize: bool = False,
+              within: str | None = None) -> str:
+    """Set italics on exactly `text` inside one paragraph.
+
+    The runs covering the span are split at its edges and only the
+    inside pieces gain ``<w:i/>``; surrounding formatting, hyperlinks,
+    bookmarks and fields survive, and the visible text is unchanged.
+    Built for the refstyle "italics" finding — a reference entry whose
+    journal or book title lost its italics (six entries on API10, and
+    the same class on LE).
+
+    `within` scopes an otherwise ambiguous target to one longer anchor.
+    """
+    return _restyle(para_xml, text, _run_italic, normalize=normalize,
+                    within=within)
+
+
+def subscript(para_xml: str, text: str, *, normalize: bool = False,
+              within: str | None = None) -> str:
+    """Lower exactly `text` into subscript inside one paragraph.
+
+    Same run-splitting contract as :func:`italicize`. For variable
+    subscripts an author typed flat — the "t" of a "Ct" that appears as
+    real math elsewhere in the same sentence (Parental Style ¶100).
+    A single letter is rarely unique in a paragraph, so this is the
+    usual caller for `within`.
+    """
+    return _restyle(para_xml, text,
+                    lambda r: _run_vert_align(r, "subscript"),
+                    normalize=normalize, within=within)
+
+
+def superscript(para_xml: str, text: str, *, normalize: bool = False,
+                within: str | None = None) -> str:
+    """Raise exactly `text` into superscript inside one paragraph."""
+    return _restyle(para_xml, text,
+                    lambda r: _run_vert_align(r, "superscript"),
+                    normalize=normalize, within=within)
 
 
 def replace_in_para(para_xml: str, old: str, new: str,

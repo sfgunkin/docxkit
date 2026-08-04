@@ -251,3 +251,64 @@ def test_italicize_asserts_its_anchor():
     from docxkit.edit import italicize
     with pytest.raises(AnchorError):
         italicize(para(run("no such title")), "Journal")
+
+
+# -------------------------------------------------- sub / superscript ---
+
+def test_subscript_lowers_only_the_span():
+    """An author typing "Ct" for a Cₜ that is real math elsewhere in the
+    sentence: the t drops, the C does not, the text is unchanged."""
+    from docxkit.edit import subscript
+    p = para(run("where Ct denotes parental consumption at period t."))
+    import re
+    out = subscript(p, "t", within="Ct")
+    assert text_of(out) == text_of(p)
+    lowered = [r.group(0) for r in re.finditer(r"<w:r>.*?</w:r>", out)
+               if "subscript" in r.group(0)]
+    assert [text_of(r) for r in lowered] == ["t"]
+
+
+def test_a_single_letter_needs_a_scope():
+    """Without `within` the ambiguous anchor must fail, not guess."""
+    from docxkit.edit import subscript
+    p = para(run("where Ct denotes parental consumption at period t."))
+    with pytest.raises(AnchorError, match="occurs twice"):
+        subscript(p, "t")
+
+
+def test_within_asserts_its_own_anchor():
+    from docxkit.edit import subscript
+    p = para(run("Ct and Lt and Ct again."))
+    with pytest.raises(AnchorError, match=r"within=.*occurs twice"):
+        subscript(p, "t", within="Ct")
+    with pytest.raises(AnchorError, match=r"within=.*not in paragraph"):
+        subscript(p, "t", within="Zt")
+    with pytest.raises(AnchorError, match=r"not in within="):
+        subscript(p, "q", within="Lt")
+
+
+def test_vert_align_sorts_before_lang_in_the_rpr():
+    """vertAlign comes after sz/szCs and before rtl/lang in EG_RPrBase;
+    Word rejects the file outright if run properties are out of order."""
+    from docxkit.edit import superscript
+    p = ('<w:p><w:r><w:rPr><w:sz w:val="20"/><w:lang w:val="en-US"/></w:rPr>'
+         "<w:t>abc</w:t></w:r></w:p>")
+    out = superscript(p, "abc")
+    assert ('<w:sz w:val="20"/><w:vertAlign w:val="superscript"/>'
+            '<w:lang w:val="en-US"/>') in out
+
+
+def test_vert_align_with_no_rpr_and_no_lang():
+    from docxkit.edit import subscript
+    assert '<w:rPr><w:vertAlign w:val="subscript"/></w:rPr>' in \
+        subscript(para(run("xy")), "y")
+    p = '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>xy</w:t></w:r></w:p>'
+    assert '<w:b/><w:vertAlign w:val="subscript"/></w:rPr>' in \
+        subscript(p, "y")
+
+
+def test_vert_align_replaces_rather_than_stacks():
+    from docxkit.edit import subscript, superscript
+    out = subscript(superscript(para(run("xy")), "y"), "y")
+    assert out.count("<w:vertAlign") == 1
+    assert "superscript" not in out
