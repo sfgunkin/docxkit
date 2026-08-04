@@ -56,6 +56,13 @@ reports success-shaped numbers.
 
 ## 2. Defects to fix before anything else
 
+> **Status: phase 0 done (`1739a8c`).** P0-1, P0-2, P0-3 and P0-5 are
+> fixed with regression tests; P0-1 and P0-2 are additionally
+> mutation-verified (reverting either turns the suite red). **P0-4 was
+> withdrawn — the claim below was wrong**; see the note under it. The
+> lower-severity `word.py`/`body.py` items in this section are fixed
+> too. `tracked.py` went 0% → 58%.
+
 These were found during the analysis and are real. Fix them first; the
 rest of the plan is worthless if the deliverable path can eat a file.
 
@@ -80,10 +87,17 @@ it correctly with `(doc, foot)`. Bookmark ids must be unique
 package-wide. *Fix:* thread the other parts through, or make the
 allocator refuse a single-part call.
 
-**P0-4 — `set_cell`/`update` address the wrong column in any row with a
-merged cell.** `tables.py:236, 363` index the `<w:tc>` list directly.
-Silent whenever the cell count still matches. *Fix:* route both through
-the existing `_cell_walk` (`:583`), which already tracks grid columns.
+**P0-4 — ~~`set_cell`/`update` address the wrong column in any row with
+a merged cell.~~ WITHDRAWN: this was wrong.** Checked against the
+source: `read_all`, `Table.rows`, `Table.column`, `set_cell` and
+`update` are all consistently CELL-indexed, so they agree with each
+other, and the Parental Style builders rely on precisely that (Table A1
+has a `gridSpan`, and its builder addresses `w:tc` elements). Routing
+them through `_cell_walk` would have *introduced* the bug it claimed to
+fix. The real hazard is narrower: `fit_columns`/`FitReport` speak GRID
+columns, so mixing the two silently addresses a different cell. Both
+coordinate systems are now documented on `Table`, and
+`Table.grid_columns()` converts between them deliberately.
 
 **P0-5 — `docxkit link --write` is the one mutating CLI path with no
 lint gate.** `cli.py:48-67` writes via `edit_in_place` directly, while
