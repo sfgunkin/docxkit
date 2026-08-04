@@ -164,3 +164,23 @@ def test_insert_helpers_can_match_through_typography():
 def test_table_applies_cell_paragraph_properties():
     t = table(["a"], [["1"]], cell_ppr='<w:pPr><w:jc w:val="left"/></w:pPr>')
     assert t.count('<w:jc w:val="left"/>') == 2      # header + body cell
+
+
+def test_cell_wraps_content_whose_tag_merely_starts_like_a_paragraph():
+    """`<w:pPr`/`<w:pict` are not paragraphs.
+
+    A prefix test on "<w:p" takes them for ready-made paragraph XML and
+    leaves them unwrapped, landing a w:tc with no w:p in it — the exact
+    "Word declares the document unreadable" failure this wrapping exists
+    to prevent.
+    """
+    from docxkit.body import cell
+    out = cell('<w:pict><v:shape id="x"/></w:pict>')
+    assert "<w:p>" in out                       # the cell has a paragraph
+    assert "&lt;w:pict&gt;" in out              # treated as text, escaped
+    assert "<w:pict>" not in out                # never spliced in raw
+
+    # a real paragraph is still passed through untouched
+    passthrough = cell("<w:p><w:r><w:t>ready</w:t></w:r></w:p>")
+    assert passthrough.count("<w:p>") == 1
+    assert "&lt;" not in passthrough

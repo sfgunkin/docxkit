@@ -441,3 +441,30 @@ def test_link_more_does_not_link_prose_ranges():
     xml, _ = crossrefs.link(xml)
     xml, counts = crossrefs.link_more(xml)
     assert counts.get("Table5", 0) == 0
+
+
+def test_new_bookmark_ids_clear_the_other_parts():
+    """Bookmark ids are unique document-wide, not part-wide.
+
+    Minting from the body alone can hand back an id footnotes.xml is
+    already using, and Word pairs bookmarkStart/End by id — the same
+    "unreadable content" class as a duplicate name. citations has always
+    passed every part to the allocator; this module used not to.
+    """
+    body = doc(para(run("As Table 1 shows, the effect is small.")),
+               para(run("Table 1. Results")))
+    foot = ('<w:footnotes><w:footnote w:id="2"><w:p>'
+            '<w:bookmarkStart w:id="900" w:name="Palloni2016txt"/>'
+            '<w:bookmarkEnd w:id="900"/>'
+            "</w:p></w:footnote></w:footnotes>")
+
+    linked, _ = crossrefs.link(body, other_parts=[foot])
+    ids = [int(i) for i in re.findall(r'<w:bookmarkStart w:id="(\d+)"',
+                                      linked)]
+    assert ids and min(ids) > 900
+
+    # and without the other part, the collision is exactly what happens
+    naive, _ = crossrefs.link(body)
+    naive_ids = [int(i) for i in re.findall(r'<w:bookmarkStart w:id="(\d+)"',
+                                            naive)]
+    assert min(naive_ids) < 900

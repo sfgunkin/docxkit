@@ -27,6 +27,7 @@ The pipeline:
 from __future__ import annotations
 
 import contextlib
+import shutil
 import tempfile
 import time
 from collections.abc import Callable
@@ -246,67 +247,82 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     if (saved := _guard.check(out, force=force)) is not None:
         say(f"note: previous deliverable backed up to {saved.name}")
 
-    flat = Path(tempfile.mkdtemp(prefix="docxkit_tracked_")) / "flat.xml"
+    # Build BESIDE the target and move it into place only once every gate
+    # has passed. Writing the deliverable first and validating it second
+    # means a failed lint or a Word repair leaves the previous good
+    # redline already destroyed — and guard.check only takes a backup
+    # when the file looks hand-edited, so the ordinary case has no copy
+    # to fall back to. Staging in `out`'s own directory keeps the final
+    # move atomic; a temp directory could be on another volume.
+    staging = Path(tempfile.mkdtemp(prefix="docxkit_tracked_"))
+    building = out.with_name(f"~{out.stem}.building{out.suffix}")
+    try:
+        flat = staging / "flat.xml"
 
-    with _word.session() as word, \
-            _word.open_doc(word, original) as orig, \
-            _word.open_doc(word, revised) as rev:
-        cmp_ = _word.compare_documents(
-            word, orig, rev, author=author,
-            whitespace=whitespace, formatting=formatting)
-        report.revisions = cmp_.Revisions.Count
-        report.mark("compared")
-        say(f"revisions: {report.revisions}")
-        _word.draft_view(cmp_)
+        with _word.session() as word, \
+                _word.open_doc(word, original) as orig, \
+                _word.open_doc(word, revised) as rev:
+            cmp_ = _word.compare_documents(
+                word, orig, rev, author=author,
+                whitespace=whitespace, formatting=formatting)
+            report.revisions = cmp_.Revisions.Count
+            report.mark("compared")
+            say(f"revisions: {report.revisions}")
+            _word.draft_view(cmp_)
 
-        report.math_resolved = _resolve_math(cmp_, classify, generic)
-        report.mark("resolved math revisions")
-        say(f"resolved {report.math_resolved} math revisions "
-            "(Word cannot serialize tracked math)")
+            report.math_resolved = _resolve_math(cmp_, classify, generic)
+            report.mark("resolved math revisions")
+            say(f"resolved {report.math_resolved} math revisions "
+                "(Word cannot serialize tracked math)")
 
-        # NOTE: keep orig/rev OPEN until after the extraction — the compare
-        # result lazily references their parts, and closing them first
-        # makes Content.WordOpenXML raise "A file error has occurred".
-        _word.extract_flat_opc(cmp_, flat)
-        report.mark("extracted Flat OPC")
-        with contextlib.suppress(Exception):
-            cmp_.Close(SaveChanges=0)
+            # NOTE: keep orig/rev OPEN until after the extraction — the
+            # compare result lazily references their parts, and closing
+            # them first makes Content.WordOpenXML raise "A file error
+            # has occurred".
+            _word.extract_flat_opc(cmp_, flat)
+            report.mark("extracted Flat OPC")
+            with contextlib.suppress(Exception):
+                cmp_.Close(SaveChanges=0)
 
-    n_parts = _word.flat_opc_to_docx(flat, out)
-    report.mark(f"packed {n_parts} parts")
+        n_parts = _word.flat_opc_to_docx(flat, building)
+        report.mark(f"packed {n_parts} parts")
 
-    parts = read_parts(out)
-    if classify is not None:
-        added, unclassified = _comments.annotate(parts, classify,
-                                                 generic=generic,
-                                                 tables=tables)
-        _comments.reclassify(parts, classify, generic=generic)
-        report.comments_added, report.unclassified = added, unclassified
-        report.mark(f"annotated {added} revisions in XML")
-        say(f"comments: {added} added, unclassified: {unclassified}")
+        parts = read_parts(building)
+        if classify is not None:
+            added, unclassified = _comments.annotate(parts, classify,
+                                                     generic=generic,
+                                                     tables=tables)
+            _comments.reclassify(parts, classify, generic=generic)
+            report.comments_added, report.unclassified = added, unclassified
+            report.mark(f"annotated {added} revisions in XML")
+            say(f"comments: {added} added, unclassified: {unclassified}")
 
-    # catch the "Word says unreadable content" classes offline, before the
-    # file is written and long before anyone opens it
-    if problems := lint_parts(parts):
-        listed = "\n  - ".join(problems)
-        raise PackageError(
-            f"the package would not open cleanly in Word:\n  - {listed}")
-    write_docx(out, parts)
-    report.comments_total = parts.get("word/comments.xml", b"").decode(
-        "utf-8").count("<w:comment w:id=")
-
-    if verify_in_word:
-        checked = verify(out)
-        report.verified_comments = checked["word"]["comments"]
-        report.verified_revisions = checked["word"]["revisions"]
-        if not checked["comments_match"]:
+        # catch the "Word says unreadable content" classes offline,
+        # before the file is written and long before anyone opens it
+        if problems := lint_parts(parts):
+            listed = "\n  - ".join(problems)
             raise PackageError(
-                f"Word read back {report.verified_comments} comments, the "
-                f"package holds {report.comments_total} — it was repaired "
-                "on open")
-        report.mark("verified in Word")
-        say(f"verified in Word: {report.verified_comments} comments, "
-            f"{report.verified_revisions} revisions")
+                f"the package would not open cleanly in Word:\n  - {listed}")
+        write_docx(building, parts)
+        report.comments_total = parts.get("word/comments.xml", b"").decode(
+            "utf-8").count("<w:comment w:id=")
 
-    _guard.stamp(out, original=original.name, revised=revised.name)
-    return report
+        if verify_in_word:
+            checked = verify(building)
+            report.verified_comments = checked["word"]["comments"]
+            report.verified_revisions = checked["word"]["revisions"]
+            if not checked["comments_match"]:
+                raise PackageError(
+                    f"Word read back {report.verified_comments} comments, "
+                    f"the package holds {report.comments_total} — it was "
+                    "repaired on open")
+            report.mark("verified in Word")
+            say(f"verified in Word: {report.verified_comments} comments, "
+                f"{report.verified_revisions} revisions")
+
+        building.replace(out)          # every gate passed: publish
+        _guard.stamp(out, original=original.name, revised=revised.name)
+        return report
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        building.unlink(missing_ok=True)   # gone already on success

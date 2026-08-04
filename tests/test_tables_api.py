@@ -18,6 +18,7 @@ from docxkit.tables import (
     find,
     parse_number,
     read_all,
+    set_cell,
     superscript_stars,
     to_frame,
 )
@@ -146,3 +147,43 @@ def test_to_frame_can_take_a_later_header_row():
     df = to_frame(t, header_row=1)
     assert list(df.columns) == ["Country", "Score", "N"]
     assert len(df) == 1
+
+
+# ------------------------------------------------- coordinate systems -----
+
+
+def _spanned_table() -> str:
+    def tc(text, span=None):
+        s = f'<w:gridSpan w:val="{span}"/>' if span else ""
+        return (f'<w:tc><w:tcPr><w:tcW w:w="800" w:type="dxa"/>{s}</w:tcPr>'
+                f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
+    return document(
+        "<w:tbl><w:tblGrid>"
+        + "".join('<w:gridCol w:w="800"/>' for _ in range(4))
+        + "</w:tblGrid>"
+        + "<w:tr>" + tc("LABEL") + tc("MERGED", span=2) + tc("LAST")
+        + "</w:tr>"
+        + "<w:tr>" + tc("a") + tc("b") + tc("c") + tc("d") + "</w:tr>"
+        + "</w:tbl>")
+
+
+def test_rows_and_set_cell_share_one_coordinate_system():
+    """Both are CELL indices, so a merged row stays self-consistent."""
+    xml = _spanned_table()
+    t = read_all(xml)[0]
+    assert t.rows[0] == ["LABEL", "MERGED", "LAST"]     # 3 cells, 4 columns
+    out = set_cell(xml, t, 0, 2, "WRITTEN")
+    assert read_all(out)[0].rows[0] == ["LABEL", "MERGED", "WRITTEN"]
+
+
+def test_grid_columns_exposes_where_the_two_systems_diverge():
+    xml = _spanned_table()
+    t = read_all(xml)[0]
+    assert t.grid_columns(xml, 0) == [0, 1, 3]   # cell 2 starts at column 3
+    assert t.grid_columns(xml, 1) == [0, 1, 2, 3]   # no span: they coincide
+
+
+def test_grid_columns_rejects_a_row_that_is_not_there():
+    xml = _spanned_table()
+    with pytest.raises(AnchorError, match="cannot read row"):
+        read_all(xml)[0].grid_columns(xml, 9)

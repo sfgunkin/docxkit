@@ -42,6 +42,7 @@ run on every build.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -177,9 +178,16 @@ def _mention_re(label: str, number: str) -> re.Pattern[str]:
     return re.compile(rf"\b{form}\s+{re.escape(number)}(?!\d)", re.IGNORECASE)
 
 
-def _next_bookmark_id(xml: str) -> int:
-    # the shared allocator; kept as a thin alias for this module's callers
-    return next_bookmark_id(xml)
+def _next_bookmark_id(xml: str, others: Sequence[str] = ()) -> int:
+    """The next free bookmark id ACROSS the package.
+
+    Bookmark ids must be unique document-wide, not part-wide: a figure
+    bookmark minted from the body alone can collide with one already
+    living in footnotes.xml, and Word pairs start/end by id.
+    :mod:`docxkit.citations` has always passed every part here; this
+    module used to pass only the body.
+    """
+    return next_bookmark_id(xml, *others)
 
 
 def find_captions(xml: str, *,
@@ -416,7 +424,8 @@ def _wrap_paragraph_in_bookmark(para_xml: str, name: str, bid: int) -> str:
 
 
 def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
-         only: list[str] | None = None) -> tuple[str, LinkReport]:
+         only: list[str] | None = None,
+         other_parts: Sequence[str] = ()) -> tuple[str, LinkReport]:
     """Cross-link every figure and table with its first in-text mention.
 
     Idempotent: an object already carrying both bookmarks is left
@@ -427,6 +436,10 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     caption or mention is missing are REPORTED, not raised — a paper
     legitimately has tables it never names in prose, and failing the
     build over one would be worse than saying so.
+
+    Pass `other_parts` (footnotes.xml, endnotes.xml — every part the
+    document also bookmarks) so the new ids cannot collide with one
+    already in use there; ids are unique document-wide, not part-wide.
     """
     report = LinkReport()
     captions = find_captions(xml, labels=labels)
@@ -457,7 +470,7 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
             report.no_mention.append(cap.name)
             continue
 
-        bid = _next_bookmark_id(xml)
+        bid = _next_bookmark_id(xml, other_parts)
         new_para, mode = _link_mention(mention.group(0), current, bid,
                                        _caption_bookmarks(xml, current))
         if mode == "NOT-FOUND":
@@ -475,7 +488,7 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
                         if c.name == cap.name), None)
         if current is None:                     # pragma: no cover - defensive
             continue
-        bid = _next_bookmark_id(xml)
+        bid = _next_bookmark_id(xml, other_parts)
         para = xml[current.start:current.end]
         xml = (xml[:current.start] + _backlink_caption(para, current, bid)
                + xml[current.end:])

@@ -26,6 +26,8 @@ Word save and comes back as a phantom author edit each round.
 """
 from __future__ import annotations
 
+import re
+
 from ._xml import escape, visible_text
 from .errors import AnchorError
 from .find import para_slice
@@ -78,7 +80,11 @@ def cell(content: str, *, span: int = 1, tcpr: str = "", rpr: str = "",
     wrapped in a paragraph, because a ``w:tc`` with no ``w:p`` makes Word
     declare the document unreadable.
     """
-    body = (content if content.lstrip().startswith("<w:p")
+    # `<w:p` alone also matches <w:pPr, <w:pict and <w:proofErr, any of
+    # which would be taken for a ready-made paragraph and left unwrapped
+    # — landing a w:tc with no w:p, the exact "unreadable" failure above.
+    stripped = content.lstrip()
+    body = (content if re.match(r"<w:p[ >]", stripped)
             else para(run(content, rpr), ppr))
     props = tcpr or '<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>'
     if span > 1:

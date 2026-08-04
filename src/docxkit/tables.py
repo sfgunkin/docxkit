@@ -52,7 +52,20 @@ _NUM_RE = re.compile(r"[-−+]?\d[\d,  ]*(?:\.\d+)?")
 
 @dataclass(frozen=True)
 class Table:
-    """One ``<w:tbl>``: its position, and its cell text as rows."""
+    """One ``<w:tbl>``: its position, and its cell text as rows.
+
+    **Rows are CELL-indexed, not grid-column-indexed.** ``rows[r][c]`` is
+    the c-th ``<w:tc>`` of the row, so a row containing a merged cell is
+    SHORTER than the grid is wide, and its later cells sit at grid
+    columns further right than their index suggests. Every mutator that
+    takes a ``col`` here — :func:`set_cell`, :func:`update`,
+    :meth:`column` — uses that same cell index, so the two agree.
+
+    :func:`fit_columns` and :class:`FitReport`, by contrast, speak in
+    GRID columns, because that is what a width belongs to. Mixing the
+    two silently addresses a different cell the moment a ``gridSpan``
+    appears; :meth:`grid_columns` converts deliberately.
+    """
 
     index: int                   # position in body order
     start: int                   # offset in the document XML
@@ -78,6 +91,26 @@ class Table:
 
     def numbers(self) -> list[list[float | None]]:
         return [[parse_number(c) for c in row] for row in self.rows]
+
+    def grid_columns(self, xml: str, row: int) -> list[int]:
+        """First grid column of each cell in `row` — the bridge.
+
+        ``[0, 1, 3]`` means the row's third cell starts at grid column 3
+        because an earlier cell spans two. Use this to move between a
+        :class:`FitReport` (grid columns) and :func:`set_cell` (cell
+        indices) on purpose, instead of assuming they coincide — they
+        only do in a table with no merged cells.
+        """
+        trs = list(_TR_RE.finditer(xml[self.start:self.end]))
+        if row >= len(trs):
+            raise AnchorError(f"table {self.index} has {len(trs)} rows, "
+                              f"cannot read row {row}")
+        out, c = [], 0
+        for tc in _TC_RE.finditer(trs[row].group(0)):
+            out.append(c)
+            s = _SPAN_RE.search(tc.group(0))
+            c += int(s.group(1)) if s else 1
+        return out
 
 
 def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
@@ -222,6 +255,10 @@ def tolerance_for(decimals: int) -> float:
 def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     """Rewrite one cell's text, preserving its formatting.
 
+    `col` is a CELL index, matching ``table.rows[row][col]`` — not a grid
+    column. In a row with a merged cell the two differ; see
+    :meth:`Table.grid_columns`.
+
     The cell keeps its own run properties: only the first ``w:t`` in the
     cell takes the new text and any others are blanked, so fonts,
     borders and shading survive.
@@ -321,8 +358,10 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
 
     `rows` is anything rectangular — lists of lists, or a pandas
     DataFrame directly (its ``.values`` are taken). The block lands with
-    its top-left cell at (`row0`, `col0`); the default writes the data
-    region under a one-row header. Each value is rendered by
+    its top-left cell at (`row0`, `col0`), both CELL indices matching
+    ``table.rows`` rather than grid columns (:meth:`Table.grid_columns`
+    converts); the default writes the data region under a one-row
+    header. Each value is rendered by
     :func:`_render_value`, so printed precision, separators and
     significance stars survive a regeneration.
 

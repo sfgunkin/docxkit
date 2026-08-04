@@ -130,16 +130,20 @@ def open_doc(word: Any, path: str | Path, *,
     """
     path = Path(path)
     td = Path(tempfile.mkdtemp(prefix="docxkit_word_")) if local else None
-    target = td / path.name if td else path
-    if td:
-        shutil.copy2(path, target)
-    doc = word.Documents.Open(str(target), ReadOnly=read_only,
-                              AddToRecentFiles=False)
     try:
-        yield doc
+        target = td / path.name if td else path
+        if td:
+            shutil.copy2(path, target)
+        # Documents.Open inside the try: it raises on a locked or corrupt
+        # file, and the staged copy has to be cleaned up on that path too
+        doc = word.Documents.Open(str(target), ReadOnly=read_only,
+                                  AddToRecentFiles=False)
+        try:
+            yield doc
+        finally:
+            with contextlib.suppress(Exception):
+                doc.Close(SaveChanges=0)
     finally:
-        with contextlib.suppress(Exception):
-            doc.Close(SaveChanges=0)
         if td:
             shutil.rmtree(td, ignore_errors=True)
 

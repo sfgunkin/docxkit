@@ -82,3 +82,42 @@ def test_an_unreadable_path_is_a_docxkit_error_not_a_traceback(
     missing = str(tmp_path / "no_such.docx")
     code, _ = run_cli(monkeypatch, "citations", missing)
     assert code != 0
+
+
+def test_link_write_refuses_a_package_lint_rejects(monkeypatch, tmp_path,
+                                                   capsys):
+    """`docxkit link --write` is a mutating path; it must lint first.
+
+    Link surgery splices hyperlink and bookmark elements across runs —
+    the class that has produced an unopenable file here before — and
+    lint is the only gate that catches it without opening Word. This
+    command used to write straight through edit_in_place.
+    """
+    from docxkit.package import write_docx
+
+    # a run loose in w:body: well-formed XML, but Word calls it
+    # unreadable content, and lint knows it
+    parts = make_parts(para(run("Smith (2020) argues.")))
+    doc = parts["word/document.xml"].decode("utf-8")
+    parts["word/document.xml"] = doc.replace(
+        "</w:body>", "<w:r><w:t>loose</w:t></w:r></w:body>").encode("utf-8")
+    path = tmp_path / "broken.docx"
+    write_docx(path, parts)
+    before = path.read_bytes()
+
+    code, _ = run_cli(monkeypatch, "link", str(path), "--write")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "REFUSED" in out
+    assert path.read_bytes() == before          # nothing written
+    assert not list(tmp_path.glob("*pre_link*"))  # not even a backup
+
+
+def test_link_dry_run_reports_without_writing(monkeypatch, paper, capsys):
+    from pathlib import Path
+    before = Path(paper).read_bytes()
+    code, _ = run_cli(monkeypatch, "link", str(paper))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "dry run" in out
+    assert Path(paper).read_bytes() == before

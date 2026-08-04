@@ -52,18 +52,28 @@ def cmd_link(args: argparse.Namespace) -> int:
     a numbered backup beside the manuscript.
     """
     from .citations import link_all
-    from .package import backup, edit_in_place, read_parts
+    from .lint import lint_parts
+    from .package import backup, read_parts, write_docx
     aliases = dict(kv.split("=", 1) for kv in (args.alias or []))
+    parts = read_parts(args.docx)
+    report = link_all(parts, aliases=aliases)
+    print(report.format())
     if not args.write:
-        report = link_all(read_parts(args.docx), aliases=aliases)
-        print(report.format())
         print("(dry run — nothing written; pass --write to apply)")
         return 0
+    # Link surgery splices hyperlink and bookmark elements across runs,
+    # which is precisely the class that has produced an unopenable file
+    # here before — and lint is the only gate that catches it offline.
+    # Every other mutating command goes through _write_document, which
+    # lints; this one used to write straight through edit_in_place.
+    if problems := lint_parts(parts):
+        for problem in problems:
+            print(f"  - {problem}")
+        print("REFUSED: the package would not open cleanly in Word; "
+              "nothing was written")
+        return 1
     print(backup(args.docx, "pre_link"))
-    out: list[str] = []
-    edit_in_place(args.docx,
-                  lambda p: out.append(link_all(p, aliases=aliases).format()))
-    print(out[0])
+    write_docx(args.docx, parts)
     return 0
 
 
