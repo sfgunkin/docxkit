@@ -1004,6 +1004,63 @@ def test_an_entrys_own_bookmark_is_still_reused():
     assert 'w:anchor="Smith2020"' in out
 
 
+# ------------------------------------- markers Word hoisted out of the ¶ -
+
+
+def _hoist_markers(parts):
+    """Move every paragraph-head bookmark out to body level, the way Word
+    normalizes them when the author saves."""
+    doc = parts["word/document.xml"].decode("utf-8")
+    doc = re.sub(
+        r"(<w:p\b[^>]*>)((?:<w:bookmarkStart[^>]*/><w:bookmarkEnd[^>]*/>)+)",
+        r"\2\1", doc)
+    parts["word/document.xml"] = doc.encode("utf-8")
+    return doc
+
+
+def test_link_all_reuses_a_marker_word_hoisted_out_of_the_paragraph():
+    """_mark_para_head writes the marker INSIDE the entry paragraph, but
+    Word moves it to body level on save — 86 of 167 on Parental Style's
+    second handback. Reading only the paragraph found nothing, so a
+    top-up run minted a second name for every entry and re-wrapped all
+    71 citations (Baumrind1991_2txt), silently doubling the scheme.
+    """
+    from docxkit.citations import link_all
+    parts = _parts("As Smith (2020) argues, and Jones (2019) agrees.",
+                   "References",
+                   "Jones, B. (2019). Another title. Journal.",
+                   "Smith, A. (2020). A title. Journal.")
+    link_all(parts)
+    first = parts["word/document.xml"].decode("utf-8")
+    assert 'w:name="Smith2020"' in first
+
+    _hoist_markers(parts)
+    hoisted = parts["word/document.xml"].decode("utf-8")
+    assert '/><w:p' in hoisted, "fixture did not hoist anything"
+
+    rep = link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+    assert "_2" not in out, "the scheme was duplicated"
+    assert rep.linked == [], f"re-wrapped: {rep.linked}"
+    for name in ("Smith2020", "Jones2019"):
+        assert out.count(f'w:name="{name}"') == 1, name
+
+
+def test_a_hoisted_marker_is_not_stolen_by_the_next_entry():
+    """Widening the search to the preceding gap is only safe because the
+    surname AND year must match: entry N must not adopt N-1's marker."""
+    from docxkit._cite_build import _own_bookmark
+    from docxkit._cite_grammar import Reference
+
+    gap = ('<w:bookmarkStart w:id="9" w:name="Jones2019"/>'
+           '<w:bookmarkEnd w:id="9"/>')
+    entry = ("<w:p><w:r><w:t>Smith, A. (2020). A title. Journal."
+             "</w:t></w:r></w:p>")
+    r = Reference(index=1, surname="Smith", year="2020",
+                  text="Smith, A. (2020). A title. Journal.")
+    assert _own_bookmark(entry, r, gap) is None
+
+
 # -------------------------------------------- Word's 40-char name cap ----
 
 _ORG = ("State Committee of the Republic of Uzbekistan on Statistics and "

@@ -54,7 +54,7 @@ WORD_BOOKMARK_LIMIT = 40
 _NAME_BUDGET = WORD_BOOKMARK_LIMIT - len("txt")
 
 
-def _own_bookmark(para_xml: str, r: Reference) -> str | None:
+def _own_bookmark(para_xml: str, r: Reference, before: str = "") -> str | None:
     """The entry's OWN key-shaped bookmark, or None.
 
     Both the year and the surname must match. Matching on the year
@@ -62,9 +62,19 @@ def _own_bookmark(para_xml: str, r: Reference) -> str | None:
     paragraph — a stray `Jones2020` left by an earlier round on a
     "Smith, A. (2020)" entry made link_all wire every "(Smith 2020)" in
     the text to the WRONG work, and report "linked 1" while doing it.
+
+    `before` is the body-level XML immediately preceding the paragraph.
+    :func:`_mark_para_head` writes the marker INSIDE the paragraph, but
+    WORD HOISTS IT OUT when the author saves — 86 of 167 on Parental
+    Style's second handback. Reading only the paragraph then found
+    nothing, so link_all minted a second name for every entry and
+    re-wrapped all 71 citations (`Baumrind1991_2txt`), silently doubling
+    the scheme. The surname-and-year check is what makes widening the
+    search safe: a marker hoisted out of the PREVIOUS entry cannot match
+    this one.
     """
     alpha = re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()
-    names: list[str] = _BOOKMARK_NAME_RE.findall(para_xml)
+    names: list[str] = _BOOKMARK_NAME_RE.findall(before + para_xml)
     for n in names:
         km = _KEY_SHAPE_RE.match(n)
         if km is None or n.endswith("txt") or km.group(2) != r.year:
@@ -177,11 +187,16 @@ def link_all(parts: dict[str, bytes], *,
     linked_anchors = {a for m in paras for a, _ in internal_links(m.group(0))}
     linked_anchors |= {a for a, _ in internal_links(foot)} if foot else set()
 
+    # The body-level XML just before each paragraph: where Word leaves a
+    # marker it has hoisted out of the paragraph head on save.
+    gaps = {i: doc[(paras[i - 1].end() if i else 0):m.start()]
+            for i, m in enumerate(paras)}
+
     # Names: reuse an entry's own key-shaped bookmark; mint otherwise.
     names: dict[str, str] = {}
     answers: dict[str, str] = {}
     for r in entries:
-        own = _own_bookmark(paras[r.index].group(0), r)
+        own = _own_bookmark(paras[r.index].group(0), r, gaps[r.index])
         name = own or _mint_name(r, taken)
         taken.add(name)
         names[r.key] = name
@@ -234,7 +249,10 @@ def link_all(parts: dict[str, bytes], *,
     def rebuild(i: int, para: str, where: str) -> str:
         if (r := by_entry.get(i)) is not None and where == "¶":
             name = names[r.key]
-            if name not in set(_BOOKMARK_NAME_RE.findall(para)):
+            # the gap counts too: a marker Word hoisted out of this
+            # paragraph is still this entry's marker, and adding a second
+            # one inside would leave two bookmarks of the same name
+            if name not in set(_BOOKMARK_NAME_RE.findall(gaps[i] + para)):
                 para = _mark_para_head(para, name, next(bids))
             # Back-link only entries whose in-text end exists or is being
             # built: back-linking an UNCITED entry writes a dangling
