@@ -219,7 +219,15 @@ delete the module-local copies (8 duplicated literals). Back-port
 Give `_doubled_links` (`citations.py:646`) the self-closing guard that
 `_xml.py` and `crossrefs.py` already have.
 
-**R2 — Make the coordinate systems distinct types.** `NewType("GridCol",
+**R2 — Make the coordinate systems distinct types. DECLINED.**
+`NewType` would force every caller to wrap plain ints — including the
+paper scripts, which are type-checked since the `py.typed` marker
+shipped — and the bug it targets happened in *paper* code, which
+internal-only types cannot see. Phase 0 already documented both systems
+on `Table` and added `grid_columns()` to convert between them; that is
+where the value actually was. Original proposal follows.
+
+~~Make the coordinate systems distinct types.~~ `NewType("GridCol",
 int)`, `NewType("CellIdx", int)`, `NewType("XmlOffset", int)`,
 `NewType("TextOffset", int)`. Zero runtime cost, and mypy then rejects
 the A1-italics class of bug at the call site. Apply to `tables`,
@@ -233,7 +241,17 @@ misuse loudly — `fit_columns` and `superscript_stars` document the
 hazard in prose today (`:621`, `:837`); `set_cell`, `update` and
 `bottom_border` do not even do that.
 
-**R4 — Split `citations.py` (1,394 lines).** Deferred once already, for
+**R4 — Split `citations.py`. HELD until after 2026-08-06.**
+This entry's own precondition — "wait until no paper is near a
+deadline" — still holds: the Life Expectancy resubmission is due
+2026-08-06 and `revision/repair_links.py` imports from this module on
+every build. The split is organisational; it buys no robustness, so
+there is nothing to weigh against even a small chance of an import
+surprise in a build-critical path. Do it on 2026-08-07, keeping
+`citations.py` re-exporting every public name, with a test that
+enumerates them. Original proposal follows.
+
+~~Split `citations.py` (1,394 lines).~~ Deferred once already, for
 good reason (build-critical import path near a deadline). The seam is
 clean and now safe to take: `grammar` (patterns, leads, `key_for`),
 `parse` (references, citations), `audit` (`_audit_findings`,
@@ -275,9 +293,9 @@ Cheap, and they close the loops that keep reopening:
 | 0 | P0-1…P0-5 | **DONE** `1739a8c` — P0-4 withdrawn; tracked.py 0→58% |
 | 1 | V1 validation gate, V3 pathological corpus | **DONE** `1e127fe` — no path can write unparseable XML |
 | 2 | COM seam + `tracked.py` tests | **DONE** `db612f0` — tracked.py 58→99%, package 91% |
-| 3 | R1 walks, R2 types, R3 offsets | mypy rejects a swapped-coordinate call |
-| 4 | V2 property suite, mutation CI | Survivor budget met |
-| 5 | R4 `citations.py` split, R5 reports | Byte-identical audit output on all papers |
+| 3 | R1 walks, R2 types, R3 offsets | **DONE** `a1319e0` — R2 declined, see below |
+| 4 | V2 property suite, mutation CI | **DONE** `a1319e0` — 17/17 caught; found a live escaping bug |
+| 5 | R4 `citations.py` split, R5 reports | R5 **DONE** `a1319e0`; **R4 HELD** — see below |
 
 Phases 0–2 are the ones that pay for themselves. Phase 5 is optional and
 should wait until no paper is near a deadline — the Life Expectancy
