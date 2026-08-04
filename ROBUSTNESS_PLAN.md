@@ -170,6 +170,19 @@ within tolerance — skipped in CI, run before releases.
 
 ## 4. Testing the COM layer (the 0% problem)
 
+> **Status: done (`db612f0`).** `tracked.py` is at 99% with no Word
+> installed. The predicted lever worked exactly as described — one
+> monkeypatched module attribute, zero source changes — and the only
+> extraction needed was `package_counts()`. The AFI equivalence is
+> pinned by a test asserting the two math scans must NOT coincide,
+> and reverting to the cheap walk turns the suite red.
+>
+> Worth recording: the fakes have to model COM's *shape*, not just its
+> names. `doc.OMaths(i)` yields an OMath object carrying a `.Range` —
+> returning a range directly made the walk silently find nothing and
+> the first version of the regression test passed for the wrong
+> reason.
+
 `tracked.py` reaches Word **only** through the module attribute `_word`
 (`tracked.py:38`). That means `monkeypatch.setattr(tracked, "_word",
 fake)` isolates the entire pipeline **with zero source changes** — and
@@ -261,7 +274,7 @@ Cheap, and they close the loops that keep reopening:
 |---|---|---|
 | 0 | P0-1…P0-5 | **DONE** `1739a8c` — P0-4 withdrawn; tracked.py 0→58% |
 | 1 | V1 validation gate, V3 pathological corpus | **DONE** `1e127fe` — no path can write unparseable XML |
-| 2 | COM seam + `tracked.py` tests | `tracked.py` ≥75% without Word |
+| 2 | COM seam + `tracked.py` tests | **DONE** `db612f0` — tracked.py 58→99%, package 91% |
 | 3 | R1 walks, R2 types, R3 offsets | mypy rejects a swapped-coordinate call |
 | 4 | V2 property suite, mutation CI | Survivor budget met |
 | 5 | R4 `citations.py` split, R5 reports | Byte-identical audit output on all papers |
