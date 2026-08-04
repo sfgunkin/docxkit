@@ -947,3 +947,115 @@ def test_the_citation_layers_stay_acyclic():
                     "below it")
             assert node.module != "citations", (
                 f"{mod} imports the facade — that is a cycle")
+
+
+# ------------------------------------------------ wiring the right entry --
+
+
+def _parts(*paras):
+    body = "".join(f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paras)
+    ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    return {"word/document.xml":
+            f"<w:document {ns}><w:body>{body}</w:body></w:document>"
+            .encode()}
+
+
+def test_an_entry_bookmark_must_match_the_surname_not_just_the_year():
+    """link_all reused any key-shaped bookmark whose YEAR matched.
+
+    A stray `Jones2020` left on a "Smith, A. (2020)" entry by an earlier
+    round made every "(Smith 2020)" in the text link to the wrong work —
+    and the report said "linked 1" while doing it.
+    """
+    from docxkit.citations import link_all
+    parts = _parts("Smith (2020) argues the point.",
+                   "References",
+                   "Smith, A. (2020). A title. Journal.")
+    doc = parts["word/document.xml"].decode("utf-8")
+    doc = doc.replace(
+        "<w:p><w:r><w:t>Smith, A. (2020)",
+        '<w:p><w:bookmarkStart w:id="90" w:name="Jones2020"/>'
+        '<w:bookmarkEnd w:id="90"/><w:r><w:t>Smith, A. (2020)')
+    parts["word/document.xml"] = doc.encode("utf-8")
+
+    link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+    assert 'w:anchor="Jones2020"' not in out, "linked to the wrong entry"
+    assert 'w:name="Smith2020"' in out       # its own bookmark was minted
+
+
+def test_an_entrys_own_bookmark_is_still_reused():
+    """The guard must not stop link_all reusing the RIGHT bookmark —
+    the document is the authority on anchor names."""
+    from docxkit.citations import link_all
+    parts = _parts("Smith (2020) argues the point.",
+                   "References",
+                   "Smith, A. (2020). A title. Journal.")
+    doc = parts["word/document.xml"].decode("utf-8")
+    doc = doc.replace(
+        "<w:p><w:r><w:t>Smith, A. (2020)",
+        '<w:p><w:bookmarkStart w:id="90" w:name="Smith2020"/>'
+        '<w:bookmarkEnd w:id="90"/><w:r><w:t>Smith, A. (2020)')
+    parts["word/document.xml"] = doc.encode("utf-8")
+
+    link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+    assert out.count('w:name="Smith2020"') == 1     # reused, not duplicated
+    assert 'w:anchor="Smith2020"' in out
+
+
+# ---------------------------------------------------- span bounds --------
+
+
+def test_wrap_visible_span_refuses_a_span_it_cannot_honour():
+    """An inverted span used to pass silently and DUPLICATE text.
+
+    The "before" and "after" slices overlapped, so the paragraph came
+    out with a stretch of the manuscript repeated — no exception, and
+    nothing in any report to say so.
+    """
+    from docxkit.citations import wrap_visible_span
+    from docxkit.errors import AnchorError
+    para = ('<w:p><w:r><w:t xml:space="preserve">Robots displace workers '
+            "badly.</w:t></w:r></w:p>")
+    for at, end in [(20, 5), (0, 999), (-1, 5), (31, 32)]:
+        with pytest.raises(AnchorError, match="not inside"):
+            wrap_visible_span(para, at, end, "Anchor")
+
+    # the honest span still works
+    out = wrap_visible_span(para, 0, 6, "Anchor")
+    assert 'w:anchor="Anchor"' in out
+
+
+# --------------------------------- limitations pinned, not fixed ---------
+
+
+def test_the_reference_year_is_the_first_one_a_period_follows():
+    """A KNOWN limitation, pinned deliberately.
+
+    "Smith, J. Effects since 1990. (2020)." parses as 1990. Preferring
+    a parenthesised year would fix it and break an entry whose TITLE
+    carries a parenthesised range. Measured across the four live papers:
+    296 entries, ZERO where the picked year differs from a
+    parenthesised one — so the heuristic holds in practice and the
+    'fix' is all risk. Change this only with a corpus that disagrees.
+    """
+    r = parse_reference("Smith, J. Effects since 1990. (2020). A title.")
+    assert r is not None and r.year == "1990"
+
+
+@pytest.mark.parametrize("text,seen", [
+    ("(Smith 2020 and Jones 2021)", ["Jones"]),      # 'and' ends the scan
+    ("(Smith 2015, 2020)", ["Smith"]),               # bare later year
+    ("(Smith 2020a, 2020b)", ["Smith"]),
+])
+def test_multi_work_groups_the_grammar_does_not_split(text, seen):
+    """Also pinned rather than fixed.
+
+    A segment must end at its year, so a second work joined by "and" or
+    a bare trailing year is not seen. Extending the grammar is exactly
+    what this module's comments record as the source of its false
+    positives, and none of these forms occurs in any of the four live
+    papers. Pinned so a future change is deliberate.
+    """
+    assert [c.surname for c in find_citations(text)] == seen

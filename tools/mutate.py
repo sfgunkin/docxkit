@@ -96,6 +96,16 @@ MUTATIONS = [
     Mutation("tables.py", "already-raised stars are wrapped again",
              '        if m is None or "<w:vertAlign" in last.group(0):',
              "        if m is None:"),
+    # --- citations ------------------------------------------------------
+    Mutation("_cite_build.py",
+             "an entry bookmark matches on the year alone again",
+             "        if alpha.startswith(got) or got.startswith(alpha):\n"
+             "            return n",
+             "        return n"),
+    Mutation("_cite_grammar.py",
+             "an inverted visible-text span is honoured, duplicating text",
+             "    if not 0 <= at <= end <= text_len:",
+             "    if False:"),
     # --- cross-references ----------------------------------------------
     Mutation("crossrefs.py", "bookmark ids stop clearing the other parts",
              "    return next_bookmark_id(xml, *others)",

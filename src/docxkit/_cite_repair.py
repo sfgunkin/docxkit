@@ -22,6 +22,7 @@ from .find import para_slice
 # carried its own copy — the second use is what moved them here.
 
 _BOOKMARK_ID_RE = BOOKMARK_ID_RE       # the shared definition
+FLDCHAR_BEGIN_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="begin"')
 
 
 def next_bookmark_id(*xmls: str) -> int:
@@ -63,6 +64,30 @@ def _run_open_before(xml: str, pos: int) -> int:
     return starts[-1] if starts else -1
 
 
+def field_spans(xml: str) -> list[tuple[int, int, str]]:
+    """Every fldChar field as ``(start, end, body)``, run boundaries in.
+
+    THE field walk. It existed three times with three different guards
+    — only one defended against a field whose end tag is missing — and a
+    walk that lives in three places is a walk that will disagree with
+    itself. An unclosable span is SKIPPED rather than guessed at:
+    `xml.find(...) + len(...)` on a miss yields 5, which slices from the
+    top of the document, and a splice built on that lands mid-element.
+    """
+    out: list[tuple[int, int, str]] = []
+    for bm in FLDCHAR_BEGIN_RE.finditer(xml):
+        r_start = _run_open_before(xml, bm.start())
+        e_off = xml.find('w:fldCharType="end"', bm.end())
+        if r_start < 0 or e_off < 0:
+            continue
+        close = xml.find("</w:r>", e_off)
+        if close < 0:
+            continue
+        r_end = close + len("</w:r>")
+        out.append((r_start, r_end, xml[r_start:r_end]))
+    return out
+
+
 def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
                           bid: int) -> str:
     """Recreate `name` around the ONE link that points at `anchor`.
@@ -84,15 +109,8 @@ def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
         raise AnchorError(
             f"wrap_link_in_bookmark: {anchor} matched {len(hits)} elements")
 
-    spans = []
-    for bm in re.finditer(r'<w:fldChar\b[^>]*w:fldCharType="begin"', xml):
-        r_start = _run_open_before(xml, bm.start())
-        e_off = xml.find('w:fldCharType="end"', bm.end())
-        if r_start < 0 or e_off < 0:
-            continue
-        r_end = xml.find("</w:r>", e_off) + len("</w:r>")
-        if f'"{anchor}"' in xml[r_start:r_end]:
-            spans.append((r_start, r_end))
+    spans = [(s, e) for s, e, body in field_spans(xml)
+             if f'"{anchor}"' in body]
     if len(spans) != 1:
         raise AnchorError(
             f"wrap_link_in_bookmark: {anchor} found {len(spans)} fields")
@@ -122,16 +140,8 @@ def remove_outer_field(xml: str, outer: str, inner: str) -> str:
     back-link inside a typo'd predecessor and its OECD source note
     inside a link to the WRONG entry. Third paper's need moved it here.
     """
-    spans = []
-    for bm in re.finditer(r'<w:fldChar\b[^>]*w:fldCharType="begin"', xml):
-        r_start = _run_open_before(xml, bm.start())
-        e_off = xml.find('w:fldCharType="end"', bm.end())
-        if r_start < 0 or e_off < 0:
-            continue
-        r_end = xml.find("</w:r>", e_off) + len("</w:r>")
-        body = xml[r_start:r_end]
-        if f'"{outer}"' in body and f'w:anchor="{inner}"' in body:
-            spans.append((r_start, r_end, body))
+    spans = [(s, e, body) for s, e, body in field_spans(xml)
+             if f'"{outer}"' in body and f'w:anchor="{inner}"' in body]
     if len(spans) != 1:
         raise AnchorError(
             f"remove_outer_field: {outer}>{inner}: {len(spans)} fields")

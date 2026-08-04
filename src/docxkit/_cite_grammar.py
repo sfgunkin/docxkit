@@ -336,7 +336,19 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
     :func:`docxkit.crossrefs.link_more`) target a SPECIFIC occurrence —
     "(Doepke et al. 2019)" cited twice in one paragraph is exactly the
     case a unique-anchor locate cannot express.
+
+    Offsets are into the paragraph's VISIBLE text, not its XML, and they
+    are checked: an inverted or out-of-range span used to pass silently
+    — the "before" and "after" slices then overlapped and the paragraph
+    came out with a stretch of manuscript text DUPLICATED, no exception
+    raised and nothing in any report to say so.
     """
+    text_len = len(visible_text(para_xml))
+    if not 0 <= at <= end <= text_len:
+        raise AnchorError(
+            f"wrap_visible_span: span [{at}, {end}) is not inside the "
+            f"paragraph's {text_len} characters of visible text "
+            f"({visible_text(para_xml)[:40]!r})")
     runs, spans, cursor = [], [], 0
     for r in RUN_RE.finditer(para_xml):
         body = visible_text(r.group(0))

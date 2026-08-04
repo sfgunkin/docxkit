@@ -47,6 +47,29 @@ _HEAD_RE = re.compile(r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]")
 _ACRONYM_RE = re.compile(r"\(([A-Z]{2,})\)")
 
 
+def _own_bookmark(para_xml: str, r: Reference) -> str | None:
+    """The entry's OWN key-shaped bookmark, or None.
+
+    Both the year and the surname must match. Matching on the year
+    alone reuses whatever key-shaped bookmark happens to sit on the
+    paragraph — a stray `Jones2020` left by an earlier round on a
+    "Smith, A. (2020)" entry made link_all wire every "(Smith 2020)" in
+    the text to the WRONG work, and report "linked 1" while doing it.
+    """
+    alpha = re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()
+    names: list[str] = _BOOKMARK_NAME_RE.findall(para_xml)
+    for n in names:
+        km = _KEY_SHAPE_RE.match(n)
+        if km is None or n.endswith("txt") or km.group(2) != r.year:
+            continue
+        # the bookmark's alpha part is the surname, possibly truncated
+        # (an acronym entry files under it) — one must prefix the other
+        got = km.group(1).casefold()
+        if alpha.startswith(got) or got.startswith(alpha):
+            return n
+    return None
+
+
 def _entry_keys(r: Reference) -> set[str]:
     """Every citation key this entry can answer to.
 
@@ -151,10 +174,7 @@ def link_all(parts: dict[str, bytes], *,
     names: dict[str, str] = {}
     answers: dict[str, str] = {}
     for r in entries:
-        own = next((n for n in _BOOKMARK_NAME_RE.findall(
-                        paras[r.index].group(0))
-                    if (km := _KEY_SHAPE_RE.match(n)) and not
-                    n.endswith("txt") and km.group(2) == r.year), None)
+        own = _own_bookmark(paras[r.index].group(0), r)
         name = own or _dedup_name(
             re.sub(r"[^0-9A-Za-z]", "", r.surname) + r.year, taken)
         taken.add(name)
@@ -288,10 +308,7 @@ def _entry_names_from_document(doc: str, entries: list[Reference],
     """
     names: dict[str, str] = {}
     for r in entries:
-        own = next((n for n in _BOOKMARK_NAME_RE.findall(
-                        paras[r.index].group(0))
-                    if (km := _KEY_SHAPE_RE.match(n)) and not
-                    n.endswith("txt") and km.group(2) == r.year), None)
+        own = _own_bookmark(paras[r.index].group(0), r)
         if own:
             names[r.key] = own
     return names
