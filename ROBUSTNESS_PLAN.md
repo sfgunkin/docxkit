@@ -56,7 +56,12 @@ reports success-shaped numbers.
 
 ## 2. Defects to fix before anything else
 
-> **Status: phase 0 done (`1739a8c`).** P0-1, P0-2, P0-3 and P0-5 are
+> **Status: EVERY phase done** (`1739a8c`, `1e127fe`,
+> `db612f0`, `a1319e0`, `285253d`). 829 tests, package 91%,
+> `tools/mutate.py` 17/17. R2 declined and P0-4 withdrawn, both with
+> reasons recorded below.
+>
+> **Phase 0 status (`1739a8c`).** P0-1, P0-2, P0-3 and P0-5 are
 > fixed with regression tests; P0-1 and P0-2 are additionally
 > mutation-verified (reverting either turns the suite red). **P0-4 was
 > withdrawn — the claim below was wrong**; see the note under it. The
@@ -241,15 +246,19 @@ misuse loudly — `fit_columns` and `superscript_stars` document the
 hazard in prose today (`:621`, `:837`); `set_cell`, `update` and
 `bottom_border` do not even do that.
 
-**R4 — Split `citations.py`. HELD until after 2026-08-06.**
-This entry's own precondition — "wait until no paper is near a
-deadline" — still holds: the Life Expectancy resubmission is due
-2026-08-06 and `revision/repair_links.py` imports from this module on
-every build. The split is organisational; it buys no robustness, so
-there is nothing to weigh against even a small chance of an import
-surprise in a build-critical path. Do it on 2026-08-07, keeping
-`citations.py` re-exporting every public name, with a test that
-enumerates them. Original proposal follows.
+**R4 — Split `citations.py`. DONE (`285253d`), once the Life
+Expectancy paper was submitted and the precondition lapsed.**
+Four layers behind an unchanged facade. Two things worth keeping:
+* **The re-exports must use `from x import y as y`.** Ruff's `--fix`
+  strips a plain re-export as unused, taking with it the private names
+  `refstyle` and the tests reach through the facade. PEP 484's alias
+  form is the signal that it is deliberate.
+* **The layering was already there** — one back-edge (`marker_bookmark`
+  reaching forward for a helper filed with the builder) was the entire
+  structural change. A test now asserts it stays acyclic, because a
+  layering nobody checks is a layering that will not hold.
+
+Original proposal follows.
 
 ~~Split `citations.py` (1,394 lines).~~ Deferred once already, for
 good reason (build-critical import path near a deadline). The seam is
@@ -295,7 +304,7 @@ Cheap, and they close the loops that keep reopening:
 | 2 | COM seam + `tracked.py` tests | **DONE** `db612f0` — tracked.py 58→99%, package 91% |
 | 3 | R1 walks, R2 types, R3 offsets | **DONE** `a1319e0` — R2 declined, see below |
 | 4 | V2 property suite, mutation CI | **DONE** `a1319e0` — 17/17 caught; found a live escaping bug |
-| 5 | R4 `citations.py` split, R5 reports | R5 **DONE** `a1319e0`; **R4 HELD** — see below |
+| 5 | R4 `citations.py` split, R5 reports | **DONE** — R5 `a1319e0`, R4 `285253d` |
 
 Phases 0–2 are the ones that pay for themselves. Phase 5 is optional and
 should wait until no paper is near a deadline — the Life Expectancy
