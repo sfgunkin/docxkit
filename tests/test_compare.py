@@ -120,3 +120,29 @@ def test_a_field_stripped_alongside_a_text_edit_is_reported(tmp_path):
     a2, b2 = docs(tmp_path / "x" if (tmp_path / "x").mkdir() is None
                   else tmp_path, with_field, same_text)
     assert compare(a2, b2)["stripped_fields"] == []
+
+
+def test_a_field_end_run_with_rpr_does_not_bleed_the_label(tmp_path):
+    """Word adds an <w:rPr> to the field's closing run when the author
+    saves. hyperlink_labels required a BARE closing run, so the label ran
+    on to the NEXT field's end and an untouched citation was reported as
+    a 90-character bled link — three false positives on Parental Style,
+    invisible in the machine build because it had never seen Word.
+    """
+    from docxkit.citations import hyperlink_field
+
+    body = (para(run("As ") + hyperlink_field("Baumrind1991", "Baumrind (1991)")
+                 + run(" conceptualized parental style as demandingness."))
+            + para(run("Also ") + hyperlink_field("Hao2008", "Hao et al. (2008)")
+                   + run(" propose a game-theoretic explanation.")))
+    worded = body.replace(
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+        "<w:r><w:rPr><w:noProof/></w:rPr>"
+        '<w:fldChar w:fldCharType="end"/></w:r>')
+    assert worded != body, "fixture did not reproduce Word's closing run"
+
+    a, b = docs(tmp_path, body, worded)
+    report = compare(a, b)
+    # identical visible text and identical links: nothing to report
+    assert report["text"] == [], report["text"]
+    assert report["hyperlinks"] == [], report["hyperlinks"]

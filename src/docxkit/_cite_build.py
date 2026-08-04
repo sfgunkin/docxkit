@@ -46,6 +46,13 @@ _HEAD_RE = re.compile(r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]")
 
 _ACRONYM_RE = re.compile(r"\(([A-Z]{2,})\)")
 
+#: Word's hard limit on a bookmark NAME. Anything longer is truncated on
+#: save without retargeting the anchors that point at it.
+WORD_BOOKMARK_LIMIT = 40
+#: The in-text partner of a reference bookmark carries a "txt" suffix, so
+#: the base name has to leave room for it under the same limit.
+_NAME_BUDGET = WORD_BOOKMARK_LIMIT - len("txt")
+
 
 def _own_bookmark(para_xml: str, r: Reference) -> str | None:
     """The entry's OWN key-shaped bookmark, or None.
@@ -175,8 +182,7 @@ def link_all(parts: dict[str, bytes], *,
     answers: dict[str, str] = {}
     for r in entries:
         own = _own_bookmark(paras[r.index].group(0), r)
-        name = own or _dedup_name(
-            re.sub(r"[^0-9A-Za-z]", "", r.surname) + r.year, taken)
+        name = own or _mint_name(r, taken)
         taken.add(name)
         names[r.key] = name
         for k in _entry_keys(r):
@@ -277,6 +283,37 @@ def _dedup_name(name: str, taken: set[str]) -> str:
     while f"{name}_{n}" in taken:
         n += 1
     return f"{name}_{n}"
+
+
+def _mint_name(r: Reference, taken: set[str]) -> str:
+    """A bookmark name Word will not truncate.
+
+    Word caps a bookmark name at :data:`WORD_BOOKMARK_LIMIT` characters
+    when it SAVES, and does not retarget the hyperlinks that pointed at
+    the full name — every anchor is silently orphaned, and the document
+    still opens, so only an audit finds it. Institutional authors blow
+    the limit easily: "State Committee of the Republic of Uzbekistan on
+    Statistics and United Nations Children's Fund (UNICEF)" + year mints
+    a 90-character name (Parental Style, 2026-08-05: four entries, eight
+    dead anchors, discovered only when the author saved in Word).
+
+    Only the alpha part is truncated, so the name keeps the shape
+    ``<alpha><year>[_N]`` that :data:`_KEY_SHAPE_RE` requires, and
+    :func:`_own_bookmark` still recognises it on a later run because it
+    matches the surname by prefix in either direction.
+    """
+    alpha = re.sub(r"[^0-9A-Za-z]", "", r.surname)
+    for n in range(1, 100):
+        suffix = "" if n == 1 else f"_{n}"
+        keep = _NAME_BUDGET - len(r.year) - len(suffix)
+        if keep < 1:
+            break
+        name = alpha[:keep] + r.year + suffix
+        if name not in taken and name + "txt" not in taken:
+            return name
+    # Pathological: uniqueness beats the cap, because a name collision
+    # mis-targets a link while an over-long one merely breaks it.
+    return _dedup_name(alpha + r.year, taken)
 
 
 @dataclass

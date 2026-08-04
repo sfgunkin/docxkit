@@ -257,6 +257,17 @@ def integrity(xml: str, label: str):
     return issues
 
 
+#: A field's closing run, whose <w:fldChar end/> may be preceded by run
+#: properties. Requiring a BARE run here used to make the label overshoot
+#: to the next field's end, so an untouched citation was reported as a
+#: 90-character bled link — Word adds an <w:rPr> to that run whenever the
+#: author saves (Parental Style, 2026-08-05: three false positives, and
+#: the machine build showed none only because it had never been through
+#: Word).
+_FIELD_END_RE = (r'<w:r\b[^>]*>(?:<w:rPr\b(?:[^<]|<(?!/w:rPr>))*</w:rPr>|'
+                 r'<w:rPr\b[^>]*/>)?<w:fldChar w:fldCharType="end"/>')
+
+
 def hyperlink_labels(xml: str) -> Counter:
     """Visible text of every hyperlink (both <w:hyperlink> elements and
     field-based HYPERLINK results). A label that bled (a content-fix dumped
@@ -264,8 +275,8 @@ def hyperlink_labels(xml: str) -> Counter:
     labels = []
     for m in re.finditer(r"<w:hyperlink\b[^>]*>(.*?)</w:hyperlink>", xml, re.DOTALL):
         labels.append(html.unescape("".join(WT_RE.findall(m.group(1)))))
-    for m in re.finditer(r'<w:fldChar w:fldCharType="separate"/></w:r>(.*?)'
-                         r'<w:r[^>]*><w:fldChar w:fldCharType="end"/>', xml, re.DOTALL):
+    for m in re.finditer(r'<w:fldChar w:fldCharType="separate"/>\s*</w:r>(.*?)'
+                         + _FIELD_END_RE, xml, re.DOTALL):
         labels.append(html.unescape("".join(WT_RE.findall(m.group(1)))))
     return Counter(labels)
 

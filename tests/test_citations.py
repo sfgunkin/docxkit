@@ -1004,6 +1004,71 @@ def test_an_entrys_own_bookmark_is_still_reused():
     assert 'w:anchor="Smith2020"' in out
 
 
+# -------------------------------------------- Word's 40-char name cap ----
+
+_ORG = ("State Committee of the Republic of Uzbekistan on Statistics and "
+        "United Nations Children's Fund (UNICEF)")
+
+
+def test_a_minted_bookmark_name_fits_wordss_40_character_limit():
+    """Word truncates a bookmark NAME to 40 chars when it saves, and does
+    not retarget the anchors — every link to it dies silently.
+
+    An institutional author mints a 90-character name, so the cap has to
+    be applied when the name is created, not discovered when the author
+    hands the file back (Parental Style: 4 entries, 8 dead anchors).
+    """
+    from docxkit._cite_build import WORD_BOOKMARK_LIMIT
+    from docxkit.citations import link_all
+    parts = _parts(f"The survey ({_ORG} 2022) covers households.",
+                   "References",
+                   f"{_ORG}. (2022). MICS 2021-2022. Tashkent.")
+    link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+
+    names = re.findall(r'w:name="([^"]+)"', out)
+    assert names, "no bookmark was minted"
+    for n in names:
+        assert len(n) <= WORD_BOOKMARK_LIMIT, f"{n!r} is {len(n)} chars"
+    # and the link still points at a bookmark that exists
+    for anchor in re.findall(r'w:anchor="([^"]+)"', out):
+        assert anchor in names, f"{anchor!r} has no bookmark"
+
+
+def test_the_in_text_partner_also_fits_the_limit():
+    """The base name must leave room for the "txt" suffix: capping only
+    the reference name would still ship a 41-character in-text one."""
+    from docxkit._cite_build import WORD_BOOKMARK_LIMIT, _mint_name
+    from docxkit._cite_grammar import Reference
+
+    r = Reference(index=0, surname="A" * 200, year="2022",
+                  text=f"{'A' * 200}. (2022).")
+    name = _mint_name(r, set())
+    assert len(name + "txt") <= WORD_BOOKMARK_LIMIT
+    assert name.endswith("2022"), "the year must survive truncation"
+
+
+def test_a_capped_name_still_dedupes_without_breaking_its_shape():
+    """The _N collision suffix goes AFTER the year; trimming must eat the
+    surname, never the year, or the name stops matching _KEY_SHAPE_RE and
+    the audit can no longer pair it with its entry."""
+    from docxkit._cite_audit import _KEY_SHAPE_RE
+    from docxkit._cite_build import WORD_BOOKMARK_LIMIT, _mint_name
+    from docxkit._cite_grammar import Reference
+
+    taken: set[str] = set()
+    r = Reference(index=0, surname="B" * 200, year="2022",
+                  text=f"{'B' * 200}. (2022).")
+    for _ in range(3):
+        name = _mint_name(r, taken)
+        taken.add(name)
+        assert len(name + "txt") <= WORD_BOOKMARK_LIMIT
+        km = _KEY_SHAPE_RE.match(name)
+        assert km is not None, f"{name!r} lost its key shape"
+        assert km.group(2) == "2022"
+    assert len(taken) == 3, "collision suffixes did not stay unique"
+
+
 # ---------------------------------------------------- span bounds --------
 
 
