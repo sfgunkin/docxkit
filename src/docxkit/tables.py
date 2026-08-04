@@ -809,9 +809,9 @@ _RUN_T_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
 
 
 def _run_superscripted(run_xml: str) -> str:
+    # the caller has already skipped runs carrying a vertAlign, so this
+    # only ever sees a plain run
     tag = '<w:vertAlign w:val="superscript"/>'
-    if "<w:vertAlign" in run_xml:
-        return run_xml
     if "<w:rPr>" in run_xml:
         # vertAlign sorts after sz/szCs and before w:lang in the schema
         at = run_xml.find("<w:lang")

@@ -14,7 +14,13 @@ from docxkit import (
 )
 from docxkit.edit import replace_in_para
 from docxkit.errors import AnchorError
-from docxkit.find import para_text_at, table_index_at
+from docxkit.find import (
+    find_para,
+    heading_level,
+    page_break_before,
+    para_text_at,
+    table_index_at,
+)
 
 
 def test_text_of_reassembles_fragmented_runs():
@@ -63,6 +69,43 @@ def test_table_index_at_locates_the_right_table():
 def test_para_text_at_returns_containing_paragraph():
     xml = document(para(run("alpha")) + para(run("beta")))
     assert para_text_at(xml, xml.index("beta")) == "beta"
+
+
+def test_para_text_at_returns_empty_outside_any_paragraph():
+    xml = document(para(run("alpha")))
+    assert para_text_at(xml, 5) == ""            # in the document header
+
+
+def test_find_para_returns_none_when_the_signature_is_absent():
+    xml = document(para(run("alpha")) + para(run("beta")))
+    assert find_para(xml, "beta") is not None
+    assert find_para(xml, "gamma") is None
+
+
+def test_page_break_before_asserts_its_anchor():
+    """The property pass breaks ten captions; a drifted one must fail
+    loudly rather than silently leaving a table mid-page."""
+    xml = document(para(run("Table 3: Results")))
+    assert "<w:pageBreakBefore/>" in page_break_before(xml, "Table 3:")
+    with pytest.raises(AnchorError):
+        page_break_before(xml, "Table 9:")
+
+
+def test_page_break_before_keeps_existing_paragraph_properties():
+    xml = document(
+        '<w:p><w:pPr><w:pStyle w:val="Caption"/>'
+        '<w:jc w:val="center"/></w:pPr>' + run("Table 5: Results")
+        + "</w:p>")
+    out = page_break_before(xml, "Table 5:")
+    assert ('<w:pStyle w:val="Caption"/><w:pageBreakBefore/>'
+            '<w:jc w:val="center"/>') in out
+
+
+@pytest.mark.parametrize("style,level", [
+    ("Title", 1), ("Subtitle", 2), ("Heading3", 3), ("Heading", 1)])
+def test_heading_level_reads_the_named_styles(style, level):
+    xml = f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr></w:p>'
+    assert heading_level(xml) == level
 
 
 def test_rep_asserts_the_anchor_count():
