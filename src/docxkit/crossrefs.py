@@ -46,7 +46,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-from ._xml import PARA_RE, T_RE, escape, visible_text
+from ._xml import (
+    BOOKMARK_ID_RE,
+    PARA_RE,
+    T_RE,
+    visible_text,
+)
 from .citations import next_bookmark_id
 from .errors import AnchorError
 
@@ -78,7 +83,7 @@ LABEL_FORMS = {
 }
 
 _SUFFIX = "txt"
-_BOOKMARK_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
+_BOOKMARK_RE = BOOKMARK_ID_RE          # the shared definition
 # (?<!/)> — a self-closing empty hyperlink must not read as an open tag;
 # see the twin note on _xml._HYPERLINK_EL_RE.
 _HYPERLINK_RE = re.compile(r"<w:hyperlink\b[^>]*(?<!/)>.*?</w:hyperlink>",
@@ -237,20 +242,24 @@ def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
     rpr = rpr_m.group(0) if rpr_m else ""
     link_rpr = _with_hyperlink_style(rpr)
 
+    # NB: `content` is the RAW text of a w:t — already XML-escaped,
+    # because it was read straight out of the document. Escaping it again
+    # turns a caption reading "Income & wealth" into one reading
+    # "Income &amp; wealth" ON THE PAGE. Found by the property suite.
     before, label, after = (content[:m.start()], content[m.start():m.end()],
                             content[m.end():])
     parts = []
     if before:
         parts.append(f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                     f"{escape(before)}</w:t></w:r>")
+                     f"{before}</w:t></w:r>")
     parts.append(
         f'<w:bookmarkStart w:id="{bid}" w:name="{bookmark_name}"/>'
         f'<w:hyperlink w:anchor="{anchor}">{open_tag}{link_rpr}'
-        f'<w:t xml:space="preserve">{escape(label)}</w:t></w:r></w:hyperlink>'
+        f'<w:t xml:space="preserve">{label}</w:t></w:r></w:hyperlink>'
         f'<w:bookmarkEnd w:id="{bid}"/>')
     if after:
         parts.append(f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                     f"{escape(after)}</w:t></w:r>")
+                     f"{after}</w:t></w:r>")
     return "".join(parts)
 
 
@@ -371,7 +380,10 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
                       if content.lstrip().startswith(cand)), None)
         if label is None:
             continue
+        # same rule as _split_run_at: these are raw, already-escaped
+        # slices of the source, so they are re-emitted verbatim
         lead = content[:len(content) - len(content.lstrip())]
+        raw_label = content.lstrip()[:len(label)]
         rest = content.lstrip()[len(label):]
 
         r_open = max(para_xml.rfind("<w:r>", 0, tm.start()),
@@ -392,13 +404,13 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
         new = ""
         if lead:
             new += (f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                    f"{escape(lead)}</w:t></w:r>")
+                    f"{lead}</w:t></w:r>")
         new += (f'<w:hyperlink w:anchor="{anchor}">{open_tag}{link_rpr}{pre}'
-                f'<w:t xml:space="preserve">{escape(label)}</w:t></w:r>'
+                f'<w:t xml:space="preserve">{raw_label}</w:t></w:r>'
                 "</w:hyperlink>")
         if rest:
             new += (f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                    f"{escape(rest)}</w:t></w:r>")
+                    f"{rest}</w:t></w:r>")
         return para_xml[:r_open] + new + para_xml[r_close:]
     raise AnchorError(
         f"{cap.prefix}: caption label is split across runs and could not be "

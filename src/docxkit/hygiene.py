@@ -23,7 +23,7 @@ import html
 import re
 from dataclasses import dataclass, field
 
-from ._xml import PARA_RE, escape
+from ._xml import PARA_RE, T_PARTS_RE, escape
 
 __all__ = ["CUSTOM_XML", "SmartenReport", "smarten", "strip_parts"]
 
@@ -69,7 +69,7 @@ def strip_parts(parts: dict[str, bytes],
 # w:t ONLY: m:t is mathematics, where a straight quote is a prime and
 # "fixing" it corrupts the formula; w:delText is someone's tracked
 # deletion, not ours to retypeset; w:instrText is field code.
-_WT_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
+_WT_RE = T_PARTS_RE                    # the shared definition
 
 
 @dataclass

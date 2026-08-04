@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from ._xml import (
+    RUN_OPEN_RE,
     RUN_RE,
     T_RUN_RE,
     XML_WS,
@@ -152,7 +153,7 @@ _RPR_HEAD_RE = re.compile(
     r"<w:rPr>(?:<w:rStyle [^>]*/>)?(?:<w:rFonts [^>]*/>)?"
     r"(?:<w:b/>)?(?:<w:bCs/>)?")
 _ITALIC_OFF_RE = re.compile(r'<w:i w:val="(?:0|false|none)"/>')
-_RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*>")
+_RUN_OPEN_RE = RUN_OPEN_RE             # the shared definition
 
 
 def _run_italic(run_xml: str) -> str:

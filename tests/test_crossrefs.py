@@ -468,3 +468,29 @@ def test_new_bookmark_ids_clear_the_other_parts():
     naive_ids = [int(i) for i in re.findall(r'<w:bookmarkStart w:id="(\d+)"',
                                             naive)]
     assert min(naive_ids) < 900
+
+
+def test_an_ampersand_survives_being_linked():
+    """Found by the property suite, and it corrupted the page.
+
+    The text taken from a `w:t` is ALREADY XML-escaped; escaping it
+    again turned a caption reading "Income & wealth" into one reading
+    "Income &amp; wealth" — visible to the reader, in the manuscript.
+    """
+    from docxkit._xml import visible_text
+    xml = doc(
+        para(run("R&amp;D spending rises, see Table 1 below &amp; after.")),
+        para(run("Table 1. Income &amp; wealth")))
+    out, report = crossrefs.link(xml)
+    assert report.linked == ["Table1"]
+    assert visible_text(out) == visible_text(xml)
+    assert "&amp;amp;" not in out
+
+
+def test_a_less_than_sign_survives_being_linked():
+    from docxkit._xml import visible_text
+    xml = doc(para(run("For p &lt; 0.05 see Table 2 below.")),
+              para(run("Table 2. Results where p &lt; 0.05")))
+    out, _ = crossrefs.link(xml)
+    assert visible_text(out) == visible_text(xml)
+    assert "&amp;lt;" not in out

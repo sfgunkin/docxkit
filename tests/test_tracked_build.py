@@ -391,11 +391,11 @@ def test_resolve_math_picks_the_cheap_walk_when_nothing_is_commented(
         monkeypatch):
     from docxkit import tracked as T
     seen = []
-    def _equations(doc):
+    def _equations(doc, *args, **kw):
         seen.append("equations")
         return 7
 
-    def _revisions(*args):
+    def _revisions(*args, **kw):
         seen.append("revisions")
         return 3
 
@@ -609,3 +609,53 @@ def test_a_revision_that_raises_is_skipped_not_fatal(monkeypatch):
                         raising=False)
     assert T._comment_and_accept_math_revisions(
         doc, lambda ctx: "note", None) == 1
+
+
+# ------------------------------------------- failure is not advisory ------
+
+
+def test_a_swallowed_word_failure_is_recorded_not_hidden():
+    """A COM call that fails must not leave success-shaped numbers.
+
+    Every call here is suppressed so one hostile revision cannot abort a
+    1400-revision build; suppressing SILENTLY is what let a
+    half-finished build look complete.
+    """
+    from docxkit.tracked import _accept_math_via_equations
+
+    class Doc:
+        OMaths = _Exploding()
+
+    notes: list[str] = []
+    assert _accept_math_via_equations(Doc(), notes) == 0
+    assert notes and "unreachable" in notes[0]
+
+
+def test_a_comment_word_refuses_is_recorded_with_the_text():
+    from docxkit.tracked import _comment_revision
+
+    class Hostile:
+        Range = _MathRange("the revised sentence")
+
+        class Comments:
+            @staticmethod
+            def Add(rng, text):
+                raise RuntimeError("Call was rejected by callee")
+
+    notes: list[str] = []
+    _comment_revision(Hostile(), Hostile(), lambda ctx: "R1", None, notes)
+    assert notes and "comment not added" in notes[0]
+
+
+def test_the_report_prints_what_was_skipped():
+    report = tracked.BuildReport()
+    report.suppressed = [f"equation {i}: unreachable" for i in range(12)]
+    text = report.format()
+    assert "12 Word call(s) failed" in text
+    assert "and 2 more" in text            # the list is capped at ten
+
+
+def test_a_clean_build_reports_nothing_suppressed(monkeypatch, sources):
+    report, _ = _build(monkeypatch, _clean_document(), sources)
+    assert report.suppressed == []
+    assert "failed" not in report.format()

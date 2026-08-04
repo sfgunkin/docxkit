@@ -187,3 +187,41 @@ def test_grid_columns_rejects_a_row_that_is_not_there():
     xml = _spanned_table()
     with pytest.raises(AnchorError, match="cannot read row"):
         read_all(xml)[0].grid_columns(xml, 9)
+
+
+# ------------------------------------------------------ stale offsets -----
+
+
+def test_a_table_read_before_an_edit_is_refused_not_misapplied():
+    """The hazard the docstrings could only ask callers to avoid.
+
+    Every edit returns a new string and shifts every later offset, so a
+    Table read beforehand slices the wrong bytes — silently, because the
+    slice is still plausible-looking XML.
+    """
+    from docxkit.tables import bottom_border, fit_columns, superscript_stars
+    xml = _spanned_table()
+    stale = read_all(xml)[0]                    # read BEFORE the edit
+    edited, _ = bottom_border(xml, stale)
+
+    for fn in (fit_columns, superscript_stars, bottom_border):
+        with pytest.raises(AnchorError, match="different version"):
+            fn(edited, stale)                   # stale offsets
+    with pytest.raises(AnchorError, match="different version"):
+        set_cell(edited, stale, 0, 0, "x")
+
+
+def test_re_reading_after_an_edit_is_what_the_error_asks_for():
+    from docxkit.tables import bottom_border
+    xml = _spanned_table()
+    once, _ = bottom_border(xml, read_all(xml)[0])
+    twice, n = bottom_border(once, read_all(once)[0])   # re-read: fine
+    assert n == 0 and twice == once
+
+
+def test_a_hand_built_table_is_not_anchored_to_any_source():
+    """to_frame and the value tests construct Tables directly; those
+    carry no offsets to go stale, so they must not be refused."""
+    t = Table(index=0, start=0, end=0, rows=[["a"], ["1"]])
+    assert t.source is None
+    assert to_frame(t).shape == (1, 1)

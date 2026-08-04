@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ._xml import (
+    BOOKMARK_ID_RE,
     PARA_RE,
     RUN_RE,
     escape,
@@ -476,7 +477,7 @@ def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:
 # Grown in the API10 and LE link-repair rounds, where each paper script
 # carried its own copy — the second use is what moved them here.
 
-_BOOKMARK_ID_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
+_BOOKMARK_ID_RE = BOOKMARK_ID_RE       # the shared definition
 
 
 def next_bookmark_id(*xmls: str) -> int:

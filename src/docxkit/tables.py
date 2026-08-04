@@ -22,7 +22,14 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple, overload
 
-from ._xml import PARA_RE, matching_close, set_run_text, visible_text
+from ._xml import (
+    PARA_RE,
+    RUN_RE,
+    T_PARTS_RE,
+    matching_close,
+    set_run_text,
+    visible_text,
+)
 from .errors import AnchorError
 from .revisions import FINAL, _has_revisions, view_transform
 
@@ -71,6 +78,12 @@ class Table:
     start: int                   # offset in the document XML
     end: int
     rows: list[list[str]]
+    #: Hash of the XML this was read from, so a mutator can tell that
+    #: `start`/`end` no longer mean anything. Every edit here returns a
+    #: NEW string and shifts every later offset, and the toolkit's own
+    #: docstrings could only ASK callers to re-read. `None` on a
+    #: hand-built Table, which is not anchored to any source.
+    source: int | None = None
 
     @property
     def header(self) -> list[str]:
@@ -113,6 +126,21 @@ class Table:
         return out
 
 
+def _fresh(xml: str, table: Table, what: str) -> None:
+    """Refuse a Table whose offsets belong to a different string.
+
+    Editing a table returns a new document and moves every offset after
+    it, so a `Table` read before that edit now slices the wrong bytes —
+    silently, since the slice is still valid XML-ish text. Cheap to
+    check: CPython caches a str's hash after the first call.
+    """
+    if table.source is not None and table.source != hash(xml):
+        raise AnchorError(
+            f"{what}: this Table was read from a different version of the "
+            "document — an edit since then moved its offsets. Re-read with "
+            "read_all()/by_caption() after every edit.")
+
+
 def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
     """Every table in the document, cells rendered as text.
 
@@ -128,7 +156,8 @@ def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
             cells = [_cell_text(tc.group(0)) for tc in _TC_RE.finditer(
                 tr.group(0))]
             rows.append(cells)
-        out.append(Table(index=i, start=start, end=end, rows=rows))
+        out.append(Table(index=i, start=start, end=end, rows=rows,
+                         source=hash(xml)))
     return out
 
 
@@ -263,6 +292,7 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     cell takes the new text and any others are blanked, so fonts,
     borders and shading survive.
     """
+    _fresh(xml, table, "set_cell")
     body = xml[table.start:table.end]
     trs = list(_TR_RE.finditer(body))
     if row >= len(trs):
@@ -384,6 +414,7 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
     if not grid:
         raise AnchorError("update: no rows given")
 
+    _fresh(xml, table, "update")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -445,7 +476,7 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
 # engine.
 
 _GRIDCOL_RE = re.compile(r'<w:gridCol w:w="(\d+)"/>')
-_RUN_RE = re.compile(r"<w:r\b[^>]*>.*?</w:r>", re.DOTALL)
+_RUN_RE = RUN_RE                       # the shared definition
 _T_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
 _RPR_RE = re.compile(r"<w:r\b[^>]*>(<w:rPr>.*?</w:rPr>)?", re.DOTALL)
 _SZ_RE = re.compile(r'<w:sz w:val="(\d+)"/>')
@@ -663,6 +694,7 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     Check the result visually once (PDF render) — the width model
     approximates Word's layout engine, `pad` covering its error.
     """
+    _fresh(xml, table, "fit_columns")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -844,7 +876,7 @@ def _apply_widths(body: str, widths: list[int], total: int,
 
 # exactly a number (the shared cell grammar) with trailing stars
 _STARRED_CELL_RE = re.compile(rf"^{_NUM_RE.pattern}\*{{1,3}}$")
-_RUN_T_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
+_RUN_T_RE = T_PARTS_RE                 # the shared definition
 
 
 def _run_superscripted(run_xml: str) -> str:
@@ -875,6 +907,7 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
     alone, so the pass is idempotent. Returns (xml, cells converted);
     other Table objects' offsets are stale afterwards.
     """
+    _fresh(xml, table, "superscript_stars")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -921,6 +954,7 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
     bottom edge — usually ``nil`` — is replaced), so the rule runs the
     full width. Returns (xml, cells changed); idempotent once applied.
     """
+    _fresh(xml, table, "bottom_border")
     body = xml[table.start:table.end]
     trs = list(_TR_RE.finditer(body))
     if not trs:

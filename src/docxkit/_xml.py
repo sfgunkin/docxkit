@@ -15,10 +15,14 @@ import html
 import re
 
 __all__ = [
+    "BOOKMARK_ID_RE",
+    "FLDCHAR_RE",
     "GLYPH_MAP",
     "PARA_RE",
+    "RUN_OPEN_RE",
     "RUN_RE",
     "T_DEL_RE",
+    "T_PARTS_RE",
     "T_RE",
     "T_RUN_RE",
     "XML_WS",
@@ -48,6 +52,22 @@ T_DEL_RE = re.compile(
 RUN_RE = re.compile(r"<w:r\b[^>]*>.*?</w:r>", re.DOTALL)
 # A w:t split into (open tag, close tag) so the body can be swapped.
 T_RUN_RE = re.compile(r"(<w:t[^>]*>)[^<]*(</w:t>)")
+# The same, keeping the text as its own group, for callers that rewrite
+# it. THE definition: hygiene and tables each had their own copy, and a
+# pattern that lives in two modules is a pattern that will disagree with
+# itself — the drift that once split the glyph table between compare and
+# ingest, and the reason the sibling-safe form in edit._ANY_T_RE had to
+# be back-ported here by hand.
+T_PARTS_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
+# An opening run tag. `\b` is load-bearing: without it this matches the
+# `<w:rPr` INSIDE a styled run, and a field-boundary scan that cut there
+# split the XML mid-element and produced a file Word would not open.
+RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*>")
+# A bookmark id, on either end of the pair.
+BOOKMARK_ID_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
+# A field character, which is how Word writes a HYPERLINK before it
+# churns to element form on the next save.
+FLDCHAR_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="(\w+)"')
 
 # Substitutions Word applies on save. They are artifacts of the editor,
 # not author intent, so a diff that vanishes under them is not an edit and

@@ -83,7 +83,12 @@ ignore = [
 # Tests assert on the very glyphs Word normalizes, reach for private
 # helpers deliberately, and import optional deps inside the tests that
 # skip without them.
-"tests/*" = ["RUF001", "RUF002", "RUF003", "PLC2701", "PLC0415"]
+"tests/*" = ["RUF001", "RUF002", "RUF003", "PLC2701", "PLC0415",
+             "ISC003", "ISC004"]
+# tools/ holds developer scripts: the mutation table quotes source
+# lines verbatim, so it cannot obey the line length or the
+# implicit-concatenation rules without changing what it tests.
+"tools/*" = ["E501", "ISC003", "ISC004", "PLW1510", "RUF059"]
 
 [tool.mypy]
 files = ["src/docxkit", "tests", "tools"]

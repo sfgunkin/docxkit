@@ -103,6 +103,12 @@ class BuildReport:
         self.comments_total = 0
         self.verified_comments: int | None = None
         self.verified_revisions: int | None = None
+        #: What Word refused to do. Every COM call here is wrapped in a
+        #: suppression because one hostile revision must not abort a
+        #: 1400-revision build — but suppressing SILENTLY let a
+        #: half-finished build report success-shaped numbers, so what
+        #: was swallowed is recorded and printed.
+        self.suppressed: list[str] = []
         self.phases: list[tuple[str, float]] = []
         self._t0 = self._last = time.perf_counter()
 
@@ -120,11 +126,18 @@ class BuildReport:
         lines.append(f"revisions {self.revisions}, comments "
                      f"{self.comments_total} ({self.unclassified} "
                      f"unclassified), {self.seconds:.0f}s total")
+        if self.suppressed:
+            lines.append(f"  {len(self.suppressed)} Word call(s) failed "
+                         "and were skipped:")
+            lines += [f"    - {note}" for note in self.suppressed[:10]]
+            if len(self.suppressed) > 10:
+                lines.append(f"    ... and {len(self.suppressed) - 10} more")
         return "\n".join(lines)
 
 
 def _resolve_math(doc: Any, classify: Classifier | None,
-                  generic: str | None) -> int:
+                  generic: str | None,
+                  notes: list[str] | None = None) -> int:
     """Comment (if the paper annotates) and accept every math revision.
 
     Word cannot serialize a compare result containing tracked math, so
@@ -142,56 +155,74 @@ def _resolve_math(doc: Any, classify: Classifier | None,
     ~20ms per revision, which was 27s of a 1359-revision compare — and is
     used where no comments are needed and it was validated.
     """
+    notes = [] if notes is None else notes
     if classify is None:
-        return _accept_math_via_equations(doc)
-    return _comment_and_accept_math_revisions(doc, classify, generic)
+        return _accept_math_via_equations(doc, notes)
+    return _comment_and_accept_math_revisions(doc, classify, generic, notes)
 
 
-def _accept_math_via_equations(doc: Any) -> int:
+def _accept_math_via_equations(doc: Any,
+                               notes: list[str] | None = None) -> int:
     """Accept revisions touching math, found by walking ``doc.OMaths``."""
-    with contextlib.suppress(Exception):
+    notes = [] if notes is None else notes
+    try:
         if not doc.OMaths.Count:
             return 0
+    except Exception as exc:
+        notes.append(f"could not read doc.OMaths: {exc}")
+        return 0
     accepted = 0
     for i in range(doc.OMaths.Count, 0, -1):   # backwards: accepting shifts
         try:
             revisions = doc.OMaths(i).Range.Revisions
-        except Exception:
+        except Exception as exc:
+            notes.append(f"equation {i}: unreachable ({exc})")
             continue
         for j in range(revisions.Count, 0, -1):
-            with contextlib.suppress(Exception):
+            try:
                 revisions(j).Accept()
                 accepted += 1
+            except Exception as exc:
+                notes.append(f"equation {i} revision {j}: "
+                             f"not accepted ({exc})")
     return accepted
 
 
 def _comment_and_accept_math_revisions(
-        doc: Any, classify: Classifier, generic: str | None) -> int:
+        doc: Any, classify: Classifier, generic: str | None,
+        notes: list[str] | None = None) -> int:
     """Comment then accept each revision that CONTAINS math.
 
     Scans the revisions rather than the equations — see
     :func:`_resolve_math` for why the cheaper walk is not a substitute.
     """
+    notes = [] if notes is None else notes
     math_revs = []
-    for rev in _word.revisions(doc):      # enumerator: indexing is O(i)
+    for n, rev in enumerate(_word.revisions(doc), 1):  # enumerator: O(i)
         try:
             if rev.Range.OMaths.Count:
                 math_revs.append(rev)
-        except Exception:
-            pass
+        except Exception as exc:
+            notes.append(f"revision {n}: could not be inspected ({exc})")
 
     seeded = 0
     for rev in reversed(math_revs):       # last first: accepting shifts rest
-        _comment_revision(doc, rev, classify, generic)
+        _comment_revision(doc, rev, classify, generic, notes)
         seeded += 1
-        with contextlib.suppress(Exception):
+        try:
             rev.Accept()
-    return seeded or _seed_scaffold(doc, classify, generic)
+        except Exception as exc:
+            notes.append(f"math revision not accepted ({exc}) — Word "
+                         "cannot serialize a compare result containing "
+                         "tracked math, so this build may fail to save")
+    return seeded or _seed_scaffold(doc, classify, generic, notes)
 
 
 def _comment_revision(doc: Any, rev: Any, classify: Classifier,
-                      generic: str | None) -> None:
+                      generic: str | None,
+                      notes: list[str] | None = None) -> None:
     """Attach the paper's comment to one revision, through Word."""
+    notes = [] if notes is None else notes
     rng = rev.Range
     text = para = ""
     with contextlib.suppress(Exception):
@@ -204,25 +235,34 @@ def _comment_revision(doc: Any, rev: Any, classify: Classifier,
     # The fallback matters even when the paper passes generic=None: this
     # comment is also the scaffold the XML pass clones, and Word cannot
     # add one with no text, so the build would fail with ScaffoldMissing.
-    with contextlib.suppress(Exception):
+    try:
         doc.Comments.Add(rng, comment or generic or _comments.GENERIC)
+    except Exception as exc:
+        # NOT cosmetic: if this was to be the scaffold, the build fails
+        # later with ScaffoldMissing and no hint of the real cause
+        notes.append(f'comment not added to "{text[:30]}": {exc}')
 
 
 def _seed_scaffold(doc: Any, classify: Classifier | None,
-                   generic: str | None) -> int:
+                   generic: str | None,
+                   notes: list[str] | None = None) -> int:
     """Ensure ONE Word-made comment exists, for the XML pass to clone.
 
     The comment parts, styles and relationships have to come from Word
     itself; hand-rolling them is how a file ends up repaired on open.
     """
+    notes = [] if notes is None else notes
     if classify is None:
         return 0
-    with contextlib.suppress(Exception):
+    try:
         if not doc.Revisions.Count:
             return 0
-        _comment_revision(doc, doc.Revisions(1), classify, generic)
+        _comment_revision(doc, doc.Revisions(1), classify, generic, notes)
         return 1
-    return 0
+    except Exception as exc:
+        notes.append(f"no comment scaffold could be seeded ({exc}) — the "
+                     "XML pass has nothing to clone and will refuse")
+        return 0
 
 
 def build(original: str | Path, revised: str | Path, out: str | Path,
@@ -282,10 +322,13 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             say(f"revisions: {report.revisions}")
             _word.draft_view(cmp_)
 
-            report.math_resolved = _resolve_math(cmp_, classify, generic)
+            report.math_resolved = _resolve_math(
+                cmp_, classify, generic, report.suppressed)
             report.mark("resolved math revisions")
             say(f"resolved {report.math_resolved} math revisions "
                 "(Word cannot serialize tracked math)")
+            for note in report.suppressed:
+                say(f"  WARNING: {note}")
 
             # NOTE: keep orig/rev OPEN until after the extraction — the
             # compare result lazily references their parts, and closing
