@@ -603,7 +603,12 @@ _KEY_SHAPE_RE = re.compile(
 _LINK_TOKEN_RE = re.compile(
     r'<w:fldChar\b[^>]*w:fldCharType="(begin|separate|end)"'
     r"|<w:instrText[^>]*>([^<]*)</w:instrText>"
-    r'|<w:hyperlink\b[^>]*w:anchor="([^"]+)"'
+    # (?<!/)> — a SELF-CLOSING <w:hyperlink .../> wraps nothing, so it
+    # must not open a frame here: it would never be popped, and every
+    # later link in the paragraph would be reported as nested inside it.
+    # Word leaves these ghosts behind on save; one on the Parental Style
+    # manuscript is what made the twin guard in _xml necessary.
+    r'|<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>'
     r"|</w:hyperlink>")
 
 

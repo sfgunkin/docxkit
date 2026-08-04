@@ -62,6 +62,9 @@ ignore = [
 # pandas, latex2mathml, lxml and pytest must not be needed to import
 # the toolkit.
 "src/docxkit/tables.py" = ["RUF001", "PLC0415"]
+# lxml is a hard dep but the parse-gate imports it lazily so package.py
+# stays importable in the minimal environments the CLI runs in
+"src/docxkit/package.py" = ["PLC0415"]
 "src/docxkit/citations.py" = ["RUF001", "PLC0415"]
 "src/docxkit/crossrefs.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]

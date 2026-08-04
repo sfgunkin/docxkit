@@ -21,6 +21,7 @@ __all__ = [
     "backup",
     "edit_in_place",
     "is_locked",
+    "malformed_parts",
     "next_backup_path",
     "read_parts",
     "write_docx",
@@ -64,6 +65,28 @@ def read_parts(path: str | Path) -> dict[str, bytes]:
         raise PackageError(f"cannot read {path}: {exc}") from exc
 
 
+def malformed_parts(parts: dict[str, bytes]) -> list[str]:
+    """Which XML parts do not parse, and why.
+
+    Well-formedness only — not the structural rules :mod:`docxkit.lint`
+    checks. A part that does not parse is never a legitimate output; a
+    part that parses but breaks a schema rule sometimes is (a test
+    fixture, an intermediate state), which is why the two are separate
+    gates.
+    """
+    from lxml import etree
+
+    bad = []
+    for name, blob in parts.items():
+        if not name.endswith((".xml", ".rels")):
+            continue                      # media, fonts, embedded objects
+        try:
+            etree.fromstring(blob)
+        except etree.XMLSyntaxError as exc:
+            bad.append(f"{name}: {exc}")
+    return bad
+
+
 def write_docx(path: str | Path, parts: dict[str, bytes],
                *, order: list[str] | None = None) -> None:
     """Repack `parts` as a .docx, atomically (temp file, then move).
@@ -71,8 +94,19 @@ def write_docx(path: str | Path, parts: dict[str, bytes],
     `order` preserves the original member order; parts not in it are
     appended, so a transform that ADDS a part (new media for a figure, a
     comments part) is written rather than silently dropped.
+
+    Refuses to write a package whose XML does not parse. Every editing
+    path in the toolkit lands here eventually, so this is the one place
+    that can make "a spliced element cut an ancestor in half" impossible
+    to ship — the LI7 incident, where only a later `docxkit lint` run
+    caught a file Word could not open, and the audit and the diff were
+    both blind to it because they read with regexes.
     """
     path = Path(path)
+    if problems := malformed_parts(parts):
+        listed = "\n  - ".join(problems)
+        raise PackageError(
+            f"refusing to write malformed XML to {path.name}:\n  - {listed}")
     names = list(parts) if order is None else (
         [n for n in order if n in parts]
         + [n for n in parts if n not in order])
