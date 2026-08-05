@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass, field
 
 from ._xml import RUN_RE, set_run_text, visible_text
-from .crossrefs import LABEL_FORMS, find_captions
+from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
 
@@ -59,15 +59,25 @@ class ShiftReport:
 
 
 def _mention_re(label: str, prefix: str) -> re.Pattern[str]:
+    # NUMBER_END, not a bare (?!\d): shifting "Table 1" used to rewrite
+    # the 1 of "Table 1.1" and "Table 1A" too, silently renumbering an
+    # exhibit the caller never named. Those are FLAGGED instead now.
     form = LABEL_FORMS.get(label, re.escape(label) + "s?")
     return re.compile(
-        rf"\b(?:{form})\s+{re.escape(prefix)}(\d+)(?!\d)", re.IGNORECASE)
+        rf"\b(?:{form})\s+{re.escape(prefix)}(\d+){NUMBER_END}",
+        re.IGNORECASE)
+
+
+#: a number this module will not shift: "1A", "1.1" — a numbering scheme
+#: it does not model, and guessing at one corrupts the manuscript
+_SUFFIXED = r"(?:\.\w|\w)"
 
 
 def _flag_re(label: str, prefix: str) -> re.Pattern[str]:
     form = LABEL_FORMS.get(label, re.escape(label) + "s?")
     return re.compile(
-        rf"\b(?:{form})\s+{re.escape(prefix)}\d+{_CONTINUATION}",
+        rf"\b(?:{form})\s+{re.escape(prefix)}\d+"
+        rf"(?:{_CONTINUATION}|{_SUFFIXED})",
         re.IGNORECASE)
 
 

@@ -22,6 +22,7 @@ from typing import NamedTuple
 
 from . import revisions as _revisions
 from ._xml import (
+    COMMENT_ID_RE,
     PARA_RE,
     delta_text,
     normalize_glyphs,
@@ -248,8 +249,7 @@ class _Scaffold(NamedTuple):
         return cls(
             comments_xml=com,
             template=tm.group(0),
-            next_id=1 + max(int(i) for i in
-                            re.findall(r'<w:comment w:id="(\d+)"', com)),
+            next_id=1 + max(int(i) for i in COMMENT_ID_RE.findall(com)),
             date_utc=utc.group(1) if utc else None)
 
 

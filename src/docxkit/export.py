@@ -25,7 +25,8 @@ from .tables import read_all as _read_tables
 
 __all__ = ["to_markdown"]
 
-_FOOTNOTE_REF_RE = re.compile(r'<w:footnoteReference w:id="(-?\d+)"[^>]*/>')
+_FOOTNOTE_REF_RE = re.compile(
+    r'<w:footnoteReference\b[^>]*w:id="(-?\d+)"[^>]*/>')
 # the shared caption definition, plus the abbreviated form
 _CAPTION_RE = caption_re((*DEFAULT_LABELS, "Fig."))
 _MARKER = "\x00"

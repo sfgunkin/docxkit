@@ -12,6 +12,7 @@ import re
 from ._cite_grammar import bookmark
 from ._xml import (
     BOOKMARK_ID_RE,
+    FLDCHAR_RE,
     own_properties,
 )
 from .edit import _RUN_OPEN_RE
@@ -23,7 +24,6 @@ from .find import para_slice
 # carried its own copy — the second use is what moved them here.
 
 _BOOKMARK_ID_RE = BOOKMARK_ID_RE       # the shared definition
-FLDCHAR_BEGIN_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="begin"')
 
 
 def next_bookmark_id(*xmls: str) -> int:
@@ -79,18 +79,35 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
     itself. An unclosable span is SKIPPED rather than guessed at:
     `xml.find(...) + len(...)` on a miss yields 5, which slices from the
     top of the document, and a splice built on that lands mid-element.
+
+    Fields NEST — Word writes a HYPERLINK inside a REF, and everything
+    inside a TOC — so the end is matched by depth, not by taking the
+    first one after the begin. Taking the first ended the outer field at
+    the INNER field's end: a fragment with two begins and one end, which
+    never reached the content past the nested field. The repair that
+    consumed it then cut there, leaving the outer field's tail and its
+    now-unmatched end marker behind in the document.
+
+    Nested fields are returned alongside their parents, in document
+    order, each with its own correct extent. The callers here all
+    demand a UNIQUE match and raise otherwise, so a nested hit surfaces
+    as a loud "found 2 fields" rather than a quiet half-field splice.
     """
     out: list[tuple[int, int, str]] = []
-    for bm in FLDCHAR_BEGIN_RE.finditer(xml):
-        r_start = _run_open_before(xml, bm.start())
-        e_off = xml.find('w:fldCharType="end"', bm.end())
-        if r_start < 0 or e_off < 0:
-            continue
-        close = xml.find("</w:r>", e_off)
-        if close < 0:
-            continue
-        r_end = close + len("</w:r>")
-        out.append((r_start, r_end, xml[r_start:r_end]))
+    open_marks: list[re.Match[str]] = []
+    for m in FLDCHAR_RE.finditer(xml):
+        kind = m.group(1)
+        if kind == "begin":
+            open_marks.append(m)
+        elif kind == "end" and open_marks:
+            bm = open_marks.pop()
+            r_start = _run_open_before(xml, bm.start())
+            close = xml.find("</w:r>", m.end())
+            if r_start < 0 or close < 0:
+                continue
+            r_end = close + len("</w:r>")
+            out.append((r_start, r_end, xml[r_start:r_end]))
+    out.sort(key=lambda span: (span[0], -span[1]))
     return out
 
 

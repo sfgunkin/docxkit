@@ -25,6 +25,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+from ._xml import BOOKMARK_END_ID_RE, BOOKMARK_START_ID_RE, COMMENT_ID_RE
 from .console import utf8_stdout
 from .errors import DocxKitError
 from .find import P_RE, text_of
@@ -149,12 +150,12 @@ def cmd_inspect(args: argparse.Namespace) -> int:
                if "word/comments.xml" in names else "")
     from .revisions import counts
     ins, dele = counts(doc)
-    starts = re.findall(r'<w:bookmarkStart w:id="(\d+)"', doc)
-    ends = re.findall(r'<w:bookmarkEnd w:id="(\d+)"', doc)
+    starts = BOOKMARK_START_ID_RE.findall(doc)
+    ends = BOOKMARK_END_ID_RE.findall(doc)
     # \b, not ">": an oMath can carry attributes, and the bare-tag form
     # undercounted AFI v13 by two
     omath = len(re.findall(r"<m:oMath[ >]", doc))
-    n_com = len(re.findall(r"<w:comment w:id=", com))
+    n_com = len(COMMENT_ID_RE.findall(com))
     print(f"{Path(args.docx).name}")
     print(f"  parts       {len(names)}")
     print(f"  paragraphs  {len(P_RE.findall(doc))}")

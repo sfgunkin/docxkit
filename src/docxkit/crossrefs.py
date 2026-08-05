@@ -174,14 +174,33 @@ def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
     return re.compile(rf"^\s*({alt})\s+([\w.]+?)\s*[.:]\s")
 
 
+#: What may not follow an exhibit number. THE boundary — :mod:`renumber`
+#: matches mentions too, and a rule that lives in two modules is a rule
+#: that will disagree with itself.
+#:
+#: Rejecting a following DIGIT is what keeps "Table 1" out of "Table 10",
+#: but digits alone are not enough: papers number exhibits "Table 1.1"
+#: and "Table 1A", and against those the digit test passes and the match
+#: lands on a DIFFERENT exhibit. It linked the "Table 1" inside "Table
+#: 1.1", left ".1" as plain text, and then reported Table 1.1 as never
+#: mentioned — and in :mod:`renumber`, which rewrites text, a shift of
+#: Table 1 silently renumbered Table 1.1 along with it.
+#:
+#: The dot is refused only when a word character follows, because the
+#: overwhelmingly common thing after a mention is a full stop: "the
+#: estimates appear in Table 1." must still match.
+NUMBER_END = r"(?!\w)(?!\.\w)"
+
+
 def _mention_re(label: str, number: str) -> re.Pattern[str]:
-    """``Figure 1`` but never ``Figure 10`` — hence the lookahead.
+    """``Figure 1`` but never ``Figure 10``, ``Figure 1.1`` or ``Figure 1A``.
 
     Case-insensitive: prose writes "table 1" and «таблице 1» as readily
     as the capitalised form.
     """
     form = LABEL_FORMS.get(label, re.escape(label) + "s?")
-    return re.compile(rf"\b{form}\s+{re.escape(number)}(?!\d)", re.IGNORECASE)
+    return re.compile(rf"\b{form}\s+{re.escape(number)}{NUMBER_END}",
+                      re.IGNORECASE)
 
 
 def _next_bookmark_id(xml: str, others: Sequence[str] = ()) -> int:
@@ -610,7 +629,7 @@ def _continuation_re(label: str, number: str) -> re.Pattern[str]:
     form = LABEL_FORMS.get(label, re.escape(label) + "s?")
     return re.compile(
         rf"\b{form}\s+[\wА-я.]+[^.;:()]{{0,30}}?"
-        rf"(?:\band\b|\bto\b|[–—,-])\s*({re.escape(number)})(?!\d)",
+        rf"(?:\band\b|\bto\b|[–—,-])\s*({re.escape(number)}){NUMBER_END}",
         re.IGNORECASE)
 
 

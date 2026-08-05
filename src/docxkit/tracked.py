@@ -37,6 +37,7 @@ from typing import Any
 from . import comments as _comments
 from . import guard as _guard
 from . import word as _word
+from ._xml import COMMENT_ID_RE
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
@@ -61,7 +62,9 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
     return {
         "insertions": doc_xml.count("<w:ins "),
         "deletions": doc_xml.count("<w:del "),
-        "comments": com_xml.count("<w:comment w:id="),
+        # not count("<w:comment w:id=") — attribute order is not
+        # meaningful in XML, and the id-second form counted as zero
+        "comments": len(COMMENT_ID_RE.findall(com_xml)),
     }
 
 

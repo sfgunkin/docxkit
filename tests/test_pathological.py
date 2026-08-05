@@ -23,6 +23,9 @@ tidy case:
 * a FORMATTING-only revision — the old properties survive as a
   snapshot nested in the new ones, with no content marker to
   find, so a writer edited the past and left the present bare;
+* ``w:id`` written second — attribute order means nothing in XML,
+  and the patterns that hard-coded it matched nothing at all;
+* a NESTED field — the outer field closed on the inner one's end;
 * the same on a paragraph and on a run — ``<w:pPr>.*?</w:pPr>``
   closes on the snapshot, so five modules read a properties
   element cut in half: one copied the fragment into a rebuilt run
@@ -33,6 +36,8 @@ parses, and the visible text survives unless the operation is defined to
 change it.
 """
 from __future__ import annotations
+
+import re
 
 import pytest
 from conftest import NS
@@ -174,7 +179,44 @@ RUN_PROPERTY_CHANGE = doc(
       '<w:t xml:space="preserve">Table 2. Estimates</w:t></w:r>'),
     p(r("See Table 2 for the detail.")))
 
+#: Attribute order carries no meaning in XML, so `w:id` need not come
+#: first — and every pattern that assumed it did matched NOTHING here.
+#: The comment count read zero and the scaffold builder died on max() of
+#: an empty sequence; compare's integrity layer found no bookmarks at
+#: all, which it reports as balanced.
+ATTRIBUTE_ORDER = doc(
+    p('<w:bookmarkStart w:name="Table1" w:id="4"/>',
+      '<w:commentRangeStart w:id="0"/>',
+      r("Table 1. Results"),
+      '<w:commentRangeEnd w:id="0"/>',
+      '<w:r><w:commentReference w:id="0"/></w:r>',
+      '<w:bookmarkEnd w:id="4"/>'),
+    p(r("See Table 1.")))
+
+#: Fields NEST: Word writes a HYPERLINK inside a REF and anything at all
+#: inside a TOC. Ending the outer field at the first `end` after its
+#: `begin` closed it on the INNER field, yielding a fragment with two
+#: begins and one end that never reached the content past the nest.
+NESTED_FIELD = doc(
+    p(r("see "),
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+      '<w:r><w:instrText xml:space="preserve"> REF Table1 \\h </w:instrText>'
+      "</w:r>"
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+      '<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc9 </w:instrText>'
+      "</w:r>"
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+      "<w:r><w:t>12</w:t></w:r>"
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+      "<w:r><w:t>Table 1</w:t></w:r>"
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+      r(" above")),
+    p(r("Table 1. Results")))
+
 CORPUS = {
+    "attribute_order": ATTRIBUTE_ORDER,
+    "nested_field": NESTED_FIELD,
     "ghost_hyperlink": GHOST_HYPERLINK,
     "property_change": PROPERTY_CHANGE_CELL,
     "property_change_para": PARAGRAPH_PROPERTY_CHANGE,
@@ -423,6 +465,105 @@ def test_own_properties_reads_the_element_not_the_snapshot_or_the_nest():
              '<w:pPr><w:jc w:val="left"/></w:pPr></w:pPrChange>')
     assert live_properties(inner) == centred
     assert live_properties(centred) == centred
+
+
+def test_a_prefix_number_never_links_a_longer_one():
+    """"Table 1" is not the "Table 1" inside "Table 1.1" or "Table 1A".
+
+    Refusing a following DIGIT keeps Table 1 out of Table 10 but not out
+    of these: the match landed on a DIFFERENT exhibit, left the rest of
+    its number as plain text, and then reported that exhibit as never
+    mentioned. The reproduction linked Table 1 and orphaned ".1".
+    """
+    from docxkit import crossrefs
+
+    d = doc(p(r("Table 1. Overall")), p(r("Table 1.1. Subsample")),
+            p(r("Table 1A. Appendix")), p(r("Table 10. Robustness")),
+            p(r("See Table 1.1, Table 1A, Table 10 and Table 1.")))
+    out, rep = crossrefs.link(d)
+    assert not rep.no_mention, rep.format()
+    linked = dict(re.findall(
+        r'<w:hyperlink w:anchor="([^"]+?)(?:txt)?">.*?<w:t[^>]*>([^<]+)</w:t>',
+        out))
+    for anchor, text in (("Table1", "Table 1"), ("Table1_1", "Table 1.1"),
+                         ("Table1A", "Table 1A"), ("Table10", "Table 10")):
+        assert linked.get(anchor) == text, (anchor, linked)
+
+
+def test_a_mention_still_ends_at_a_full_stop():
+    """The boundary refuses "1.1" without refusing "1." — by far the
+    commonest thing after a mention is the end of the sentence."""
+    from docxkit import crossrefs
+    _, rep = crossrefs.link(
+        doc(p(r("Table 1. Overall")), p(r("The estimates are in Table 1."))))
+    assert not rep.no_mention, rep.format()
+
+
+def test_ids_are_read_whatever_order_the_attributes_come_in():
+    """`<w:comment w:author="A" w:id="7">` is as valid as the id-first
+    form. Reading it as zero comments is not a cosmetic miscount: the
+    scaffold builder took max() of an empty sequence and raised."""
+    from docxkit._xml import BOOKMARK_END_ID_RE, BOOKMARK_START_ID_RE
+    from docxkit.comments import _Scaffold
+    from docxkit.tracked import package_counts
+
+    com = ('<w:comments><w:comment w:author="A" w:id="7" '
+           'w:date="2026-01-01T00:00:00Z" w:initials="A">'
+           "<w:p><w:r><w:t>note</w:t></w:r></w:p></w:comment></w:comments>")
+    parts = {"word/document.xml": ATTRIBUTE_ORDER.encode("utf-8"),
+             "word/comments.xml": com.encode("utf-8")}
+
+    assert package_counts(parts)["comments"] == 1
+    assert _Scaffold.read(parts).next_id == 8
+    assert BOOKMARK_START_ID_RE.findall(ATTRIBUTE_ORDER) == ["4"]
+    assert BOOKMARK_END_ID_RE.findall(ATTRIBUTE_ORDER) == ["4"]
+
+
+def test_a_nested_field_does_not_close_its_parent():
+    """Depth, not the first end tag after the begin.
+
+    The truncated outer span had two begins and one end and stopped
+    short of the nested field's sibling content — so the repair that
+    consumed it cut there, leaving the outer field's tail and its
+    unmatched end marker behind.
+    """
+    from docxkit._cite_repair import field_spans
+
+    spans = field_spans(NESTED_FIELD)
+    assert len(spans) == 2
+    outer, inner = spans                       # document order, outer first
+    assert outer[0] < inner[0] and outer[1] > inner[1]
+    for *_, body in spans:
+        assert body.count('w:fldCharType="begin"') == \
+            body.count('w:fldCharType="end"'), body
+    assert "Table 1" in visible_text(outer[2])   # reaches past the nest
+    assert "Table 1" not in visible_text(inner[2])
+
+
+def test_removing_an_outer_field_leaves_no_half_field_behind():
+    from docxkit._cite_repair import remove_outer_field
+
+    xml = doc(p(
+        r("see "),
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> HYPERLINK "http://dead" '
+        "</w:instrText></w:r>"
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc9 </w:instrText>'
+        "</w:r>"
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        "<w:r><w:t>12</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        '<w:hyperlink w:anchor="Smith2020"><w:r><w:t>Smith (2020)</w:t>'
+        "</w:r></w:hyperlink>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+        r(" here")))
+    out = remove_outer_field(xml, "http://dead", "Smith2020")
+    parses(out)
+    assert visible_text(out) == "see Smith (2020) here"
+    for marker in ("fldChar", "instrText"):
+        assert marker not in out, marker
 
 
 def test_an_nbsp_cell_is_not_treated_as_empty_whitespace():

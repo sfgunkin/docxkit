@@ -55,7 +55,7 @@ MUTATIONS = [
              '"{text[:30]}": {exc}\')',
              "        pass  # mutation"),
     Mutation("tracked.py", "package_counts stops counting comments",
-             '        "comments": com_xml.count("<w:comment w:id="),',
+             '        "comments": len(COMMENT_ID_RE.findall(com_xml)),',
              '        "comments": 0,'),
     # --- the write gate -------------------------------------------------
     Mutation("package.py", "malformed XML may be written again",
@@ -142,6 +142,25 @@ MUTATIONS = [
              "    m = _PROPERTY_CHANGE_RE.search(inner)\n"
              "    return inner if m is None else inner[:m.start()]",
              "    return inner"),
+    # --- exhibit mentions -----------------------------------------------
+    Mutation("crossrefs.py",
+             "a mention boundary rejects digits only, so Table 1 "
+             "matches inside Table 1.1",
+             r'NUMBER_END = r"(?!\w)(?!\.\w)"',
+             r'NUMBER_END = r"(?!\d)"'),
+    # --- attribute order -------------------------------------------------
+    Mutation("_xml.py",
+             "an id is only found when it is the first attribute",
+             r"""COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')""",
+             r"""COMMENT_ID_RE = re.compile(r'<w:comment w:id="(\d+)"')"""),
+    # --- fields ----------------------------------------------------------
+    Mutation("_cite_repair.py",
+             "a field ends at the first end tag, so a nested field "
+             "closes its parent",
+             '        elif kind == "end" and open_marks:\n'
+             "            bm = open_marks.pop()",
+             '        elif kind == "end" and open_marks:\n'
+             "            bm = open_marks.pop(0)"),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",

@@ -25,7 +25,7 @@ __all__ = ["Footnote", "append", "find", "find_all", "remap", "renumber_map"]
 
 _FOOTNOTE_RE = re.compile(r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)'
                           r"</w:footnote>", re.DOTALL)
-_REFERENCE_RE = re.compile(r'(w:footnoteReference w:id=")(-?\d+)(")')
+_REFERENCE_RE = re.compile(r'(w:footnoteReference\b[^>]*?w:id=")(-?\d+)(")')
 # Word's own separator/continuation notes, present in every document
 _RESERVED_IDS = {"0", "-1"}
 

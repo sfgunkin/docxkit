@@ -15,7 +15,10 @@ import html
 import re
 
 __all__ = [
+    "BOOKMARK_END_ID_RE",
     "BOOKMARK_ID_RE",
+    "BOOKMARK_START_ID_RE",
+    "COMMENT_ID_RE",
     "FLDCHAR_RE",
     "GLYPH_MAP",
     "PARA_RE",
@@ -66,8 +69,17 @@ T_PARTS_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
 # `<w:rPr` INSIDE a styled run, and a field-boundary scan that cut there
 # split the XML mid-element and produced a file Word would not open.
 RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*>")
-# A bookmark id, on either end of the pair.
+# A bookmark id, on either end of the pair, and each end on its own.
+# `[^>]*` before every w:id here is load-bearing, not defensive noise:
+# XML attribute order carries no meaning, so `<w:comment w:author="A"
+# w:id="7">` is exactly as valid as the id-first form Word happens to
+# write. Patterns that hard-coded the order silently matched NOTHING on
+# a conforming document — the comment count read zero, and building a
+# comment scaffold died on max() of an empty sequence.
 BOOKMARK_ID_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
+BOOKMARK_START_ID_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:id="(\d+)"')
+BOOKMARK_END_ID_RE = re.compile(r'<w:bookmarkEnd\b[^>]*w:id="(\d+)"')
+COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
 # A field character, which is how Word writes a HYPERLINK before it
 # churns to element form on the next save.
 FLDCHAR_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="(\w+)"')

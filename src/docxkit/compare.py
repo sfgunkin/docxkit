@@ -51,7 +51,7 @@ from difflib import SequenceMatcher
 # each kept their own copy they drifted apart on U+00A0, so this
 # gate called a non-breaking-space change a Word artifact while
 # ingest treated the same change as an author edit.
-from ._xml import GLYPH_MAP, normalize_glyphs
+from ._xml import BOOKMARK_END_ID_RE, GLYPH_MAP, normalize_glyphs
 
 # ----------------------------------------------------------------- extraction
 P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
@@ -232,8 +232,13 @@ def stripped_fields(pa: Para, pb: Para):
 # ----------------------------------------------------------------- integrity
 def integrity(xml: str, label: str):
     issues = []
-    bs = re.findall(r'<w:bookmarkStart w:id="(\d+)"(?:\s+w:name="([^"]*)")?', xml)
-    be = re.findall(r'<w:bookmarkEnd w:id="(\d+)"', xml)
+    # `\b[^>]*` before each w:id: attribute order is not meaningful in
+    # XML, and hard-coding it made the INTEGRITY layer find no bookmarks
+    # at all on a conforming document — which reads as "balanced".
+    bs = re.findall(
+        r'<w:bookmarkStart\b[^>]*w:id="(\d+)"[^>]*?(?:\s+w:name="([^"]*)")?',
+        xml)
+    be = BOOKMARK_END_ID_RE.findall(xml)
     sc, ec = Counter(i for i, _ in bs), Counter(be)
     imbalance = [i for i in set(sc) | set(ec) if sc[i] != ec[i]]
     if imbalance:

@@ -33,7 +33,7 @@ __all__ = [
     "update_overrides",
 ]
 
-_FN_RE = re.compile(r'(w:footnoteReference w:id=")(\d+)(")')
+_FN_RE = re.compile(r'(w:footnoteReference\b[^>]*?w:id=")(\d+)(")')
 
 _cat = visible_text
 
@@ -72,7 +72,8 @@ def _footnote_remap(user_foot: str, build_foot: str) -> dict[str, str]:
     """
     def defs(f: str) -> dict[str, str]:
         return {i: _cat(m) for i, m in re.findall(
-            r'<w:footnote w:id="(-?\d+)">(.*?)</w:footnote>', f, re.DOTALL)}
+            r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>',
+            f, re.DOTALL)}
 
     ud, bd = defs(user_foot), defs(build_foot)
     return {ui: bi for ui, ut in ud.items() for bi, bt in bd.items()
