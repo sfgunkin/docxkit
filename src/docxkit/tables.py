@@ -47,25 +47,31 @@ from ._table_layout import _SPAN_RE as _SPAN_RE
 
 # re-exported from _table_layout: `as` marks it deliberate, or
 # ruff --fix strips it and the papers stop importing
+from ._table_layout import BooktabsPlan as BooktabsPlan
 from ._table_layout import ColumnFit as ColumnFit
 from ._table_layout import FitReport as FitReport
 from ._table_layout import _bump as _bump
 from ._table_layout import _const as _const
 from ._table_layout import _round_to as _round_to
+from ._table_layout import booktabs as booktabs
 from ._table_layout import bottom_border as bottom_border
 from ._table_layout import fit_columns as fit_columns
+from ._table_layout import plan_booktabs as plan_booktabs
 from ._table_layout import superscript_stars as superscript_stars
 
 __all__ = [
+    "BooktabsPlan",
     "CellChange",
     "ColumnFit",
     "FitReport",
     "Table",
+    "booktabs",
     "bottom_border",
     "by_caption",
     "find",
     "fit_columns",
     "parse_number",
+    "plan_booktabs",
     "read_all",
     "set_cell",
     "superscript_stars",

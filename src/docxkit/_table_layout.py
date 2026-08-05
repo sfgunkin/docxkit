@@ -570,3 +570,180 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
     return xml[:table.start] + body + xml[table.end:], len(edits)
+
+
+# ------------------------------------------------ three-line (booktabs) ----
+# The academic house style: no vertical rules, no box, and horizontal
+# rules only where they carry meaning —
+#
+#   top       a single rule above the header
+#   cmidrule  a PARTIAL rule under a spanning group head, covering only
+#             that group's columns, so the reader sees what belongs to it
+#   mid       a single rule closing the header block
+#   panel     a single rule between stacked panels (Kyrgyzstan /
+#             Turkmenistan / Uzbekistan) — strict three-line forbids it,
+#             but a 48-row table without one is unreadable, and it is
+#             ordinary booktabs practice
+#   stats     a single rule above the summary block (N, F, clusters)
+#   bottom    a DOUBLE rule, this house's variation on \bottomrule
+#
+# Everything else is cleared, which is most of the work: these tables
+# arrived with rules stacked three deep at the top, headers that were
+# never closed, and panel rules in some tables but not others.
+
+_SIDES = ("top", "bottom", "left", "right")
+_EDGE_RE = re.compile(r"<w:tcBorders>.*?</w:tcBorders>", re.DOTALL)
+#: rows whose label marks the summary block rather than an estimate
+_STATS_RE = re.compile(
+    r"^\s*(?:number of observations|observations|n(?:um)?\.?\s*(?:of\s*)?"
+    r"obs|sample size|r-?squared|r²|adj\.?\s*r|f-?stat|first[- ]stage|"
+    r"clusters?|oblast clusters|wild p|mean of|log likelihood)\b",
+    re.IGNORECASE)
+
+
+def _edges(spec: dict[str, tuple[str, int]]) -> str:
+    """A ``w:tcBorders`` element from ``{side: (val, sz)}``."""
+    inner = "".join(
+        f'<w:{side} w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+        for side in _SIDES if (pair := spec.get(side))
+        for val, sz in [pair])
+    return f"<w:tcBorders>{inner}</w:tcBorders>"
+
+
+def _with_edges(cell: str, spec: dict[str, tuple[str, int]]) -> str:
+    """`cell` carrying exactly `spec` — every other edge explicitly nil.
+
+    Explicit rather than absent: an omitted edge inherits whatever the
+    table style says, and these manuscripts are full of styles that draw
+    a box.
+    """
+    full = {side: spec.get(side, ("nil", 0)) for side in _SIDES}
+    borders = _edges(full)
+    if "<w:tcBorders>" in cell:
+        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
+    if "<w:tcPr>" in cell:
+        at = min(p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
+                             cell.find("<w:vAlign"), cell.find("</w:tcPr>"))
+                 if p != -1)
+        return cell[:at] + borders + cell[at:]
+    return cell.replace("<w:tc>", f"<w:tc><w:tcPr>{borders}</w:tcPr>", 1)
+
+
+class BooktabsPlan(NamedTuple):
+    """Which rows carry which rule. Inferred, but overridable — a table
+    the inference reads wrongly should be stated, not fought."""
+
+    header_rows: int             # leading rows forming the header block
+    group_rows: list[int]        # header rows carrying spanning heads
+    panel_rows: list[int]        # rows that open a stacked panel
+    stats_rows: list[int]        # rows that open a summary block
+
+
+def plan_booktabs(table: Table) -> BooktabsPlan:
+    """Read a table's shape: header block, panels, summary block.
+
+    The header is the run of leading rows with an EMPTY first cell —
+    every one of these papers labels its stub column only from the first
+    data row down. A panel row has a label and no values beside it. The
+    summary block starts at the first trailing row whose label names a
+    statistic rather than a regressor.
+    """
+    rows = table.rows
+    header = 0
+    while header < len(rows) and not (rows[header][:1] or [""])[0].strip():
+        header += 1
+    header = max(header, 1)
+
+    # A header row that SPANS carries fewer cells than the table is
+    # wide. The last header row gets the full mid rule instead, so it
+    # is never a cmidrule row however it is built.
+    width = max((len(r) for r in rows), default=0)
+    groups = [i for i in range(header - 1)
+              if len(rows[i]) < width and any(c.strip() for c in rows[i])]
+
+    def label_of(i: int) -> str:
+        return (rows[i][:1] or [""])[0].strip()
+
+    panels, stats = [], []
+    for i in range(header, len(rows)):
+        label = label_of(i)
+        rest = [c for c in rows[i][1:] if c.strip()]
+        # a panel opens with a label and no values beside it — but two
+        # such rows in a row are a heading and its first panel ("Panel A"
+        # then "Kyrgyzstan"), and a rule between them rules off nothing
+        if (label and not rest and i != len(rows) - 1
+                and not (i > header and not [c for c in rows[i - 1][1:]
+                                             if c.strip()]
+                         and label_of(i - 1))):
+            panels.append(i)
+        # every summary block, not just the last: a panelled table
+        # repeats N and the cluster count under each panel
+        if label and _STATS_RE.match(label) and not (
+                i > header and _STATS_RE.match(label_of(i - 1))):
+            stats.append(i)
+    return BooktabsPlan(header, groups, panels, stats)
+
+
+def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
+             rule: int = 4, bottom: str = "double"
+             ) -> tuple[str, BooktabsPlan]:
+    """Set `table` in three-line academic style.
+
+    Clears every existing rule, then draws only the ones that carry
+    meaning (see the note above this function). `bottom` is the house
+    variation: a DOUBLE rule closes the table where booktabs proper
+    draws a thick single one.
+
+    Pass `plan` to state the shape when :func:`plan_booktabs` reads it
+    wrongly — a table whose stub column is filled from the first row, for
+    instance, has no empty-labelled header to detect.
+    """
+    _fresh(xml, table, "booktabs")
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - rule the "
+            f"clean build and rebuild the redline from it")
+    shape = plan or plan_booktabs(table)
+    trs = list(_TR_RE.finditer(body))
+    if not trs:
+        raise AnchorError(f"table {table.index} has no rows")
+
+    edits: list[tuple[int, int, str]] = []
+    for i, tr in enumerate(trs):
+        cells = list(_TC_RE.finditer(tr.group(0)))
+        spanned = _group_columns(cells) if i in shape.group_rows else []
+        for j, tc in enumerate(cells):
+            spec: dict[str, tuple[str, int]] = {}
+            if i == 0:
+                spec["top"] = ("single", rule)
+            if i == shape.header_rows - 1:
+                spec["bottom"] = ("single", rule)
+            elif i in shape.group_rows and j in spanned:
+                # the cmidrule: only under the cells that span
+                spec["bottom"] = ("single", rule)
+            if i in shape.panel_rows or i in shape.stats_rows:
+                spec["top"] = ("single", rule)
+            if i == len(trs) - 1:
+                spec["bottom"] = (bottom, rule)
+            new = _with_edges(tc.group(0), spec)
+            if new != tc.group(0):
+                edits.append((tr.start() + tc.start(),
+                              tr.start() + tc.end(), new))
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return xml[:table.start] + body + xml[table.end:], shape
+
+
+def _group_columns(cells: list[re.Match[str]]) -> set[int]:
+    """Which cells of a header row actually span a group of columns.
+
+    The stub cell and any empty spacer do not get a cmidrule — a rule
+    under an empty cell is a rule under nothing.
+    """
+    out = set()
+    for j, tc in enumerate(cells):
+        span = _SPAN_RE.search(tc.group(0))
+        if span and int(span.group(1)) > 1 and _cell_text(tc.group(0)):
+            out.add(j)
+    return out

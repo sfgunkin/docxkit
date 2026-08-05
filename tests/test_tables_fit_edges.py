@@ -409,3 +409,129 @@ def test_the_package_ships_the_py_typed_marker():
 
     import docxkit
     assert (Path(docxkit.__file__).parent / "py.typed").is_file()
+
+
+# ------------------------------------------- three-line (booktabs) style --
+
+
+def _regression_table() -> str:
+    """A group head over two columns, a sub-head, two country panels,
+    and a summary block — the shape every results table here has."""
+    rows = [
+        "<w:tr>" + cell(frun(""), w=2000)
+        + cell(frun("OLS Regression"), w=1600, span=2) + "</w:tr>",
+        "<w:tr>" + cell(frun(""), w=2000) + cell(frun("Coeff."), w=800)
+        + cell(frun("Std.Err"), w=800) + "</w:tr>",
+    ]
+    for label, a, b in (("Kyrgyzstan", "", ""),
+                        ("Child's age", "0.054", "0.005"),
+                        ("Turkmenistan", "", ""),
+                        ("Child's age", "0.006", "0.004"),
+                        ("Number of observations", "3,168", "")):
+        rows.append("<w:tr>" + cell(frun(label), w=2000)
+                    + cell(frun(a), w=800) + cell(frun(b), w=800)
+                    + "</w:tr>")
+    return doc(tbl([2000, 800, 800], *rows))
+
+
+def _row_edges(xml: str) -> list[list[str]]:
+    """The non-nil edges of each row, as `side:val` strings."""
+    out = []
+    for tr in re.findall(r"<w:tr>.*?</w:tr>", xml, re.DOTALL):
+        edges = []
+        for side, val in re.findall(
+                r'<w:(top|bottom) w:val="(\w+)"', tr):
+            if val != "nil":
+                edges.append(f"{side}:{val}")
+        out.append(sorted(set(edges)))
+    return out
+
+
+def test_the_plan_reads_the_shape_of_a_results_table():
+    from docxkit.tables import plan_booktabs
+    t = read_all(_regression_table())[0]
+    plan = plan_booktabs(t)
+    assert plan.header_rows == 2          # the two rows with no stub label
+    assert plan.group_rows == [0]         # "OLS Regression" spans
+    assert plan.panel_rows == [2, 4]      # the two country rows
+    assert plan.stats_rows == [6]         # "Number of observations"
+
+
+def test_three_line_style_draws_exactly_the_meaningful_rules():
+    from docxkit.tables import booktabs
+    xml = _regression_table()
+    out, _ = booktabs(xml, read_all(xml)[0])
+    edges = _row_edges(out)
+    assert "top:single" in edges[0]            # top rule
+    assert "bottom:single" in edges[0]         # cmidrule under the group
+    assert "bottom:single" in edges[1]         # mid rule closes the header
+    assert "top:single" in edges[2]            # panel
+    assert edges[3] == []                      # a data row carries nothing
+    assert "top:single" in edges[4]            # the second panel
+    assert "top:single" in edges[6]            # above the summary block
+    assert "bottom:double" in edges[6]         # and the double bottom
+
+
+def test_the_partial_rule_covers_only_the_spanning_cells():
+    """A cmidrule under the stub column would be a rule under nothing."""
+    from docxkit.tables import booktabs
+    xml = _regression_table()
+    out, _ = booktabs(xml, read_all(xml)[0])
+    first = re.findall(r"<w:tr>.*?</w:tr>", out, re.DOTALL)[0]
+    cells = re.findall(r"<w:tc>.*?</w:tc>", first, re.DOTALL)
+    def bottom_of(cell: str) -> str:
+        m = re.search(r"<w:bottom [^>]*/>", cell)
+        assert m is not None, "every cell states its edges explicitly"
+        return m.group(0)
+
+    assert 'w:val="nil"' in bottom_of(cells[0])       # the stub: no rule
+    assert 'w:val="single"' in bottom_of(cells[1])    # the group: ruled
+
+
+def test_every_other_rule_is_cleared():
+    """The tables arrived with rules stacked three deep; the style is
+    defined by what it removes as much as by what it draws."""
+    from docxkit.tables import booktabs
+    xml = _regression_table()
+    # a table boxed on every edge
+    boxed = xml.replace(
+        '<w:tcPr><w:tcW w:w="800" w:type="dxa"/></w:tcPr>',
+        '<w:tcPr><w:tcW w:w="800" w:type="dxa"/><w:tcBorders>'
+        '<w:top w:val="single"/><w:bottom w:val="single"/>'
+        '<w:left w:val="single"/><w:right w:val="single"/>'
+        "</w:tcBorders></w:tcPr>")
+    out, _ = booktabs(boxed, read_all(boxed)[0])
+    left = re.search(r"<w:left [^>]*/>", out)
+    assert left is not None
+    assert 'w:val="single"' not in left.group(0)      # no vertical rules
+    assert _row_edges(out)[3] == []                   # data row is bare
+
+
+def test_three_line_style_is_idempotent():
+    from docxkit.tables import booktabs
+    xml = _regression_table()
+    once, _ = booktabs(xml, read_all(xml)[0])
+    twice, _ = booktabs(once, read_all(once)[0])
+    assert twice == once
+
+
+def test_the_style_preserves_every_value():
+    from docxkit.tables import booktabs
+    xml = _regression_table()
+    out, _ = booktabs(xml, read_all(xml)[0])
+    assert read_all(out)[0].rows == read_all(xml)[0].rows
+    from lxml import etree
+    etree.fromstring(out.encode("utf-8"))
+
+
+def test_a_stated_plan_overrides_the_inference():
+    """A table whose stub column is filled from the first row has no
+    empty-labelled header to detect; the caller says so instead."""
+    from docxkit.tables import BooktabsPlan, booktabs
+    xml = _regression_table()
+    plan = BooktabsPlan(header_rows=1, group_rows=[], panel_rows=[],
+                        stats_rows=[])
+    out, used = booktabs(xml, read_all(xml)[0], plan=plan)
+    assert used is plan
+    assert "bottom:single" in _row_edges(out)[0]      # header closes at r0
+    assert _row_edges(out)[2] == []                   # no panel rule now

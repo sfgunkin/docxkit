@@ -96,6 +96,15 @@ MUTATIONS = [
     Mutation("_table_layout.py", "already-raised stars are wrapped again",
              '        if m is None or "<w:vertAlign" in last.group(0):',
              "        if m is None:"),
+    Mutation("_table_layout.py",
+             "a cmidrule is drawn under every cell, not just the span",
+             "            elif i in shape.group_rows and j in spanned:",
+             "            elif i in shape.group_rows:"),
+    Mutation("_table_layout.py",
+             "the three-line style stops clearing the rules it replaces",
+             "    full = {side: spec.get(side, (\"nil\", 0)) "
+             "for side in _SIDES}",
+             "    full = dict(spec)"),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",
