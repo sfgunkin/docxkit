@@ -37,13 +37,16 @@ from .revisions import _fragment_declarations
 __all__ = [
     "OMATH_RE",
     "Equation",
+    "ProseMath",
     "clone",
     "display_equations",
+    "document_symbols",
     "equations",
     "find_mml2omml_xsl",
     "harvest",
     "is_display",
     "latex_to_omml",
+    "prose_math",
     "skeleton",
     "to_latex",
     "tokens",
@@ -520,3 +523,137 @@ def is_display(para_xml: str) -> bool:
 def display_equations(xml: str) -> list[re.Match[str]]:
     """Paragraph matches for every display equation, in body order."""
     return [m for m in PARA_RE.finditer(xml) if is_display(m.group(0))]
+
+
+# ------------------------------------------------- math typed as prose ----
+# House rule: a symbol or expression that belongs to the model is an
+# <m:oMath>, not letters in the body font. Two things go wrong when it is
+# not — the symbol renders in a different face from the equation it comes
+# from, and half-expressions appear, where the SYMBOL is math and the
+# relation beside it is prose ("θᵢ" as OMML, "=0" as text).
+#
+# Precision comes from the document itself: the symbols inside its own
+# equations are the paper's symbols, so those characters appearing in
+# prose are unformatted math rather than ordinary words. That is why this
+# does not carry a fixed vocabulary — a paper that never writes θ never
+# gets a θ finding.
+
+#: Greek letters, and the glyphs that are mathematical wherever they
+#: appear — REUSING the tables to_latex already keeps, because a second
+#: copy of a symbol table is a copy that will disagree with the first.
+#: (Defining a private `_GREEK` set here shadowed the dict above and
+#: broke to_latex; the tests caught it, which is the argument for not
+#: writing the table twice.)
+#:
+#: Latin letters are deliberately NOT harvested: "C" is a variable in
+#: half these papers and an ordinary word-letter everywhere else, and
+#: flagging it would bury every real finding.
+_PROSE_GREEK = frozenset(_GREEK)
+_MATH_GLYPHS = frozenset(_SYMBOLS) | frozenset(_NARY)
+#: Unicode sub/superscripts — "poor man's math", typed instead of built.
+_SUB_SUP = set("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ"
+               "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ")
+#: A relation that continues an expression the symbol started.
+_RELATION = "=<>≤≥≠≈∈∉"
+_INTERVAL_RE = re.compile(r"[\[(]\s*-?[\d.]+\s*,\s*-?[\d.]+\s*[\])]")
+# capture the WHOLE operand, not its first character: a finding
+# that reads "cmax = 1" when the text says "cmax = 100" sends a
+# reader hunting for something that is not there
+_TRAILING_RE = re.compile(rf"^\s*([{_RELATION}])\s*([\w.,*+-]+)")
+_LEADING_RE = re.compile(rf"([\w.,*+-]+)\s*([{_RELATION}])\s*$")
+
+
+@dataclass(frozen=True)
+class ProseMath:
+    """One symbol or expression sitting in prose instead of in OMML."""
+
+    kind: str          # "split expression" | "symbol" | "typed script" ...
+    para: int          # 1-based paragraph number
+    symbol: str        # what was found
+    context: str       # the surrounding words, for locating it
+
+    def __str__(self) -> str:
+        return (f"{self.kind.upper()}: {self.symbol!r} (¶{self.para}) "
+                f"— …{self.context}…")
+
+
+def document_symbols(xml: str) -> set[str]:
+    """The Greek letters and math glyphs this document's OMML uses.
+
+    The paper's own vocabulary, which is what makes the audit precise:
+    a character is only "unformatted math" if the document typesets it
+    as math somewhere else.
+    """
+    used: set[str] = set()
+    for m in OMATH_RE.finditer(xml):
+        for t in MT_RE.findall(m.group(0)):
+            used |= {c for c in html.unescape(t)
+                     if c in _PROSE_GREEK or c in _MATH_GLYPHS}
+    return used
+
+
+def prose_math(xml: str, *, symbols: set[str] | None = None
+               ) -> list[ProseMath]:
+    """Symbols and expressions typeset as prose rather than as OMML.
+
+    Ordered by how certain the finding is: an expression cut in half by
+    the run boundary first, then math typed with Unicode sub/superscripts,
+    then the paper's own symbols loose in a sentence, then interval
+    notation beside an equation.
+
+    Deliberately NOT reported: a bare ``=`` between plain words and a
+    number. "p = 0.012" and "(mean Gini = 64.6)" are statistics prose,
+    and a rule that flags them is a rule nobody runs twice.
+    """
+    from ._xml import PARA_RE, visible_text
+
+    known = document_symbols(xml) if symbols is None else symbols
+    out: list[ProseMath] = []
+    for i, pm in enumerate(PARA_RE.finditer(xml), 1):
+        para = pm.group(0)
+        maths = list(OMATH_RE.finditer(para))
+        # the sentinel must sit INSIDE a w:t, or visible_text drops
+        # it and the pieces stop lining up with the equations
+        prose = visible_text(OMATH_RE.sub("<w:t>\u0000</w:t>", para))
+        pieces = prose.split("\u0000")
+
+        # 1. an expression split across the OMML boundary
+        for k, math in enumerate(maths):
+            after = pieces[k + 1] if k + 1 < len(pieces) else ""
+            before = pieces[k] if k < len(pieces) else ""
+            sym = visible_text(math.group(0))
+            if (m := _TRAILING_RE.match(after)):
+                out.append(ProseMath(
+                    "split expression", i, f"{sym}{m.group(0).rstrip()}",
+                    (before[-36:] + sym + after[:36]).strip()))
+            elif (m := _LEADING_RE.search(before)):
+                out.append(ProseMath(
+                    "split expression", i, f"{m.group(0).strip()}{sym}",
+                    (before[-36:] + sym + after[:36]).strip()))
+
+        # 2. math typed with Unicode sub/superscripts
+        for piece in pieces:
+            for ch in sorted(set(piece) & _SUB_SUP):
+                at = piece.index(ch)
+                out.append(ProseMath(
+                    "typed script", i, ch,
+                    piece[max(0, at - 36):at + 36].strip()))
+
+        # 3. the paper's own symbols, loose in a sentence
+        for piece in pieces:
+            for ch in sorted(set(piece) & known):
+                at = piece.index(ch)
+                out.append(ProseMath(
+                    "symbol", i, ch,
+                    piece[max(0, at - 36):at + 36].strip()))
+
+        # 4. interval notation, but only where the paragraph is doing
+        #    maths — a results table full of confidence intervals is not
+        if maths:
+            for piece in pieces:
+                for m in _INTERVAL_RE.finditer(piece):
+                    lo = max(0, m.start() - 36)
+                    out.append(ProseMath(
+                        "interval", i, m.group(0),
+                        piece[lo:m.end() + 36].strip()))
+    return out

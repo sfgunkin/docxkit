@@ -106,6 +106,17 @@ MUTATIONS = [
              "an inverted visible-text span is honoured, duplicating text",
              "    if not 0 <= at <= end <= text_len:",
              "    if False:"),
+    # --- prose math -----------------------------------------------------
+    Mutation("equations.py",
+             "the sentinel stops surviving visible_text, so the pieces "
+             "no longer line up with the equations",
+             'OMATH_RE.sub("<w:t>' + chr(92) + 'u0000</w:t>", para)',
+             'OMATH_RE.sub("", para)'),
+    Mutation("equations.py",
+             "prose math is judged against a fixed vocabulary again",
+             "    known = document_symbols(xml) if symbols is None "
+             "else symbols",
+             "    known = _PROSE_GREEK"),
     # --- cross-references ----------------------------------------------
     Mutation("crossrefs.py", "bookmark ids stop clearing the other parts",
              "    return next_bookmark_id(xml, *others)",

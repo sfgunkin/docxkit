@@ -360,6 +360,33 @@ def cmd_count(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_math(args: argparse.Namespace) -> int:
+    """Symbols and expressions typeset as prose instead of as OMML."""
+    from .equations import document_symbols, prose_math
+    from .package import read_parts
+    doc = read_parts(args.docx)["word/document.xml"].decode("utf-8")
+    findings = prose_math(doc)
+    vocabulary = "".join(sorted(document_symbols(doc)))
+    print(f"{Path(args.docx).name}  (math vocabulary: "
+          f"{vocabulary or 'none — the document typesets no symbols'})")
+    if not findings:
+        print("  clean — every symbol in the text is OMML")
+        return 0
+    order = ["split expression", "typed script", "symbol", "interval"]
+    for kind in order:
+        group = [f for f in findings if f.kind == kind]
+        if not group:
+            continue
+        print(f"\n{kind.upper()} ({len(group)})")
+        for f in group:
+            print(f"  ¶{f.para:<5} {f.symbol!r}")
+            print(f"        …{f.context}…")
+    print(f"\n{len(findings)} finding(s). Advisory: the house rule is that "
+          "a symbol belongs in an\nequation, but only a person can tell a "
+          "model parameter from a label.")
+    return 1 if args.check else 0
+
+
 def cmd_figures(args: argparse.Namespace) -> int:
     """Figures and their alt text; --check gates on missing descriptions."""
     from .figures import alt_texts
@@ -578,6 +605,13 @@ def main() -> None:
                        help="structural checks (no Word needed)")
     p.add_argument("docx")
     p.set_defaults(fn=cmd_lint)
+
+    p = sub.add_parser(
+        "math", help="symbols typeset as prose instead of OMML")
+    p.add_argument("docx")
+    p.add_argument("--check", action="store_true",
+                   help="exit 1 if anything is found")
+    p.set_defaults(fn=cmd_math)
 
     p = sub.add_parser(
         "figures", help="figures and their alt text")
