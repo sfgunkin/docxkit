@@ -110,6 +110,16 @@ MUTATIONS = [
              "one gets a second element beside it",
              r'_EDGE_RE = re.compile(r"<w:tcBorders\b[^>]*/>"',
              r'_EDGE_RE = re.compile(r"(?!x)x"'),
+    Mutation("_table_layout.py",
+             "borders are searched across the whole cell, so a nested "
+             "table's rule is rewritten instead of the outer cell's",
+             "    own = _own_properties(cell)",
+             "\n".join([
+                 "    if _EDGE_RE.search(cell):",
+                 "        return _EDGE_RE.sub(lambda _: borders, cell,",
+                 "                            count=1)",
+                 "    own = _own_properties(cell)",
+             ])),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",

@@ -677,3 +677,66 @@ def test_the_style_reaches_every_cell_of_a_row_with_a_nested_table():
     assert first_left is not None
     assert 'w:val="single"' not in first_left.group(0)
     assert out.count('<w:bottom w:val="double"') == 2   # both outer cells
+
+
+# ----------------------------- the OUTER cell's own properties only -------
+
+
+def _outer_with_nested(outer_props: str) -> str:
+    """A cell whose nested table HAS borders while the outer cell may
+    not — the shape that made a whole-string search rewrite the wrong
+    element."""
+    nested = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="400"/>'
+              "</w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders>"
+              '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              "</w:tcBorders></w:tcPr><w:p><w:r><w:t>in</w:t></w:r></w:p>"
+              "</w:tc></w:tr></w:tbl>")
+    return doc('<w:tbl><w:tblPr><w:tblW w:w="900" w:type="dxa"/></w:tblPr>'
+               '<w:tblGrid><w:gridCol w:w="900"/></w:tblGrid>'
+               f"<w:tr><w:tc>{outer_props}{nested}"
+               "<w:p><w:r><w:t>out</w:t></w:r></w:p></w:tc></w:tr></w:tbl>")
+
+
+@pytest.mark.parametrize("outer_props", [
+    '<w:tcPr><w:tcW w:w="900" w:type="dxa"/></w:tcPr>',   # no borders yet
+    "<w:tcPr/>",                                          # empty, valid
+    "",                                                   # none at all
+])
+def test_the_outer_cell_is_ruled_not_the_nested_one(outer_props):
+    """Searching the whole cell string found the NESTED table's borders
+    and rewrote those, leaving the outer cell unruled — a rule drawn on
+    the wrong table, silently."""
+    from docxkit.lint import lint_parts
+    from docxkit.tables import booktabs
+    xml = _outer_with_nested(outer_props)
+    out, _ = booktabs(xml, read_all(xml)[0])
+
+    outer = re.match(r".*?<w:tc>(?:(?!<w:tbl>).)*", out, re.DOTALL)
+    assert outer is not None
+    assert "<w:tcBorders>" in outer.group(0), "the outer cell got no rule"
+    assert 'w:val="double"' in outer.group(0)
+    assert len(re.findall(r"<w:tcPr\b", outer.group(0))) == 1
+    assert not lint_parts({"word/document.xml": out.encode("utf-8")})
+
+
+def test_an_empty_properties_element_is_expanded_not_duplicated():
+    """<w:tcPr/> is valid. Reading it as absent prepended a SECOND
+    properties element beside it."""
+    from docxkit.lint import lint_parts
+    from docxkit.tables import booktabs, bottom_border
+    xml = doc('<w:tbl><w:tblPr><w:tblW w:w="900" w:type="dxa"/></w:tblPr>'
+              '<w:tblGrid><w:gridCol w:w="900"/></w:tblGrid>'
+              "<w:tr><w:tc><w:tcPr/>"
+              "<w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>")
+    for fn in (booktabs, bottom_border):
+        out, _ = fn(xml, read_all(xml)[0])
+        assert len(re.findall(r"<w:tcPr\b", out)) == 1, fn.__name__
+        assert not lint_parts({"word/document.xml": out.encode("utf-8")})
+
+
+def test_lint_reports_a_duplicated_properties_element():
+    from docxkit.lint import lint_parts
+    xml = doc("<w:tbl><w:tr><w:tc><w:tcPr><w:tcBorders/></w:tcPr>"
+              "<w:tcPr/><w:p/></w:tc></w:tr></w:tbl>")
+    problems = lint_parts({"word/document.xml": xml.encode("utf-8")})
+    assert problems and "2 w:tcPr" in problems[0]

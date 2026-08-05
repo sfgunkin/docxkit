@@ -33,6 +33,7 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     T_PARTS_RE,
+    matching_close,
     set_run_text,
 )
 from .errors import AnchorError
@@ -613,22 +614,53 @@ def _edges(spec: dict[str, tuple[str, int]]) -> str:
     return f"<w:tcBorders>{inner}</w:tcBorders>"
 
 
+def _own_properties(cell: str) -> tuple[int, int, str] | None:
+    """``(start, end, inner)`` of the cell's OWN ``w:tcPr``, or None.
+
+    ``CT_Tc`` is ``(tcPr?, block-level content)``, so a cell's
+    properties sit immediately after its open tag and anything found
+    deeper belongs to a NESTED table. Searching the whole cell string
+    instead rewrote the nested table's borders and left the outer cell
+    unruled. Both forms are recognised: an empty ``<w:tcPr/>`` is valid,
+    and treating it as absent prepended a second properties element.
+    """
+    open_tag = re.match(r"<w:tc\b[^>]*>\s*", cell)
+    if open_tag is None:
+        return None
+    pr = re.compile(r"<w:tcPr\b[^>]*?(/?)>").match(cell, open_tag.end())
+    if pr is None:
+        return None
+    if pr.group(1) == "/":
+        return pr.start(), pr.end(), ""          # self-closing: no children
+    close = matching_close(cell, pr.end(), "tcPr")
+    return pr.start(), close, cell[pr.end():close - len("</w:tcPr>")]
+
+
 def _set_borders(cell: str, borders: str) -> str:
-    """`cell` carrying exactly `borders`, replacing any element already
-    there in EITHER form. The single place that knows where a
-    ``w:tcBorders`` belongs in the ``tcPr`` schema order."""
-    if _EDGE_RE.search(cell):
-        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
-    if "<w:tcPr>" in cell:
+    """`cell` carrying exactly `borders` in its own properties.
+
+    The single place that knows where a ``w:tcBorders`` belongs in the
+    ``tcPr`` schema order — and that the cell in question is the OUTER
+    one.
+    """
+    own = _own_properties(cell)
+    if own is None:            # no properties at all: give it some
+        m = re.match(r"<w:tc\b[^>]*>", cell)
+        at = m.end() if m else 0
+        return cell[:at] + f"<w:tcPr>{borders}</w:tcPr>" + cell[at:]
+    start, end, inner = own
+    if _EDGE_RE.search(inner):
+        inner = _EDGE_RE.sub(lambda _: borders, inner, count=1)
+    else:
         # CT_TcPr is a SEQUENCE, so tcBorders has to land before every
         # property that follows it and after every one that precedes.
         # Anchoring on only shd/tcMar/vAlign put it after w:noWrap or
         # w:hideMark in a cell carrying neither of those three, and Word
         # repairs a document whose properties are out of order.
-        at = min((p for p in (cell.find(t) for t in _AFTER_BORDERS)
-                  if p != -1), default=cell.find("</w:tcPr>"))
-        return cell[:at] + borders + cell[at:]
-    return cell.replace("<w:tc>", f"<w:tc><w:tcPr>{borders}</w:tcPr>", 1)
+        at = min((p for p in (inner.find(t) for t in _AFTER_BORDERS)
+                  if p != -1), default=len(inner))
+        inner = inner[:at] + borders + inner[at:]
+    return cell[:start] + f"<w:tcPr>{inner}</w:tcPr>" + cell[end:]
 
 
 def _with_edges(cell: str, spec: dict[str, tuple[str, int]]) -> str:

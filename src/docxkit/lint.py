@@ -44,6 +44,9 @@ def _local(tag: Any) -> str:
 # Tag sets for the walks below, built once.
 #: property containers whose children may each appear once
 _PROPS = ("tcPr", "rPr", "pPr", "trPr", "tblPr")
+#: each of these carries at most ONE properties element
+_OWNER = {"tc": "tcPr", "tr": "trPr", "tbl": "tblPr",
+          "p": "pPr", "r": "rPr"}
 _RUN_LEVEL_TAGS = frozenset({W + t for t in _RUN_LEVEL}
                             | {M + t for t in _RUN_LEVEL_MATH})
 _BLOCK_CHILDREN = frozenset({W + "p", W + "tbl", W + "tr", W + "tc"})
@@ -166,6 +169,18 @@ def lint(*roots: Any) -> list[str]:
                         f"w:{_local(props.tag)} carries two w:{tag} "
                         "children (each may appear once)")
                 seen.add(tag)
+
+        # 7c. ...and the properties element itself appears once in its
+        #     parent. A self-closing <w:tcPr/> read as "absent" got a
+        #     second one prepended beside it, which 7b cannot see
+        #     because it inspects a properties element's CHILDREN.
+        for parent, prop in _OWNER.items():
+            for owner in root.iter(W + parent):
+                n = sum(1 for c in owner if c.tag == W + prop)
+                if n > 1:
+                    problems.append(
+                        f"w:{parent} carries {n} w:{prop} elements "
+                        "(it may carry one)")
 
     # 8. Revision ids must be unique across the whole package; Word merges
     #    or drops revisions that share one.
