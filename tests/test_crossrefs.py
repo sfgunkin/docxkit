@@ -323,6 +323,73 @@ def test_audit_finds_a_dangling_anchor():
     assert crossrefs.audit(xml)["dangling"] == ["Figure7"]
 
 
+def test_relinking_an_unlinked_run_leaves_one_rstyle():
+    """unlink_by_anchor leaves run properties alone by design, so a
+    wipe-and-rebuild round re-links a run that still carries the
+    Hyperlink style. Two rStyle children is an rPr Word's schema
+    rejects — 24 of them on Parental Style's R2 pass, and only lint
+    could see it.
+    """
+    from docxkit.crossrefs import _with_hyperlink_style
+
+    styled = ('<w:rPr><w:rStyle w:val="Hyperlink"/>'
+              '<w:color w:val="1F3864"/></w:rPr>')
+    assert _with_hyperlink_style(styled).count("<w:rStyle") == 1
+    assert _with_hyperlink_style(styled) == styled          # idempotent
+
+    plain = '<w:rPr><w:color w:val="000000"/></w:rPr>'
+    out = _with_hyperlink_style(plain)
+    assert out.count("<w:rStyle") == 1 and "Hyperlink" in out
+
+    assert _with_hyperlink_style("").count("<w:rStyle") == 1
+
+    other = '<w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+    out = _with_hyperlink_style(other)
+    assert out.count("<w:rStyle") == 1, "a second style was added"
+    assert "Hyperlink" in out
+
+
+def test_wipe_and_relink_is_schema_clean():
+    """End to end: link, unlink the whole scheme, link again — the
+    round trip must not accumulate run properties."""
+    from docxkit.citations import unlink_by_anchor
+    from docxkit.lint import lint_parts
+
+    xml = doc(
+        para(run("As Table 1 shows, employment rises.")),
+        para(run("Table 1. Employment")),
+    )
+    linked, _ = crossrefs.link(xml)
+    wiped, _, _ = unlink_by_anchor(linked, r"^(Table|Figure)[A-Za-z0-9_.]+$")
+    relinked, _ = crossrefs.link(wiped)
+
+    problems = lint_parts({"word/document.xml": relinked.encode("utf-8")})
+    assert not [p for p in problems if "rStyle" in p], problems
+    for m in re.finditer(r"<w:rPr>.*?</w:rPr>", relinked, re.DOTALL):
+        assert m.group(0).count("<w:rStyle") <= 1, m.group(0)
+
+
+def test_a_bookmark_in_another_part_is_not_dangling():
+    """A link and its bookmark need not share a part: a work cited only
+    in a footnote keeps its in-text bookmark in footnotes.xml while the
+    reference entry links to it from the body. Reading the body alone
+    called four such pairs dangling on Parental Style — and the false
+    flag was written off as a quirk twice before being read as the bug.
+    """
+    body = doc(para('<w:hyperlink w:anchor="Smith2020txt">',
+                    run("Smith, A. (2020)"), "</w:hyperlink>"))
+    notes = doc(para('<w:bookmarkStart w:id="9" w:name="Smith2020txt"/>'
+                     '<w:bookmarkEnd w:id="9"/>', run("(Smith 2020)")))
+
+    assert crossrefs.audit(body)["dangling"] == ["Smith2020txt"]
+    assert crossrefs.audit(body, also=notes)["dangling"] == []
+    assert crossrefs.audit(body, also=[notes])["dangling"] == []
+    # a genuinely dangling anchor still reports with `also` supplied
+    assert crossrefs.audit(
+        doc(para('<w:hyperlink w:anchor="Figure7">', run("Figure 7"),
+                 "</w:hyperlink>")), also=notes)["dangling"] == ["Figure7"]
+
+
 def test_unlink_restores_a_plain_document():
     xml = doc(
         para(run("As Table 1 shows, employment rises.")),

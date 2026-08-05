@@ -1004,6 +1004,49 @@ def test_an_entrys_own_bookmark_is_still_reused():
     assert 'w:anchor="Smith2020"' in out
 
 
+# --------------------------------- a back-link whose target never landed -
+
+
+def test_no_backlink_survives_a_refused_in_text_wrap():
+    """The back-link is decided while PLANNING, but the wrap that creates
+    its <name>txt target runs later and can refuse — a citation occurring
+    twice in one paragraph is ambiguous, so link_in_para raises. Entries
+    are rebuilt bottom-up and the reference list sits below the prose, so
+    the back-link is already written by then. Shipping it leaves a
+    dangling anchor that only an audit finds (Parental Style: Bhalotra
+    and Clarke, welded by hand).
+    """
+    from docxkit.citations import audit_links, link_all
+    parts = _parts(
+        "Smith (2020) shows one thing, and Smith (2020) shows another.",
+        "References",
+        "Smith, A. (2020). A title. Journal.")
+    rep = link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+
+    assert "Smith2020txt" not in out or 'w:name="Smith2020txt"' in out, \
+        "a Smith2020txt anchor exists with no such bookmark"
+    assert rep.backlinked == [], f"back-linked anyway: {rep.backlinked}"
+    assert any("back-link" in s for s in rep.skipped), rep.skipped
+
+    findings = audit_links(parts)
+    broken = [f for f in findings if "BROKEN LINK" in str(f)]
+    assert not broken, broken
+
+
+def test_a_normal_backlink_is_untouched():
+    """The repair must not fire when the wrap succeeded."""
+    from docxkit.citations import link_all
+    parts = _parts("Smith (2020) shows one thing.",
+                   "References",
+                   "Smith, A. (2020). A title. Journal.")
+    rep = link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+    assert rep.backlinked == ["Smith2020"], rep.backlinked
+    assert 'w:name="Smith2020txt"' in out
+    assert 'w:anchor="Smith2020txt"' in out
+
+
 # ------------------------------------- markers Word hoisted out of the ¶ -
 
 

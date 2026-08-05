@@ -42,7 +42,7 @@ run on every build.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -220,10 +220,28 @@ def _find_captions(xml: str,
     return tuple(out)
 
 
+_RSTYLE_RE = re.compile(r"<w:rStyle [^>]*/>")
+
+
 def _with_hyperlink_style(rpr: str) -> str:
-    """Run properties with the Hyperlink character style added."""
+    """Run properties with the Hyperlink character style added.
+
+    Idempotent, and never leaves TWO rStyle children: the schema allows
+    one, and a run can arrive already styled. :func:`unlink_by_anchor`
+    deliberately leaves run properties alone when it unwraps a link
+    ("stripping a legacy link's explicit colouring is a formatting
+    decision, not a linking one"), so a wipe-and-rebuild round hands
+    every former link run straight back here still carrying its
+    Hyperlink style. Prepending unconditionally built an rPr Word's
+    schema rejects — 24 of them on Parental Style's R2 pass, and
+    nothing but a lint run would have said so.
+    """
     if not rpr:
         return '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+    if _RSTYLE_RE.search(rpr):
+        # a run becoming a hyperlink carries the Hyperlink style; any
+        # other character style already on it is replaced, never doubled
+        return _RSTYLE_RE.sub('<w:rStyle w:val="Hyperlink"/>', rpr, count=1)
     return rpr.replace("<w:rPr>",
                        '<w:rPr><w:rStyle w:val="Hyperlink"/>', 1)
 
@@ -523,7 +541,8 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
 
 
 def audit(xml: str, *,
-          labels: tuple[str, ...] = DEFAULT_LABELS) -> dict[str, list[str]]:
+          labels: tuple[str, ...] = DEFAULT_LABELS,
+          also: str | Iterable[str] = ()) -> dict[str, list[str]]:
     """Report the cross-reference state without changing anything.
 
     Keys: ``linked`` (both bookmarks present), ``caption_only``,
@@ -533,9 +552,24 @@ def audit(xml: str, *,
     whose NUMBER is not the caption's, which is what a renumbering
     leaves behind (LI7's "Figure 5" caption carries bookmark Figure6;
     every link still works, one renumbering behind).
+
+    Pass the other bookmarked parts (footnotes.xml, endnotes.xml) as
+    `also`. **A link and its bookmark need not live in the same part**:
+    a work cited only in a footnote carries its in-text bookmark in
+    footnotes.xml while the reference entry links to it from the body.
+    Reading the body alone reported four such pairs as ``dangling`` on
+    Parental Style, and the false flag was written down as a known
+    quirk twice before it was read as the bug it is. Captions are still
+    sought in `xml` only — those live in the body.
     """
-    names = set(re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"', xml))
-    anchors = set(re.findall(r'<w:hyperlink[^>]*w:anchor="([^"]+)"', xml))
+    others = [also] if isinstance(also, str) else list(also)
+    every = [xml, *others]
+    names = {n for part in every
+             for n in re.findall(
+                 r'<w:bookmarkStart[^>]*w:name="([^"]+)"', part)}
+    anchors = {a for part in every
+               for a in re.findall(
+                   r'<w:hyperlink[^>]*w:anchor="([^"]+)"', part)}
 
     exhibit_re = re.compile(
         rf"^({'|'.join(re.escape(w) for w in labels)})(\d+)$")

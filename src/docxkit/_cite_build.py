@@ -288,6 +288,30 @@ def link_all(parts: dict[str, bytes], *,
         m = fparas[i]
         foot = (foot[:m.start()] + rebuild(i, m.group(0), "fn¶")
                 + foot[m.end():])
+
+    # A back-link is decided from `claimed`, which is filled while
+    # PLANNING; the in-text wrap that creates its <name>txt target runs
+    # later in the same pass and can legitimately refuse (a citation
+    # occurring twice in one paragraph is ambiguous, so link_in_para
+    # raises). Entries are rebuilt bottom-up, and the reference list sits
+    # BELOW the prose, so the back-link is already written by then.
+    # Shipping it anyway leaves a dangling anchor — silent, and only an
+    # audit finds it (Parental Style 2026-08-05: Bhalotra and Clarke,
+    # welded by hand). Undo any back-link whose target never appeared.
+    if report.backlinked:
+        marks = set(_BOOKMARK_NAME_RE.findall(doc))
+        if foot:
+            marks |= set(_BOOKMARK_NAME_RE.findall(foot))
+        for name in list(report.backlinked):
+            if name + "txt" in marks:
+                continue
+            doc, _, _ = unlink_by_anchor(
+                doc, rf"^{re.escape(name)}txt$")
+            report.backlinked.remove(name)
+            report.skipped.append(
+                f"back-link {name}: its in-text mention was not wrapped, "
+                f"so {name}txt does not exist — back-link removed")
+
     if fn_plan:
         parts["word/footnotes.xml"] = foot.encode("utf-8")
     parts["word/document.xml"] = doc.encode("utf-8")

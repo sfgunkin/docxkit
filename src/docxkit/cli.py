@@ -116,7 +116,11 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     name = Path(args.docx).name
 
     if args.audit:
-        state = crossrefs.audit(doc)
+        # every other bookmarked part: a footnote-only citation keeps its
+        # in-text bookmark there while the body links to it
+        others = [v.decode("utf-8") for k, v in parts.items()
+                  if k in ("word/footnotes.xml", "word/endnotes.xml")]
+        state = crossrefs.audit(doc, also=others)
         print(name)
         for key in ("linked", "caption_only", "mention_only", "dangling"):
             found = state[key]
