@@ -21,6 +21,7 @@ from typing import Any, Literal, NamedTuple, overload
 
 from ._xml import (
     PARA_RE,
+    element_spans,
     matching_close,
     set_run_text,
     visible_text,
@@ -35,6 +36,41 @@ _TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
 _SPAN_RE = re.compile(r'<w:gridSpan w:val="(\d+)"/>')
 # a leading signed number, tolerating the typographic minus and separators
 _NUM_RE = re.compile(r"[-−+]?\d[\d,  ]*(?:\.\d+)?")
+
+
+@dataclass(frozen=True)
+class _Span:
+    """A located element, offering the slice of `re.Match` this module
+    uses. Not a Match: the depth-aware walk finds spans by counting
+    tags, and dressing that up as a regex result would only disguise
+    where the offsets come from."""
+
+    xml: str
+    at: int
+    to: int
+
+    def start(self) -> int:
+        return self.at
+
+    def end(self) -> int:
+        return self.to
+
+    def group(self, index: int = 0) -> str:
+        return self.xml
+
+
+def _spans(xml: str, tag: str) -> list[_Span]:
+    return [_Span(xml[s:e], s, e) for s, e in element_spans(xml, tag)]
+
+
+def rows_of(body: str) -> list[_Span]:
+    """The table's OWN rows — a nested table's rows are not its rows."""
+    return _spans(body, "tr")
+
+
+def cells_of(row: str) -> list[_Span]:
+    """The row's OWN cells, likewise."""
+    return _spans(row, "tc")
 
 
 @dataclass(frozen=True)
@@ -94,12 +130,12 @@ class Table:
         indices) on purpose, instead of assuming they coincide — they
         only do in a table with no merged cells.
         """
-        trs = list(_TR_RE.finditer(xml[self.start:self.end]))
+        trs = list(rows_of(xml[self.start:self.end]))
         if row >= len(trs):
             raise AnchorError(f"table {self.index} has {len(trs)} rows, "
                               f"cannot read row {row}")
         out, c = [], 0
-        for tc in _TC_RE.finditer(trs[row].group(0)):
+        for tc in cells_of(trs[row].group(0)):
             out.append(c)
             s = _SPAN_RE.search(tc.group(0))
             c += int(s.group(1)) if s else 1
@@ -132,9 +168,8 @@ def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
     for i, (start, end) in enumerate(_table_spans(xml)):
         body = transform(xml[start:end])
         rows = []
-        for tr in _TR_RE.finditer(body):
-            cells = [_cell_text(tc.group(0)) for tc in _TC_RE.finditer(
-                tr.group(0))]
+        for tr in rows_of(body):
+            cells = [_cell_text(tc.group(0)) for tc in cells_of(tr.group(0))]
             rows.append(cells)
         out.append(Table(index=i, start=start, end=end, rows=rows,
                          source=hash(xml)))
@@ -274,12 +309,12 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     """
     _fresh(xml, table, "set_cell")
     body = xml[table.start:table.end]
-    trs = list(_TR_RE.finditer(body))
+    trs = list(rows_of(body))
     if row >= len(trs):
         raise AnchorError(f"table {table.index} has {len(trs)} rows, "
                           f"cannot set row {row}")
     tr = trs[row]
-    tcs = list(_TC_RE.finditer(tr.group(0)))
+    tcs = list(cells_of(tr.group(0)))
     if col >= len(tcs):
         raise AnchorError(f"row {row} has {len(tcs)} cells, "
                           f"cannot set column {col}")
@@ -400,7 +435,7 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
         raise AnchorError(
             f"table {table.index} contains tracked changes - update the "
             f"clean build and rebuild the redline from it")
-    trs = list(_TR_RE.finditer(body))
+    trs = list(rows_of(body))
     if row0 + len(grid) > len(trs):
         raise AnchorError(
             f"block of {len(grid)} rows at row {row0} overruns table "
@@ -410,7 +445,7 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
     edits: list[tuple[int, int, str]] = []      # (start, end) within body
     for i, incoming in enumerate(grid):
         tr = trs[row0 + i]
-        tcs = list(_TC_RE.finditer(tr.group(0)))
+        tcs = list(cells_of(tr.group(0)))
         if col0 + len(incoming) > len(tcs):
             raise AnchorError(
                 f"row {row0 + i} of table {table.index} has {len(tcs)} "

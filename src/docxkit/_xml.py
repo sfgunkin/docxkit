@@ -27,6 +27,7 @@ __all__ = [
     "T_RUN_RE",
     "XML_WS",
     "delta_text",
+    "element_spans",
     "escape",
     "internal_links",
     "matching_close",
@@ -199,3 +200,26 @@ def matching_close(xml: str, pos: int, tag: str) -> int:
             depth -= 1
             pos = nxt + len(close)
     return pos
+
+
+def element_spans(xml: str, tag: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of every ``w:tag`` at the OUTERMOST level.
+
+    A non-greedy ``<w:tc>.*?</w:tc>`` closes on the first end tag it
+    meets, which for a cell containing a nested table is the INNER
+    cell's — so the outer cell reads as the inner one's content and
+    every later cell in the row is lost. Questionnaires nest tables
+    freely; :func:`docxkit.tables.read_all` hit this first for whole
+    tables, and rows and cells need the same depth-counted walk.
+    """
+    spans: list[tuple[int, int]] = []
+    open_re = re.compile(rf"<w:{tag}\b[^>]*?(/?)>")
+    pos = 0
+    while (m := open_re.search(xml, pos)) is not None:
+        if m.group(1) == "/":
+            pos = m.end()               # self-closing: no content, no close
+            continue
+        end = matching_close(xml, m.end(), tag)
+        spans.append((m.start(), end))
+        pos = end                       # nested elements ride along inside
+    return spans

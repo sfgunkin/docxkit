@@ -22,11 +22,12 @@ from typing import NamedTuple
 from ._table_core import (
     _NUM_RE,
     _SPAN_RE,
-    _TC_RE,
-    _TR_RE,
     Table,
     _cell_text,
     _fresh,
+    _Span,
+    cells_of,
+    rows_of,
 )
 from ._xml import (
     PARA_RE,
@@ -232,15 +233,15 @@ def _const(text: str) -> Callable[[re.Match[str]], str]:
 
 
 def _cell_walk(body: str, n: int) -> Iterable[
-        tuple[re.Match[str], re.Match[str], int, int]]:
+        tuple[_Span, _Span, int, int]]:
     """(row, cell, first grid column, span) for every cell in `body`.
 
     Rows wider than the `n`-column grid are truncated — a malformed
     row's overflow cells are not mapped onto columns that do not exist.
     """
-    for tr in _TR_RE.finditer(body):
+    for tr in rows_of(body):
         c = 0
-        for tc in _TC_RE.finditer(tr.group(0)):
+        for tc in cells_of(tr.group(0)):
             if c >= n:
                 break
             s = _SPAN_RE.search(tc.group(0))
@@ -496,8 +497,8 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
             f"clean build and rebuild the redline from it")
     count = 0
     edits: list[tuple[int, int, str]] = []
-    for tr in _TR_RE.finditer(body):
-        for tc in _TC_RE.finditer(tr.group(0)):
+    for tr in rows_of(body):
+        for tc in cells_of(tr.group(0)):
             if not _STARRED_CELL_RE.match(_cell_text(tc.group(0))):
                 continue
             last = None
@@ -537,34 +538,24 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
     """
     _fresh(xml, table, "bottom_border")
     body = xml[table.start:table.end]
-    trs = list(_TR_RE.finditer(body))
+    trs = list(rows_of(body))
     if not trs:
         raise AnchorError(f"table {table.index} has no rows")
     last = trs[-1]
     edge = f'<w:bottom w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
     edits: list[tuple[int, int, str]] = []
-    for tc in _TC_RE.finditer(last.group(0)):
+    for tc in cells_of(last.group(0)):
         cell = tc.group(0)
         if edge in cell:
             continue
-        if "<w:tcBorders>" in cell:
-            new, n = re.subn(r"<w:bottom [^>]*/>", _const(edge),
-                             cell, count=1)
-            if not n:
-                b = cell.find("</w:tcBorders>")
-                new = cell[:b] + edge + cell[b:]
-        elif "<w:tcPr>" in cell:
-            # tcBorders sorts before shd/tcMar/vAlign in the tcPr schema
-            at = min(p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
-                                 cell.find("<w:vAlign"),
-                                 cell.find("</w:tcPr>")) if p != -1)
-            new = (cell[:at] + f"<w:tcBorders>{edge}</w:tcBorders>"
-                   + cell[at:])
-        else:
-            new = cell.replace(
-                "<w:tc>",
-                f"<w:tc><w:tcPr><w:tcBorders>{edge}</w:tcBorders></w:tcPr>",
-                1)
+        # keep whatever other edges the cell states, replace the bottom
+        existing = _EDGE_RE.search(cell)
+        inner = ""
+        if existing and not existing.group(0).endswith("/>"):
+            inner = re.sub(r"<w:bottom [^>]*/>", "",
+                           existing.group(0)[len("<w:tcBorders>"):
+                                             -len("</w:tcBorders>")])
+        new = _set_borders(cell, f"<w:tcBorders>{inner}{edge}</w:tcBorders>")
         edits.append((last.start() + tc.start(),
                       last.start() + tc.end(), new))
     for start, end, replacement in sorted(edits, reverse=True):
@@ -592,7 +583,19 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
 # never closed, and panel rules in some tables but not others.
 
 _SIDES = ("top", "bottom", "left", "right")
-_EDGE_RE = re.compile(r"<w:tcBorders>.*?</w:tcBorders>", re.DOTALL)
+#: Everything that follows w:tcBorders in the CT_TcPr sequence. The
+#: ones before it — cnfStyle, tcW, gridSpan, hMerge, vMerge — stay put.
+_AFTER_BORDERS = ("<w:shd", "<w:noWrap", "<w:tcMar", "<w:textDirection",
+                  "<w:tcFitText", "<w:vAlign", "<w:hideMark",
+                  "<w:headers", "<w:tcPrChange")
+
+# BOTH forms: an empty <w:tcBorders/> is valid OOXML, and matching
+# only the expanded form made the writers insert a SECOND element
+# beside it — two tcBorders in one tcPr, which is schema-invalid
+# and which neither the write gate (well-formed) nor lint caught.
+_EDGE_RE = re.compile(r"<w:tcBorders\b[^>]*/>"
+                      r"|<w:tcBorders\b[^>]*>.*?</w:tcBorders>",
+                      re.DOTALL)
 #: rows whose label marks the summary block rather than an estimate
 _STATS_RE = re.compile(
     r"^\s*(?:number of observations|observations|n(?:um)?\.?\s*(?:of\s*)?"
@@ -610,6 +613,24 @@ def _edges(spec: dict[str, tuple[str, int]]) -> str:
     return f"<w:tcBorders>{inner}</w:tcBorders>"
 
 
+def _set_borders(cell: str, borders: str) -> str:
+    """`cell` carrying exactly `borders`, replacing any element already
+    there in EITHER form. The single place that knows where a
+    ``w:tcBorders`` belongs in the ``tcPr`` schema order."""
+    if _EDGE_RE.search(cell):
+        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
+    if "<w:tcPr>" in cell:
+        # CT_TcPr is a SEQUENCE, so tcBorders has to land before every
+        # property that follows it and after every one that precedes.
+        # Anchoring on only shd/tcMar/vAlign put it after w:noWrap or
+        # w:hideMark in a cell carrying neither of those three, and Word
+        # repairs a document whose properties are out of order.
+        at = min((p for p in (cell.find(t) for t in _AFTER_BORDERS)
+                  if p != -1), default=cell.find("</w:tcPr>"))
+        return cell[:at] + borders + cell[at:]
+    return cell.replace("<w:tc>", f"<w:tc><w:tcPr>{borders}</w:tcPr>", 1)
+
+
 def _with_edges(cell: str, spec: dict[str, tuple[str, int]]) -> str:
     """`cell` carrying exactly `spec` — every other edge explicitly nil.
 
@@ -618,15 +639,7 @@ def _with_edges(cell: str, spec: dict[str, tuple[str, int]]) -> str:
     a box.
     """
     full = {side: spec.get(side, ("nil", 0)) for side in _SIDES}
-    borders = _edges(full)
-    if "<w:tcBorders>" in cell:
-        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
-    if "<w:tcPr>" in cell:
-        at = min(p for p in (cell.find("<w:shd"), cell.find("<w:tcMar"),
-                             cell.find("<w:vAlign"), cell.find("</w:tcPr>"))
-                 if p != -1)
-        return cell[:at] + borders + cell[at:]
-    return cell.replace("<w:tc>", f"<w:tc><w:tcPr>{borders}</w:tcPr>", 1)
+    return _set_borders(cell, _edges(full))
 
 
 class BooktabsPlan(NamedTuple):
@@ -705,13 +718,13 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
             f"table {table.index} contains tracked changes - rule the "
             f"clean build and rebuild the redline from it")
     shape = plan or plan_booktabs(table)
-    trs = list(_TR_RE.finditer(body))
+    trs = list(rows_of(body))
     if not trs:
         raise AnchorError(f"table {table.index} has no rows")
 
     edits: list[tuple[int, int, str]] = []
     for i, tr in enumerate(trs):
-        cells = list(_TC_RE.finditer(tr.group(0)))
+        cells = list(cells_of(tr.group(0)))
         spanned = _group_columns(cells) if i in shape.group_rows else []
         for j, tc in enumerate(cells):
             spec: dict[str, tuple[str, int]] = {}
@@ -735,7 +748,7 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
     return xml[:table.start] + body + xml[table.end:], shape
 
 
-def _group_columns(cells: list[re.Match[str]]) -> set[int]:
+def _group_columns(cells: list[_Span]) -> set[int]:
     """Which cells of a header row actually span a group of columns.
 
     The stub cell and any empty spacer do not get a cmidrule — a rule

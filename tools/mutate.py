@@ -105,6 +105,11 @@ MUTATIONS = [
              "    full = {side: spec.get(side, (\"nil\", 0)) "
              "for side in _SIDES}",
              "    full = dict(spec)"),
+    Mutation("_table_layout.py",
+             "only the expanded <w:tcBorders> is matched, so an empty "
+             "one gets a second element beside it",
+             r'_EDGE_RE = re.compile(r"<w:tcBorders\b[^>]*/>"',
+             r'_EDGE_RE = re.compile(r"(?!x)x"'),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",

@@ -42,6 +42,8 @@ def _local(tag: Any) -> str:
 
 
 # Tag sets for the walks below, built once.
+#: property containers whose children may each appear once
+_PROPS = ("tcPr", "rPr", "pPr", "trPr", "tblPr")
 _RUN_LEVEL_TAGS = frozenset({W + t for t in _RUN_LEVEL}
                             | {M + t for t in _RUN_LEVEL_MATH})
 _BLOCK_CHILDREN = frozenset({W + "p", W + "tbl", W + "tr", W + "tc"})
@@ -147,6 +149,23 @@ def lint(*roots: Any) -> list[str]:
                     if not any(t.text or "" for t in om.iter(M + "t")))
         if empty:
             problems.append(f"{empty} empty m:oMath shell(s)")
+
+        # 7b. A properties element may carry each child ONCE. Two
+        #     w:tcBorders in one w:tcPr is schema-invalid and reads as
+        #     "unreadable content", and neither the write gate (a
+        #     duplicate is still well-formed) nor anything else here
+        #     saw it — a border writer that matched only the expanded
+        #     <w:tcBorders> and not the empty <w:tcBorders/> inserted a
+        #     second one beside it.
+        for props in root.iter(*(W + t for t in _PROPS)):
+            seen: set[str] = set()
+            for child in props:
+                tag = _local(child.tag)
+                if tag in seen:
+                    problems.append(
+                        f"w:{_local(props.tag)} carries two w:{tag} "
+                        "children (each may appear once)")
+                seen.add(tag)
 
     # 8. Revision ids must be unique across the whole package; Word merges
     #    or drops revisions that share one.

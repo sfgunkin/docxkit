@@ -535,3 +535,145 @@ def test_a_stated_plan_overrides_the_inference():
     assert used is plan
     assert "bottom:single" in _row_edges(out)[0]      # header closes at r0
     assert _row_edges(out)[2] == []                   # no panel rule now
+
+
+# ------------------------------------ an empty <w:tcBorders/> is valid ----
+
+
+def _cell_with(tcborders: str) -> str:
+    tc = ('<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/>' + tcborders
+          + "</w:tcPr><w:p><w:r><w:t>0.054</w:t></w:r></w:p></w:tc>")
+    return doc('<w:tbl><w:tblPr><w:tblW w:w="900" w:type="dxa"/></w:tblPr>'
+               '<w:tblGrid><w:gridCol w:w="900"/></w:tblGrid>'
+               f"<w:tr>{tc}</w:tr></w:tbl>")
+
+
+@pytest.mark.parametrize("existing", [
+    "<w:tcBorders/>",                                  # the empty form
+    '<w:tcBorders w:x="1"/>',                          # with an attribute
+    '<w:tcBorders><w:top w:val="single"/></w:tcBorders>',
+    "",                                                # none at all
+])
+def test_a_cell_never_ends_up_with_two_border_elements(existing):
+    """An empty <w:tcBorders/> is valid OOXML. Matching only the
+    expanded form made both writers insert a SECOND element beside it —
+    two w:tcBorders in one w:tcPr, which is schema-invalid, and which
+    neither the write gate nor lint saw.
+    """
+    from docxkit.lint import lint_parts
+    from docxkit.tables import booktabs, bottom_border
+    xml = _cell_with(existing)
+    for fn in (booktabs, bottom_border):
+        out, _ = fn(xml, read_all(xml)[0])
+        assert len(re.findall(r"<w:tcBorders\b", out)) == 1, fn.__name__
+        assert not lint_parts({"word/document.xml": out.encode("utf-8")})
+
+
+def test_bottom_border_keeps_the_other_edges_a_cell_states():
+    from docxkit.tables import bottom_border
+    xml = _cell_with('<w:tcBorders><w:top w:val="single" w:sz="4" '
+                     'w:space="0" w:color="auto"/></w:tcBorders>')
+    out, _ = bottom_border(xml, read_all(xml)[0])
+    assert '<w:top w:val="single"' in out          # untouched
+    assert '<w:bottom w:val="double"' in out       # added
+
+
+def test_lint_reports_a_duplicated_property_child():
+    from docxkit.lint import lint_parts
+    xml = doc('<w:tbl><w:tr><w:tc><w:tcPr><w:tcBorders/>'
+              '<w:tcBorders><w:top w:val="single"/></w:tcBorders>'
+              "</w:tcPr><w:p/></w:tc></w:tr></w:tbl>")
+    problems = lint_parts({"word/document.xml": xml.encode("utf-8")})
+    assert problems and "two w:tcBorders" in problems[0]
+
+
+def test_no_source_file_carries_a_control_character():
+    """The bash-heredoc trap, which has now mangled a pattern four times
+    in one session: `\b` in a non-raw context becomes U+0008 and the
+    regex silently matches nothing. Cheap to make impossible to ship."""
+    from pathlib import Path
+
+    import docxkit
+    for path in Path(docxkit.__file__).parent.glob("*.py"):
+        blob = path.read_bytes()
+        for ch in (b"\x08", b"\x00", b"\x01", b"\x0c"):
+            assert ch not in blob, f"{path.name} carries {ch!r}"
+
+
+# ------------------------------------------- CT_TcPr is a SEQUENCE --------
+
+
+@pytest.mark.parametrize("props,expected", [
+    ('<w:tcW w:w="900" w:type="dxa"/><w:noWrap/><w:hideMark/>',
+     ["tcW", "tcBorders", "noWrap", "hideMark"]),
+    ('<w:tcW w:w="900" w:type="dxa"/><w:vMerge/><w:shd w:val="clear"/>',
+     ["tcW", "vMerge", "tcBorders", "shd"]),
+    ('<w:tcW w:w="900" w:type="dxa"/><w:headers w:val="h1"/>',
+     ["tcW", "tcBorders", "headers"]),
+    ('<w:tcW w:w="900" w:type="dxa"/><w:textDirection w:val="btLr"/>',
+     ["tcW", "tcBorders", "textDirection"]),
+    ('<w:gridSpan w:val="2"/><w:tcFitText/>',
+     ["gridSpan", "tcBorders", "tcFitText"]),
+])
+def test_the_border_lands_in_its_schema_position(props, expected):
+    """CT_TcPr is a sequence. Anchoring only on shd/tcMar/vAlign put the
+    borders AFTER w:noWrap in a cell carrying none of those three, and
+    Word repairs a document whose properties are out of order."""
+    from docxkit.tables import booktabs
+    xml = doc('<w:tbl><w:tblPr><w:tblW w:w="900" w:type="dxa"/></w:tblPr>'
+              '<w:tblGrid><w:gridCol w:w="900"/></w:tblGrid>'
+              f"<w:tr><w:tc><w:tcPr>{props}</w:tcPr>"
+              "<w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>")
+    out, _ = booktabs(xml, read_all(xml)[0])
+    tcpr = re.search(r"<w:tcPr>.*?</w:tcPr>", out, re.DOTALL)
+    assert tcpr is not None
+    order = re.findall(
+        r"<w:(tcW|gridSpan|vMerge|tcBorders|shd|noWrap|tcMar|"
+        r"textDirection|tcFitText|vAlign|hideMark|headers)\b", tcpr.group(0))
+    assert order == expected
+
+
+# ------------------------------------------------ nested tables -----------
+
+
+def _nested_row_table() -> str:
+    """A nested table in the FIRST of two outer cells — the shape that
+    makes a non-nesting <w:tc>.*?</w:tc> stop at the inner cell."""
+    inner = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="400"/></w:tblGrid>'
+             "<w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>inner</w:t></w:r></w:p>"
+             "</w:tc></w:tr></w:tbl>")
+    return doc('<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr>'
+               '<w:tblGrid><w:gridCol w:w="900"/><w:gridCol w:w="900"/>'
+               "</w:tblGrid>"
+               '<w:tr><w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/></w:tcPr>'
+               + inner + "<w:p><w:r><w:t>after inner</w:t></w:r></w:p>"
+               "</w:tc>"
+               '<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/><w:tcBorders>'
+               '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               "</w:tcBorders></w:tcPr>"
+               "<w:p><w:r><w:t>SECOND</w:t></w:r></w:p></w:tc>"
+               "</w:tr></w:tbl>")
+
+
+def test_a_nested_table_does_not_truncate_the_outer_cell():
+    """read_all reported the outer cell as the INNER one's text and lost
+    the second cell entirely — silent data loss in every value test."""
+    t = read_all(_nested_row_table())[0]
+    assert len(t.rows[0]) == 2, t.rows
+    assert "after inner" in t.rows[0][0]
+    assert t.rows[0][1] == "SECOND"
+
+
+def test_the_style_reaches_every_cell_of_a_row_with_a_nested_table():
+    """booktabs promises it clears every rule; a cell the walk never
+    reached kept its vertical border, which is a broken contract."""
+    from docxkit.tables import booktabs
+    xml = _nested_row_table()
+    out, _ = booktabs(xml, read_all(xml)[0])
+    outer = out[out.index("<w:tbl>"):]
+    # the inner table keeps its own (untouched) markup; the OUTER cells
+    # must both have been cleared and ruled
+    first_left = re.search(r"<w:left [^>]*/>", outer)
+    assert first_left is not None
+    assert 'w:val="single"' not in first_left.group(0)
+    assert out.count('<w:bottom w:val="double"') == 2   # both outer cells
