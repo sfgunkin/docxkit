@@ -39,6 +39,7 @@ __all__ = [
     "normalize_glyphs",
     "own_properties",
     "set_run_text",
+    "used_prefixes",
     "visible_text",
 ]
 
@@ -294,6 +295,24 @@ def own_properties(element: str, tag: str) -> tuple[int, int, str] | None:
         return pr.start(), pr.end(), ""
     close = matching_close(element, pr.end(), tag)
     return pr.start(), close, element[pr.end():close - len(f"</w:{tag}>")]
+
+
+_ELEMENT_PREFIX_RE = re.compile(r"</?([A-Za-z][\w.-]*):")
+_ATTR_PREFIX_RE = re.compile(r"\s([A-Za-z][\w.-]*):[\w.-]+=")
+
+
+def used_prefixes(xml: str) -> set[str]:
+    """Every namespace prefix a fragment uses, on elements or attributes.
+
+    A fragment sliced out of a part inherits its declarations from that
+    part's root and carries none of its own, so anything that parses one
+    has to supply them — and first has to know which. Both callers
+    needed the same answer and put different halves of it in different
+    modules; what they do with the answer differs, and legitimately.
+    """
+    used = {m.group(1) for m in _ELEMENT_PREFIX_RE.finditer(xml)}
+    used |= {m.group(1) for m in _ATTR_PREFIX_RE.finditer(xml)}
+    return used - {"xmlns", "xml"}
 
 
 _PROPERTY_CHANGE_RE = re.compile(r"<w:\w+PrChange\b")

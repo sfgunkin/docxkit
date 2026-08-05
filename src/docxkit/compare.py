@@ -155,8 +155,16 @@ def load(path: str):
 
 # -------------------------------------------------------------------- diffing
 def word_diff(a: str, b: str):
+    # autojunk=False, as the paragraph-level matchers below already do.
+    # With it left on, difflib treats any token filling >1% of a long
+    # sequence as noise — "the", "of", a repeated technical phrase — and
+    # a one-word edit in a long repetitive paragraph comes back as one
+    # enormous replace block instead of the word that changed. Measured
+    # on a 440-word paragraph with a single word altered: the whole
+    # paragraph was reported as replaced. That is a report a human
+    # cannot audit, which is the only thing this function is for.
     aw, bw = a.split(), b.split()
-    sm = SequenceMatcher(None, aw, bw)
+    sm = SequenceMatcher(None, aw, bw, autojunk=False)
     out = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":

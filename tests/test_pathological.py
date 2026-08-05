@@ -113,6 +113,20 @@ SPLIT_RUN = doc(
     p('<w:r><w:t xml:space="preserve">One run, </w:t>'
       '<w:t xml:space="preserve">two text nodes.</w:t></w:r>'))
 
+#: The same shape where a mutator actually reaches it. SPLIT_RUN has
+#: been in this corpus since the beginning and never caught the linker
+#: dropping a sibling w:t, because it holds no caption and no mention:
+#: crossrefs.link is a NO-OP on it, so the specimen rode through every
+#: invariant untested. A fixture only covers the code it reaches.
+SPLIT_RUN_CAPTION = doc(
+    p('<w:r><w:t xml:space="preserve">Table 1. </w:t>'
+      '<w:t xml:space="preserve">Results by cohort</w:t>'
+      '<w:footnoteReference w:id="4"/></w:r>'),
+    p(r("See "),
+      '<w:r><w:t xml:space="preserve">Table</w:t>'
+      '<w:t xml:space="preserve"> 1</w:t><w:br/></w:r>',
+      r(" for the detail.")))
+
 NBSP_CELL = doc(tbl(
     2, "<w:tr>" + tc(p(r(" "))) + tc(p(r("0.047"))) + "</w:tr>"))
 
@@ -225,6 +239,7 @@ CORPUS = {
     "merged_cells": MERGED_CELLS,
     "nested_table": NESTED_TABLE,
     "split_run": SPLIT_RUN,
+    "split_run_caption": SPLIT_RUN_CAPTION,
     "nbsp_cell": NBSP_CELL,
     "both_link_forms": BOTH_LINK_FORMS,
     "tracked_cell": TRACKED_CELL,

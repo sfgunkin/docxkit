@@ -39,6 +39,7 @@ from ._xml import (
     PARA_RE,
     delta_text,
     matching_close,
+    used_prefixes,
     visible_text,
 )
 from .errors import DocxKitError
@@ -77,8 +78,6 @@ _OPEN_RE = re.compile(r"<w:(ins|del)\b[^>]*?(/?)>")
 _NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
        ' xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"')
 _WRAPPER = "docxkitFragment"
-_ELEMENT_PREFIX_RE = re.compile(r"</?([A-Za-z][\w.-]*):")
-_ATTR_PREFIX_RE = re.compile(r"\s([A-Za-z][\w.-]*):[\w.-]+=")
 _PLACEHOLDER = "urn:docxkit:undeclared:"
 _RANGE_MARKERS = ("moveFromRangeStart", "moveFromRangeEnd",
                   "moveToRangeStart", "moveToRangeEnd")
@@ -116,11 +115,8 @@ def counts(xml: str) -> tuple[int, int]:
 def _fragment_declarations(xml: str) -> str:
     """xmlns declarations covering every prefix the fragment uses."""
     declared = set(re.findall(r'xmlns:([\w.-]+)=', _NS))
-    used = {m.group(1) for m in _ELEMENT_PREFIX_RE.finditer(xml)}
-    used |= {m.group(1) for m in _ATTR_PREFIX_RE.finditer(xml)}
-    used -= {"xmlns", "xml"}
     extra = "".join(f' xmlns:{p}="{_PLACEHOLDER}{p}"'
-                    for p in sorted(used - declared))
+                    for p in sorted(used_prefixes(xml) - declared))
     return _NS + extra
 
 

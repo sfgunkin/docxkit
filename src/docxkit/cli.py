@@ -23,6 +23,7 @@ import json
 import re
 import sys
 import zipfile
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from ._xml import BOOKMARK_END_ID_RE, BOOKMARK_START_ID_RE, COMMENT_ID_RE
@@ -31,12 +32,35 @@ from .errors import DocxKitError
 from .find import P_RE, text_of
 
 
+def _json_default(value: object) -> object:
+    """Last-resort encoder, so a finished comparison is never lost.
+
+    The reports here sort their sets before storing them, but the cost
+    of one that does not is losing the whole run at the final step —
+    the comparison already done, the report never written. In CI that
+    is the worst possible moment to fail.
+    """
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    if isinstance(value, Path):
+        return str(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+
+
+def _write_json(path: str, payload: object) -> None:
+    Path(path).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2,
+                   default=_json_default),
+        encoding="utf-8")
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from .compare import compare, render
     rep = compare(args.built, args.edited)
     if args.json:
-        Path(args.json).write_text(
-            json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_json(args.json, rep)
     # compare is a verbatim port and untyped; render returns the exit code
     return int(render(rep, args.expect_clean))
 
@@ -115,12 +139,16 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     parts = read_parts(args.docx)
     doc = parts["word/document.xml"].decode("utf-8")
     name = Path(args.docx).name
+    # every other bookmarked part: a footnote-only citation keeps its
+    # in-text bookmark there while the body links to it — and a new
+    # bookmark id minted from the body ALONE can collide with one
+    # already living there, which Word opens with a repair warning.
+    # link() takes these for exactly that reason; this path used to
+    # pass them only to audit().
+    others = [v.decode("utf-8") for k, v in parts.items()
+              if k in ("word/footnotes.xml", "word/endnotes.xml")]
 
     if args.audit:
-        # every other bookmarked part: a footnote-only citation keeps its
-        # in-text bookmark there while the body links to it
-        others = [v.decode("utf-8") for k, v in parts.items()
-                  if k in ("word/footnotes.xml", "word/endnotes.xml")]
         state = crossrefs.audit(doc, also=others)
         print(name)
         for key in ("linked", "caption_only", "mention_only", "dangling"):
@@ -129,7 +157,7 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
                   f"{'  ' + ', '.join(found) if found else ''}")
         return 1 if state["dangling"] else 0
 
-    linked, report = crossrefs.link(doc)
+    linked, report = crossrefs.link(doc, other_parts=others)
     print(name)
     print("  " + report.format().replace("\n", "\n  "))
 

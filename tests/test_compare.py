@@ -148,3 +148,17 @@ def test_a_field_end_run_with_rpr_does_not_bleed_the_label(tmp_path):
     # identical visible text and identical links: nothing to report
     assert report["text"] == [], report["text"]
     assert report["hyperlinks"] == [], report["hyperlinks"]
+
+
+def test_word_diff_pinpoints_a_single_edit_in_a_repetitive_paragraph():
+    """difflib's autojunk treats any token filling >1% of a long
+    sequence as noise, so in a repetitive paragraph a one-word edit came
+    back as one enormous replace block. The paragraph matchers in this
+    module already pass autojunk=False; word_diff did not."""
+    from docxkit.compare import word_diff
+    a = " ".join(["the quantity of the good and the price of the good"] * 40)
+    b = a.replace("price of the good", "price of the service", 1)
+    out = word_diff(a, b)
+    # localised to the clause that changed, not the 440-word paragraph
+    assert sum(len(line) for line in out) < 150, out
+    assert any("service" in line for line in out), out

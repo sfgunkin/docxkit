@@ -122,13 +122,33 @@ def session(*, fast: bool = True) -> Iterator[Any]:
 @contextlib.contextmanager
 def open_doc(word: Any, path: str | Path, *,
              read_only: bool = True,
-             local: bool = True) -> Iterator[Any]:
+             local: bool | None = None) -> Iterator[Any]:
     """Open `path`, yielding the Document; closed without saving.
 
-    `local` stages the file through TEMP first (the default) because COM
-    against a OneDrive path is a documented source of flaky failures.
+    `local` stages the file through TEMP first because COM against a
+    OneDrive path is a documented source of flaky failures. It defaults
+    to `read_only`: staging is right for reading and WRONG for writing,
+    because a ``Save()`` then lands on the staged copy and the file the
+    caller named is never touched — no error, no warning, and the
+    document reports the same counts either way.
+
+    That silence cost a reviewer a false conclusion: an accept/reject
+    comparison "proved" a divergence from Word that turned out to be
+    entirely this default. A write that does not happen must not look
+    like one that did, so passing ``local=True`` with
+    ``read_only=False`` is refused rather than quietly staged.
+
+    Closing never saves. A caller that wants to write calls ``Save()``
+    itself; ``SaveChanges=0`` only discards what was left unsaved.
     """
     path = Path(path)
+    if local is None:
+        local = read_only
+    elif local and not read_only:
+        raise ValueError(
+            "open_doc(read_only=False, local=True): a staged copy is "
+            "discarded on close, so Save() would not reach "
+            f"{path.name} - pass local=False to write it")
     td = Path(tempfile.mkdtemp(prefix="docxkit_word_")) if local else None
     try:
         target = td / path.name if td else path

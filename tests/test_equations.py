@@ -135,3 +135,51 @@ def test_latex_converts_through_words_own_transform():
     assert out.startswith("<m:oMath")
     assert skeleton(out).startswith("f"), "a fraction must produce m:f"
     assert "L" in tokens(out)
+
+
+# --- the documented pair must compose ---------------------------------
+
+
+def _harvestable() -> str:
+    """A document whose equation is BARE, as a real one is.
+
+    The namespace is declared on the part's root; the m:oMath inherits
+    it and carries no declaration of its own. Writing xmlns:m on the
+    equation itself — as this fixture first did — hands harvest a
+    fragment that already parses, so the defect cannot appear.
+    """
+    return document(para(
+        "<m:oMath><m:r><m:t>λ</m:t></m:r>"
+        "<m:f><m:num><m:r><m:t>a</m:t></m:r></m:num>"
+        "<m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath>"))
+
+
+def test_clone_composes_with_harvest():
+    """A fragment sliced out of document.xml inherits its namespace
+    declarations from the part's root, so it carries none of its own and
+    etree.fromstring rejects it. harvest produced exactly what clone
+    could not read, though the two are documented as a pair."""
+    from lxml import etree
+
+    frag = harvest(_harvestable(), "λ")
+    assert "xmlns:m=" in frag                       # parses on its own
+    etree.fromstring(frag.encode("utf-8"))
+    out = clone(frag)
+    assert "<m:t>λ</m:t>" in out
+    assert clone(out) == out                        # and again
+
+
+def test_clone_still_accepts_a_freshly_built_equation():
+    """latex_to_omml already declared its namespaces; that path must not
+    regress while the harvest one is fixed."""
+    pytest.importorskip("latex2mathml")
+    if find_mml2omml_xsl() is None:
+        pytest.skip("MML2OMML.XSL not installed")
+    built = latex_to_omml(r"\lambda")
+    assert "<m:oMath" in clone(built)
+
+
+def test_an_unknown_namespace_prefix_is_named_not_swallowed():
+    from docxkit.equations import standalone
+    with pytest.raises(AnchorError, match="zz"):
+        standalone("<m:oMath><zz:thing/></m:oMath>")

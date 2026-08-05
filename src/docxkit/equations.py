@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ._xml import PARA_RE, visible_text
+from ._xml import PARA_RE, used_prefixes, visible_text
 from .errors import AnchorError, PackageError
 from .revisions import _fragment_declarations
 
@@ -48,6 +48,7 @@ __all__ = [
     "latex_to_omml",
     "prose_math",
     "skeleton",
+    "standalone",
     "to_latex",
     "tokens",
 ]
@@ -174,14 +175,64 @@ def harvest(xml: str, contains: str, *, index: int = 0) -> str:
     if index >= len(hits):
         raise AnchorError(
             f"{len(hits)} equations contain {contains!r}, no index {index}")
-    return hits[index].xml
+    return standalone(hits[index].xml)
+
+
+#: The prefixes an equation lifted out of a manuscript can carry: the
+#: math namespace, the main one for w:rPr and tracked changes inside a
+#: formula, and the Word extensions that ride along on those.
+_NS_URIS = {
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "w14": "http://schemas.microsoft.com/office/word/2010/wordml",
+    "w15": "http://schemas.microsoft.com/office/word/2012/wordml",
+    "w16cid": "http://schemas.microsoft.com/office/word/2016/wordml/cid",
+    "mc": "http://schemas.openxmlformats.org/markup-compatibility/2006",
+    "r": ("http://schemas.openxmlformats.org/officeDocument/2006/"
+          "relationships"),
+}
+_NS_DECL = " ".join(f'xmlns:{p}="{u}"' for p, u in _NS_URIS.items())
+
+
+def standalone(omml: str) -> str:
+    """An equation fragment that parses on its own.
+
+    A fragment sliced out of ``word/document.xml`` inherits its
+    namespace declarations from the part's root, so it carries none of
+    its own and ``etree.fromstring`` rejects it — which broke the pair
+    this module documents: :func:`harvest` produced exactly what
+    :func:`clone` could not read. Re-serialising it through a declaring
+    wrapper puts the declarations lxml needs on the element itself, and
+    only the ones actually used.
+    """
+    from lxml import etree
+
+    # REAL URIs only, and a refusal otherwise. revisions._fragment_
+    # declarations answers the same question with a placeholder URI for
+    # anything it does not know, which is right for a read-only text
+    # pass and wrong here: this fragment gets INSERTED into a document,
+    # and a urn:docxkit:undeclared: namespace would ship with it.
+    unknown = used_prefixes(omml) - set(_NS_URIS)
+    if unknown:
+        raise AnchorError(
+            f"equation uses undeclared namespace prefix(es) "
+            f"{sorted(unknown)}; add them to equations._NS_URIS")
+    root = etree.fromstring(
+        f"<docxkitFragment {_NS_DECL}>{omml}</docxkitFragment>"
+        .encode())
+    return str(etree.tostring(root[0], encoding="unicode"))
 
 
 def clone(omml: str) -> str:
-    """A detached copy of an equation element, ready to insert elsewhere."""
+    """A detached copy of an equation element, ready to insert elsewhere.
+
+    Accepts a fragment with or without its own namespace declarations,
+    so it composes with :func:`harvest` and with :func:`latex_to_omml`
+    alike.
+    """
     from lxml import etree
 
-    element = etree.fromstring(omml.encode("utf-8"))
+    element = etree.fromstring(standalone(omml).encode("utf-8"))
     return str(etree.tostring(copy.deepcopy(element),
                               encoding="unicode"))
 

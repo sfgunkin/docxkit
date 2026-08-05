@@ -561,3 +561,97 @@ def test_a_less_than_sign_survives_being_linked():
     out, _ = crossrefs.link(xml)
     assert visible_text(out) == visible_text(xml)
     assert "&amp;lt;" not in out
+
+
+# --- runs that hold more than a w:t -----------------------------------
+
+
+def test_a_caption_run_with_two_text_nodes_keeps_both():
+    """Word splits text at rsid boundaries, so one run routinely holds
+    several w:t. Rebuilding the run from the ONE matched w:t dropped the
+    rest: a caption stored as "Table 1. " + "Results" came back reading
+    "Table 1." with the title gone, and no text-level check would show
+    it because the linker is not supposed to change text at all."""
+    d = doc(para('<w:r><w:t xml:space="preserve">Table 1. </w:t>'
+                 '<w:t xml:space="preserve">Results</w:t></w:r>'),
+            para(run("See Table 1 for detail.")))
+    out, _ = crossrefs.link(d)
+    assert "Results" in "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", out))
+
+
+@pytest.mark.parametrize("extra,marker", [
+    ("<w:br/>", "<w:br/>"),
+    ('<w:footnoteReference w:id="3"/>', "footnoteReference"),
+    ("<w:tab/>", "<w:tab/>"),
+])
+def test_a_run_child_beside_the_text_survives_linking(extra, marker):
+    """A run may carry a break, a tab, a drawing or a note reference
+    alongside its text. None of them is visible to a text diff, so
+    dropping one is silent."""
+    d = doc(para(f'<w:r><w:t xml:space="preserve">Table 1. Results</w:t>'
+                 f"{extra}</w:r>"),
+            para(run("See Table 1 for detail.")))
+    out, _ = crossrefs.link(d)
+    assert marker in out, f"{marker} was dropped"
+
+
+# --- number boundaries -------------------------------------------------
+
+
+def test_a_hyphen_suffixed_exhibit_is_its_own_object():
+    """"Table 1-A" is a different table from "Table 1". Matching the
+    prefix linked the wrong one and left "-A" as orphaned plain text."""
+    d = doc(para(run("Table 1. Main")), para(run("Table 1-A. Appendix")),
+            para(run("See Table 1-A and Table 1.")))
+    out, rep = crossrefs.link(d)
+    assert sorted(rep.linked) == ["Table1", "Table1_A"]
+    assert not rep.no_mention, rep.format()
+    linked = dict(re.findall(
+        r'<w:hyperlink w:anchor="([^"]+?)(?:txt)?">.*?<w:t[^>]*>([^<]+)',
+        out, re.DOTALL))
+    assert linked["Table1_A"] == "Table 1-A"
+
+
+def test_a_hyphen_range_still_links_its_first_number():
+    """The other side of the same hyphen: "Tables 1-3" is a RANGE, and
+    refusing every hyphen would stop the 1 being linked at all. A digit
+    continues a range, a letter starts a suffix."""
+    d = doc(para(run("Table 1. A")), para(run("Table 2. B")),
+            para(run("Table 3. C")), para(run("See Tables 1-3 for detail.")))
+    _, rep = crossrefs.link(d)
+    assert rep.linked == ["Table1"]
+
+
+# --- idempotency reads elements, not text ------------------------------
+
+
+def test_the_already_linked_check_reads_bookmarks_not_prose():
+    """`w:name="Table1"` occurring anywhere — in a w:t, in some other
+    attribute — read as "already bookmarked", and the caption silently
+    got none."""
+    d = doc(para(run('Table 1. A note on w:name="Table1" conventions')),
+            para(run("See Table 1 for detail.")))
+    out, _ = crossrefs.link(d)
+    names = re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"', out)
+    assert "Table1" in names and "Table1txt" in names
+
+
+# --- Russian label forms ----------------------------------------------
+
+
+@pytest.mark.parametrize("phrase,matches", [
+    ("рисунок 1", True), ("рисунка 1", True), ("рисунке 1", True),
+    ("рисунком 1", True), ("рисунков 1", True),
+    ("рисуночный 1", False), ("рисованию 1", False), ("рису 1", False),
+    ("таблица 1", True), ("таблице 1", True), ("таблицы 1", True),
+    ("таблицами 1", False), ("табло 1", False),
+])
+def test_russian_label_stems_accept_inflections_but_not_neighbours(
+        phrase, matches):
+    """The stem forms are deliberately loose enough for Russian case
+    endings. Pinning the close non-matches is what stops a future widening
+    from swallowing an unrelated word."""
+    label = "Рисунок" if phrase.startswith("рис") else "Таблица"
+    form = crossrefs.LABEL_FORMS[label]
+    got = re.match(form + r"\s+1\b", phrase, re.IGNORECASE) is not None
+    assert got is matches, phrase

@@ -45,6 +45,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import NamedTuple
 
 from ._xml import (
     BOOKMARK_ID_RE,
@@ -170,8 +171,12 @@ def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
     whether "Table" counts, which is the same drift that once split the
     glyph table between compare and ingest.
     """
+    # [\w.-]: exhibit numbers are "1", "A2", "3.2" and "1-A". The hyphen
+    # form was invisible here, so a "Table 1-A." caption was not a
+    # caption at all and nothing linked to it. anchor_names sanitises
+    # the bookmark (Table1_A) — Word allows only word characters there.
     alt = "|".join(re.escape(w) for w in labels)
-    return re.compile(rf"^\s*({alt})\s+([\w.]+?)\s*[.:]\s")
+    return re.compile(rf"^\s*({alt})\s+([\w.-]+?)\s*[.:]\s")
 
 
 #: What may not follow an exhibit number. THE boundary — :mod:`renumber`
@@ -189,7 +194,22 @@ def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
 #: The dot is refused only when a word character follows, because the
 #: overwhelmingly common thing after a mention is a full stop: "the
 #: estimates appear in Table 1." must still match.
-NUMBER_END = r"(?!\w)(?!\.\w)"
+#:
+#: The hyphen splits the same way and for the same reason. "Table 1-A"
+#: is another exhibit, so matching Table 1 inside it linked the wrong
+#: one and orphaned "-A" as plain text; but "Tables 1-3" is a RANGE, and
+#: refusing every hyphen would stop the 1 there being linked at all. A
+#: digit after the hyphen continues a range, a letter starts a suffix.
+NUMBER_END = r"(?!\w)(?!\.\w)(?!-[^\W\d_])"
+
+
+@lru_cache(maxsize=256)
+def _named_bookmark(name: str) -> re.Pattern[str]:
+    """``<w:bookmarkStart ... w:name="NAME">`` — the element, not the text.
+
+    Attribute order is not meaningful, so w:name may precede w:id.
+    """
+    return re.compile(rf'<w:bookmarkStart\b[^>]*w:name="{re.escape(name)}"')
 
 
 def _mention_re(label: str, number: str) -> re.Pattern[str]:
@@ -266,8 +286,45 @@ def _with_hyperlink_style(rpr: str) -> str:
                        '<w:rPr><w:rStyle w:val="Hyperlink"/>', 1)
 
 
+class _RunParts(NamedTuple):
+    """One run, cut around the ``w:t`` a label was found in."""
+
+    open_tag: str
+    rpr: str
+    pre: str            # children between the properties and that w:t
+    post: str           # children between that w:t and </w:r>
+
+
+def _run_parts(run_xml: str, t_start: int, t_end: int) -> _RunParts:
+    """Split a run so that NOTHING in it is lost when it is rebuilt.
+
+    A ``w:r`` is not "properties plus one ``w:t``". It may hold several
+    text nodes — Word splits them at rsid boundaries — and alongside
+    them a ``w:br``, a ``w:tab``, a ``w:drawing``, a ``w:footnoteReference``
+    or a rendered page break. Rebuilding the run from its open tag, its
+    properties and the ONE matched ``w:t`` silently drops every one of
+    those: a caption stored as ``<w:t>Table 1. </w:t><w:t>Results</w:t>``
+    came back reading "Table 1." with the title gone, and no text-level
+    check would show it because the linker is not supposed to change
+    text at all.
+
+    `pre` rides with the first fragment emitted and `post` with the
+    last, so the run's children keep their order and their count.
+    """
+    open_tag = run_xml[: run_xml.index(">") + 1]
+    rpr_m = own_properties(run_xml, "rPr")
+    rpr = run_xml[rpr_m[0]:rpr_m[1]] if rpr_m else ""
+    body_from = rpr_m[1] if rpr_m else len(open_tag)
+    close = run_xml.rfind("</w:r>")
+    body_to = close if close != -1 else len(run_xml)
+    return _RunParts(open_tag=open_tag, rpr=rpr,
+                     pre=run_xml[body_from:t_start],
+                     post=run_xml[t_end:body_to])
+
+
 def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
-                  anchor: str, bookmark_name: str, bid: int) -> str:
+                  t_span: tuple[int, int], anchor: str,
+                  bookmark_name: str, bid: int) -> str:
     """Rewrite one run so the matched label is a bookmarked hyperlink.
 
     The text before and after the label keeps the run's own open tag and
@@ -275,10 +332,8 @@ def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
     style. Rebuilding the surrounding text as a bare run instead is how
     italics and language tags get dropped.
     """
-    open_tag = run_xml[: run_xml.index(">") + 1]
-    rpr_m = own_properties(run_xml, "rPr")
-    rpr = run_xml[rpr_m[0]:rpr_m[1]] if rpr_m else ""
-    link_rpr = _with_hyperlink_style(rpr)
+    cut = _run_parts(run_xml, *t_span)
+    link_rpr = _with_hyperlink_style(cut.rpr)
 
     # NB: `content` is the RAW text of a w:t — already XML-escaped,
     # because it was read straight out of the document. Escaping it again
@@ -287,17 +342,19 @@ def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
     before, label, after = (content[:m.start()], content[m.start():m.end()],
                             content[m.end():])
     parts = []
+    head = cut.pre                      # attaches to whatever comes first
     if before:
-        parts.append(f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                     f"{before}</w:t></w:r>")
+        parts.append(f'{cut.open_tag}{cut.rpr}{head}'
+                     f'<w:t xml:space="preserve">{before}</w:t></w:r>')
+        head = ""
     parts.append(
         f'<w:bookmarkStart w:id="{bid}" w:name="{bookmark_name}"/>'
-        f'<w:hyperlink w:anchor="{anchor}">{open_tag}{link_rpr}'
+        f'<w:hyperlink w:anchor="{anchor}">{cut.open_tag}{link_rpr}{head}'
         f'<w:t xml:space="preserve">{label}</w:t></w:r></w:hyperlink>'
         f'<w:bookmarkEnd w:id="{bid}"/>')
-    if after:
-        parts.append(f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                     f"{after}</w:t></w:r>")
+    tail = (f'<w:t xml:space="preserve">{after}</w:t>' if after else "")
+    if tail or cut.post:
+        parts.append(f"{cut.open_tag}{cut.rpr}{tail}{cut.post}</w:r>")
     return "".join(parts)
 
 
@@ -351,8 +408,10 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
         r_close = para_xml.find("</w:r>", tm.end()) + len("</w:r>")
         run = para_xml[r_open:r_close]
         return (para_xml[:r_open]
-                + _split_run_at(run, tm.group(1), m, anchor=anchor,
-                                bookmark_name=name, bid=bid)
+                + _split_run_at(run, tm.group(1), m,
+                                t_span=(tm.start() - r_open,
+                                        tm.end() - r_open),
+                                anchor=anchor, bookmark_name=name, bid=bid)
                 + para_xml[r_close:]), "linked"
     return para_xml, "NOT-FOUND"
 
@@ -430,25 +489,25 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
             continue
         r_close = para_xml.find("</w:r>", tm.end()) + len("</w:r>")
         run = para_xml[r_open:r_close]
-        open_tag = run[: run.index(">") + 1]
-        rpr_m = own_properties(run, "rPr")
-        rpr = run[rpr_m[0]:rpr_m[1]] if rpr_m else ""
-        # anything between the properties and the text — a rendered page
-        # break, for instance — has to survive the rewrite
-        pre_from = rpr_m[1] if rpr_m else run.index(">") + 1
-        pre = run[pre_from: run.find("<w:t", pre_from)]
-        link_rpr = _with_hyperlink_style(rpr)
+        # everything in the run that is not the matched w:t — a rendered
+        # page break, a second text node, a footnote reference — has to
+        # survive the rewrite, in its own order
+        cut = _run_parts(run, tm.start() - r_open, tm.end() - r_open)
+        link_rpr = _with_hyperlink_style(cut.rpr)
 
         new = ""
+        head = cut.pre                  # attaches to whatever comes first
         if lead:
-            new += (f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                    f"{lead}</w:t></w:r>")
-        new += (f'<w:hyperlink w:anchor="{anchor}">{open_tag}{link_rpr}{pre}'
+            new += (f'{cut.open_tag}{cut.rpr}{head}'
+                    f'<w:t xml:space="preserve">{lead}</w:t></w:r>')
+            head = ""
+        new += (f'<w:hyperlink w:anchor="{anchor}">'
+                f'{cut.open_tag}{link_rpr}{head}'
                 f'<w:t xml:space="preserve">{raw_label}</w:t></w:r>'
                 "</w:hyperlink>")
-        if rest:
-            new += (f'{open_tag}{rpr}<w:t xml:space="preserve">'
-                    f"{rest}</w:t></w:r>")
+        tail = f'<w:t xml:space="preserve">{rest}</w:t>' if rest else ""
+        if tail or cut.post:
+            new += f"{cut.open_tag}{cut.rpr}{tail}{cut.post}</w:r>"
         return para_xml[:r_open] + new + para_xml[r_close:]
     raise AnchorError(
         f"{cap.prefix}: caption label is split across runs and could not be "
@@ -457,7 +516,10 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
 
 def _wrap_paragraph_in_bookmark(para_xml: str, name: str, bid: int) -> str:
     """Put a bookmark around a paragraph's content, after any ``w:pPr``."""
-    if f'w:name="{name}"' in para_xml:
+    # The bookmark ELEMENT, not the string: `w:name="Table1"` occurring
+    # anywhere — in a w:t, in some other element's attribute — read as
+    # "already bookmarked" and the caption silently got none.
+    if _named_bookmark(name).search(para_xml):
         return para_xml
     if (mpp := own_properties(para_xml, "pPr")) is not None:
         at = mpp[1]
@@ -503,8 +565,8 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
             continue
         seen.add(cap.name)
 
-        if (f'w:name="{cap.name}"' in xml
-                and f'w:name="{cap.mention_name}"' in xml):
+        if (_named_bookmark(cap.name).search(xml)
+                and _named_bookmark(cap.mention_name).search(xml)):
             report.already_linked.append(cap.name)
             continue
 

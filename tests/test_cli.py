@@ -121,3 +121,16 @@ def test_link_dry_run_reports_without_writing(monkeypatch, paper, capsys):
     assert code == 0
     assert "dry run" in out
     assert Path(paper).read_bytes() == before
+
+
+def test_a_report_with_an_unencodable_value_is_still_written(tmp_path):
+    """Losing a finished comparison at the serialisation step is the
+    worst moment to fail: the work is done and the report is gone."""
+    import json
+
+    from docxkit.cli import _write_json
+    target = tmp_path / "r.json"
+    _write_json(str(target), {"anchors": {"b", "a"}, "where": tmp_path})
+    back = json.loads(target.read_text(encoding="utf-8"))
+    assert back["anchors"] == ["a", "b"]
+    assert back["where"] == str(tmp_path)
