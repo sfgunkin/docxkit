@@ -94,8 +94,8 @@ MUTATIONS = [
     Mutation("_table_layout.py", "the closing rule lands on the first row",
              "    last = trs[-1]", "    last = trs[0]"),
     Mutation("_table_layout.py", "already-raised stars are wrapped again",
-             '        if m is None or "<w:vertAlign" in last.group(0):',
-             "        if m is None:"),
+             "            if m is None or raised:",
+             "            if m is None:"),
     Mutation("_table_layout.py",
              "a cmidrule is drawn under every cell, not just the span",
              "            elif i in shape.group_rows and j in spanned:",
@@ -130,6 +130,18 @@ MUTATIONS = [
              "the border search reaches into a tracked property snapshot",
              "    hit = _EDGE_RE.search(masked)",
              "    hit = _EDGE_RE.search(inner)"),
+    Mutation("_xml.py",
+             "a properties element closes on the nested old-properties "
+             "snapshot instead of its own end tag",
+             "    close = matching_close(element, pr.end(), tag)",
+             '    close = (element.index(f"</w:{tag}>", pr.end())\n'
+             '             + len(f"</w:{tag}>"))'),
+    Mutation("_xml.py",
+             "the historical snapshot answers property questions for "
+             "the formatting in force",
+             "    m = _PROPERTY_CHANGE_RE.search(inner)\n"
+             "    return inner if m is None else inner[:m.start()]",
+             "    return inner"),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",

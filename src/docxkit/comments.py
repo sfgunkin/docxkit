@@ -25,6 +25,7 @@ from ._xml import (
     PARA_RE,
     delta_text,
     normalize_glyphs,
+    own_properties,
     set_run_text,
     visible_text,
 )
@@ -381,13 +382,18 @@ def add_at(parts: dict[str, bytes], anchor: str, comment: str, *,
 
     para = hits[0]
     body = para.group(0)
-    # after <w:pPr>...</w:pPr> if present, else straight after <w:p ...>
-    # `<w:p(?: ...)?>` rather than a word boundary: the latter would also
-    # match the `<w:pPr>` this is trying to step over.
-    ppr = re.match(r"<w:p(?: [^>]*)?>(?:<w:pPr>.*?</w:pPr>)?", body,
-                   re.DOTALL)
-    assert ppr is not None      # PARA_RE guarantees the <w:p opens
-    start = para.start() + ppr.end()
+    # after <w:pPr>...</w:pPr> if present, else straight after <w:p ...>.
+    # Depth-aware: a tracked formatting change nests a snapshot of the
+    # old pPr inside the live one, and stepping to the first close tag
+    # opened the comment range INSIDE that historical record.
+    own = own_properties(body, "pPr")
+    if own is not None:
+        at = own[1]
+    else:
+        popen = re.match(r"<w:p(?: [^>]*)?>", body)
+        assert popen is not None    # PARA_RE guarantees the <w:p opens
+        at = popen.end()
+    start = para.start() + at
     end = para.end() - len("</w:p>")
 
     scaffold = _Scaffold.read(parts)

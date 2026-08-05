@@ -30,8 +30,10 @@ __all__ = [
     "element_spans",
     "escape",
     "internal_links",
+    "live_properties",
     "matching_close",
     "normalize_glyphs",
+    "own_properties",
     "set_run_text",
     "visible_text",
 ]
@@ -223,3 +225,71 @@ def element_spans(xml: str, tag: str) -> list[tuple[int, int]]:
         spans.append((m.start(), end))
         pos = end                       # nested elements ride along inside
     return spans
+
+
+_ELEMENT_OPEN_RE = re.compile(r"<w:\w+\b[^>]*?(/?)>\s*")
+
+
+def own_properties(element: str, tag: str) -> tuple[int, int, str] | None:
+    """``(start, end, inner)`` of `element`'s OWN ``w:tag`` child, or None.
+
+    Properties come first in ``CT_P``, ``CT_R`` and ``CT_Tc``, so the
+    element's own ``w:pPr`` / ``w:rPr`` / ``w:tcPr`` is the child right
+    after its open tag — and that is the ONLY one a writer may touch.
+
+    Two shapes make the obvious searches wrong, and both are ordinary
+    Word output rather than corner cases:
+
+    * A tracked FORMATTING change stores the OLD properties as a
+      complete snapshot NESTED inside the new ones, so ``w:rPr`` holds a
+      second ``w:rPr``. A non-greedy ``<w:rPr>.*?</w:rPr>`` closes on the
+      snapshot and returns an element cut in half; code that then copies
+      that text into a rebuilt run emits XML Word cannot open, and code
+      that inserts before its close writes the edit into the historical
+      record instead of the live formatting.
+    * A nested table puts another cell's ``w:tcPr`` inside this one, so a
+      plain search finds the inner cell's properties first.
+
+    The close tag is therefore found by depth count, and the search
+    starts at the open tag rather than anywhere in the fragment. An empty
+    ``<w:tcPr/>`` is real too: it reports ``inner == ""`` with a span
+    covering the self-closing tag, so a caller can expand it in place
+    rather than prepend a second properties element beside it.
+    """
+    open_tag = _ELEMENT_OPEN_RE.match(element)
+    if open_tag is None or open_tag.group(1) == "/":
+        return None
+    pr = re.compile(rf"<w:{tag}\b[^>]*?(/?)>").match(element, open_tag.end())
+    if pr is None:
+        return None
+    if pr.group(1) == "/":
+        return pr.start(), pr.end(), ""
+    close = matching_close(element, pr.end(), tag)
+    return pr.start(), close, element[pr.end():close - len(f"</w:{tag}>")]
+
+
+_PROPERTY_CHANGE_RE = re.compile(r"<w:\w+PrChange\b")
+
+
+def live_properties(inner: str) -> str:
+    """The part of a properties element that is in force NOW.
+
+    ``w:rPrChange`` / ``w:pPrChange`` / ``w:tcPrChange`` carries the
+    formatting a tracked change replaced, and the schema puts it LAST in
+    the properties element it revises, so everything before it is
+    current. Take this before asking a property question — "is this run
+    already italic?", "where does ``w:lang`` start?" — because the
+    snapshot answers for the past and the answers differ; that is the
+    whole reason it is recorded.
+
+    The returned prefix shares offsets with `inner`, so a match found
+    here indexes straight back into the full properties, and its length
+    is the insertion point for a new child that sorts last.
+
+    Writers that REPLACE an element rather than insert one mask the
+    snapshot in place instead (see ``_table_layout._set_borders``):
+    masking keeps the trailing bytes addressable, and it holds even in a
+    document that puts the change element somewhere the schema does not.
+    """
+    m = _PROPERTY_CHANGE_RE.search(inner)
+    return inner if m is None else inner[:m.start()]

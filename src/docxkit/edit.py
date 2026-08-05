@@ -14,7 +14,9 @@ from ._xml import (
     RUN_RE,
     T_RUN_RE,
     XML_WS,
+    live_properties,
     normalize_glyphs,
+    own_properties,
     set_run_text,
     visible_text,
 )
@@ -183,17 +185,28 @@ _RUN_OPEN_RE = RUN_OPEN_RE             # the shared definition
 
 def _run_italic(run_xml: str) -> str:
     """The same run with italics ON, schema order respected."""
-    if _ITALIC_OFF_RE.search(run_xml):
-        return _ITALIC_OFF_RE.sub("<w:i/>", run_xml, count=1)
-    if re.search(r"<w:i[/ >]", run_xml):
-        return run_xml                       # already italic
-    if "<w:rPr>" in run_xml:
-        m = _RPR_HEAD_RE.search(run_xml)
+    # Every question below is about the run's OWN properties. A tracked
+    # formatting change nests a snapshot of the old rPr inside the live
+    # one, so a run whose italics were REMOVED still contains <w:i/> in
+    # that historical record — and reading the whole run reported it as
+    # already italic and skipped it.
+    own = own_properties(run_xml, "rPr")
+    if own is None:
+        m = _RUN_OPEN_RE.search(run_xml)
         assert m is not None
-        return run_xml[:m.end()] + "<w:i/>" + run_xml[m.end():]
-    m = _RUN_OPEN_RE.search(run_xml)
-    assert m is not None
-    return run_xml[:m.end()] + "<w:rPr><w:i/></w:rPr>" + run_xml[m.end():]
+        return run_xml[:m.end()] + "<w:rPr><w:i/></w:rPr>" + run_xml[m.end():]
+    start, end, inner = own
+    live = live_properties(inner)
+    if (off := _ITALIC_OFF_RE.search(live)) is not None:
+        inner = inner[:off.start()] + "<w:i/>" + inner[off.end():]
+    elif re.search(r"<w:i[/ >]", live):
+        return run_xml                       # already italic
+    else:
+        m = _RPR_HEAD_RE.search(f"<w:rPr>{live}")
+        assert m is not None
+        at = m.end() - len("<w:rPr>")
+        inner = inner[:at] + "<w:i/>" + inner[at:]
+    return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
 
 
 _VERT_ALIGN_RE = re.compile(r'<w:vertAlign w:val="[^"]*"/>')
@@ -204,15 +217,24 @@ _RPR_TAIL_RE = re.compile(r"(?=(?:<w:rtl[/ >]|<w:lang[ /]|</w:rPr>))")
 def _run_vert_align(run_xml: str, val: str) -> str:
     """The same run raised or lowered, schema order respected."""
     tag = f'<w:vertAlign w:val="{val}"/>'
-    if _VERT_ALIGN_RE.search(run_xml):
-        return _VERT_ALIGN_RE.sub(tag, run_xml, count=1)
-    if "<w:rPr>" in run_xml:
-        m = _RPR_TAIL_RE.search(run_xml, run_xml.find("<w:rPr>"))
-        assert m is not None                 # the rPr has a close tag
-        return run_xml[:m.start()] + tag + run_xml[m.start():]
-    m = _RUN_OPEN_RE.search(run_xml)
-    assert m is not None
-    return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
+    # Confined to the run's OWN properties: the tail search below stops
+    # at the first `</w:rPr>`, which inside a tracked formatting change
+    # is the close of the nested OLD-properties snapshot — so the run
+    # was raised in the historical record and left flat on the page.
+    own = own_properties(run_xml, "rPr")
+    if own is None:
+        m = _RUN_OPEN_RE.search(run_xml)
+        assert m is not None
+        return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
+    start, end, inner = own
+    live = live_properties(inner)
+    if (was := _VERT_ALIGN_RE.search(live)) is not None:
+        inner = inner[:was.start()] + tag + inner[was.end():]
+    else:
+        m = _RPR_TAIL_RE.search(live)
+        at = m.start() if m is not None else len(live)
+        inner = inner[:at] + tag + inner[at:]
+    return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
 
 
 def _restyle(para_xml: str, text: str, style: Callable[[str], str],

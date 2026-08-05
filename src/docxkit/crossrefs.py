@@ -50,6 +50,7 @@ from ._xml import (
     BOOKMARK_ID_RE,
     PARA_RE,
     T_RE,
+    own_properties,
     visible_text,
 )
 from .citations import next_bookmark_id
@@ -256,8 +257,8 @@ def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
     italics and language tags get dropped.
     """
     open_tag = run_xml[: run_xml.index(">") + 1]
-    rpr_m = _RPR_RE.search(run_xml)
-    rpr = rpr_m.group(0) if rpr_m else ""
+    rpr_m = own_properties(run_xml, "rPr")
+    rpr = run_xml[rpr_m[0]:rpr_m[1]] if rpr_m else ""
     link_rpr = _with_hyperlink_style(rpr)
 
     # NB: `content` is the RAW text of a w:t — already XML-escaped,
@@ -411,11 +412,11 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
         r_close = para_xml.find("</w:r>", tm.end()) + len("</w:r>")
         run = para_xml[r_open:r_close]
         open_tag = run[: run.index(">") + 1]
-        rpr_m = _RPR_RE.search(run)
-        rpr = rpr_m.group(0) if rpr_m else ""
+        rpr_m = own_properties(run, "rPr")
+        rpr = run[rpr_m[0]:rpr_m[1]] if rpr_m else ""
         # anything between the properties and the text — a rendered page
         # break, for instance — has to survive the rewrite
-        pre_from = rpr_m.end() if rpr_m else run.index(">") + 1
+        pre_from = rpr_m[1] if rpr_m else run.index(">") + 1
         pre = run[pre_from: run.find("<w:t", pre_from)]
         link_rpr = _with_hyperlink_style(rpr)
 
@@ -439,8 +440,8 @@ def _wrap_paragraph_in_bookmark(para_xml: str, name: str, bid: int) -> str:
     """Put a bookmark around a paragraph's content, after any ``w:pPr``."""
     if f'w:name="{name}"' in para_xml:
         return para_xml
-    if (mpp := _PPR_RE.search(para_xml)) is not None:
-        at = mpp.end()
+    if (mpp := own_properties(para_xml, "pPr")) is not None:
+        at = mpp[1]
     elif (popen := _P_OPEN_RE.match(para_xml)) is not None:
         at = popen.end()
     else:

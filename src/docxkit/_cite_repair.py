@@ -12,6 +12,7 @@ import re
 from ._cite_grammar import bookmark
 from ._xml import (
     BOOKMARK_ID_RE,
+    own_properties,
 )
 from .edit import _RUN_OPEN_RE
 from .errors import AnchorError
@@ -38,9 +39,14 @@ def next_bookmark_id(*xmls: str) -> int:
 
 def _mark_para_head(para: str, name: str, bid: int) -> str:
     """A zero-length bookmark at the paragraph's head (after pPr)."""
-    m = re.match(r"<w:p\b[^>]*>(<w:pPr>.*?</w:pPr>)?", para, re.DOTALL)
-    assert m is not None
-    return para[:m.end()] + bookmark(name, bid) + para[m.end():]
+    own = own_properties(para, "pPr")
+    if own is not None:
+        at = own[1]
+    else:
+        m = re.match(r"<w:p\b[^>]*>", para)
+        assert m is not None
+        at = m.end()
+    return para[:at] + bookmark(name, bid) + para[at:]
 
 
 def marker_bookmark(xml: str, sig: str, name: str, bid: int) -> str:

@@ -22,7 +22,11 @@ tidy case:
   empty;
 * a FORMATTING-only revision — the old properties survive as a
   snapshot nested in the new ones, with no content marker to
-  find, so a writer edited the past and left the present bare.
+  find, so a writer edited the past and left the present bare;
+* the same on a paragraph and on a run — ``<w:pPr>.*?</w:pPr>``
+  closes on the snapshot, so five modules read a properties
+  element cut in half: one copied the fragment into a rebuilt run
+  and emitted XML with more ``<w:rPr>`` opens than closes.
 
 The invariants asserted are the ones every mutator shares: the result
 parses, and the visible text survives unless the operation is defined to
@@ -141,9 +145,40 @@ PROPERTY_CHANGE_CELL = doc(
     "</w:tcPrChange></w:tcPr>"
     + p(r("0.054")) + "</w:tc></w:tr></w:tbl>")
 
+#: The same revision on a PARAGRAPH. `w:pPrChange` holds a complete
+#: `w:pPr` of its own, so the first `</w:pPr>` in the string closes the
+#: snapshot rather than the live properties — and every module that
+#: stepped over the properties to reach a paragraph's content landed
+#: inside the historical record instead.
+PARAGRAPH_PROPERTY_CHANGE = doc(
+    '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="40"/>'
+    '<w:pPrChange w:id="11" w:author="A" w:date="2026-01-01T00:00:00Z">'
+    '<w:pPr><w:jc w:val="left"/></w:pPr>'
+    "</w:pPrChange></w:pPr>"
+    + r("Table 1. Results") + "</w:p>",
+    p(r("See Table 1 for the detail.")))
+
+#: The same revision on a RUN, and the one that reached furthest. The
+#: snapshot carries italics, a vertAlign and a w:lang — every property
+#: the run writers look for — so reading the whole run answers each
+#: question with the formatting the author REMOVED. `crossrefs` also
+#: copies the matched properties into the runs it rebuilds around a
+#: link, which spliced half an element into the document: the result
+#: had one more `<w:rPr>` open than close and would not open in Word.
+RUN_PROPERTY_CHANGE = doc(
+    p('<w:r><w:rPr><w:b/>'
+      '<w:rPrChange w:id="12" w:author="A" w:date="2026-01-01T00:00:00Z">'
+      '<w:rPr><w:i/><w:vertAlign w:val="superscript"/>'
+      '<w:lang w:val="en-GB"/></w:rPr>'
+      "</w:rPrChange></w:rPr>"
+      '<w:t xml:space="preserve">Table 2. Estimates</w:t></w:r>'),
+    p(r("See Table 2 for the detail.")))
+
 CORPUS = {
     "ghost_hyperlink": GHOST_HYPERLINK,
     "property_change": PROPERTY_CHANGE_CELL,
+    "property_change_para": PARAGRAPH_PROPERTY_CHANGE,
+    "property_change_run": RUN_PROPERTY_CHANGE,
     "styled_runs": STYLED_RUNS,
     "merged_cells": MERGED_CELLS,
     "nested_table": NESTED_TABLE,
@@ -290,6 +325,104 @@ def test_a_merged_row_reports_fewer_cells_than_the_grid_is_wide():
     t = tables.read_all(MERGED_CELLS)[0]
     assert len(t.rows[0]) == 3 and len(t.rows[1]) == 4
     assert t.grid_columns(MERGED_CELLS, 0) == [0, 1, 3]
+
+
+def test_linking_a_tracked_caption_keeps_the_properties_balanced():
+    """The splice that produced a file Word would not open.
+
+    ``crossrefs`` copies a run's properties into the runs it rebuilds
+    around a new hyperlink. Read with a non-greedy close, those
+    "properties" end at the snapshot's ``</w:rPr>`` — so the copy carries
+    an open ``w:rPrChange`` and no close, and the document gained one
+    more ``<w:rPr>`` open than it had closes. Caught only by parsing:
+    every text-level check passes on XML this broken.
+    """
+    from docxkit import crossrefs
+    out, _ = crossrefs.link(RUN_PROPERTY_CHANGE)
+    parses(out)
+    assert out.count("<w:rPr>") == out.count("</w:rPr>")
+    # Linking SPLITS the caption run, and both halves carry the change —
+    # that is what Word does to a split run, so the count rises. What may
+    # never happen is a half element: every open still has its close, and
+    # the revision is not quietly dropped either.
+    assert out.count("<w:rPrChange") == out.count("</w:rPrChange>") >= 1
+
+
+def test_a_snapshot_is_never_what_a_run_writer_rewrites():
+    """Every run-property writer edits the live formatting.
+
+    The snapshot in this fixture carries italics, a vertAlign and a
+    w:lang deliberately: those are the three things the writers search
+    for, and finding them in the historical record made one skip the run
+    as "already done" and the others insert into the past.
+    """
+    from docxkit._table_layout import _run_superscripted
+    from docxkit._xml import live_properties, own_properties
+    from docxkit.edit import _run_italic, _run_vert_align
+
+    run = ('<w:r><w:rPr><w:b/>'
+           '<w:rPrChange w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z">'
+           '<w:rPr><w:i/><w:vertAlign w:val="superscript"/>'
+           '<w:lang w:val="en-GB"/></w:rPr>'
+           "</w:rPrChange></w:rPr><w:t>-0.250***</w:t></w:r>")
+
+    for name, out, want in [
+            ("italic", _run_italic(run), "<w:i/>"),
+            ("vertAlign", _run_vert_align(run, "superscript"), "<w:vertAlign"),
+            ("superscript", _run_superscripted(run), "<w:vertAlign")]:
+        parses(f"<w:p {W_NS}>{out}</w:p>")
+        own = own_properties(out, "rPr")
+        assert own is not None, name
+        # written to the formatting in force...
+        assert want in live_properties(own[2]), f"{name}: skipped the run"
+        # ...and the record of what the author changed is untouched
+        assert out[out.index("<w:rPrChange"):] == \
+            run[run.index("<w:rPrChange"):], f"{name}: rewrote the past"
+
+
+def test_a_paragraph_writer_steps_over_the_whole_properties_element():
+    """A mark placed after ``</w:pPr>`` — the live one, not the snapshot's.
+
+    ``w:bookmarkStart`` inside ``w:pPr`` is schema-invalid, and the
+    marker it anchors would not travel with the paragraph anyway.
+    """
+    from docxkit._cite_repair import _mark_para_head
+    from docxkit.crossrefs import _wrap_paragraph_in_bookmark
+
+    para = PARAGRAPH_PROPERTY_CHANGE[
+        PARAGRAPH_PROPERTY_CHANGE.index("<w:p>"):
+        PARAGRAPH_PROPERTY_CHANGE.index("</w:p>") + len("</w:p>")]
+    for out in (_mark_para_head(para, "cite_x", 9),
+                _wrap_paragraph_in_bookmark(para, "Table1", 9)):
+        parses(f"<w:body {W_NS}>{out}</w:body>")
+        assert out.index("<w:bookmarkStart") > out.rindex("</w:pPr>")
+
+
+def test_own_properties_reads_the_element_not_the_snapshot_or_the_nest():
+    """The one helper the five call sites now share."""
+    from docxkit._xml import live_properties, own_properties
+
+    # a nested table's cell properties are NOT this cell's
+    outer = ('<w:tc><w:tcPr><w:tcW w:w="800" w:type="dxa"/></w:tcPr>'
+             '<w:tbl><w:tr><w:tc><w:tcPr><w:tcBorders/></w:tcPr>'
+             "<w:p/></w:tc></w:tr></w:tbl></w:tc>")
+    own = own_properties(outer, "tcPr")
+    assert own is not None and own[2] == '<w:tcW w:w="800" w:type="dxa"/>'
+
+    # the empty form is properties, not their absence
+    empty = own_properties("<w:tc><w:tcPr/><w:p/></w:tc>", "tcPr")
+    assert empty == (6, 15, "")
+
+    # no properties at all, and properties that are not the first child
+    assert own_properties("<w:tc><w:p/></w:tc>", "tcPr") is None
+    assert own_properties("<w:p><w:r/><w:pPr/></w:p>", "pPr") is None
+
+    # and the live/past split
+    centred = '<w:jc w:val="center"/>'
+    inner = (centred + '<w:pPrChange w:id="1">'
+             '<w:pPr><w:jc w:val="left"/></w:pPr></w:pPrChange>')
+    assert live_properties(inner) == centred
+    assert live_properties(centred) == centred
 
 
 def test_an_nbsp_cell_is_not_treated_as_empty_whitespace():

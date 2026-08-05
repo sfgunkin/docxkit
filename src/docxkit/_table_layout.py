@@ -33,7 +33,8 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     T_PARTS_RE,
-    matching_close,
+    live_properties,
+    own_properties,
     set_run_text,
 )
 from .errors import AnchorError
@@ -62,7 +63,6 @@ from .revisions import _has_revisions
 _GRIDCOL_RE = re.compile(r'<w:gridCol w:w="(\d+)"/>')
 _RUN_RE = RUN_RE                       # the shared definition
 _T_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
-_RPR_RE = re.compile(r"<w:r\b[^>]*>(<w:rPr>.*?</w:rPr>)?", re.DOTALL)
 _SZ_RE = re.compile(r'<w:sz w:val="(\d+)"/>')
 _ASCII_RE = re.compile(r'<w:rFonts[^>]*w:ascii="([^"]+)"')
 _TCW_RE = re.compile(r'<w:tcW w:w="[^"]*" w:type="\w+"/>')
@@ -131,8 +131,8 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
     for p in PARA_RE.finditer(tc_xml):
         chars: list[tuple[str, float]] = []
         for r in _RUN_RE.finditer(p.group(0)):
-            head = _RPR_RE.match(r.group(0))
-            rpr = (head.group(1) or "") if head else ""
+            head = own_properties(r.group(0), "rPr")
+            rpr = head[2] if head else ""
             font_m = _ASCII_RE.search(rpr)
             sz_m = _SZ_RE.search(rpr)
             font = font_m.group(1) if font_m else fallback[0]
@@ -466,12 +466,19 @@ def _run_superscripted(run_xml: str) -> str:
     # the caller has already skipped runs carrying a vertAlign, so this
     # only ever sees a plain run
     tag = '<w:vertAlign w:val="superscript"/>'
-    if "<w:rPr>" in run_xml:
-        # vertAlign sorts after sz/szCs and before w:lang in the schema
-        at = run_xml.find("<w:lang")
+    own = own_properties(run_xml, "rPr")
+    if own is not None:
+        start, end, inner = own
+        # vertAlign sorts after sz/szCs and before w:lang in the schema.
+        # Offsets are measured INSIDE the run's own properties: a tracked
+        # formatting change nests a snapshot of the old rPr here, and
+        # searching the whole run put the tag in that historical record.
+        live = live_properties(inner)
+        at = live.find("<w:lang")
         if at == -1:
-            at = run_xml.find("</w:rPr>")
-        return run_xml[:at] + tag + run_xml[at:]
+            at = len(live)
+        body = inner[:at] + tag + inner[at:]
+        return run_xml[:start] + f"<w:rPr>{body}</w:rPr>" + run_xml[end:]
     m = re.match(r"<w:r\b[^>]*>", run_xml)
     assert m is not None
     return (run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>"
@@ -511,7 +518,10 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
                 continue
             text = _RUN_T_RE.search(last.group(0)).group(2)  # type: ignore[union-attr]
             m = re.match(r"^(.*?)(\*{1,3})$", text)
-            if m is None or "<w:vertAlign" in last.group(0):
+            own = own_properties(last.group(0), "rPr")
+            raised = own is not None and "<w:vertAlign" in live_properties(
+                own[2])
+            if m is None or raised:
                 continue                 # stars already split and raised
             head, stars = m.group(1), m.group(2)
             star_run = _run_superscripted(set_run_text(last.group(0), stars))
@@ -628,23 +638,11 @@ def _edges(spec: dict[str, tuple[str, int]]) -> str:
 def _own_properties(cell: str) -> tuple[int, int, str] | None:
     """``(start, end, inner)`` of the cell's OWN ``w:tcPr``, or None.
 
-    ``CT_Tc`` is ``(tcPr?, block-level content)``, so a cell's
-    properties sit immediately after its open tag and anything found
-    deeper belongs to a NESTED table. Searching the whole cell string
-    instead rewrote the nested table's borders and left the outer cell
-    unruled. Both forms are recognised: an empty ``<w:tcPr/>`` is valid,
-    and treating it as absent prepended a second properties element.
+    ``CT_Tc`` is ``(tcPr?, block-level content)``, so a cell's properties
+    sit immediately after its open tag and anything found deeper belongs
+    to a NESTED table — the shared rule, and the shared helper.
     """
-    open_tag = re.match(r"<w:tc\b[^>]*>\s*", cell)
-    if open_tag is None:
-        return None
-    pr = re.compile(r"<w:tcPr\b[^>]*?(/?)>").match(cell, open_tag.end())
-    if pr is None:
-        return None
-    if pr.group(1) == "/":
-        return pr.start(), pr.end(), ""          # self-closing: no children
-    close = matching_close(cell, pr.end(), "tcPr")
-    return pr.start(), close, cell[pr.end():close - len("</w:tcPr>")]
+    return own_properties(cell, "tcPr")
 
 
 def _set_borders(cell: str, borders: str) -> str:
