@@ -740,3 +740,60 @@ def test_lint_reports_a_duplicated_properties_element():
               "<w:tcPr/><w:p/></w:tc></w:tr></w:tbl>")
     problems = lint_parts({"word/document.xml": xml.encode("utf-8")})
     assert problems and "2 w:tcPr" in problems[0]
+
+
+# --------------------------------- a formatting-only tracked change -------
+
+
+def _property_change_cell() -> str:
+    """Word stores a property change as a snapshot of the OLD properties
+    NESTED inside the new ones — a second w:tcPr, with its own borders,
+    and no content revision marker anywhere in the cell."""
+    return doc('<w:tbl><w:tblPr><w:tblW w:w="900" w:type="dxa"/></w:tblPr>'
+               '<w:tblGrid><w:gridCol w:w="900"/></w:tblGrid>'
+               '<w:tr><w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/>'
+               '<w:tcPrChange w:id="7" w:author="A" '
+               'w:date="2026-01-01T00:00:00Z"><w:tcPr><w:tcBorders>'
+               '<w:bottom w:val="single" w:sz="4" w:space="0" '
+               'w:color="auto"/></w:tcBorders></w:tcPr></w:tcPrChange>'
+               "</w:tcPr><w:p><w:r><w:t>0.054</w:t></w:r></w:p>"
+               "</w:tc></w:tr></w:tbl>")
+
+
+def test_a_formatting_only_revision_counts_as_a_tracked_change():
+    """The guard looked for insertions and deletions, so a cell whose
+    ONLY revision is a property snapshot read as clean."""
+    from docxkit.revisions import _has_revisions
+    assert _has_revisions(_property_change_cell())
+
+
+@pytest.mark.parametrize("writer", ["booktabs", "bottom_border",
+                                    "fit_columns", "superscript_stars"])
+def test_every_writer_refuses_a_formatting_revision(writer):
+    from docxkit import tables as T
+    from docxkit.errors import AnchorError
+    xml = _property_change_cell()
+    with pytest.raises(AnchorError, match="tracked changes"):
+        getattr(T, writer)(xml, read_all(xml)[0])
+
+
+def test_the_historical_snapshot_is_never_the_element_rewritten():
+    """Defence in depth: even with the guard bypassed, the search must
+    not reach into the past. It found the snapshot's rule, rewrote THAT,
+    and left the live cell with no border at all."""
+    from docxkit._table_layout import _set_borders
+    cell = ('<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/>'
+            '<w:tcPrChange w:id="7" w:author="A" '
+            'w:date="2026-01-01T00:00:00Z"><w:tcPr><w:tcBorders>'
+            '<w:bottom w:val="single" w:sz="4" w:space="0" '
+            'w:color="auto"/></w:tcBorders></w:tcPr></w:tcPrChange>'
+            "</w:tcPr><w:p/></w:tc>")
+    out = _set_borders(cell, '<w:tcBorders><w:bottom w:val="double" '
+                             'w:sz="4" w:space="0" w:color="auto"/>'
+                             "</w:tcBorders>")
+    snapshot = re.search(r"<w:tcPrChange.*?</w:tcPrChange>", out, re.DOTALL)
+    assert snapshot is not None
+    assert "double" not in snapshot.group(0), "the past was rewritten"
+    assert 'w:val="single"' in snapshot.group(0), "the past was preserved"
+    current = out[:out.index("<w:tcPrChange")]
+    assert "double" in current, "the live cell got no rule"

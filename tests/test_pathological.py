@@ -18,7 +18,11 @@ tidy case:
 * an NBSP-only cell — ``str.strip()`` eats U+00A0 where XML does not;
 * both hyperlink forms in one document — Word converts field to element
   on every save, so a real paper contains both;
-* tracked content in a table cell — python-docx reads it as empty.
+* tracked content in a table cell — python-docx reads it as
+  empty;
+* a FORMATTING-only revision — the old properties survive as a
+  snapshot nested in the new ones, with no content marker to
+  find, so a writer edited the past and left the present bare.
 
 The invariants asserted are the ones every mutator shares: the result
 parses, and the visible text survives unless the operation is defined to
@@ -122,8 +126,24 @@ TRACKED_CELL = doc(tbl(
     + tc('<w:p><w:ins w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z">'
          "<w:r><w:t>0.022</w:t></w:r></w:ins></w:p>") + "</w:tr>"))
 
+#: A FORMATTING-only revision. Word stores the old properties as a
+#: snapshot NESTED inside the new ones, so the cell carries a second
+#: w:tcPr with its own borders and NO content marker at all — the
+#: tracked-changes guard looked for insertions and called it clean.
+PROPERTY_CHANGE_CELL = doc(
+    "<w:tbl>"
+    '<w:tblPr><w:tblW w:w="800" w:type="dxa"/></w:tblPr>'
+    '<w:tblGrid><w:gridCol w:w="800"/></w:tblGrid>'
+    '<w:tr><w:tc><w:tcPr><w:tcW w:w="800" w:type="dxa"/>'
+    '<w:tcPrChange w:id="7" w:author="A" w:date="2026-01-01T00:00:00Z">'
+    '<w:tcPr><w:tcBorders><w:bottom w:val="single" w:sz="4" '
+    'w:space="0" w:color="auto"/></w:tcBorders></w:tcPr>'
+    "</w:tcPrChange></w:tcPr>"
+    + p(r("0.054")) + "</w:tc></w:tr></w:tbl>")
+
 CORPUS = {
     "ghost_hyperlink": GHOST_HYPERLINK,
+    "property_change": PROPERTY_CHANGE_CELL,
     "styled_runs": STYLED_RUNS,
     "merged_cells": MERGED_CELLS,
     "nested_table": NESTED_TABLE,
@@ -216,7 +236,12 @@ def test_fit_columns_survives_every_table_shape(table_doc):
 
 def test_bottom_border_survives_every_table_shape(table_doc):
     t = tables.read_all(table_doc)[0]
-    out, _ = tables.bottom_border(table_doc, t)
+    try:
+        out, _ = tables.bottom_border(table_doc, t)
+    except Exception as exc:
+        # a tracked table is REFUSED by every writer, loudly and alike
+        assert "tracked" in str(exc), exc
+        return
     parses(out)
     assert visible_text(out) == visible_text(table_doc)
 

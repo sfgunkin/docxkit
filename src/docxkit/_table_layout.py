@@ -539,6 +539,10 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
     """
     _fresh(xml, table, "bottom_border")
     body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - rule the "
+            f"clean build and rebuild the redline from it")
     trs = list(rows_of(body))
     if not trs:
         raise AnchorError(f"table {table.index} has no rows")
@@ -584,6 +588,13 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
 # never closed, and panel rules in some tables but not others.
 
 _SIDES = ("top", "bottom", "left", "right")
+#: A tracked FORMATTING change: `<w:tcPrChange>` holds a snapshot of the
+#: properties as they were. Groups: open tag, content, close tag — the
+#: content is masked so a search cannot reach into the past, while the
+#: tags stay visible so the schema anchor still finds them.
+_CHANGE_RE = re.compile(r"(<w:\w+Change\b[^>]*>)(.*?)(</w:\w+Change>)",
+                        re.DOTALL)
+
 #: Everything that follows w:tcBorders in the CT_TcPr sequence. The
 #: ones before it — cnfStyle, tcW, gridSpan, hMerge, vMerge — stay put.
 _AFTER_BORDERS = ("<w:shd", "<w:noWrap", "<w:tcMar", "<w:textDirection",
@@ -649,15 +660,22 @@ def _set_borders(cell: str, borders: str) -> str:
         at = m.end() if m else 0
         return cell[:at] + f"<w:tcPr>{borders}</w:tcPr>" + cell[at:]
     start, end, inner = own
-    if _EDGE_RE.search(inner):
-        inner = _EDGE_RE.sub(lambda _: borders, inner, count=1)
+    # Word records a property change as a snapshot of the OLD properties
+    # NESTED inside the new ones, so a w:tcPr can contain a whole second
+    # w:tcPr with its own borders. Mask those before looking: the search
+    # found the historical rule, rewrote it, and left the live cell bare.
+    masked = _CHANGE_RE.sub(
+        lambda m: m.group(1) + "\x01" * len(m.group(2)) + m.group(3), inner)
+    hit = _EDGE_RE.search(masked)
+    if hit is not None:
+        inner = inner[:hit.start()] + borders + inner[hit.end():]
     else:
         # CT_TcPr is a SEQUENCE, so tcBorders has to land before every
         # property that follows it and after every one that precedes.
         # Anchoring on only shd/tcMar/vAlign put it after w:noWrap or
         # w:hideMark in a cell carrying neither of those three, and Word
         # repairs a document whose properties are out of order.
-        at = min((p for p in (inner.find(t) for t in _AFTER_BORDERS)
+        at = min((p for p in (masked.find(t) for t in _AFTER_BORDERS)
                   if p != -1), default=len(inner))
         inner = inner[:at] + borders + inner[at:]
     return cell[:start] + f"<w:tcPr>{inner}</w:tcPr>" + cell[end:]

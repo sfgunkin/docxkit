@@ -233,10 +233,28 @@ def _merge_into_next(para: Any) -> None:
     parent.remove(para)
 
 
+#: Content revisions — an insertion, a deletion, a move.
+_CONTENT_MARKERS = ("<w:ins ", "<w:del ", "<w:ins/", "<w:del/",
+                    "w:moveFrom", "w:moveTo")
+#: FORMATTING revisions. Word records a property change as a snapshot of
+#: the OLD properties nested inside the new ones — `w:tcPrChange` holds a
+#: whole `w:tcPr`. A cell whose only revision is one of these carries no
+#: content marker at all, so a guard that looked for insertions alone
+#: called the table clean and let a writer edit the historical snapshot.
+_PROPERTY_MARKERS = ("<w:tcPrChange", "<w:trPrChange", "<w:tblPrChange",
+                     "<w:pPrChange", "<w:rPrChange", "<w:sectPrChange",
+                     "<w:tblGridChange")
+
+
+def _has_content_revisions(xml: str) -> bool:
+    """An insertion, deletion or move — what accept/reject simulate."""
+    return any(marker in xml for marker in _CONTENT_MARKERS)
+
+
 def _has_revisions(xml: str) -> bool:
-    return any(marker in xml for marker in
-               ("<w:ins ", "<w:del ", "<w:ins/", "<w:del/",
-                "w:moveFrom", "w:moveTo"))
+    """ANY tracked change, including a formatting-only one."""
+    return (_has_content_revisions(xml)
+            or any(marker in xml for marker in _PROPERTY_MARKERS))
 
 
 def _simulate(xml: str, mode: str, where: Where | None = None) -> str:
@@ -261,7 +279,9 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     # so there is nothing to simulate. Worth checking first: most
     # manuscripts are clean, and parsing a 1.7MB part to discover that
     # costs ~20ms every time — per table, in tables.read_all.
-    if not _has_revisions(xml):
+    # content revisions only: this models ins/del/move, and a
+    # formatting snapshot is not something it can 'apply'
+    if not _has_content_revisions(xml):
         return xml
     root, wrapped = _parse(xml)
     vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \

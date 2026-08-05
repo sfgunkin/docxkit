@@ -120,6 +120,16 @@ MUTATIONS = [
                  "                            count=1)",
                  "    own = _own_properties(cell)",
              ])),
+    Mutation("revisions.py",
+             "a formatting-only revision stops counting as a revision",
+             "    return (_has_content_revisions(xml)\n"
+             "            or any(marker in xml "
+             "for marker in _PROPERTY_MARKERS))",
+             "    return _has_content_revisions(xml)"),
+    Mutation("_table_layout.py",
+             "the border search reaches into a tracked property snapshot",
+             "    hit = _EDGE_RE.search(masked)",
+             "    hit = _EDGE_RE.search(inner)"),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",
