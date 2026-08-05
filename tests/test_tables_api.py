@@ -225,3 +225,33 @@ def test_a_hand_built_table_is_not_anchored_to_any_source():
     t = Table(index=0, start=0, end=0, rows=[["a"], ["1"]])
     assert t.source is None
     assert to_frame(t).shape == (1, 1)
+
+
+# --------------------------------------------------- the facade contract --
+
+
+def test_the_tables_facade_still_offers_every_name():
+    """`tables` is a facade over _table_core and _table_layout; the
+    import path is the API the papers build against."""
+    import docxkit.tables as T
+    for name in T.__all__:
+        assert hasattr(T, name), f"{name} vanished from the facade"
+    for name in ("_TR_RE", "_TC_RE", "_SPAN_RE", "_RUN_RE", "_cell_text",
+                 "_render_value", "_table_spans", "_const", "_bump",
+                 "_round_to", "_ARIAL", "_ARIAL_NARROW"):
+        assert hasattr(T, name), f"{name} vanished from the facade"
+
+
+def test_the_table_layers_stay_one_directional():
+    """Layout may lean on the core; the core must not know about widths,
+    or the two concerns are one concern again."""
+    import ast
+    from pathlib import Path
+
+    import docxkit
+    src = Path(docxkit.__file__).parent
+    core = ast.parse((src / "_table_core.py").read_text(encoding="utf-8"))
+    for node in ast.walk(core):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            assert node.module not in ("_table_layout", "tables"), (
+                f"_table_core imports {node.module} — that is a cycle")

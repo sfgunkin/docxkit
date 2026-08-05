@@ -61,7 +61,14 @@ ignore = [
 # non-breaking space), and defer heavy/optional imports on purpose:
 # pandas, latex2mathml, lxml and pytest must not be needed to import
 # the toolkit.
-"src/docxkit/tables.py" = ["RUF001", "PLC0415"]
+# tables.py is a FACADE over the two halves below, so every line of
+# its import block is a deliberate re-export (see citations.py).
+"src/docxkit/tables.py" = ["RUF001", "PLC0415", "PLC0414"]
+# _table_core parses the glyphs Word emits (typographic minus,
+# non-breaking space) and defers pandas; _table_layout IS a table
+# of character widths, so every look-alike in it is the subject.
+"src/docxkit/_table_core.py" = ["RUF001", "PLC0415"]
+"src/docxkit/_table_layout.py" = ["RUF001", "PLC0415"]
 # lxml is a hard dep but the parse-gate imports it lazily so package.py
 # stays importable in the minimal environments the CLI runs in
 "src/docxkit/package.py" = ["PLC0415"]
