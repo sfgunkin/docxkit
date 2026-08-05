@@ -21,6 +21,7 @@ __all__ = [
     "COMMENT_ID_RE",
     "FLDCHAR_RE",
     "GLYPH_MAP",
+    "MATH_OBJECTS",
     "PARA_RE",
     "RUN_OPEN_RE",
     "RUN_RE",
@@ -83,6 +84,21 @@ COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
 # A field character, which is how Word writes a HYPERLINK before it
 # churns to element form on the next save.
 FLDCHAR_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="(\w+)"')
+
+# OMML objects: the things that RENDER A BOX. Each is optional wherever
+# it appears, so an empty one can be dropped and the markup stays valid.
+#
+# The slots they contain — num, den, e, sub, sup, deg, lim, fName, mr —
+# are deliberately absent: those are REQUIRED by their parent's content
+# model, so removing an emptied m:den turns a fraction into schema-
+# invalid markup, where removing the whole emptied m:f is clean. So are
+# the *Pr property elements, which never hold glyphs and belong to
+# whatever survives.
+MATH_OBJECTS = frozenset({
+    "acc", "bar", "box", "borderBox", "d", "eqArr", "f", "func",
+    "groupChr", "limLow", "limUpp", "m", "nary", "phant", "r", "rad",
+    "sPre", "sSub", "sSubSup", "sSup",
+})
 
 # Substitutions Word applies on save. They are artifacts of the editor,
 # not author intent, so a diff that vanishes under them is not an edit and

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._xml import XML_WS
+from ._xml import MATH_OBJECTS, XML_WS
 
 __all__ = ["lint", "lint_parts"]
 
@@ -39,6 +39,11 @@ _PARTS = ("word/document.xml", "word/footnotes.xml", "word/endnotes.xml",
 
 def _local(tag: Any) -> str:
     return str(tag).rsplit("}", 1)[-1]
+
+
+def _math_has_glyph(el: Any) -> bool:
+    """Any descendant ``m:t`` carrying text; U+00A0 is a deliberate spacer."""
+    return any(t.text for t in el.iter(M + "t"))
 
 
 # Tag sets for the walks below, built once.
@@ -148,10 +153,29 @@ def lint(*roots: Any) -> list[str]:
                 problems.append("w:rPr: w:rPrChange is not the last child")
 
         # 7. An empty oMath shell renders as garbage, or loses the math.
-        empty = sum(1 for om in root.iter(M + "oMath")
-                    if not any(t.text or "" for t in om.iter(M + "t")))
+        #
+        #    Two counts, because asking only whether a WHOLE equation
+        #    has gone textless misses the commoner and more visible
+        #    case: a surviving equation carrying an emptied fraction,
+        #    which Word draws as an empty box beside the real content.
+        #    On the DSI paper the split was 53 wholly-empty against 121
+        #    empty children, so the whole-equation test passed the large
+        #    majority of the damage — and that document shipped.
+        empty = orphaned = 0
+        for om in root.iter(M + "oMath"):
+            if not _math_has_glyph(om):
+                empty += 1
+                continue
+            orphaned += sum(
+                1 for el in om.iter()
+                if el is not om and _local(el.tag) in MATH_OBJECTS
+                and not _math_has_glyph(el))
         if empty:
             problems.append(f"{empty} empty m:oMath shell(s)")
+        if orphaned:
+            problems.append(
+                f"{orphaned} empty math object(s) inside a surviving "
+                f"m:oMath (renders as a blank box)")
 
         # 7b. A properties element may carry each child ONCE. Two
         #     w:tcBorders in one w:tcPr is schema-invalid and reads as

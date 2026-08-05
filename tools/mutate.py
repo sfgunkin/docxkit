@@ -161,6 +161,26 @@ MUTATIONS = [
              "            bm = open_marks.pop()",
              '        elif kind == "end" and open_marks:\n'
              "            bm = open_marks.pop(0)"),
+    # --- equation skeletons ----------------------------------------------
+    Mutation("revisions.py",
+             "accepting a deletion leaves the emptied equation shell "
+             "standing, as it did in the DSI paper",
+             "    if touched:\n        _prune_math(touched)",
+             "    if False:\n        _prune_math(touched)"),
+    Mutation("revisions.py",
+             "a deliberate U+00A0 spacer counts as an empty shell",
+             "    return any(t.text for t in el.iter(MATH + \"t\"))",
+             "    return any((t.text or '').strip() "
+             "for t in el.iter(MATH + \"t\"))"),
+    Mutation("lint.py",
+             "an empty object inside a surviving equation goes unreported",
+             "            orphaned += sum(",
+             "            orphaned += 0 * sum("),
+    # --- new-content guards ----------------------------------------------
+    Mutation("body.py",
+             "an unstyled template silently builds an unstyled table",
+             '    if require_style and "<w:tblStyle" not in tblpr:',
+             "    if False:"),
     # --- citations ------------------------------------------------------
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",

@@ -184,3 +184,26 @@ def test_cell_wraps_content_whose_tag_merely_starts_like_a_paragraph():
     passthrough = cell("<w:p><w:r><w:t>ready</w:t></w:r></w:p>")
     assert passthrough.count("<w:p>") == 1
     assert "&lt;" not in passthrough
+
+
+def test_a_template_without_a_table_style_is_refused():
+    """The equation-number carriers in a manuscript are borderless 1x2
+    tables with no w:tblStyle. Cloning tables[-1] therefore hands back a
+    template that renders a DATA table with no grid at all — valid
+    markup, no complaint from anything, caught in a PDF render."""
+    carrier = ('<w:tblPr><w:tblW w:w="5000" w:type="pct"/>'
+               '<w:tblCellMar><w:left w:w="0" w:type="dxa"/></w:tblCellMar>'
+               "</w:tblPr>")
+    with pytest.raises(AnchorError, match="w:tblStyle"):
+        table(["A", "B"], [["1", "2"]], tblpr=carrier)
+
+
+def test_a_deliberately_borderless_table_is_allowed():
+    carrier = '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>'
+    out = table(["A", "B"], [["1", "2"]], tblpr=carrier,
+                require_style=False)
+    assert "<w:tblStyle" not in out and "<w:tbl>" in out
+
+
+def test_the_default_template_is_styled():
+    assert "<w:tblStyle" in table(["A"], [["1"]])

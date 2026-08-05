@@ -147,3 +147,32 @@ def test_several_problems_are_all_reported():
             '<w:p><w:pPr><w:rPr/><w:jc w:val="center"/></w:pPr></w:p>')
     problems = lint_parts(_parts(body))
     assert len(problems) >= 2
+
+
+def test_an_empty_object_inside_a_surviving_equation_is_reported():
+    """The check used to ask only whether a WHOLE equation had lost its
+    text, which passes an equation carrying an emptied fraction — and
+    Word draws that as a blank box beside the real content. On the DSI
+    paper the split was 53 wholly-empty against 121 empty children, so
+    the whole-equation test cleared the large majority of the damage."""
+    body = ("<w:p><m:oMath>"
+            "<m:f><m:num/><m:den/></m:f>"
+            "<m:r><m:t>x</m:t></m:r>"
+            "</m:oMath></w:p>")
+    problems = lint_parts(_parts(body))
+    assert any("empty math object" in p for p in problems), problems
+
+
+def test_a_full_equation_is_not_reported_as_having_empty_objects():
+    body = ("<w:p><m:oMath>"
+            "<m:f><m:num><m:r><m:t>a</m:t></m:r></m:num>"
+            "<m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>"
+            "</m:oMath></w:p>")
+    assert lint_parts(_parts(body)) == []
+
+
+def test_a_nonbreaking_space_counts_as_a_glyph():
+    """A spacer run is deliberate typography, not an empty shell."""
+    body = ("<w:p><m:oMath><m:r><m:t> </m:t></m:r>"
+            "<m:r><m:t>x</m:t></m:r></m:oMath></w:p>")
+    assert lint_parts(_parts(body)) == []

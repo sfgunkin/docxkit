@@ -30,17 +30,27 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import Any
+from typing import Any, NamedTuple
 
-from ._xml import PARA_RE, delta_text, matching_close, visible_text
+from ._xml import (
+    MATH_OBJECTS,
+    PARA_RE,
+    delta_text,
+    matching_close,
+    visible_text,
+)
+from .errors import DocxKitError
 
 __all__ = [
     "FINAL",
     "ORIGINAL",
+    "ParagraphChange",
     "Revision",
     "accept",
     "by_author",
+    "changed_paragraphs",
     "counts",
     "reject",
     "revision_text",
@@ -54,6 +64,7 @@ FINAL = "final"        # revisions accepted: what the document becomes
 ORIGINAL = "original"  # revisions rejected: what it was before
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+MATH = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 _OPEN_RE = re.compile(r"<w:(ins|del)\b[^>]*?(/?)>")
 # Only these two need their real URIs: they are the namespaces this
 # module looks elements up by. Every other prefix a fragment might use —
@@ -202,6 +213,111 @@ def _unwrap(el: Any) -> None:
     parent.remove(el)
 
 
+class ParagraphChange(NamedTuple):
+    """One paragraph that a revision operation actually altered."""
+
+    # `paragraph`, not `index`: a NamedTuple field called index shadows
+    # tuple.index, which both type checkers reject and which would make
+    # the method unreachable on every instance.
+    paragraph: int          # 0-based position in the BEFORE document
+    before: str             # "" when the paragraph was added
+    after: str              # "" when the paragraph was removed
+
+
+def changed_paragraphs(before: str, after: str) -> list[ParagraphChange]:
+    """Which paragraphs a revision operation actually changed, by TEXT.
+
+    The check to run after a selective accept or reject, because the
+    obvious one lies. Word reports how many revisions it processed, and
+    that number answers a different question: rejecting one author's
+    changes through ``Revisions(i).Reject()`` reported 4 of 9 handled,
+    while the paragraph-level insert/delete pairs came out as plain
+    untracked text and only the run-level edits reverted. Nothing was
+    corrupt and the count looked reasonable, which is what made it hard
+    to see. Text is the thing the reader gets; count it instead.
+
+    Paragraphs are aligned by content rather than by index, because
+    accepting an inserted paragraph mark MERGES two paragraphs — under
+    index pairing every paragraph after the merge reads as changed.
+    """
+    old = [visible_text(m.group(0)) for m in PARA_RE.finditer(before)]
+    new = [visible_text(m.group(0)) for m in PARA_RE.finditer(after)]
+    out: list[ParagraphChange] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(
+            None, old, new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        width = max(i2 - i1, j2 - j1)
+        for k in range(width):
+            out.append(ParagraphChange(
+                paragraph=i1 + k,
+                before=old[i1 + k] if i1 + k < i2 else "",
+                after=new[j1 + k] if j1 + k < j2 else ""))
+    return out
+
+
+def _enclosing_math(el: Any) -> Any | None:
+    """The ``m:oMath`` this element sits in, if any."""
+    node = el.getparent()
+    while node is not None:
+        if node.tag == MATH + "oMath":
+            return node
+        node = node.getparent()
+    return None
+
+
+def _glyphs(root: Any) -> str:
+    """Every math glyph in document order — the pruning invariant."""
+    return "\x00".join(t.text or "" for t in root.iter(MATH + "t"))
+
+
+def _has_glyph(el: Any) -> bool:
+    """Any descendant ``m:t`` carrying text.
+
+    Plain truthiness, so U+00A0 counts: a non-breaking space in an
+    equation is a deliberate spacer, and pruning it changes the render.
+    """
+    return any(t.text for t in el.iter(MATH + "t"))
+
+
+def _prune_math(maths: list[Any]) -> None:
+    """Drop the empty skeletons a removed revision leaves behind.
+
+    Deleting the runs inside a fraction leaves ``<m:f><m:num/><m:den/>
+    </m:f>`` standing, and Word renders that as an empty fraction box
+    beside the surviving content — a visibly broken equation from a
+    document the toolkit called clean. Word's own AcceptAllRevisions
+    prunes these, which is exactly why the fault only ever appeared on
+    the XML path, and why it took a visual render to catch.
+
+    Only objects are pruned, never the slots they live in, and only
+    inside equations a removal actually touched — a legitimately empty
+    ``m:f`` elsewhere in the document is the author's business.
+
+    Bottom-up, so a fraction emptied only by pruning its own children is
+    seen as empty in the same pass.
+    """
+    for om in maths:
+        if om.getparent() is None:
+            continue                       # a nested one, already dropped
+        before = _glyphs(om)
+        for el in reversed(list(om.iter())):
+            if el is om or el.getparent() is None:
+                continue
+            if _local(el.tag) in MATH_OBJECTS and not _has_glyph(el):
+                el.getparent().remove(el)
+        if _glyphs(om) != before:          # never possible; never silent
+            raise DocxKitError(
+                "revisions: pruning an empty equation shell changed the "
+                f"glyphs {before!r} -> {_glyphs(om)!r}")
+        if not _has_glyph(om):
+            om.getparent().remove(om)
+
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
 def _mark_flag(para: Any, tags: tuple[str, ...]) -> Any | None:
     """The paragraph-mark revision element inside ``pPr/rPr``, if any."""
     ppr = para.find(W + "pPr")
@@ -290,11 +406,17 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     def wants(el: Any, kind: str) -> bool:
         return where is None or where(_info(el, kind))
 
+    # equations a removal reaches into, so the prune below can be
+    # confined to them; collected BEFORE the element leaves the tree
+    touched: list[Any] = []
     for tag in vanish:
         for el in _content_elements(root, tag):
             if where is not None and tag in ("moveFrom", "moveTo"):
                 continue               # moves are a pair; see accept()
             if wants(el, tag):
+                om = _enclosing_math(el)
+                if om is not None and not any(om is seen for seen in touched):
+                    touched.append(om)
                 el.getparent().remove(el)
     for tag in keep:
         for el in _content_elements(root, tag):
@@ -313,6 +435,8 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
         for tag in _RANGE_MARKERS:
             for el in list(root.iter(W + tag)):
                 el.getparent().remove(el)
+    if touched:
+        _prune_math(touched)
     for para in list(root.iter(W + "p")):
         flag = _mark_flag(para, vanish)
         if flag is not None and wants(flag, "paragraph-mark"):

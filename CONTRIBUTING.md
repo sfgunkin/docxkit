@@ -121,6 +121,28 @@ figures" is worth little; one saying it *and* that mapping to the nearest
 drawing before it gets every figure wrong by one is what stops the next
 person reverting it.
 
+## Two traps that keep coming back
+
+**`x or default` is a bug when `x` may be an lxml element.** An element
+with no children is FALSY, so a legitimately empty `w:tcPr` or `w:pPr`
+silently becomes the default and the caller's real value is discarded.
+Write `x if x is not None else default`. Audited 2026-08-06: no live
+site does this — the two candidates raised in review were a `str`
+(where empty *does* mean "none given") and a `NamedTuple` (always
+truthy, being a fixed-length tuple). It stays worth checking on review
+because the failure is silent and the correct-looking form is wrong.
+
+**Build content as STRINGS, not shared lxml elements.** In lxml,
+appending an element that already has a parent MOVES it, so reusing one
+`pPr` template across N paragraphs leaves the first N-1 without their
+properties. This is why `body.para(ppr=...)`, `cell(tcpr=...)` and
+`table(tblpr=...)` all take XML *strings*: a string is copied at every
+interpolation, so the hazard cannot arise through this API. The only
+places here that append live elements are `revisions._unwrap` and
+`_merge_into_next`, where moving is the point. Keep new builders
+string-based rather than adding a `copy.deepcopy` obligation for
+callers to forget.
+
 ## The ported modules
 
 `compare.py` and `word_edits.py` came over from `C:\Users\Ezhik\tools`

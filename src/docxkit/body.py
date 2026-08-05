@@ -110,6 +110,7 @@ def table(headers: list[str], rows: list[list[str]], *,
           spans: list[int] | None = None,
           extra_header: str = "",
           tblpr: str = DEFAULT_TBLPR,
+          require_style: bool = True,
           header_rpr: str = "<w:rPr><w:b/></w:rPr>",
           cell_rpr: str = "",
           cell_ppr: str = "") -> str:
@@ -122,7 +123,21 @@ def table(headers: list[str], rows: list[list[str]], *,
 
     Ragged rows are an error rather than something to pad silently: a short
     row in a results table means the caller lost a value.
+
+    `tblpr` is usually cloned off an existing table so the new one
+    matches the manuscript, and `require_style` guards the way that
+    goes wrong: a manuscript's equation-number carriers are borderless
+    1x2 tables with no ``w:tblStyle``, so cloning ``tables[-1]`` hands
+    back a template that renders a DATA table with no grid at all. The
+    document stays valid and nothing complains — it was caught in a PDF
+    render. Pass ``require_style=False`` when a borderless table is
+    what you actually want.
     """
+    if require_style and "<w:tblStyle" not in tblpr:
+        raise AnchorError(
+            "table: the tblPr carries no w:tblStyle, so this table would "
+            "render unstyled - clone a DATA table's properties, or pass "
+            "require_style=False for a deliberately borderless one")
     spans = spans or [1] * len(headers)
     if len(spans) != len(headers):
         raise AnchorError(

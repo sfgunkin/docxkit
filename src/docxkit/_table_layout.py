@@ -626,6 +626,66 @@ _STATS_RE = re.compile(
     re.IGNORECASE)
 
 
+_JC_RE = re.compile(r"<w:jc\b[^>]*/>")
+#: Everything that follows w:jc in the CT_PPr sequence. Alignment is a
+#: PARAGRAPH property even inside a table, so this is the pPr order, not
+#: the tcPr one.
+_AFTER_JC = ("<w:textDirection", "<w:textAlignment", "<w:textboxTightWrap",
+             "<w:outlineLvl", "<w:divId", "<w:cnfStyle", "<w:rPr",
+             "<w:sectPr", "<w:pPrChange")
+
+
+def _set_jc(para: str, val: str) -> str:
+    """`para` aligned `val`, in the one place ``CT_PPr`` allows."""
+    own = own_properties(para, "pPr")
+    if own is None:
+        m = re.match(r"<w:p\b[^>]*>", para)
+        if m is None:
+            return para
+        return (para[:m.end()] + f'<w:pPr><w:jc w:val="{val}"/></w:pPr>'
+                + para[m.end():])
+    start, end, inner = own
+    live = live_properties(inner)
+    tag = f'<w:jc w:val="{val}"/>'
+    if (was := _JC_RE.search(live)) is not None:
+        inner = inner[:was.start()] + tag + inner[was.end():]
+    else:
+        at = min((p for p in (live.find(t) for t in _AFTER_JC) if p != -1),
+                 default=len(live))
+        inner = inner[:at] + tag + inner[at:]
+    return para[:start] + f"<w:pPr>{inner}</w:pPr>" + para[end:]
+
+
+def _align_cell(tc: str, val: str) -> str:
+    """Every paragraph in the cell aligned `val`."""
+    out, at = [], 0
+    for m in PARA_RE.finditer(tc):
+        out.append(tc[at:m.start()])
+        out.append(_set_jc(m.group(0), val))
+        at = m.end()
+    out.append(tc[at:])
+    return "".join(out)
+
+
+def _alignment(align: str | Sequence[str], columns: int) -> list[str]:
+    """Per-GRID-column alignment, the last value repeating.
+
+    So ``("left", "center")`` is the house convention — stub column
+    left, every number column centred — however many columns there are.
+    """
+    vals = [align] if isinstance(align, str) else list(align)
+    if not vals:
+        raise AnchorError("booktabs: align= is empty")
+    bad = [v for v in vals if v not in _JC_VALUES]
+    if bad:
+        raise AnchorError(
+            f"booktabs: align={bad} - use {sorted(_JC_VALUES)}")
+    return [vals[min(i, len(vals) - 1)] for i in range(columns)]
+
+
+_JC_VALUES = frozenset({"left", "center", "right", "both", "start", "end"})
+
+
 def _edges(spec: dict[str, tuple[str, int]]) -> str:
     """A ``w:tcBorders`` element from ``{side: (val, sz)}``."""
     inner = "".join(
@@ -746,7 +806,8 @@ def plan_booktabs(table: Table) -> BooktabsPlan:
 
 
 def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
-             rule: int = 4, bottom: str = "double"
+             rule: int = 4, bottom: str = "double",
+             align: str | Sequence[str] | None = None
              ) -> tuple[str, BooktabsPlan]:
     """Set `table` in three-line academic style.
 
@@ -758,6 +819,17 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
     Pass `plan` to state the shape when :func:`plan_booktabs` reads it
     wrongly — a table whose stub column is filled from the first row, for
     instance, has no empty-labelled header to detect.
+
+    `align` sets column alignment, which the rules alone do not: a
+    three-line table with left-aligned numerics is the usual next
+    complaint. One value applies to every column; a sequence gives them
+    per column with the LAST repeating, so ``align=("left", "center")``
+    is the house convention — stub column left, every number column
+    centred — whatever the width. Omitted, alignment is left alone.
+
+    Columns are GRID columns, so a spanning header takes the alignment
+    of the column it starts in rather than of its position in the row;
+    those two only coincide in a table with no merged cells.
     """
     _fresh(xml, table, "booktabs")
     body = xml[table.start:table.end]
@@ -769,11 +841,14 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
     trs = list(rows_of(body))
     if not trs:
         raise AnchorError(f"table {table.index} has no rows")
+    jc = (_alignment(align, body.count("<w:gridCol") or len(table.rows[0]))
+          if align is not None else None)
 
     edits: list[tuple[int, int, str]] = []
     for i, tr in enumerate(trs):
         cells = list(cells_of(tr.group(0)))
         spanned = _group_columns(cells) if i in shape.group_rows else []
+        columns = table.grid_columns(xml, i) if jc else []
         for j, tc in enumerate(cells):
             spec: dict[str, tuple[str, int]] = {}
             if i == 0:
@@ -788,6 +863,8 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
             if i == len(trs) - 1:
                 spec["bottom"] = (bottom, rule)
             new = _with_edges(tc.group(0), spec)
+            if jc is not None and j < len(columns):
+                new = _align_cell(new, jc[min(columns[j], len(jc) - 1)])
             if new != tc.group(0):
                 edits.append((tr.start() + tc.start(),
                               tr.start() + tc.end(), new))

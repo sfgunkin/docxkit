@@ -14,6 +14,8 @@ import pytest
 from conftest import NS
 from lxml import etree
 
+from docxkit import tables
+from docxkit._xml import visible_text
 from docxkit.errors import AnchorError
 from docxkit.tables import (
     _bump,
@@ -797,3 +799,66 @@ def test_the_historical_snapshot_is_never_the_element_rewritten():
     assert 'w:val="single"' in snapshot.group(0), "the past was preserved"
     current = out[:out.index("<w:tcPrChange")]
     assert "double" in current, "the live cell got no rule"
+
+
+# ------------------------------------------------------- alignment ---------
+
+
+def _aligned_table() -> str:
+    def tc(text: str, span: int = 1) -> str:
+        s = f'<w:gridSpan w:val="{span}"/>' if span > 1 else ""
+        return (f'<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/>{s}</w:tcPr>'
+                f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r>'
+                "</w:p></w:tc>")
+
+    def tr(*cells: str) -> str:
+        return "<w:tr>" + "".join(cells) + "</w:tr>"
+
+    return (f"<w:document {NS}><w:body><w:tbl>"
+            '<w:tblPr><w:tblW w:w="4500" w:type="dxa"/></w:tblPr>'
+            "<w:tblGrid>" + '<w:gridCol w:w="900"/>' * 5 + "</w:tblGrid>"
+            + tr(tc(""), tc("Boys", 2), tc("Girls", 2))
+            + tr(tc("Child age"), tc("-0.25"), tc("0.04"), tc("-0.11"),
+                 tc("0.03"))
+            + "</w:tbl></w:body></w:document>")
+
+
+def test_align_sets_the_stub_left_and_the_rest_centred():
+    """The house convention, and the last value repeating is what makes
+    ("left", "center") mean it whatever the table's width."""
+    xml = _aligned_table()
+    t = tables.read_all(xml)[0]
+    out, _ = tables.booktabs(xml, t, align=("left", "center"))
+    rows = re.findall(r"<w:tr>.*?</w:tr>", out, re.DOTALL)
+    assert re.findall(r'<w:jc w:val="(\w+)"/>', rows[1]) == \
+        ["left", "center", "center", "center", "center"]
+
+
+def test_align_follows_grid_columns_not_cell_positions():
+    """A spanning header takes the alignment of the column it STARTS in.
+    Cell index and grid column only coincide without merged cells, and
+    assuming they do is what italicised the wrong column once already."""
+    xml = _aligned_table()
+    t = tables.read_all(xml)[0]
+    out, _ = tables.booktabs(xml, t, align=("left", "center", "right"))
+    header = re.findall(r"<w:tr>.*?</w:tr>", out, re.DOTALL)[0]
+    # three cells at grid columns 0, 1 and 3 -> left, center, right
+    assert re.findall(r'<w:jc w:val="(\w+)"/>', header) == \
+        ["left", "center", "right"]
+
+
+def test_align_is_idempotent_and_keeps_the_text():
+    xml = _aligned_table()
+    out, _ = tables.booktabs(xml, tables.read_all(xml)[0], align="center")
+    again, _ = tables.booktabs(out, tables.read_all(out)[0], align="center")
+    assert again == out
+    assert visible_text(out) == visible_text(xml)
+    # one per cell, no duplicates: 3 header cells (two of them spanning)
+    # plus 5 data cells
+    assert out.count("<w:jc") == 8
+
+
+def test_an_unknown_alignment_is_refused():
+    xml = _aligned_table()
+    with pytest.raises(AnchorError, match="align"):
+        tables.booktabs(xml, tables.read_all(xml)[0], align="middle")

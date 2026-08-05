@@ -153,6 +153,20 @@ def revisions(doc: Any) -> Iterator[Any]:
 
     Indexing ``Revisions(i)`` is O(i); a full indexed scan of a
     316-revision document costs ~280s against ~6s here.
+
+    READ ONLY. Do not Accept() or Reject() what this yields to apply a
+    subset — use :func:`docxkit.revisions.accept` with a ``where``
+    predicate (``accept(xml, where=by_author("A"))``) instead.
+
+    Accepting or rejecting through COM one revision at a time does not
+    do what the filter says. A paragraph-level insert/delete is a PAIR,
+    and handling one side of it leaves the other applied as plain
+    untracked text; Word then reports a plausible number — 4 of 9
+    processed — for an outcome nobody asked for. The count is the trap:
+    it describes revisions Word touched, not text the reader ends up
+    with. Whatever route is taken, verify with
+    :func:`docxkit.revisions.changed_paragraphs`, which compares the
+    resulting TEXT.
     """
     yield from doc.Revisions
 
