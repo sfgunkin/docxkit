@@ -88,14 +88,59 @@ def _char_fmt(p_xml: str) -> tuple[str, list[frozenset[str]]]:
     return "".join(text), fmt
 
 
-def _omml(p_xml: str) -> list[tuple[str, str]]:
-    """(structural skeleton, token stream) for each oMath in a paragraph."""
-    out: list[tuple[str, str]] = []
+MATH_RUN_RE = re.compile(r"<m:r\b[^>]*>.*?</m:r>", re.DOTALL)
+
+#: Typography inside an equation that changes what a symbol IS: upright
+#: against math-italic, bold, script, size. A change to any of these was
+#: invisible to every layer of the comparison — FORMULA compares the
+#: token stream and the structural skeleton, neither of which moves when
+#: a variable stops being italic, and FORMAT walks <w:t> runs, which an
+#: equation has none of. An author's italics fix could be dropped by a
+#: rebuild and --expect-clean would still say clean.
+#:
+#: Deliberately NOT here: w:rFonts (the Cambria Math declaration on all
+#: 51,877 runs in this corpus — boilerplate), w:lang (Word rewrites it
+#: unprompted), the *Cs complex-script mirrors of sz and b (one change
+#: would report twice), and w:color/w:highlight (review decoration a
+#: build is not expected to carry, not the symbol's identity).
+MATH_FMT_RE = re.compile(
+    r"<(m:nor|m:sty|m:scr|w:i|w:b|w:sz|w:vertAlign)\b[^>]*?"
+    r'(?:\s[mw]:val="([^"]*)")?\s*/?>')
+
+
+def _fmt_markers(run_xml: str) -> str:
+    """One math run's typography, as a sorted comparable string."""
+    marks: list[str] = []
+    for m in MATH_FMT_RE.finditer(run_xml):
+        tag, val = m.group(1).split(":")[1], m.group(2)
+        if val in ("0", "false", "none"):    # explicitly switched OFF
+            continue
+        marks.append(tag if val is None else f"{tag}={val}")
+    return ",".join(sorted(marks))
+
+
+def _omml(p_xml: str) -> list[tuple[str, str, list[str]]]:
+    """(skeleton, token stream, per-CHARACTER typography) per oMath.
+
+    Per character, not per run, for the reason every anchor in this
+    toolkit is: Word fragments runs at rsid boundaries, so the same
+    equation is 45 runs in one save and 43 in the next. A positional
+    per-run fingerprint shifts against itself and reports typography
+    that nobody touched — measured on le2_expanded against le3, where
+    19 runs "differed" and not one character's formatting had changed.
+    `_char_fmt` takes the same per-character view of prose.
+    """
+    out: list[tuple[str, str, list[str]]] = []
     for m in OMATH_RE.finditer(p_xml):
         block = m.group(0)
         skel = "/".join(OMML_STRUCT_RE.findall(block))
         toks = html.unescape("".join(MT_RE.findall(block)))
-        out.append((skel, toks))
+        marks: list[str] = []
+        for r in MATH_RUN_RE.finditer(block):
+            marker = _fmt_markers(r.group(0))
+            text = html.unescape("".join(MT_RE.findall(r.group(0))))
+            marks.extend([marker] * len(text))
+        out.append((skel, toks, marks))
     return out
 
 
@@ -108,6 +153,46 @@ def _fields(p_xml: str) -> Fields:
             "footnotes": p_xml.count("w:footnoteReference")}
 
 
+#: The container tags that give a paragraph an address. `\b` keeps
+#: <w:tblPr>, <w:trPr>, <w:tcPr> and <w:pPr> out of it: after "tbl"
+#: comes "P", both word characters, so there is no boundary to match.
+STRUCT_TAG_RE = re.compile(r"<(/?)w:(tbl|tr|tc|p)\b[^>]*?>")
+
+
+def _addresses(xml: str) -> dict[int, str]:
+    """Offset -> "table 3 r2c1" for every paragraph inside a table.
+
+    A report that says "paragraph 145" makes a reader count paragraphs;
+    one that says which cell of which table sends them straight there,
+    and a results table is where the numbers that matter live. Tables
+    are numbered in document order, so they agree with
+    `tables.read_all`, and nested tables read outer > inner.
+    """
+    out: dict[int, str] = {}
+    stack: list[list[int]] = []          # [table, row, cell] per nesting
+    tables = 0
+    for m in STRUCT_TAG_RE.finditer(xml):
+        closing, tag = m.group(1), m.group(2)
+        if tag == "tbl":
+            if closing:
+                if stack:
+                    stack.pop()
+            else:
+                tables += 1
+                stack.append([tables, 0, 0])
+        elif closing or not stack:
+            continue                     # </tr>, </tc>, </p>, or no table
+        elif tag == "tr":
+            stack[-1][1] += 1
+            stack[-1][2] = 0
+        elif tag == "tc":
+            stack[-1][2] += 1
+        elif tag == "p":
+            out[m.start()] = " > ".join(f"table {t} r{r}c{c}"
+                                        for t, r, c in stack)
+    return out
+
+
 class Para:
     """One paragraph, with every layer's view of it precomputed.
 
@@ -118,10 +203,12 @@ class Para:
     """
 
     __slots__ = (
+        "at",
         "fields",
         "fmt",
         "mtext",
         "omml",
+        "omml_fmt",
         "pid",
         "text",
         "wtext",
@@ -136,16 +223,24 @@ class Para:
     text: str
     fmt: list[frozenset[str]]
     omml: list[tuple[str, str]]
+    omml_fmt: list[list[str]]
     fields: Fields
     pid: str | None
+    at: str                 # "table 3 r2c1", or "" outside a table
 
-    def __init__(self, xml: str) -> None:
+    def __init__(self, xml: str, at: str = "") -> None:
         self.xml = xml
+        self.at = at
         self.wtext = html.unescape("".join(WT_RE.findall(xml)))
         self.mtext = html.unescape("".join(MT_RE.findall(xml)))
         self.text = (self.wtext + self.mtext).strip()
         self.wtext_f, self.fmt = _char_fmt(xml)
-        self.omml = _omml(xml)
+        # The equation's identity and its typography are kept apart: a
+        # report entry carries the (skeleton, tokens) pair it always
+        # did, so the JSON shape papers read is unchanged.
+        equations = _omml(xml)
+        self.omml = [(skel, toks) for skel, toks, _ in equations]
+        self.omml_fmt = [fmt for _, _, fmt in equations]
         self.fields = _fields(xml)
         m = PARAID_RE.search(xml)
         self.pid = m.group(1) if m else None
@@ -255,7 +350,9 @@ class Part:
         # read exactly as it did before parts existed.
         self.label = "body" if stem == "document" else stem
         self.xml = mask_volatile_fields(xml)
-        self.paras = [p for p in (Para(x) for x in P_RE.findall(self.xml))
+        at = _addresses(self.xml)
+        self.paras = [p for p in (Para(m.group(0), at.get(m.start(), ""))
+                                  for m in P_RE.finditer(self.xml))
                       if p.text]
         self.blob = " ".join(p.text for p in self.paras)
 

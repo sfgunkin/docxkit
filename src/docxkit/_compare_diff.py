@@ -11,7 +11,7 @@ import html
 import re
 from collections import Counter
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, NamedTuple
 
 from ._compare_read import (
     P_RE,
@@ -32,7 +32,12 @@ Report = dict[str, list[Any]]
 #: are reported for review and deliberately do not gate. Defined once
 #: here because the sweep gates on the same four, and two copies of this
 #: tuple would be two answers to "did anything change?".
-GATED = ("structure", "text", "formula", "format")
+#:
+#: `formula_format` gates: an author who made a variable upright made an
+#: edit, and a rebuild that drops it has lost one. It is a separate
+#: bucket from `formula` because "the equation now says something else"
+#: and "the equation is set differently" want different responses.
+GATED = ("structure", "text", "formula", "formula_format", "format")
 
 _norm_glyph = normalize_glyphs
 
@@ -86,21 +91,83 @@ def fmt_diff(pa: Para,
     return res
 
 
-def formula_diff(
-    pa: Para, pb: Para,
-) -> list[tuple[str, bool, tuple[str, str], tuple[str, str]]]:
-    """(kind, glyph_only, before, after) per differing equation.
+def _marker_segments(text: str, before: list[str],
+                     after: list[str]) -> list[tuple[str, str, str]]:
+    """(symbols, old markers, new markers) per contiguous run of
+    characters whose typography differs — the equation-side twin of
+    `fmt_diff`, so a report names the symbol that changed rather than
+    the whole formula."""
+    if len(before) != len(after) or len(before) != len(text):
+        return [(text, ",".join(sorted(set(before))),
+                 ",".join(sorted(set(after))))]
+    segs: list[tuple[str, str, str]] = []
+    start: int | None = None
+    for i in range(len(before)):
+        if before[i] != after[i]:
+            if start is None:
+                start = i
+        elif start is not None:
+            segs.append((text[start:i], before[start], after[start]))
+            start = None
+    if start is not None:
+        segs.append((text[start:], before[start], after[start]))
+    return segs
+
+
+class FormulaChange(NamedTuple):
+    """One equation that differs, and in which of the three ways."""
+
+    kind: str                    # "tokens", "structure", "formatting"
+    glyph_only: bool
+    before: tuple[str, str]      # (skeleton, tokens)
+    after: tuple[str, str]
+    fmt_before: list[str]        # per-character typography, which is
+    fmt_after: list[str]         # what "formatting" means here
+
+    @property
+    def bucket(self) -> str:
+        if self.glyph_only:
+            return "formula_glyph"
+        return "formula_format" if self.kind == "formatting" else "formula"
+
+    def entry(self) -> dict[str, Any]:
+        """What the report shows. For a typography change the skeleton
+        and tokens are identical by definition, so printing them would
+        show two identical sides; the symbols whose markers moved are
+        what a reader needs."""
+        if self.kind != "formatting":
+            return {"change": self.kind, "from": self.before,
+                    "to": self.after}
+        segs = _marker_segments(self.before[1], self.fmt_before,
+                                self.fmt_after)
+        return {"change": self.kind,
+                "from": ", ".join(f"{t}:{a or 'plain'}" for t, a, _ in segs),
+                "to": ", ".join(f"{t}:{b or 'plain'}" for t, _, b in segs)}
+
+
+def formula_diff(pa: Para, pb: Para) -> list[FormulaChange]:
+    """Every equation that differs, in the three ways one can.
 
     `glyph_only` is True when the sole difference is a glyph
     normalization (the math minus U+2212 against a hyphen the user's
     Word produced) — an artifact rather than an edit, so the
     generator's glyph is the one to keep.
+
+    Typography is consulted ONLY when the skeleton and the tokens both
+    match. Otherwise an equation that was genuinely rewritten would be
+    reported twice, once for its content and once for the formatting
+    that moved with it.
     """
-    out: list[tuple[str, bool, tuple[str, str], tuple[str, str]]] = []
+    out: list[FormulaChange] = []
     for i in range(max(len(pa.omml), len(pb.omml))):
         ea = pa.omml[i] if i < len(pa.omml) else ("", "<none>")
         eb = pb.omml[i] if i < len(pb.omml) else ("", "<none>")
+        fa = pa.omml_fmt[i] if i < len(pa.omml_fmt) else []
+        fb = pb.omml_fmt[i] if i < len(pb.omml_fmt) else []
         if ea == eb:
+            if fa != fb:
+                out.append(FormulaChange("formatting", False, ea, eb,
+                                         fa, fb))
             continue
         kind: list[str] = []
         if ea[1] != eb[1]:
@@ -109,7 +176,8 @@ def formula_diff(
             kind.append("structure")
         glyph_only = (ea[0] == eb[0]
                       and _norm_glyph(ea[1]) == _norm_glyph(eb[1]))
-        out.append((", ".join(kind), glyph_only, ea, eb))
+        out.append(FormulaChange(", ".join(kind), glyph_only, ea, eb,
+                                 fa, fb))
     return out
 
 
@@ -229,26 +297,31 @@ class _Alignment:
         self.deleted: list[Para] = []
         self.inserted: list[Para] = []
 
-    def place(self, entry: dict[str, Any]) -> dict[str, Any]:
-        """Stamp an entry with its part, unless it is the body — a
-        body-only document must read as it did before parts existed."""
+    def place(self, entry: dict[str, Any],
+              at: Para | None = None) -> dict[str, Any]:
+        """Stamp an entry with where it happened: its part, unless it is
+        the body (a body-only document must read as it did before parts
+        existed), and its cell, when it is in a table."""
         if self.where != "body":
             entry["part"] = self.where
+        if at is not None and at.at:
+            entry["at"] = at.at
         return entry
 
-    def add(self, bucket: str, entry: dict[str, Any]) -> None:
-        self.report[bucket].append(self.place(entry))
+    def add(self, bucket: str, entry: dict[str, Any],
+            at: Para | None = None) -> None:
+        self.report[bucket].append(self.place(entry, at))
 
     def matched(self, pa: Para, pb: Para) -> None:
         """Two paragraphs the alignment considers to be the same one."""
         for seg, old, new in fmt_diff(pa, pb):
             self.add("format", {"text": seg, "from": sorted(old),
-                                "to": sorted(new)})
-        for kind, glyph_only, ea, eb in formula_diff(pa, pb):
-            self.add("formula_glyph" if glyph_only else "formula",
-                     {"change": kind, "from": ea, "to": eb})
+                                "to": sorted(new)}, pa)
+        for change in formula_diff(pa, pb):
+            self.add(change.bucket, change.entry(), pa)
         if pa.text != pb.text:          # equal under glyph-norm only
-            self.add("glyph", {"from": pa.text[:120], "to": pb.text[:120]})
+            self.add("glyph", {"from": pa.text[:120], "to": pb.text[:120]},
+                     pa)
 
     def replaced(self, left: list[Para], right: list[Para]) -> None:
         """A replace run: pair positionally, word-diff EVERY paragraph.
@@ -269,17 +342,18 @@ class _Alignment:
                 continue
             if _norm_glyph(pa.text) == _norm_glyph(pb.text):
                 self.add("glyph", {"from": pa.text[:120],
-                                   "to": pb.text[:120]})
+                                   "to": pb.text[:120]}, pa)
                 continue
             entry = self.place({"context": pa.text[:60],
-                                "word_diff": word_diff(pa.text, pb.text)})
+                                "word_diff": word_diff(pa.text, pb.text)},
+                               pa)
             strip = stripped_fields(pa, pb)
             if strip:
                 entry["WARNING_stripped"] = strip
                 self.add("stripped_fields", {"context": pa.text[:60],
-                                             "lost": strip})
-            changed = [k for k, glyph, _, _ in formula_diff(pa, pb)
-                       if not glyph]
+                                             "lost": strip}, pa)
+            changed = [c.kind for c in formula_diff(pa, pb)
+                       if not c.glyph_only]
             if changed:
                 entry["formula"] = changed
             self.report["text"].append(entry)
@@ -296,7 +370,7 @@ class _Alignment:
                 if r > 0.85:
                     self.add("structure", {"type": "MOVE",
                                            "ratio": round(r, 3),
-                                           "text": da.text[:90]})
+                                           "text": da.text[:90]}, da)
                     matched.add(id(ib))
                     matched.add(id(da))
                     break
@@ -304,11 +378,11 @@ class _Alignment:
             if id(da) not in matched:
                 self.add("structure", {"type": "DELETE",
                                        "text": da.text[:110],
-                                       "lost_fields": _fields(da.xml)})
+                                       "lost_fields": _fields(da.xml)}, da)
         for ib in self.inserted:
             if id(ib) not in matched:
                 self.add("structure", {"type": "INSERT",
-                                       "text": ib.text[:110]})
+                                       "text": ib.text[:110]}, ib)
 
 
 def compare_paras(a: list[Para], b: list[Para], report: Report,

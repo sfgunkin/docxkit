@@ -29,6 +29,11 @@ Layers reported
   FORMULA    per-equation OMML: token stream AND structural skeleton
              (sSub/sSup/nary/f/d/rad/...). Catches the omath_display blind
              spot and structure-only rewrites
+  FORMULA TYPOGRAPHY
+             an equation that says the same thing and is SET differently:
+             upright against math-italic, bold, script, size. Nothing else
+             sees this — FORMULA compares tokens and structure, FORMAT
+             walks <w:t> runs and an equation has none
   FORMAT     character-level run formatting (italic/bold/super/sub/strike/
              smallCaps) on text-matched paragraphs, ignoring Hyperlink styling
   INTEGRITY  bookmark start/end balance, dangling hyperlink anchors, cite_/ref_
@@ -41,6 +46,10 @@ Usage
   docxkit compare BUILT.docx USER_EDITED.docx --expect-clean
         # exit 1 if any non-glyph difference remains (use to gate the
         # rebuild->verify loop: after integration this MUST pass)
+
+Every entry says where it happened: which part, and which cell of which
+table ("table 3 r2c1"), because a results table has hundreds of cells
+that all read like `0.312`.
 
 Conventions: A = first file = the BUILT/baseline doc; B = second = USER-edited.
 
@@ -88,8 +97,9 @@ def compare(path_a: str, path_b: str) -> Report:
 
 def compare_docs(a: Doc, b: Doc) -> Report:
     report: Report = {"structure": [], "text": [], "glyph": [], "formula": [],
-                      "formula_glyph": [], "format": [], "hyperlinks": [],
-                      "integrity": [], "stripped_fields": [], "comments": []}
+                      "formula_glyph": [], "formula_format": [], "format": [],
+                      "hyperlinks": [], "integrity": [],
+                      "stripped_fields": [], "comments": []}
 
     for pa, pb in pair_parts(a.parts, b.parts):
         # A part that exists on one side only and carries no visible text

@@ -14,10 +14,15 @@ from ._compare_diff import Report
 
 
 def _in(entry: dict[str, Any]) -> str:
-    """' (header1)' for anything outside the body; '' for the body, so a
-    body-only document reads exactly as it did before parts existed."""
-    part = entry.get("part")
-    return f" ({part})" if part else ""
+    """Where it happened: ' (footnotes, table 3 r2c1)'.
+
+    Empty for a body paragraph outside a table, so an ordinary prose
+    document reads exactly as it did before either was recorded. The
+    cell address is the difference between "a number changed somewhere
+    in Table 3" and a reader landing on the cell.
+    """
+    inside = ", ".join(x for x in (entry.get("part"), entry.get("at")) if x)
+    return f" ({inside})" if inside else ""
 
 
 def _head(title: str) -> None:
@@ -62,6 +67,20 @@ def _formula(report: Report) -> int:
     if not report["formula"]:
         print("  (none)")
     return len(report["formula"])
+
+
+def _formula_format(report: Report) -> int:
+    _head("FORMULA TYPOGRAPHY  (upright/italic/bold/script inside an "
+          "equation — gated)")
+    print("  The equation says the same thing and is SET differently. "
+          "Nothing else sees this: FORMULA compares tokens and structure, "
+          "FORMAT walks <w:t> runs and an equation has none.")
+    for f in report["formula_format"]:
+        print(f"  [{f['change']}]{_in(f)} {f['from']!r}\n"
+              f"                 -> {f['to']!r}")
+    if not report["formula_format"]:
+        print("  (none)")
+    return len(report["formula_format"])
 
 
 def _format(report: Report) -> int:
@@ -124,7 +143,7 @@ def _review(report: Report) -> None:
 def render(report: Report, expect_clean: bool) -> int:
     """Print every layer; return the exit code."""
     real = _structure(report) + _text(report)
-    real += _formula(report) + _format(report)
+    real += _formula(report) + _formula_format(report) + _format(report)
     _review(report)
 
     print("\n" + "-" * 72)

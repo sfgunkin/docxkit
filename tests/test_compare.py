@@ -8,6 +8,7 @@ what it does, not what it should do.
 """
 from __future__ import annotations
 
+import pytest
 from conftest import (
     comment,
     field,
@@ -16,7 +17,9 @@ from conftest import (
     note,
     notes,
     para,
+    row,
     run,
+    table,
     write,
 )
 
@@ -38,6 +41,16 @@ def docs(tmp_path, body_a: str, body_b: str, **kw):
 BASE = (para(run("The index rose to 0.35 in 2024."))
         + para(run("Methods follow the standard approach."))
         + para(run("Conclusions are unchanged.")))
+
+
+def _rendered(report) -> str:
+    """What render() prints — the half of the report a human reads."""
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        render(report, expect_clean=False)
+    return buf.getvalue()
 
 
 def test_identical_documents_compare_clean(tmp_path):
@@ -313,6 +326,156 @@ def test_comments_are_reported_but_never_gate(tmp_path):
     assert [c["side"] for c in report["comments"]] == ["user-only"]
     assert "recheck" in report["comments"][0]["text"]
     assert render(report, expect_clean=True) == 0
+
+
+# ------------------------------------------------------- where it happened
+# "in: '0.312…'" tells a reviewer a number changed and leaves them to
+# find it. A results table has hundreds of cells that all look like that.
+
+
+def test_a_changed_table_cell_reports_its_address(tmp_path):
+    grid = table(row("Country", "AFI"), row("Poland", "0.31"),
+                 row("Hungary", "0.44"))
+    a, b = docs(tmp_path, para(run("Intro.")) + grid,
+                para(run("Intro.")) + grid.replace("0.44", "0.46"))
+    report = compare(a, b)
+    assert len(report["text"]) == 1, report
+    assert report["text"][0]["at"] == "table 1 r3c2"
+    assert "table 1 r3c2" in _rendered(report)
+
+
+def test_a_paragraph_outside_a_table_has_no_address(tmp_path):
+    """An ordinary prose document reads exactly as it did before any of
+    this was recorded — the address is only there when it helps."""
+    a, b = docs(tmp_path, BASE, BASE.replace("0.35", "0.37"))
+    report = compare(a, b)
+    assert "at" not in report["text"][0]
+    assert '\n  in: "The index rose' in _rendered(report)
+
+
+def test_a_nested_table_reads_outer_then_inner(tmp_path):
+    """Nested tables are real — the sweep found them in these papers —
+    and an address that named only one of the two would send a reader
+    to the wrong cell."""
+    inner = table(row("x", "1"))
+    outer = ("<w:tbl><w:tr><w:tc>" + para(run("lead")) + inner
+             + "</w:tc></w:tr></w:tbl>")
+    a, b = docs(tmp_path, outer, outer.replace(">1<", ">2<"))
+    report = compare(a, b)
+    # the inner table's SECOND cell, inside the outer table's first
+    assert report["text"][0]["at"] == "table 1 r1c1 > table 2 r1c2"
+
+
+# --------------------------------------------------------- equation typography
+# An equation that says the same thing and is SET differently was
+# invisible to every layer: FORMULA compares the token stream and the
+# structural skeleton, neither of which moves when a variable stops being
+# italic, and FORMAT walks <w:t> runs, which an equation has none of. An
+# author's italics fix could be dropped by a rebuild with --expect-clean
+# still reporting clean.
+
+
+def omath(*runs: str) -> str:
+    return f"<w:p><m:oMath>{''.join(runs)}</m:oMath></w:p>"
+
+
+def mrun(text: str, rpr: str = "") -> str:
+    return f"<m:r>{rpr}<m:t>{text}</m:t></m:r>"
+
+
+@pytest.mark.parametrize("rpr,marker", [
+    ("<m:rPr><m:nor/></m:rPr>", "nor"),        # upright, not math-italic
+    ("<w:rPr><w:i/></w:rPr>", "i"),
+    ("<w:rPr><w:b/></w:rPr>", "b"),
+    ('<m:rPr><m:sty m:val="bi"/></m:rPr>', "sty=bi"),
+])
+def test_equation_typography_is_a_gated_difference(tmp_path, rpr, marker):
+    a, b = docs(tmp_path, omath(mrun("x"), mrun("+y")),
+                omath(mrun("x", rpr), mrun("+y")))
+    report = compare(a, b)
+    assert report["formula"] == [], "not a token or structure change"
+    assert len(report["formula_format"]) == 1, report
+    entry = report["formula_format"][0]
+    # named per symbol, so a reader sees WHICH one was reset
+    assert entry["from"] == "x:plain"
+    assert entry["to"] == f"x:{marker}"
+    assert render(report, expect_clean=True) == 1
+
+
+def test_a_rewritten_equation_is_not_also_reported_as_typography(tmp_path):
+    """Typography is consulted only when the skeleton and tokens match.
+    An equation that was genuinely rewritten carries its formatting with
+    it, and reporting both would be one edit counted twice.
+
+    An equation whose TOKENS changed also changed its paragraph's
+    visible text, so it lands in TEXT with a formula flag rather than in
+    the FORMULA bucket — that is where to look for it.
+    """
+    a, b = docs(tmp_path, omath(mrun("x"), mrun("+y")),
+                omath(mrun("z", "<w:rPr><w:i/></w:rPr>"), mrun("+y")))
+    report = compare(a, b)
+    assert [t["formula"] for t in report["text"]] == [["tokens"]]
+    assert report["formula_format"] == []
+
+
+def test_a_restructured_equation_is_not_also_reported_as_typography(tmp_path):
+    """The same rule where the paragraphs DO align: identical tokens,
+    a different skeleton, and formatting that moved with it. One
+    report, of the structure."""
+    flat = omath(mrun("x"), mrun("1"))
+    sub = omath("<m:sSub><m:e>" + mrun("x", "<w:rPr><w:i/></w:rPr>")
+                + "</m:e><m:sub>" + mrun("1") + "</m:sub></m:sSub>")
+    report = compare(*docs(tmp_path, flat, sub))
+    assert [f["change"] for f in report["formula"]] == ["structure"]
+    assert report["formula_format"] == []
+
+
+@pytest.mark.parametrize("noise", [
+    '<w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr>',   # on every run
+    '<w:rPr><w:lang w:val="en-GB"/></w:rPr>',              # Word rewrites it
+    '<w:rPr><w:szCs w:val="24"/></w:rPr>',                 # mirrors w:sz
+])
+def test_equation_markup_that_is_not_typography_is_ignored(tmp_path, noise):
+    """The exclusion list is the false-positive guard, so it is pinned.
+    Seven real manuscripts carrying 300+ equations were opened and saved
+    by Word and compared against their originals: no typography
+    difference was reported for any of them. That is what makes this
+    layer safe to gate, and these are the markers that would have
+    broken it."""
+    a, b = docs(tmp_path, omath(mrun("x"), mrun("+y")),
+                omath(mrun("x", noise), mrun("+y")))
+    report = compare(a, b)
+    assert report["formula_format"] == [], report["formula_format"]
+    assert render(report, expect_clean=True) == 0
+
+
+def test_the_same_equation_split_into_different_runs_is_not_a_change(tmp_path):
+    """Word fragments runs at rsid boundaries, so one save writes an
+    equation as three runs and the next writes it as two. The
+    fingerprint is per CHARACTER for that reason.
+
+    Found on real documents, not here: a per-run version reported 71
+    typography changes across 40 version pairs of these papers, and
+    inspection of one showed 45 runs against 43 with not a single
+    character's formatting altered. Per character the same 40 pairs
+    report 2, both of them real.
+    """
+    three = omath(mrun("x", "<w:rPr><w:i/></w:rPr>"),
+                  mrun("+", "<w:rPr><w:i/></w:rPr>"),
+                  mrun("y", "<w:rPr><w:i/></w:rPr>"))
+    one = omath(mrun("x+y", "<w:rPr><w:i/></w:rPr>"))
+    report = compare(*docs(tmp_path, three, one))
+    assert report["formula_format"] == [], report["formula_format"]
+    assert render(report, expect_clean=True) == 0
+
+
+def test_typography_switched_off_explicitly_is_not_a_change(tmp_path):
+    """`<w:i w:val="0"/>` is italic turned OFF — the same state as no
+    marker at all, which is how the prose FORMAT layer reads it too."""
+    a, b = docs(tmp_path, omath(mrun("x"), mrun("+y")),
+                omath(mrun("x", '<w:rPr><w:i w:val="0"/></w:rPr>'),
+                      mrun("+y")))
+    assert compare(a, b)["formula_format"] == []
 
 
 def test_the_comparison_layers_stay_acyclic():
