@@ -54,14 +54,16 @@ SKIP = re.compile(r"~\$|backup|_old|_pre_|\.tmp|userbackup|bak_",
 
 Routine = Callable[[], object]
 
-GATED = ("structure", "text", "formula", "format")
-
 
 def _self_diff(raw: dict[str, bytes]) -> int:
-    """Gated differences between a document and itself — always 0."""
+    """Gated differences between a document and itself — always 0.
+
+    `compare.GATED` rather than a tuple of the same four names spelled
+    out here: two copies would be two answers to "did anything change?".
+    """
     doc = compare.load_parts(raw)
     report = compare.compare_docs(doc, doc)
-    return sum(len(report[k]) for k in GATED)
+    return sum(len(report[k]) for k in compare.GATED)
 
 
 def routines(blob: bytes) -> dict[str, Routine]:

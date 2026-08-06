@@ -158,16 +158,33 @@ callers to forget.
 
 ## The ported modules
 
-`compare.py` and `word_edits.py` came over from `C:\Users\Ezhik\tools`
-unchanged. They are exempt from lint and type checking on purpose: they
-are working, well-exercised code, and reformatting ~2000 lines would
-risk behaviour for no benefit. New code is held to the full ruleset.
-`compare.py` now has characterization tests (`tests/test_compare.py`)
-pinning its behavior — extend them before changing it. That rule paid
-off when the diff was widened past `document.xml` (2026-08-06): the
-existing eleven tests are what showed that a body-only document still
-compares exactly as it did, so the change could be judged on the new
-parts alone.
+`word_edits.py` came over from `C:\Users\Ezhik\tools` unchanged and is
+still exempt from lint and type checking on purpose: it is working,
+well-exercised code, and reformatting it would risk behaviour for no
+benefit. New code is held to the full ruleset.
+
+`compare.py` was exempt for the same reason and is not any more. The
+exemption's premise — "carried over unchanged" — stopped being true the
+day it was rewritten to read every part of a package, and it is the
+module most likely to be extended next. It is now three typed layers
+behind a facade: `_compare_read` (a package to paragraphs) knows nothing
+of differences, `_compare_diff` (paragraphs to a report) knows nothing
+of files or printing, `_compare_render` (a report to a page and an exit
+code) knows nothing of XML. A test asserts that stays acyclic.
+
+Two things made the split safe to take, and both are worth reusing:
+
+* **Characterization tests first.** The eleven that existed are what
+  showed a body-only document still compares exactly as it did when the
+  diff was widened past `document.xml`, so that change could be judged
+  on the new parts alone.
+* **An oracle over real documents.** The previous implementation was
+  kept beside the new one and both were run over 210 comparisons of real
+  manuscripts — every version pair and every document against itself —
+  requiring byte-identical JSON. A unit suite pins the behaviour someone
+  thought to write down; this pins all of it. It is a throwaway script
+  and worth writing again for the next refactor of a build-critical
+  path.
 
 The third port, `_citation_audit.py`, was REWRITTEN onto the shared
 grammar (2026-08-01) and folded into `citations.py`: the old audit read

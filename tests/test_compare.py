@@ -315,6 +315,52 @@ def test_comments_are_reported_but_never_gate(tmp_path):
     assert render(report, expect_clean=True) == 0
 
 
+def test_the_comparison_layers_stay_acyclic():
+    """Each layer may import only from the ones below it.
+
+    read <- diff <- render, with compare.py the facade over all three:
+    reading knows nothing of differences, diffing knows nothing of files
+    or printing, rendering knows nothing of XML. The facade's own import
+    of the CLI's JSON writer is deferred into the function that needs it
+    for the same reason — at module level it would be a cycle.
+
+    Written because the citations split needed the same guard for the
+    same reason: a layering nobody checks is a layering that will not
+    hold. This one is what stops the next feature landing in whichever
+    file it was easiest to reach.
+    """
+    import ast
+    from pathlib import Path
+
+    import docxkit
+    src = Path(docxkit.__file__).parent
+    order = ["_compare_read", "_compare_diff", "_compare_render"]
+    for i, mod in enumerate(order):
+        tree = ast.parse((src / f"{mod}.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            if node.module in order:
+                assert order.index(node.module) < i, (
+                    f"{mod} imports from {node.module}, which is not "
+                    "below it")
+            assert node.module != "compare", (
+                f"{mod} imports the facade — that is a cycle")
+
+
+def test_the_facade_still_exports_what_callers_import():
+    """The re-exports are load-bearing and ruff --fix strips a plain one
+    as unused, which is why they are written `from x import y as y`.
+    These are the names the CLI, the sweep, the tests and the papers
+    reach for; losing one is a broken import at someone else's build."""
+    import docxkit.compare as facade
+    for name in ("compare", "compare_docs", "render", "load", "load_parts",
+                 "word_diff", "integrity", "hyperlink_labels", "Doc",
+                 "Para", "Part", "GATED", "VOLATILE_FIELDS",
+                 "mask_volatile_fields"):
+        assert hasattr(facade, name), f"compare.{name} is gone"
+
+
 def test_word_diff_pinpoints_a_single_edit_in_a_repetitive_paragraph():
     """difflib's autojunk treats any token filling >1% of a long
     sequence as noise, so in a repetitive paragraph a one-word edit came

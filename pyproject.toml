@@ -46,11 +46,17 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Verbatim ports of the tools that lived in C:\Users\Ezhik\tools. They are
-# working, well-tested code carried over unchanged on purpose; reformatting
-# ~2000 lines to a new line-length would risk behaviour for no benefit.
-# New code in this package is held to the full ruleset above.
-"src/docxkit/compare.py" = ["ALL"]
+# compare.py IS a facade now (see citations.py): `from x import y as y`
+# is the PEP 484 signal for a deliberate re-export, and every line of
+# its import block is one. It also parses the glyphs Word emits and
+# defers the cli import to keep the layering acyclic.
+"src/docxkit/compare.py" = ["RUF001", "RUF002", "RUF003", "PLC0415",
+                            "PLC0414"]
+# The comparison's own layers parse those glyphs too — the masking token
+# and the report's typographic characters are the subject, not a typo.
+"src/docxkit/_compare_read.py" = ["RUF001", "RUF002", "RUF003"]
+"src/docxkit/_compare_diff.py" = ["RUF001", "RUF002", "RUF003"]
+"src/docxkit/_compare_render.py" = ["RUF001", "RUF002", "RUF003"]
 # Lazy imports are deliberate: pywin32 is an optional extra, so the rest of
 # the toolkit must import on any platform.
 "src/docxkit/word.py" = ["PLC0415"]
@@ -137,25 +143,16 @@ disallow_untyped_defs = true
 module = ["win32com.*", "pythoncom", "docx.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-# Verbatim ports from C:\Users\Ezhik\tools, exempted for the same reason
-# they are exempted from the lint config: they are working, well-exercised
-# code carried over unchanged, and their errors are all python-docx's
-# untyped Document() rather than anything actionable here.
-module = ["docxkit.compare"]
-ignore_errors = true
-
 [tool.pyright]
 # Pinned so the CLI and Pylance in the editor agree with each other.
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
-# The same verbatim ports mypy and ruff exempt (see their sections above):
-# working, well-exercised code carried over unchanged on purpose. `ignore`
-# rather than `exclude`, so the files still resolve as imports but report
-# no diagnostics, matching mypy's ignore_errors.
-ignore = [
-    "src/docxkit/compare.py",
-]
+# Nothing is exempt any more. compare.py was, as a verbatim port from
+# C:\Users\Ezhik\tools — "working, well-exercised code carried over
+# unchanged", which stopped being true the day it was rewritten to read
+# every part of a package. It is now three typed layers behind a facade
+# and held to the same rules as everything else.
+ignore = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -66,6 +66,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `console` | UTF-8 stdout, guarded — a bare reconfigure crashes off-console |
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |
+| `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
 
 ## CLI
 
@@ -174,8 +175,8 @@ python -m pytest        # synthetic fixtures, no Word required
 python -m pytest -m word   # the width model, measured against real Word
 python tools/sweep.py <project-root> ...   # every routine over real papers
 python -m ruff check .
-python -m mypy          # package + tests; ported modules exempt
-python -m pyright       # what Pylance shows in the editor; same exemptions
+python -m mypy          # package + tests; word_edits exempt, nothing else
+python -m pyright       # what Pylance shows in the editor; no exemptions
 ```
 
 `_xml.py` exists because the primitives had already started to drift: the
