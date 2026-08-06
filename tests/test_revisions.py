@@ -230,3 +230,54 @@ def test_changed_paragraphs_is_empty_when_nothing_changed():
     from docxkit.revisions import changed_paragraphs
     doc = document(para(run("Only.")))
     assert changed_paragraphs(doc, doc) == []
+
+
+def _row(cells: str, flag: str = "") -> str:
+    trpr = (f'<w:trPr><w:{flag} w:id="8" w:author="A" '
+            f'w:date="2026-08-07T00:00:00Z"/></w:trPr>') if flag else ""
+    return f"<w:tr>{trpr}{cells}</w:tr>"
+
+
+def _cell(text: str) -> str:
+    return f"<w:tc><w:tcPr/>{para(run(text))}</w:tc>"
+
+
+def test_an_inserted_table_disappears_when_its_rows_are_rejected():
+    """An inserted table is encoded as nothing but flagged rows. A simulation
+    blind to `trPr` leaves the whole table standing, emptied of text, where
+    Word removes it — so reject-all stopped matching the baseline for every
+    batch that adds a table."""
+    from docxkit.revisions import accept, reject
+    tbl = ("<w:tbl><w:tblPr/><w:tblGrid/>"
+           + _row(_cell("Регион") + _cell("2025"), "ins")
+           + _row(_cell("Астана") + _cell("0,726"), "ins")
+           + "</w:tbl>")
+    doc = document(para(run("before")) + tbl + para(run("after")))
+    assert "w:tbl" not in reject(doc)
+    assert "Астана" not in reject(doc)
+    assert "before" in reject(doc) and "after" in reject(doc)
+    kept = accept(doc)
+    assert "Астана" in kept and "w:ins" not in kept
+
+
+def test_rejecting_one_inserted_row_keeps_the_rest_of_the_table():
+    from docxkit.revisions import reject
+    tbl = ("<w:tbl><w:tblPr/><w:tblGrid/>"
+           + _row(_cell("original"))
+           + _row(_cell("added"), "ins")
+           + "</w:tbl>")
+    out = reject(document(tbl))
+    assert "w:tbl" in out
+    assert "original" in out and "added" not in out
+
+
+def test_a_deleted_row_survives_rejection_without_its_flag():
+    from docxkit.revisions import accept, reject
+    tbl = ("<w:tbl><w:tblPr/><w:tblGrid/>"
+           + _row(_cell("doomed"), "del")
+           + _row(_cell("stays"))
+           + "</w:tbl>")
+    assert "doomed" in reject(document(tbl))
+    assert "w:del" not in reject(document(tbl))
+    assert "doomed" not in accept(document(tbl))
+    assert "stays" in accept(document(tbl))

@@ -148,15 +148,19 @@ def _serialize(root: Any, was_wrapped: bool) -> str:
                    for child in root)
 
 
-def _content_elements(root: Any, tag: str) -> list[Any]:
-    """Elements of `tag` that wrap CONTENT, not the paragraph-mark flag.
+#: Parents whose `w:ins`/`w:del` child is a FLAG on the thing itself, not a
+#: wrapper around content: `w:rPr` flags a paragraph mark, `w:trPr` a row.
+#: Both share the element name with the content form, and treating either as
+#: content is what breaks naive handlers — a row flag removed as if it were a
+#: wrapper leaves the row standing, so an inserted table survived rejection.
+_FLAG_PARENTS = (W + "rPr", W + "trPr")
 
-    The flag inside ``w:rPr`` shares the element name; treating it as
-    content is what breaks naive handlers.
-    """
+
+def _content_elements(root: Any, tag: str) -> list[Any]:
+    """Elements of `tag` that wrap CONTENT, not a property-level flag."""
     return [el for el in root.iter(W + tag)
             if el.getparent() is not None
-            and el.getparent().tag != W + "rPr"]
+            and el.getparent().tag not in _FLAG_PARENTS]
 
 
 @dataclass(frozen=True)
@@ -324,6 +328,30 @@ def _mark_flag(para: Any, tags: tuple[str, ...]) -> Any | None:
                  if (el := rpr.find(W + t)) is not None), None)
 
 
+def _row_flag(row: Any, tags: tuple[str, ...]) -> Any | None:
+    """The row-level revision element inside ``trPr``, if any."""
+    trpr = row.find(W + "trPr")
+    if trpr is None:
+        return None
+    return next((el for t in tags
+                 if (el := trpr.find(W + t)) is not None), None)
+
+
+def _drop_row(row: Any) -> None:
+    """Remove a row, and the table with it if nothing is left.
+
+    Word deletes a table whose every row goes; leaving an empty ``w:tbl``
+    behind would report one more table than the document has and, on the
+    reject side, would not restore the baseline.
+    """
+    table = row.getparent()
+    table.remove(row)
+    if table is not None and not table.findall(W + "tr"):
+        parent = table.getparent()
+        if parent is not None:
+            parent.remove(table)
+
+
 def _merge_into_next(para: Any) -> None:
     """Word: losing a paragraph mark joins this paragraph to the next."""
     parent = para.getparent()
@@ -433,6 +461,20 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
                 el.getparent().remove(el)
     if touched:
         _prune_math(touched)
+    # Table ROWS carry their own revision flag, in `trPr`, and it is the whole
+    # row that appears or disappears — an inserted table is encoded as nothing
+    # but flagged rows, so a simulation blind to them leaves the entire table
+    # standing (emptied of text) where Word removes it. Rows first: a row that
+    # goes takes its paragraphs with it.
+    for row in list(root.iter(W + "tr")):
+        flag = _row_flag(row, vanish)
+        if flag is not None and wants(flag, "row"):
+            _drop_row(row)
+            continue
+        kept = _row_flag(row, keep)
+        if kept is not None and wants(kept, "row"):
+            kept.getparent().remove(kept)
+
     for para in list(root.iter(W + "p")):
         flag = _mark_flag(para, vanish)
         if flag is not None and wants(flag, "paragraph-mark"):
