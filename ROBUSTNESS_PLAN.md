@@ -321,11 +321,33 @@ Cheap, and they close the loops that keep reopening:
   `\n` eaten this session). Use the Write/Edit tools. This is already in
   memory; it belongs in `CONTRIBUTING` too.
 - **Mutation testing in CI for the core modules.** This session's
-  8-mutation run found a genuinely missing test (the span rule). Wire
-  `mutmut`/`cosmic-ray` over `tables`, `citations`, `edit`, `_xml` with
-  a survivor budget.
+  8-mutation run found a genuinely missing test (the span rule).
+  `tools/mutate.py` now carries 41 curated mutations, each re-introducing
+  a defect this codebase really shipped — but curated means "the ones
+  someone thought of", and its coverage by module is uneven:
+
+      _table_layout 9   crossrefs 5   revisions 3   _table_core 2
+      _xml          6   tracked   5   equations 3   word/package/lint/
+                                                    body/_cite_* 1 each
+
+  Nothing for `compare` or the `_compare_*` layers — the authoritative
+  gate, ~560 statements — and nothing for `authors`. A GENERIC runner
+  finds what nobody thought of, which is the failure mode that bit twice
+  on 2026-08-06: a render test that survived the width model scaled to
+  0.600, cell margins zeroed AND `pad` cut to 0.90, and an older test
+  that asserted the model's own wrong numbers back at it. Both were
+  found by hand-mutating; a runner automates exactly that.
+
+  Checked on this machine (Python 3.14.6): `mutmut` 3.7.0 resolves with
+  7 dependencies, `cosmic-ray` 8.4.6 with 15 (SQLAlchemy, aiohttp).
+  mutmut is the lighter one. Scope a first run to `_compare_*`, `_xml`,
+  `edit` and `_table_layout`; runtime is the only real cost.
 - **A coverage floor per module**, not just globally — 88% overall hides
-  a 0% module.
+  a 0% module. **DONE** (`tools/coverage_floor.py`): the floors are the
+  CURRENT numbers, so a module can never lose coverage, and the
+  exceptions name the debt instead of averaging it away. `cli.py` at 52%
+  is the one to pay down — it holds every `--write` path, which is the
+  code that touches a manuscript.
 
 ---
 

@@ -86,6 +86,23 @@ python -m mypy
 python -m pyright       # what Pylance shows in the editor
 ```
 
+Install what they need with `pip install -e .[dev]` — hypothesis is in
+there because the property suite imports it at module level, so a clone
+without it does not lose those tests quietly, it fails at collection.
+
+```
+python tools/coverage_floor.py    # per-module floors, as a ratchet
+```
+
+A single global number hides the thing worth knowing: this package sat
+at 88% overall while `tracked.py` — which builds the deliverable that
+ships to journals — was at 0%, paid for by well-covered code elsewhere.
+The floors are the CURRENT numbers, so a module can never lose coverage,
+and the exceptions in that file say out loud where the debt is (`cli.py`
+at 52% is the one to pay down: it holds every `--write` path, which is
+the code that touches a manuscript). `--update` raises them after you
+cover more.
+
 And one more, deselected by default because it drives a real Word:
 
 ```

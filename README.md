@@ -175,6 +175,7 @@ they do.
 ```
 python -m pytest        # synthetic fixtures, no Word required
 python -m pytest -m word   # the width model, measured against real Word
+python tools/coverage_floor.py             # per-module floors, a ratchet
 python tools/sweep.py <project-root> ...   # every routine over real papers
 python -m ruff check .
 python -m mypy          # package + tests; word_edits exempt, nothing else
