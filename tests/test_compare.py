@@ -8,6 +8,8 @@ what it does, not what it should do.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import (
     comment,
@@ -575,6 +577,126 @@ def test_a_dangling_anchor_written_as_a_field_is_caught(tmp_path):
     report = compare(*docs(tmp_path, field_link, field_link))
     assert any("NoSuchBookmark" in i for i in report["integrity"]), \
         report["integrity"]
+
+
+# ---------------------------------------------- the reading layer, mutated
+# A second cosmic-ray pass, over _compare_read.py: 122 survivors, and
+# they clustered on the part pairing, the nesting guard in the field
+# masking, and three of the four run properties FORMAT knows about.
+
+
+def test_leftover_parts_too_different_to_be_the_same_one_are_not_paired(
+        tmp_path):
+    """The similarity fallback exists for a header Word RENUMBERED, not
+    for any two orphans. Pairing unrelated parts would report one as a
+    rewrite of the other and hide that a header was lost outright."""
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml":
+                        hdr(para(run("Age-Friendly Index — running head")))},
+                       {"word/header2.xml":
+                        hdr(para(run("Confidential draft: do not circulate "
+                                     "or cite without permission")))}))
+    report = compare(a, b)
+    kinds = sorted(s["type"] for s in report["structure"])
+    assert kinds == ["PART ADDED", "PART REMOVED"], report["structure"]
+    assert report["text"] == [], "unrelated parts are not a text edit"
+
+
+def test_the_most_similar_leftover_part_wins(tmp_path):
+    """With two candidates, the pairing must take the better one — a
+    first-match rule would pair the running head with whichever part
+    happened to come first and report both as rewritten."""
+    head = "Age-Friendly Index — running head"
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml": hdr(para(run(head)))},
+                       {"word/header2.xml":
+                        hdr(para(run("Wholly unrelated boilerplate here"))),
+                        "word/header3.xml":
+                        hdr(para(run(head + " (revised)")))}))
+    report = compare(a, b)
+    # header1 pairs with header3 and shows a text edit; header2 is new
+    assert [t.get("part") for t in report["text"]] == ["header1"], report
+    assert any("revised" in str(d) for d in report["text"][0]["word_diff"])
+    assert [s["type"] for s in report["structure"]] == ["PART ADDED"]
+
+
+def test_nested_volatile_fields_are_masked_exactly_once():
+    """The guard tested where it can be SEEN.
+
+    Masking is offset arithmetic on one string, right to left. Register
+    a region already inside another and the inner rewrite shifts the
+    outer's stored offsets, so the outer slice cuts in the wrong place.
+    The end-to-end comparison cannot catch that — it mangles both sides
+    identically and reports clean — so this asserts on the masked XML:
+    one token, and every field character still there.
+    """
+    from lxml import etree
+
+    from docxkit._compare_read import mask_volatile_fields
+    inner = field("PAGE", "7")
+    nested = ("<w:p>"
+              '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+              '<w:r><w:instrText> PAGEREF _Toc1 </w:instrText></w:r>'
+              '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+              + inner
+              + '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+    out = mask_volatile_fields(nested)
+    assert re.findall(r"«F:\w+»", out) == ["«F:PAGEREF»"], out
+    assert out.count("w:fldChar") == nested.count("w:fldChar")
+    etree.fromstring(('<w:p xmlns:w="http://schemas.openxmlformats.org/'
+                      'wordprocessingml/2006/main">'
+                      + out[len("<w:p>"):]).encode())
+
+
+def test_a_volatile_field_inside_another_is_masked_once(tmp_path):
+    """The same guard from the outside: a nested cached value must not
+    reach the report either."""
+    inner = field("PAGE", "7")
+    outer = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText> PAGEREF _Toc1 </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + inner
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/footer1.xml": hdr(para(outer), foot=True)},
+                       {"word/footer1.xml": hdr(
+                           para(outer.replace(">7<", ">9<")), foot=True)}))
+    report = compare(a, b)
+    assert report["text"] == [] and report["structure"] == [], report
+    assert render(report, expect_clean=True) == 0
+
+
+@pytest.mark.parametrize("prop,shown", [
+    ("<w:b/>", "bold"),
+    ("<w:strike/>", "strike"),
+    ("<w:smallCaps/>", "smallCaps"),
+    ('<w:vertAlign w:val="superscript"/>', "superscript"),
+])
+def test_every_run_property_the_format_layer_knows(tmp_path, prop, shown):
+    """Italic had a test and the other four did not, so a mutation that
+    stopped reading any of them survived."""
+    plain = para(run("See the Journal of Things here."))
+    marked = ('<w:p><w:r><w:t xml:space="preserve">See the </w:t></w:r>'
+              f"<w:r><w:rPr>{prop}</w:rPr><w:t>Journal of Things</w:t></w:r>"
+              '<w:r><w:t xml:space="preserve"> here.</w:t></w:r></w:p>')
+    report = compare(*docs(tmp_path, plain, marked))
+    assert report["text"] == []
+    assert any(shown in str(e) for e in report["format"]), report["format"]
+
+
+def test_parts_are_reported_in_a_stable_order(tmp_path):
+    """Two runs must list their parts the same way, or a reader
+    comparing today's report to yesterday's is reading noise."""
+    from docxkit.compare import load_parts
+    parts = make_parts(BASE, footnotes=notes("footnotes", note("a note")),
+                       extra={"word/endnotes.xml":
+                              notes("endnotes", note("an endnote",
+                                                     kind="endnote")),
+                              "word/header1.xml": hdr(para(run("head"))),
+                              "word/footer1.xml": hdr(para(run("foot")),
+                                                      foot=True)})
+    assert [p.label for p in load_parts(parts).parts] == [
+        "body", "footnotes", "endnotes", "header1", "footer1"]
 
 
 def test_the_comparison_layers_stay_acyclic():
