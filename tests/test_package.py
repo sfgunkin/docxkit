@@ -99,3 +99,66 @@ def test_is_locked_false_for_closed_file(simple_docx):
 
 def test_is_locked_false_for_missing_file(tmp_path):
     assert is_locked(tmp_path / "nope.docx") is False
+
+
+# --- did the author change this part, or did Word just re-save it? ---
+
+_STYLE = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          b'<w:styles xmlns:w="http://schemas.openxmlformats.org/'
+          b'wordprocessingml/2006/main">'
+          b'<w:style w:type="paragraph" w:styleId="Normal">'
+          b'<w:name w:val="Normal"/><w:rPr><w:sz w:val="24"/></w:rPr>'
+          b"</w:style></w:styles>")
+
+
+def _resaved(blob: bytes) -> bytes:
+    """What a Word save does to a part it did not change: bind an extra
+    namespace prefix, add rsids, reorder attributes, reindent."""
+    w14 = (b'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+           b'xmlns:w="')
+    return (blob.replace(b'xmlns:w="', w14)
+                .replace(b"<w:style ", b'<w:style w:rsidR="00AB12CD" ')
+                .replace(b"</w:style>", b"</w:style>\n  "))
+
+
+def test_part_fingerprint_ignores_what_a_word_save_rewrites():
+    """Comparing raw bytes reports a style edit on every author round-trip,
+    and a warning that cries wolf is the one nobody reads."""
+    from docxkit.package import part_fingerprint, same_part
+    assert _resaved(_STYLE) != _STYLE
+    assert same_part(_STYLE, _resaved(_STYLE))
+    assert part_fingerprint(_STYLE) == part_fingerprint(_resaved(_STYLE))
+
+
+def test_part_fingerprint_still_sees_a_real_style_edit():
+    from docxkit.package import same_part
+    bigger = _STYLE.replace(b'<w:sz w:val="24"/>', b'<w:sz w:val="28"/>')
+    assert not same_part(_STYLE, bigger)
+
+
+def test_part_fingerprint_keeps_leaf_whitespace():
+    """A space inside a w:t is content, not indentation."""
+    from docxkit.package import same_part
+    doc = make_parts(para(run("Section 5")))["word/document.xml"]
+    spaced = doc.replace(b"Section 5", b"Section  5")
+    assert not same_part(doc, spaced)
+
+
+def test_part_fingerprint_falls_back_to_bytes_for_non_xml():
+    from docxkit.package import same_part
+    assert same_part(b"\x89PNG binary", b"\x89PNG binary")
+    assert not same_part(b"\x89PNG binary", b"\x89PNG other")
+
+
+def test_changed_parts_separates_real_edits_from_a_re_save():
+    from docxkit.package import changed_parts
+    before = {"word/styles.xml": _STYLE, "word/document.xml": b"<a/>",
+              "word/footer1.xml": b"<f/>"}
+    after = {"word/styles.xml": _resaved(_STYLE),          # noise
+             "word/document.xml": b"<a><b/></a>",          # real
+             "docProps/core.xml": b"<c/>"}                 # Word restored it
+    got = changed_parts(before, after)
+    assert got == {"changed": ["word/document.xml"],
+                   "added": ["docProps/core.xml"],
+                   "removed": ["word/footer1.xml"],
+                   "resaved": ["word/styles.xml"]}

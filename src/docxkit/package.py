@@ -8,22 +8,30 @@ the parts dict preserves every byte the transform did not touch.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import tempfile
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from lxml import etree
 
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
     "assert_unlocked",
     "backup",
+    "changed_parts",
     "edit_in_place",
     "is_locked",
     "malformed_parts",
     "next_backup_path",
+    "part_fingerprint",
     "read_parts",
+    "same_part",
     "write_docx",
 ]
 
@@ -63,6 +71,74 @@ def read_parts(path: str | Path) -> dict[str, bytes]:
             return {n: z.read(n) for n in z.namelist()}
     except (OSError, zipfile.BadZipFile) as exc:
         raise PackageError(f"cannot read {path}: {exc}") from exc
+
+
+#: Attributes Word rewrites on every save. They carry no meaning for a
+#: reader: revision-save ids and the paragraph/text ids Word re-mints.
+_VOLATILE_ATTR = re.compile(r"rsid|paraId|textId", re.IGNORECASE)
+
+
+def _shape(el: Any) -> tuple[Any, ...]:
+    kids = tuple(_shape(c) for c in el if isinstance(c.tag, str))
+    attrs = tuple(sorted((k, v) for k, v in el.attrib.items()
+                         if not _VOLATILE_ATTR.search(k)))
+    # Text is significant in a leaf (a `w:t` holds the prose, spaces and
+    # all); between child elements it is only Word's or a writer's
+    # indentation, and comparing it would report every re-serialisation.
+    text = (el.text or "") if not kids else (el.text or "").strip()
+    return (el.tag, attrs, text, kids)
+
+
+def part_fingerprint(blob: bytes) -> str:
+    """A hash of what a part MEANS, blind to how it was serialised.
+
+    Two questions look alike and are not: "do these bytes differ" and "did
+    someone change this part". A Word save answers yes to the first for
+    almost every part in the package — it re-declares namespace prefixes,
+    re-mints `w:rsid*`/`w14:paraId`, reorders attributes, reindents — while
+    changing nothing a reader could see. Comparing digests of the raw bytes
+    therefore reports a style edit on every author round-trip, and the
+    warning that cries wolf is the one nobody reads.
+
+    This ignores namespace DECLARATIONS (the prefix bindings, not the
+    resolved names), volatile attributes, attribute order and inter-element
+    whitespace, and keeps everything else — including leaf text exactly as
+    written, because a space inside a ``w:t`` is content.
+
+    Non-XML members (images, the mimetype) hash their bytes directly.
+    """
+    try:
+        root = etree.fromstring(blob)
+    except etree.XMLSyntaxError:
+        return hashlib.sha256(blob).hexdigest()
+    return hashlib.sha256(repr(_shape(root)).encode("utf-8")).hexdigest()
+
+
+def same_part(a: bytes, b: bytes) -> bool:
+    """True if two versions of a part differ only by serialisation."""
+    return part_fingerprint(a) == part_fingerprint(b)
+
+
+def changed_parts(before: dict[str, bytes],
+                  after: dict[str, bytes]) -> dict[str, list[str]]:
+    """Which parts really changed, added or vanished between two packages.
+
+    Returns ``{"changed": [...], "added": [...], "removed": [...],
+    "resaved": [...]}`` — where `resaved` is the noise bucket: parts whose
+    bytes differ but whose meaning does not. A Word round-trip puts nearly
+    everything there, which is what makes the `changed` list worth reading.
+    """
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed: list[str] = []
+    resaved: list[str] = []
+    for name in sorted(set(before) & set(after)):
+        if before[name] == after[name]:
+            continue
+        bucket = resaved if same_part(before[name], after[name]) else changed
+        bucket.append(name)
+    return {"changed": changed, "added": added,
+            "removed": removed, "resaved": resaved}
 
 
 def malformed_parts(parts: dict[str, bytes]) -> list[str]:
