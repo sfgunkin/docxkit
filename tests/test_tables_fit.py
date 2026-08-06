@@ -351,10 +351,27 @@ def test_slash_is_a_break_opportunity_but_hyphen_is_not():
         < label_hard("Professional-vocational") - 200
 
 
-def test_arial_narrow_digits_are_not_a_uniform_scaling():
+def test_arial_narrow_is_a_uniform_scaling_of_arial():
+    """It is 0.820 of Arial in every character, digits included.
+
+    This test used to assert the opposite — digits at 501 (0.90) and
+    letters at 0.835 — because it was written from the same hand-tuned
+    numbers it was meant to check, and a test that only repeats the
+    model's belief cannot contradict it. Word says 456 for a digit
+    (0.820 x 556) and agrees with 0.820 for every printable ASCII
+    character within 0.4%; `tests/test_width_model.py -m word` is what
+    holds these to a measurement rather than to each other.
+    """
     from docxkit.tables import _ARIAL, _ARIAL_NARROW
-    assert _ARIAL_NARROW["0"] == 501          # measured, 0.90 x Arial
-    assert _ARIAL_NARROW["o"] == round(_ARIAL["o"] * 0.835)
+    assert _ARIAL_NARROW["0"] == 456
+    assert all(_ARIAL_NARROW[ch] == round(_ARIAL[ch] * 0.820)
+               for ch in _ARIAL)
+    # The two Arial entries the measurement corrected, kept here so a
+    # revert shows up without Word: K was 722 (Helvetica's is 667) and P
+    # was in no group at all, taking the 600 fallback.
+    assert _ARIAL["K"] == 667
+    assert _ARIAL["P"] == 667
+    assert _ARIAL["!"] == 278
 
 
 def test_page_break_before_creates_ppr_when_missing():

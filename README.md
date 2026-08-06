@@ -47,7 +47,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
-| `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) |
+| `compare` | the authoritative multi-layer diff (structure/text/formula/format/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
 | `citations` | the grammar, the link audit, and `link_all` — build the whole citation<->entry apparatus document-wide |
@@ -171,6 +171,7 @@ they do.
 
 ```
 python -m pytest        # synthetic fixtures, no Word required
+python -m pytest -m word   # the width model, measured against real Word
 python tools/sweep.py <project-root> ...   # every routine over real papers
 python -m ruff check .
 python -m mypy          # package + tests; ported modules exempt
@@ -186,6 +187,15 @@ edit. One table now, one `visible_text`, one run-text writer.
 Word-dependent paths (`tracked.build`, `word.export_pdf`, `word.pages`)
 are exercised against real manuscripts rather than in the unit suite.
 
+The one exception is the column-width model, which now has Word itself
+as its oracle: `docxkit.word.ruler` asks how wide Word ACTUALLY lays text
+out, and `tests/test_width_model.py -m word` holds every metric table to
+that answer. It was worth building — the tables had been hand-tuned from
+a single PDF render, and the first run found Arial's K, P and "!" wrong
+(the last two missing entirely, taking a 600 fallback), every Arial
+Narrow override too wide (digits by 9.9%), and four alias scales out by
+3-5%.
+
 `tools/sweep.py` runs every read-only routine over a corpus and reports
 failures, implausible results and timings. It is read-only and copies
 each file to TEMP, so it cannot touch a manuscript. The last full run
@@ -193,3 +203,10 @@ covered **347 documents across ten projects with zero failures**; the
 three bugs it found first time round (a BOM, undeclared namespace
 prefixes in fragments, nested tables) are pinned in
 `tests/test_corpus_regressions.py`.
+
+One of its routines is `compare.self`: a document diffed against
+**itself**, which must report nothing. It is the cheapest false-positive
+gate the authoritative diff has, and it earned its place immediately —
+on the run that widened `compare` past `document.xml` it caught a
+Word-written `endnotes.xml` holding only separator entries being
+reported as a whole part gained. Measured clean on 499 manuscripts.

@@ -18,6 +18,7 @@ __all__ = [
     "DeliverableModified",
     "DocumentLocked",
     "DocxKitError",
+    "FontMissing",
     "PackageError",
     "ScaffoldMissing",
 ]
@@ -33,6 +34,16 @@ class DocumentLocked(DocxKitError):
     Worth failing on before any write: Word holds an exclusive handle, so
     the write dies half-way and leaves a truncated file where the
     manuscript used to be.
+    """
+
+
+class FontMissing(DocxKitError):
+    """A font asked of Word is not installed on this machine.
+
+    Its own class because the honest response differs by caller: a
+    calibration run SKIPS the face (Word would substitute another and
+    the measurement would describe that one), while a build that needs
+    the manuscript's font should stop.
     """
 
 

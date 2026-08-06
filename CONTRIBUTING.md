@@ -86,6 +86,19 @@ python -m mypy
 python -m pyright       # what Pylance shows in the editor
 ```
 
+And one more, deselected by default because it drives a real Word:
+
+```
+python -m pytest -m word    # ~40s; before a release, and after ANY
+                            # edit to a width table in _table_layout
+```
+
+It asks Word for the advance of every printable ASCII character and
+compares the model's tables to the answer. Run it when you touch those
+tables: they had been hand-tuned from a PDF render and were out by up to
+10% — see V4 in `ROBUSTNESS_PLAN.md`. Expect a passing run to print
+first-chance RPC exceptions from Word's teardown; read the exit code.
+
 mypy and pyright disagree just enough to be worth running both: only the
 stubs told either of them that `part.get()` can return None, and only
 pyright saw it through `lxml-stubs` before the mypy override list was
@@ -150,7 +163,11 @@ unchanged. They are exempt from lint and type checking on purpose: they
 are working, well-exercised code, and reformatting ~2000 lines would
 risk behaviour for no benefit. New code is held to the full ruleset.
 `compare.py` now has characterization tests (`tests/test_compare.py`)
-pinning its behavior — extend them before changing it.
+pinning its behavior — extend them before changing it. That rule paid
+off when the diff was widened past `document.xml` (2026-08-06): the
+existing eleven tests are what showed that a body-only document still
+compares exactly as it did, so the change could be judged on the new
+parts alone.
 
 The third port, `_citation_audit.py`, was REWRITTEN onto the shared
 grammar (2026-08-01) and folded into `citations.py`: the old audit read

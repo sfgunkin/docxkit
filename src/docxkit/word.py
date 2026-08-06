@@ -28,13 +28,13 @@ import re
 import shutil
 import tempfile
 import zipfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple, cast
 
 from lxml import etree
 
-from .errors import AnchorError, PackageError
+from .errors import AnchorError, FontMissing, PackageError
 
 __all__ = [
     "Location",
@@ -52,6 +52,7 @@ __all__ = [
     "paginate",
     "revision_locations",
     "revisions",
+    "ruler",
     "search_text",
     "session",
 ]
@@ -72,9 +73,13 @@ WD_FIND_STOP = 0
 WD_INFO_ADJUSTED_PAGE = 1     # the number PRINTED on the page
 WD_INFO_PAGE = 3              # the page's position in the file
 WD_INFO_LINE = 10             # line number, counted from the top of the page
+WD_HORIZ_POS_PAGE = 5         # x of the range, in points from the page edge
 
 # Word's Find box takes at most 255 characters.
 FIND_LIMIT = 255
+
+# A paragraph is the unit both `search_text` and `ruler` work in.
+_LINE_BREAK = re.compile(r"[\r\n\v]")
 
 # Word options switched off for bulk edits; restored on exit so an
 # interactive Word is not left reconfigured.
@@ -328,6 +333,90 @@ def page_count(path: str | Path) -> int:
         return int(doc.ComputeStatistics(WD_STATISTIC_PAGES))
 
 
+@contextlib.contextmanager
+def ruler(word: Any, *, size_pt: float = 10.0
+          ) -> Iterator[Callable[[str, Sequence[str]], list[float]]]:
+    """Ask Word how wide it ACTUALLY lays text out. Yields
+    ``measure(font, texts) -> widths in dxa``.
+
+    The column-width model in :mod:`docxkit.tables` approximates this;
+    without a way to ask, an error in a metric table is invisible until a
+    manuscript comes back with wrapped rows — which is how a 10% error in
+    the Arial Narrow digits survived for months. `tests/test_width_model.py`
+    is the gate built on this.
+
+    Two traps are closed here rather than left to the caller:
+
+    * **A font that is not installed is refused.** Word substitutes
+      another face without a word of complaint and measures THAT one, so
+      a calibration run would quietly describe the wrong typeface.
+    * **A string that wraps is refused.** The end-of-text position would
+      then be measured on the second line and come back far too small —
+      a wrong number that looks entirely plausible.
+
+    For a single character's advance, measure a repetition and take the
+    difference: ``(w(c*40) - w(c*20)) / 20`` cancels the side bearings
+    and any edge effect.
+
+    Expect a passing run to print first-chance Windows exceptions
+    (RPC_S_CALL_FAILED, RPC_S_SERVER_UNAVAILABLE) from Word's own
+    teardown: an invisible instance that has been asked layout questions
+    does not always survive to answer the Close and Quit. They are dumped
+    by faulthandler, the suppressed handlers here and in :func:`session`
+    absorb them, and the count is not stable between runs — measured 0,
+    3 and 5 for the same work. Not worth chasing; worth knowing about
+    before you do.
+    """
+    installed = {str(name) for name in word.FontNames}
+    doc = word.Documents.Add()
+    try:
+        # Print layout explicitly: position information describes a page,
+        # and a machine whose default view is draft would answer about a
+        # layout that has no pages.
+        with contextlib.suppress(Exception):
+            doc.ActiveWindow.View.Type = WD_PRINT_VIEW
+        setup = doc.PageSetup
+        setup.PageWidth = 1584          # Word's maximum, in points
+        setup.LeftMargin = setup.RightMargin = 18
+
+        def measure(font: str, texts: Sequence[str]) -> list[float]:
+            if font not in installed:
+                raise FontMissing(
+                    f"font {font!r} is not installed - Word would "
+                    "substitute another face and the measurement would "
+                    "describe that one instead")
+            bad = [t for t in texts if _LINE_BREAK.search(t)]
+            if bad:
+                raise AnchorError(
+                    f"ruler: {bad[0]!r} contains a line break; paragraphs "
+                    "are the unit of measurement here")
+            doc.Content.Delete()
+            doc.Content.Text = "\r".join(texts)
+            doc.Content.Font.Name = font
+            doc.Content.Font.Size = size_pt
+            doc.Content.ParagraphFormat.LeftIndent = 0
+            out: list[float] = []
+            for i, text in enumerate(texts, start=1):
+                rng = doc.Paragraphs(i).Range
+                head = doc.Range(rng.Start, rng.Start)
+                # End-1 steps back over the paragraph mark itself.
+                tail = doc.Range(max(rng.Start, rng.End - 1),
+                                 max(rng.Start, rng.End - 1))
+                if head.Information(WD_INFO_LINE) != tail.Information(
+                        WD_INFO_LINE):
+                    raise AnchorError(
+                        f"ruler: {text!r} wraps at {size_pt}pt in {font} - "
+                        "its width cannot be read off one line")
+                out.append((tail.Information(WD_HORIZ_POS_PAGE)
+                            - head.Information(WD_HORIZ_POS_PAGE)) * 20.0)
+            return out
+
+        yield measure
+    finally:
+        with contextlib.suppress(Exception):
+            doc.Close(SaveChanges=0)
+
+
 # --- where a sentence falls on the page ------------------------------------
 #
 # What a response letter needs is "R2a - revised, p. 14", and only Word can
@@ -408,9 +497,6 @@ def paginate(doc: Any) -> None:
     with contextlib.suppress(Exception):
         doc.ActiveWindow.View.Type = WD_PRINT_VIEW
     doc.Repaginate()
-
-
-_LINE_BREAK = re.compile(r"[\r\n\v]")
 
 
 def search_text(anchor: str) -> str:

@@ -121,8 +121,10 @@ paragraph".)*
 
 The goal: make the invariants unbreakable rather than remembered.
 
-> **Status: V1 and V3 done (`1e127fe`).** V1 landed in a better place
-> than planned — see below. V2 and V4 remain.
+> **Status: all four done.** V1 and V3 in `1e127fe` (V1 landed in a
+> better place than planned — see below), V2 with the property suite in
+> `a1319e0`, V4 on 2026-08-06 — and V4 found the width model already
+> wrong by up to 10%, not merely unguarded.
 
 **V1 — One well-formedness gate, applied by construction. DONE.**
 Implemented at `package.write_docx` rather than as a per-mutator
@@ -165,11 +167,43 @@ Two lessons worth keeping from building it:
   span whose first anchor is not one of its own. That is a genuine
   second line of defence, not a missing test.
 
-**V4 — Calibrate the width model against a real render.** `_ARIAL_NARROW`
-(`tables.py:527`) was hand-tuned from one Word PDF. Nothing would catch a
-bad edit to that table. Add a marked (`@pytest.mark.word`) test that
-renders a known table and asserts predicted vs measured column widths
-within tolerance — skipped in CI, run before releases.
+**V4 — Calibrate the width model against a real render. DONE**
+(`tests/test_width_model.py`, `docxkit.word.ruler`). `_ARIAL_NARROW` was
+hand-tuned from one Word PDF and nothing would have caught a bad edit to
+it — which turned out to be the wrong worry, because the table was
+already wrong. Word was asked for the advance of every printable ASCII
+character in each font, and the hour the test first ran it found four
+defects:
+
+* `_ARIAL["K"]` was 722 against a true 667 (Helvetica's value), and
+  `_ARIAL["P"]` and `_ARIAL["!"]` were in no group at all, so both took
+  the 600 fallback — P by 10%, "!" by 116%.
+* Every hand-set `_ARIAL_NARROW` override was too wide, digits by 9.9%.
+  Arial Narrow IS a uniform 0.820 scaling of Arial: every character
+  measures within 0.4% of it, digits exactly (456 = 0.820 x 556). The
+  old comment asserted the opposite in so many words.
+* Four alias scales were off by 3-5%, three of them *under*-providing,
+  which is the direction that wraps a row.
+
+Three things worth keeping:
+* **An omitted character is the failure mode to design the test around.**
+  A wrong entry is off by a percent or two; a missing one silently takes
+  600 and is off by a factor. That is why the test sweeps all of
+  printable ASCII rather than a representative sample.
+* **The old test asserted the model's mistake.** It pinned digits at 501
+  and letters at 0.835 because it was written from the same hand-tuned
+  numbers it was meant to check. A test that only repeats what the code
+  believes cannot contradict it; this one asks Word.
+* **The end-to-end version of this test was written and then deleted.**
+  "Fit a table, render it, assert no row wrapped" is the property that
+  matters, and it could not fail: `ComputeStatistics(wdStatisticLines)`
+  returns 0 for a cell so the assertion never fired, and once that was
+  fixed the check still passed with the model scaled to 0.600, the cell
+  margins zeroed and `pad` cut to 0.90. `fit_columns` divides a fixed
+  total, so a uniform error only changes how the leftover is shared.
+  Shipping it would have added the appearance of an end-to-end
+  guarantee and nothing else. The reasoning is kept in the test file so
+  the next person does not rebuild it.
 
 ---
 

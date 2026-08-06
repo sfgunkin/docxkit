@@ -83,30 +83,43 @@ _TIMES = _widths({
     611: "ELTZ", 667: "BCR", 722: "ADGHKNOQUVXYw", 778: "&m", 833: "%",
     889: "M", 921: "@", 944: "W", 1000: "—",
 })
+# K and P are 667, as in the Helvetica AFM. Both were wrong here until
+# they were measured against Word (2026-08-06): K sat in the 722 group,
+# and P was in no group at all so it took the 600 fallback — 10% out in
+# each direction. An OMITTED character is the worse failure of the two:
+# "!" was missing as well and predicted 600 against a true 278, and
+# nothing about the table's shape says which characters it forgot.
 _ARIAL = _widths({
     191: "'", 222: "ijl‘’", 260: "|",
-    278: " ,./:;\\ftI[] ", 333: "()-`r“”", 355: '"',
+    278: " !,./:;\\ftI[] ", 333: "()-`r“”", 355: '"',
     389: "*", 469: "^", 500: "Jcksvxyz", 334: "{}",
     556: "#$?_0123456789Labdeghnopqu–", 584: "+<=>~−",
-    611: "FTZ", 667: "ABESVXY&", 722: "CDHKNRUw", 778: "GOQ",
+    611: "FTZ", 667: "ABEKPSVXY&", 722: "CDHNRUw", 778: "GOQ",
     833: "Mm", 889: "%", 944: "W", 1000: "—", 1015: "@",
 })
-# Arial Narrow is a true narrow design, not a geometric scaling of
-# Arial: measured from a Word PDF render, its letters run ~0.835 of
-# Arial but its digits are 501/1000 em (0.90) — a uniform 0.82 scale
-# under-provides every numeric column by ~9%.
-_ARIAL_NARROW = {ch: round(w * 0.835) for ch, w in _ARIAL.items()}
-_ARIAL_NARROW.update(_widths({
-    501: "0123456789", 250: ",.", 284: "-", 300: "()",
-    329: "*", 500: "−–",
-}))
+# Arial Narrow IS a uniform 0.820 scaling of Arial: every printable
+# ASCII character measures within 0.4% of it in Word, digits exactly
+# (456 = 0.820 x 556). The table used to carry 0.835 plus hand-set
+# overrides for digits, punctuation and dashes, "measured from a Word
+# PDF render" — and every one of those overrides was too wide, digits by
+# 9.9%, so numeric columns were bought a tenth more room than they need
+# and the label column went short by the same. Do not reintroduce a
+# special case here without a `pytest -m word` measurement behind it.
+_ARIAL_NARROW = {ch: round(w * 0.820) for ch, w in _ARIAL.items()}
+# An aliased face borrows another font's SHAPES and corrects the total
+# with one number, so any single string can be a few percent out either
+# way; the scale zeroes the MEAN over a corpus of table cells, which is
+# what a column's width is actually spent on. Measured in Word and
+# stable across 8/9/10/12pt — the model's linearity in size holds, so
+# these are constants and not a size curve. Segoe UI is not installed
+# here, so it keeps its unverified 0.98.
 _FONT_ALIASES: dict[str, tuple[dict[str, int], float]] = {
-    "times new roman": (_TIMES, 1.0), "cambria": (_TIMES, 1.02),
-    "georgia": (_TIMES, 1.08), "garamond": (_TIMES, 0.92),
+    "times new roman": (_TIMES, 1.0), "cambria": (_TIMES, 1.05),
+    "georgia": (_TIMES, 1.09), "garamond": (_TIMES, 0.956),
     "arial": (_ARIAL, 1.0), "helvetica": (_ARIAL, 1.0),
-    "arial narrow": (_ARIAL_NARROW, 1.0), "calibri": (_ARIAL, 0.915),
-    "segoe ui": (_ARIAL, 0.98), "tahoma": (_ARIAL, 1.0),
-    "verdana": (_ARIAL, 1.10),
+    "arial narrow": (_ARIAL_NARROW, 1.0), "calibri": (_ARIAL, 0.908),
+    "segoe ui": (_ARIAL, 0.98), "tahoma": (_ARIAL, 0.993),
+    "verdana": (_ARIAL, 1.145),
 }
 
 

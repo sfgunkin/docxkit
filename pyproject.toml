@@ -160,3 +160,9 @@ ignore = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+# `word` drives a real Word instance: minutes, not milliseconds, and no
+# use on a machine without it. Deselected by default so the everyday
+# suite stays synthetic and fast; run it with `pytest -m word` before a
+# release and after any edit to the width model.
+markers = ["word: needs a real Word installation (run with -m word)"]
+addopts = ["-m", "not word"]
