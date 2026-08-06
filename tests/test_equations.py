@@ -88,6 +88,26 @@ def test_harvest_can_pick_among_repeats():
         harvest(xml, "x", index=5)
 
 
+def test_harvest_exact_refuses_a_formula_that_merely_mentions_the_symbol():
+    """Harvesting a bare symbol is the case a substring match gets wrong.
+
+    A manuscript defines C_k once and then uses it everywhere, so the
+    standalone symbol is rarely the first equation containing it. The
+    default match hands back the formula; exact= asks for the letter.
+    """
+    xml = document(para(omath(ssub("C", "k") + mr("=") + mr("1")))
+                   + para(omath(ssub("C", "k"))))
+    assert tokens(harvest(xml, "Ck")) == "Ck=1"
+    assert tokens(harvest(xml, "Ck", exact=True)) == "Ck"
+
+
+def test_harvest_exact_says_which_match_it_tried():
+    formula = omath(ssub("C", "k") + mr("=") + mr("1"))
+    only_in_a_formula = document(para(formula))
+    with pytest.raises(AnchorError, match="symbols equal 'Ck'"):
+        harvest(only_in_a_formula, "Ck", exact=True)
+
+
 def test_clone_detaches_a_copy():
     original = harvest(_doc(), "sict")
     copied = clone(original)

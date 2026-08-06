@@ -159,7 +159,8 @@ def skeleton(omml: str) -> str:
     return "/".join(_STRUCT_RE.findall(omml))
 
 
-def harvest(xml: str, contains: str, *, index: int = 0) -> str:
+def harvest(xml: str, contains: str, *, index: int = 0,
+            exact: bool = False) -> str:
     """An existing equation from the document, to deepcopy into a new one.
 
     When new math reuses symbols the document already renders, copying
@@ -167,14 +168,26 @@ def harvest(xml: str, contains: str, *, index: int = 0) -> str:
     spacing, same control properties — where a rebuild from LaTeX only
     usually does.
 
-    `contains` is matched against the equation's symbol stream.
+    `contains` is matched against the equation's symbol stream. Pass
+    ``exact=True`` to require the whole stream, which is what harvesting
+    a BARE SYMBOL needs: in a manuscript that defines ``C_k`` once and
+    then uses it, 24 equations contain "Ck" and the standalone symbol is
+    not the first of them, so a substring match hands back a whole
+    formula where a letter was asked for — plausible, wrong, and visible
+    only in the render.
     """
-    hits = [e for e in equations(xml) if contains in e.tokens]
+    def matches(stream: str) -> bool:
+        if exact:
+            return stream.strip() == contains.strip()
+        return contains in stream
+
+    hits = [e for e in equations(xml) if matches(e.tokens)]
+    how = "equal" if exact else "contain"
     if not hits:
-        raise AnchorError(f"no equation whose symbols contain {contains!r}")
+        raise AnchorError(f"no equation whose symbols {how} {contains!r}")
     if index >= len(hits):
         raise AnchorError(
-            f"{len(hits)} equations contain {contains!r}, no index {index}")
+            f"{len(hits)} equations {how} {contains!r}, no index {index}")
     return standalone(hits[index].xml)
 
 
