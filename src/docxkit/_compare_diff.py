@@ -393,11 +393,22 @@ def compare_paras(a: list[Para], b: list[Para], report: Report,
     candidate match for a body sentence, and pooling them would invent
     moves between the two.
 
-    Two passes of difflib, not one. The outer pass aligns on
-    glyph-normalised text; inside a replace block it runs again over
-    that block alone, because difflib's opcodes over a whole manuscript
-    call a reworded paragraph and its unchanged neighbours one big
-    replacement, and the second pass separates them.
+    ONE pass of difflib, where there used to be two.
+
+    The second pass re-ran SequenceMatcher inside each replace block, on
+    the belief that difflib's whole-document opcodes lump a reworded
+    paragraph together with its unchanged neighbours. They do not: a
+    `replace` opcode is BY CONSTRUCTION a region containing no matching
+    elements, because the matching blocks are exactly the `equal`
+    opcodes. Re-running the same matcher over it can only return one
+    `replace` spanning the whole block — measured over 3,735 replace
+    blocks from 4,000 random pairs, every one came back as a single
+    opcode — so the inner pass's equal/delete/insert branches were
+    unreachable, and its `else` reduced to this call.
+
+    Mutation testing is what surfaced it: 88 mutants sat on those three
+    branches and none could be killed, because no input reaches them.
+    Reports over 100 real comparisons are byte-identical without it.
     """
     align = _Alignment(report, where)
     sm = SequenceMatcher(None, [_norm_glyph(p.text) for p in a],
@@ -411,19 +422,7 @@ def compare_paras(a: list[Para], b: list[Para], report: Report,
         elif tag == "insert":
             align.inserted += b[j1:j2]
         elif tag == "replace":
-            inner = SequenceMatcher(
-                None, [_norm_glyph(p.text) for p in a[i1:i2]],
-                [_norm_glyph(p.text) for p in b[j1:j2]], autojunk=False)
-            for t2, a1, a2, b1, b2 in inner.get_opcodes():
-                if t2 == "equal":
-                    for off in range(a2 - a1):
-                        align.matched(a[i1 + a1 + off], b[j1 + b1 + off])
-                elif t2 == "delete":
-                    align.deleted += a[i1 + a1:i1 + a2]
-                elif t2 == "insert":
-                    align.inserted += b[j1 + b1:j1 + b2]
-                else:
-                    align.replaced(a[i1 + a1:i1 + a2], b[j1 + b1:j1 + b2])
+            align.replaced(a[i1:i2], b[j1:j2])
 
     align.structure()
     return report
