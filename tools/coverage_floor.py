@@ -42,7 +42,7 @@ FLOORS = {
     # package AND the code that touches a manuscript. This is the debt
     # worth paying down first; the number is here so it cannot quietly
     # get worse while it waits.
-    "cli.py": 52,
+    "cli.py": 59,
     # COM-backed: session, open_doc and the Flat OPC bypass need a real
     # Word or a fake of one. `tracked.py` went 0 -> 99% on a fake, so
     # this is reachable the same way.
@@ -54,9 +54,9 @@ FLOORS = {
     "compare.py": 75,
     # Report renderers: every branch prints, and pinning the exact
     # wording of 11 sections would test the prose, not the logic.
-    "_compare_render.py": 83,
+    "_compare_render.py": 86,
     "_cite_build.py": 85,
-    "_compare_diff.py": 86,
+    "_compare_diff.py": 92,
 }
 
 

@@ -123,6 +123,101 @@ def test_link_dry_run_reports_without_writing(monkeypatch, paper, capsys):
     assert Path(paper).read_bytes() == before
 
 
+def _tracked(tmp_path, name="round.docx"):
+    """A document with revisions and a comment by two people."""
+    from conftest import comment, dele, ins
+
+    from docxkit.package import write_docx
+    # preserve=True: a bare <w:t> with an edge space is what lint
+    # refuses, and this fixture is meant to reach the WRITE, not to
+    # re-test the seatbelt.
+    body = (para(run("Kept ", preserve=True), ins("added"), dele("removed"))
+            + para(run("tail")))
+    parts = make_parts(body, comment_items=(comment(1, "please check"),))
+    parts["docProps/core.xml"] = (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        b'<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/'
+        b'package/2006/metadata/core-properties" xmlns:dc="http://purl.org/'
+        b'dc/elements/1.1/"><dc:creator>someone@example.com</dc:creator>'
+        b"<cp:lastModifiedBy>Someone Else</cp:lastModifiedBy>"
+        b"</cp:coreProperties>")
+    path = tmp_path / name
+    write_docx(path, parts)
+    return path
+
+
+def test_authors_reports_who_is_credited_without_writing(monkeypatch,
+                                                         tmp_path, capsys):
+    path = _tracked(tmp_path)
+    before = path.read_bytes()
+    code, _ = run_cli(monkeypatch, "authors", str(path))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Revision" in out and "Tester" in out
+    assert path.read_bytes() == before
+
+
+def test_authors_set_is_a_dry_run_until_write(monkeypatch, tmp_path, capsys):
+    """Every mutating command here is dry by default. Restamping who
+    made the changes is not something to do on a typo."""
+    path = _tracked(tmp_path)
+    before = path.read_bytes()
+    code, _ = run_cli(monkeypatch, "authors", str(path), "--set", "M Lokshin")
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "dry run" in out
+    assert path.read_bytes() == before
+
+
+def test_authors_write_restamps_and_keeps_a_backup(monkeypatch, tmp_path,
+                                                   capsys):
+    from docxkit.authors import read_authors
+    from docxkit.package import read_parts
+    path = _tracked(tmp_path)
+    code, _ = run_cli(monkeypatch, "authors", str(path), "--set",
+                      "M Lokshin", "--write")
+    out = capsys.readouterr().out
+    assert code == 0
+    assert read_authors(read_parts(str(path))) == {"M Lokshin": 3}
+    core = read_parts(str(path))["docProps/core.xml"].decode("utf-8")
+    assert "someone@example.com" not in core
+    kept = list(tmp_path.glob("*pre_authors*"))
+    assert kept, out
+    assert read_authors(read_parts(str(kept[0]))) == {"Revision": 2,
+                                                      "Tester": 1}
+
+
+def test_authors_only_leaves_a_co_authors_edits_alone(monkeypatch, tmp_path):
+    """The flag that stops one person's work being credited to another."""
+    from docxkit.authors import read_authors
+    from docxkit.package import read_parts
+    path = _tracked(tmp_path)
+    run_cli(monkeypatch, "authors", str(path), "--set", "M Lokshin",
+            "--only", "Tester", "--write")
+    assert read_authors(read_parts(str(path))) == {"M Lokshin": 1,
+                                                   "Revision": 2}
+
+
+def test_authors_write_refuses_a_package_lint_rejects(monkeypatch, tmp_path,
+                                                      capsys):
+    """The seatbelt every mutating command wears: lint before writing,
+    and on a refusal leave the file — and the backup — untouched."""
+    from docxkit.package import write_docx
+    parts = make_parts(para(run("Kept ")) + para(run("tail")))
+    doc = parts["word/document.xml"].decode("utf-8")
+    parts["word/document.xml"] = doc.replace(
+        "</w:body>", "<w:r><w:t>loose</w:t></w:r></w:body>").encode("utf-8")
+    path = tmp_path / "broken.docx"
+    write_docx(path, parts)
+    before = path.read_bytes()
+
+    code, _ = run_cli(monkeypatch, "authors", str(path), "--set", "M L",
+                      "--write")
+    assert code == 1
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob("*pre_authors*"))
+
+
 def test_a_report_with_an_unencodable_value_is_still_written(tmp_path):
     """Losing a finished comparison at the serialisation step is the
     worst moment to fail: the work is done and the report is gone."""
