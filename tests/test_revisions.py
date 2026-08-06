@@ -185,6 +185,47 @@ def test_changed_paragraphs_survives_a_paragraph_merge():
     assert "Fourth." not in [c.before for c in got]
 
 
+def _marked(kind: str, text: str) -> str:
+    """A paragraph whose MARK carries an ins/del revision (the flag in pPr)."""
+    return (f'<w:p w14:paraId="33333333"><w:pPr><w:rPr>'
+            f'<w:{kind} w:id="7" w:author="A" w:date="2026-08-06T00:00:00Z"/>'
+            f"</w:rPr></w:pPr>{run(text)}</w:p>")
+
+
+def _joined(xml: str) -> str:
+    from docxkit._xml import visible_text
+    return visible_text(xml)
+
+
+def test_applying_a_paragraph_mark_revision_leaves_no_markup_behind():
+    """The flag lives in pPr/rPr, so unwrapping runs never reaches it.
+
+    A batch that inserted nine paragraphs validated as "accepted" while the
+    document still carried nine `w:ins` — Word would open it and report
+    revisions in a document nothing remains to accept in. The same holds for
+    the deletion flag on the reject side.
+    """
+    from docxkit.revisions import accept, reject
+    inserted = document(_marked("ins", "New paragraph.") + para(run("Next.")))
+    assert "w:ins" not in accept(inserted)
+    assert "New paragraph." in accept(inserted)
+
+    deleted = document(_marked("del", "Doomed.") + para(run("Next.")))
+    assert "w:del" not in reject(deleted)
+    assert "Doomed." in reject(deleted)
+
+
+def test_applying_a_paragraph_mark_revision_still_merges_the_other_side():
+    """The vanishing side must keep its old behaviour: losing a paragraph
+    mark joins the paragraph to the one after it."""
+    from docxkit.revisions import accept, reject
+    deleted = document(_marked("del", "First.") + para(run("Second.")))
+    assert "First.Second." in _joined(accept(deleted))
+
+    inserted = document(_marked("ins", "First.") + para(run("Second.")))
+    assert "First.Second." in _joined(reject(inserted))
+
+
 def test_changed_paragraphs_is_empty_when_nothing_changed():
     from docxkit.revisions import changed_paragraphs
     doc = document(para(run("Only.")))

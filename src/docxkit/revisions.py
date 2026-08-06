@@ -437,6 +437,14 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
         flag = _mark_flag(para, vanish)
         if flag is not None and wants(flag, "paragraph-mark"):
             _merge_into_next(para)
+            continue
+        # The SURVIVING side's flag is not content, so unwrapping runs never
+        # reaches it: an accepted document kept one `w:ins` per inserted
+        # paragraph mark and still reported those as revisions. Applying a
+        # revision means removing its markup on both sides.
+        kept = _mark_flag(para, keep)
+        if kept is not None and wants(kept, "paragraph-mark"):
+            kept.getparent().remove(kept)
     return _serialize(root, wrapped)
 
 
