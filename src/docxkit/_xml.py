@@ -33,6 +33,7 @@ __all__ = [
     "delta_text",
     "element_spans",
     "escape",
+    "escape_attr",
     "internal_links",
     "live_properties",
     "matching_close",
@@ -141,6 +142,18 @@ def normalize_glyphs(text: str) -> str:
 def escape(text: str) -> str:
     """Escape for an XML text node."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def escape_attr(value: str) -> str:
+    """Escape for a double-quoted XML ATTRIBUTE value.
+
+    Not the same job as :func:`escape`, which is for text nodes and
+    leaves ``"`` alone — correct there, fatal here: a name carrying a
+    quote closes the attribute early and Word declares the document
+    unreadable. Anything interpolated into ``w:author="..."`` comes
+    through this.
+    """
+    return escape(value).replace('"', "&quot;")
 
 
 def set_run_text(xml: str, text: str) -> str:

@@ -4,6 +4,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit citations PAPER.docx
     docxkit refstyle PAPER.docx [--chicago] [--json R.json]
     docxkit crossrefs PAPER.docx [--write] [--audit]
+    docxkit authors PAPER.docx [--set NAME] [--only A,B] [--write]
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit locate PAPER.docx ANCHOR... | --revisions
     docxkit text PAPER.docx [--tracked final|original] [--md]
@@ -461,6 +462,39 @@ def cmd_smarten(args: argparse.Namespace) -> int:
         else 1
 
 
+def cmd_authors(args: argparse.Namespace) -> int:
+    """Who the document credits; ``--set`` restamps every one of them."""
+    from .authors import read_authors, set_author
+    from .lint import lint_parts
+    from .package import read_parts
+
+    parts = read_parts(args.docx)
+    print(Path(args.docx).name)
+    for who, n in read_authors(parts).most_common():
+        print(f"  {n:5}  {who}")
+    if not read_authors(parts):
+        print("  (no tracked changes or comments)")
+    if not args.set:
+        return 0
+
+    only = set(args.only.split(",")) if args.only else None
+    report = set_author(parts, args.set, initials=args.initials, only=only)
+    print(f"  -> {args.set}: {report.revisions} change(s), "
+          f"{report.comments} comment initial(s), "
+          f"{report.properties} document propert(ies), "
+          f"{report.people} people entr(ies)")
+    if not args.write:
+        print("  (dry run - pass --write to save)")
+        return 0
+    if problems := lint_parts(parts):
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    kept = _write_back(args.docx, parts, "pre_authors")
+    print(f"  written; previous version kept at {kept}")
+    return 0
+
+
 def cmd_lint(args: argparse.Namespace) -> int:
     """Structural checks for the markup Word refuses to open."""
     from .lint import lint_parts
@@ -659,6 +693,21 @@ def main() -> None:
     p.add_argument("--write", action="store_true",
                    help="save the result; without it this is a dry run")
     p.set_defaults(fn=cmd_smarten)
+
+    p = sub.add_parser(
+        "authors",
+        help="who is credited with the changes; --set restamps them")
+    p.add_argument("docx")
+    p.add_argument("--set", metavar="NAME",
+                   help='credit every change and comment to NAME')
+    p.add_argument("--initials", metavar="XX",
+                   help="comment initials; derived from the name by default")
+    p.add_argument("--only", metavar="A,B",
+                   help="restamp only these existing authors, leaving a "
+                        "real co-author's edits credited to them")
+    p.add_argument("--write", action="store_true",
+                   help="save the result; without it this is a dry run")
+    p.set_defaults(fn=cmd_authors)
 
     p = sub.add_parser("verify",
                        help="does Word read this back unchanged? (needs Word)")

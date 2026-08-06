@@ -59,6 +59,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
 | `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass |
 | `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
+| `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
 | `tracked` | build a tracked-changes deliverable end to end |
 | `guard` | stop a rebuild discarding a review someone made in Word |
 | `ingest` | fold the author's Word edits back into the build source |
@@ -83,6 +84,7 @@ docxkit text PAPER.docx [--tracked final|original] [--md]
 docxkit count PAPER.docx [--exclude references,tables,...] [--limit N]
 docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
 docxkit figures PAPER.docx [--check]
+docxkit authors PAPER.docx [--set NAME] [--only A,B] [--initials XX] [--write]
 docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx
