@@ -48,6 +48,34 @@ def comment(cid: int, text: str, para_id: str = "AAAA0001") -> str:
             f"{run(text)}</w:p></w:comment>")
 
 
+def hdr(body: str, foot: bool = False) -> str:
+    """A header (or footer) part. Word numbers these after the section
+    that references them, so the NAME is not stable across an edit."""
+    tag = "w:ftr" if foot else "w:hdr"
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f"<{tag} {NS}>{body}</{tag}>")
+
+
+def notes(kind: str, *items: str) -> str:
+    """A footnotes/endnotes part; `items` are already-built note elements."""
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f"<w:{kind} {NS}>{''.join(items)}</w:{kind}>")
+
+
+def note(text: str, nid: int = 2, kind: str = "footnote") -> str:
+    return f'<w:{kind} w:id="{nid}">{para(run(text))}</w:{kind}>'
+
+
+def field(instr: str, result: str) -> str:
+    """A fldChar field with a cached result — PAGE, DATE, HYPERLINK."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> {instr} '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f"{run(result)}"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
 def table(*rows: str) -> str:
     return f"<w:tbl>{''.join(rows)}</w:tbl>"
 
@@ -77,7 +105,8 @@ def para_mark_ins(rid: int = 92) -> str:
 
 
 def make_parts(body: str, *, comment_items: tuple[str, ...] = (),
-               footnotes: str | None = None) -> dict[str, bytes]:
+               footnotes: str | None = None,
+               extra: dict[str, str] | None = None) -> dict[str, bytes]:
     parts = {
         "[Content_Types].xml": b"<Types/>",
         "word/document.xml": document(body).encode("utf-8"),
@@ -98,6 +127,8 @@ def make_parts(body: str, *, comment_items: tuple[str, ...] = (),
             f"</w16cex:commentsExtensible>").encode()
     if footnotes is not None:
         parts["word/footnotes.xml"] = footnotes.encode("utf-8")
+    for name, xml in (extra or {}).items():
+        parts[name] = xml.encode("utf-8")
     return parts
 
 

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from docxkit import (
     citations,
     comments,
+    compare,
     crossrefs,
     equations,
     figures,
@@ -52,6 +53,15 @@ SKIP = re.compile(r"~\$|backup|_old|_pre_|\.tmp|userbackup|bak_",
 
 
 Routine = Callable[[], object]
+
+GATED = ("structure", "text", "formula", "format")
+
+
+def _self_diff(raw: dict[str, bytes]) -> int:
+    """Gated differences between a document and itself — always 0."""
+    doc = compare.load_parts(raw)
+    report = compare.compare_docs(doc, doc)
+    return sum(len(report[k]) for k in GATED)
 
 
 def routines(blob: bytes) -> dict[str, Routine]:
@@ -86,6 +96,12 @@ def routines(blob: bytes) -> dict[str, Routine]:
         "crossrefs.dangling": lambda: len(
             crossrefs.audit(doc)["dangling"]),
         "comments.read_all": lambda: len(comments.read_all(dict(raw))),
+        # A document against ITSELF must report nothing. It is the cheapest
+        # false-positive gate the authoritative diff has: the day headers,
+        # footers and endnotes were included, this caught a Word-written
+        # endnotes.xml holding only separator entries being reported as a
+        # whole part gained.
+        "compare.self": lambda: _self_diff(dict(raw)),
         "footnotes.find_all": lambda: len(footnotes.find_all(foot))
         if foot else 0,
         "hygiene.strip": lambda: len(hygiene.strip_parts(dict(raw))),
@@ -134,6 +150,9 @@ def check(row: dict[str, object]) -> list[str]:
     out = []
     if row.get("lint") not in (0, "FAIL"):
         out.append(f"lint reports {row['lint']} structural problem(s)")
+    if row.get("compare.self") not in (0, "FAIL"):
+        out.append(f"compare reports {row['compare.self']} difference(s) "
+                   "between the document and ITSELF")
     if row.get("text.final") == 0:
         out.append("no paragraphs of text")
     if isinstance(row.get("figures.shared"), int) and row["figures.shared"]:
