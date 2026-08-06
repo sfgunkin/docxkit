@@ -375,8 +375,13 @@ def test_a_nested_table_reads_outer_then_inner(tmp_path):
 # still reporting clean.
 
 
+def math(*runs: str) -> str:
+    """An inline equation, for a paragraph that holds prose too."""
+    return f"<m:oMath>{''.join(runs)}</m:oMath>"
+
+
 def omath(*runs: str) -> str:
-    return f"<w:p><m:oMath>{''.join(runs)}</m:oMath></w:p>"
+    return f"<w:p>{math(*runs)}</w:p>"
 
 
 def mrun(text: str, rpr: str = "") -> str:
@@ -476,6 +481,100 @@ def test_typography_switched_off_explicitly_is_not_a_change(tmp_path):
                 omath(mrun("x", '<w:rPr><w:i w:val="0"/></w:rPr>'),
                       mrun("+y")))
     assert compare(a, b)["formula_format"] == []
+
+
+# ------------------------------------------------- what mutation found
+# cosmic-ray over _compare_diff.py left survivors clustered on three
+# branches no test reached. Each of these kills one cluster: the
+# machinery is reported in three kinds and only one kind was exercised,
+# an equation count that differs on the two sides was never compared,
+# and a field left open was never opened.
+
+
+def test_a_lost_citation_bookmark_is_named(tmp_path):
+    """stripped_fields reports three kinds of loss and only the
+    hyperlink one had a test. A cite_ bookmark is what the build
+    RESTORES after Word drops it, so losing it silently is the failure
+    the FIELD DIFFERENCES layer exists to prevent."""
+    before = para('<w:bookmarkStart w:id="4" w:name="cite_Smith2020"/>'
+                  + run("As Smith (2020) shows, the effect is small.")
+                  + '<w:bookmarkEnd w:id="4"/>')
+    after = para(run("As Smith (2020) shows, the effect is negligible."))
+    report = compare(*docs(tmp_path, before, after))
+    assert report["stripped_fields"], report
+    assert "cite_Smith2020" in str(report["stripped_fields"][0]["lost"])
+    assert "citation bookmark" in str(report["stripped_fields"][0]["lost"])
+
+
+def test_a_lost_footnote_reference_is_counted(tmp_path):
+    """The third kind. Word drops a footnote reference when an author
+    rewrites the sentence around it, and the count is what says how
+    many went."""
+    ref = '<w:r><w:footnoteReference w:id="2"/></w:r>'
+    before = para(run("Kazakhstan reformed its pension system") + ref
+                  + run(" in 1998."))
+    after = para(run("Kazakhstan reformed its pension scheme in 1998."))
+    report = compare(*docs(tmp_path, before, after))
+    assert report["stripped_fields"], report
+    assert "lost 1 footnote ref(s)" in str(
+        report["stripped_fields"][0]["lost"])
+
+
+def test_an_equation_present_on_one_side_only_is_reported(tmp_path):
+    """The two sides are zipped by position, and the shorter one is
+    padded with <none>. Without that, a paragraph that LOST an equation
+    would compare only the equations it still has and report nothing."""
+    # Same visible text, different equation STRUCTURE: two inline
+    # equations merged into one, which is what an author (or Word) does
+    # to adjacent symbols. The paragraphs still align, so the padding is
+    # the only thing that can notice the equation that went.
+    two = para(run("Equation (3): "), math(mrun("x")), math(mrun("y")))
+    one = para(run("Equation (3): "), math(mrun("x"), mrun("y")))
+    report = compare(*docs(tmp_path, two, one))
+    assert report["text"] == [], "the visible text is identical"
+    assert any("<none>" in str(f["to"]) for f in report["formula"]), report
+
+
+def test_a_math_minus_against_a_hyphen_is_a_glyph_artifact(tmp_path):
+    """Word rewrites the math minus U+2212 as a hyphen on save. That is
+    an artifact, not an edit, so it belongs in formula_glyph — which
+    does NOT gate — and the generator's glyph is the one to keep."""
+    proper = omath(mrun("x"), mrun("−y"))      # U+2212
+    worded = omath(mrun("x"), mrun("-y"))      # hyphen-minus
+    report = compare(*docs(tmp_path, proper, worded))
+    assert report["formula"] == [], report["formula"]
+    assert len(report["formula_glyph"]) == 1, report
+    assert render(report, expect_clean=True) == 0
+
+
+def test_a_field_left_open_is_an_integrity_flag(tmp_path):
+    """An unbalanced HYPERLINK field renders as literal field code in
+    the document — the reader sees the instruction, not the link."""
+    broken = para(run("See ")
+                  + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                  + '<w:r><w:instrText> REF Table1 \\h </w:instrText></w:r>'
+                  + run("Table 1"))
+    report = compare(*docs(tmp_path, broken, broken))
+    assert any("unbalanced field" in i for i in report["integrity"]), \
+        report["integrity"]
+
+
+def test_a_dangling_anchor_written_as_a_field_is_caught(tmp_path):
+    """Anchors come in two forms and both must be resolved: the
+    element's w:anchor attribute, and the instruction text of a
+    field-form HYPERLINK. A build that emits the field form would
+    otherwise have its dangling links go unreported."""
+    field_link = para(
+        run("See ")
+        + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        + '<w:r><w:instrText>HYPERLINK \\l "NoSuchBookmark"'
+          "</w:instrText></w:r>"
+        + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        + run("the appendix")
+        + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    report = compare(*docs(tmp_path, field_link, field_link))
+    assert any("NoSuchBookmark" in i for i in report["integrity"]), \
+        report["integrity"]
 
 
 def test_the_comparison_layers_stay_acyclic():
