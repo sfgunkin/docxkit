@@ -240,7 +240,7 @@ figures" is worth little; one saying it *and* that mapping to the nearest
 drawing before it gets every figure wrong by one is what stops the next
 person reverting it.
 
-## Two traps that keep coming back
+## Three traps that keep coming back
 
 **`x or default` is a bug when `x` may be an lxml element.** An element
 with no children is FALSY, so a legitimately empty `w:tcPr` or `w:pPr`
@@ -261,6 +261,17 @@ places here that append live elements are `revisions._unwrap` and
 `_merge_into_next`, where moving is the point. Keep new builders
 string-based rather than adding a `copy.deepcopy` obligation for
 callers to forget.
+
+**Correcting text means correcting the OFFSET too.** A match carries both
+what it matched and where it sat, and fixing one without the other fails
+silently. `strip_lead` had been trimming a wrongly-swallowed word off a
+citation's `authors` since LE le15 while leaving `start` where it was, so
+every hyperlink `link_all` wrote read "Similarly, Liebman and Luttmer
+(2015)": the right entry, underlined from the wrong word. The audits had
+the same defect in reporting form, quoting a snippet nobody could find in
+the document. Any helper that narrows or widens a match must return the
+span with it — which is why `resolve_lead` and `extend_to_name` take and
+return a `Citation` rather than a string.
 
 ## The ported modules
 

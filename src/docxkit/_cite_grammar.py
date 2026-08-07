@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass
+from collections.abc import Collection
+from dataclasses import dataclass, replace
 
 from ._xml import (
     RUN_RE,
@@ -131,6 +132,8 @@ DISCOURSE_LEADS = frozenset({
 })
 _LEAD_ADVERB_RE = re.compile(r"^([A-ZÀ-ÿĀ-ſ][a-zà-ÿā-ſ]+),\s+(.+)$",
                              re.DOTALL)
+# Where one author ends and the next begins, in an in-text chain.
+_CHAIN_SPLIT_RE = re.compile(r",|\s+(?:and|&)\s+|\s+et\s+al")
 
 
 def strip_lead(authors: str) -> str:
@@ -139,6 +142,11 @@ def strip_lead(authors: str) -> str:
     if m and m.group(1) in DISCOURSE_LEADS:
         return m.group(2)
     return authors
+
+
+def lead_surname(authors: str) -> str:
+    """The first author of a chain, as the reference list would file it."""
+    return _CHAIN_SPLIT_RE.split(authors)[0].strip()
 
 
 @dataclass(frozen=True)
@@ -154,8 +162,7 @@ class Citation:
     @property
     def surname(self) -> str:
         """The first author's surname, as the reference list would file it."""
-        lead = re.split(r",|\s+(?:and|&)\s+|\s+et\s+al", self.authors)[0]
-        return lead.strip()
+        return lead_surname(self.authors)
 
     @property
     def key(self) -> str:
@@ -184,6 +191,117 @@ def key_for(surname: str, year: str) -> str:
     """
     slug = re.sub(r"[^\w]+", "", surname.replace("’", "").replace("'", ""))
     return f"{slug.lower()}_{year}"
+
+
+def resolve_lead(c: Citation, *,
+                 known: Collection[str] = ()) -> Citation:
+    """The citation without the lead word the grammar mistook for an author.
+
+    "Word, First and Second" is exactly the shape of a three-author
+    citation, so the grammar swallows whatever capitalised word sits
+    before the comma. Two kinds really occur:
+
+    * a sentence adverb — "Similarly, Liebman and Luttmer (2015)" (LE
+      le15 ¶30), handled by the closed :data:`DISCOURSE_LEADS` list;
+    * the tail of a longer capitalised phrase, which the grammar can
+      only capture from its last word because free capitalised adjacency
+      is not a surname — "in the United Kingdom, Chan and Koo (2011)"
+      files under "Kingdom" (Parental Style). That left the mention
+      unlinked, reported an already-linked one as UNLINKED, and had
+      :mod:`docxkit.refstyle` asking the author for "Kingdom et al."
+
+    Syntax cannot tell the second from a real three-author chain:
+    "Kingdom, Chan and Koo" and "Chan, Koo and Smith" are the same
+    string shape. So it is decided on EVIDENCE. Pass ``known``, the keys
+    the reference list answers to, and the head is dropped only when the
+    bibliography files nothing under it at ANY year and does file the
+    next name at this citation's year.
+
+    With no evidence — no ``known``, or neither name listed — the
+    citation comes back untouched and is reported unmatched. What that
+    leaves is narrow: a citation whose lead author is missing from the
+    bibliography while a co-author has an entry of the same year. A
+    document in that state has a worse problem than this link.
+
+    The SPAN moves with the text. Trimming only ``authors`` left the
+    hyperlink wrapping "Similarly, Liebman and Luttmer (2015)" — the
+    right target under the wrong words, in every paper linked so far.
+    """
+    authors = strip_lead(c.authors)
+    if known:
+        authors = _drop_unlisted_head(authors, c.year, known)
+    if authors == c.authors:
+        return c
+    return replace(c, authors=authors,
+                   start=c.start + len(c.authors) - len(authors))
+
+
+# The word immediately before a span, across a space or a NON-BREAKING
+# space — Word writes the latter inside an institution's name.
+_PREV_WORD_RE = re.compile(r"(\S+)[ \u00a0]+$")
+# Punctuation that ends a name: whatever precedes it belongs to a
+# different phrase, however well its words match.
+_STOPS_A_NAME = ",;:.…)]"
+# …and punctuation that OPENS one. The word carrying it is part of the
+# name; anything before it is not, so the walk takes it and stops.
+_OPENS_A_PHRASE = "([{«\"'“"
+
+
+def _bare(word: str) -> str:
+    return re.sub(r"[^\w]", "", word).casefold()
+
+
+def extend_to_name(text: str, c: Citation, name: str) -> Citation:
+    """Widen a citation's span back over the institutional name it ends.
+
+    The grammar captures a plain multi-word institution from its LAST
+    word only — free capitalised adjacency is not a surname, or "As
+    Smith" would be one. That is right for FINDING the entry, which
+    answers to every word run of its name. It is wrong for the LINK: the
+    Global Initiative to End All Corporal Punishment, cited "(End
+    Corporal Punishment 2024)", was underlined from "Punishment"
+    (Parental Style). The underline is what a reader sees.
+
+    The entry's own filed name says how far back to go: a preceding word
+    counts only if the entry names it, so ordinary prose ("the", "in")
+    stops the walk, and so does punctuation. The span then settles on a
+    capitalised word — an institution's name does not begin with "of".
+    Anything else is returned untouched, including a chain of human
+    authors and an acronym the name does not spell.
+    """
+    if len(_CHAIN_SPLIT_RE.split(c.authors)) > 1:
+        return c                       # a chain of authors, not a name
+    words = {_bare(w) for w in name.split()}
+    if len(words) < 2 or _bare(c.authors.split()[0]) not in words:
+        return c
+    at = c.start
+    while (m := _PREV_WORD_RE.search(text[:at])):
+        word = m.group(1)
+        if word[-1] in _STOPS_A_NAME or _bare(word) not in words:
+            break
+        at = m.start(1)
+        if word[0] in _OPENS_A_PHRASE:     # "(End Corporal Punishment"
+            break
+    # Settle on a capital: the walk may have crossed "of" or "to", and the
+    # word it stopped on can carry the citation group's own "(".
+    for wm in re.finditer(r"\S+", text[at:c.start]):
+        first = re.search(r"[^\W\d_]", wm.group(0))
+        if first is not None and first.group(0).isupper():
+            return replace(c, start=at + wm.start() + first.start())
+    return c
+
+
+def _drop_unlisted_head(authors: str, year: str,
+                        known: Collection[str]) -> str:
+    head, sep, rest = authors.partition(",")
+    if not sep or not (rest := rest.strip()):
+        return authors
+    # `key_for(head, "")` is the key's alpha part with its separator —
+    # "kingdom_" — so this asks "filed under that name at any year".
+    prefix = key_for(head.strip(), "")
+    if any(k.startswith(prefix) for k in known):
+        return authors
+    return rest if key_for(lead_surname(rest), year) in known else authors
 
 
 def anchor_names(key: str) -> tuple[str, str]:

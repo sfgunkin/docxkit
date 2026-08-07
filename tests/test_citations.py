@@ -370,6 +370,17 @@ def R(text: str) -> str:
     return f"<w:r><w:t>{text}</w:t></w:r>"
 
 
+def _links(parts: dict[str, bytes]) -> list[str]:
+    """What each link in the body actually WRAPS, in document order.
+
+    A link's target can be right while its span is wrong, and only the
+    label shows that.
+    """
+    from docxkit._xml import internal_links
+    return [label for _, label
+            in internal_links(parts["word/document.xml"].decode("utf-8"))]
+
+
 def test_internal_links_reads_both_forms():
     """The builds write fldChar HYPERLINK fields; Word converts them to
     w:hyperlink elements on save. An audit reading one form misses half
@@ -705,6 +716,159 @@ def test_a_lead_particle_needs_a_word_boundary():
     and produced surname 'le Yang' on the Missing Market dry run."""
     assert find_citations("worthwhile Yang (2018) results")[0].surname \
         == "Yang"
+
+
+# ------------------------------------------------------- resolve_lead ---
+#
+# "Word, First and Second" is the shape of a three-author citation, so a
+# capitalised word before the comma is swallowed into the chain. The head
+# of a real chain is what the bibliography files the work under; the
+# swallowed word is not, and that is the only thing telling them apart.
+
+UK = "In the United Kingdom, Chan and Koo (2011) find a gradient."
+
+
+def _resolved(text, known=()):
+    from docxkit.citations import resolve_lead
+    return resolve_lead(find_citations(text)[0], known=known)
+
+
+def test_an_unlisted_lead_word_is_dropped_on_the_bibliographys_evidence():
+    """Parental Style: 'Kingdom, Chan and Koo (2011)' — the grammar can
+    only take 'United Kingdom' from its last word, and the comma welds
+    it to the authors."""
+    c = _resolved(UK, {"chan_2011"})
+    assert c.authors == "Chan and Koo" and c.surname == "Chan"
+    assert UK[c.start:c.end] == "Chan and Koo (2011)"
+
+
+def test_a_real_three_author_chain_keeps_its_lead():
+    """Same string shape, and the head IS what the list files it under."""
+    text = "Work by Chan, Koo and Smith (2011) finds a gradient."
+    c = _resolved(text, {"chan_2011", "koo_2011"})
+    assert c.authors == "Chan, Koo and Smith"
+
+
+def test_a_lead_filed_at_another_year_is_never_dropped():
+    """'Kingdom' as a real surname, cited for a different work: the
+    evidence is that the list files SOMETHING under it, not that this
+    year matches — a 2011 entry missing from the list must not silently
+    re-point the citation at its co-author."""
+    c = _resolved(UK, {"kingdom_1999", "chan_2011"})
+    assert c.authors == "Kingdom, Chan and Koo"
+
+
+@pytest.mark.parametrize("known", [
+    (),                                  # no bibliography to consult
+    {"nobody_2011"},                     # neither name listed
+    {"kingdom_2011"},                    # the head itself is listed
+])
+def test_without_evidence_the_citation_is_left_exactly_as_found(known):
+    """The honest answer is UNMATCHED. Guessing here would link a
+    citation whose lead author is merely missing from the list to
+    whatever co-author happens to be in it."""
+    assert _resolved(UK, known).authors == "Kingdom, Chan and Koo"
+
+
+def test_link_all_links_a_citation_behind_a_swallowed_lead_word():
+    from docxkit.citations import link_all
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R(UK))
+            + P(R("References"))
+            + P(R("Chan, T. W., and A. Koo. (2011). Parenting style. "
+                  "EJP, 27(3): 385-99.")))
+    parts = xml_parts(body)
+    report = link_all(parts)
+    assert report.unmatched == [] and len(report.linked) == 1
+    assert _links(parts)[0] == "Chan and Koo (2011)"
+    issues, _ = audit_links(parts)
+    assert issues == [], issues
+
+
+# ----------------------------------------------------- extend_to_name ---
+#
+# The mirror of the same grammar rule: a plain multi-word institution is
+# captured from its LAST word, which finds the entry and underlines the
+# wrong words.
+
+GICP = "Global Initiative to End All Corporal Punishment of Children"
+
+
+def _extended(text, name=GICP):
+    from docxkit.citations import extend_to_name
+    c = extend_to_name(text, find_citations(text)[0], name)
+    return text[c.start:c.end]
+
+
+def test_an_institutional_citation_is_widened_to_its_whole_name():
+    """Parental Style: the underline began at "Punishment", mid-name."""
+    assert _extended("Still lawful (End Corporal Punishment 2024).") \
+        == "End Corporal Punishment 2024"
+
+
+def test_the_widening_settles_on_a_capital():
+    """"to" and "of" are words of the name, but no institution's name
+    begins with one."""
+    want = "Initiative to End All Corporal Punishment (2024)"
+    assert _extended(f"See {want} on the law.") == want
+
+
+@pytest.mark.parametrize("text, want", [
+    # prose the entry does not name stops the walk
+    ("Reported in the recent Punishment (2024) review.", "Punishment (2024)"),
+    # so does punctuation, however well the words match
+    ("Ending all corporal punishment. Punishment (2024) reports.",
+     "Punishment (2024)"),
+    # and the citation group's own bracket is taken, never crossed
+    ("Children (End Corporal Punishment 2024).",
+     "End Corporal Punishment 2024"),
+])
+def test_the_widening_stops_where_the_name_does(text, want):
+    assert _extended(text) == want
+
+
+def test_a_chain_of_authors_is_never_widened():
+    """The words to the left may belong to an institution and the
+    citation still be two people: widening here would weld a name onto a
+    co-author chain."""
+    text = "End Corporal Punishment and Koo (2011) agree."
+    assert _extended(text) == "Punishment and Koo (2011)"
+
+
+def test_an_acronym_the_name_does_not_spell_is_not_widened():
+    """"(WHO 2015)" resolves to "World Health Organization" through the
+    entry's initialism — there is nothing to its left to take."""
+    assert _extended("As reported (WHO 2015).",
+                     "World Health Organization") == "WHO 2015"
+
+
+def test_link_all_underlines_an_institutions_whole_name():
+    from docxkit.citations import link_all
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Corporal punishment is still lawful in the home "
+                  "(End Corporal Punishment 2024)."))
+            + P(R("References"))
+            + P(R(f"{GICP}. (2024). Global report. London.")))
+    parts = xml_parts(body)
+    assert len(link_all(parts).linked) == 1
+    assert _links(parts)[0] == "End Corporal Punishment 2024"
+
+
+def test_a_stripped_lead_takes_the_span_with_it():
+    """The strip fixed the KEY and left the SPAN, so the hyperlink went
+    on "Similarly, Liebman and Luttmer (2015)" — right target, wrong
+    words, in every paper linked before this."""
+    from docxkit.citations import link_all
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Similarly, Liebman and Luttmer (2015) show a gap."))
+            + P(R("References"))
+            + P(R("Liebman, J., and E. Luttmer. (2015). A title. JEP.")))
+    parts = xml_parts(body)
+    assert len(link_all(parts).linked) == 1
+    assert _links(parts)[0] == "Liebman and Luttmer (2015)"
 
 
 # ---------------------------------------------------------- repair_plan ---

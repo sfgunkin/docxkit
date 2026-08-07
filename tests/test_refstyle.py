@@ -171,6 +171,27 @@ def test_a_discourse_adverb_is_not_a_first_author():
     assert advice and "Smith et al." in advice[0].message
 
 
+def test_a_swallowed_place_name_is_not_a_first_author():
+    """"in the United Kingdom, Chan and Koo (2011)" read as three named
+    authors and advised 'write "Kingdom et al."' (Parental Style). No
+    word list catches this one — the audit holds the reference list, and
+    that is what says "Kingdom" files nothing while "Chan" files this."""
+    body = (para(run("In the United Kingdom, Chan and Koo (2011) report "
+                     "a gradient."))
+            + para(run("References"))
+            + para(run("Chan, T., and A. Koo. (2011). “Parenting Style.” "),
+                   irun("European Journal of Population"),
+                   run(", 27(3): 385–399.")))
+    report = audit(make_parts(body))
+    assert not any(i.code == "et-al" for i in report.issues)
+    assert not any(i.code == "missing-ref" for i in report.issues)
+    # …and one paragraph on its own has no such evidence, so it still says
+    # what it can see. The advice is wrong there and unavoidable; the
+    # document-level audit is the one an author reads.
+    assert "et-al" in _codes(check_prose(
+        "In the United Kingdom, Chan and Koo (2011) report a gradient."))
+
+
 # --------------------------------------------------------------- audit ---
 
 def body_paragraphs() -> str:

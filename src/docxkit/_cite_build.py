@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE
 from ._cite_grammar import (
@@ -17,12 +17,13 @@ from ._cite_grammar import (
     _REF_YEAR_RE,
     IGNORED_LEADS,
     Reference,
+    extend_to_name,
     find_citations,
     key_for,
     link_in_para,
     masked_visible_text,
     references,
-    strip_lead,
+    resolve_lead,
     wrap_visible_span,
 )
 from ._cite_repair import (
@@ -195,6 +196,7 @@ def link_all(parts: dict[str, bytes], *,
     # Names: reuse an entry's own key-shaped bookmark; mint otherwise.
     names: dict[str, str] = {}
     answers: dict[str, str] = {}
+    by_key = {r.key: r for r in entries}
     for r in entries:
         own = _own_bookmark(paras[r.index].group(0), r, gaps[r.index])
         name = own or _mint_name(r, taken)
@@ -218,7 +220,7 @@ def link_all(parts: dict[str, bytes], *,
             if skip and skip[0] <= i <= skip[1]:
                 continue
             for found in find_citations(text):
-                c = replace(found, authors=strip_lead(found.authors))
+                c = resolve_lead(found, known=answers)
                 if c.surname.casefold() in ignored:
                     continue
                 key = answers.get(
@@ -234,6 +236,7 @@ def link_all(parts: dict[str, bytes], *,
                 if name in linked_anchors:
                     report.already.append(name)
                     continue
+                c = extend_to_name(text, c, by_key[key].surname)
                 into.setdefault(i, []).append((text[c.start:c.end], name))
 
     scan(texts, plan, (head_idx, last_idx))
@@ -426,6 +429,7 @@ def link_rest(parts: dict[str, bytes], *,
             "entries carry no bookmarks — run link_all first")
         return report
     answers: dict[str, str] = {}
+    by_key = {r.key: r for r in entries}
     for r in entries:
         for k in _entry_keys(r):
             answers.setdefault(k, r.key)
@@ -442,7 +446,7 @@ def link_rest(parts: dict[str, bytes], *,
             text = visible_text(para)
             todo: list[tuple[int, int, str]] = []
             for found in find_citations(text):
-                c = replace(found, authors=strip_lead(found.authors))
+                c = resolve_lead(found, known=answers)
                 if c.surname.casefold() in ignored:
                     continue
                 if "\x00" in masked[c.start:c.end]:
@@ -459,6 +463,12 @@ def link_rest(parts: dict[str, bytes], *,
                         f"{text[c.start:c.end]!r} ({where}{i + 1}): entry "
                         "has no bookmark")
                     continue
+                # Widen over the institution's name, but not into an
+                # existing link: the narrow span already cleared the mask,
+                # so falling back to it links less prettily, never worse.
+                wide = extend_to_name(text, c, by_key[key].surname)
+                if "\x00" not in masked[wide.start:wide.end]:
+                    c = wide
                 todo.append((c.start, c.end, name))
             for at, end, name in sorted(todo, reverse=True):
                 try:

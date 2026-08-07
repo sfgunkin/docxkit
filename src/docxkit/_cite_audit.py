@@ -10,7 +10,6 @@ from __future__ import annotations
 import html
 import re
 from collections import defaultdict
-from dataclasses import replace
 from typing import NamedTuple
 
 from ._cite_grammar import (
@@ -18,7 +17,7 @@ from ._cite_grammar import (
     IGNORED_LEADS,
     find_citations,
     references,
-    strip_lead,
+    resolve_lead,
 )
 from ._xml import (
     PARA_RE,
@@ -249,13 +248,17 @@ def _audit_findings(parts: dict[str, bytes], *,
                      if t.strip().rstrip(":").casefold() in wanted),
                     len(texts))
     ignored = {s.casefold() for s in ignore}
+    # What the bibliography files, for resolve_lead's evidence test. The
+    # alias keys _entry_keys mints live one layer up, in _cite_build; the
+    # canonical keys are what this decision needs.
+    entry_keys = {r.key for r in entries}
     labels = {lb.strip() for sites in links.values() for _, lb in sites}
     unlinked = 0
     for i, text in enumerate(texts[:head_idx]):
         if i < 5:
             continue
         for found in find_citations(text):
-            c = replace(found, authors=strip_lead(found.authors))
+            c = resolve_lead(found, known=entry_keys)
             if c.surname.casefold() in ignored:
                 continue
             cite = text[c.start:c.end].strip()

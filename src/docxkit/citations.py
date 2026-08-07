@@ -80,6 +80,7 @@ from ._cite_grammar import _add_style as _add_style
 from ._cite_grammar import _styled_run as _styled_run
 from ._cite_grammar import anchor_names as anchor_names
 from ._cite_grammar import bookmark as bookmark
+from ._cite_grammar import extend_to_name as extend_to_name
 from ._cite_grammar import find_citations as find_citations
 from ._cite_grammar import hyperlink_field as hyperlink_field
 from ._cite_grammar import key_for as key_for
@@ -87,6 +88,7 @@ from ._cite_grammar import link_in_para as link_in_para
 from ._cite_grammar import masked_visible_text as masked_visible_text
 from ._cite_grammar import parse_reference as parse_reference
 from ._cite_grammar import references as references
+from ._cite_grammar import resolve_lead as resolve_lead
 from ._cite_grammar import strip_lead as strip_lead
 from ._cite_grammar import wrap_visible_span as wrap_visible_span
 
@@ -116,6 +118,7 @@ __all__ = [
     "bookmark",
     "check_citations",
     "delete_bookmark",
+    "extend_to_name",
     "find_citations",
     "hyperlink_field",
     "key_for",

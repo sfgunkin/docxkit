@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Collection
 from dataclasses import dataclass, field, replace
 
 from ._xml import PARA_RE, visible_text
@@ -46,7 +47,7 @@ from .citations import (
     references,
 )
 from .citations import (
-    strip_lead as _strip_lead,
+    resolve_lead as _resolve_lead,
 )
 
 __all__ = [
@@ -133,14 +134,18 @@ def check_prose(text: str, style: Style = HOUSE) -> list[Issue]:
     return _check_prose(text, style, find_citations(text))
 
 
-def _check_prose(text: str, style: Style,
-                 cites: list[Citation]) -> list[Issue]:
+def _check_prose(text: str, style: Style, cites: list[Citation],
+                 known: Collection[str] = ()) -> list[Issue]:
     # audit() already holds the paragraph's citations for its
     # cross-check; taking them here keeps the grammar from running twice
-    # on every paragraph of every document.
+    # on every paragraph of every document. It also holds the reference
+    # list, which is what tells a swallowed lead word from a real third
+    # author — without it "in the United Kingdom, Chan and Koo (2011)"
+    # asks the author to write "Kingdom et al." One paragraph on its own
+    # has no such evidence, so check_prose can still say that.
     issues: list[Issue] = []
     for found in cites:
-        c = replace(found, authors=_strip_lead(found.authors))
+        c = _resolve_lead(found, known=known)
         cite = text[c.start:c.end]
         if "&" in c.authors:
             issues.append(Issue(
@@ -353,19 +358,23 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     last_entry = max((r.index for r in entries), default=-1)
     ignored = {s.casefold() for s in ignore}
     filed_as = aliases or {}
+    # Every key the bibliography answers to, needed BEFORE the prose scan:
+    # it is the evidence resolve_lead decides a swallowed lead word on.
+    answers_to = [_entry_keys(r) for r in entries]
+    listed = set().union(*answers_to) if entries else set()
 
     report = RefStyleReport()
     cited: dict[str, tuple[str, str]] = {}    # key -> (where, snippet)
 
     def prose(text: str, where: str) -> None:
         cites = find_citations(text)
-        for issue in _check_prose(text, style, cites):
+        for issue in _check_prose(text, style, cites, listed):
             report.issues.append(replace(issue, where=where))
         if not cites and (m := _BARE_CITE_RE.fullmatch(text.strip())):
             cites = [Citation(authors=m.group(1), year=m.group(2),
                               start=0, end=len(text), narrative=False)]
         for found in cites:
-            c = replace(found, authors=_strip_lead(found.authors))
+            c = _resolve_lead(found, known=listed)
             if c.surname.casefold() in ignored:
                 continue
             key = key_for(filed_as.get(c.surname, c.surname), c.year)
@@ -421,8 +430,6 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
 
     report.entries = len(entries)
     report.cited = len(cited)
-    answers_to = [_entry_keys(r) for r in entries]
-    listed = set().union(*answers_to) if entries else set()
     if entries:
         for key, (where, snip) in cited.items():
             if key not in listed:
