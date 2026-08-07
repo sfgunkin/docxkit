@@ -266,6 +266,30 @@ def test_a_stop_heading_ends_the_list():
     assert [r.surname for r in references(doc)] == ["Aksoy"]
 
 
+def test_a_TITLED_stop_heading_ends_the_list():
+    """The stop word used to have to be the whole paragraph, so «Приложение А.
+    Характеристика показателей» did not end anything. The list ran on into the
+    appendix, a prose paragraph citing «(Jensen 1906)» parsed as an entry, and
+    the real Jensen entry then read as never cited."""
+    ru = ["Литература", "Jensen, J.L.W.V. (1906). Sur les fonctions convexes.",
+          "Приложение А. Характеристика и значимость показателей",
+          "Индекс вогнут. По неравенству Йенсена (Jensen 1906) он не меньше."]
+    assert [r.surname for r in references(ru)] == ["Jensen"]
+
+    en = ["References", "Aksoy, Cevat. 2026. Title.",
+          "Appendix B. Robustness checks",
+          "Prose that cites (Brown 2020) in passing."]
+    assert [r.surname for r in references(en)] == ["Aksoy"]
+
+
+def test_an_author_named_like_a_stop_word_still_files():
+    """The stop test only fires on a paragraph that is not itself an entry, so
+    a real author called Tables does not end the list she is listed in."""
+    doc = ["References", "Aksoy, Cevat. 2026. Title.",
+           "Tables, A.B. (2019). A real surname. J. Odd, 1: 1-2."]
+    assert [r.surname for r in references(doc)] == ["Aksoy", "Tables"]
+
+
 def test_a_document_with_no_reference_heading_yields_nothing():
     assert references(["Introduction", "Body text (Smith 2020)."]) == []
 

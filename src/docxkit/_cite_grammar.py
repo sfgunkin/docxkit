@@ -254,6 +254,30 @@ def parse_reference(text: str, index: int = -1) -> Reference | None:
                      index=index)
 
 
+def _ends_the_list(text: str, stops: set[str]) -> bool:
+    """Does this paragraph end the reference list?
+
+    A stop word used to have to be the WHOLE paragraph, which is true of a
+    bare "Appendix" and false of every appendix heading that carries a letter
+    and a title — "Приложение А. Характеристика показателей", "Appendix B.
+    Robustness". The list then ran on into the appendix, where one prose
+    paragraph containing "(Jensen 1906)" parsed as an entry, minted a bookmark
+    out of the surrounding equation glyphs, and left the real Jensen entry
+    reading as never cited.
+
+    So a stop word now counts at the START of the paragraph too — but only
+    when the paragraph is not itself an entry. A reference is never a heading,
+    and that is what stops an author named Tables from ending the list.
+    """
+    flat = text.rstrip(":").casefold()
+    if flat in stops:
+        return True
+    head = re.match(r"[^\W\d_]+", text, re.UNICODE)
+    if head is None or head.group(0).casefold() not in stops:
+        return False
+    return parse_reference(text) is None
+
+
 def references(paragraphs: list[str], *,
                heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                stop: tuple[str, ...] = _DEFAULT_STOPS) -> list[Reference]:
@@ -276,7 +300,7 @@ def references(paragraphs: list[str], *,
         text = paragraphs[i].strip()
         if not text:
             continue
-        if text.rstrip(":").casefold() in {s.casefold() for s in stop}:
+        if _ends_the_list(text, {s.casefold() for s in stop}):
             break
         if _CAPTION_START_RE.match(text):
             break                     # figures/tables moved to the end
