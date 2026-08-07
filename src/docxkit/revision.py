@@ -56,7 +56,7 @@ import shutil
 import tomllib
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +123,20 @@ RESCUE_KEEP = 5
 #: called ``_rescue1``, older than the ``_rescue5`` beside it. Numbering and
 #: pruning cannot both be right. A timestamp sorts correctly no matter
 #: what has been deleted.
-_RESCUE_STAMP = "%Y%m%d-%H%M%S"
+#:
+#: **Every name is the same width, down to the microsecond**, which is
+#: what makes sorting them as strings give chronological order. The first
+#: version stamped whole seconds and appended ``-2``, ``-3`` on collision,
+#: and that inverted the order it existed to preserve: ``-`` (0x2D) sorts
+#: before ``.`` (0x2E), so ``…224455-2.docx`` came before
+#: ``…224455.docx`` and the OLDEST copy read as the newest. Seven promotes
+#: inside one second on a real paper is how that surfaced — prune then
+#: deletes from the wrong end, which for an undo file is the whole game.
+#:
+#: Sorting by mtime instead is not an option either: `shutil.copy2`
+#: carries the SOURCE's timestamp onto the copy, so every rescue would
+#: claim the manuscript's mtime rather than its own.
+_RESCUE_STAMP = "%Y%m%d-%H%M%S-%f"
 _RESCUE_GLOB = "*_rescue_*"
 
 
@@ -612,22 +625,22 @@ class PromoteReport:
 def rescue_path(paper: Paper, when: datetime | None = None) -> Path:
     """The next rescue file: ``build/rescue/working_rescue_<stamp>.docx``.
 
-    Two promotes inside one second get ``…-2``, ``…-3``. That is not
-    hypothetical — a real project has two rescue copies written in the
-    same minute, byte-identical, from a promote that ran twice over
-    unchanged content.
+    A taken name advances the stamp by a microsecond rather than gaining
+    a suffix, so every rescue in a folder has the SAME shape and sorts
+    chronologically as a plain string. See :data:`_RESCUE_STAMP` for the
+    version that did not and what it cost.
     """
-    stamp = (when or datetime.now()).strftime(_RESCUE_STAMP)
+    moment = when or datetime.now()
     stem, suffix = paper.working.stem, paper.working.suffix
-    base = paper.rescue_dir / f"{stem}_rescue_{stamp}{suffix}"
-    if not base.exists():
-        return base
-    n = 2
-    while True:
-        cand = paper.rescue_dir / f"{stem}_rescue_{stamp}-{n}{suffix}"
-        if not cand.exists():
-            return cand
-        n += 1
+    for _ in range(1000):
+        name = f"{stem}_rescue_{moment.strftime(_RESCUE_STAMP)}{suffix}"
+        candidate = paper.rescue_dir / name
+        if not candidate.exists():
+            return candidate
+        moment += timedelta(microseconds=1)
+    raise ProtocolError(
+        f"no free rescue name near {moment:%Y-%m-%d %H:%M:%S} in "
+        f"{paper.rescue_dir}")
 
 
 def rescues(paper: Paper) -> list[Path]:

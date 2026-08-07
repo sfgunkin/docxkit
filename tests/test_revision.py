@@ -416,16 +416,32 @@ def test_rescues_are_stamped_not_numbered(project):
     first FREE number, so pruning 1-3 makes the next promote write a new
     file called _rescue1, older than the _rescue5 beside it."""
     stamped = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
-    assert stamped.name == "working_rescue_20260807-215403.docx"
+    assert stamped.name == "working_rescue_20260807-215403-000000.docx"
 
-    stamped.parent.mkdir(parents=True, exist_ok=True)
-    stamped.write_bytes(b"first")
-    again = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
-    assert again.name == "working_rescue_20260807-215403-2.docx", \
-        "two promotes in one second collided"
-    again.write_bytes(b"second")
-    third = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
-    assert third.name == "working_rescue_20260807-215403-3.docx"
+
+def test_same_moment_names_keep_their_order(project):
+    """The regression that a real run found. The first version appended
+    '-2' on collision, and '-' sorts BEFORE '.', so '…215403-2.docx' came
+    before '…215403.docx' — the oldest copy reading as the newest, and
+    prune deleting from the wrong end.
+    """
+    project.rescue_dir.mkdir(parents=True, exist_ok=True)
+    moment = datetime(2026, 8, 7, 21, 54, 3)
+    written = []
+    for _ in range(7):                       # seven promotes, one second
+        p = revision.rescue_path(project, moment)
+        p.write_bytes(b"x")
+        written.append(p)
+
+    assert len({p.name for p in written}) == 7, "two promotes collided"
+    assert len({len(p.name) for p in written}) == 1, \
+        "names differ in width, so sorting them is not chronological"
+    assert revision.rescues(project) == written, \
+        "listed order does not match the order they were written"
+
+    revision.prune_rescues(project, keep=2)
+    assert revision.rescues(project) == written[-2:], \
+        "prune kept the wrong end"
 
 
 def _seed_rescues(project, n: int) -> list[Path]:
@@ -694,3 +710,33 @@ def test_exit_codes_are_distinct():
 def test_document_helper_is_used():
     """conftest.document is the fixture builder these tests lean on."""
     assert "<w:body>" in document("")
+
+
+def test_a_rescue_that_did_not_land_stops_the_promote(project,
+                                                      monkeypatch):
+    """The guard that makes the undo real. If the rescue copy is not
+    what it was copied from, overwriting the manuscript would leave
+    nothing to undo it with — so the promote refuses instead."""
+    write(project.batch, make_parts(para(run("the batch"))))
+    live_before = project.working.read_bytes()
+
+    def truncating_copy(src, dst, *a, **kw):
+        Path(dst).write_bytes(b"truncated")
+        return dst
+
+    monkeypatch.setattr(revision.shutil, "copy2", truncating_copy)
+    with pytest.raises(ProtocolError, match="nothing to undo it"):
+        revision.promote(project)
+    assert project.working.read_bytes() == live_before, \
+        "the manuscript was overwritten despite a bad rescue"
+
+
+def test_rescue_names_cannot_be_exhausted_silently(project, monkeypatch):
+    """Bounded, and it says so rather than looping forever. Forced here
+    by coarsening the stamp so every candidate collides."""
+    project.rescue_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(revision, "_RESCUE_STAMP", "%Y%m%d")
+    taken = revision.rescue_path(project, datetime(2026, 8, 7))
+    taken.write_bytes(b"x")
+    with pytest.raises(ProtocolError, match="no free rescue name"):
+        revision.rescue_path(project, datetime(2026, 8, 7))
