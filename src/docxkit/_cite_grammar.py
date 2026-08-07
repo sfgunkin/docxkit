@@ -28,7 +28,14 @@ from .errors import AnchorError
 # Mühlbach — and continues with word characters, hyphen, apostrophe
 # (straight or typographic) or period.
 _NAME_CHAR = r"\w\-'.’"
-_NAME = rf"[A-ZÀ-ÿĀ-ſ][{_NAME_CHAR}]*"
+# The initial capital, in the alphabets these papers cite in. `\w` already
+# admits Cyrillic for the REST of a name, so a Russian paper's ministry
+# citation was invisible to the finder for want of one character class — and
+# the entry it pointed at then read as an orphan nobody cites. Kazakh and
+# Ukrainian capitals are here for the same reason: these are Central Asian
+# papers. See test_a_cyrillic_citation_is_found for the case.
+_CYRILLIC_UPPER = "А-ЯЁЄІЇҐӘҒҚҢӨҰҮҺ"
+_NAME = rf"[A-ZÀ-ÿĀ-ſ{_CYRILLIC_UPPER}][{_NAME_CHAR}]*"
 # A surname can span tokens two ways: a capitalised prefix particle
 # ("De Giorgi", "Van Reenen", "La Porta") and a lowercase join ("Bank of
 # England", "Ministry of Health"). Free capitalised adjacency is NOT

@@ -266,6 +266,28 @@ def test_a_stop_heading_ends_the_list():
     assert [r.surname for r in references(doc)] == ["Aksoy"]
 
 
+def test_a_cyrillic_citation_is_found():
+    """A Russian paper cites «(МИД РК 2026)». `\\w` already admitted Cyrillic
+    for the REST of a name, so only the initial capital's character class stood
+    between the finder and every Cyrillic citation — and the entry it pointed
+    at read as an orphan nobody cites. Multi-word institutions are captured
+    from their last word, here as everywhere."""
+    text = "В мае 2026 года объявлено о создании хаба (МИД РК 2026)."
+    assert _found(text) == [("РК", "2026", False)]
+
+
+@pytest.mark.parametrize("text", [
+    "Результаты приведены в таблице 3.",
+    "Ориентиры фиксируются (раздел 5.3).",
+    "Доказательство дано в Приложении Б.",
+    "Перепись 2021 года дала оценку.",
+])
+def test_russian_structural_parentheticals_are_not_citations(text):
+    """What admitting Cyrillic must NOT do: a section or table reference is not
+    a citation, and neither is a bare year in running prose."""
+    assert _found(text) == []
+
+
 def test_a_TITLED_stop_heading_ends_the_list():
     """The stop word used to have to be the whole paragraph, so «Приложение А.
     Характеристика показателей» did not end anything. The list ran on into the
