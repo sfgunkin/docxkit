@@ -106,6 +106,10 @@ def routines(blob: bytes) -> dict[str, Routine]:
         "compare.self": lambda: _self_diff(dict(raw)),
         "footnotes.find_all": lambda: len(footnotes.find_all(foot))
         if foot else 0,
+        # How many DISTINCT face/size combinations the notes state. A
+        # house rule ("footnotes are Times New Roman 10") is a claim
+        # about this number being one.
+        "footnotes.fonts": lambda: len(footnotes.fonts(foot)) if foot else 0,
         "hygiene.strip": lambda: len(hygiene.strip_parts(dict(raw))),
     }
 

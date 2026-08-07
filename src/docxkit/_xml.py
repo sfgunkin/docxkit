@@ -23,6 +23,7 @@ __all__ = [
     "GLYPH_MAP",
     "MATH_OBJECTS",
     "PARA_RE",
+    "RPR_ORDER",
     "RUN_OPEN_RE",
     "RUN_RE",
     "T_DEL_RE",
@@ -39,6 +40,7 @@ __all__ = [
     "matching_close",
     "normalize_glyphs",
     "own_properties",
+    "set_run_property",
     "set_run_text",
     "used_prefixes",
     "visible_text",
@@ -353,3 +355,63 @@ def live_properties(inner: str) -> str:
     """
     m = _PROPERTY_CHANGE_RE.search(inner)
     return inner if m is None else inner[:m.start()]
+
+
+#: ``EG_RPrBase`` in schema order. Word REJECTS a run whose properties
+#: are out of it, so a new child cannot simply be appended to ``w:rPr``
+#: — the position is part of the correctness. Only the members needed to
+#: place one are listed; an unknown property sorts LAST, which keeps an
+#: unfamiliar element from pushing a known one out of place.
+RPR_ORDER = (
+    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps",
+    "strike", "dstrike", "outline", "shadow", "emboss", "imprint",
+    "noProof", "snapToGrid", "vanish", "webHidden", "color", "spacing",
+    "w", "kern", "position", "sz", "szCs", "highlight", "u", "effect",
+    "bdr", "shd", "fitText", "vertAlign", "rtl", "cs", "em", "lang",
+    "eastAsianLayout", "specVanish", "oMath",
+)
+_RPR_RANK = {name: i for i, name in enumerate(RPR_ORDER)}
+_RPR_CHILD_RE = re.compile(r"<w:(\w+)\b[^>]*?(/?)>")
+
+
+def set_run_property(run_xml: str, tag: str, element: str) -> str:
+    """The same run carrying `element` as its ``w:tag`` run property.
+
+    Replaces the run's existing ``w:tag`` if it has one, otherwise
+    inserts it at its ``EG_RPrBase`` position. Pass ``element=""`` to
+    REMOVE the property.
+
+    Confined to the run's OWN, LIVE properties. A tracked formatting
+    change nests a snapshot of the old ``w:rPr`` inside the new one, so
+    a writer that searches the whole run edits the historical record and
+    leaves the page exactly as it was — the bug ``_run_italic`` and
+    ``_run_vert_align`` each had to learn separately.
+    """
+    own = own_properties(run_xml, "rPr")
+    if own is None:
+        if not element:
+            return run_xml
+        m = RUN_OPEN_RE.search(run_xml)
+        if m is None:                       # not a run: nothing to carry it
+            return run_xml
+        return (run_xml[:m.end()] + f"<w:rPr>{element}</w:rPr>"
+                + run_xml[m.end():])
+
+    start, end, inner = own
+    live = live_properties(inner)
+    rank = _RPR_RANK.get(tag, len(RPR_ORDER))
+
+    at = len(live)                          # default: after every live child
+    for m in _RPR_CHILD_RE.finditer(live):
+        name = m.group(1)
+        if name == tag:                     # replace in place
+            inner = inner[:m.start()] + element + inner[m.end():]
+            return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
+        if _RPR_RANK.get(name, len(RPR_ORDER)) > rank:
+            at = m.start()
+            break
+
+    if not element:
+        return run_xml                      # nothing to remove
+    inner = inner[:at] + element + inner[at:]
+    return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
