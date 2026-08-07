@@ -47,6 +47,10 @@ FLOORS = {
     # Word or a fake of one. `tracked.py` went 0 -> 99% on a fake, so
     # this is reachable the same way.
     "word.py": 73,
+    # Held above DEFAULT deliberately: every refusal in here is a thing
+    # that failed SILENTLY in a real paper, and an uncovered refusal is
+    # one nobody would notice had stopped working.
+    "revision.py": 97,
     # Guarded stdout reconfigure: the branches are for a machine with no
     # console attached, which pytest always has.
     "console.py": 73,

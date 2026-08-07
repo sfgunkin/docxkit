@@ -8,13 +8,30 @@ reconfigure stdout, and every one of them wrote it unguarded.
 That crashes when stdout is not a real console stream: under pytest
 capture, piped through a wrapper, or from a scheduled task, it can be an
 object with no ``reconfigure`` at all.
+
+**stderr needs the same treatment**, and for a sharper reason. Errors
+here quote the document — an anchor that did not match, a reference
+entry, a paragraph of a Russian manuscript — and the CLI prints them to
+stderr. Left at cp1252 that is where an em dash arrives as ``?`` in the
+one message whose job is to explain what went wrong.
 """
 from __future__ import annotations
 
 import io
 import sys
 
-__all__ = ["utf8_stdout"]
+__all__ = ["utf8_console", "utf8_stderr", "utf8_stdout"]
+
+
+def _reconfigure(stream: object, line_buffering: bool | None) -> bool:
+    if not isinstance(stream, io.TextIOWrapper):
+        return False
+    if line_buffering is None:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    else:
+        stream.reconfigure(encoding="utf-8", errors="replace",
+                           line_buffering=line_buffering)
+    return True
 
 
 def utf8_stdout(*, line_buffering: bool | None = None) -> bool:
@@ -24,11 +41,19 @@ def utf8_stdout(*, line_buffering: bool | None = None) -> bool:
     `line_buffering=True` also makes output appear as it happens, which
     matters for a long build whose log is being watched.
     """
-    if not isinstance(sys.stdout, io.TextIOWrapper):
-        return False
-    if line_buffering is None:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    else:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace",
-                               line_buffering=line_buffering)
-    return True
+    return _reconfigure(sys.stdout, line_buffering)
+
+
+def utf8_stderr(*, line_buffering: bool | None = None) -> bool:
+    """The same for stderr, where the error messages go."""
+    return _reconfigure(sys.stderr, line_buffering)
+
+
+def utf8_console(*, line_buffering: bool | None = None) -> bool:
+    """Both streams. Returns whether stdout was reconfigured.
+
+    What a command prints and what it fails with belong to the same
+    console, and every caller that wanted one wanted the other.
+    """
+    err = _reconfigure(sys.stderr, line_buffering)
+    return _reconfigure(sys.stdout, line_buffering) or err

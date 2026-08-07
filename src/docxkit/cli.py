@@ -39,7 +39,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from ._xml import BOOKMARK_END_ID_RE, BOOKMARK_START_ID_RE, COMMENT_ID_RE
-from .console import utf8_stdout
+from .console import utf8_console
 from .errors import DocxKitError, ProtocolError
 from .find import P_RE, text_of
 
@@ -635,20 +635,16 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
         print("   ** a STYLE-level edit, not just content **")
 
     print("\n== state ==")
-    if report.working_state:
-        _show_state("working", report.working_state)
-    if report.prev_state:
-        _show_state("prev", report.prev_state)
-    if report.working_state and report.working_state.is_truth \
-            and not report.untouched:
+    _show_state("working", report.working_state)
+    _show_state("prev", report.prev_state)
+    if report.working_state.is_truth and not report.untouched:
         print("\n   The author has accepted everything. Record it as the "
               "new truth:\n     docxkit revision baseline")
     if args.json:
         _write_json(args.json, {
             "content": report.content,
             "changed_parts": report.changed_parts,
-            "working_pending": report.working_state.pending
-            if report.working_state else 0,
+            "working_pending": report.working_state.pending,
         })
     return 0
 
@@ -747,7 +743,7 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    utf8_stdout()
+    utf8_console()
     ap = argparse.ArgumentParser(
         prog="docxkit", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)

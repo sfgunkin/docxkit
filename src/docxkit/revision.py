@@ -249,20 +249,25 @@ def state(path: str | Path) -> State:
 
 # --------------------------------------------------------------- ingest
 
-@dataclass
+@dataclass(frozen=True)
 class IngestReport:
-    """What the author did to the manuscript while the agent was away."""
+    """What the author did to the manuscript while the agent was away.
+
+    Every field is required. An ingest that ran always has all of them,
+    and making the states optional bought nothing but a ``None`` check
+    at each of the two places that read them.
+    """
 
     working: Path
     prev: Path
-    content: dict[str, list[Any]] = field(default_factory=dict)
-    changed_parts: list[str] = field(default_factory=list)
-    noise_parts: list[str] = field(default_factory=list)
-    resaved: int = 0
-    added: list[str] = field(default_factory=list)
-    removed: list[str] = field(default_factory=list)
-    working_state: State | None = None
-    prev_state: State | None = None
+    content: dict[str, list[Any]]
+    changed_parts: list[str]
+    noise_parts: list[str]
+    resaved: int
+    added: list[str]
+    removed: list[str]
+    working_state: State
+    prev_state: State
 
     @property
     def style_edit(self) -> bool:
@@ -303,19 +308,20 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
     from . import compare as _compare  # deferred: heavy import chain
 
     working, prev = Path(working), Path(prev)
-    report = IngestReport(working=working, prev=prev)
-    report.content = dict(_compare.compare(str(prev), str(working)))
-
     parts = package.changed_parts(package.read_parts(prev),
                                   package.read_parts(working))
-    report.changed_parts = [p for p in parts["changed"]
-                            if p not in SAVE_NOISE]
-    report.noise_parts = [p for p in parts["changed"] if p in SAVE_NOISE]
-    report.resaved = len(parts["resaved"])
-    report.added, report.removed = parts["added"], parts["removed"]
-    report.working_state = state(working)
-    report.prev_state = state(prev)
-    return report
+    return IngestReport(
+        working=working,
+        prev=prev,
+        content=dict(_compare.compare(str(prev), str(working))),
+        changed_parts=[p for p in parts["changed"] if p not in SAVE_NOISE],
+        noise_parts=[p for p in parts["changed"] if p in SAVE_NOISE],
+        resaved=len(parts["resaved"]),
+        added=parts["added"],
+        removed=parts["removed"],
+        working_state=state(working),
+        prev_state=state(prev),
+    )
 
 
 # ---------------------------------------------------------------- build
@@ -746,8 +752,11 @@ def init(root: str | Path, source: str | Path, *, name: str = "",
     for sub in ("build", "notes", "scripts/applied"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
 
+    # `source` may BE working.docx: re-running init on a migrated paper
+    # to correct its config is a reasonable thing to do, and copying a
+    # file onto itself raises rather than being a no-op
     working = folder / "working.docx"
-    if not working.exists() or force:
+    if (not working.exists() or force) and source != working:
         shutil.copyfile(source, working)
     prev = folder / "build" / "prev.docx"
     if not prev.exists() or force:
