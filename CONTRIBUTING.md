@@ -187,6 +187,46 @@ assertion of `"italic" in out` that was satisfied by the section HEADING
 — "FORMAT (italic/bold/super/sub/strike…)" — and so had never been
 about the entry it claimed to check.
 
+## The revision protocol lives here, the paper keeps paper.toml
+
+`docxkit.revision` is the single-file protocol every paper on this
+machine revises through: ONE `revision/working.docx`, whose state is
+readable from the file itself — 0 revisions is the truth, more than 0 is
+a proposal awaiting the author's verdict.
+
+It is here for the same reason as everything else: two papers migrated
+to it on one day, and the second got its tools by copying four files out
+of the first. They were pure docxkit wrappers already. The third copy is
+where they would have started disagreeing about what the protocol IS.
+
+The seam is the usual one. The engine is shared — how to ingest, build,
+validate, promote. What stays with the paper is `revision/paper.toml`:
+its name, its author string, and the list of its own gates. Those gates
+are LISTED by `revision validate` and never run. What a paper checks is
+the paper's business, and a shared tool that shells out to per-project
+commands is a different, larger promise than this one makes.
+
+Three rules that are not obvious from the code:
+
+* **The author accepts; the tool never does.** If revisions are still
+  pending on handback, say WHERE and stop. `status` names the part,
+  because Review > Next walks the body and both Simple Markup and No
+  Markup hide footnote balloons — "1 pending" otherwise sends an author
+  hunting through prose for something that is in a footnote.
+* **Resolve before extend.** Word's Compare rebuilds a redline from
+  ACCEPTED content, so a batch built on a baseline with pending
+  revisions flattens them into plain text and the author's open verdicts
+  are decided for them. `BaselinePending`, exit 3.
+* **Text-only goes through Compare; anything touching math does not.**
+  Word cannot serialize tracked math. Measured on a real subscript
+  batch: hand-authored gave 4 insertions and reject-all restored the
+  baseline; clean-build plus Compare gave 0 and it did not.
+  `MathResolved`, exit 2.
+
+`reject-all == baseline` is the check that proves a batch is fully
+REVIEWABLE. If rejecting everything does not reproduce the baseline,
+something in it cannot be refused and the author's veto is not real.
+
 ## Two habits worth keeping
 
 **Validate against a real paper before believing a green suite.** Every
