@@ -150,6 +150,82 @@ def test_part_fingerprint_falls_back_to_bytes_for_non_xml():
     assert not same_part(b"\x89PNG binary", b"\x89PNG other")
 
 
+def test_write_leaves_no_staging_file_behind(simple_docx, tmp_path):
+    parts = read_parts(simple_docx)
+    out = tmp_path / "out.docx"
+    write_docx(out, parts)
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_a_failed_write_keeps_the_previous_file_and_cleans_up(
+        simple_docx, tmp_path, monkeypatch):
+    """An interrupted save must not destroy the manuscript it replaces.
+
+    Staging plus rename is what makes that true; the test pins it by
+    breaking the rename, which is the last thing to happen.
+    """
+    parts = read_parts(simple_docx)
+    out = tmp_path / "out.docx"
+    write_docx(out, parts)
+    before = out.read_bytes()
+
+    def boom(src, dst, **kw):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr("docxkit.package.os.replace", boom)
+    with pytest.raises(OSError, match="disk went away"):
+        write_docx(out, parts)
+
+    assert out.read_bytes() == before
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_write_rides_out_a_transient_lock(simple_docx, tmp_path,
+                                          monkeypatch):
+    """OneDrive holds the target open for a moment; that is not failure.
+
+    The sync engine intermittently locks or read-onlys a file that is
+    being replaced — the same race Stata surfaces as r(608). Giving up
+    on the first refusal would turn it into a lost save.
+    """
+    import os as os_module
+
+    parts = read_parts(simple_docx)
+    out = tmp_path / "out.docx"
+    write_docx(out, parts)
+
+    real = os_module.replace
+    tries = {"n": 0}
+
+    def flaky(src, dst, **kw):
+        tries["n"] += 1
+        if tries["n"] < 3:
+            raise PermissionError(32, "being used by another process")
+        return real(src, dst, **kw)
+
+    monkeypatch.setattr("docxkit.package.os.replace", flaky)
+    monkeypatch.setattr("docxkit.package.time.sleep", lambda _s: None)
+    write_docx(out, parts)
+
+    assert tries["n"] == 3
+    assert read_parts(out) == parts
+
+
+def test_write_gives_up_on_a_permanent_lock(simple_docx, tmp_path,
+                                            monkeypatch):
+    parts = read_parts(simple_docx)
+    out = tmp_path / "out.docx"
+
+    def locked(src, dst, **kw):
+        raise PermissionError(32, "locked forever")
+
+    monkeypatch.setattr("docxkit.package.os.replace", locked)
+    monkeypatch.setattr("docxkit.package.time.sleep", lambda _s: None)
+    with pytest.raises(PermissionError):
+        write_docx(out, parts)
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_changed_parts_separates_real_edits_from_a_re_save():
     from docxkit.package import changed_parts
     before = {"word/styles.xml": _STYLE, "word/document.xml": b"<a/>",

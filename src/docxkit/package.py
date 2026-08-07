@@ -9,9 +9,12 @@ the parts dict preserves every byte the transform did not touch.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
+import stat
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -177,6 +180,20 @@ def write_docx(path: str | Path, parts: dict[str, bytes],
     to ship — the LI7 incident, where only a later `docxkit lint` run
     caught a file Word could not open, and the audit and the diff were
     both blind to it because they read with regexes.
+
+    "Atomically" is load-bearing and has two halves. Staging beside the
+    target and renaming is the visible one. The other is the fsync: a
+    rename can reach the disk before the bytes it points at do, so an
+    interrupted save could leave a manuscript-shaped file full of
+    nothing while the old one was already gone. Flushing first closes
+    that window — the machine this runs on has unreliable mains power,
+    which is the whole reason it matters.
+
+    The rename is also retried, because on a OneDrive-backed tree the
+    sync engine intermittently holds the destination open or flips it
+    read-only mid-write (the same race Stata reports as r(608)), and a
+    save that gives up on the first refusal turns a hiccup into lost
+    work.
     """
     path = Path(path)
     if problems := malformed_parts(parts):
@@ -187,10 +204,59 @@ def write_docx(path: str | Path, parts: dict[str, bytes],
         [n for n in order if n in parts]
         + [n for n in parts if n not in order])
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        for name in names:
-            z.writestr(name, parts[name])
-    shutil.move(str(tmp), str(path))
+    try:
+        with open(tmp, "wb") as fh:
+            with zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as z:
+                for name in names:
+                    z.writestr(name, parts[name])
+            fh.flush()
+            os.fsync(fh.fileno())
+        _replace_atomically(tmp, path)
+    except BaseException:
+        _discard(tmp)
+        raise
+
+
+def _replace_atomically(tmp: Path, target: Path,
+                        *, retries: int = 6, delay: float = 0.2) -> None:
+    """Rename `tmp` over `target`, riding out transient Windows locks.
+
+    `os.replace` is a real atomic rename within a volume, which
+    `shutil.move` is not guaranteed to be — it falls back to copy when
+    it thinks it must, and a copy is exactly the interruptible write
+    being avoided. Staging is always a sibling of the target, so the
+    volume is the same by construction.
+    """
+    last: OSError | None = None
+    for attempt in range(retries):
+        try:
+            os.replace(tmp, target)
+        except PermissionError as exc:      # sharing violation / read-only
+            last = exc
+            _clear_readonly(target)
+            if attempt < retries - 1:
+                time.sleep(delay * (attempt + 1))
+                continue
+        else:
+            return
+    assert last is not None
+    raise last
+
+
+def _clear_readonly(path: Path) -> None:
+    try:
+        if path.exists():
+            os.chmod(path, os.stat(path).st_mode | stat.S_IWRITE)
+    except OSError:
+        pass
+
+
+def _discard(path: Path) -> None:
+    try:
+        _clear_readonly(path)
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def edit_in_place(path: str | Path,
