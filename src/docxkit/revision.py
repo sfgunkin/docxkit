@@ -471,14 +471,25 @@ class ValidateReport:
 
 
 # Word's Range.Text and the raw XML spell the same document differently,
-# and all three differences are presentational. Fold them before
+# and every difference here is presentational. Fold them before
 # comparing, or the accept-paths gate reports a mismatch on every
 # document containing a footnote or an equation: \x02 is a footnote
 # reference mark and \x07 a cell mark; Word returns math letters from
 # the Mathematical Italic block while the XML stores ASCII with m:
 # markup around it; and Word gives U+2212 where the XML holds a hyphen.
+#
+# U+2217 is the same story one character further: Word renders the
+# asterisk inside math as ASTERISK OPERATOR, which NFKC does NOT fold
+# because the two are distinct characters rather than compatibility
+# variants. LI7 writes its prospective-age threshold "T*" eighteen times,
+# so the gate failed on that paper with ZERO revisions in the file \u2014 and
+# a gate that cannot pass is one its reader learns to skip.
+#
+# Each entry costs a little of what the gate can see, so each one is
+# here because a real document produced it. Do not add a fold on
+# suspicion.
 _FOLD = str.maketrans({"\u2212": "-", "\u2010": "-", "\u2011": "-",
-                       "\u00a0": " "})
+                       "\u00a0": " ", "\u2217": "*"})
 
 
 def _norm(text: str) -> str:

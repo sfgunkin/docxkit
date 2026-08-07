@@ -678,6 +678,26 @@ def test_validate_folds_presentational_differences(tmp_path, monkeypatch):
     assert report.accept_paths_agree is True
 
 
+def test_validate_folds_the_math_asterisk(tmp_path, monkeypatch):
+    """Word sets an asterisk inside math as U+2217 ASTERISK OPERATOR, and
+    NFKC leaves it alone — the two are distinct characters, not
+    compatibility variants. LI7 writes "T*" eighteen times, so gate 6
+    failed there on a file holding ZERO revisions."""
+    path = write(tmp_path / "t.docx", make_parts(para(run("T* is the age"))))
+    rendered = _FakeDoc(revisions=0, text="T∗ is the age\r")
+    monkeypatch.setattr(revision, "_word", _FakeWord(rendered))
+    assert revision.validate(path).accept_paths_agree is True
+
+
+def test_validate_still_sees_a_real_difference_in_math(tmp_path, monkeypatch):
+    """The folds must not blind the gate: a character Word did not merely
+    RENDER differently is still a mismatch."""
+    path = write(tmp_path / "t.docx", make_parts(para(run("T* is the age"))))
+    different = _FakeDoc(revisions=0, text="T+ is the age\r")
+    monkeypatch.setattr(revision, "_word", _FakeWord(different))
+    assert revision.validate(path).accept_paths_agree is False
+
+
 def test_validate_skips_word_when_asked(tmp_path, monkeypatch):
     path = write(tmp_path / "x.docx", make_parts(para(run("x"))))
     monkeypatch.setattr(revision, "_word", _FakeWord(explode=True))
