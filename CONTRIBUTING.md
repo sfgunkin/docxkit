@@ -98,10 +98,15 @@ A single global number hides the thing worth knowing: this package sat
 at 88% overall while `tracked.py` — which builds the deliverable that
 ships to journals — was at 0%, paid for by well-covered code elsewhere.
 The floors are the CURRENT numbers, so a module can never lose coverage,
-and the exceptions in that file say out loud where the debt is (`cli.py`
-at 52% is the one to pay down: it holds every `--write` path, which is
-the code that touches a manuscript). `--update` raises them after you
-cover more.
+and the exceptions in that file say out loud where the debt is.
+`--update` raises them after you cover more.
+
+`cli.py` was that debt at 52%, and it is now at 100% — it holds every
+`--write` path, which is the code that edits an author's file. Those
+tests assert on the FILE (written, not written, and what the backup
+holds) rather than on the message, because a message is not what an
+author loses. `word.py` at 73% is what remains, and most of what is
+uncovered there is COM itself rather than a decision of ours.
 
 And one more, deselected by default because it drives a real Word:
 
@@ -137,6 +142,50 @@ it cannot touch a manuscript.
 
 For anything Word-backed, the real check is `docxkit verify` — does Word
 read the file back as written, or repair it on open?
+
+### Mutation testing
+
+Coverage says a line RAN. Mutation testing says a test would NOTICE if
+that line changed, which is the question worth asking — `_compare_render`
+sat at 87% coverage while 82 of its 204 mutants survived.
+
+```
+cosmic-ray init cr.toml run.sqlite      # module-path = ONE source file
+cosmic-ray exec cr.toml run.sqlite      # test-command = the narrow suite
+cr-report run.sqlite
+```
+
+Two traps, both hit on 2026-08-07:
+
+* **Killing a run strands a mutation in your source.** cosmic-ray edits
+  the file in place and restores it after each mutant; interrupt it
+  mid-mutant and the mutation stays on disk, where it reads as your own
+  work. `git diff -- src/` before believing anything after an aborted run.
+* **Do not touch the source or the tests while a run is executing.** Every
+  mutant re-reads both, so an edit halfway through means the early mutants
+  and the late ones were judged against different suites, and the survivor
+  count is a number with no meaning. Restart the run instead.
+
+**A survivor is a question, not a work item.** They sort into three kinds
+and only the first is a missing test:
+
+* a real gap — write the test, then *apply the mutation by hand and watch
+  it go red*. A survivor that a new test does not actually kill is the
+  normal outcome of guessing;
+* an equivalent mutant — `n > 1` becomes `n != 1` where `n` is a count
+  that is never below 1. Record it and move on; a test pinning it would
+  pin an accident;
+* cosmetic — the width of a rule. Same treatment.
+
+Say which in the commit message. Two runs here have ended with the
+survivor telling us something other than "write a test": an unreachable
+second difflib pass, and a similarity threshold whose only effect was on
+ties. Both were better findings than a test would have been.
+
+The survivors also audit the tests themselves. That pass turned up an
+assertion of `"italic" in out` that was satisfied by the section HEADING
+— "FORMAT (italic/bold/super/sub/strike…)" — and so had never been
+about the entry it claimed to check.
 
 ## Two habits worth keeping
 

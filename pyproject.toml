@@ -113,8 +113,13 @@ ignore = [
 # Tests assert on the very glyphs Word normalizes, reach for private
 # helpers deliberately, and import optional deps inside the tests that
 # skip without them.
+# PLR0917 counts POSITIONAL arguments, and a test function is never
+# called positionally: pytest resolves fixtures and parametrize ids by
+# NAME. A parametrized test that also takes monkeypatch, tmp_path and
+# capsys trips it at four fixtures plus three cases, which says nothing
+# about the test.
 "tests/*" = ["RUF001", "RUF002", "RUF003", "PLC2701", "PLC0415",
-             "ISC003", "ISC004"]
+             "ISC003", "ISC004", "PLR0917"]
 # tools/ holds developer scripts: the mutation table quotes source
 # lines verbatim, so it cannot obey the line length or the
 # implicit-concatenation rules without changing what it tests.

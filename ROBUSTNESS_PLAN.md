@@ -338,6 +338,29 @@ Cheap, and they close the loops that keep reopening:
   that asserted the model's own wrong numbers back at it. Both were
   found by hand-mutating; a runner automates exactly that.
 
+  **DONE for the compare stack (2026-08-07), with cosmic-ray.**
+  `_compare_diff` (`d344d0d`, `7da6b2d`), `_compare_read` (`be082dc`)
+  and `_compare_render` — the last of the three at 204 mutants, 82
+  survived, now 9. All nine are recorded as equivalent or cosmetic: six
+  are the width of a printed rule, and three are `n > 1` against
+  `n != 1` on a count never below 1, and `== "MOVE"` against `is` on an
+  interned literal.
+
+  The survivors said one thing: `render()` had its RETURN value tested
+  and its OUTPUT tested nowhere, which inverts what the module is for.
+  Eleven of them sat on the gate arithmetic — every fixture filled ONE
+  bucket, and three of the five gated layers had no test that reached
+  the exit code at all, so dropping a term left a real difference no
+  longer failing `--expect-clean`.
+
+  Worth keeping: **the run audits the tests, not just the code.** It
+  found an assertion of `"italic" in out` that was satisfied by the
+  section HEADING — "FORMAT (italic/bold/super/sub/strike…)" — and so
+  had never been about the entry it claimed to check. And a mark
+  collector that matched only at the START of a string, which silently
+  excused the one layer whose content is `"- 0.35"`-shaped lines. Both
+  passed green and asserted nothing.
+
   Checked on this machine (Python 3.14.6): `mutmut` 3.7.0 resolves with
   7 dependencies, `cosmic-ray` 8.4.6 with 15 (SQLAlchemy, aiohttp).
   mutmut is the lighter one. Scope a first run to `_compare_*`, `_xml`,
@@ -346,8 +369,14 @@ Cheap, and they close the loops that keep reopening:
   a 0% module. **DONE** (`tools/coverage_floor.py`): the floors are the
   CURRENT numbers, so a module can never lose coverage, and the
   exceptions name the debt instead of averaging it away. `cli.py` at 52%
-  is the one to pay down — it holds every `--write` path, which is the
-  code that touches a manuscript.
+  was the one to pay down — it holds every `--write` path, which is the
+  code that touches a manuscript. **Paid on 2026-08-07: 60% → 100%**,
+  asserting on the FILE (written, not written, what the backup holds)
+  rather than on the message. The Word-backed commands are faked at the
+  COM boundary rather than skipped — which verdict a set of counts
+  earns, and how `--pages 1-3` becomes a first and a last, are decisions
+  `cli.py` makes and none of them need Word to be wrong. `word.py` at
+  73% is what is left, and most of that is COM itself.
 
 ---
 
