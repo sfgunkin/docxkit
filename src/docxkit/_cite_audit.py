@@ -171,8 +171,35 @@ def _audit_findings(parts: dict[str, bytes], *,
         # hunting in footnotes.xml for bookmarks that were never there.
         return {-1: "body", -2: "fn"}.get(i) or f"¶{i + 1}"
 
+    entry_years = {r.year[:4] for r in references(texts, heading=heading)}
+
+    def names_a_missing_entry(name: str) -> bool:
+        """Does this key-shaped bookmark name a work the list no longer has?
+
+        A reference marker outlives its entry: delete the paragraph in Word and
+        the bookmark is hoisted to body level rather than removed, so the audit
+        went on reporting a work that is not in the document — as an UNCITED
+        REFERENCE, which sent a reader looking for an entry that was not there.
+
+        Matched on the YEAR alone, deliberately. The alpha part is minted from
+        the surname and a Cyrillic or hand-placed name shares none of it
+        (`MFA2026`), so requiring it to match would call live entries stale.
+        A year no entry carries is evidence enough, and costs no false report.
+        """
+        if not entry_years:
+            return False      # no list parsed — nothing to be missing FROM
+        m = _KEY_SHAPE_RE.fullmatch(name)
+        return bool(m) and m.group(2)[:4] not in entry_years
+
     issues: list[_Finding] = []
     for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
+        if names_a_missing_entry(key):
+            issues.append(_Finding(
+                "STALE BOOKMARK", key,
+                f"STALE BOOKMARK: '{key}' ({where(idx)}) names a work that is "
+                "no longer in the reference list — the entry was deleted and "
+                "the marker stayed; remove the bookmark"))
+            continue
         if not links.get(key):
             issues.append(_Finding(
                 "ORPHAN REF", key,
@@ -280,6 +307,8 @@ def _audit_findings(parts: dict[str, bytes], *,
             f"CITE WITHOUT REF: '{key}' cited in text but no "
             "reference bookmark"))
     for key in sorted(ref_marks.keys() - cited_keys):
+        if names_a_missing_entry(key):
+            continue          # already reported, and more usefully, as stale
         issues.append(_Finding(
             "REF WITHOUT CITE", key,
             f"REF WITHOUT CITE: '{key}' "

@@ -177,6 +177,11 @@ def repair_plan(parts: dict[str, bytes]) -> str:
                     f'"{name}"   # find the citation first; {issue}')
             else:
                 buckets["investigate"].append(issue)
+        elif f.kind == "STALE BOOKMARK":
+            # No "VERIFY" hedge here: the audit checked the reference list and
+            # the work is not in it. The other two kinds only guess at debris.
+            buckets["debris"].append(
+                f'delete_bookmark(doc, "{name}")   # {issue}')
         elif f.kind in ("ORPHAN REF", "REF WITHOUT CITE"):
             km = _KEY_SHAPE_RE.match(name)
             key = (key_for(km.group(1), km.group(2)) if km else "?")

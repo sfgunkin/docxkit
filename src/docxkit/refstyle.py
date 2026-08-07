@@ -428,6 +428,28 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
                 snippet=r.text[:50]))
         prev = r
 
+    # Two entries that render to the SAME in-text citation. Author-date has one
+    # answer — 2013a, 2013b — and nothing here asked for it: applying "et al.
+    # from three authors" to DSI collapsed Foster, McGillivray, and Seth (2013)
+    # and Foster, Seth, Lokshin, and Sajaia (2013) into one «Foster et al.
+    # 2013», the linker could then resolve only one of the three mentions, and
+    # the audit still reported no issues. Keyed on surname+year, so a suffixed
+    # pair is distinct and never flagged.
+    same: dict[str, list[Reference]] = {}
+    for r in entries:
+        same.setdefault(key_for(r.surname, r.year), []).append(r)
+    for group in same.values():
+        if len(group) < 2:
+            continue
+        letters = ", ".join(f"{group[0].year}{chr(ord('a') + i)}"
+                            for i in range(len(group)))
+        for r in group:
+            report.issues.append(Issue(
+                "ambiguous-cite",
+                f"{len(group)} entries cite as "
+                f'"{r.surname} {r.year}" — distinguish them as {letters}',
+                where=f"¶{r.index + 1}", snippet=r.text[:60]))
+
     report.entries = len(entries)
     report.cited = len(cited)
     if entries:

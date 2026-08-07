@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE
@@ -55,6 +56,46 @@ WORD_BOOKMARK_LIMIT = 40
 _NAME_BUDGET = WORD_BOOKMARK_LIMIT - len("txt")
 
 
+#: Cyrillic -> Latin, enough for the Russian and Kazakh names these papers
+#: cite. Not a standard transliteration: it exists so a bookmark name has
+#: Latin letters to be built from.
+_CYRILLIC = {
+    "А": "A", "Б": "B", "В": "V", "Г": "G", "Д": "D", "Е": "E", "Ж": "Zh",
+    "З": "Z", "И": "I", "К": "K", "Л": "L", "М": "M", "Н": "N", "О": "O",
+    "П": "P", "Р": "R", "С": "S", "Т": "T", "У": "U", "Ф": "F", "Х": "Kh",
+    "Ц": "Ts", "Ч": "Ch", "Ш": "Sh", "Щ": "Shch", "Ъ": "", "Ы": "Y",
+    "Ь": "", "Э": "E", "Ю": "Yu", "Я": "Ya",
+    "Ә": "A", "Ғ": "G", "Қ": "K", "Ң": "N", "Ө": "O", "Ұ": "U", "Ү": "U",
+    "Һ": "H", "І": "I", "Є": "Ye", "Ї": "Yi",
+}
+_CYRILLIC.update({k.lower(): v.lower() for k, v in list(_CYRILLIC.items())})
+
+
+def _ascii_stem(surname: str) -> str:
+    """The Latin letters a bookmark name is built from.
+
+    Stripping non-ASCII outright gave "Aczél" the stem "Aczl", and a Cyrillic
+    institution no stem at all — so its name became the bare year, "2026",
+    which :data:`_KEY_SHAPE_RE` does not accept as a key. :func:`link_all` then
+    failed to recognise its own marker on the next run and minted "2026_2",
+    then "2026_3": the pass advertises idempotency and quietly lost it.
+
+    Accents fold and Cyrillic transliterates, so the stem is stable and still
+    readable. A surname with no Latin letters at all falls back to "Ref", which
+    is key-shaped and therefore reusable.
+    """
+    out = []
+    for ch in unicodedata.normalize("NFKD", surname):
+        if unicodedata.combining(ch):
+            continue
+        out.append(_CYRILLIC.get(ch, ch))
+    # LETTERS only: _KEY_SHAPE_RE's alpha group is [A-Za-z][A-Za-z.]*, so a
+    # digit anywhere in the stem costs the name its key shape — which is the
+    # whole point of having one.
+    stem = re.sub(r"[^A-Za-z]", "", "".join(out))
+    return stem or "Ref"
+
+
 def _own_bookmark(para_xml: str, r: Reference, before: str = "") -> str | None:
     """The entry's OWN key-shaped bookmark, or None.
 
@@ -74,7 +115,11 @@ def _own_bookmark(para_xml: str, r: Reference, before: str = "") -> str | None:
     search safe: a marker hoisted out of the PREVIOUS entry cannot match
     this one.
     """
-    alpha = re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()
+    # BOTH stems: the current one, and the strip-only stem earlier runs minted.
+    # A document linked before _ascii_stem existed carries «Aczl1966», and
+    # recognising only «Aczel» would orphan it and mint a second marker.
+    stems = {_ascii_stem(r.surname).casefold(),
+             re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()}
     names: list[str] = _BOOKMARK_NAME_RE.findall(before + para_xml)
     for n in names:
         km = _KEY_SHAPE_RE.match(n)
@@ -83,7 +128,7 @@ def _own_bookmark(para_xml: str, r: Reference, before: str = "") -> str | None:
         # the bookmark's alpha part is the surname, possibly truncated
         # (an acronym entry files under it) — one must prefix the other
         got = km.group(1).casefold()
-        if alpha.startswith(got) or got.startswith(alpha):
+        if any(a and (a.startswith(got) or got.startswith(a)) for a in stems):
             return n
     return None
 
@@ -347,7 +392,7 @@ def _mint_name(r: Reference, taken: set[str]) -> str:
     :func:`_own_bookmark` still recognises it on a later run because it
     matches the surname by prefix in either direction.
     """
-    alpha = re.sub(r"[^0-9A-Za-z]", "", r.surname)
+    alpha = _ascii_stem(r.surname)
     for n in range(1, 100):
         suffix = "" if n == 1 else f"_{n}"
         keep = _NAME_BUDGET - len(r.year) - len(suffix)

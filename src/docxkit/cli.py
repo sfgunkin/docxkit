@@ -83,6 +83,17 @@ def cmd_citations(args: argparse.Namespace) -> int:
     return 1 if check_citations(args.docx) > 0 else 0
 
 
+def _aliases(args: argparse.Namespace) -> dict[str, str]:
+    """--alias CITED=FILED, for every command that cross-checks the two sides.
+
+    `link` took it and `refstyle` did not, so the same document that linked
+    cleanly was audited as citing three works it has no entries for, and
+    listing three entries nothing cites.
+    """
+    pairs = getattr(args, "alias", None) or []
+    return dict(kv.split("=", 1) for kv in pairs)
+
+
 def cmd_link(args: argparse.Namespace) -> int:
     """Build the bidirectional citation-link apparatus document-wide.
 
@@ -92,9 +103,8 @@ def cmd_link(args: argparse.Namespace) -> int:
     from .citations import link_all
     from .lint import lint_parts
     from .package import backup, read_parts, write_docx
-    aliases = dict(kv.split("=", 1) for kv in (args.alias or []))
     parts = read_parts(args.docx)
-    report = link_all(parts, aliases=aliases)
+    report = link_all(parts, aliases=_aliases(args))
     print(report.format())
     if not args.write:
         print("(dry run — nothing written; pass --write to apply)")
@@ -134,7 +144,8 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
     from .package import read_parts
     from .refstyle import CHICAGO, HOUSE, audit
     report = audit(read_parts(args.docx),
-                   CHICAGO if args.chicago else HOUSE)
+                   CHICAGO if args.chicago else HOUSE,
+                   aliases=_aliases(args))
     print(Path(args.docx).name)
     print("  " + report.format().replace("\n", "\n  "))
     if args.json:
@@ -808,6 +819,10 @@ def main() -> None:
                    help="AFI's variant: full names, bare year, "
                         "et al. from 4 authors")
     p.add_argument("--json", metavar="PATH")
+    p.add_argument("--alias", action="append", metavar="CITED=FILED",
+                   help='e.g. --alias "WHO=World Health Organization" — '
+                        "without it the acronym in the prose and the full "
+                        "name in the list read as two different works")
     p.set_defaults(fn=cmd_refstyle)
 
     p = sub.add_parser(

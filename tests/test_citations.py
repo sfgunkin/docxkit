@@ -266,6 +266,60 @@ def test_a_stop_heading_ends_the_list():
     assert [r.surname for r in references(doc)] == ["Aksoy"]
 
 
+def test_a_bookmark_whose_entry_was_deleted_reads_as_stale():
+    """The author removed an entry in Word. The marker did not go with it —
+    Word hoists a paragraph-head bookmark to body level rather than dropping
+    it — so the audit went on reporting a work that is not in the document, as
+    an UNCITED REFERENCE. Twice I relayed that to the author as a real finding
+    before checking whether the entry existed at all."""
+    from conftest import make_parts, para, run
+
+    body = (para(run("A claim (Card 1999)."))
+            + para(run("References"))
+            + '<w:bookmarkStart w:id="9" w:name="Ravallion2012"/>'
+              '<w:bookmarkEnd w:id="9"/>'
+            + para(run("Card, D. (1999). Education. Amsterdam: Elsevier.")))
+    issues, _stats = audit_links(make_parts(body))
+    stale = [m for m in issues if m.startswith("STALE BOOKMARK")]
+    assert len(stale) == 1
+    assert "Ravallion2012" in stale[0]
+    assert not any("REF WITHOUT CITE: 'Ravallion2012'" in m for m in issues)
+
+
+def test_a_live_entry_hoisted_to_body_level_is_not_stale():
+    """Word hoists markers whose entry is very much still there — 52 of them in
+    DSI — so placement cannot be the test. The year is."""
+    from conftest import make_parts, para, run
+
+    body = (para(run("A claim (Card 1999)."))
+            + para(run("References"))
+            + '<w:bookmarkStart w:id="9" w:name="Card1999"/>'
+              '<w:bookmarkEnd w:id="9"/>'
+            + para(run("Card, D. (1999). Education. Amsterdam: Elsevier.")))
+    issues, _stats = audit_links(make_parts(body))
+    assert not any(m.startswith("STALE BOOKMARK") for m in issues)
+
+
+def test_a_bookmark_name_survives_a_non_latin_surname():
+    """A Cyrillic institution gave no Latin stem at all, so its name became the
+    bare year «2026» — not key-shaped, so link_all could not recognise its own
+    marker next run and minted «2026_2», then «2026_3». The pass advertises
+    idempotency and quietly lost it. Accents fold rather than vanish, too:
+    «Aczél» was becoming «Aczl»."""
+    from docxkit._cite_audit import _KEY_SHAPE_RE
+    from docxkit._cite_build import _ascii_stem
+
+    assert _ascii_stem("Aczél") == "Aczel"
+    assert _ascii_stem("Mühlbach") == "Muhlbach"
+    assert _ascii_stem("Министерство иностранных дел")[:12] == "Ministerstvo"
+    assert _ascii_stem("Ұлытау").isascii()
+    for surname in ("Министерство", "Ұлытау", "—", "2026", "Ministry 4"):
+        stem = _ascii_stem(surname)
+        assert stem.isalpha(), surname
+        assert _KEY_SHAPE_RE.fullmatch(stem + "2026"), surname
+    assert _ascii_stem("———") == "Ref"
+
+
 def test_a_cyrillic_citation_is_found():
     """A Russian paper cites «(МИД РК 2026)». `\\w` already admitted Cyrillic
     for the REST of a name, so only the initial capital's character class stood

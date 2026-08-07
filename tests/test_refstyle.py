@@ -357,6 +357,57 @@ def test_ignored_leads_do_not_read_as_citations():
     assert not any(i.code == "missing-ref" for i in report.issues)
 
 
+def test_two_entries_that_cite_alike_are_flagged():
+    """Author-date's one rule with a name: 2013a, 2013b. Nothing asked for it,
+    so applying «et al. from three authors» to DSI collapsed Foster,
+    McGillivray, and Seth (2013) and Foster, Seth, Lokshin, and Sajaia (2013)
+    into a single «Foster et al. 2013» — the linker could resolve only one of
+    the three mentions, and the audit still reported no issues."""
+    body = (para(run("Both matter (Foster et al. 2013)."))
+            + para(run("References"))
+            + para(run("Foster, J., McGillivray, M., and S. Seth. (2013). "
+                       "“Composite Indices.” "), irun("Econometric Reviews"),
+                   run(", 32(1): 35–56."))
+            + para(run("Foster, J., Seth, S., Lokshin, M., and Z. Sajaia. "
+                       "(2013). "), irun("A Unified Approach"),
+                   run(". Washington, DC: World Bank.")))
+    issues = [i for i in audit(make_parts(body)).issues
+              if i.code == "ambiguous-cite"]
+    assert len(issues) == 2
+    assert "2013a, 2013b" in issues[0].message
+
+
+def test_a_suffixed_year_is_not_ambiguous():
+    """Which is the fix, so applying it must silence the finding."""
+    body = (para(run("Both matter (Foster et al. 2013a, 2013b)."))
+            + para(run("References"))
+            + para(run("Foster, J., McGillivray, M., and S. Seth. (2013a). "
+                       "“Composite Indices.” "), irun("Econometric Reviews"),
+                   run(", 32(1): 35–56."))
+            + para(run("Foster, J., Seth, S., Lokshin, M., and Z. Sajaia. "
+                       "(2013b). "), irun("A Unified Approach"),
+                   run(". Washington, DC: World Bank.")))
+    assert not any(i.code == "ambiguous-cite"
+                   for i in audit(make_parts(body)).issues)
+
+
+def test_an_alias_reconciles_an_acronym_with_the_filed_name():
+    """The CLI dropped this argument, so a paper citing «(UNFPA 2021)» against
+    an entry filed under the full name was reported as BOTH a missing reference
+    and an uncited entry — twice over, for the same work."""
+    body = (para(run("The programme began in 2021 (UNFPA 2021)."))
+            + para(run("References"))
+            + para(run("United Nations Population Fund. (2021). "),
+                   irun("Decade of Demographic Resilience"),
+                   run(". Geneva: UNFPA.")))
+    bare = audit(make_parts(body))
+    assert {"missing-ref", "uncited-ref"} <= _codes(bare.issues)
+    aliased = audit(make_parts(body),
+                    aliases={"UNFPA": "United Nations Population Fund"})
+    assert not any(i.code in ("missing-ref", "uncited-ref")
+                   for i in aliased.issues)
+
+
 def test_no_reference_list_is_its_own_finding():
     body = para(run("A citation exists (Smith 2020) but no list."))
     report = audit(make_parts(body))
