@@ -110,6 +110,12 @@ ignore = [
 "src/docxkit/hygiene.py" = ["RUF001", "RUF002"]
 "src/docxkit/lint.py" = ["PLC0415"]
 "src/docxkit/revisions.py" = ["PLC0415"]
+# revision.py holds the log.md and paper.toml TEMPLATES it writes into a
+# migrating project. Their line length is the generated file's business —
+# a markdown table row cannot be wrapped without changing what is emitted
+# — and the deferred imports keep compare's heavy chain, lxml and
+# datetime off the cost of `import docxkit`.
+"src/docxkit/revision.py" = ["E501", "PLC0415"]
 # Tests assert on the very glyphs Word normalizes, reach for private
 # helpers deliberately, and import optional deps inside the tests that
 # skip without them.

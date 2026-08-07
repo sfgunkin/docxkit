@@ -14,13 +14,17 @@ from __future__ import annotations
 
 __all__ = [
     "AnchorError",
+    "BaselinePending",
     "ConversionGap",
     "DeliverableModified",
     "DocumentLocked",
     "DocxKitError",
     "FontMissing",
+    "MathResolved",
     "PackageError",
+    "ProtocolError",
     "ScaffoldMissing",
+    "StaleBatch",
 ]
 
 
@@ -83,3 +87,54 @@ class ScaffoldMissing(PackageError):
     Comment parts, styles and relationships have to come from Word itself;
     hand-rolling them is how a file ends up "repaired" on open.
     """
+
+
+class ProtocolError(DocxKitError):
+    """The single-file revision protocol was about to be broken.
+
+    Its subclasses are the three refusals in :mod:`docxkit.revision`,
+    and each one exists because the alternative is SILENT: the batch is
+    produced, it looks finished, and what it cost — an author's pending
+    verdict, an equation nobody can reject, an edit overwritten — is
+    discovered later or not at all.
+
+    Each carries its own ``exit_code`` so a script can tell WHICH
+    refusal it hit without parsing the message. The two numbers below
+    are the ones the protocol's own documentation already quotes.
+    """
+
+    exit_code = 1
+
+
+class BaselinePending(ProtocolError):
+    """The baseline still carries revisions nobody has adjudicated.
+
+    Word's Compare rebuilds a redline from ACCEPTED content, so building
+    on such a baseline flattens those revisions into plain text: the
+    author's open verdicts are decided for them, and the change can
+    never be rejected again.
+    """
+
+    exit_code = 3
+
+
+class MathResolved(ProtocolError):
+    """Compare resolved tracked math instead of marking it.
+
+    Word cannot serialize a tracked equation, so the new math is simply
+    present in the deliverable with nothing to accept or reject, and
+    reject-all no longer reproduces the baseline. Author the batch by
+    hand instead.
+    """
+
+    exit_code = 2
+
+
+class StaleBatch(ProtocolError):
+    """The live file moved on while the batch was being built.
+
+    Promoting anyway overwrites whatever the author did in the
+    meantime — the one unrecoverable mistake in this workflow.
+    """
+
+    exit_code = 4

@@ -16,6 +16,17 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
     docxkit pages PAPER.docx
+
+and the single-file revision protocol, which finds its own paths in
+``revision/paper.toml`` and so takes almost no arguments::
+
+    docxkit revision status
+    docxkit revision ingest [--json R.json]
+    docxkit revision build REVISED.docx [--out PATH]
+    docxkit revision validate [BATCH.docx] [--no-word]
+    docxkit revision promote [BATCH.docx]
+    docxkit revision baseline [--force]
+    docxkit revision init PAPER.docx [--root DIR] [--name NAME]
 """
 from __future__ import annotations
 
@@ -29,7 +40,7 @@ from pathlib import Path
 
 from ._xml import BOOKMARK_END_ID_RE, BOOKMARK_START_ID_RE, COMMENT_ID_RE
 from .console import utf8_stdout
-from .errors import DocxKitError
+from .errors import DocxKitError, ProtocolError
 from .find import P_RE, text_of
 
 
@@ -552,6 +563,189 @@ def cmd_pages(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- the single-file revision protocol -------------------------------
+#
+# These read revision/paper.toml and take no paths, on purpose. Every
+# path the protocol needs is derivable from it, and the alternative —
+# passing filenames on each call — is exactly how one paper ended up
+# with twenty scripts pinned to a manuscript two generations stale.
+
+def _paper(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    from .revision import load_paper
+    return load_paper(getattr(args, "paper", None))
+
+
+def _show_state(label: str, st: object) -> None:
+    from .revision import State
+    assert isinstance(st, State)
+    print(f"  {label:<9} {st.pending} pending -> {st.label.upper()}")
+    for part, count in st.by_part.items():
+        where = part.split("/")[-1].replace(".xml", "")
+        note = "" if where == "document" else \
+            "   <- Review>Next SKIPS these, and Simple Markup hides them"
+        print(f"      {count:>4} in {where}{note}")
+    if st.by_author:
+        who = ", ".join(f"{a} ({n})" for a, n in st.by_author.items())
+        print(f"      by: {who}")
+
+
+def cmd_revision_status(args: argparse.Namespace) -> int:
+    """Truth or proposal? The one question the layout answers by itself."""
+    from .revision import state
+    paper = _paper(args)
+    print(f"{paper.name}\n  {paper.working}")
+    st = state(paper.working)
+    _show_state("working", st)
+    if paper.prev.exists():
+        _show_state("prev", state(paper.prev))
+    else:
+        print("  prev      MISSING - no baseline to compare or reject "
+              "against; run `docxkit revision baseline`")
+    return 0 if st.is_truth else 1
+
+
+def cmd_revision_ingest(args: argparse.Namespace) -> int:
+    """What did the author change while I was away? (read-only)"""
+    from .revision import ingest
+    paper = _paper(args)
+    report = ingest(paper.working, paper.prev)
+    print(f"{paper.name}: {paper.prev.name} -> {paper.working.name}")
+
+    print("\n== content ==")
+    for bucket, items in report.content.items():
+        if not items:
+            continue
+        print(f"-- {bucket} ({len(items)})")
+        for item in items[:12]:
+            print("   ", str(item)[:200])
+        if len(items) > 12:
+            print(f"    ... and {len(items) - 12} more")
+    if report.untouched:
+        print("   no differences - working.docx is still the baseline")
+
+    print("\n== package ==")
+    if report.added:
+        print("   added  :", report.added)
+    if report.removed:
+        print("   removed:", report.removed)
+    print("   changed:", report.changed_parts or "(only save-noise)")
+    if report.resaved:
+        print(f"   re-saved, meaning unchanged: {report.resaved} part(s)")
+    if report.style_edit:
+        print("   ** a STYLE-level edit, not just content **")
+
+    print("\n== state ==")
+    if report.working_state:
+        _show_state("working", report.working_state)
+    if report.prev_state:
+        _show_state("prev", report.prev_state)
+    if report.working_state and report.working_state.is_truth \
+            and not report.untouched:
+        print("\n   The author has accepted everything. Record it as the "
+              "new truth:\n     docxkit revision baseline")
+    if args.json:
+        _write_json(args.json, {
+            "content": report.content,
+            "changed_parts": report.changed_parts,
+            "working_pending": report.working_state.pending
+            if report.working_state else 0,
+        })
+    return 0
+
+
+def cmd_revision_build(args: argparse.Namespace) -> int:
+    """Clean edit -> redline, via Word Compare."""
+    from .revision import build
+    paper = _paper(args)
+    report = build(paper, args.revised, args.out,
+                   allow_math_resolve=args.allow_math_resolve,
+                   allow_pending_baseline=args.allow_pending_baseline,
+                   progress=lambda line: print("   ", line))
+    out = Path(args.out) if args.out else paper.batch
+    print(f"\nbuilt {out} ({report.revisions} revisions)")
+    print(f"\nNow run:  docxkit revision validate {out}")
+    return 0
+
+
+def cmd_revision_validate(args: argparse.Namespace) -> int:
+    """The gate ladder. Gate 5 is the one that proves reviewability."""
+    from .revision import validate
+    paper = _paper(args)
+    target = Path(args.batch) if args.batch else paper.batch
+    base = Path(args.baseline) if args.baseline else paper.prev
+    report = validate(target, base if base.exists() else None,
+                      use_word=not args.no_word)
+
+    print(f"{target.name}")
+    print("== lint ==", "clean" if not report.lint
+          else f"{len(report.lint)} problem(s)")
+    for problem in report.lint:
+        print("   FAIL:", problem)
+    if report.lint:
+        print("\nABORT before Word - fix lint first.")
+        return 2
+    print("== counts ==", report.counts)
+    if report.word_opened is False:
+        print("== Word ==  FAILED (corrupted):", report.word_error)
+        return 3
+    if report.word_opened:
+        print(f"== Word ==  opened, {report.word_revisions} revision groups")
+    print("== accept-all ==", report.accepted)
+    if report.empty_shells:
+        print("   ** WARNING: empty OMML shells after accept **")
+    if report.reject_matches_baseline is not None:
+        verdict = "OK" if report.reject_matches_baseline else "MISMATCH"
+        print(f"== reject-all == baseline ?  {report.reject_detail} "
+              f"-> {verdict}")
+        if not report.reject_matches_baseline:
+            print("   the batch is NOT fully reviewable: rejecting "
+                  "everything does not restore the baseline")
+    if report.accept_paths_agree is not None:
+        print("== XML accept == Word accept ?",
+              "OK" if report.accept_paths_agree else "MISMATCH")
+    if paper.gates:
+        print("\nThe paper's own gates (run these too):")
+        for gate in paper.gates:
+            print("   ", gate)
+    print("\nVERDICT:", "PASS" if report.ok else "FAIL")
+    return 0 if report.ok else 1
+
+
+def cmd_revision_promote(args: argparse.Namespace) -> int:
+    """Put a validated batch onto working.docx, lock- and hash-guarded."""
+    from .revision import promote
+    paper = _paper(args)
+    report = promote(paper, args.batch, args.base)
+    print(f"promoted {report.promoted.name} -> {report.onto.name}")
+    print(f"rescue copy of the previous live file: {report.rescue.name}")
+    print("\nworking.docx is now a PROPOSAL. The author adjudicates it in "
+          "Word;\nthis tool never accepts on their behalf.")
+    return 0
+
+
+def cmd_revision_baseline(args: argparse.Namespace) -> int:
+    """The author accepted: record working.docx as the new truth."""
+    from .revision import baseline
+    paper = _paper(args)
+    written = baseline(paper, force=args.force)
+    print(f"baseline updated: {written}")
+    return 0
+
+
+def cmd_revision_init(args: argparse.Namespace) -> int:
+    """Scaffold the layout around a manuscript that has not migrated."""
+    from .revision import init
+    paper = init(args.root or Path(args.source).resolve().parent,
+                 args.source, name=args.name or "", author=args.author,
+                 language=args.language, attic=args.attic, force=args.force)
+    print(f"scaffolded {paper.config.parent}")
+    print(f"  working.docx  <- {Path(args.source).name}")
+    print("  build/prev.docx (baseline, same bytes)")
+    print("\nNothing was moved or deleted. Retire the old filename only "
+          "after\nthe paper's own gates pass against working.docx.")
+    return 0
+
+
 def main() -> None:
     utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -724,9 +918,83 @@ def main() -> None:
     p.add_argument("docx")
     p.set_defaults(fn=cmd_pages)
 
+    p = sub.add_parser(
+        "revision",
+        help="the single-file protocol: one working.docx, two states")
+    rev = p.add_subparsers(dest="rcmd", required=True)
+
+    def _rev(name: str, fn: object, help_: str) -> argparse.ArgumentParser:
+        r = rev.add_parser(name, help=help_)
+        # every one of these finds its own paths in revision/paper.toml;
+        # --paper is only for driving a paper from outside its tree
+        r.add_argument("--paper", metavar="DIR",
+                       help="the project root (default: search upwards "
+                            "from the working directory)")
+        r.set_defaults(fn=fn)
+        return r
+
+    _rev("status", cmd_revision_status,
+         "truth or proposal? (exit 1 while a proposal is pending)")
+
+    r = _rev("ingest", cmd_revision_ingest,
+             "what the author changed since the last truth (read-only)")
+    r.add_argument("--json", metavar="PATH")
+
+    r = _rev("build", cmd_revision_build,
+             "clean edit -> redline, via Word Compare")
+    r.add_argument("revised", help="the edited CLEAN copy of prev.docx")
+    r.add_argument("--out", metavar="PATH",
+                   help="default: revision/build/batch.docx")
+    r.add_argument("--allow-math-resolve", action="store_true",
+                   help="ship equations Word baked in unreviewable "
+                        "(they almost never are meant to be)")
+    r.add_argument("--allow-pending-baseline", action="store_true",
+                   help="absorb the baseline's pending revisions "
+                        "deliberately")
+
+    r = _rev("validate", cmd_revision_validate, "run the gate ladder")
+    r.add_argument("batch", nargs="?",
+                   help="default: revision/build/batch.docx")
+    r.add_argument("--baseline", metavar="PATH",
+                   help="default: revision/build/prev.docx")
+    r.add_argument("--no-word", action="store_true",
+                   help="offline gates only; skips the two that need Word")
+
+    r = _rev("promote", cmd_revision_promote,
+             "put a validated batch onto working.docx")
+    r.add_argument("batch", nargs="?")
+    r.add_argument("--base", metavar="PATH",
+                   help="the baseline the batch was built on")
+
+    r = _rev("baseline", cmd_revision_baseline,
+             "the author accepted: record working.docx as the new truth")
+    r.add_argument("--force", action="store_true",
+                   help="adopt a file that still carries revisions "
+                        "(migration only)")
+
+    r = rev.add_parser("init",
+                       help="scaffold the layout around a manuscript")
+    r.add_argument("source", help="the paper as it stands today")
+    r.add_argument("--root", metavar="DIR",
+                   help="project root (default: the manuscript's folder)")
+    r.add_argument("--name", metavar="NAME")
+    r.add_argument("--author", default="Revision", metavar="NAME",
+                   help="who tracked changes are credited to")
+    r.add_argument("--language", default="en", metavar="XX")
+    r.add_argument("--attic", metavar="PATH",
+                   help="where retired snapshots go")
+    r.add_argument("--force", action="store_true",
+                   help="rewrite an existing configuration")
+    r.set_defaults(fn=cmd_revision_init)
+
     args = ap.parse_args()
     try:
         sys.exit(args.fn(args))
+    except ProtocolError as exc:
+        # a distinct code per refusal, so a caller can tell WHICH one it
+        # hit without parsing English
+        print(f"docxkit: {exc}", file=sys.stderr)
+        sys.exit(exc.exit_code)
     except DocxKitError as exc:
         sys.exit(f"docxkit: {exc}")
 
