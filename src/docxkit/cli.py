@@ -26,6 +26,7 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision validate [BATCH.docx] [--no-word]
     docxkit revision promote [BATCH.docx]
     docxkit revision baseline [--force]
+    docxkit revision rescues [--prune KEEP]
     docxkit revision init PAPER.docx [--root DIR] [--name NAME]
 """
 from __future__ import annotations
@@ -713,9 +714,33 @@ def cmd_revision_promote(args: argparse.Namespace) -> int:
     paper = _paper(args)
     report = promote(paper, args.batch, args.base)
     print(f"promoted {report.promoted.name} -> {report.onto.name}")
-    print(f"rescue copy of the previous live file: {report.rescue.name}")
+    print(f"rescue copy of the previous live file: "
+          f"{report.rescue.relative_to(paper.root)}")
+    if report.pruned:
+        print(f"pruned {len(report.pruned)} older rescue(s), keeping "
+              f"{paper.rescue_keep}")
     print("\nworking.docx is now a PROPOSAL. The author adjudicates it in "
           "Word;\nthis tool never accepts on their behalf.")
+    return 0
+
+
+def cmd_revision_rescues(args: argparse.Namespace) -> int:
+    """List the undo copies, and optionally thin them."""
+    from .revision import prune_rescues, rescues
+    paper = _paper(args)
+    if args.prune is not None:
+        gone = prune_rescues(paper, args.prune)
+        for path in gone:
+            print(f"  removed {path.name}")
+        print(f"pruned {len(gone)}, keeping {max(0, args.prune)}")
+        return 0
+    found = rescues(paper)
+    if not found:
+        print(f"no rescue copies in {paper.rescue_dir}")
+        return 0
+    print(f"{paper.rescue_dir}  (keeping {paper.rescue_keep})")
+    for path in found:
+        print(f"  {path.name:<44} {path.stat().st_size:>9,} bytes")
     return 0
 
 
@@ -967,6 +992,11 @@ def main() -> None:
     r.add_argument("--force", action="store_true",
                    help="adopt a file that still carries revisions "
                         "(migration only)")
+
+    r = _rev("rescues", cmd_revision_rescues,
+             "the undo copies promote leaves in build/rescue/")
+    r.add_argument("--prune", type=int, metavar="KEEP", nargs="?", const=0,
+                   help="delete all but the newest KEEP (default 0: all)")
 
     r = rev.add_parser("init",
                        help="scaffold the layout around a manuscript")

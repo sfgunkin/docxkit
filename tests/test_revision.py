@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -388,7 +389,7 @@ def test_promote_lands_and_leaves_a_rescue_copy(project):
         "the rescue copy does not hold the file that was replaced"
 
 
-def test_promote_rescues_are_numbered(project):
+def test_each_promote_keeps_its_own_rescue(project):
     """The fixed-name version overwrote its own rescue every time, so
     only the most recent live state was ever recoverable."""
     write(project.batch, make_parts(para(run("first"))))
@@ -398,6 +399,96 @@ def test_promote_rescues_are_numbered(project):
     second = revision.promote(project)
     assert first.rescue != second.rescue
     assert first.rescue.exists() and second.rescue.exists()
+
+
+def test_rescues_live_under_build_not_beside_the_manuscript(project):
+    """Five working_rescueN.docx beside working.docx is exactly the
+    ambiguity the one-file layout removed."""
+    write(project.batch, make_parts(para(run("the batch"))))
+    report = revision.promote(project)
+    assert report.rescue.parent == project.rescue_dir
+    assert project.rescue_dir.parent == project.build_dir
+    assert not list(project.working.parent.glob("*rescue*"))
+
+
+def test_rescues_are_stamped_not_numbered(project):
+    """Numbering and pruning cannot both be right: the counter takes the
+    first FREE number, so pruning 1-3 makes the next promote write a new
+    file called _rescue1, older than the _rescue5 beside it."""
+    stamped = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
+    assert stamped.name == "working_rescue_20260807-215403.docx"
+
+    stamped.parent.mkdir(parents=True, exist_ok=True)
+    stamped.write_bytes(b"first")
+    again = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
+    assert again.name == "working_rescue_20260807-215403-2.docx", \
+        "two promotes in one second collided"
+    again.write_bytes(b"second")
+    third = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
+    assert third.name == "working_rescue_20260807-215403-3.docx"
+
+
+def _seed_rescues(project, n: int) -> list[Path]:
+    project.rescue_dir.mkdir(parents=True, exist_ok=True)
+    made = []
+    for i in range(n):
+        p = revision.rescue_path(project, datetime(2026, 8, 7, 10, 0, i))
+        p.write_bytes(f"rescue {i}".encode())
+        made.append(p)
+    return made
+
+
+def test_rescues_are_listed_oldest_first(project):
+    made = _seed_rescues(project, 4)
+    assert revision.rescues(project) == made
+
+
+def test_prune_keeps_the_newest(project):
+    made = _seed_rescues(project, 7)
+    gone = revision.prune_rescues(project, keep=3)
+    assert gone == made[:4]
+    assert revision.rescues(project) == made[4:]
+    assert all(not p.exists() for p in gone)
+
+
+def test_prune_zero_removes_all(project):
+    _seed_rescues(project, 3)
+    assert len(revision.prune_rescues(project, keep=0)) == 3
+    assert revision.rescues(project) == []
+
+
+def test_a_negative_keep_does_not_delete_the_newest(project):
+    """Slicing with a negative limit would take from the wrong end and
+    delete exactly the copies worth having."""
+    made = _seed_rescues(project, 3)
+    assert revision.prune_rescues(project, keep=-2) == made
+    assert revision.rescues(project) == []
+
+
+def test_promote_prunes_to_the_configured_depth(project):
+    _seed_rescues(project, 6)
+    write(project.batch, make_parts(para(run("the batch"))))
+    report = revision.promote(project)
+    # 6 seeded + this promote's own = 7, thinned to rescue_keep
+    assert len(revision.rescues(project)) == project.rescue_keep
+    assert report.pruned
+    assert report.rescue.exists(), "the promote pruned its own rescue"
+
+
+def test_rescue_keep_is_configurable(project):
+    project.config.write_text(
+        project.config.read_text(encoding="utf-8").replace(
+            "rescue_keep = 5", "rescue_keep = 2"), encoding="utf-8")
+    reloaded = revision.load_paper(project.root)
+    assert reloaded.rescue_keep == 2
+    _seed_rescues(reloaded, 4)
+    revision.prune_rescues(reloaded)
+    assert len(revision.rescues(reloaded)) == 2
+
+
+def test_rescues_on_a_paper_that_has_never_promoted(project):
+    assert revision.rescues(project) == []
+    assert revision.prune_rescues(project) == []
 
 
 def test_promote_needs_its_inputs(project):

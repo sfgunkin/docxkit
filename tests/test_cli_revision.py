@@ -499,8 +499,11 @@ def test_promote_lands_and_leaves_a_rescue(monkeypatch, project, capsys):
     assert project.working.read_bytes() == project.batch.read_bytes()
     assert "rescue copy" in out
     assert "never accepts on their behalf" in out
-    rescues = list(project.working.parent.glob("*rescue*"))
-    assert rescues and rescues[0].read_bytes() == original
+    # in build/rescue/, NOT beside the manuscript: one file to open is
+    # the whole point of this layout
+    assert not list(project.working.parent.glob("*rescue*"))
+    kept = list(project.rescue_dir.glob("*rescue*"))
+    assert kept and kept[0].read_bytes() == original
 
 
 def test_promote_refuses_a_stale_batch_with_exit_4(monkeypatch, project):
@@ -534,3 +537,67 @@ def test_promote_takes_explicit_paths(monkeypatch, project, tmp_path):
                       "--paper", str(project.root))
     assert code == 0
     assert project.working.read_bytes() == Path(batch).read_bytes()
+
+
+# -------------------------------------------------------------- rescues
+
+def _seed(project, n: int):
+    from datetime import datetime
+
+    from docxkit import revision
+    project.rescue_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        p = revision.rescue_path(project, datetime(2026, 8, 7, 10, 0, i))
+        p.write_bytes(f"rescue {i}".encode())
+
+
+def test_rescues_lists_what_promote_left(monkeypatch, project, capsys):
+    _seed(project, 3)
+    code, _ = run_cli(monkeypatch, "revision", "rescues",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.count("working_rescue_") == 3
+    assert "keeping 5" in out
+
+
+def test_rescues_on_a_paper_that_never_promoted(monkeypatch, project,
+                                                capsys):
+    code, _ = run_cli(monkeypatch, "revision", "rescues",
+                      "--paper", str(project.root))
+    assert code == 0
+    assert "no rescue copies" in capsys.readouterr().out
+
+
+def test_rescues_prune_to_a_depth(monkeypatch, project, capsys):
+    from docxkit import revision
+    _seed(project, 6)
+    code, _ = run_cli(monkeypatch, "revision", "rescues", "--prune", "2",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "pruned 4, keeping 2" in out
+    assert len(revision.rescues(project)) == 2
+
+
+def test_rescues_bare_prune_removes_all(monkeypatch, project, capsys):
+    from docxkit import revision
+    _seed(project, 3)
+    code, _ = run_cli(monkeypatch, "revision", "rescues", "--prune",
+                      "--paper", str(project.root))
+    assert code == 0
+    assert "keeping 0" in capsys.readouterr().out
+    assert revision.rescues(project) == []
+
+
+def test_promote_reports_what_it_pruned(monkeypatch, project, capsys):
+    _seed(project, 6)
+    write(project.batch, make_parts(para(run("the batch"))))
+    code, _ = run_cli(monkeypatch, "revision", "promote",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "pruned" in out and "older rescue" in out
+    # reported relative to the project, not as an absolute path
+    assert r"build\rescue" in out or "build/rescue" in out
+    assert str(project.root) not in out

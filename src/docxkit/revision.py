@@ -56,6 +56,7 @@ import shutil
 import tomllib
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +87,9 @@ __all__ = [
     "init",
     "load_paper",
     "promote",
+    "prune_rescues",
+    "rescue_path",
+    "rescues",
     "state",
 ]
 
@@ -107,6 +111,21 @@ SAVE_NOISE = ("docProps/app.xml", "docProps/core.xml", "word/settings.xml")
 _CONFIG = "paper.toml"
 _DIR = "revision"
 
+#: How many rescue copies survive a promote, newest first. Five covers
+#: "undo the last few promotes", which is all a rescue is for: anything
+#: older is better served by the safekit vault, the attic and git, none
+#: of which sit in the author's working folder.
+RESCUE_KEEP = 5
+
+#: Rescue copies are named by TIME, not by a counter, and that is not a
+#: cosmetic choice. The counter form takes the first FREE number, so the
+#: moment pruning removes 1 to 3 the next promote writes a *new* file
+#: called ``_rescue1``, older than the ``_rescue5`` beside it. Numbering and
+#: pruning cannot both be right. A timestamp sorts correctly no matter
+#: what has been deleted.
+_RESCUE_STAMP = "%Y%m%d-%H%M%S"
+_RESCUE_GLOB = "*_rescue_*"
+
 
 # --------------------------------------------------------------- config
 
@@ -127,11 +146,28 @@ class Paper:
     """The paper's own verification commands. Recorded, never run — see
     :func:`validate`."""
     attic: Path | None
+    rescue_keep: int = RESCUE_KEEP
+    """How many rescue copies to keep. See :func:`prune_rescues`."""
 
     @property
     def batch(self) -> Path:
         """Where a batch is staged before it is promoted."""
         return self.build_dir / "batch.docx"
+
+    @property
+    def rescue_dir(self) -> Path:
+        """Where `promote` puts the file it is about to overwrite.
+
+        Its OWN folder under ``build/``, for two reasons. It keeps the
+        undo copies out of the author's line of sight — the whole point
+        of this layout is that there is one file to open, and five
+        ``working_rescueN.docx`` beside the manuscript is exactly the
+        ambiguity it removed. And it means :func:`prune_rescues` deletes
+        inside a folder that holds nothing else, so no bug in it can
+        reach ``prev.docx``, whose loss would silently break every
+        reject-all check that follows.
+        """
+        return self.build_dir / "rescue"
 
 
 def find_config(start: str | Path | None = None) -> Path:
@@ -185,6 +221,7 @@ def load_paper(start: str | Path | None = None) -> Paper:
         language=paper.get("language", "en"),
         gates=tuple(verify.get("commands", ())),
         attic=Path(attic) if attic else None,
+        rescue_keep=int(batch_cfg.get("rescue_keep", RESCUE_KEEP)),
     )
 
 
@@ -569,6 +606,56 @@ class PromoteReport:
     promoted: Path
     onto: Path
     rescue: Path
+    pruned: tuple[Path, ...] = ()
+
+
+def rescue_path(paper: Paper, when: datetime | None = None) -> Path:
+    """The next rescue file: ``build/rescue/working_rescue_<stamp>.docx``.
+
+    Two promotes inside one second get ``…-2``, ``…-3``. That is not
+    hypothetical — a real project has two rescue copies written in the
+    same minute, byte-identical, from a promote that ran twice over
+    unchanged content.
+    """
+    stamp = (when or datetime.now()).strftime(_RESCUE_STAMP)
+    stem, suffix = paper.working.stem, paper.working.suffix
+    base = paper.rescue_dir / f"{stem}_rescue_{stamp}{suffix}"
+    if not base.exists():
+        return base
+    n = 2
+    while True:
+        cand = paper.rescue_dir / f"{stem}_rescue_{stamp}-{n}{suffix}"
+        if not cand.exists():
+            return cand
+        n += 1
+
+
+def rescues(paper: Paper) -> list[Path]:
+    """Every rescue copy, oldest first."""
+    if not paper.rescue_dir.is_dir():
+        return []
+    return sorted(paper.rescue_dir.glob(_RESCUE_GLOB + paper.working.suffix))
+
+
+def prune_rescues(paper: Paper, keep: int | None = None) -> list[Path]:
+    """Delete all but the newest `keep` rescue copies; return what went.
+
+    A rescue exists to undo the promote that just happened, or one of
+    the few before it. Beyond that the safekit vault, the attic and git
+    all hold the same history and hold it out of the working tree, so
+    keeping more here buys nothing and costs the clarity this layout was
+    built for.
+
+    `keep=0` is honoured — someone may want none — but a NEGATIVE keep
+    is treated as zero rather than slicing from the wrong end, which
+    would delete the newest instead of the oldest.
+    """
+    limit = paper.rescue_keep if keep is None else keep
+    limit = max(0, limit)
+    doomed = rescues(paper)[:-limit] if limit else rescues(paper)
+    for path in doomed:
+        path.unlink()
+    return doomed
 
 
 def promote(paper: Paper, batch: str | Path | None = None,
@@ -586,10 +673,13 @@ def promote(paper: Paper, batch: str | Path | None = None,
       batch was built on, the author has edited it since, and promoting
       would destroy those edits.
 
-    A numbered rescue copy of the live file is taken first. Numbered,
-    not a fixed name: the earlier fixed-name version overwrote its own
-    rescue on every promote, so only the most recent live state was ever
-    recoverable.
+    A rescue copy of the live file is taken first, into
+    ``build/rescue/`` and stamped with the time. Not a fixed name: an
+    earlier version overwrote its own rescue on every promote, so only
+    the most recent live state was ever recoverable. Not beside the
+    manuscript either, and not numbered — see :attr:`Paper.rescue_dir`
+    and :data:`_RESCUE_STAMP`. Older copies are pruned to
+    :attr:`Paper.rescue_keep`.
     """
     batch = Path(batch) if batch else paper.batch
     base = Path(base) if base else paper.prev
@@ -613,11 +703,22 @@ def promote(paper: Paper, batch: str | Path | None = None,
             f"from the live file, rebuild the batch on top of it, "
             f"re-validate, then promote.")
 
-    rescue = package.backup(live, tag="rescue")
+    paper.rescue_dir.mkdir(parents=True, exist_ok=True)
+    rescue = rescue_path(paper)
+    shutil.copy2(live, rescue)
+    if _sha(rescue) != _sha(live):
+        raise ProtocolError(
+            f"the rescue copy did not land: {rescue} — refusing to "
+            f"overwrite {live.name} with nothing to undo it")
+
     shutil.copyfile(batch, live)
     if _sha(live) != _sha(batch):
         raise ProtocolError(f"the copy did not land: {live}")
-    return PromoteReport(promoted=batch, onto=live, rescue=rescue)
+
+    # only after the promote has landed: a prune that ran first could
+    # delete the one copy this promote was about to need
+    return PromoteReport(promoted=batch, onto=live, rescue=rescue,
+                         pruned=tuple(prune_rescues(paper)))
 
 
 def _sha(path: str | Path) -> str:
@@ -711,6 +812,10 @@ prev     = "revision/build/prev.docx"   # last accepted truth (compare baseline)
 # Word's Compare cannot serialize tracked math, so a batch touching
 # equations must be hand-authored instead of built through it.
 author = "{author}"
+# Rescue copies kept in revision/build/rescue/, newest first. A rescue
+# undoes the promote that just happened; older history is in the vault,
+# the attic and git, none of which sit in the working folder.
+rescue_keep = {rescue_keep}
 
 [verify]
 # The paper's OWN gates. Recorded here so there is one list; run them
@@ -765,6 +870,7 @@ def init(root: str | Path, source: str | Path, *, name: str = "",
     config.write_text(_TOML_TEMPLATE.format(
         name=(name or root.name).replace('"', "'"),
         language=language, author=author, gates="",
+        rescue_keep=RESCUE_KEEP,
         attic=str(attic) if attic else f"D:\\PaperAttic\\{root.name}",
     ), encoding="utf-8")
 
@@ -779,6 +885,4 @@ def init(root: str | Path, source: str | Path, *, name: str = "",
 
 
 def _today() -> str:
-    from datetime import date
-
     return date.today().isoformat()
