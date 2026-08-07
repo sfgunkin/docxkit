@@ -25,7 +25,7 @@ from conftest import (
     write,
 )
 
-from docxkit.compare import compare, render
+from docxkit.compare import GATED, Report, compare, render
 
 
 def docs(tmp_path, body_a: str, body_b: str, **kw):
@@ -743,6 +743,393 @@ def test_the_facade_still_exports_what_callers_import():
                  "Para", "Part", "GATED", "VOLATILE_FIELDS",
                  "mask_volatile_fields"):
         assert hasattr(facade, name), f"compare.{name} is gone"
+
+
+def test_a_link_only_in_the_user_copy_is_reported_for_review(tmp_path):
+    """The built-only side of this layer had a test; the user-only side
+    had none, so half of it could stop working unnoticed.
+
+    A link present only in the author's copy is either a build
+    regression or prose the author bled into a link. Neither shows in
+    TEXT — the words still match exactly — which is the whole reason
+    this layer sits alongside it.
+    """
+    linked = para(run("As ")
+                  + '<w:hyperlink w:anchor="ref_Smith2020"><w:r>'
+                    "<w:t>Smith (2020)</w:t></w:r></w:hyperlink>"
+                  + run(" argues."))
+    report = compare(*docs(tmp_path, para(run("As Smith (2020) argues.")),
+                           linked))
+    assert report["text"] == [], report["text"]
+    assert [(h["side"], h["label"]) for h in report["hyperlinks"]] == [
+        ("user-only", "Smith (2020)")]
+
+
+def test_both_command_lines_are_one_comparison(tmp_path, monkeypatch, capsys):
+    """`docxkit compare` and `python -m docxkit.compare` are two front
+    doors to one comparison, and they have drifted before.
+
+    The last-resort JSON encoder was added to the CLI's path and not to
+    the module's own — so the entry point living in the very file the
+    fix was written for could still finish a comparison and lose it at
+    the final step. Nothing failed when they disagreed. This asserts
+    they agree on both things a caller can observe: the exit code, and
+    the bytes written to --json.
+    """
+    from docxkit import cli
+    from docxkit import compare as facade
+
+    a, b = docs(tmp_path, BASE, BASE.replace("0.35", "0.37"))
+    seen = {}
+    for name, entry, argv0 in (("cli", cli.main, ["docxkit", "compare"]),
+                               ("module", facade.main, ["docxkit-compare"])):
+        dest = tmp_path / f"{name}.json"
+        monkeypatch.setattr("sys.argv", [*argv0, a, b, "--expect-clean",
+                                         "--json", str(dest)])
+        with pytest.raises(SystemExit) as exc:
+            entry()
+        capsys.readouterr()
+        code = exc.value.code
+        seen[name] = (0 if code is None else code,
+                      dest.read_text(encoding="utf-8"))
+
+    assert seen["cli"][0] == seen["module"][0] == 1, seen
+    assert seen["cli"][1] == seen["module"][1], "the two reports differ"
+    assert '"text"' in seen["cli"][1] and "0.37" in seen["cli"][1]
+
+
+@pytest.mark.parametrize("door", ["cli", "module"])
+def test_neither_door_loses_a_report_json_cannot_encode(
+        tmp_path, monkeypatch, capsys, door):
+    """The exact bug the facade's own comment records, on both doors.
+
+    `_json_default` exists because the worst moment to fail is the last
+    one: the comparison already done, the report never written. Today no
+    layer emits a set — the encoder is a seatbelt for the one that will
+    — so nothing in the ordinary fixtures exercises it, and the door
+    that lacked it looked exactly like the door that had it.
+    """
+    from docxkit import cli
+    from docxkit import compare as facade
+
+    a, b = docs(tmp_path, BASE, BASE)
+
+    def with_a_set(path_a, path_b):
+        rep = facade.compare_docs(facade.load(path_a), facade.load(path_b))
+        rep["structure"].append({"type": "PART REMOVED", "part": "body",
+                                 "text": "a part", "names": {"b1", "b2"}})
+        return rep
+
+    monkeypatch.setattr(facade, "compare", with_a_set)
+    entry = cli.main if door == "cli" else facade.main
+    argv0 = ["docxkit", "compare"] if door == "cli" else ["docxkit-compare"]
+    dest = tmp_path / "report.json"
+    monkeypatch.setattr("sys.argv", [*argv0, a, b, "--json", str(dest)])
+
+    with pytest.raises(SystemExit):
+        entry()
+    capsys.readouterr()
+
+    import json
+    assert dest.exists(), f"{door}: the finished comparison never reached disk"
+    assert json.loads(dest.read_text(encoding="utf-8")
+                      )["structure"][0]["names"] == ["b1", "b2"]
+
+
+# ------------------------------------------------------------ the report
+# A cosmic-ray pass over _compare_render.py: 204 mutants, 62 killed, 82
+# survived. They were not scattered — nearly all of them said one thing.
+# render() had its RETURN value tested and its OUTPUT tested nowhere, so
+# a mutation that stopped a layer printing its entries, or miscounted the
+# summary, or printed "(none)" over a list of real differences, changed
+# nothing any test looked at.
+#
+# That inverts the module's whole reason for existing. Its docstring is
+# "nothing here truncates a list or summarises a count in place of the
+# entries" — a report a reader has to guess at is the failure this tool
+# is FOR. The exit code was pinned; the report a human acts on was not.
+#
+# The worst cluster was the arithmetic behind the gate (:145-146): eleven
+# mutants of `real = structure + text + formula + formula_format + format`
+# survived, because every existing fixture fills ONE bucket, and three of
+# the five buckets had no test that reached the exit code at all. A
+# dropped term means a real difference silently stops failing
+# --expect-clean, which every paper round reads as "nothing left to
+# integrate".
+
+def _empty_report() -> Report:
+    return {k: [] for k in ("structure", "text", "glyph", "formula",
+                            "formula_glyph", "formula_format", "format",
+                            "hyperlinks", "integrity", "stripped_fields",
+                            "comments")}
+
+
+def _entry(bucket: str) -> object:
+    """One entry, shaped as the producers really build them.
+
+    Keys come from the code that emits them, not from what the renderer
+    happens to read: _compare_diff structure :371/:379/:384, text :348,
+    format :318, formula :139, stripped_fields :353, comments :442, and
+    compare.py :134 for hyperlinks. A fixture inventing its own shapes
+    would test the renderer against fiction.
+    """
+    mark = f"MARK-{bucket}"
+    return {
+        "structure": {"type": "DELETE", "part": "footnotes", "text": mark,
+                      "lost_fields": {"anchors": [], "cites": [],
+                                      "footnotes": 0}},
+        "text": {"context": mark, "at": "table 3 r2c1",
+                 "word_diff": [f"- {mark}-old", f"+ {mark}-new"]},
+        "formula": {"change": "tokens", "from": f"{mark}-from",
+                    "to": f"{mark}-to"},
+        "formula_format": {"change": "formatting", "from": f"{mark}-from",
+                           "to": f"{mark}-to"},
+        # `from` carries a MARK rather than a plain "italic": the FORMAT
+        # heading is "(italic/bold/super/sub/strike, ...)", so asserting
+        # "italic" in the output passed on the HEADING and said nothing
+        # about the entry. A mutation blanking this side survived under
+        # exactly that vacuous assertion.
+        "format": {"text": mark, "from": [f"{mark}-from"], "to": []},
+        "glyph": {"from": f"{mark}-from", "to": f"{mark}-to"},
+        # from/to are TUPLES here and the renderer prints element [1] —
+        # element 0 is the equation id, so an off-by-one prints the
+        # wrong half of the pair.
+        "formula_glyph": {"change": "glyph", "from": ("eq1", f"{mark}-from"),
+                          "to": ("eq1", f"{mark}-to")},
+        "hyperlinks": {"side": "user-only", "label": mark, "n": 1},
+        "comments": {"side": "user-only", "text": mark, "n": 1},
+        "integrity": mark,                       # a plain string, not a dict
+        "stripped_fields": {"context": mark, "lost": [f"{mark}-lost"]},
+    }[bucket]
+
+
+def _out(report: Report, expect_clean: bool = False) -> tuple[int, str]:
+    """The exit code AND the page — the half never asserted."""
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = render(report, expect_clean)
+    return code, buf.getvalue()
+
+
+def _filled(**sizes: int) -> Report:
+    report = _empty_report()
+    for bucket, n in sizes.items():
+        report[bucket] = [_entry(bucket)] * n
+    return report
+
+
+def _section(out: str, heading: str) -> str:
+    """The body under ONE heading.
+
+    The rules `_head` draws are the only reliable boundary, and the last
+    section runs straight into the summary — so a naive "everything
+    after the heading" slice reads the NEXT layer's "(none)" as this
+    one's, which is exactly the false pass this helper exists to stop.
+    """
+    # Split on the rule as a SHAPE, not at its current width: re-flowing
+    # the report to 80 columns is a cosmetic change and must not fail
+    # every test here with "no section headed ...".
+    chunks = re.split(r"^={5,}$", out, flags=re.MULTILINE)
+    for i in range(1, len(chunks) - 1, 2):
+        if chunks[i].strip().startswith(heading):
+            return re.split(r"^-{5,}$", chunks[i + 1], flags=re.MULTILINE)[0]
+    raise AssertionError(f"no section headed {heading!r} in:\n{out}")
+
+
+@pytest.mark.parametrize("bucket", list(GATED))
+def test_every_gated_layer_fails_the_gate_on_its_own(bucket):
+    """--expect-clean must fail on ANY gated layer.
+
+    Only text, structure and formula_format had a test that reached the
+    exit code; formula and format had fixtures that filled the bucket
+    and stopped there. Dropping either term left a real difference no
+    longer failing the gate, and nothing went red.
+    """
+    assert _out(_empty_report(), expect_clean=True)[0] == 0, "empty is clean"
+    code, _ = _out(_filled(**{bucket: 1}), expect_clean=True)
+    assert code == 1, f"a difference in {bucket} alone did not fail the gate"
+
+
+def test_an_integrity_flag_alone_fails_the_gate():
+    """The sixth term, and the only one in the OR rather than the sum: a
+    built doc whose bookmarks do not balance is not shippable even when
+    every visible layer matches."""
+    assert _out(_filled(integrity=1), expect_clean=True)[0] == 1
+
+
+@pytest.mark.parametrize("sizes", [
+    (1, 1, 1, 1, 1), (1, 3, 1, 1, 2), (3, 1, 4, 1, 1),
+    (0, 2, 0, 1, 0), (2, 0, 1, 0, 3), (0, 0, 0, 0, 1),
+])
+def test_the_headline_total_is_every_gated_layer_summed(sizes):
+    """The number a reader acts on is the sum of all five, not of the
+    ones a fixture happened to fill. Asserted as the relationship over
+    several shapes rather than one magic constant — a single shape lets
+    an arithmetic slip land on the right answer by luck."""
+    # strict=True is load-bearing: a sixth gated layer must fail this
+    # test rather than silently go uncounted here.
+    report = _filled(**dict(zip(GATED, sizes, strict=True)))
+    _, out = _out(report)
+    assert f"REAL change locations (excl. glyph): {sum(sizes)}" in out, out
+
+
+@pytest.mark.parametrize("glyph,formula_glyph", [
+    (1, 1), (3, 1), (1, 3), (2, 2), (0, 2), (2, 0)])
+def test_the_glyph_total_is_both_glyph_layers_summed(glyph, formula_glyph):
+    _, out = _out(_filled(glyph=glyph, formula_glyph=formula_glyph))
+    assert f"glyph-only: {glyph + formula_glyph}" in out, out
+
+
+def test_the_summary_counts_each_review_layer_separately():
+    """Four counts share one line, and a reader tells "nothing to do"
+    from "eyeball these" by which number moved."""
+    _, out = _out(_filled(integrity=2, stripped_fields=3, hyperlinks=1,
+                          comments=4))
+    for label, n in (("built-doc integrity flags", 2),
+                     ("field-restores (info)", 3),
+                     ("hyperlink diffs (review)", 1),
+                     ("comment diffs (review)", 4)):
+        assert f"{label}: {n}" in out, f"{label} miscounted:\n{out}"
+
+
+def _marks(value: object) -> set[str]:
+    """Every MARK- token an entry carries, however deeply nested.
+
+    Asserting on the bucket's own name was not enough: an entry whose
+    two halves both said "MARK-formula_glyph" still printed one of them
+    when a mutation read the wrong tuple element. Collecting the tokens
+    means each printed FIELD is pinned, not each layer.
+    """
+    # Found ANYWHERE in the string, not just at its start: a word_diff
+    # line really reads "- 0.35", so a start-anchored match collected
+    # nothing from the one layer whose content IS those lines, and the
+    # mutation that stopped printing them stayed green.
+    if isinstance(value, str):
+        return set(re.findall(r"MARK-[\w-]+", value))
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, (list, tuple)):
+        return {m for v in value for m in _marks(v)}
+    return set()
+
+
+@pytest.mark.parametrize("bucket", [
+    "structure", "text", "glyph", "formula", "formula_glyph",
+    "formula_format", "format", "hyperlinks", "integrity",
+    "stripped_fields", "comments"])
+def test_every_layer_prints_every_part_of_its_entry(bucket):
+    """Each layer must SAY what it found, in full. Eleven mutants
+    emptied one loop apiece and survived: the summary count was still
+    right, so the report claimed differences it then declined to name.
+
+    Every field is asserted, not just one per layer — the word-level
+    diff under a TEXT entry and the second half of a glyph pair are
+    the CONTENT of those layers, and both had mutations that dropped
+    them while the entry's other half still printed.
+    """
+    entry = _entry(bucket)
+    expected = _marks(entry)
+    assert expected, f"{bucket}: the fixture carries no marks to look for"
+    _, out = _out(_filled(**{bucket: 1}))
+    missing = sorted(m for m in expected if m not in out)
+    assert not missing, f"{bucket} never printed {missing}:\n{out}"
+
+
+def test_a_format_change_prints_both_sides_and_names_the_empty_one():
+    """'was -> ∅' is the whole content of a FORMAT entry; either side
+    printing the other's value makes it unreadable.
+
+    Asserted inside the SECTION, because the heading names four run
+    properties and matching against the whole page reads the heading
+    instead of the entry.
+    """
+    body = _section(_out(_filled(format=1))[1], "FORMAT")
+    assert "MARK-format-from" in body, body
+    assert "∅" in body, body
+
+
+def test_the_integrity_line_claims_clean_only_when_it_is():
+    """INTEGRITY is the one section whose empty state is a CLAIM rather
+    than a blank — "(clean: bookmarks balanced, no dangling anchors)" is
+    what a reader takes as permission to ship, so printing it over a
+    list of flags is the worst sentence in the report."""
+    head = "BUILT-DOC INTEGRITY"
+    assert "(clean:" in _section(_out(_empty_report())[1], head)
+    assert "(clean:" not in _section(_out(_filled(integrity=1))[1], head)
+
+
+@pytest.mark.parametrize("bucket,heading", [
+    ("structure", "STRUCTURE"), ("text", "TEXT"), ("formula", "FORMULA"),
+    ("formula_format", "FORMULA TYPOGRAPHY"), ("format", "FORMAT"),
+    ("hyperlinks", "HYPERLINK"), ("comments", "COMMENTS"),
+    ("stripped_fields", "FIELD DIFFERENCES")])
+def test_a_layer_with_nothing_in_it_says_so(bucket, heading):
+    """"(none)" under a heading is how a reader tells "clean" from
+    "this layer did not run". Printing it over a list of real
+    differences is the same bug in the other direction, so both
+    directions are asserted."""
+    empty = _section(_out(_empty_report())[1], heading)
+    assert "(none)" in empty, f"{heading} did not say none:\n{empty}"
+
+    filled = _section(_out(_filled(**{bucket: 1}))[1], heading)
+    assert "(none)" not in filled, f"{heading} claimed none:\n{filled}"
+
+
+def test_a_clean_glyph_layer_says_none_only_when_both_halves_are_empty():
+    """GLYPH is the one section fed by two buckets, so its "(none)"
+    hangs on an `and` that a single-bucket fixture cannot exercise."""
+    for filled in ({"glyph": 1}, {"formula_glyph": 1},
+                   {"glyph": 1, "formula_glyph": 1}):
+        section = _section(_out(_filled(**filled))[1], "GLYPH")
+        assert "(none)" not in section, f"{filled}:\n{section}"
+    assert "(none)" in _section(_out(_empty_report())[1], "GLYPH")
+
+
+@pytest.mark.parametrize("bucket", ["hyperlinks", "comments"])
+@pytest.mark.parametrize("n,shown", [(1, False), (2, True), (5, True)])
+def test_a_label_seen_more_than_once_prints_its_count(bucket, n, shown):
+    """One occurrence prints bare; several print ' xN'. The threshold is
+    the whole point — a citation link that went from one occurrence to
+    four is a different report than one that moved."""
+    report = _filled(**{bucket: 1})
+    report[bucket][0] = {**report[bucket][0], "n": n}
+    _, out = _out(report)
+    assert (f" x{n}" in out) is shown, f"n={n}:\n{out}"
+
+
+def test_the_expect_clean_verdict_is_printed_only_when_asked():
+    """A plain run reports; --expect-clean also renders a verdict. The
+    verdict appearing on a run that never asked for it tells a reader
+    the build was gated when it was not."""
+    clean = _empty_report()
+    assert "EXPECT-CLEAN" not in _out(clean, expect_clean=False)[1]
+    assert "EXPECT-CLEAN OK" in _out(clean, expect_clean=True)[1]
+    assert "EXPECT-CLEAN FAILED" in _out(_filled(text=1), expect_clean=True)[1]
+
+
+@pytest.mark.parametrize("lost", [
+    {"anchors": ["ref_Smith2020"], "cites": [], "footnotes": 0},
+    {"anchors": [], "cites": ["cite_Smith2020"], "footnotes": 0},
+])
+def test_a_deleted_paragraph_names_the_fields_it_lost(lost):
+    """Either kind alone must raise the annotation. It is an `or`, and
+    a fixture that sets both cannot tell a dead branch from a live one —
+    which is how a mutation that read only one side survived."""
+    report = _filled(structure=1)
+    report["structure"][0] = {**report["structure"][0], "lost_fields": lost}
+    _, out = _out(report)
+    assert "LOST FIELDS" in out, out
+
+
+def test_a_moved_paragraph_prints_its_ratio_and_a_deleted_one_does_not():
+    """The move ratio is what says whether a MOVE is the same paragraph
+    or two that merely rhyme."""
+    report = _filled(structure=1)
+    report["structure"][0] = {"type": "MOVE", "ratio": 0.93, "text": "moved"}
+    assert "move ratio 0.93" in _out(report)[1]
+    assert "move ratio" not in _out(_filled(structure=1))[1]
 
 
 def test_word_diff_pinpoints_a_single_edit_in_a_repetitive_paragraph():
