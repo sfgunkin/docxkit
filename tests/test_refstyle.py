@@ -1,10 +1,12 @@
 """Reference-format audit: the house author-date style, checked."""
 from __future__ import annotations
 
+import pytest
 from conftest import NS, make_parts, para, run
 
 from docxkit.refstyle import (
     CHICAGO,
+    HOUSE,
     audit,
     check_entry,
     check_prose,
@@ -29,6 +31,60 @@ CLEAN_ARTICLE = ('Acemoglu, D., and P. Restrepo. (2020). "Robots and Jobs: '
 
 def test_a_house_style_entry_is_clean():
     assert check_entry(CLEAN_ARTICLE) == []
+
+
+# The house style is written out for a human in the `reference-format`
+# skill (~/.claude/skills/reference-format/SKILL.md). These are its own
+# worked examples, one per entry kind. A prose spec and a preset drift
+# the moment nobody checks them against each other, so HOUSE has to call
+# every one of them clean — and if a rule here ever changes, the skill is
+# the other half of the edit.
+SKILL_EXAMPLES = [
+    # journal article, two authors
+    'Acemoglu, D., and P. Restrepo. (2020). "Robots and Jobs: Evidence '
+    'from US Labor Markets." Journal of Political Economy, 128(6): '
+    "2188–2244.",
+    # journal article, three authors — the serial comma before "and"
+    'Chetty, R., Friedman, J., and E. Saez. (2013). "Using Differences in '
+    "Knowledge across Neighborhoods to Uncover the Impacts of the EITC on "
+    'Earnings." American Economic Review, 103(7): 2683–2721.',
+    # book
+    "Angrist, J., and J. Pischke. (2009). Mostly Harmless Econometrics: "
+    "An Empiricist's Companion. Princeton, NJ: Princeton University Press.",
+    # chapter in an edited volume
+    'Card, D. (1999). "The Causal Effect of Education on Earnings." In '
+    "Handbook of Labor Economics, Vol. 3A, edited by O. Ashenfelter and "
+    "D. Card, 1801–1863. Amsterdam: Elsevier.",
+    # working paper
+    'Autor, D., Dorn, D., and G. Hanson. (2021). "On the Persistence of '
+    'the China Shock." NBER Working Paper No. 29401.',
+    # institutional report — no personal-name rules apply
+    "World Bank. (2020). World Development Report 2020: Trading for "
+    "Development in the Age of Global Value Chains. Washington, DC: "
+    "World Bank.",
+    # online resource, with a URL whose hyphens are not page ranges
+    'Ritchie, H. (2023). "Why Do Women Live Longer Than Men?" Published '
+    "online at OurWorldinData.org. Retrieved from: "
+    "https://ourworldindata.org/why-do-women-live-longer-than-men.",
+]
+
+SKILL_CITATIONS = [
+    "Smith (2020) shows this, and so does (Smith 2020).",
+    "Smith and Jones (2020) agree with (Smith and Jones 2020).",
+    "Smith et al. (2020) and (Smith et al. 2020) concur.",
+    "Several works agree (Smith 2019, 2020; Jones 2021).",
+    "The estimate is precise (Smith 2020, p. 45) or (Smith 2020, pp. 45–48).",
+]
+
+
+@pytest.mark.parametrize("entry", SKILL_EXAMPLES)
+def test_every_documented_entry_kind_is_clean_under_house(entry):
+    assert check_entry(entry, HOUSE) == []
+
+
+@pytest.mark.parametrize("text", SKILL_CITATIONS)
+def test_every_documented_citation_form_is_clean_under_house(text):
+    assert check_prose(text, HOUSE) == []
 
 
 def test_a_bare_year_flags_under_house_style():
