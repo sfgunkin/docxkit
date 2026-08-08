@@ -22,12 +22,14 @@ from typing import Any
 
 from lxml import etree
 
+from ._xml import escape
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
     "assert_unlocked",
     "backup",
     "changed_parts",
+    "core_property",
     "edit_in_place",
     "is_locked",
     "malformed_parts",
@@ -35,8 +37,73 @@ __all__ = [
     "part_fingerprint",
     "read_parts",
     "same_part",
+    "set_core_property",
     "write_docx",
 ]
+
+CORE_PART = "docProps/core.xml"
+#: The order Word itself writes ``docProps/core.xml`` in, read off real
+#: manuscripts rather than from the schema's element declarations — the
+#: two disagree, and Word's file is what every other reader has to cope
+#: with. A property inserted out of order opens fine and fails a strict
+#: validator, which is the kind of defect that surfaces at a journal.
+CORE_ORDER = ("dc:title", "dc:subject", "dc:creator", "cp:keywords",
+              "dc:description", "cp:lastModifiedBy", "cp:revision",
+              "dcterms:created", "dcterms:modified")
+_CORE_OPEN_RE = re.compile(r"(<cp:coreProperties\b[^>]*>)")
+
+
+def _core_re(tag: str) -> re.Pattern[str]:
+    return re.compile(rf"<{tag}\b[^>]*>([^<]*)</{tag}>")
+
+
+def core_property(parts: dict[str, bytes], tag: str) -> str | None:
+    """A ``docProps/core.xml`` value — ``dc:title``, ``dc:creator``, …
+
+    None when the part or the element is absent, which are different
+    from an empty string and worth telling apart: Word's Compare drops
+    the whole part, and the copy Word writes back afterwards is missing
+    individual elements.
+    """
+    blob = parts.get(CORE_PART)
+    if blob is None:
+        return None
+    m = _core_re(tag).search(blob.decode("utf-8"))
+    return m.group(1) if m else None
+
+
+def set_core_property(parts: dict[str, bytes], tag: str, value: str) -> bool:
+    """Set a core property, CREATING it if absent. True if `parts` moved.
+
+    Absent is the case that matters. A rewrite that only substitutes
+    leaves a document with no title and no author while reporting
+    success — see :func:`docxkit.authors.set_author`, which is built on
+    this. The new element lands in :data:`CORE_ORDER` position; an
+    unknown tag goes last, where it cannot displace anything Word wrote.
+    """
+    blob = parts.get(CORE_PART)
+    if blob is None:
+        return False
+    core = blob.decode("utf-8")
+    element = f"<{tag}>{escape(value)}</{tag}>"
+    if (m := _core_re(tag).search(core)) is not None:
+        if m.group(1) == escape(value):
+            return False
+        core = core[:m.start()] + element + core[m.end():]
+    else:
+        after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \
+            if tag in CORE_ORDER else ()
+        nxt = next((f"<{t}" for t in after if f"<{t}" in core), None)
+        if nxt is not None:
+            core = core.replace(nxt, element + nxt, 1)
+        elif "</cp:coreProperties>" in core:
+            core = core.replace("</cp:coreProperties>",
+                                element + "</cp:coreProperties>", 1)
+        else:
+            core = _CORE_OPEN_RE.sub(lambda mm: mm.group(1) + element,
+                                     core, count=1)
+    parts[CORE_PART] = core.encode("utf-8")
+    return True
 
 
 def is_locked(path: str | Path) -> bool:

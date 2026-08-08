@@ -238,3 +238,100 @@ def test_changed_parts_separates_real_edits_from_a_re_save():
                    "added": ["docProps/core.xml"],
                    "removed": ["word/footer1.xml"],
                    "resaved": ["word/styles.xml"]}
+
+
+# ------------------------------------------------ docProps/core.xml ---
+#
+# Word's Compare drops docProps outright and the copy Word writes back
+# afterwards is missing individual elements, so "set" here has to mean
+# "create if absent" — a rewrite that only substitutes leaves a
+# deliverable with no title and no author while reporting success.
+
+_HEAD = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/'
+         'package/2006/metadata/core-properties" xmlns:dc="http://purl.org/'
+         'dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/">')
+
+
+def core(inner: str = "") -> dict[str, bytes]:
+    return {"docProps/core.xml":
+            (_HEAD + inner + "</cp:coreProperties>").encode("utf-8")}
+
+
+def test_reading_a_property_that_is_there():
+    from docxkit.package import core_property
+    p = core("<dc:title>Loneliness Risk Index</dc:title>")
+    assert core_property(p, "dc:title") == "Loneliness Risk Index"
+
+
+def test_absent_element_and_absent_part_both_read_as_none():
+    """Different from an empty string, and worth telling apart."""
+    from docxkit.package import core_property
+    assert core_property(core("<dc:title></dc:title>"), "dc:title") == ""
+    assert core_property(core(), "dc:title") is None
+    assert core_property({}, "dc:title") is None
+
+
+def test_setting_an_existing_property_replaces_it():
+    from docxkit.package import core_property, set_core_property
+    p = core("<dc:title>Old</dc:title>")
+    assert set_core_property(p, "dc:title", "New") is True
+    assert core_property(p, "dc:title") == "New"
+
+
+def test_setting_the_same_value_changes_nothing():
+    from docxkit.package import set_core_property
+    p = core("<dc:title>Same</dc:title>")
+    before = p["docProps/core.xml"]
+    assert set_core_property(p, "dc:title", "Same") is False
+    assert p["docProps/core.xml"] == before
+
+
+def test_a_missing_property_is_created_in_words_order():
+    """CORE_ORDER is read off Word's own files: title precedes creator,
+    which precedes lastModifiedBy. Out of order opens fine and fails a
+    strict validator."""
+    from docxkit.package import set_core_property
+    p = core("<dc:creator>M</dc:creator>"
+             "<cp:lastModifiedBy>M</cp:lastModifiedBy>")
+    assert set_core_property(p, "dc:title", "Loneliness Risk Index") is True
+    text = p["docProps/core.xml"].decode("utf-8")
+    assert text.index("<dc:title>") < text.index("<dc:creator>")
+    assert text.index("<dc:creator>") < text.index("<cp:lastModifiedBy>")
+
+
+def test_a_property_with_no_later_sibling_goes_last():
+    from docxkit.package import set_core_property
+    p = core("<dc:title>T</dc:title>")
+    set_core_property(p, "dcterms:modified", "2026-08-08T00:00:00Z")
+    text = p["docProps/core.xml"].decode("utf-8")
+    assert text.index("<dc:title>") < text.index("<dcterms:modified>")
+    assert text.endswith("</cp:coreProperties>")
+
+
+def test_a_value_with_markup_characters_is_escaped():
+    """A title carrying & or < would otherwise close the element early
+    and make Word call the document unreadable."""
+    from docxkit.package import core_property, set_core_property
+    p = core()
+    set_core_property(p, "dc:title", "Aging & Loneliness <2026>")
+    text = p["docProps/core.xml"].decode("utf-8")
+    assert "&amp;" in text and "&lt;2026&gt;" in text
+    assert core_property(p, "dc:title") == ("Aging &amp; Loneliness "
+                                            "&lt;2026&gt;")
+
+
+def test_a_package_with_no_core_part_is_left_alone():
+    from docxkit.package import set_core_property
+    p: dict[str, bytes] = {}
+    assert set_core_property(p, "dc:title", "T") is False
+    assert p == {}
+
+
+def test_the_result_parses():
+    from lxml import etree
+
+    from docxkit.package import set_core_property
+    p = core("<dc:creator>M</dc:creator>")
+    set_core_property(p, "dc:title", "A & B")
+    etree.fromstring(p["docProps/core.xml"])
