@@ -91,7 +91,7 @@ class SpacingReport:
     """What :func:`table_spacing` set, and what it deliberately did not."""
 
     spaced: list[str] = field(default_factory=list)     # got `before`
-    notes: list[str] = field(default_factory=list)      # pinned to 0
+    notes: list[str] = field(default_factory=list)      # corrected to 0
     skipped: list[str] = field(default_factory=list)    # and why
 
     def format(self) -> str:
@@ -125,6 +125,12 @@ def _is_equation_carrier(tbl_xml: str) -> bool:
     return (len(cells) == 2
             and bool(re.fullmatch(r"\([\w.]+\)",
                                   visible_text(cells[-1]).strip())))
+
+
+def _declared_before(para_xml: str) -> int | None:
+    """The paragraph's OWN `w:before`, or None when it inherits one."""
+    m = re.search(r'<w:spacing\b[^>]*w:before="(\d+)"', para_xml)
+    return int(m.group(1)) if m else None
 
 
 def _set_before(para_xml: str, twentieths: int) -> tuple[str, bool]:
@@ -167,7 +173,11 @@ def table_spacing(xml: str, *, before: int = 120,
     Three things are deliberately not the paragraph that resumes:
 
     * a NOTE belongs to the table above it and is set tight against it, so
-      it is skipped and pinned to `note_before` (0) instead;
+      it is skipped, and pinned to `note_before` (0) only when it declares
+      a space of its own that disagrees — a note that INHERITS is left to
+      inherit, because Word deletes a declaration equal to the inherited
+      value the next time it saves, and a rule that cannot survive a save
+      is an audit that can never come back clean;
     * a HEADING carries its own, larger spacing from its style — giving it
       6pt would make the gap SMALLER, not larger;
     * an EQUATION CARRIER is a table only to the schema; the «where …»
@@ -200,11 +210,18 @@ def table_spacing(xml: str, *, before: int = 120,
                 pos = m.end()
                 continue
             if _is_note(text):
-                fixed, changed = _set_before(para, note_before)
-                if changed:
-                    out = out[:m.start()] + fixed + out[m.end():]
+                # Only an explicit, WRONG value is corrected. A note that
+                # declares nothing inherits, and writing an explicit 0 on
+                # top of an inherited 0 is a change Word deletes on its
+                # next save — which it did, on all eleven of DSI's notes,
+                # so the audit came back with the same eleven every run.
+                declared = _declared_before(para)
+                changed = False
+                if declared is not None and declared != note_before:
+                    para, changed = _set_before(para, note_before)
+                    out = out[:m.start()] + para + out[m.end():]
                     report.notes.append(text[:48])
-                pos = m.start() + len(fixed if changed else para)
+                pos = m.start() + len(para)
                 continue
             if _is_heading(para):
                 report.skipped.append(f"heading {text[:40]!r}: has its own")

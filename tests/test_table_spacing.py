@@ -46,9 +46,29 @@ def test_a_note_stays_tight_and_the_text_after_it_gets_the_space():
     xml = doc(table("Region") + para(run("Примечание. D — база."))
               + para(run("Ранжирование чувствительно.")))
     out, report = table_spacing(xml)
-    assert before_of(out, "Примечание") == "0"
+    assert before_of(out, "Примечание") is None       # left to inherit
     assert before_of(out, "Ранжирование") == "120"
-    assert report.notes and report.spaced == ["Ранжирование чувствительно."]
+    assert not report.notes
+    assert report.spaced == ["Ранжирование чувствительно."]
+
+
+def test_a_note_that_inherits_is_left_alone():
+    """Writing an explicit 0 over an inherited 0 is a change Word DELETES
+    on its next save — it did, on all eleven of DSI's notes, and the audit
+    then reported the same eleven every run. A rule that cannot survive a
+    save is not a rule."""
+    xml = doc(table("Region") + para(run("Примечание. D — база.")))
+    out, report = table_spacing(xml)
+    assert out == xml and not report.notes
+
+
+def test_a_note_that_declares_the_wrong_space_is_corrected():
+    p = ('<w:p><w:pPr><w:spacing w:before="120" w:after="0"/></w:pPr>'
+         f'{run("Примечание. D — база.")}</w:p>')
+    out, report = table_spacing(doc(table("Region") + p))
+    assert before_of(out, "Примечание") == "0"
+    assert report.notes == ["Примечание. D — база."]
+    assert 'w:after="0"' in out
 
 
 def test_a_second_note_line_is_also_skipped():
@@ -56,7 +76,7 @@ def test_a_second_note_line_is_also_skipped():
     xml = doc(table("Indicator") + para(run("Примечание. Ориентация."))
               + para(run("* Высокая доля занятости.")) + para(run("Prose.")))
     out, _ = table_spacing(xml)
-    assert before_of(out, "*") == "0"
+    assert before_of(out, "*") is None
     assert before_of(out, "Prose") == "120"
 
 
@@ -115,6 +135,19 @@ def test_it_is_idempotent_so_a_second_run_is_an_audit():
     twice, second = table_spacing(once)
     assert twice == once
     assert first.spaced and not second.spaced and not second.notes
+
+
+def test_the_audit_survives_a_word_save_that_drops_redundant_zeros():
+    """The round trip that broke it: Word strips `w:before="0"` when 0 is
+    what the paragraph would inherit, so a pass that writes those zeros
+    reports the same notes for ever. Simulated by deleting them."""
+    xml = doc(table("Region") + para(run("Примечание. D — база."))
+              + para(run("Ранжирование чувствительно.")))
+    once, _ = table_spacing(xml)
+    saved = re.sub(r'\s*w:before="0"', "", once)     # what Word gives back
+    again, report = table_spacing(saved)
+    assert again == saved
+    assert not report.notes and not report.spaced
 
 
 def test_the_paragraph_keeps_its_text_and_the_document_still_parses():
