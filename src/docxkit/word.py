@@ -129,12 +129,13 @@ def session(*, fast: bool = True) -> Iterator[Any]:
     Uses DispatchEx so an interactive Word the user has open is neither
     reused nor closed.
     """
-    # The `word` extra, and Windows-only: on Linux CI pywin32 cannot be
-    # installed at all, so pyright — which resolves imports from its own
-    # environment — reports both as missing. mypy has these in
-    # ignore_missing_imports; pyright takes the marker at the site.
-    import pythoncom  # pyright: ignore[reportMissingImports]
-    import win32com.client as com  # pyright: ignore[reportMissingImports]
+    # The `word` extra, Windows-only, so it is absent wherever CI runs.
+    # No pyright directive needed and none wanted: pyright BUNDLES stubs
+    # for pywin32, so the import resolves against those and it reports
+    # reportMissingModuleSource — a warning, which does not fail the run.
+    # An ignore here suppressed nothing and said otherwise.
+    import pythoncom
+    import win32com.client as com
 
     with _suppress_com("CoInitialize"):
         pythoncom.CoInitialize()

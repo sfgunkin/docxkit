@@ -109,7 +109,11 @@ def load_document(path: str | Path) -> Any:
     so for anything with tracked changes read the XML instead
     (:mod:`docxkit.tables`, :mod:`docxkit.revisions`).
     """
-    from docx import Document
+    # python-docx is not a dependency — it was dropped when word_edits
+    # retired, and this helper is the only caller left. Absent on a plain
+    # install, so pyright must be told at the site; mypy has `docx.*` in
+    # ignore_missing_imports.
+    from docx import Document  # pyright: ignore[reportMissingImports]
 
     return Document(io.BytesIO(read_bytes(path)))
 
