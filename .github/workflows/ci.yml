@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # Report every version's result: with fail-fast a 3.12 break would
+      # cancel the 3.14 job and hide whether the problem is the code or
+      # the version floor.
+      fail-fast: false
+      matrix:
+        # 3.12 is the requires-python floor, 3.14 is what the toolkit is
+        # developed and used on. Testing only the middle would leave both
+        # ends of the contract unchecked.
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        # No `word` extra: pywin32 is Windows-only, and every gate below
+        # runs without Word. The 8 tests that drive it are marked and
+        # deselected by default.
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Mypy
+        run: python -m mypy
+      - name: Pyright
+        run: python -m pyright
+      - name: Pytest
+        run: python -m pytest -q
+      - name: Coverage floors
+        run: python tools/coverage_floor.py

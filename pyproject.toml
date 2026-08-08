@@ -4,12 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docxkit"
-version = "0.1.0"
+version = "1.0.0"
 description = "Shared toolkit for working with Word .docx manuscripts: surgical XML editing, multi-layer diffing, tracked-changes deliverables, and author-edit ingestion."
+readme = "README.md"
+# PEP 639: an SPDX expression, not the {text = ...} table. setuptools has
+# deprecated the table form and warns on it from 77 onward.
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Michael Lokshin" }]
 requires-python = ">=3.12"
 dependencies = [
     "lxml>=5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/sfgunkin/docxkit"
+Repository = "https://github.com/sfgunkin/docxkit"
+Issues = "https://github.com/sfgunkin/docxkit/issues"
 
 [project.optional-dependencies]
 # Word automation: Windows only, and only needed for the COM-backed features
