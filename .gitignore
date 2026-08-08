@@ -7,3 +7,4 @@ dist/
 .ruff_cache/
 tests/corpus/*.docx
 !tests/corpus/README.md
+.coverage
