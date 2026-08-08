@@ -189,7 +189,9 @@ def _audit_findings(parts: dict[str, bytes], *,
         if not entry_years:
             return False      # no list parsed — nothing to be missing FROM
         m = _KEY_SHAPE_RE.fullmatch(name)
-        return bool(m) and m.group(2)[:4] not in entry_years
+        if m is None:
+            return False              # not key-shaped: not ours to judge
+        return m.group(2)[:4] not in entry_years
 
     issues: list[_Finding] = []
     for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
