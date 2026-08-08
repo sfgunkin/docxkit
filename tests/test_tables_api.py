@@ -224,6 +224,12 @@ def test_a_hand_built_table_is_not_anchored_to_any_source():
     carry no offsets to go stale, so they must not be refused."""
     t = Table(index=0, start=0, end=0, rows=[["a"], ["1"]])
     assert t.source is None
+    # The guard every other to_frame test in this file carries; this one
+    # was missed, and it was the single test in 1,386 that a pandas-free
+    # environment failed. It sits AFTER the source assertion so the
+    # staleness contract — the thing this test is named for — still runs
+    # where pandas is absent.
+    pytest.importorskip("pandas")
     assert to_frame(t).shape == (1, 1)
 
 

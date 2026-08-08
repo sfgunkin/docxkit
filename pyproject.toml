@@ -32,6 +32,11 @@ word = ["pywin32>=306"]
 # checkout — installed on the author's machine, invisible everywhere
 # else, and nothing told a user what to install when the ImportError hit.
 latex = ["latex2mathml>=3.75"]
+# `tables.to_frame` only. pandas is heavy and the toolkit reads tables
+# perfectly well without it, so it stays out of the core dependency the
+# same way — and, like latex2mathml, it was undeclared until a clean
+# environment asked for it.
+pandas = ["pandas>=2.0"]
 # Everything the documented gates need. hypothesis is not optional:
 # tests/test_properties.py and test_tables_api.py import it at module
 # level, so a clone without it does not lose the property suite quietly
