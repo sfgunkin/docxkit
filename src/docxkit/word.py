@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import logging
 import re
 import shutil
 import tempfile
@@ -59,6 +60,36 @@ __all__ = [
 
 PKG = "{http://schemas.microsoft.com/office/2006/xmlPackage}"
 CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+# A library gets a logger and nothing else: no handler, no level, no
+# basicConfig. Configuring logging at import time is the caller's
+# decision, and taking it here would hijack the logging of every paper
+# script that imports docxkit.
+_log = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _suppress_com(what: str) -> Iterator[None]:
+    """Swallow a COM failure the way the bare suppress did, but say so.
+
+    Every use of this is a call whose failure genuinely does not matter
+    to the caller: restoring a Word option, switching a view, closing a
+    document Word has already lost. Letting one of those abort a
+    1,400-revision build would be the worse outcome, so the control flow
+    is unchanged — this only ends the SILENCE. A machine where Word quits
+    badly, or refuses to set an option, used to look identical to one
+    where everything worked.
+
+    DEBUG, because on a healthy run these fire routinely (Word raises on
+    ScreenUpdating in some versions) and a warning nobody can act on is
+    noise. `python -m logging` config or `logging.basicConfig(
+    level=logging.DEBUG)` in a script turns them on.
+    """
+    try:
+        yield
+    except Exception as exc:
+        _log.debug("COM call failed and was skipped — %s: %s: %s",
+                   what, type(exc).__name__, exc)
 
 WD_NORMAL_VIEW = 1
 WD_PRINT_VIEW = 3
@@ -101,7 +132,7 @@ def session(*, fast: bool = True) -> Iterator[Any]:
     import pythoncom
     import win32com.client as com
 
-    with contextlib.suppress(Exception):
+    with _suppress_com("CoInitialize"):
         pythoncom.CoInitialize()
     word = com.DispatchEx("Word.Application")
     word.Visible = False
@@ -109,18 +140,18 @@ def session(*, fast: bool = True) -> Iterator[Any]:
     saved = {}
     if fast:
         for name, value in _FAST_OPTIONS.items():
-            with contextlib.suppress(Exception):
+            with _suppress_com(f"set Word option {name}"):
                 saved[name] = getattr(word.Options, name)
                 setattr(word.Options, name, value)
-        with contextlib.suppress(Exception):
+        with _suppress_com("disable ScreenUpdating"):
             word.ScreenUpdating = False
     try:
         yield word
     finally:
         for name, value in saved.items():
-            with contextlib.suppress(Exception):
+            with _suppress_com(f"restore Word option {name}"):
                 setattr(word.Options, name, value)
-        with contextlib.suppress(Exception):
+        with _suppress_com("Word.Quit"):
             word.Quit()
 
 
@@ -166,7 +197,7 @@ def open_doc(word: Any, path: str | Path, *,
         try:
             yield doc
         finally:
-            with contextlib.suppress(Exception):
+            with _suppress_com(f"close {Path(path).name}"):
                 doc.Close(SaveChanges=0)
     finally:
         if td:
@@ -198,7 +229,7 @@ def revisions(doc: Any) -> Iterator[Any]:
 
 def draft_view(doc: Any) -> None:
     """Draft view with markup hidden — balloon layout is pure cost."""
-    with contextlib.suppress(Exception):
+    with _suppress_com("switch to draft view"):
         view = doc.ActiveWindow.View
         view.Type = WD_NORMAL_VIEW
         view.ShowRevisionsAndComments = False
@@ -373,7 +404,7 @@ def ruler(word: Any, *, size_pt: float = 10.0
         # Print layout explicitly: position information describes a page,
         # and a machine whose default view is draft would answer about a
         # layout that has no pages.
-        with contextlib.suppress(Exception):
+        with _suppress_com("set print layout on the measuring document"):
             doc.ActiveWindow.View.Type = WD_PRINT_VIEW
         setup = doc.PageSetup
         setup.PageWidth = 1584          # Word's maximum, in points
@@ -413,7 +444,7 @@ def ruler(word: Any, *, size_pt: float = 10.0
 
         yield measure
     finally:
-        with contextlib.suppress(Exception):
+        with _suppress_com("close the measuring document"):
             doc.Close(SaveChanges=0)
 
 
@@ -494,7 +525,7 @@ def paginate(doc: Any) -> None:
     because these numbers are meant to describe the printed page, and
     :func:`draft_view` leaves documents in the other view.
     """
-    with contextlib.suppress(Exception):
+    with _suppress_com("set print layout before repaginating"):
         doc.ActiveWindow.View.Type = WD_PRINT_VIEW
     doc.Repaginate()
 

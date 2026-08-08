@@ -10,6 +10,7 @@ divergence from Word was entirely this default.
 from __future__ import annotations
 
 import inspect
+import logging
 
 import pytest
 
@@ -78,3 +79,50 @@ def test_writing_opens_the_file_itself(tmp_path):
     with word.open_doc(_App(), target, read_only=False):
         pass
     assert opened == [str(target)]
+
+
+# ----------------------------------------------- suppressed COM failures ---
+
+def _com_call_fails() -> None:
+    """A COM call Word refuses. Raised from a CALL rather than inline so
+    the suppression is opaque to mypy: raising in the with-body makes
+    everything after it statically unreachable, and the reachability IS
+    what these tests are about."""
+    raise RuntimeError("Call was rejected by callee")
+
+
+def test_a_failed_com_call_is_still_suppressed(caplog):
+    """The control flow does not change: a COM teardown failure must not
+    propagate, or one hostile revision aborts a 1400-revision build."""
+    with (caplog.at_level(logging.DEBUG, logger="docxkit.word"),
+          word._suppress_com("Word.Quit")):
+        _com_call_fails()
+    assert True          # reaching here IS the assertion
+
+
+def test_what_was_suppressed_says_which_call_and_why(caplog):
+    """It used to say nothing at all, so a machine where Word quits badly
+    looked exactly like one where everything worked."""
+    with (caplog.at_level(logging.DEBUG, logger="docxkit.word"),
+          word._suppress_com("restore Word option Pagination")):
+        _com_call_fails()
+    assert len(caplog.records) == 1
+    line = caplog.records[0].getMessage()
+    assert "restore Word option Pagination" in line
+    assert "RuntimeError" in line and "rejected by callee" in line
+    assert caplog.records[0].levelno == logging.DEBUG
+
+
+def test_a_call_that_works_logs_nothing(caplog):
+    with (caplog.at_level(logging.DEBUG, logger="docxkit.word"),
+          word._suppress_com("CoInitialize")):
+        pass
+    assert caplog.records == []
+
+
+def test_the_library_configures_no_logging_of_its_own():
+    """A library takes a logger and no handler: docxkit must not hijack
+    the logging of a paper script that imports it."""
+    log = logging.getLogger("docxkit.word")
+    assert log.handlers == []
+    assert log.level == logging.NOTSET

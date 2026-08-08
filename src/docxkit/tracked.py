@@ -26,7 +26,6 @@ The pipeline:
 """
 from __future__ import annotations
 
-import contextlib
 import shutil
 import tempfile
 import time
@@ -42,6 +41,11 @@ from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
 from .package import read_parts, write_docx
+
+# Bound directly, NOT reached through `_word`: tests replace that
+# module attribute with a COM fake, and a fake has no reason to
+# carry a suppression helper. The seam is for Word, not for this.
+from .word import _suppress_com
 
 __all__ = ["BuildReport", "build", "package_counts", "verify"]
 
@@ -228,9 +232,9 @@ def _comment_revision(doc: Any, rev: Any, classify: Classifier,
     notes = [] if notes is None else notes
     rng = rev.Range
     text = para = ""
-    with contextlib.suppress(Exception):
+    with _suppress_com("read a revision's own text"):
         text = rng.Text or ""
-    with contextlib.suppress(Exception):
+    with _suppress_com("read a revision's paragraph"):
         para = rng.Paragraphs(1).Range.Text or ""
     comment = classify(RevisionContext(
         text=text, para=para, window=para, table_index=None,
@@ -339,7 +343,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             # has occurred".
             _word.extract_flat_opc(cmp_, flat)
             report.mark("extracted Flat OPC")
-            with contextlib.suppress(Exception):
+            with _suppress_com("close the compare result"):
                 cmp_.Close(SaveChanges=0)
 
         n_parts = _word.flat_opc_to_docx(flat, building)
