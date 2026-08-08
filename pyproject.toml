@@ -26,6 +26,12 @@ Issues = "https://github.com/sfgunkin/docxkit/issues"
 # Word automation: Windows only, and only needed for the COM-backed features
 # (redline via CompareDocuments, PDF export, page counts).
 word = ["pywin32>=306"]
+# Building NEW math from LaTeX (`equations.latex_to_omml`). Optional for
+# the same reason as `word`: it backs one function, which imports it
+# lazily. It went undeclared entirely until CI failed on a clean
+# checkout — installed on the author's machine, invisible everywhere
+# else, and nothing told a user what to install when the ImportError hit.
+latex = ["latex2mathml>=3.75"]
 # Everything the documented gates need. hypothesis is not optional:
 # tests/test_properties.py and test_tables_api.py import it at module
 # level, so a clone without it does not lose the property suite quietly
@@ -168,7 +174,13 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 # No stubs published for any of these (lxml has lxml-stubs, installed via
 # the dev extra, so it is typed for real and not listed here).
-module = ["win32com.*", "pythoncom", "docx.*"]
+#
+# latex2mathml is here because it is ABSENT, not because it is untyped:
+# it backs one function, is imported inside it, and the tests
+# importorskip it. This list was written on a machine where it happened
+# to be installed, so mypy resolved it and nobody noticed the gap until
+# CI ran on a clean checkout and failed on all three Python versions.
+module = ["win32com.*", "pythoncom", "docx.*", "latex2mathml.*"]
 ignore_missing_imports = true
 
 [tool.pyright]

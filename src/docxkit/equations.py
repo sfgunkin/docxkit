@@ -129,7 +129,10 @@ def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
 
     LaTeX -> presentation MathML (latex2mathml) -> OMML (Word's own XSL).
     """
-    import latex2mathml.converter
+    # Optional extra, absent on a plain install: pyright resolves imports
+    # from the environment it runs in, and mypy's ignore_missing_imports
+    # does not reach it. See [project.optional-dependencies] latex.
+    import latex2mathml.converter  # pyright: ignore[reportMissingImports]
     from lxml import etree
 
     transform = etree.XSLT(etree.parse(str(find_mml2omml_xsl(xsl))))
