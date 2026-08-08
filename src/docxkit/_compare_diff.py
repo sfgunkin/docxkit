@@ -200,6 +200,10 @@ def stripped_fields(pa: Para, pb: Para) -> list[str]:
 
 
 # --------------------------------------------------------------- integrity
+_INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
+_HYPERLINK_TARGET_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
+
+
 def bookmark_names(xml: str) -> set[str]:
     return set(re.findall(r'<w:bookmarkStart\b[^>]*w:name="([^"]*)"', xml))
 
@@ -230,8 +234,19 @@ def integrity(xml: str, label: str,
     if imbalance:
         issues.append(f"{label}: bookmark id imbalance {imbalance}")
     known = set(names) | {n for _, n in bs if n}
-    anchors = set(re.findall(r'w:anchor="([^"]+)"', xml)) | \
-        set(re.findall(r'HYPERLINK[^"]*"([^"]+)"', xml))
+    # REASSEMBLE THE FIELD INSTRUCTION BEFORE READING ITS TARGET. Word splits
+    # one instruction across runs on save — `HYPERLINK` in the first,
+    # ` \l "Munda2009" \h` in the next — and a pattern run over the raw XML
+    # then walks straight through the intervening tags: the old
+    # `HYPERLINK[^"]*"([^"]+)"` returned the RSID of the following run, and
+    # every footnote whose field Word had fragmented reported
+    # a dangling anchor named `00C04908`. Join the instrText nodes per
+    # paragraph first, exactly as the citation layer does.
+    targets: set[str] = set()
+    for para_xml in P_RE.findall(xml):
+        joined = html.unescape("".join(_INSTR_RE.findall(para_xml)))
+        targets |= set(_HYPERLINK_TARGET_RE.findall(joined))
+    anchors = set(re.findall(r'w:anchor="([^"]+)"', xml)) | targets
     dangling = sorted(a for a in anchors if a not in known)
     if dangling:
         issues.append(f"{label}: dangling anchors (no bookmark) {dangling}")

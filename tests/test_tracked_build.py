@@ -289,6 +289,23 @@ def test_package_counts_reads_what_the_file_holds():
                                      "comments": 2}
 
 
+def test_package_counts_includes_the_footnotes():
+    """A batch that edits only a footnote reported «0 pending revisions» — the
+    number this workflow reads to decide a document is at truth — while the
+    footnote carried three. Word counts them, so this must too."""
+    from docxkit.tracked import package_counts
+    parts = {
+        "word/document.xml": b"<w:document><w:body/></w:document>",
+        "word/footnotes.xml": (
+            b'<w:footnotes><w:footnote w:id="7">'
+            b'<w:ins w:id="1"><w:r><w:t>added</w:t></w:r></w:ins>'
+            b'<w:del w:id="2"><w:r><w:delText>gone</w:delText></w:r></w:del>'
+            b"</w:footnote></w:footnotes>"),
+    }
+    assert package_counts(parts) == {"insertions": 1, "deletions": 1,
+                                     "comments": 0}
+
+
 def test_package_counts_treats_a_missing_comments_part_as_zero():
     from docxkit.tracked import package_counts
     parts = {"word/document.xml": _clean_document().encode("utf-8")}

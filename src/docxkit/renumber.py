@@ -33,7 +33,8 @@ from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
 
-__all__ = ["ShiftReport", "audit", "numbers_in_order", "remap", "shift"]
+__all__ = ["ShiftReport", "audit", "audit_parts", "numbers_in_order",
+           "remap", "remap_parts", "shift"]
 
 # a mention number engaged in a range or list — the continuation the
 # labelled match must not have after it
@@ -299,6 +300,73 @@ def audit(xml: str, label: str, *, prefix: str = "") -> list[str]:
     return problems
 
 
+#: every part whose text a reader sees, and therefore every part a renumber
+#: must cover. document.xml alone leaves the footnotes pointing at the old
+#: exhibit — DSI's footnote 7 went on saying «в таблице 9» after the table it
+#: names had become 11, and nothing dangled because 9 still existed elsewhere.
+TEXT_PARTS = ("word/document.xml", "word/footnotes.xml", "word/endnotes.xml")
+
+
+def remap_parts(parts: dict[str, bytes], label: str, mapping: dict[int, int],
+                *, prefix: str = "") -> ShiftReport:
+    """:func:`remap` across every text-bearing part, in place.
+
+    A mention lives wherever prose does. Captions are read from
+    ``document.xml`` — the collision check needs them — and the rewrite is
+    then applied to the footnotes and endnotes as well.
+    """
+    doc = parts["word/document.xml"].decode("utf-8")
+    total = ShiftReport()
+    for name in TEXT_PARTS:
+        if name not in parts:
+            continue
+        xml = parts[name].decode("utf-8")
+        if name == "word/document.xml":
+            xml, rep = remap(xml, label, mapping, prefix=prefix)
+        else:
+            # captions live in the body; here only mentions and names move
+            _check_permutation(mapping, doc, label, prefix)
+            xml, rep = _apply(xml, label, prefix,
+                              lambda n: mapping.get(n, n))
+        parts[name] = xml.encode("utf-8")
+        total.mentions += rep.mentions
+        total.bookmarks += rep.bookmarks
+        total.anchors += rep.anchors
+        total.fields += rep.fields
+        total.flagged += rep.flagged
+    return total
+
+
+def audit_parts(parts: dict[str, bytes], label: str, *,
+                prefix: str = "") -> list[str]:
+    """:func:`audit` with mentions read from every text-bearing part."""
+    problems = audit(parts["word/document.xml"].decode("utf-8"), label,
+                     prefix=prefix)
+    defined = set(numbers_in_order(
+        parts["word/document.xml"].decode("utf-8"), label, prefix=prefix))
+    mention = _mention_re(label, prefix)
+    for name in TEXT_PARTS[1:]:
+        if name not in parts:
+            continue
+        seen = set()
+        for p in paragraphs(parts[name].decode("utf-8")):
+            for m in mention.finditer(visible_text(p.group(0))):
+                seen.add(int(m.group(1)))
+        for n in sorted(seen - defined):
+            problems.append(
+                f"{label}: {name} mentions {n}, but no caption defines it")
+    return problems
+
+
+def _check_permutation(mapping: dict[int, int], doc: str, label: str,
+                       prefix: str) -> None:
+    if len(set(mapping.values())) != len(mapping):
+        raise AnchorError(f"remap: {mapping} sends two numbers to one")
+    nums = set(numbers_in_order(doc, label, prefix=prefix))
+    if len({mapping.get(n, n) for n in nums}) != len(nums):
+        raise AnchorError(f"remap: {sorted(nums)} under {mapping} collides")
+
+
 def remap(xml: str, label: str, mapping: dict[int, int], *,
           prefix: str = "") -> tuple[str, ShiftReport]:
     """Renumber by an arbitrary MAPPING — captions, mentions, bookmarks,
@@ -320,12 +388,5 @@ def remap(xml: str, label: str, mapping: dict[int, int], *,
     """
     if not mapping:
         raise AnchorError("remap: empty mapping")
-    if len(set(mapping.values())) != len(mapping):
-        raise AnchorError(f"remap: {mapping} sends two numbers to one")
-    nums = set(numbers_in_order(xml, label, prefix=prefix))
-    after = {mapping.get(n, n) for n in nums}
-    if len(after) != len(nums):
-        raise AnchorError(
-            f"remap: {sorted(nums)} under {mapping} collides at "
-            f"{sorted(after)}")
+    _check_permutation(mapping, xml, label, prefix)
     return _apply(xml, label, prefix, lambda n: mapping.get(n, n))

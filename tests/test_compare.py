@@ -579,6 +579,29 @@ def test_a_dangling_anchor_written_as_a_field_is_caught(tmp_path):
         report["integrity"]
 
 
+def test_a_field_instruction_split_across_runs_resolves(tmp_path):
+    """Word splits one instruction over several runs on save, and a pattern
+    run over the raw XML walks straight through the tags between them: the
+    old `HYPERLINK[^"]*"([^"]+)"` returned the RSID of the following run, so
+    every footnote whose field Word had fragmented reported a dangling anchor
+    called «00C04908». The instruction is reassembled before it is read."""
+    split_field = (
+        '<w:p><w:bookmarkStart w:id="9" w:name="Munda2009"/>'
+        + run("See ")
+        + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        + "<w:r><w:instrText>HYPERLINK</w:instrText></w:r>"
+        + '<w:r w:rsidRPr="00C04908"><w:instrText xml:space="preserve">'
+          ' \\l "Munda2009" \\h</w:instrText></w:r>'
+        + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        + run("Munda and Nardo 2009")
+        + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        + '<w:bookmarkEnd w:id="9"/></w:p>')
+    report = compare(*docs(tmp_path, split_field, split_field))
+    assert not any("00C04908" in i for i in report["integrity"]), \
+        report["integrity"]
+    assert not report["integrity"], report["integrity"]
+
+
 # ---------------------------------------------- the reading layer, mutated
 # A second cosmic-ray pass, over _compare_read.py: 122 survivors, and
 # they clustered on the part pairing, the nesting guard in the field

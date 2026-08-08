@@ -125,6 +125,35 @@ def test_remap_moves_hyperlink_field_links_too():
     assert report.fields == 1 and report.bookmarks == 1
 
 
+def test_remap_parts_renumbers_the_footnotes_too():
+    """A mention lives wherever prose does. Renumbering document.xml alone left
+    DSI's footnote 7 saying «в таблице 9» after that table had become 11 — and
+    nothing dangled, because 9 still existed elsewhere. A wrong-but-valid
+    reference is exactly what no dangling-reference check can see."""
+    from docxkit.renumber import audit_parts, remap_parts
+    body = doc(caption(1) + caption(2))
+    foot = (f"<w:footnotes {NS}><w:footnote w:id=\"7\">"
+            f"{para(run('as Table 1 shows'))}</w:footnote></w:footnotes>")
+    parts = {"word/document.xml": body.encode("utf-8"),
+             "word/footnotes.xml": foot.encode("utf-8")}
+    report = remap_parts(parts, "Table", {1: 2, 2: 1})
+    assert "Table 2 shows" in parts["word/footnotes.xml"].decode("utf-8")
+    assert report.mentions == 3
+    assert audit_parts(parts, "Table") == [
+        "Table: captions are not in document order: [2, 1]"]
+
+
+def test_audit_parts_sees_a_footnote_mention_with_no_caption():
+    from docxkit.renumber import audit_parts
+    body = doc(caption(1))
+    foot = (f"<w:footnotes {NS}><w:footnote w:id=\"7\">"
+            f"{para(run('but see Table 9'))}</w:footnote></w:footnotes>")
+    parts = {"word/document.xml": body.encode("utf-8"),
+             "word/footnotes.xml": foot.encode("utf-8")}
+    assert any("footnotes.xml mentions 9" in p
+               for p in audit_parts(parts, "Table"))
+
+
 def test_remap_refuses_a_mapping_that_collides():
     xml = doc(caption(9) + caption(10))
     with pytest.raises(AnchorError):
