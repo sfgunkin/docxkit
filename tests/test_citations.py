@@ -266,6 +266,25 @@ def test_a_stop_heading_ends_the_list():
     assert [r.surname for r in references(doc)] == ["Aksoy"]
 
 
+def test_a_citation_after_an_equation_is_wrapped_at_the_right_place():
+    """Offsets come from visible_text, which counts OMML; the run walk sees
+    `w:r` only, and maths lives in `m:r`. Every span after an equation was
+    short by its glyph count — on a real paragraph the link wrapped the closing
+    full stop instead of the citation, and rendered as a blue «).»."""
+    from docxkit._xml import visible_text
+    from docxkit.citations import wrap_visible_span
+
+    math = ('<m:oMath><m:r><m:t>γ∈{0,25}</m:t></m:r></m:oMath>')
+    para = ("<w:p><w:r><w:t>Weights </w:t></w:r>" + math
+            + "<w:r><w:t> vary (Smith 2020).</w:t></w:r></w:p>")
+    text = visible_text(para)
+    at = text.index("Smith 2020")
+    out = wrap_visible_span(para, at, at + len("Smith 2020"), "Smith2020")
+    inner = re.search(r"<w:hyperlink[^>]*>(.*?)</w:hyperlink>", out, re.DOTALL)
+    assert inner is not None
+    assert visible_text(inner.group(1)) == "Smith 2020"
+
+
 def test_a_bookmark_whose_entry_was_deleted_reads_as_stale():
     """The author removed an entry in Word. The marker did not go with it —
     Word hoists a paragraph-head bookmark to body level rather than dropping

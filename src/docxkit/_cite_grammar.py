@@ -498,12 +498,21 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
             f"wrap_visible_span: span [{at}, {end}) is not inside the "
             f"paragraph's {text_len} characters of visible text "
             f"({visible_text(para_xml)[:40]!r})")
-    runs, spans, cursor = [], [], 0
+    # COUNT WHAT SITS BETWEEN THE RUNS. The offsets come from
+    # visible_text(para_xml), which includes OMML — maths lives in `m:r`, and
+    # RUN_RE matches `w:r` only. Advancing the cursor solely across w:r runs
+    # therefore under-counted every paragraph containing an equation, and each
+    # span after the maths landed short by its glyph count: on DSI §6.2 the
+    # citation moved 20 characters and the link wrapped the closing full stop
+    # instead of "(Foster et al. 2013a)".
+    runs, spans, cursor, prev_end = [], [], 0, 0
     for r in RUN_RE.finditer(para_xml):
+        cursor += len(visible_text(para_xml[prev_end:r.start()]))
         body = visible_text(r.group(0))
         runs.append(r)
         spans.append((cursor, cursor + len(body)))
         cursor += len(body)
+        prev_end = r.end()
     covered = [(sp, r) for sp, r in zip(spans, runs, strict=True)
                if sp[1] > at and sp[0] < end]
     if not covered:
