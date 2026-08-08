@@ -162,3 +162,71 @@ def test_reading_authors_names_everyone_before_a_rewrite():
     co-author whose edits are about to be absorbed."""
     p = parts()
     assert read_authors(p) == {"Revision": 2, "Tester": 1}
+
+
+# --------------------------------- a property that is missing, not wrong ---
+#
+# Word's Compare drops docProps entirely, and the copy Word writes back on
+# the next save carries a cp:lastModifiedBy and NO dc:creator. Renaming
+# then credited the machine account and left authorship empty, while the
+# report said one property had been set. LI7 shipped in that state.
+
+_HEAD = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+         b'<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/'
+         b'package/2006/metadata/core-properties" xmlns:dc="http://purl.org/'
+         b'dc/elements/1.1/">')
+
+
+def _core(inner: bytes) -> bytes:
+    return _HEAD + inner + b"</cp:coreProperties>"
+
+
+def test_a_missing_creator_is_created_not_skipped():
+    p = parts()
+    p["docProps/core.xml"] = _core(
+        b"<cp:lastModifiedBy>Fel'dsher Gun'kin</cp:lastModifiedBy>")
+    report = set_author(p, "Michael Lokshin")
+    core = text(p, "docProps/core.xml")
+    assert "<dc:creator>Michael Lokshin</dc:creator>" in core
+    assert "<cp:lastModifiedBy>Michael Lokshin</cp:lastModifiedBy>" in core
+    assert report.properties == 2
+
+
+def test_a_created_creator_precedes_lastModifiedBy():
+    """CT_CoreProperties is a SEQUENCE: creator comes before
+    lastModifiedBy. Word tolerates other orders; a validator does not."""
+    p = parts()
+    p["docProps/core.xml"] = _core(
+        b"<cp:lastModifiedBy>Someone</cp:lastModifiedBy>")
+    set_author(p, "Michael Lokshin")
+    core = text(p, "docProps/core.xml")
+    assert core.index("<dc:creator>") < core.index("<cp:lastModifiedBy>")
+
+
+def test_a_missing_lastModifiedBy_is_created_after_the_creator():
+    p = parts()
+    p["docProps/core.xml"] = _core(b"<dc:creator>Someone</dc:creator>")
+    set_author(p, "Michael Lokshin")
+    core = text(p, "docProps/core.xml")
+    assert "<cp:lastModifiedBy>Michael Lokshin</cp:lastModifiedBy>" in core
+    assert core.index("<dc:creator>") < core.index("<cp:lastModifiedBy>")
+
+
+def test_both_missing_are_both_created():
+    p = parts()
+    p["docProps/core.xml"] = _core(b"<dc:title>A paper</dc:title>")
+    report = set_author(p, "Michael Lokshin")
+    core = text(p, "docProps/core.xml")
+    assert "<dc:creator>Michael Lokshin</dc:creator>" in core
+    assert "<cp:lastModifiedBy>Michael Lokshin</cp:lastModifiedBy>" in core
+    assert core.index("<dc:creator>") < core.index("<cp:lastModifiedBy>")
+    assert report.properties == 2
+
+
+def test_the_result_still_parses():
+    from lxml import etree
+    p = parts()
+    p["docProps/core.xml"] = _core(
+        b"<cp:lastModifiedBy>Someone</cp:lastModifiedBy>")
+    set_author(p, "Michael Lokshin")
+    etree.fromstring(p["docProps/core.xml"])      # raises if malformed

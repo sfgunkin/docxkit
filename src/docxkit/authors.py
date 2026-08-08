@@ -58,6 +58,8 @@ _PERSON_RE = re.compile(r"<w15:person\b.*?</w15:person>|<w15:person\b[^>]*/>",
 _CORE_NAME_RE = re.compile(
     r"<(dc:creator|cp:lastModifiedBy)>([^<]*)</(?:dc:creator|cp:lastModifiedBy)>")
 
+_CORE_OPEN_RE = re.compile(r"(<cp:coreProperties\b[^>]*>)")
+
 PEOPLE_PART = "word/people.xml"
 CORE_PART = "docProps/core.xml"
 
@@ -157,7 +159,20 @@ def set_author(parts: dict[str, bytes], name: str, *,
 
 
 def _rename_properties(core: str, esc_name: str) -> tuple[str, int]:
-    """dc:creator and cp:lastModifiedBy — what File > Info shows."""
+    """dc:creator and cp:lastModifiedBy — what File > Info shows.
+
+    MISSING is not the same as wrong, and both have to be handled: a
+    property that is not there cannot be renamed, so a rewrite that only
+    substitutes leaves the deliverable with NO author while reporting a
+    success. LI7 arrived exactly so — Word's Compare drops docProps
+    entirely, and the copy Word writes back on the author's next save has
+    a `cp:lastModifiedBy` and no `dc:creator` at all. Renaming credited
+    one name to the machine account and left the authorship field empty.
+
+    Insertion respects CT_CoreProperties' sequence, where creator
+    precedes lastModifiedBy; Word tolerates other orders but a strict
+    validator does not, and getting it right costs one branch.
+    """
     count = 0
 
     def one(m: re.Match[str]) -> str:
@@ -165,7 +180,25 @@ def _rename_properties(core: str, esc_name: str) -> tuple[str, int]:
         count += 1
         return f"<{m.group(1)}>{esc_name}</{m.group(1)}>"
 
-    return _CORE_NAME_RE.sub(one, core), count
+    core = _CORE_NAME_RE.sub(one, core)
+
+    for tag, follows in (("dc:creator", None),
+                         ("cp:lastModifiedBy", "dc:creator")):
+        if f"<{tag}>" in core:
+            continue
+        element = f"<{tag}>{esc_name}</{tag}>"
+        if follows and f"</{follows}>" in core:
+            core = core.replace(f"</{follows}>", f"</{follows}>{element}", 1)
+        elif tag == "dc:creator" and "<cp:lastModifiedBy>" in core:
+            core = core.replace("<cp:lastModifiedBy>",
+                                f"{element}<cp:lastModifiedBy>", 1)
+        else:
+            def at_open(m: re.Match[str], el: str = element) -> str:
+                return m.group(1) + el
+
+            core = _CORE_OPEN_RE.sub(at_open, core, count=1)
+        count += 1
+    return core, count
 
 
 def _collapse_people(parts: dict[str, bytes]) -> int:
