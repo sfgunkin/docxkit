@@ -23,11 +23,25 @@ import html
 import re
 from dataclasses import dataclass, field
 
-from ._xml import PARA_RE, T_PARTS_RE, escape
+from ._xml import PARA_RE, T_PARTS_RE, element_spans, escape, visible_text
 
-__all__ = ["CUSTOM_XML", "SmartenReport", "smarten", "strip_parts"]
+__all__ = [
+    "CUSTOM_XML",
+    "NOTE_LEADS",
+    "SmartenReport",
+    "SpacingReport",
+    "smarten",
+    "strip_parts",
+    "table_spacing",
+]
 
 CUSTOM_XML = "customXml/"
+
+#: What opens a table's note. A note belongs to the table above it — it is
+#: set tight against the bottom rule, at 0 before — so it is never the
+#: paragraph the spacing rule is about. The asterisk form is a note's second
+#: line, which the rule must skip for the same reason.
+NOTE_LEADS = ("Примечание", "Note", "Notes", "Источник", "Source", "*")
 
 
 def strip_parts(parts: dict[str, bytes],
@@ -70,6 +84,137 @@ def strip_parts(parts: dict[str, bytes],
 # "fixing" it corrupts the formula; w:delText is someone's tracked
 # deletion, not ours to retypeset; w:instrText is field code.
 _WT_RE = T_PARTS_RE                    # the shared definition
+
+
+@dataclass
+class SpacingReport:
+    """What :func:`table_spacing` set, and what it deliberately did not."""
+
+    spaced: list[str] = field(default_factory=list)     # got `before`
+    notes: list[str] = field(default_factory=list)      # pinned to 0
+    skipped: list[str] = field(default_factory=list)    # and why
+
+    def format(self) -> str:
+        lines = [(f"paragraphs spaced {len(self.spaced)}, "
+                  f"notes pinned {len(self.notes)}, "
+                  f"skipped {len(self.skipped)}")]
+        lines += [f"  skipped: {s}" for s in self.skipped]
+        return "\n".join(lines)
+
+
+def _is_note(text: str) -> bool:
+    return text.lstrip().startswith(NOTE_LEADS)
+
+
+def _is_heading(para_xml: str) -> bool:
+    m = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+    return bool(m) and m.group(1).lower().startswith("heading")
+
+
+def _is_equation_carrier(tbl_xml: str) -> bool:
+    """A numbered display equation is a 1×2 table whose second cell is «(N)».
+
+    It is a table to the schema and an equation to the reader, and the
+    paragraph after it continues the sentence the equation sits in — so the
+    rule that separates a table from the text below does not apply to it.
+    """
+    rows = re.findall(r"<w:tr\b.*?</w:tr>", tbl_xml, re.DOTALL)
+    if len(rows) != 1:
+        return False
+    cells = re.findall(r"<w:tc\b.*?</w:tc>", rows[0], re.DOTALL)
+    return (len(cells) == 2
+            and bool(re.fullmatch(r"\([\w.]+\)",
+                                  visible_text(cells[-1]).strip())))
+
+
+def _set_before(para_xml: str, twentieths: int) -> tuple[str, bool]:
+    """Set `w:spacing/@w:before` on a paragraph, inserting pPr if need be."""
+    m = re.search(r"<w:spacing\b[^>]*/>", para_xml)
+    if m:
+        tag = m.group(0)
+        if re.search(rf'w:before="{twentieths}"', tag):
+            return para_xml, False
+        stripped = re.sub(r'\s*w:before="[^"]*"', "", tag)
+        new = stripped.replace(
+            "<w:spacing", f'<w:spacing w:before="{twentieths}"', 1)
+        return para_xml[:m.start()] + new + para_xml[m.end():], True
+    spacing = f'<w:spacing w:before="{twentieths}"/>'
+    ppr = re.search(r"<w:pPr>", para_xml)
+    if ppr:
+        # CT_PPr order: spacing precedes ind / jc / rPr, follows pStyle
+        body_start = ppr.end()
+        rest = para_xml[body_start:]
+        anchor = re.search(r"<w:(ind|jc|rPr|sectPr)\b", rest)
+        at = body_start + (anchor.start() if anchor else 0)
+        if not anchor:
+            close = rest.find("</w:pPr>")
+            at = body_start + close
+        return para_xml[:at] + spacing + para_xml[at:], True
+    open_tag = re.match(r"<w:p\b[^>]*>", para_xml)
+    assert open_tag is not None
+    return (para_xml[:open_tag.end()] + f"<w:pPr>{spacing}</w:pPr>"
+            + para_xml[open_tag.end():], True)
+
+
+def table_spacing(xml: str, *, before: int = 120,
+                  note_before: int = 0) -> tuple[str, SpacingReport]:
+    """House rule: the text that RESUMES after a table gets space above it.
+
+    A table ends in a rule, and the next paragraph starts hard against it
+    unless something separates them. `before` is in twentieths of a point,
+    so the house 6pt is 120.
+
+    Three things are deliberately not the paragraph that resumes:
+
+    * a NOTE belongs to the table above it and is set tight against it, so
+      it is skipped and pinned to `note_before` (0) instead;
+    * a HEADING carries its own, larger spacing from its style — giving it
+      6pt would make the gap SMALLER, not larger;
+    * an EQUATION CARRIER is a table only to the schema; the «where …»
+      that follows it continues the sentence the equation is part of.
+
+    Idempotent, so a second call reports nothing — which makes it an audit
+    as well as a repair: run it on a copy, and an empty report means the
+    document already follows the rule.
+    """
+    report = SpacingReport()
+    out = xml
+    for start, end in reversed(element_spans(xml, "tbl")):
+        tbl = xml[start:end]
+        if _is_equation_carrier(tbl):
+            report.skipped.append(
+                f"equation {visible_text(tbl)[-8:].strip()}: a carrier, "
+                f"not a table")
+            continue
+        pos = end
+        while True:
+            m = PARA_RE.search(out, pos)
+            if m is None:
+                break
+            para, text = m.group(0), visible_text(m.group(0))
+            if not text.strip():
+                # An empty paragraph is a spacer, or the carrier of a
+                # section break — a landscape page is made by putting a
+                # sectPr in one right after the table. It is not the text
+                # that resumes, and spacing it moves nothing a reader sees.
+                pos = m.end()
+                continue
+            if _is_note(text):
+                fixed, changed = _set_before(para, note_before)
+                if changed:
+                    out = out[:m.start()] + fixed + out[m.end():]
+                    report.notes.append(text[:48])
+                pos = m.start() + len(fixed if changed else para)
+                continue
+            if _is_heading(para):
+                report.skipped.append(f"heading {text[:40]!r}: has its own")
+                break
+            fixed, changed = _set_before(para, before)
+            if changed:
+                out = out[:m.start()] + fixed + out[m.end():]
+                report.spaced.append(text[:48])
+            break
+    return out, report
 
 
 @dataclass
