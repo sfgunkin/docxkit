@@ -57,6 +57,15 @@ XML_WS = " \t\r\n"
 PARA_RE = re.compile(r"<w:p\b[^>]*>.*?</w:p>", re.DOTALL)
 # Text nodes: w:t is prose, m:t is math.
 T_RE = re.compile(r"<(?:w|m):t[^>]*>([^<]*)</(?:w|m):t>")
+# The same two separately, for the callers that must NOT mix them: the
+# compare layers count prose and math apart, `equations` reads only
+# math, and `_table_layout` measures only prose because an equation's
+# advance is not a character width. Here rather than in each of them —
+# `<w:t>` alone had three definitions and `<m:t>` two, which is C3 in
+# ROBUSTNESS_PLAN and the exact class R1 was meant to close. A pattern
+# that lives in two modules is a pattern that will disagree with itself.
+WT_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
+MT_RE = re.compile(r"<m:t[^>]*>([^<]*)</m:t>")
 # Text nodes including deletions — what a tracked revision spans.
 T_DEL_RE = re.compile(
     r"<(?:w|m):(?:t|delText)[^>]*>([^<]*)</(?:w|m):(?:t|delText)>")
@@ -193,7 +202,9 @@ _HYPERLINK_GHOST_RE = re.compile(
 _FIELD_RE = re.compile(
     r'<w:fldChar\b[^>]*w:fldCharType="begin"[^>]*/>(.*?)'
     r'<w:fldChar\b[^>]*w:fldCharType="end"[^>]*/>', re.DOTALL)
-_INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
+# Public: the compare layers read field instructions too, and kept a
+# second copy of this until it was promoted here.
+INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
 _INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
 _SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 
@@ -215,7 +226,7 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
     for m in _HYPERLINK_EL_RE.finditer(xml):
         out.append((html.unescape(m.group(1)), visible_text(m.group(2))))
     for m in _FIELD_RE.finditer(xml):
-        instr = html.unescape("".join(_INSTR_RE.findall(m.group(1))))
+        instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
         am = _INSTR_ANCHOR_RE.search(instr)
         if am is None:
             continue                       # PAGEREF, REF, external link...

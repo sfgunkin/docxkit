@@ -20,13 +20,11 @@ from difflib import SequenceMatcher
 from typing import TypedDict
 
 from ._cite_repair import field_spans
-from ._xml import T_PARTS_RE
+from ._xml import INSTR_RE, MT_RE, T_PARTS_RE, WT_RE
 from .comments import read_all as _read_comments
 
 # ------------------------------------------------------------- extraction
 P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
-WT_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
-MT_RE = re.compile(r"<m:t[^>]*>([^<]*)</m:t>")
 OMATH_RE = re.compile(r"<m:oMath>.*?</m:oMath>", re.DOTALL)
 RUN_RE = re.compile(r"<w:r\b[^>]*>(.*?)</w:r>", re.DOTALL)
 RPR_RE = re.compile(r"<w:rPr>(.*?)</w:rPr>", re.DOTALL)
@@ -277,7 +275,6 @@ VOLATILE_FIELDS = frozenset({
     "FILENAME", "FILESIZE", "LASTSAVEDBY", "NUMCHARS", "NUMWORDS",
 })
 
-INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
 SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 FLDSIMPLE_RE = re.compile(
     r'<w:fldSimple\b[^>]*w:instr="([^"]*)"[^>]*>(?:(?!</?w:fldSimple).)*'

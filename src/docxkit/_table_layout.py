@@ -33,6 +33,7 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     T_PARTS_RE,
+    WT_RE,
     live_properties,
     own_properties,
     set_run_text,
@@ -62,7 +63,6 @@ from .revisions import _has_revisions
 
 _GRIDCOL_RE = re.compile(r'<w:gridCol w:w="(\d+)"/>')
 _RUN_RE = RUN_RE                       # the shared definition
-_T_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
 _SZ_RE = re.compile(r'<w:sz w:val="(\d+)"/>')
 _ASCII_RE = re.compile(r'<w:rFonts[^>]*w:ascii="([^"]+)"')
 _TCW_RE = re.compile(r'<w:tcW w:w="[^"]*" w:type="\w+"/>')
@@ -157,7 +157,7 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
                 factor *= 1.05
             if _VERT_RE.search(rpr):
                 factor *= 0.65
-            for t in _T_RE.finditer(r.group(0)):
+            for t in WT_RE.finditer(r.group(0)):
                 for ch in _unescape(t.group(1)):
                     chars.append((ch, table.get(ch, 600) * factor))
         while chars and chars[0][0] in " \t":

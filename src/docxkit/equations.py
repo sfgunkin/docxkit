@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ._xml import PARA_RE, used_prefixes, visible_text
+from ._xml import MT_RE, PARA_RE, used_prefixes, visible_text
 from .errors import AnchorError, PackageError
 from .revisions import _fragment_declarations
 
@@ -59,7 +59,6 @@ M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 # carries xmlns:m, and both have to match
 OMATH_RE = re.compile(r"<m:oMath\b[^>]*>.*?</m:oMath>", re.DOTALL)
 # public: wordcount counts equation tokens with the SAME matcher
-MT_RE = re.compile(r"<m:t[^>]*>([^<]*)</m:t>")
 # structural OMML elements — the ones that change a formula's shape
 _STRUCT = ("sSub", "sSup", "sSubSup", "nary", "f", "d", "rad", "func",
            "acc", "bar", "groupChr", "limLow", "limUpp", "m", "eqArr", "box")

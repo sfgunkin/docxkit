@@ -555,7 +555,7 @@ def unlink_by_anchor(xml: str, pattern: str) -> tuple[str, int, int]:
         _HYPERLINK_EL_RE,
         _HYPERLINK_GHOST_RE,
         _INSTR_ANCHOR_RE,
-        _INSTR_RE,
+        INSTR_RE,
     )
     unwrapped = 0
 
@@ -582,7 +582,7 @@ def unlink_by_anchor(xml: str, pattern: str) -> tuple[str, int, int]:
     out: list[str] = []
     pos = 0
     for m in _FIELD_RE.finditer(xml):
-        instr = html.unescape("".join(_INSTR_RE.findall(m.group(1))))
+        instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
         am = _INSTR_ANCHOR_RE.search(instr)
         if am is None or not anchor_re.search(am.group(1)):
             continue

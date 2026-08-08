@@ -51,6 +51,7 @@ from ._xml import (
     BOOKMARK_ID_RE,
     PARA_RE,
     T_RE,
+    WT_RE,
     own_properties,
     visible_text,
 )
@@ -93,7 +94,6 @@ _HYPERLINK_RE = re.compile(r"<w:hyperlink\b[^>]*(?<!/)>.*?</w:hyperlink>",
 _PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
 _P_OPEN_RE = re.compile(r"<w:p\b[^>]*>")
 _RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)
-_T_ELEMENT_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
 # a bookmark name Word will accept: letters, digits, underscore
 _UNSAFE_RE = re.compile(r"[^0-9A-Za-z_]")
 
@@ -397,7 +397,7 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
                 + para_xml[hm.end():]), mode
 
     # Plain text: find the <w:t> holding the label and split its run.
-    for tm in _T_ELEMENT_RE.finditer(para_xml):
+    for tm in WT_RE.finditer(para_xml):
         m = pattern.search(tm.group(1))
         if m is None:
             continue
@@ -471,7 +471,7 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
     # A caption often separates label from number with a non-breaking
     # space, which visible_text preserves, so match both forms.
     candidates = (cap.prefix, cap.prefix.replace(" ", "\u00a0"))
-    for tm in _T_ELEMENT_RE.finditer(para_xml):
+    for tm in WT_RE.finditer(para_xml):
         content = tm.group(1)
         label = next((cand for cand in candidates
                       if content.lstrip().startswith(cand)), None)
