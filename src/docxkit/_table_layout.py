@@ -37,6 +37,7 @@ from ._xml import (
     live_properties,
     own_properties,
     set_run_text,
+    visible_text,
 )
 from .errors import AnchorError
 from .revisions import _has_revisions
@@ -884,6 +885,64 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
     return xml[:table.start] + body + xml[table.end:], shape
+
+
+#: What makes a textless row content anyway. An image, a shape or an
+#: embedded object renders nothing into `visible_text`, and a row holding
+#: one is not a spacer — this is the table-level form of the rule that a
+#: run with a `w:drawing` and no `w:t` is not an empty run.
+_ROW_CONTENT = ("<w:drawing", "<w:pict", "<w:object", "<w:sdt")
+
+
+def drop_blank_rows(xml: str, table: Table) -> tuple[str, list[int]]:
+    """Remove a table's empty separator rows; say where the rules go now.
+
+    A table typed in Word separates its blocks with a BLANK ROW, because
+    it has no rules to separate them with. Set in three-line style that
+    row is both redundant and wrong: the panel rule already marks the
+    boundary, and a blank row above it opens a gap that rules off
+    nothing. Every table in these papers that reads as panelled — see
+    :func:`booktabs` — closes its blocks with a rule and no blank row.
+
+    Returns the document with those rows gone, and the row indices IN THE
+    TABLE AS RETURNED at which a panel now opens, ready to hand to
+    ``BooktabsPlan.panel_rows``. Two are deliberately not in that list: a
+    blank row that TRAILS the table opens nothing, and one at the very
+    top would name row 0, which already carries the top rule.
+
+    A row is blank only when it renders nothing at all. A row whose cells
+    hold an image, a shape or an embedded object carries no text and is
+    not a spacer, so it stays — the same rule that keeps a `w:drawing`
+    run from being swept up as an empty run.
+    """
+    _fresh(xml, table, "drop_blank_rows")
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - drop the rows "
+            f"in the clean build and rebuild the redline from it")
+    trs = list(rows_of(body))
+    blank = [i for i, tr in enumerate(trs)
+             if not visible_text(tr.group(0)).strip()
+             and not any(tag in tr.group(0) for tag in _ROW_CONTENT)]
+    if not blank:
+        return xml, []
+    if len(blank) == len(trs):
+        raise AnchorError(f"table {table.index} is entirely blank rows")
+
+    gone = set(blank)
+    after = {i: n for n, i in enumerate(i for i in range(len(trs))
+                                        if i not in gone)}
+    panels = set()
+    for b in blank:
+        successor = next((j for j in range(b + 1, len(trs)) if j not in gone),
+                         None)
+        if successor is not None and after[successor] > 0:
+            panels.add(after[successor])
+
+    for i in sorted(blank, reverse=True):
+        body = body[:trs[i].start()] + body[trs[i].end():]
+    return xml[:table.start] + body + xml[table.end:], sorted(panels)
 
 
 def _group_columns(cells: list[_Span]) -> set[int]:

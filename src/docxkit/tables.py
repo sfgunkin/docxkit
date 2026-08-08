@@ -55,6 +55,7 @@ from ._table_layout import _const as _const
 from ._table_layout import _round_to as _round_to
 from ._table_layout import booktabs as booktabs
 from ._table_layout import bottom_border as bottom_border
+from ._table_layout import drop_blank_rows as drop_blank_rows
 from ._table_layout import fit_columns as fit_columns
 from ._table_layout import plan_booktabs as plan_booktabs
 from ._table_layout import superscript_stars as superscript_stars
@@ -68,6 +69,7 @@ __all__ = [
     "booktabs",
     "bottom_border",
     "by_caption",
+    "drop_blank_rows",
     "find",
     "fit_columns",
     "parse_number",
