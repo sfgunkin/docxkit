@@ -23,7 +23,7 @@ import zipfile
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from ._xml import PARA_RE, normalize_glyphs, visible_text
+from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, normalize_glyphs, visible_text
 from .errors import AnchorError
 
 __all__ = [
@@ -55,9 +55,9 @@ def _ratio(a: str, b: str) -> float:
 def load_paragraphs(path: str | Path) -> tuple[list[str], str]:
     """(paragraph XML list, footnotes XML) for a .docx."""
     with zipfile.ZipFile(path) as z:
-        doc = z.read("word/document.xml").decode("utf-8")
+        doc = z.read(DOCUMENT).decode("utf-8")
         try:
-            foot = z.read("word/footnotes.xml").decode("utf-8")
+            foot = z.read(FOOTNOTES).decode("utf-8")
         except KeyError:
             foot = ""
     return PARA_RE.findall(doc), foot

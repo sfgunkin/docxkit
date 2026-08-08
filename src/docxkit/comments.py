@@ -23,6 +23,8 @@ from typing import NamedTuple
 from . import revisions as _revisions
 from ._xml import (
     COMMENT_ID_RE,
+    COMMENTS,
+    DOCUMENT,
     PARA_RE,
     delta_text,
     normalize_glyphs,
@@ -237,7 +239,7 @@ class _Scaffold(NamedTuple):
 
     @classmethod
     def read(cls, parts: dict[str, bytes]) -> _Scaffold:
-        com = parts["word/comments.xml"].decode("utf-8")
+        com = parts[COMMENTS].decode("utf-8")
         tm = re.search(r"<w:comment .*?</w:comment>", com, re.DOTALL)
         if not tm:
             raise ScaffoldMissing(
@@ -287,8 +289,8 @@ def _write(parts: dict[str, bytes], doc: str,
             exls.append('<w16cex:commentExtensible w16cex:durableId='
                         f'"{durable}" w16cex:dateUtc="{scaffold.date_utc}"/>')
 
-    parts["word/document.xml"] = doc.encode("utf-8")
-    parts["word/comments.xml"] = _append_before_close(
+    parts[DOCUMENT] = doc.encode("utf-8")
+    parts[COMMENTS] = _append_before_close(
         scaffold.comments_xml, "</w:comments>",
         "".join(elements)).encode("utf-8")
     # The three side parts must stay in step with comments.xml or Word
@@ -338,7 +340,7 @@ def annotate(parts: dict[str, bytes],
     if tables not in (COALESCE, ALL):
         raise ValueError(f"tables must be {COALESCE!r} or {ALL!r}, "
                          f"not {tables!r}")
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     scaffold = _Scaffold.read(parts)
 
     planned = _plan(doc, classify, table_spans(doc))
@@ -369,7 +371,7 @@ def add_at(parts: dict[str, bytes], anchor: str, comment: str, *,
     Like the rest of this module it needs Word's own comment scaffold
     already in the package (see :class:`_Scaffold`).
     """
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     fold = normalize_glyphs if normalize else (lambda s: s)
     needle = fold(anchor)
     hits = [m for m in PARA_RE.finditer(doc)
@@ -428,8 +430,8 @@ def reclassify(parts: dict[str, bytes],
     """
     if generic is None:
         return 0, []
-    doc = parts["word/document.xml"].decode("utf-8")
-    com = parts["word/comments.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
+    com = parts[COMMENTS].decode("utf-8")
     stale = [m.group(2) for m in _COMMENT_RE.finditer(com)
              if generic in delta_text(m.group(3))]
     if not stale:
@@ -452,7 +454,7 @@ def reclassify(parts: dict[str, bytes],
         else:
             com = _set_comment_text(com, cid, new)
             done += 1
-    parts["word/comments.xml"] = com.encode("utf-8")
+    parts[COMMENTS] = com.encode("utf-8")
     return done, still
 
 
@@ -566,10 +568,10 @@ def threads(parts: dict[str, bytes]) -> list[Thread]:
     ordered by where their anchor sits in the document, which is the
     order a reader works through them, not the id order Word assigned.
     """
-    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    com = parts.get(COMMENTS, b"").decode("utf-8")
     if not com:
         return []
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     ext = parts.get("word/commentsExtended.xml", b"").decode("utf-8")
 
     flags: dict[str, tuple[bool, str | None]] = {}
@@ -629,7 +631,7 @@ def set_done(parts: dict[str, bytes], ids: Iterable[str],
     wanted = {str(i) for i in ids}
     if not wanted:
         return 0
-    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    com = parts.get(COMMENTS, b"").decode("utf-8")
     if "word/commentsExtended.xml" not in parts:
         raise PackageError(
             "no commentsExtended.xml - the package carries no done flags "
@@ -663,7 +665,7 @@ def read_all(parts: dict[str, bytes]) -> list[tuple[str, str, str]]:
     anchors. Both read through the same parser, so they cannot disagree
     about what a comment's text is.
     """
-    com = parts.get("word/comments.xml", b"").decode("utf-8")
+    com = parts.get(COMMENTS, b"").decode("utf-8")
     return [(r["cid"], r["author"], r["text"])
             for r in _comment_records(com)]
 
@@ -682,8 +684,8 @@ def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
     wanted = {str(i) for i in ids}
     if not wanted:
         return 0
-    com = parts.get("word/comments.xml", b"").decode("utf-8")
-    doc = parts["word/document.xml"].decode("utf-8")
+    com = parts.get(COMMENTS, b"").decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
 
     para_ids, durable_ids, removed = set(), set(), 0
     for m in list(re.finditer(r"<w:comment [^>]*w:id=\"(\d+)\"[^>]*>.*?"
@@ -706,8 +708,8 @@ def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
         doc = doc.replace(f'<w:commentRangeStart w:id="{cid}"/>', "")
         doc = doc.replace(f'<w:commentRangeEnd w:id="{cid}"/>', "")
         doc = _drop_reference_run(doc, cid)
-    parts["word/document.xml"] = doc.encode("utf-8")
-    parts["word/comments.xml"] = com.encode("utf-8")
+    parts[DOCUMENT] = doc.encode("utf-8")
+    parts[COMMENTS] = com.encode("utf-8")
 
     for name, pattern in (
             ("word/commentsExtended.xml",

@@ -34,6 +34,8 @@ from ._cite_repair import (
     wrap_link_in_bookmark,
 )
 from ._xml import (
+    DOCUMENT,
+    FOOTNOTES,
     PARA_RE,
     RUN_RE,
     internal_links,
@@ -216,8 +218,8 @@ def link_all(parts: dict[str, bytes], *,
     one paragraph, an unfindable head) are REPORTED and skipped, never
     guessed at. Exhibits are :func:`docxkit.crossrefs.link`'s job.
     """
-    doc = parts["word/document.xml"].decode("utf-8")
-    foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
+    foot = parts.get(FOOTNOTES, b"").decode("utf-8")
     report = LinkAllReport()
     filed_as = aliases or {}
     ignored = {s.casefold() for s in ignore}
@@ -361,8 +363,8 @@ def link_all(parts: dict[str, bytes], *,
                 f"so {name}txt does not exist — back-link removed")
 
     if fn_plan:
-        parts["word/footnotes.xml"] = foot.encode("utf-8")
-    parts["word/document.xml"] = doc.encode("utf-8")
+        parts[FOOTNOTES] = foot.encode("utf-8")
+    parts[DOCUMENT] = doc.encode("utf-8")
     return report
 
 
@@ -456,8 +458,8 @@ def link_rest(parts: dict[str, bytes], *,
     bookmarks link_all wrote) and it is idempotent, because a linked
     citation is masked out of the next scan.
     """
-    doc = parts["word/document.xml"].decode("utf-8")
-    foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
+    foot = parts.get(FOOTNOTES, b"").decode("utf-8")
     report = LinkRestReport()
     filed_as = aliases or {}
     ignored = {s.casefold() for s in ignore}
@@ -529,8 +531,8 @@ def link_rest(parts: dict[str, bytes], *,
     if foot:
         fparas = list(PARA_RE.finditer(foot))
         foot = rewrite(foot, fparas, None, "fn¶")
-        parts["word/footnotes.xml"] = foot.encode("utf-8")
-    parts["word/document.xml"] = doc.encode("utf-8")
+        parts[FOOTNOTES] = foot.encode("utf-8")
+    parts[DOCUMENT] = doc.encode("utf-8")
     return report
 
 
@@ -554,7 +556,7 @@ def unlink_by_anchor(xml: str, pattern: str) -> tuple[str, int, int]:
         _FIELD_RE,
         _HYPERLINK_EL_RE,
         _HYPERLINK_GHOST_RE,
-        _INSTR_ANCHOR_RE,
+        INSTR_ANCHOR_RE,
         INSTR_RE,
     )
     unwrapped = 0
@@ -583,7 +585,7 @@ def unlink_by_anchor(xml: str, pattern: str) -> tuple[str, int, int]:
     pos = 0
     for m in _FIELD_RE.finditer(xml):
         instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
-        am = _INSTR_ANCHOR_RE.search(instr)
+        am = INSTR_ANCHOR_RE.search(instr)
         if am is None or not anchor_re.search(am.group(1)):
             continue
         s = _run_open_before(xml, m.start())

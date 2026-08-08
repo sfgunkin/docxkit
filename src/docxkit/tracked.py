@@ -37,7 +37,7 @@ from typing import Any
 from . import comments as _comments
 from . import guard as _guard
 from . import word as _word
-from ._xml import COMMENT_ID_RE, internal_links
+from ._xml import COMMENT_ID_RE, COMMENTS, internal_links, text_parts
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
@@ -114,12 +114,8 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
     # footnote used to report "0 pending revisions" — the number this project
     # reads to decide whether a document is at truth — while the footnote
     # carried three. Word counts them; this must agree with Word.
-    text_xml = "".join(
-        parts[name].decode("utf-8")
-        for name in ("word/document.xml", "word/footnotes.xml",
-                     "word/endnotes.xml")
-        if name in parts)
-    com_xml = parts.get("word/comments.xml", b"").decode("utf-8")
+    text_xml = "".join(xml for _name, xml in text_parts(parts))
+    com_xml = parts.get(COMMENTS, b"").decode("utf-8")
     return {
         "insertions": text_xml.count("<w:ins "),
         "deletions": text_xml.count("<w:del "),

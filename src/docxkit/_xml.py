@@ -18,14 +18,21 @@ __all__ = [
     "BOOKMARK_END_ID_RE",
     "BOOKMARK_ID_RE",
     "BOOKMARK_START_ID_RE",
+    "COMMENTS",
     "COMMENT_ID_RE",
+    "DOCUMENT",
+    "ENDNOTES",
     "FLDCHAR_RE",
+    "FOOTNOTES",
     "GLYPH_MAP",
+    "INSTR_ANCHOR_RE",
+    "INSTR_RE",
     "MATH_OBJECTS",
     "PARA_RE",
     "RPR_ORDER",
     "RUN_OPEN_RE",
     "RUN_RE",
+    "TEXT_PARTS",
     "T_DEL_RE",
     "T_PARTS_RE",
     "T_RE",
@@ -42,9 +49,42 @@ __all__ = [
     "own_properties",
     "set_run_property",
     "set_run_text",
+    "text_parts",
     "used_prefixes",
     "visible_text",
 ]
+
+# THE PART NAMES, ONCE. Every module used to spell them itself — 38
+# occurrences of the body's name across 16 modules, 19 of the footnotes' —
+# and the consequence was never a typo. It was that each site decided for
+# itself what "the document" meant, and three of them decided wrong in the
+# same week: `renumber` renumbered the body and left a footnote pointing at
+# the old table, `tracked.package_counts` reported "0 pending revisions"
+# for a batch that had edited only a footnote, and `compare`'s integrity
+# layer read a field target out of raw XML because it never looked at the
+# footnote's instruction as a whole. A name spelled in one place is a name
+# that cannot mean different things in different places.
+DOCUMENT = "word/document.xml"
+FOOTNOTES = "word/footnotes.xml"
+ENDNOTES = "word/endnotes.xml"
+COMMENTS = "word/comments.xml"
+
+#: Every part a READER sees text in, in reading order. An operation that
+#: describes the document — counting revisions, renumbering an exhibit,
+#: searching for a phrase — is wrong if it stops at the body.
+TEXT_PARTS = (DOCUMENT, FOOTNOTES, ENDNOTES)
+
+
+def text_parts(parts: dict[str, bytes]) -> list[tuple[str, str]]:
+    """The (name, xml) of every text-bearing part present, in reading order.
+
+    The iteration `TEXT_PARTS` exists for: callers that must cover the whole
+    document rather than the body, without each one re-deciding which parts
+    those are or whether an absent part is an error (it is not — a document
+    with no footnotes simply has none).
+    """
+    return [(name, parts[name].decode("utf-8"))
+            for name in TEXT_PARTS if name in parts]
 
 # The whitespace XML actually trims: space, tab, CR, LF. NOT Python's
 # str.strip() set, which also eats U+00A0 and the other Unicode spaces —
@@ -205,7 +245,7 @@ _FIELD_RE = re.compile(
 # Public: the compare layers read field instructions too, and kept a
 # second copy of this until it was promoted here.
 INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
-_INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
+INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
 _SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 
 
@@ -227,7 +267,7 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
         out.append((html.unescape(m.group(1)), visible_text(m.group(2))))
     for m in _FIELD_RE.finditer(xml):
         instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
-        am = _INSTR_ANCHOR_RE.search(instr)
+        am = INSTR_ANCHOR_RE.search(instr)
         if am is None:
             continue                       # PAGEREF, REF, external link...
         sep = _SEPARATE_RE.search(m.group(1))

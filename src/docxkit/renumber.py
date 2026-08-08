@@ -28,7 +28,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ._xml import RUN_RE, set_run_text, visible_text
+from ._xml import DOCUMENT, RUN_RE, set_run_text, text_parts, visible_text
 from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
@@ -300,35 +300,27 @@ def audit(xml: str, label: str, *, prefix: str = "") -> list[str]:
     return problems
 
 
-#: every part whose text a reader sees, and therefore every part a renumber
-#: must cover. document.xml alone leaves the footnotes pointing at the old
-#: exhibit — DSI's footnote 7 went on saying «в таблице 9» after the table it
-#: names had become 11, and nothing dangled because 9 still existed elsewhere.
-TEXT_PARTS = ("word/document.xml", "word/footnotes.xml", "word/endnotes.xml")
-
-
 def remap_parts(parts: dict[str, bytes], label: str, mapping: dict[int, int],
                 *, prefix: str = "") -> ShiftReport:
     """:func:`remap` across every text-bearing part, in place.
 
-    A mention lives wherever prose does. Captions are read from
-    ``document.xml`` — the collision check needs them — and the rewrite is
-    then applied to the footnotes and endnotes as well.
+    A mention lives wherever prose does — DSI's footnote 7 went on saying
+    «в таблице 9» after the table it names had become 11, and nothing dangled
+    because 9 still existed elsewhere. Captions are read from the body (the
+    collision check needs them) and the rewrite reaches the footnotes and
+    endnotes too.
     """
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     total = ShiftReport()
-    for name in TEXT_PARTS:
-        if name not in parts:
-            continue
-        xml = parts[name].decode("utf-8")
-        if name == "word/document.xml":
-            xml, rep = remap(xml, label, mapping, prefix=prefix)
+    for name, xml in text_parts(parts):
+        if name == DOCUMENT:
+            new_xml, rep = remap(xml, label, mapping, prefix=prefix)
         else:
             # captions live in the body; here only mentions and names move
             _check_permutation(mapping, doc, label, prefix)
-            xml, rep = _apply(xml, label, prefix,
-                              lambda n: mapping.get(n, n))
-        parts[name] = xml.encode("utf-8")
+            new_xml, rep = _apply(xml, label, prefix,
+                                  lambda n: mapping.get(n, n))
+        parts[name] = new_xml.encode("utf-8")
         total.mentions += rep.mentions
         total.bookmarks += rep.bookmarks
         total.anchors += rep.anchors
@@ -340,16 +332,15 @@ def remap_parts(parts: dict[str, bytes], label: str, mapping: dict[int, int],
 def audit_parts(parts: dict[str, bytes], label: str, *,
                 prefix: str = "") -> list[str]:
     """:func:`audit` with mentions read from every text-bearing part."""
-    problems = audit(parts["word/document.xml"].decode("utf-8"), label,
-                     prefix=prefix)
-    defined = set(numbers_in_order(
-        parts["word/document.xml"].decode("utf-8"), label, prefix=prefix))
+    doc = parts[DOCUMENT].decode("utf-8")
+    problems = audit(doc, label, prefix=prefix)
+    defined = set(numbers_in_order(doc, label, prefix=prefix))
     mention = _mention_re(label, prefix)
-    for name in TEXT_PARTS[1:]:
-        if name not in parts:
+    for name, xml in text_parts(parts):
+        if name == DOCUMENT:
             continue
         seen = set()
-        for p in paragraphs(parts[name].decode("utf-8")):
+        for p in paragraphs(xml):
             for m in mention.finditer(visible_text(p.group(0))):
                 seen.add(int(m.group(1)))
         for n in sorted(seen - defined):

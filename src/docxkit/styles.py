@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES
 from .errors import AnchorError, PackageError
 
 __all__ = ["Style", "StyleReport", "apply_template", "ensure", "read",
@@ -24,8 +25,8 @@ __all__ = ["Style", "StyleReport", "apply_template", "ensure", "read",
 _STYLE_EL_RE = re.compile(r"<w:style\b[^>]*>.*?</w:style>", re.DOTALL)
 _STYLES_PART = "word/styles.xml"
 # every part that can reference a style by id
-_REFERRING_PARTS = ("word/document.xml", "word/footnotes.xml",
-                    "word/endnotes.xml", "word/comments.xml")
+_REFERRING_PARTS = (DOCUMENT, FOOTNOTES,
+                    ENDNOTES, COMMENTS)
 _REF_RE = re.compile(r'(<w:(?:pStyle|rStyle|tblStyle) w:val=")([^"]+)(")')
 
 

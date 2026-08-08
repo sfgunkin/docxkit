@@ -20,7 +20,12 @@ from ._compare_read import (
     Para,
     _fields,
 )
-from ._xml import BOOKMARK_END_ID_RE, normalize_glyphs
+from ._xml import (
+    BOOKMARK_END_ID_RE,
+    INSTR_ANCHOR_RE,
+    INSTR_RE,
+    normalize_glyphs,
+)
 
 #: A report is buckets of entries: dicts for the layers, plain strings
 #: for INTEGRITY. Typed loosely on purpose — it is written straight to
@@ -200,10 +205,6 @@ def stripped_fields(pa: Para, pb: Para) -> list[str]:
 
 
 # --------------------------------------------------------------- integrity
-_INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
-_HYPERLINK_TARGET_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
-
-
 def bookmark_names(xml: str) -> set[str]:
     return set(re.findall(r'<w:bookmarkStart\b[^>]*w:name="([^"]*)"', xml))
 
@@ -244,8 +245,8 @@ def integrity(xml: str, label: str,
     # paragraph first, exactly as the citation layer does.
     targets: set[str] = set()
     for para_xml in P_RE.findall(xml):
-        joined = html.unescape("".join(_INSTR_RE.findall(para_xml)))
-        targets |= set(_HYPERLINK_TARGET_RE.findall(joined))
+        joined = html.unescape("".join(INSTR_RE.findall(para_xml)))
+        targets |= set(INSTR_ANCHOR_RE.findall(joined))
     anchors = set(re.findall(r'w:anchor="([^"]+)"', xml)) | targets
     dangling = sorted(a for a in anchors if a not in known)
     if dangling:

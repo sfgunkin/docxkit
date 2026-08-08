@@ -20,6 +20,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, NoReturn
 
+from ._xml import DOCUMENT
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
@@ -91,7 +92,7 @@ def _skip_or_raise(message: str, allow_skip: bool,
     raise error(message)
 
 
-def load_xml(path: str | Path, part: str = "word/document.xml") -> str:
+def load_xml(path: str | Path, part: str = DOCUMENT) -> str:
     """One part of the package as text, lock-safe."""
     with zipfile.ZipFile(io.BytesIO(read_bytes(path))) as z:
         return z.read(part).decode("utf-8")

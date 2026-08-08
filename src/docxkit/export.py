@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 
-from ._xml import visible_text
+from ._xml import DOCUMENT, FOOTNOTES, visible_text
 from .crossrefs import DEFAULT_LABELS, caption_re
 from .equations import EQ_NUMBER_RE, OMATH_RE, is_display, to_latex
 from .find import body_elements, heading_level
@@ -86,7 +86,7 @@ def to_markdown(parts: dict[str, bytes], *, view: str = FINAL) -> str:
     the definitions at the end.
     """
     transform = view_transform(view)
-    xml = transform(parts["word/document.xml"].decode("utf-8"))
+    xml = transform(parts[DOCUMENT].decode("utf-8"))
 
     blocks: list[str] = []
     for kind, start, end in body_elements(xml):
@@ -106,8 +106,8 @@ def to_markdown(parts: dict[str, bytes], *, view: str = FINAL) -> str:
         else:
             blocks.append(_inline(frag))
 
-    if "word/footnotes.xml" in parts:
-        notes_xml = transform(parts["word/footnotes.xml"].decode("utf-8"))
+    if FOOTNOTES in parts:
+        notes_xml = transform(parts[FOOTNOTES].decode("utf-8"))
         notes = [f"[^{f.id}]: {' '.join(f.text.split())}"
                  for f in _footnotes(notes_xml) if f.text]
         if notes:

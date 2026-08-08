@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 from typing import TypedDict
 
 from ._cite_repair import field_spans
-from ._xml import INSTR_RE, MT_RE, T_PARTS_RE, WT_RE
+from ._xml import COMMENTS, INSTR_RE, MT_RE, T_PARTS_RE, WT_RE
 from .comments import read_all as _read_comments
 
 # ------------------------------------------------------------- extraction
@@ -255,7 +255,7 @@ class Para:
 #: whole job is to certify that no edit was lost.
 TEXT_PART_RE = re.compile(
     r"^word/(document|footnotes|endnotes|header\d*|footer\d*)\.xml$")
-COMMENTS_PART = "word/comments.xml"
+COMMENTS_PART = COMMENTS
 
 #: Report order, so two runs list their parts the same way.
 _PART_RANK = ("document", "footnotes", "endnotes", "header", "footer")

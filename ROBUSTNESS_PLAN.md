@@ -309,6 +309,26 @@ exceptions in `tracked.py` with what was suppressed.
 
 ---
 
+**R6 — One definition of the document's text. DONE.**
+R1 put the run/text/bookmark WALKS in `_xml`. The PART NAMES stayed
+scattered: the body's spelled 38 times across 16 modules, the footnotes'
+19 times across 13. The cost was never a typo — it was that each site
+decided for itself what "the document" meant, and three decided wrong in
+one week. `renumber` renumbered the body and left a footnote pointing at
+the old table (nothing dangled: the old number still existed elsewhere).
+`tracked.package_counts` reported "0 pending revisions" — the number the
+papers read to decide a document is at truth — for a batch that had
+edited only a footnote. `compare`'s integrity layer read a field target
+off raw XML and returned the RSID of the next run, never having assembled
+the footnote's instruction.
+
+`_xml` now owns `DOCUMENT`, `FOOTNOTES`, `ENDNOTES`, `COMMENTS`, the
+`TEXT_PARTS` tuple and `text_parts(parts)`; 14 modules import them and
+none spells a part itself. `tests/test_part_names.py` enforces it per
+module with a three-entry allowlist, each entry saying why — because a
+layering nobody checks is a layering that will not hold, which is what
+R4 learned.
+
 ## 6. Process guards
 
 Cheap, and they close the loops that keep reopening:

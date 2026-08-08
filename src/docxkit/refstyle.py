@@ -30,7 +30,7 @@ import unicodedata
 from collections.abc import Collection
 from dataclasses import dataclass, field, replace
 
-from ._xml import PARA_RE, visible_text
+from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, visible_text
 from .citations import (
     _ACRONYM_RE,
     AUTHORS_PATTERN,
@@ -346,7 +346,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     the entry names itself by — "Health Promotion Board (HPB)" — needs
     no map: see :func:`_entry_keys`.
     """
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     matches = list(PARA_RE.finditer(doc))
     texts = [visible_text(m.group(0)) for m in matches]
     entries = references(texts, heading=heading, stop=stop)
@@ -384,7 +384,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
         if head_idx is not None and head_idx <= i <= last_entry:
             continue              # the reference section is not prose
         prose(text, f"¶{i + 1}")
-    foot = parts.get("word/footnotes.xml")
+    foot = parts.get(FOOTNOTES)
     if foot:
         for j, m in enumerate(PARA_RE.finditer(foot.decode("utf-8"))):
             if (t := visible_text(m.group(0))).strip():

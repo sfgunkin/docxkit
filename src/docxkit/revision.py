@@ -63,6 +63,7 @@ from typing import Any
 from . import lint as _lint
 from . import package, revisions, tracked
 from . import word as _word
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES
 from .errors import (
     BaselinePending,
     DocumentLocked,
@@ -100,8 +101,8 @@ __all__ = [
 #: while still making the file a proposal rather than the truth. Any
 #: count that reads only the body will call such a file "truth" and let
 #: the next batch flatten it.
-TEXT_PARTS = ("word/document.xml", "word/footnotes.xml",
-              "word/endnotes.xml")
+TEXT_PARTS = (DOCUMENT, FOOTNOTES,
+              ENDNOTES)
 
 #: Parts a Word save rewrites whether or not anything was edited —
 #: rsids, the editing-time total, the namespace prefix order. Reporting
@@ -268,7 +269,7 @@ class State:
         looking through the body for something that is in a footnote.
         """
         return sum(n for part, n in self.by_part.items()
-                   if part != "word/document.xml")
+                   if part != DOCUMENT)
 
 
 _AUTHOR_RE = re.compile(r'w:author="([^"]*)"')
@@ -497,7 +498,7 @@ def _norm(text: str) -> str:
     return "".join(re.sub(r"[\x00-\x1f]", "", folded).split())
 
 
-def _root(parts: dict[str, bytes], name: str = "word/document.xml"
+def _root(parts: dict[str, bytes], name: str = DOCUMENT
           ) -> Any | None:
     from lxml import etree
 
@@ -611,8 +612,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
             "glyphs": _glyph(_root(rejected)) == _glyph(_root(base)),
-            "footnotes": (_glyph(_root(rejected, "word/footnotes.xml"))
-                          == _glyph(_root(base, "word/footnotes.xml"))),
+            "footnotes": (_glyph(_root(rejected, FOOTNOTES))
+                          == _glyph(_root(base, FOOTNOTES))),
         }
         report.reject_detail = detail
         report.reject_matches_baseline = all(detail.values())

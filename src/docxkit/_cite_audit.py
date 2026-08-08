@@ -20,6 +20,8 @@ from ._cite_grammar import (
     resolve_lead,
 )
 from ._xml import (
+    DOCUMENT,
+    FOOTNOTES,
     PARA_RE,
     internal_links,
     visible_text,
@@ -136,7 +138,7 @@ def _audit_findings(parts: dict[str, bytes], *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
                     ) -> tuple[list[_Finding], dict[str, int]]:
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     paras = list(PARA_RE.finditer(doc))
     texts = [visible_text(m.group(0)) for m in paras]
 
@@ -149,7 +151,7 @@ def _audit_findings(parts: dict[str, bytes], *,
             links[anchor].append((i, label))
     for name in _BOOKMARK_NAME_RE.findall(doc):
         bookmarks.setdefault(name, -1)      # BODY-LEVEL, between paragraphs
-    foot = parts.get("word/footnotes.xml")
+    foot = parts.get(FOOTNOTES)
     if foot:
         ftext = foot.decode("utf-8")
         for name in _BOOKMARK_NAME_RE.findall(ftext):

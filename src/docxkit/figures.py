@@ -24,7 +24,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._xml import PARA_RE, visible_text
+from ._xml import DOCUMENT, PARA_RE, visible_text
 from .errors import AnchorError, PackageError
 
 __all__ = [
@@ -170,7 +170,7 @@ def replace_image(parts: dict[str, bytes], caption_prefix: str,
     image = Path(image)
     if not image.exists():
         raise PackageError(f"image not found: {image}")
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     rels_name = "word/_rels/document.xml.rels"
     rels = parts[rels_name].decode("utf-8")
 
@@ -205,7 +205,7 @@ def replace_image(parts: dict[str, bytes], caption_prefix: str,
 
     if keep_width:
         doc = _rescale_drawing(doc, rid, blob)
-    parts["word/document.xml"] = doc.encode("utf-8")
+    parts[DOCUMENT] = doc.encode("utf-8")
     return target
 
 

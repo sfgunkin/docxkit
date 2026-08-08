@@ -25,7 +25,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 
-from ._xml import PARA_RE, visible_text
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, visible_text
 from .crossrefs import DEFAULT_LABELS, caption_re
 from .equations import MT_RE, OMATH_RE
 from .find import body_elements, heading_level
@@ -124,7 +124,7 @@ def count(parts: dict[str, bytes], *,
     themselves.
     """
     transform = view_transform(view)
-    xml = transform(parts["word/document.xml"].decode("utf-8"))
+    xml = transform(parts[DOCUMENT].decode("utf-8"))
 
     tally = dict.fromkeys((f.name for f in fields(Counts)), 0)
     zone: str | None = None                      # None = the main text
@@ -154,7 +154,7 @@ def count(parts: dict[str, bytes], *,
     # Word's separator/continuation notes hold no w:t, so no reserved-id
     # filtering is needed, and per-paragraph counting covers endnotes,
     # whose elements footnotes.find_all would not match.
-    for name in ("word/footnotes.xml", "word/endnotes.xml"):
+    for name in (FOOTNOTES, ENDNOTES):
         if name in parts:
             tally["footnotes"] += _block_words(
                 transform(parts[name].decode("utf-8")))

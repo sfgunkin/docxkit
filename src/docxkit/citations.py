@@ -101,7 +101,7 @@ from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
 from ._cite_repair import wrap_link_in_bookmark as wrap_link_in_bookmark
-from ._xml import PARA_RE, internal_links, visible_text
+from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, internal_links, visible_text
 from .package import read_parts
 
 __all__ = [
@@ -150,10 +150,10 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     person, because two of three Lutz diagnoses were wrong before the
     right one.
     """
-    doc = parts["word/document.xml"].decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     findings, _stats = _audit_findings(parts)
     bookmarks = set(_BOOKMARK_NAME_RE.findall(doc))
-    foot = parts.get("word/footnotes.xml", b"").decode("utf-8")
+    foot = parts.get(FOOTNOTES, b"").decode("utf-8")
     bookmarks |= set(_BOOKMARK_NAME_RE.findall(foot))
     anchors = {a for a, _ in internal_links(doc)}
     anchors |= {a for a, _ in internal_links(foot)}

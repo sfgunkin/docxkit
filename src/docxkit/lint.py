@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._xml import MATH_OBJECTS, XML_WS
+from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES, MATH_OBJECTS, XML_WS
 
 __all__ = ["lint", "lint_parts"]
 
@@ -33,8 +33,8 @@ _PPR_BEFORE_RPR = frozenset({
     "outlineLvl", "contextualSpacing",
 })
 # Parts worth checking, in the order a reader would care about.
-_PARTS = ("word/document.xml", "word/footnotes.xml", "word/endnotes.xml",
-          "word/comments.xml")
+_PARTS = (DOCUMENT, FOOTNOTES, ENDNOTES,
+          COMMENTS)
 
 
 def _local(tag: Any) -> str:
