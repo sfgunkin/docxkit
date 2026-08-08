@@ -25,6 +25,7 @@ it should now say.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ._xml import RUN_RE, set_run_text, visible_text
@@ -32,7 +33,7 @@ from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
 
-__all__ = ["ShiftReport", "shift"]
+__all__ = ["ShiftReport", "audit", "numbers_in_order", "remap", "shift"]
 
 # a mention number engaged in a range or list — the continuation the
 # labelled match must not have after it
@@ -82,7 +83,7 @@ def _flag_re(label: str, prefix: str) -> re.Pattern[str]:
 
 
 def _shift_in_para(para_xml: str, pattern: re.Pattern[str],
-                   frm: int, by: int) -> tuple[str, int]:
+                   remap_fn: Callable[[int], int]) -> tuple[str, int]:
     """Rewrite the DIGIT spans of qualifying mentions in one paragraph.
 
     Matches are located in the paragraph's visible text and mapped back
@@ -104,7 +105,7 @@ def _shift_in_para(para_xml: str, pattern: re.Pattern[str],
     hits = []
     for m in pattern.finditer(visible):
         n = int(m.group(1))
-        if n < frm:
+        if remap_fn(n) == n:
             continue
         if re.match(_CONTINUATION, visible[m.end():]):
             continue                    # range/list: flagged by the caller
@@ -114,7 +115,7 @@ def _shift_in_para(para_xml: str, pattern: re.Pattern[str],
 
     changed = set()
     for (a, b), n in sorted(hits, reverse=True):
-        new = str(n + by)
+        new = str(remap_fn(n))
         # runs overlapping the digit span, first gets the new text
         first = True
         for i in range(len(runs)):
@@ -136,14 +137,13 @@ def _shift_in_para(para_xml: str, pattern: re.Pattern[str],
 
 
 def _shift_names(xml: str, label: str, prefix: str,
-                 frm: int, by: int) -> tuple[str, int, int, int]:
+                 remap_fn: Callable[[int], int]) -> tuple[str, int, int, int]:
     """Bookmark names, hyperlink anchors and REF fields, one pass each."""
     base = re.escape(label) + re.escape(prefix)
     counts = {"w:name": 0, "w:anchor": 0, "ref": 0}
 
     def bump(number: str) -> str:
-        n = int(number)
-        return str(n + by) if n >= frm else number
+        return str(remap_fn(int(number)))
 
     attr_re = re.compile(rf'((?:w:name|w:anchor)="){base}(\d+)(txt)?(")')
 
@@ -208,6 +208,13 @@ def shift(xml: str, label: str, *, frm: int, by: int = 1,
             f"{sorted(shifted)} - remove or renumber the caption in the "
             f"way first")
 
+    return _apply(xml, label, prefix,
+                  lambda n: n + by if n >= frm else n)
+
+
+def _apply(xml: str, label: str, prefix: str,
+           remap_fn: Callable[[int], int]) -> tuple[str, ShiftReport]:
+    """The one pass both `shift` and `remap` run: mentions, then names."""
     report = ShiftReport()
     mention = _mention_re(label, prefix)
     flag = _flag_re(label, prefix)
@@ -218,7 +225,7 @@ def shift(xml: str, label: str, *, frm: int, by: int = 1,
             report.flagged.append(" ".join(text.split())[:80])
         if not mention.search(text):
             continue
-        new_para, n = _shift_in_para(p.group(0), mention, frm, by)
+        new_para, n = _shift_in_para(p.group(0), mention, remap_fn)
         if n:
             report.mentions += n
             out.append((p.start(), p.end(), new_para))
@@ -226,6 +233,86 @@ def shift(xml: str, label: str, *, frm: int, by: int = 1,
     for start, end, new_para in reversed(out):
         xml = xml[:start] + new_para + xml[end:]
 
-    xml, names, anchors, refs = _shift_names(xml, label, prefix, frm, by)
+    xml, names, anchors, refs = _shift_names(xml, label, prefix, remap_fn)
     report.bookmarks, report.anchors, report.fields = names, anchors, refs
     return xml, report
+
+
+def numbers_in_order(xml: str, label: str, *,
+                     prefix: str = "") -> list[int]:
+    """The caption numbers of `label`, in DOCUMENT ORDER."""
+    out = []
+    for cap in find_captions(xml, labels=(label,)):
+        if prefix and not cap.number.startswith(prefix):
+            continue
+        digits = cap.number[len(prefix):]
+        if digits.isdigit():
+            out.append(int(digits))
+    return out
+
+
+def audit(xml: str, label: str, *, prefix: str = "") -> list[str]:
+    """Problems with `label`'s numbering — empty list means it is sound.
+
+    THE CHECK THAT CATCHES A REORDER. Numbering a new exhibit "one past
+    the highest so far" keeps numbers UNIQUE, which is what a build
+    normally asserts, and says nothing about whether they still run in
+    reading order. DSI numbered two new tables 11 and 12 into §6.2 while
+    §6.3 already held 9 and 10, so the captions read
+    1..8, 11, 12, 9, 10 — every number unique, every cross-reference
+    resolving, and the sequence backwards where the sections meet. A
+    reader meets Table 11 before Table 9.
+
+    Reports three things: numbers out of document order, gaps and
+    duplicates, and mentions of a number no caption defines.
+    """
+    problems = []
+    nums = numbers_in_order(xml, label, prefix=prefix)
+    if nums != sorted(nums):
+        problems.append(
+            f"{label}: captions are not in document order: {nums}")
+    if sorted(nums) != list(range(1, len(nums) + 1)):
+        problems.append(
+            f"{label}: numbering is not 1..{len(nums)}: {sorted(nums)}")
+    defined = set(nums)
+    mention = _mention_re(label, prefix)
+    seen: set[int] = set()
+    for p in paragraphs(xml):
+        for m in mention.finditer(visible_text(p.group(0))):
+            seen.add(int(m.group(1)))
+    for n in sorted(seen - defined):
+        problems.append(
+            f"{label}: the text mentions {n}, but no caption defines it")
+    return problems
+
+
+def remap(xml: str, label: str, mapping: dict[int, int], *,
+          prefix: str = "") -> tuple[str, ShiftReport]:
+    """Renumber by an arbitrary MAPPING — captions, mentions, bookmarks,
+    anchors and REF fields together.
+
+    :func:`shift` moves a tail and cannot express a swap, which is what a
+    reorder needs: putting DSI's §6.2 tables before §6.3's meant
+    9→11, 10→12, 11→9, 12→10 at once. Doing that as two shifts is not
+    possible and doing it as sequential replacements double-renumbers
+    whatever the first pass already touched.
+
+    Atomic by construction, and for the same reason `shift` is: every
+    replacement is computed from the ORIGINAL number in a single pass, so
+    a permutation needs no temporary numbers.
+
+    The mapping must be a permutation of the numbers it touches —
+    otherwise two captions would end up sharing a number, which is the
+    failure this function exists to repair.
+    """
+    if not mapping:
+        raise AnchorError("remap: empty mapping")
+    if len(set(mapping.values())) != len(mapping):
+        raise AnchorError(f"remap: {mapping} sends two numbers to one")
+    nums = set(numbers_in_order(xml, label, prefix=prefix))
+    after = {mapping.get(n, n) for n in nums}
+    if len(after) != len(nums):
+        raise AnchorError(
+            f"remap: {sorted(nums)} under {mapping} collides at "
+            f"{sorted(after)}")
+    return _apply(xml, label, prefix, lambda n: mapping.get(n, n))

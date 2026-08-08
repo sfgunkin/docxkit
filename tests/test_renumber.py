@@ -11,7 +11,7 @@ import pytest
 from conftest import NS, para, run
 
 from docxkit.errors import AnchorError
-from docxkit.renumber import shift
+from docxkit.renumber import audit, numbers_in_order, remap, shift
 from docxkit.tables import read_all
 
 
@@ -29,6 +29,60 @@ def text_of_doc(xml: str) -> str:
     from docxkit._xml import visible_text
     return " | ".join(visible_text(m.group(0)) for m in
                       re.finditer(r"<w:p\b.*?</w:p>", xml, re.DOTALL))
+
+
+def test_audit_catches_captions_out_of_document_order():
+    """THE DSI SHAPE. Two tables numbered one past the highest so far went
+    into a section that PRECEDES the one already holding those numbers, so the
+    captions read 1, 2, 11, 12, 9, 10 — every number unique, every reference
+    resolving, and the sequence backwards where the sections meet. Uniqueness
+    is what a build asserts; order is what a reader sees."""
+    xml = doc("".join(caption(n) for n in (1, 2, 11, 12, 9, 10)))
+    assert numbers_in_order(xml, "Table") == [1, 2, 11, 12, 9, 10]
+    problems = audit(xml, "Table")
+    assert any("not in document order" in p for p in problems)
+    assert any("not 1..6" in p for p in problems)
+
+
+def test_audit_is_silent_on_sound_numbering():
+    xml = doc("".join(caption(n) for n in (1, 2, 3))
+              + para(run("As Table 2 shows.")))
+    assert audit(xml, "Table") == []
+
+
+def test_audit_reports_a_mention_no_caption_defines():
+    xml = doc(caption(1) + para(run("But see Table 4 for the detail.")))
+    assert any("mentions 4" in p for p in audit(xml, "Table"))
+
+
+def test_remap_swaps_two_pairs_in_one_pass():
+    """A reorder needs a permutation, and no sequence of shifts expresses one.
+    Done as sequential replacements, 9->11 would then be caught by 11->9 and
+    come back; every replacement here is computed from the ORIGINAL number."""
+    xml = doc("".join(caption(n) for n in (9, 10, 11, 12))
+              + para(run("Table 11 first, then Table 9.")))
+    out, report = remap(xml, "Table", {9: 11, 10: 12, 11: 9, 12: 10})
+    assert numbers_in_order(out, "Table") == [11, 12, 9, 10]
+    assert "Table 9 first, then Table 11." in text_of_doc(out)
+    assert report.mentions == 6
+
+
+def test_remap_moves_bookmarks_and_anchors_with_the_number():
+    xml = doc(
+        '<w:p><w:bookmarkStart w:id="1" w:name="Table9"/>'
+        f'{run("Table 9. Dispersion")}</w:p>'
+        '<w:p><w:hyperlink w:anchor="Table9">'
+        f'{run("Table 9")}</w:hyperlink></w:p>')
+    out, report = remap(xml, "Table", {9: 11})
+    assert 'w:name="Table11"' in out and 'w:anchor="Table11"' in out
+    assert 'w:name="Table9"' not in out and 'w:anchor="Table9"' not in out
+    assert report.bookmarks == 1 and report.anchors == 1
+
+
+def test_remap_refuses_a_mapping_that_collides():
+    xml = doc(caption(9) + caption(10))
+    with pytest.raises(AnchorError):
+        remap(xml, "Table", {9: 10})
 
 
 def test_captions_and_mentions_from_frm_shift_once():
