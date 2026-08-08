@@ -285,6 +285,55 @@ def test_a_citation_after_an_equation_is_wrapped_at_the_right_place():
     assert visible_text(inner.group(1)) == "Smith 2020"
 
 
+def test_locate_counts_the_maths_too():
+    """The other half of the same bug, and the half that shipped. Fixing
+    `wrap_visible_span` left `edit._locate` joining the `w:r` runs alone, so it
+    returned offsets into a SHORTER string than the one the wrapper consumes.
+    Two definitions of "visible" in one call path is one too many."""
+    from docxkit._xml import visible_text
+    from docxkit.edit import _locate
+
+    math = "<m:oMath><m:r><m:t>αβγ</m:t></m:r></m:oMath>"
+    para = ("<w:p><w:r><w:t>where </w:t></w:r>" + math
+            + "<w:r><w:t> are weights (Smith 2020).</w:t></w:r></w:p>")
+    _runs, _spans, at, end = _locate(para, "Smith 2020")
+    assert visible_text(para)[at:end] == "Smith 2020"
+
+
+def test_link_all_places_a_citation_that_follows_inline_symbols():
+    """End to end, on the shape that shipped: a «where y — …, α and β — …»
+    gloss carrying five inline symbols, then the citation. The link came out
+    four characters early, over «ему (Friedman», and no glyph-identity gate can
+    see that — a displaced wrap moves no characters. The audit caught it."""
+    from docxkit._xml import visible_text
+    from docxkit.citations import link_all
+
+    def sym(g):
+        return f"<m:oMath><m:r><m:t>{g}</m:t></m:r></m:oMath>"
+
+    cite = ("<w:p><w:r><w:t>where </w:t></w:r>" + sym("y")
+            + "<w:r><w:t> is the index, </w:t></w:r>" + sym("c")
+            + "<w:r><w:t> the region, </w:t></w:r>" + sym("α")
+            + "<w:r><w:t> and </w:t></w:r>" + sym("β")
+            + "<w:r><w:t> the coefficients, </w:t></w:r>" + sym("e")
+            + "<w:r><w:t> the residual. Regression to the mean can produce "
+              "it (Friedman 1992).</w:t></w:r></w:p>")
+    head = "<w:p><w:r><w:t>References</w:t></w:r></w:p>"
+    entry = ('<w:p><w:r><w:t>Friedman, M. (1992). "Do Old Fallacies Ever '
+             'Die?" Journal of Economic Literature, 30(4): 2129-2132.'
+             "</w:t></w:r></w:p>")
+    body = ('<w:document xmlns:w="http://schemas.openxmlformats.org/'
+            'wordprocessingml/2006/main" xmlns:m="http://schemas.'
+            'openxmlformats.org/officeDocument/2006/math"><w:body>'
+            + cite + head + entry + "</w:body></w:document>")
+    parts = {"word/document.xml": body.encode("utf-8")}
+    link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+    inner = re.search(r"<w:hyperlink[^>]*>(.*?)</w:hyperlink>", out, re.DOTALL)
+    assert inner is not None
+    assert visible_text(inner.group(1)) == "Friedman 1992"
+
+
 def test_a_bookmark_whose_entry_was_deleted_reads_as_stale():
     """The author removed an entry in Word. The marker did not go with it —
     Word hoists a paragraph-head bookmark to body level rather than dropping

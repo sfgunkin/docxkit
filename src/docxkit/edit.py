@@ -146,15 +146,27 @@ def _locate(para_xml: str, old: str, *, normalize: bool = False,
     target that is not unique in the paragraph — a single letter, a
     repeated word — can still be addressed unambiguously. Both anchors
     are asserted: ambiguity is an error, never a silent first-match.
+
+    OFFSETS ARE INTO ``visible_text(para_xml)``, which counts everything a
+    reader sees — including the maths, which lives in ``m:r`` INSIDE an
+    ``m:oMath`` sibling of the runs, not in a ``w:r``. Joining the runs alone
+    gave a shorter string, and its offsets then meant something different from
+    the ones :func:`_cite_grammar.wrap_visible_span` consumes: on a DSI §6.3
+    paragraph carrying five inline symbols the citation link wrapped
+    «ему (Friedman» instead of «(Friedman 1992)», four characters early. That
+    function had already been fixed to count between-run content; this one had
+    not, and two definitions of "visible" in one call path is one too many.
     """
-    runs, spans, cursor = [], [], 0
+    runs, spans, cursor, prev_end = [], [], 0, 0
     for r in RUN_RE.finditer(para_xml):
+        cursor += len(visible_text(para_xml[prev_end:r.start()]))
         body = visible_text(r.group(0))
         runs.append(r)
         spans.append((cursor, cursor + len(body)))
         cursor += len(body)
+        prev_end = r.end()
 
-    visible = "".join(visible_text(r.group(0)) for r in runs)
+    visible = visible_text(para_xml)
     base = 0
     if within is not None:
         scope = _hits(visible, within, normalize)
