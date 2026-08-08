@@ -26,6 +26,7 @@ The pipeline:
 """
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 import time
@@ -36,7 +37,7 @@ from typing import Any
 from . import comments as _comments
 from . import guard as _guard
 from . import word as _word
-from ._xml import COMMENT_ID_RE
+from ._xml import COMMENT_ID_RE, internal_links
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
@@ -47,7 +48,55 @@ from .package import read_parts, write_docx
 # carry a suppression helper. The seam is for Word, not for this.
 from .word import _suppress_com
 
-__all__ = ["BuildReport", "build", "package_counts", "verify"]
+__all__ = ["BuildReport", "build", "compare_collateral", "package_counts",
+           "verify"]
+
+_BOOKMARK_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
+
+
+def _anchors(parts: dict[str, bytes]) -> tuple[set[str], set[str]]:
+    """Every bookmark NAME and every internal link TARGET in a package."""
+    names: set[str] = set()
+    targets: set[str] = set()
+    for name, blob in parts.items():
+        if not (name.startswith("word/") and name.endswith(".xml")):
+            continue
+        xml = blob.decode("utf-8", "replace")
+        names |= set(_BOOKMARK_RE.findall(xml))
+        targets |= {a for a, _ in internal_links(xml)}
+    return names, targets
+
+
+def compare_collateral(revised: dict[str, bytes],
+                       redline: dict[str, bytes]) -> list[str]:
+    """What Word's Compare removed on the way from `revised` to `redline`.
+
+    Compare rebuilds the document rather than annotating it, and what it
+    declines to carry over it drops in silence. Three kinds turned up on
+    ONE manuscript in one day, none of them visible in any text diff:
+
+    * a bookmark — LI7's ``OECD2021txt``, whose start had no matching
+      end, so Word discarded it and the entry's back-link pointed at
+      nothing;
+    * a hyperlink — the link to ``Hadiyana2021`` simply absent, 162
+      links in and 161 out;
+    * whole PARTS — ``word/header1.xml`` and three customXml items.
+
+    Every one was found afterwards, by hand, because the build reported
+    revisions and comments and nothing else. This is advisory and does
+    NOT fail a build: Word legitimately drops an empty header and the
+    customXml a template left behind, and a redline nobody can produce
+    is worse than one with a note on it. But it must be SAID, because
+    the alternative is finding it in the deliverable.
+    """
+    notes = [f"part dropped: {p}" for p in sorted(set(revised) - set(redline))]
+    was_names, was_targets = _anchors(revised)
+    now_names, now_targets = _anchors(redline)
+    notes += [f"bookmark dropped: {b}"
+              for b in sorted(was_names - now_names)]
+    notes += [f"link dropped: -> {t}"
+              for t in sorted(was_targets - now_targets)]
+    return notes
 
 Classifier = Callable[[RevisionContext], str | None]
 
@@ -116,6 +165,10 @@ class BuildReport:
         #: half-finished build report success-shaped numbers, so what
         #: was swallowed is recorded and printed.
         self.suppressed: list[str] = []
+        #: What Word's Compare removed rather than carried over — parts,
+        #: bookmarks, links. See :func:`compare_collateral`. Advisory:
+        #: some of it is legitimate tidying, and only a person can tell.
+        self.dropped: list[str] = []
         self.phases: list[tuple[str, float]] = []
         self._t0 = self._last = time.perf_counter()
 
@@ -139,6 +192,12 @@ class BuildReport:
             lines += [f"    - {note}" for note in self.suppressed[:10]]
             if len(self.suppressed) > 10:
                 lines.append(f"    ... and {len(self.suppressed) - 10} more")
+        if self.dropped:
+            lines.append(f"  Word's Compare dropped {len(self.dropped)} "
+                         "thing(s) the revised copy had:")
+            lines += [f"    - {note}" for note in self.dropped[:10]]
+            if len(self.dropped) > 10:
+                lines.append(f"    ... and {len(self.dropped) - 10} more")
         return "\n".join(lines)
 
 
@@ -350,6 +409,13 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         report.mark(f"packed {n_parts} parts")
 
         parts = read_parts(building)
+        # Before anything is added to it: what did Compare decline to
+        # carry over? Checked against the REVISED input, which is the
+        # document the redline is supposed to be able to reproduce.
+        report.dropped = compare_collateral(read_parts(revised), parts)
+        for note in report.dropped:
+            say(f"  WARNING: Compare {note}")
+
         if classify is not None:
             added, unclassified = _comments.annotate(parts, classify,
                                                      generic=generic,

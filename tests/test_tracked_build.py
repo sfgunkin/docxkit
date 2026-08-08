@@ -659,3 +659,85 @@ def test_a_clean_build_reports_nothing_suppressed(monkeypatch, sources):
     report, _ = _build(monkeypatch, _clean_document(), sources)
     assert report.suppressed == []
     assert "failed" not in report.format()
+
+
+# ------------------------------------ what Word's Compare quietly removes ---
+#
+# Compare rebuilds the document rather than annotating it, and drops what
+# it declines to carry over without a word. All three shapes below came
+# off ONE manuscript (LI7) on one day, and every one was found by hand
+# afterwards because the build reported revisions and comments and
+# nothing else.
+
+def _pkg(doc_xml: str, **extra: str) -> dict[str, bytes]:
+    parts = {"word/document.xml": document(doc_xml).encode("utf-8")}
+    parts.update({k: v.encode("utf-8") for k, v in extra.items()})
+    return parts
+
+
+def test_a_dropped_part_is_reported():
+    """word/header1.xml and three customXml items, on the RF-a promote."""
+    revised = _pkg(para(run("x")), **{"word/header1.xml": "<w:hdr/>"})
+    redline = _pkg(para(run("x")))
+    assert tracked.compare_collateral(revised, redline) == [
+        "part dropped: word/header1.xml"]
+
+
+def test_a_dropped_bookmark_is_reported():
+    """OECD2021txt: its start had no matching end, so Word discarded it
+    and the reference entry's back-link pointed at nothing."""
+    revised = _pkg('<w:bookmarkStart w:id="1" w:name="OECD2021txt"/>'
+                   + para(run("x")))
+    assert tracked.compare_collateral(revised, _pkg(para(run("x")))) == [
+        "bookmark dropped: OECD2021txt"]
+
+
+def test_a_dropped_link_is_reported():
+    """162 links in, 161 out, and nothing said so."""
+    linked = ('<w:hyperlink w:anchor="Hadiyana2021">'
+              + run("Hudiyana 2022") + "</w:hyperlink>")
+    revised = _pkg(f"<w:p>{linked}</w:p>")
+    redline = _pkg(para(run("Hudiyana 2022")))
+    assert tracked.compare_collateral(revised, redline) == [
+        "link dropped: -> Hadiyana2021"]
+
+
+def test_carrying_everything_over_reports_nothing():
+    same = _pkg('<w:bookmarkStart w:id="1" w:name="Keep"/>'
+                + para(run("x")), **{"word/header1.xml": "<w:hdr/>"})
+    assert tracked.compare_collateral(same, dict(same)) == []
+
+
+def test_what_the_redline_ADDS_is_not_a_loss():
+    """The build writes comments.xml into the redline; only what the
+    revised copy had and the redline lacks counts."""
+    revised = _pkg(para(run("x")))
+    redline = _pkg(para(run("x")), **{"word/comments.xml": "<w:comments/>"})
+    assert tracked.compare_collateral(revised, redline) == []
+
+
+def test_bookmarks_are_read_from_every_part_not_just_the_body():
+    """A citation bookmark can live in footnotes.xml, and losing one
+    there is exactly as fatal to the link."""
+    revised = _pkg(para(run("x")), **{
+        "word/footnotes.xml": document(
+            '<w:bookmarkStart w:id="9" w:name="Jdanov2008txt"/>'
+            + para(run("note")))})
+    redline = _pkg(para(run("x")), **{
+        "word/footnotes.xml": document(para(run("note")))})
+    assert tracked.compare_collateral(revised, redline) == [
+        "bookmark dropped: Jdanov2008txt"]
+
+
+def test_the_report_prints_what_compare_dropped():
+    report = tracked.BuildReport()
+    report.dropped = [f"bookmark dropped: B{i}" for i in range(12)]
+    text = report.format()
+    assert "dropped 12 thing(s)" in text
+    assert "and 2 more" in text            # capped at ten, like suppressed
+
+
+def test_a_clean_build_reports_nothing_dropped(monkeypatch, sources):
+    report, _ = _build(monkeypatch, _clean_document(), sources)
+    assert report.dropped == []
+    assert "dropped" not in report.format()
