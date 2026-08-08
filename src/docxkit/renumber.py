@@ -70,8 +70,13 @@ def _mention_re(label: str, prefix: str) -> re.Pattern[str]:
 
 
 #: a number this module will not shift: "1A", "1.1" — a numbering scheme
-#: it does not model, and guessing at one corrupts the manuscript
-_SUFFIXED = r"(?:\.\w|\w)"
+#: it does not model, and guessing at one corrupts the manuscript.
+#: NOT `\w`: that class includes digits, so `\d+` would give one back and the
+#: "suffix" would match it — every TWO-DIGIT exhibit was flagged as a scheme
+#: this module refuses to touch. Single-digit exhibits shifted; everything from
+#: ten upwards was reported as the author's problem, in every paper long enough
+#: to have ten of them.
+_SUFFIXED = r"(?:\.\w|[^\W\d_])"
 
 
 def _flag_re(label: str, prefix: str) -> re.Pattern[str]:
@@ -157,15 +162,23 @@ def _shift_names(xml: str, label: str, prefix: str,
 
     xml = attr_re.sub(attr_sub, xml)
 
-    ref_re = re.compile(rf"(\bREF\s+){base}(\d+)(txt)?\b")
+    # REF fields and the HYPERLINK-field form of an internal link. BOTH are
+    # needed: `crossrefs.link` writes `HYPERLINK \l "Table3txt"` field
+    # instructions, not w:anchor attributes, and renaming the bookmarks
+    # without them leaves every link pointing at the exhibit that used to
+    # hold the name. Under a PERMUTATION nothing dangles — the set of names
+    # is unchanged — so an audit sees no broken anchors and the reader is
+    # simply sent to the wrong table.
+    field_re = re.compile(
+        rf'(\bREF\s+|\bHYPERLINK\s+\\l\s+"){base}(\d+)(txt)?\b')
 
-    def ref_sub(m: re.Match[str]) -> str:
+    def field_sub(m: re.Match[str]) -> str:
         new = bump(m.group(2))
         if new != m.group(2):
             counts["ref"] += 1
         return m.group(1) + label + prefix + new + (m.group(3) or "")
 
-    xml = ref_re.sub(ref_sub, xml)
+    xml = field_re.sub(field_sub, xml)
     return xml, counts["w:name"], counts["w:anchor"], counts["ref"]
 
 

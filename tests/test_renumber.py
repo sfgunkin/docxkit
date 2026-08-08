@@ -44,6 +44,31 @@ def test_audit_catches_captions_out_of_document_order():
     assert any("not 1..6" in p for p in problems)
 
 
+def test_a_two_digit_exhibit_is_not_a_suffixed_scheme():
+    """`\\w` includes digits, so the suffix class used to match the second
+    digit of its own number: `\\d+` gave one back and "Table 11" read as
+    "Table 1" with a suffix. Every exhibit from 10 upwards was then reported
+    as a numbering scheme the module refuses to touch — in every paper long
+    enough to have ten of them."""
+    xml = doc("".join(caption(n) for n in (10, 11, 12))
+              + para(run("See Table 11 and also Table 12.")))
+    out, report = shift(xml, "Table", frm=10, by=3)
+    assert not report.flagged
+    assert numbers_in_order(out, "Table") == [13, 14, 15]
+
+
+@pytest.mark.parametrize("phrase", [
+    "See Table 1A for the detail.",
+    "See Table 1.1 for the detail.",
+    "See Tables 5–7 for the detail.",
+    "See Tables 5 and 6 for the detail.",
+])
+def test_schemes_and_ranges_are_still_flagged(phrase):
+    xml = doc(caption(1) + caption(5) + para(run(phrase)))
+    _out, report = shift(xml, "Table", frm=1, by=10)
+    assert report.flagged, phrase
+
+
 def test_audit_is_silent_on_sound_numbering():
     xml = doc("".join(caption(n) for n in (1, 2, 3))
               + para(run("As Table 2 shows.")))
@@ -77,6 +102,27 @@ def test_remap_moves_bookmarks_and_anchors_with_the_number():
     assert 'w:name="Table11"' in out and 'w:anchor="Table11"' in out
     assert 'w:name="Table9"' not in out and 'w:anchor="Table9"' not in out
     assert report.bookmarks == 1 and report.anchors == 1
+
+
+def test_remap_moves_hyperlink_field_links_too():
+    """crossrefs.link writes internal links as HYPERLINK FIELDS, not w:anchor
+    attributes. Renaming the bookmarks without the fields leaves every link
+    pointing at whichever exhibit now holds the old name — and under a
+    permutation the set of names is unchanged, so nothing dangles, no audit
+    reports a broken anchor, and the reader is simply sent to the wrong
+    table."""
+    xml = doc(
+        '<w:p><w:bookmarkStart w:id="1" w:name="Table9txt"/>'
+        f'{run("As Table 9 shows")}</w:p>'
+        '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText>HYPERLINK \\l "Table9txt" \\h</w:instrText></w:r>'
+        f'{run("Table 9")}'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        f'{run(". Dispersion")}</w:p>')
+    out, report = remap(xml, "Table", {9: 11})
+    assert 'HYPERLINK \\l "Table11txt"' in out
+    assert 'Table9txt' not in out
+    assert report.fields == 1 and report.bookmarks == 1
 
 
 def test_remap_refuses_a_mapping_that_collides():
