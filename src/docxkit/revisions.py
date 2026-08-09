@@ -386,6 +386,38 @@ _PROPERTY_MARKERS = ("<w:tcPrChange", "<w:trPrChange", "<w:tblPrChange",
                      "<w:tblGridChange")
 
 
+#: Every element whose presence means a tracked change is PENDING, as one
+#: pattern rather than as a predicate — because a caller that needs to
+#: COUNT them, or read their authors, cannot use the booleans below and
+#: was therefore writing its own narrower list.
+#:
+#: `revision.state` did exactly that: it counted `<w:ins ` and `<w:del `
+#: alone, so a manuscript whose only pending change was a MOVE or a
+#: FORMATTING change reported "0 pending -> TRUTH". That is the number the
+#: protocol decides everything on. `build` refuses a baseline with pending
+#: revisions because Word's Compare rebuilds a redline from ACCEPTED
+#: content — so the guard that stops an author's open verdicts being
+#: flattened into plain text was blind to five of the seven ways a verdict
+#: can be open.
+#:
+#: The lookahead is load-bearing: without it `w:moveFrom` also matches
+#: `w:moveFromRangeStart`, and a move would be counted twice.
+_REVISION_NAMES = ("ins", "del", "moveFrom", "moveTo", "tcPrChange",
+                   "trPrChange", "tblPrChange", "pPrChange", "rPrChange",
+                   "sectPrChange", "tblGridChange")
+REVISION_RE = re.compile(
+    r"<w:(?:" + "|".join(_REVISION_NAMES) + r")(?=[ />])[^>]*>")
+
+
+def revision_elements(xml: str) -> list[str]:
+    """Every pending-revision element in `xml`, as its opening tag.
+
+    The tag rather than a count, so a caller can read `w:author` off it —
+    which is the whole reason the narrower copy existed.
+    """
+    return REVISION_RE.findall(xml)
+
+
 def _has_content_revisions(xml: str) -> bool:
     """An insertion, deletion or move — what accept/reject simulate."""
     return any(marker in xml for marker in _CONTENT_MARKERS)

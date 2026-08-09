@@ -276,7 +276,16 @@ _AUTHOR_RE = re.compile(r'w:author="([^"]*)"')
 
 
 def state(path: str | Path) -> State:
-    """Count the pending revisions in every text-bearing part."""
+    """Count the pending revisions in every text-bearing part.
+
+    Every KIND of pending revision, via ``revisions.revision_elements``.
+    This counted `<w:ins ` and `<w:del ` itself, which meant a manuscript
+    whose only open change was a MOVE or a FORMATTING one — `w:moveTo`,
+    `w:rPrChange`, `w:pPrChange`, `w:sectPrChange` — reported "0 pending
+    -> TRUTH" and was treated as settled. `revisions` already had the
+    full list, and said in a comment why the short one is wrong; the
+    protocol's own truth test was the place still using it.
+    """
     path = Path(path)
     parts = package.read_parts(path)
     by_part: dict[str, int] = {}
@@ -288,10 +297,10 @@ def state(path: str | Path) -> State:
         xml = blob.decode("utf-8", "replace")
         # count the elements, not the authors: a single <w:ins> may hold
         # several runs, and every one of them carries the attribute
-        found = xml.count("<w:ins ") + xml.count("<w:del ")
+        found = revisions.revision_elements(xml)
         if found:
-            by_part[name] = found
-        for chunk in re.findall(r"<w:(?:ins|del) [^>]*>", xml):
+            by_part[name] = len(found)
+        for chunk in found:
             who = _AUTHOR_RE.search(chunk)
             if who:
                 by_author[who.group(1)] = by_author.get(who.group(1), 0) + 1
