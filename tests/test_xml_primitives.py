@@ -1,0 +1,292 @@
+"""The shared WordprocessingML primitives, tested directly.
+
+`_xml` is where R1 and R6 put the one definition of a run, a text node, a
+bookmark and a part name, and every editing module is built on it. It had
+no test module: `set_run_text`, `matching_close`, `element_spans` and
+`used_prefixes` were not named anywhere in the suite, and were exercised
+only through whatever shapes their callers happened to produce.
+
+A cosmic-ray pass over the file (357 mutants, 2026-08-09) said so
+precisely — 49 survivors, and almost every viable one sat in exactly
+those functions. Two clusters did the most work:
+
+  * ten mutations of the `xml:space="preserve"` guard in `set_run_text`
+    ALL survived, including inverting it outright. That guard is the
+    reason a manuscript does not grow a phantom author edit on every
+    round;
+  * every self-closing-element branch survived — `<w:ins/>` is a
+    property-level mark that neither nests nor closes, and getting it
+    wrong makes a walk pair an open tag with someone else's close.
+
+So the tests below are deliberately about the primitive rather than
+about a caller: a bug reached through five modules is a bug found five
+times over.
+"""
+from __future__ import annotations
+
+import pytest
+from conftest import NS, field
+
+from docxkit._xml import (
+    element_spans,
+    internal_links,
+    live_properties,
+    matching_close,
+    own_properties,
+    set_run_property,
+    set_run_text,
+    used_prefixes,
+    visible_text,
+)
+
+
+def run(text: str, *, rpr: str = "") -> str:
+    return f"<w:r>{rpr}<w:t>{text}</w:t></w:r>"
+
+
+# ------------------------------------------------------- set_run_text ----
+# The mandatory last build step lives here as well as in edit.preserve_space:
+# a bare `<w:t> x</w:t>` loses its edge space on every Word save, and the
+# space then reappears as an author edit nobody made.
+
+
+def test_an_edge_space_gets_xml_space_preserve():
+    got = set_run_text(run("x"), " lead")
+    assert '<w:t xml:space="preserve"> lead</w:t>' in got
+
+
+def test_a_trailing_space_gets_it_too():
+    assert 'xml:space="preserve"' in set_run_text(run("x"), "trail ")
+
+
+@pytest.mark.parametrize("text", ["plain", "two words", ""])
+def test_text_with_no_edge_whitespace_does_not(text):
+    """Not decoration: writing it unconditionally would rewrite every run
+    in the manuscript and show up as a diff on every paragraph."""
+    assert "xml:space" not in set_run_text(run("x"), text)
+
+
+def test_an_existing_preserve_is_not_written_twice():
+    already = '<w:r><w:t xml:space="preserve">x</w:t></w:r>'
+    got = set_run_text(already, " y")
+    assert got.count("xml:space") == 1
+
+
+def test_the_text_lands_in_the_first_run_and_the_others_are_blanked():
+    """The multi-run case, which no caller in the suite produced: every
+    mutation of the index arithmetic survived because `len(runs)` was
+    always 1, so `idx` was 0 whatever the expression said."""
+    two = run("a") + run("b")
+    got = set_run_text(two, "Z")
+    assert visible_text(got) == "Z"
+    assert got.count("<w:t") == 2          # structure kept, text moved
+    assert "<w:t>Z</w:t>" in got
+    assert "<w:t></w:t>" in got
+
+
+def test_three_runs_keep_their_order_and_their_formatting():
+    three = (run("a", rpr="<w:rPr><w:b/></w:rPr>") + run("b") + run("c"))
+    got = set_run_text(three, "Q")
+    assert visible_text(got) == "Q"
+    assert got.index("<w:t>Q</w:t>") < got.index("<w:t></w:t>")
+    assert "<w:b/>" in got
+
+
+def test_the_text_is_escaped():
+    assert "R&amp;D" in set_run_text(run("x"), "R&D")
+    assert "&lt;" in set_run_text(run("x"), "a<b")
+
+
+def test_a_fragment_with_no_run_is_returned_unchanged():
+    assert set_run_text("<w:p/>", "x") == "<w:p/>"
+
+
+# ----------------------------------------------------- matching_close ----
+
+
+def test_a_nested_element_of_the_same_name_closes_at_the_outer_one():
+    xml = "<w:tc>A<w:tc>B</w:tc>C</w:tc>"
+    assert matching_close(xml, len("<w:tc>"), "tc") == len(xml)
+
+
+def test_a_self_closing_open_neither_nests_nor_closes():
+    """`<w:ins/>` is a property-level mark. Counted as an open, the walk
+    goes looking for a close that is not there and pairs the next one it
+    finds with the wrong element."""
+    xml = "<w:ins>X<w:ins/>Y</w:ins>"
+    assert matching_close(xml, len("<w:ins>"), "ins") == len(xml)
+
+
+def test_two_self_closing_marks_in_a_row_are_both_skipped():
+    xml = "<w:ins><w:ins/><w:ins/>tail</w:ins>"
+    assert matching_close(xml, len("<w:ins>"), "ins") == len(xml)
+
+
+def test_an_attribute_bearing_open_tag_still_counts():
+    xml = '<w:tc><w:tc w:id="3">B</w:tc></w:tc>'
+    assert matching_close(xml, len("<w:tc>"), "tc") == len(xml)
+
+
+# ------------------------------------------------------ element_spans ----
+
+
+def test_a_span_starting_at_the_very_beginning_is_found():
+    """The scan starts at 0, and every mutation of that start survived —
+    no test ever passed a string whose element sat at offset 0."""
+    xml = "<w:tc>a</w:tc>"
+    assert element_spans(xml, "tc") == [(0, len(xml))]
+
+
+def test_only_the_outermost_elements_are_returned():
+    xml = "<w:p><w:tc>A<w:tc>inner</w:tc></w:tc><w:tc>B</w:tc></w:p>"
+    spans = element_spans(xml, "tc")
+    assert len(spans) == 2
+    assert xml[spans[0][0]:spans[0][1]].count("<w:tc") == 2   # rides along
+    assert xml[spans[1][0]:spans[1][1]] == "<w:tc>B</w:tc>"
+
+
+def test_a_self_closing_element_is_skipped_and_the_walk_goes_on():
+    """`continue`, not `break`: a self-closing element has no content, but
+    the elements AFTER it still do."""
+    xml = "<w:p><w:tc/><w:tc>real</w:tc></w:p>"
+    spans = element_spans(xml, "tc")
+    assert [xml[s:e] for s, e in spans] == ["<w:tc>real</w:tc>"]
+
+
+def test_nothing_to_find_is_an_empty_list():
+    assert element_spans("<w:p>text</w:p>", "tc") == []
+
+
+# ----------------------------------------------------- own_properties ----
+
+
+def test_the_properties_are_the_child_right_after_the_open_tag():
+    el = "<w:r><w:rPr><w:b/></w:rPr><w:t>x</w:t></w:r>"
+    got = own_properties(el, "rPr")
+    assert got is not None
+    start, end, inner = got
+    assert el[start:end] == "<w:rPr><w:b/></w:rPr>"
+    assert inner == "<w:b/>"
+
+
+def test_an_empty_self_closing_properties_element_is_real():
+    el = "<w:tc><w:tcPr/><w:p/></w:tc>"
+    got = own_properties(el, "tcPr")
+    assert got is not None
+    assert got[2] == ""
+    assert el[got[0]:got[1]] == "<w:tcPr/>"
+
+
+def test_a_nested_snapshot_does_not_end_the_properties_early():
+    """A tracked FORMATTING change stores the old rPr INSIDE the new one,
+    so a non-greedy close returns an element cut in half."""
+    el = ("<w:r><w:rPr><w:i/><w:rPrChange w:id='1'><w:rPr><w:b/></w:rPr>"
+          "</w:rPrChange></w:rPr><w:t>x</w:t></w:r>")
+    got = own_properties(el, "rPr")
+    assert got is not None
+    assert got[2].endswith("</w:rPrChange>")
+    assert live_properties(got[2]) == "<w:i/>"
+
+
+def test_a_string_that_is_not_an_element_has_no_properties():
+    """`open_tag is None or ...` — with `and` there, this raises
+    AttributeError instead of answering."""
+    assert own_properties("not markup at all", "rPr") is None
+    assert own_properties("", "rPr") is None
+
+
+def test_a_self_closing_element_has_no_properties():
+    assert own_properties("<w:r/><w:rPr><w:b/></w:rPr>", "rPr") is None
+
+
+def test_an_element_without_that_child_reports_none():
+    assert own_properties("<w:r><w:t>x</w:t></w:r>", "rPr") is None
+
+
+# ---------------------------------------------------- internal_links -----
+
+
+def test_a_field_form_link_gives_its_anchor_and_its_visible_label():
+    xml = field('HYPERLINK \\l "Table1"', "Table 1")
+    assert internal_links(xml) == [("Table1", "Table 1")]
+
+
+def test_an_element_form_link_gives_the_same_answer():
+    xml = ('<w:hyperlink w:anchor="Table1">' + run("Table 1")
+           + "</w:hyperlink>")
+    assert internal_links(xml) == [("Table1", "Table 1")]
+
+
+def test_a_field_that_is_not_a_hyperlink_is_skipped_not_a_full_stop():
+    """`continue`, not `break`. A PAGEREF sits in every cross-reference
+    these papers build, so stopping at the first one would report no
+    links at all in a document full of them."""
+    xml = (field("PAGEREF _Ref1 \\h", "12")
+           + field('HYPERLINK \\l "Table1"', "Table 1"))
+    assert internal_links(xml) == [("Table1", "Table 1")]
+
+
+def test_a_self_closing_ghost_hyperlink_swallows_nothing_after_it():
+    xml = ('<w:hyperlink w:anchor="Ghost"/>' + run("prose ")
+           + '<w:hyperlink w:anchor="Real">' + run("label")
+           + "</w:hyperlink>")
+    assert ("Real", "label") in internal_links(xml)
+
+
+# --------------------------------------------------- set_run_property ----
+
+
+def test_a_new_property_lands_in_its_schema_position():
+    r = "<w:r><w:rPr><w:b/><w:sz w:val='20'/></w:rPr><w:t>x</w:t></w:r>"
+    got = set_run_property(r, "i", "<w:i/>")
+    assert "<w:rPr><w:b/><w:i/><w:sz w:val='20'/></w:rPr>" in got
+
+
+def test_an_existing_property_is_replaced_and_its_neighbours_are_not():
+    """`name == tag`, not `name >= tag`: with the comparison loosened,
+    the first property that merely SORTS after the one asked for gets
+    overwritten instead."""
+    r = "<w:r><w:rPr><w:b/><w:sz w:val='20'/></w:rPr><w:t>x</w:t></w:r>"
+    got = set_run_property(r, "b", '<w:b w:val="0"/>')
+    assert '<w:b w:val="0"/>' in got
+    assert "<w:sz w:val='20'/>" in got
+    assert got.count("<w:b") == 1
+
+
+def test_a_run_with_no_properties_gets_some():
+    got = set_run_property("<w:r><w:t>x</w:t></w:r>", "i", "<w:i/>")
+    assert "<w:rPr><w:i/></w:rPr>" in got
+
+
+def test_an_empty_element_removes_the_property():
+    r = "<w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>x</w:t></w:r>"
+    got = set_run_property(r, "i", "")
+    assert "<w:i/>" not in got
+    assert "<w:b/>" in got
+
+
+def test_a_fragment_that_is_not_a_run_is_left_alone():
+    assert set_run_property("<w:p/>", "i", "<w:i/>") == "<w:p/>"
+
+
+# ------------------------------------------------------ used_prefixes ----
+
+
+def test_every_prefix_on_an_element_or_an_attribute_is_reported():
+    frag = '<m:oMath><w:ins w16du:dateUtc="x"><m:t>a</m:t></w:ins></m:oMath>'
+    assert used_prefixes(frag) == {"m", "w", "w16du"}
+
+
+def test_the_xml_and_xmlns_prefixes_are_not_namespaces_to_declare():
+    frag = '<w:t xml:space="preserve" xmlns:w="urn:w">x</w:t>'
+    assert used_prefixes(frag) == {"w"}
+
+
+def test_a_fragment_with_no_prefixes_needs_none():
+    assert used_prefixes("<p>text</p>") == set()
+
+
+def test_the_document_namespaces_round_trip(tmp_path):
+    """A sanity check against the real declaration string the fixtures
+    use, so the set above is not just self-consistent."""
+    assert "w" in used_prefixes(f"<w:document {NS}><w:p/></w:document>")
