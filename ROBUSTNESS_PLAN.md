@@ -110,6 +110,19 @@ lint gate.** `cli.py:48-67` writes via `edit_in_place` directly, while
 that lint is the *only* thing that caught the malformed-XML incident
 this session, this is a missing seatbelt on a live path.
 
+> **"The one" was wrong (2026-08-09).** `tasks --done` was a second, and
+> the wording stopped anyone looking for it: it wrote through
+> `_write_back` with neither a lint nor `preserve_space`. Two others
+> diverged more quietly — `link` and `authors` linted but skipped
+> `preserve_space`, so a PRE-EXISTING fragile edge space failed their
+> gate and blocked a write that had nothing to do with it. Every
+> mutating command now goes through one `_save`. The lesson is about the
+> finding, not the bug: a defect stated as "the one X" invites a fix to
+> that X, where counting the Xs would have found all four. None of the
+> three divergences was visible except by putting the paths side by
+> side, which is the argument for a shared function over three careful
+> implementations.
+
 *(Lower-severity, same batch: `word.py:136` stages a temp copy before
 the `try/finally` that cleans it; `word.py:100` never calls
 `CoUninitialize`; `body.py:81` treats `<w:pPr`/`<w:pict` as "already a

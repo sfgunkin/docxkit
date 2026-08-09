@@ -178,8 +178,6 @@ def cmd_link(args: argparse.Namespace) -> int:
     a numbered backup beside the manuscript.
     """
     from .citations import link_all
-    from .lint import lint_parts
-    from .package import backup, write_docx
     parts = _package(args.docx)
     report = link_all(parts, aliases=_aliases(args))
     print(report.format())
@@ -189,17 +187,7 @@ def cmd_link(args: argparse.Namespace) -> int:
     # Link surgery splices hyperlink and bookmark elements across runs,
     # which is precisely the class that has produced an unopenable file
     # here before — and lint is the only gate that catches it offline.
-    # Every other mutating command goes through _write_document, which
-    # lints; this one used to write straight through edit_in_place.
-    if problems := lint_parts(parts):
-        for problem in problems:
-            print(f"  - {problem}")
-        print("REFUSED: the package would not open cleanly in Word; "
-              "nothing was written")
-        return 1
-    print(backup(args.docx, "pre_link"))
-    write_docx(args.docx, parts)
-    return 0
+    return 0 if _save(args.docx, parts, "pre_link") else 1
 
 
 def cmd_linkfix(args: argparse.Namespace) -> int:
@@ -410,30 +398,52 @@ def _write_back(path: str, parts: dict[str, bytes], tag: str) -> str:
     return kept.name
 
 
-def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
-                    tag: str) -> bool:
-    """The save path for a command that edited ``document.xml``.
+def _save(path: str, parts: dict[str, bytes], tag: str) -> bool:
+    """THE save path: preserve_space, lint, back up, write.
 
-    Runs ``preserve_space`` first — the mandatory last build step, and
-    without it a PRE-EXISTING fragile edge space blocks an unrelated
-    write at the lint gate (found by smartening le14, whose references
-    carried four) — then lints, backs up and writes. Returns False when
-    the lint refused and nothing was written.
+    Every mutating command lands here, because the three that did not
+    each guaranteed something different and a document accepted by one
+    was refused by another:
+
+    * ``link`` and ``authors`` linted but skipped ``preserve_space``, so
+      a PRE-EXISTING fragile edge space — nothing to do with the edit
+      being made — failed their lint and blocked the write. That is what
+      the step exists to prevent, found by smartening le14, whose
+      references carried four;
+    * ``tasks --done`` wrote with NEITHER, which is the gap P0-5 closed
+      for ``link`` and did not notice here. Lint is the only thing that
+      catches spliced markup Word will not open, offline.
+
+    Returns False when the lint refused, in which case nothing was
+    written and the previous file stands.
     """
     from .edit import preserve_space
     from .lint import lint_parts
-    doc_xml, protected = preserve_space(doc_xml)
+    # Indexed, not `.get`: every command reads its manuscript through
+    # `_package`, which refuses a package without this part, so an
+    # absent one is a broken caller and should say so rather than
+    # silently skip the whitespace pass.
+    fixed, protected = preserve_space(parts[DOCUMENT].decode("utf-8"))
     if protected:
         print(f"  protected {protected} edge-whitespace run(s) "
               f"(preserve_space)")
-    parts[DOCUMENT] = doc_xml.encode("utf-8")
+    parts[DOCUMENT] = fixed.encode("utf-8")
     if problems := lint_parts(parts):
         for problem in problems:
             print(f"  - {problem}")
+        print("REFUSED: the package would not open cleanly in Word; "
+              "nothing was written")
         return False
     kept = _write_back(path, parts, tag)
     print(f"  written; previous version kept at {kept}")
     return True
+
+
+def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
+                    tag: str) -> bool:
+    """:func:`_save`, for a command holding an edited ``document.xml``."""
+    parts[DOCUMENT] = doc_xml.encode("utf-8")
+    return _save(path, parts, tag)
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:
@@ -446,9 +456,9 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         if n == 0:
             print("no comment matched those ids; nothing written")
             return 1
-        kept = _write_back(args.docx, parts, "pre_tasks")
-        print(f"marked {n} comment(s) done; previous version kept at "
-              f"{kept}")
+        if not _save(args.docx, parts, "pre_tasks"):
+            return 1
+        print(f"marked {n} comment(s) done")
         return 0
 
     found = threads(parts)
@@ -582,7 +592,6 @@ def cmd_smarten(args: argparse.Namespace) -> int:
 def cmd_authors(args: argparse.Namespace) -> int:
     """Who the document credits; ``--set`` restamps every one of them."""
     from .authors import read_authors, set_author
-    from .lint import lint_parts
 
     parts = _package(args.docx)
     print(Path(args.docx).name)
@@ -602,13 +611,7 @@ def cmd_authors(args: argparse.Namespace) -> int:
     if not args.write:
         print("  (dry run - pass --write to save)")
         return 0
-    if problems := lint_parts(parts):
-        for problem in problems:
-            print(f"  - {problem}")
-        return 1
-    kept = _write_back(args.docx, parts, "pre_authors")
-    print(f"  written; previous version kept at {kept}")
-    return 0
+    return 0 if _save(args.docx, parts, "pre_authors") else 1
 
 
 def cmd_lint(args: argparse.Namespace) -> int:

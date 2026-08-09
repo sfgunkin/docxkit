@@ -17,7 +17,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from conftest import make_parts, para, run, write
+from conftest import comment, make_parts, para, run, write
 
 from docxkit import cli
 from docxkit.errors import DocxKitError, PackageError
@@ -267,6 +267,72 @@ def test_compare_refuses_input_it_cannot_actually_diff(fixture, request):
     with pytest.raises(PackageError):
         cli.cmd_compare(args_with(built=path, edited=path, json=None,
                                   expect_clean=True))
+
+
+# ------------------------------------------------------ the one save path -
+
+
+def _commented(tmp_path) -> str:
+    body = para(run("Body text."))
+    return write(tmp_path / "c.docx",
+                 make_parts(body, comment_items=(comment(1, "check this"),)))
+
+
+@pytest.mark.parametrize("argv,tag", [
+    (("tasks", "--done", "1"), "pre_tasks"),
+    (("authors", "--set", "M Lokshin", "--write"), "pre_authors"),
+    (("link", "--write"), "pre_link"),
+])
+def test_a_mutating_command_writes_nothing_when_the_lint_refuses(
+        monkeypatch, tmp_path, argv, tag):
+    """One answer to "did this write?" for every command.
+
+    `tasks --done` used to write with neither a lint nor preserve_space —
+    the gap P0-5 closed for `link` and did not notice here — so markup
+    Word cannot open had no offline gate on this path at all.
+    """
+    path = _commented(tmp_path)
+    before = Path(path).read_bytes()
+    monkeypatch.setattr("docxkit.lint.lint_parts",
+                        lambda parts: ["a made-up structural problem"])
+    cmd, *flags = argv
+    assert _run(monkeypatch, cmd, path, *flags) == 1
+    assert Path(path).read_bytes() == before
+    assert not list(Path(tmp_path).glob(f"*{tag}*"))
+
+
+@pytest.mark.parametrize("argv", [
+    ("tasks", "--done", "1"),
+    ("authors", "--set", "M Lokshin", "--write"),
+])
+def test_a_mutating_command_keeps_a_backup_when_it_does_write(
+        monkeypatch, tmp_path, argv):
+    path = _commented(tmp_path)
+    before = Path(path).read_bytes()
+    cmd, *flags = argv
+    assert _run(monkeypatch, cmd, path, *flags) == 0
+    kept = list(Path(tmp_path).glob("c_pre_*.docx"))
+    assert len(kept) == 1
+    assert kept[0].read_bytes() == before
+    assert Path(path).read_bytes() != before
+
+
+def test_the_save_path_protects_edge_whitespace_for_every_command(tmp_path):
+    """`link` and `authors` linted but skipped preserve_space, so a
+    PRE-EXISTING fragile edge space failed their lint and blocked a write
+    that had nothing to do with it — which is the failure the step exists
+    to prevent (found by smartening le14, whose references carried four).
+    """
+    from docxkit.package import read_parts
+
+    body = para('<w:r><w:t>trailing space </w:t></w:r>')
+    path = write(tmp_path / "s.docx", make_parts(body))
+    parts = read_parts(path)
+    assert "xml:space" not in parts["word/document.xml"].decode()
+
+    assert cli._save(path, parts, "pre_test") is True
+    after = zipfile.ZipFile(path).read("word/document.xml").decode()
+    assert 'xml:space="preserve"' in after
 
 
 # -------------------------------------------------- report serialisation --
