@@ -43,10 +43,13 @@ FLOORS = {
     # worth paying down first; the number is here so it cannot quietly
     # get worse while it waits.
     "cli.py": 100,
-    # COM-backed: session, open_doc and the Flat OPC bypass need a real
-    # Word or a fake of one. `tracked.py` went 0 -> 99% on a fake, so
-    # this is reachable the same way.
-    "word.py": 73,
+    # Was 73 and described as reachable "the same way tracked.py went
+    # 0 -> 99% on a fake". It was: 99% now, faking COM in `sys.modules`
+    # because `session` imports pythoncom and win32com INSIDE the
+    # function. The one statement left is `_Finder.find`'s early return,
+    # which needs the fuller document fake `test_locate.py` already
+    # carries — worth folding in when something else touches that class.
+    "word.py": 99,
     # Held above DEFAULT deliberately: every refusal in here is a thing
     # that failed SILENTLY in a real paper, and an uncovered refusal is
     # one nobody would notice had stopped working.
