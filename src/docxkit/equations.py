@@ -99,17 +99,32 @@ class Equation:
         return skeleton(self.xml)
 
 
+#: Where to find the transform when Office is not in its usual place —
+#: or is not installed at all. `latex_to_omml` is the one thing in this
+#: package that needs Word's FILE but never needs Word RUNNING, so it is
+#: the one thing that can work in CI or on a Linux box, given the path.
+XSL_ENV = "DOCXKIT_MML2OMML_XSL"
+
+
 def find_mml2omml_xsl(explicit: str | Path | None = None) -> Path:
     """Locate Word's MathML-to-OMML transform.
 
     Searched rather than hard-coded to one Office version, which is what
-    made the per-paper copies break on a different machine.
+    made the per-paper copies break on a different machine. Checked in
+    order: the argument, ``$DOCXKIT_MML2OMML_XSL``, then the Office
+    install — so a machine without Office can still be told where a copy
+    lives instead of being locked out of the conversion entirely.
     """
-    if explicit:
-        path = Path(explicit)
-        if not path.exists():
-            raise PackageError(f"MML2OMML.XSL not found at {path}")
-        return path
+    import os
+
+    for given, whence in ((explicit, "the path given"),
+                          (os.environ.get(XSL_ENV), f"${XSL_ENV}")):
+        if given:
+            path = Path(given)
+            if not path.exists():
+                raise PackageError(f"MML2OMML.XSL not found at {path} "
+                                   f"({whence})")
+            return path
     for candidate in _XSL_CANDIDATES:
         if (path := Path(candidate)).exists():
             return path
@@ -118,8 +133,28 @@ def find_mml2omml_xsl(explicit: str | Path | None = None) -> Path:
     if hits:
         return hits[0]
     raise PackageError(
-        "MML2OMML.XSL not found — it ships with Word. Pass its path "
-        "explicitly if Office is installed somewhere unusual.")
+        f"MML2OMML.XSL not found — it ships with Word. Pass its path "
+        f"explicitly, or set {XSL_ENV}, if Office is installed somewhere "
+        f"unusual or not at all.")
+
+
+#: Compiled stylesheets, by (path, mtime, size). Compiling Word's
+#: transform costs 10ms of the 24ms an equation used to take, paid again
+#: for every equation in the paper — and a build converts dozens. Keyed
+#: on the file's stamp rather than its name so editing it during a test
+#: is picked up rather than cached over.
+_XSLT_CACHE: dict[tuple[str, int, int], Any] = {}
+
+
+def _transform(xsl: str | Path | None) -> Any:
+    from lxml import etree
+
+    path = find_mml2omml_xsl(xsl)
+    stat = path.stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if key not in _XSLT_CACHE:
+        _XSLT_CACHE[key] = etree.XSLT(etree.parse(str(path)))
+    return _XSLT_CACHE[key]
 
 
 def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
@@ -130,10 +165,15 @@ def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
     # Optional extra, absent on a plain install: pyright resolves imports
     # from the environment it runs in, and mypy's ignore_missing_imports
     # does not reach it. See [project.optional-dependencies] latex.
-    import latex2mathml.converter  # pyright: ignore[reportMissingImports]
+    try:
+        import latex2mathml.converter  # pyright: ignore[reportMissingImports]
+    except ImportError as exc:        # say which extra, not which module
+        raise PackageError(
+            "latex_to_omml needs latex2mathml, which is an optional "
+            "extra: pip install docxkit[latex]") from exc
     from lxml import etree
 
-    transform = etree.XSLT(etree.parse(str(find_mml2omml_xsl(xsl))))
+    transform = _transform(xsl)
     mathml = latex2mathml.converter.convert(latex)
     result = transform(etree.fromstring(mathml.encode("utf-8"))).getroot()
     if result.tag != f"{{{M_NS}}}oMath":

@@ -12,12 +12,21 @@ The numbers in the comments come from the corpus these papers live in —
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import NS
 
 from docxkit import equations
-from docxkit.equations import M_NS, clone, harvest, standalone, to_latex
-from docxkit.errors import AnchorError
+from docxkit.equations import (
+    M_NS,
+    clone,
+    find_mml2omml_xsl,
+    harvest,
+    standalone,
+    to_latex,
+)
+from docxkit.errors import AnchorError, PackageError
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 DU = "http://schemas.microsoft.com/office/word/2023/wordml/word16du"
@@ -175,6 +184,74 @@ def test_the_run_property_still_decides_upright_text():
 
 def test_an_ordinary_run_reads_the_same_way_it_did():
     assert to_latex(omath(mrun("x") + mrun("+") + mrun("y"))) == "x+y"
+
+
+# ------------------------------------------------------ the transform -----
+
+
+IDENTITY_XSL = """<?xml version="1.0"?>
+<xsl:stylesheet version="1.0"
+  xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:template match="/"><done/></xsl:template>
+</xsl:stylesheet>
+"""
+
+
+def test_the_stylesheet_is_compiled_once_per_file(tmp_path):
+    """Compiling Word's transform was 10ms of the 24ms an equation cost,
+    paid again for every equation in the paper. 9.6ms -> 0.8ms."""
+    xsl = tmp_path / "t.xsl"
+    xsl.write_text(IDENTITY_XSL, encoding="utf-8")
+    equations._XSLT_CACHE.clear()
+    first = equations._transform(xsl)
+    assert equations._transform(xsl) is first
+    assert len(equations._XSLT_CACHE) == 1
+
+
+def test_editing_the_stylesheet_is_not_cached_over(tmp_path):
+    """Keyed on the file's stamp, not its name — or a test that rewrites
+    it would silently keep testing the old one."""
+    xsl = tmp_path / "t.xsl"
+    xsl.write_text(IDENTITY_XSL, encoding="utf-8")
+    equations._XSLT_CACHE.clear()
+    first = equations._transform(xsl)
+    xsl.write_text(IDENTITY_XSL.replace("<done/>", "<done2/>"),
+                   encoding="utf-8")
+    assert equations._transform(xsl) is not first
+
+
+def test_the_transform_can_be_pointed_at_by_environment(tmp_path,
+                                                        monkeypatch):
+    """`latex_to_omml` needs Word's FILE and never Word RUNNING, so it is
+    the one thing here that can work on a machine without Office."""
+    xsl = tmp_path / "MML2OMML.XSL"
+    xsl.write_text(IDENTITY_XSL, encoding="utf-8")
+    monkeypatch.setenv(equations.XSL_ENV, str(xsl))
+    assert find_mml2omml_xsl() == xsl
+
+
+def test_an_environment_path_that_does_not_exist_says_so(tmp_path,
+                                                         monkeypatch):
+    monkeypatch.setenv(equations.XSL_ENV, str(tmp_path / "nope.xsl"))
+    with pytest.raises(PackageError, match=re.escape(equations.XSL_ENV)):
+        find_mml2omml_xsl()
+
+
+def test_an_explicit_path_still_wins_over_the_environment(tmp_path,
+                                                          monkeypatch):
+    good = tmp_path / "good.xsl"
+    good.write_text(IDENTITY_XSL, encoding="utf-8")
+    monkeypatch.setenv(equations.XSL_ENV, str(tmp_path / "nope.xsl"))
+    assert find_mml2omml_xsl(good) == good
+
+
+def test_a_missing_optional_dependency_names_the_extra(monkeypatch):
+    """A bare ModuleNotFoundError names the module; the user needs the
+    extra that installs it."""
+    import sys
+    monkeypatch.setitem(sys.modules, "latex2mathml.converter", None)
+    with pytest.raises(PackageError, match=re.escape("docxkit[latex]")):
+        equations.latex_to_omml(r"\frac{a}{b}")
 
 
 # --------------------------------------------------------------- clone ---

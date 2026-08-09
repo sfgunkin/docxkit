@@ -187,6 +187,27 @@ assertion of `"italic" in out` that was satisfied by the section HEADING
 — "FORMAT (italic/bold/super/sub/strike…)" — and so had never been
 about the entry it claimed to check.
 
+## Do not "harden" the XML parser without measuring it first
+
+A review will eventually propose passing
+`etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)`
+everywhere, against XXE. Measured on 2026-08-09, that would make this
+package **more** permissive, not less:
+
+* lxml's DEFAULTS already refuse a document carrying an external entity —
+  `load_dtd=False` is the default, so the declaration is never
+  registered and the reference fails to parse. `lint` reports
+  "not well-formed XML: Entity 'xxe' not defined", and `write_docx`
+  refuses to write it;
+* with `resolve_entities=False`, that same file PARSES, and `&xxe;`
+  survives as literal text. The refusal becomes an acceptance.
+
+`no_network=True` and `huge_tree=False` are already the defaults too, so
+the change buys nothing and costs a gate. If you want to revisit it,
+write the hostile .docx first and check what the current code does with
+it — the answer is in `tests/test_lint.py`'s territory, not in a
+CVE checklist.
+
 ## The revision protocol lives here, the paper keeps paper.toml
 
 `docxkit.revision` is the single-file protocol every paper on this

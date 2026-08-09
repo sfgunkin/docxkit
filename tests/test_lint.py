@@ -171,6 +171,39 @@ def test_a_full_equation_is_not_reported_as_having_empty_objects():
     assert lint_parts(_parts(body)) == []
 
 
+def test_a_document_carrying_an_external_entity_is_refused(tmp_path):
+    """The XXE answer, pinned — because the "fix" for it is a regression.
+
+    A review will propose `XMLParser(resolve_entities=False, ...)`
+    everywhere. lxml's DEFAULTS already refuse this file: `load_dtd` is
+    off, so the declaration is never registered and the reference does
+    not resolve. With `resolve_entities=False` the same document PARSES
+    and `&xxe;` survives as literal text — the refusal below becomes an
+    acceptance. See the section in CONTRIBUTING.md.
+    """
+    from docxkit.errors import PackageError
+    from docxkit.package import malformed_parts, write_docx
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET", encoding="utf-8")
+    hostile = (
+        '<?xml version="1.0"?>'
+        f'<!DOCTYPE w:document [<!ENTITY xxe SYSTEM "{secret.as_uri()}">]>'
+        f"<w:document {NS}><w:body>{para(run('&xxe;'))}</w:body>"
+        "</w:document>")
+    parts = {"[Content_Types].xml": b"<Types/>",
+             "word/document.xml": hostile.encode("utf-8")}
+
+    problems = lint_parts(dict(parts))
+    assert problems and "not well-formed" in problems[0]
+    assert malformed_parts(dict(parts))
+    with pytest.raises(PackageError, match="malformed XML"):
+        write_docx(tmp_path / "out.docx", dict(parts))
+    assert not (tmp_path / "out.docx").exists()
+    # and nothing anywhere read the file it pointed at
+    assert "TOP-SECRET" not in " ".join(problems)
+
+
 def test_a_nonbreaking_space_counts_as_a_glyph():
     """A spacer run is deliberate typography, not an empty shell."""
     body = ("<w:p><m:oMath><m:r><m:t> </m:t></m:r>"
