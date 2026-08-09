@@ -1,14 +1,22 @@
 """Which PARTS `authors` reads and rewrites, and what it counts.
 
-`set_author` exists so a deliverable goes out under one name, and it
-sweeps the whole package to do it. The three lines no test reached are
-all about the sweep's boundary: the parts it must skip, and the report it
-hands back.
+`set_author` exists so a deliverable goes out under ONE name, and it
+sweeps the whole package to do it. What the suite had never exercised was
+the edge of that sweep: the parts it must skip, the registry it must
+collapse, and the numbers it reports afterwards.
 
 Skipping a non-XML part is not defensive noise. `w:author="..."` is an
 ordinary byte sequence, and a .docx carries images, fonts and embedded
-objects; decoding one as UTF-8 and running a regex over it would at best
-find nothing and at worst rewrite bytes in the middle of a PNG.
+objects; decoding one as UTF-8 and running a substitution over it would
+at best find nothing and at worst rewrite bytes inside a PNG.
+
+Two of these tests are about the difference between an edit and a record
+of one. A `w15:author` in the people registry is renamed like any other,
+but it is NOT a tracked change, and counting it reports more edits than
+the document contains. And renaming several reviewers to one name leaves
+several identical `w15:person` elements, which Word tolerates and its
+reviewing pane lists once per entry — reading as several people who
+happen to share a name.
 """
 from __future__ import annotations
 
@@ -31,7 +39,7 @@ def parts_with(body: str, **extra: bytes) -> dict[str, bytes]:
         "[Content_Types].xml": b"<Types/>",
         "word/document.xml": (
             f'<w:document {NS}><w:body>{body}</w:body></w:document>'
-        ).encode("utf-8"),
+        ).encode(),
     }
     parts.update(extra)
     return parts
@@ -44,12 +52,31 @@ def tracked(text: str) -> str:
 # ------------------------------------------------------ what is read ----
 
 
+def binary_first(body: str) -> dict[str, bytes]:
+    """The image BEFORE the document.
+
+    Order matters to what this proves. With the media part last, skipping
+    it and stopping at it look identical — the test passes either way and
+    checks nothing about the guard.
+    """
+    parts: dict[str, bytes] = {"word/media/image1.png": FAKE_PNG}
+    parts.update(parts_with(body))
+    return parts
+
+
 def test_a_binary_part_is_not_scanned_for_authors():
-    parts = parts_with(tracked("edit"),
-                       **{"word/media/image1.png": FAKE_PNG})
-    found = read_authors(parts)
+    found = read_authors(binary_first(tracked("edit")))
     assert found == {"Reviewer": 1}
     assert "Ghost" not in found
+
+
+def test_a_binary_part_is_skipped_rather_than_stopped_at():
+    """`continue`, not `break`: the parts AFTER an image still hold the
+    document."""
+    parts = binary_first(tracked("edit"))
+    report = set_author(parts, "M Lokshin")
+    assert report.revisions == 1
+    assert b'w:author="M Lokshin"' in parts["word/document.xml"]
 
 
 def test_an_author_is_read_the_way_a_person_writes_it():
@@ -89,6 +116,80 @@ def test_a_people_part_with_nothing_to_dedupe_is_not_rewritten():
     parts = parts_with(tracked("edit"), **{PEOPLE_PART: people})
     set_author(parts, "Solo")
     assert parts[PEOPLE_PART] == people
+
+
+# ------------------------------------------------ the people registry ----
+
+
+def people_of(*names: str) -> bytes:
+    entries = "".join(
+        f'<w15:person w15:author="{n}"><w15:presenceInfo '
+        f'w15:providerId="None" w15:userId="{n}"/></w15:person>'
+        for n in names)
+    return f"<w15:people {NS}>{entries}</w15:people>".encode()
+
+
+def test_a_registry_entry_is_renamed_but_is_not_a_revision():
+    """`m.group(1) == "w"`. `w15:author` in the people registry is not a
+    tracked change — counting it would report more edits than the
+    document contains."""
+    parts = parts_with(tracked("edit"), **{PEOPLE_PART: people_of("Old")})
+    report = set_author(parts, "M Lokshin")
+    assert report.revisions == 1                 # the w:ins, not the w15
+    assert b'w15:author="M Lokshin"' in parts[PEOPLE_PART]
+
+
+def test_reviewers_renamed_to_one_name_collapse_to_one_entry():
+    """Word tolerates several identical `w15:person` elements, but the
+    reviewing pane lists the name once per entry — which reads as several
+    people who happen to share a name."""
+    parts = parts_with(tracked("edit"),
+                       **{PEOPLE_PART: people_of("Alice", "Bob", "Carol")})
+    report = set_author(parts, "M Lokshin")
+    assert report.people == 1
+    assert parts[PEOPLE_PART].count(b"<w15:person ") == 1
+
+
+def test_distinct_reviewers_are_left_distinct():
+    """`only` protects a real co-author, so the registry must keep them."""
+    parts = parts_with(tracked("edit"),
+                       **{PEOPLE_PART: people_of("Alice", "Bob")})
+    report = set_author(parts, "M Lokshin", only={"Reviewer"})
+    assert report.people == 2
+    assert parts[PEOPLE_PART].count(b"<w15:person ") == 2
+
+
+# --------------------------------------------------------- initials ----
+
+
+def test_initials_come_from_the_first_three_words():
+    from docxkit.authors import initials_for
+
+    assert initials_for("Ana Maria Lopez Garcia") == "AML"
+    assert initials_for("Michael Lokshin") == "ML"
+    assert initials_for("Lokshin") == "L"
+    assert initials_for("M. Lokshin") == "ML"
+
+
+def test_a_nameless_string_still_yields_a_mark():
+    from docxkit.authors import initials_for
+
+    assert initials_for("   ") == "?"
+
+
+def test_every_comment_initial_is_counted():
+    body = (tracked("edit")
+            + '<w:p><w:r><w:t>x</w:t></w:r></w:p>')
+    comments = (f'<w:comments {NS}>'
+                f'<w:comment w:id="1" w:author="Reviewer" w:initials="R">'
+                f"<w:p><w:r><w:t>one</w:t></w:r></w:p></w:comment>"
+                f'<w:comment w:id="2" w:author="Reviewer" w:initials="R">'
+                f"<w:p><w:r><w:t>two</w:t></w:r></w:p></w:comment>"
+                f"</w:comments>").encode()
+    parts = parts_with(body, **{"word/comments.xml": comments})
+    report = set_author(parts, "M Lokshin")
+    assert report.comments == 2
+    assert parts["word/comments.xml"].count(b'w:initials="ML"') == 2
 
 
 # -------------------------------------------------- what is reported ----
