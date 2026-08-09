@@ -1,0 +1,327 @@
+"""What the CLI does with input it was not given correctly.
+
+`test_cli.py` covers the commands doing their job. This covers the
+boundary: an argument that does not parse, a file that is not a
+manuscript, and the write path that every mutating command has to share.
+
+The theme is that a mistake should come back as a sentence naming the
+argument, not as a traceback — and that "did this write?" must have one
+answer for every command rather than one per command.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import zipfile
+from pathlib import Path
+
+import pytest
+from conftest import make_parts, para, run, write
+
+from docxkit import cli
+from docxkit.errors import DocxKitError, PackageError
+
+SRC = Path(cli.__file__)
+
+
+def args_with(**kw) -> argparse.Namespace:
+    return argparse.Namespace(**kw)
+
+
+# ------------------------------------------------------- --alias ----------
+
+
+def test_an_alias_without_an_equals_is_a_sentence_not_a_traceback():
+    """`dict(kv.split("=", 1) ...)` on a one-element list raises
+    "dictionary update sequence element #0 has length 1; 2 is required",
+    which names nothing the user typed."""
+    with pytest.raises(DocxKitError, match="expected CITED=FILED"):
+        cli._aliases(args_with(alias=["WHO"]))
+
+
+@pytest.mark.parametrize("bad", ["=World Health Organization", "WHO=",
+                                 "  =  ", "WHO=   "])
+def test_an_alias_with_an_empty_side_is_refused(bad):
+    """Accepted silently, it maps an acronym to nothing — which reads in
+    the audit as an entry no one cites, the exact confusion --alias is
+    there to remove."""
+    with pytest.raises(DocxKitError, match="expected CITED=FILED"):
+        cli._aliases(args_with(alias=[bad]))
+
+
+def test_a_good_alias_still_parses_and_is_trimmed():
+    got = cli._aliases(args_with(alias=["WHO=World Health Organization",
+                                        " OECD = OECD "]))
+    assert got == {"WHO": "World Health Organization", "OECD": "OECD"}
+
+
+def test_an_equals_in_the_filed_name_belongs_to_the_filed_name():
+    assert cli._aliases(args_with(alias=["A=B=C"])) == {"A": "B=C"}
+
+
+def test_a_repeated_alias_that_agrees_is_allowed():
+    assert cli._aliases(args_with(alias=["WHO=W", "WHO=W"])) == {"WHO": "W"}
+
+
+def test_a_repeated_alias_that_disagrees_is_refused():
+    """Last-wins is a silent winner for what is almost certainly a typo."""
+    with pytest.raises(DocxKitError, match="given twice"):
+        cli._aliases(args_with(alias=["WHO=W", "WHO=X"]))
+
+
+def test_no_alias_at_all_is_not_an_error():
+    assert cli._aliases(args_with(alias=None)) == {}
+    assert cli._aliases(args_with()) == {}
+
+
+# -------------------------------------------------------- --pages --------
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("3", (3, 3)), ("1-3", (1, 3)), ("12-12", (12, 12)),
+])
+def test_a_page_range_that_makes_sense_parses(text, expected):
+    assert cli._page_range(text) == expected
+
+
+@pytest.mark.parametrize("text,why", [
+    ("-3", "expected a page"),          # partition ate the leading dash
+    ("x-y", "expected a page"),
+    ("", "expected a page"),
+    ("1-", "needs a last page"),        # silently meant "page 1" alone
+    ("3-1", "ends before it begins"),
+    ("0", "numbered from 1"),
+    ("0-2", "numbered from 1"),
+])
+def test_a_page_range_that_does_not_is_refused_by_the_parser(text, why):
+    """`int("")` and `int("x")` reached the user as a ValueError from
+    inside cmd_pdf. As an argparse type it is "argument --pages: ..."
+    and exit 2, with the offending text quoted."""
+    with pytest.raises(argparse.ArgumentTypeError, match=why):
+        cli._page_range(text)
+
+
+def test_pdf_passes_the_parsed_range_through(monkeypatch, tmp_path):
+    seen: dict[str, int | None] = {}
+
+    def fake_export(docx, out, *, first, last):
+        seen.update(first=first, last=last)
+        dest = Path(out)
+        dest.write_bytes(b"%PDF-1.4")
+        return dest
+
+    monkeypatch.setattr("docxkit.word.export_pdf", fake_export)
+    paper = write(tmp_path / "p.docx", make_parts(para(run("x"))))
+    out = tmp_path / "p.pdf"
+    monkeypatch.setattr("sys.argv",
+                        ["docxkit", "pdf", paper, str(out), "--pages", "2-5"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0
+    assert seen == {"first": 2, "last": 5}
+
+
+def test_pdf_without_pages_asks_for_the_whole_document(monkeypatch, tmp_path):
+    seen: dict[str, int | None] = {}
+
+    def fake_export(docx, out, *, first, last):
+        seen.update(first=first, last=last)
+        Path(out).write_bytes(b"%PDF-1.4")
+        return Path(out)
+
+    monkeypatch.setattr("docxkit.word.export_pdf", fake_export)
+    paper = write(tmp_path / "p.docx", make_parts(para(run("x"))))
+    monkeypatch.setattr("sys.argv",
+                        ["docxkit", "pdf", paper, str(tmp_path / "p.pdf")])
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert seen == {"first": None, "last": None}
+
+
+# -------------------------------------------------------- --limit --------
+
+
+@pytest.mark.parametrize("text", ["0", "8000"])
+def test_a_word_limit_parses(text):
+    assert cli._word_limit(text) == int(text)
+
+
+@pytest.mark.parametrize("text,why", [("-5", "cannot be negative"),
+                                      ("many", "expected a number")])
+def test_a_word_limit_that_is_not_one_is_refused(text, why):
+    with pytest.raises(argparse.ArgumentTypeError, match=why):
+        cli._word_limit(text)
+
+
+def _wordy(tmp_path) -> str:
+    body = para(run("One two three four five six seven eight nine ten."))
+    return write(tmp_path / "w.docx", make_parts(body))
+
+
+def _run(monkeypatch, *argv) -> int | str:
+    """Exit code, or the MESSAGE a DocxKitError exits with (a str)."""
+    monkeypatch.setattr("sys.argv", ["docxkit", *argv])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    code = exc.value.code
+    return 0 if code is None else code
+
+
+def test_a_zero_word_limit_is_a_limit(monkeypatch, tmp_path, capsys):
+    """`if args.limit and ...` read 0 as "no limit given", so the
+    strictest cap of all was the one silently ignored."""
+    assert _run(monkeypatch, "count", _wordy(tmp_path), "--limit", "0") == 1
+    assert "OVER the 0-word limit" in capsys.readouterr().out
+
+
+def test_the_json_report_is_written_even_when_the_count_is_over(
+        monkeypatch, tmp_path):
+    """It sat after the `return 1`, so the failing run — the one whose
+    numbers a caller actually wants — produced no file. That is what
+    `_json_default` exists to prevent, in another form."""
+    dest = tmp_path / "count.json"
+    code = _run(monkeypatch, "count", _wordy(tmp_path), "--limit", "3",
+                "--json", str(dest))
+    assert code == 1
+    assert json.loads(dest.read_text(encoding="utf-8"))
+
+
+def test_a_count_under_the_limit_still_writes_its_report(monkeypatch,
+                                                         tmp_path):
+    dest = tmp_path / "count.json"
+    assert _run(monkeypatch, "count", _wordy(tmp_path), "--limit", "9999",
+                "--json", str(dest)) == 0
+    assert json.loads(dest.read_text(encoding="utf-8"))
+
+
+# ------------------------------------------- a file that is not a paper ---
+
+
+COMMANDS = ["inspect", "text", "figures", "lint", "count", "linkfix",
+            "refstyle", "tasks", "math", "smarten", "authors", "crossrefs",
+            "link", "citations"]
+
+
+@pytest.fixture
+def not_a_zip(tmp_path):
+    path = tmp_path / "junk.docx"
+    path.write_bytes(b"this is not a zip file")
+    return str(path)
+
+
+@pytest.fixture
+def zip_without_a_document(tmp_path):
+    path = tmp_path / "notdoc.docx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("hello.txt", "no document part here")
+    return str(path)
+
+
+@pytest.mark.parametrize("cmd", COMMANDS)
+def test_a_file_that_is_not_a_zip_is_refused_in_one_sentence(cmd, not_a_zip):
+    """`inspect`, `text` and `figures` opened the zip themselves and let a
+    raw `BadZipFile` traceback out, while every command that went through
+    `read_parts` already said "cannot read ...". One door now."""
+    with pytest.raises(PackageError, match="cannot read"):
+        getattr(cli, f"cmd_{cmd}")(
+            args_with(docx=not_a_zip, **_FLAGS.get(cmd, {})))
+
+
+@pytest.mark.parametrize("cmd", COMMANDS)
+def test_a_zip_that_is_not_a_document_is_refused_too(cmd,
+                                                     zip_without_a_document):
+    """The nastiest of the three: a valid zip got past `read_parts` and
+    died on a KeyError naming a part the user never mentioned — and
+    `lint` did something worse, reporting a document with no parts as
+    "clean - no structural problems found"."""
+    with pytest.raises(PackageError, match="not a Word document"):
+        getattr(cli, f"cmd_{cmd}")(
+            args_with(docx=zip_without_a_document, **_FLAGS.get(cmd, {})))
+
+
+#: the flags each command reads off the namespace, defaulted to "do nothing"
+_FLAGS: dict[str, dict[str, object]] = {
+    "text": {"md": False, "tracked": "final"},
+    "count": {"exclude": None, "limit": None, "tracked": "final",
+              "json": None},
+    "inspect": {"comments": False, "revisions": False},
+    "figures": {"check": False},
+    "math": {"check": False},
+    "tasks": {"all": False, "check": False, "done": None, "json": None},
+    "smarten": {"write": False},
+    "authors": {"set": None, "only": None, "initials": None, "write": False},
+    "crossrefs": {"write": False, "audit": False},
+    "link": {"write": False, "alias": None},
+    "refstyle": {"chicago": False, "json": None, "alias": None},
+}
+
+
+@pytest.mark.parametrize("fixture", ["not_a_zip", "zip_without_a_document"])
+def test_compare_refuses_input_it_cannot_actually_diff(fixture, request):
+    """The one that mattered most: `compare.load` reads only the text
+    parts it recognises, so two files with none compared as two empty
+    documents and reported nothing changed — and `--expect-clean`, the
+    flag CI gates on, returned 0 for it."""
+    path = request.getfixturevalue(fixture)
+    with pytest.raises(PackageError):
+        cli.cmd_compare(args_with(built=path, edited=path, json=None,
+                                  expect_clean=True))
+
+
+# -------------------------------------------------- report serialisation --
+
+
+def test_every_json_report_goes_through_the_resilient_encoder():
+    """A source-level rule, because the trap is a future edit rather than
+    today's data: `_json_default` exists so a set, a Path or a dataclass
+    in a report cannot lose the whole run at the final step, and four
+    commands called `json.dumps` directly and would not have been covered
+    by it. A layering nobody checks is a layering that will not hold.
+    """
+    text = SRC.read_text(encoding="utf-8")
+    body = text.split("def _write_json", 1)[1].split("\ndef ", 1)[1]
+    stray = [ln.strip() for ln in body.splitlines() if "json.dumps" in ln]
+    assert not stray, (
+        f"{stray} — write reports through _write_json, which carries "
+        f"_json_default")
+
+
+def test_the_resilient_encoder_copes_with_what_a_report_may_hold(tmp_path):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Row:
+        name: str
+
+    dest = tmp_path / "r.json"
+    cli._write_json(str(dest), {"seen": {"b", "a"}, "where": Path("x/y"),
+                                "row": Row("n")})
+    got = json.loads(dest.read_text(encoding="utf-8"))
+    # str(Path(...)), not the literal: the separator is the platform's
+    assert got == {"seen": ["a", "b"], "where": str(Path("x/y")),
+                   "row": {"name": "n"}}
+
+
+# ------------------------------------------------------------- inspect ---
+
+
+def test_inspect_counts_the_tables_a_reader_can_index(monkeypatch, tmp_path,
+                                                      capsys):
+    """It counted the open tag, so a nested table was a table — and
+    `tables.read_all`, which is what a caller then indexes, disagreed."""
+    from docxkit import tables
+
+    inner = ("<w:tbl><w:tr><w:tc>" + para(run("inner"))
+             + "</w:tc></w:tr></w:tbl>")
+    body = (para(run("x")) + "<w:tbl><w:tr><w:tc>" + inner
+            + para(run("outer")) + "</w:tc></w:tr></w:tbl>")
+    path = write(tmp_path / "n.docx", make_parts(body))
+
+    assert _run(monkeypatch, "inspect", path) == 0
+    line = next(ln for ln in capsys.readouterr().out.splitlines()
+                if "tables" in ln)
+    doc = zipfile.ZipFile(path).read("word/document.xml").decode()
+    top = len(tables.read_all(doc))
+    assert re.search(rf"tables\s+{top}\b", line)
+    assert "+1 nested" in line

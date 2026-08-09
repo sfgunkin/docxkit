@@ -35,13 +35,20 @@ import argparse
 import json
 import re
 import sys
-import zipfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
-from ._xml import BOOKMARK_END_ID_RE, BOOKMARK_START_ID_RE, COMMENT_ID_RE
+from ._xml import (
+    BOOKMARK_END_ID_RE,
+    BOOKMARK_START_ID_RE,
+    COMMENT_ID_RE,
+    COMMENTS,
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+)
 from .console import utf8_console
-from .errors import DocxKitError, ProtocolError
+from .errors import DocxKitError, PackageError, ProtocolError
 from .find import P_RE, text_of
 
 
@@ -69,8 +76,57 @@ def _write_json(path: str, payload: object) -> None:
         encoding="utf-8")
 
 
+# --- argument types -------------------------------------------------
+#
+# Checked HERE rather than in the command, because argparse turns an
+# ArgumentTypeError into "docxkit pdf: error: argument --pages: ..." and
+# exit 2, where the command turned the same mistake into a traceback with
+# the user's typo nowhere in it.
+
+def _page_range(text: str) -> tuple[int, int]:
+    """``A`` or ``A-B`` — one-based, inclusive, and ordered."""
+    a, sep, b = text.partition("-")
+    if sep and not b.strip():
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: a range needs a last page, e.g. 1-3 (there is no "
+            f"'to the end' form; pass the page count)")
+    try:
+        first = int(a)
+        last = int(b) if sep else first
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: expected a page or a range, e.g. 3 or 1-3") from None
+    if first < 1:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: pages are numbered from 1")
+    if last < first:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: the range ends before it begins")
+    return first, last
+
+
+def _word_limit(text: str) -> int:
+    """A journal's word cap: a whole, non-negative number."""
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: expected a number of words") from None
+    if n < 0:
+        raise argparse.ArgumentTypeError(
+            f"{text}: a word limit cannot be negative")
+    return n
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from .compare import compare, render
+    # Both sides checked FIRST. `compare.load` reads only the text parts
+    # it knows, so two files that are not manuscripts compared as two
+    # empty documents and reported no differences — and `--expect-clean`
+    # in CI passed on them. A gate that cannot fail on garbage input is
+    # not a gate.
+    for side in (args.built, args.edited):
+        _package(side)
     rep = compare(args.built, args.edited)
     if args.json:
         _write_json(args.json, rep)
@@ -80,6 +136,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
+    _package(args.docx)          # a zip with no document.xml died on KeyError
     return 1 if check_citations(args.docx) > 0 else 0
 
 
@@ -89,9 +146,29 @@ def _aliases(args: argparse.Namespace) -> dict[str, str]:
     `link` took it and `refstyle` did not, so the same document that linked
     cleanly was audited as citing three works it has no entries for, and
     listing three entries nothing cites.
+
+    Each entry is checked: `--alias WHO` (no ``=``) used to reach `dict()`
+    as a one-element sequence and come back as a bare ValueError
+    traceback, and `--alias WHO=` mapped the acronym to nothing at all,
+    which reads in the audit as an entry no one cites.
     """
     pairs = getattr(args, "alias", None) or []
-    return dict(kv.split("=", 1) for kv in pairs)
+    out: dict[str, str] = {}
+    for kv in pairs:
+        cited, sep, filed = kv.partition("=")
+        cited, filed = cited.strip(), filed.strip()
+        if not sep or not cited or not filed:
+            raise DocxKitError(
+                f"--alias {kv!r}: expected CITED=FILED, as in "
+                f'--alias "WHO=World Health Organization"')
+        # A repeat that AGREES is harmless (two commands sharing a script);
+        # one that disagrees is a mistake with a silent winner.
+        if out.get(cited, filed) != filed:
+            raise DocxKitError(
+                f"--alias {cited!r} given twice, as {out[cited]!r} and "
+                f"{filed!r}: pick one")
+        out[cited] = filed
+    return out
 
 
 def cmd_link(args: argparse.Namespace) -> int:
@@ -102,8 +179,8 @@ def cmd_link(args: argparse.Namespace) -> int:
     """
     from .citations import link_all
     from .lint import lint_parts
-    from .package import backup, read_parts, write_docx
-    parts = read_parts(args.docx)
+    from .package import backup, write_docx
+    parts = _package(args.docx)
     report = link_all(parts, aliases=_aliases(args))
     print(report.format())
     if not args.write:
@@ -129,8 +206,7 @@ def cmd_linkfix(args: argparse.Namespace) -> int:
     """The audit's findings classified into proposed repairs — a plan
     for a human to review, never an edit."""
     from .citations import repair_plan
-    from .package import read_parts
-    print(repair_plan(read_parts(args.docx)))
+    print(repair_plan(_package(args.docx)))
     return 0
 
 
@@ -141,27 +217,23 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
     "and" not "&", "(2020).", en-dashes, alphabetical order, and the
     cited/listed cross-check.
     """
-    from .package import read_parts
     from .refstyle import CHICAGO, HOUSE, audit
-    report = audit(read_parts(args.docx),
+    report = audit(_package(args.docx),
                    CHICAGO if args.chicago else HOUSE,
                    aliases=_aliases(args))
     print(Path(args.docx).name)
     print("  " + report.format().replace("\n", "\n  "))
     if args.json:
-        Path(args.json).write_text(
-            json.dumps(report.as_rows(), ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        _write_json(args.json, report.as_rows())
     return 1 if report.issues else 0
 
 
 def cmd_crossrefs(args: argparse.Namespace) -> int:
     """Link every figure and table to its first mention, and back."""
     from . import crossrefs
-    from .package import read_parts
 
-    parts = read_parts(args.docx)
-    doc = parts["word/document.xml"].decode("utf-8")
+    parts = _package(args.docx)
+    doc = parts[DOCUMENT].decode("utf-8")
     name = Path(args.docx).name
     # every other bookmarked part: a footnote-only citation keeps its
     # in-text bookmark there while the body links to it — and a new
@@ -170,7 +242,7 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     # link() takes these for exactly that reason; this path used to
     # pass them only to audit().
     others = [v.decode("utf-8") for k, v in parts.items()
-              if k in ("word/footnotes.xml", "word/endnotes.xml")]
+              if k in (FOOTNOTES, ENDNOTES)]
 
     if args.audit:
         state = crossrefs.audit(doc, also=others)
@@ -195,12 +267,12 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
-    with zipfile.ZipFile(args.docx) as z:
-        names = z.namelist()
-        doc = z.read("word/document.xml").decode("utf-8")
-        com = (z.read("word/comments.xml").decode("utf-8")
-               if "word/comments.xml" in names else "")
+    parts = _package(args.docx)
+    names = list(parts)
+    doc = parts[DOCUMENT].decode("utf-8")
+    com = parts.get(COMMENTS, b"").decode("utf-8")
     from .revisions import counts
+    from .tables import _table_spans
     ins, dele = counts(doc)
     starts = BOOKMARK_START_ID_RE.findall(doc)
     ends = BOOKMARK_END_ID_RE.findall(doc)
@@ -208,10 +280,15 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     # undercounted AFI v13 by two
     omath = len(re.findall(r"<m:oMath[ >]", doc))
     n_com = len(COMMENT_ID_RE.findall(com))
+    # Top-level, and nested said separately: a plain count of the open tag
+    # disagreed with `tables.read_all`, which is what a reader goes on to
+    # index, and a questionnaire's inner tables made the gap large.
+    top = len(_table_spans(doc))
+    nested = doc.count("<w:tbl>") - top
     print(f"{Path(args.docx).name}")
     print(f"  parts       {len(names)}")
     print(f"  paragraphs  {len(P_RE.findall(doc))}")
-    print(f"  tables      {doc.count('<w:tbl>')}")
+    print(f"  tables      {top}{f'  (+{nested} nested)' if nested else ''}")
     print(f"  equations   {omath}")
     print(f"  revisions   {ins} ins / {dele} del")
     print(f"  bookmarks   {len(starts)}/{len(ends)}"
@@ -288,24 +365,41 @@ def cmd_locate(args: argparse.Namespace) -> int:
     for anchor in missing:
         print(f"  NOT FOUND  {anchor[:60]!r}")
     if args.json:
-        Path(args.json).write_text(
-            json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_json(args.json, rows)
     return 1 if missing else 0
 
 
 def cmd_text(args: argparse.Namespace) -> int:
     """Dump visible text from one side of the tracked changes."""
+    parts = _package(args.docx)
     if args.md:
         from .export import to_markdown
-        from .package import read_parts
-        print(to_markdown(read_parts(args.docx), view=args.tracked), end="")
+        print(to_markdown(parts, view=args.tracked), end="")
         return 0
     from .revisions import text
-    with zipfile.ZipFile(args.docx) as z:
-        doc = z.read("word/document.xml").decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     for line in text(doc, args.tracked):
         print(line)
     return 0
+
+
+def _package(path: str) -> dict[str, bytes]:
+    """Every part of a manuscript, or a refusal a reader can act on.
+
+    `read_parts` already turns a missing file or a non-zip into a
+    `PackageError` that ``main`` prints as one line — but `inspect`,
+    `text` and `figures` opened the zip themselves and handed back a raw
+    `BadZipFile` traceback instead. A zip that is not a Word document
+    reached even further, dying on a `KeyError` naming a part the user
+    never mentioned.
+    """
+    from .package import read_parts
+    parts = read_parts(path)
+    if DOCUMENT not in parts:
+        raise PackageError(
+            f"{Path(path).name} is a zip, but not a Word document: "
+            f"it has no {DOCUMENT}")
+    return parts
 
 
 def _write_back(path: str, parts: dict[str, bytes], tag: str) -> str:
@@ -332,7 +426,7 @@ def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
     if protected:
         print(f"  protected {protected} edge-whitespace run(s) "
               f"(preserve_space)")
-    parts["word/document.xml"] = doc_xml.encode("utf-8")
+    parts[DOCUMENT] = doc_xml.encode("utf-8")
     if problems := lint_parts(parts):
         for problem in problems:
             print(f"  - {problem}")
@@ -345,9 +439,8 @@ def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
 def cmd_tasks(args: argparse.Namespace) -> int:
     """The margin comments as a work list; --check gates a submission."""
     from .comments import set_done, threads
-    from .package import read_parts
 
-    parts = read_parts(args.docx)
+    parts = _package(args.docx)
     if args.done:
         n = set_done(parts, [i.strip() for i in args.done.split(",")])
         if n == 0:
@@ -382,8 +475,7 @@ def cmd_tasks(args: argparse.Namespace) -> int:
             "replies": [{"cid": r.cid, "author": r.author, "text": r.text}
                         for r in t.replies],
         } for t in found]
-        Path(args.json).write_text(
-            json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_json(args.json, rows)
     if args.check and open_threads:
         print(f"CHECK FAILED: {len(open_threads)} open comment thread(s) - "
               f"a submission should carry none")
@@ -393,9 +485,8 @@ def cmd_tasks(args: argparse.Namespace) -> int:
 
 def cmd_count(args: argparse.Namespace) -> int:
     """Bucketed word count — the number a journal cap is phrased in."""
-    from .package import read_parts
     from .wordcount import count
-    counts = count(read_parts(args.docx), view=args.tracked)
+    counts = count(_package(args.docx), view=args.tracked)
     print(Path(args.docx).name)
     for name, n in counts.as_dict().items():
         print(f"  {name:<11}{n:>8,}")
@@ -405,23 +496,28 @@ def cmd_count(args: argparse.Namespace) -> int:
     if drop:
         print(f"  {'counted':<11}{counted:>8,}  "
               f"(excluding {', '.join(drop)})")
+    # Written BEFORE the verdict: the report used to sit after the
+    # over-limit `return 1`, so the one run whose numbers a caller most
+    # wants to read — the failing one — was the run that produced no
+    # file. That is the failure `_json_default` exists to prevent, in
+    # another form: the work all done and the record never written.
+    if args.json:
+        _write_json(args.json, counts.as_dict())
     # the cap applies to whatever is being counted: the exclusion set if
     # one was given, the full total otherwise
-    if args.limit and counted > args.limit:
+    if args.limit is not None and counted > args.limit:
+        # `is not None`, not truthiness: `--limit 0` is a real cap that
+        # every document exceeds, and it used to read as "no limit set"
         print(f"  OVER the {args.limit:,}-word limit by "
               f"{counted - args.limit:,}")
         return 1
-    if args.json:
-        Path(args.json).write_text(
-            json.dumps(counts.as_dict(), indent=2), encoding="utf-8")
     return 0
 
 
 def cmd_math(args: argparse.Namespace) -> int:
     """Symbols and expressions typeset as prose instead of as OMML."""
     from .equations import document_symbols, prose_math
-    from .package import read_parts
-    doc = read_parts(args.docx)["word/document.xml"].decode("utf-8")
+    doc = _package(args.docx)[DOCUMENT].decode("utf-8")
     findings = prose_math(doc)
     vocabulary = "".join(sorted(document_symbols(doc)))
     print(f"{Path(args.docx).name}  (math vocabulary: "
@@ -447,8 +543,7 @@ def cmd_math(args: argparse.Namespace) -> int:
 def cmd_figures(args: argparse.Namespace) -> int:
     """Figures and their alt text; --check gates on missing descriptions."""
     from .figures import alt_texts
-    with zipfile.ZipFile(args.docx) as z:
-        doc = z.read("word/document.xml").decode("utf-8")
+    doc = _package(args.docx)[DOCUMENT].decode("utf-8")
     drawings = alt_texts(doc)
     missing = [d for d in drawings if d.missing]
     print(f"{Path(args.docx).name}  ({len(drawings)} drawing(s), "
@@ -468,10 +563,9 @@ def cmd_figures(args: argparse.Namespace) -> int:
 def cmd_smarten(args: argparse.Namespace) -> int:
     """Straight quotes to typographic ones; dry run unless --write."""
     from .hygiene import smarten
-    from .package import read_parts
 
-    parts = read_parts(args.docx)
-    doc = parts["word/document.xml"].decode("utf-8")
+    parts = _package(args.docx)
+    doc = parts[DOCUMENT].decode("utf-8")
     fixed, report = smarten(doc)
     print(Path(args.docx).name)
     print("  " + report.format().replace("\n", "\n  "))
@@ -489,9 +583,8 @@ def cmd_authors(args: argparse.Namespace) -> int:
     """Who the document credits; ``--set`` restamps every one of them."""
     from .authors import read_authors, set_author
     from .lint import lint_parts
-    from .package import read_parts
 
-    parts = read_parts(args.docx)
+    parts = _package(args.docx)
     print(Path(args.docx).name)
     for who, n in read_authors(parts).most_common():
         print(f"  {n:5}  {who}")
@@ -521,8 +614,7 @@ def cmd_authors(args: argparse.Namespace) -> int:
 def cmd_lint(args: argparse.Namespace) -> int:
     """Structural checks for the markup Word refuses to open."""
     from .lint import lint_parts
-    from .package import read_parts
-    problems = lint_parts(read_parts(args.docx))
+    problems = lint_parts(_package(args.docx))
     print(f"{Path(args.docx).name}")
     if not problems:
         print("  clean - no structural problems found")
@@ -560,10 +652,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_pdf(args: argparse.Namespace) -> int:
     from .word import export_pdf
-    first = last = None
-    if args.pages:
-        a, _, b = args.pages.partition("-")
-        first, last = int(a), int(b or a)
+    first, last = args.pages or (None, None)
     out = export_pdf(args.docx, args.out, first=first, last=last)
     print(f"wrote {out} ({out.stat().st_size} bytes)")
     return 0
@@ -889,7 +978,7 @@ def main() -> None:
     p.add_argument("--exclude", metavar="A,B,...",
                    help="buckets to leave out of the counted total, e.g. "
                         "references,tables,captions,footnotes,appendix")
-    p.add_argument("--limit", type=int, metavar="N",
+    p.add_argument("--limit", type=_word_limit, metavar="N",
                    help="with --exclude: exit 1 if the counted total "
                         "exceeds N words")
     p.add_argument("--tracked", choices=("final", "original"),
@@ -947,7 +1036,8 @@ def main() -> None:
     p = sub.add_parser("pdf", help="render to PDF via Word")
     p.add_argument("docx")
     p.add_argument("out")
-    p.add_argument("--pages", metavar="A-B")
+    p.add_argument("--pages", metavar="A-B", type=_page_range,
+                   help="a page or an inclusive range, e.g. 3 or 1-3")
     p.set_defaults(fn=cmd_pdf)
 
     p = sub.add_parser("pages", help="laid-out page count (needs Word)")
