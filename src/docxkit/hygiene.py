@@ -108,7 +108,9 @@ def _is_note(text: str) -> bool:
 
 def _is_heading(para_xml: str) -> bool:
     m = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
-    return bool(m) and m.group(1).lower().startswith("heading")
+    # `m is not None`, not `bool(m)`: only the former narrows the Optional
+    # away for a type checker, and the gate went red on the difference.
+    return m is not None and m.group(1).lower().startswith("heading")
 
 
 def _is_equation_carrier(tbl_xml: str) -> bool:
