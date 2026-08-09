@@ -140,3 +140,51 @@ def test_anything_has_revisions_calls_dirty_is_something_state_counts(kind):
     xml = KINDS[kind]
     assert _has_revisions(xml)
     assert revision_elements(xml), f"{kind}: dirty, but nothing counted"
+
+
+# ------------------------------------------ a baseline taken mid-save ----
+
+
+def _scaffold(tmp_path, body: str):
+    """A migrated project whose working.docx holds `body`."""
+    src = write(tmp_path / "src.docx", make_parts(body))
+    paper = revision.init(tmp_path / "proj", src, name="Test Paper",
+                          author="Agent", attic=tmp_path / "attic")
+    paper.prev.unlink(missing_ok=True)      # init seeds one; start clean
+    return paper
+
+
+def test_baseline_refuses_a_file_that_is_open_in_word(monkeypatch,
+                                                      tmp_path):
+    """`promote` checked this and `baseline` did not.
+
+    A .docx is a zip. Copying one Word is part-way through rewriting
+    captures an archive that is internally inconsistent — and this one is
+    kept as `prev.docx`, which every later Compare and every reject-all
+    is measured against.
+    """
+    from docxkit.errors import DocumentLocked
+
+    paper = _scaffold(tmp_path, para(run("settled prose")))
+    monkeypatch.setattr("docxkit.package.is_locked", lambda p: True)
+    with pytest.raises(DocumentLocked, match="open in Word"):
+        revision.baseline(paper)
+    assert not paper.prev.exists()
+
+
+def test_force_does_not_override_the_lock(tmp_path, monkeypatch):
+    """`force` is for adopting a file that CARRIES revisions on purpose.
+    A locked file is not a decision the author made."""
+    from docxkit.errors import DocumentLocked
+
+    paper = _scaffold(tmp_path, KINDS["insertion"])
+    monkeypatch.setattr("docxkit.package.is_locked", lambda p: True)
+    with pytest.raises(DocumentLocked):
+        revision.baseline(paper, force=True)
+
+
+def test_an_unlocked_settled_file_still_baselines(tmp_path):
+    paper = _scaffold(tmp_path, para(run("settled prose")))
+    written = revision.baseline(paper)
+    assert written.exists()
+    assert written.read_bytes() == paper.working.read_bytes()

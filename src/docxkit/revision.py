@@ -773,7 +773,20 @@ def baseline(paper: Paper, *, force: bool = False) -> Path:
     into plain text. `force` is for the one legitimate case — adopting a
     file that already carries revisions the author intends to keep as
     the starting point, which is what a MIGRATION does.
+
+    It also refuses while the file is open in Word, which `promote`
+    already did and this did not. A .docx is a zip, and copying one that
+    Word is part-way through rewriting captures an archive that is
+    internally inconsistent — enshrined here as `prev.docx`, the file
+    every later Compare and every reject-all is measured against. `force`
+    does NOT override this: a locked file is not a decision the author
+    has made, it is a file that cannot be copied safely.
     """
+    if package.is_locked(paper.working):
+        raise DocumentLocked(
+            f"{paper.working.name} is open in Word. Close it first — a "
+            f"baseline copied mid-save is a zip nothing can reject "
+            f"against.")
     current = state(paper.working)
     if not current.is_truth and not force:
         where = ", ".join(f"{n} in {p.split('/')[-1]}"
