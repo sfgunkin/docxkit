@@ -13,6 +13,7 @@ untouched when one fails.
 from __future__ import annotations
 
 import contextlib
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -231,23 +232,36 @@ def test_a_failed_build_does_not_create_the_deliverable(monkeypatch,
     assert not out.exists()
 
 
+def _private_tmp(monkeypatch: Any, tmp_path: Path) -> Path:
+    """Point `tempfile` at a directory only this test can write to.
+
+    Both of the tests below assert that a set of directories is UNCHANGED,
+    and they used to assert it about the machine's shared temp directory —
+    which any other build is entitled to write to. Under `pytest -n 8` a
+    second worker's `build()` lands there mid-assertion and the test fails
+    for something it is not about. That is worse than flake: the suite is
+    the oracle a mutation run judges a mutant by, and a test that fails on
+    its own would score a surviving mutant as killed.
+    """
+    root = tmp_path / "tmp"
+    root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    return root
+
+
 def test_the_build_leaves_no_temp_directory_behind(monkeypatch, sources,
                                                    tmp_path):
-    import tempfile
-    root = Path(tempfile.gettempdir())
-    before = set(root.glob("docxkit_tracked_*"))
+    root = _private_tmp(monkeypatch, tmp_path)
     _build(monkeypatch, _clean_document(), sources)
-    assert set(root.glob("docxkit_tracked_*")) == before
+    assert list(root.glob("docxkit_tracked_*")) == []
 
 
 def test_the_temp_directory_goes_even_when_the_build_fails(
-        monkeypatch, sources):
-    import tempfile
-    root = Path(tempfile.gettempdir())
-    before = set(root.glob("docxkit_tracked_*"))
+        monkeypatch, sources, tmp_path):
+    root = _private_tmp(monkeypatch, tmp_path)
     with pytest.raises(PackageError):
         _build(monkeypatch, _broken_document(), sources)
-    assert set(root.glob("docxkit_tracked_*")) == before
+    assert list(root.glob("docxkit_tracked_*")) == []
 
 
 def test_build_refuses_to_overwrite_a_hand_edited_deliverable(
