@@ -240,7 +240,28 @@ figures" is worth little; one saying it *and* that mapping to the nearest
 drawing before it gets every figure wrong by one is what stops the next
 person reverting it.
 
-## Three traps that keep coming back
+## Four traps that keep coming back
+
+**A search over a `w:tbl` is not a search over THAT table.** `rows_of` and
+`cells_of` count depth and say so — "a nested table's rows are not its
+rows" — but a table's GRID and PROPERTIES are found by searching, and
+those searches ran over the whole element. A questionnaire nests tables
+freely, and the outer table only has to be MISSING a property for the
+first match to be the inner table's: `fit_columns` switched a nested
+table to fixed layout and left the outer one autofit, rewrote the inner
+table's cell margins, measured its own columns against the inner table's
+padding, and counted the inner table's `w:gridCol`s as its own — giving a
+two-column table a four-column grid. Go through `_own_grid` /
+`_own_tblpr`; everything before the table's own `w:tblGrid` is its own,
+and nothing after it is.
+
+Its sibling: **an element written in another attribute order is the same
+element.** `<w:tblW w:type="auto" w:w="0"/>` is what one accepted paper
+holds, and a pattern spelling `w:w` before `w:type` matched nothing
+there — so the table kept an auto width while its columns were divided
+in fixed dxa. Write `<w:tblW\b[^>]*/>`. The bookmark patterns in `_xml`
+carry the same warning, and it had not travelled.
+
 
 **`x or default` is a bug when `x` may be an lxml element.** An element
 with no children is FALSY, so a legitimately empty `w:tcPr` or `w:pPr`

@@ -862,3 +862,162 @@ def test_an_unknown_alignment_is_refused():
     xml = _aligned_table()
     with pytest.raises(AnchorError, match="align"):
         tables.booktabs(xml, tables.read_all(xml)[0], align="middle")
+
+
+# ---------------------------------------------------- what a line IS -------
+# The model measures characters, so anything that is not a character and
+# still moves the text is invisible to it until it is read for.
+
+
+def _extents(cell_xml: str):
+    from docxkit._table_layout import _cell_extents
+    return _cell_extents(cell_xml, ("Times New Roman", 20))
+
+
+def _para(*content: str) -> str:
+    return "<w:tc><w:p>" + "".join(content) + "</w:p></w:tc>"
+
+
+def test_a_hard_break_ends_a_line_the_way_a_paragraph_mark_does():
+    """`Total<w:br/>expenditure` is two lines, not one long word.
+
+    The scan read `w:t` only, so the break vanished and the two words
+    fused into the single unbreakable cluster "Totalexpenditure" — 45%
+    wider than anything the cell renders. `hard` is the floor a column
+    cannot go below, so the cell bought that width out of the label
+    column, which is the one place it can come from.
+    """
+    plain = _para('<w:r><w:t>Total expenditure</w:t></w:r>')
+    broken = _para('<w:r><w:t>Total</w:t></w:r>', "<w:r><w:br/></w:r>",
+                   '<w:r><w:t>expenditure</w:t></w:r>')
+    split = ('<w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p>'
+             '<w:p><w:r><w:t>expenditure</w:t></w:r></w:p></w:tc>')
+
+    hard_b, full_b, text_b = _extents(broken)
+    hard_s, full_s, _ = _extents(split)
+    hard_p, full_p, _ = _extents(plain)
+
+    # a break behaves exactly like the paragraph mark it stands in for
+    assert (hard_b, full_b) == (hard_s, full_s)
+    # and neither claims the whole one-line width
+    assert full_b < full_p
+    # the widest word, not the two of them run together
+    assert hard_b == hard_p
+    assert "Totalexpenditure" not in text_b
+
+
+def test_a_carriage_return_breaks_the_line_too():
+    br = _para('<w:r><w:t>a</w:t></w:r>', "<w:r><w:br/></w:r>",
+               '<w:r><w:t>b</w:t></w:r>')
+    cr = _para('<w:r><w:t>a</w:t></w:r>', "<w:r><w:cr/></w:r>",
+               '<w:r><w:t>b</w:t></w:r>')
+    assert _extents(cr)[:2] == _extents(br)[:2]
+
+
+def test_a_page_break_is_still_a_break():
+    """`<w:br w:type="page"/>` — the attribute does not stop it ending
+    the line, and a pattern that demanded a bare `<w:br/>` missed it."""
+    typed = _para('<w:r><w:t>a</w:t></w:r>',
+                  '<w:r><w:br w:type="page"/></w:r>',
+                  '<w:r><w:t>b</w:t></w:r>')
+    bare = _para('<w:r><w:t>a</w:t></w:r>', "<w:r><w:br/></w:r>",
+                 '<w:r><w:t>b</w:t></w:r>')
+    assert _extents(typed)[:2] == _extents(bare)[:2]
+
+
+def test_a_tab_advances_the_line_instead_of_vanishing():
+    """A tab is layout-bearing content. Read as nothing, a cell holding
+    one measured as though its two halves were adjacent."""
+    # the same letter both sides, so the halves are directly comparable
+    tabbed = _para('<w:r><w:t>a</w:t></w:r>', "<w:r><w:tab/></w:r>",
+                   '<w:r><w:t>a</w:t></w:r>')
+    joined = _para('<w:r><w:t>aa</w:t></w:r>')
+    assert _extents(tabbed)[1] > _extents(joined)[1]
+    # and it breaks the cluster, as any whitespace does
+    assert _extents(tabbed)[0] == _extents(joined)[0] / 2
+
+
+@pytest.mark.parametrize("ref", ["&#x2013;", "&#8211;"])
+def test_a_numeric_character_reference_measures_as_one_character(ref):
+    """`&#x2013;` is an en dash, not eight ASCII characters.
+
+    The module carried a five-entity table of its own where
+    `visible_text` reads the same text with `html.unescape`, so the two
+    disagreed about what a cell says — and the width came out 79% over.
+    """
+    literal = _para('<w:r><w:t>2010–2020</w:t></w:r>')
+    encoded = _para(f'<w:r><w:t>2010{ref}2020</w:t></w:r>')
+    assert _extents(encoded) == _extents(literal)
+
+
+def test_the_named_entities_still_decode():
+    assert _extents(_para('<w:r><w:t>R&amp;D</w:t></w:r>')) == \
+        _extents(_para("<w:r><w:t>R&D</w:t></w:r>"))
+
+
+def test_a_run_naming_only_hansi_is_not_dropped_to_the_fallback():
+    """Word writes w:ascii and w:hAnsi together; another producer need
+    not, and they cover the same Latin text."""
+    both = _para(f'<w:r><w:rPr><w:rFonts w:ascii="{FONT}" w:hAnsi="{FONT}"/>'
+                 '<w:sz w:val="20"/></w:rPr><w:t>Narrow</w:t></w:r>')
+    hansi = _para(f'<w:r><w:rPr><w:rFonts w:hAnsi="{FONT}"/>'
+                  '<w:sz w:val="20"/></w:rPr><w:t>Narrow</w:t></w:r>')
+    assert _extents(hansi) == _extents(both)
+
+
+# ------------------------------------------------- a rule Word can draw ----
+
+
+@pytest.mark.parametrize("val", ['single" w:hack="x', "hairline", ""])
+def test_a_border_style_word_does_not_know_is_refused(val):
+    """`val` is interpolated into an attribute, so one carrying a quote
+    closes it early and produces a document Word calls unreadable. The
+    write gate refuses to ship that; this says which argument was wrong,
+    at the call that passed it."""
+    xml = two_col()
+    with pytest.raises(AnchorError, match="not a border style"):
+        bottom_border(xml, read_all(xml)[0], val=val)
+
+
+def test_a_border_width_outside_words_range_is_refused():
+    xml = two_col()
+    with pytest.raises(AnchorError, match="eighths of a point"):
+        bottom_border(xml, read_all(xml)[0], sz=400)
+
+
+def test_booktabs_checks_its_closing_rule_too():
+    xml = two_col()
+    with pytest.raises(AnchorError, match="not a border style"):
+        tables.booktabs(xml, read_all(xml)[0], bottom="quadruple")
+
+
+def test_a_width_written_in_the_other_attribute_order_is_still_replaced():
+    """`<w:tblW w:type="auto" w:w="0"/>` is the same element.
+
+    Word writes `w:w` first and the old pattern required that, so on a
+    manuscript that writes `w:type` first it matched nothing: the table
+    kept its AUTO width while its columns were divided in fixed dxa, and
+    Word sized the result by neither. Found in an accepted paper, not
+    invented — attribute order carries no meaning, which is what the
+    bookmark patterns in `_xml` say about their own `[^>]*`.
+    """
+    xml = doc(
+        '<w:tbl><w:tblPr><w:tblW w:type="auto" w:w="0"/></w:tblPr>'
+        '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="800"/>'
+        "</w:tblGrid><w:tr>" + cell(frun("Label here"), w=2000)
+        + cell(frun("-0.250***"), w=800) + "</w:tr></w:tbl>")
+    out, report = fit_columns(xml, read_all(xml)[0], total=2800)
+
+    assert '<w:tblW w:w="2800" w:type="dxa"/>' in out
+    assert 'w:type="auto"' not in out
+    # and exactly one width element survives, not the old beside the new
+    assert out.count("<w:tblW") == 1
+    assert sum(c.new for c in report.columns) == 2800
+
+
+def test_the_border_styles_the_house_uses_are_all_accepted():
+    for val in ("single", "double", "nil", "none", "thick", "dotted"):
+        xml = two_col()
+        out, n = bottom_border(xml, read_all(xml)[0], val=val)
+        assert n == 3
+        assert f'w:val="{val}"' in out

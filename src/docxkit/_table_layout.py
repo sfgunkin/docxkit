@@ -13,6 +13,7 @@ being it.
 """
 from __future__ import annotations
 
+import html
 import math
 import re
 from collections import Counter
@@ -33,8 +34,8 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     T_PARTS_RE,
-    WT_RE,
     live_properties,
+    matching_close,
     own_properties,
     set_run_text,
     visible_text,
@@ -66,9 +67,111 @@ _GRIDCOL_RE = re.compile(r'<w:gridCol w:w="(\d+)"/>')
 _RUN_RE = RUN_RE                       # the shared definition
 _SZ_RE = re.compile(r'<w:sz w:val="(\d+)"/>')
 _ASCII_RE = re.compile(r'<w:rFonts[^>]*w:ascii="([^"]+)"')
+# Word writes w:ascii and w:hAnsi together, but a document from another
+# producer may state only the latter — and the two cover the same Latin
+# text, so reading one and not the other silently drops the run to the
+# table's fallback face. Theme fonts and style inheritance are still not
+# resolved here; see the module docstring on what this model is.
+_HANSI_RE = re.compile(r'<w:rFonts[^>]*w:hAnsi="([^"]+)"')
 _TCW_RE = re.compile(r'<w:tcW w:w="[^"]*" w:type="\w+"/>')
 _BOLD_RE = re.compile(r'<w:b(?: w:val="(?:1|true|on)")?/>')
 _VERT_RE = re.compile(r'<w:vertAlign w:val="(?:superscript|subscript)"/>')
+
+
+_TBLGRID_RE = re.compile(r"<w:tblGrid\b[^>]*>.*?</w:tblGrid>", re.DOTALL)
+# `[^>]*` and not `w:w="..." w:type="..."`: XML attribute order carries no
+# meaning, and the Corruption and Wages manuscript states
+# `<w:tblW w:type="auto" w:w="0"/>`. The order-bound pattern matched
+# NOTHING there, so the table kept its auto width while its columns were
+# being divided in fixed dxa — the same failure the bookmark patterns in
+# `_xml` carry the same warning about.
+_TBLW_RE = re.compile(r"<w:tblW\b[^>]*/>")
+_TBLLAYOUT_RE = re.compile(r"<w:tblLayout\b[^>]*/>")
+_TBLCELLMAR_RE = re.compile(r"<w:tblCellMar\b[^>]*/>"
+                            r"|<w:tblCellMar\b[^>]*>.*?</w:tblCellMar>",
+                            re.DOTALL)
+
+#: ``CT_TblPr`` is a SEQUENCE, so a property that is ABSENT has to be
+#: inserted in its slot rather than appended. Each tuple lists what
+#: FOLLOWS the property being written; the same shape as
+#: ``_AFTER_BORDERS``, and for the same reason — Word repairs a document
+#: whose properties are out of order.
+_AFTER_TBLW = ("<w:jc", "<w:tblCellSpacing", "<w:tblInd", "<w:tblBorders",
+               "<w:shd", "<w:tblLayout", "<w:tblCellMar", "<w:tblLook",
+               "<w:tblCaption", "<w:tblDescription", "<w:tblPrChange")
+_AFTER_TBLLAYOUT = ("<w:tblCellMar", "<w:tblLook", "<w:tblCaption",
+                    "<w:tblDescription", "<w:tblPrChange")
+_AFTER_TBLCELLMAR = ("<w:tblLook", "<w:tblCaption", "<w:tblDescription",
+                     "<w:tblPrChange")
+
+
+def _own_grid(body: str) -> re.Match[str] | None:
+    """The table's OWN ``w:tblGrid``.
+
+    ``CT_Tbl`` is ``(tblPr, tblGrid, rows)`` and a nested table can only
+    appear inside a CELL, so everything before the first ``w:tblGrid``
+    belongs to the outer table and the first match is always its own.
+
+    This is :func:`_table_core.rows_of`'s rule — "a nested table's rows
+    are not its rows" — applied to the parts of a table that are not
+    rows. They were exempt from it, and a plain scan for ``w:gridCol``
+    counted a nested table's columns as this one's: a two-column table
+    was rewritten with a four-column grid, whose widths then summed to
+    the wrong total and whose extra columns no row had cells for.
+    """
+    return _TBLGRID_RE.search(body)
+
+
+def _own_tblpr(body: str) -> tuple[int, int, str] | None:
+    """``(start, end, inner)`` of the table's OWN ``w:tblPr``, or None.
+
+    Searched only ahead of the table's own grid, which is what keeps a
+    nested table's properties out of reach. Reaching one was not a
+    theoretical risk: a table with no ``w:tblLayout`` of its own, holding
+    one that had, sent ``fit_columns``' fixed-layout switch and its cell
+    margins into the INNER table and left the outer one autofit.
+
+    An empty ``<w:tblPr/>`` reports ``inner == ""`` over the
+    self-closing tag, so a caller expands it in place rather than
+    writing a second properties element beside it.
+    """
+    grid = _own_grid(body)
+    head = body[:grid.start()] if grid is not None else body
+    m = re.search(r"<w:tblPr\b[^>]*?(/?)>", head)
+    if m is None:
+        return None
+    if m.group(1) == "/":
+        return m.start(), m.end(), ""
+    close = matching_close(head, m.end(), "tblPr")
+    return m.start(), close, head[m.end():close - len("</w:tblPr>")]
+
+
+def _set_tbl_pr(body: str, pattern: re.Pattern[str], element: str,
+                after: tuple[str, ...]) -> str:
+    """`body` with `element` as the OUTER table's own ``tblPr`` property.
+
+    Replaces the existing property or inserts it in its schema slot, and
+    creates the ``w:tblPr`` when the table has none. Confined to the
+    table's LIVE properties: ``w:tblPrChange`` holds a snapshot of what a
+    tracked change replaced, and writing into that edits the historical
+    record while leaving the page as it was.
+    """
+    own = _own_tblpr(body)
+    if own is None:
+        grid = _own_grid(body)
+        # tblPr sits immediately before the grid — after any range
+        # markup, which CT_Tbl allows to precede it.
+        at = grid.start() if grid is not None else len(body)
+        return body[:at] + f"<w:tblPr>{element}</w:tblPr>" + body[at:]
+    start, end, inner = own
+    live = live_properties(inner)
+    if (was := pattern.search(live)) is not None:
+        inner = inner[:was.start()] + element + inner[was.end():]
+    else:
+        at = min((p for p in (live.find(t) for t in after) if p != -1),
+                 default=len(live))
+        inner = inner[:at] + element + inner[at:]
+    return body[:start] + f"<w:tblPr>{inner}</w:tblPr>" + body[end:]
 
 
 def _widths(groups: dict[int, str]) -> dict[str, int]:
@@ -124,11 +227,18 @@ _FONT_ALIASES: dict[str, tuple[dict[str, int], float]] = {
 }
 
 
-def _unescape(text: str) -> str:
-    for k, v in (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'),
-                 ("&apos;", "'"), ("&amp;", "&")):
-        text = text.replace(k, v)
-    return text
+#: What a run contributes to a line, in document order: text, a hard
+#: break, or a tab. Read as one scan rather than as a `w:t` scan, because
+#: the BREAKS are what a width model gets wrong when it cannot see them.
+_RUN_TOKEN_RE = re.compile(
+    r"<w:t\b[^>]*>([^<]*)</w:t>|<w:(br|cr)\b[^>]*/?>|<w:(tab)\b[^>]*/>")
+
+#: A tab in a table cell, as a multiple of the space advance. Word
+#: advances to the next stop, which depends on the cell's own tab stops
+#: and so is not knowable from the run — this approximates it, the way
+#: `pad` approximates the model's error. Under-providing is the direction
+#: that wraps a row, so it is deliberately generous.
+_TAB_SPACES = 4.0
 
 
 def _cell_extents(tc_xml: str, fallback: tuple[str, int]
@@ -139,6 +249,12 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
     only — a column cannot go below this without ugly mid-word wraps);
     `full` is the widest whole line (give a column this and nothing in
     it wraps at all).
+
+    A ``w:br`` ends a line exactly as a paragraph mark does. Until it was
+    read, a cell holding ``Total<w:br/>expenditure`` measured as the
+    single unbreakable cluster "Totalexpenditure" — 45% wider than the
+    text it renders — and bought that column room out of the label
+    column's, which is the one place the width has to come from.
     """
     hard = full = 0.0
     texts: list[str] = []
@@ -147,7 +263,7 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
         for r in _RUN_RE.finditer(p.group(0)):
             head = own_properties(r.group(0), "rPr")
             rpr = head[2] if head else ""
-            font_m = _ASCII_RE.search(rpr)
+            font_m = _ASCII_RE.search(rpr) or _HANSI_RE.search(rpr)
             sz_m = _SZ_RE.search(rpr)
             font = font_m.group(1) if font_m else fallback[0]
             sz = int(sz_m.group(1)) if sz_m else fallback[1]
@@ -158,15 +274,31 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
                 factor *= 1.05
             if _VERT_RE.search(rpr):
                 factor *= 0.65
-            for t in WT_RE.finditer(r.group(0)):
-                for ch in _unescape(t.group(1)):
-                    chars.append((ch, table.get(ch, 600) * factor))
+            for tok in _RUN_TOKEN_RE.finditer(r.group(0)):
+                if tok.group(1) is not None:
+                    # html.unescape, not a five-entity table of our own:
+                    # the local copy left `&#x2013;` as eight characters
+                    # and measured an en dash 79% too wide. It is also
+                    # what `visible_text` reads the same text with, and
+                    # two answers to "what does this cell say" is the
+                    # drift R1 exists to stop.
+                    for ch in html.unescape(tok.group(1)):
+                        chars.append((ch, table.get(ch, 600) * factor))
+                elif tok.group(2):
+                    chars.append(("\n", 0.0))
+                else:
+                    chars.append(("\t", table.get(" ", 250) * factor
+                                  * _TAB_SPACES))
         while chars and chars[0][0] in " \t":
             chars.pop(0)
         while chars and chars[-1][0] in " \t":
             chars.pop()
         line = cluster = 0.0
         for ch, w in chars:
+            if ch == "\n":            # a hard break closes the line
+                full = max(full, line)
+                line = cluster = 0.0
+                continue
             line += w
             if ch in " \t":
                 cluster = 0.0
@@ -182,7 +314,10 @@ def _cell_extents(tc_xml: str, fallback: tuple[str, int]
                 cluster = 0.0
         full = max(full, line)
         if chars:
-            texts.append("".join(ch for ch, _ in chars))
+            # the driver is quoted back to a reader, so a break reads as
+            # the space it renders as rather than fusing two words
+            texts.append("".join(" " if ch == "\n" else ch
+                                 for ch, _ in chars))
     return hard, full, " ".join(texts)
 
 
@@ -297,7 +432,9 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
         raise AnchorError(
             f"table {table.index} contains tracked changes - fit the "
             f"clean build and rebuild the redline from it")
-    grid = [int(m.group(1)) for m in _GRIDCOL_RE.finditer(body)]
+    own_grid = _own_grid(body)
+    grid = ([int(m.group(1)) for m in _GRIDCOL_RE.finditer(own_grid.group(0))]
+            if own_grid is not None else [])
     if not grid:
         raise AnchorError(f"table {table.index} has no tblGrid")
 
@@ -306,8 +443,14 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     if not any(filled):
         raise AnchorError(f"table {table.index} has no cell content to fit")
     if total is None:
-        w_m = re.search(r'<w:tblW w:w="(\d+)" w:type="dxa"/>', body)
+        own = _own_tblpr(body)
+        w_m = re.search(r'<w:tblW w:w="(\d+)" w:type="dxa"/>',
+                        live_properties(own[2])) if own else None
         total = int(w_m.group(1)) if w_m else sum(grid)
+    if total <= 0:
+        raise AnchorError(
+            f"table {table.index}: total={total} - a table width must be "
+            f"positive, and a width in dxa is what Word divides")
 
     widths, cramped = _divide(grid, need_h, need_f, filled, total)
     body = _apply_widths(body, widths, total, margin)
@@ -320,8 +463,15 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
 
 
 def _side_margins(body: str) -> int:
-    """Left + right cell margin of the table, in dxa."""
-    mar = re.search(r"<w:tblCellMar>.*?</w:tblCellMar>", body, re.DOTALL)
+    """Left + right cell margin of the table, in dxa.
+
+    Read from the table's OWN properties: a table that states no margins
+    while containing one that does used to be measured with the INNER
+    table's, and every column was then fitted around a padding figure
+    belonging to a different table.
+    """
+    own = _own_tblpr(body)
+    mar = _TBLCELLMAR_RE.search(live_properties(own[2])) if own else None
 
     def one(*names: str) -> int:
         for nm in names:
@@ -341,7 +491,7 @@ def _column_needs(body: str, grid: list[int], side: int, pad: float
     cell writes into is unfilled (a spacer) and needs nothing.
     """
     n = len(grid)
-    fonts = Counter(_ASCII_RE.findall(body))
+    fonts = Counter(_ASCII_RE.findall(body) or _HANSI_RE.findall(body))
     sizes = Counter(_SZ_RE.findall(body))
     fallback = (fonts.most_common(1)[0][0] if fonts else "Times New Roman",
                 int(sizes.most_common(1)[0][0]) if sizes else 24)
@@ -396,6 +546,17 @@ def _divide(grid: list[int], need_h: list[int], need_f: list[int],
     """
     live = [c for c in range(len(grid)) if filled[c]]
     avail = total - sum(grid[c] for c in range(len(grid)) if not filled[c])
+    # Spacer columns keep their width unconditionally, so they can eat the
+    # whole table. Past that `_round_to` apportions a NEGATIVE total and
+    # every filled column is written as a negative w:w — which is not a
+    # narrow table but invalid OOXML (ST_TwipsMeasure is unsigned), and
+    # Word repairs the document rather than laying it out.
+    if avail <= 0:
+        raise AnchorError(
+            f"fit_columns: the spacer columns hold {total - avail} dxa of a "
+            f"{total} dxa table, leaving nothing for the {len(live)} "
+            f"column(s) with content - widen the table, or pass a total= "
+            f"that matches the section's text width")
     sum_h = sum(need_h[c] for c in live)
     sum_f = sum(need_f[c] for c in live)
     cramped = False
@@ -420,36 +581,24 @@ def _apply_widths(body: str, widths: list[int], total: int,
     """Write the division back: grid, tblW, fixed layout, margins, tcWs."""
     new_grid = "<w:tblGrid>" + "".join(
         f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
-    body = re.sub(r"<w:tblGrid>.*?</w:tblGrid>", _const(new_grid), body,
-                  count=1, flags=re.DOTALL)
-    body = re.sub(r'<w:tblW w:w="[^"]*" w:type="\w+"/>',
-                  _const(f'<w:tblW w:w="{total}" w:type="dxa"/>'),
-                  body, count=1)
-    if "<w:tblLayout" in body:
-        body = re.sub(r'<w:tblLayout w:type="\w+"/>',
-                      '<w:tblLayout w:type="fixed"/>', body, count=1)
-    else:
-        pr = re.search(r"<w:tblPr>.*?</w:tblPr>", body, re.DOTALL)
-        if pr:
-            at = min(pr.group(0).find(t) for t in
-                     ("<w:tblCellMar", "<w:tblLook", "</w:tblPr>")
-                     if pr.group(0).find(t) != -1)
-            body = (body[:pr.start() + at]
-                    + '<w:tblLayout w:type="fixed"/>'
-                    + body[pr.start() + at:])
+    grid = _own_grid(body)
+    if grid is not None:
+        body = body[:grid.start()] + new_grid + body[grid.end():]
+    # Each of these goes through the table's OWN tblPr. A `re.sub` over
+    # the whole body wrote into a NESTED table whenever the outer one
+    # lacked the property being set — and the tblW substitution, having
+    # nothing to replace, simply did nothing, so a table that declared no
+    # width was left without the one this docstring promises.
+    body = _set_tbl_pr(body, _TBLW_RE,
+                       f'<w:tblW w:w="{total}" w:type="dxa"/>', _AFTER_TBLW)
+    body = _set_tbl_pr(body, _TBLLAYOUT_RE, '<w:tblLayout w:type="fixed"/>',
+                       _AFTER_TBLLAYOUT)
     if margin is not None:
         cellmar = (f'<w:tblCellMar>'
                    f'<w:left w:w="{margin}" w:type="dxa"/>'
                    f'<w:right w:w="{margin}" w:type="dxa"/>'
                    f'</w:tblCellMar>')
-        if "<w:tblCellMar>" in body:
-            body = re.sub(r"<w:tblCellMar>.*?</w:tblCellMar>",
-                          _const(cellmar), body, count=1,
-                          flags=re.DOTALL)
-        else:                       # schema slot: right after tblLayout
-            body = body.replace('<w:tblLayout w:type="fixed"/>',
-                                '<w:tblLayout w:type="fixed"/>' + cellmar,
-                                1)
+        body = _set_tbl_pr(body, _TBLCELLMAR_RE, cellmar, _AFTER_TBLCELLMAR)
 
     edits: list[tuple[int, int, str]] = []
     for tr, tc, c, k in _cell_walk(body, len(widths)):
@@ -506,10 +655,16 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
     columns, because superscript renders at roughly two-thirds size and
     :func:`fit_columns` prices that in. Only cells that are exactly a
     number with trailing stars are touched (a note paragraph explaining
-    the stars never matches), the star run clones the number run's
-    formatting, and cells whose stars are already superscript are left
-    alone, so the pass is idempotent. Returns (xml, cells converted);
-    other Table objects' offsets are stale afterwards.
+    the stars never matches), and the star run clones the number run's
+    formatting. Returns (xml, cells converted); other Table objects'
+    offsets are stale afterwards.
+
+    A star run that ALREADY states a vertical alignment is left as it is
+    — which is what makes the pass idempotent, that being the case this
+    is for, and which also leaves a SUBSCRIPT one alone. Wider than
+    "already superscript" on purpose: :func:`_run_superscripted` writes a
+    ``w:vertAlign`` rather than reconciling one, so the skip is what
+    guarantees it never meets a run carrying its own.
     """
     _fresh(xml, table, "superscript_stars")
     body = xml[table.start:table.end]
@@ -561,6 +716,7 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
     bottom edge — usually ``nil`` — is replaced), so the rule runs the
     full width. Returns (xml, cells changed); idempotent once applied.
     """
+    _check_rule(val, sz, "bottom_border")
     _fresh(xml, table, "bottom_border")
     body = xml[table.start:table.end]
     if _has_revisions(body):
@@ -612,6 +768,32 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
 # never closed, and panel rules in some tables but not others.
 
 _SIDES = ("top", "bottom", "left", "right")
+
+#: ``ST_Border``, the members a manuscript actually rules with. The check
+#: is not pedantry about the enumeration: `val` is interpolated straight
+#: into an attribute, so one carrying a quote closes it early and the
+#: result is a document Word calls unreadable. The write gate refuses to
+#: ship that, but it refuses several hundred lines away from the call
+#: that caused it — this says which argument was wrong.
+_BORDER_VALUES = frozenset({
+    "nil", "none", "single", "thick", "double", "dotted", "dashed",
+    "dotDash", "dotDotDash", "triple", "wave", "dashSmallGap",
+    "dashDotStroked", "threeDEmboss", "threeDEngrave", "outset", "inset",
+})
+
+
+def _check_rule(val: str, sz: int, where: str) -> None:
+    """Refuse a border this house cannot draw, at the call that asked."""
+    if val not in _BORDER_VALUES:
+        raise AnchorError(
+            f"{where}: {val!r} is not a border style - use one of "
+            f"{', '.join(sorted(_BORDER_VALUES))}")
+    # ST_EighthPointMeasure: Word draws 2..96 eighths of a point and
+    # clamps outside it, so a number out here is a caller's mistake
+    # rather than a hairline rule.
+    if not 0 <= sz <= 96:
+        raise AnchorError(
+            f"{where}: sz={sz} is outside Word's 0-96 eighths of a point")
 #: A tracked FORMATTING change: `<w:tcPrChange>` holds a snapshot of the
 #: properties as they were. Groups: open tag, content, close tag — the
 #: content is masked so a search cannot reach into the past, while the
@@ -845,6 +1027,7 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
     of the column it starts in rather than of its position in the row;
     those two only coincide in a table with no merged cells.
     """
+    _check_rule(bottom, rule, "booktabs")
     _fresh(xml, table, "booktabs")
     body = xml[table.start:table.end]
     if _has_revisions(body):
