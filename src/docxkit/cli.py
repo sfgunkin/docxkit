@@ -614,6 +614,13 @@ def cmd_authors(args: argparse.Namespace) -> int:
     return 0 if _save(args.docx, parts, "pre_authors") else 1
 
 
+def cmd_probe(args: argparse.Namespace) -> int:
+    """What shape is this manuscript? Run it BEFORE choosing an approach."""
+    from .probe import probe
+    print(probe(args.docx, tuple(args.anchor)).report())
+    return 0
+
+
 def cmd_lint(args: argparse.Namespace) -> int:
     """Structural checks for the markup Word refuses to open."""
     from .lint import lint_parts
@@ -989,6 +996,13 @@ def main() -> None:
                    help="which side of tracked changes to count")
     p.add_argument("--json", metavar="PATH")
     p.set_defaults(fn=cmd_count)
+
+    p = sub.add_parser(
+        "probe", help="link form, exhibit blocks, sections, run splits")
+    p.add_argument("docx")
+    p.add_argument("anchor", nargs="*",
+                   help="phrases to show the run split for")
+    p.set_defaults(fn=cmd_probe)
 
     p = sub.add_parser("lint",
                        help="structural checks (no Word needed)")
