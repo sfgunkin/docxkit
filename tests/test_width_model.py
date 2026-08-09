@@ -113,7 +113,22 @@ def predicted(font: str, text: str) -> float:
 def test_every_character_is_within_2_5_percent_of_word(font, table, measure):
     """Per character, because that is the unit the table stores. The
     tolerance is tight on purpose: these fonts have real metric tables,
-    so a character more than 2.5% out is an error, not approximation."""
+    so a character more than 2.5% out is an error, not approximation.
+
+    A note for whoever next runs mutation testing over `_table_layout`:
+    it will report ~87 survivors sitting on the font tables, and they are
+    NOT gaps. 2.5% of a 556-unit width is ±13 units, so cosmic-ray's
+    ±1 `NumberReplacer` mutations fall inside the tolerance this test
+    declares, and surviving is the correct answer rather than a missing
+    check. Measured 2026-08-09: 556→557 and 0.820→0.821 survive here,
+    while 556→600, 722→760, 0.820→0.900 and dropping 'K' from its group
+    (so it takes the 600 fallback — the V4 defect) are all killed. The
+    gate works; the mutation operator is simply finer-grained than the
+    contract. Some of those ±1 mutants DO die in the offline suite, which
+    is incidental: `test_tables_fit*` pins exact divided widths, and an
+    exact pin is sensitive to changes the model never promised to
+    resolve.
+    """
     wide = measure(font, [f"x{ch * 40}" for ch in CHARS])
     narrow = measure(font, [f"x{ch * 20}" for ch in CHARS])
     off = []
