@@ -23,7 +23,6 @@ not.
 """
 from __future__ import annotations
 
-import copy
 import html
 import re
 from dataclasses import dataclass
@@ -190,7 +189,10 @@ def harvest(xml: str, contains: str, *, index: int = 0,
     if index >= len(hits):
         raise AnchorError(
             f"{len(hits)} equations {how} {contains!r}, no index {index}")
-    return standalone(hits[index].xml)
+    # `xml` is the part this came out of, so its root can answer for any
+    # prefix the fragment carries — which is how a redline's math, whose
+    # runs are wrapped in w16du-stamped revisions, survives being lifted.
+    return standalone(hits[index].xml, source=xml)
 
 
 #: The prefixes an equation lifted out of a manuscript can carry: the
@@ -208,8 +210,25 @@ _NS_URIS = {
 }
 _NS_DECL = " ".join(f'xmlns:{p}="{u}"' for p, u in _NS_URIS.items())
 
+#: A namespace binding as the root element states it.
+_XMLNS_RE = re.compile(r'xmlns:([A-Za-z][\w.-]*)="([^"]*)"')
 
-def standalone(omml: str) -> str:
+
+def _declared_in(source: str) -> dict[str, str]:
+    """The REAL prefix -> URI bindings a part's root element states.
+
+    The list below can only ever name the prefixes someone thought of,
+    and Word keeps adding: `w16du` alone appears in 158 equations across
+    six of these manuscripts, so `standalone` refused the very fragments
+    :func:`harvest` exists to lift out. The document already says what
+    every prefix means — asking it is both correct and permanent, where
+    extending a hard-coded list is neither.
+    """
+    head = re.search(r"<\w[^>]*>", source)      # skips <?xml and <!DOCTYPE
+    return dict(_XMLNS_RE.findall(head.group(0))) if head else {}
+
+
+def standalone(omml: str, *, source: str | None = None) -> str:
     """An equation fragment that parses on its own.
 
     A fragment sliced out of ``word/document.xml`` inherits its
@@ -217,8 +236,12 @@ def standalone(omml: str) -> str:
     its own and ``etree.fromstring`` rejects it — which broke the pair
     this module documents: :func:`harvest` produced exactly what
     :func:`clone` could not read. Re-serialising it through a declaring
-    wrapper puts the declarations lxml needs on the element itself, and
-    only the ones actually used.
+    wrapper puts the declarations lxml needs on the element itself.
+
+    Pass `source` — the part the fragment came from — for any prefix
+    beyond the common set below; its bindings are read off the root, so
+    a namespace this module has never heard of still resolves to the URI
+    the document gives it. :func:`harvest` does this for you.
     """
     from lxml import etree
 
@@ -227,29 +250,52 @@ def standalone(omml: str) -> str:
     # anything it does not know, which is right for a read-only text
     # pass and wrong here: this fragment gets INSERTED into a document,
     # and a urn:docxkit:undeclared: namespace would ship with it.
-    unknown = used_prefixes(omml) - set(_NS_URIS)
-    if unknown:
+    known = dict(_NS_URIS)
+    if source is not None:
+        known.update(_declared_in(source))
+    # What the fragment declares for ITSELF counts too, and has to: this
+    # function's own output carries those declarations, so without this
+    # `clone(harvest(...))` refused the very thing `harvest` had just
+    # made self-contained — and the pair is the documented workflow.
+    known.update(_XMLNS_RE.findall(omml))
+    used = used_prefixes(omml)
+    if unknown := used - set(known):
         raise AnchorError(
-            f"equation uses undeclared namespace prefix(es) "
-            f"{sorted(unknown)}; add them to equations._NS_URIS")
+            f"equation uses namespace prefix(es) {sorted(unknown)} that "
+            f"nothing declares; pass source=<the part it came from> so "
+            f"their real URIs can be read off its root")
+    # The common set is declared verbatim, and anything the source added
+    # only when the fragment uses it — so an equation needing none of the
+    # latter serialises exactly as it always has, which the papers'
+    # byte-identical rebuilds depend on.
+    extra = "".join(f' xmlns:{p}="{known[p]}"'
+                    for p in sorted(used - set(_NS_URIS)))
     root = etree.fromstring(
-        f"<docxkitFragment {_NS_DECL}>{omml}</docxkitFragment>"
+        f"<docxkitFragment {_NS_DECL}{extra}>{omml}</docxkitFragment>"
         .encode())
+    # Exactly one element, and nothing loose around it: `root[0]` took
+    # the first and discarded the rest in silence, so two equations in
+    # came back as one and a trailing sentence vanished.
+    if len(root) != 1:
+        raise AnchorError(
+            f"standalone expects one element, got {len(root)}")
+    if (root.text or "").strip() or (root[0].tail or "").strip():
+        raise AnchorError(
+            "standalone expects one element and no text around it")
     return str(etree.tostring(root[0], encoding="unicode"))
 
 
-def clone(omml: str) -> str:
+def clone(omml: str, *, source: str | None = None) -> str:
     """A detached copy of an equation element, ready to insert elsewhere.
 
     Accepts a fragment with or without its own namespace declarations,
     so it composes with :func:`harvest` and with :func:`latex_to_omml`
-    alike.
+    alike. `source` is passed through to :func:`standalone`.
     """
-    from lxml import etree
-
-    element = etree.fromstring(standalone(omml).encode("utf-8"))
-    return str(etree.tostring(copy.deepcopy(element),
-                              encoding="unicode"))
+    # Parse-and-reserialise IS the normalisation; the element is created
+    # here and never shared, so the deepcopy that used to sit between the
+    # two copied something nobody else could reach.
+    return standalone(omml, source=source)
 
 
 # -------------------------------------------------------- OMML -> LaTeX -----
@@ -400,8 +446,15 @@ class _Walker:
         return _text(el.text or "")
 
     def e_r(self, el: Any) -> str:
-        body = "".join(_text(t.text or "")
-                       for t in el.findall(f"{{{M_NS}}}t"))
+        # Through the walker, not `findall("m:t")`: an edited equation
+        # wraps a run's OWN text in w:ins/w:del, so the text sits one
+        # level below and a direct-children scan silently dropped it.
+        # Measured over 5,527 equations in the corpus: 589 characters
+        # gone, and one fraction rendered as \frac{}{{}_{}} — every
+        # symbol it had was inside a revision. The walker already knows
+        # to keep an insertion and drop a deletion; this now asks it,
+        # rather than deciding the same question a second way.
+        body = self.children(el)
         rpr = el.find(f"{{{M_NS}}}rPr")
         upright = rpr is not None and (
             rpr.find(f"{{{M_NS}}}nor") is not None
@@ -506,7 +559,10 @@ class _Walker:
         # "lim" under "n -> inf" is the operator taking its limit, which
         # LaTeX writes as \lim_{...}; anything else is a generic underset
         if base.lstrip("\\") in _KNOWN_FUNCS:
-            return rf"\{base.lstrip(chr(92))}_{{{low}}}"
+            # `chr(92)` was here because an f-string could not hold a
+            # backslash before PEP 701; requires-python is >=3.12, so it
+            # can, and the literal says what it means
+            return rf"\{base.lstrip('\\')}_{{{low}}}"
         return rf"\underset{{{low}}}{{{base}}}"
 
     def e_limUpp(self, el: Any) -> str:
