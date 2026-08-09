@@ -68,6 +68,7 @@ def paper(tmp_path):
     ("lint",),
     ("figures",),
     ("smarten",),                 # dry run without --write
+    ("probe",),                   # read-only by nature
 ])
 def test_subcommand_smoke(paper, monkeypatch, capsys, argv):
     code, _ = run_cli(monkeypatch, *argv, paper)

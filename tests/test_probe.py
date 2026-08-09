@@ -1,8 +1,8 @@
 """probe answers the questions a batch has to know before it starts."""
 
-from docxkit.probe import probe
-
 from conftest import make_parts, write
+
+from docxkit.probe import probe
 
 
 def make_docx(tmp_path, body: str) -> str:

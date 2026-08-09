@@ -200,7 +200,7 @@ def test_a_count_under_the_limit_still_writes_its_report(monkeypatch,
 
 COMMANDS = ["inspect", "text", "figures", "lint", "count", "linkfix",
             "refstyle", "tasks", "math", "smarten", "authors", "crossrefs",
-            "link", "citations"]
+            "link", "citations", "probe"]
 
 
 @pytest.fixture
@@ -254,6 +254,7 @@ _FLAGS: dict[str, dict[str, object]] = {
     "crossrefs": {"write": False, "audit": False},
     "link": {"write": False, "alias": None},
     "refstyle": {"chicago": False, "json": None, "alias": None},
+    "probe": {"anchor": []},
 }
 
 

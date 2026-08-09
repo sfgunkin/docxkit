@@ -617,6 +617,7 @@ def cmd_authors(args: argparse.Namespace) -> int:
 def cmd_probe(args: argparse.Namespace) -> int:
     """What shape is this manuscript? Run it BEFORE choosing an approach."""
     from .probe import probe
+    _package(args.docx)          # a zip with no document.xml died on KeyError
     print(probe(args.docx, tuple(args.anchor)).report())
     return 0
 

@@ -34,7 +34,8 @@ _BM_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
 _TR_RE = re.compile(r"<w:tr\b")
 _SECT_RE = re.compile(r"<w:sectPr\b.*?</w:sectPr>", re.DOTALL)
 _PGSZ_RE = re.compile(r'<w:pgSz[^>]*w:orient="([^"]+)"')
-_CAPTION_RE = re.compile(r"^\s*((?:Table|Figure|Таблица|Рисунок)\s+[A-Z]?\d+)\s*[:.]")
+_CAPTION_RE = re.compile(
+    r"^\s*((?:Table|Figure|Таблица|Рисунок)\s+[A-Z]?\d+)\s*[:.]")
 
 
 def _visible(para: str) -> str:
@@ -51,11 +52,13 @@ class Probe:
     exhibits: list[tuple[str, str, str]] = field(default_factory=list)
     bookmarks: list[tuple[str, str]] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
-    anchors: dict[str, list[tuple[int, list[str]]]] = field(default_factory=dict)
+    anchors: dict[str, list[tuple[int, list[str]]]] = field(
+        default_factory=dict)
 
     @property
     def link_form(self) -> str:
-        el, fld = sum(self.element_links.values()), sum(self.field_links.values())
+        el = sum(self.element_links.values())
+        fld = sum(self.field_links.values())
         if el and fld:
             return f"MIXED ({el} element, {fld} field)"
         if fld:
@@ -68,8 +71,9 @@ class Probe:
             out.append("  field-form anchors: "
                        + ", ".join(sorted(self.field_links)[:12]))
         out.append(f"  sections    {' -> '.join(self.sections) or 'one'}")
+        body_level = sum(1 for _, w in self.bookmarks if w == "body")
         out.append(f"  bookmarks   {len(self.bookmarks)}"
-                   f" ({sum(1 for _, w in self.bookmarks if w == 'body')} body-level)")
+                   f" ({body_level} body-level)")
         if self.exhibits:
             out.append("  exhibits")
             for label, follows, orient in self.exhibits:
@@ -99,7 +103,8 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
         for instr in _FIELD_RE.findall(xml):
             m = re.search(r'HYPERLINK\s+\\l\s+"([^"]+)"', instr)
             if m:
-                rep.field_links[m.group(1)] = rep.field_links.get(m.group(1), 0) + 1
+                at = m.group(1)
+                rep.field_links[at] = rep.field_links.get(at, 0) + 1
 
     doc = parts[DOCUMENT].decode("utf-8")
 
@@ -110,7 +115,8 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
     for m in _BM_RE.finditer(body):
         before = body.rfind("<w:p", 0, m.start())
         closed = body.rfind("</w:p>", 0, m.start())
-        rep.bookmarks.append((m.group(1), "body" if closed > before else "nested"))
+        where = "body" if closed > before else "nested"
+        rep.bookmarks.append((m.group(1), where))
 
     for sect in _SECT_RE.findall(doc):
         o = _PGSZ_RE.search(sect)
