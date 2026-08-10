@@ -378,6 +378,74 @@ def test_promote_refuses_a_stale_batch(project):
     assert project.working.read_bytes() == before
 
 
+@pytest.mark.parametrize("edit", [
+    "the author's own edit", "aaa", "zzz", "a much longer sentence the "
+    "author typed into the manuscript while the batch was building", "0",
+])
+def test_the_stale_guard_does_not_depend_on_how_two_HASHES_SORT(project,
+                                                                edit):
+    """`live_hash != base_hash` read as `<` still fires for about half
+    of all content — whichever half the one fixture happened to land in.
+    The guard's property is that ANY difference is refused, and only a
+    spread of contents can assert that: these five put the live hash on
+    both sides of the baseline's.
+
+    This is the refusal that stands between a batch and an author's
+    unsaved work, so "usually catches it" is not the contract.
+    """
+    write(project.batch, make_parts(para(run("the batch"))))
+    write(project.working, make_parts(para(run(edit))))
+    before = project.working.read_bytes()
+    with pytest.raises(StaleBatch):
+        revision.promote(project)
+    assert project.working.read_bytes() == before
+
+
+def test_promote_refuses_when_the_RESCUE_copy_did_not_land(project,
+                                                           monkeypatch):
+    """A post-condition that never fires in a happy path, and so was
+    never run: without it, a failed rescue means working.docx is
+    overwritten with nothing left to undo it. `!=` read as `<` passes
+    half the time and this branch is the whole reason the copy is
+    checked at all."""
+    import shutil
+
+    def _bad(src, dst, *a, **k):
+        Path(dst).write_bytes(b"not the file")
+        return dst
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    before = project.working.read_bytes()
+    monkeypatch.setattr(shutil, "copy2", _bad)
+    with pytest.raises(ProtocolError, match="rescue copy did not land"):
+        revision.promote(project)
+    assert project.working.read_bytes() == before, \
+        "the live file was overwritten with no rescue behind it"
+
+
+@pytest.mark.parametrize("landed", [b"half a file", b"a", b"zzzz", b""])
+def test_promote_refuses_when_the_PROMOTE_itself_did_not_land(
+        project, monkeypatch, landed):
+    """The same for the copy onto working.docx — and parametrised for
+    the same reason as the stale guard: `!=` read as an ordering still
+    fires for whichever half of all content the one fixture landed in.
+    The rescue must still be made by the real routine, or the check
+    above this one fires instead and proves nothing about this one."""
+    import shutil
+    real = shutil.copyfile
+
+    def _bad_onto_live(src, dst, *a, **k):
+        if Path(dst) == project.working:
+            Path(dst).write_bytes(landed)
+            return dst
+        return real(src, dst, *a, **k)
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    monkeypatch.setattr(shutil, "copyfile", _bad_onto_live)
+    with pytest.raises(ProtocolError, match="copy did not land"):
+        revision.promote(project)
+
+
 def test_promote_lands_and_leaves_a_rescue_copy(project):
     write(project.batch, make_parts(para(run("the batch"))))
     original = project.working.read_bytes()
@@ -612,6 +680,53 @@ def test_validate_checks_footnotes_too(tmp_path):
     assert not report.ok
 
 
+@pytest.mark.parametrize("baseline,batch", [
+    ("body", "aaaa"),          # the batch sorts BEFORE the baseline
+    ("body", "zzzz"),          # and after it
+])
+def test_gate_5_compares_for_EQUALITY_not_for_order(tmp_path, baseline,
+                                                    batch):
+    """`_paras(rejected) == _paras(base)` read as `>=` is True whenever
+    the batch happens to sort later, so half of all lossy batches pass.
+    The existing fixtures all sorted one way. This gate is what proves a
+    batch is reviewable at all — a false OK here ships something the
+    author cannot reject."""
+    base = write(tmp_path / f"prev_{batch}.docx",
+                 make_parts(para(run(baseline))))
+    lossy = write(tmp_path / f"batch_{batch}.docx",
+                  make_parts(para(run(batch))))
+    report = revision.validate(lossy, base, use_word=False)
+    assert report.reject_detail["paragraphs"] is False
+    assert report.reject_detail["glyphs"] is False
+    assert not report.ok
+
+
+def test_gate_5_compares_the_FOOTNOTES_for_equality_too(tmp_path):
+    base = write(tmp_path / "prev.docx", make_parts(
+        para(run("body")), footnotes=footnotes_part(para(run("aaa")))))
+    lossy = write(tmp_path / "batch.docx", make_parts(
+        para(run("body")), footnotes=footnotes_part(para(run("zzz")))))
+    report = revision.validate(lossy, base, use_word=False)
+    assert report.reject_detail["footnotes"] is False
+
+
+def test_the_main_story_walk_does_not_stop_at_a_text_box(tmp_path,
+                                                         monkeypatch):
+    """The `continue` that skips a text box, read as `break`, ends the
+    walk there — so every word AFTER the box vanishes from the stream
+    and gate 6 reports a mismatch on a document with nothing wrong. The
+    existing fixture put the box last, where the two are the same."""
+    body = (para(run("Before the box."))
+            + para(f"<w:r><w:pict><w:txbxContent>{para(run('BOXED'))}"
+                   f"</w:txbxContent></w:pict></w:r>")
+            + para(run("After the box.")))
+    path = write(tmp_path / "box.docx", make_parts(body))
+    rendered = _FakeDoc(revisions=0,
+                        text="Before the box.\rAfter the box.\r")
+    monkeypatch.setattr(revision, "_word", _FakeWord(rendered))
+    assert revision.validate(path).accept_paths_agree is True
+
+
 def test_lint_catches_a_shell_that_already_exists(tmp_path):
     """The cheap gate gets there first, and aborts before Word."""
     body = f'<w:p><m:oMath {NS_M}><m:r><m:t></m:t></m:r></m:oMath></w:p>'
@@ -782,6 +897,19 @@ def test_reject_all_notices_a_figure_the_batch_dropped(tmp_path):
     assert report.reject_detail["paragraphs"] is True, "text alone is blind"
     assert report.reject_detail["glyphs"] is False
     assert not report.ok
+
+
+@pytest.mark.parametrize("rendered", ["T+ is the age", "T( is the age"])
+def test_gate_6_compares_for_EQUALITY_not_for_order(tmp_path, monkeypatch,
+                                                    rendered):
+    """`_norm(...) == _norm(...)` read as `>=` is True whenever the XML
+    side happens to sort later, so half of all real disagreements pass.
+    The one existing mismatch fixture sorted the other way — these two
+    put the XML on both sides of Word's answer."""
+    path = write(tmp_path / "t.docx", make_parts(para(run("T* is the age"))))
+    monkeypatch.setattr(revision, "_word",
+                        _FakeWord(_FakeDoc(revisions=0, text=rendered)))
+    assert revision.validate(path).accept_paths_agree is False
 
 
 def test_validate_skips_word_when_asked(tmp_path, monkeypatch):

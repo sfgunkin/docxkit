@@ -173,6 +173,23 @@ What five real runs cost and bought, for calibration:
 | `revisions.py` | 858 | 120 | 73 |
 | `_compare_read.py` | 449 | 51 | — |
 | `equations.py` | 1,323 | 312 | — |
+| `tracked.py` | 478 | 97 | — |
+| `revision.py` | 1,066 | 60 | — |
+
+`revision.py` at 5.6% is the best of the seven and `tracked.py` at 20.3%
+the worst, which is the right way round: the protocol is what an
+author's work depends on, and most of what survives in `tracked` is COM
+the fake absorbs.
+
+**One survivor shape turned up four times and is worth knowing by
+name: a guard written as `!=` or `==`, mutated to an ORDERING.** Any
+single fixture puts its two values on one side of each other, so `<` or
+`>=` passes for whichever half it landed in and the test still goes
+green. It hit the stale-batch guard that stands between a batch and an
+author's unsaved work, both post-conditions in `promote`, all three
+arms of gate 5, and gate 6. The fix is not a cleverer fixture — it is
+several, chosen so the values fall on both sides, asserting the
+property the guard actually has: ANY difference is refused, not most.
 
 `equations.py` is where the ratio is worst, and it is not a scandal:
 roughly half its real survivors are in the `to_latex` walker's methods

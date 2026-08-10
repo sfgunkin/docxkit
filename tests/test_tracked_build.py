@@ -187,6 +187,46 @@ def test_build_writes_the_deliverable_and_stamps_it(monkeypatch, sources):
     assert fake.compared["author"] == "Revision"
 
 
+def test_the_compare_options_DEFAULT_to_on(monkeypatch, sources):
+    """The pair below proves they are passed through; nothing proved
+    what they are when nobody passes them. `formatting=False` by default
+    would have made the footnote batch of 2026-08-10 — 25 `w:rPrChange`
+    and not one insertion — come back from Compare with nothing to
+    review, which reads exactly like a batch Compare cannot represent."""
+    _, fake = _build(monkeypatch, _clean_document(), sources)
+    assert fake.compared["formatting"] is True
+    assert fake.compared["whitespace"] is True
+
+
+def test_a_body_only_count_is_not_reported_as_the_whole_batch(
+        monkeypatch, sources, capsys):
+    """Word's Revisions collection walks the MAIN STORY, so a footnote
+    batch reads 0 there while the package holds 25. The note that says
+    so had eight surviving mutants — including deleting the comparison
+    outright, which makes it fire on every build, and inverting it,
+    which makes it fire on none."""
+    said: list[str] = []
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+    original, revised, out = sources
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           progress=said.append)
+    # the fake's compare result reports no body revisions at all
+    assert report.body_revisions == 0
+    assert not any("in the body" in line for line in said), \
+        "the note fired when the two counts agree"
+
+    said.clear()
+    monkeypatch.setattr(tracked, "package_counts",
+                        lambda parts: {"insertions": 0, "deletions": 0,
+                                       "comments": 0, "revisions": 25})
+    tracked.build(original, revised, out, verify_in_word=False, force=True,
+                  progress=said.append)
+    note = [line for line in said if "in the body" in line]
+    assert note, "a batch whose revisions are all in footnotes said nothing"
+    assert "0 of them" in note[0]
+
+
 def test_build_passes_the_compare_options_through(monkeypatch, sources):
     _, fake = _build(monkeypatch, _clean_document(), sources,
                      author="Revision R2", whitespace=False,
@@ -275,6 +315,44 @@ def test_build_refuses_to_overwrite_a_hand_edited_deliverable(
 
 
 # ------------------------------------------------------------- reporting --
+
+
+def test_what_compare_dropped_is_SAID_not_just_recorded(monkeypatch,
+                                                        sources):
+    """"Suppressing silently let a half-finished build report
+    success-shaped numbers" is this module's own comment, and the loop
+    that says so could be deleted with nothing going red. The report
+    field was asserted; the telling was not."""
+    said: list[str] = []
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+    monkeypatch.setattr(tracked, "compare_collateral",
+                        lambda revised, redline: ["part dropped: word/x.xml"])
+    original, revised, out = sources
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           progress=said.append)
+    assert report.dropped == ["part dropped: word/x.xml"]
+    assert any("part dropped: word/x.xml" in line for line in said), \
+        "the build recorded it and never said it"
+
+
+def test_a_suppressed_word_call_is_SAID_too(monkeypatch, sources):
+    """The same for the COM failures the build swallows so that one
+    hostile revision cannot abort a 1,400-revision run."""
+    said: list[str] = []
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+
+    def _resolve(cmp_, classify, generic, suppressed):
+        suppressed.append("comment on revision 7: rejected by callee")
+        return 0
+
+    monkeypatch.setattr(tracked, "_resolve_math", _resolve)
+    original, revised, out = sources
+    tracked.build(original, revised, out, verify_in_word=False,
+                  progress=said.append)
+    assert any("rejected by callee" in line for line in said), \
+        "a swallowed Word call was recorded and never said"
 
 
 def test_build_report_formats_its_phases(monkeypatch, sources):
@@ -758,6 +836,20 @@ def test_carrying_everything_over_reports_nothing():
     same = _pkg('<w:bookmarkStart w:id="1" w:name="Keep"/>'
                 + para(run("x")), **{"word/header1.xml": "<w:hdr/>"})
     assert tracked.compare_collateral(same, dict(same)) == []
+
+
+def test_something_the_redline_GAINED_is_not_a_loss():
+    """The direction matters and only an asymmetric case shows it. Each
+    of these three lines is a set DIFFERENCE; read as a symmetric
+    difference (`^`) or a union (`|`) — five surviving mutants between
+    them — anything the redline gained is announced as dropped, and the
+    warning that exists to catch a real loss starts crying wolf on every
+    build. Word's Compare adds bookmarks of its own."""
+    revised = _pkg(para(run("x")))
+    redline = _pkg('<w:bookmarkStart w:id="9" w:name="_Toc12345"/>'
+                   + f'<w:hyperlink w:anchor="Added">{run("y")}</w:hyperlink>'
+                   + para(run("x")), **{"word/footer1.xml": "<w:ftr/>"})
+    assert tracked.compare_collateral(revised, redline) == []
 
 
 def test_what_the_redline_ADDS_is_not_a_loss():
