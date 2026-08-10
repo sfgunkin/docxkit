@@ -17,6 +17,72 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 `revisions.accept`/`reject` ignore every PROPERTY revision
+- **Symptom** `w:rPrChange`, `w:pPrChange`, `w:tcPrChange` and
+  `w:sectPrChange` pass through both functions untouched: accept leaves
+  the marker standing (so an XML-accepted file still counts as a
+  proposal), and reject does NOT restore the formatting the revision
+  replaced.
+- **What it costs** gate 5, `reject-all == baseline`, **cannot fail on a
+  formatting-only batch**. It compares paragraph text and the glyph
+  stream, reject changes no formatting anyway, so the gate that exists
+  to prove the author's veto is real passes vacuously. Verified on the
+  Parental_style footnote batch: accept and reject produced byte-equal
+  footnotes.
+- **Repro** `revisions.reject('<w:r><w:rPr><w:sz w:val="20"/>'
+  '<w:rPrChange …><w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange>'
+  '</w:rPr>…')` returns its input.
+- **Evidence** 2026-08-10, the footnote-size round.
+- **Not a Word problem** — in Word, rejecting an rPrChange restores the
+  old properties correctly. It is the XML simulation that is blind, and
+  the simulation is what two gates are built on.
+- **Fix** accept: drop the `*PrChange` element. reject: replace the live
+  properties with the snapshot inside it. `revision.state` already
+  KNOWS all seven kinds (`_REVISION_NAMES`); the simulator handles
+  three, and `test_revision_state.py` already has the drift guard that
+  should have covered this pair too.
+
+### S3 a batch of 25 revisions is reported as "0 revisions"
+- **Symptom** `revision build` printed `revisions: 0` and
+  `verified in Word: 0 revisions`, and gate 3 printed `opened, 0
+  revision groups`, for a batch carrying 25 `w:rPrChange` revisions in
+  `word/footnotes.xml`. `revision.state` read the same file and said 25.
+- **Cause** the build report and Word's `Document.Revisions.Count` both
+  see the MAIN STORY only. It is the same blind spot the module
+  docstring already records for the author's Review > Next button —
+  `TEXT_PARTS` exists because of it — and the build's own counter never
+  learned it.
+- **What it costs** it reads as "Compare could not represent this batch",
+  which is the documented `MathResolved` failure. Half an hour went into
+  proving the batch was in fact sound.
+- **Evidence** 2026-08-10, the footnote-size round.
+- **Fix** count over `TEXT_PARTS`, as `state` does. If Word's own count
+  is kept beside it, label it "in the body".
+
+### S2 `footnotes.sizes` flags a note whose STYLE supplies the size
+- **Symptom** Footnote 6 of Parental_style carries `pStyle
+  FootnoteText`, and that style defines `w:sz 20` — it has always
+  rendered at 10pt like its neighbours. `sizes` sees runs stating
+  nothing and reports it as disagreeing. A false positive on the first
+  real manuscript the check was pointed at, and one the 134-document
+  sweep could not surface because no other paper mixes the two.
+- **Confirmed by Word** Compare DROPPED the explicit `w:sz 20` written
+  onto that run and kept only the colour — Word removes direct
+  formatting equal to the style's value, which is the same behaviour
+  `table_spacing` already records for `w:before`.
+- **Evidence** 2026-08-10.
+- **Fix** let `sizes` take the styles part: a run that states nothing,
+  in a paragraph whose `pStyle` chain supplies a size, states that size.
+  Without the part it must keep reporting the disagreement — the answer
+  is genuinely not in `footnotes.xml`.
+
+### S4 `revision status` prints every stale part on one line
+- **Symptom** 16 part names, mostly `word/fonts/font*.odttf`, in a
+  single unreadable line — the first real use of the staleness message.
+- **Evidence** 2026-08-10.
+- **Fix** cap the list and say "and N more"; fold a run of parts under
+  one directory into `word/fonts/ (12)`.
+
 ### S4 `wrap_link_in_bookmark` has no "first mention" mode
 - **Symptom** Refuses when a work is cited more than once (correct — it
   will not guess), but the house convention is *bookmark the first
