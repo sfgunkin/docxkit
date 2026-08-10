@@ -30,6 +30,7 @@ from ._xml import (
     visible_text,
 )
 from .errors import AnchorError
+from .styles import Cascade
 
 __all__ = [
     "FontReport",
@@ -295,48 +296,6 @@ def fonts(footnotes_xml: str, *, include_reserved: bool = False
 # purpose; counting it would put every conforming document on the list.
 
 
-_STYLE_RE = re.compile(r'<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>(.*?)'
-                       r"</w:style>", re.DOTALL)
-_BASED_ON_RE = re.compile(r'<w:basedOn\b[^>]*w:val="([^"]+)"')
-_DOC_DEFAULTS_RE = re.compile(r"<w:docDefaults\b.*?</w:docDefaults>",
-                              re.DOTALL)
-_PSTYLE_RE = re.compile(r'<w:pStyle\b[^>]*w:val="([^"]+)"')
-
-
-def _style_sizes(styles_xml: str) -> dict[str, int]:
-    """styleId -> the half-point size it resolves to, ``basedOn`` followed.
-
-    A style's own ``w:sz`` lives in its ``w:rPr``; its ``w:pPr`` cannot
-    carry one, so the whole style element can be searched.
-    """
-    own: dict[str, str] = {}
-    based: dict[str, str] = {}
-    for sid, blob in _STYLE_RE.findall(styles_xml):
-        own[sid] = blob
-        if (m := _BASED_ON_RE.search(blob)):
-            based[sid] = m.group(1)
-
-    def resolve(sid: str) -> int | None:
-        seen: set[str] = set()
-        while sid in own and sid not in seen:
-            seen.add(sid)                # a basedOn cycle is a real file
-            if (m := _SZ_RE.search(own[sid])):
-                return int(m.group(1))
-            sid = based.get(sid, "")
-        return None
-
-    return {sid: size for sid in own
-            if (size := resolve(sid)) is not None}
-
-
-def _default_size(styles_xml: str) -> int | None:
-    block = _DOC_DEFAULTS_RE.search(styles_xml)
-    if block is None:
-        return None
-    m = _SZ_RE.search(block.group(0))
-    return int(m.group(1)) if m else None
-
-
 @dataclass(frozen=True)
 class SizeOutlier:
     """A footnote that does not resolve to what its neighbours state."""
@@ -402,8 +361,11 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
 
     Repair with :func:`set_font`, which writes direct run formatting.
     """
-    by_style = _style_sizes(styles_xml) if styles_xml else {}
-    default = _default_size(styles_xml) if styles_xml else None
+    # ONE cascade, shared with the FORMAT layer of `compare`. This module
+    # grew its own for an hour and it was already the narrower of the
+    # two: paragraph styles only, where a run's own character style can
+    # carry a size just as well.
+    cascade = Cascade(styles_xml)
 
     stated: list[tuple[str, tuple[int | None, ...], str, str]] = []
     for note in find_all(footnotes_xml, include_reserved=include_reserved):
@@ -411,24 +373,21 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
         seen: set[int | None] = set()
         sources: set[str] = set()
         for para in PARA_RE.finditer(note.xml):
-            style = m.group(1) if (m := _PSTYLE_RE.search(para.group(0))) \
-                else ""
+            pstyle = Cascade.paragraph_style(para.group(0))
             for r in RUN_RE.finditer(para.group(0)):
                 at = para.start() + r.start()
                 if any(s <= at < e for s, e in math):
                     continue
                 if not visible_text(r.group(0)).strip():
                     continue           # the reference mark states no size
-                size = _run_font(r.group(0))[1]
-                if size is not None or not styles_xml:
-                    seen.add(size)
-                    continue
-                if style in by_style:
-                    seen.add(by_style[style])
-                    sources.add(f"the {style} style")
-                else:
-                    seen.add(default)
-                    sources.add("the document default")
+                own = own_properties(r.group(0), "rPr")
+                rpr = live_properties(own[2]) if own else None
+                value, source = cascade.explain(
+                    "sz", rpr=rpr, rstyle=cascade.style_of(rpr),
+                    pstyle=pstyle)
+                seen.add(int(value) if value is not None else None)
+                if source:
+                    sources.add(source)
         if not seen:
             continue                   # nothing a reader sees: nothing to say
         # `None` sorts last, and never against an int: the first key

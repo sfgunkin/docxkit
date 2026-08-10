@@ -17,40 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 `compare`'s FORMAT layer cannot see size or colour
-- **Symptom** `docxkit compare A.docx B.docx --expect-clean` prints
-  **"EXPECT-CLEAN OK"** and exits 0 on two documents differing in 25
-  runs' `w:sz` and `w:color`. `_flags` in `_compare_read` collects
-  `w:i`, `w:b`, `w:strike`, `w:smallCaps` and `w:vertAlign` — nothing
-  else — so a size or colour edit is invisible to every layer: STRUCTURE
-  and TEXT do not move, and FORMAT does not look.
-- **Repro** 2026-08-10, exactly:
-  `docxkit compare revision/build/prev.docx
-  revision/build/footnote_sizes.docx --expect-clean` → exit 0, "0 real
-  change locations", on the pair whose whole difference was the footnote
-  repair.
-- **What it costs** the report is the authoritative gate — "never decide
-  *did this change?* by eyeballing; let the tool enumerate". An author
-  who changes a font size in their copy gets "clean", and the next
-  rebuild drops it with nothing said. That is the same class of loss
-  FORMULA TYPOGRAPHY was added for, and `_compare_read`'s own comment
-  above that layer NAMES size as a thing that changes what a symbol is —
-  so the math side gates on it and the prose side does not.
-- **The second half is deliberate and must survive any fix**
-  hyperlink-styled runs contribute EMPTY formatting on purpose ("their
-  underline and colour are structural, not an author's emphasis"), which
-  is also why footnote 5's eleven citation links changing colour was
-  invisible. A colour rule that fires on every hyperlink is worse than
-  no colour rule.
-- **Not obviously a defect** the layer's own header declares its scope,
-  and widening it risks the noise `_char_fmt` was tuned to avoid. The
-  question is whether `--expect-clean` may keep passing a document that
-  differs.
-- **Fix** decide first, with a real author round in hand: either add
-  size/colour to `_flags` (and check what it does to the sweep's
-  formatting counts), or say in the report that this layer is blind to
-  them so nobody reads "0 real changes" as "identical".
-
 ### S4 `footnotes.sizes` skips the reference mark untested
 - **Symptom** `sizes` asks only runs with visible text, so a paper that
   deliberately sizes the `w:footnoteRef` run gets no finding when one
@@ -111,6 +77,43 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S3 `compare`'s FORMAT layer cannot see size or colour — `PENDING`
+FORMAT now carries `size` and `colour`, **resolved** through the new
+`styles.Cascade` — direct run properties, then the character style
+chain, then the paragraph style chain, then docDefaults — rather than
+read off the run. The resolution is the whole design, not a refinement:
+Word deletes a direct property equal to the inherited one, so comparing
+what a run STATES reports a change on every author round-trip, which is
+how a widened gate becomes a gate nobody reads.
+
+Both directions are tested, and the pair that opened the entry now
+enumerates correctly:
+
+    footnote 5   size 24 -> colour 000000, size 20     the real fix
+    footnote 6   size 20 -> colour 000000, size 20     colour only, and
+                                                       right: it resolved
+                                                       to 20 either way
+    footnote 7   size 24 -> colour 000000, size 20     the real fix
+
+Hyperlink runs still contribute no EMPHASIS — their underline is
+structural — but their colour IS compared, resolved through the
+Hyperlink style so the ordinary case is equal on both sides. That is
+what makes footnote 5's eleven links in Word's default blue visible
+where the house navy was meant.
+
+**Measured before shipping, over three corpora: 136 documents compared
+against THEMSELVES, 0 noisy.** The version-pair findings are all real —
+a body size changed between two generations of one paper, citation links
+gaining or losing a colour. With no `styles.xml` in the package the
+layer compares emphasis only and says so in its docstring: silence
+beats a guess, because a stated-value comparison there would report the
+redundant-declaration case as a change.
+
+**Second copy retired.** `footnotes.sizes` had grown its own resolver an
+hour earlier; it now uses `Cascade`, which is also strictly wider — it
+had known paragraph styles only, and a run's own character style carries
+a size just as well.
 
 ### S3 `revisions.accept`/`reject` ignore every PROPERTY revision — `760b45b`
 Both views passed a `*PrChange` straight through, so an XML-accepted

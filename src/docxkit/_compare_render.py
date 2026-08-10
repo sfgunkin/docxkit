@@ -84,7 +84,8 @@ def _formula_format(report: Report) -> int:
 
 
 def _format(report: Report) -> int:
-    _head("FORMAT  (italic/bold/super/sub/strike, text-matched paras)")
+    _head("FORMAT  (italic/bold/super/sub/strike, size, colour — "
+          "text-matched paras)")
     for f in report["format"]:
         print(f"  '{f['text']}'{_in(f)}: {f['from'] or '∅'} -> "
               f"{f['to'] or '∅'}")

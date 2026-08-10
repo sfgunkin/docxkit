@@ -22,6 +22,7 @@ from typing import TypedDict
 from ._cite_repair import field_spans
 from ._xml import COMMENTS, INSTR_RE, MT_RE, T_PARTS_RE, WT_RE
 from .comments import read_all as _read_comments
+from .styles import Cascade
 
 # ------------------------------------------------------------- extraction
 P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
@@ -64,13 +65,50 @@ def _flags(rpr: str | None) -> frozenset[str]:
     return frozenset(found)
 
 
-def _char_fmt(p_xml: str) -> tuple[str, list[frozenset[str]]]:
+#: Properties reported as a resolved VALUE rather than as on/off, and
+#: only when a `Cascade` can resolve them. Both were invisible to every
+#: layer until 2026-08-10: `--expect-clean` printed OK on a pair whose
+#: whole difference was 25 runs' size and colour.
+#:
+#: They are resolved rather than read off the run because Word deletes a
+#: direct property equal to the inherited one, so comparing what is
+#: STATED reports a difference on documents that render identically —
+#: which is how a check that cries wolf gets written. See
+#: :class:`docxkit.styles.Cascade`.
+_VALUED = (("sz", "size"), ("color", "colour"))
+
+
+def _valued(cascade: Cascade, rpr: str | None,
+            pstyle: str | None) -> frozenset[str]:
+    if not cascade.known:
+        return frozenset()              # no styles part: no honest answer
+    rstyle = cascade.style_of(rpr)
+    out: set[str] = set()
+    for prop, label in _VALUED:
+        value = cascade.of(prop, rpr=rpr, rstyle=rstyle, pstyle=pstyle)
+        # `auto` and "nothing" are the same claim about colour, and Word
+        # writes each in different years of the same document
+        if value in (None, "auto"):
+            continue
+        out.add(f"{label} {value}")
+    return frozenset(out)
+
+
+def _char_fmt(p_xml: str, cascade: Cascade | None = None
+              ) -> tuple[str, list[frozenset[str]]]:
     """Per-character formatting over the prose (``<w:t>``) text.
 
-    Hyperlink-styled runs contribute EMPTY formatting: their underline
-    and colour are structural, not an author's emphasis, and counting
-    them makes every link a formatting difference.
+    Hyperlink-styled runs contribute no EMPHASIS: their underline is
+    structural, not an author's emphasis, and counting it makes every
+    link a formatting difference. Their size and colour are compared
+    like anything else's — resolved through the Hyperlink style, so the
+    ordinary case is equal on both sides and a link that really changed
+    colour is not waved through. One manuscript's citation links sat in
+    Word's default blue while every other link in the paper was the
+    house navy, and nothing said so.
     """
+    cascade = cascade if cascade is not None else Cascade()
+    pstyle = Cascade.paragraph_style(p_xml)
     text: list[str] = []
     fmt: list[frozenset[str]] = []
     for run in RUN_RE.finditer(p_xml):
@@ -78,7 +116,8 @@ def _char_fmt(p_xml: str) -> tuple[str, list[frozenset[str]]]:
         rpr_m = RPR_RE.search(body)
         rpr = rpr_m.group(1) if rpr_m else None
         is_hyper = rpr is not None and 'w:val="Hyperlink"' in rpr
-        flags = frozenset[str]() if is_hyper else _flags(rpr)
+        flags = (frozenset[str]() if is_hyper else _flags(rpr)) \
+            | _valued(cascade, rpr, pstyle)
         for t in WT_RE.findall(body):
             for ch in html.unescape(t):
                 text.append(ch)
@@ -226,13 +265,14 @@ class Para:
     pid: str | None
     at: str                 # "table 3 r2c1", or "" outside a table
 
-    def __init__(self, xml: str, at: str = "") -> None:
+    def __init__(self, xml: str, at: str = "",
+                 cascade: Cascade | None = None) -> None:
         self.xml = xml
         self.at = at
         self.wtext = html.unescape("".join(WT_RE.findall(xml)))
         self.mtext = html.unescape("".join(MT_RE.findall(xml)))
         self.text = (self.wtext + self.mtext).strip()
-        self.wtext_f, self.fmt = _char_fmt(xml)
+        self.wtext_f, self.fmt = _char_fmt(xml, cascade)
         # The equation's identity and its typography are kept apart: a
         # report entry carries the (skeleton, tokens) pair it always
         # did, so the JSON shape papers read is unchanged.
@@ -256,6 +296,9 @@ class Para:
 TEXT_PART_RE = re.compile(
     r"^word/(document|footnotes|endnotes|header\d*|footer\d*)\.xml$")
 COMMENTS_PART = COMMENTS
+#: Not compared itself — read so the FORMAT layer can RESOLVE size and
+#: colour rather than compare what each run happens to state.
+STYLES_PART = "word/styles.xml"
 
 #: Report order, so two runs list their parts the same way.
 _PART_RANK = ("document", "footnotes", "endnotes", "header", "footer")
@@ -340,7 +383,8 @@ class Part:
     paras: list[Para]
     blob: str
 
-    def __init__(self, name: str, xml: str) -> None:
+    def __init__(self, name: str, xml: str,
+                 cascade: Cascade | None = None) -> None:
         self.name = name
         stem = name[len("word/"):-len(".xml")]
         # The body keeps an unlabelled report: a body-only document must
@@ -348,7 +392,8 @@ class Part:
         self.label = "body" if stem == "document" else stem
         self.xml = mask_volatile_fields(xml)
         at = _addresses(self.xml)
-        self.paras = [p for p in (Para(m.group(0), at.get(m.start(), ""))
+        self.paras = [p for p in (Para(m.group(0), at.get(m.start(), ""),
+                                       cascade)
                                   for m in P_RE.finditer(self.xml))
                       if p.text]
         self.blob = " ".join(p.text for p in self.paras)
@@ -380,8 +425,16 @@ def _rank(name: str) -> tuple[int, str]:
 
 def load_parts(raw: dict[str, bytes], path: str = "") -> Doc:
     """The parts dict view, so a caller holding a package (the sweep, a
-    build in memory) can diff without writing a file first."""
-    parts = [Part(n, raw[n].decode("utf-8"))
+    build in memory) can diff without writing a file first.
+
+    Include ``word/styles.xml`` if you have it: without it the FORMAT
+    layer compares emphasis only, because size and colour cannot be
+    resolved and comparing what a run merely STATES reports a difference
+    on documents that render identically.
+    """
+    cascade = Cascade(raw[STYLES_PART].decode("utf-8")
+                      if STYLES_PART in raw else None)
+    parts = [Part(n, raw[n].decode("utf-8"), cascade)
              for n in sorted(raw, key=_rank) if TEXT_PART_RE.match(n)]
     return Doc(path, parts, _read_comments(raw))
 
@@ -389,7 +442,8 @@ def load_parts(raw: dict[str, bytes], path: str = "") -> Doc:
 def load(path: str) -> Doc:
     with zipfile.ZipFile(path) as z:
         raw = {n: z.read(n) for n in z.namelist()
-               if TEXT_PART_RE.match(n) or n == COMMENTS_PART}
+               if TEXT_PART_RE.match(n)
+               or n in (COMMENTS_PART, STYLES_PART)}
     return load_parts(raw, path)
 
 

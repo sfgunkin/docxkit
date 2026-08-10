@@ -47,7 +47,8 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
-| `compare` | the authoritative multi-layer diff (structure/text/formula/formula-typography/format/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments — with each entry addressed to its part and table cell |
+| `compare` | the authoritative multi-layer diff (structure/text/formula/formula-typography/format/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments — with each entry addressed to its part and table cell. FORMAT covers emphasis **and size and colour**, resolved through `styles.Cascade` rather than read off the run |
+| `styles` | named styles: read, remap, apply a journal template — and `Cascade`, what a run's properties RESOLVE to once the style chain and docDefaults are applied |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
 | `citations` | the grammar, the link audit, and `link_all` — build the whole citation<->entry apparatus document-wide |
@@ -163,6 +164,14 @@ they do.
   Word's own `MML2OMML.XSL` (`math.latex_to_omml`). When an equation
   reuses symbols already in the document, `math.harvest` the live element
   and deepcopy it — the only way to guarantee it renders identically.
+- **What a run STATES is not what it renders.** Word deletes a direct
+  property equal to the value it would inherit — measured: its Compare
+  dropped a `w:sz 20` from a run whose paragraph style already said 20.
+  So a stated-value comparison reports a change on documents that render
+  identically, and misses the mirror case (a run that stated 10pt and now
+  inherits the 12pt default). Resolve through `styles.Cascade`: direct
+  run properties, then the character style chain, then the paragraph
+  style chain, then docDefaults.
 - **A bare `<m:oMath>` is INLINE to Word**, however alone in its paragraph
   it sits; display is `<m:oMathPara>`, and Word promotes a lone one on
   save *sometimes* — measured, one equation of four. `equations.display`

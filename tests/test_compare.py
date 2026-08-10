@@ -707,6 +707,118 @@ def test_every_run_property_the_format_layer_knows(tmp_path, prop, shown):
     assert any(shown in str(e) for e in report["format"]), report["format"]
 
 
+# ------------------------------------------- size and colour ------------
+# Both were invisible to every layer until 2026-08-10: `--expect-clean`
+# printed OK on a pair whose entire difference was 25 runs' size and
+# colour. They are RESOLVED through the styles rather than read off the
+# run, because Word deletes a direct property equal to the inherited one.
+
+STYLES = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<w:styles xmlns:w="http://schemas.openxmlformats.org/'
+          'wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault>'
+          '<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrDefault>'
+          "</w:docDefaults>"
+          '<w:style w:type="paragraph" w:styleId="Note">'
+          '<w:rPr><w:sz w:val="20"/></w:rPr></w:style>'
+          '<w:style w:type="character" w:styleId="Hyperlink">'
+          '<w:rPr><w:color w:val="0563C1"/></w:rPr></w:style>'
+          "</w:styles>")
+
+
+def _sized(size: str | None = None, colour: str | None = None,
+           pstyle: str | None = None, rstyle: str | None = None) -> str:
+    rpr = ""
+    if rstyle:
+        rpr += f'<w:rStyle w:val="{rstyle}"/>'
+    if colour:
+        rpr += f'<w:color w:val="{colour}"/>'
+    if size:
+        rpr += f'<w:sz w:val="{size}"/>'
+    ppr = f'<w:pPr><w:pStyle w:val="{pstyle}"/></w:pPr>' if pstyle else ""
+    props = f"<w:rPr>{rpr}</w:rPr>" if rpr else ""
+    return (f"<w:p>{ppr}<w:r>{props}"
+            f"<w:t>The estimate is robust.</w:t></w:r></w:p>")
+
+
+def _styled(tmp_path, a_body: str, b_body: str):
+    return docs(tmp_path, a_body, b_body,
+                extra={"word/styles.xml": STYLES})
+
+
+def test_a_size_change_is_a_format_difference(tmp_path):
+    """The gap this closes: `--expect-clean` said OK on a pair whose
+    whole difference was the size of 25 runs."""
+    report = compare(*_styled(tmp_path, _sized("20"), _sized("24")))
+    assert report["text"] == []
+    assert any("size 20" in str(e) and "size 24" in str(e)
+               for e in report["format"]), report["format"]
+
+
+def test_a_colour_change_is_a_format_difference(tmp_path):
+    report = compare(*_styled(tmp_path, _sized(colour="000000"),
+                              _sized(colour="1F3864")))
+    assert any("colour 1F3864" in str(e) for e in report["format"])
+
+
+def test_a_redundant_declaration_is_not_a_difference(tmp_path):
+    """The reason these are RESOLVED and not read off the run. Word
+    deletes a direct property equal to the inherited one — measured on
+    2026-08-10, its Compare dropped a `w:sz 20` from a run whose
+    paragraph style already said 20. Both sides render at 10pt, and a
+    comparison of what is STATED calls that a change on every author
+    round-trip."""
+    states_it = _sized("20", pstyle="Note")
+    inherits_it = _sized(pstyle="Note")
+    report = compare(*_styled(tmp_path, states_it, inherits_it))
+    assert report["format"] == [], report["format"]
+    assert render(report, expect_clean=True) == 0
+
+
+def test_dropping_a_declaration_that_changes_the_render_IS_a_difference(
+        tmp_path):
+    """The mirror, and the defect that started this: a run that stated
+    10pt and now states nothing, in a paragraph with NO style, falls to
+    the 12pt document default."""
+    report = compare(*_styled(tmp_path, _sized("20"), _sized()))
+    assert any("size 20" in str(e) and "size 24" in str(e)
+               for e in report["format"]), report["format"]
+
+
+def test_a_character_style_supplies_the_value_too(tmp_path):
+    """A run naming the Hyperlink style and one stating its colour
+    directly render the same."""
+    report = compare(*_styled(tmp_path, _sized(rstyle="Hyperlink"),
+                              _sized(colour="0563C1", rstyle="Hyperlink")))
+    assert report["format"] == [], report["format"]
+
+
+def test_a_link_that_changed_colour_is_reported(tmp_path):
+    """Hyperlink runs contribute no EMPHASIS — their underline is
+    structural — but their colour is compared like anything else's. One
+    manuscript's citation links sat in Word's default blue while every
+    other link in the paper was the house navy, and nothing said so."""
+    report = compare(*_styled(tmp_path, _sized(rstyle="Hyperlink"),
+                              _sized(colour="1F3864", rstyle="Hyperlink")))
+    assert any("colour 1F3864" in str(e) for e in report["format"])
+
+
+def test_auto_and_absent_are_the_same_claim_about_colour(tmp_path):
+    """Word writes each in different years of the same document."""
+    report = compare(*_styled(tmp_path, _sized(), _sized(colour="auto")))
+    assert report["format"] == [], report["format"]
+
+
+def test_without_a_styles_part_the_layer_compares_emphasis_only(tmp_path):
+    """Silence rather than a guess: with nothing to resolve THROUGH, a
+    stated-value comparison would report the redundant-declaration case
+    above as a change on every round-trip."""
+    report = compare(*docs(tmp_path, _sized("20"), _sized("24")))
+    assert report["format"] == []
+    italic = _sized("20").replace("<w:rPr>", "<w:rPr><w:i/>")
+    still = compare(*docs(tmp_path, _sized("20"), italic))
+    assert any("italic" in str(e) for e in still["format"])
+
+
 def test_parts_are_reported_in_a_stable_order(tmp_path):
     """Two runs must list their parts the same way, or a reader
     comparing today's report to yesterday's is reading noise."""
