@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -423,6 +424,21 @@ def test_a_page_range_becomes_words_seven_argument_export(faked_word,
     assert args[1] == W.WD_EXPORT_PDF
     assert args[-2:] == (2, 5)
     assert out == tmp_path / "o.pdf"
+
+
+def test_the_destination_reaches_word_as_an_absolute_path(faked_word,
+                                                          monkeypatch,
+                                                          tmp_path):
+    """Word has its own working directory. Handed a relative path, it
+    wrote the render into its default folder while this returned a path
+    with no file at it, and the caller went looking for a PDF that was
+    never there."""
+    monkeypatch.chdir(tmp_path)
+    out = W.export_pdf("in.docx", "o.pdf")
+    (args,) = faked_word.exports
+    assert Path(args[0]).is_absolute()
+    assert Path(args[0]).parent == tmp_path.resolve()
+    assert out == tmp_path.resolve() / "o.pdf"
 
 
 def test_no_page_range_exports_the_whole_document(faked_word, tmp_path):

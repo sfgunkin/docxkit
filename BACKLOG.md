@@ -17,28 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 `latex_to_omml` output needs a normalization pass
-All four are valid markup, so lint, `math` and text-diff pass while the
-page is wrong. Only a PDF render catches them.
-- `\overline{v}` emits `<m:acc>` with `m:chr m:val="―"` (U+2015
-  HORIZONTAL BAR). Not in Word's bar-set, so Word centres the glyph ON
-  the letter — **v-bar renders struck through**. Should be U+0305
-  COMBINING OVERLINE.
-- `\quad` emits a literal U+00A0 *inside* the math, and `\{` a literal
-  brace character. Both then join the vocabulary `docxkit math` derives
-  from the document's own equations — every non-breaking space in the
-  reference list started reporting as prose-math, 1 finding → 19.
-  `\left\{ \right\}` builds a set as delimiters and is clean.
-- `\frac{(-)}{(-)}` emits an **empty `m:e`**, which draws as a blank box.
-  Caught by lint, but only after the build. Parenthesised signs should be
-  an `m:d` with default delimiters, as the papers write them by hand.
-- **Repro** `latex_to_omml(r"\overline{v}_i")` etc.
-- **Evidence** 2026-08-09/10, theory-section merge.
-- **Workaround** `omml()` in
-  `Parental_style/revision/scripts/applied/theory_merge.py` (accent chr);
-  `fix_a3_signs.py` (clones the paper's own `m:d`).
-- **Fix** Normalize in `equations`, so every paper gets it.
-
 ### S2 no display-mode support, and Word's auto-promotion is unreliable
 - **Symptom** A bare `<m:oMath>` is INLINE to Word; display is
   `<m:oMathPara>`. House rule for ALL papers is display + centred, and no
@@ -108,6 +86,41 @@ page is wrong. Only a PDF render catches them.
 ---
 
 ## Fixed
+
+### S2 `latex_to_omml` output needs a normalization pass — `PENDING`
+New `equations._normalize`, run on every conversion. Each before/after
+was RENDERED through Word, which is the only gate that sees any of this.
+
+* **the accent** — `\overline{v}` → `m:chr` U+2015 HORIZONTAL BAR, and
+  the render confirmed it: the v is struck through. Now U+0305
+  COMBINING OVERLINE, which draws as Word's own `m:bar` does. An
+  `m:groupChr`'s character is left alone — a bar is legitimate there.
+* **the sign** — worse than reported, and not confined to
+  `\frac{(-)}{(-)}`: latex2mathml reads the minus in **`(-1)`** as the
+  fence's SEPARATOR, so it arrives as an empty `m:e` plus `1` with the
+  sign in `m:sepChr`, and the page reads `(   −1)`. Same for `[-1]`,
+  `|-1|`, `\{-1\}`, `(-)`. Now rejoined into one `m:e` with the sign
+  inline; delimiters survive. **The tell is the empty element, not the
+  separator**: `(x,y)` and `(a-b)` arrive in the same shape with both
+  elements filled, where the separator is real and drawn — firing on
+  the separator alone would flatten them.
+* **the NBSP** — did not reproduce as written. On latex2mathml 3.81.0
+  `\quad` emits nothing at all (the spacing is dropped), and `\{x\}`
+  builds a proper `m:d`, not a literal brace. The NBSP that does reach
+  the math comes from `\text{ if }` and `~`, where the space is CONTENT
+  and the converter is right to keep it. So the fix went where the harm
+  was: `document_symbols` no longer harvests the NBSP or the invisible
+  operators into the paper's vocabulary. `to_latex` still knows them —
+  it has to render them — but a space is not evidence of math, which is
+  what turned one finding into nineteen. Braces left alone: a bare
+  brace in a paper's math is a fair thing to flag.
+
+**Workarounds:** `theory_merge.py` and `fix_a3_signs.py` stay in
+`scripts/applied/` — spent scripts are records of a round, not code to
+delete — but neither technique is forced on the next paper.
+**Bonus:** `word.export_pdf` resolves its destination. Handed a relative
+path it wrote the render into WORD's working directory and returned a
+path with no file at it. Found by using it for the render above.
 
 ### S3 gate 6 counts a drawing as a text difference — `712e2fd`
 Measured before encoding, as the entry demanded — a synthetic package

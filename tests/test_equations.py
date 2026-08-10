@@ -157,6 +157,115 @@ def test_latex_converts_through_words_own_transform():
     assert "L" in tokens(out)
 
 
+# --- what the converter emits and Word cannot draw --------------------
+# Every one of these is VALID markup, so lint, the formula diff and the
+# text diff pass on all of them and only a PDF render shows the page is
+# wrong. The before/after of each was rendered through Word once; what
+# it showed is in the test names.
+
+
+def _normalized(omml: str) -> str:
+    """`_normalize` alone, so these run without Word or latex2mathml."""
+    from lxml import etree
+
+    from docxkit.equations import _normalize
+
+    root = etree.fromstring(omml.encode("utf-8"))
+    _normalize(root)
+    return str(etree.tostring(root, encoding="unicode"))
+
+
+def _d(dpr: str, *els: str) -> str:
+    return omath(f"<m:d><m:dPr>{dpr}</m:dPr>{''.join(els)}</m:d>")
+
+
+def test_an_overline_accent_word_would_strike_through_is_replaced():
+    """U+2015 HORIZONTAL BAR is not in Word's accent set, so Word centres
+    it ON the letter: v-bar renders struck through. U+0305 COMBINING
+    OVERLINE draws it above, as Word's own m:bar does."""
+    out = _normalized(omath('<m:acc><m:accPr><m:chr m:val="―"/></m:accPr>'
+                            f"<m:e>{mr('v')}</m:e></m:acc>"))
+    assert 'm:val="̅"' in out
+    assert "―" not in out
+
+
+def test_a_group_character_is_left_alone():
+    """`m:chr` also carries the brace of an `m:groupChr`, where a
+    horizontal bar is a legitimate choice, not a mistake."""
+    src = omath('<m:groupChr><m:groupChrPr><m:chr m:val="―"/>'
+                f"</m:groupChrPr><m:e>{mr('x')}</m:e></m:groupChr>")
+    assert _normalized(src) == src
+
+
+def test_a_sign_read_as_a_separator_is_rejoined():
+    """latex2mathml reads the minus in `(-1)` as the fence's SEPARATOR,
+    so it arrives as an empty m:e and a `1` with the sign in m:sepChr.
+    Word lays the empty element out as a gap: the page reads `(   −1)`,
+    the parenthesis adrift from the sign."""
+    out = _normalized(_d('<m:sepChr m:val="−"/>', "<m:e/>",
+                         f"<m:e>{mr('1')}</m:e>"))
+    assert "<m:e/>" not in out and "sepChr" not in out
+    assert out.count("<m:e>") == 1
+    assert tokens(out) == "−1"
+
+
+def test_a_parenthesised_sign_keeps_its_delimiters():
+    """`(-)` is two empty elements — `(  −  )` on the page. What the
+    papers write by hand is an m:d with default delimiters."""
+    out = _normalized(_d('<m:sepChr m:val="−"/>', "<m:e/>", "<m:e/>"))
+    assert tokens(out) == "−"
+    assert "<m:e/>" not in out
+
+
+def test_the_brackets_of_a_rejoined_fence_survive():
+    out = _normalized(_d('<m:begChr m:val="["/><m:sepChr m:val="−"/>'
+                         '<m:endChr m:val="]"/>',
+                         "<m:e/>", f"<m:e>{mr('1')}</m:e>"))
+    assert 'm:begChr m:val="["' in out and 'm:endChr m:val="]"' in out
+    assert tokens(out) == "−1"
+
+
+@pytest.mark.parametrize("sep", [",", "−"])
+def test_a_real_separator_between_two_filled_elements_is_untouched(sep):
+    """The tell is the EMPTY element, not the separator. `(x,y)` and
+    `(a-b)` arrive in exactly this shape with both elements filled, and
+    there the separator is real and drawn between them. Firing on the
+    separator alone would flatten both."""
+    src = _d(f'<m:sepChr m:val="{sep}"/>',
+             f"<m:e>{mr('x')}</m:e>", f"<m:e>{mr('y')}</m:e>")
+    assert _normalized(src) == src
+
+
+def test_normalisation_reaches_a_fence_inside_a_fraction():
+    """`\\frac{(-)}{(-)}` is where this was found, and the defective
+    element is two levels down."""
+    bad = ('<m:d><m:dPr><m:sepChr m:val="−"/></m:dPr><m:e/><m:e/></m:d>')
+    out = _normalized(omath(f"<m:f><m:num>{bad}</m:num>"
+                            f"<m:den>{bad}</m:den></m:f>"))
+    assert "<m:e/>" not in out
+    assert tokens(out) == "−−"
+
+
+def _needs_word_and_latex() -> None:
+    pytest.importorskip("latex2mathml")
+    try:
+        find_mml2omml_xsl()
+    except PackageError as exc:
+        pytest.skip(f"Word not installed here: {exc}")
+
+
+def test_the_whole_pipeline_produces_a_drawable_overline():
+    _needs_word_and_latex()
+    out = latex_to_omml(r"\overline{v}_i")
+    assert "―" not in out and 'm:val="̅"' in out
+
+
+def test_the_whole_pipeline_keeps_a_parenthesised_sign():
+    _needs_word_and_latex()
+    assert tokens(latex_to_omml(r"(-1)")) == "−1"
+    assert "<m:e/>" not in latex_to_omml(r"\frac{(-)}{(-)}")
+
+
 # --- the documented pair must compose ---------------------------------
 
 

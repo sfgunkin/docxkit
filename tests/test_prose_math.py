@@ -138,6 +138,25 @@ def test_statistics_prose_is_not_math(text):
     assert [f for f in prose_math(xml) if f.para == 2] == []
 
 
+def test_a_space_inside_an_equation_is_not_a_symbol():
+    """`to_latex` has to know the non-breaking space and the invisible
+    operators — they are characters it meets inside `m:t` and must
+    render. Harvesting them into the paper's VOCABULARY is another
+    matter: `\\text{ if }` and `~` put an NBSP in the math, and every
+    non-breaking space in the reference list then read as unformatted
+    math. One real finding became nineteen."""
+    xml = doc(p(math("θ = f⁡(x)"), t(" is the rule.")))
+    assert document_symbols(xml) == {"θ"}
+
+
+def test_a_non_breaking_space_in_prose_is_not_a_finding():
+    """The shape it took in the manuscript: a reference list, where the
+    NBSP between initials is house style."""
+    xml = doc(p(math("θ "), t(" defined.")),
+              p(t("Becker, G. S. and N. Tomes. 1986.")))
+    assert [f for f in prose_math(xml) if f.para == 2] == []
+
+
 def test_prose_that_merely_mentions_a_greek_word_is_not_flagged():
     xml = doc(p(math("α"), t(" is the weight.")),
               p(t("Cronbach alpha exceeded 0.8 in every wave.")))

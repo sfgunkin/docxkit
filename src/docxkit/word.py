@@ -351,8 +351,14 @@ def export_pdf(path: str | Path, out_pdf: str | Path,
 
     The way to check equations visually: Word keeps OMML, LibreOffice does
     not. Works even when saving hangs, so it is also a liveness check.
+
+    The destination is RESOLVED first. A relative path is relative to the
+    caller's working directory and means nothing to Word, which has its
+    own — so the render landed in Word's default folder while this
+    returned a path with no file at it, and the caller went looking for a
+    PDF that was never written there.
     """
-    out_pdf = Path(out_pdf)
+    out_pdf = Path(out_pdf).resolve()
     with session() as word, open_doc(word, path) as doc:
         if first and last:
             doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0, 0,

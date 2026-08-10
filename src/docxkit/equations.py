@@ -157,10 +157,83 @@ def _transform(xsl: str | Path | None) -> Any:
     return _XSLT_CACHE[key]
 
 
+#: What `latex2mathml` gives `\overline`, and what Word can draw with.
+#: U+2015 HORIZONTAL BAR is not in Word's accent set, so Word centres the
+#: glyph ON the letter and v-bar renders STRUCK THROUGH. U+0305
+#: COMBINING OVERLINE draws it above, matching Word's own `m:bar`.
+#:
+#: Confirmed in a PDF render, which is the only gate that sees it: both
+#: forms are valid markup, so lint, the formula diff and the text diff
+#: pass on the struck-through one.
+_ACCENT_CHR = {"―": "̅"}
+
+_M = f"{{{M_NS}}}"
+
+
+def _rejoin_at_separator(d: Any) -> None:
+    """Undo a fence the converter split at an operator.
+
+    `latex2mathml` reads the minus in ``(-1)`` as the delimiter's
+    SEPARATOR rather than as a sign, so the fence comes back as two
+    ``m:e`` — an empty one and ``1`` — with the minus in ``m:sepChr``.
+    Word lays the empty element out as a gap and the page reads
+    ``(   −1)``, the parenthesis adrift from the sign. Rejoining at the
+    separator gives back the ``(−1)`` that was written. Same for
+    ``(-)``, ``[-1]``, ``|-1|``.
+
+    **The tell is the EMPTY element, not the separator.** ``(x,y)``
+    arrives in exactly this shape with both elements filled, and there
+    the separator is real and drawn between them — as it is in
+    ``(a-b)``. Firing on the separator alone would flatten those.
+    """
+    from lxml import etree
+
+    els = [e for e in d if e.tag == _M + "e"]
+    if len(els) < 2 or all(len(e) for e in els):
+        return
+    sep_el = d.find(f"{_M}dPr/{_M}sepChr")
+    sep = sep_el.get(_M + "val") if sep_el is not None else None
+    if sep_el is None or not sep:
+        return                              # `(1,-2)`: nothing to rejoin
+    first = els[0]
+    for other in els[1:]:
+        etree.SubElement(etree.SubElement(first, _M + "r"),
+                         _M + "t").text = sep
+        for child in list(other):
+            first.append(child)             # append MOVES it, which is here
+        d.remove(other)                     # the point
+    # The now-childless `m:dPr` stays. Every child of it is optional, and
+    # an empty one renders with Word's defaults — parentheses — which is
+    # the form the render probe proved. Tidier is not better here.
+    sep_el.getparent().remove(sep_el)
+
+
+def _normalize(root: Any) -> None:
+    """Repair what the converter emits and Word cannot draw.
+
+    Every defect fixed here produces VALID markup, so lint, the formula
+    diff and the text diff all pass while the page is wrong — only a PDF
+    render catches them. That is the argument for doing it once, in the
+    shared converter, rather than per paper: two manuscripts had already
+    grown their own patch for the accent character alone.
+    """
+    for chr_el in root.iter(_M + "chr"):
+        parent = chr_el.getparent()
+        # `m:chr` also carries the brace of an `m:groupChr`, where
+        # U+2015 would be a legitimate choice. Only the accent is wrong.
+        if parent is not None and parent.tag == _M + "accPr" and (
+                fixed := _ACCENT_CHR.get(chr_el.get(_M + "val") or "")):
+            chr_el.set(_M + "val", fixed)
+    for d in list(root.iter(_M + "d")):
+        _rejoin_at_separator(d)
+
+
 def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
     """Convert LaTeX to an ``<m:oMath>`` element, as an XML string.
 
-    LaTeX -> presentation MathML (latex2mathml) -> OMML (Word's own XSL).
+    LaTeX -> presentation MathML (latex2mathml) -> OMML (Word's own XSL),
+    then :func:`_normalize` for the places that chain produces markup
+    Word cannot draw.
     """
     # Optional extra, absent on a plain install: pyright resolves imports
     # from the environment it runs in, and mypy's ignore_missing_imports
@@ -181,6 +254,7 @@ def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
         if found is None:
             raise PackageError(f"no m:oMath produced for LaTeX: {latex!r}")
         result = found
+    _normalize(result)
     return str(etree.tostring(result, encoding="unicode"))
 
 
@@ -711,7 +785,15 @@ def display_equations(xml: str) -> list[re.Match[str]]:
 #: half these papers and an ordinary word-letter everywhere else, and
 #: flagging it would bury every real finding.
 _PROSE_GREEK = frozenset(_GREEK)
-_MATH_GLYPHS = frozenset(_SYMBOLS) | frozenset(_NARY)
+#: A space is not evidence of math, wherever it appears. `to_latex` has
+#: to know the invisible operators and the NBSP — they are characters it
+#: meets inside `m:t` and must render — but harvesting them into the
+#: paper's VOCABULARY makes every non-breaking space in the reference
+#: list read as unformatted math: one real finding became nineteen. The
+#: math that seeded it came from `\text{ if }` and `~`, where the space
+#: is content and the converter is right to keep it.
+_INVISIBLE = frozenset("⁢⁡⁤ ")
+_MATH_GLYPHS = (frozenset(_SYMBOLS) | frozenset(_NARY)) - _INVISIBLE
 #: Unicode sub/superscripts — "poor man's math", typed instead of built.
 _SUB_SUP = set("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜᵢⱼ"
                "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ")
