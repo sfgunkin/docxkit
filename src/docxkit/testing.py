@@ -18,14 +18,13 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import NoReturn
 
 from ._xml import DOCUMENT
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
     "latest_version",
-    "load_document",
     "load_xml",
     "load_zip",
     "prose_numbers",
@@ -101,22 +100,6 @@ def load_xml(path: str | Path, part: str = DOCUMENT) -> str:
 def load_zip(path: str | Path) -> zipfile.ZipFile:
     """The package, backed by an in-memory copy, lock-safe."""
     return zipfile.ZipFile(io.BytesIO(read_bytes(path)))
-
-
-def load_document(path: str | Path) -> Any:
-    """A python-docx ``Document``, lock-safe.
-
-    Use for layout-level work only. It cannot see text inside ``w:ins``,
-    so for anything with tracked changes read the XML instead
-    (:mod:`docxkit.tables`, :mod:`docxkit.revisions`).
-    """
-    # python-docx is not a dependency — it was dropped when word_edits
-    # retired, and this helper is the only caller left. Absent on a plain
-    # install, so pyright must be told at the site; mypy has `docx.*` in
-    # ignore_missing_imports.
-    from docx import Document  # pyright: ignore[reportMissingImports]
-
-    return Document(io.BytesIO(read_bytes(path)))
 
 
 def prose_numbers(text: str, *, context: int = 60) -> list[tuple[float, str]]:

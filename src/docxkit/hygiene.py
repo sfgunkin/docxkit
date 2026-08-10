@@ -26,8 +26,6 @@ from dataclasses import dataclass, field
 from ._xml import PARA_RE, T_PARTS_RE, element_spans, escape, visible_text
 
 __all__ = [
-    "CUSTOM_XML",
-    "NOTE_LEADS",
     "SmartenReport",
     "SpacingReport",
     "smarten",

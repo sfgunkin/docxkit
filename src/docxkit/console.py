@@ -20,7 +20,7 @@ from __future__ import annotations
 import io
 import sys
 
-__all__ = ["utf8_console", "utf8_stderr", "utf8_stdout"]
+__all__ = ["utf8_console", "utf8_stdout"]
 
 
 def _reconfigure(stream: object, line_buffering: bool | None) -> bool:
@@ -44,16 +44,14 @@ def utf8_stdout(*, line_buffering: bool | None = None) -> bool:
     return _reconfigure(sys.stdout, line_buffering)
 
 
-def utf8_stderr(*, line_buffering: bool | None = None) -> bool:
-    """The same for stderr, where the error messages go."""
-    return _reconfigure(sys.stderr, line_buffering)
-
-
 def utf8_console(*, line_buffering: bool | None = None) -> bool:
     """Both streams. Returns whether stdout was reconfigured.
 
     What a command prints and what it fails with belong to the same
-    console, and every caller that wanted one wanted the other.
+    console, and every caller that wanted one wanted the other — which
+    is why there is no `utf8_stderr` beside this. There was one, reached
+    by nothing in four trees and bypassed by this function, which called
+    `_reconfigure` directly rather than going through it.
     """
     err = _reconfigure(sys.stderr, line_buffering)
     return _reconfigure(sys.stdout, line_buffering) or err

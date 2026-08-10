@@ -33,7 +33,6 @@ __all__ = [
     "RUN_OPEN_RE",
     "RUN_RE",
     "TEXT_PARTS",
-    "T_DEL_RE",
     "T_PARTS_RE",
     "T_RE",
     "T_RUN_RE",

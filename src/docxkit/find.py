@@ -13,7 +13,6 @@ from collections.abc import Callable
 
 from ._xml import (
     PARA_RE,
-    delta_text,
     matching_close,
     normalize_glyphs,
     visible_text,
@@ -23,7 +22,6 @@ from .errors import AnchorError
 __all__ = [
     "P_RE",
     "body_elements",
-    "delta_text_of",
     "edit_para",
     "heading_level",
     "page_break_before",
@@ -35,10 +33,11 @@ __all__ = [
     "text_of",
 ]
 
-# kept as an alias: several paper scripts import P_RE from here
+# kept as aliases: several paper scripts import these from here. There
+# was a third, `delta_text_of`, and nothing in four trees ever called it
+# — an alias is only worth its export while someone spells it that way.
 P_RE = PARA_RE
 text_of = visible_text
-delta_text_of = delta_text
 
 
 def paragraphs(xml: str) -> list[re.Match[str]]:

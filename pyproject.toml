@@ -185,7 +185,12 @@ disallow_untyped_defs = true
 # importorskip it. This list was written on a machine where it happened
 # to be installed, so mypy resolved it and nobody noticed the gap until
 # CI ran on a clean checkout and failed on all three Python versions.
-module = ["win32com.*", "pythoncom", "docx.*", "latex2mathml.*"]
+#
+# `docx.*` came off this list when `testing.load_document` did: that
+# helper was the package's LAST touch of python-docx, and the README's
+# first non-negotiable is never to save through it. The source now does
+# not import it at all.
+module = ["win32com.*", "pythoncom", "latex2mathml.*"]
 ignore_missing_imports = true
 
 [tool.pyright]
