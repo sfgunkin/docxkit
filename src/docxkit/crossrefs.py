@@ -56,7 +56,7 @@ from ._xml import (
     visible_text,
 )
 from .citations import next_bookmark_id
-from .errors import AnchorError
+from .errors import AnchorError, ConversionGap
 
 __all__ = [
     "Caption",
@@ -64,6 +64,7 @@ __all__ = [
     "anchor_names",
     "audit",
     "caption_re",
+    "field_targets",
     "find_captions",
     "link",
     "unlink",
@@ -96,6 +97,11 @@ _P_OPEN_RE = re.compile(r"<w:p\b[^>]*>")
 _RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)
 # a bookmark name Word will accept: letters, digits, underscore
 _UNSAFE_RE = re.compile(r"[^0-9A-Za-z_]")
+#: ``HYPERLINK \l "Anchor" \h`` inside a field instruction. Word splits
+#: instrText across runs, so the quoted anchor is matched on its own
+#: rather than the whole instruction.
+_FIELD_ANCHOR_RE = re.compile(
+    r'<w:instrText[^>]*>[^<]*?HYPERLINK\s+\\l\s+"([^"]+)"', re.DOTALL)
 
 
 def anchor_names(label: str, number: str) -> tuple[str, str]:
@@ -142,6 +148,11 @@ class LinkReport:
     already_linked: list[str] = field(default_factory=list)
     no_mention: list[str] = field(default_factory=list)
     no_caption: list[str] = field(default_factory=list)
+    #: Anchors already reached by a HYPERLINK FIELD. link() cannot see
+    #: those, so it treats the object as unlinked and adds an element
+    #: link on top — two schemes over one caption. Reported rather than
+    #: raised: linking the REST of the document is still worth doing.
+    field_form: list[str] = field(default_factory=list)
     notes: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -157,6 +168,10 @@ class LinkReport:
         if self.no_caption:
             lines.append(f"  mentioned but no caption: "
                          f"{', '.join(self.no_caption)}")
+        if self.field_form:
+            lines.append(f"  ALREADY LINKED BY A WORD FIELD, which link() "
+                         f"cannot see — check for a doubled link: "
+                         f"{', '.join(self.field_form)}")
         for name, note in sorted(self.notes.items()):
             lines.append(f"  {name}: {note}")
         return "\n".join(lines)
@@ -556,6 +571,7 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     report = LinkReport()
     captions = find_captions(xml, labels=labels)
     seen: set[str] = set()
+    fielded = field_targets(xml)
 
     for cap in captions:
         if only is not None and cap.name not in only:
@@ -568,6 +584,13 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
         if (_named_bookmark(cap.name).search(xml)
                 and _named_bookmark(cap.mention_name).search(xml)):
             report.already_linked.append(cap.name)
+            continue
+
+        # A field already points here. We cannot see it to skip it the way
+        # the element check above does, so linking would stack a second
+        # scheme on the same caption. Say so; do not silently double it.
+        if fielded & {cap.name, cap.mention_name}:
+            report.field_form.append(cap.name)
             continue
 
         # Re-find the caption: earlier edits have shifted every offset.
@@ -750,18 +773,48 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     return xml, counts
 
 
+def field_targets(xml: str) -> set[str]:
+    """Anchors reached by a Word HYPERLINK FIELD rather than an element.
+
+    ``link`` and ``unlink`` only understand element-form
+    ``<w:hyperlink w:anchor="...">``. The same link can equally be a
+    field — ``<w:instrText>HYPERLINK \\l "X" \\h</w:instrText>`` between
+    fldChars — and a manuscript can hold both forms at once. Parental_style
+    holds 53 element and 160 field, and there is nothing in the rendered
+    page to tell them apart.
+    """
+    return {m.group(1) for m in _FIELD_ANCHOR_RE.finditer(xml)}
+
+
 def unlink(xml: str, *,
            labels: tuple[str, ...] = DEFAULT_LABELS) -> tuple[str, int]:
     """Remove the cross-reference bookmarks and unwrap their hyperlinks.
 
     For rebuilding from scratch when numbering has changed. Hyperlinks
     pointing anywhere else — a citation, a URL — are left alone.
+
+    Raises :class:`ConversionGap` if any exhibit link is FIELD form.
+    Removing the bookmarks while leaving those fields standing is not a
+    partial success, it is a wrong answer that reports a healthy count:
+    on Parental_style it said "24 removed" and left every caption link
+    live, which was found only much later and by hand.
     """
     ours: set[str] = set()
     for cap in find_captions(xml, labels=labels):
         ours.update((cap.name, cap.mention_name))
     if not ours:
         return xml, 0
+
+    fielded = sorted(ours & field_targets(xml))
+    if fielded:
+        raise ConversionGap(
+            f"{len(fielded)} exhibit link(s) are Word FIELD form, which "
+            f"unlink cannot see or remove: {', '.join(fielded[:6])}"
+            + (" ..." if len(fielded) > 6 else "")
+            + ". Removing the bookmarks alone would leave the links live "
+              "and report success. Retarget the fields in place instead "
+              "(swap the anchor names), or convert them to element form "
+              "first.")
 
     removed = 0
     for name in sorted(ours):

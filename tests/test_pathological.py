@@ -45,6 +45,7 @@ from lxml import etree
 
 from docxkit import tables
 from docxkit._xml import visible_text
+from docxkit.errors import DocxKitError
 from docxkit.package import malformed_parts
 
 W_NS = NS
@@ -263,6 +264,26 @@ def test_every_specimen_is_itself_well_formed(specimen):
 # ------------------------------------------------ document-wide mutators ---
 
 
+def refusing_is_safe(fn):
+    """Wrap a mutator so a DELIBERATE refusal counts as leaving the
+    document alone.
+
+    A mutator that raises a DocxKitError on a specimen it cannot handle
+    faithfully has done the safe thing: nothing was written, so parseable
+    / text-preserving / idempotent all hold trivially. Only an
+    uncontrolled exception is a failure. `crossrefs.unlink` refuses the
+    both_link_forms specimen for exactly this reason — it cannot see
+    field-form links, and removing the bookmarks alone would leave the
+    links live while reporting success.
+    """
+    def run(xml: str) -> str:
+        try:
+            return fn(xml)
+        except DocxKitError:
+            return xml
+    return run
+
+
 def text_preserving_mutators():
     """(name, fn) — each takes a part's XML and returns it rewritten,
     with the visible text unchanged by definition."""
@@ -271,7 +292,7 @@ def text_preserving_mutators():
     return [
         ("crossrefs.link", lambda x: crossrefs.link(x)[0]),
         ("crossrefs.link_more", lambda x: crossrefs.link_more(x)[0]),
-        ("crossrefs.unlink", lambda x: crossrefs.unlink(x)[0]),
+        ("crossrefs.unlink", refusing_is_safe(lambda x: crossrefs.unlink(x)[0])),
         ("preserve_space", lambda x: preserve_space(x)[0]),
         ("hygiene.smarten", lambda x: hygiene.smarten(x)[0]),
     ]

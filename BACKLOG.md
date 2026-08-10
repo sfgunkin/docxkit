@@ -32,18 +32,25 @@ fixed entries; "did we ever fix that?" is a real question later.
   links are in scope. Refusal is small and turns a wrong answer into a
   message; full support would let papers use the normal rebuild path.
 
-### S3 `revision._norm` does not fold U+2032 `′` against U+0027 `'`
+### S3 gate 6 counts a drawing as a text difference
 - **Symptom** `revision validate` gate 6 (XML accept == Word accept)
-  reports MISMATCH on a document with **zero revisions**, so it can never
-  pass on this manuscript and stops being read.
-- **Repro** `docxkit revision validate` on Parental_style; then run the
-  same comparison on a 0-revision `working.docx` — identical diffs.
-  Word's `Range.Text` returns `′` where the XML stores `'` in the theory
-  equations, plus two stray `/`.
-- **Evidence** 2026-08-09.
-- **Workaround** None. Gate 6 is being ignored on this paper, which is
-  precisely the corrosion it was built to prevent.
-- **Fix** Fold the prime/apostrophe pair (and the stray `/`) in `_norm`.
+  still reports MISMATCH on a zero-revision document, now down to
+  **exactly one `/` per `<w:drawing>`**: Word's `Range.Text` emits a
+  placeholder character for an inline graphic, while `_glyph` collects
+  only `w:t`/`m:t` and contributes nothing there.
+- **Repro** Parental_style `working.docx`: 2 drawings (`Graphic 5` at
+  body[375], `Graphic 7` at body[380]) → 2 `/` insertions, at those exact
+  offsets.
+- **Evidence** 2026-08-10. The prime half of this entry is FIXED
+  (`00db587`); this is what remains.
+- **Deliberately NOT fixed by folding `/`** — that character is ordinary
+  prose ("and/or", URLs), and `_FOLD`'s own docstring says not to add a
+  fold on suspicion. One two-sample observation is not enough to declare
+  `/` "the drawing character".
+- **Fix** Make the comparison drawing-aware on BOTH sides rather than
+  character-folding: have `_glyph` emit a placeholder per `w:drawing`,
+  and confirm against a second document what Word actually returns for an
+  inline graphic before encoding it.
 
 ### S3 `revision status` says TRUTH/TRUTH when prev and working differ
 - **Symptom** `status` counts pending revisions only. After the author
