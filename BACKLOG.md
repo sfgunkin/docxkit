@@ -147,7 +147,9 @@ Expectancy, DSI and FLOPsExport.
 
 **And it found a LIVE one the workaround missed.** Parental_style
 `revision/working.docx` still has three footnotes (5, 6, 7) whose text
-runs carry no `w:sz`. `fix_display_math.py` skipped them because it
+runs carry no `w:sz`. *(Corrected the same day: TWO of them — 5 and 7 —
+actually rendered wrong. Footnote 6 takes 10pt from `pStyle
+FootnoteText`, which is the style-resolution entry above.)* `fix_display_math.py` skipped them because it
 tested `'<w:sz w:val=' in blob` and the PARAGRAPH MARK's `w:rPr` carries
 one — the mark's own formatting, not the runs'. Worth a batch on that
 paper: `footnotes.set_font(xml, size=10)`.
