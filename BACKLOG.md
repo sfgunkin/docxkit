@@ -17,21 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 `crossrefs.unlink`/`link` are blind to field-form hyperlinks
-- **Symptom** On a manuscript whose exhibit links are Word FIELD form
-  (`HYPERLINK \l "X" \h` in instrText), `unlink` reports a healthy
-  bookmark count and leaves every link standing. Success-shaped failure:
-  nothing in the output distinguishes it from having worked.
-- **Repro** Parental_style `revision/working.docx` — MIXED, 53 element /
-  160 field. `docxkit probe` reports the form. `unlink` said "24" and
-  changed no caption link.
-- **Evidence** 2026-08-09, Table 1/2 swap.
-- **Workaround** Symmetric identifier swap instead of teardown+rebuild —
-  `Parental_style/revision/scripts/applied/swap_tables_1_2.py`.
-- **Fix** Either handle the field form, or REFUSE loudly when field-form
-  links are in scope. Refusal is small and turns a wrong answer into a
-  message; full support would let papers use the normal rebuild path.
-
 ### S3 gate 6 counts a drawing as a text difference
 - **Symptom** `revision validate` gate 6 (XML accept == Word accept)
   still reports MISMATCH on a zero-revision document, now down to
@@ -159,6 +144,26 @@ page is wrong. Only a PDF render catches them.
 ---
 
 ## Fixed
+
+### S1 `crossrefs.unlink`/`link` blind to field-form hyperlinks — `1c09490`
+`unlink` removed the bookmarks, left every HYPERLINK field standing and
+returned "24 removed". Now raises `ConversionGap` naming the anchors and
+saying what to do instead; `link` reports them as `field_form` rather
+than stacking a second scheme on the caption. New public helper
+`crossrefs.field_targets(xml)`.
+**Workaround to retire:** the symmetric identifier swap in
+`Parental_style/revision/scripts/applied/swap_tables_1_2.py` stays as a
+record of the round, but the technique is no longer forced — a future
+paper gets a clear refusal instead of a wrong answer.
+**Bonus:** the pathological harness now treats a deliberate refusal as a
+SAFE mutator outcome (nothing written ⇒ parseable, text-preserving and
+idempotent all hold). Only an uncontrolled exception is a failure.
+
+### S3 `_norm` did not fold U+2032 `′` against U+0027 `'` — `00db587`
+Gate 6 (XML accept == Word accept) could not pass on a paper that writes
+derivatives; proved on a ZERO-revision file. Folded, with a test verified
+to fail without the fix. What remains of that entry is the drawing
+placeholder, still open above.
 
 ### S3 cover letter printed "ALL CHECKS PASSED: /" — repkit, `c3391ab`
 Recorded here because it is the same class: `refresh` re-writes the
