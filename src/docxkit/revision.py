@@ -563,12 +563,64 @@ def _root(parts: dict[str, bytes], name: str = DOCUMENT
     return etree.fromstring(blob) if blob else None
 
 
-def _glyph(root: Any | None) -> str:
-    """Every rendered character, prose and math alike, in document order."""
+#: What Word's ``Range.Text`` returns where an INLINE ``w:drawing``
+#: sits: one U+002F SOLIDUS, measured on a synthetic package whose only
+#: content was a picture and two letters (``'A/B\r'``, ord 47).
+#:
+#: This is deliberately NOT a `_FOLD` entry. Folding ``/`` away would
+#: blind the gate to every "and/or" and every URL in the manuscript;
+#: emitting the same character the other side emits keeps both.
+#:
+#: Three things the same probe settled, each of which would otherwise
+#: have been guessed:
+#:
+#: * an ANCHORED drawing (``wp:anchor``, a floating figure) contributes
+#:   NOTHING — it is not in the text stream at all;
+#: * the legacy inline forms, ``w:pict`` and ``w:object``, give U+0001
+#:   instead, which `_norm` already strips as a control character. They
+#:   need no placeholder, and giving them this one would break them;
+#: * a TEXT BOX's prose is a different STORY, and `doc.Paragraphs` does
+#:   not walk it — hence `main_story` below.
+_DRAWING_GLYPH = "/"
+
+WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+
+
+def _glyph(root: Any | None, *, main_story: bool = False) -> str:
+    """Every rendered character, prose and math alike, in document order.
+
+    `main_story` narrows the walk to what Word's ``doc.Paragraphs``
+    covers, for the gate that compares this stream against Word's own:
+    a text box is a separate story, so its prose is absent from
+    ``Range.Text`` while it sits in ``document.xml`` like any other
+    paragraph. Left in, the gate reports a difference for every text box
+    in the manuscript — and it is off by default because the XML-to-XML
+    gate above WANTS that prose compared.
+
+    Pruning `w:txbxContent` also disposes of an `mc:AlternateContent`
+    hazard for free: Word writes a shape's text twice, once under
+    `mc:Choice` and once in the VML `mc:Fallback`, and only one of them
+    is ever rendered.
+    """
     if root is None:
         return ""
-    return "".join((t.text or "") for t in root.iter()
-                   if t.tag in (W + "t", M + "t"))
+    out: list[str] = []
+    stack: list[Any] = [root]
+    while stack:
+        el = stack.pop()
+        tag = el.tag
+        if not isinstance(tag, str):
+            continue                       # a comment or a PI
+        if tag in (W + "t", M + "t"):
+            out.append(el.text or "")
+            continue                       # a leaf: nothing below it
+        if tag == W + "drawing":
+            if el.find(WP + "inline") is not None:
+                out.append(_DRAWING_GLYPH)
+        elif main_story and tag == W + "txbxContent":
+            continue
+        stack.extend(reversed(list(el)))   # depth-first, document order
+    return "".join(out)
 
 
 def _paras(root: Any | None) -> list[str]:
@@ -677,7 +729,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
 
     if word_accept_glyph is not None:
         report.accept_paths_agree = (
-            _norm(_glyph(acc_root)) == _norm(word_accept_glyph))
+            _norm(_glyph(acc_root, main_story=True))
+            == _norm(word_accept_glyph))
     return report
 
 

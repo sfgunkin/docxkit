@@ -17,26 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 gate 6 counts a drawing as a text difference
-- **Symptom** `revision validate` gate 6 (XML accept == Word accept)
-  still reports MISMATCH on a zero-revision document, now down to
-  **exactly one `/` per `<w:drawing>`**: Word's `Range.Text` emits a
-  placeholder character for an inline graphic, while `_glyph` collects
-  only `w:t`/`m:t` and contributes nothing there.
-- **Repro** Parental_style `working.docx`: 2 drawings (`Graphic 5` at
-  body[375], `Graphic 7` at body[380]) → 2 `/` insertions, at those exact
-  offsets.
-- **Evidence** 2026-08-10. The prime half of this entry is FIXED
-  (`00db587`); this is what remains.
-- **Deliberately NOT fixed by folding `/`** — that character is ordinary
-  prose ("and/or", URLs), and `_FOLD`'s own docstring says not to add a
-  fold on suspicion. One two-sample observation is not enough to declare
-  `/` "the drawing character".
-- **Fix** Make the comparison drawing-aware on BOTH sides rather than
-  character-folding: have `_glyph` emit a placeholder per `w:drawing`,
-  and confirm against a second document what Word actually returns for an
-  inline graphic before encoding it.
-
 ### S2 `latex_to_omml` output needs a normalization pass
 All four are valid markup, so lint, `math` and text-diff pass while the
 page is wrong. Only a PDF render catches them.
@@ -128,6 +108,31 @@ page is wrong. Only a PDF render catches them.
 ---
 
 ## Fixed
+
+### S3 gate 6 counts a drawing as a text difference — `PENDING`
+Measured before encoding, as the entry demanded — a synthetic package
+whose only content was a picture and two letters, so the character at
+the drawing's offset could not be a neighbour's. Word's `Range.Text`:
+
+| form | what Word returns |
+|---|---|
+| `w:drawing` + `wp:inline` | one `/` (U+002F, ord 47) |
+| `w:drawing` + `wp:anchor` (floating) | **nothing** — not in the stream |
+| `w:pict`, `w:object` (legacy inline) | U+0001, already stripped by `_norm` |
+| a text box's prose | absent — a different STORY |
+
+So `_glyph` emits `/` for an inline drawing only, and grew a
+`main_story=True` mode that prunes `w:txbxContent` for the gate that
+compares against Word (the XML-to-XML gate still wants that prose). The
+text-box half was NOT in the original report — the same probe found it,
+and it would have kept gate 6 permanently red on any paper with a text
+box. Still not a `_FOLD` entry: folding `/` away would blind the gate to
+every "and/or" and every URL.
+**Bonus:** gate 5 (reject-all == baseline) now notices a figure a batch
+dropped. Neither paragraph text nor the old glyph stream changed when a
+drawing vanished.
+**Verified on the paper that reported it:** Parental_style
+`working.docx`, zero revisions — gate 6 `False` before, `True` after.
 
 ### S3 `revision status` says TRUTH/TRUTH when prev and working differ — `a897948`
 New `revision.drift(working, prev)` compares MEANING part by part

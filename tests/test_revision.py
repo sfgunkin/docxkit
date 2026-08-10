@@ -709,6 +709,81 @@ def test_validate_still_sees_a_real_difference_in_math(tmp_path, monkeypatch):
     assert revision.validate(path).accept_paths_agree is False
 
 
+NS_WP = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+         'wordprocessingDrawing"')
+
+
+def picture(kind: str = "inline") -> str:
+    """A figure, inline (in the text stream) or anchored (floating)."""
+    return (f"<w:r><w:drawing {NS_WP}><wp:{kind}>"
+            f'<wp:extent cx="457200" cy="457200"/>'
+            f"</wp:{kind}></w:drawing></w:r>")
+
+
+def test_validate_counts_an_inline_figure_as_word_does(tmp_path,
+                                                       monkeypatch):
+    """Word's Range.Text puts a SOLIDUS where an inline drawing sits —
+    measured, on a package whose only content was a picture and two
+    letters. `_glyph` collected `w:t`/`m:t` and contributed nothing
+    there, so gate 6 reported one difference per figure on a document
+    holding ZERO revisions."""
+    path = write(tmp_path / "fig.docx",
+                 make_parts(para(run("A"), picture(), run("B"))))
+    monkeypatch.setattr(revision, "_word",
+                        _FakeWord(_FakeDoc(revisions=0, text="A/B\r")))
+    assert revision.validate(path).accept_paths_agree is True
+
+
+def test_validate_gives_a_floating_figure_no_character(tmp_path,
+                                                       monkeypatch):
+    """The other half of the same measurement: an ANCHORED drawing is
+    not in the text stream, and Word returns nothing for it. Emitting a
+    placeholder for every `w:drawing` alike would fail here."""
+    path = write(tmp_path / "float.docx",
+                 make_parts(para(run("E"), picture("anchor"), run("F"))))
+    monkeypatch.setattr(revision, "_word",
+                        _FakeWord(_FakeDoc(revisions=0, text="EF\r")))
+    assert revision.validate(path).accept_paths_agree is True
+
+
+def test_validate_still_sees_a_slash_the_author_typed(tmp_path,
+                                                      monkeypatch):
+    """Why this is a placeholder and not a `_FOLD` entry: folding the
+    solidus away would blind the gate to every "and/or" and every URL in
+    the manuscript."""
+    path = write(tmp_path / "s.docx", make_parts(para(run("and/or"))))
+    monkeypatch.setattr(revision, "_word",
+                        _FakeWord(_FakeDoc(revisions=0, text="and or\r")))
+    assert revision.validate(path).accept_paths_agree is False
+
+
+def test_validate_does_not_compare_a_text_box_against_the_body(tmp_path,
+                                                               monkeypatch):
+    """A text box is a separate STORY: its prose sits in document.xml
+    like any other paragraph, and `doc.Paragraphs` does not walk it. Left
+    in the stream, the gate reports a difference for every text box."""
+    body = para(run("Body prose."),
+                f"<w:r><w:pict><w:txbxContent>{para(run('BOXED'))}"
+                f"</w:txbxContent></w:pict></w:r>")
+    path = write(tmp_path / "box.docx", make_parts(body))
+    monkeypatch.setattr(revision, "_word",
+                        _FakeWord(_FakeDoc(revisions=0, text="Body prose.\r")))
+    assert revision.validate(path).accept_paths_agree is True
+
+
+def test_reject_all_notices_a_figure_the_batch_dropped(tmp_path):
+    """Gate 5 compares paragraph text and the glyph stream, and a lost
+    figure changes neither — until the stream counts figures. The
+    reject-all gate is what proves a batch is fully reviewable."""
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("A"), picture(), run("B"))))
+    lost = write(tmp_path / "batch.docx", make_parts(para(run("A"), run("B"))))
+    report = revision.validate(lost, baseline_path, use_word=False)
+    assert report.reject_detail["paragraphs"] is True, "text alone is blind"
+    assert report.reject_detail["glyphs"] is False
+    assert not report.ok
+
+
 def test_validate_skips_word_when_asked(tmp_path, monkeypatch):
     path = write(tmp_path / "x.docx", make_parts(para(run("x"))))
     monkeypatch.setattr(revision, "_word", _FakeWord(explode=True))
