@@ -109,7 +109,7 @@ page is wrong. Only a PDF render catches them.
 
 ## Fixed
 
-### S3 gate 6 counts a drawing as a text difference — `PENDING`
+### S3 gate 6 counts a drawing as a text difference — `712e2fd`
 Measured before encoding, as the entry demanded — a synthetic package
 whose only content was a picture and two letters, so the character at
 the drawing's offset could not be a neighbour's. Word's `Range.Text`:
