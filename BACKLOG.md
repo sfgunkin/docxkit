@@ -87,7 +87,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Fixed
 
-### S2 `latex_to_omml` output needs a normalization pass — `PENDING`
+### S2 `latex_to_omml` output needs a normalization pass — `ab891bd`
 New `equations._normalize`, run on every conversion. Each before/after
 was RENDERED through Word, which is the only gate that sees any of this.
 
