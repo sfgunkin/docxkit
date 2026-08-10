@@ -175,6 +175,27 @@ What five real runs cost and bought, for calibration:
 | `equations.py` | 1,323 | 312 | — |
 | `tracked.py` | 478 | 97 | — |
 | `revision.py` | 1,066 | 60 | — |
+| `cli.py` | 728 | 206 | — |
+
+**`cli.py` is the one to read twice: 28.3%, the worst of the eight, on
+the module at 100% line coverage.** That is the whole argument for
+running this tool, made on the module that looked safest. Eleven
+`return 0` / `return 1 if …` sites across nine commands could be flipped
+with nothing going red — the smoke test asserted `isinstance(code, int)`
+and the rest asserted output. The exit code is what a script reads;
+`docxkit citations`, `refstyle`, `crossrefs --audit` and `crossrefs
+--write` are all gates somebody pipes into `&&`.
+
+Two traps in the confirming, both worth avoiding:
+
+* **address the LINE, not the context.** Three commands print the same
+  `(dry run - pass --write to save)`, so a `replace(old, new, 1)`
+  patched a different function than its label claimed and reported a
+  survivor for a branch it never touched. `tools/mutation_survivors.py`
+  gives line numbers; use them;
+* a mutant that runs and changes nothing visible is worth tracing before
+  believing. `return 99` in a live branch still exiting 0 was the tell
+  that the patch had landed elsewhere.
 
 `revision.py` at 5.6% is the best of the seven and `tracked.py` at 20.3%
 the worst, which is the right way round: the protocol is what an

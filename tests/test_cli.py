@@ -76,6 +76,113 @@ def test_subcommand_smoke(paper, monkeypatch, capsys, argv):
     assert capsys.readouterr().out.strip(), f"{argv}: printed nothing"
 
 
+# --------------------------------------------------- the EXIT CODES ------
+# The smoke test above asserts `isinstance(code, int)`, which is what a
+# hundred percent line coverage bought and no more: the mutation sweep
+# found eleven `return 0` / `return 1 if …` sites across nine commands
+# where flipping the code changed nothing any test could see. The exit
+# code IS the contract — a script gating on `docxkit citations` reads
+# nothing else — and this file's own header says the assertions belong
+# on what a caller loses, not on the message.
+
+
+@pytest.fixture
+def broken_link(tmp_path):
+    """A citation whose bookmark nothing defines."""
+    return write(tmp_path / "broken.docx", make_parts(
+        para(run("See "))
+        + '<w:p><w:hyperlink w:anchor="Ghost2001">' + run("Ghost (2001)")
+        + "</w:hyperlink></w:p>"
+        + para(run("References"))
+        + para(run("Ghost, G. (2001). “A Title.” Journal."))))
+
+
+@pytest.fixture
+def dangling_ref(tmp_path):
+    """A cross-reference pointing at a caption that does not exist."""
+    return write(tmp_path / "dangling.docx", make_parts(
+        para(run("See ")) + '<w:hyperlink w:anchor="Nowhere">'
+        + run("Table 9") + "</w:hyperlink>" + para(run("body"))))
+
+
+def test_citations_exits_1_only_when_something_is_broken(
+        monkeypatch, paper, broken_link, capsys):
+    code, _ = run_cli(monkeypatch, "citations", paper)
+    capsys.readouterr()
+    assert code == 0, "a clean paper must not fail the gate"
+    code, _ = run_cli(monkeypatch, "citations", broken_link)
+    capsys.readouterr()
+    assert code == 1
+
+
+def test_refstyle_exits_1_only_when_it_found_issues(
+        monkeypatch, paper, dangling_ref, capsys):
+    code, _ = run_cli(monkeypatch, "refstyle", paper)
+    capsys.readouterr()
+    assert code == 1, "the fixture's reference list has known issues"
+    code, _ = run_cli(monkeypatch, "refstyle", dangling_ref)
+    capsys.readouterr()
+    assert code == 0, "a document with no reference list has no issues"
+
+
+def test_crossrefs_audit_exits_1_only_on_a_dangling_anchor(
+        monkeypatch, paper, dangling_ref, capsys):
+    code, _ = run_cli(monkeypatch, "crossrefs", str(paper), "--audit")
+    capsys.readouterr()
+    assert code == 0
+    code, _ = run_cli(monkeypatch, "crossrefs", str(dangling_ref), "--audit")
+    capsys.readouterr()
+    assert code == 1
+
+
+@pytest.fixture
+def unmentioned_caption(tmp_path):
+    """A caption with no in-text mention: the pair cannot be completed."""
+    return write(tmp_path / "half.docx", make_parts(
+        para(run("Some prose with no mention at all."))
+        + para(run("Table 1: Descriptive statistics"))))
+
+
+@pytest.fixture
+def mentioned_caption(tmp_path):
+    return write(tmp_path / "full.docx", make_parts(
+        para(run("As Table 1 shows, the effect is large."))
+        + para(run("Table 1: Descriptive statistics"))))
+
+
+@pytest.mark.parametrize("write_it", [False, True])
+def test_crossrefs_exits_1_when_the_pairing_is_INCOMPLETE(
+        monkeypatch, mentioned_caption, unmentioned_caption, capsys,
+        write_it):
+    """Both arms of `return 0 if report.complete else 1`, and both the
+    dry-run and the --write site — they are separate returns and the
+    existing write test ignored the code entirely. A caption the prose
+    never mentions cannot be linked in both directions, and that is the
+    whole promise of the house convention."""
+    extra = ["--write"] if write_it else []
+    code, _ = run_cli(monkeypatch, "crossrefs", str(mentioned_caption),
+                      *extra)
+    capsys.readouterr()
+    assert code == 0, "a caption with its mention is a complete pair"
+    code, _ = run_cli(monkeypatch, "crossrefs", str(unmentioned_caption),
+                      *extra)
+    capsys.readouterr()
+    assert code == 1, "an unmentioned caption must not report success"
+
+
+@pytest.mark.parametrize("argv", [
+    ("text",), ("text", "--md"), ("lint",), ("smarten",), ("linkfix",),
+    ("probe",), ("inspect",), ("figures",), ("tasks",),
+])
+def test_a_read_only_command_on_a_sound_paper_exits_0(
+        monkeypatch, paper, capsys, argv):
+    """`return 0` flipped to `return 1` survived on five of these: the
+    smoke test above accepted any int."""
+    code, _ = run_cli(monkeypatch, *argv, paper)
+    capsys.readouterr()
+    assert code == 0, f"{argv} failed on a paper with nothing wrong"
+
+
 def test_compare_identical_files_is_clean(paper, monkeypatch, capsys):
     code, _ = run_cli(monkeypatch, "compare", paper, paper, "--expect-clean")
     assert code == 0

@@ -243,6 +243,21 @@ def test_status_reports_a_missing_baseline(monkeypatch, project, capsys):
     assert "MISSING" in capsys.readouterr().out
 
 
+def test_a_pending_proposal_still_exits_1_with_no_baseline(monkeypatch,
+                                                           project, capsys):
+    """That branch has its own `return 0 if st.is_truth else 1`, and only
+    the truth half was ever run — so the code a script reads to decide
+    whether it may start a batch was unpinned for a paper that has not
+    been baselined yet."""
+    project.prev.unlink()
+    write(project.working, make_parts(para(run("x"), _ins("added"))))
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "MISSING" in out and "PROPOSAL" in out
+
+
 def test_a_paper_that_has_not_migrated_says_what_to_do(monkeypatch,
                                                        tmp_path, capsys):
     code, _ = run_cli(monkeypatch, "revision", "status",
