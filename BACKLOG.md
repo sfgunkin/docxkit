@@ -60,7 +60,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Fixed
 
-### S2 no check that footnotes share one size — `PENDING`
+### S2 no check that footnotes share one size — `a07f8fd`
 `footnotes.sizes(xml) -> SizeReport`, plus `docxkit footnotes PAPER.docx
 [--check]`. It went to `footnotes` rather than `hygiene` as the entry
 suggested, because `footnotes.fonts` was already asking the neighbouring
