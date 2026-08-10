@@ -525,16 +525,37 @@ def cmd_count(args: argparse.Namespace) -> int:
 
 
 def cmd_math(args: argparse.Namespace) -> int:
-    """Symbols and expressions typeset as prose instead of as OMML."""
-    from .equations import document_symbols, prose_math
+    """Symbols as prose, and display equations Word will set inline."""
+    from .equations import (
+        display_equations,
+        document_symbols,
+        inline_display,
+        prose_math,
+        tokens,
+    )
     doc = _package(args.docx)[DOCUMENT].decode("utf-8")
     findings = prose_math(doc)
     vocabulary = "".join(sorted(document_symbols(doc)))
     print(f"{Path(args.docx).name}  (math vocabulary: "
           f"{vocabulary or 'none — the document typesets no symbols'})")
+
+    # A separate question from prose-math, and invisible to every other
+    # check: a bare m:oMath is INLINE to Word, and the house rule is
+    # display + centred. Word promotes a lone one on save SOMETIMES,
+    # which is why it has to be set rather than trusted.
+    displays = display_equations(doc)
+    stranded = inline_display(doc)
+    at = {m.start(): i for i, m in enumerate(P_RE.finditer(doc), 1)}
+    print(f"  {len(displays)} display equation(s), "
+          f"{len(stranded)} still in INLINE mode")
+    for m in stranded:
+        print(f"     ¶{at[m.start()]:<5} {tokens(m.group(0))[:60]!r}")
+    if stranded:
+        print("     -> equations.display(para) wraps them in m:oMathPara")
+
     if not findings:
         print("  clean — every symbol in the text is OMML")
-        return 0
+        return 1 if (args.check and stranded) else 0
     order = ["split expression", "typed script", "symbol", "interval"]
     for kind in order:
         group = [f for f in findings if f.kind == kind]

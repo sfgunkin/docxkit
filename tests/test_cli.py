@@ -465,6 +465,44 @@ def test_math_reports_prose_symbols_and_check_gates(monkeypatch, tmp_path,
     assert code == 1, "--check must gate on findings"
 
 
+def test_math_reports_a_display_equation_word_will_set_inline(monkeypatch,
+                                                              tmp_path,
+                                                              capsys):
+    """A bare m:oMath is INLINE to Word however alone in its paragraph it
+    sits, and the house rule in every paper here is display + centred.
+    Word promotes one on save SOMETIMES, which is why nothing may assume
+    it. No other check in the toolkit sees this."""
+    from docxkit.package import write_docx
+    path = tmp_path / "eq.docx"
+    write_docx(path, make_parts(
+        para("<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>")
+        + para(run("Prose after the equation."))))
+
+    code, _ = run_cli(monkeypatch, "math", str(path))
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "1 display equation(s), 1 still in INLINE mode" in out
+    assert "'x'" in out                       # says WHICH
+
+    code, _ = run_cli(monkeypatch, "math", str(path), "--check")
+    capsys.readouterr()
+    assert code == 1, "--check must gate on an inline display equation"
+
+
+def test_math_says_nothing_is_stranded_once_it_is_promoted(monkeypatch,
+                                                           tmp_path, capsys):
+    from docxkit.equations import display
+    from docxkit.package import write_docx
+    path = tmp_path / "eq2.docx"
+    write_docx(path, make_parts(
+        display(para("<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"))))
+
+    code, _ = run_cli(monkeypatch, "math", str(path), "--check")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "1 display equation(s), 0 still in INLINE mode" in out
+
+
 def test_figures_check_gates_on_a_drawing_without_alt_text(monkeypatch,
                                                            tmp_path, capsys):
     from docxkit.package import write_docx

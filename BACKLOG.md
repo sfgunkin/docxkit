@@ -17,21 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 no display-mode support, and Word's auto-promotion is unreliable
-- **Symptom** A bare `<m:oMath>` is INLINE to Word; display is
-  `<m:oMathPara>`. House rule for ALL papers is display + centred, and no
-  gate checks it. Word sometimes promotes a lone oMath on save and
-  sometimes does not — equations (2)-(4) were written identically to (1)
-  in one batch and came back promoted while (1) stayed inline.
-- **Gotcha to encode** an `oMathPara` must be the ONLY content of its
-  paragraph; a trailing run (a comma, an equation number) silently
-  demotes it back to inline on the next Word save.
-- **Evidence** 2026-08-10, user: "this is a general rule for all papers".
-- **Workaround** `make_display()` in
-  `Parental_style/revision/scripts/applied/fix_display_math.py`.
-- **Fix** `equations.display(para, jc="center")` + a check that reports
-  inline display-equations. See [[feedback_house_style_math]].
-
 ### S2 no check that footnotes share one size
 - **Symptom** One footnote rendered at 12pt among 10pt neighbours. The
   offender carried **no `w:sz` at all** and inherited the body size, so
@@ -86,6 +71,31 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S2 no display-mode support, and Word's auto-promotion is unreliable — `PENDING`
+`equations.display(para, jc="center")` wraps the paragraph's maths in an
+`m:oMathPara`, idempotently; `equations.inline_display(xml)` is the audit
+half and `docxkit math` now prints "N display equation(s), M still in
+INLINE mode" with the equation named, gated by `--check`.
+
+Both halves of the gotcha were put through Word rather than trusted, by
+round-tripping a built document through Flat OPC — the package Word
+hands back is what Word would have saved:
+
+| written | after Word |
+|---|---|
+| bare `m:oMath` | **promoted** — and with no `oMathParaPr`, so not centred either |
+| `display()` | kept, centring and all |
+| `display(absorb=True)` | kept |
+| `display()` + a trailing run | **demoted back to inline** |
+
+So the auto-promotion is real, unreliable *and* not enough (it does not
+centre), and the trailing-run demotion reproduces exactly. `display`
+therefore drops empty runs, REFUSES a run carrying text — naming it —
+and offers `absorb=True` to move it inside the maths instead, which is
+how a numbered appendix equation is built. Text BEFORE the equation is
+refused even under `absorb`: moving it after the maths is a reordering
+no text diff would show.
 
 ### S2 `latex_to_omml` output needs a normalization pass — `ab891bd`
 New `equations._normalize`, run on every conversion. Each before/after

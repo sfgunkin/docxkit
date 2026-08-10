@@ -6,10 +6,13 @@ from conftest import document, para, run
 
 from docxkit.equations import (
     clone,
+    display,
     display_equations,
     equations,
     find_mml2omml_xsl,
     harvest,
+    in_display_mode,
+    inline_display,
     is_display,
     latex_to_omml,
     skeleton,
@@ -155,6 +158,92 @@ def test_latex_converts_through_words_own_transform():
     assert out.startswith("<m:oMath")
     assert skeleton(out).startswith("f"), "a fraction must produce m:f"
     assert "L" in tokens(out)
+
+
+# --- display MODE, which is not the same question as is_display -------
+
+
+def test_a_lone_equation_paragraph_is_still_inline_to_word():
+    """`is_display` asks about the paragraph — is the maths all it holds.
+    Word asks about the markup: a bare m:oMath is INLINE however alone it
+    sits, and every paper here wants display, centred."""
+    p = para(omath(mr("x")))
+    assert is_display(p) and not in_display_mode(p)
+    assert [m.group(0) for m in inline_display(document(p))] == [p]
+
+
+def test_display_wraps_the_maths_and_centres_it():
+    out = display(para(omath(mr("x"))))
+    assert "<m:oMathPara>" in out and "</m:oMathPara>" in out
+    assert '<m:jc m:val="center"/>' in out
+    assert in_display_mode(out)
+    assert tokens(out) == "x", "the maths itself must come through intact"
+
+
+def test_display_is_idempotent():
+    """It is meant to be run over a whole document, and Word promotes
+    SOME equations on save by itself — so it meets both kinds."""
+    once = display(para(omath(mr("x"))))
+    assert display(once) == once
+
+
+def test_display_leaves_the_alignment_to_word_when_asked():
+    out = display(para(omath(mr("x"))), jc=None)
+    assert "<m:oMathPara>" in out and "m:jc" not in out
+
+
+def test_display_refuses_a_justification_word_does_not_know():
+    with pytest.raises(AnchorError, match="m:jc"):
+        display(para(omath(mr("x"))), jc="centre")
+
+
+def test_display_drops_an_empty_run_beside_the_maths():
+    """An oMathPara must be the ONLY content of its paragraph. A leftover
+    run — even an empty one — has Word demote the whole thing back to
+    inline on the next save."""
+    out = display(para(omath(mr("x")), run("  ")))
+    assert "<w:r>" not in out and in_display_mode(out)
+
+
+def test_display_refuses_a_run_that_carries_text():
+    """This is how equation (A.3) came back inline: the "   (A.3)" run
+    appended after it demoted the display, silently."""
+    with pytest.raises(AnchorError, match=r"\(A\.3\)"):
+        display(para(omath(mr("x")), run("   (A.3)")))
+
+
+def test_absorb_moves_the_number_inside_the_maths():
+    """Which is how the appendix's own (A.1) and (A.2) are built."""
+    out = display(para(omath(mr("x")), run("   (A.3)")), absorb=True)
+    assert in_display_mode(out) and "<w:r>" not in out
+    assert tokens(out) == "x(A.3)"
+
+
+def test_absorb_refuses_text_that_sits_before_the_equation():
+    """Absorbing it would move it AFTER the maths, and no text diff
+    would show that it had been reordered."""
+    with pytest.raises(AnchorError, match="BEFORE"):
+        display(para(run("where "), omath(mr("x"))), absorb=True)
+
+
+def test_display_refuses_a_paragraph_with_two_equations():
+    with pytest.raises(AnchorError, match="exactly one"):
+        display(para(omath(mr("x")), omath(mr("y"))))
+
+
+def test_display_keeps_the_paragraph_properties():
+    p = ('<w:p><w:pPr><w:pStyle w:val="Equation"/></w:pPr>'
+         f'{omath(mr("x"))}</w:p>')
+    out = display(p)
+    assert '<w:pStyle w:val="Equation"/>' in out
+
+
+def test_a_promoted_paragraph_is_no_longer_reported():
+    doc_xml = document(para(omath(mr("x"))) + para(run("prose")))
+    (found,) = inline_display(doc_xml)
+    fixed = doc_xml.replace(found.group(0), display(found.group(0)))
+    assert inline_display(fixed) == []
+    assert len(display_equations(fixed)) == 1, "still a display equation"
 
 
 # --- what the converter emits and Word cannot draw --------------------

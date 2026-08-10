@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ._xml import MT_RE, PARA_RE, used_prefixes, visible_text
+from ._xml import MT_RE, PARA_RE, RUN_RE, escape, used_prefixes, visible_text
 from .errors import AnchorError, PackageError
 from .revisions import _fragment_declarations
 
@@ -38,11 +38,14 @@ __all__ = [
     "Equation",
     "ProseMath",
     "clone",
+    "display",
     "display_equations",
     "document_symbols",
     "equations",
     "find_mml2omml_xsl",
     "harvest",
+    "in_display_mode",
+    "inline_display",
     "is_display",
     "latex_to_omml",
     "prose_math",
@@ -759,6 +762,108 @@ def is_display(para_xml: str) -> bool:
 def display_equations(xml: str) -> list[re.Match[str]]:
     """Paragraph matches for every display equation, in body order."""
     return [m for m in PARA_RE.finditer(xml) if is_display(m.group(0))]
+
+
+# ------------------------------------------------------ display MODE ----
+# `is_display` above is about the paragraph: is the maths all it holds?
+# This is about the markup Word reads: a bare `<m:oMath>` is INLINE, and
+# display is `<m:oMathPara>`. A paragraph can be the first and not the
+# second, which is exactly the defect these three exist for — the house
+# rule in every paper here is display and centred, and nothing checked
+# it.
+#
+# Word's auto-promotion cannot be relied on to do it: equations (2)-(4)
+# of one manuscript were built identically to (1) and came back from a
+# save promoted, while (1) stayed inline.
+
+_OMATHPARA_RE = re.compile(r"<m:oMathPara\b")
+#: `m:jc` takes ST_Justification. centerGroup is Word's own default for
+#: a display equation; the house rule is plain center.
+_JC_VALUES = ("center", "centerGroup", "left", "right")
+
+
+def in_display_mode(para_xml: str) -> bool:
+    """True if the paragraph's maths is in an ``m:oMathPara``."""
+    return bool(_OMATHPARA_RE.search(para_xml))
+
+
+def inline_display(xml: str) -> list[re.Match[str]]:
+    """Display equations Word will lay out INLINE, in body order.
+
+    The audit half of :func:`display`. A paragraph holding nothing but
+    its equation, with that equation in a bare ``m:oMath``, renders as a
+    left-aligned run of text where the paper means a centred display.
+    """
+    return [m for m in display_equations(xml)
+            if not in_display_mode(m.group(0))]
+
+
+def display(para_xml: str, *, jc: str | None = "center",
+            absorb: bool = False) -> str:
+    """Put a paragraph's equation into display mode, centred.
+
+    Idempotent: a paragraph already in display mode comes back
+    unchanged, so this can be run over a whole document.
+
+    **An ``oMathPara`` must be the only content of its paragraph.** A
+    run left beside it — a comma, an equation number — makes Word demote
+    the whole thing back to inline on the next save, silently, and the
+    paragraph looks right in the XML while the page is wrong. So:
+
+    * runs with no visible text are dropped (they demote it too);
+    * a run WITH text is refused, naming what it holds;
+    * ``absorb=True`` moves that text inside the maths instead, which is
+      how a numbered appendix equation is built. Text BEFORE the
+      equation is still refused — absorbing it would move it after the
+      maths and no diff would say so.
+
+    Pass ``jc=None`` to leave the alignment to Word.
+    """
+    if jc is not None and jc not in _JC_VALUES:
+        raise AnchorError(f"m:jc takes one of {_JC_VALUES}, not {jc!r}")
+    if in_display_mode(para_xml):
+        return para_xml
+    maths = list(OMATH_RE.finditer(para_xml))
+    if len(maths) != 1:
+        raise AnchorError(
+            f"display needs exactly one m:oMath in the paragraph, "
+            f"found {len(maths)}")
+    math = maths[0]
+
+    prose = visible_text(OMATH_RE.sub("", para_xml)).strip()
+    runs = [r for r in RUN_RE.finditer(para_xml)
+            if r.end() <= math.start() or r.start() >= math.end()]
+    if prose:
+        if not absorb:
+            raise AnchorError(
+                f"a run beside the equation ({prose!r}) makes Word demote "
+                f"the display back to inline on the next save. Move it "
+                f"inside the maths with absorb=True, or take it out of "
+                f"the paragraph.")
+        if any(r.start() < math.start() and visible_text(r.group(0)).strip()
+               for r in runs):
+            raise AnchorError(
+                f"{prose!r} sits BEFORE the equation; absorbing it would "
+                f"move it after the maths, and no text diff would show it")
+
+    inner = math.group(0)
+    if prose and absorb:
+        inner = inner.replace(
+            "</m:oMath>", f"<m:r><m:t>{escape(prose)}</m:t></m:r></m:oMath>")
+    pr = (f"<m:oMathParaPr><m:jc m:val=\"{jc}\"/></m:oMathParaPr>"
+          if jc else "")
+    wrapped = f"<m:oMathPara>{pr}{inner}</m:oMathPara>"
+
+    out, at = [], 0
+    for r in runs:                          # every run outside the maths
+        out.append(para_xml[at:r.start()])
+        at = r.end()
+    out.append(para_xml[at:])
+    stripped = "".join(out)
+    # the maths moved once the runs around it were cut out; find it again
+    remade = OMATH_RE.search(stripped)
+    assert remade is not None               # it was there a moment ago
+    return stripped[:remade.start()] + wrapped + stripped[remade.end():]
 
 
 # ------------------------------------------------- math typed as prose ----

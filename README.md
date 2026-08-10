@@ -162,6 +162,14 @@ they do.
   Word's own `MML2OMML.XSL` (`math.latex_to_omml`). When an equation
   reuses symbols already in the document, `math.harvest` the live element
   and deepcopy it — the only way to guarantee it renders identically.
+- **A bare `<m:oMath>` is INLINE to Word**, however alone in its paragraph
+  it sits; display is `<m:oMathPara>`, and Word promotes a lone one on
+  save *sometimes* — measured, one equation of four. `equations.display`
+  sets it, and `docxkit math` reports the ones still inline. An
+  `oMathPara` must be the ONLY content of its paragraph: a trailing run —
+  an equation number, a comma — has Word demote it back on the next save,
+  which is also measured, so `display` refuses one rather than writing
+  markup Word will undo.
 - **A rebuild must not overwrite a deliverable someone reviewed in Word.**
   `tracked.build` stamps what it produced and refuses if the file changed.
 - **A figure caption sits ABOVE its image**, one figure can be several
