@@ -429,6 +429,80 @@ def _has_revisions(xml: str) -> bool:
             or any(marker in xml for marker in _PROPERTY_MARKERS))
 
 
+#: The FORMATTING revisions, and what applying one means. Word records
+#: a property change as a SNAPSHOT of the old properties nested inside
+#: the new ones::
+#:
+#:     <w:rPr><w:sz w:val="20"/>
+#:       <w:rPrChange …><w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange>
+#:     </w:rPr>
+#:
+#: — the live properties are 10pt and the record says they were 12pt. So
+#: accepting is dropping the record, and rejecting is putting the
+#: snapshot back. Neither happened here for as long as this module
+#: existed: both simulations passed a `*PrChange` straight through, so
+#: an XML-accepted file still counted as a proposal, and `reject-all ==
+#: baseline` — the gate that proves an author's veto is real — could not
+#: fail on a formatting-only batch. `state` has known all seven kinds
+#: since `22d5181`; the simulator knew three.
+_PROPERTY_CHANGES = ("rPrChange", "pPrChange", "tcPrChange", "trPrChange",
+                     "tblPrChange", "sectPrChange", "tblGridChange")
+
+#: What the SNAPSHOT cannot hold, and where it sits in the live element.
+#: A reject replaces the live properties with the snapshot's, so anything
+#: the snapshot's own content model excludes has to be carried across by
+#: hand or it is silently lost:
+#:
+#: * `pPrChange/pPr` is CT_PPrBase — no `w:rPr` (the paragraph MARK's own
+#:   run properties, which carry the mark's insert/delete flag) and no
+#:   `w:sectPr` (a section break lives there);
+#: * `sectPrChange/sectPr` is CT_SectPrBase, which drops every header and
+#:   footer reference — a rejected section-formatting change would take
+#:   the running heads with it;
+#: * a `w:tcPr`/`w:trPr` also carries the cell's and the row's own
+#:   tracked insert/delete flags, and the row handler above needs the
+#:   row's to still be there.
+#:
+#: The side says where they go back: CT_SectPr puts its references
+#: FIRST, CT_PPr and CT_TcPr put theirs LAST.
+_OUTSIDE_SNAPSHOT: dict[str, tuple[tuple[str, ...], str]] = {
+    "pPrChange": (("rPr", "sectPr"), "last"),
+    "sectPrChange": (("headerReference", "footerReference"), "first"),
+    "tcPrChange": (("cellIns", "cellDel", "cellMerge"), "last"),
+    "trPrChange": (("ins", "del"), "last"),
+}
+
+
+def _apply_property_changes(root: Any, mode: str,
+                            wants: Callable[[Any, str], bool]) -> None:
+    """Accept or reject every formatting revision in the tree."""
+    for tag in _PROPERTY_CHANGES:
+        for change in list(root.iter(W + tag)):
+            parent = change.getparent()
+            if parent is None or not wants(change, tag):
+                continue
+            if mode == FINAL:
+                parent.remove(change)      # the live properties stay
+                continue
+            names, side = _OUTSIDE_SNAPSHOT.get(tag, ((), "last"))
+            carried = [c for c in parent if c is not change
+                       and isinstance(c.tag, str)
+                       and c.tag.rsplit("}", 1)[-1] in names]
+            # the snapshot is the change's only child; a change element
+            # with none records "there were no properties", and emptying
+            # the parent is then exactly right
+            snapshot = list(change)
+            for child in list(parent):
+                parent.remove(child)
+            for child in (snapshot[0] if snapshot else ()):
+                parent.append(child)
+            for i, child in enumerate(carried):
+                if side == "first":
+                    parent.insert(i, child)
+                else:
+                    parent.append(child)
+
+
 def _simulate(xml: str, mode: str, where: Where | None = None) -> str:
     # The predicate-free views are CACHED: the audits and the sweep ask
     # for the same view of the same document several times in a row, and
@@ -451,9 +525,13 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     # so there is nothing to simulate. Worth checking first: most
     # manuscripts are clean, and parsing a 1.7MB part to discover that
     # costs ~20ms every time — per table, in tables.read_all.
-    # content revisions only: this models ins/del/move, and a
-    # formatting snapshot is not something it can 'apply'
-    if not _has_content_revisions(xml):
+    #
+    # This asked `_has_content_revisions`, on the reasoning that a
+    # formatting snapshot is not something a text simulation can apply.
+    # It is: see `_apply_property_changes`. A batch of nothing but
+    # `w:rPrChange` came back byte-identical from BOTH views, which is
+    # what let gate 5 pass on it without deciding anything.
+    if not _has_revisions(xml):
         return xml
     root, wrapped = _parse(xml)
     vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \
@@ -519,6 +597,11 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
         kept = _mark_flag(para, keep)
         if kept is not None and wants(kept, "paragraph-mark"):
             kept.getparent().remove(kept)
+
+    # LAST, so the row and paragraph-mark handlers above still see the
+    # `w:ins`/`w:del` flags a rejected `trPrChange`/`pPrChange` restore
+    # would otherwise have moved out from under them.
+    _apply_property_changes(root, mode, wants)
     return _serialize(root, wrapped)
 
 

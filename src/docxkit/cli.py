@@ -601,7 +601,11 @@ def cmd_footnotes(args: argparse.Namespace) -> int:
         print(f"{Path(args.docx).name}: no footnotes part")
         return 0
     xml = notes.decode("utf-8")
-    report = sizes(xml)
+    # WITH the styles: a run that states nothing, in a paragraph whose
+    # pStyle supplies a size, is not a finding. Without them every
+    # style-formatted footnote reads as an outlier.
+    styles = parts.get("word/styles.xml")
+    report = sizes(xml, styles_xml=styles.decode("utf-8") if styles else None)
     print(f"{Path(args.docx).name}\n{report.format()}")
     print("\n== every face and size a run states ==")
     for key, count in sorted(fonts(xml).items(), key=lambda kv: -kv[1]):
@@ -745,6 +749,28 @@ def _show_state(label: str, st: object) -> None:
         print(f"      by: {who}")
 
 
+def _summarize(parts: list[str], *, keep: int = 4) -> str:
+    """Part names as a line someone reads rather than skips.
+
+    The first real staleness report listed sixteen, twelve of them
+    ``word/fonts/font*.odttf`` from one tick of Word's embed-fonts box,
+    on a single line. A directory that contributes more than one part is
+    worth one entry.
+    """
+    folded: dict[str, int] = {}
+    for name in parts:
+        if "/" in name:                 # a part at the package ROOT has no
+            folder = name.rsplit("/", 1)[0] + "/"   # directory to fold into,
+            folded[folder] = folded.get(folder, 0) + 1   # and folding it
+    out = [name for name in parts       # under "" dropped it from the line
+           if "/" not in name or folded[name.rsplit("/", 1)[0] + "/"] == 1]
+    out += [f"{folder} ({n} parts)" for folder, n in folded.items() if n > 1]
+    out.sort()
+    if len(out) <= keep:
+        return ", ".join(out)
+    return f"{', '.join(out[:keep])}, and {len(out) - keep} more"
+
+
 def cmd_revision_status(args: argparse.Namespace) -> int:
     """Truth or proposal? The one question the layout answers by itself.
 
@@ -769,7 +795,7 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     # warning stops being read.
     stale = drift(paper.working, paper.prev) if st.is_truth else []
     if stale:
-        print(f"\n  ** baseline STALE: {', '.join(stale)} differ(s) **")
+        print(f"\n  ** baseline STALE: {_summarize(stale)} differ(s) **")
         print("     Both files count 0 pending, and they are not the same "
               "paper -\n     prev.docx is not what working.docx grew out "
               "of. Building a batch\n     on it compares against the wrong "
@@ -862,7 +888,12 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
         print("== Word ==  FAILED (corrupted):", report.word_error)
         return 3
     if report.word_opened:
-        print(f"== Word ==  opened, {report.word_revisions} revision groups")
+        # "in the body" is not a hedge: Word's Revisions collection walks
+        # the main story, so a footnote-only batch reads 0 here while the
+        # package count above says 25. Two numbers, both true, and the
+        # unlabelled one read as "Compare produced nothing".
+        print(f"== Word ==  opened, {report.word_revisions} revision "
+              f"group(s) in the body")
     print("== accept-all ==", report.accepted)
     if report.empty_shells:
         print("   ** WARNING: empty OMML shells after accept **")

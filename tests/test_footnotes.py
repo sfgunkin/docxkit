@@ -234,6 +234,80 @@ def test_set_font_answers_the_finding():
     assert footnotes.sizes(out).ok
 
 
+# ------------------------------- what the STYLES answer that XML cannot ---
+
+
+def styles(*defs: str, default: str = "24") -> str:
+    return (f"<w:styles {NS}><w:docDefaults><w:rPrDefault><w:rPr>"
+            f'<w:sz w:val="{default}"/></w:rPr></w:rPrDefault>'
+            f"</w:docDefaults>{''.join(defs)}</w:styles>")
+
+
+def style(sid: str, sz: str | None = None, based_on: str | None = None) -> str:
+    inner = f'<w:basedOn w:val="{based_on}"/>' if based_on else ""
+    inner += f'<w:rPr><w:sz w:val="{sz}"/></w:rPr>' if sz else ""
+    return f'<w:style w:type="paragraph" w:styleId="{sid}">{inner}</w:style>'
+
+
+def styled_note(nid: int, text: str, pstyle: str) -> str:
+    return (f'<w:footnote w:id="{nid}"><w:p>'
+            f'<w:pPr><w:pStyle w:val="{pstyle}"/></w:pPr>'
+            f"{run(text)}</w:p></w:footnote>")
+
+
+def test_a_note_whose_STYLE_supplies_the_size_is_not_a_finding():
+    """The false positive this check produced on the first real
+    manuscript it was pointed at: Parental_style's footnote 6 carries
+    `pStyle FootnoteText`, that style says `w:sz 20`, and it has always
+    rendered at 10pt like its neighbours."""
+    xml = part(note(2, run("a", SZ10)), note(3, run("b", SZ10)),
+               styled_note(4, "styled", "FootnoteText"))
+    assert not footnotes.sizes(xml).ok, "blind to styles, it is a finding"
+    report = footnotes.sizes(xml, styles_xml=styles(
+        style("FootnoteText", sz="20")))
+    assert report.ok, report.format()
+
+
+def test_a_style_that_does_not_supply_it_falls_back_to_the_default():
+    """And that is the shape of the REAL offender: no pStyle at all, so
+    the note takes docDefaults — 12pt among 10pt neighbours."""
+    xml = part(note(2, run("a", SZ10)), note(3, run("b", SZ10)),
+               note(4, run("the real one")))
+    report = footnotes.sizes(xml, styles_xml=styles(default="24"))
+    (odd,) = report.outliers
+    assert odd.stated == (24,)
+    assert "resolves to 12pt through the document default" in str(odd)
+
+
+def test_the_based_on_chain_is_followed():
+    """A style that states no size inherits one from its parent, and
+    stopping at the first style would report the note as unresolved."""
+    xml = part(note(2, run("a", SZ10)), note(3, run("b", SZ10)),
+               styled_note(4, "styled", "NoteTight"))
+    report = footnotes.sizes(xml, styles_xml=styles(
+        style("NoteTight", based_on="FootnoteText"),
+        style("FootnoteText", sz="20")))
+    assert report.ok, report.format()
+
+
+def test_a_based_on_cycle_does_not_hang():
+    """Real files carry them."""
+    xml = part(note(2, run("a", SZ10)), note(3, run("b", SZ10)),
+               styled_note(4, "styled", "A"))
+    report = footnotes.sizes(xml, styles_xml=styles(
+        style("A", based_on="B"), style("B", based_on="A")))
+    assert [o.id for o in report.outliers] == ["4"]
+
+
+def test_without_the_styles_the_disagreement_is_still_reported():
+    """The answer is genuinely not in footnotes.xml, and saying nothing
+    would be a claim this cannot support."""
+    xml = part(note(2, run("a", SZ10)), note(3, run("b", SZ10)),
+               styled_note(4, "styled", "FootnoteText"))
+    (odd,) = footnotes.sizes(xml).outliers
+    assert odd.stated == (None,) and "states no size" in str(odd)
+
+
 def test_the_report_prints_the_house_size_and_the_count():
     line = footnotes.sizes(part(note(2, run("a", SZ10)),
                                 note(3, run("b", SZ10)),

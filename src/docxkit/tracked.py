@@ -42,6 +42,7 @@ from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
 from .package import read_parts, write_docx
+from .revisions import revision_elements
 
 # Bound directly, NOT reached through `_word`: tests replace that
 # module attribute with a COM fake, and a fake has no reason to
@@ -122,6 +123,13 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
         # not count("<w:comment w:id=") — attribute order is not
         # meaningful in XML, and the id-second form counted as zero
         "comments": len(COMMENT_ID_RE.findall(com_xml)),
+        # EVERY KIND, not just ins/del. A batch of nothing but footnote
+        # `w:rPrChange` reported "revisions: 0" and read as a Compare
+        # that had failed — the documented shape of the math refusal —
+        # while carrying 25. Same lesson as the parts above, one axis
+        # over: the two counts that decide whether a file is settled must
+        # know the same seven kinds `revision.state` does.
+        "revisions": len(revision_elements(text_xml)),
     }
 
 
@@ -156,7 +164,15 @@ class BuildReport:
     """What a redline build did, and how long each phase took."""
 
     def __init__(self) -> None:
+        #: Every pending revision the built package carries, of every
+        #: kind and in every text-bearing part. Word's own
+        #: `Revisions.Count` — which is what this used to hold — walks
+        #: the MAIN STORY only, so a batch of 25 footnote formatting
+        #: revisions reported 0 and read as a Compare that had failed.
+        #: Kept beside it as `body_revisions`, labelled, because the two
+        #: disagreeing is worth seeing rather than resolving silently.
         self.revisions = 0
+        self.body_revisions = 0
         self.math_resolved = 0
         self.comments_added = 0
         self.unclassified = 0
@@ -387,9 +403,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             cmp_ = _word.compare_documents(
                 word, orig, rev, author=author,
                 whitespace=whitespace, formatting=formatting)
-            report.revisions = cmp_.Revisions.Count
+            report.body_revisions = int(cmp_.Revisions.Count)
             report.mark("compared")
-            say(f"revisions: {report.revisions}")
             _word.draft_view(cmp_)
 
             report.math_resolved = _resolve_math(
@@ -413,6 +428,16 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         report.mark(f"packed {n_parts} parts")
 
         parts = read_parts(building)
+        # The count that matters, read off the PACKAGE: every kind, every
+        # text-bearing part. Word's is the body only, so it is said aloud
+        # separately when the two disagree rather than quietly replaced.
+        report.revisions = package_counts(parts)["revisions"]
+        say(f"revisions: {report.revisions}")
+        if report.body_revisions != report.revisions:
+            say(f"  ({report.body_revisions} of them in the body; the rest "
+                f"are in footnotes or endnotes, where Word's own count and "
+                f"Review > Next do not go)")
+
         # Before anything is added to it: what did Compare decline to
         # carry over? Checked against the REVISED input, which is the
         # document the redline is supposed to be able to reproduce.
@@ -449,7 +474,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                     "repaired on open")
             report.mark("verified in Word")
             say(f"verified in Word: {report.verified_comments} comments, "
-                f"{report.verified_revisions} revisions")
+                f"{report.verified_revisions} revisions in the body")
 
         building.replace(out)          # every gate passed: publish
         _guard.stamp(out, original=original.name, revised=revised.name)

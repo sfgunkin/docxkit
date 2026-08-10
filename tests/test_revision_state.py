@@ -142,6 +142,24 @@ def test_anything_has_revisions_calls_dirty_is_something_state_counts(kind):
     assert revision_elements(xml), f"{kind}: dirty, but nothing counted"
 
 
+@pytest.mark.parametrize("kind", sorted(KINDS))
+@pytest.mark.parametrize("view", ["accept", "reject"])
+def test_anything_state_counts_is_something_the_simulator_applies(kind, view):
+    """The third face of the same guard, and the one that was missing.
+
+    `state` learned all seven kinds; the SIMULATOR knew three, so a
+    formatting revision survived both views untouched. Two gates are
+    built on those views: `reject-all == baseline` could not fail on a
+    formatting-only batch, and an XML-accepted file still counted as a
+    proposal because the marker was still in it.
+    """
+    from docxkit import revisions as R
+
+    applied = getattr(R, view)(KINDS[kind])
+    assert not revision_elements(applied), (
+        f"{kind}: {view} left the revision standing")
+
+
 # ------------------------------------------ a baseline taken mid-save ----
 
 

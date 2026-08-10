@@ -295,21 +295,65 @@ def fonts(footnotes_xml: str, *, include_reserved: bool = False
 # purpose; counting it would put every conforming document on the list.
 
 
+_STYLE_RE = re.compile(r'<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>(.*?)'
+                       r"</w:style>", re.DOTALL)
+_BASED_ON_RE = re.compile(r'<w:basedOn\b[^>]*w:val="([^"]+)"')
+_DOC_DEFAULTS_RE = re.compile(r"<w:docDefaults\b.*?</w:docDefaults>",
+                              re.DOTALL)
+_PSTYLE_RE = re.compile(r'<w:pStyle\b[^>]*w:val="([^"]+)"')
+
+
+def _style_sizes(styles_xml: str) -> dict[str, int]:
+    """styleId -> the half-point size it resolves to, ``basedOn`` followed.
+
+    A style's own ``w:sz`` lives in its ``w:rPr``; its ``w:pPr`` cannot
+    carry one, so the whole style element can be searched.
+    """
+    own: dict[str, str] = {}
+    based: dict[str, str] = {}
+    for sid, blob in _STYLE_RE.findall(styles_xml):
+        own[sid] = blob
+        if (m := _BASED_ON_RE.search(blob)):
+            based[sid] = m.group(1)
+
+    def resolve(sid: str) -> int | None:
+        seen: set[str] = set()
+        while sid in own and sid not in seen:
+            seen.add(sid)                # a basedOn cycle is a real file
+            if (m := _SZ_RE.search(own[sid])):
+                return int(m.group(1))
+            sid = based.get(sid, "")
+        return None
+
+    return {sid: size for sid in own
+            if (size := resolve(sid)) is not None}
+
+
+def _default_size(styles_xml: str) -> int | None:
+    block = _DOC_DEFAULTS_RE.search(styles_xml)
+    if block is None:
+        return None
+    m = _SZ_RE.search(block.group(0))
+    return int(m.group(1)) if m else None
+
+
 @dataclass(frozen=True)
 class SizeOutlier:
-    """A footnote that does not state what its neighbours state."""
+    """A footnote that does not resolve to what its neighbours state."""
 
     id: str
-    stated: tuple[int | None, ...]     # half-points; None = states nothing
+    stated: tuple[int | None, ...]     # half-points; None = unresolvable
     text: str
+    via: str = ""                      # what supplied it, if not the run
 
     def __str__(self) -> str:
         if self.stated == (None,):
             what = "states no size — inherits whatever the body is"
         else:
-            what = "states " + ", ".join(
-                "nothing" if s is None else f"{s / 2:g}pt"
-                for s in self.stated)
+            sizes_ = ", ".join("nothing" if s is None else f"{s / 2:g}pt"
+                               for s in self.stated)
+            what = (f"resolves to {sizes_} through {self.via}" if self.via
+                    else f"states {sizes_}")
         return f"footnote {self.id}: {what} — {self.text!r}"
 
 
@@ -333,45 +377,74 @@ class SizeReport:
         return "\n".join([head] + [f"  {o}" for o in self.outliers])
 
 
-def sizes(footnotes_xml: str, *, include_reserved: bool = False
-          ) -> SizeReport:
+def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
+          include_reserved: bool = False) -> SizeReport:
     """Which footnotes disagree with the rest about their size.
 
     Reported as a disagreement rather than as a wrong value, because the
     footnote that went out at 12pt among 10pt neighbours stated NOTHING:
     it inherited the body size, and a search for a wrong number cannot
-    find an absent one. The house size is what most footnotes state, so
-    a document whose footnotes all inherit — every size living in
-    styles.xml, which is perfectly ordinary — has nothing to report and
-    gets no findings.
+    find an absent one. The house size is what most footnotes resolve
+    to, so a document whose footnotes all inherit — every size living in
+    styles.xml, which is perfectly ordinary — has nothing to report.
+
+    **Pass `styles_xml`.** A run that states nothing in a paragraph
+    whose ``w:pStyle`` chain supplies a size resolves to that size, and
+    without the part there is no way to know: Parental_style's footnote
+    6 carries ``pStyle FootnoteText``, that style says ``w:sz 20``, and
+    it has always rendered at 10pt like its neighbours. Reported as a
+    finding, it was a false positive on the first real manuscript this
+    was pointed at. The document default is the last fallback, which is
+    what the two REAL offenders in that file resolve through.
+
+    Without the part the disagreement is still reported, because the
+    answer genuinely is not in ``footnotes.xml``.
 
     Repair with :func:`set_font`, which writes direct run formatting.
     """
-    stated: list[tuple[str, tuple[int | None, ...], str]] = []
+    by_style = _style_sizes(styles_xml) if styles_xml else {}
+    default = _default_size(styles_xml) if styles_xml else None
+
+    stated: list[tuple[str, tuple[int | None, ...], str, str]] = []
     for note in find_all(footnotes_xml, include_reserved=include_reserved):
         math = _math_spans(note.xml)
         seen: set[int | None] = set()
-        for m in RUN_RE.finditer(note.xml):
-            if any(s <= m.start() < e for s, e in math):
-                continue
-            if not visible_text(m.group(0)).strip():
-                continue               # the reference mark states no size
-            seen.add(_run_font(m.group(0))[1])
+        sources: set[str] = set()
+        for para in PARA_RE.finditer(note.xml):
+            style = m.group(1) if (m := _PSTYLE_RE.search(para.group(0))) \
+                else ""
+            for r in RUN_RE.finditer(para.group(0)):
+                at = para.start() + r.start()
+                if any(s <= at < e for s, e in math):
+                    continue
+                if not visible_text(r.group(0)).strip():
+                    continue           # the reference mark states no size
+                size = _run_font(r.group(0))[1]
+                if size is not None or not styles_xml:
+                    seen.add(size)
+                    continue
+                if style in by_style:
+                    seen.add(by_style[style])
+                    sources.add(f"the {style} style")
+                else:
+                    seen.add(default)
+                    sources.add("the document default")
         if not seen:
             continue                   # nothing a reader sees: nothing to say
         # `None` sorts last, and never against an int: the first key
         # element already separates the two cases
         found = tuple(sorted(seen, key=lambda s: (s is None, s)))
         text = " ".join(visible_text(note.xml).split())[:48]
-        stated.append((note.id, found, text))
+        stated.append((note.id, found, text, ", ".join(sorted(sources))))
 
     report = SizeReport(counted=len(stated))
-    agreed = [s[0] for _, s, _ in stated
+    agreed = [s[0] for _, s, _, _ in stated
               if len(s) == 1 and s[0] is not None]
     if not agreed:
         return report                  # nothing states a size: nothing to say
     report.house = max(set(agreed), key=agreed.count)
-    report.outliers = [SizeOutlier(fid, s, text) for fid, s, text in stated
+    report.outliers = [SizeOutlier(fid, s, text, via)
+                       for fid, s, text, via in stated
                        if s != (report.house,)]
     return report
 

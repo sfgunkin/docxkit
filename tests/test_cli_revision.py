@@ -190,6 +190,30 @@ def test_status_flags_a_baseline_the_paper_has_outgrown(monkeypatch,
     assert "revision ingest" in out
 
 
+def test_status_folds_a_flood_of_stale_parts_into_a_line(monkeypatch,
+                                                         project, capsys):
+    """The first real one listed sixteen parts, twelve of them
+    `word/fonts/font*.odttf` from one tick of Word's embed-fonts box, on
+    a single line nobody would read."""
+    from docxkit import package
+    fonts = {f"word/fonts/font{i}.odttf": f"binary{i}".encode()
+             for i in range(1, 13)}
+    parts = package.read_parts(project.working)
+    parts.update(fonts)
+    parts["word/document.xml"] = make_parts(
+        para(run("edited")))["word/document.xml"]
+    package.write_docx(project.working, parts)
+
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    stale_line = next(ln for ln in out.splitlines() if "STALE" in ln)
+    assert code == 4
+    assert "word/fonts/ (12 parts)" in stale_line
+    assert "font1.odttf" not in stale_line
+    assert len(stale_line) < 120, stale_line
+
+
 def test_status_does_not_cry_stale_over_a_pending_proposal(monkeypatch,
                                                            project, capsys):
     """A proposal is SUPPOSED to differ from its baseline. Reporting it
@@ -199,6 +223,16 @@ def test_status_does_not_cry_stale_over_a_pending_proposal(monkeypatch,
                       "--paper", str(project.root))
     out = capsys.readouterr().out
     assert code == 1 and "STALE" not in out
+
+
+def test_the_stale_line_caps_a_long_list_of_loose_parts():
+    """Folding by directory is not enough on its own: a package can
+    diverge in a dozen parts that share no folder."""
+    from docxkit.cli import _summarize
+    loose = [f"part{i}.xml" for i in range(1, 8)]
+    line = _summarize(loose)
+    assert line.endswith("and 3 more")
+    assert "part5.xml" not in line
 
 
 def test_status_reports_a_missing_baseline(monkeypatch, project, capsys):
@@ -468,7 +502,7 @@ def test_validate_with_word_lists_the_papers_own_gates(monkeypatch,
     out = capsys.readouterr().out
     assert code == 0
     assert "verify_tables.py" in out
-    assert "1 revision groups" in out
+    assert "1 revision group(s) in the body" in out
     assert "XML accept == Word accept ? OK" in out
 
 

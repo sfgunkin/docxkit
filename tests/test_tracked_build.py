@@ -300,7 +300,7 @@ def test_package_counts_reads_what_the_file_holds():
             b"</w:comments>"),
     }
     assert package_counts(parts) == {"insertions": 1, "deletions": 1,
-                                     "comments": 2}
+                                     "comments": 2, "revisions": 2}
 
 
 def test_package_counts_includes_the_footnotes():
@@ -317,7 +317,28 @@ def test_package_counts_includes_the_footnotes():
             b"</w:footnote></w:footnotes>"),
     }
     assert package_counts(parts) == {"insertions": 1, "deletions": 1,
-                                     "comments": 0}
+                                     "comments": 0, "revisions": 2}
+
+
+def test_package_counts_sees_a_formatting_only_batch():
+    """`insertions` and `deletions` are both zero for a batch of nothing
+    but property revisions, and the build printed that zero as its
+    headline: it read as a Compare that had produced nothing, which is
+    the documented shape of the math refusal. 25 footnote `w:rPrChange`
+    revisions were in the file."""
+    from docxkit.tracked import package_counts
+    parts = {
+        "word/document.xml": b"<w:document><w:body/></w:document>",
+        "word/footnotes.xml": (
+            b'<w:footnotes><w:footnote w:id="7"><w:p><w:r><w:rPr>'
+            b'<w:sz w:val="20"/><w:rPrChange w:id="1" w:author="A" '
+            b'w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange>'
+            b"</w:rPr><w:t>note</w:t></w:r></w:p></w:footnote>"
+            b"</w:footnotes>"),
+    }
+    counted = package_counts(parts)
+    assert (counted["insertions"], counted["deletions"]) == (0, 0)
+    assert counted["revisions"] == 1
 
 
 def test_package_counts_treats_a_missing_comments_part_as_zero():
@@ -511,7 +532,7 @@ def test_verify_reports_agreement_between_word_and_the_package(
                                                       revisions=1))
     got = tracked.verify(path)
     assert got["package"] == {"insertions": 1, "deletions": 0,
-                              "comments": 3}
+                              "comments": 3, "revisions": 1}
     assert got["word"]["comments"] == 3
     assert got["comments_match"] is True
 

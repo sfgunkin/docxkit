@@ -281,3 +281,130 @@ def test_a_deleted_row_survives_rejection_without_its_flag():
     assert "w:del" not in reject(document(tbl))
     assert "doomed" not in accept(document(tbl))
     assert "stays" in accept(document(tbl))
+
+
+# --------------------------------------------- FORMATTING revisions ----
+# A property change is recorded as a snapshot of the OLD properties
+# nested in the new ones. Accepting means dropping the record; rejecting
+# means putting the snapshot back. Both views passed it straight through
+# until 2026-08-10, which is what let `reject-all == baseline` pass on a
+# batch of nothing else.
+
+D = 'w:id="1" w:author="Reviewer" w:date="2026-01-01T00:00:00Z"'
+
+
+def test_accepting_a_formatting_change_keeps_the_new_properties():
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>note</w:t></w:r></w:p>")
+    out = accept(xml)
+    assert '<w:sz w:val="20"/>' in out
+    assert "rPrChange" not in out, "accepted, and still on the tally"
+    assert '<w:sz w:val="24"/>' not in out
+
+
+def test_rejecting_a_formatting_change_puts_the_old_ones_back():
+    """What makes the author's veto real. The text is identical either
+    way, so no text comparison can tell these two apart — which is
+    exactly why the gate built on one could not fail."""
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>note</w:t></w:r></w:p>")
+    out = reject(xml)
+    assert '<w:sz w:val="24"/>' in out
+    assert '<w:sz w:val="20"/>' not in out
+    assert "rPrChange" not in out
+
+
+def test_rejecting_a_paragraph_change_keeps_the_marks_own_properties():
+    """`pPrChange/pPr` is CT_PPrBase: it cannot hold the paragraph MARK's
+    `w:rPr`. Restore the snapshot wholesale and the mark loses its own
+    formatting — and, worse, the flag that kind of revision lives in."""
+    xml = document(
+        f'<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:b/></w:rPr>'
+        f'<w:pPrChange {D}><w:pPr><w:jc w:val="left"/></w:pPr>'
+        f"</w:pPrChange></w:pPr><w:r><w:t>x</w:t></w:r></w:p>")
+    out = reject(xml)
+    assert '<w:jc w:val="left"/>' in out
+    assert '<w:jc w:val="center"/>' not in out
+    assert "<w:b/>" in out, "the paragraph mark's properties were dropped"
+
+
+def test_a_paragraph_with_both_kinds_still_has_its_mark_rejected():
+    """The ordering guard. The mark's insert flag lives in the `w:rPr`
+    the restore above carries across, so property changes are applied
+    LAST — otherwise the flag moves out from under the handler that was
+    about to act on it, and an inserted paragraph mark stops being
+    rejectable."""
+    xml = document(
+        f'<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:ins {D}/></w:rPr>'
+        f'<w:pPrChange {D}><w:pPr><w:jc w:val="left"/></w:pPr>'
+        f"</w:pPrChange></w:pPr><w:r><w:t>first</w:t></w:r></w:p>"
+        + para(run("second")))
+    out = reject(xml)
+    assert out.count("<w:p ") + out.count("<w:p>") == 1, "the mark survived"
+    assert "first" in out and "second" in out
+
+
+def test_rejecting_a_section_change_keeps_the_running_heads():
+    """`sectPrChange/sectPr` is CT_SectPrBase, which has no header or
+    footer reference — and CT_SectPr puts them FIRST, so they go back at
+    the front or the section does not parse as Word wrote it."""
+    xml = document(
+        f"<w:p><w:r><w:t>body</w:t></w:r></w:p><w:sectPr>"
+        f'<w:headerReference w:type="default"/>'
+        f'<w:pgSz w:w="12240" w:h="15840"/>'
+        f'<w:sectPrChange {D}><w:sectPr>'
+        f'<w:pgSz w:w="15840" w:h="12240"/></w:sectPr></w:sectPrChange>'
+        f"</w:sectPr>")
+    out = reject(xml)
+    assert "headerReference" in out, "the running head was rejected away"
+    assert 'w:w="15840"' in out, "the landscape page size was not restored"
+    assert out.index("headerReference") < out.index('w:w="15840"')
+
+
+def test_rejecting_a_row_change_leaves_the_rows_own_flag_alone():
+    """A `w:trPr` carries both the formatting record and the row's own
+    insert flag. Rejecting the first must not take the second, or the
+    inserted row stops being rejectable."""
+    tbl = ("<w:tbl><w:tblPr/><w:tblGrid/><w:tr><w:trPr>"
+           f'<w:ins {D}/><w:trHeight w:val="300"/>'
+           f'<w:trPrChange {D}><w:trPr><w:trHeight w:val="200"/></w:trPr>'
+           "</w:trPrChange></w:trPr>" + _cell("added") + "</w:tr></w:tbl>")
+    assert "added" not in reject(document(tbl)), "the row was not rejected"
+
+
+def test_an_empty_snapshot_means_there_were_no_properties():
+    """Word writes `<w:rPrChange><w:rPr/></w:rPrChange>` for a run that
+    had no direct formatting at all — which is the commonest case in a
+    Compare, and emptying the live properties is exactly right."""
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}><w:rPr/>'
+        f"</w:rPrChange></w:rPr><w:t>note</w:t></w:r></w:p>")
+    out = reject(xml)
+    assert "<w:rPr/>" in out or "<w:rPr></w:rPr>" in out
+    assert 'w:sz' not in out
+
+
+def test_a_selective_accept_by_author_now_reaches_formatting():
+    """"Accept everything this author did" means their formatting too."""
+    from docxkit.revisions import by_author
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>note</w:t></w:r></w:p>")
+    assert "rPrChange" not in accept(xml, where=by_author("Reviewer"))
+    assert "rPrChange" in accept(xml, where=by_author("Somebody Else"))
+
+
+def test_whitespace_only_still_does_not_touch_formatting():
+    """The predicate is about respacing noise. A formatting revision has
+    no text at all, and bulk-accepting one is never what was meant."""
+    from docxkit.revisions import whitespace_only
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>note</w:t></w:r></w:p>")
+    assert "rPrChange" in accept(xml, where=whitespace_only)

@@ -17,72 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 `revisions.accept`/`reject` ignore every PROPERTY revision
-- **Symptom** `w:rPrChange`, `w:pPrChange`, `w:tcPrChange` and
-  `w:sectPrChange` pass through both functions untouched: accept leaves
-  the marker standing (so an XML-accepted file still counts as a
-  proposal), and reject does NOT restore the formatting the revision
-  replaced.
-- **What it costs** gate 5, `reject-all == baseline`, **cannot fail on a
-  formatting-only batch**. It compares paragraph text and the glyph
-  stream, reject changes no formatting anyway, so the gate that exists
-  to prove the author's veto is real passes vacuously. Verified on the
-  Parental_style footnote batch: accept and reject produced byte-equal
-  footnotes.
-- **Repro** `revisions.reject('<w:r><w:rPr><w:sz w:val="20"/>'
-  '<w:rPrChange …><w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange>'
-  '</w:rPr>…')` returns its input.
-- **Evidence** 2026-08-10, the footnote-size round.
-- **Not a Word problem** — in Word, rejecting an rPrChange restores the
-  old properties correctly. It is the XML simulation that is blind, and
-  the simulation is what two gates are built on.
-- **Fix** accept: drop the `*PrChange` element. reject: replace the live
-  properties with the snapshot inside it. `revision.state` already
-  KNOWS all seven kinds (`_REVISION_NAMES`); the simulator handles
-  three, and `test_revision_state.py` already has the drift guard that
-  should have covered this pair too.
-
-### S3 a batch of 25 revisions is reported as "0 revisions"
-- **Symptom** `revision build` printed `revisions: 0` and
-  `verified in Word: 0 revisions`, and gate 3 printed `opened, 0
-  revision groups`, for a batch carrying 25 `w:rPrChange` revisions in
-  `word/footnotes.xml`. `revision.state` read the same file and said 25.
-- **Cause** the build report and Word's `Document.Revisions.Count` both
-  see the MAIN STORY only. It is the same blind spot the module
-  docstring already records for the author's Review > Next button —
-  `TEXT_PARTS` exists because of it — and the build's own counter never
-  learned it.
-- **What it costs** it reads as "Compare could not represent this batch",
-  which is the documented `MathResolved` failure. Half an hour went into
-  proving the batch was in fact sound.
-- **Evidence** 2026-08-10, the footnote-size round.
-- **Fix** count over `TEXT_PARTS`, as `state` does. If Word's own count
-  is kept beside it, label it "in the body".
-
-### S2 `footnotes.sizes` flags a note whose STYLE supplies the size
-- **Symptom** Footnote 6 of Parental_style carries `pStyle
-  FootnoteText`, and that style defines `w:sz 20` — it has always
-  rendered at 10pt like its neighbours. `sizes` sees runs stating
-  nothing and reports it as disagreeing. A false positive on the first
-  real manuscript the check was pointed at, and one the 134-document
-  sweep could not surface because no other paper mixes the two.
-- **Confirmed by Word** Compare DROPPED the explicit `w:sz 20` written
-  onto that run and kept only the colour — Word removes direct
-  formatting equal to the style's value, which is the same behaviour
-  `table_spacing` already records for `w:before`.
-- **Evidence** 2026-08-10.
-- **Fix** let `sizes` take the styles part: a run that states nothing,
-  in a paragraph whose `pStyle` chain supplies a size, states that size.
-  Without the part it must keep reporting the disagreement — the answer
-  is genuinely not in `footnotes.xml`.
-
-### S4 `revision status` prints every stale part on one line
-- **Symptom** 16 part names, mostly `word/fonts/font*.odttf`, in a
-  single unreadable line — the first real use of the staleness message.
-- **Evidence** 2026-08-10.
-- **Fix** cap the list and say "and N more"; fold a run of parts under
-  one directory into `word/fonts/ (12)`.
-
 ### S4 `wrap_link_in_bookmark` has no "first mention" mode
 - **Symptom** Refuses when a work is cited more than once (correct — it
   will not guess), but the house convention is *bookmark the first
@@ -125,6 +59,70 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S3 `revisions.accept`/`reject` ignore every PROPERTY revision — `PENDING`
+Both views passed a `*PrChange` straight through, so an XML-accepted
+file still counted as a proposal and a rejected one kept the formatting
+it was supposed to undo. What that cost: **gate 5, `reject-all ==
+baseline`, could not fail on a formatting-only batch** — it compares
+paragraph text and the glyph stream, and reject changed no formatting
+anyway, so the gate that exists to prove the author's veto is real
+passed vacuously on the Parental_style footnote round.
+
+Accept drops the record; reject puts the snapshot back. Three things a
+wholesale restore would have lost, each now carried across by hand and
+named in the code: `pPrChange/pPr` is CT_PPrBase and cannot hold the
+paragraph MARK's `w:rPr` — where that kind of revision's own flag lives;
+`sectPrChange/sectPr` is CT_SectPrBase and drops every header and footer
+reference, which CT_SectPr puts FIRST; a `w:trPr` carries the row's own
+insert flag beside the formatting record. Property changes are applied
+LAST for the same reason.
+
+`test_revision_state.py` had a guard that `_has_revisions` and
+`revision.state` agree on all seven kinds. It now has the third face of
+it — anything `state` counts is something the simulator can APPLY —
+which fails 8 ways without this fix.
+
+### S3 a batch of 25 revisions is reported as "0 revisions" — `PENDING`
+`revision build` printed `revisions: 0` and gate 3 `opened, 0 revision
+groups` for a batch carrying 25 `w:rPrChange` in `word/footnotes.xml`,
+because Word's `Document.Revisions` walks the MAIN STORY only. It reads
+as "Compare could not represent this batch" — the documented
+`MathResolved` failure — and half an hour went into proving the batch
+was sound. `package_counts` gained a `revisions` key over every kind and
+every text-bearing part, `BuildReport.revisions` is read off the built
+PACKAGE with Word's count kept beside it as `body_revisions`, and both
+messages now say "in the body" where that is what they mean.
+
+### S2 `footnotes.sizes` flags a note whose STYLE supplies the size — `PENDING`
+`sizes` takes `styles_xml` and resolves a run that states nothing
+through its paragraph's `pStyle` chain (`basedOn` followed, cycles
+survived), then the document default. On the manuscript that produced
+the check:
+
+    blind to styles   3 disagreeing — footnotes 5, 6 and 7
+    with the styles   2 disagreeing — "resolves to 12pt through the
+                                       document default"
+
+Footnote 6 carries `pStyle FootnoteText`, that style says `w:sz 20`, and
+it had always rendered at 10pt: a false positive on the first real paper
+the check was pointed at, which the 134-document sweep could not surface
+because no other paper mixes the two. Word agreed independently — its
+Compare DROPPED the redundant explicit size written onto that run and
+kept only the colour, the same "Word deletes a declaration equal to the
+inherited value" behaviour `table_spacing` already records.
+
+Without the part the disagreement is still reported: the answer
+genuinely is not in `footnotes.xml`, and silence would be a claim this
+cannot support.
+
+### S4 `revision status` printed every stale part on one line — `PENDING`
+Sixteen names, twelve of them `word/fonts/font*.odttf` from one tick of
+Word's embed-fonts box. Folded by directory —
+`word/fonts/ (12 parts)` — and capped at four entries with "and N more".
+The test written for the cap caught a bug in the fold: a part at the
+package ROOT has no directory, and folding it under `""` dropped
+`[Content_Types].xml` off the line entirely.
 
 ### S2 no check that footnotes share one size — `a07f8fd`
 `footnotes.sizes(xml) -> SizeReport`, plus `docxkit footnotes PAPER.docx
