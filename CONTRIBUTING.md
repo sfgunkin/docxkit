@@ -164,19 +164,38 @@ survival where the real figure was 9.5%, and a number like that is how a
 tool stops being run. `tools/mutation_survivors.py` splits them and
 prints only the ones that are a question.
 
-What two real runs cost and bought, for calibration:
+What three real runs cost and bought, for calibration:
 
 | module | mutants | real survivors | after |
 |---|---|---|---|
 | `styles.py` | 399 | 38 | 12 |
 | `footnotes.py` | 494 | 76 | — |
+| `revisions.py` | 858 | 120 | 73 |
 
-The best finding of the pair was one the module had already predicted in
-prose: `set_font`'s skip for a `w:r` inside an `m:oMath` says in its own
-docstring that it has never fired on a real document. Eighteen mutants
-lived on that line across two functions — no test fired it either, and it
-is the only thing standing between a formula and the body font the day
-the run pattern is widened.
+A second equivalent class, on top of the annotations, accounts for 43 of
+`revisions.py`'s remaining 73: an ordering operator on a CLOSED string
+set (`mode <= FINAL`, where `mode` is only ever `final` or `original`),
+`==` read as `is` on an interned constant or on an lxml element, `[-1]`
+on a `rsplit(sep, 1)` that always yields two, and removing an
+`@lru_cache` that exists for speed. Thirty are genuinely unexamined —
+that is where the frontier is, not at zero.
+
+Two findings worth keeping:
+
+* the best one was already written down in prose. `set_font`'s skip for
+  a `w:r` inside an `m:oMath` says in its own docstring that it has never
+  fired on a real document; eighteen mutants lived on that line across
+  two functions, so no test fired it either. It is the only thing between
+  a formula and the body font the day the run pattern is widened;
+* **a survivor can mean the test asserts nothing.**
+  `test_move_range_markers_are_removed` read
+  `"moveFromRange" not in "".join(text(xml, view))` — and `text()` returns
+  VISIBLE text, which a range marker has none of, so it passed either
+  way. Deleting the loop that removes the markers turned nothing red.
+  That is the third assertion in this repo found to be satisfied by
+  something other than what it names; the `"italic" in out` one below is
+  another. When a survivor lands on code you believe is tested, read the
+  test before writing a new one.
 
 Two traps, both hit on 2026-08-07:
 

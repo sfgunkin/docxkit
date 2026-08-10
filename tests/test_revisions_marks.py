@@ -84,11 +84,27 @@ def test_reject_keeps_the_source_and_drops_the_destination():
 
 
 def test_move_range_markers_are_removed():
+    """Asserted on the XML, because a range marker has NO visible text.
+
+    This read `"moveFromRange" not in "".join(text(xml, view))` and so
+    passed whether or not the markers were removed — the mutation sweep
+    found it by deleting the loop that removes them and watching nothing
+    go red. A marker left behind is a dangling `w:id` in a document that
+    no longer has the move it belonged to.
+    """
+    from docxkit.revisions import accept, reject
+
     xml = document(
         '<w:p><w:moveFromRangeStart w:id="1" w:name="m1"/>'
-        + run("text") + '<w:moveFromRangeEnd w:id="1"/></w:p>')
-    for view in (FINAL, ORIGINAL):
-        assert "moveFromRange" not in "".join(text(xml, view))
+        + run("text")
+        + '<w:moveFromRangeEnd w:id="1"/>'
+        + '<w:moveToRangeStart w:id="2" w:name="m1"/>'
+        + '<w:moveToRangeEnd w:id="2"/></w:p>')
+    for view in (accept, reject):
+        out = view(xml)
+        assert "moveFromRange" not in out, view.__name__
+        assert "moveToRange" not in out, view.__name__
+        assert "text" in out, "the prose between them went too"
 
 
 def test_a_document_with_no_revisions_is_unchanged():

@@ -226,6 +226,58 @@ def test_applying_a_paragraph_mark_revision_still_merges_the_other_side():
     assert "First.Second." in _joined(reject(inserted))
 
 
+def test_a_merge_puts_the_absorbed_content_in_ORDER_after_the_pPr():
+    """Where the merged children land is 13 mutants' worth of arithmetic:
+    `list(nxt).index(nxt_ppr) + 1`. Off by one and the absorbed runs go
+    BEFORE the surviving paragraph's own properties — which Word rejects
+    — and out of order among themselves, which reads as scrambled prose
+    no count would catch."""
+    # REJECTING an inserted paragraph mark is what joins them: the mark
+    # was added, so undoing it puts the two paragraphs back together
+    xml = document(
+        f'<w:p><w:pPr><w:rPr><w:ins {D}/></w:rPr></w:pPr>'
+        f"{run('one ')}{run('two ')}{run('three ')}</w:p>"
+        f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{run("tail")}</w:p>')
+    out = reject(xml)
+    assert out.count("<w:p ") + out.count("<w:p>") == 1, out
+    assert _joined(out) == "one two three tail"
+    # and the surviving paragraph's own properties still come first
+    assert out.index('<w:jc w:val="center"/>') < out.index("one ")
+
+
+def test_a_merge_into_a_paragraph_with_no_properties_still_orders():
+    xml = document(
+        f'<w:p><w:pPr><w:rPr><w:ins {D}/></w:rPr></w:pPr>'
+        f"{run('a ')}{run('b ')}</w:p>"
+        f'<w:p>{run("c")}</w:p>')
+    assert _joined(reject(xml)) == "a b c"
+
+
+def test_changed_paragraphs_reports_the_index_and_both_sides():
+    """The existing pair only ever moved ONE paragraph, where k is 0 and
+    every arithmetic mutation of `i1 + k` is equivalent. A wider block,
+    with the two sides at different offsets, is what pins it."""
+    from docxkit.revisions import changed_paragraphs
+    before = document(para(run("Keep.")) + para(run("A."))
+                      + para(run("B.")) + para(run("C."))
+                      + para(run("End.")))
+    after = document(para(run("Keep.")) + para(run("New."))
+                     + para(run("End.")))
+    got = changed_paragraphs(before, after)
+    assert [(c.paragraph, c.before, c.after) for c in got] == [
+        (1, "A.", "New."), (2, "B.", ""), (3, "C.", "")]
+
+
+def test_changed_paragraphs_reports_an_insertion_at_its_own_offset():
+    from docxkit.revisions import changed_paragraphs
+    before = document(para(run("One.")) + para(run("Four.")))
+    after = document(para(run("One.")) + para(run("Two."))
+                     + para(run("Three.")) + para(run("Four.")))
+    got = changed_paragraphs(before, after)
+    assert [(c.paragraph, c.before, c.after) for c in got] == [
+        (1, "", "Two."), (2, "", "Three.")]
+
+
 def test_changed_paragraphs_is_empty_when_nothing_changed():
     from docxkit.revisions import changed_paragraphs
     doc = document(para(run("Only.")))
@@ -346,6 +398,66 @@ def test_a_paragraph_with_both_kinds_still_has_its_mark_rejected():
     out = reject(xml)
     assert out.count("<w:p ") + out.count("<w:p>") == 1, "the mark survived"
     assert "first" in out and "second" in out
+
+
+def test_what_a_reject_carries_across_goes_back_in_SCHEMA_ORDER():
+    """Presence is not enough. CT_PPr puts the paragraph mark's `w:rPr`
+    AFTER the base properties and CT_SectPr puts its references FIRST,
+    so a restore that appends both, or prepends both, writes markup Word
+    rejects — while a test asserting only that the element survived goes
+    green. The mutation sweep found it: `side == "first"` read as
+    `side >= "first"` is True for "last" too, and nothing noticed."""
+    para_xml = document(
+        f'<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:b/></w:rPr>'
+        f'<w:pPrChange {D}><w:pPr><w:jc w:val="left"/></w:pPr>'
+        f"</w:pPrChange></w:pPr><w:r><w:t>x</w:t></w:r></w:p>")
+    out = reject(para_xml)
+    assert out.index('<w:jc w:val="left"/>') < out.index("<w:rPr>"), \
+        "the mark's properties were put BEFORE the base ones"
+
+    sect = document(
+        f"<w:p><w:r><w:t>body</w:t></w:r></w:p><w:sectPr>"
+        f'<w:headerReference w:type="default"/>'
+        f'<w:pgSz w:w="12240" w:h="15840"/>'
+        f'<w:sectPrChange {D}><w:sectPr>'
+        f'<w:pgSz w:w="15840" w:h="12240"/></w:sectPr></w:sectPrChange>'
+        f"</w:sectPr>")
+    back = reject(sect)
+    assert back.index("headerReference") < back.index('w:w="15840"'), \
+        "the running head was put AFTER the page size"
+
+
+def test_accepting_clears_EVERY_formatting_record_not_just_the_first():
+    """The other `continue` in that loop. With `break` the first record
+    of each kind goes and the rest stay, so the document still counts as
+    a proposal — and `state` would say so while the accept reported
+    success."""
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>first</w:t></w:r>"
+        f'<w:r><w:rPr><w:i/><w:rPrChange {D}><w:rPr/></w:rPrChange>'
+        f"</w:rPr><w:t>second</w:t></w:r></w:p>")
+    assert xml.count("<w:rPrChange") == 2
+    assert "<w:rPrChange" not in accept(xml)
+
+
+def test_a_property_change_the_predicate_declines_stops_nothing():
+    """`continue`, not `break`: one revision an author's predicate leaves
+    alone must not end the pass over the rest."""
+    from docxkit.revisions import by_author
+    other = 'w:id="2" w:author="Someone Else" w:date="2026-01-01T00:00:00Z"'
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {other}>'
+        f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>first</w:t></w:r></w:p>"
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        f'<w:rPr><w:sz w:val="28"/></w:rPr></w:rPrChange></w:rPr>'
+        f"<w:t>second</w:t></w:r></w:p>")
+    out = accept(xml, where=by_author("Reviewer"))
+    # the OPENING tag: a surviving element serialises as two occurrences
+    assert out.count("<w:rPrChange") == 1, "the walk stopped at the skip"
+    assert 'w:author="Someone Else"' in out
 
 
 def test_rejecting_a_section_change_keeps_the_running_heads():
