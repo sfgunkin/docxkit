@@ -72,7 +72,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Fixed
 
-### S2 no display-mode support, and Word's auto-promotion is unreliable — `PENDING`
+### S2 no display-mode support, and Word's auto-promotion is unreliable — `eee8274`
 `equations.display(para, jc="center")` wraps the paragraph's maths in an
 `m:oMathPara`, idempotently; `equations.inline_display(xml)` is the audit
 half and `docxkit math` now prints "N display equation(s), M still in
