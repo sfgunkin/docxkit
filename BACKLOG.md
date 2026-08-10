@@ -60,7 +60,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Fixed
 
-### S3 `revisions.accept`/`reject` ignore every PROPERTY revision — `PENDING`
+### S3 `revisions.accept`/`reject` ignore every PROPERTY revision — `760b45b`
 Both views passed a `*PrChange` straight through, so an XML-accepted
 file still counted as a proposal and a rejected one kept the formatting
 it was supposed to undo. What that cost: **gate 5, `reject-all ==
@@ -83,7 +83,7 @@ LAST for the same reason.
 it — anything `state` counts is something the simulator can APPLY —
 which fails 8 ways without this fix.
 
-### S3 a batch of 25 revisions is reported as "0 revisions" — `PENDING`
+### S3 a batch of 25 revisions is reported as "0 revisions" — `760b45b`
 `revision build` printed `revisions: 0` and gate 3 `opened, 0 revision
 groups` for a batch carrying 25 `w:rPrChange` in `word/footnotes.xml`,
 because Word's `Document.Revisions` walks the MAIN STORY only. It reads
@@ -94,7 +94,7 @@ every text-bearing part, `BuildReport.revisions` is read off the built
 PACKAGE with Word's count kept beside it as `body_revisions`, and both
 messages now say "in the body" where that is what they mean.
 
-### S2 `footnotes.sizes` flags a note whose STYLE supplies the size — `PENDING`
+### S2 `footnotes.sizes` flags a note whose STYLE supplies the size — `760b45b`
 `sizes` takes `styles_xml` and resolves a run that states nothing
 through its paragraph's `pStyle` chain (`basedOn` followed, cycles
 survived), then the document default. On the manuscript that produced
@@ -116,7 +116,7 @@ Without the part the disagreement is still reported: the answer
 genuinely is not in `footnotes.xml`, and silence would be a claim this
 cannot support.
 
-### S4 `revision status` printed every stale part on one line — `PENDING`
+### S4 `revision status` printed every stale part on one line — `760b45b`
 Sixteen names, twelve of them `word/fonts/font*.odttf` from one tick of
 Word's embed-fonts box. Folded by directory —
 `word/fonts/ (12 parts)` — and capped at four entries with "and N more".
