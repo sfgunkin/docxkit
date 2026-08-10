@@ -78,7 +78,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Fixed
 
-### S3 `compare`'s FORMAT layer cannot see size or colour — `PENDING`
+### S3 `compare`'s FORMAT layer cannot see size or colour — `6920980`
 FORMAT now carries `size` and `colour`, **resolved** through the new
 `styles.Cascade` — direct run properties, then the character style
 chain, then the paragraph style chain, then docDefaults — rather than
