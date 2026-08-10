@@ -535,6 +535,50 @@ def test_figures_check_gates_on_a_drawing_without_alt_text(monkeypatch,
     assert "without alt text" in capsys.readouterr().out
 
 
+_FOOTNOTES = (
+    '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
+    'wordprocessingml/2006/main">{notes}</w:footnotes>')
+
+
+def _note(nid: int, text: str, sz: str = "") -> str:
+    props = f'<w:rPr><w:sz w:val="{sz}"/></w:rPr>' if sz else ""
+    return (f'<w:footnote w:id="{nid}"><w:p><w:r>{props}'
+            f"<w:t>{text}</w:t></w:r></w:p></w:footnote>")
+
+
+def test_footnotes_check_gates_on_one_that_disagrees(monkeypatch, tmp_path,
+                                                     capsys):
+    """The offender states NO size and inherits the body's, so no search
+    for a wrong value can find it — only the disagreement shows."""
+    from docxkit.package import write_docx
+    agreed = _note(2, "first", "20") + _note(3, "second", "20")
+    tidy = tmp_path / "tidy.docx"
+    write_docx(tidy, make_parts(para(run("body")), footnotes=(
+        _FOOTNOTES.format(notes=agreed))))
+    odd = tmp_path / "odd.docx"
+    write_docx(odd, make_parts(para(run("body")), footnotes=(
+        _FOOTNOTES.format(notes=agreed + _note(4, "the silent one")))))
+
+    code, _ = run_cli(monkeypatch, "footnotes", str(tidy), "--check")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "house size 10pt" in out
+
+    code, _ = run_cli(monkeypatch, "footnotes", str(odd), "--check")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "footnote 4" in out and "the silent one" in out
+
+
+def test_footnotes_on_a_paper_that_has_none(monkeypatch, tmp_path, capsys):
+    from docxkit.package import write_docx
+    path = tmp_path / "plain.docx"
+    write_docx(path, make_parts(para(run("body"))))
+    code, _ = run_cli(monkeypatch, "footnotes", str(path), "--check")
+    assert code == 0
+    assert "no footnotes part" in capsys.readouterr().out
+
+
 def test_lint_names_the_structural_problem_it_found(monkeypatch, tmp_path,
                                                     capsys):
     path = _broken(tmp_path)

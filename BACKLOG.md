@@ -17,18 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 no check that footnotes share one size
-- **Symptom** One footnote rendered at 12pt among 10pt neighbours. The
-  offender carried **no `w:sz` at all** and inherited the body size, so
-  searching for a wrong value finds nothing.
-- **Gotcha** `word/footnotes.xml` also holds the separator and
-  continuationSeparator at ids 0 and -1; they carry `w:type` and are not
-  footnotes. A naive sweep "fixes" two non-footnotes.
-- **Evidence** 2026-08-10.
-- **Workaround** `fix_display_math.py`, same file as above.
-- **Fix** A `hygiene` check: footnotes disagreeing on size, or lacking an
-  explicit one.
-
 ### S4 `wrap_link_in_bookmark` has no "first mention" mode
 - **Symptom** Refuses when a work is cited more than once (correct — it
   will not guess), but the house convention is *bookmark the first
@@ -71,6 +59,34 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S2 no check that footnotes share one size — `PENDING`
+`footnotes.sizes(xml) -> SizeReport`, plus `docxkit footnotes PAPER.docx
+[--check]`. It went to `footnotes` rather than `hygiene` as the entry
+suggested, because `footnotes.fonts` was already asking the neighbouring
+question and `set_font` is already the repair — a footnote check in
+`hygiene` would have split the seam.
+
+Reported as a DISAGREEMENT, not as a wrong value, which is what the
+entry's symptom demands: the offender states nothing, so no search for a
+wrong number can find it. The house size is what most footnotes state,
+so a document whose footnotes all inherit — every size in styles.xml,
+perfectly ordinary — reports nothing. Ids 0 and -1 are skipped by
+`find_all` already. Runs with no visible text are not asked: the
+`w:footnoteRef` run is formatted by the FootnoteReference style and
+states no size on purpose, and counting it would put every conforming
+document on the list.
+
+**Swept over real manuscripts, which is the only way to know a check
+like this does not cry wolf: 134 clean, 0 flagged** across Life
+Expectancy, DSI and FLOPsExport.
+
+**And it found a LIVE one the workaround missed.** Parental_style
+`revision/working.docx` still has three footnotes (5, 6, 7) whose text
+runs carry no `w:sz`. `fix_display_math.py` skipped them because it
+tested `'<w:sz w:val=' in blob` and the PARAGRAPH MARK's `w:rPr` carries
+one — the mark's own formatting, not the runs'. Worth a batch on that
+paper: `footnotes.set_font(xml, size=10)`.
 
 ### S2 no display-mode support, and Word's auto-promotion is unreliable — `eee8274`
 `equations.display(para, jc="center")` wraps the paragraph's maths in an

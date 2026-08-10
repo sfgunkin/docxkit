@@ -153,6 +153,94 @@ def test_a_face_with_an_ampersand_is_escaped_into_the_attribute():
     assert parses(out)
 
 
+# --------------------------------------------- do they AGREE on a size ----
+# The manuscript defect this exists for: one footnote rendered at 12pt
+# among 10pt neighbours, and the offender carried NO w:sz at all — it
+# inherited the body size, so searching for a wrong value found nothing.
+
+
+SZ10, SZ12 = '<w:sz w:val="20"/>', '<w:sz w:val="24"/>'
+
+
+def test_footnotes_that_all_state_the_same_size_are_clean():
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10))))
+    assert report.ok and report.house == 20 and report.counted == 2
+
+
+def test_the_one_that_states_nothing_is_the_finding():
+    """No wrong value exists to search for: the note is silent and
+    inherits whatever the body is."""
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, run("the odd one out"))))
+    assert not report.ok
+    (odd,) = report.outliers
+    assert odd.id == "4" and odd.stated == (None,)
+    assert "states no size" in str(odd)
+    assert "the odd one out" in str(odd), "a finding must say where"
+
+
+def test_a_note_stating_a_different_size_is_also_a_finding():
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, run("c", SZ12))))
+    assert [o.id for o in report.outliers] == ["4"]
+    assert "12pt" in str(report.outliers[0])
+
+
+def test_a_document_whose_footnotes_all_inherit_has_nothing_to_report():
+    """Every size living in styles.xml is perfectly ordinary, and a check
+    that flagged it would flag half the manuscripts on this machine."""
+    report = footnotes.sizes(part(note(2, run("a")), note(3, run("b"))))
+    assert report.ok and report.house is None
+
+
+def test_the_reference_mark_does_not_count_as_a_silent_run():
+    """The run holding w:footnoteRef is formatted by the
+    FootnoteReference style and states no size ON PURPOSE. Counting it
+    would put every conforming document on the list."""
+    marked = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+              "<w:footnoteRef/></w:r>")
+    report = footnotes.sizes(part(note(2, marked + run("a", SZ10)),
+                                  note(3, marked + run("b", SZ10))))
+    assert report.ok, report.format()
+
+
+def test_words_separator_notes_are_not_footnotes():
+    """ids 0 and -1 are the separator and continuationSeparator. A naive
+    sweep "fixes" two things nobody reads."""
+    report = footnotes.sizes(part(note(0, run("---")), note(-1, run("---")),
+                                  note(2, run("a", SZ10))))
+    assert report.counted == 1 and report.ok
+
+
+def test_a_mixed_footnote_is_reported_with_both_sizes():
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, run("c", SZ10) + run("d", SZ12))))
+    (odd,) = report.outliers
+    assert odd.stated == (20, 24)
+    assert "10pt, 12pt" in str(odd)
+
+
+def test_set_font_answers_the_finding():
+    """The repair and the check are a pair: after set_font the audit
+    comes back clean, which is what makes it worth running twice."""
+    xml = part(note(2, run("a", SZ10)), note(3, run("b", SZ10)),
+               note(4, run("silent")))
+    assert not footnotes.sizes(xml).ok
+    out, _ = footnotes.set_font(xml, size=10)
+    assert footnotes.sizes(out).ok
+
+
+def test_the_report_prints_the_house_size_and_the_count():
+    line = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                note(3, run("b", SZ10)),
+                                note(4, run("c")))).format()
+    assert "3 footnote(s), house size 10pt, 1 disagreeing" in line
+
+
 # ------------------------------------------------- the primitive underneath
 
 def test_set_run_property_gives_a_bare_run_its_properties():

@@ -17,7 +17,7 @@ document, not real footnotes; :func:`find_all` skips them.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ._xml import (
     PARA_RE,
@@ -34,6 +34,7 @@ from .errors import AnchorError
 __all__ = [
     "FontReport",
     "Footnote",
+    "SizeReport",
     "append",
     "find",
     "find_all",
@@ -41,6 +42,7 @@ __all__ = [
     "remap",
     "renumber_map",
     "set_font",
+    "sizes",
 ]
 
 _FOOTNOTE_RE = re.compile(r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)'
@@ -279,4 +281,97 @@ def fonts(footnotes_xml: str, *, include_reserved: bool = False
                 key = f"{face or 'inherited face'} {pts}"
             seen[key] = seen.get(key, 0) + 1
     return seen
+
+
+# ------------------------------------------------- do they AGREE on a size
+# A different question from `fonts`, and the one a manuscript fails
+# silently: one footnote rendered at 12pt among 10pt neighbours, and it
+# carried NO `w:sz` at all — it inherited the body size — so searching
+# for a wrong value found nothing. What gives it away is not the value
+# but the DISAGREEMENT, which needs no styles.xml to see.
+#
+# Only text-bearing runs are asked. The run holding `w:footnoteRef` is
+# formatted by the FootnoteReference style and states no size on
+# purpose; counting it would put every conforming document on the list.
+
+
+@dataclass(frozen=True)
+class SizeOutlier:
+    """A footnote that does not state what its neighbours state."""
+
+    id: str
+    stated: tuple[int | None, ...]     # half-points; None = states nothing
+    text: str
+
+    def __str__(self) -> str:
+        if self.stated == (None,):
+            what = "states no size — inherits whatever the body is"
+        else:
+            what = "states " + ", ".join(
+                "nothing" if s is None else f"{s / 2:g}pt"
+                for s in self.stated)
+        return f"footnote {self.id}: {what} — {self.text!r}"
+
+
+@dataclass
+class SizeReport:
+    """What the footnotes agree on, and which ones do not."""
+
+    house: int | None = None           # half-points, or None if none agree
+    counted: int = 0
+    outliers: list[SizeOutlier] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.outliers
+
+    def format(self) -> str:
+        house = ("none stated" if self.house is None
+                 else f"{self.house / 2:g}pt")
+        head = (f"{self.counted} footnote(s), house size {house}, "
+                f"{len(self.outliers)} disagreeing")
+        return "\n".join([head] + [f"  {o}" for o in self.outliers])
+
+
+def sizes(footnotes_xml: str, *, include_reserved: bool = False
+          ) -> SizeReport:
+    """Which footnotes disagree with the rest about their size.
+
+    Reported as a disagreement rather than as a wrong value, because the
+    footnote that went out at 12pt among 10pt neighbours stated NOTHING:
+    it inherited the body size, and a search for a wrong number cannot
+    find an absent one. The house size is what most footnotes state, so
+    a document whose footnotes all inherit — every size living in
+    styles.xml, which is perfectly ordinary — has nothing to report and
+    gets no findings.
+
+    Repair with :func:`set_font`, which writes direct run formatting.
+    """
+    stated: list[tuple[str, tuple[int | None, ...], str]] = []
+    for note in find_all(footnotes_xml, include_reserved=include_reserved):
+        math = _math_spans(note.xml)
+        seen: set[int | None] = set()
+        for m in RUN_RE.finditer(note.xml):
+            if any(s <= m.start() < e for s, e in math):
+                continue
+            if not visible_text(m.group(0)).strip():
+                continue               # the reference mark states no size
+            seen.add(_run_font(m.group(0))[1])
+        if not seen:
+            continue                   # nothing a reader sees: nothing to say
+        # `None` sorts last, and never against an int: the first key
+        # element already separates the two cases
+        found = tuple(sorted(seen, key=lambda s: (s is None, s)))
+        text = " ".join(visible_text(note.xml).split())[:48]
+        stated.append((note.id, found, text))
+
+    report = SizeReport(counted=len(stated))
+    agreed = [s[0] for _, s, _ in stated
+              if len(s) == 1 and s[0] is not None]
+    if not agreed:
+        return report                  # nothing states a size: nothing to say
+    report.house = max(set(agreed), key=agreed.count)
+    report.outliers = [SizeOutlier(fid, s, text) for fid, s, text in stated
+                       if s != (report.house,)]
+    return report
 

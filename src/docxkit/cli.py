@@ -11,6 +11,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit count PAPER.docx [--exclude references,tables] [--limit N]
     docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
     docxkit figures PAPER.docx [--check]
+    docxkit footnotes PAPER.docx [--check]
     docxkit smarten PAPER.docx [--write]
     docxkit lint PAPER.docx
     docxkit verify PAPER.docx
@@ -591,6 +592,28 @@ def cmd_figures(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_footnotes(args: argparse.Namespace) -> int:
+    """What the footnotes are set in, and which one disagrees."""
+    from .footnotes import fonts, sizes
+    parts = _package(args.docx)
+    notes = parts.get(FOOTNOTES)
+    if not notes:
+        print(f"{Path(args.docx).name}: no footnotes part")
+        return 0
+    xml = notes.decode("utf-8")
+    report = sizes(xml)
+    print(f"{Path(args.docx).name}\n{report.format()}")
+    print("\n== every face and size a run states ==")
+    for key, count in sorted(fonts(xml).items(), key=lambda kv: -kv[1]):
+        print(f"  {count:>5}  {key}")
+    if args.check and not report.ok:
+        print(f"\nCHECK FAILED: {len(report.outliers)} footnote(s) do not "
+              f"agree with the rest.\nfootnotes.set_font(xml, size=...) "
+              f"writes the size onto every run.")
+        return 1
+    return 0
+
+
 def cmd_smarten(args: argparse.Namespace) -> int:
     """Straight quotes to typographic ones; dry run unless --write."""
     from .hygiene import smarten
@@ -1058,6 +1081,13 @@ def main() -> None:
     p.add_argument("--check", action="store_true",
                    help="exit 1 if anything is found")
     p.set_defaults(fn=cmd_math)
+
+    p = sub.add_parser(
+        "footnotes", help="the size the footnotes agree on, and who does not")
+    p.add_argument("docx")
+    p.add_argument("--check", action="store_true",
+                   help="exit 1 if a footnote disagrees with the rest")
+    p.set_defaults(fn=cmd_footnotes)
 
     p = sub.add_parser(
         "figures", help="figures and their alt text")

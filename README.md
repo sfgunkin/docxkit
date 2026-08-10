@@ -84,6 +84,7 @@ docxkit text PAPER.docx [--tracked final|original] [--md]
 docxkit count PAPER.docx [--exclude references,tables,...] [--limit N]
 docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
 docxkit figures PAPER.docx [--check]
+docxkit footnotes PAPER.docx [--check]      # the size they agree on, and who does not
 docxkit authors PAPER.docx [--set NAME] [--only A,B] [--initials XX] [--write]
 docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
