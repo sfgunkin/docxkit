@@ -499,7 +499,14 @@ class ValidateReport:
 # here because a real document produced it. Do not add a fold on
 # suspicion.
 _FOLD = str.maketrans({"\u2212": "-", "\u2010": "-", "\u2011": "-",
-                       "\u00a0": " ", "\u2217": "*"})
+                       "\u00a0": " ", "\u2217": "*",
+                       # PRIME vs APOSTROPHE. Word's Range.Text returns
+                       # U+2032 where the XML stores U+0027 in derivative
+                       # notation. Parental_style writes V', S', a^E'(x)
+                       # and a^X'(x) throughout its theory section, so the
+                       # gate failed there with ZERO revisions in the file
+                       # -- the same shape as the T* case above.
+                       "\u2032": "'"})
 
 
 def _norm(text: str) -> str:

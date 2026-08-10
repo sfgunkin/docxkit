@@ -689,6 +689,17 @@ def test_validate_folds_the_math_asterisk(tmp_path, monkeypatch):
     assert revision.validate(path).accept_paths_agree is True
 
 
+def test_validate_folds_the_derivative_prime(tmp_path, monkeypatch):
+    """Word returns U+2032 PRIME where the XML stores U+0027 APOSTROPHE in
+    derivative notation. Parental_style writes V', S' and a^E'(x) through
+    its theory section, so gate 6 failed there on a file holding ZERO
+    revisions — the same shape as the T* case."""
+    path = write(tmp_path / "p.docx", make_parts(para(run("V' is the value"))))
+    rendered = _FakeDoc(revisions=0, text="V′ is the value\r")
+    monkeypatch.setattr(revision, "_word", _FakeWord(rendered))
+    assert revision.validate(path).accept_paths_agree is True
+
+
 def test_validate_still_sees_a_real_difference_in_math(tmp_path, monkeypatch):
     """The folds must not blind the gate: a character Word did not merely
     RENDER differently is still a mismatch."""
