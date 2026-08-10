@@ -188,3 +188,64 @@ def test_an_unlocked_settled_file_still_baselines(tmp_path):
     written = revision.baseline(paper)
     assert written.exists()
     assert written.read_bytes() == paper.working.read_bytes()
+
+
+# ------------------------------------------- a baseline left behind ----
+
+
+def test_drift_is_empty_when_the_baseline_is_the_file(tmp_path):
+    body = para(run("The paper as it stands."))
+    working = write(tmp_path / "working.docx", make_parts(body))
+    prev = write(tmp_path / "prev.docx", make_parts(body))
+    assert revision.drift(working, prev) == []
+
+
+def test_drift_sees_what_counting_pending_revisions_cannot(tmp_path):
+    """The author accepted everything in Word and saved. Both files now
+    count 0 pending -> TRUTH, and they are not the same paper."""
+    working = write(tmp_path / "working.docx",
+                    make_parts(para(run("The paper, as accepted."))))
+    prev = write(tmp_path / "prev.docx",
+                 make_parts(KINDS["insertion"]))
+    assert revision.state(working).is_truth
+    assert revision.drift(working, prev) == ["word/document.xml"]
+
+
+def test_drift_names_the_part_not_just_the_fact(tmp_path):
+    """An edit confined to a footnote is a different message to the
+    author than an edit to the body."""
+    body = para(run("Body prose."))
+    working = write(tmp_path / "working.docx", make_parts(
+        body, footnotes=notes("footnotes", '<w:footnote w:id="2">'
+                              + para(run("revised note")) + "</w:footnote>")))
+    prev = write(tmp_path / "prev.docx", make_parts(
+        body, footnotes=notes("footnotes", '<w:footnote w:id="2">'
+                              + para(run("the old note")) + "</w:footnote>")))
+    assert revision.drift(working, prev) == ["word/footnotes.xml"]
+
+
+def test_a_word_resave_is_not_drift(tmp_path):
+    """The guard that keeps the warning worth reading: a Word round-trip
+    re-mints rsids and the editing-time total in nearly every part, and a
+    staleness check that fires on all of them is one nobody reads."""
+    body = para(run("Identical prose."))
+    working = write(tmp_path / "working.docx", make_parts(body, extra={
+        "docProps/app.xml": "<Properties><TotalTime>91</TotalTime>"
+                            "</Properties>",
+        "word/settings.xml": '<w:settings w:rsid="00AF12C4"/>'}))
+    prev = write(tmp_path / "prev.docx", make_parts(body, extra={
+        "docProps/app.xml": "<Properties><TotalTime>17</TotalTime>"
+                            "</Properties>",
+        "word/settings.xml": '<w:settings w:rsid="00119933"/>'}))
+    assert revision.drift(working, prev) == []
+
+
+def test_a_part_the_author_added_is_drift(tmp_path):
+    """Not every divergence is an edited part. A footnote added where
+    there were none leaves every shared part identical."""
+    body = para(run("Body prose."))
+    working = write(tmp_path / "working.docx", make_parts(
+        body, footnotes=notes("footnotes", '<w:footnote w:id="2">'
+                              + para(run("a new note")) + "</w:footnote>")))
+    prev = write(tmp_path / "prev.docx", make_parts(body))
+    assert revision.drift(working, prev) == ["word/footnotes.xml"]

@@ -46,7 +46,10 @@ list, because each one is silent if you skip it:
 * a copy made while Word holds the file is overwritten the moment Word
   saves, and the promotion silently vanishes;
 * a batch promoted onto a working.docx the author has edited since
-  destroys those edits.
+  destroys those edits;
+* an accept the author made in Word leaves NOTHING pending on either
+  side, so a pending count alone calls a baseline the paper has already
+  outgrown "the truth" — see :func:`drift`.
 """
 from __future__ import annotations
 
@@ -83,6 +86,7 @@ __all__ = [
     "ValidateReport",
     "baseline",
     "build",
+    "drift",
     "find_config",
     "ingest",
     "init",
@@ -305,6 +309,43 @@ def state(path: str | Path) -> State:
             if who:
                 by_author[who.group(1)] = by_author.get(who.group(1), 0) + 1
     return State(path=path, by_part=by_part, by_author=by_author)
+
+
+def _drifted(before: dict[str, bytes], after: dict[str, bytes]) -> list[str]:
+    """Which parts differ in MEANING, save-noise excluded."""
+    parts = package.changed_parts(before, after)
+    return sorted(name for bucket in ("changed", "added", "removed")
+                  for name in parts[bucket] if name not in SAVE_NOISE)
+
+
+def drift(working: str | Path, prev: str | Path) -> list[str]:
+    """Which parts of the live file the baseline no longer matches.
+
+    "Is anything still pending?" and "is the baseline still the file this
+    one grew out of?" look like one question and are two. :func:`state`
+    answers only the first, so the moment the author accepts everything
+    in Word and saves, BOTH files read 0 pending -> truth while their
+    content has diverged — ``prev.docx`` is still the pre-accept copy.
+    A batch built then is built on a stale base, and nothing says so
+    until ``promote`` refuses on a hash mismatch, *after* a Word Compare
+    has been paid for.
+
+    The accept is not the only way in. A batch whose revisions are all
+    math-resolved leaves nothing pending either, so ``prev`` goes stale
+    the instant that batch is promoted.
+
+    Read-only, and compares MEANING rather than bytes
+    (:func:`package.part_fingerprint`), skipping :data:`SAVE_NOISE` —
+    a Word save re-mints rsids and the editing-time total in every
+    round-trip, and a staleness warning that fires on all of them is one
+    nobody reads.
+
+    Returns the part names, because a warning is worth little without
+    WHERE: ``word/document.xml`` is an edit to the paper, while
+    ``word/footnotes.xml`` alone is one to a note.
+    """
+    return _drifted(package.read_parts(Path(prev)),
+                    package.read_parts(Path(working)))
 
 
 # --------------------------------------------------------------- ingest
@@ -820,7 +861,11 @@ from the file:
 | 0 | **truth** — this is the paper | agent may start a batch |
 | >0 | **proposal** — a batch awaiting a verdict | author accepts/rejects |
 
-    docxkit revision status
+    docxkit revision status   # 0 settled · 1 pending · 4 stale baseline
+
+Exit 4 means the two counts agree and the CONTENT does not: `prev.docx`
+is no longer what `working.docx` grew out of (an accept in Word leaves
+nothing pending on either side). Ingest, then baseline.
 
 ## Rules
 

@@ -37,22 +37,6 @@ fixed entries; "did we ever fix that?" is a real question later.
   and confirm against a second document what Word actually returns for an
   inline graphic before encoding it.
 
-### S3 `revision status` says TRUTH/TRUTH when prev and working differ
-- **Symptom** `status` counts pending revisions only. After the author
-  accepts in Word, BOTH sides read `0 pending -> TRUTH` while their
-  CONTENT has diverged, because `prev.docx` is still the pre-accept file.
-  A batch built then is built on a stale base.
-- **Repro** Accept all revisions in Word, save, then `docxkit revision
-  status` — TRUTH/TRUTH. Build a batch and `promote` refuses with a hash
-  mismatch, *after* the Word Compare has been paid for.
-- **Evidence** 2026-08-10, A.3 sign fix — cost one full Compare cycle.
-- **Workaround** Always `revision ingest` first; recorded in
-  [[feedback_house_style_math]].
-- **Fix** `status` already fingerprints parts elsewhere. Compare
-  `working` against `prev` and print **"baseline stale — ingest first"**.
-  Also: a batch whose revisions are ALL math-resolved leaves nothing
-  pending, so `prev` goes stale the instant it is promoted.
-
 ### S2 `latex_to_omml` output needs a normalization pass
 All four are valid markup, so lint, `math` and text-diff pass while the
 page is wrong. Only a PDF render catches them.
@@ -144,6 +128,20 @@ page is wrong. Only a PDF render catches them.
 ---
 
 ## Fixed
+
+### S3 `revision status` says TRUTH/TRUTH when prev and working differ — `PENDING`
+New `revision.drift(working, prev)` compares MEANING part by part
+(`package.part_fingerprint`, save-noise excluded) and returns the parts
+that differ; `status` asks it only of a settled file — while a proposal
+is pending the two are *supposed* to differ — and exits **4** with the
+part named and the remedy printed. Exit 0 now means both settled AND
+built on a current baseline, which is what a script checking it was
+already assuming. Verified failing without the fix: the stale case
+exited 0.
+**Bonus:** `ruff` and `mypy` were both red at HEAD on
+`tests/test_pathological.py` (a long line and an untyped wrapper from
+`1c09490`). Fixed here — two of the four gates being red is the same
+S3 class as the entry above.
 
 ### S1 `crossrefs.unlink`/`link` blind to field-form hyperlinks — `1c09490`
 `unlink` removed the bookmarks, left every HYPERLINK field standing and

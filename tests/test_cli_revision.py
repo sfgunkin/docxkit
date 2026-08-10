@@ -174,6 +174,33 @@ def test_status_names_the_part_the_author_cannot_see(monkeypatch, project,
     assert "Review>Next SKIPS these" in out
 
 
+def test_status_flags_a_baseline_the_paper_has_outgrown(monkeypatch,
+                                                        project, capsys):
+    """The author accepted every revision in Word and saved. Counting
+    pending revisions sees TRUTH on both sides and says go; the two files
+    are no longer the same paper, and a batch built here is built on the
+    wrong base — which `promote` discovers only after a Word Compare."""
+    write(project.working, make_parts(para(run("The paper, as accepted."))))
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 4, "a stale baseline exited 0 - a script would build on it"
+    assert "TRUTH" in out                    # both sides still count zero
+    assert "STALE" in out and "word/document.xml" in out
+    assert "revision ingest" in out
+
+
+def test_status_does_not_cry_stale_over_a_pending_proposal(monkeypatch,
+                                                           project, capsys):
+    """A proposal is SUPPOSED to differ from its baseline. Reporting it
+    as staleness would fire on every batch the protocol produces."""
+    write(project.working, make_parts(para(run("x"), _ins("added"))))
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 1 and "STALE" not in out
+
+
 def test_status_reports_a_missing_baseline(monkeypatch, project, capsys):
     project.prev.unlink()
     code, _ = run_cli(monkeypatch, "revision", "status",

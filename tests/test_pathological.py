@@ -38,6 +38,7 @@ change it.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 import pytest
 from conftest import NS
@@ -264,7 +265,7 @@ def test_every_specimen_is_itself_well_formed(specimen):
 # ------------------------------------------------ document-wide mutators ---
 
 
-def refusing_is_safe(fn):
+def refusing_is_safe(fn: Callable[[str], str]) -> Callable[[str], str]:
     """Wrap a mutator so a DELIBERATE refusal counts as leaving the
     document alone.
 
@@ -292,7 +293,8 @@ def text_preserving_mutators():
     return [
         ("crossrefs.link", lambda x: crossrefs.link(x)[0]),
         ("crossrefs.link_more", lambda x: crossrefs.link_more(x)[0]),
-        ("crossrefs.unlink", refusing_is_safe(lambda x: crossrefs.unlink(x)[0])),
+        ("crossrefs.unlink",
+         refusing_is_safe(lambda x: crossrefs.unlink(x)[0])),
         ("preserve_space", lambda x: preserve_space(x)[0]),
         ("hygiene.smarten", lambda x: hygiene.smarten(x)[0]),
     ]

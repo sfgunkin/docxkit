@@ -702,17 +702,38 @@ def _show_state(label: str, st: object) -> None:
 
 
 def cmd_revision_status(args: argparse.Namespace) -> int:
-    """Truth or proposal? The one question the layout answers by itself."""
-    from .revision import state
+    """Truth or proposal? The one question the layout answers by itself.
+
+    Exit 0 means both: settled AND built on a current baseline. A truth
+    whose baseline has drifted exits 4, not 0 — the whole point of a
+    non-zero status is to let a script refuse to start a batch, and a
+    batch on a stale base is refused by `promote` only after a Word
+    Compare has been paid for.
+    """
+    from .revision import drift, state
     paper = _paper(args)
     print(f"{paper.name}\n  {paper.working}")
     st = state(paper.working)
     _show_state("working", st)
-    if paper.prev.exists():
-        _show_state("prev", state(paper.prev))
-    else:
+    if not paper.prev.exists():
         print("  prev      MISSING - no baseline to compare or reject "
               "against; run `docxkit revision baseline`")
+        return 0 if st.is_truth else 1
+    _show_state("prev", state(paper.prev))
+    # Only worth asking of a settled file: while a proposal is pending
+    # the two are SUPPOSED to differ, and saying so every time is how a
+    # warning stops being read.
+    stale = drift(paper.working, paper.prev) if st.is_truth else []
+    if stale:
+        print(f"\n  ** baseline STALE: {', '.join(stale)} differ(s) **")
+        print("     Both files count 0 pending, and they are not the same "
+              "paper -\n     prev.docx is not what working.docx grew out "
+              "of. Building a batch\n     on it compares against the wrong "
+              "base. First:\n"
+              "       docxkit revision ingest     (what changed, read-only)"
+              "\n       docxkit revision baseline   (record it as the new "
+              "truth)")
+        return 4
     return 0 if st.is_truth else 1
 
 
@@ -1078,7 +1099,7 @@ def main() -> None:
         return r
 
     _rev("status", cmd_revision_status,
-         "truth or proposal? (exit 1 while a proposal is pending)")
+         "truth or proposal? (exit 1 pending, 4 stale baseline)")
 
     r = _rev("ingest", cmd_revision_ingest,
              "what the author changed since the last truth (read-only)")
