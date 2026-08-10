@@ -17,6 +17,58 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 `compare`'s FORMAT layer cannot see size or colour
+- **Symptom** `docxkit compare A.docx B.docx --expect-clean` prints
+  **"EXPECT-CLEAN OK"** and exits 0 on two documents differing in 25
+  runs' `w:sz` and `w:color`. `_flags` in `_compare_read` collects
+  `w:i`, `w:b`, `w:strike`, `w:smallCaps` and `w:vertAlign` — nothing
+  else — so a size or colour edit is invisible to every layer: STRUCTURE
+  and TEXT do not move, and FORMAT does not look.
+- **Repro** 2026-08-10, exactly:
+  `docxkit compare revision/build/prev.docx
+  revision/build/footnote_sizes.docx --expect-clean` → exit 0, "0 real
+  change locations", on the pair whose whole difference was the footnote
+  repair.
+- **What it costs** the report is the authoritative gate — "never decide
+  *did this change?* by eyeballing; let the tool enumerate". An author
+  who changes a font size in their copy gets "clean", and the next
+  rebuild drops it with nothing said. That is the same class of loss
+  FORMULA TYPOGRAPHY was added for, and `_compare_read`'s own comment
+  above that layer NAMES size as a thing that changes what a symbol is —
+  so the math side gates on it and the prose side does not.
+- **The second half is deliberate and must survive any fix**
+  hyperlink-styled runs contribute EMPTY formatting on purpose ("their
+  underline and colour are structural, not an author's emphasis"), which
+  is also why footnote 5's eleven citation links changing colour was
+  invisible. A colour rule that fires on every hyperlink is worse than
+  no colour rule.
+- **Not obviously a defect** the layer's own header declares its scope,
+  and widening it risks the noise `_char_fmt` was tuned to avoid. The
+  question is whether `--expect-clean` may keep passing a document that
+  differs.
+- **Fix** decide first, with a real author round in hand: either add
+  size/colour to `_flags` (and check what it does to the sweep's
+  formatting counts), or say in the report that this layer is blind to
+  them so nobody reads "0 real changes" as "identical".
+
+### S4 `footnotes.sizes` skips the reference mark untested
+- **Symptom** `sizes` asks only runs with visible text, so a paper that
+  deliberately sizes the `w:footnoteRef` run gets no finding when one
+  mark disagrees with the rest.
+- **Why it is that way** the mark's run is formatted by the
+  FootnoteReference style and states no size on purpose. Counting it put
+  every conforming document on the list — that exclusion is what makes
+  the check quiet enough to run twice.
+- **Evidence** none. No document on this machine sizes it; the 134-file
+  sweep says nothing either way. Recorded as a KNOWN EDGE rather than a
+  defect, at the user's request, so the next person meets it as a
+  decision rather than as a surprise.
+- **Verify before fixing** find a manuscript whose footnote marks carry
+  an explicit `w:sz`, and check whether one of them disagreeing is
+  visible on the page. Without that, widening the rule trades a real
+  quiet for a hypothetical catch — the same trade `_FOLD`'s docstring
+  refuses.
+
 ### S4 `wrap_link_in_bookmark` has no "first mention" mode
 - **Symptom** Refuses when a work is cited more than once (correct — it
   will not guess), but the house convention is *bookmark the first
