@@ -5,7 +5,7 @@ import pytest
 from conftest import NS
 
 from docxkit.errors import PackageError
-from docxkit.styles import apply_template, ensure, read, used
+from docxkit.styles import Cascade, apply_template, ensure, read, used
 
 
 def style(sid: str, name: str, *, kind: str = "paragraph",
@@ -102,3 +102,120 @@ def test_ensure_appends_once():
     assert ensure(parts, new) is False
     assert parts["word/styles.xml"].decode("utf-8").count(
         'w:styleId="CaptionX"') == 1
+
+
+def test_the_report_reads_when_nothing_was_remapped():
+    """`or "none"` — a report of an empty dict said "remapped: " and
+    trailed off."""
+    parts = make_parts()
+    report = apply_template(parts, TEMPLATE)
+    assert "none" in report.format()
+
+
+def test_the_report_names_what_dangles():
+    """The `missing` line is the whole point of the audit: every id on it
+    is a place the manuscript falls back to Word's defaults. It had no
+    test, so neither the branch nor the join that builds it was run."""
+    parts = make_parts()
+    report = apply_template(parts, TEMPLATE, remap={"MyHeading":
+                                                    "JnlHeading"})
+    line = report.format()
+    assert "MyTable" in line and "MyNote" in line
+    assert "UNDEFINED" in line
+    assert "MyEmphasis" not in line, "defined in the template: not missing"
+
+
+def test_the_remap_count_is_per_id_and_counts_every_hit():
+    parts = {
+        "word/document.xml": doc_part(
+            '<w:p><w:pPr><w:pStyle w:val="A"/></w:pPr></w:p>'
+            '<w:p><w:pPr><w:pStyle w:val="A"/></w:pPr></w:p>'
+            '<w:p><w:pPr><w:pStyle w:val="B"/></w:pPr></w:p>'),
+        "word/styles.xml": styles_part(style("A", "a"), style("B", "b")),
+    }
+    report = apply_template(parts, {"word/styles.xml": styles_part(
+        style("X", "x"), style("Y", "y"))}, remap={"A": "X", "B": "Y"})
+    assert report.remapped == {"A": 2, "B": 1}
+
+
+# ----------------------------------------------------------- Cascade ----
+# What a run's properties RESOLVE to. The mutation sweep found the
+# `w:tblStylePr` guard below completely uncovered — a defensive branch
+# written against a known trap and never once run.
+
+
+def _styles(*defs: str, default: str = "") -> str:
+    head = (f"<w:docDefaults><w:rPrDefault><w:rPr>{default}"
+            f"</w:rPr></w:rPrDefault></w:docDefaults>" if default else "")
+    return f"<w:styles {NS}>{head}{''.join(defs)}</w:styles>"
+
+
+def _para_style(sid: str, rpr: str, based_on: str | None = None) -> str:
+    base = f'<w:basedOn w:val="{based_on}"/>' if based_on else ""
+    return (f'<w:style w:type="paragraph" w:styleId="{sid}">{base}'
+            f"<w:rPr>{rpr}</w:rPr></w:style>")
+
+
+def test_a_table_styles_conditional_band_is_not_its_own_properties():
+    """A table style nests a whole `w:rPr` per conditional band, AFTER
+    its own. Searching the raw element finds the band's — so a style
+    whose own rPr is silent would answer with whatever the first-row
+    band happens to say."""
+    banded = ('<w:style w:type="table" w:styleId="Grid">'
+              '<w:rPr><w:sz w:val="20"/></w:rPr>'
+              '<w:tblStylePr w:type="firstRow"><w:rPr>'
+              '<w:sz w:val="96"/></w:rPr></w:tblStylePr></w:style>')
+    assert Cascade(_styles(banded)).of("sz", pstyle="Grid") == "20"
+
+
+def test_a_band_is_not_borrowed_when_the_style_itself_is_silent():
+    """The half that fails LOUDLY without the cut: nothing of the
+    style's own to find, so the band's 48pt is what comes back."""
+    silent = ('<w:style w:type="table" w:styleId="Grid">'
+              '<w:tblStylePr w:type="firstRow"><w:rPr>'
+              '<w:sz w:val="96"/></w:rPr></w:tblStylePr></w:style>')
+    cascade = Cascade(_styles(silent, default='<w:sz w:val="24"/>'))
+    assert cascade.of("sz", pstyle="Grid") == "24", "took the band's size"
+
+
+def test_known_is_true_with_only_document_defaults():
+    """`known` gates the whole size/colour comparison in `compare`. Read
+    with `and` instead of `or` it goes quietly False on a package that
+    has one source and not the other, and the layer stops looking
+    without saying so."""
+    assert Cascade(_styles(default='<w:sz w:val="24"/>')).known is True
+
+
+def test_known_is_true_with_only_style_definitions():
+    assert Cascade(_styles(_para_style("N", '<w:sz w:val="20"/>'))).known
+
+
+def test_known_is_false_with_no_styles_part():
+    assert Cascade().known is False
+    assert Cascade("").known is False
+
+
+def test_paragraph_style_reads_off_an_instance_too():
+    """It is a @staticmethod, and callers here reach it through the
+    class. Removing the decorator leaves that working and breaks the
+    instance call, which is the one a reader would write."""
+    p = '<w:p><w:pPr><w:pStyle w:val="Note"/></w:pPr></w:p>'
+    assert Cascade().paragraph_style(p) == "Note"
+    assert Cascade.paragraph_style(p) == "Note"
+
+
+def test_a_package_missing_a_referring_part_keeps_going():
+    """`continue`, not `break`: a document with no footnotes must not
+    stop the walk before comments."""
+    parts = {
+        "word/document.xml": doc_part(
+            '<w:p><w:pPr><w:pStyle w:val="A"/></w:pPr></w:p>'),
+        "word/comments.xml": (
+            f'<w:comments {NS}><w:comment w:id="1"><w:p><w:pPr>'
+            f'<w:pStyle w:val="A"/></w:pPr></w:p></w:comment>'
+            f"</w:comments>").encode(),
+        "word/styles.xml": styles_part(style("A", "a")),
+    }
+    report = apply_template(parts, {"word/styles.xml": styles_part(
+        style("X", "x"))}, remap={"A": "X"})
+    assert report.remapped == {"A": 2}, "the comments part was skipped"

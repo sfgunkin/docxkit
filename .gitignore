@@ -8,3 +8,4 @@ dist/
 tests/corpus/*.docx
 !tests/corpus/README.md
 .coverage
+*.sqlite

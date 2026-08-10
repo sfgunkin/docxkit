@@ -153,6 +153,102 @@ def test_a_face_with_an_ampersand_is_escaped_into_the_attribute():
     assert parses(out)
 
 
+# ------------------------------------- locating and appending ------------
+
+
+def test_find_returns_the_matching_note_not_the_first_one():
+    xml = part(note(2, run("the first note")),
+               note(3, run("the second note")),
+               note(4, run("the third note")))
+    assert footnotes.find(xml, "second").id == "3"
+
+
+def test_find_refuses_an_ambiguous_anchor():
+    """Which is also why `return hits[0]` cannot be tested against
+    `hits[-1]`: the refusal above guarantees there is exactly one, so
+    the two index the same element. An equivalent mutant, recorded here
+    rather than chased — a test that pinned it would pin an accident."""
+    xml = part(note(2, run("a shared phrase here")),
+               note(3, run("a shared phrase there")))
+    with pytest.raises(Exception, match="2 hits"):
+        footnotes.find(xml, "shared phrase")
+
+
+def test_append_lands_inside_the_LAST_paragraph():
+    """A run placed directly in `w:footnote`, or in the wrong paragraph,
+    is what makes Word reject the part."""
+    two = ('<w:footnote w:id="2">'
+           f"<w:p>{run('first para')}</w:p>"
+           f"<w:p>{run('second para')}</w:p></w:footnote>")
+    out = footnotes.append(part(two), "second para", " appended.")
+    assert parses(out)
+    body = re.findall(r"<w:p>.*?</w:p>", out, re.DOTALL)
+    assert " appended." not in body[0]
+    assert body[1].endswith("appended.</w:t></w:r></w:p>"), body[1]
+
+
+def test_append_puts_the_text_inside_the_paragraph_not_after_it():
+    out = footnotes.append(part(note(2, run("a note"))), "a note", " more")
+    assert "</w:p></w:footnote>" in out
+    assert "</w:p><w:r>" not in out, "the run escaped its paragraph"
+
+
+# ------------------------------- the guard that has never fired -----------
+# `set_font` skips a `w:r` sitting INSIDE an `m:oMath` — legal markup, and
+# how Word writes literal text in a formula. The module's own docstring
+# says the skip has never fired on a real document: of the 1,940 footnote
+# parts on this machine, 495 carry OMML and none of them puts a `w:r` in
+# it, so the `m:r` rule does all the work. The mutation sweep found that
+# no TEST fired it either -- 18 mutants lived on that one line across the
+# two functions. It is the only thing standing between a formula and the
+# body font the day the run pattern is widened.
+
+MATH_WITH_A_TEXT_RUN = (
+    '<m:oMath><m:r><m:t>x</m:t></m:r>'
+    '<w:r><w:rPr><w:rFonts w:ascii="Cambria Math"/><w:sz w:val="24"/>'
+    "</w:rPr><w:t> if </w:t></w:r>"
+    "<m:r><m:t>y</m:t></m:r></m:oMath>")
+
+
+def test_a_text_run_inside_an_equation_keeps_its_face():
+    """Rewriting it to Times New Roman is how an equation turns into
+    boxes: the text faces do not carry the math glyphs."""
+    out, rep = footnotes.set_font(
+        part(note(2, run("a note") + MATH_WITH_A_TEXT_RUN)))
+    assert 'w:ascii="Cambria Math"' in out, "the equation run was restyled"
+    assert out.count('w:ascii="Times New Roman"') == 1, "only the prose run"
+    assert rep.runs_set == 1
+    assert rep.math_runs_skipped == 1, "the skip is COUNTED, not inferred"
+    assert parses(out)
+
+
+def test_the_skip_is_reported_so_a_low_total_is_not_a_mystery():
+    """"some runs were left" has to be visible rather than inferred from
+    a total that looks low."""
+    _, rep = footnotes.set_font(
+        part(note(2, run("a") + MATH_WITH_A_TEXT_RUN + run("b"))))
+    assert (rep.runs_set, rep.math_runs_skipped) == (2, 1)
+    assert "1 equation run(s) left alone" in rep.format()
+
+
+def test_a_run_after_an_equation_is_still_reached():
+    """`continue`, not `break`: the skip must not end the walk, or every
+    run after the first equation keeps the wrong size."""
+    out, rep = footnotes.set_font(
+        part(note(2, MATH_WITH_A_TEXT_RUN + run("prose after"))))
+    assert rep.runs_set == 1
+    assert 'w:sz w:val="20"' in out
+
+
+def test_the_audit_does_not_count_an_equations_run_either():
+    """`fonts` carries the same skip, and the same 14 mutants lived on
+    it. A Cambria Math run in the tally reads as a footnote set in the
+    wrong face."""
+    seen = footnotes.fonts(part(note(2, run("a") + MATH_WITH_A_TEXT_RUN)))
+    assert "Cambria Math" not in str(seen)
+    assert seen == {"inherited": 1}
+
+
 # --------------------------------------------- do they AGREE on a size ----
 # The manuscript defect this exists for: one footnote rendered at 12pt
 # among 10pt neighbours, and the offender carried NO w:sz at all — it
@@ -306,6 +402,27 @@ def test_without_the_styles_the_disagreement_is_still_reported():
                styled_note(4, "styled", "FootnoteText"))
     (odd,) = footnotes.sizes(xml).outliers
     assert odd.stated == (None,) and "states no size" in str(odd)
+
+
+def test_a_half_point_size_is_reported_as_a_half_point():
+    """Word records half-points, so 21 is 10.5pt. Reported with integer
+    division it reads 10pt — a size that is wrong by half a point and
+    looks like a clean number, which is the hardest kind to notice."""
+    house, odd_one = '<w:sz w:val="21"/>', '<w:sz w:val="25"/>'
+    report = footnotes.sizes(part(note(2, run("a", house)),
+                                  note(3, run("b", house)),
+                                  note(4, run("c", odd_one))))
+    # BOTH sides have to carry an odd value: the house size and the
+    # outlier are rendered by different code, and a test where either
+    # halves evenly cannot tell `/ 2` from `// 2` there
+    assert "house size 10.5pt" in report.format()
+    (odd,) = report.outliers
+    assert "12.5pt" in str(odd)
+
+
+def test_the_audit_reports_a_half_point_face_size_too():
+    seen = footnotes.fonts(part(note(2, run("x", '<w:sz w:val="21"/>'))))
+    assert seen == {"inherited face 10.5pt": 1}
 
 
 def test_the_report_prints_the_house_size_and_the_count():

@@ -152,8 +152,31 @@ sat at 87% coverage while 82 of its 204 mutants survived.
 ```
 cosmic-ray init cr.toml run.sqlite      # module-path = ONE source file
 cosmic-ray exec cr.toml run.sqlite      # test-command = the narrow suite
-cr-report run.sqlite
+python tools/mutation_survivors.py run.sqlite src/docxkit/styles.py
 ```
+
+**Do not read `cr-report`'s percentage.** Every module here carries
+`from __future__ import annotations`, so annotations are strings that are
+never evaluated and a mutation inside one cannot change behaviour. On
+`styles.py`: 225 survivors, **187 of them inside a type annotation** —
+equivalent by construction, not missing tests. The headline said 56%
+survival where the real figure was 9.5%, and a number like that is how a
+tool stops being run. `tools/mutation_survivors.py` splits them and
+prints only the ones that are a question.
+
+What two real runs cost and bought, for calibration:
+
+| module | mutants | real survivors | after |
+|---|---|---|---|
+| `styles.py` | 399 | 38 | 12 |
+| `footnotes.py` | 494 | 76 | — |
+
+The best finding of the pair was one the module had already predicted in
+prose: `set_font`'s skip for a `w:r` inside an `m:oMath` says in its own
+docstring that it has never fired on a real document. Eighteen mutants
+lived on that line across two functions — no test fired it either, and it
+is the only thing standing between a formula and the body font the day
+the run pattern is widened.
 
 Two traps, both hit on 2026-08-07:
 

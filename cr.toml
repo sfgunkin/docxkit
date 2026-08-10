@@ -1,0 +1,22 @@
+# cosmic-ray, one module at a time.
+#
+#     cosmic-ray init cr.toml run.sqlite
+#     cosmic-ray exec cr.toml run.sqlite
+#     python tools/mutation_survivors.py run.sqlite src/docxkit/styles.py
+#
+# Point `module-path` at ONE source file and `test-command` at the
+# NARROW suite that exercises it — the whole suite per mutant turns a
+# ten-minute run into an hour, and a broad suite hides which test does
+# the killing.
+#
+# Read the survivors through `tools/mutation_survivors.py`, not through
+# `cr-report`'s percentage: annotations are strings here (PEP 563), so
+# roughly half of every run's "survivors" are equivalent by construction.
+[cosmic-ray]
+module-path = "src/docxkit/styles.py"
+timeout = 60.0
+excluded-modules = []
+test-command = "python -m pytest -x -q --no-header -p no:cacheprovider tests/test_styles.py tests/test_footnotes.py tests/test_compare.py"
+
+[cosmic-ray.distributor]
+name = "local"
