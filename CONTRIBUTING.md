@@ -164,13 +164,23 @@ survival where the real figure was 9.5%, and a number like that is how a
 tool stops being run. `tools/mutation_survivors.py` splits them and
 prints only the ones that are a question.
 
-What three real runs cost and bought, for calibration:
+What five real runs cost and bought, for calibration:
 
 | module | mutants | real survivors | after |
 |---|---|---|---|
 | `styles.py` | 399 | 38 | 12 |
 | `footnotes.py` | 494 | 76 | — |
 | `revisions.py` | 858 | 120 | 73 |
+| `_compare_read.py` | 449 | 51 | — |
+| `equations.py` | 1,323 | 312 | — |
+
+`equations.py` is where the ratio is worst, and it is not a scandal:
+roughly half its real survivors are in the `to_latex` walker's methods
+for constructs no manuscript here uses — `e_sPre`, `e_groupChr`,
+`e_borderBox`, `e_phant`. The walker's guarantee is that an unknown tag
+is MARKED, never dropped, and that is tested; how prettily it renders a
+pre-subscript is not the same promise. Judge a survivor by what its line
+protects.
 
 A second equivalent class, on top of the annotations, accounts for 43 of
 `revisions.py`'s remaining 73: an ordering operator on a CLOSED string

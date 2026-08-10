@@ -39,6 +39,18 @@ def test_fraction():
     assert to_latex(m(body)) == r"\frac{a}{b}"
 
 
+def test_a_barless_fraction_is_a_binomial_stack():
+    """`noBar` is how Word writes a binomial coefficient — a stack with
+    no rule. Sixteen mutants lived on the slicing that unwraps the two
+    braced arguments, because nothing had ever built one: the arguments
+    come back as `{a}` and `{b}`, and `\\atop` takes them bare inside a
+    single group."""
+    body = ('<m:f><m:fPr><m:type m:val="noBar"/></m:fPr>'
+            "<m:num>" + r("n") + "</m:num><m:den>" + r("k")
+            + "</m:den></m:f>")
+    assert to_latex(m(body)) == r"{n \atop k}"
+
+
 def test_linear_fraction_uses_a_solidus():
     body = ('<m:f><m:fPr><m:type m:val="lin"/></m:fPr>'
             "<m:num>" + r("a") + "</m:num><m:den>" + r("b")

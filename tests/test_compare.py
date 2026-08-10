@@ -671,6 +671,40 @@ def test_nested_volatile_fields_are_masked_exactly_once():
                       + out[len("<w:p>"):]).encode())
 
 
+def test_masking_a_field_does_not_touch_the_prose_around_it():
+    """What the nested test could not see. `result_at = start + sep.end()`
+    had seven surviving mutants — `-`, `//`, `%`, `>>`, `|`, `&`, `^` —
+    because the existing fixture asserts only which tokens appear, and
+    the outer mask overwrites a wrongly-masked inner one either way. A
+    wrong offset masks the wrong REGION: the prose beside the field, or a
+    slice starting inside a tag."""
+    from docxkit._compare_read import mask_volatile_fields
+    xml = ("<w:p>" + run("Chapter opening. ")
+           + field("PAGE", "7")
+           + run(" and the sentence continues.") + "</w:p>")
+    out = mask_volatile_fields(xml)
+    assert "Chapter opening. " in out
+    assert " and the sentence continues." in out
+    assert "«F:PAGE»" in out and ">7<" not in out
+    assert out.count("w:fldChar") == xml.count("w:fldChar")
+
+
+def test_a_field_that_is_not_volatile_keeps_its_result():
+    """The `not in VOLATILE_FIELDS` test, from the fldSimple side."""
+    from docxkit._compare_read import mask_volatile_fields
+    simple = ('<w:p><w:fldSimple w:instr=" AUTHOR ">'
+              + run("M. Lokshin") + "</w:fldSimple></w:p>")
+    assert mask_volatile_fields(simple) == simple
+
+
+def test_a_volatile_fldSimple_is_masked():
+    from docxkit._compare_read import mask_volatile_fields
+    simple = ('<w:p><w:fldSimple w:instr=" PAGE  \\* MERGEFORMAT ">'
+              + run("12") + "</w:fldSimple></w:p>")
+    out = mask_volatile_fields(simple)
+    assert "«F:PAGE»" in out and ">12<" not in out
+
+
 def test_a_volatile_field_inside_another_is_masked_once(tmp_path):
     """The same guard from the outside: a nested cached value must not
     reach the report either."""

@@ -138,6 +138,25 @@ def test_statistics_prose_is_not_math(text):
     assert [f for f in prose_math(xml) if f.para == 2] == []
 
 
+def test_an_n_ary_operator_the_paper_typesets_is_part_of_its_vocabulary():
+    """The vocabulary is `(_SYMBOLS | _NARY) - _INVISIBLE`, and four
+    mutants lived on that union: read as `&` it is very nearly empty and
+    the audit finds nothing anywhere. Nothing had asked for an N-ary
+    symbol, so only the `_SYMBOLS` half was ever exercised."""
+    xml = doc(p(math("∑"), t(" runs over households.")),
+              p(t("We then take ∑ over the panel.")))
+    assert "∑" in document_symbols(xml)
+    assert [f.symbol for f in prose_math(xml) if f.para == 2] == ["∑"]
+    # `^` in place of `|` is NOT killable here and does not need to be:
+    # the two tables are disjoint, so union and symmetric difference are
+    # the same set. Asserting that is worth more than a test that pinned
+    # the operator by accident.
+    from docxkit.equations import _NARY, _SYMBOLS
+    assert not (frozenset(_SYMBOLS) & frozenset(_NARY)), (
+        "the tables now overlap — the union in _MATH_GLYPHS stopped "
+        "being interchangeable with a symmetric difference")
+
+
 def test_a_space_inside_an_equation_is_not_a_symbol():
     """`to_latex` has to know the non-breaking space and the invisible
     operators — they are characters it meets inside `m:t` and must

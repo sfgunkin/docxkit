@@ -226,6 +226,35 @@ def test_absorb_refuses_text_that_sits_before_the_equation():
         display(para(run("where "), omath(mr("x"))), absorb=True)
 
 
+def test_display_drops_a_run_butted_straight_against_the_maths():
+    """The filter is `r.end() <= math.start() or r.start() >= math.end()`,
+    and six mutants lived on those two boundaries. A run that ends
+    exactly where the equation begins — no gap — must still read as
+    OUTSIDE it. Misread as inside, it is never cut out, and an
+    oMathPara with a sibling run is demoted by Word on the next save."""
+    p = f'<w:p>{run("  ")}{omath(mr("x"))}{run("  ")}</w:p>'
+    out = display(p)
+    assert "<w:r>" not in out, "a run survived beside the oMathPara"
+    assert in_display_mode(out) and tokens(out) == "x"
+
+
+def test_display_refuses_a_paragraph_with_no_equation_at_all():
+    """`len(maths) != 1` read as `> 1` lets zero through, and the next
+    line indexes `maths[0]`. A refusal naming the count is the contract;
+    an IndexError is not."""
+    with pytest.raises(AnchorError, match="found 0"):
+        display(para(run("ordinary prose")))
+
+
+def test_absorb_needs_prose_AND_the_flag_not_either():
+    """`prose and absorb` read as `or`: a paragraph with nothing beside
+    the maths would take the absorb path and splice an EMPTY run into
+    the equation."""
+    out = display(para(omath(mr("x"))), absorb=True)
+    assert tokens(out) == "x"
+    assert "<m:t></m:t>" not in out and "<m:t/>" not in out
+
+
 def test_display_refuses_a_paragraph_with_two_equations():
     with pytest.raises(AnchorError, match="exactly one"):
         display(para(omath(mr("x")), omath(mr("y"))))
