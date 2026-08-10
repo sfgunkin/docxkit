@@ -129,7 +129,7 @@ page is wrong. Only a PDF render catches them.
 
 ## Fixed
 
-### S3 `revision status` says TRUTH/TRUTH when prev and working differ — `PENDING`
+### S3 `revision status` says TRUTH/TRUTH when prev and working differ — `a897948`
 New `revision.drift(working, prev)` compares MEANING part by part
 (`package.part_fingerprint`, save-noise excluded) and returns the parts
 that differ; `status` asks it only of a settled file — while a proposal
