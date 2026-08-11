@@ -1775,3 +1775,44 @@ def test_multi_work_groups_the_grammar_does_not_split(text, seen):
     papers. Pinned so a future change is deliberate.
     """
     assert [c.surname for c in find_citations(text)] == seen
+
+
+@pytest.mark.parametrize("hoisted", [False, True])
+def test_repair_plan_never_calls_a_LIVE_entry_debris(hoisted):
+    """It proposed `delete_bookmark(doc, "BhlerNiederberger2022")` while
+    both the entry and its citation were alive (2026-08-09). The
+    evidence it used was the citation KEY, and the two spellings never
+    meet: the bookmark was minted by an older strip-only stem, while
+    "Bühler-Niederberger (2022)" keys as `bühlerniederberger_2022`.
+    The reference LIST is the evidence the entry demanded.
+
+    Both placements, because Word HOISTS a collapsed bookmark out of the
+    paragraph it marks: reading the entry paragraph alone finds nothing
+    and the false debris call comes straight back."""
+    from docxkit.citations import repair_plan
+    mark = ('<w:bookmarkStart w:id="4" w:name="BhlerNiederberger2022"/>'
+            '<w:bookmarkEnd w:id="4"/>')
+    entry = R("Bühler-Niederberger, D. (2022). Childhood studies. "
+              "Routledge.")
+    body = (FILLER
+            + P(R("As Bühler-Niederberger (2022) shows, the gap is wide."))
+            + P(R("References"))
+            + (mark + P(entry) if hoisted else P(mark + entry)))
+    plan = repair_plan(xml_parts(body))
+    assert "BhlerNiederberger2022" in plan, plan
+    assert "debris of a deleted entry" not in plan, plan
+    assert "still in the list" in plan, plan
+
+
+def test_repair_plan_still_calls_a_bookmark_with_no_entry_debris():
+    """The other side: nothing in the list owns it, nothing cites it,
+    and the plan must still say so — a guard that silences the true
+    finding along with the false one is not a fix."""
+    from docxkit.citations import repair_plan
+    body = (FILLER
+            + P(R("Prose that cites nobody."))
+            + bookmark("Ghost2019", 30)
+            + P(R("References"))
+            + P(R("Aksoy, C. (2026). Working from home. JEP.")))
+    plan = repair_plan(xml_parts(body))
+    assert "Ghost2019" in plan and "debris" in plan.lower(), plan

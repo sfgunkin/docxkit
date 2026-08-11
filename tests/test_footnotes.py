@@ -518,3 +518,17 @@ def test_set_run_property_leaves_a_non_run_alone():
     not a run must come back unchanged rather than grow a stray rPr."""
     assert set_run_property("<w:bookmarkStart/>", "b", "<w:b/>") == (
         "<w:bookmarkStart/>")
+
+
+def test_a_mark_whose_size_does_not_resolve_is_not_judged():
+    """Read without styles.xml nothing resolves, and calling that a
+    disagreement would put every document read without the part on the
+    list. One mark states a size, the other inherits — and inheriting
+    is not a finding until something can say what it inherits."""
+    stated = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+              f'{SZ10}</w:rPr><w:footnoteRef/></w:r>')
+    report = footnotes.sizes(part(note(2, stated + run("a", SZ10)),
+                                  note(3, MARK + run("b", SZ10))))
+    assert report.mark_house == 20
+    assert report.mark_outliers == [], report.format()
+    assert report.ok

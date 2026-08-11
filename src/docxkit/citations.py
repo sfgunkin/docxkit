@@ -44,6 +44,7 @@ from ._cite_build import _entry_keys as _entry_keys
 from ._cite_build import (
     _entry_names_from_document as _entry_names_from_document,
 )
+from ._cite_build import _own_bookmark as _own_bookmark
 from ._cite_build import link_all as link_all
 from ._cite_build import link_rest as link_rest
 from ._cite_build import unlink_by_anchor as unlink_by_anchor
@@ -157,8 +158,27 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     bookmarks |= set(_BOOKMARK_NAME_RE.findall(foot))
     anchors = {a for a, _ in internal_links(doc)}
     anchors |= {a for a, _ in internal_links(foot)}
-    texts = [visible_text(m.group(0)) for m in PARA_RE.finditer(doc)]
+    paras = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in paras]
     cited_text = {c.key for t in texts for c in find_citations(t)}
+
+    # Bookmarks a LIVE reference entry still owns. Nothing may be called
+    # debris while its entry is in the list, and the citation key is the
+    # wrong evidence for that: `BhlerNiederberger2022` was minted by an
+    # older strip-only stem, while the citation "Bühler-Niederberger
+    # (2022)" keys as `bühlerniederberger_2022` — the two never meet, so
+    # a live reference was proposed for deletion (2026-08-09). Asking
+    # the ENTRY is what the backlog entry demanded, and `_own_bookmark`
+    # already knows both stems and reads the body-level gap Word hoists
+    # a marker into.
+    entries = references(texts)
+    live: set[str] = set()
+    for r in entries:
+        m = paras[r.index]
+        before = doc[(paras[r.index - 1].end() if r.index else 0):m.start()]
+        own = _own_bookmark(m.group(0), r, before)
+        if own:
+            live.add(own)
 
     buckets: dict[str, list[str]] = {
         "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],
@@ -186,10 +206,15 @@ def repair_plan(parts: dict[str, bytes]) -> str:
             km = _KEY_SHAPE_RE.match(name)
             key = (key_for(km.group(1), km.group(2)) if km else "?")
             if km and key not in cited_text and name + "txt" not in \
-                    bookmarks:
+                    bookmarks and name not in live:
                 buckets["debris"].append(
                     f'delete_bookmark(doc, "{name}")   # VERIFY the entry '
                     f"text is truly gone; {issue}")
+            elif name in live and f.kind == "REF WITHOUT CITE":
+                buckets["relink"].append(
+                    f'link_in_para(para, CITE_TEXT, "{name}")   # the ENTRY '
+                    f"is still in the list, so this is a lost citation "
+                    f"link, not debris; {issue}")
             elif f.kind == "ORPHAN REF":
                 buckets["relink"].append(
                     f'link_in_para(para, CITE_TEXT, "{name}")   # first '
