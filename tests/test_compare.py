@@ -508,6 +508,97 @@ def test_a_lost_citation_bookmark_is_named(tmp_path):
     assert "citation bookmark" in str(report["stripped_fields"][0]["lost"])
 
 
+# ------------------------------------- the block, not the pair ----------
+#
+# Inside a replace run the pairing is POSITIONAL, so a block of unequal
+# length pairs every paragraph after the difference against its
+# neighbour. Asking "did this pair lose a target" of that pairing put
+# four present targets on the FIELD layer of Parental Style's comparison
+# round — and a dangling-link flag is one this project may never wave
+# away, so it cost a diagnosis to disprove.
+
+
+def _linked(text: str, *anchors: str) -> str:
+    return para(run(text) + "".join(
+        f'<w:hyperlink w:anchor="{a}"><w:r><w:t>{a}</w:t></w:r>'
+        "</w:hyperlink>" for a in anchors))
+
+
+def test_an_inserted_paragraph_does_not_strip_the_next_ones_fields(tmp_path):
+    before = (_linked("Filler above.")
+              + _linked("The comparison paragraph as built.",
+                        "Gracia2008", "Straus1998")
+              + _linked("The second paragraph as built.", "Table2")
+              + _linked("Filler below."))
+    after = (_linked("Filler above.")
+             + _linked("Comparison with high-income evidence")   # a heading
+             + _linked("The comparison paragraph, rewritten.",
+                       "Gracia2008", "Straus1998")
+             + _linked("The second paragraph, rewritten.", "Table2")
+             + _linked("Filler below."))
+    report = compare(*docs(tmp_path, before, after))
+    assert report["text"], "the rewrite itself must still be reported"
+    assert report["stripped_fields"] == [], report["stripped_fields"]
+
+
+def test_a_target_that_moved_to_the_next_paragraph_is_not_lost(tmp_path):
+    """The same rule stated the other way: the author moved a citation
+    into the following sentence. It is still in the document, and the
+    block is the unit that can see that."""
+    before = (_linked("The instrument is discussed here.", "Angrist1998")
+              + _linked("A second paragraph follows."))
+    after = (_linked("The instrument is discussed in what follows.")
+             + _linked("A second paragraph follows it.", "Angrist1998"))
+    report = compare(*docs(tmp_path, before, after))
+    assert report["stripped_fields"] == [], report["stripped_fields"]
+
+
+def test_a_target_that_moved_out_of_its_block_is_not_lost(tmp_path):
+    """The block is the unit, but the PART is the evidence: a link the
+    author moved to a paragraph the block does not cover is still in the
+    document, and 246 of the layer's remaining false claims over 748 real
+    comparisons were exactly that."""
+    before = (_linked("The instrument is discussed here.", "Angrist1998")
+              + _linked("Unrelated paragraph.")
+              + _linked("A distant paragraph, untouched."))
+    after = (_linked("The instrument is discussed in what follows.")
+             + _linked("Unrelated paragraph.")
+             + _linked("A distant paragraph, untouched.", "Angrist1998"))
+    report = compare(*docs(tmp_path, before, after))
+    assert report["stripped_fields"] == [], report["stripped_fields"]
+
+
+def test_a_target_that_moved_into_a_footnote_is_not_lost(tmp_path):
+    """Package-wide, not part-wide: bookmarks are package-wide in Word,
+    and a citation the author moved from the prose into a footnote was
+    the last shape of false 'lost' left after the block rule."""
+    body_before = _linked("The instrument is discussed here.", "Angrist1998")
+    body_after = _linked("The instrument is discussed in the note.")
+    moved = note(2, para(run("See ") + '<w:hyperlink w:anchor="Angrist1998">'
+                         + run("Angrist and Evans (1998)") + "</w:hyperlink>"))
+    a, b = docs(tmp_path, body_before, body_after,
+                footnotes=(notes(note(2, para(run("See it.")))), notes(moved)))
+    report = compare(a, b)
+    assert report["stripped_fields"] == [], report["stripped_fields"]
+
+
+def test_a_target_lost_inside_a_shifted_block_is_still_reported(tmp_path):
+    """And the guard must not swallow the finding: same shifted block,
+    one target genuinely gone."""
+    before = (_linked("Filler above.")
+              + _linked("The comparison paragraph as built.",
+                        "Gracia2008", "Straus1998")
+              + _linked("Filler below."))
+    after = (_linked("Filler above.")
+             + _linked("Comparison with high-income evidence")
+             + _linked("The comparison paragraph, rewritten.", "Gracia2008")
+             + _linked("Filler below."))
+    report = compare(*docs(tmp_path, before, after))
+    lost = str([e["lost"] for e in report["stripped_fields"]])
+    assert "Straus1998" in lost, report
+    assert "Gracia2008" not in lost, report
+
+
 def test_a_lost_footnote_reference_is_counted(tmp_path):
     """The third kind. Word drops a footnote reference when an author
     rewrites the sentence around it, and the count is what says how

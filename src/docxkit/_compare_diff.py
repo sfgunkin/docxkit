@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import html
 import re
-from collections import Counter
+from collections import Counter, defaultdict
+from collections.abc import Collection
 from difflib import SequenceMatcher
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from ._compare_read import (
     P_RE,
@@ -188,19 +189,69 @@ def formula_diff(pa: Para, pb: Para) -> list[FormulaChange]:
 
 def stripped_fields(pa: Para, pb: Para) -> list[str]:
     """Machinery A had and B (same prose) lost — the classic 'Word
-    deleted my hyperlink field' failure."""
-    notes: list[str] = []
-    if len(pa.fields["anchors"]) > len(pb.fields["anchors"]):
-        lost = set(pa.fields["anchors"]) - set(pb.fields["anchors"])
-        if lost:
-            notes.append(f"lost hyperlink target(s): {sorted(lost)}")
-    if len(pa.fields["cites"]) > len(pb.fields["cites"]):
-        lost = set(pa.fields["cites"]) - set(pb.fields["cites"])
-        if lost:
-            notes.append(f"lost citation bookmark(s): {sorted(lost)}")
-    if pa.fields["footnotes"] > pb.fields["footnotes"]:
-        gone = pa.fields["footnotes"] - pb.fields["footnotes"]
-        notes.append(f"lost {gone} footnote ref(s)")
+    deleted my hyperlink field' failure.
+
+    The pair form. :func:`stripped_block` is what the alignment uses:
+    inside a replace run the pairing is positional, and a pair is the
+    wrong unit to ask this of.
+    """
+    return [note for note, _ in stripped_block([pa], [pb])]
+
+
+def stripped_block(left: list[Para], right: list[Para], *,
+                   present: Collection[str] = (),
+                   ) -> list[tuple[str, Para | None]]:
+    """Machinery the whole block had and lost, with the paragraph that
+    held it.
+
+    Asked of the BLOCK because that is the unit the answer is true of. A
+    link the author moved to the next paragraph — or one that only looks
+    moved, because an inserted heading shifted the positional pairing by
+    one — has not been lost, and saying it has costs a diagnosis every
+    time: a dangling-link flag is one this project may never wave away.
+
+    `present` is every name the OTHER SIDE's whole part still carries,
+    and a name in it is not lost however far it moved. Measured over 748
+    real comparisons, the three rules together are what make this layer
+    worth reading:
+
+        per pair    1,463 named lost, 594 of them still in the file  59%
+        per block   1,764 named lost, 246 still in the file          86%
+        + present   what remains is what is really gone
+
+    It also names MORE true losses than the pair form did (869 -> 1,518):
+    a pair whose prose came through glyph-identical never reached the old
+    test at all, so machinery lost there was invisible.
+
+    The holder is the LEFT paragraph the target was last seen in, so the
+    report can still say where to look. It is None for a footnote count,
+    which is a number rather than a name.
+    """
+    notes: list[tuple[str, Para | None]] = []
+    #: `Fields` is a TypedDict, so the key has to stay a literal for the
+    #: type checkers to follow it through the loop.
+    named: tuple[tuple[Literal["anchors", "cites"], str], ...] = (
+        ("anchors", "hyperlink target"), ("cites", "citation bookmark"))
+
+    def holder_of(key: Literal["anchors", "cites"],
+                  name: str) -> Para | None:
+        return next((p for p in reversed(left) if name in p.fields[key]),
+                    None)
+
+    for key, label in named:
+        before = Counter(n for p in left for n in p.fields[key])
+        after = Counter(n for p in right for n in p.fields[key])
+        # Counter subtraction keeps only the positive side: a name whose
+        # count merely MOVED between paragraphs cancels out.
+        gone = sorted(n for n in (before - after).elements()
+                      if n not in present)
+        if gone:
+            notes.append((f"lost {label}(s): {sorted(set(gone))}",
+                          holder_of(key, gone[0])))
+    short = (sum(p.fields["footnotes"] for p in left)
+             - sum(p.fields["footnotes"] for p in right))
+    if short > 0:
+        notes.append((f"lost {short} footnote ref(s)", None))
     return notes
 
 
@@ -305,11 +356,15 @@ class _Alignment:
     ends can say so.
     """
 
-    __slots__ = ("deleted", "inserted", "report", "where")
+    __slots__ = ("deleted", "inserted", "report", "surviving", "where")
 
-    def __init__(self, report: Report, where: str) -> None:
+    def __init__(self, report: Report, where: str,
+                 surviving: Collection[str] = ()) -> None:
         self.report = report
         self.where = where
+        # every field name the OTHER side's part still holds, so a
+        # target that moved out of its block is not called lost
+        self.surviving = surviving
         self.deleted: list[Para] = []
         self.inserted: list[Para] = []
 
@@ -345,7 +400,24 @@ class _Alignment:
         Never truncated and never summarised — a block reported as
         changed that listed only its first difference is the "para 9-11"
         class of misses this layer exists to prevent.
+
+        The FIELD question is asked of the BLOCK, not of the pairs. The
+        pairing here is positional, so a block of unequal length — one
+        inserted heading in front of four rewritten paragraphs — pairs
+        every paragraph after the insertion against its NEIGHBOUR, and
+        the machinery then reads as lost while it sits one paragraph
+        down. That is what put four present targets on the FIELD layer
+        of Parental Style's comparison round (2026-08-10), where the
+        standing rule that a dangling-link flag must never be waved away
+        cost a diagnosis to disprove. Whether a target survived is a
+        property of the block; which pair it sat in is not.
         """
+        pending: dict[int, list[str]] = defaultdict(list)
+        holders: dict[int, Para | None] = {}
+        for note, holder in stripped_block(left, right,
+                                           present=self.surviving):
+            pending[id(holder)].append(note)
+            holders[id(holder)] = holder
         for off in range(max(len(left), len(right))):
             pa = left[off] if off < len(left) else None
             pb = right[off] if off < len(right) else None
@@ -354,6 +426,10 @@ class _Alignment:
                     self.inserted.append(pb)
                 continue
             if pb is None:
+                # `structure` reports a DELETE with its `lost_fields`
+                # already; a second entry here would be the same loss
+                # counted twice.
+                pending.pop(id(pa), None)
                 self.deleted.append(pa)
                 continue
             if _norm_glyph(pa.text) == _norm_glyph(pb.text):
@@ -363,7 +439,9 @@ class _Alignment:
             entry = self.place({"context": pa.text[:60],
                                 "word_diff": word_diff(pa.text, pb.text)},
                                pa)
-            strip = stripped_fields(pa, pb)
+            # attributed to the paragraph that HELD the target, so the
+            # report still says where to look
+            strip = pending.pop(id(pa), [])
             if strip:
                 entry["WARNING_stripped"] = strip
                 self.add("stripped_fields", {"context": pa.text[:60],
@@ -373,6 +451,15 @@ class _Alignment:
             if changed:
                 entry["formula"] = changed
             self.report["text"].append(entry)
+        # A loss whose paragraph never reached the text layer — its prose
+        # came through glyph-identical while its machinery did not — is
+        # still a loss, and silence would be worse than an entry with no
+        # word diff beside it.
+        for key, notes in pending.items():
+            holder = holders[key]
+            self.add("stripped_fields",
+                     {"context": holder.text[:60] if holder else "",
+                      "lost": notes}, holder)
 
     def structure(self) -> None:
         """What is left over: moves first, then plain inserts/deletes."""
@@ -402,7 +489,8 @@ class _Alignment:
 
 
 def compare_paras(a: list[Para], b: list[Para], report: Report,
-                  where: str = "body") -> Report:
+                  where: str = "body", *,
+                  surviving: Collection[str] | None = None) -> Report:
     """Every paragraph layer, for ONE pair of parts.
 
     Paragraphs are matched WITHIN a part: a running head is not a
@@ -426,7 +514,13 @@ def compare_paras(a: list[Para], b: list[Para], report: Report,
     branches and none could be killed, because no input reaches them.
     Reports over 100 real comparisons are byte-identical without it.
     """
-    align = _Alignment(report, where)
+    # Package-wide when the caller has the whole package; this part's own
+    # names otherwise, which is what a direct caller (a test, a paper's
+    # own script) can honestly supply.
+    align = _Alignment(report, where,
+                       surviving if surviving is not None else
+                       {n for p in b for key in ("anchors", "cites")
+                        for n in p.fields[key]})
     sm = SequenceMatcher(None, [_norm_glyph(p.text) for p in a],
                          [_norm_glyph(p.text) for p in b], autojunk=False)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():

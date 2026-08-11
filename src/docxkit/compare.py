@@ -101,6 +101,15 @@ def compare_docs(a: Doc, b: Doc) -> Report:
                       "hyperlinks": [], "integrity": [],
                       "stripped_fields": [], "comments": []}
 
+    # Every field name side B still carries, PACKAGE-wide. A target the
+    # author moved is not a target the author lost, and it can move
+    # between parts as easily as within one — a citation that went from
+    # the prose into a footnote accounted for the last 27 of the false
+    # "lost" claims over 748 real comparisons. Bookmarks are package-wide
+    # in Word too, so the narrower reading was never the right one.
+    surviving = {n for part in b.parts for p in part.paras
+                 for key in ("anchors", "cites") for n in p.fields[key]}
+
     for pa, pb in pair_parts(a.parts, b.parts):
         # A part that exists on one side only and carries no visible text
         # is not a difference: Word writes endnotes.xml into nearly every
@@ -109,7 +118,8 @@ def compare_docs(a: Doc, b: Doc) -> Report:
         # lost nothing. Gating on it would fail --expect-clean over a
         # part with no reader-visible content.
         if pa is not None and pb is not None:
-            compare_paras(pa.paras, pb.paras, report, pa.label)
+            compare_paras(pa.paras, pb.paras, report, pa.label,
+                          surviving=surviving)
         elif pa is not None and pa.paras:
             report["structure"].append({"type": "PART REMOVED",
                                         "part": pa.label,

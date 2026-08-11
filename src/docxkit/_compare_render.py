@@ -133,10 +133,15 @@ def _review(report: Report) -> None:
     if not report["integrity"]:
         print("  (clean: bookmarks balanced, no dangling anchors)")
 
-    _head("FIELD DIFFERENCES  (informational — Word stripped these in your "
-          "copy; the build restores them)")
+    # Not "Word stripped these in your copy": that named a cause, and a
+    # direction — built against author-edited — which is only one of the
+    # ways this command is used. Comparing two builds, the sentence sent
+    # a reader looking for a Word save that never happened.
+    _head("FIELD DIFFERENCES  (informational — machinery in A that B no "
+          "longer has anywhere; usually a Word save dropping a link)")
     for s in report["stripped_fields"]:
-        print(f"  ·{_in(s)} {s['context']}…  {s['lost']}")
+        where = f" {s['context']}…" if s["context"] else ""
+        print(f"  ·{_in(s)}{where}  {s['lost']}")
     if not report["stripped_fields"]:
         print("  (none)")
 
