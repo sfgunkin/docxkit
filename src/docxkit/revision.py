@@ -60,13 +60,14 @@ import tomllib
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 from . import lint as _lint
 from . import package, revisions, tracked
 from . import word as _word
-from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, visible_text
 from .errors import (
     BaselinePending,
     DocumentLocked,
@@ -476,6 +477,25 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
                            author=paper.author, verify_in_word=True,
                            progress=_say)
 
+    # What Compare baked in with no revision on it, named paragraph by
+    # paragraph. The math count alone understated this badly: a merged,
+    # rewritten math-bearing paragraph shipped WHOLE and untracked while
+    # the batch read "7 revisions, 6 of them in the body".
+    base_parts = package.read_parts(paper.prev)
+    built = package.read_parts(out)
+    lost = untracked(built, base_parts)
+    for note in moved_footnotes(built, base_parts):
+        _say(f"footnote {note}: Compare emitted the whole note as an "
+             f"insertion with no matching deletion — its REFERENCE moved. "
+             f"Accepting is right; rejecting empties the note, so gate 5 "
+             f"will fail on it.")
+    for u in lost:
+        _say(f"UNTRACKED {u}")
+    if lost:
+        _say(f"{len(lost)} paragraph(s) above differ from the baseline "
+             f"with no revision on them: the author cannot refuse those "
+             f"edits, and reject-all will not restore the baseline.")
+
     # docxkit emits this note even when the count is zero, so read the
     # number rather than matching the sentence
     resolved = [n for n in notes if "math revision" in n
@@ -485,7 +505,11 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
             "; ".join(resolved) + f" — Word cannot serialize tracked "
             f"math, so those edits are baked into {out.name} with "
             f"nothing to accept or reject, and reject-all will not "
-            f"restore the baseline. Author this batch by hand instead.")
+            f"restore the baseline. This batch has NO reviewable redline: "
+            f"either ship it clean and record that in the log, or make "
+            f"the edit by hand-authored markup on working.docx (the DSI "
+            f"vehicle) — Compare cannot represent it, and building it "
+            f"again will not change that.")
     return report
 
 
@@ -505,6 +529,11 @@ class ValidateReport:
     accepted: dict[str, int] = field(default_factory=dict)
     reject_matches_baseline: bool | None = None
     reject_detail: dict[str, bool] = field(default_factory=dict)
+    #: WHICH paragraphs gate 5 disagrees on, and the named cause when
+    #: there is one. Three booleans do not say whether the batch is
+    #: salvageable, which is the decision their reader has to make.
+    reject_diff: list[Untracked] = field(default_factory=list)
+    moved_footnotes: list[int] = field(default_factory=list)
     accept_paths_agree: bool | None = None
 
     @property
@@ -657,6 +686,91 @@ def _simulate(parts: dict[str, bytes], how: Any) -> dict[str, bytes]:
     return out
 
 
+@dataclass(frozen=True)
+class Untracked:
+    """A paragraph the batch changed with NO revision mark on it."""
+
+    part: str               # "body" or "footnotes"
+    index: int              # paragraph index in the rejected view, 0-based
+    baseline: str           # what the baseline says there
+    batch: str              # what rejecting everything leaves
+
+    def __str__(self) -> str:
+        where = f"{self.part} ¶{self.index + 1}"
+        return (f"{where}: baseline {self.baseline[:70]!r}\n"
+                f"{' ' * len(where)}  batch    {self.batch[:70]!r}")
+
+
+def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
+              limit: int = 8) -> list[Untracked]:
+    """Paragraphs where reject-all does NOT reproduce the baseline.
+
+    The batch changed them and no revision covers the change, so the
+    author cannot refuse it — and the headline revision count says
+    nothing about it. Parental Style shipped a merged, rewritten
+    math-bearing paragraph this way while its batch read "7 revisions, 6
+    of them in the body": all six were two word-swaps in an unrelated
+    paragraph, and the central edit had no marks at all.
+
+    The same computation gate 5 already performs, named and returned
+    rather than reduced to a boolean — which is what made the failure
+    cost a bespoke difflib script to diagnose. Both callers use it: the
+    build says it BEFORE the handback, the gate says it after.
+    """
+    out: list[Untracked] = []
+    rejected = _simulate(parts, revisions.reject)
+    for label, name in (("body", DOCUMENT), ("footnotes", FOOTNOTES)):
+        got = _paras(_root(rejected, name))
+        want = _paras(_root(baseline, name))
+        for tag, i1, i2, j1, j2 in SequenceMatcher(
+                None, want, got, autojunk=False).get_opcodes():
+            if tag == "equal":
+                continue
+            for k in range(max(i2 - i1, j2 - j1)):
+                out.append(Untracked(
+                    label, j1 + k,
+                    want[i1 + k] if i1 + k < i2 else "",
+                    got[j1 + k] if j1 + k < j2 else ""))
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+#: A footnote Compare emitted as one insertion with nothing to delete.
+_MOVED_NOTE_RE = re.compile(
+    r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>', re.DOTALL)
+
+
+def moved_footnotes(parts: dict[str, bytes],
+                    baseline: dict[str, bytes]) -> list[int]:
+    """Footnote ids whose whole body Compare wrapped in ``w:ins``.
+
+    When a footnote's REFERENCE moves — same note, new position in the
+    text — Word's Compare treats the note as brand new: its body is one
+    insertion with **no matching deletion**. Accepting is right;
+    rejecting empties the footnote, so a batch carrying one cannot pass
+    gate 5 and the reason is invisible in the counts (Parental Style
+    2026-08-10, footnote 2 re-anchored onto a new opening sentence).
+
+    A footnote that carries insertions AND deletions is an ordinary
+    edit; one that is new in this batch is a genuinely new note. So the
+    shape is: insertions, no deletions, and the id already had text in
+    the baseline.
+    """
+    was = {int(m.group(1)): visible_text(m.group(2))
+           for m in _MOVED_NOTE_RE.finditer(
+               baseline.get(FOOTNOTES, b"").decode("utf-8"))}
+    out: list[int] = []
+    for m in _MOVED_NOTE_RE.finditer(
+            parts.get(FOOTNOTES, b"").decode("utf-8")):
+        nid, body = int(m.group(1)), m.group(2)
+        if nid < 1 or not was.get(nid, "").strip():
+            continue                    # separators, and notes that are new
+        if "<w:ins " in body and "<w:del " not in body:
+            out.append(nid)
+    return out
+
+
 def validate(path: str | Path, baseline: str | Path | None = None,
              *, use_word: bool = True) -> ValidateReport:
     """Run the gate ladder over a batch, fast to slow, failing early.
@@ -726,6 +840,9 @@ def validate(path: str | Path, baseline: str | Path | None = None,
         }
         report.reject_detail = detail
         report.reject_matches_baseline = all(detail.values())
+        if not report.reject_matches_baseline:
+            report.reject_diff = untracked(parts, base)
+            report.moved_footnotes = moved_footnotes(parts, base)
 
     if word_accept_glyph is not None:
         report.accept_paths_agree = (

@@ -904,6 +904,15 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
         if not report.reject_matches_baseline:
             print("   the batch is NOT fully reviewable: rejecting "
                   "everything does not restore the baseline")
+            # Three booleans do not say whether the batch is salvageable
+            # or has to ship clean, which is the decision waiting on
+            # them — and finding out cost a bespoke difflib script.
+            for note in report.moved_footnotes:
+                print(f"   footnote {note}: the whole note is one "
+                      f"insertion with no deletion — its REFERENCE moved, "
+                      f"so rejecting empties it")
+            for u in report.reject_diff:
+                print(f"   {u}")
     if report.accept_paths_agree is not None:
         print("== XML accept == Word accept ?",
               "OK" if report.accept_paths_agree else "MISMATCH")

@@ -472,6 +472,29 @@ def test_validate_fails_an_unreviewable_batch(monkeypatch, project,
     assert code == 1
     assert "MISMATCH" in out
     assert "NOT fully reviewable" in out
+    # and WHICH paragraph, which is the half that cost a bespoke difflib
+    # script to work out
+    assert "quietly rewritten" in out, out
+
+
+def test_validate_names_a_moved_footnote_anchor(monkeypatch, project,
+                                                capsys):
+    """Compare emits a re-anchored footnote as one insertion with no
+    deletion. Gate 5 could only say `footnotes: False`, and that reads
+    like a lossy batch rather than a note whose reference moved."""
+    from test_revision import footnotes_part
+    write(project.prev, make_parts(
+        para(run("body")), footnotes=footnotes_part(para(run("the note")))))
+    write(project.batch, make_parts(
+        para(run("body")),
+        footnotes=footnotes_part(
+            para('<w:ins w:id="9" w:author="R" w:date="2026-08-11T00:00:00Z">'
+                 "<w:r><w:t>the note</w:t></w:r></w:ins>"))))
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "footnote 2" in out and "REFERENCE moved" in out, out
 
 
 def test_validate_aborts_on_lint_with_exit_2(monkeypatch, project,

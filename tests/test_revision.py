@@ -345,6 +345,44 @@ def test_build_defaults_to_the_staging_path(project, monkeypatch):
         "a batch must be built on the baseline, not on the live file"
 
 
+def test_build_names_the_paragraphs_compare_left_untracked(project,
+                                                           monkeypatch):
+    """The math count understated this badly: a merged, rewritten
+    math-bearing paragraph shipped WHOLE and untracked while the batch
+    read "7 revisions, 6 of them in the body" — all six of them two
+    word-swaps in an unrelated paragraph (Parental Style 2026-08-10).
+    Said BEFORE the handback, not after gate 5 fails."""
+    write(project.prev, make_parts(para(run("the baseline sentence"))))
+    monkeypatch.setattr(revision.tracked, "build",
+                        _FakeBuild(out_text="a rewritten sentence"))
+    seen: list[str] = []
+    revision.build(project, project.working, progress=seen.append)
+    said = "\n".join(seen)
+    assert "UNTRACKED" in said, said
+    assert "the baseline sentence" in said and "a rewritten sentence" in said
+    assert "no revision on them" in said
+
+
+def test_a_faithfully_tracked_build_says_nothing_about_untracking(
+        project, monkeypatch):
+    write(project.prev, make_parts(para(run("built"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+    seen: list[str] = []
+    revision.build(project, project.working, progress=seen.append)
+    assert not any("UNTRACKED" in s for s in seen), seen
+
+
+def test_build_no_longer_advises_a_path_that_does_not_exist(project,
+                                                            monkeypatch):
+    """"Author this batch by hand instead" named no supported path —
+    `tracked.build` IS the Compare wrapper. The refusal now says what is
+    true: this batch has no reviewable redline."""
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild(math=5))
+    with pytest.raises(MathResolved) as exc:
+        revision.build(project, project.working)
+    assert "no reviewable redline" in str(exc.value).lower()
+
+
 def test_build_progress_reaches_the_caller(project, monkeypatch):
     monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
     seen: list[str] = []
@@ -678,6 +716,78 @@ def test_validate_checks_footnotes_too(tmp_path):
     report = revision.validate(lossy, baseline_path, use_word=False)
     assert report.reject_detail["footnotes"] is False
     assert not report.ok
+
+
+# ----------------------------------- what gate 5 disagreed about --------
+#
+# `{'paragraphs': False, 'glyphs': False, 'footnotes': False} -> MISMATCH`
+# is three booleans, and the decision waiting on them is whether the
+# batch is salvageable or has to ship clean. Finding that out cost a
+# bespoke difflib script on Parental Style, 2026-08-10.
+
+
+def test_gate_5_names_the_paragraphs_it_disagrees_on(tmp_path):
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("settled one")) + para(run("settled two"))))
+    lossy = write(tmp_path / "lossy.docx", make_parts(
+        para(run("settled one")) + para(run("quietly rewritten"))))
+    report = revision.validate(lossy, baseline_path, use_word=False)
+    assert not report.ok
+    got = report.reject_diff
+    assert len(got) == 1, got
+    assert got[0].part == "body" and got[0].index == 1
+    assert got[0].baseline == "settled two"
+    assert got[0].batch == "quietly rewritten"
+    assert "quietly rewritten" in str(got[0])
+
+
+def test_a_faithful_batch_is_asked_for_no_diagnosis(tmp_path):
+    """The work only happens on failure — the gate runs on every batch."""
+    baseline_path = write(tmp_path / "prev.docx",
+                          make_parts(para(run("settled text"))))
+    faithful = write(tmp_path / "batch.docx", make_parts(
+        para(run("settled text"), ins("added"))))
+    report = revision.validate(faithful, baseline_path, use_word=False)
+    assert report.reject_diff == [] and report.moved_footnotes == []
+
+
+def _notes(body: str, baseline_body: str):
+    """(batch parts, baseline parts) differing only in footnote 2."""
+    return (make_parts(para(run("body")), footnotes=footnotes_part(body)),
+            make_parts(para(run("body")),
+                       footnotes=footnotes_part(baseline_body)))
+
+
+def test_a_moved_footnote_anchor_is_named(tmp_path):
+    """Compare treats a re-anchored footnote as brand new: one w:ins over
+    the whole body with no w:del. Accepting is right, rejecting empties
+    it — and gate 5 could only say `footnotes: False`."""
+    batch, base = _notes(para(ins("the note text")),
+                         para(run("the note text")))
+    assert revision.moved_footnotes(batch, base) == [2]
+    # and the gate carries it through
+    report = revision.validate(
+        write(tmp_path / "batch.docx", batch),
+        write(tmp_path / "prev.docx", base), use_word=False)
+    assert report.reject_detail["footnotes"] is False
+    assert report.moved_footnotes == [2], report.moved_footnotes
+
+
+def test_an_ordinary_footnote_edit_is_not_called_a_moved_anchor():
+    """Insertions AND deletions is someone editing the note, which
+    rejects cleanly. Naming it would send a reader hunting for a moved
+    reference that never moved."""
+    batch, base = _notes(para(dele("old text") + ins("new text")),
+                         para(run("old text")))
+    assert revision.moved_footnotes(batch, base) == []
+
+
+def test_a_genuinely_new_footnote_is_not_called_a_moved_anchor():
+    """A note this batch ADDED is all insertion and no deletion too, and
+    rejecting it is supposed to remove it. The baseline is what tells
+    the two apart."""
+    batch, base = _notes(para(ins("a brand new note")), para(run("")))
+    assert revision.moved_footnotes(batch, base) == []
 
 
 @pytest.mark.parametrize("baseline,batch", [
