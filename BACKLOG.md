@@ -35,20 +35,6 @@ fixed entries; "did we ever fix that?" is a real question later.
   quiet for a hypothetical catch — the same trade `_FOLD`'s docstring
   refuses.
 
-### S4 `wrap_link_in_bookmark` has no "first mention" mode
-- **Symptom** Refuses when a work is cited more than once (correct — it
-  will not guess), but the house convention is *bookmark the first
-  mention, leave later ones forward-only*, and there is no helper for it.
-- **Repro** `Doepke2017`, cited 3×. **Recurred 2026-08-10** with
-  `Table5`, linked twice (the wealth paragraph and the age-profile
-  paragraph) after an author save stripped `Table5txt`.
-- **Workaround** Hand-rolled regex in
-  `Parental_style/revision/scripts/applied/repair_round3_links.py`, and
-  again as `_wrap_first` in `applied/repair_round5.py` — **two copies of
-  the same hack now, in the same paper.** That is the drift this file
-  exists to prevent; delete both when `which="first"` lands.
-- **Fix** `which="first"`.
-
 ### S4 `citations.repair_plan` proposed deleting a live entry as debris
 - **Symptom** Classified `BhlerNiederberger2022` as "debris of a deleted
   entry — remove", while both the reference entry (¶133) and its citation
@@ -88,6 +74,18 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S4 `wrap_link_in_bookmark` has no "first mention" mode — `3d42a31`
+`which="first"`. The rewrite also fixed a counting bug the entry did not
+know about: the two link FORMS were counted separately, so a work linked
+once as a field and once as an element passed the element branch as
+unique — and Word rewrites a field into an element on every author save,
+so a manuscript mid-round holds one of each. The bookmark would have
+landed wherever form churn left it.
+
+**Workarounds to retire** `repair_round3_links.py` and `_wrap_first` in
+`repair_round5.py`; both stay as records of their rounds, but neither
+technique is forced on the next paper.
 
 ### S2 `revision build` under-reports what Compare baked in untracked — `af355b7`
 ### S2 a moved footnote ANCHOR makes Compare emit the footnote as an unmatched insert — `af355b7`
