@@ -655,3 +655,184 @@ def test_russian_label_stems_accept_inflections_but_not_neighbours(
     form = crossrefs.LABEL_FORMS[label]
     got = re.match(form + r"\s+1\b", phrase, re.IGNORECASE) is not None
     assert got is matches, phrase
+
+
+# ---------------------------------------- what the mutation sweep found ---
+#
+# 841 mutants, 168 real survivors (2026-08-11), and every one below was
+# CONFIRMED by applying it to the source and watching the whole suite
+# stay green. The narrow suite invents survivors on its own — three
+# candidates from the same run turned out to be covered by test_cli.py —
+# so a survivor is a question until the full suite has been asked.
+
+
+def test_a_report_says_every_kind_of_thing_it_found():
+    """Four survivors sat on format()'s branches. A report that counts
+    what it will not name is the failure compare's renderer had, where
+    eleven mutants each emptied one loop and none could be killed."""
+    rep = crossrefs.LinkReport()
+    rep.linked.append("Table1")
+    rep.no_mention.append("Table2")
+    rep.no_caption.append("Figure9")
+    rep.field_form.append("Table3")
+    rep.notes["Table4"] = "mention found but its label is split across runs"
+    out = rep.format()
+    assert "linked 1" in out
+    assert "Table2" in out and "no in-text mention" in out
+    assert "Figure9" in out and "no caption" in out
+    assert "Table3" in out and "WORD FIELD" in out
+    assert "Table4" in out and "split across runs" in out
+
+
+# --- the mention that is already a hyperlink: which MODE comes back -----
+
+def _already_linked(anchor: str, *, legacy_in_gap: str = "") -> str:
+    mention = para(run("As "),
+                   f'<w:hyperlink w:anchor="{anchor}">'
+                   + run("Table 1") + "</w:hyperlink>",
+                   run(" shows, the gap is wide."))
+    gap = (f'<w:bookmarkStart w:id="77" w:name="{legacy_in_gap}"/>'
+           '<w:bookmarkEnd w:id="77"/>') if legacy_in_gap else ""
+    return doc(para(run("Opening prose.")), mention,
+               gap + para(run("Table 1. Employment by age")))
+
+
+@pytest.mark.parametrize("anchor, note, legacy", [
+    ("Table1", "wrapped an existing hyperlink", ""),
+    ("fig4_caption", "retargeted legacy anchor", "fig4_caption"),
+    ("Figure7", "kept the author's own anchor", ""),
+])
+def test_every_mode_reaches_the_report(anchor, note, legacy):
+    """`mode == "NOT-FOUND"` and `mode != "linked"` are what put these in
+    the report, and both survived as ORDERINGS (`<`, `>`): one fixture
+    puts every value on one side of a string comparison, so half of all
+    real disagreements pass. The fix is fixtures on both sides, which is
+    what these three are — the same shape as the guard survivors on
+    revision's gates."""
+    _, rep = crossrefs.link(_already_linked(anchor, legacy_in_gap=legacy))
+    assert note in rep.notes.get("Table1", ""), rep.format()
+    assert rep.linked == ["Table1"]
+
+
+def test_a_split_label_is_reported_as_a_mention_it_could_not_link():
+    """The "NOT-FOUND" mode itself: visible_text finds the label, the
+    run walk cannot, and the object must be reported rather than
+    silently skipped."""
+    xml = doc(para(run("As Tabl"), run("e 1 shows, the gap is wide.")),
+              para(run("Table 1. Employment by age")))
+    _, rep = crossrefs.link(xml)
+    assert rep.no_mention == ["Table1"]
+    assert "split across runs" in rep.notes["Table1"]
+
+
+# --- link_more: two mentions in ONE paragraph ---------------------------
+
+def test_link_more_links_two_mentions_in_one_paragraph():
+    """The suite had never put two mentions in one paragraph.
+
+    `sorted(todo, reverse=True)` is what the sweep flagged, and chasing
+    it settled a question rather than finding a bug: the order is
+    EQUIVALENT here, because `wrap_visible_span` takes VISIBLE-text
+    offsets and wrapping a span changes no visible text. Bottom-up
+    matters where a pass splices XML — `link` does, and is written that
+    way for the reason `link_more` does not need to be."""
+    xml = doc(
+        para(run("Both Table 1 and Table 2 report the same gradient.")),
+        para(run("Table 1. First")), para(run("Table 2. Second")))
+    out, counts = crossrefs.link_more(xml)
+    assert counts == {"Table1": 1, "Table2": 1}
+    body = paragraph_holding(out, "Both Table 1 and Table 2")
+    assert "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", body)) == \
+        "Both Table 1 and Table 2 report the same gradient."
+    assert 'w:anchor="Table1"' in body and 'w:anchor="Table2"' in body
+
+
+def test_link_more_is_a_no_op_on_a_second_run():
+    """A linked mention is masked out of the next scan, so a second run
+    plans nothing."""
+    xml = doc(para(run("See Table 1 for the gradient.")),
+              para(run("Table 1. First")))
+    once, first = crossrefs.link_more(xml)
+    twice, again = crossrefs.link_more(once)
+    assert first == {"Table1": 1} and again == {}
+    assert twice == once
+
+
+def test_link_more_claims_a_span_once_when_a_caption_is_duplicated():
+    """`... or span in claimed` as `and` links the same span twice, and
+    the second wrap lands inside the markup the first one wrote.
+
+    It needs a DUPLICATE caption to show: two Caption objects of one
+    name put two identical patterns in the list, and `claimed` is the
+    only thing between them. A paper gets there by copying a table and
+    editing the copy — `link` has a report line for exactly that ("only
+    the first linked"), so it is a shape this toolkit already meets."""
+    xml = doc(para(run("See Table 1 for the gradient.")),
+              para(run("Table 1. First")),
+              para(run("Table 1. A copy nobody renumbered")))
+    out, counts = crossrefs.link_more(xml)
+    assert counts == {"Table1": 1}, counts
+    body = paragraph_holding(out, "See Table 1 for the gradient.")
+    assert body.count("<w:hyperlink") == 1, body
+
+
+# --- the loop must not stop at the first thing it skips ------------------
+
+def test_link_keeps_going_past_a_caption_it_skips():
+    """Every `continue` in `link` survived as a `break`: nothing had a
+    second caption AFTER a skipped one, so a loop that stopped early was
+    indistinguishable from one that carried on."""
+    xml = doc(
+        para(run("Both Table 1 and Table 2 matter.")),
+        para(run("Table 1. First")),
+        para(run("Table 2. Second")),
+    )
+    once, _ = crossrefs.link(xml, only=["Table1"])
+    _twice, rep = crossrefs.link(once)
+    assert rep.already_linked == ["Table1"]
+    assert rep.linked == ["Table2"], rep.format()
+
+
+def test_a_caption_with_only_one_of_its_two_bookmarks_is_not_skipped():
+    """`and` read as `or`: half an apparatus counts as linked, and the
+    pass that would have completed it walks past."""
+    half = doc(
+        para(run("As Table 1 shows, the gap is wide.")),
+        para('<w:bookmarkStart w:id="5" w:name="Table1"/>'
+             '<w:bookmarkEnd w:id="5"/>' + run("Table 1. Employment")))
+    out, rep = crossrefs.link(half)
+    assert rep.already_linked == []
+    assert rep.linked == ["Table1"]
+    assert 'w:name="Table1txt"' in out
+
+
+# --- audit ---------------------------------------------------------------
+
+def test_audit_separates_a_half_linked_pair_from_a_linked_one():
+    xml = doc(
+        para('<w:bookmarkStart w:id="1" w:name="Table1"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 1. Caption only")),
+        para('<w:bookmarkStart w:id="2" w:name="Figure2txt"/>'
+             '<w:bookmarkEnd w:id="2"/>' + run("Figure 2. Mention only")),
+    )
+    got = crossrefs.audit(xml)
+    assert got["caption_only"] == ["Table1"]
+    assert got["mention_only"] == ["Figure2"]
+    assert got["linked"] == []
+
+
+@pytest.mark.parametrize("bookmark, caption, misnamed", [
+    ("Figure6", "Figure 5. Life expectancy", True),    # LI7's own case
+    ("Table1", "Figure 1. Life expectancy", True),     # the LABEL half
+    ("Figure5", "Figure 5. Life expectancy", False),
+])
+def test_audit_reads_both_halves_of_a_misnamed_bookmark(bookmark, caption,
+                                                        misnamed):
+    """LI7's "Figure 5" caption carries bookmark Figure6 — every link
+    works, one renumbering behind. Fourteen survivors sat on that
+    comparison, and a fixture that only ever disagrees about the NUMBER
+    cannot tell the label half from a constant."""
+    xml = doc(para(f'<w:bookmarkStart w:id="1" w:name="{bookmark}"/>'
+                   '<w:bookmarkEnd w:id="1"/>' + run(caption)))
+    got = crossrefs.audit(xml)["misnamed"]
+    assert bool(got) is misnamed, got

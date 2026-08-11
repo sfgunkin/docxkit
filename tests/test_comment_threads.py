@@ -104,3 +104,17 @@ def test_set_done_without_the_extended_part_refuses():
 
 def test_no_comments_means_no_threads():
     assert threads({"word/document.xml": b"<w:document/>"}) == []
+
+
+def test_a_comment_with_no_extended_entry_is_not_done():
+    """`flags.get(para_id, (False, None))` — the default. As `(True,
+    None)` every comment Word has not flagged reads as resolved, which
+    is the wrong way for a work list to be wrong: `docxkit tasks
+    --check` would pass a round with everything still open."""
+    parts = make_parts()
+    ext_part = parts["word/commentsExtended.xml"].decode("utf-8")
+    parts["word/commentsExtended.xml"] = ext_part.replace(
+        ext("AAAA0001"), "").encode("utf-8")
+    found = {t.comment.cid: t.comment.done for t in threads(parts)}
+    assert found["1"] is False, "an unflagged comment reads as resolved"
+    assert found["2"] is True, "the flagged one must still read as done"

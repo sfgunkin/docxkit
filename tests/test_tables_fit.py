@@ -382,3 +382,74 @@ def test_page_break_before_creates_ppr_when_missing():
     out = page_break_before(d, "Table 4:")
     assert "<w:pPr><w:pageBreakBefore/></w:pPr><w:r>" in out
     etree.fromstring(out.encode("utf-8"))
+
+
+# ---------------------------------------- what the mutation sweep found ---
+
+def test_a_run_that_states_only_hAnsi_is_measured_in_that_font():
+    """The comment on `_HANSI_RE` says a document from another producer
+    may state only w:hAnsi, and that reading one and not the other drops
+    the run to the table's fallback face. Every fixture here states
+    BOTH, so the fallback chain could be inverted and nothing noticed."""
+    # The table-level FALLBACK is what the hAnsi half feeds, and a run
+    # that states a font of its own never asks for it. So the cell that
+    # has to be measured states nothing, and the rest of the table
+    # states w:hAnsi only — which is the shape a non-Word producer
+    # writes, and the one where reading w:ascii alone silently drops the
+    # whole table to Times. Two earlier versions of this test could not
+    # tell the two readings apart, because every run named its own font.
+    def table_of(measured: str, neighbour: str) -> list[int]:
+        d = tbl([2000, 2000],
+                f"<w:tr>{cell(measured, w=2000)}{cell(neighbour, w=2000)}"
+                "</w:tr>")
+        out, _ = fit_columns(d, read_all(d)[0])
+        return grid_of(out)
+
+    def r(text: str, rfonts: str = "") -> str:
+        return (f'<w:r><w:rPr>{rfonts}<w:sz w:val="20"/></w:rPr>'
+                f"<w:t>{text}</w:t></w:r>")
+
+    # The reference is measured from the run's OWN w:ascii, which no
+    # fallback rule can touch. Comparing two FALLBACK tables to each
+    # other cannot work: the misreading sends both of them to Times, so
+    # they agree with each other while both being wrong.
+    stated = table_of(r("WWWWWWWWWW", f'<w:rFonts w:ascii="{FONT}"/>'),
+                      r("x", f'<w:rFonts w:ascii="{FONT}"/>'))
+    hansi = f'<w:rFonts w:hAnsi="{FONT}"/>'
+    inherited = table_of(r("WWWWWWWWWW"), r("x", hansi))
+    assert inherited == stated, \
+        "the bare run fell back to Times: w:hAnsi was not read"
+    other = '<w:rFonts w:hAnsi="Times New Roman"/>'
+    assert table_of(r("WWWWWWWWWW"), r("x", other)) != stated, \
+        "the fixture cannot see a font change at all"
+
+
+def test_superscript_stars_survives_a_run_with_no_text_node():
+    """`if t and t.group(2)` as `or` dereferences None the moment a
+    starred cell holds a run with no w:t — a bookmark run, a break, a
+    field. The suite's starred cells were all plain text runs."""
+    starred = ("<w:r><w:rPr><w:noProof/></w:rPr></w:r>"
+               + frun("-0.250***"))
+    d = tbl([2000, 2000],
+            f"<w:tr>{cell(frun('Label'), w=2000)}{cell(starred, w=2000)}"
+            "</w:tr>")
+    out, n = superscript_stars(d, read_all(d)[0])
+    assert n == 1
+    assert read_all(out)[0].rows[0][1] == "-0.250***"
+    assert "vertAlign" in out
+
+
+@pytest.mark.parametrize("sz", [97, 200, -1])
+def test_a_border_size_outside_words_range_is_refused(sz):
+    """ST_EighthPointMeasure is 0..96 and Word CLAMPS outside it, so a
+    number out here is a caller's mistake rather than a hairline rule —
+    which is why the guard exists and why its edge has to be pinned."""
+    d = tbl([2000], f"<w:tr>{cell(frun('x'), w=2000)}</w:tr>")
+    with pytest.raises(AnchorError, match="eighths of a point"):
+        bottom_border(d, read_all(d)[0], sz=sz)
+
+
+def test_a_border_size_at_the_edge_is_accepted():
+    d = tbl([2000], f"<w:tr>{cell(frun('x'), w=2000)}</w:tr>")
+    out, n = bottom_border(d, read_all(d)[0], sz=96)
+    assert n == 1 and 'w:sz="96"' in out

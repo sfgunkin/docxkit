@@ -345,3 +345,90 @@ def test_add_at_rejects_a_missing_anchor():
     parts = _scaffolded(para(run("something")))
     with pytest.raises(AnchorError, match="no paragraph"):
         add_at(parts, "absent phrase", "nope")
+
+
+# ---------------------------------------- what the mutation sweep found ---
+#
+# 732 mutants, 244 real survivors (2026-08-11). Each test below was
+# confirmed by applying its mutation and watching the FULL suite stay
+# green — the narrow run also blamed `remove` for 31 survivors, and
+# `remove` is tested thoroughly in test_parts_gaps.py, which the run did
+# not include. A survivor is a question, not a work item.
+
+
+def test_two_revisions_get_two_DIFFERENT_comment_ids():
+    """`cid = scaffold.next_id + i` reduced to `scaffold.next_id` gives
+    every comment in the batch the same id: Word then shows one balloon
+    for the lot, or calls the file unreadable. Nothing asserted the ids
+    were distinct."""
+    parts = make_parts(para(run("keep "), ins("one"), dele("two")),
+                       comment_items=(comment(1, "seed"),))
+    annotate(parts, always("R1: reason"))
+    ids = re.findall(r'<w:comment w:id="(\d+)"', _com(parts))
+    assert len(ids) == len(set(ids)) == 3, ids
+    anchors = re.findall(r'<w:commentRangeStart w:id="(\d+)"/>', _doc(parts))
+    assert sorted(anchors) == sorted(i for i in ids if i != "1")
+
+
+def test_a_revision_whose_range_is_only_half_present_is_still_commented():
+    """`_already_anchored` needs BOTH ends. As `or`, a stray
+    commentRangeStart near the revision — Word leaves them behind when
+    an author deletes a comment — makes the pass walk past a revision
+    that has no comment at all."""
+    body = para(run("keep "), '<w:commentRangeStart w:id="1"/>',
+                ins("added"))
+    parts = make_parts(body, comment_items=(comment(1, "seed"),))
+    added, _ = annotate(parts, always("R1: reason"))
+    assert added == 1, "the revision was treated as already anchored"
+
+
+def test_a_comment_reclassifies_through_its_REFERENCE_when_the_range_is_gone():
+    """The `or` fallback: Word drops the range but keeps the reference
+    mark when an author edits across it. As `and`, such a comment is
+    reported unresolvable and its text never updated."""
+    body = (para(run("The estimate is 0.35."))
+            + para(run("tail "),
+                   '<w:r><w:commentReference w:id="1"/></w:r>'))
+    parts = make_parts(body, comment_items=(comment(1, GENERIC),))
+    done, still = reclassify(parts, always("R4: rewritten"))
+    assert (done, still) == (1, [])
+    assert "R4: rewritten" in _com(parts)
+
+
+def test_add_at_says_which_failure_it_met():
+    """`len(hits) > 1` read as `!= 1` makes a missing anchor report
+    itself as an ambiguous one, which sends a reader looking for a
+    second occurrence of a phrase that is not in the document at all."""
+    parts = make_parts(para(run("The estimate is 0.35.")),
+                       comment_items=(comment(1, "seed"),))
+    with pytest.raises(AnchorError, match=r"no paragraph contains"):
+        add_at(parts, "a phrase the paper does not contain", "note")
+
+
+def test_the_extensible_entry_is_written_when_the_scaffold_dates_one():
+    """`if scaffold.date_utc:` inverted writes the w16cex entry only
+    when there is no date to put in it — and drops it for every
+    document Word has actually dated."""
+    parts = make_parts(para(run("keep "), ins("added")),
+                       comment_items=(comment(1, "seed"),))
+    parts["word/commentsExtensible.xml"] = (
+        b'<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft'
+        b'.com/office/word/2018/wordml/cex">'
+        b'<w16cex:commentExtensible w16cex:durableId="00000001" '
+        b'w16cex:dateUtc="2026-07-30T09:00:00Z"/>'
+        b"</w16cex:commentsExtensible>")
+    annotate(parts, always("R1: reason"))
+    out = parts["word/commentsExtensible.xml"].decode("utf-8")
+    assert out.count("w16cex:commentExtensible") == 2, out
+    assert out.count('w16cex:dateUtc="2026-07-30T09:00:00Z"') == 2
+
+
+def test_a_table_rule_needs_a_table():
+    """`tables and ctx.table_index is not None` as `or` gives the table
+    comment to prose: on AFI that would have labelled ordinary
+    paragraphs with a table's referee point."""
+    from docxkit.comments import match
+    classify = match((("added", "R2: prose rule"),), tables={0: "R8: table"})
+    prose = RevisionContext(text="added", para="added", window="added",
+                            table_index=None, start=0, end=1)
+    assert classify(prose) == "R2: prose rule"

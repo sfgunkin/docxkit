@@ -249,3 +249,20 @@ def test_the_margin_is_charged_to_both_sides_of_every_cell():
     assert _side_margins(written) == 120
     assert '<w:left w:w="60" w:type="dxa"/>' in written
     assert '<w:right w:w="60" w:type="dxa"/>' in written
+
+
+def test_an_empty_span_BESIDE_a_group_head_gets_no_cmidrule():
+    """`span > 1 and _cell_text(...)` as `or`: a rule under an empty
+    cell is a rule under nothing, and the docstring says so.
+
+    It takes both in ONE row to show. A row whose only span is empty is
+    not a group row at all — `plan_booktabs` never lists it, so
+    `_group_columns` is not consulted and the guard is unreachable from
+    there. The shape that reaches it is a real one: a group head over
+    the first block of columns and a spanned gap over the rest."""
+    rows = ruled([["", "Discipline", ""],
+                  ["", "(1)", "(2)", "(3)", "(4)"],
+                  ["Age", "0.1", "0.2", "0.3", "0.4"]],
+                 width=5, spans={(0, 1): 2, (0, 2): 2})
+    assert rows[0][1]["bottom"] == "single", "the group head lost its rule"
+    assert rows[0][2]["bottom"] == "nil", "an empty span was ruled"

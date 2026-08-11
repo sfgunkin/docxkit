@@ -18,7 +18,12 @@ from __future__ import annotations
 import pytest
 
 from docxkit import tables
-from docxkit._table_layout import _TAB_SPACES, _cell_extents
+from docxkit._table_layout import (
+    _TAB_SPACES,
+    _cell_extents,
+    _divide,
+    _round_to,
+)
 from docxkit.errors import AnchorError
 
 FALLBACK = ("Times New Roman", 24)
@@ -224,3 +229,71 @@ def test_spacers_that_take_the_whole_table_are_refused_at_the_boundary():
     xml = tbl(600, [100, 500, 100], ["A", "", "B"])
     with pytest.raises(AnchorError, match="spacer columns"):
         tables.fit_columns(xml, tables.read_all(xml)[0], total=500)
+
+
+# ---------------------------------------- what the mutation sweep found ---
+#
+# 2,217 mutants, 382 real survivors (2026-08-11). The apportioning maths
+# was the densest untested part: _round_to had four survivors on three
+# lines and _divide's two branch edges had none. Each was confirmed by
+# applying it and watching the whole suite stay green.
+#
+# The 98 survivors inside `_widths` are NOT here, and the reason is
+# already written down: `test_width_model.py` has a note addressed to
+# whoever next runs this tool, saying that a +-1 NumberReplacer on an
+# AFM entry falls INSIDE the 2.5% tolerance that gate declares, so
+# surviving is the right answer rather than a missing check.
+#
+# Checked again rather than taken on trust (2026-08-11): the apostrophe
+# at 180 per 1000 em, mutated to 181, passes the everyday suite AND
+# `pytest -m word` against a real Word. So the note is right, and the
+# gate's promise is "no character is out by more than 2.5%", not "every
+# entry is exact". A test written here would pin the model to itself.
+
+
+def test_round_to_apportions_by_weight_and_sums_exactly():
+    """Two mutants live here and one fixture separates both, which the
+    first attempt at this test did not: weights that divide EXACTLY
+    (1000 over 1:2:7) give the same answer under `/` and `//` and leave
+    every remainder at zero, so neither the division nor the ordering is
+    doing anything a test can see. 10 over 1:2 does both."""
+    assert _round_to(10, [1.0, 2.0]) == [3, 7]
+    assert _round_to(1000, [1.0, 2.0, 7.0]) == [100, 200, 700]
+
+
+def test_round_to_gives_the_remainder_to_the_largest_fractions_first():
+    """The largest-remainder rule: 3.33 and 6.67 leave one spare unit,
+    and it belongs to the .67. Sorted the other way it goes to the
+    column that needed it least — and floor-dividing first flattens
+    both fractions to zero, which hands it to whichever column sorts
+    first."""
+    assert _round_to(10, [1.0, 2.0]) == [3, 7]
+    assert _round_to(100, [1.0, 2.0, 4.0]) == [14, 29, 57]
+
+
+def test_round_to_spreads_the_remainder_over_DIFFERENT_columns():
+    """`i % len(order)` as `i // len(order)` puts every spare unit on one
+    column: the remainder is always smaller than the column count, so
+    the index collapses to 0 and one column absorbs the lot."""
+    got = _round_to(11, [1.0, 1.0, 1.0])
+    assert sum(got) == 11
+    assert sorted(got) == [3, 4, 4], got
+
+
+def test_divide_takes_the_full_widths_when_they_fit_EXACTLY():
+    """The edge itself. `sum_f <= avail` as `<` is EQUIVALENT here and
+    that is worth knowing rather than testing around: on an exact fit
+    the shaving branch apportions `sum_f - avail == 0`, so it hands back
+    the full widths the first branch would have. The two branches meet
+    at the boundary."""
+    widths, cramped = _divide([100, 100], [40, 40], [60, 40],
+                              [True, True], 100)
+    assert widths == [60, 40] and not cramped
+
+
+def test_divide_shaves_to_the_hard_widths_when_they_fit_EXACTLY():
+    """The second edge, one branch down."""
+    widths, cramped = _divide([100, 100], [50, 50], [90, 60],
+                              [True, True], 100)
+    assert sum(widths) == 100 and not cramped
+    assert widths == [50, 50]

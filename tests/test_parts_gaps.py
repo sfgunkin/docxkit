@@ -189,3 +189,17 @@ def test_strip_parts_on_a_clean_package_is_a_noop():
     before = dict(parts)
     assert strip_parts(parts) == []
     assert parts == before
+
+
+def test_remove_keeps_the_text_the_comment_was_anchored_on():
+    """`_drop_reference_run` walks back to the LAST run boundary before
+    the mark. Cutting at the FIRST one instead takes every earlier run
+    in the paragraph with it — the prose the comment was about — and the
+    existing tests only asked whether the comment's own machinery was
+    gone. Seventy-two survivors sat in that walk."""
+    parts = _commented(1, 2)
+    remove(parts, ["1"])
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "text 1" in doc, "the commented prose went with the reference run"
+    assert "text 2" in doc
+    assert 'w:id="1"' not in doc
