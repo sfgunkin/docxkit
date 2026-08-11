@@ -17,12 +17,48 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*(nothing open — the S1/S2/S3 batch closed 2026-08-11, the four S4s the
-same day. Append as you hit them.)*
+### S4 two definitions of "what this paragraph says"
+- **Symptom** `find.para_slice` reads `visible_text` — `w:t` AND `m:t`,
+  entities unescaped — while `edit.replace_in_para` walks `w:r` runs,
+  and OMML text lives in `m:r`. So a phrase spanning an equation is
+  findable by one and invisible to the other, and a caller who locates a
+  paragraph with the first and edits it with the second gets "not in
+  paragraph" for text it just found.
+- **Evidence** 2026-08-11, found while consolidating `probe` onto the
+  shared patterns: over 399 manuscripts the two answers differ on 256.
+  DSI's methodology paragraph reads "где DRID, DRIS, DRIH обозначают…"
+  to `find` and "где , ,  обозначают…" to `replace_in_para`.
+- **Mitigation already present** `probe` reports the split
+  (`Probe.view_split`) rather than picking a side, and a test asserts
+  the two tools behave the way it says.
+- **Fix** Decide which answer the package gives, or name the two
+  deliberately (`visible_text` / `editable_text`) so a caller chooses
+  rather than discovers. **Do not** simply widen `replace_in_para` to
+  see `m:r`: it rewrites runs, and writing prose into an equation's run
+  is a worse failure than not finding it.
 
 ---
 
 ## Fixed
+
+### S2 `PARA_RE` read a self-closing `<w:p/>` as an open tag — `6acc545`
+Found by the refactor that consolidated the duplicated element patterns
+into `_xml`, and it was in the shared definition itself: `[^>]*`
+swallows the slash of an EMPTY paragraph, so the walk ran on to the next
+paragraph's close and the span a caller got back began at the blank line
+BEFORE the one it asked for. Splicing that span deletes the author's
+blank line; `probe` reported "(no table follows)" for a table sitting
+right under its caption.
+
+**816 paragraph spans in 233 of 399 manuscripts started too early.** No
+oracle saw it — the merged block's TEXT is the text that was asked for,
+so only the offsets moved. `_compare_read.P_RE` had the guard by
+accident of spelling and was the only paragraph walk in the package that
+was right.
+
+Fixed with the `(?<!/)>` ghost guard already used for hyperlinks. An
+empty paragraph is invisible to the walk rather than returned as its
+own, which keeps every report's `¶N` numbering where it was.
 
 ### S4 `footnotes.sizes` skips the reference mark untested — `cf6c0f2`
 The entry refused to widen anything without evidence and named the
