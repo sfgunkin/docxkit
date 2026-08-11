@@ -17,29 +17,29 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S4 two definitions of "what this paragraph says"
-- **Symptom** `find.para_slice` reads `visible_text` — `w:t` AND `m:t`,
-  entities unescaped — while `edit.replace_in_para` walks `w:r` runs,
-  and OMML text lives in `m:r`. So a phrase spanning an equation is
-  findable by one and invisible to the other, and a caller who locates a
-  paragraph with the first and edits it with the second gets "not in
-  paragraph" for text it just found.
-- **Evidence** 2026-08-11, found while consolidating `probe` onto the
-  shared patterns: over 399 manuscripts the two answers differ on 256.
-  DSI's methodology paragraph reads "где DRID, DRIS, DRIH обозначают…"
-  to `find` and "где , ,  обозначают…" to `replace_in_para`.
-- **Mitigation already present** `probe` reports the split
-  (`Probe.view_split`) rather than picking a side, and a test asserts
-  the two tools behave the way it says.
-- **Fix** Decide which answer the package gives, or name the two
-  deliberately (`visible_text` / `editable_text`) so a caller chooses
-  rather than discovers. **Do not** simply widen `replace_in_para` to
-  see `m:r`: it rewrites runs, and writing prose into an equation's run
-  is a worse failure than not finding it.
+*(nothing open. Append as you hit them.)*
 
 ---
 
 ## Fixed
+
+### S4 two definitions of "what this paragraph says" — `35fd07b`
+**Decision (2026-08-11, the author's): name both.** `visible_text` is
+the reader's — `w:t` and `m:t` — and what `para_slice`, `crossrefs`,
+`citations` and compare locate with. `editable_text` is what a run walk
+can address, now a name in `_xml` rather than a join inlined in
+`replace_in_para`. Over 399 manuscripts they differ on 256, and the
+maths is the only thing they differ over.
+
+Widening the editor was rejected on the grounds recorded when the entry
+was opened: it would find phrases it could not write. Instead the
+refusal explains itself — when the anchor is in the reader's text and
+not in the run walk, `replace_in_para` names the equation.
+
+`edit.py` had held both readings all along: `_locate` was fixed for
+this in the DSI §6.3 round, with a comment that "two definitions of
+visible in one call path is one too many", and `replace_in_para` beside
+it still joined the runs alone.
 
 ### S2 `PARA_RE` read a self-closing `<w:p/>` as an open tag — `6acc545`
 Found by the refactor that consolidated the duplicated element patterns
