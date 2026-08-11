@@ -77,54 +77,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 - **Fix** `revision build` could detect "this batch removes bookmarks"
   and say so.
 
-### S2 `revision build` under-reports what Compare baked in untracked
-- **Symptom** It warns `resolved N math revisions … Author this batch by
-  hand instead`, which reads as "N equation edits are untracked". The
-  real damage was far wider: restructuring a math-bearing paragraph
-  (merging two paragraphs, one holding an inline oMath) shipped the
-  **entire rewritten paragraph** untracked, and the batch's headline
-  count looked healthy — 7 revisions, 6 of them in the body — while the
-  central edit had no revision marks at all.
-- **Repro** Parental_style 2026-08-10, protocol_theory_opening.
-  `docxkit revision build` → "resolved 5 math revisions", 7 revisions;
-  `docxkit locate batch.docx --revisions` → all 6 body revisions are the
-  two word-swaps in an unrelated paragraph.
-- **Also** the advice has no tool behind it: `tracked.build` IS the
-  Compare wrapper, so "author this batch by hand" names no supported
-  path. Either provide one or say plainly that such a batch has no
-  redline.
-- **Not steerable by authoring.** Built twice — delete-and-reinsert, then
-  rewrite-in-place so neither the footnote reference nor the oMath moved
-  — and Compare emitted **byte-identical** output. It diffs document
-  CONTENT, not the XML it is handed.
-- **Fix** Report which PARAGRAPHS lost tracking, not just a math count;
-  `locate --revisions` already has the data.
-
-### S2 a moved footnote ANCHOR makes Compare emit the footnote as an unmatched insert
-- **Symptom** When a footnote's reference moves (same footnote, new
-  position in the text), Compare treats it as a brand-new footnote:
-  the whole footnote body is wrapped in one `<w:ins>` with **no matching
-  `<w:del>`**. Accepting is correct; **rejecting empties the footnote.**
-  This is one of the two reasons a batch fails gate 5 while looking fine.
-- **Repro** Parental_style 2026-08-10: footnote 2 re-anchored from the
-  deleted roadmap paragraph to the new opening sentence.
-  `revisions.reject(footnotes.xml)` → empty footnote body.
-- **Fix** Detectable before the handback: a footnote part whose `w:ins`
-  count is non-zero and `w:del` count is zero, when the footnote existed
-  in the baseline, is always this. Warn by name.
-
-### S4 `revision validate` says reject-all MISMATCH but not WHAT failed
-- **Symptom** Gate 5 prints `{'paragraphs': False, 'glyphs': False,
-  'footnotes': False} -> MISMATCH` and stops. Three booleans do not say
-  which paragraph, or whether the cause is one word or a whole section.
-- **Evidence** 2026-08-10. Cost a bespoke diff script
-  (`difflib` over reject-all vs `prev.docx` paragraph text) to learn that
-  the merged paragraph was untracked and footnote 2 came back empty —
-  which is exactly the information needed to decide whether the batch is
-  salvageable or has to ship clean.
-- **Fix** On mismatch, print the first few differing paragraphs the way
-  `compare`'s TEXT layer does. The comparison is already computed.
-
 ### S4 `build/batch.docx` is reserved but not guarded
 - **Symptom** Writing a hand-built clean edit to `build/batch.docx`
   collides with `revision build`'s provenance tracking: it reports "the
@@ -136,6 +88,29 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S2 `revision build` under-reports what Compare baked in untracked — `af355b7`
+### S2 a moved footnote ANCHOR makes Compare emit the footnote as an unmatched insert — `af355b7`
+### S4 `revision validate` says reject-all MISMATCH but not WHAT failed — `af355b7`
+Three entries, one commit, because they are the same complaint from
+different ends: the protocol knew a batch was unreviewable and would not
+say what.
+
+`untracked(parts, baseline)` returns the paragraphs where reject-all does
+not reproduce the baseline — the computation gate 5 already performed and
+threw away. `build` says it BEFORE the handback, `validate` after.
+`moved_footnotes` names the second cause by itself: insertions, no
+deletions, and text already at that id in the baseline (the last clause
+is what keeps a genuinely NEW note off the list).
+
+The MathResolved refusal no longer advises "author this batch by hand
+instead", which named no supported call. It says what is true: the batch
+has no reviewable redline.
+
+**Two of the four footnote tests reached none of this** —
+`moved_footnotes` only runs when gate 5 FAILS, and those fixtures
+rejected cleanly, so both mutations lived. They test the function
+directly now.
 
 ### S2 `citations.link_rest` is blind to entry bookmarks Word has HOISTED — `a2f28a2`
 `link_all` already reads the body-level gap before each entry, for this
