@@ -54,9 +54,16 @@ _SURNAME = (rf"\b(?:{_PREFIX}\s+|{_LEAD}\s+)*{_NAME}"
             rf"(?:\s+{_PARTICLE}(?:\s+{_PARTICLE})*\s+{_NAME})*")
 # "Surname", "Surname et al.", "First and Second",
 # "First, Second and Third", "First, Second, and Third"
+# The trailing possessive is what a chain needs and a bare surname does
+# not: the apostrophe is a name character, so "Becker's" is already
+# inside _NAME, but "Doepke et al.'s (2019)" ends past it and the whole
+# citation was invisible to the finder. :func:`lead_surname` drops the
+# suffix again for the key; the SPAN keeps it, because it is what the
+# sentence says.
 _AUTHORS = (rf"{_SURNAME}"
             r"(?:\s+et\s+al\.?)?"
-            rf"(?:(?:,\s+|,?\s+(?:and|&)\s+){_SURNAME})*")
+            rf"(?:(?:,\s+|,?\s+(?:and|&)\s+){_SURNAME})*"
+            r"(?:['’]s)?")
 _YEAR = r"\d{4}[a-z]?"
 # In-text citations hide inside parenthesis GROUPS, which real papers
 # fill with more than one work: "(Bernheim and Rangel 2009; Chetty
@@ -134,6 +141,9 @@ _LEAD_ADVERB_RE = re.compile(r"^([A-ZÀ-ÿĀ-ſ][a-zà-ÿā-ſ]+),\s+(.+)$",
                              re.DOTALL)
 # Where one author ends and the next begins, in an in-text chain.
 _CHAIN_SPLIT_RE = re.compile(r",|\s+(?:and|&)\s+|\s+et\s+al")
+# The possessive that ends a name in prose but never in a bibliography:
+# "Becker's" straight or typographic, and the plural "the Smiths' (2019)".
+_POSSESSIVE_RE = re.compile(r"['’]s?$")
 
 
 def strip_lead(authors: str) -> str:
@@ -145,8 +155,18 @@ def strip_lead(authors: str) -> str:
 
 
 def lead_surname(authors: str) -> str:
-    """The first author of a chain, as the reference list would file it."""
-    return _CHAIN_SPLIT_RE.split(authors)[0].strip()
+    """The first author of a chain, as the reference list would file it.
+
+    A POSSESSIVE mention — "Becker's (1981) model", "Doepke et al.'s
+    (2019)" — is a citation, and the name the bibliography files it under
+    is the plain surname. The apostrophe is a name character (D'Souza,
+    O'Brien) so the grammar takes "Becker's" whole and :func:`key_for`
+    strips the punctuation without removing the *s*: the key came out
+    ``beckers_1981``, matched no entry, and the mention could not be
+    linked at all (Parental Style 2026-08-10). Only a TRAILING possessive
+    is dropped, so a name whose apostrophe JOINS it is untouched.
+    """
+    return _POSSESSIVE_RE.sub("", _CHAIN_SPLIT_RE.split(authors)[0].strip())
 
 
 @dataclass(frozen=True)

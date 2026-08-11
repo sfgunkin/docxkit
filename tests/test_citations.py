@@ -908,6 +908,95 @@ def test_link_all_links_a_citation_behind_a_swallowed_lead_word():
     assert issues == [], issues
 
 
+# ------------------------------------------------ the possessive form ---
+#
+# "Becker's (1981) model" is a citation of Becker 1981. The apostrophe is
+# a NAME character — D'Souza, O'Brien — so the grammar takes "Becker's"
+# whole and the key came out `beckers_1981`, matching no entry. Found on
+# Parental Style ¶92, 2026-08-10, where it cost a hand-written
+# link_in_para in the paper's repair script.
+
+FILLER = "".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                 for i in range(5))
+BECKER = ("Becker, G. S. (1981). A Treatise on the Family. "
+          "Harvard University Press.")
+
+
+@pytest.mark.parametrize("text, surname, year", [
+    ("Becker’s (1981) model", "Becker", "1981"),          # typographic
+    ("Becker's (1981) model", "Becker", "1981"),          # straight
+    ("Doepke et al.'s (2019) model", "Doepke", "2019"),   # on a CHAIN
+    ("the Smiths' (1981) model", "Smiths", "1981"),       # plural
+    ("D'Souza (1981) argues", "D'Souza", "1981"),         # a JOINING one
+])
+def test_a_possessive_citation_files_under_the_plain_surname(
+        text, surname, year):
+    c = find_citations(text)[0]
+    assert c.surname == surname and c.key == key_for(surname, year)
+
+
+def test_link_all_links_a_possessive_citation():
+    """It reported `unmatched` — right, and unlinkable: no entry answers
+    to `beckers_1981`."""
+    from docxkit.citations import link_all
+    body = (FILLER
+            + P(R("Becker’s (1981) model explains the gradient."))
+            + P(R("References")) + P(R(BECKER)))
+    parts = xml_parts(body)
+    report = link_all(parts)
+    assert report.unmatched == [] and len(report.linked) == 1
+    # the span keeps the possessive: it is what the sentence says
+    assert _links(parts)[0] == "Becker’s (1981)"
+
+
+def test_a_later_mention_worded_differently_is_not_reported_unlinked():
+    """The convention links a work's FIRST mention only, so UNLINKED asks
+    whether the WORK is linked — and asking it of the label text read the
+    possessive mention as unlinked while the entry was linked twice
+    elsewhere."""
+    from docxkit.citations import link_all
+    body = (FILLER
+            + P(R("Fertility responds to income (Becker 1981)."))
+            + P(R("Becker’s (1981) framework explains it."))
+            + P(R("References")) + P(R(BECKER)))
+    parts = xml_parts(body)
+    link_all(parts)
+    issues, stats = audit_links(parts)
+    assert issues == [], issues
+    assert stats["unlinked"] == 0
+
+
+def test_a_work_with_no_link_at_all_is_still_reported():
+    """The guard above must not silence the finding it was built around:
+    with nothing linked, the possessive mention IS unlinked."""
+    body = (FILLER
+            + P(R("Becker’s (1981) framework explains it."))
+            + P(R("References")) + P(R(BECKER)))
+    issues, stats = audit_links(xml_parts(body))
+    assert stats["unlinked"] == 1
+    assert any("UNLINKED" in i and "Becker" in i for i in issues)
+
+
+def test_a_link_inside_deleted_text_is_not_evidence_of_a_link():
+    """LE le12 ¶195: the author retyped the sentence, which dropped its
+    hyperlink, and the tracked DELETION beside it still carried the old
+    one. A link the final document does not show cannot answer "is this
+    work linked"."""
+    deleted = (
+        '<w:p><w:del w:id="9" w:author="A" w:date="2026-07-01T00:00:00Z">'
+        '<w:r><w:delText xml:space="preserve">Longevity is endogenous ('
+        "</w:delText></w:r>"
+        '<w:hyperlink w:anchor="Becker1981"><w:r>'
+        "<w:delText>Becker 1981</w:delText></w:r></w:hyperlink>"
+        "<w:r><w:delText>).</w:delText></w:r></w:del></w:p>")
+    retyped = P(R("Longevity is endogenous to investment (Becker 1981)."))
+    parts = xml_parts(FILLER + retyped + deleted
+                      + P(R("References")) + P(R(BECKER)))
+    issues, stats = audit_links(parts)
+    assert stats["unlinked"] == 1
+    assert any("UNLINKED" in i and "Becker" in i for i in issues), issues
+
+
 # ----------------------------------------------------- extend_to_name ---
 #
 # The mirror of the same grammar rule: a plain multi-word institution is

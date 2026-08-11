@@ -15,6 +15,7 @@ from typing import NamedTuple
 from ._cite_grammar import (
     _DEFAULT_HEADINGS,
     IGNORED_LEADS,
+    Reference,
     find_citations,
     references,
     resolve_lead,
@@ -95,6 +96,26 @@ def _doubled_links(para_xml: str) -> list[tuple[str, str]]:
                     del stack[i]
                     break
     return out
+
+
+def _marker_owner(name: str, entries: list[Reference]) -> Reference | None:
+    """The entry a key-shaped bookmark names, when exactly one answers.
+
+    Conservative on purpose, and shared by the two checks that need it —
+    MISPLACED MARKER, which asks WHERE the marker sits, and the UNLINKED
+    scan, which asks whether a work is linked at all. A name that does
+    not parse as surname+year, or that fits two entries, belongs to
+    neither check: silence beats a guess, and a second copy of this rule
+    is how the two would drift apart.
+    """
+    km = _KEY_SHAPE_RE.match(name)
+    if km is None:
+        return None
+    alpha, year = km.group(1).casefold(), km.group(2)
+    owners = [r for r in entries
+              if re.sub(r"[^\w]", "", r.surname).casefold().startswith(alpha)
+              and r.year == year]
+    return owners[0] if len(owners) == 1 else None
 
 
 class _Finding(NamedTuple):
@@ -248,14 +269,8 @@ def _audit_findings(parts: dict[str, bytes], *,
     if entries:
         starts = {r.index: r for r in entries}
         for name in ref_marks:
-            km = _KEY_SHAPE_RE.match(name)
-            if km is None:
-                continue
-            alpha, year = km.group(1).casefold(), km.group(2)
-            owners = [r for r in entries
-                      if re.sub(r"[^\w]", "", r.surname).casefold()
-                      .startswith(alpha) and r.year == year]
-            if len(owners) != 1:
+            owner = _marker_owner(name, entries)
+            if owner is None:
                 continue
             pos = doc.find(f'w:name="{name}"')
             at = next((r for i, r in starts.items()
@@ -263,12 +278,12 @@ def _audit_findings(parts: dict[str, bytes], *,
             if at is None:                    # body-level: next entry down
                 at = next((starts[i] for i in sorted(starts)
                            if paras[i].start() >= pos), None)
-            if at is not None and at.index != owners[0].index:
+            if at is not None and at.index != owner.index:
                 issues.append(_Finding(
                     "MISPLACED MARKER", name,
                     f"MISPLACED MARKER: '{name}' sits at "
                     f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
-                    f"is ¶{owners[0].index + 1}"))
+                    f"is ¶{owner.index + 1}"))
 
     # Unlinked citation-like text, on the shared grammar. Only body
     # prose before the reference list; the first five paragraphs are the
@@ -284,6 +299,33 @@ def _audit_findings(parts: dict[str, bytes], *,
     # canonical keys are what this decision needs.
     entry_keys = {r.key for r in entries}
     labels = {lb.strip() for sites in links.values() for _, lb in sites}
+    # The convention links a work's FIRST mention only, so the question
+    # this check asks is "is this WORK linked anywhere", and it must be
+    # asked of the work — not of the wording. Pairing on the label text
+    # alone read "Doepke and Zilibotti's (2017)" as unlinked while the
+    # entry was linked from two other paragraphs, because no label
+    # carries the possessive (Parental Style ¶92, 2026-08-10): a false
+    # positive that cost a hand-written link_in_para in the paper's
+    # repair script. Measured over 397 real manuscripts, 38 of the 44
+    # findings this quiets are one shape — a link whose label stops a
+    # character short of the citation, "Davletov et al. (2016" and
+    # "Angrist and Evans (1998", because the closing parenthesis sits in
+    # a run outside the hyperlink. Those mentions ARE linked.
+    #
+    # The evidence must be visible in the FINAL document: a link inside
+    # deleted text is not a link. Its label comes back empty (a deleted
+    # run holds `w:delText`, which no visible-text reader returns), and
+    # requiring a non-empty one is what keeps le12's finding — the
+    # author retyped the sentence, which dropped the hyperlink, while
+    # the tracked deletion beside it still carried the old one.
+    #
+    # The label test stays as the fallback for a document whose
+    # bookmarks are not key-shaped — anchor_names' cite_/ref_ naming, or
+    # a work cited with no entry to resolve against.
+    linked_works = {owner.key for name in ref_marks
+                    if any(lb.strip() for _, lb in links.get(name, ()))
+                    for owner in (_marker_owner(name, entries),)
+                    if owner is not None}
     unlinked = 0
     for i, text in enumerate(texts[:head_idx]):
         if i < 5:
@@ -291,6 +333,8 @@ def _audit_findings(parts: dict[str, bytes], *,
         for found in find_citations(text):
             c = resolve_lead(found, known=entry_keys)
             if c.surname.casefold() in ignored:
+                continue
+            if c.key in linked_works:
                 continue
             cite = text[c.start:c.end].strip()
             cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
