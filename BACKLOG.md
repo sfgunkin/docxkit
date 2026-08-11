@@ -17,35 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 `citations.link_rest` is blind to entry bookmarks Word has HOISTED
-- **Symptom** Reports `'Straus et al. (1998)' (¶40): entry has no
-  bookmark` and skips the mention, for works whose entry bookmark exists
-  and resolves perfectly well. Word hoists a collapsed bookmark out of
-  the paragraph it marks, so the reference entry's own
-  `<w:bookmarkStart w:name="Straus1998"/><w:bookmarkEnd/>` sits BETWEEN
-  paragraphs at body level: `…</w:p><w:bookmarkStart/><w:bookmarkEnd/>
-  <w:p …>`. `link_rest` looks inside the entry paragraph, finds nothing,
-  and declines.
-- **Consequence** the later-mention layer silently stops being
-  maintained for those works. On Parental_style that was **nine
-  mentions across six works** (Straus1998, Doepke2019 ×4, Doepke2017,
-  Gracia2008, Roche2020, Habibov2012) — the author noticed before any
-  tool did, because `citations` reports ALL CHECKS PASSED (it resolves
-  anchors document-wide, and first mentions are all linked).
-- **Repro** Parental_style 2026-08-11, `working.docx` after author round
-  9. `Straus1998` bookmark: 1 in the document, 0 inside its entry
-  paragraph.
-- **Workaround** `_link_citations` in
-  `Parental_style/revision/scripts/applied/relink_mentions.py` — takes
-  `link_rest`'s own skip list, derives `SurnameYear`, **verifies it
-  against the document-wide bookmark set** (refusing to write a link
-  that goes nowhere) and calls `link_in_para` directly.
-- **Fix** Resolve entry anchors from the document-wide bookmark set,
-  or accept a bookmark that sits immediately before/after the entry
-  paragraph. `crossrefs` already copes with hoisting; this path does
-  not. Note `citations` should probably also report the gap — "N later
-  mentions unlinked" is invisible today.
-
 ### S4 `footnotes.sizes` skips the reference mark untested
 - **Symptom** `sizes` asks only runs with visible text, so a paper that
   deliberately sizes the `w:footnoteRef` run gets no finding when one
@@ -165,6 +136,34 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S2 `citations.link_rest` is blind to entry bookmarks Word has HOISTED — `a2f28a2`
+`link_all` already reads the body-level gap before each entry, for this
+exact reason and with this exact comment. `_entry_names_from_document`
+did not, so the two halves of one convention disagreed about where a
+marker lives. The surname-AND-year test in `_own_bookmark` is what makes
+the wider search safe.
+
+Measured read-only on the three live manuscripts:
+
+                          skipped        would link
+    Parental_style        0 -> 0          0 -> 0
+    Life_Expectancy       5 -> 3          3 -> 5
+    Loneliness Index     44 -> 7          1 -> 38
+
+**Thirty-seven later mentions on LI** the pass had been declining. What
+still skips are entries whose bookmark is genuinely absent or filed
+under a name the surname test cannot match ("Commission 2024", "UN
+2019b") — a different question.
+
+**Not done:** the entry's second suggestion, that `citations` report "N
+later mentions unlinked". The audit deliberately treats a later mention
+as fine — the house convention links first mentions only — so that
+number would contradict the check beside it. `link_rest`'s own report is
+where the count belongs, and it is there.
+
+**Workaround to retire** `_link_citations` in `relink_mentions.py`; the
+script stays as the record of the round.
 
 ### S2 `compare`'s FIELD layer reports targets that are present as lost — `122a180`
 The entry guessed "pairs paragraphs by text"; the real mechanism is that
