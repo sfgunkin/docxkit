@@ -574,11 +574,15 @@ def test_a_target_that_moved_into_a_footnote_is_not_lost(tmp_path):
     the last shape of false 'lost' left after the block rule."""
     body_before = _linked("The instrument is discussed here.", "Angrist1998")
     body_after = _linked("The instrument is discussed in the note.")
-    moved = note(2, para(run("See ") + '<w:hyperlink w:anchor="Angrist1998">'
-                         + run("Angrist and Evans (1998)") + "</w:hyperlink>"))
+    moved = ('<w:footnote w:id="2">'
+             + para(run("See ") + '<w:hyperlink w:anchor="Angrist1998">'
+                    + run("Angrist and Evans (1998)") + "</w:hyperlink>")
+             + "</w:footnote>")
     a, b = docs(tmp_path, body_before, body_after,
-                footnotes=(notes(note(2, para(run("See it.")))), notes(moved)))
+                footnotes=(notes("footnotes", note("See it.")),
+                           notes("footnotes", moved)))
     report = compare(a, b)
+    assert report["text"], "the fixture must really differ"
     assert report["stripped_fields"] == [], report["stripped_fields"]
 
 
