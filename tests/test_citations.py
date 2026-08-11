@@ -15,7 +15,9 @@ from docxkit.citations import (
     key_for,
     parse_reference,
     references,
+    wrap_link_in_bookmark,
 )
+from docxkit.errors import AnchorError
 
 
 def _found(text):
@@ -678,7 +680,7 @@ def test_marker_bookmark_travels_inside_the_paragraph():
 
 def test_wrap_link_in_bookmark_handles_both_forms():
     from docxkit._xml import internal_links
-    from docxkit.citations import wrap_link_in_bookmark
+
     element = P(R("see ") + '<w:hyperlink w:anchor="Smith2020">'
                 + R("Smith 2020") + "</w:hyperlink>")
     out = wrap_link_in_bookmark(element, "Smith2020", "Smith2020txt", 9)
@@ -1158,7 +1160,7 @@ def test_wrap_link_survives_a_styled_field_run():
     before the fix. The result must PARSE, not just look right."""
     from lxml import etree
 
-    from docxkit.citations import wrap_link_in_bookmark
+
     styled_field = (
         '<w:r><w:rPr><w:noProof/></w:rPr>'
         '<w:fldChar w:fldCharType="begin"/></w:r>'
@@ -1239,6 +1241,71 @@ def test_link_rest_links_every_later_citation_forward_only():
     assert "Maestas2023txt" not in later         # no second bookmark
     rep2 = C.link_rest(parts)
     assert rep2.linked == [], rep2.format()      # idempotent
+
+
+# --- wrap_link_in_bookmark: which mention owns the <key>txt bookmark ---
+#
+# It refuses on several links by design. The house convention has an
+# answer — the FIRST mention — and with no way to say so the same regex
+# was hand-rolled twice in one paper.
+
+def _two_links(anchor: str = "Table5") -> str:
+    return ("<w:document><w:body>"
+            + P(R("The wealth gradient is in ")
+                + f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>Table 5'
+                  "</w:t></w:r></w:hyperlink>" + R("."))
+            + P(R("The age profile repeats it (")
+                + f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>Table 5'
+                  "</w:t></w:r></w:hyperlink>" + R(").").rstrip())
+            + "</w:body></w:document>")
+
+
+def test_wrap_link_still_refuses_to_guess_by_default():
+
+    with pytest.raises(AnchorError, match="matched 2 links"):
+        wrap_link_in_bookmark(_two_links(), "Table5", "Table5txt", 9200)
+
+
+def test_wrap_link_takes_the_first_mention_when_asked():
+
+    out = wrap_link_in_bookmark(_two_links(), "Table5", "Table5txt", 9200,
+                                which="first")
+    assert out.count('w:name="Table5txt"') == 1
+    first, second = re.findall(r"<w:p>.*?</w:p>", out, re.DOTALL)
+    assert "Table5txt" in first and "Table5txt" not in second
+
+
+def test_wrap_link_counts_both_link_FORMS_as_mentions():
+    """Word rewrites a field into an element on every author save, so a
+    manuscript mid-round holds one of each. Counting only the elements
+    made the element unique — and the bookmark would land wherever form
+    churn had left it."""
+    from docxkit.citations import hyperlink_field, wrap_link_in_bookmark
+    mixed = ("<w:document><w:body>"
+             + P(R("Field form: ") + hyperlink_field("Table5", "Table 5"))
+             + P(R("Element form: ")
+                 + '<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5'
+                   "</w:t></w:r></w:hyperlink>")
+             + "</w:body></w:document>")
+    with pytest.raises(AnchorError, match="matched 2 links"):
+        wrap_link_in_bookmark(mixed, "Table5", "Table5txt", 9200)
+    out = wrap_link_in_bookmark(mixed, "Table5", "Table5txt", 9200,
+                                which="first")
+    first = re.findall(r"<w:p>.*?</w:p>", out, re.DOTALL)[0]
+    assert "Table5txt" in first, "the FIELD-form mention came first"
+
+
+def test_wrap_link_rejects_an_unknown_mode():
+
+    with pytest.raises(ValueError, match="which="):
+        wrap_link_in_bookmark(_two_links(), "Table5", "t", 1, which="last")
+
+
+def test_wrap_link_says_so_when_there_is_no_link_at_all():
+
+    with pytest.raises(AnchorError, match="no link to"):
+        wrap_link_in_bookmark("<w:document><w:body/></w:document>",
+                              "Ghost2019", "Ghost2019txt", 1)
 
 
 def test_link_rest_sees_an_entry_bookmark_word_hoisted_out():

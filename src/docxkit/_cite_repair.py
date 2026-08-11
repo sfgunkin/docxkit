@@ -111,33 +111,46 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
     return out
 
 
-def wrap_link_in_bookmark(xml: str, anchor: str, name: str,
-                          bid: int) -> str:
+def wrap_link_in_bookmark(xml: str, anchor: str, name: str, bid: int,
+                          *, which: str = "only") -> str:
     """Recreate `name` around the ONE link that points at `anchor`.
 
     The ``<key>txt`` convention's in-text end, rebuilt exactly where the
     surviving hyperlink sits — element form, or a complete fldChar
     field whose instruction carries the anchor.
+
+    ``which="first"`` wraps the FIRST of several links to one anchor
+    rather than refusing. Refusing is right as the default — the tool
+    will not guess which mention owns the bookmark — but the house
+    convention has an answer: the ``<key>txt`` bookmark belongs on the
+    first in-text mention, later ones stay forward-only. With no way to
+    say that, the same regex was hand-rolled twice in ONE paper
+    (`repair_round3_links.py`, then `_wrap_first` in `repair_round5.py`).
+
+    The two forms are counted together for that decision. A work linked
+    once each way is two mentions — Word rewrites a field into an
+    element whenever the author saves, so a manuscript mid-round holds
+    both — and taking the element because it happened to be unique
+    would put the bookmark wherever form churn left it.
     """
+    if which not in ("only", "first"):
+        raise ValueError(f"which={which!r}: expected 'only' or 'first'")
     start = f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
     end = f'<w:bookmarkEnd w:id="{bid}"/>'
 
     el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*>'
                     r".*?</w:hyperlink>", re.DOTALL)
-    hits = list(el.finditer(xml))
-    if len(hits) == 1:
-        m = hits[0]
-        return xml[:m.start()] + start + m.group(0) + end + xml[m.end():]
-    if hits:
+    spans = [(m.start(), m.end()) for m in el.finditer(xml)]
+    spans += [(s, e) for s, e, body in field_spans(xml)
+              if f'"{anchor}"' in body]
+    if not spans:
+        raise AnchorError(f"wrap_link_in_bookmark: no link to {anchor}")
+    if len(spans) > 1 and which == "only":
         raise AnchorError(
-            f"wrap_link_in_bookmark: {anchor} matched {len(hits)} elements")
-
-    spans = [(s, e) for s, e, body in field_spans(xml)
-             if f'"{anchor}"' in body]
-    if len(spans) != 1:
-        raise AnchorError(
-            f"wrap_link_in_bookmark: {anchor} found {len(spans)} fields")
-    s, e = spans[0]
+            f"wrap_link_in_bookmark: {anchor} matched {len(spans)} links "
+            f"— pass which='first' for the house convention (the bookmark "
+            f"goes on the first mention), or name a narrower anchor")
+    s, e = min(spans)
     return xml[:s] + start + xml[s:e] + end + xml[e:]
 
 
