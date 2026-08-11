@@ -176,6 +176,33 @@ What five real runs cost and bought, for calibration:
 | `tracked.py` | 478 | 97 | — |
 | `revision.py` | 1,066 | 60 | — |
 | `cli.py` | 728 | 206 | — |
+| `crossrefs.py` | 841 | 168 | — |
+| `comments.py` | 732 | 244 | — |
+| `_table_layout.py` | 2,217 | 382 | — |
+
+**A suite that is too narrow INVENTS survivors, and that costs more than
+one that is too broad.** `comments.py` came back as the worst module in
+this table — 31 survivors in `remove`, seven loops that could each be
+emptied — and `remove` is tested exhaustively in `test_parts_gaps.py`,
+which was not in the run. `_table_layout`'s `drop_blank_rows` had 77 for
+the same reason (`test_tables_blank_rows.py`). The three "real survivor"
+numbers above are therefore upper bounds, not findings.
+
+The cure is not a wider run: it is to let the sweep PROPOSE and the full
+suite DISPOSE. Apply each candidate by hand and run everything; green
+means a real gap, red names the test that already covers it. Over 48
+candidates that filtered 17 artifacts out of 31 real gaps — and it is
+the same "apply the mutation and watch it go red" step already required
+after writing a test, run in the other direction.
+
+Expect a quarter of the tests written this way not to kill what they
+were aimed at. Four of the last batch did not, and each miss was worth
+more than the test: the `w:hAnsi` fallback needs a run that states NO
+font (one naming its own never consults the fallback) and cannot be
+shown by comparing two fallback tables, because the misreading sends
+BOTH to Times; `_round_to`'s `/` and its largest-remainder ordering both
+need weights that do NOT divide exactly, or every fraction is zero and
+neither line is doing anything visible.
 
 **`cli.py` is the one to read twice: 28.3%, the worst of the eight, on
 the module at 100% line coverage.** That is the whole argument for
@@ -227,6 +254,33 @@ set (`mode <= FINAL`, where `mode` is only ever `final` or `original`),
 on a `rsplit(sep, 1)` that always yields two, and removing an
 `@lru_cache` that exists for speed. Thirty are genuinely unexamined —
 that is where the frontier is, not at zero.
+
+The crossrefs/comments/`_table_layout` round added five shapes to that
+class, all of them worth recognising on sight:
+
+* a guard whose two branches MEET at the boundary — `sum_f <= avail`
+  read as `<` sends an exact fit down the shaving branch, which
+  apportions zero and hands back the same widths;
+* a lookup that returns the same thing either way: `tables.get(None)`
+  is `None`, so `if tables and idx is not None` decides nothing;
+* a check the guard above it has already made — `not hits` raises
+  before `len(hits) > 1` can ever see zero;
+* `==` read as `is` where both sides came from ONE object (a cid taken
+  twice out of the same records list), which is a stronger claim than
+  interning and holds by construction;
+* an ordering imposed on offsets that do not move: `sorted(...,
+  reverse=True)` where the spans are VISIBLE-text offsets and the edit
+  changes no visible text. Bottom-up is load-bearing where a pass
+  splices XML, and only there.
+
+**The AFM width tables in `_table_layout` are a category of their own:
+98 survivors, none of them a gap.** `test_width_model.py` already says
+so in a note addressed to whoever runs this next — a ±1 entry falls
+inside the 2.5% tolerance that gate declares. Re-measured 2026-08-11
+rather than trusted: the Times apostrophe at 180 per 1000 em, mutated to
+181, passes the everyday suite AND `pytest -m word` against a real Word.
+The gate's promise is "no character is out by more than 2.5%", not
+"every entry is exact".
 
 Two findings worth keeping:
 
