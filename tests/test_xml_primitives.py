@@ -28,6 +28,7 @@ import pytest
 from conftest import NS, field
 
 from docxkit._xml import (
+    PARA_RE,
     dead_links,
     element_spans,
     internal_links,
@@ -352,3 +353,85 @@ def test_the_document_namespaces_round_trip(tmp_path):
     """A sanity check against the real declaration string the fixtures
     use, so the set above is not just self-consistent."""
     assert "w" in used_prefixes(f"<w:document {NS}><w:p/></w:document>")
+
+
+# ---------------------------------------- one definition, and only one ---
+
+
+def test_no_element_pattern_is_compiled_in_two_modules():
+    """This module's own docstring says it holds THE definition of a run,
+    a text node, a bookmark and a part name, and six of them had drifted
+    into copies: the bookmark NAME in four modules (in two spellings),
+    the hyperlink element in two — one of them carrying a comment
+    pointing AT the twin here rather than importing it — and the
+    paragraph, the instruction, the field separator and the section
+    properties elsewhere.
+
+    The cost is never the duplicate itself, it is the fix that lands in
+    one copy: the field walk existed three times with three different
+    guards and only one defended against a missing end tag; a `\b` and a
+    ghost guard are exactly the kind of detail that gets added once.
+
+    So the rule is mechanical, and this is the mechanism.
+    """
+    import ast
+    import re
+    from collections import defaultdict
+    from pathlib import Path
+
+    import docxkit
+
+    src = Path(docxkit.__file__).parent
+    literal = re.compile(r"""re\.compile\(\s*(?:rf?|fr?)?(['"])(.*?)\1""",
+                         re.DOTALL)
+    where: dict[str, set[str]] = defaultdict(set)
+    for path in sorted(src.glob("*.py")):
+        if path.name == "word_edits.py":       # a port, exempt by policy
+            continue
+        text = path.read_text(encoding="utf-8")
+        ast.parse(text)                        # it must still be Python
+        for _quote, pattern in literal.findall(text):
+            # only WordprocessingML element shapes: a bare `\d+` or a
+            # prose pattern is not this module's business
+            if "<w:" in pattern or "<m:" in pattern:
+                where[" ".join(pattern.split())].add(path.stem)
+    twice = {pat: sorted(mods) for pat, mods in where.items()
+             if len(mods) > 1}
+    assert not twice, "\n".join(
+        f"{mods}: {pat[:70]}" for pat, mods in sorted(twice.items()))
+
+
+# ------------------------------------------------ the empty paragraph ----
+
+
+def test_a_self_closing_paragraph_is_not_an_open_tag():
+    """`<w:p/>` is an EMPTY paragraph. `[^>]*>` swallowed the slash and
+    the walk then ran on to the next paragraph's close, so the span a
+    caller got back began at the blank line BEFORE the one it asked for
+    — and replacing that span deletes the author's blank line.
+
+    Measured over 399 manuscripts: 816 spans in 233 of them started too
+    early. Not one oracle saw it, because the TEXT of the merged block
+    is the text of the paragraph that was asked for; only the offsets
+    moved."""
+    xml = "<w:p/><w:p><w:r><w:t>real</w:t></w:r></w:p>"
+    got = [m.group(0) for m in PARA_RE.finditer(xml)]
+    assert got == ["<w:p><w:r><w:t>real</w:t></w:r></w:p>"]
+
+
+def test_an_attribute_bearing_empty_paragraph_too():
+    """Word writes the attributes, so this is the form that actually
+    occurs — the bare `<w:p/>` is in 28 documents here and the attributed
+    one in 233."""
+    xml = ('<w:p w14:paraId="4BD89DAE" w14:textId="77" w:rsidR="00A"/>'
+           "<w:p><w:r><w:t>real</w:t></w:r></w:p>")
+    got = [m.group(0) for m in PARA_RE.finditer(xml)]
+    assert got == ["<w:p><w:r><w:t>real</w:t></w:r></w:p>"]
+
+
+def test_an_ordinary_paragraph_still_matches_whole():
+    """The guard must not cost the ordinary case: a `/` INSIDE the open
+    tag's attributes, and a self-closing child, are both fine."""
+    xml = ('<w:p w:rsidR="00A/B"><w:pPr><w:jc w:val="center"/></w:pPr>'
+           "<w:r><w:t>x</w:t></w:r></w:p>")
+    assert [m.group(0) for m in PARA_RE.finditer(xml)] == [xml]

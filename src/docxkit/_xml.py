@@ -93,7 +93,26 @@ def text_parts(parts: dict[str, bytes]) -> list[tuple[str, str]]:
 XML_WS = " \t\r\n"
 
 # A paragraph. Non-greedy, so nested content stops at the first close.
-PARA_RE = re.compile(r"<w:p\b[^>]*>.*?</w:p>", re.DOTALL)
+# `(?<!/)>` — a SELF-CLOSING `<w:p/>` is an empty paragraph, not an open
+# tag, and `[^>]*>` swallowed the slash and then ran on to the next
+# paragraph's close. The span therefore began at the blank line BEFORE
+# the paragraph a caller asked for: `para_slice` handed back a slice
+# whose replacement deletes the author's blank line, and probe's block
+# walk reported "(no table follows)" for a table sitting right under its
+# caption with a spacer between.
+#
+# Measured 2026-08-11 over 399 manuscripts: 28 hold a self-closing
+# paragraph, 87 blocks in all. `_compare_read.P_RE` had the guard by
+# accident of spelling (`<w:p[ >]`) and was the only walk that was
+# right; the shared definition was the one with the defect, which is
+# why consolidating onto it had to be measured rather than assumed.
+#
+# An empty paragraph is now invisible to the walk rather than reported
+# as its own: that keeps the paragraph NUMBERING every report prints
+# (`¶133`) exactly as it was, where returning it would renumber every
+# finding after it in those 28 documents. Nothing in this package has
+# anything to do to an empty paragraph.
+PARA_RE = re.compile(r"<w:p\b[^>]*(?<!/)>.*?</w:p>", re.DOTALL)
 # Text nodes: w:t is prose, m:t is math.
 T_RE = re.compile(r"<(?:w|m):t[^>]*>([^<]*)</(?:w|m):t>")
 # The same two separately, for the callers that must NOT mix them: the
@@ -132,7 +151,17 @@ RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*>")
 BOOKMARK_ID_RE = re.compile(r'<w:bookmark(?:Start|End)[^>]*w:id="(\d+)"')
 BOOKMARK_START_ID_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:id="(\d+)"')
 BOOKMARK_END_ID_RE = re.compile(r'<w:bookmarkEnd\b[^>]*w:id="(\d+)"')
+#: Every bookmark NAME. This module holds the one definition of a
+#: bookmark and had three by id and none by name, so four modules grew
+#: their own — `_cite_audit`, `probe`, `tracked` and `revision`, in two
+#: spellings. That is the shape this package has been bitten by
+#: repeatedly: the field walk existed three times with three different
+#: guards, and only one of them defended against a missing end tag.
+BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:name="([^"]+)"')
 COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
+#: A section's properties. `figures` reads the LAST one as the template
+#: for a new section; `probe` reports how many there are.
+SECTPR_RE = re.compile(r"<w:sectPr\b.*?</w:sectPr>", re.DOTALL)
 # A field character, which is how Word writes a HYPERLINK before it
 # churns to element form on the next save.
 FLDCHAR_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="(\w+)"')
@@ -151,6 +180,24 @@ MATH_OBJECTS = frozenset({
     "groupChr", "limLow", "limUpp", "m", "nary", "phant", "r", "rad",
     "sPre", "sSub", "sSubSup", "sSup",
 })
+
+#: The structural OMML elements — the ones that change a formula's SHAPE
+#: rather than its symbols. Their sequence is an equation's skeleton, and
+#: two modules computed it from two hand-kept copies of this tuple:
+#: `equations.skeleton` and `compare`'s FORMULA layer, which decides
+#: whether an equation was rewritten or merely re-typeset. They agreed
+#: exactly on the day they were merged, which is the point — the next
+#: element added to one of them would have split the two answers, and
+#: the layer that reports "structure" would have stopped agreeing with
+#: the function that defines it.
+#:
+#: A different question from :data:`MATH_OBJECTS`, which is about what
+#: renders a box and may be pruned when empty; `borderBox`, `phant`,
+#: `sPre` and the bare run belong there and not here.
+OMML_STRUCT = ("sSub", "sSup", "sSubSup", "nary", "f", "d", "rad", "func",
+               "acc", "bar", "groupChr", "limLow", "limUpp", "m", "eqArr",
+               "box")
+OMML_STRUCT_RE = re.compile(r"<m:(" + "|".join(OMML_STRUCT) + r")\b")
 
 # Substitutions Word applies on save. They are artifacts of the editor,
 # not author intent, so a diff that vanishes under them is not an edit and
@@ -251,7 +298,10 @@ _FIELD_RE = re.compile(
 # second copy of this until it was promoted here.
 INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
 INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
-_SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
+#: Public: `_compare_read` masks a volatile field's cached RESULT, which
+#: starts here, and kept its own copy of this until it was promoted.
+SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
+_SEPARATE_RE = SEPARATE_RE
 
 
 def internal_links(xml: str) -> list[tuple[str, str]]:

@@ -369,3 +369,18 @@ def test_vert_align_replaces_rather_than_stacks():
     out = subscript(superscript(para(run("xy")), "y"), "y")
     assert out.count("<w:vertAlign") == 1
     assert "superscript" not in out
+
+
+def test_para_slice_starts_at_the_paragraph_it_was_asked_for():
+    """The span is what a caller splices, so a start that includes the
+    EMPTY paragraph above deletes the author's blank line. `<w:p/>` was
+    read as an open tag and the walk ran on to the next close."""
+    xml = document('<w:p w14:paraId="4BD89DAE"/>'
+                   + para(run("The paragraph the caller wants.")))
+    s, e = para_slice(xml, "the caller wants")
+    assert xml[s:].startswith("<w:p w14:paraId=\"11111111\"") or \
+        xml[s:].startswith("<w:p>"), xml[s:s + 40]
+    assert "4BD89DAE" not in xml[s:e], "the empty paragraph rode along"
+    # and splicing the span keeps the blank line
+    rebuilt = xml[:s] + para(run("REPLACED")) + xml[e:]
+    assert "4BD89DAE" in rebuilt

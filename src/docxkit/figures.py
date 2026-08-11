@@ -24,7 +24,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._xml import DOCUMENT, PARA_RE, visible_text
+from ._xml import DOCUMENT, PARA_RE, SECTPR_RE, visible_text
 from .errors import AnchorError, PackageError
 
 __all__ = [
@@ -46,7 +46,6 @@ __all__ = [
 EMU_PER_INCH = 914400
 _EMBED_RE = re.compile(r'r:embed="([^"]+)"')
 _EXTENT_RE = re.compile(r'<wp:extent cx="(\d+)" cy="(\d+)"/>')
-_SECTPR_RE = re.compile(r"<w:sectPr\b.*?</w:sectPr>", re.DOTALL)
 _PGSZ_RE = re.compile(r'<w:pgSz([^/]*)/>')
 # A caption is a label, a number, then a separator: "Figure 7." or
 # "Рисунок 2:". Merely STARTING with "Figure" is not enough — an in-text
@@ -373,7 +372,7 @@ def scale_to_width(block: str, image: str | Path, width_inches: float) -> str:
 
 def section_properties(doc_xml: str) -> str:
     """The body's final ``<w:sectPr>`` — the template for a new section."""
-    hits: list[str] = _SECTPR_RE.findall(doc_xml)
+    hits: list[str] = SECTPR_RE.findall(doc_xml)
     if not hits:
         raise AnchorError("document has no sectPr")
     return hits[-1]

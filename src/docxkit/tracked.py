@@ -26,7 +26,6 @@ The pipeline:
 """
 from __future__ import annotations
 
-import re
 import shutil
 import tempfile
 import time
@@ -37,7 +36,13 @@ from typing import Any
 from . import comments as _comments
 from . import guard as _guard
 from . import word as _word
-from ._xml import COMMENT_ID_RE, COMMENTS, internal_links, text_parts
+from ._xml import (
+    BOOKMARK_NAME_RE,
+    COMMENT_ID_RE,
+    COMMENTS,
+    internal_links,
+    text_parts,
+)
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
@@ -52,7 +57,6 @@ from .word import _suppress_com
 __all__ = ["BuildReport", "build", "compare_collateral", "package_counts",
            "verify"]
 
-_BOOKMARK_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
 
 
 def _anchors(parts: dict[str, bytes]) -> tuple[set[str], set[str]]:
@@ -63,7 +67,7 @@ def _anchors(parts: dict[str, bytes]) -> tuple[set[str], set[str]]:
         if not (name.startswith("word/") and name.endswith(".xml")):
             continue
         xml = blob.decode("utf-8", "replace")
-        names |= set(_BOOKMARK_RE.findall(xml))
+        names |= set(BOOKMARK_NAME_RE.findall(xml))
         targets |= {a for a, _ in internal_links(xml)}
     return names, targets
 

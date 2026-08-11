@@ -21,6 +21,7 @@ from ._cite_grammar import (
     resolve_lead,
 )
 from ._xml import (
+    BOOKMARK_NAME_RE,
     DOCUMENT,
     FOOTNOTES,
     PARA_RE,
@@ -31,7 +32,9 @@ from ._xml import (
 
 # ------------------------------------------------------ the link audit ---
 
-_BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
+#: kept as a name because `docxkit.citations` re-exports it and the
+#: papers' scripts import it from that path
+_BOOKMARK_NAME_RE = BOOKMARK_NAME_RE
 # The optional _N is :func:`_dedup_name`'s collision suffix. Without it a
 # deduped entry bookmark (minted when a STALE bookmark held the plain
 # name) was invisible to the own-name scan, so every link_all run minted

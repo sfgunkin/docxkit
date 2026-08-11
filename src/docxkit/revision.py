@@ -67,7 +67,13 @@ from typing import Any
 from . import lint as _lint
 from . import package, revisions, tracked
 from . import word as _word
-from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, visible_text
+from ._xml import (
+    BOOKMARK_NAME_RE,
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    visible_text,
+)
 from .errors import (
     BaselinePending,
     DocumentLocked,
@@ -760,13 +766,10 @@ def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
     return out
 
 
-_BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:name="([^"]+)"')
-
-
 def _bookmarks(parts: dict[str, bytes]) -> set[str]:
     return {n for name, blob in parts.items()
             if name in TEXT_PARTS
-            for n in _BOOKMARK_NAME_RE.findall(blob.decode("utf-8", "replace"))
+            for n in BOOKMARK_NAME_RE.findall(blob.decode("utf-8", "replace"))
             if not n.startswith("_")}       # Word's own _Toc/_Heading names
 
 

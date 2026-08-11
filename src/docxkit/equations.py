@@ -29,7 +29,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ._xml import MT_RE, PARA_RE, RUN_RE, escape, used_prefixes, visible_text
+from ._xml import (
+    MT_RE,
+    OMML_STRUCT,
+    OMML_STRUCT_RE,
+    PARA_RE,
+    RUN_RE,
+    escape,
+    used_prefixes,
+    visible_text,
+)
 from .errors import AnchorError, PackageError
 from .revisions import _fragment_declarations
 
@@ -61,10 +70,18 @@ M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 # carries xmlns:m, and both have to match
 OMATH_RE = re.compile(r"<m:oMath\b[^>]*>.*?</m:oMath>", re.DOTALL)
 # public: wordcount counts equation tokens with the SAME matcher
-# structural OMML elements — the ones that change a formula's shape
-_STRUCT = ("sSub", "sSup", "sSubSup", "nary", "f", "d", "rad", "func",
-           "acc", "bar", "groupChr", "limLow", "limUpp", "m", "eqArr", "box")
-_STRUCT_RE = re.compile(r"<m:(" + "|".join(_STRUCT) + r")\b")
+# structural OMML elements — the ones that change a formula's shape.
+# The shared definition: `compare`'s FORMULA layer decides whether an
+# equation was rewritten by comparing exactly this skeleton, and it kept
+# its own copy of the tuple until they were merged.
+#
+# `OMATH_RE` above stays local on purpose, and the difference is real:
+# this module reads HARVESTED elements, which carry xmlns:m when
+# serialized on their own, while compare reads document parts. Measured
+# 2026-08-11 over 282 manuscripts holding OMML: not one writes an
+# attribute on `m:oMath` inside a part. Two inputs, two patterns.
+_STRUCT = OMML_STRUCT
+_STRUCT_RE = OMML_STRUCT_RE
 # "(5)" / "(A.2)" — what a display equation carries besides its math;
 # is_display strips it and the markdown export turns it into a \tag
 EQ_NUMBER_RE = re.compile(r"\(\s*([A-Z]?\.?\d+)\s*\)")

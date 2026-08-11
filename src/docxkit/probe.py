@@ -21,25 +21,38 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES
+from ._xml import (
+    BOOKMARK_NAME_RE,
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    INSTR_ANCHOR_RE,
+    INSTR_RE,
+    PARA_RE,
+    RUN_RE,
+    SECTPR_RE,
+    T_RE,
+    visible_text,
+)
 from .package import read_parts
 
 __all__ = ["Probe", "probe"]
 
-_P_RE = re.compile(r"<w:p\b.*?</w:p>", re.DOTALL)
-_T_RE = re.compile(r"<w:t[^>]*>([^<]*)</w:t>")
+# Everything above the next line is the SHARED definition. This module
+# had its own copy of the paragraph, the text node, the instruction, the
+# bookmark name and the section properties — five of them, one of which
+# was called `_FIELD_RE` while `_xml._FIELD_RE` means the whole field,
+# and one of which (`<w:p\b.*?</w:p>`) is the unsafe spelling: after a
+# self-closing `<w:p/>` it runs on to the NEXT paragraph's close tag and
+# reports the two as one.
 _EL_LINK_RE = re.compile(r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>')
-_FIELD_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
-_BM_RE = re.compile(r'<w:bookmarkStart[^>]*w:name="([^"]+)"')
 _TR_RE = re.compile(r"<w:tr\b")
-_SECT_RE = re.compile(r"<w:sectPr\b.*?</w:sectPr>", re.DOTALL)
 _PGSZ_RE = re.compile(r'<w:pgSz[^>]*w:orient="([^"]+)"')
 _CAPTION_RE = re.compile(
     r"^\s*((?:Table|Figure|Таблица|Рисунок)\s+[A-Z]?\d+)\s*[:.]")
-
-
-def _visible(para: str) -> str:
-    return "".join(_T_RE.findall(para))
+#: a paragraph OR a table, in document order, on the shared spelling of
+#: a paragraph — the two walks below have to agree about where one ends
+_BLOCK_RE = re.compile(rf"{PARA_RE.pattern}|<w:tbl\b.*?</w:tbl>", re.DOTALL)
 
 
 @dataclass
@@ -53,6 +66,16 @@ class Probe:
     bookmarks: list[tuple[str, str]] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
     anchors: dict[str, list[tuple[int, list[str]]]] = field(
+        default_factory=dict)
+    #: anchors the two definitions of "what this paragraph says" disagree
+    #: about, as (what `find` sees, what `edit` sees). They are both in
+    #: this package and they differ over OMML: `visible_text` reads
+    #: `w:t` AND `m:t`, while `edit.replace_in_para` walks `w:r` runs,
+    #: and math lives in `m:r` — so a phrase spanning an equation is
+    #: findable by one and invisible to the other. Probe exists to be
+    #: asked BEFORE choosing an approach, so it reports the split rather
+    #: than picking a side.
+    view_split: dict[str, tuple[list[int], list[int]]] = field(
         default_factory=dict)
 
     @property
@@ -85,6 +108,12 @@ class Probe:
                 out.append("    NOT FOUND")
             for idx, runs in hits:
                 out.append(f"    para {idx}: {runs}")
+            if text in self.view_split:
+                seen, editable = self.view_split[text]
+                out.append(f"    ** the two views disagree: find/para_slice "
+                           f"{seen or 'nothing'}, edit/replace_in_para "
+                           f"{editable or 'nothing'} — a phrase spanning an "
+                           f"equation is visible to one and not the other")
         return "\n".join(out)
 
 
@@ -100,8 +129,8 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
         xml = parts[name].decode("utf-8")
         for anchor in _EL_LINK_RE.findall(xml):
             rep.element_links[anchor] = rep.element_links.get(anchor, 0) + 1
-        for instr in _FIELD_RE.findall(xml):
-            m = re.search(r'HYPERLINK\s+\\l\s+"([^"]+)"', instr)
+        for instr in INSTR_RE.findall(xml):
+            m = INSTR_ANCHOR_RE.search(instr)
             if m:
                 at = m.group(1)
                 rep.field_links[at] = rep.field_links.get(at, 0) + 1
@@ -112,22 +141,22 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
     # a block move has to carry those, and they are invisible to a
     # paragraph-oriented edit
     body = doc[doc.find("<w:body>"):]
-    for m in _BM_RE.finditer(body):
+    for m in BOOKMARK_NAME_RE.finditer(body):
         before = body.rfind("<w:p", 0, m.start())
         closed = body.rfind("</w:p>", 0, m.start())
         where = "body" if closed > before else "nested"
         rep.bookmarks.append((m.group(1), where))
 
-    for sect in _SECT_RE.findall(doc):
+    for sect in SECTPR_RE.findall(doc):
         o = _PGSZ_RE.search(sect)
         rep.sections.append(o.group(1) if o else "portrait")
 
     # exhibit captions, what follows them, and the section they close
-    blocks = re.findall(r"<w:p\b.*?</w:p>|<w:tbl\b.*?</w:tbl>", doc, re.DOTALL)
+    blocks = _BLOCK_RE.findall(doc)
     for i, blk in enumerate(blocks):
         if blk.startswith("<w:tbl"):
             continue
-        cap = _CAPTION_RE.match(_visible(blk))
+        cap = _CAPTION_RE.match(visible_text(blk))
         if not cap:
             continue
         follows = "(no table follows)"
@@ -137,18 +166,29 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
                 break
         orient = ""
         for nxt in blocks[i:i + 8]:
-            s = _SECT_RE.search(nxt)
+            s = SECTPR_RE.search(nxt)
             if s:
                 o = _PGSZ_RE.search(s.group(0))
                 orient = o.group(1) if o else "portrait"
                 break
         rep.exhibits.append((cap.group(1), follows, orient))
 
-    paras = _P_RE.findall(doc)
+    paras = [m.group(0) for m in PARA_RE.finditer(doc)]
     for text in anchors:
-        hits = []
-        for i, para in enumerate(paras):
-            if text in _visible(para):
-                hits.append((i, _T_RE.findall(para)[:10]))
+        hits = [(i, T_RE.findall(para)[:10])
+                for i, para in enumerate(paras)
+                if text in visible_text(para)]
         rep.anchors[text] = hits
+        # …and the same question asked the way `edit` asks it. Measured
+        # over 399 real manuscripts, the two answers differ on 256 of
+        # them, and every difference is an equation: DSI's methodology
+        # paragraph reads "где DRID, DRIS, DRIH обозначают…" to `find`
+        # (the subindex names are math-italic letters in OMML) and
+        # "где , ,  обозначают…" to `replace_in_para`, which walks w:r
+        # runs and cannot see an m:r.
+        editable = [i for i, para in enumerate(paras)
+                    if text in "".join(visible_text(r.group(0))
+                                       for r in RUN_RE.finditer(para))]
+        if [i for i, _ in hits] != editable:
+            rep.view_split[text] = ([i for i, _ in hits], editable)
     return rep

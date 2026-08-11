@@ -49,6 +49,7 @@ from typing import NamedTuple
 
 from ._xml import (
     BOOKMARK_ID_RE,
+    HYPERLINK_ANY_RE,
     PARA_RE,
     T_RE,
     WT_RE,
@@ -88,10 +89,11 @@ LABEL_FORMS = {
 
 _SUFFIX = "txt"
 _BOOKMARK_RE = BOOKMARK_ID_RE          # the shared definition
-# (?<!/)> — a self-closing empty hyperlink must not read as an open tag;
-# see the twin note on _xml._HYPERLINK_EL_RE.
-_HYPERLINK_RE = re.compile(r"<w:hyperlink\b[^>]*(?<!/)>.*?</w:hyperlink>",
-                           re.DOTALL)
+# and so is this one. It carried a comment pointing AT the twin in _xml
+# rather than using it — an acknowledged duplicate is still a duplicate,
+# and the ghost guard is exactly the kind of detail that gets fixed in
+# one copy.
+_HYPERLINK_RE = HYPERLINK_ANY_RE
 _PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
 _P_OPEN_RE = re.compile(r"<w:p\b[^>]*>")
 _RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)

@@ -20,7 +20,15 @@ from difflib import SequenceMatcher
 from typing import TypedDict
 
 from ._cite_repair import field_spans
-from ._xml import COMMENTS, INSTR_RE, MT_RE, T_PARTS_RE, WT_RE
+from ._xml import (
+    COMMENTS,
+    INSTR_RE,
+    MT_RE,
+    OMML_STRUCT_RE,
+    SEPARATE_RE,
+    T_PARTS_RE,
+    WT_RE,
+)
 from .comments import read_all as _read_comments
 from .styles import Cascade
 
@@ -31,11 +39,17 @@ RUN_RE = re.compile(r"<w:r\b[^>]*>(.*?)</w:r>", re.DOTALL)
 RPR_RE = re.compile(r"<w:rPr>(.*?)</w:rPr>", re.DOTALL)
 PARAID_RE = re.compile(r'w14:paraId="([0-9A-Fa-f]+)"')
 
-#: Structural OMML elements that change a formula's meaning or shape.
-OMML_STRUCT = ("sSub", "sSup", "sSubSup", "nary", "f", "d", "rad", "func",
-               "acc", "bar", "groupChr", "limLow", "limUpp", "m", "eqArr",
-               "box")
-OMML_STRUCT_RE = re.compile(r"<m:(" + "|".join(OMML_STRUCT) + r")\b")
+#: `OMML_STRUCT_RE` is imported, not defined: `equations.skeleton` reads
+#: the same structural elements, and this layer decides whether an
+#: equation was rewritten by comparing exactly that skeleton. Two copies
+#: agreed on the day they were merged; the next element added to one of
+#: them would have split the answer from its own definition.
+#:
+#: `OMATH_RE` above stays local, and that difference is real rather than
+#: drift: this layer reads document PARTS, where Word writes the tag
+#: bare, while `equations` also reads harvested elements, which carry
+#: xmlns:m when serialized alone. Measured over 282 manuscripts holding
+#: OMML: not one writes an attribute on `m:oMath` inside a part.
 
 
 class Fields(TypedDict):
@@ -318,7 +332,6 @@ VOLATILE_FIELDS = frozenset({
     "FILENAME", "FILESIZE", "LASTSAVEDBY", "NUMCHARS", "NUMWORDS",
 })
 
-SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 FLDSIMPLE_RE = re.compile(
     r'<w:fldSimple\b[^>]*w:instr="([^"]*)"[^>]*>(?:(?!</?w:fldSimple).)*'
     r"</w:fldSimple>", re.DOTALL)
