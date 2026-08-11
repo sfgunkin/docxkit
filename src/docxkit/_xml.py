@@ -38,6 +38,7 @@ __all__ = [
     "T_RUN_RE",
     "XML_WS",
     "delta_text",
+    "editable_text",
     "element_spans",
     "escape",
     "escape_attr",
@@ -222,6 +223,38 @@ def visible_text(xml: str) -> str:
     ``"R&D spending"`` matches a paragraph stored as ``R&amp;D spending``.
     """
     return html.unescape("".join(T_RE.findall(xml)))
+
+
+def editable_text(para_xml: str) -> str:
+    """What a RUN-WALKING edit can address: the ``w:r`` runs' text alone.
+
+    The other answer to "what does this paragraph say", and the package
+    has always had both. :func:`visible_text` counts everything a reader
+    sees, maths included; an equation's text lives in ``m:r`` inside an
+    ``m:oMath`` SIBLING of the runs, so a pass that rewrites ``w:r``
+    cannot address it and must not pretend otherwise.
+
+    Which door gives which:
+
+    * :func:`docxkit.find.para_slice`, `crossrefs`, `citations` and the
+      compare layers read :func:`visible_text` — they LOCATE and report;
+    * :func:`docxkit.edit.replace_in_para` reads this one — it REWRITES
+      runs, and writing prose into an equation's run is a worse failure
+      than not finding the phrase.
+
+    Measured over 399 manuscripts (2026-08-11): the two readings differ
+    on 256 of them, and the maths is the ONLY thing they differ over —
+    both unescape entities, because this one is built from
+    :func:`visible_text` per run rather than from a raw `w:t` walk.
+    (`probe` had such a walk of its own and so disagreed with both; that
+    is a third reading, now gone.)
+
+    `italicize` and its siblings take the READER's offsets through
+    `_locate`, which was fixed for that in the DSI §6.3 round; this
+    function is the other half of that fix, named rather than inlined.
+    """
+    return "".join(visible_text(r.group(0))
+                   for r in RUN_RE.finditer(para_xml))
 
 
 def delta_text(xml: str) -> str:

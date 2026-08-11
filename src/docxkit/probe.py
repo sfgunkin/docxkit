@@ -29,9 +29,9 @@ from ._xml import (
     INSTR_ANCHOR_RE,
     INSTR_RE,
     PARA_RE,
-    RUN_RE,
     SECTPR_RE,
     T_RE,
+    editable_text,
     visible_text,
 )
 from .package import read_parts
@@ -187,8 +187,7 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
         # "где , ,  обозначают…" to `replace_in_para`, which walks w:r
         # runs and cannot see an m:r.
         editable = [i for i, para in enumerate(paras)
-                    if text in "".join(visible_text(r.group(0))
-                                       for r in RUN_RE.finditer(para))]
+                    if text in editable_text(para)]
         if [i for i, _ in hits] != editable:
             rep.view_split[text] = ([i for i, _ in hits], editable)
     return rep

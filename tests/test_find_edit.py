@@ -384,3 +384,60 @@ def test_para_slice_starts_at_the_paragraph_it_was_asked_for():
     # and splicing the span keeps the blank line
     rebuilt = xml[:s] + para(run("REPLACED")) + xml[e:]
     assert "4BD89DAE" in rebuilt
+
+
+# ------------------- the two readings, named --------------------------
+#
+# `visible_text` is what a reader (and `docxkit text`, and `para_slice`)
+# sees: w:t AND m:t. `editable_text` is what a run walk can address: the
+# w:r runs alone, and an equation's text is in an m:r inside a sibling
+# m:oMath. Both are right for what they do; the package has always had
+# both and used to say so nowhere.
+
+MATH_PARA = ('<w:p><w:r><w:t xml:space="preserve">where </w:t></w:r>'
+             "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+             '<w:r><w:t xml:space="preserve"> denotes it.</w:t></w:r></w:p>')
+
+
+def test_the_two_readings_differ_exactly_over_the_maths():
+    from docxkit._xml import editable_text, visible_text
+    assert visible_text(MATH_PARA) == "where x denotes it."
+    assert editable_text(MATH_PARA) == "where  denotes it."
+
+
+def test_the_maths_is_the_ONLY_thing_they_differ_over():
+    """Both unescape, because `editable_text` is built from
+    `visible_text` per run rather than from a raw `w:t` walk. A third
+    reading is what `probe` used to have, and it disagreed with both
+    over entities as well — pinned here so the narrow one is not
+    "simplified" back into a raw walk."""
+    from docxkit._xml import editable_text, visible_text
+    p = para(run("R&amp;D spending"))
+    assert visible_text(p) == editable_text(p) == "R&D spending"
+
+
+def test_replace_in_para_says_WHY_it_cannot_see_a_phrase_over_maths():
+    """The confusing case: `docxkit text` shows the phrase, `para_slice`
+    finds it, and the editor refuses. Saying "not in paragraph" and
+    stopping is what sends someone hunting for a typo that is not
+    there."""
+    from docxkit._xml import visible_text
+    from docxkit.find import para_slice
+    doc = document(MATH_PARA)
+    start, end = para_slice(doc, "where x denotes")
+    assert visible_text(doc[start:end]) == "where x denotes it."
+    with pytest.raises(AnchorError, match="spans an equation"):
+        replace_in_para(MATH_PARA, "where x denotes", "REPLACED")
+
+
+def test_an_ordinary_miss_is_still_an_ordinary_message():
+    """The explanation must not attach itself to every failure — a
+    phrase that is in NEITHER reading is simply absent."""
+    with pytest.raises(AnchorError, match="not in paragraph") as exc:
+        replace_in_para(MATH_PARA, "a phrase nobody wrote", "X")
+    assert "spans an equation" not in str(exc.value)
+
+
+def test_the_editor_still_works_either_side_of_the_maths():
+    out = replace_in_para(MATH_PARA, "where ", "wherever ")
+    assert "wherever " in out and "<m:t>x</m:t>" in out

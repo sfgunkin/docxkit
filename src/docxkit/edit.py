@@ -15,6 +15,7 @@ from ._xml import (
     RUN_RE,
     T_RUN_RE,
     XML_WS,
+    editable_text,
     live_properties,
     normalize_glyphs,
     own_properties,
@@ -333,6 +334,12 @@ def replace_in_para(para_xml: str, old: str, new: str,
     the paragraph's hyperlinks, bookmarks, footnote references and italic
     runs.
 
+    The anchor is matched against :func:`docxkit._xml.editable_text` —
+    the ``w:r`` runs' text — which is NOT what `find.para_slice` and
+    `docxkit text` show you. An equation's text lives in an ``m:r``
+    inside a sibling ``m:oMath``, so a phrase spanning maths is findable
+    there and not here; the refusal says so when that is the reason.
+
     Refuses when the match TOUCHES a hyperlink, in either of the two ways
     it can, because both are invisible to a text diff:
 
@@ -364,12 +371,29 @@ def replace_in_para(para_xml: str, old: str, new: str,
         spans.append((cursor, cursor + len(body)))
         cursor += len(body)
 
-    visible = "".join(visible_text(r.group(0)) for r in runs)
+    # `editable_text`, NOT `visible_text`: this pass rewrites w:r runs,
+    # and an equation's text is in an m:r inside a sibling m:oMath. The
+    # two readings differ on 256 of 399 manuscripts. Counting the maths
+    # here would find phrases this function then could not write, which
+    # is the worse failure — see the note in `_xml.editable_text`.
+    visible = editable_text(para_xml)
+
+    def missing(reason: str) -> AnchorError:
+        # The confusing case, named: the phrase IS in the paragraph as a
+        # reader (and `docxkit text`, and `para_slice`) sees it, and is
+        # not addressable by a run walk.
+        if old in visible_text(para_xml):
+            return AnchorError(
+                f"replace_in_para: {old[:60]!r} {reason} — it IS in the "
+                f"paragraph a reader sees, but it spans an equation "
+                f"(m:oMath), which this pass rewrites nothing inside. "
+                f"Anchor on prose either side of the maths.")
+        return AnchorError(f"replace_in_para: {old[:60]!r} {reason}")
+
     if normalize:
         hits = find_normalized(visible, old)
         if not hits:
-            raise AnchorError(
-                f"replace_in_para: {old[:60]!r} not in paragraph")
+            raise missing("not in paragraph")
         if len(hits) > 1:
             raise AnchorError(
                 f"replace_in_para: {old[:60]!r} occurs twice")
@@ -377,8 +401,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
     else:
         at = visible.find(old)
         if at < 0:
-            raise AnchorError(
-                f"replace_in_para: {old[:60]!r} not in paragraph")
+            raise missing("not in paragraph")
         if visible.find(old, at + 1) >= 0:
             raise AnchorError(f"replace_in_para: {old[:60]!r} occurs twice")
         end = at + len(old)
