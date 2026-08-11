@@ -238,6 +238,12 @@ _HYPERLINK_EL_RE = re.compile(
     re.DOTALL)
 _HYPERLINK_GHOST_RE = re.compile(
     r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*/>')
+#: Any hyperlink ELEMENT, whatever it points at. Public because
+#: :func:`docxkit.edit.replace_in_para` needs the wider question — is
+#: this run somebody's LABEL — and an external link's label is destroyed
+#: exactly as easily as an internal one's. Same ghost guard.
+HYPERLINK_ANY_RE = re.compile(r"<w:hyperlink\b[^>]*(?<!/)>.*?</w:hyperlink>",
+                              re.DOTALL)
 _FIELD_RE = re.compile(
     r'<w:fldChar\b[^>]*w:fldCharType="begin"[^>]*/>(.*?)'
     r'<w:fldChar\b[^>]*w:fldCharType="end"[^>]*/>', re.DOTALL)
@@ -273,6 +279,64 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
         label = visible_text(m.group(1)[sep.end():]) if sep else ""
         out.append((am.group(1), label))
     return out
+
+
+# Everything a link can legitimately wrap while showing no text of its
+# own. `w:delText` is the important one: a link inside a tracked DELETION
+# is not in the final document at all, and four of them sit in LE le12.
+_SHOWS_SOMETHING_RE = re.compile(
+    r"<w:(?:delText|drawing|pict|object|footnoteReference|endnoteReference)\b")
+
+
+def dead_links(xml: str) -> list[str]:
+    """Anchors of internal links that put NOTHING on the page.
+
+    An empty label is what an edit across a link leaves behind: the
+    replacement text lands in the run holding the start of the match and
+    the rest of the span is emptied, the link's own label run included.
+    The paragraph then reads exactly right — the words are still there,
+    as plain text — while the document carries a
+    ``<w:hyperlink w:anchor="Table5">`` with nothing inside it.
+
+    Nothing else catches this. The anchor still resolves, so the link is
+    not broken, the bookmark is not orphaned, and Word opens the file
+    without complaint (Parental Style 2026-08-11). Both link forms are
+    read, because both fail the same way — and the FIELD form is where
+    the damage was found to be sitting already.
+
+    Measured over 397 real manuscripts: 103 hits in 49 files, and they
+    are ~10 distinct defects repeated across archived versions of three
+    papers. Every one inspected was real, including two in submitted
+    work: LE's ``Elder2013`` citation is an empty field standing where
+    the citation used to be, and five of LI's footnote citations read as
+    plain "(Catalano 2003)" followed by a train of empty fields still
+    holding their ``<key>txt`` bookmarks. A link inside a tracked
+    deletion (four in le12) is NOT reported: it is not in the final
+    document at all.
+
+    The field grammar is shared with :func:`internal_links` and carries
+    its limitation — begin-to-end matched non-greedily, so a NESTED
+    field mispairs. `citations` reports that separately as DOUBLED LINK.
+    """
+    out: list[str] = []
+    for m in _HYPERLINK_EL_RE.finditer(xml):
+        if _shows_nothing(m.group(2)):
+            out.append(html.unescape(m.group(1)))
+    for m in _FIELD_RE.finditer(xml):
+        instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
+        am = INSTR_ANCHOR_RE.search(instr)
+        sep = _SEPARATE_RE.search(m.group(1))
+        # No `separate` means the field has no result yet — an unrendered
+        # field, not an emptied one. Word fills it on open.
+        if am is not None and sep is not None \
+                and _shows_nothing(m.group(1)[sep.end():]):
+            out.append(am.group(1))
+    return out
+
+
+def _shows_nothing(inner: str) -> bool:
+    return (not visible_text(inner).strip()
+            and not _SHOWS_SOMETHING_RE.search(inner))
 
 
 def matching_close(xml: str, pos: int, tag: str) -> int:

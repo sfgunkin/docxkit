@@ -238,8 +238,8 @@ def check_citations(docx_path: str | Path) -> int:
           f"in-text, {stats['ref_bookmarks']} reference, "
           f"{stats['eq_bookmarks']} equation)")
     print(f"Hyperlinks: {stats['links']} total "
-          f"({stats['broken']} broken, {stats['unlinked']} unlinked "
-          "citation-like mentions)")
+          f"({stats['broken']} broken, {stats['empty']} with no label, "
+          f"{stats['unlinked']} unlinked citation-like mentions)")
     print("=" * 60)
     if not issues:
         print("ALL CHECKS PASSED — no issues found.")

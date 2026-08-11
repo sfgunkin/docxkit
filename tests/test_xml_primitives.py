@@ -28,6 +28,7 @@ import pytest
 from conftest import NS, field
 
 from docxkit._xml import (
+    dead_links,
     element_spans,
     internal_links,
     live_properties,
@@ -231,6 +232,67 @@ def test_a_self_closing_ghost_hyperlink_swallows_nothing_after_it():
            + '<w:hyperlink w:anchor="Real">' + run("label")
            + "</w:hyperlink>")
     assert ("Real", "label") in internal_links(xml)
+
+
+# -------------------------------------------------------- dead_links -----
+#
+# A link that puts nothing on the page. The anchor still resolves, so no
+# other check sees it: `citations` says the bookmark is linked,
+# `crossrefs` counts it, `lint` is clean and Word opens the file. Found
+# on Parental Style 2026-08-11 after an edit ran across a link, and the
+# corpus then turned up ten more in three papers — two of them submitted.
+
+
+def test_an_emptied_element_form_link_is_dead():
+    xml = '<w:hyperlink w:anchor="Table5"><w:r><w:t></w:t></w:r></w:hyperlink>'
+    assert dead_links(xml) == ["Table5"]
+
+
+def test_an_emptied_field_form_link_is_dead():
+    """LE's Elder2013 and five of LI's footnote citations are exactly
+    this: begin, instrText, separate, end, with no result between the
+    last two."""
+    xml = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText>HYPERLINK \\l "Elder2013"</w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           '<w:bookmarkEnd w:id="7"/>'
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    assert dead_links(xml) == ["Elder2013"]
+
+
+def test_a_live_link_is_not_reported_in_either_form():
+    xml = (field('HYPERLINK \\l "Table1"', "Table 1")
+           + '<w:hyperlink w:anchor="Table2">' + run("Table 2")
+           + "</w:hyperlink>")
+    assert dead_links(xml) == []
+
+
+def test_a_link_inside_a_tracked_deletion_is_not_dead():
+    """It is not in the final document at all. Four sit in LE le12, and
+    reporting them would put every redline on the list — which is how a
+    check stops being run."""
+    xml = ('<w:del w:id="9" w:author="A" w:date="2026-07-01T00:00:00Z">'
+           '<w:hyperlink w:anchor="Yaari1965"><w:r>'
+           "<w:delText>Yaari 1965</w:delText></w:r></w:hyperlink></w:del>")
+    assert dead_links(xml) == []
+
+
+@pytest.mark.parametrize("content", [
+    "<w:r><w:drawing/></w:r>",                     # a linked figure
+    "<w:r><w:footnoteReference w:id='3'/></w:r>",  # a linked note mark
+])
+def test_a_link_wrapping_something_other_than_text_is_not_dead(content):
+    xml = f'<w:hyperlink w:anchor="Fig1">{content}</w:hyperlink>'
+    assert dead_links(xml) == []
+
+
+def test_a_field_with_no_result_yet_is_not_dead():
+    """No `separate` means Word has not rendered the field — it fills it
+    on open. That is an unrendered field, not an emptied one."""
+    xml = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText>HYPERLINK \\l "Table1"</w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    assert dead_links(xml) == []
 
 
 # --------------------------------------------------- set_run_property ----

@@ -24,6 +24,7 @@ from ._xml import (
     DOCUMENT,
     FOOTNOTES,
     PARA_RE,
+    dead_links,
     internal_links,
     visible_text,
 )
@@ -165,11 +166,13 @@ def _audit_findings(parts: dict[str, bytes], *,
 
     bookmarks: dict[str, int] = {}          # first definition wins
     links: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    empty: list[tuple[str, int]] = []       # (anchor, where) — label lost
     for i, m in enumerate(paras):
         for name in _BOOKMARK_NAME_RE.findall(m.group(0)):
             bookmarks.setdefault(name, i)
         for anchor, label in internal_links(m.group(0)):
             links[anchor].append((i, label))
+        empty += [(a, i) for a in dead_links(m.group(0))]
     for name in _BOOKMARK_NAME_RE.findall(doc):
         bookmarks.setdefault(name, -1)      # BODY-LEVEL, between paragraphs
     foot = parts.get(FOOTNOTES)
@@ -179,6 +182,7 @@ def _audit_findings(parts: dict[str, bytes], *,
             bookmarks.setdefault(name, -2)  # defined in a footnote
         for anchor, label in internal_links(ftext):
             links[anchor].append((-2, label))
+        empty += [(a, -2) for a in dead_links(ftext)]
 
     cite_marks = {n: i for n, i in bookmarks.items()
                   if not n.startswith("_") and n.endswith("txt")}
@@ -242,6 +246,15 @@ def _audit_findings(parts: dict[str, bytes], *,
                 f"MISSING REF: in-text citation '{name}' "
                 f"({where(idx)}) links to '{name[:-3]}' but no "
                 "reference bookmark exists"))
+    # A link that shows nothing. Reported here rather than in `lint`
+    # because the file is not malformed — Word opens it happily — and
+    # `write_docx` must not start refusing documents over it.
+    for anchor, spot in empty:
+        issues.append(_Finding(
+            "EMPTY LINK", anchor,
+            f"EMPTY LINK: hyperlink to '{anchor}' ({where(spot)}) shows no "
+            "text — nothing on the page carries this link; the mention it "
+            "wrapped is plain text now, or gone"))
     broken = 0
     for anchor, sites in sorted(links.items()):
         if anchor not in bookmarks:
@@ -367,7 +380,7 @@ def _audit_findings(parts: dict[str, bytes], *,
              "cite_bookmarks": len(cite_marks),
              "ref_bookmarks": len(ref_marks), "eq_bookmarks": len(eq_marks),
              "links": sum(len(v) for v in links.values()),
-             "broken": broken, "unlinked": unlinked}
+             "broken": broken, "empty": len(empty), "unlinked": unlinked}
     return issues, stats
 
 

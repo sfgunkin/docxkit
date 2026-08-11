@@ -977,6 +977,44 @@ def test_a_work_with_no_link_at_all_is_still_reported():
     assert any("UNLINKED" in i and "Becker" in i for i in issues)
 
 
+def test_the_audit_reports_a_link_with_no_label():
+    """The S1 the audit could not see: the anchor resolves, so nothing
+    else in here fires. Parental Style 2026-08-11."""
+    dead = ('<w:p><w:r><w:t xml:space="preserve">as shown in </w:t></w:r>'
+            '<w:bookmarkStart w:id="3" w:name="Table1"/>'
+            '<w:bookmarkEnd w:id="3"/>'
+            '<w:hyperlink w:anchor="Table1"><w:r><w:t></w:t></w:r>'
+            "</w:hyperlink>"
+            '<w:r><w:t>Table 1, the gap is wide.</w:t></w:r></w:p>')
+    parts = xml_parts(FILLER + dead + P(R("References")) + P(R(BECKER)))
+    issues, stats = audit_links(parts)
+    assert stats["empty"] == 1
+    assert any(i.startswith("EMPTY LINK") and "Table1" in i for i in issues), \
+        issues
+
+
+def test_the_audit_reads_footnotes_for_dead_links_too():
+    """Five of the real ones are in a footnote: LI's "(Catalano 2003)"
+    and its four neighbours read as plain text, each followed by an
+    empty field still holding its <key>txt bookmark. A body-only scan
+    reports none of them."""
+    from conftest import NS, make_parts, para, run
+    body = (FILLER + P(R("References")) + P(R(BECKER))
+            + '<w:p><w:bookmarkStart w:id="3" w:name="Catalano2003"/>'
+              "<w:bookmarkEnd w:id=\"3\"/><w:r><w:t>Catalano, R. (2003). "
+              "Sex ratios. Human Reproduction.</w:t></w:r></w:p>")
+    dead = (para(run("Stress selects fetal loss (Catalano 2003).")
+                 + '<w:hyperlink w:anchor="Catalano2003"><w:r><w:t></w:t>'
+                   "</w:r></w:hyperlink>"))
+    foot = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:footnotes {NS}><w:footnote w:id="2">{dead}'
+            f"</w:footnote></w:footnotes>")
+    issues, stats = audit_links(make_parts(body, footnotes=foot))
+    assert stats["empty"] == 1
+    assert any(i.startswith("EMPTY LINK") and "(fn)" in i for i in issues), \
+        issues
+
+
 def test_a_link_inside_deleted_text_is_not_evidence_of_a_link():
     """LE le12 ¶195: the author retyped the sentence, which dropped its
     hyperlink, and the tracked DELETION beside it still carried the old

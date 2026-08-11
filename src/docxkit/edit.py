@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable
 
 from ._xml import (
+    HYPERLINK_ANY_RE,
     RUN_OPEN_RE,
     RUN_RE,
     T_RUN_RE,
@@ -332,11 +333,25 @@ def replace_in_para(para_xml: str, old: str, new: str,
     the paragraph's hyperlinks, bookmarks, footnote references and italic
     runs.
 
-    Refuses when the receiving run is hyperlink-styled: the replacement
-    would land inside the link and turn the whole sentence into a
-    hyperlink, and no text-level diff would ever show it. Anchor on plain
-    text outside the link, or edit the link's label separately with
-    ``allow_hyperlink=True``.
+    Refuses when the match TOUCHES a hyperlink, in either of the two ways
+    it can, because both are invisible to a text diff:
+
+    * the match STARTS in a link — the replacement lands inside it and
+      turns the whole sentence into a hyperlink;
+    * the match CROSSES one — the following runs are emptied, and the
+      link's own label run is one of them, so the document keeps a
+      ``<w:hyperlink w:anchor="Table5">`` with nothing inside it. The
+      words are still on the page, as plain text, and nothing catches it:
+      the anchor resolves, so `citations` and `crossrefs` both pass, and
+      `lint` is clean (Parental Style 2026-08-11). Split the replacement
+      into one call on each side of the link.
+
+    The label is found by the run's style AND by the enclosing element:
+    a field-form link (``fldChar``/``instrText``) styles its result run,
+    while an element-form one may state no style at all.
+
+    Anchor on plain text outside the link, or pass ``allow_hyperlink=True``
+    to edit the link's label deliberately.
 
     `normalize` matches through Word's typographic substitutions (curly vs
     straight quotes, dash variants) — see :func:`find_normalized`. `new` is
@@ -368,6 +383,13 @@ def replace_in_para(para_xml: str, old: str, new: str,
             raise AnchorError(f"replace_in_para: {old[:60]!r} occurs twice")
         end = at + len(old)
 
+    link_spans = [(m.start(), m.end())
+                  for m in HYPERLINK_ANY_RE.finditer(para_xml)]
+
+    def labels_a_link(run: re.Match[str]) -> bool:
+        return (_HYPERLINK_RUN in run.group(0)
+                or any(lo <= run.start() < hi for lo, hi in link_spans))
+
     edits, first = [], True
     for (start, stop), run in zip(spans, runs, strict=True):
         if stop <= at or start >= end:
@@ -376,7 +398,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
         body = visible_text(run_xml)
         tail = body[end - start:] if stop > end else ""
         if first:
-            if not allow_hyperlink and _HYPERLINK_RUN in run_xml:
+            if not allow_hyperlink and labels_a_link(run):
                 raise AnchorError(
                     "replace_in_para: the match starts inside a hyperlink "
                     "run -- the replacement would bleed into the link. "
@@ -385,6 +407,13 @@ def replace_in_para(para_xml: str, old: str, new: str,
                                             + tail)))
             first = False
         else:
+            if not allow_hyperlink and labels_a_link(run):
+                raise AnchorError(
+                    "replace_in_para: the match spans a hyperlink -- "
+                    f"emptying {visible_text(run_xml)[:30]!r} would leave "
+                    "the link with no label, which no text diff shows and "
+                    "no link check catches. Replace on each side of the "
+                    "link separately.")
             edits.append((run, set_run_text(run_xml, tail)))
 
     out = para_xml

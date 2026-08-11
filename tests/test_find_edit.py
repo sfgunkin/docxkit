@@ -182,6 +182,63 @@ def test_replace_in_para_refuses_to_bleed_into_a_hyperlink():
     assert text_of(out) == "see Table 4 now"
 
 
+# A link is broken two ways by one function, and only the first was
+# guarded. Parental Style 2026-08-11: the prose read exactly right and
+# the manuscript carried a <w:hyperlink w:anchor="Table5"> with nothing
+# in it — the anchor still resolved, so `citations`, `crossrefs` and
+# `lint` were all green.
+
+ELEMENT_LINK = ('<w:hyperlink w:anchor="Table5" w:history="1">'
+                '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+                "<w:t>Table 5</w:t></w:r></w:hyperlink>")
+#: the same link in FIELD form, whose label is the run after `separate`
+FIELD_LINK = (
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+    '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l "Table5" '
+    "</w:instrText></w:r>"
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+    '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+    "<w:t>Table 5</w:t></w:r>"
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+#: an element-form link whose label run states NO style — the element is
+#: then the only thing that says this run is a label
+BARE_LINK = ('<w:hyperlink w:anchor="Table5" w:history="1">'
+             "<w:r><w:t>Table 5</w:t></w:r></w:hyperlink>")
+
+
+def _crossing(link: str) -> str:
+    return ('<w:p><w:r><w:t xml:space="preserve">the practices of '
+            "</w:t></w:r>" + link
+            + '<w:r><w:t xml:space="preserve"> as well</w:t></w:r></w:p>')
+
+
+@pytest.mark.parametrize("link", [ELEMENT_LINK, FIELD_LINK, BARE_LINK])
+def test_replace_in_para_refuses_to_cross_a_hyperlink(link):
+    p = _crossing(link)
+    with pytest.raises(AnchorError, match="spans a hyperlink"):
+        replace_in_para(p, "the practices of Table 5 as well",
+                        "the harsher practices of Table 5 persist")
+    assert text_of(p) == "the practices of Table 5 as well"
+
+
+def test_the_opt_in_still_crosses_a_hyperlink():
+    """One flag for "I know a link is involved" — the caller that means
+    to rewrite the label keeps its escape hatch."""
+    out = replace_in_para(_crossing(ELEMENT_LINK),
+                          "the practices of Table 5 as well", "gone",
+                          allow_hyperlink=True)
+    assert text_of(out) == "gone"
+
+
+def test_a_replacement_beside_a_link_is_untouched_by_the_guard():
+    """The guard must not refuse the ordinary edit: same paragraph, same
+    link, a span that does not reach it."""
+    p = _crossing(ELEMENT_LINK)
+    out = replace_in_para(p, "the practices of", "the harsher practices of")
+    assert text_of(out) == "the harsher practices of Table 5 as well"
+    assert 'w:anchor="Table5"' in out
+
+
 def test_replace_in_para_rejects_missing_or_ambiguous():
     p = para(run("alpha beta alpha"))
     with pytest.raises(AnchorError, match="not in paragraph"):
