@@ -1241,6 +1241,31 @@ def test_link_rest_links_every_later_citation_forward_only():
     assert rep2.linked == [], rep2.format()      # idempotent
 
 
+def test_link_rest_sees_an_entry_bookmark_word_hoisted_out():
+    """Word lifts a collapsed bookmark out of the paragraph it marks, so
+    a settled manuscript keeps the entry's marker BETWEEN paragraphs.
+    Reading the paragraph alone, link_rest declined every later mention
+    of those works as "entry has no bookmark" — nine mentions across six
+    works on Parental Style, and the author found it before any tool
+    did."""
+    from docxkit import citations as C
+    parts = make_doc(
+        P(R("Straus et al. (1998) report the same gradient.")),
+        P(R("Later work concurs (Straus et al. 1998).")),
+        P(R("References")),
+        # the marker hoisted clear of its entry, as Word leaves it
+        '<w:bookmarkStart w:id="7" w:name="Straus1998"/>'
+        '<w:bookmarkEnd w:id="7"/>',
+        P(R("Straus, M., Sugarman, D., and J. Giles-Sims. (1998). "
+            "Spanking and antisocial behavior. APAM.")),
+    )
+    rep = C.link_rest(parts)
+    assert rep.skipped == [], rep.format()
+    assert len(rep.linked) == 2, rep.format()
+    body = parts["word/document.xml"].decode("utf-8")
+    assert body.count('w:anchor="Straus1998"') == 2
+
+
 def test_link_rest_handles_repeats_within_one_paragraph():
     # link_all's unique-anchor locate cannot place a citation that
     # repeats inside one paragraph; the positional pass can.

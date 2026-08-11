@@ -434,10 +434,25 @@ def _entry_names_from_document(doc: str, entries: list[Reference],
     :func:`link_all` bookmarks every entry, so after it has run the
     document itself is the authority on anchor names; re-deriving them
     from surnames would silently diverge on a deduplicated name.
+
+    The BODY-LEVEL gap before each entry counts as the entry's own, the
+    same way :func:`link_all` reads it. Word hoists a collapsed bookmark
+    out of the paragraph it marks, so a settled manuscript keeps
+    ``…</w:p><w:bookmarkStart/><w:bookmarkEnd/><w:p …>`` — and reading
+    the paragraph alone found nothing, so :func:`link_rest` declined
+    every later mention of those works with "entry has no bookmark".
+    Nine mentions across six works on Parental Style (2026-08-11), which
+    the author noticed before any tool did: the later-mention layer had
+    quietly stopped being maintained. `_own_bookmark` requires the
+    surname AND the year to match, which is what makes the wider search
+    safe — a marker hoisted out of the previous entry cannot match this
+    one.
     """
     names: dict[str, str] = {}
     for r in entries:
-        own = _own_bookmark(paras[r.index].group(0), r)
+        m = paras[r.index]
+        before = doc[(paras[r.index - 1].end() if r.index else 0):m.start()]
+        own = _own_bookmark(m.group(0), r, before)
         if own:
             names[r.key] = own
     return names
