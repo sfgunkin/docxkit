@@ -276,13 +276,14 @@ def test_baseline_names_the_part_a_revision_hides_in(project):
 class _FakeBuild:
     """tracked.build, replaced: it reports what Word Compare resolved."""
 
-    def __init__(self, math: int = 0, out_text: str = "built") -> None:
-        self.math, self.out_text = math, out_text
+    def __init__(self, math: int = 0, out_text: str = "built",
+                 extra: str = "") -> None:
+        self.math, self.out_text, self.extra = math, out_text, extra
         self.called_with: tuple[Any, ...] = ()
 
     def __call__(self, original, revised, out, classify=None, **kw):
         self.called_with = (Path(original), Path(revised), Path(out))
-        write(Path(out), make_parts(para(run(self.out_text))))
+        write(Path(out), make_parts(para(self.extra + run(self.out_text))))
         say = kw.get("progress") or (lambda _: None)
         say(f"resolved {self.math} math revisions")
         report = revision.tracked.BuildReport()
@@ -1084,3 +1085,79 @@ def test_rescue_names_cannot_be_exhausted_silently(project, monkeypatch):
     taken.write_bytes(b"x")
     with pytest.raises(ProtocolError, match="no free rescue name"):
         revision.rescue_path(project, datetime(2026, 8, 7))
+
+
+# ------------------------- what a redline cannot carry, and what it is not
+
+def test_a_bookmark_the_clean_edit_removed_is_reported_as_restored():
+    """Compare carries bookmarks over from the ORIGINAL side, so a
+    deletion made in the clean copy is silently undone — and nothing in
+    the counts shows it, because a bookmark is not tracked content. The
+    orphan `Lari2023` survived two full rounds that way."""
+    marked = ('<w:bookmarkStart w:id="4" w:name="Lari2023"/>'
+              '<w:bookmarkEnd w:id="4"/>')
+    baseline = make_parts(para(marked + run("Lari, A. (2023). Title.")))
+    clean = make_parts(para(run("Lari, A. (2023). Title.")))
+    built = make_parts(para(marked + run("Lari, A. (2023). Title.")))
+    assert revision.restored_bookmarks(baseline, clean, built) == ["Lari2023"]
+
+
+def test_a_bookmark_the_clean_edit_kept_is_not_reported():
+    marked = ('<w:bookmarkStart w:id="4" w:name="Lari2023"/>'
+              '<w:bookmarkEnd w:id="4"/>')
+    parts = make_parts(para(marked + run("Lari, A. (2023). Title.")))
+    assert revision.restored_bookmarks(parts, parts, parts) == []
+
+
+def test_words_own_navigation_bookmarks_are_not_reported():
+    """`_Toc` and `_Heading` names are Word's, they come and go on every
+    save, and a report full of them is a report nobody reads."""
+    tocd = ('<w:bookmarkStart w:id="4" w:name="_Toc12345"/>'
+            '<w:bookmarkEnd w:id="4"/>')
+    baseline = make_parts(para(tocd + run("A heading")))
+    clean = make_parts(para(run("A heading")))
+    assert revision.restored_bookmarks(baseline, clean, baseline) == []
+
+
+def test_build_refuses_to_read_the_path_it_writes(project, monkeypatch):
+    """`build/batch.docx` is where a batch is STAGED, and the provenance
+    stamp beside it is how `guard.check` tells "docxkit wrote this" from
+    "someone edited it in Word". A hand-built clean edit written there
+    made the build refuse its own output as modified, and the message
+    named a Word session that never happened."""
+    write(project.batch, make_parts(para(run("a hand-built clean edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+    with pytest.raises(ProtocolError, match="STAGES its output"):
+        revision.build(project, project.batch)
+
+
+def test_build_says_which_bookmark_compare_put_back(project, monkeypatch):
+    """The build-time half: said before the handback, where the author
+    can still be told the deletion has to wait for the promote."""
+    marked = ('<w:bookmarkStart w:id="4" w:name="Lari2023"/>'
+              '<w:bookmarkEnd w:id="4"/>')
+    write(project.prev, make_parts(para(marked + run("Lari, A. (2023)."))))
+    clean = project.build_dir / "clean.docx"
+    write(clean, make_parts(para(run("Lari, A. (2023)."))))
+    # the fake stands in for Compare, and Compare's behaviour here IS
+    # the bug: it writes the baseline's bookmarks back out
+    monkeypatch.setattr(
+        revision.tracked, "build",
+        _FakeBuild(out_text="Lari, A. (2023).", extra=marked))
+    seen: list[str] = []
+    revision.build(project, clean, progress=seen.append)
+    said = "\n".join(seen)
+    assert "Lari2023" in said and "AFTER the promote" in said
+
+
+def test_a_bookmark_the_BUILD_invented_is_not_the_authors_deletion():
+    """"in the build, not in the clean edit" also describes a name Word
+    minted during the compare. Reporting that as a deletion the author
+    made sends them looking for an edit that never happened, so the
+    baseline is what decides."""
+    minted = ('<w:bookmarkStart w:id="4" w:name="Compare_Mint1"/>'
+              '<w:bookmarkEnd w:id="4"/>')
+    baseline = make_parts(para(run("Lari, A. (2023). Title.")))
+    clean = make_parts(para(run("Lari, A. (2023). Title.")))
+    built = make_parts(para(minted + run("Lari, A. (2023). Title.")))
+    assert revision.restored_bookmarks(baseline, clean, built) == []

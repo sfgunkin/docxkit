@@ -455,6 +455,21 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     pending revisions must wait for the author to adjudicate them.
     """
     out = Path(out) if out else paper.batch
+    # `build/batch.docx` is where a BUILT batch is staged, and the stamp
+    # beside it is how `guard.check` tells "docxkit wrote this" from
+    # "someone edited it in Word". A hand-built clean edit written there
+    # collides with that: the build refuses its own output as modified,
+    # and the message sends the reader looking for a Word session that
+    # never happened (2026-08-09, a cycle to diagnose). The path is
+    # reserved; say so where the mistake is made.
+    if Path(revised).resolve() == out.resolve():
+        raise ProtocolError(
+            f"{out.name} is where `revision build` STAGES its output, so it "
+            f"cannot also be the clean edit it builds FROM — the provenance "
+            f"stamp beside it would read the edit as a Word session. Write "
+            f"the clean edit anywhere else in build/ (build/clean.docx is "
+            f"the usual name) and pass that.")
+
     counts = tracked.package_counts(package.read_parts(paper.prev))
     if (counts["insertions"] or counts["deletions"]) \
             and not allow_pending_baseline:
@@ -476,6 +491,15 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     report = tracked.build(paper.prev, revised, out, None,
                            author=paper.author, verify_in_word=True,
                            progress=_say)
+
+    for name in restored_bookmarks(package.read_parts(paper.prev),
+                                   package.read_parts(revised),
+                                   package.read_parts(out)):
+        _say(f"bookmark {name!r}: your clean edit removed it and Compare "
+             f"put it back — a bookmark is carried over from the ORIGINAL "
+             f"side and cannot ship through a redline. Apply the deletion "
+             f"to working.docx AFTER the promote; the revision count is "
+             f"unaffected, a bookmark is not tracked content.")
 
     # What Compare baked in with no revision on it, named paragraph by
     # paragraph. The math count alone understated this badly: a merged,
@@ -734,6 +758,39 @@ def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
                 if len(out) >= limit:
                     return out
     return out
+
+
+_BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:name="([^"]+)"')
+
+
+def _bookmarks(parts: dict[str, bytes]) -> set[str]:
+    return {n for name, blob in parts.items()
+            if name in TEXT_PARTS
+            for n in _BOOKMARK_NAME_RE.findall(blob.decode("utf-8", "replace"))
+            if not n.startswith("_")}       # Word's own _Toc/_Heading names
+
+
+def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
+                       built: dict[str, bytes]) -> list[str]:
+    """Bookmarks the clean edit REMOVED and Compare put back.
+
+    Word's Compare carries bookmarks over from the ORIGINAL side, so a
+    deletion made in the clean copy is silently undone in the redline —
+    and nothing in the counts shows it, because a bookmark is not
+    tracked content. The orphan `Lari2023` survived two full rounds that
+    way, and dropping the `Conley1999` and `Ingoglia2021` entries hit it
+    again: `citations` on the built batch reported STALE BOOKMARK and
+    REF WITHOUT CITE for entries that were no longer in the document.
+
+    Three sides are needed, and the BASELINE is the one that makes the
+    answer mean something: "in the build, not in the clean edit" also
+    describes a name Word MINTED during the compare, and reporting that
+    as the author's deletion sends them looking for an edit they never
+    made. Only a name the baseline already carried is one the clean edit
+    can have removed.
+    """
+    return sorted((_bookmarks(baseline) & _bookmarks(built))
+                  - _bookmarks(clean))
 
 
 #: A footnote Compare emitted as one insertion with nothing to delete.
