@@ -125,21 +125,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 - **Fix** On mismatch, print the first few differing paragraphs the way
   `compare`'s TEXT layer does. The comparison is already computed.
 
-### S2 `citations.link_all` leaves a possessive citation unlinked and reports `unmatched 0`
-- **Symptom** `"Doepke and Zilibotti's (2017)"` is not matched by the
-  author-chain grammar (the apostrophe-s), so `link_all` walks past it —
-  and its report says `linked 1, … unmatched 0`, which reads as "nothing
-  left to do". The `citations` audit is what caught it, as `UNLINKED`.
-- **Repro** Parental_style 2026-08-10, ¶92.
-- **Workaround** Explicit `link_in_para(para, "Doepke and Zilibotti's
-  (2017)", "Doepke2017")` in `applied/repair_round5.py`.
-- **Same family as** the already-known comma-before-a-surname gap
-  ("in the United Kingdom, Chan and Koo (2011)" reads as one author
-  chain). Both are possessive/punctuation forms of a real citation.
-- **Fix** Accept `'s` after the surname chain; and count a
-  citation-shaped mention it declined to link as `unmatched`, so the
-  report stops claiming completeness it has not got.
-
 ### S2 `compare`'s FIELD layer reports "lost hyperlink target(s)" for targets that are present
 - **Symptom** Comparing a baseline against a clean edit that REWRITES a
   paragraph heavily, the FIELD layer lists every field-form target in
@@ -177,6 +162,34 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S2 a possessive citation is left unlinked and reported UNLINKED — `a66259c`
+The entry blamed the author-chain grammar and the grammar was innocent:
+`find_citations` returns `"Doepke and Zilibotti's (2017)"` whole. Two
+other things were wrong, one per layer, and both are wider than the
+entry.
+
+**The key carried the possessive.** The apostrophe is a NAME character
+(D'Souza), so `key_for` stripped the punctuation without removing the
+*s*: `beckers_1981`, which no entry answers to. A SINGLE-author
+possessive could not be linked at all — the reported case worked only by
+luck, its lead author being someone else. On a chain the suffix falls
+outside `_NAME` and `"Doepke et al.'s (2019)"` was invisible to the
+finder.
+
+**The audit paired a mention to the links by its WORDING.** Resolving it
+to its entry instead, over 397 real manuscripts: 36 changed, **41
+findings removed, 0 added**. Thirty-eight are one shape nobody had
+named — a label stopping a character short, `"Davletov et al. (2016"`,
+because the closing parenthesis sits in a run outside the hyperlink.
+
+The measurement also caught the fix overreaching: LE le12's finding is
+real (the author retyped the sentence and dropped its link, while the
+tracked DELETION beside it still carried the old one), so the evidence
+must be visible in the FINAL document.
+
+**Workaround** `repair_round5.py` stays as the record of a spent round;
+the technique is no longer forced on the next paper.
 
 ### S3 `compare`'s FORMAT layer cannot see size or colour — `6920980`
 FORMAT now carries `size` and `colour`, **resolved** through the new
