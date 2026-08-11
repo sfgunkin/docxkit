@@ -17,6 +17,35 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 `citations.link_rest` is blind to entry bookmarks Word has HOISTED
+- **Symptom** Reports `'Straus et al. (1998)' (¶40): entry has no
+  bookmark` and skips the mention, for works whose entry bookmark exists
+  and resolves perfectly well. Word hoists a collapsed bookmark out of
+  the paragraph it marks, so the reference entry's own
+  `<w:bookmarkStart w:name="Straus1998"/><w:bookmarkEnd/>` sits BETWEEN
+  paragraphs at body level: `…</w:p><w:bookmarkStart/><w:bookmarkEnd/>
+  <w:p …>`. `link_rest` looks inside the entry paragraph, finds nothing,
+  and declines.
+- **Consequence** the later-mention layer silently stops being
+  maintained for those works. On Parental_style that was **nine
+  mentions across six works** (Straus1998, Doepke2019 ×4, Doepke2017,
+  Gracia2008, Roche2020, Habibov2012) — the author noticed before any
+  tool did, because `citations` reports ALL CHECKS PASSED (it resolves
+  anchors document-wide, and first mentions are all linked).
+- **Repro** Parental_style 2026-08-11, `working.docx` after author round
+  9. `Straus1998` bookmark: 1 in the document, 0 inside its entry
+  paragraph.
+- **Workaround** `_link_citations` in
+  `Parental_style/revision/scripts/applied/relink_mentions.py` — takes
+  `link_rest`'s own skip list, derives `SurnameYear`, **verifies it
+  against the document-wide bookmark set** (refusing to write a link
+  that goes nowhere) and calls `link_in_para` directly.
+- **Fix** Resolve entry anchors from the document-wide bookmark set,
+  or accept a bookmark that sits immediately before/after the entry
+  paragraph. `crossrefs` already copes with hoisting; this path does
+  not. Note `citations` should probably also report the gap — "N later
+  mentions unlinked" is invisible today.
+
 ### S4 `footnotes.sizes` skips the reference mark untested
 - **Symptom** `sizes` asks only runs with visible text, so a paper that
   deliberately sizes the `w:footnoteRef` run gets no finding when one
@@ -125,32 +154,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 - **Fix** On mismatch, print the first few differing paragraphs the way
   `compare`'s TEXT layer does. The comparison is already computed.
 
-### S2 `compare`'s FIELD layer reports "lost hyperlink target(s)" for targets that are present
-- **Symptom** Comparing a baseline against a clean edit that REWRITES a
-  paragraph heavily, the FIELD layer lists every field-form target in
-  that paragraph as lost: `lost hyperlink target(s):
-  ['GlobalInitiativetoEndAllCorporalP2024', 'Gracia2008', 'Straus1998',
-  'Table2']`. The targets are all still there.
-- **Repro** Parental_style 2026-08-10, protocol_comparison_subsection.
-  Both paragraphs flagged; direct inspection shows the field structure
-  is IDENTICAL on both sides — 3 `fldChar begin/separate/end`, the same
-  three `instrText` targets, the same element anchor. `citations` on the
-  built batch: 0 broken, 0 unlinked.
-- **Why it is probably wrong** the layer pairs paragraphs by text, and a
-  paragraph whose prose was substantially rewritten no longer pairs with
-  its baseline self, so every target reads as missing. Its header text
-  ("Word stripped these in your copy; the build restores them") assumes
-  the built-vs-author-edited direction, which is not the only way the
-  command gets used.
-- **Cost** a diagnosis: the finding contradicts `citations` and the
-  paper's own checks, and this project's standing rule is that a
-  dangling-link flag must never be waved away, so it has to be chased
-  every time.
-- **Fix** either pair on the field's own identity rather than paragraph
-  text, or suppress the layer when the two sides are both builds — and
-  say "could not pair this paragraph" rather than "lost", which asserts
-  something false.
-
 ### S4 `build/batch.docx` is reserved but not guarded
 - **Symptom** Writing a hand-built clean edit to `build/batch.docx`
   collides with `revision build`'s provenance tracking: it reports "the
@@ -162,6 +165,25 @@ fixed entries; "did we ever fix that?" is a real question later.
 ---
 
 ## Fixed
+
+### S2 `compare`'s FIELD layer reports targets that are present as lost — `122a180`
+The entry guessed "pairs paragraphs by text"; the real mechanism is that
+inside a replace run the pairing is POSITIONAL, so the inserted Heading2
+made the block 4 against 5 and shifted every pair after it by one.
+
+Three rules, measured over 748 real comparisons (every version pair on
+this machine, and every document against itself):
+
+    per pair                1,463 named lost, 594 still present  59.4%
+    per BLOCK               1,764 named lost, 246 still present  86.1%
+    + surviving, per part   1,540 named lost,  27 still present  98.2%
+    + surviving, package    1,521 named lost,   8 still present  99.5%
+
+It also names MORE true losses (869 → 1,513): a pair whose prose came
+through glyph-identical never reached the old test at all. TEXT,
+STRUCTURE and GLYPH are byte-identical across all 748.
+
+The header no longer asserts a cause and a direction it cannot know.
 
 ### S1 `replace_in_para` empties a hyperlink's LABEL when the match spans it — `031e96d`
 Both halves, because the entry's own "why it is S1" was that nothing
