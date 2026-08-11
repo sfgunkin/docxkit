@@ -163,6 +163,38 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Fixed
 
+### S1 `replace_in_para` empties a hyperlink's LABEL when the match spans it — `031e96d`
+Both halves, because the entry's own "why it is S1" was that nothing
+catches it.
+
+**The refusal.** A run is somebody's label if it is hyperlink-STYLED or
+if it sits inside a `<w:hyperlink>` element — the style is what a
+field-form result run carries, the element is what an unstyled
+element-form label has. Both forms fail the same way and both were
+reproduced first. Same `allow_hyperlink` opt-in as the existing guard.
+
+**The check.** `_xml.dead_links`, reported by the citation audit as
+EMPTY LINK. It went there rather than into `lint` because the file is
+not malformed — Word opens it happily — and `write_docx` must not start
+refusing documents over it.
+
+**It found live damage in submitted work.** 103 hits over 397
+manuscripts, ~10 distinct defects repeated across archived versions:
+LE ¶25's `Elder2013` is an empty field standing where the citation was
+("confirmed by [ ]Ludwig and Zimper (2013)"), LE ¶40's `Table3` the same,
+five of LI's footnote citations read as plain "(Catalano 2003)" followed
+by a train of empty fields, and IGM ¶716's `Table4_text`. **Each of those
+papers needs a repair round of its own** — recorded here because the
+toolkit is what found them.
+
+A link inside a tracked DELETION is excluded: it is not in the final
+document. Four sit in LE le12, and reporting them would put every
+redline on the list.
+
+**Workaround to retire** `_link_labels` in `readability_pass.py` is no
+longer needed as a guard — the refusal is upstream of it now — but the
+script stays as the record of the round.
+
 ### S2 a possessive citation is left unlinked and reported UNLINKED — `a66259c`
 The entry blamed the author-chain grammar and the grammar was innocent:
 `find_citations` returns `"Doepke and Zilibotti's (2017)"` whole. Two
