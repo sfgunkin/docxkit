@@ -256,6 +256,9 @@ def test_the_audit_does_not_count_an_equations_run_either():
 
 
 SZ10, SZ12 = '<w:sz w:val="20"/>', '<w:sz w:val="24"/>'
+#: the run that draws the little number, as Word writes it
+MARK = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+        "<w:footnoteRef/></w:r>")
 
 
 def test_footnotes_that_all_state_the_same_size_are_clean():
@@ -295,12 +298,77 @@ def test_a_document_whose_footnotes_all_inherit_has_nothing_to_report():
 def test_the_reference_mark_does_not_count_as_a_silent_run():
     """The run holding w:footnoteRef is formatted by the
     FootnoteReference style and states no size ON PURPOSE. Counting it
-    would put every conforming document on the list."""
-    marked = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
-              "<w:footnoteRef/></w:r>")
-    report = footnotes.sizes(part(note(2, marked + run("a", SZ10)),
-                                  note(3, marked + run("b", SZ10))))
+    among the BODY runs would put every conforming document on the list
+    — the mark is superscript and a size or two smaller by design."""
+    report = footnotes.sizes(part(note(2, MARK + run("a", SZ10)),
+                                  note(3, MARK + run("b", SZ10))))
     assert report.ok, report.format()
+    assert report.mark_outliers == []
+
+
+# --- the marks, against each OTHER -------------------------------------
+#
+# The exclusion above was recorded as a known edge with "Evidence:
+# none", and the entry asked for a manuscript that sizes its marks
+# before widening anything. Measured over 331 manuscripts with footnotes
+# (2026-08-11): 26 state a size on the mark, and in 22 of them exactly
+# ONE mark RESOLVES differently from the rest — 10pt against 11pt in
+# IGM, TCC and Parental Style, several of them submitted. LI's is the
+# clearest: every mark run is byte-identical, and one note's paragraph
+# lost its `FootnoteText` style, so that mark alone falls through to the
+# document default and is drawn a point larger.
+
+
+def test_marks_that_all_resolve_alike_say_nothing():
+    """The quiet the exclusion was protecting, kept: a document whose
+    marks agree reports nothing however they are styled."""
+    sized = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+             f'{SZ10}</w:rPr><w:footnoteRef/></w:r>')
+    report = footnotes.sizes(part(note(2, sized + run("a", SZ10)),
+                                  note(3, sized + run("b", SZ10))))
+    assert report.ok, report.format()
+
+
+def test_a_mark_that_resolves_larger_than_the_rest_is_reported():
+    """And the body check cannot see it: every body run states the same
+    size, so the note reads as conforming."""
+    def mark(sz: str) -> str:
+        return ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+                f'{sz}</w:rPr><w:footnoteRef/></w:r>')
+
+    report = footnotes.sizes(part(note(2, mark(SZ10) + run("a", SZ10)),
+                                  note(3, mark(SZ10) + run("b", SZ10)),
+                                  note(4, mark(SZ12) + run("c", SZ10))))
+    assert report.outliers == [], "the BODY sizes agree"
+    assert not report.ok
+    (found,) = report.mark_outliers
+    assert found.id.startswith("4") and "reference mark" in found.id
+    assert "12pt" in str(found)
+    assert "reference marks" in report.format()
+
+
+def test_a_mark_left_to_the_document_default_by_a_lost_pStyle():
+    """LI7's shape exactly: the mark runs are identical and the
+    PARAGRAPH differs, so nothing about the mark itself looks wrong."""
+    styles = ('<w:styles><w:docDefaults><w:rPrDefault><w:rPr>'
+              '<w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>'
+              '<w:style w:type="paragraph" w:styleId="FootnoteText">'
+              f'<w:rPr>{SZ10}</w:rPr></w:style></w:styles>')
+    def styled(nid: int) -> str:
+        return (f'<w:footnote w:id="{nid}"><w:p><w:pPr><w:pStyle '
+                f'w:val="FootnoteText"/></w:pPr>{MARK}{run("a")}'
+                "</w:p></w:footnote>")
+
+    # three conforming notes, so the house is a majority rather than a
+    # coin toss — two marks that differ have no house at all
+    bare = (f'<w:footnote w:id="9"><w:p>{MARK}{run("b", SZ10)}'
+            "</w:p></w:footnote>")
+    report = footnotes.sizes(part(styled(2), styled(3), styled(4), bare),
+                             styles_xml=styles)
+    assert report.mark_house == 20
+    (found,) = report.mark_outliers
+    assert found.id.startswith("9")
+    assert "12pt" in str(found) and "document default" in str(found)
 
 
 def test_words_separator_notes_are_not_footnotes():

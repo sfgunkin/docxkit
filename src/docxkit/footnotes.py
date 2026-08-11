@@ -291,9 +291,26 @@ def fonts(footnotes_xml: str, *, include_reserved: bool = False
 # for a wrong value found nothing. What gives it away is not the value
 # but the DISAGREEMENT, which needs no styles.xml to see.
 #
-# Only text-bearing runs are asked. The run holding `w:footnoteRef` is
-# formatted by the FootnoteReference style and states no size on
-# purpose; counting it would put every conforming document on the list.
+# Only text-bearing runs are asked for the BODY size. The run holding
+# `w:footnoteRef` is formatted by the FootnoteReference style and
+# normally states no size, so counting it among the body runs would put
+# every conforming document on the list — the mark is superscript and a
+# point or two smaller by design.
+#
+# The mark is asked SEPARATELY, and it earned that after the exclusion
+# was recorded as a known edge with "Evidence: none". Measured over 331
+# manuscripts with footnotes (2026-08-11): 26 state a size on the mark,
+# and in 22 of them exactly ONE mark resolves to 10pt where every other
+# resolves to 11pt — IGM, TCC and Parental Style, several of them
+# submitted. So the marks are compared to each OTHER, which keeps the
+# quiet the exclusion was protecting: a document whose marks all resolve
+# alike reports nothing, however they are styled.
+
+
+#: the run that DRAWS the little number, in a footnote's own first
+#: paragraph. `w:footnoteReference` is the other end — the mark in the
+#: body — and is deliberately not this.
+_MARK_RE = re.compile(r"<w:footnoteRef\s*/>")
 
 
 @dataclass(frozen=True)
@@ -323,17 +340,28 @@ class SizeReport:
     house: int | None = None           # half-points, or None if none agree
     counted: int = 0
     outliers: list[SizeOutlier] = field(default_factory=list)
+    #: the reference MARK, compared to the other marks rather than to the
+    #: body — a different question with a different house size
+    mark_house: int | None = None
+    mark_outliers: list[SizeOutlier] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.outliers
+        return not self.outliers and not self.mark_outliers
 
     def format(self) -> str:
         house = ("none stated" if self.house is None
                  else f"{self.house / 2:g}pt")
         head = (f"{self.counted} footnote(s), house size {house}, "
                 f"{len(self.outliers)} disagreeing")
-        return "\n".join([head] + [f"  {o}" for o in self.outliers])
+        lines = [head] + [f"  {o}" for o in self.outliers]
+        if self.mark_outliers:
+            mark = ("none stated" if self.mark_house is None
+                    else f"{self.mark_house / 2:g}pt")
+            lines.append(f"reference marks: house {mark}, "
+                         f"{len(self.mark_outliers)} disagreeing")
+            lines += [f"  {o}" for o in self.mark_outliers]
+        return "\n".join(lines)
 
 
 def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
@@ -368,6 +396,7 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
     cascade = Cascade(styles_xml)
 
     stated: list[tuple[str, tuple[int | None, ...], str, str]] = []
+    marks: list[tuple[str, int | None, str, str]] = []
     for note in find_all(footnotes_xml, include_reserved=include_reserved):
         math = _math_spans(note.xml)
         seen: set[int | None] = set()
@@ -378,13 +407,19 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
                 at = para.start() + r.start()
                 if any(s <= at < e for s, e in math):
                     continue
-                if not visible_text(r.group(0)).strip():
-                    continue           # the reference mark states no size
                 own = own_properties(r.group(0), "rPr")
                 rpr = live_properties(own[2]) if own else None
                 value, source = cascade.explain(
                     "sz", rpr=rpr, rstyle=cascade.style_of(rpr),
                     pstyle=pstyle)
+                if _MARK_RE.search(r.group(0)):
+                    text = " ".join(visible_text(note.xml).split())[:48]
+                    marks.append((note.id,
+                                  int(value) if value is not None else None,
+                                  text, source))
+                    continue           # judged against the other MARKS
+                if not visible_text(r.group(0)).strip():
+                    continue           # nothing on the page to size
                 seen.add(int(value) if value is not None else None)
                 if source:
                     sources.add(source)
@@ -397,6 +432,23 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
         stated.append((note.id, found, text, ", ".join(sorted(sources))))
 
     report = SizeReport(counted=len(stated))
+
+    # The marks, against each other. A document whose marks all resolve
+    # alike says nothing, which is what the exclusion was protecting;
+    # one that draws a single mark a point smaller than the rest says so.
+    mark_sizes = [sz for _, sz, _, _ in marks if sz is not None]
+    if mark_sizes:
+        report.mark_house = max(set(mark_sizes), key=mark_sizes.count)
+        # A mark whose size does not resolve is not judged: without
+        # styles.xml nothing here resolves, and calling that a
+        # disagreement would report every document read without the
+        # part. The body half declines the same way ("nothing states a
+        # size: nothing to say").
+        report.mark_outliers = [
+            SizeOutlier(f"{fid} (reference mark)", (sz,), text, via)
+            for fid, sz, text, via in marks
+            if sz is not None and sz != report.mark_house]
+
     agreed = [s[0] for _, s, _, _ in stated
               if len(s) == 1 and s[0] is not None]
     if not agreed:

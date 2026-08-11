@@ -611,9 +611,21 @@ def cmd_footnotes(args: argparse.Namespace) -> int:
     for key, count in sorted(fonts(xml).items(), key=lambda kv: -kv[1]):
         print(f"  {count:>5}  {key}")
     if args.check and not report.ok:
-        print(f"\nCHECK FAILED: {len(report.outliers)} footnote(s) do not "
-              f"agree with the rest.\nfootnotes.set_font(xml, size=...) "
-              f"writes the size onto every run.")
+        n, m = len(report.outliers), len(report.mark_outliers)
+        # The two findings need different repairs, so the failure says
+        # which it met: `set_font` writes the BODY runs, and a mark that
+        # resolves differently is usually a paragraph that lost its
+        # FootnoteText style rather than anything stated on the mark.
+        what = []
+        if n:
+            what.append(f"{n} footnote(s) do not agree with the rest — "
+                        f"footnotes.set_font(xml, size=...) writes the size "
+                        f"onto every run")
+        if m:
+            what.append(f"{m} reference MARK(s) resolve differently from the "
+                        f"other marks — check the paragraph's w:pStyle "
+                        f"before writing anything onto the mark")
+        print("\nCHECK FAILED: " + "\n  ".join(what))
         return 1
     return 0
 

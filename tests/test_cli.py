@@ -677,6 +677,35 @@ def test_footnotes_check_gates_on_one_that_disagrees(monkeypatch, tmp_path,
     assert "footnote 4" in out and "the silent one" in out
 
 
+def test_footnotes_check_gates_on_a_MARK_that_disagrees(monkeypatch,
+                                                        tmp_path, capsys):
+    """The other half of the check, and the other repair. A mark that
+    resolves differently is usually a paragraph that lost its
+    FootnoteText style, so telling the author to write a size onto the
+    mark would be the wrong instruction — the failure says which of the
+    two it met."""
+    from docxkit.package import write_docx
+
+    def marked(nid: int, sz: str) -> str:
+        mark = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+                f'<w:sz w:val="{sz}"/></w:rPr><w:footnoteRef/></w:r>')
+        return (f'<w:footnote w:id="{nid}"><w:p>{mark}'
+                '<w:r><w:rPr><w:sz w:val="20"/></w:rPr>'
+                f"<w:t>note {nid}</w:t></w:r></w:p></w:footnote>")
+
+    path = tmp_path / "marks.docx"
+    write_docx(path, make_parts(para(run("body")), footnotes=(
+        _FOOTNOTES.format(notes=marked(2, "20") + marked(3, "20")
+                          + marked(4, "24")))))
+    code, _ = run_cli(monkeypatch, "footnotes", str(path), "--check")
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "reference MARK(s)" in out and "w:pStyle" in out
+    assert "footnote 4 (reference mark)" in out
+    # the body sizes agree: only the mark finding belongs here
+    assert "do not agree with the rest" not in out
+
+
 def test_footnotes_on_a_paper_that_has_none(monkeypatch, tmp_path, capsys):
     from docxkit.package import write_docx
     path = tmp_path / "plain.docx"
