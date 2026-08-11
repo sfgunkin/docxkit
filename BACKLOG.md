@@ -39,9 +39,14 @@ fixed entries; "did we ever fix that?" is a real question later.
 - **Symptom** Refuses when a work is cited more than once (correct — it
   will not guess), but the house convention is *bookmark the first
   mention, leave later ones forward-only*, and there is no helper for it.
-- **Repro** `Doepke2017`, cited 3×.
+- **Repro** `Doepke2017`, cited 3×. **Recurred 2026-08-10** with
+  `Table5`, linked twice (the wealth paragraph and the age-profile
+  paragraph) after an author save stripped `Table5txt`.
 - **Workaround** Hand-rolled regex in
-  `Parental_style/revision/scripts/applied/repair_round3_links.py`.
+  `Parental_style/revision/scripts/applied/repair_round3_links.py`, and
+  again as `_wrap_first` in `applied/repair_round5.py` — **two copies of
+  the same hack now, in the same paper.** That is the drift this file
+  exists to prevent; delete both when `which="first"` lands.
 - **Fix** `which="first"`.
 
 ### S4 `citations.repair_plan` proposed deleting a live entry as debris
@@ -59,12 +64,107 @@ fixed entries; "did we ever fix that?" is a real question later.
 - **Symptom** Compare carries bookmarks over from the ORIGINAL side, so
   deleting one in the clean copy is silently overwritten when the redline
   is built. The orphan `Lari2023` bookmark survived two full rounds.
-- **Evidence** 2026-08-09/10.
+- **Evidence** 2026-08-09/10. **Third occurrence 2026-08-10**: dropping
+  the `Conley1999` and `Ingoglia2021` entries removed each bookmark in
+  the clean copy, and Compare put both back — `citations` on the built
+  batch reported `STALE BOOKMARK` and `REF WITHOUT CITE` for entries
+  that no longer existed. Confirms the pattern is systematic, not a
+  one-off. Note the bookmarks were HOISTED clear of their entry
+  paragraphs, so deleting the paragraph did not take them either.
 - **Workaround** Apply bookmark deletions to `working.docx` AFTER the
   promote; revision count is unaffected, a bookmark is not tracked
   content.
 - **Fix** `revision build` could detect "this batch removes bookmarks"
   and say so.
+
+### S2 `revision build` under-reports what Compare baked in untracked
+- **Symptom** It warns `resolved N math revisions … Author this batch by
+  hand instead`, which reads as "N equation edits are untracked". The
+  real damage was far wider: restructuring a math-bearing paragraph
+  (merging two paragraphs, one holding an inline oMath) shipped the
+  **entire rewritten paragraph** untracked, and the batch's headline
+  count looked healthy — 7 revisions, 6 of them in the body — while the
+  central edit had no revision marks at all.
+- **Repro** Parental_style 2026-08-10, protocol_theory_opening.
+  `docxkit revision build` → "resolved 5 math revisions", 7 revisions;
+  `docxkit locate batch.docx --revisions` → all 6 body revisions are the
+  two word-swaps in an unrelated paragraph.
+- **Also** the advice has no tool behind it: `tracked.build` IS the
+  Compare wrapper, so "author this batch by hand" names no supported
+  path. Either provide one or say plainly that such a batch has no
+  redline.
+- **Not steerable by authoring.** Built twice — delete-and-reinsert, then
+  rewrite-in-place so neither the footnote reference nor the oMath moved
+  — and Compare emitted **byte-identical** output. It diffs document
+  CONTENT, not the XML it is handed.
+- **Fix** Report which PARAGRAPHS lost tracking, not just a math count;
+  `locate --revisions` already has the data.
+
+### S2 a moved footnote ANCHOR makes Compare emit the footnote as an unmatched insert
+- **Symptom** When a footnote's reference moves (same footnote, new
+  position in the text), Compare treats it as a brand-new footnote:
+  the whole footnote body is wrapped in one `<w:ins>` with **no matching
+  `<w:del>`**. Accepting is correct; **rejecting empties the footnote.**
+  This is one of the two reasons a batch fails gate 5 while looking fine.
+- **Repro** Parental_style 2026-08-10: footnote 2 re-anchored from the
+  deleted roadmap paragraph to the new opening sentence.
+  `revisions.reject(footnotes.xml)` → empty footnote body.
+- **Fix** Detectable before the handback: a footnote part whose `w:ins`
+  count is non-zero and `w:del` count is zero, when the footnote existed
+  in the baseline, is always this. Warn by name.
+
+### S4 `revision validate` says reject-all MISMATCH but not WHAT failed
+- **Symptom** Gate 5 prints `{'paragraphs': False, 'glyphs': False,
+  'footnotes': False} -> MISMATCH` and stops. Three booleans do not say
+  which paragraph, or whether the cause is one word or a whole section.
+- **Evidence** 2026-08-10. Cost a bespoke diff script
+  (`difflib` over reject-all vs `prev.docx` paragraph text) to learn that
+  the merged paragraph was untracked and footnote 2 came back empty —
+  which is exactly the information needed to decide whether the batch is
+  salvageable or has to ship clean.
+- **Fix** On mismatch, print the first few differing paragraphs the way
+  `compare`'s TEXT layer does. The comparison is already computed.
+
+### S2 `citations.link_all` leaves a possessive citation unlinked and reports `unmatched 0`
+- **Symptom** `"Doepke and Zilibotti's (2017)"` is not matched by the
+  author-chain grammar (the apostrophe-s), so `link_all` walks past it —
+  and its report says `linked 1, … unmatched 0`, which reads as "nothing
+  left to do". The `citations` audit is what caught it, as `UNLINKED`.
+- **Repro** Parental_style 2026-08-10, ¶92.
+- **Workaround** Explicit `link_in_para(para, "Doepke and Zilibotti's
+  (2017)", "Doepke2017")` in `applied/repair_round5.py`.
+- **Same family as** the already-known comma-before-a-surname gap
+  ("in the United Kingdom, Chan and Koo (2011)" reads as one author
+  chain). Both are possessive/punctuation forms of a real citation.
+- **Fix** Accept `'s` after the surname chain; and count a
+  citation-shaped mention it declined to link as `unmatched`, so the
+  report stops claiming completeness it has not got.
+
+### S2 `compare`'s FIELD layer reports "lost hyperlink target(s)" for targets that are present
+- **Symptom** Comparing a baseline against a clean edit that REWRITES a
+  paragraph heavily, the FIELD layer lists every field-form target in
+  that paragraph as lost: `lost hyperlink target(s):
+  ['GlobalInitiativetoEndAllCorporalP2024', 'Gracia2008', 'Straus1998',
+  'Table2']`. The targets are all still there.
+- **Repro** Parental_style 2026-08-10, protocol_comparison_subsection.
+  Both paragraphs flagged; direct inspection shows the field structure
+  is IDENTICAL on both sides — 3 `fldChar begin/separate/end`, the same
+  three `instrText` targets, the same element anchor. `citations` on the
+  built batch: 0 broken, 0 unlinked.
+- **Why it is probably wrong** the layer pairs paragraphs by text, and a
+  paragraph whose prose was substantially rewritten no longer pairs with
+  its baseline self, so every target reads as missing. Its header text
+  ("Word stripped these in your copy; the build restores them") assumes
+  the built-vs-author-edited direction, which is not the only way the
+  command gets used.
+- **Cost** a diagnosis: the finding contradicts `citations` and the
+  paper's own checks, and this project's standing rule is that a
+  dangling-link flag must never be waved away, so it has to be chased
+  every time.
+- **Fix** either pair on the field's own identity rather than paragraph
+  text, or suppress the layer when the two sides are both builds — and
+  say "could not pair this paragraph" rather than "lost", which asserts
+  something false.
 
 ### S4 `build/batch.docx` is reserved but not guarded
 - **Symptom** Writing a hand-built clean edit to `build/batch.docx`
