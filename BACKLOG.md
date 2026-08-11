@@ -17,63 +17,59 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S4 `footnotes.sizes` skips the reference mark untested
-- **Symptom** `sizes` asks only runs with visible text, so a paper that
-  deliberately sizes the `w:footnoteRef` run gets no finding when one
-  mark disagrees with the rest.
-- **Why it is that way** the mark's run is formatted by the
-  FootnoteReference style and states no size on purpose. Counting it put
-  every conforming document on the list — that exclusion is what makes
-  the check quiet enough to run twice.
-- **Evidence** none. No document on this machine sizes it; the 134-file
-  sweep says nothing either way. Recorded as a KNOWN EDGE rather than a
-  defect, at the user's request, so the next person meets it as a
-  decision rather than as a surprise.
-- **Verify before fixing** find a manuscript whose footnote marks carry
-  an explicit `w:sz`, and check whether one of them disagreeing is
-  visible on the page. Without that, widening the rule trades a real
-  quiet for a hypothetical catch — the same trade `_FOLD`'s docstring
-  refuses.
-
-### S4 `citations.repair_plan` proposed deleting a live entry as debris
-- **Symptom** Classified `BhlerNiederberger2022` as "debris of a deleted
-  entry — remove", while both the reference entry (¶133) and its citation
-  (¶22) were alive. Following it would have destroyed a live reference.
-- **Mitigation already present** the plan's header says the
-  classification is mechanical and the repair is not. That warning is
-  what saved it.
-- **Evidence** 2026-08-09.
-- **Fix** Before classifying as debris, check whether the entry TEXT
-  still exists — the bookmark alone is not evidence.
-
-### S4 a bookmark deletion cannot ship through Word Compare
-- **Symptom** Compare carries bookmarks over from the ORIGINAL side, so
-  deleting one in the clean copy is silently overwritten when the redline
-  is built. The orphan `Lari2023` bookmark survived two full rounds.
-- **Evidence** 2026-08-09/10. **Third occurrence 2026-08-10**: dropping
-  the `Conley1999` and `Ingoglia2021` entries removed each bookmark in
-  the clean copy, and Compare put both back — `citations` on the built
-  batch reported `STALE BOOKMARK` and `REF WITHOUT CITE` for entries
-  that no longer existed. Confirms the pattern is systematic, not a
-  one-off. Note the bookmarks were HOISTED clear of their entry
-  paragraphs, so deleting the paragraph did not take them either.
-- **Workaround** Apply bookmark deletions to `working.docx` AFTER the
-  promote; revision count is unaffected, a bookmark is not tracked
-  content.
-- **Fix** `revision build` could detect "this batch removes bookmarks"
-  and say so.
-
-### S4 `build/batch.docx` is reserved but not guarded
-- **Symptom** Writing a hand-built clean edit to `build/batch.docx`
-  collides with `revision build`'s provenance tracking: it reports "the
-  file changed since docxkit built it — someone edited it in Word" and
-  refuses.
-- **Evidence** 2026-08-09. Cost a cycle to diagnose.
-- **Fix** Say the path is reserved, or accept a clean edit there.
+*(nothing open — the S1/S2/S3 batch closed 2026-08-11, the four S4s the
+same day. Append as you hit them.)*
 
 ---
 
 ## Fixed
+
+### S4 `footnotes.sizes` skips the reference mark untested — `cf6c0f2`
+The entry refused to widen anything without evidence and named the
+evidence it wanted. Measured over 331 manuscripts with footnotes: **26
+state a size on the mark, and in 22 of them exactly ONE mark RESOLVES
+differently from the rest** — 10pt against 11pt in IGM, TCC and Parental
+Style, several submitted. So "no document on this machine sizes it" was
+false.
+
+LI's is the shape that matters: every mark run is byte-identical, one
+note's PARAGRAPH lost its `FootnoteText` style, and that mark alone
+falls to the document default and is drawn a point larger — while its
+body text states 20 like everyone else, so the existing check reports
+the note as conforming.
+
+The marks are now compared to EACH OTHER, which keeps the quiet the
+exclusion was protecting: 291 of 331 documents say nothing, and the 40
+that speak are versions of three papers with one finding apiece. A mark
+whose size does not resolve is not judged, the way the body half already
+declines. `--check` says which of the two it met, because they need
+different repairs.
+
+### S4 `citations.repair_plan` proposed deleting a live entry as debris — `fda1788`
+The evidence it used could not work for that name: the bookmark was
+minted by an older strip-only stem (accents dropped, not folded) while
+"Bühler-Niederberger (2022)" keys as `bühlerniederberger_2022`, because
+`\w` keeps the umlaut. The two spellings never meet, so a live work
+reads as uncited however carefully it is cited.
+
+The question now goes to the reference LIST, as the entry demanded —
+`_own_bookmark` knows both stems and reads the hoisted gap — and a
+finding on a live entry is re-classified as the lost citation LINK it
+actually is. Both bookmark placements tested: reading the entry
+paragraph alone brings the false debris call straight back.
+
+### S4 a bookmark deletion cannot ship through Word Compare — `114b464`
+`restored_bookmarks(baseline, clean, built)` names them and `build` says
+so before the handback, with the remedy the three rounds arrived at.
+Three sides, because the BASELINE is what makes the answer mean
+something: "in the build, not in the clean edit" also describes a name
+Word MINTED during the compare, and reporting that as the author's
+deletion sends them looking for an edit they never made.
+
+### S4 `build/batch.docx` is reserved but not guarded — `114b464`
+It refuses at the call now, and names `build/clean.docx` as the place to
+put a hand-built edit. The old failure came from the far end — the
+provenance stamp reading the edit as a Word session that never happened.
 
 ### S4 `wrap_link_in_bookmark` has no "first mention" mode — `3d42a31`
 `which="first"`. The rewrite also fixed a counting bug the entry did not
