@@ -161,9 +161,13 @@ MUTATIONS = [
              "    if _named_bookmark(name).search(para_xml):",
              "    if f'w:name=\"{name}\"' in para_xml:"),
     # --- composition and write targets ------------------------------------
+    # Re-pointed 2026-08-12: `standalone` gained `source=` when harvest
+    # learned to carry the document's namespace declarations, and the
+    # anchor had been drifting — which the harness reports as a failure
+    # precisely so it cannot rot unnoticed.
     Mutation("equations.py",
              "a harvested equation cannot be parsed on its own",
-             "    return standalone(hits[index].xml)",
+             "    return standalone(hits[index].xml, source=xml)",
              "    return hits[index].xml"),
     Mutation("word.py",
              "a write is staged to a copy and silently discarded",
@@ -203,9 +207,16 @@ MUTATIONS = [
              '    if require_style and "<w:tblStyle" not in tblpr:',
              "    if False:"),
     # --- citations ------------------------------------------------------
+    # Re-pointed 2026-08-12: the check grew a SECOND stem (a document
+    # linked before `_ascii_stem` existed carries «Aczl1966»), so the
+    # single-alpha comparison the mutation named is gone. What it tests
+    # is unchanged — drop the surname check and a bookmark matches on
+    # its YEAR alone, which is how "(Smith 2020)" got wired to a stray
+    # `Jones2020`.
     Mutation("_cite_build.py",
              "an entry bookmark matches on the year alone again",
-             "        if alpha.startswith(got) or got.startswith(alpha):\n"
+             "        if any(a and (a.startswith(got) or got.startswith(a))"
+             " for a in stems):\n"
              "            return n",
              "        return n"),
     Mutation("_cite_grammar.py",

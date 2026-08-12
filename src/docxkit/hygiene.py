@@ -113,6 +113,11 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
 
     A part already present is left exactly as it is: the target's copy
     is the newer one, and this is a rescue, not a sync.
+
+    This does not fight :func:`strip_parts` above it. Stripping the data
+    store is a DECISION a paper makes before it submits; carrying it
+    across a rebuild is the build declining to make that decision on the
+    paper's behalf, in a step nobody asked for and nothing reports.
     """
     missing = sorted(n for n in source
                      if any(n.startswith(p) for p in prefixes)
