@@ -17,6 +17,35 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S4 `revision build`'s staleness refusal advertises a flag that does not exist
+When `build/batch.docx` has changed since docxkit wrote it, `build`
+refuses with:
+
+    batch.docx has changed since docxkit built it - someone edited it in
+    Word. Backed up to batch_user_edited1.docx; rebuilding would discard
+    those edits. Fold them into the build source first, then re-run with
+    force=True (CLI: --force).
+
+`docxkit revision build --force` is `error: unrecognized arguments:
+--force`; `build --help` lists only `--paper`, `--out`,
+`--allow-math-resolve` and `--allow-pending-baseline`. The refusal is
+right and the guard is worth having -- it is what stopped a spent batch
+being silently overwritten on Parental_style 2026-08-12 -- but the way
+out it names is fiction, and the two ways that DO work (`--out` to a
+different path, or deleting the stale file) are not mentioned.
+
+The trigger is not exotic: any post-build edit to `batch.docx` sets it
+up. That paper hand-restores `customXml/` parts into the batch after
+every build, because Compare drops them (entry above), so it trips the
+guard on the very next build every time.
+
+**Suggested shape.** Either add the flag, or name the real remedy:
+"re-run with --out PATH, or delete build/batch.docx if the previous
+batch is already promoted." The second is a one-line message change.
+
+**Workaround in use** delete `build/batch.docx` and re-run; the backup
+`batch_user_edited1.docx` already holds whatever was there.
+
 ### S2 `crossrefs --audit` never checks that an anchor leads its mentions
 The audit proves a `<key>txt` bookmark EXISTS and RESOLVES. It does not
 prove it sits on the FIRST in-text mention, which is the house
