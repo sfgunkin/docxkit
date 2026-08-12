@@ -141,6 +141,15 @@ With no styled mark anywhere the commonest value still stands, and
 `mark_house_from` says which of the two answers was given, because they
 deserve different confidence.
 
+**Measured over 1,535 manuscripts with footnotes: 293 hold a mark
+disagreement, and every one of them is now decided by a style.** The
+document COUNT cannot move — outliers are non-empty exactly when the
+resolved sizes differ, under either rule — so this changes no document's
+verdict, only which side of it is named. API10 is the shape beside
+Parental_style's: five marks state 11pt directly and four take 10pt from
+`FootnoteText`, so the old rule made 11pt the house and flagged the four
+that agree with the paper's own stylesheet.
+
 `unstyled` names the footnotes whose paragraphs carry no `pStyle` — the
 actionable fact the entry asked for, one attribute lookup — and the
 report now tells the reader to give them the style rather than to write
