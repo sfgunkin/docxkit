@@ -344,6 +344,69 @@ def hyperlink_labels(xml: str) -> Counter[str]:
     return Counter(labels)
 
 
+#: Below this, containment is a coincidence rather than a survival: a
+#: two-character label sits inside half the prose in the document.
+_LABEL_KEEP = 3
+
+
+def label_moves(gone: Counter[str],
+                gained: Counter[str]) -> list[dict[str, Any]]:
+    """Pair a label that lost text with the one that gained it.
+
+    Both sides of the same edit, said once. A label that SWALLOWS
+    surrounding prose is the S1 defect `edit.replace_in_para` now
+    refuses: the replacement is written into the run holding the start
+    of the match, so when that run is the link's label the link ends up
+    owning every word — Parental Style's Table 4 caption came back with
+    two thirds of it drawn blue and underlined, and this layer was the
+    ONLY place it was visible.
+
+    It was visible as two unrelated lines, though: ``[built-only] 'Table
+    4'`` somewhere in the list and ``[user-only] 'Table 4: The likelihood
+    of using non-violent and coercive discipline'`` somewhere else, for
+    the reader to correlate. Pairing them names the defect instead.
+
+    Containment decides the pairing, because that is what the mechanism
+    leaves: the old label's own text survives inside the new one. Both
+    directions are reported — a label that SHRANK is the emptying case
+    caught partway, and `citations` reports the fully emptied one as
+    EMPTY LINK. `gone` and `gained` are consumed, so a pair is never
+    also printed as two singletons.
+
+    A static rule was tried first and measured before shipping: "no
+    label may contain a sentence-ending ':' or '.' followed by more
+    words" fires **5,378 times across 718 of 1,873 manuscripts**, because
+    many papers link the WHOLE caption by convention and the damaged
+    label is indistinguishable from that. Restricting it to exhibit
+    back-links and to labels that disagree with their own document's
+    majority still left 936 in 332. The difference is not a property of
+    one document, so only a comparison can see it.
+    """
+    out: list[dict[str, Any]] = []
+    for new in sorted(gained, key=lambda s: (-len(s), s)):
+        if len(new) < _LABEL_KEEP:
+            continue
+        olds = sorted((o for o in gone
+                       if len(o) >= _LABEL_KEEP and o != new
+                       and (o in new or new in o)),
+                      key=lambda s: (-len(s), s))
+        for old in olds:
+            while gained[new] and gone[old]:
+                gained[new] -= 1
+                gone[old] -= 1
+                side = "grew" if len(new) > len(old) else "shrank"
+                out.append({"side": side, "label": old[:90],
+                            "to": new[:90], "n": 1})
+            if not gained[new]:
+                break
+    # Counter arithmetic leaves zero counts behind, and `for lab, n in
+    # gone.items()` would then print a label nothing lost.
+    for counter in (gone, gained):
+        for label in [k for k, n in counter.items() if not n]:
+            del counter[label]
+    return out
+
+
 # ----------------------------------------------------------------- aligning
 class _Alignment:
     """One pair of parts, being aligned paragraph by paragraph.

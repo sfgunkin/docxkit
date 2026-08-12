@@ -324,6 +324,7 @@ def superscript(para_xml: str, text: str, *, normalize: bool = False,
 
 def replace_in_para(para_xml: str, old: str, new: str,
                     *, allow_hyperlink: bool = False,
+                    grow_link_label: bool = False,
                     normalize: bool = False) -> str:
     """Run-aware text replace inside one paragraph.
 
@@ -359,6 +360,20 @@ def replace_in_para(para_xml: str, old: str, new: str,
 
     Anchor on plain text outside the link, or pass ``allow_hyperlink=True``
     to edit the link's label deliberately.
+
+    ``allow_hyperlink`` permits the match to TOUCH a link; it does not
+    permit the link to grow. The write puts the whole replacement into
+    the run holding the start of the match, so when that run is a label
+    and the match runs on past the link, the label ends up owning words
+    that were never the link's: the Parental Style Table 4 caption
+    opened with a ``Table4txt`` back-link labelled "Table 4", and one
+    ``allow_hyperlink=True`` call on the whole caption rendered two
+    thirds of it blue and underlined. Every gate passed — the anchor
+    still resolves and the words still read correctly — exactly as in
+    the emptying case above. So a match that starts in a label and ends
+    outside it is refused; ``grow_link_label=True`` is the deliberate
+    retitle, and the usual answer is to replace only a span lying wholly
+    on one side of the link.
 
     `normalize` matches through Word's typographic substitutions (curly vs
     straight quotes, dash variants) — see :func:`find_normalized`. `new` is
@@ -413,8 +428,34 @@ def replace_in_para(para_xml: str, old: str, new: str,
         return (_HYPERLINK_RUN in run.group(0)
                 or any(lo <= run.start() < hi for lo, hi in link_spans))
 
+    def label_extent(idx: int) -> tuple[int, int]:
+        """The VISIBLE span of the whole label the idx-th run belongs to.
+
+        Element form first: every run inside the ``w:hyperlink`` is part
+        of one label, and Word fragments a label across runs as freely
+        as it fragments prose. Field form has no element to ask, so the
+        label is the run's styled neighbours — which is the same answer
+        for the same reason.
+        """
+        run = runs[idx]
+        for lo, hi in link_spans:
+            if lo <= run.start() < hi:
+                inside = [i for i, r in enumerate(runs)
+                          if lo <= r.start() < hi]
+                return spans[inside[0]][0], spans[inside[-1]][1]
+
+        def styled(i: int) -> bool:
+            return 0 <= i < len(runs) and _HYPERLINK_RUN in runs[i].group(0)
+
+        lo_i = hi_i = idx
+        while styled(lo_i - 1):
+            lo_i -= 1
+        while styled(hi_i + 1):
+            hi_i += 1
+        return spans[lo_i][0], spans[hi_i][1]
+
     edits, first = [], True
-    for (start, stop), run in zip(spans, runs, strict=True):
+    for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
         if stop <= at or start >= end:
             continue
         run_xml = run.group(0)
@@ -426,6 +467,22 @@ def replace_in_para(para_xml: str, old: str, new: str,
                     "replace_in_para: the match starts inside a hyperlink "
                     "run -- the replacement would bleed into the link. "
                     "Anchor on plain text outside the link.")
+            # The opt-in above answers "may this match touch a link?".
+            # It must not also answer "may the label ABSORB text?" — the
+            # whole replacement lands in this run, so a match that runs
+            # on past the link ends with the label owning words that
+            # were outside it (Parental Style's Table 4 caption, two
+            # thirds of it drawn as a link).
+            if (labels_a_link(run) and not grow_link_label
+                    and end > label_extent(idx)[1]):
+                raise AnchorError(
+                    "replace_in_para: the match starts in a hyperlink's "
+                    f"label and ends outside it -- writing {new[:40]!r} "
+                    "into the label would make the link swallow the text "
+                    "beyond it, which no text diff and no anchor check "
+                    "shows. Replace a span lying wholly on one side of "
+                    "the link, or pass grow_link_label=True to retitle "
+                    "the link deliberately.")
             edits.append((run, set_run_text(run_xml, body[:at - start] + new
                                             + tail)))
             first = False

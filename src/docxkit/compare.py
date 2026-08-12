@@ -76,6 +76,7 @@ from ._compare_diff import fmt_diff as fmt_diff
 from ._compare_diff import formula_diff as formula_diff
 from ._compare_diff import hyperlink_labels as hyperlink_labels
 from ._compare_diff import integrity as integrity
+from ._compare_diff import label_moves as label_moves
 from ._compare_diff import stripped_fields as stripped_fields
 from ._compare_diff import word_diff as word_diff
 from ._compare_read import COMMENTS_PART as COMMENTS_PART
@@ -140,10 +141,13 @@ def compare_docs(a: Doc, b: Doc) -> Report:
                            Counter())
     lb: Counter[str] = sum((hyperlink_labels(p.xml) for p in b.parts),
                            Counter())
-    for lab, n in (la - lb).items():
+    gone, gained = la - lb, lb - la
+    for pair in label_moves(gone, gained):
+        report["hyperlinks"].append(pair)
+    for lab, n in gone.items():
         report["hyperlinks"].append({"side": "built-only",
                                      "label": lab[:90], "n": n})
-    for lab, n in (lb - la).items():
+    for lab, n in gained.items():
         report["hyperlinks"].append({"side": "user-only",
                                      "label": lab[:90], "n": n})
 

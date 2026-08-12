@@ -101,8 +101,15 @@ def _review(report: Report) -> None:
           "(restored citation) or fixed; user-only = a link only in the "
           "user copy (a build regression, OR the user's own bled link). "
           "Eyeball these.")
+    print("  grew/shrank = ONE label, both sides of it: the link now "
+          "draws more (or less) of the sentence than it did. A label "
+          "that grew is prose swallowed into the link — blue and "
+          "underlined on the page, invisible to every other layer.")
     for h in report["hyperlinks"]:
         times = f" x{h['n']}" if h["n"] > 1 else ""
+        if "to" in h:
+            print(f"  [{h['side']}] {h['label']!r} -> {h['to']!r}{times}")
+            continue
         print(f"  [{h['side']}] {h['label']!r}{times}")
     if not report["hyperlinks"]:
         print("  (none)")

@@ -239,6 +239,76 @@ def test_a_replacement_beside_a_link_is_untouched_by_the_guard():
     assert 'w:anchor="Table5"' in out
 
 
+# The counterpart of the crossing guard, and the same silent wrong
+# answer wearing the opposite mask: the opt-in that lets a match TOUCH a
+# link was also, silently, permission for the label to ABSORB text.
+# Parental Style's Table 4 caption 2026-08-12 — every gate green, two
+# thirds of the caption drawn blue and underlined.
+
+def _caption(link: str) -> str:
+    return ("<w:p>" + link
+            + '<w:r><w:t xml:space="preserve">: The likelihood of using '
+            "non-violent discipline</w:t></w:r></w:p>")
+
+
+CAPTION_LINK = ('<w:hyperlink w:anchor="Table4txt" w:history="1">'
+                '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+                "<w:t>Table 4</w:t></w:r></w:hyperlink>")
+CAPTION_FIELD = (
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+    '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l "Table4txt" '
+    "</w:instrText></w:r>"
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+    '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+    "<w:t>Table 4</w:t></w:r>"
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+@pytest.mark.parametrize("link", [CAPTION_LINK, CAPTION_FIELD])
+def test_the_opt_in_does_not_let_a_label_swallow_the_caption(link):
+    p = _caption(link)
+    old = "Table 4: The likelihood of using non-violent discipline"
+    new = "Table 4: The likelihood of using coercive discipline"
+    with pytest.raises(AnchorError, match="swallow"):
+        replace_in_para(p, old, new, allow_hyperlink=True)
+    assert text_of(p) == old               # nothing written
+
+
+def test_a_deliberate_retitle_says_so():
+    """The two questions are separable, so the caller that really means
+    to grow the label has its own way to say it."""
+    p = _caption(CAPTION_LINK)
+    out = replace_in_para(p, "Table 4: The likelihood of using non-violent "
+                          "discipline", "Table 4: Discipline",
+                          allow_hyperlink=True, grow_link_label=True)
+    assert text_of(out) == "Table 4: Discipline"
+
+
+def test_editing_a_label_within_its_own_extent_is_untouched():
+    """The refusal is about the label GROWING, not about editing it: a
+    span that ends inside the label is the ordinary retitle."""
+    p = _caption(CAPTION_LINK)
+    out = replace_in_para(p, "Table 4", "Table 5", allow_hyperlink=True)
+    assert text_of(out).startswith("Table 5: The likelihood")
+    assert "<w:t>Table 5</w:t>" in out      # still the label, nothing more
+
+
+def test_a_fragmented_label_is_one_label():
+    """Word splits a label across runs as freely as it splits prose, so
+    the extent is the whole hyperlink element and not one run."""
+    p = ('<w:p><w:hyperlink w:anchor="Table4txt">'
+         "<w:r><w:t>Table</w:t></w:r>"
+         '<w:r><w:t xml:space="preserve"> 4</w:t></w:r></w:hyperlink>'
+         '<w:r><w:t xml:space="preserve"> and after</w:t></w:r></w:p>')
+    # ends inside the label: allowed
+    out = replace_in_para(p, "Table 4", "Table 6", allow_hyperlink=True)
+    assert text_of(out) == "Table 6 and after"
+    # runs past it: refused
+    with pytest.raises(AnchorError, match="swallow"):
+        replace_in_para(p, "Table 4 and after", "Table 6 and later",
+                        allow_hyperlink=True)
+
+
 def test_replace_in_para_rejects_missing_or_ambiguous():
     p = para(run("alpha beta alpha"))
     with pytest.raises(AnchorError, match="not in paragraph"):

@@ -153,6 +153,52 @@ def test_a_field_stripped_alongside_a_text_edit_is_reported(tmp_path):
     assert compare(a2, b2)["stripped_fields"] == []
 
 
+def test_a_label_that_swallowed_its_caption_is_named_as_one_finding(tmp_path):
+    """Both sides of one edit, said once. This layer was the only place
+    Parental Style's swallowed Table 4 caption was visible, and it was
+    visible as two lines a reader had to correlate — a built-only
+    'Table 4' and a user-only label carrying the whole caption."""
+    caption = ('<w:hyperlink w:anchor="Table4txt"><w:r><w:t>Table 4'
+               "</w:t></w:r></w:hyperlink>")
+    swollen = ('<w:hyperlink w:anchor="Table4txt"><w:r><w:t>Table 4: The '
+               "likelihood of coercive discipline</w:t></w:r></w:hyperlink>")
+    tail = run(": The likelihood of coercive discipline")
+    a, b = docs(tmp_path, para(caption + tail), para(swollen))
+    report = compare(a, b)
+    grew = [h for h in report["hyperlinks"] if h["side"] == "grew"]
+    assert len(grew) == 1, report["hyperlinks"]
+    assert grew[0]["label"] == "Table 4"
+    assert grew[0]["to"].startswith("Table 4: The likelihood")
+    # and the pair is not ALSO printed as two unrelated singletons
+    assert not [h for h in report["hyperlinks"]
+                if h["side"] in ("built-only", "user-only")]
+
+
+def test_the_grown_label_is_PRINTED_as_one_line(tmp_path):
+    """The layer is only useful if a reader meets the pair as a pair."""
+    caption = ('<w:hyperlink w:anchor="Table4txt"><w:r><w:t>Table 4'
+               "</w:t></w:r></w:hyperlink>")
+    swollen = ('<w:hyperlink w:anchor="Table4txt"><w:r><w:t>Table 4: The '
+               "likelihood of coercive discipline</w:t></w:r></w:hyperlink>")
+    a, b = docs(tmp_path,
+                para(caption + run(": The likelihood of coercive discipline")),
+                para(swollen))
+    out = _rendered(compare(a, b))
+    assert "[grew] 'Table 4' -> 'Table 4: The likelihood" in out, out
+
+
+def test_an_unrelated_pair_of_labels_is_not_paired(tmp_path):
+    """Containment is the pairing rule because it is what the mechanism
+    leaves behind. Two different links changing is still two lines."""
+    a_body = para('<w:hyperlink w:anchor="A"><w:r><w:t>Smith (2020)'
+                  "</w:t></w:r></w:hyperlink>")
+    b_body = para('<w:hyperlink w:anchor="A"><w:r><w:t>Jones (2021)'
+                  "</w:t></w:r></w:hyperlink>")
+    report = compare(*docs(tmp_path, a_body, b_body))
+    sides = sorted(h["side"] for h in report["hyperlinks"])
+    assert sides == ["built-only", "user-only"], report["hyperlinks"]
+
+
 def test_a_field_end_run_with_rpr_does_not_bleed_the_label(tmp_path):
     """Word adds an <w:rPr> to the field's closing run when the author
     saves. hyperlink_labels required a BARE closing run, so the label ran
