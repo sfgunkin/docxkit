@@ -708,6 +708,68 @@ def test_validate_reject_all_passes_on_a_faithful_batch(tmp_path):
     assert report.ok
 
 
+def test_validate_fails_on_a_part_the_batch_lost(tmp_path):
+    """The reject-all gate proves the TEXT round-trips; nothing proved
+    the PACKAGE did. Word's Compare drops the customXml data store on
+    every rebuild and `promote` copies the batch over working.docx, so
+    the loss reaches the live manuscript with lint clean, validate
+    PASSing and Word opening the file happily (2026-08-12)."""
+    base_parts = make_parts(para(run("settled text")))
+    base_parts["customXml/item1.xml"] = (
+        b'<b:Sources xmlns:b="http://schemas.openxmlformats.org'
+        b'/officeDocument/2006/bibliography"/>')
+    base_parts["docProps/app.xml"] = b"<Properties/>"
+    baseline_path = write(tmp_path / "prev.docx", base_parts)
+
+    without = {k: v for k, v in base_parts.items()
+               if not k.startswith(("customXml/", "docProps/"))}
+    batch = write(tmp_path / "batch.docx", without)
+    report = revision.validate(batch, baseline_path, use_word=False)
+    # docProps is Word's own bookkeeping and says nothing
+    assert report.lost_parts == ["customXml/item1.xml"]
+    assert report.reject_matches_baseline is True, "the TEXT is intact"
+    assert not report.ok
+
+
+def test_validate_reject_all_counts_the_LINKS(tmp_path):
+    """Rejecting a batch that deleted linked text gives the words back
+    as PLAIN TEXT: Word's Compare does not rebuild a hyperlink inside a
+    rejected deletion. Parental Style T4(3) came back 227 links against
+    the baseline's 229 with reject-all reporting OK, `citations` ALL
+    CHECKS PASSED (later mentions, so nothing dangled), and the author
+    two links short with nothing anywhere saying so (2026-08-12)."""
+    linked = ('<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5</w:t>'
+              "</w:r></w:hyperlink>")
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("see"), linked, run("for detail"))))
+    # the same words, the link gone: every existing arm of the gate is
+    # satisfied, because paragraphs and glyphs both compare TEXT
+    unlinked = write(tmp_path / "batch.docx", make_parts(
+        para(run("see"), run("Table 5"), run("for detail"))))
+    report = revision.validate(unlinked, baseline_path, use_word=False)
+    assert report.reject_detail["paragraphs"] is True
+    assert report.reject_detail["glyphs"] is True
+    assert report.reject_detail["links"] is False
+    assert not report.ok
+    assert report.lost_links and "Table5" in report.lost_links[0]
+
+
+def test_the_link_count_is_blind_to_which_FORM_a_link_takes(tmp_path):
+    """Word rewrites a field into an element on every author save, so a
+    gate that told the two apart would fail on a document nobody
+    changed."""
+    from docxkit.citations import hyperlink_field
+
+    element = ('<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5</w:t>'
+               "</w:r></w:hyperlink>")
+    baseline_path = write(tmp_path / "prev.docx",
+                          make_parts(para(run("see"), element)))
+    as_field = write(tmp_path / "batch.docx", make_parts(
+        para(run("see"), hyperlink_field("Table5", "Table 5"))))
+    report = revision.validate(as_field, baseline_path, use_word=False)
+    assert report.reject_detail["links"] is True, report.reject_detail
+
+
 def test_validate_checks_footnotes_too(tmp_path):
     """A batch may be faithful in the body and lossy in a footnote."""
     baseline_path = write(tmp_path / "prev.docx", make_parts(

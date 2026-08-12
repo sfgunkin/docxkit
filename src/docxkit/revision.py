@@ -58,6 +58,7 @@ import re
 import shutil
 import tomllib
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -72,6 +73,8 @@ from ._xml import (
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
+    internal_links,
+    text_parts,
     visible_text,
 )
 from .errors import (
@@ -436,7 +439,7 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
 
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
-          allow_pending_baseline: bool = False,
+          allow_pending_baseline: bool = False, force: bool = False,
           progress: Any = None) -> tracked.BuildReport:
     """Clean-build plus Word Compare: a redline from an edited copy.
 
@@ -459,6 +462,14 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     two refusals below: a batch that touches equations must be authored
     by hand instead, and one built on a baseline that still carries
     pending revisions must wait for the author to adjudicate them.
+
+    `force` overrides the third refusal — the one
+    :func:`docxkit.guard.check` raises when ``build/batch.docx`` has
+    changed since docxkit wrote it. That guard is what stopped a spent
+    batch being silently overwritten (Parental Style 2026-08-12) and it
+    is worth keeping; what was NOT worth keeping is that the message
+    named ``--force`` while neither this function nor the CLI had one,
+    so the only way out the reader was told about did not exist.
     """
     out = Path(out) if out else paper.batch
     # `build/batch.docx` is where a BUILT batch is staged, and the stamp
@@ -496,7 +507,7 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
 
     report = tracked.build(paper.prev, revised, out, None,
                            author=paper.author, verify_in_word=True,
-                           progress=_say)
+                           force=force, progress=_say)
 
     for name in restored_bookmarks(package.read_parts(paper.prev),
                                    package.read_parts(revised),
@@ -564,6 +575,12 @@ class ValidateReport:
     #: salvageable, which is the decision their reader has to make.
     reject_diff: list[Untracked] = field(default_factory=list)
     moved_footnotes: list[int] = field(default_factory=list)
+    #: Links the rejected view does not have and the baseline does. See
+    #: :func:`_links` for why rejecting a batch can lose one.
+    lost_links: list[str] = field(default_factory=list)
+    #: Whole PARTS the baseline has and the batch does not. See
+    #: :func:`docxkit.package.missing_parts`.
+    lost_parts: list[str] = field(default_factory=list)
     accept_paths_agree: bool | None = None
 
     @property
@@ -576,6 +593,7 @@ class ValidateReport:
         return (not self.lint
                 and self.word_opened is not False
                 and not self.empty_shells
+                and not self.lost_parts
                 and self.reject_matches_baseline is not False
                 and self.accept_paths_agree is not False)
 
@@ -766,6 +784,30 @@ def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
     return out
 
 
+def _links(parts: dict[str, bytes]) -> Counter[tuple[str, str]]:
+    """``(anchor, label)`` for every internal link, every text part.
+
+    The fourth thing gate 5 compares, and the one it was blind to.
+    Rejecting a batch that DELETED linked text restores the sentence as
+    PLAIN TEXT: Word's Compare does not rebuild a hyperlink inside a
+    rejected deletion, so the words come back and the link does not.
+    Parental Style T4(3) came back 227 links against the baseline's 229,
+    with `reject-all` reporting OK and `citations` ALL CHECKS PASSED —
+    both later mentions, so nothing dangled — and the author two links
+    short with nothing anywhere saying so (2026-08-12).
+
+    Counted as a MULTISET of pairs, not as a total: a link that survives
+    at a different place is not a link that was lost, and a total hides
+    a swap. Both link forms are read, because Word rewrites a field into
+    an element on every author save and the two must not read as one
+    lost and one gained.
+    """
+    out: Counter[tuple[str, str]] = Counter()
+    for _name, xml in text_parts(parts):
+        out.update(internal_links(xml))
+    return out
+
+
 def _bookmarks(parts: dict[str, bytes]) -> set[str]:
     return {n for name, blob in parts.items()
             if name in TEXT_PARTS
@@ -839,8 +881,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     2. tracked counts, package-wide;
     3. does Word open it without repairing it;
     4. accept-all: residual revisions, and empty OMML shells;
-    5. reject-all: paragraph text and the glyph stream against the
-       baseline;
+    5. reject-all: paragraph text, the glyph stream and the LINKS
+       against the baseline, and the baseline's PART LIST;
     6. the XML accept against Word's own accept.
 
     Gate 5 is the one that proves a batch is fully REVIEWABLE: if
@@ -892,17 +934,25 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     if report.baseline is not None:
         rejected = _simulate(parts, revisions.reject)
         base = package.read_parts(report.baseline)
+        # The PACKAGE, before its text: the reject-all gate below proves
+        # the words round-trip, and a part that is not there has no words
+        # for it to read.
+        report.lost_parts = package.missing_parts(parts, base)
+        was, now = _links(base), _links(rejected)
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
             "glyphs": _glyph(_root(rejected)) == _glyph(_root(base)),
             "footnotes": (_glyph(_root(rejected, FOOTNOTES))
                           == _glyph(_root(base, FOOTNOTES))),
+            "links": was == now,
         }
         report.reject_detail = detail
         report.reject_matches_baseline = all(detail.values())
         if not report.reject_matches_baseline:
             report.reject_diff = untracked(parts, base)
             report.moved_footnotes = moved_footnotes(parts, base)
+            report.lost_links = [f"-> {a} ({label[:40]!r})"
+                                 for a, label in sorted((was - now).elements())]
 
     if word_accept_glyph is not None:
         report.accept_paths_agree = (

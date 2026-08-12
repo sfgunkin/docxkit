@@ -57,8 +57,11 @@ def check(out: str | Path, *, force: bool = False,
     raise DeliverableModified(
         f"{out.name} has changed since docxkit built it — someone edited it "
         f"in Word. Backed up to {saved.name}; rebuilding would discard those "
-        "edits. Fold them into the build source first, then re-run with "
-        "force=True (CLI: --force).")
+        f"edits. Three ways on, in the order they are usually right: fold "
+        f"the edits into the build SOURCE and re-run with force=True (CLI: "
+        f"--force), which is safe because {saved.name} already holds what "
+        f"was here; build somewhere else with out=/--out; or delete "
+        f"{out.name} if that batch is already promoted.")
 
 
 def stamp(out: str | Path, **provenance: str) -> Path:
