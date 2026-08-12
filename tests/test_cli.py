@@ -423,7 +423,11 @@ def test_crossrefs_audit_reports_every_bucket_without_writing(
     before = Path(paper).read_bytes()
     code, _ = run_cli(monkeypatch, "crossrefs", str(paper), "--audit")
     out = capsys.readouterr().out
-    for bucket in ("linked", "caption_only", "mention_only", "dangling"):
+    # EVERY bucket the audit returns, which is what the name claims:
+    # `misnamed` was computed and printed nowhere for as long as it has
+    # existed, and a list of four kept saying so
+    for bucket in ("linked", "caption_only", "mention_only", "dangling",
+                   "misnamed", "misplaced_anchor"):
         assert bucket in out, out
     assert isinstance(code, int)
     assert Path(paper).read_bytes() == before
