@@ -405,6 +405,36 @@ figures" is worth little; one saying it *and* that mapping to the nearest
 drawing before it gets every figure wrong by one is what stops the next
 person reverting it.
 
+## Measure a proposed CHECK before writing it, not after
+
+Not the same habit as measuring a fix. A check is a claim about what
+every manuscript on this machine should look like, and the corpus can
+refute it in a minute — before it costs a test suite, a CLI line and a
+reader's attention.
+
+The rule proposed for a link label that had swallowed its caption was
+"no label may contain a sentence-ending `:` or `.` followed by more
+words". It fires **5,378 times across 718 of 1,873 manuscripts**: many
+papers link the WHOLE caption by convention, so the damaged label and
+the house style are the same string. Narrowing it to exhibit back-links
+and to labels that disagree with their own document's majority — the
+`footnotes.sizes` framing, which is the right next thing to try — still
+left 936 in 332.
+
+That measurement is the finding. **Some defects are not a property of
+one document at all**, and for those the only instrument is a
+comparison: `compare` now pairs the label that lost text with the one
+that gained it, and cannot cry wolf on a convention because a convention
+does not change between two versions. Before adding a check, ask which
+kind you have — and if the answer is "the same shape is legitimate in
+some papers", it belongs in `compare`, not in an audit.
+
+The sibling failure is a check that is right and unreadable: the same
+"part dropped" line was printed for `docProps/*`, which Word regenerates
+on every save, and for the customXml data store, which nothing puts
+back. Three papers' worth of ignorable noise around one real loss is not
+a warning. Classify, or say nothing.
+
 ## Four traps that keep coming back
 
 **A search over a `w:tbl` is not a search over THAT table.** `rows_of` and
