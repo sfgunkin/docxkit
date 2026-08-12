@@ -91,6 +91,11 @@ fail on a document nobody touched.
 False" beside three other booleans is the shape this protocol has
 already been bitten by.
 
+**Run against every real batch on this machine** — Parental_style (544
+revisions), Loneliness Index (23) and DSI (0) — both new gates pass and
+`lost_parts` is empty. A widened gate is only worth having if it stays
+silent on work that is fine.
+
 ### S2 `revision build` silently DROPS every `customXml/` part — `c288968`, `91055cd`
 Both suggestions, because they answer different halves.
 
