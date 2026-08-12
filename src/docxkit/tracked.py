@@ -35,6 +35,7 @@ from typing import Any
 
 from . import comments as _comments
 from . import guard as _guard
+from . import hygiene as _hygiene
 from . import word as _word
 from ._xml import (
     BOOKMARK_NAME_RE,
@@ -46,7 +47,7 @@ from ._xml import (
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
-from .package import read_parts, write_docx
+from .package import REGENERATED_BY_WORD, read_parts, write_docx
 from .revisions import revision_elements
 
 # Bound directly, NOT reached through `_word`: tests replace that
@@ -93,8 +94,21 @@ def compare_collateral(revised: dict[str, bytes],
     customXml a template left behind, and a redline nobody can produce
     is worse than one with a note on it. But it must be SAID, because
     the alternative is finding it in the deliverable.
+
+    **A part Word REGENERATES is not a part that was lost**, and mixing
+    the two is how a real loss goes unread: the same "part dropped" line
+    was printed for ``docProps/app.xml``, ``core.xml`` and ``custom.xml``
+    — which Word rewrites on every save and nobody needs to care about —
+    and for the customXml data store, which nothing puts back. Those are
+    named separately and first, because a signal buried in ignorable
+    noise is not a signal.
     """
-    notes = [f"part dropped: {p}" for p in sorted(set(revised) - set(redline))]
+    lost = sorted(set(revised) - set(redline))
+    notes = [f"part LOST: {p} — nothing regenerates this; it is gone from "
+             f"the redline unless you put it back"
+             for p in lost if not p.startswith(REGENERATED_BY_WORD)]
+    notes += [f"part dropped: {p} (Word regenerates it on save)"
+              for p in lost if p.startswith(REGENERATED_BY_WORD)]
     was_names, was_targets = _anchors(revised)
     now_names, now_targets = _anchors(redline)
     notes += [f"bookmark dropped: {b}"
@@ -193,6 +207,10 @@ class BuildReport:
         #: bookmarks, links. See :func:`compare_collateral`. Advisory:
         #: some of it is legitimate tidying, and only a person can tell.
         self.dropped: list[str] = []
+        #: Part-trees Compare dropped and the build put BACK — the
+        #: customXml data store, by default. See
+        #: :func:`docxkit.hygiene.restore_parts`.
+        self.carried: list[str] = []
         self.phases: list[tuple[str, float]] = []
         self._t0 = self._last = time.perf_counter()
 
@@ -216,6 +234,9 @@ class BuildReport:
             lines += [f"    - {note}" for note in self.suppressed[:10]]
             if len(self.suppressed) > 10:
                 lines.append(f"    ... and {len(self.suppressed) - 10} more")
+        if self.carried:
+            lines.append(f"  carried back across the Compare: "
+                         f"{', '.join(self.carried)}")
         if self.dropped:
             lines.append(f"  Word's Compare dropped {len(self.dropped)} "
                          "thing(s) the revised copy had:")
@@ -361,6 +382,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           tables: str = _comments.COALESCE,
           whitespace: bool = True, formatting: bool = True,
           verify_in_word: bool = True, force: bool = False,
+          carry: tuple[str, ...] = (_hygiene.CUSTOM_XML,),
           progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
@@ -381,6 +403,13 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     `verify_in_word` reopens the result and fails the build if Word had to
     repair it. `force` overrides the refusal to overwrite a deliverable
     that has been edited since it was built.
+
+    `carry` names part-trees to copy back from `revised` when Compare
+    drops them — the ``customXml/`` data store by default, which it
+    drops on every single rebuild. Pass ``carry=()`` to get the raw
+    Compare output and only a warning. See
+    :func:`docxkit.hygiene.restore_parts` for why the default is not
+    "warn and leave it to the reader".
     """
     original, revised, out = Path(original), Path(revised), Path(out)
     report = BuildReport()
@@ -445,7 +474,18 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # Before anything is added to it: what did Compare decline to
         # carry over? Checked against the REVISED input, which is the
         # document the redline is supposed to be able to reproduce.
-        report.dropped = compare_collateral(read_parts(revised), parts)
+        revised_parts = read_parts(revised)
+        # The data store is not referenced from the body, so putting it
+        # back is three mechanical edits and no judgment — which is
+        # exactly the sort of thing that belongs here rather than in a
+        # paper's script directory, hand-run after every single build.
+        report.carried = _hygiene.restore_parts(parts, revised_parts,
+                                                prefixes=carry)
+        for name in report.carried:
+            say(f"  carried across: {name} (Compare drops it; it is not "
+                f"referenced from the body, so it goes back with its "
+                f"content type and a free rId)")
+        report.dropped = compare_collateral(revised_parts, parts)
         for note in report.dropped:
             say(f"  WARNING: Compare {note}")
 

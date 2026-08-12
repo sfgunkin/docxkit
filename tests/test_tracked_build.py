@@ -198,6 +198,68 @@ def test_the_compare_options_DEFAULT_to_on(monkeypatch, sources):
     assert fake.compared["whitespace"] is True
 
 
+def test_the_build_carries_the_customXml_store_across_the_compare(
+        monkeypatch, sources, capsys):
+    """Compare drops the data store on EVERY rebuild, and `promote`
+    copies the batch over working.docx — so the loss reaches the live
+    manuscript in one step, with lint clean and validate PASSing. That
+    paper hand-restored three parts after every build for a week."""
+    original, revised, out = sources
+    with zipfile.ZipFile(revised, "w") as z:
+        z.writestr("word/document.xml", _clean_document())
+        z.writestr("customXml/item1.xml",
+                   '<b:Sources xmlns:b="http://schemas.openxmlformats.org'
+                   '/officeDocument/2006/bibliography"/>')
+        z.writestr("customXml/itemProps1.xml",
+                   '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats'
+                   '.org/officeDocument/2006/customXml"/>')
+        z.writestr("[Content_Types].xml",
+                   '<Types><Override PartName="/customXml/itemProps1.xml" '
+                   'ContentType="application/xml"/></Types>')
+        z.writestr("word/_rels/document.xml.rels",
+                   '<Relationships><Relationship Id="rId4" '
+                   'Target="../customXml/item1.xml"/></Relationships>')
+
+    said: list[str] = []
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           progress=said.append)
+
+    built = zipfile.ZipFile(out)
+    assert "customXml/item1.xml" in built.namelist()
+    assert report.carried == ["customXml/item1.xml",
+                              "customXml/itemProps1.xml"]
+    assert any("carried across" in line for line in said)
+    # the content type comes back with the part; the RELATIONSHIP half is
+    # unit-tested in test_parts_gaps, because Word's flat-OPC output for
+    # a two-part fixture carries no word/_rels/document.xml.rels to
+    # merge into
+    types = built.read("[Content_Types].xml").decode("utf-8")
+    assert 'PartName="/customXml/itemProps1.xml"' in types
+    # a part that was carried back is not also announced as dropped
+    assert not [n for n in report.dropped if "customXml" in n], report.dropped
+
+
+def test_carry_can_be_turned_off(monkeypatch, sources):
+    """`carry=()` is the raw Compare output and a warning — which is
+    what every build did before, and is still the right answer for a
+    caller that wants Word's own package."""
+    original, revised, out = sources
+    with zipfile.ZipFile(revised, "w") as z:
+        z.writestr("word/document.xml", _clean_document())
+        z.writestr("customXml/item1.xml",
+                   '<b:Sources xmlns:b="http://schemas.openxmlformats.org'
+                   '/officeDocument/2006/bibliography"/>')
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           carry=())
+    assert report.carried == []
+    assert "customXml/item1.xml" not in zipfile.ZipFile(out).namelist()
+    assert any("part LOST: customXml/item1.xml" in n for n in report.dropped)
+
+
 def test_a_body_only_count_is_not_reported_as_the_whole_batch(
         monkeypatch, sources, capsys):
     """Word's Revisions collection walks the MAIN STORY, so a footnote
@@ -809,8 +871,22 @@ def test_a_dropped_part_is_reported():
     """word/header1.xml and three customXml items, on the RF-a promote."""
     revised = _pkg(para(run("x")), **{"word/header1.xml": "<w:hdr/>"})
     redline = _pkg(para(run("x")))
-    assert tracked.compare_collateral(revised, redline) == [
-        "part dropped: word/header1.xml"]
+    (note,) = tracked.compare_collateral(revised, redline)
+    assert note.startswith("part LOST: word/header1.xml")
+
+
+def test_a_part_word_REGENERATES_is_not_reported_as_a_loss():
+    """The same "part dropped" line was printed for docProps/app.xml —
+    which Word rewrites on every save — and for the customXml data
+    store, which nothing puts back. The real loss was unreadable inside
+    the noise, and it reached a live manuscript that way (Parental Style
+    2026-08-12). The regenerated ones sort LAST, and say so."""
+    revised = _pkg(para(run("x")), **{"docProps/app.xml": "<Properties/>",
+                                      "customXml/item1.xml": "<b:Sources/>"})
+    notes = tracked.compare_collateral(revised, _pkg(para(run("x"))))
+    assert notes[0].startswith("part LOST: customXml/item1.xml")
+    assert notes[1].startswith("part dropped: docProps/app.xml")
+    assert "regenerates" in notes[1]
 
 
 def test_a_dropped_bookmark_is_reported():

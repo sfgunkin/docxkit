@@ -28,12 +28,17 @@ from ._xml import PARA_RE, T_PARTS_RE, element_spans, escape, visible_text
 __all__ = [
     "SmartenReport",
     "SpacingReport",
+    "restore_parts",
     "smarten",
     "strip_parts",
     "table_spacing",
 ]
 
 CUSTOM_XML = "customXml/"
+_CONTENT_TYPES = "[Content_Types].xml"
+_DOC_RELS = "word/_rels/document.xml.rels"
+_ID_RE = re.compile(r'\bId="rId(\d+)"')
+_TARGET_RE = re.compile(r'\bTarget="([^"]+)"')
 
 #: What opens a table's note. A note belongs to the table above it — it is
 #: set tight against the bottom rule, at 0 before — so it is never the
@@ -61,19 +66,93 @@ def strip_parts(parts: dict[str, bytes],
 
     for prefix in prefixes:
         quoted = re.escape(prefix)
-        if "[Content_Types].xml" in parts:
-            xml = parts["[Content_Types].xml"].decode("utf-8")
+        if _CONTENT_TYPES in parts:
+            xml = parts[_CONTENT_TYPES].decode("utf-8")
             xml = re.sub(rf'<Override PartName="/{quoted}[^"]*"[^>]*/>',
                          "", xml)
-            parts["[Content_Types].xml"] = xml.encode("utf-8")
-        rels = "word/_rels/document.xml.rels"
-        if rels in parts:
-            xml = parts[rels].decode("utf-8")
+            parts[_CONTENT_TYPES] = xml.encode("utf-8")
+        if _DOC_RELS in parts:
+            xml = parts[_DOC_RELS].decode("utf-8")
             xml = re.sub(
                 rf'<Relationship[^>]*Target="(?:\.\./)?{quoted}[^"]*"[^>]*/>',
                 "", xml)
-            parts[rels] = xml.encode("utf-8")
+            parts[_DOC_RELS] = xml.encode("utf-8")
     return dropped
+
+
+def _free_rid(rels_xml: str, wanted: str) -> str:
+    """`wanted` if no relationship uses it, otherwise the next free rId."""
+    taken = {f"rId{n}" for n in _ID_RE.findall(rels_xml)}
+    if wanted and wanted not in taken:
+        return wanted
+    n = max((int(x) for x in _ID_RE.findall(rels_xml)), default=0)
+    return f"rId{n + 1}"
+
+
+def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
+                  prefixes: tuple[str, ...] = (CUSTOM_XML,)) -> list[str]:
+    """Copy whole part-trees back from `source`, with their references.
+
+    The mirror of :func:`strip_parts`, and the reason it exists is that
+    Word's Compare REBUILDS a document rather than annotating it, and
+    what it declines to carry over it drops in silence: the three
+    ``customXml/`` parts, the ``[Content_Types].xml`` Override and the
+    relationship, all gone from a redline whose text is perfect. Nothing
+    downstream notices — `lint` is clean, `validate` passes, Word opens
+    the file happily — and `promote` then copies the batch over
+    ``working.docx``, so the data store is gone from the live manuscript
+    (Parental Style 2026-08-12, where the author's Word had just created
+    an empty ``b:Sources`` bibliography store).
+
+    Mutates `parts` and returns the names restored. Three coordinated
+    edits are what makes it a function rather than a note in a paper's
+    log: the parts, the content-type Override, and a Relationship on an
+    id that is FREE in the target — `rId7` in the source is somebody
+    else's relationship here, and Word opens a duplicated id with a
+    repair warning.
+
+    A part already present is left exactly as it is: the target's copy
+    is the newer one, and this is a rescue, not a sync.
+    """
+    missing = sorted(n for n in source
+                     if any(n.startswith(p) for p in prefixes)
+                     and n not in parts)
+    if not missing:
+        return []
+    for name in missing:
+        parts[name] = source[name]
+
+    if _CONTENT_TYPES in parts and _CONTENT_TYPES in source:
+        types = parts[_CONTENT_TYPES].decode("utf-8")
+        src = source[_CONTENT_TYPES].decode("utf-8")
+        add = [m.group(0) for name in missing
+               if f'PartName="/{name}"' not in types
+               and (m := re.search(
+                   rf'<Override PartName="/{re.escape(name)}"[^>]*/>', src))]
+        if add:
+            at = types.rindex("</Types>")
+            parts[_CONTENT_TYPES] = (types[:at] + "".join(add)
+                                     + types[at:]).encode("utf-8")
+
+    if _DOC_RELS in parts and _DOC_RELS in source:
+        rels = parts[_DOC_RELS].decode("utf-8")
+        for m in re.finditer(r"<Relationship\b[^>]*/>",
+                             source[_DOC_RELS].decode("utf-8")):
+            target = _TARGET_RE.search(m.group(0))
+            if target is None:
+                continue
+            name = target.group(1).removeprefix("../")
+            if not any(name.startswith(p) for p in prefixes):
+                continue
+            if f'Target="{target.group(1)}"' in rels:
+                continue                       # already pointing at it
+            was = _ID_RE.search(m.group(0))
+            rid = _free_rid(rels, f"rId{was.group(1)}" if was else "")
+            entry = re.sub(r'\bId="[^"]*"', f'Id="{rid}"', m.group(0))
+            at = rels.rindex("</Relationships>")
+            rels = rels[:at] + entry + rels[at:]
+        parts[_DOC_RELS] = rels.encode("utf-8")
+    return missing
 
 
 # ------------------------------------------------------------- smarten ------

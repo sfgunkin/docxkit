@@ -5,13 +5,15 @@ matter, tested where the papers can share them.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import NS, comment, make_parts, para, run
 
 from docxkit.comments import read_all, remove
 from docxkit.errors import AnchorError
 from docxkit.footnotes import append, find, find_all, remap, renumber_map
-from docxkit.hygiene import strip_parts
+from docxkit.hygiene import restore_parts, strip_parts
 
 # --------------------------------------------------------------- comments ---
 
@@ -189,6 +191,68 @@ def test_strip_parts_on_a_clean_package_is_a_noop():
     before = dict(parts)
     assert strip_parts(parts) == []
     assert parts == before
+
+
+# Word's Compare drops the customXml data store on EVERY rebuild, and
+# `promote` then copies the batch over working.docx — so the loss reaches
+# the live manuscript in one step, with lint clean and validate PASSing
+# (Parental Style 2026-08-12).
+
+def test_restore_parts_puts_the_tree_back_with_its_references():
+    source = _with_custom_xml()
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)                    # exactly what Compare leaves
+
+    back = restore_parts(rebuilt, source)
+    assert back == ["customXml/item1.xml", "customXml/itemProps1.xml"]
+    assert rebuilt["customXml/item1.xml"] == source["customXml/item1.xml"]
+    ct = rebuilt["[Content_Types].xml"].decode("utf-8")
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert 'PartName="/customXml/itemProps1.xml"' in ct
+    assert 'Target="../customXml/item1.xml"' in rels
+    assert ct.count("</Types>") == 1 and rels.count("</Relationships>") == 1
+
+
+def test_a_restored_relationship_takes_a_FREE_id():
+    """The source's rId is somebody else's relationship in the rebuild,
+    and Word opens a duplicated id with a repair warning."""
+    source = _with_custom_xml()
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+    # the rebuild has since minted rId1 for something of its own
+    rebuilt["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Target="fontTable.xml"/>'
+        b'<Relationship Id="rId2" Target="styles.xml"/></Relationships>')
+
+    restore_parts(rebuilt, source)
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    ids = re.findall(r'Id="(rId\d+)"', rels)
+    assert len(ids) == len(set(ids)), rels
+    assert 'Target="fontTable.xml"' in rels, "the id's owner was overwritten"
+    assert "customXml" in rels
+
+
+def test_restore_parts_leaves_a_part_that_is_already_there():
+    """A rescue, not a sync: the target's own copy is the newer one."""
+    source = _with_custom_xml()
+    live = _with_custom_xml()
+    live["customXml/item1.xml"] = b"<b:Sources>newer</b:Sources>"
+    assert restore_parts(live, source) == []
+    assert live["customXml/item1.xml"] == b"<b:Sources>newer</b:Sources>"
+
+
+def test_missing_parts_ignores_what_word_regenerates():
+    """docProps/* is Word's own bookkeeping; every other absence is a
+    loss. Both used to be reported with the same line."""
+    from docxkit.package import missing_parts
+
+    baseline = _with_custom_xml()
+    baseline["docProps/app.xml"] = b"<Properties/>"
+    batch = dict(baseline)
+    del batch["docProps/app.xml"]
+    assert missing_parts(batch, baseline) == []
+    del batch["customXml/item1.xml"]
+    assert missing_parts(batch, baseline) == ["customXml/item1.xml"]
 
 
 def test_remove_keeps_the_text_the_comment_was_anchored_on():

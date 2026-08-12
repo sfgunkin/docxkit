@@ -26,6 +26,7 @@ from ._xml import escape
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
+    "REGENERATED_BY_WORD",
     "assert_unlocked",
     "backup",
     "changed_parts",
@@ -33,6 +34,7 @@ __all__ = [
     "edit_in_place",
     "is_locked",
     "malformed_parts",
+    "missing_parts",
     "next_backup_path",
     "part_fingerprint",
     "read_parts",
@@ -42,6 +44,13 @@ __all__ = [
 ]
 
 CORE_PART = "docProps/core.xml"
+#: Parts Word writes for itself on every save, so their absence from a
+#: rebuilt package says nothing. Everything ELSE that goes missing is a
+#: loss somebody has to put back — and both used to be reported with the
+#: same "part dropped" line, which is how the customXml data store
+#: disappeared from a manuscript inside a warning nobody could read
+#: (see :func:`docxkit.tracked.compare_collateral`).
+REGENERATED_BY_WORD = ("docProps/",)
 #: The order Word itself writes ``docProps/core.xml`` in, read off real
 #: manuscripts rather than from the schema's element declarations — the
 #: two disagree, and Word's file is what every other reader has to cope
@@ -231,6 +240,25 @@ def malformed_parts(parts: dict[str, bytes]) -> list[str]:
         except etree.XMLSyntaxError as exc:
             bad.append(f"{name}: {exc}")
     return bad
+
+
+def missing_parts(parts: dict[str, bytes],
+                  baseline: dict[str, bytes]) -> list[str]:
+    """Parts the baseline has and `parts` does not, Word's own aside.
+
+    "Did the package survive?" — the question nothing asked. The
+    reject-all gate proves the TEXT round-trips; a whole part can go
+    missing with every text check green, because no text check reads a
+    part that is not there. Word's Compare drops the ``customXml/`` data
+    store on every rebuild and `promote` then copies the batch over
+    ``working.docx``, so the loss reaches the live manuscript in one
+    step (Parental Style 2026-08-12).
+
+    :data:`REGENERATED_BY_WORD` is excluded: ``docProps/*`` is Word's
+    own bookkeeping and its absence means nothing.
+    """
+    return sorted(n for n in baseline
+                  if n not in parts and not n.startswith(REGENERATED_BY_WORD))
 
 
 def write_docx(path: str | Path, parts: dict[str, bytes],
