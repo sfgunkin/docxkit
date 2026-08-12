@@ -717,23 +717,21 @@ def audit(xml: str, *,
             if em and (em.group(1) != cap.label
                        or em.group(2) != cap.number):
                 misnamed.append(f"{nm} on the '{cap.prefix}' caption")
-        at = marks.get(cap.mention_name)
-        if at is None:
-            continue
-        # PARAGRAPHS, not offsets. Whether the marker wraps its own link
-        # or sits inside it is a linker's choice and means nothing to a
-        # reader — comparing raw offsets called 100 of those a finding,
-        # every one of them "the first mention is in this same
-        # paragraph". What the convention is about is which PARAGRAPH the
-        # reader lands in.
-        home = _where(paras, at)
-        ahead = [pos for pos in mentions.get(cap.name, ())
-                 if _where(paras, pos) != home and pos < at]
-        if ahead:
-            misplaced.append(
-                f"{cap.mention_name} sits at {home} with {len(ahead)} "
-                f"earlier mention(s) of '{cap.prefix}' linking past it, the "
-                f"first at {_where(paras, ahead[0])}")
+        if (at := marks.get(cap.mention_name)) is not None:
+            # PARAGRAPHS, not offsets. Whether the marker wraps its own
+            # link or sits inside it is a linker's choice and means
+            # nothing to a reader — comparing raw offsets called 100 of
+            # those a finding, every one of them "the first mention is
+            # in this same paragraph". What the convention is about is
+            # which PARAGRAPH the reader lands in.
+            home = _where(paras, at)
+            ahead = [pos for pos in mentions.get(cap.name, ())
+                     if pos < at and _where(paras, pos) != home]
+            if ahead:
+                misplaced.append(
+                    f"{cap.mention_name} sits at {home} with {len(ahead)} "
+                    f"earlier mention(s) of '{cap.prefix}' linking past it, "
+                    f"the first at {_where(paras, ahead[0])}")
     return {
         "linked": sorted(linked),
         "caption_only": sorted(caption_only),
