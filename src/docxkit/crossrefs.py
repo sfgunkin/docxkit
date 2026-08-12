@@ -42,6 +42,8 @@ run on every build.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -655,10 +657,25 @@ def audit(xml: str, *,
     Keys: ``linked`` (both bookmarks present), ``caption_only``,
     ``mention_only``, ``dangling`` — hyperlinks pointing at a bookmark
     no longer in the document, which is what a deleted figure leaves
-    behind — and ``misnamed``: a caption carrying an exhibit bookmark
-    whose NUMBER is not the caption's, which is what a renumbering
-    leaves behind (LI7's "Figure 5" caption carries bookmark Figure6;
-    every link still works, one renumbering behind).
+    behind — ``misnamed``: a caption carrying an exhibit bookmark whose
+    NUMBER is not the caption's, which is what a renumbering leaves
+    behind (LI7's "Figure 5" caption carries bookmark Figure6; every
+    link still works, one renumbering behind) — and
+    ``misplaced_anchor``, below.
+
+    **A resolving anchor is not a well-placed anchor.** ``linked`` proves
+    the ``<key>txt`` bookmark EXISTS; the house convention is that it
+    sits on the FIRST in-text mention, because later mentions are
+    forward-only and the caption's back-link is meant to land the reader
+    where the exhibit is first discussed. An inserted paragraph that
+    mentions an existing exhibit puts a link AHEAD of the marker and
+    nothing else in the document shows it: Parental Style carried
+    ``Table5txt`` on the third mention and ``Table4txt`` on the second
+    for a day, and every audit in between reported ``linked 12, dangling
+    0`` (2026-08-12). Both link forms are counted together, as
+    :func:`docxkit.citations.wrap_link_in_bookmark` with
+    ``which="first"`` already does — a work linked once each way is two
+    mentions, and Word rewrites a field into an element on every save.
 
     Pass the other bookmarked parts (footnotes.xml, endnotes.xml) as
     `also`. **A link and its bookmark need not live in the same part**:
@@ -680,7 +697,11 @@ def audit(xml: str, *,
 
     exhibit_re = re.compile(
         rf"^({'|'.join(re.escape(w) for w in labels)})(\d+)$")
+    marks = _bookmark_offsets(xml)
+    mentions = _mention_offsets(xml)
+    paras = [m.start() for m in PARA_RE.finditer(xml)]
     linked, caption_only, mention_only, misnamed = [], [], [], []
+    misplaced = []
     for cap in find_captions(xml, labels=labels):
         has_cap = cap.name in names
         has_txt = cap.mention_name in names
@@ -696,13 +717,61 @@ def audit(xml: str, *,
             if em and (em.group(1) != cap.label
                        or em.group(2) != cap.number):
                 misnamed.append(f"{nm} on the '{cap.prefix}' caption")
+        at = marks.get(cap.mention_name)
+        if at is None:
+            continue
+        # PARAGRAPHS, not offsets. Whether the marker wraps its own link
+        # or sits inside it is a linker's choice and means nothing to a
+        # reader — comparing raw offsets called 100 of those a finding,
+        # every one of them "the first mention is in this same
+        # paragraph". What the convention is about is which PARAGRAPH the
+        # reader lands in.
+        home = _where(paras, at)
+        ahead = [pos for pos in mentions.get(cap.name, ())
+                 if _where(paras, pos) != home and pos < at]
+        if ahead:
+            misplaced.append(
+                f"{cap.mention_name} sits at {home} with {len(ahead)} "
+                f"earlier mention(s) of '{cap.prefix}' linking past it, the "
+                f"first at {_where(paras, ahead[0])}")
     return {
         "linked": sorted(linked),
         "caption_only": sorted(caption_only),
         "mention_only": sorted(mention_only),
         "dangling": sorted(a for a in anchors if a not in names),
         "misnamed": sorted(misnamed),
+        "misplaced_anchor": sorted(misplaced),
     }
+
+
+def _where(para_starts: list[int], at: int) -> str:
+    """``¶N`` for an offset, or ``body`` between paragraphs."""
+    n = bisect_right(para_starts, at)
+    return f"¶{n}" if n else "body"
+
+
+def _bookmark_offsets(xml: str) -> dict[str, int]:
+    """Offset of each bookmark's FIRST definition."""
+    out: dict[str, int] = {}
+    for m in re.finditer(r'<w:bookmarkStart[^>]*w:name="([^"]+)"', xml):
+        out.setdefault(m.group(1), m.start())
+    return out
+
+
+def _mention_offsets(xml: str) -> dict[str, list[int]]:
+    """Offsets of every link to each anchor, both forms, in document order.
+
+    A field's offset is taken at its instruction rather than at its
+    ``begin`` — a few runs late, and always still inside the field, so a
+    bookmark that legitimately wraps the whole field cannot be read as
+    sitting after it.
+    """
+    out: dict[str, list[int]] = defaultdict(list)
+    for m in re.finditer(r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"', xml):
+        out[m.group(1)].append(m.start())
+    for m in _FIELD_ANCHOR_RE.finditer(xml):
+        out[m.group(1)].append(m.start())
+    return {k: sorted(v) for k, v in out.items()}
 
 
 def _continuation_re(label: str, number: str) -> re.Pattern[str]:

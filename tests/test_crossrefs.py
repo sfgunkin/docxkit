@@ -323,6 +323,80 @@ def test_audit_finds_a_dangling_anchor():
     assert crossrefs.audit(xml)["dangling"] == ["Figure7"]
 
 
+# A resolving anchor is not a well-placed anchor. Parental Style carried
+# Table5txt on the THIRD mention for a day and every audit in between
+# said "linked 12, dangling 0" (2026-08-12); the caption's back-link
+# jumps the reader past the discussion it belongs to.
+
+def _mention(anchor: str, text: str, mark: str = "") -> str:
+    link = f'<w:hyperlink w:anchor="{anchor}">{run(text)}</w:hyperlink>'
+    if not mark:
+        return para(link)
+    return para(f'<w:bookmarkStart w:id="9" w:name="{mark}"/>{link}'
+                '<w:bookmarkEnd w:id="9"/>')
+
+
+def test_audit_reports_an_anchor_that_does_not_lead_its_mentions():
+    xml = doc(
+        _mention("Table5", "Table 5"),                      # the FIRST one
+        para(run("Intervening prose.")),
+        _mention("Table5", "Table 5", mark="Table5txt"),     # marker here
+        para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
+    )
+    got = crossrefs.audit(xml)
+    assert got["linked"] == ["Table5"], got
+    assert not got["dangling"]
+    assert len(got["misplaced_anchor"]) == 1, got["misplaced_anchor"]
+    line = got["misplaced_anchor"][0]
+    assert line.startswith("Table5txt sits at ¶3")
+    assert "the first at ¶1" in line
+
+
+def test_the_marker_on_the_first_mention_is_reported_clean():
+    xml = doc(
+        _mention("Table5", "Table 5", mark="Table5txt"),
+        _mention("Table5", "Table 5"),                       # a later one
+        para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
+    )
+    assert crossrefs.audit(xml)["misplaced_anchor"] == []
+
+
+def test_a_marker_inside_its_own_link_is_not_misplaced():
+    """Whether the marker wraps the link or sits INSIDE it is a linker's
+    choice that means nothing to a reader. Comparing raw offsets called
+    100 of those a finding across the manuscripts on this machine —
+    every one of them 'the first mention is this same paragraph'."""
+    xml = doc(
+        para(f'<w:hyperlink w:anchor="Table5">'
+             f'<w:bookmarkStart w:id="9" w:name="Table5txt"/>'
+             f'{run("Table 5")}<w:bookmarkEnd w:id="9"/></w:hyperlink>'),
+        para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
+    )
+    assert crossrefs.audit(xml)["misplaced_anchor"] == []
+
+
+def test_both_link_forms_count_as_mentions():
+    """A work linked once as a field and once as an element is TWO
+    mentions — Word rewrites a field into an element on every author
+    save, so a manuscript mid-round holds one of each."""
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l '
+             '"Table5" \\h </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + run("Table 5")
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    xml = doc(
+        para(field),                                        # first, a FIELD
+        _mention("Table5", "Table 5", mark="Table5txt"),
+        para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
+    )
+    assert len(crossrefs.audit(xml)["misplaced_anchor"]) == 1
+
+
 def test_relinking_an_unlinked_run_leaves_one_rstyle():
     """unlink_by_anchor leaves run properties alone by design, so a
     wipe-and-rebuild round re-links a run that still carries the
