@@ -371,6 +371,62 @@ def test_a_mark_left_to_the_document_default_by_a_lost_pStyle():
     assert "12pt" in str(found) and "document default" in str(found)
 
 
+def test_the_STYLED_marks_are_the_house_however_few_they_are():
+    """Parental Style 2026-08-12, and the report was exactly backwards.
+
+    Five footnote paragraphs carried no `w:pStyle` at all, fell through
+    Normal to a 12pt `docDefaults`, and took the majority with them; the
+    two the check FLAGGED were the two carrying `pStyle FootnoteText` —
+    the well-formed ones. Acting on it would have stripped the correct
+    style off the correct notes. A count cannot tell malformed from
+    house; how the value RESOLVES can.
+    """
+    styles_xml = ('<w:styles><w:docDefaults><w:rPrDefault><w:rPr>'
+                  '<w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>'
+                  '<w:style w:type="paragraph" w:styleId="FootnoteText">'
+                  f'<w:rPr>{SZ10}</w:rPr></w:style></w:styles>')
+
+    def styled(nid: int) -> str:
+        return (f'<w:footnote w:id="{nid}"><w:p><w:pPr><w:pStyle '
+                f'w:val="FootnoteText"/></w:pPr>{MARK}{run("a", SZ10)}'
+                "</w:p></w:footnote>")
+
+    def bare(nid: int) -> str:
+        # 10pt body text stated on every run, and a mark left to fall
+        # through to the document default — which is the whole trap: the
+        # BODY halves all agree, so only the marks disagree
+        return (f'<w:footnote w:id="{nid}"><w:p>{MARK}{run("b", SZ10)}'
+                "</w:p></w:footnote>")
+
+    report = footnotes.sizes(
+        part(styled(2), styled(3), *(bare(n) for n in range(4, 9))),
+        styles_xml=styles_xml)
+
+    assert report.outliers == [], "the BODY sizes agree"
+    assert report.mark_house == 20, "the majority (12pt) set the house"
+    assert report.mark_house_from == "style"
+    assert sorted(o.id.split()[0] for o in report.mark_outliers) == \
+        ["4", "5", "6", "7", "8"]
+    assert report.unstyled == ["4", "5", "6", "7", "8"]
+    assert "NO w:pStyle" in report.format()
+
+
+def test_with_no_styled_mark_the_commonest_value_still_stands():
+    """There is nothing better to go on then — but the report says which
+    of the two answers it gave, because they deserve different
+    confidence."""
+    def mark(sz: str) -> str:
+        return ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+                f'{sz}</w:rPr><w:footnoteRef/></w:r>')
+
+    report = footnotes.sizes(part(note(2, mark(SZ10) + run("a", SZ10)),
+                                  note(3, mark(SZ10) + run("b", SZ10)),
+                                  note(4, mark(SZ12) + run("c", SZ10))))
+    assert report.mark_house == 20
+    assert report.mark_house_from == "majority"
+    assert len(report.mark_outliers) == 1
+
+
 def test_words_separator_notes_are_not_footnotes():
     """ids 0 and -1 are the separator and continuationSeparator. A naive
     sweep "fixes" two things nobody reads."""

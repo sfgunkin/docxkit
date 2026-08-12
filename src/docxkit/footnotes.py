@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from ._xml import (
     PARA_RE,
@@ -30,6 +31,7 @@ from ._xml import (
     visible_text,
 )
 from .errors import AnchorError
+from .styles import STYLE as _STYLE
 from .styles import Cascade
 
 __all__ = [
@@ -344,6 +346,17 @@ class SizeReport:
     #: body — a different question with a different house size
     mark_house: int | None = None
     mark_outliers: list[SizeOutlier] = field(default_factory=list)
+    #: how :attr:`mark_house` was decided: ``"style"`` when some marks
+    #: resolve through a paragraph or character style and those set it,
+    #: ``"majority"`` when none do and the commonest value is all there
+    #: is to go on
+    mark_house_from: str = ""
+    #: ids of footnotes whose paragraphs carry NO ``w:pStyle``. The
+    #: actionable fact behind most mark disagreements, and one attribute
+    #: lookup — a note that lost its style falls through `Normal` to
+    #: `docDefaults`, and its mark is drawn at whatever the document
+    #: default is.
+    unstyled: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -358,10 +371,66 @@ class SizeReport:
         if self.mark_outliers:
             mark = ("none stated" if self.mark_house is None
                     else f"{self.mark_house / 2:g}pt")
-            lines.append(f"reference marks: house {mark}, "
+            how = (" (the marks that resolve through a STYLE, whatever "
+                   "their number — the styled ones are the well-formed "
+                   "ones)" if self.mark_house_from == "style"
+                   else " (the commonest value: no mark here resolves "
+                        "through a style, so there is nothing better to "
+                        "go on)")
+            lines.append(f"reference marks: house {mark}{how}, "
                          f"{len(self.mark_outliers)} disagreeing")
             lines += [f"  {o}" for o in self.mark_outliers]
+        if self.unstyled:
+            lines.append(
+                f"  footnote(s) with NO w:pStyle: "
+                f"{', '.join(self.unstyled)} — these fall through Normal to "
+                f"the document default; give them the footnote style rather "
+                f"than writing a size onto the mark")
         return "\n".join(lines)
+
+
+class _Mark(NamedTuple):
+    """One reference mark: what it resolves to, and through what."""
+
+    id: str
+    size: int | None            # half-points; None = does not resolve
+    text: str
+    via: str
+    kind: str                   # styles.RUN | STYLE | DEFAULT | NOWHERE
+
+
+def _judge_marks(report: SizeReport, marks: list[_Mark]) -> None:
+    """Decide the marks' house size, and name the ones that miss it.
+
+    **The styled marks set the house, however few they are.** The rule
+    used to be "whatever most marks resolve to", and on Parental Style
+    that was exactly backwards: five footnote paragraphs carried no
+    `w:pStyle` at all, fell through `Normal` to a 12pt `docDefaults`,
+    and took the majority with them; the two the check FLAGGED were the
+    two carrying `pStyle FootnoteText` — the well-formed ones. Acting on
+    that report would have stripped the correct style off the correct
+    notes (2026-08-12).
+
+    A count cannot tell malformed from house; how a value RESOLVES can.
+    With no styled mark in the document there is nothing better to go on
+    and the commonest value stands — said out loud in
+    :attr:`SizeReport.mark_house_from`, because the two answers deserve
+    different confidence.
+    """
+    resolved = [m for m in marks if m.size is not None]
+    if not resolved:
+        # A mark whose size does not resolve is not judged: without
+        # styles.xml nothing here resolves, and calling that a
+        # disagreement would report every document read without the
+        # part. The body half declines the same way.
+        return
+    styled = [m.size for m in resolved if m.kind == _STYLE]
+    pool = styled or [m.size for m in resolved]
+    report.mark_house_from = "style" if styled else "majority"
+    report.mark_house = max(set(pool), key=pool.count)
+    report.mark_outliers = [
+        SizeOutlier(f"{m.id} (reference mark)", (m.size,), m.text, m.via)
+        for m in resolved if m.size != report.mark_house]
 
 
 def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
@@ -396,12 +465,17 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
     cascade = Cascade(styles_xml)
 
     stated: list[tuple[str, tuple[int | None, ...], str, str]] = []
-    marks: list[tuple[str, int | None, str, str]] = []
+    marks: list[_Mark] = []
+    unstyled: list[str] = []
     for note in find_all(footnotes_xml, include_reserved=include_reserved):
         math = _math_spans(note.xml)
         seen: set[int | None] = set()
         sources: set[str] = set()
-        for para in PARA_RE.finditer(note.xml):
+        paras = list(PARA_RE.finditer(note.xml))
+        if paras and not any(Cascade.paragraph_style(p.group(0))
+                             for p in paras):
+            unstyled.append(note.id)
+        for para in paras:
             pstyle = Cascade.paragraph_style(para.group(0))
             for r in RUN_RE.finditer(para.group(0)):
                 at = para.start() + r.start()
@@ -409,20 +483,22 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
                     continue
                 own = own_properties(r.group(0), "rPr")
                 rpr = live_properties(own[2]) if own else None
-                value, source = cascade.explain(
+                got = cascade.resolve(
                     "sz", rpr=rpr, rstyle=cascade.style_of(rpr),
                     pstyle=pstyle)
+                value = got.value
                 if _MARK_RE.search(r.group(0)):
                     text = " ".join(visible_text(note.xml).split())[:48]
-                    marks.append((note.id,
-                                  int(value) if value is not None else None,
-                                  text, source))
+                    marks.append(_Mark(
+                        note.id,
+                        int(value) if value is not None else None,
+                        text, got.via, got.kind))
                     continue           # judged against the other MARKS
                 if not visible_text(r.group(0)).strip():
                     continue           # nothing on the page to size
                 seen.add(int(value) if value is not None else None)
-                if source:
-                    sources.add(source)
+                if got.via:
+                    sources.add(got.via)
         if not seen:
             continue                   # nothing a reader sees: nothing to say
         # `None` sorts last, and never against an int: the first key
@@ -431,23 +507,8 @@ def sizes(footnotes_xml: str, *, styles_xml: str | None = None,
         text = " ".join(visible_text(note.xml).split())[:48]
         stated.append((note.id, found, text, ", ".join(sorted(sources))))
 
-    report = SizeReport(counted=len(stated))
-
-    # The marks, against each other. A document whose marks all resolve
-    # alike says nothing, which is what the exclusion was protecting;
-    # one that draws a single mark a point smaller than the rest says so.
-    mark_sizes = [sz for _, sz, _, _ in marks if sz is not None]
-    if mark_sizes:
-        report.mark_house = max(set(mark_sizes), key=mark_sizes.count)
-        # A mark whose size does not resolve is not judged: without
-        # styles.xml nothing here resolves, and calling that a
-        # disagreement would report every document read without the
-        # part. The body half declines the same way ("nothing states a
-        # size: nothing to say").
-        report.mark_outliers = [
-            SizeOutlier(f"{fid} (reference mark)", (sz,), text, via)
-            for fid, sz, text, via in marks
-            if sz is not None and sz != report.mark_house]
+    report = SizeReport(counted=len(stated), unstyled=unstyled)
+    _judge_marks(report, marks)
 
     agreed = [s[0] for _, s, _, _ in stated
               if len(s) == 1 and s[0] is not None]

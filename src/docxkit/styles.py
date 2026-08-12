@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES
 from .errors import AnchorError, PackageError
 
-__all__ = ["Cascade", "Style", "StyleReport", "apply_template", "ensure",
-           "read", "used"]
+__all__ = ["DEFAULT", "NOWHERE", "RUN", "STYLE", "Cascade", "Resolved",
+           "Style", "StyleReport", "apply_template", "ensure", "read", "used"]
 
 _STYLE_EL_RE = re.compile(r"<w:style\b[^>]*>.*?</w:style>", re.DOTALL)
 _STYLES_PART = "word/styles.xml"
@@ -111,6 +111,25 @@ def used(xml: str) -> set[str]:
 # The order is Word's: direct run properties, then the character style
 # chain, then the paragraph style chain, then docDefaults.
 
+#: Where a resolved value came from, as a KIND rather than as prose.
+#: WELL-FORMED is `STYLE`: a run whose paragraph carries the right
+#: `pStyle` gets its size from the stylesheet, which is what the house
+#: rule means. `RUN` states it directly and `DEFAULT` fell all the way
+#: through to `docDefaults` — the shape of a footnote paragraph that
+#: lost its style.
+RUN, STYLE, DEFAULT, NOWHERE = "run", "style", "default", "nowhere"
+
+
+@dataclass(frozen=True)
+class Resolved:
+    """What a property resolves to, and what supplied it."""
+
+    value: str | None
+    via: str                    # the phrase a report prints; "" for RUN
+    kind: str                   # RUN | STYLE | DEFAULT | NOWHERE
+    style: str | None = None    # the style id, when kind is STYLE
+
+
 _DOC_DEFAULTS_RE = re.compile(r"<w:docDefaults\b.*?</w:docDefaults>",
                               re.DOTALL)
 _STYLE_ID_RE = re.compile(r'<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>(.*?)'
@@ -169,6 +188,26 @@ class Cascade:
             sid = self._based.get(sid)
         return None
 
+    def resolve(self, prop: str, *, rpr: str | None = None,
+                rstyle: str | None = None, pstyle: str | None = None
+                ) -> Resolved:
+        """What `prop` resolves to, where from, and WHICH KIND of source.
+
+        The kind is the part a report cannot reconstruct from the
+        sentence. `footnotes.sizes` groups the reference marks by it,
+        and matching on the prose ``explain`` builds ("the FootnoteText
+        style") would be a parser for our own wording — the sort of
+        coupling that survives exactly until someone rewords a message.
+        """
+        if rpr and (direct := _val(rpr, prop)) is not None:
+            return Resolved(direct, "", RUN)
+        for sid in (rstyle, pstyle):
+            if (found := self._chain(sid, prop)) is not None:
+                return Resolved(found, f"the {sid} style", STYLE, sid)
+        if self._default and (value := _val(self._default, prop)) is not None:
+            return Resolved(value, "the document default", DEFAULT)
+        return Resolved(None, "", NOWHERE)
+
     def explain(self, prop: str, *, rpr: str | None = None,
                 rstyle: str | None = None, pstyle: str | None = None
                 ) -> tuple[str | None, str]:
@@ -178,14 +217,8 @@ class Cascade:
         that says *"resolves to 12pt through the document default"* sends
         a reader somewhere, and *"states no size"* does not.
         """
-        if rpr and (direct := _val(rpr, prop)) is not None:
-            return direct, ""
-        for sid in (rstyle, pstyle):
-            if (found := self._chain(sid, prop)) is not None:
-                return found, f"the {sid} style"
-        if self._default and (value := _val(self._default, prop)) is not None:
-            return value, "the document default"
-        return None, ""
+        got = self.resolve(prop, rpr=rpr, rstyle=rstyle, pstyle=pstyle)
+        return got.value, got.via
 
     def of(self, prop: str, *, rpr: str | None = None,
            rstyle: str | None = None, pstyle: str | None = None
