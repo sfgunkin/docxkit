@@ -17,203 +17,144 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S4 `revision build`'s staleness refusal advertises a flag that does not exist
-When `build/batch.docx` has changed since docxkit wrote it, `build`
-refuses with:
-
-    batch.docx has changed since docxkit built it - someone edited it in
-    Word. Backed up to batch_user_edited1.docx; rebuilding would discard
-    those edits. Fold them into the build source first, then re-run with
-    force=True (CLI: --force).
-
-`docxkit revision build --force` is `error: unrecognized arguments:
---force`; `build --help` lists only `--paper`, `--out`,
-`--allow-math-resolve` and `--allow-pending-baseline`. The refusal is
-right and the guard is worth having -- it is what stopped a spent batch
-being silently overwritten on Parental_style 2026-08-12 -- but the way
-out it names is fiction, and the two ways that DO work (`--out` to a
-different path, or deleting the stale file) are not mentioned.
-
-The trigger is not exotic: any post-build edit to `batch.docx` sets it
-up. That paper hand-restores `customXml/` parts into the batch after
-every build, because Compare drops them (entry above), so it trips the
-guard on the very next build every time.
-
-**Suggested shape.** Either add the flag, or name the real remedy:
-"re-run with --out PATH, or delete build/batch.docx if the previous
-batch is already promoted." The second is a one-line message change.
-
-**Workaround in use** delete `build/batch.docx` and re-run; the backup
-`batch_user_edited1.docx` already holds whatever was there.
-
-### S2 `crossrefs --audit` never checks that an anchor leads its mentions
-The audit proves a `<key>txt` bookmark EXISTS and RESOLVES. It does not
-prove it sits on the FIRST in-text mention, which is the house
-convention the rest of the scheme is built on — later mentions are
-forward-only, and the caption's back-link is supposed to land the reader
-at the first place the exhibit is discussed.
-
-**Reproduced twice on Parental_style, from one cause (2026-08-12).** An
-R8 batch inserted a disability paragraph that mentions Tables 4 and 5
-ahead of the paragraphs that carried their markers. `Table5txt` sat on
-the THIRD mention and `Table4txt` on the second, from 2026-08-11
-onward, and **every audit in between reported `linked 12, dangling 0`**.
-Both were found only because an unrelated edit had to move one of them;
-a sweep then turned up the other.
-
-**Why it matters.** The caption back-link silently jumps past the
-discussion it belongs to. Nothing in the text layer shows it, `citations`
-is clean, `lint` is clean. And the failure mode is systematic rather
-than accidental: any batch that inserts a paragraph mentioning an
-existing exhibit creates it.
-
-**Suggested shape.** A `MISPLACED ANCHOR` line beside the existing
-`MISPLACED MARKER` one: for each exhibit, compare the `<key>txt`
-position against the first `w:anchor="<key>"` (both link forms, counted
-together, as `wrap_link_in_bookmark(which="first")` already does) and
-report when they differ. It is ~20 lines and it reuses machinery the
-module already has — `wrap_link_in_bookmark(..., which="first")` exists
-precisely because the convention has an answer.
-
-**Workaround in use** a hand-rolled sweep in the Parental_style session,
-now recorded in that paper's `log.md`; it should not have to live there.
-
-### S2 `validate`'s reject-all check is blind to HYPERLINKS
-`reject-all == baseline?` compares `paragraphs`, `glyphs` and
-`footnotes`, prints the dict, and on success prints `VERDICT: PASS`.
-Elsewhere the same tool phrases failure as "the batch is NOT fully
-reviewable", so PASS reads as "rejecting everything restores the
-baseline". For links it does not.
-
-**Reproduced on Parental_style T4(3) (2026-08-12).** The batch deleted a
-span holding two later-mention exhibit links. Rejecting restores the
-sentences as PLAIN TEXT — hyperlink count comes back 227 against the
-baseline's 229 — because Compare does not rebuild a link inside a
-rejected deletion. `reject-all` reported OK, `citations` reported ALL
-CHECKS PASSED (they were later mentions, so nothing dangled), and the
-author would have been two links short with nothing anywhere saying so.
-
-**Arguably S1** — it reports success for a property it does not test,
-and the surrounding wording invites the stronger reading. Filed S2
-because the dict does name what was compared; the owner may want to
-promote it.
-
-**Suggested shape.** Add `links` to the comparison dict, counting
-(anchor, label) pairs on the rejected view against the baseline. The
-`_link_labels` guard written for the S1 emptying case already computes
-exactly that pair set.
-
-**Workaround in use** "if a batch that deletes linked text is rejected,
-re-run `relink_mentions.py`", recorded in the paper's log — a rule
-nobody will remember at the moment it matters.
-
-### S4 `footnotes --check` calls the malformed majority "house"
-The check reports the reference-mark size shared by most notes as the
-house value and flags the minority. On Parental_style (2026-08-12) that
-was exactly backwards: five footnote paragraphs carried no `w:pStyle`
-at all, fell through `Normal` to `docDefaults` 12pt, and got their 10pt
-body text from an explicit `sz 20` on every run; the two the check
-FLAGGED were the two carrying `pStyle="FootnoteText"` — the well-formed
-ones. Acting on the report as written would have stripped the correct
-style off the correct notes.
-
-The message already says the right thing — "check the paragraph's
-`w:pStyle` before writing anything onto the mark" — so the tool
-anticipates the trap and then hands over a report that points the other
-way.
-
-**Suggested shape.** Split the marks by HOW they resolve, not by how
-many share a value: mark-size-from-`FootnoteText`, mark-size-from-
-`docDefaults`, mark-size-stated-on-the-run. Name the styled group as the
-well-formed one regardless of count, and say which paragraphs lack a
-`pStyle` — that is the actionable fact and it is one attribute lookup.
-
-**Workaround in use** `Parental_style/revision/scripts/applied/footnote_style.py`,
-which reasons the direction out from `styles.xml` by hand and refuses to
-run if any footnote has a text run without an explicit size.
-
-### S2 `revision build` silently DROPS every `customXml/` part
-Word's Compare rebuild discards `customXml/item1.xml`,
-`customXml/itemProps1.xml` and `customXml/_rels/item1.xml.rels`, strips
-the `/customXml/itemProps1.xml` Override out of `[Content_Types].xml`,
-and removes the customXml Relationship from
-`word/_rels/document.xml.rels`. `build` prints `WARNING: Compare part
-dropped: customXml/item1.xml` — but it prints the same warning for
-`docProps/app.xml`, `core.xml` and `custom.xml`, which Word regenerates
-on save and which nobody needs to care about. The signal is buried in
-noise that is genuinely ignorable.
-
-**Why it matters.** `promote` copies the batch over `working.docx`, so
-the parts are gone from the live manuscript. Nothing downstream
-notices: `lint` is clean, `validate` PASSes, Word opens the file
-happily. Reproduced on Parental_style 2026-08-12, where the author's
-Word had just added an empty `b:Sources` bibliography store — a
-Compare batch would have deleted it, and the next `ingest` would have
-reported three parts removed with no explanation of who removed them.
-
-**Suggested shape.** Two changes, either of which would have caught it.
-(1) `build` should CARRY dropped parts across rather than warn, or at
-minimum separate "regenerated by Word, ignore" (`docProps/*`) from
-"lost, and only you can put it back" (everything else). (2) `validate`
-should compare the part LIST against the baseline and fail on a part
-present in prev and absent from the batch — the reject-all check
-already proves the text round-trips; nothing proves the package does.
-
-Restoring by hand needs three coordinated edits (the parts, the
-`[Content_Types].xml` Override, a Relationship on a free `rId`), which
-is exactly the sort of thing that belongs in the toolkit rather than in
-a paper's script directory.
-
-**Workaround in use** `Parental_style/revision/log.md` now carries a
-pre-promote check, and the batch of 2026-08-12 restored the three parts
-inline before promoting.
-
-### S1 `allow_hyperlink=True` lets the LINK SWALLOW the replacement
-The counterpart of the refusal added in `031e96d`, and the same silent
-wrong answer wearing the opposite mask. The guard now refuses a span
-that crosses a link; the opt-in that overrides it does not merely permit
-the edit, it takes the normal path — write the whole replacement into
-the run holding the START of the match, empty the rest — and when that
-first run is the link's label the link ends up owning every word.
-
-Reproduced on the Parental_style Table 4 caption (2026-08-12). The
-caption opens with a `Table4txt` back-link labelled `Table 4`; anchoring
-on the full caption and passing `allow_hyperlink=True` turned the label
-into `Table 4: The likelihood of using non-violent and coercive
-discipline`, so two thirds of the caption rendered blue and underlined.
-
-**Why S1.** Every gate passed: `lint` clean, `citations` ALL CHECKS
-PASSED including "0 with no label", `crossrefs` 12/12, all 1,680 table
-values. The anchor still resolves and the words still read correctly, so
-nothing that walks anchors or text can see it. The only signal was
-`compare`'s HYPERLINK layer, explicitly "REVIEW; not gated" —
-`[built-only] 'Table 4'` against a `[user-only]` label carrying the whole
-caption. That is the exact pair of properties that made the emptying
-case S1.
-
-**Suggested shape.** `allow_hyperlink` currently answers one question
-("may this match cross a link?") and is silently answering a second
-("may the label absorb text?"). Split them: keep the opt-in for a span
-that crosses a link, but make the write refuse to GROW a label — a
-replacement whose first run is a link label should either distribute
-across the boundary or raise. A caller who genuinely wants to retitle a
-link should say so with a distinct argument.
-
-**The check.** Extend `_xml.dead_links`'s neighbourhood — it currently
-reports a label that lost its text; the mirror is a label that gained
-text it never had. A cheaper gate that would have caught this specific
-case: no link label may contain a sentence-ending `:` or `.` followed by
-more words, which is what a swallowed caption looks like. Whatever the
-rule, it belongs in the citation audit, not in `lint`.
-
-**Workaround in use.** Locate on the long signature, replace only a
-short span lying entirely on one side of the link — as
-`Parental_style/revision/scripts/applied/v8_mechanical.py` does for both
-the Table 4 caption and the M5(b) sentence.
+*(empty — the batch of 2026-08-12 closed the six that were here.)*
 
 ---
 
 ## Fixed
+
+### S1 `allow_hyperlink=True` lets the LINK SWALLOW the replacement — `e04b700`
+Both halves, because the entry's own "why it is S1" was that nothing
+catches it.
+
+**The refusal.** `allow_hyperlink` answered one question and was
+silently answering a second. It answers only its own now: a match may
+TOUCH a link, and a match that starts in a label and ends OUTSIDE it is
+refused — that is the write putting words into a label that were never
+the link's. `grow_link_label=True` is the deliberate retitle. The
+label's extent is the whole `w:hyperlink` element rather than the run,
+because Word fragments a label as freely as it fragments prose and a
+one-run reading passes the fragmented case straight through.
+
+**The check went where the mechanism is, and only after the entry's own
+suggestion was measured and failed.** "No link label may contain a
+sentence-ending `:` or `.` followed by more words" fires **5,378 times
+across 718 of 1,873 manuscripts on this machine**: many papers link the
+WHOLE caption by convention, so the damaged label and the house style
+are the same string. Restricting it to exhibit back-links and to labels
+that disagree with their own document's majority — the `footnotes.sizes`
+framing, which is the honest thing to try next — still left 936 in 332.
+**The difference is not a property of one document**, and no static rule
+can be. That is worth more than the check would have been.
+
+So `compare.label_moves` pairs the label that LOST text with the one
+that gained it: `[grew] 'Table 4' -> 'Table 4: The likelihood…'`, one
+finding. That layer was already the only place the Parental Style
+caption was visible — as two lines, a `built-only` and a `user-only`,
+for the reader to correlate. Both directions, because a label that
+SHRANK is the emptying case caught partway.
+
+### S2 `crossrefs --audit` never checks that an anchor leads its mentions — `79d6163`, `8c6ffb8`
+`misplaced_anchor`, beside `misnamed` — and both are PRINTED now. The
+second was computed and never shown by the CLI at all, which is the same
+class one notch quieter.
+
+Two things the sketch did not know:
+
+* **compare PARAGRAPHS, not offsets.** Whether the marker wraps its own
+  link or sits inside it is a linker's choice that means nothing to a
+  reader, and an offset comparison called **100 of those a finding** —
+  every one of them "the first mention is in this same paragraph";
+* a field is located at its INSTRUCTION rather than at its `begin`, so a
+  bookmark that legitimately wraps the whole field cannot read as
+  sitting after it. Both link forms count together, as the entry asked.
+
+Measured over 1,873 manuscripts: **113 findings in 98 documents against
+4,379 linked exhibits**, clustered on repeated versions of a few papers
+— what a real defect looks like in an archive. Verified by hand on a
+paper unrelated to the report: `Social protection Engel curve
+05112022.docx` mentions and links Figure 2 at ¶54, and `Figure2txt` sits
+at ¶60, a paragraph about Figure 3. Exits 1, as `dangling` does.
+
+**Workaround to retire** the hand-rolled sweep in the Parental_style
+session; it stays in that paper's `log.md` as the record of the round.
+
+### S2 `validate`'s reject-all check is blind to HYPERLINKS — `91055cd`, `8c6ffb8`
+`links` is the fourth thing gate 5 compares: a MULTISET of (anchor,
+label) pairs over every text-bearing part, so a link that survives
+somewhere else is not called lost and a swap cannot hide inside a total.
+Both link forms are read together — Word rewrites a field into an
+element on every author save, and a gate that told the two apart would
+fail on a document nobody touched.
+
+`validate` names the ones that went (`LINK LOST -> Table5`). "links:
+False" beside three other booleans is the shape this protocol has
+already been bitten by.
+
+### S2 `revision build` silently DROPS every `customXml/` part — `c288968`, `91055cd`
+Both suggestions, because they answer different halves.
+
+**(1) The build CARRIES it across.** `hygiene.restore_parts` is the
+mirror of `strip_parts`: the parts, the `[Content_Types].xml` Override,
+and a Relationship on an id that is FREE in the target — the source's
+`rId7` is somebody else's relationship in a rebuilt package, and Word
+opens a duplicated id with a repair warning. `tracked.build` runs it
+before lint and before the stamp, so nothing downstream ever sees a
+package docxkit did not write; `carry=()` gets the raw Compare output.
+
+**And the warning that stays is readable.** "part dropped" was printed
+identically for `docProps/*`, which Word regenerates on save, and for
+the data store, which nothing puts back.
+`package.REGENERATED_BY_WORD` names the ignorable ones once; everything
+else is `part LOST`, and those sort first.
+
+**(2) `validate` compares the PART LIST.** `package.missing_parts`
+against the baseline, and it fails the ladder: the reject-all gate
+proves the text round-trips, and a part that is not there has no text
+for it to read.
+
+**Workaround to retire** the pre-promote check in
+`Parental_style/revision/log.md`, and the inline restore that day's
+batch carried.
+
+### S4 `revision build`'s staleness refusal advertises a flag that does not exist — `91055cd`, `8c6ffb8`
+The flag exists now: `revision.build(..., force=True)`, CLI `--force`,
+passed down to the guard. Added rather than deleted from the message,
+because `guard.check` takes the backup BEFORE it refuses — so the spent
+batch survives either way, and the remedy the message named was the
+right one all along, just unimplemented at both doors. The message names
+the other two ways out as well, in the order they are usually right.
+
+**The trigger retired itself.** That paper tripped this on every build
+because it hand-restored `customXml/` after each one; the entry above
+means it no longer has to.
+
+### S4 `footnotes --check` calls the malformed majority "house" — `aea00f5`
+The marks are grouped by HOW they resolve, and **the styled ones set the
+house however few they are**. On Parental_style five footnote paragraphs
+carried no `w:pStyle`, fell through `Normal` to a 12pt `docDefaults` and
+took the majority with them, so the two the check flagged were the two
+carrying `pStyle FootnoteText` — the well-formed ones. A count cannot
+tell malformed from house; a resolution can.
+
+With no styled mark anywhere the commonest value still stands, and
+`mark_house_from` says which of the two answers was given, because they
+deserve different confidence.
+
+`unstyled` names the footnotes whose paragraphs carry no `pStyle` — the
+actionable fact the entry asked for, one attribute lookup — and the
+report now tells the reader to give them the style rather than to write
+a size onto the mark, which is the repair the old report pointed away
+from.
+
+`styles.Cascade.resolve` returns the KIND beside the value and the
+phrase; `explain` is a thin wrapper over it. Grouping on the sentence
+`explain` builds ("the FootnoteText style") would have been a parser for
+our own wording.
+
+**Workaround to retire**
+`Parental_style/revision/scripts/applied/footnote_style.py` stays as the
+record of its round, but its reasoning is upstream now.
 
 ### S4 two definitions of "what this paragraph says" — `35fd07b`
 **Decision (2026-08-11, the author's): name both.** `visible_text` is
