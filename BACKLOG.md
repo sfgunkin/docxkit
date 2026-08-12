@@ -17,13 +17,57 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*(empty — the batch of 2026-08-12 closed the six that were here.)*
+### S2 `pages` returns a count and nothing else, so pagination defects ship
+`docxkit pages PAPER.docx` prints `52`. Everything a pagination question
+actually needs is absent: which sheets are BLANK, what number each sheet
+PRINTS, and each sheet's ORIENTATION.
+
+**Two defects shipped in Parental_style because nothing surfaced them.**
+Both were found by the author reading the PDF on 2026-08-12, not by any
+gate:
+
+* page numbering restarted at 1 after the References (`pgNumType
+  w:start="1"` on the second section), and `titlePg` was set on all four
+  sections with no first-page footer, so the opening sheet of every
+  section printed nothing. Rendered: `… 28, -, -, 3, -, 5 …`;
+* a blank landscape sheet between Tables 2 and 3, from two empty
+  paragraphs that would not fit beside Table 2.
+
+Both survived every gate in the toolkit. `lint` is clean on each, and
+`compare` reports **zero real change locations** for either fix -- which
+is correct, since neither moves a word, and is exactly why no text-layer
+check can ever see them.
+
+**The diagnostic lesson, worth encoding rather than relearning.**
+Pagination cannot be inferred from the XML. Two plausible causes for the
+blank page were derived from the markup and BOTH were falsified by
+re-rendering: shrinking the `sectPr` host paragraph (still 53 pages), and
+removing a redundant `<w:br w:type="page"/>` stacked on the section break
+(still 53). Only dumping the block sequence between the two captions
+found the real cause. Anything worth calling `pages` has to measure the
+RENDER, not the source.
+
+**Suggested shape.** `pages PAPER.docx [--check]`, one row per sheet:
+index, orientation, printed number, `BLANK` flag. `--check` exits
+non-zero on a blank sheet, a numbering restart, or a gap in the printed
+sequence. The machinery exists already -- `pdf` exports through Word and
+the repo parses PDFs elsewhere.
+
+**Workaround in use** ~40 lines of PyMuPDF, hand-rolled THREE times in
+one session on `Parental_style`: sampling the bottom 12 % of each page
+for a digit, and reading `page.rect` for orientation.
 
 ---
 
 ## Fixed
 
 ### S1 `allow_hyperlink=True` lets the LINK SWALLOW the replacement — `e04b700`
+**Pre-fix damage still in a submitted manuscript (found 2026-08-12).**
+Parental_style's Table 5 caption back-link owns the whole phrase
+"Table 5: The incidence of harsh parental coercive actions", where
+Table 4's owns two words. Editing that prose afterwards required the
+very opt-in that caused it. Repair is queued paper-side; noted here
+because the entry's value is knowing where the damage landed.
 Both halves, because the entry's own "why it is S1" was that nothing
 catches it.
 
