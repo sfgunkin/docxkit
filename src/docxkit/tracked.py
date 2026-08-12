@@ -410,6 +410,14 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     Compare output and only a warning. See
     :func:`docxkit.hygiene.restore_parts` for why the default is not
     "warn and leave it to the reader".
+
+    **Do not widen it to a part the BODY references.** The data store is
+    reachable only through a relationship, which is why putting it back
+    is mechanical. A header is reached from a ``w:headerReference`` in
+    the section properties, and Compare rewrote those when it rebuilt
+    the document — so copying the part back would satisfy the part-list
+    gate with a header that renders nowhere, which is worse than the
+    loss it was hiding. That case wants a person.
     """
     original, revised, out = Path(original), Path(revised), Path(out)
     report = BuildReport()
