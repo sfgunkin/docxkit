@@ -135,6 +135,32 @@ def test_crossrefs_audit_exits_1_only_on_a_dangling_anchor(
     assert code == 1
 
 
+def test_crossrefs_audit_says_the_anchor_does_not_lead_its_mentions(
+        monkeypatch, tmp_path, capsys):
+    """`linked 12, dangling 0` was the whole report while the marker sat
+    on the third mention (Parental Style 2026-08-12). `misnamed` was
+    computed and never printed at all."""
+    def mention(mark=""):
+        inner = ('<w:hyperlink w:anchor="Table5">'
+                 + run("Table 5") + "</w:hyperlink>")
+        if mark:
+            inner = (f'<w:bookmarkStart w:id="9" w:name="{mark}"/>{inner}'
+                     '<w:bookmarkEnd w:id="9"/>')
+        return f"<w:p>{inner}</w:p>"
+
+    doc = write(tmp_path / "late.docx", make_parts(
+        mention() + para(run("Intervening prose."))
+        + mention("Table5txt")
+        + para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+               '<w:bookmarkEnd w:id="1"/>' + run("Table 5: The caption"))))
+    code, _ = run_cli(monkeypatch, "crossrefs", str(doc), "--audit")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "dangling           0" in out, out
+    assert "misnamed" in out
+    assert "Table5txt sits at" in out
+
+
 @pytest.fixture
 def unmentioned_caption(tmp_path):
     """A caption with no in-text mention: the pair cannot be completed."""

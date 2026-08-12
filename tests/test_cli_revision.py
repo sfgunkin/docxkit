@@ -448,6 +448,29 @@ def test_build_can_absorb_a_pending_baseline_deliberately(monkeypatch,
     assert code == 0
 
 
+def test_the_flag_the_staleness_refusal_advertises_EXISTS(monkeypatch,
+                                                          project):
+    """`docxkit revision build --force` was `error: unrecognized
+    arguments: --force`, and it is what the refusal told the reader to
+    do — the guard was right and the only way out it named was fiction
+    (2026-08-12). The refusal itself is asserted in test_tracked_guard;
+    this asks the parser whether the flag is real, and passes it on."""
+    from docxkit import revision
+
+    seen: list[bool] = []
+
+    def _capture(original, revised, out, classify=None, **kw):
+        seen.append(kw["force"])
+        return _fake_build()(original, revised, out, classify, **kw)
+
+    monkeypatch.setattr(revision.tracked, "build", _capture)
+    code, _ = run_cli(monkeypatch, "revision", "build",
+                      str(project.working), "--force",
+                      "--paper", str(project.root))
+    assert code == 0
+    assert seen == [True], "the flag parsed and was not passed on"
+
+
 # ------------------------------------------------------------- validate
 
 def test_validate_passes_a_faithful_batch(monkeypatch, project, capsys):
@@ -495,6 +518,42 @@ def test_validate_names_a_moved_footnote_anchor(monkeypatch, project,
     out = capsys.readouterr().out
     assert code == 1
     assert "footnote 2" in out and "REFERENCE moved" in out, out
+
+
+def test_validate_says_which_LINK_the_rejected_batch_lost(monkeypatch,
+                                                          project, capsys):
+    """The words come back and the hyperlink does not: Word's Compare
+    does not rebuild a link inside a rejected deletion. Parental Style
+    T4(3) came back two links short with reject-all reporting OK."""
+    linked = ('<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5</w:t>'
+              "</w:r></w:hyperlink>")
+    write(project.prev, make_parts(para(run("see"), linked)))
+    write(project.batch, make_parts(para(run("see"), run("Table 5"))))
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "'links': False" in out, out
+    assert "LINK LOST -> Table5" in out
+
+
+def test_validate_says_which_PART_the_batch_lost(monkeypatch, project,
+                                                 capsys):
+    """The reject-all gate proves the TEXT round-trips; nothing proved
+    the package did, and promote copies the batch over working.docx."""
+    base = make_parts(para(run("settled")))
+    base["customXml/item1.xml"] = (
+        b'<b:Sources xmlns:b="http://schemas.openxmlformats.org'
+        b'/officeDocument/2006/bibliography"/>')
+    write(project.prev, base)
+    write(project.batch, {k: v for k, v in base.items()
+                          if not k.startswith("customXml/")})
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "LOST customXml/item1.xml" in out, out
+    assert "VERDICT: FAIL" in out
 
 
 def test_validate_aborts_on_lint_with_exit_2(monkeypatch, project,

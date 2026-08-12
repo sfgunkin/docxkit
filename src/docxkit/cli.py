@@ -238,9 +238,16 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
         print(name)
         for key in ("linked", "caption_only", "mention_only", "dangling"):
             found = state[key]
-            print(f"  {key:<13} {len(found):>3}"
+            print(f"  {key:<16} {len(found):>3}"
                   f"{'  ' + ', '.join(found) if found else ''}")
-        return 1 if state["dangling"] else 0
+        # One finding per line: these carry a sentence, not a name, and
+        # `misnamed` was computed and never printed at all — a check
+        # nobody can read is a check nobody runs.
+        for key in ("misnamed", "misplaced_anchor"):
+            print(f"  {key:<16} {len(state[key]):>3}")
+            for line in state[key]:
+                print(f"    {line}")
+        return 1 if state["dangling"] or state["misplaced_anchor"] else 0
 
     linked, report = crossrefs.link(doc, other_parts=others)
     print(name)
@@ -871,6 +878,7 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
     report = build(paper, args.revised, args.out,
                    allow_math_resolve=args.allow_math_resolve,
                    allow_pending_baseline=args.allow_pending_baseline,
+                   force=args.force,
                    progress=lambda line: print("   ", line))
     out = Path(args.out) if args.out else paper.batch
     print(f"\nbuilt {out} ({report.revisions} revisions)")
@@ -909,6 +917,15 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
     print("== accept-all ==", report.accepted)
     if report.empty_shells:
         print("   ** WARNING: empty OMML shells after accept **")
+    if report.lost_parts:
+        print(f"== parts ==  {len(report.lost_parts)} in the baseline and "
+              f"NOT in the batch")
+        for part in report.lost_parts:
+            print(f"   LOST {part}")
+        print("   Word's Compare rebuilds rather than annotates and drops "
+              "what it will not carry; promote would copy this batch over "
+              "working.docx, so the part goes with it. Restore it with "
+              "docxkit.hygiene.restore_parts and rebuild.")
     if report.reject_matches_baseline is not None:
         verdict = "OK" if report.reject_matches_baseline else "MISMATCH"
         print(f"== reject-all == baseline ?  {report.reject_detail} "
@@ -925,6 +942,11 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                       f"so rejecting empties it")
             for u in report.reject_diff:
                 print(f"   {u}")
+            for link in report.lost_links:
+                print(f"   LINK LOST {link}: the baseline has this "
+                      f"hyperlink and the rejected batch does not — Word's "
+                      f"Compare does not rebuild a link inside a rejected "
+                      f"deletion, so the words come back as plain text")
     if report.accept_paths_agree is not None:
         print("== XML accept == Word accept ?",
               "OK" if report.accept_paths_agree else "MISMATCH")
@@ -1219,6 +1241,13 @@ def main() -> None:
     r.add_argument("--allow-pending-baseline", action="store_true",
                    help="absorb the baseline's pending revisions "
                         "deliberately")
+    # The staleness refusal has named this flag since it was written,
+    # and `build --help` did not list it: the one way out the reader was
+    # told about was `error: unrecognized arguments: --force`. The
+    # backup is taken either way, so the previous batch survives.
+    r.add_argument("--force", action="store_true",
+                   help="rebuild over a batch.docx that was edited since "
+                        "docxkit wrote it (a backup is taken first)")
 
     r = _rev("validate", cmd_revision_validate, "run the gate ladder")
     r.add_argument("batch", nargs="?",
