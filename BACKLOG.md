@@ -17,6 +17,95 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S1 `export_pdf`'s page range is DISCARDED — every "pages 1–3" render is the whole document
+
+`docxkit pdf PAPER.docx OUT.pdf --pages 1-3` writes all 52 pages and
+reports success. Measured on `Parental_style/revision/working.docx`
+2026-08-13, three exports from one file:
+
+    full          1,920,546 bytes   52 pages
+    --pages 1-3   1,920,546 bytes   52 pages
+    --pages 9     1,920,546 bytes   52 pages
+
+Byte-identical. The CLI is innocent — `cmd_pdf` parses the range and
+passes it through correctly. The defect is in `word.export_pdf`:
+
+    doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0, 0,
+                            first, last)
+
+`ExportAsFixedFormat(OutputFileName, ExportFormat, OpenAfterExport,
+OptimizeFor, **Range**, From, To, …)`. The 5th positional is
+`WdExportRange` and it is hardcoded **0 = `wdExportAllDocument`**, which
+tells Word to export everything and ignore `From`/`To`. It has to be
+**3 = `wdExportFromTo`** for the range to be honoured. `word.py` defines
+only `WD_EXPORT_PDF = 17`; there is no `WD_EXPORT_FROM_TO` constant to
+reach for, which is probably how the 0 got written.
+
+**Why it is S1 and not S4.** Nothing fails. The file is written, the
+byte count is printed, and the pages you asked for are all present —
+along with the other 49. A referee excerpt, an editor's "just send me
+the tables", or a figure-only render all ship the entire manuscript,
+and the only way to notice is to open the PDF and count.
+
+**Fix:** pass 3 as `Range`, name the constant, and test that a
+`first=2, last=3` export has `page_count == 2`. Both the export and a
+PDF page count already exist in the repo, so the test needs no new
+machinery.
+
+**Workaround in use** export the whole document and slice with the
+`Read` tool's `pages` argument, or PyMuPDF.
+
+### S2 no public way to ask whether a MATH run is bold, so every guard written against `w:b` guards NOTHING
+
+A paper that renames one symbol and must not touch its bold twin has to
+ask "is this `m:r` bold?" and there is no API for it. The obvious
+implementation is wrong in a way that reports success.
+
+**Hit on `Parental_style` 2026-08-13.** The theory's parenting time
+`X_i` was renamed to `τ_i` to de-collide with the empirical covariate
+vector **X**, and the protocol's guard read: *"Boldface (OMML bold /
+`\mathbf`) identifies it. Zero bold-X instances may be edited."* Written
+the natural way — `'<w:b/>' in run` — the enumeration returned:
+
+    italic X: 32   bold X: 0
+
+**All four covariate X's were counted as italic and would have been
+swept into the rename**, silently corrupting equations (5)–(6) and the
+endogeneity paragraph. They carry `<m:sty m:val="bi"/>`, not `<w:b/>`:
+OMML states its own face through `m:sty` (`p`/`b`/`i`/`bi`), and a
+`w:rPr` bold is a different, rarer spelling. Correct detection gives
+`28 plain / 4 bold`, which then reconciles exactly with the protocol's
+independently-derived count of 29.
+
+The toolkit already knows this — `_compare_read.py:158` folds
+`m:nor|m:sty|m:scr|w:i|w:b|…` when it fingerprints FORMULA TYPOGRAPHY,
+which is why that layer reported clean throughout. The knowledge is
+private, so every caller re-derives it and gets it wrong.
+
+**Suggested shape.** `equations.face(run) -> {"plain","b","i","bi"}` (or
+`is_bold`/`is_italic` predicates) reading `m:sty` first and `w:rPr`
+second, exported and documented in the skill next to `to_latex`. Cheap;
+the parsing exists.
+
+**Workaround in use** `re.search(r'<m:sty m:val="b[i]?"/>', run)`,
+asserted against a known-good count before and after the edit.
+
+### S4 `edit.RUN_RE` is not exported although `T_RUN_RE` is
+
+`edit.__all__` lists `T_RUN_RE` but not `RUN_RE`, so
+`from docxkit.edit import RUN_RE` — the way to walk whole `w:r`
+elements, which is what run-aware surgery needs — is flagged
+`reportPrivateImportUsage` by pyright while the sibling constant next to
+it imports clean. `docxkit._xml` works but is private.
+
+Hand-rolling the pattern instead is its own trap and cost real time on
+`Parental_style` 2026-08-13: `head.rfind("<w:r")` also matches
+`<w:rPr`, which spliced a paragraph mid-properties and silently
+destroyed the `(B.2)` equation label two screens away. `RUN_RE`'s
+`<w:r\b` is exactly the guard that prevents it.
+
+**Fix:** add `RUN_RE` to `edit.__all__` beside `T_RUN_RE`.
+
 ### S2 `pages` returns a count and nothing else, so pagination defects ship
 `docxkit pages PAPER.docx` prints `52`. Everything a pagination question
 actually needs is absent: which sheets are BLANK, what number each sheet
