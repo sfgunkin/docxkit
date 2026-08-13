@@ -97,6 +97,11 @@ WD_WITHIN_TABLE = 12
 WD_COMPARE_TO_NEW = 2
 WD_FORMAT_DOCX = 16
 WD_EXPORT_PDF = 17
+#: WdExportRange. `ExportAsFixedFormat`'s 5th positional decides whether
+#: From/To are read at all; 0 (wdExportAllDocument) makes Word ignore
+#: them, which silently turned every page range into a full render.
+WD_EXPORT_ALL_DOCUMENT = 0
+WD_EXPORT_FROM_TO = 3
 WD_STATISTIC_PAGES = 2
 WD_COLLAPSE_START = 1
 WD_FIND_STOP = 0
@@ -361,8 +366,8 @@ def export_pdf(path: str | Path, out_pdf: str | Path,
     out_pdf = Path(out_pdf).resolve()
     with session() as word, open_doc(word, path) as doc:
         if first and last:
-            doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0, 0,
-                                    first, last)
+            doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0,
+                                    WD_EXPORT_FROM_TO, first, last)
         else:
             doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF)
     return out_pdf

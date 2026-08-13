@@ -419,9 +419,18 @@ def faked_word(monkeypatch):
 
 def test_a_page_range_becomes_words_seven_argument_export(faked_word,
                                                           tmp_path):
+    """From and To are inert unless Range says to read them.
+
+    This asserted the call SHAPE -- seven arguments, (2, 5) on the end --
+    and passed for as long as the fifth was `wdExportAllDocument`, which
+    tells Word to export everything and ignore From/To. Every
+    `--pages 1-3` render was the whole document, and the byte count
+    printed underneath made it look like it had worked.
+    """
     out = W.export_pdf("in.docx", tmp_path / "o.pdf", first=2, last=5)
     (args,) = faked_word.exports
     assert args[1] == W.WD_EXPORT_PDF
+    assert args[4] == W.WD_EXPORT_FROM_TO
     assert args[-2:] == (2, 5)
     assert out == tmp_path / "o.pdf"
 

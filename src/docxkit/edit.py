@@ -26,6 +26,7 @@ from .errors import AnchorError
 
 __all__ = [
     # re-exported: callers building a run from scratch need the same rule
+    "RUN_RE",
     "T_RUN_RE",
     "find_normalized",
     "italicize",

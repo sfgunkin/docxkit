@@ -198,3 +198,21 @@ def test_styling_a_whole_run_does_not_split_it():
     got = italicize(p, "abc")
     assert visible_text(got) == "abcdef"
     assert got.count("<w:t>") == 2          # no split was needed
+
+
+def test_the_edit_facade_exports_both_run_patterns():
+    """`RUN_RE` is how a caller walks whole `w:r` elements, which is what
+    run-aware surgery needs, and it sat next to `T_RUN_RE` unexported --
+    so pyright rejected the import while its sibling came in clean.
+
+    Hand-rolling the pattern instead is the trap it exists to prevent:
+    `rfind("<w:r")` also matches `<w:rPr`, which on Parental_style
+    spliced a paragraph mid-properties and destroyed an equation label
+    two screens away. `<w:r\b` is exactly that guard.
+    """
+    import docxkit.edit as E
+    for name in ("RUN_RE", "T_RUN_RE"):
+        assert name in E.__all__, f"{name} is not exported"
+        assert hasattr(E, name)
+    assert E.RUN_RE.match("<w:r><w:t>x</w:t></w:r>")
+    assert not E.RUN_RE.match("<w:rPr><w:b/></w:rPr>")
