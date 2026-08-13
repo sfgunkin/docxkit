@@ -17,44 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 `export_pdf`'s page range is DISCARDED — every "pages 1–3" render is the whole document
-
-`docxkit pdf PAPER.docx OUT.pdf --pages 1-3` writes all 52 pages and
-reports success. Measured on `Parental_style/revision/working.docx`
-2026-08-13, three exports from one file:
-
-    full          1,920,546 bytes   52 pages
-    --pages 1-3   1,920,546 bytes   52 pages
-    --pages 9     1,920,546 bytes   52 pages
-
-Byte-identical. The CLI is innocent — `cmd_pdf` parses the range and
-passes it through correctly. The defect is in `word.export_pdf`:
-
-    doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0, 0,
-                            first, last)
-
-`ExportAsFixedFormat(OutputFileName, ExportFormat, OpenAfterExport,
-OptimizeFor, **Range**, From, To, …)`. The 5th positional is
-`WdExportRange` and it is hardcoded **0 = `wdExportAllDocument`**, which
-tells Word to export everything and ignore `From`/`To`. It has to be
-**3 = `wdExportFromTo`** for the range to be honoured. `word.py` defines
-only `WD_EXPORT_PDF = 17`; there is no `WD_EXPORT_FROM_TO` constant to
-reach for, which is probably how the 0 got written.
-
-**Why it is S1 and not S4.** Nothing fails. The file is written, the
-byte count is printed, and the pages you asked for are all present —
-along with the other 49. A referee excerpt, an editor's "just send me
-the tables", or a figure-only render all ship the entire manuscript,
-and the only way to notice is to open the PDF and count.
-
-**Fix:** pass 3 as `Range`, name the constant, and test that a
-`first=2, last=3` export has `page_count == 2`. Both the export and a
-PDF page count already exist in the repo, so the test needs no new
-machinery.
-
-**Workaround in use** export the whole document and slice with the
-`Read` tool's `pages` argument, or PyMuPDF.
-
 ### S2 no public way to ask whether a MATH run is bold, so every guard written against `w:b` guards NOTHING
 
 A paper that renames one symbol and must not touch its bold twin has to
@@ -90,23 +52,60 @@ the parsing exists.
 **Workaround in use** `re.search(r'<m:sty m:val="b[i]?"/>', run)`,
 asserted against a known-good count before and after the edit.
 
-### S4 `edit.RUN_RE` is not exported although `T_RUN_RE` is
+### S2 replacement is guarded against links, INSERTION is not offered at all — so callers hand-roll it and land inside one
 
-`edit.__all__` lists `T_RUN_RE` but not `RUN_RE`, so
-`from docxkit.edit import RUN_RE` — the way to walk whole `w:r`
-elements, which is what run-aware surgery needs — is flagged
-`reportPrivateImportUsage` by pyright while the sibling constant next to
-it imports clean. `docxkit._xml` works but is private.
+`replace_in_para` takes this class seriously: `labels_a_link` refuses a
+match that starts inside a hyperlink *or* spans one, with
+`allow_hyperlink` as a deliberate escape hatch and two S1 entries below
+recording what happened when it was missing. There is no equivalent for
+**inserting** text at a position inside a paragraph, because there is no
+inline-insertion helper at all — `body` stops at whole paragraphs
+(`insert_after`/`insert_before`), and `edit` has `set_run_text`,
+`replace_in_para`, `rep`, and nothing that puts a run *between* runs.
 
-Hand-rolling the pattern instead is its own trap and cost real time on
-`Parental_style` 2026-08-13: `head.rfind("<w:r")` also matches
-`<w:rPr`, which spliced a paragraph mid-properties and silently
-destroyed the `(B.2)` equation label two screens away. `RUN_RE`'s
-`<w:r\b` is exactly the guard that prevents it.
+So every caller writes the string surgery themselves, and the obvious
+version is wrong twice over. Both failures hit `Parental_style` on
+2026-08-13.
 
-**Fix:** add `RUN_RE` to `edit.__all__` beside `T_RUN_RE`.
+**1. Prepending to a paragraph whose first run is a link label.** The
+Bhalotra–Clarke paragraph, moved into §6, opens directly on its
+citation's field-form hyperlink, so its first `<w:t>` *is* the link
+label. Fronting the paragraph with a connective sentence by prepending
+there put the sentence inside the link. Measured label afterwards:
+
+    'A further consideration concerns the twin instrument itself. Bhalotra and Clarke (2020)'
+
+Blue and underlined across the whole sentence on the page. **Every
+text-layer check passed** — `citations` ALL CHECKS PASSED, `crossrefs`
+12/12, `lint` clean, and the caller's own acceptance grep
+(`startswith(CONNECTIVE + "Bhalotra and Clarke (2020)")`) was satisfied
+by construction, because the words really are in that order. Only
+`compare`'s HYPERLINK layer sees it, as a `[grew]` label, and that layer
+is explicitly REVIEW-not-gated. Cost: a promote undone and the batch
+rebuilt.
+
+**2. Finding the run boundary by hand.** The same day, splicing an
+inline OMML τ into a prose run located the reopening tag with
+`head.rfind("<w:r")` — which matches `<w:rPr` too. That spliced a
+paragraph mid-properties and silently destroyed the `(B.2)` equation
+label two screens away, surfacing as a bogus "equation label lost"
+failure in an unrelated assertion.
+
+**Suggested shape.** `edit.insert_in_para(para, at, xml_or_text)` —
+offset in VISIBLE text, splits the containing run, and refuses when the
+offset falls inside a hyperlink label or a bookmark span unless told
+otherwise, mirroring `replace_in_para`'s contract exactly. `labels_a_link`
+already exists and is private; this is mostly plumbing it to the
+insertion case.
+
+**Workaround in use** rebuild the whole run with `set_run_text` twice
+around the inserted element, never splice; insert new runs *before* the
+first `<w:r>` rather than into it; and assert the LABEL — the visible
+text between `fldCharType="separate"` and `"end"` — rather than the
+paragraph text, which cannot distinguish the two states.
 
 ### S2 `pages` returns a count and nothing else, so pagination defects ship
+
 `docxkit pages PAPER.docx` prints `52`. Everything a pagination question
 actually needs is absent: which sheets are BLANK, what number each sheet
 PRINTS, and each sheet's ORIENTATION.
@@ -149,6 +148,72 @@ for a digit, and reading `page.rect` for orientation.
 ---
 
 ## Fixed
+
+### S1 `export_pdf`'s page range is DISCARDED — every "pages 1–3" render is the whole document — `9a9fdfc`
+
+`docxkit pdf PAPER.docx OUT.pdf --pages 1-3` writes all 52 pages and
+reports success. Measured on `Parental_style/revision/working.docx`
+2026-08-13, three exports from one file:
+
+    full          1,920,546 bytes   52 pages
+    --pages 1-3   1,920,546 bytes   52 pages
+    --pages 9     1,920,546 bytes   52 pages
+
+Byte-identical. The CLI is innocent — `cmd_pdf` parses the range and
+passes it through correctly. The defect is in `word.export_pdf`:
+
+    doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0, 0,
+                            first, last)
+
+`ExportAsFixedFormat(OutputFileName, ExportFormat, OpenAfterExport,
+OptimizeFor, **Range**, From, To, …)`. The 5th positional is
+`WdExportRange` and it is hardcoded **0 = `wdExportAllDocument`**, which
+tells Word to export everything and ignore `From`/`To`. It has to be
+**3 = `wdExportFromTo`** for the range to be honoured. `word.py` defines
+only `WD_EXPORT_PDF = 17`; there is no `WD_EXPORT_FROM_TO` constant to
+reach for, which is probably how the 0 got written.
+
+**Why it is S1 and not S4.** Nothing fails. The file is written, the
+byte count is printed, and the pages you asked for are all present —
+along with the other 49. A referee excerpt, an editor's "just send me
+the tables", or a figure-only render all ship the entire manuscript,
+and the only way to notice is to open the PDF and count.
+
+**Fix:** pass 3 as `Range`, name the constant, and test that a
+`first=2, last=3` export has `page_count == 2`. Both the export and a
+PDF page count already exist in the repo, so the test needs no new
+machinery.
+
+**Workaround in use** export the whole document and slice with the
+`Read` tool's `pages` argument, or PyMuPDF.
+
+**Fixed.** `WD_EXPORT_FROM_TO` / `WD_EXPORT_ALL_DOCUMENT` named, `Range`
+set to the former rather than written as a bare integer at the call
+site — which is likely how a `0` got there. The existing test asserted
+the call SHAPE and never `args[4]`, so it passed with the bug; it now
+asserts the constant and fails without the fix. Proven against real
+Word on the 52-page manuscript: `--pages 1-3` → **3 pages, 143KB**,
+`--pages 9` → **1 page**, against 52 pages and 1.9MB before.
+
+### S4 `edit.RUN_RE` is not exported although `T_RUN_RE` is — `9a9fdfc`
+
+`edit.__all__` lists `T_RUN_RE` but not `RUN_RE`, so
+`from docxkit.edit import RUN_RE` — the way to walk whole `w:r`
+elements, which is what run-aware surgery needs — is flagged
+`reportPrivateImportUsage` by pyright while the sibling constant next to
+it imports clean. `docxkit._xml` works but is private.
+
+Hand-rolling the pattern instead is its own trap and cost real time on
+`Parental_style` 2026-08-13: `head.rfind("<w:r")` also matches
+`<w:rPr`, which spliced a paragraph mid-properties and silently
+destroyed the `(B.2)` equation label two screens away. `RUN_RE`'s
+`<w:r\b` is exactly the guard that prevents it.
+
+**Fix:** add `RUN_RE` to `edit.__all__` beside `T_RUN_RE`.
+
+**Fixed.** Added to `edit.__all__`; a test asserts both patterns are
+exported and that `RUN_RE` matches `<w:r>` but not `<w:rPr>` — the
+distinction the hand-rolled version got wrong.
 
 ### S1 `allow_hyperlink=True` lets the LINK SWALLOW the replacement — `e04b700`
 **Pre-fix damage still in a submitted manuscript (found 2026-08-12).**
