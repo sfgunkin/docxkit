@@ -149,7 +149,7 @@ for a digit, and reading `page.rect` for orientation.
 
 ## Fixed
 
-### S1 `Cascade` skips the DEFAULT paragraph style, so a paragraph that names none resolves through docDefaults instead — `PENDING`
+### S1 `Cascade` skips the DEFAULT paragraph style, so a paragraph that names none resolves through docDefaults instead — `a87f201`
 
 `Cascade.resolve` walks direct → character style → paragraph style →
 docDefaults, and `Cascade.paragraph_style` returns the style a `w:p`
