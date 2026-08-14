@@ -20,10 +20,15 @@ import zipfile
 from pathlib import Path
 from typing import NoReturn
 
-from ._xml import DOCUMENT
+from ._xml import DOCUMENT, FOOTNOTES
 from .errors import DocumentLocked, PackageError
 
+# The part names travel WITH `load_xml`: a suite reading the footnotes
+# would otherwise spell that part itself, which is the drift R6 was about
+# — every site deciding for itself what "the document" means.
 __all__ = [
+    "DOCUMENT",
+    "FOOTNOTES",
     "latest_version",
     "load_xml",
     "load_zip",

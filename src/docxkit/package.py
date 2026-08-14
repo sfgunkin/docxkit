@@ -22,7 +22,13 @@ from typing import Any
 
 from lxml import etree
 
-from ._xml import escape
+# `text_parts` is re-exported, not re-implemented: a build that
+# post-processes its own output — protect every edge space, everywhere a
+# reader looks — needs the text-bearing parts, and the alternative is the
+# caller naming one part itself, the drift R6 removed from fourteen
+# modules. It belongs here because it takes the parts dict, which is this
+# module's subject.
+from ._xml import escape, text_parts
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
@@ -40,6 +46,7 @@ __all__ = [
     "read_parts",
     "same_part",
     "set_core_property",
+    "text_parts",
     "write_docx",
 ]
 
