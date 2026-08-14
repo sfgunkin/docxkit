@@ -17,55 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 `Cascade` skips the DEFAULT paragraph style, so a paragraph that names none resolves through docDefaults instead
-
-`Cascade.resolve` walks direct → character style → paragraph style →
-docDefaults, and `Cascade.paragraph_style` returns the style a `w:p`
-**names**. A paragraph that names none does not thereby have no
-paragraph style: it takes the one marked `w:default="1"`, which is
-`Normal` in every manuscript here. The chain gets `pstyle=None`, skips
-the style step entirely, and answers from docDefaults — a part that
-usually says something DIFFERENT.
-
-**Hit on `FLOPsExport` 2026-08-14, integrating an author handback.**
-That paper's `Normal` says `w:sz 24` and its docDefaults says `22`. Word
-renders both spellings of the paragraph at 12pt. `compare` reported:
-
-    FORMAT  'Training market. '  ['italic', 'size 24'] -> ['italic', 'size 22']
-
-on **22 run-in lead-ins**, on a pair where the author had changed the
-size of nothing — Word had merely dropped a direct `w:sz 24` equal to
-the value `Normal` already supplied, which is the round-trip this layer
-exists to survive. Reproduction, two paragraphs that differ only in
-whether they spell the style they are already in:
-
-    names no style   pstyle=None      -> sz=22 (the document default)
-    names Normal     pstyle='Normal'  -> sz=24 (the Normal style)
-
-**S1 rather than S3 because the mirror case is silent.** The false
-positive is loud and costs a reader's time; the reverse — a run that
-STATED `sz 22` in a `Normal` paragraph and now inherits — resolves to 22
-on both sides and reports **clean on a real 11pt→12pt change**. That is
-the exact failure `_VALUED`'s comment says resolving was introduced to
-prevent ("misses the mirror case (a run that stated 10pt and now
-inherits the 12pt default)"): it was fixed for the direct-vs-docDefaults
-pair and left open for the direct-vs-default-STYLE pair, which is the
-common one, because a python-docx build names a style on almost nothing.
-
-**Suggested shape.** `Cascade` reads the `w:default="1"` paragraph
-style's id at construction (`_STYLE_ID_RE` already walks every style
-body; the attribute is on the same element) and `resolve` falls back to
-it when `pstyle` is None, BEFORE docDefaults. Also worth exposing as
-`Cascade.default_paragraph_style`, since `_compare_read` is not the only
-caller that passes a `paragraph_style(...)` that can be None.
-`footnotes.sizes` takes the same route and will report the same way on
-any manuscript whose footnote paragraphs name no style.
-
-**Workaround in use** none — the FLOPs build stopped writing the
-redundant `Pt(12)`, which removes the trigger for that paper (and is
-right anyway, per the "Word drops a redundant pPr value" rule) but does
-nothing about the missed-change direction.
-
 ### S2 no public way to ask whether a MATH run is bold, so every guard written against `w:b` guards NOTHING
 
 A paper that renames one symbol and must not touch its bold twin has to
@@ -197,6 +148,74 @@ for a digit, and reading `page.rect` for orientation.
 ---
 
 ## Fixed
+
+### S1 `Cascade` skips the DEFAULT paragraph style, so a paragraph that names none resolves through docDefaults instead — `PENDING`
+
+`Cascade.resolve` walks direct → character style → paragraph style →
+docDefaults, and `Cascade.paragraph_style` returns the style a `w:p`
+**names**. A paragraph that names none does not thereby have no
+paragraph style: it takes the one marked `w:default="1"`, which is
+`Normal` in every manuscript here. The chain gets `pstyle=None`, skips
+the style step entirely, and answers from docDefaults — a part that
+usually says something DIFFERENT.
+
+**Hit on `FLOPsExport` 2026-08-14, integrating an author handback.**
+That paper's `Normal` says `w:sz 24` and its docDefaults says `22`. Word
+renders both spellings of the paragraph at 12pt. `compare` reported:
+
+    FORMAT  'Training market. '  ['italic', 'size 24'] -> ['italic', 'size 22']
+
+on **22 run-in lead-ins**, on a pair where the author had changed the
+size of nothing — Word had merely dropped a direct `w:sz 24` equal to
+the value `Normal` already supplied, which is the round-trip this layer
+exists to survive. Reproduction, two paragraphs that differ only in
+whether they spell the style they are already in:
+
+    names no style   pstyle=None      -> sz=22 (the document default)
+    names Normal     pstyle='Normal'  -> sz=24 (the Normal style)
+
+**S1 rather than S3 because the mirror case is silent.** The false
+positive is loud and costs a reader's time; the reverse — a run that
+STATED `sz 22` in a `Normal` paragraph and now inherits — resolves to 22
+on both sides and reports **clean on a real 11pt→12pt change**. That is
+the exact failure `_VALUED`'s comment says resolving was introduced to
+prevent ("misses the mirror case (a run that stated 10pt and now
+inherits the 12pt default)"): it was fixed for the direct-vs-docDefaults
+pair and left open for the direct-vs-default-STYLE pair, which is the
+common one, because a python-docx build names a style on almost nothing.
+
+**Suggested shape.** `Cascade` reads the `w:default="1"` paragraph
+style's id at construction (`_STYLE_ID_RE` already walks every style
+body; the attribute is on the same element) and `resolve` falls back to
+it when `pstyle` is None, BEFORE docDefaults. Also worth exposing as
+`Cascade.default_paragraph_style`, since `_compare_read` is not the only
+caller that passes a `paragraph_style(...)` that can be None.
+`footnotes.sizes` takes the same route and will report the same way on
+any manuscript whose footnote paragraphs name no style.
+
+**Workaround in use** none — the FLOPs build stopped writing the
+redundant `Pt(12)`, which removes the trigger for that paper (and is
+right anyway, per the "Word drops a redundant pPr value" rule) but does
+nothing about the missed-change direction.
+
+**Fixed.** `Cascade` reads the `w:default="1"` paragraph style at
+construction and `resolve` falls back to it when `pstyle` is None, before
+docDefaults; exposed as `Cascade.default_paragraph_style`. A NAMED style
+deliberately does not fall back — it inherits along its own `basedOn`
+chain, which is Word's order.
+
+Validated against **Word itself**, which is the only authority on what a
+paragraph is in: 12 probes over 5 transition classes and 4 documents,
+Word agreed with the new resolution **12/12 and with the old 0/12** —
+including the two classes where the fix makes the size SMALLER (`24 -> 22`,
+`28 -> 24`) and the one where nothing resolved at all before
+(`None -> 24`). Corpus measurement over **1,562 manuscripts**: 772 have at
+least one run whose resolved size changes, 1.43 M runs in total, dominated
+by `22 -> 24` (docDefaults 11pt → Normal 12pt). `footnotes --check` over
+1,272 footnote-bearing documents flips **no verdict** — 33 name a more
+accurate size with the same pass/fail — so no paper's gate goes red. The
+FLOPs pair that surfaced it now reports 0 FORMAT entries where it reported
+22, with its 10 real text edits untouched.
 
 ### S1 `export_pdf`'s page range is DISCARDED — every "pages 1–3" render is the whole document — `9a9fdfc`
 

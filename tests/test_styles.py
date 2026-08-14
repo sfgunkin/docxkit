@@ -150,10 +150,88 @@ def _styles(*defs: str, default: str = "") -> str:
     return f"<w:styles {NS}>{head}{''.join(defs)}</w:styles>"
 
 
-def _para_style(sid: str, rpr: str, based_on: str | None = None) -> str:
+def _para_style(sid: str, rpr: str, based_on: str | None = None,
+                default: bool = False) -> str:
     base = f'<w:basedOn w:val="{based_on}"/>' if based_on else ""
-    return (f'<w:style w:type="paragraph" w:styleId="{sid}">{base}'
+    mark = ' w:default="1"' if default else ""
+    return (f'<w:style w:type="paragraph"{mark} w:styleId="{sid}">{base}'
             f"<w:rPr>{rpr}</w:rPr></w:style>")
+
+
+# The shape every manuscript here has: a default paragraph style that
+# states a size, and docDefaults stating a DIFFERENT one.
+_NORMAL_24 = _styles(_para_style("Normal", '<w:sz w:val="24"/>', default=True),
+                     default='<w:sz w:val="22"/>')
+
+
+def test_a_paragraph_naming_no_style_is_in_the_default_one():
+    """Naming no style is not having none: Word puts such a paragraph in
+    the `w:default="1"` style. Resolving it straight to docDefaults
+    answers 22 for a paragraph Word renders at 24 — and compares two
+    spellings of the same paragraph as a size change (BACKLOG S1)."""
+    assert Cascade(_NORMAL_24).of("sz", pstyle=None) == "24"
+
+
+def test_the_two_spellings_of_the_default_style_resolve_alike():
+    """The false-positive half: Word DELETES a direct property equal to
+    what it would inherit, so one side of an author round-trip states
+    the size and the other does not. Both must resolve the same."""
+    cascade = Cascade(_NORMAL_24)
+    stated = cascade.of("sz", rpr='<w:rPr><w:sz w:val="24"/></w:rPr>',
+                        pstyle=None)
+    inherited = cascade.of("sz", rpr="<w:rPr/>", pstyle=None)
+    assert stated == inherited == "24"
+
+
+def test_a_run_that_states_the_document_default_is_not_the_same_as_silence():
+    """The silent half, which is why this is S1 and not a cosmetic fix: a
+    run stating 22 in an unnamed paragraph really is 11pt among 12pt, and
+    resolving both sides to 22 reports a real change clean."""
+    cascade = Cascade(_NORMAL_24)
+    assert cascade.of("sz", rpr='<w:rPr><w:sz w:val="22"/></w:rPr>',
+                      pstyle=None) == "22"
+    assert cascade.of("sz", rpr="<w:rPr/>", pstyle=None) == "24"
+
+
+def test_the_default_style_is_read_whatever_order_its_attributes_are_in():
+    marked = ('<w:style w:default="1" w:styleId="Normal" '
+              'w:type="paragraph"><w:rPr><w:sz w:val="24"/></w:rPr>'
+              "</w:style>")
+    cascade = Cascade(_styles(marked, default='<w:sz w:val="22"/>'))
+    assert cascade.default_paragraph_style == "Normal"
+    assert cascade.of("sz", pstyle=None) == "24"
+
+
+def test_a_default_CHARACTER_style_is_not_the_paragraph_fallback():
+    """`w:default="1"` marks one style per TYPE. Taking the first one
+    marked default would put every unnamed paragraph in the default
+    character style."""
+    char = ('<w:style w:type="character" w:default="1" w:styleId="DefChar">'
+            '<w:rPr><w:sz w:val="96"/></w:rPr></w:style>')
+    cascade = Cascade(_styles(char, _para_style("Normal",
+                                                '<w:sz w:val="24"/>',
+                                                default=True),
+                              default='<w:sz w:val="22"/>'))
+    assert cascade.default_paragraph_style == "Normal"
+    assert cascade.of("sz", pstyle=None) == "24"
+
+
+def test_a_named_style_does_not_fall_back_to_the_default_style():
+    """Word's order, and the reason the fallback is on the UNNAMED case
+    only: a style that sets nothing inherits along its own basedOn chain
+    and then to docDefaults, not through a style it was never based on."""
+    cascade = Cascade(_styles(
+        _para_style("Normal", '<w:sz w:val="24"/>', default=True),
+        _para_style("Quote", '<w:i w:val="1"/>'),
+        default='<w:sz w:val="22"/>'))
+    assert cascade.of("sz", pstyle="Quote") == "22"
+
+
+def test_no_default_style_marked_still_falls_to_the_document_default():
+    cascade = Cascade(_styles(_para_style("Normal", '<w:sz w:val="24"/>'),
+                              default='<w:sz w:val="22"/>'))
+    assert cascade.default_paragraph_style is None
+    assert cascade.of("sz", pstyle=None) == "22"
 
 
 def test_a_table_styles_conditional_band_is_not_its_own_properties():

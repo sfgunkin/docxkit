@@ -104,12 +104,20 @@ def used(xml: str) -> set[str]:
 #   render identically — and a comparison of what is STATED calls that a
 #   change, on every author round-trip;
 # * the mirror: a run that stated 20 and now states nothing, in a
-#   paragraph with no style, falls to the document default. That is a
-#   real 12pt-among-10pt defect and stating-only comparison cannot see
-#   it either. `footnotes.sizes` reported both, and the false one first.
+#   paragraph that names no style, falls through to whatever it inherits.
+#   That is a real 12pt-among-10pt defect and stating-only comparison
+#   cannot see it either. `footnotes.sizes` reported both, and the false
+#   one first.
 #
 # The order is Word's: direct run properties, then the character style
-# chain, then the paragraph style chain, then docDefaults.
+# chain, then the paragraph style chain, then docDefaults — where "the
+# paragraph style" of a paragraph naming none is the one marked
+# `w:default="1"`, NOT nothing. Resolving those two straight to
+# docDefaults reproduced the very failure above one level out: FLOPs'
+# Normal says 24 and its docDefaults 22, so 22 run-in lead-ins Word had
+# merely stripped a redundant `w:sz 24` from compared as 24 -> 22, and a
+# run that stated 22 and now inherits would have compared CLEAN against a
+# real 11pt-to-12pt change (BACKLOG S1, 2026-08-14).
 
 #: Where a resolved value came from, as a KIND rather than as prose.
 #: WELL-FORMED is `STYLE`: a run whose paragraph carries the right
@@ -135,6 +143,12 @@ _DOC_DEFAULTS_RE = re.compile(r"<w:docDefaults\b.*?</w:docDefaults>",
 _STYLE_ID_RE = re.compile(r'<w:style\b[^>]*w:styleId="([^"]+)"[^>]*>(.*?)'
                           r"</w:style>", re.DOTALL)
 _BASED_ON_VAL_RE = re.compile(r'<w:basedOn\b[^>]*w:val="([^"]+)"')
+#: The paragraph style a paragraph that names none is IN. Both attributes
+#: are matched by lookahead because their order is not ours to assume, and
+#: `w:default` is an OOXML boolean, which has three spellings for true.
+_DEFAULT_PSTYLE_RE = re.compile(
+    r'<w:style\b(?=[^>]*\bw:type="paragraph")'
+    r'(?=[^>]*\bw:default="(?:1|true|on)")[^>]*\bw:styleId="([^"]+)"')
 _PSTYLE_VAL_RE = re.compile(r'<w:pStyle\b[^>]*w:val="([^"]+)"')
 _RSTYLE_VAL_RE = re.compile(r'<w:rStyle\b[^>]*w:val="([^"]+)"')
 
@@ -164,16 +178,19 @@ class Cascade:
     than a guess about a part nobody handed over.
     """
 
-    __slots__ = ("_based", "_default", "_own")
+    __slots__ = ("_based", "_default", "_default_pstyle", "_own")
 
     def __init__(self, styles_xml: str | None = None) -> None:
         self._own: dict[str, str] = {}
         self._based: dict[str, str] = {}
         self._default = ""
+        self._default_pstyle: str | None = None
         if not styles_xml:
             return
         block = _DOC_DEFAULTS_RE.search(styles_xml)
         self._default = block.group(0) if block else ""
+        if (m := _DEFAULT_PSTYLE_RE.search(styles_xml)):
+            self._default_pstyle = m.group(1)
         for sid, body in _STYLE_ID_RE.findall(styles_xml):
             self._own[sid] = _own_rpr(body)
             if (m := _BASED_ON_VAL_RE.search(body)):
@@ -201,7 +218,14 @@ class Cascade:
         """
         if rpr and (direct := _val(rpr, prop)) is not None:
             return Resolved(direct, "", RUN)
-        for sid in (rstyle, pstyle):
+        # A paragraph that NAMES no style is not a paragraph with no
+        # style: it is in the one marked `w:default="1"`, which is
+        # `Normal` in every manuscript here and routinely states a size
+        # docDefaults does not. Only the unnamed case falls back — a
+        # named style that sets nothing inherits along its OWN basedOn
+        # chain and then to docDefaults, which is Word's order, not via
+        # a default style it was never based on.
+        for sid in (rstyle, pstyle or self._default_pstyle):
             if (found := self._chain(sid, prop)) is not None:
                 return Resolved(found, f"the {sid} style", STYLE, sid)
         if self._default and (value := _val(self._default, prop)) is not None:
@@ -239,9 +263,23 @@ class Cascade:
 
     @staticmethod
     def paragraph_style(p_xml: str) -> str | None:
-        """The paragraph style a `w:p` names, if any."""
+        """The paragraph style a `w:p` NAMES, if any.
+
+        None means "names none", which is not the same as "has none" —
+        see :attr:`default_paragraph_style`, which is the style such a
+        paragraph is actually in. Callers wanting the effective style
+        want ``paragraph_style(p) or cascade.default_paragraph_style``;
+        callers reporting on the MARKUP (has this footnote lost its
+        style?) want this one, unchanged.
+        """
         m = _PSTYLE_VAL_RE.search(p_xml)
         return m.group(1) if m else None
+
+    @property
+    def default_paragraph_style(self) -> str | None:
+        """The `w:default="1"` paragraph style's id — what an unnamed
+        paragraph is in. None when the stylesheet marks no default."""
+        return self._default_pstyle
 
     @property
     def known(self) -> bool:
