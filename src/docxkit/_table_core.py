@@ -34,6 +34,10 @@ _TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
 # a merged cell: structure, which is why it lives here and
 # not with the width fitting that also consumes it
 _SPAN_RE = re.compile(r'<w:gridSpan w:val="(\d+)"/>')
+# the vertical half of the same story: a continuation cell carries no
+# text, so only the flag distinguishes "empty" from "merged upward"
+_VMERGE_RE = re.compile(r'<w:vMerge(?:\s+w:val="(\w+)")?\s*/>')
+_GRIDCOL_RE = re.compile(r"<w:gridCol\b")
 # a leading signed number, tolerating the typographic minus and separators
 _NUM_RE = re.compile(r"[-−+]?\d[\d,  ]*(?:\.\d+)?")
 
@@ -139,6 +143,48 @@ class Table:
             out.append(c)
             s = _SPAN_RE.search(tc.group(0))
             c += int(s.group(1)) if s else 1
+        return out
+
+    def grid_rows(self, xml: str) -> list[list[str]]:
+        """The table as a RECTANGLE: one entry per grid column, merges carried.
+
+        :attr:`rows` is cell-indexed, so a row holding a merged cell is
+        shorter than the grid is wide. Anything writing the table out as a
+        grid — a CSV compared column-by-column against a statistical
+        package's export — needs the rectangle instead, and needs the
+        merged cells to say what a reader sees in the columns they cover:
+        a horizontal span repeats its text across those columns, and a
+        vertical continuation carries its origin's text down, because a
+        continuation ``<w:tc>`` holds no text of its own and reading it
+        plainly loses the row label entirely.
+
+        Cells still come from the chosen `view`, so this reads a redline
+        the same way :func:`read_all` does.
+        """
+        body = xml[self.start:self.end]
+        width = len(_GRIDCOL_RE.findall(body))
+        rows = list(rows_of(body))
+        if not width:                       # no tblGrid: take the widest row
+            width = max((sum(int(m.group(1)) if (m := _SPAN_RE.search(
+                tc.group(0))) else 1 for tc in cells_of(tr.group(0)))
+                for tr in rows), default=0)
+        carried: dict[int, str] = {}
+        out: list[list[str]] = []
+        for r, tr in enumerate(rows):
+            row = [""] * width
+            col = 0
+            for tc, cell in zip(cells_of(tr.group(0)), self.rows[r],
+                                strict=True):
+                s = _SPAN_RE.search(tc.group(0))
+                span = int(s.group(1)) if s else 1
+                v = _VMERGE_RE.search(tc.group(0))
+                text = (cell or carried.get(col, "")
+                        if v is not None and v.group(1) != "restart" else cell)
+                carried[col] = text
+                for i in range(col, min(col + span, width)):
+                    row[i] = text
+                col += span
+            out.append(row)
         return out
 
 

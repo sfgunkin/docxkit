@@ -189,6 +189,46 @@ def test_grid_columns_rejects_a_row_that_is_not_there():
         read_all(xml)[0].grid_columns(xml, 9)
 
 
+def test_grid_rows_widens_a_span_across_the_columns_it_covers():
+    """The rectangle a CSV needs: cell-indexed rows would misalign it."""
+    xml = _spanned_table()
+    t = read_all(xml)[0]
+    assert t.rows[0] == ["LABEL", "MERGED", "LAST"]          # 3 cells
+    assert t.grid_rows(xml)[0] == ["LABEL", "MERGED", "MERGED", "LAST"]
+    assert t.grid_rows(xml)[1] == ["a", "b", "c", "d"]       # unmerged: same
+
+
+def _vmerged_table() -> str:
+    """A row label merged down over two rows, as Table 1 of FLOPs has it."""
+    def tc(text, vmerge=None):
+        v = f'<w:vMerge{vmerge}/>' if vmerge is not None else ""
+        return (f"<w:tc><w:tcPr>{v}</w:tcPr>"
+                f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
+    return document(
+        "<w:tbl><w:tblGrid>"
+        + "".join('<w:gridCol w:w="800"/>' for _ in range(2))
+        + "</w:tblGrid>"
+        + "<w:tr>" + tc("Training", vmerge=' w:val="restart"') + tc("Export")
+        + "</w:tr>"
+        + "<w:tr>" + tc("", vmerge="") + tc("Domestic") + "</w:tr>"
+        + "</w:tbl>")
+
+
+def test_grid_rows_carries_a_vertical_merge_down_to_its_continuation():
+    """A continuation <w:tc> holds no text: read plainly, the label is lost."""
+    xml = _vmerged_table()
+    t = read_all(xml)[0]
+    assert t.rows[1] == ["", "Domestic"]                     # what is stored
+    assert t.grid_rows(xml)[1] == ["Training", "Domestic"]   # what is read
+
+
+def test_grid_rows_falls_back_to_the_widest_row_without_a_grid():
+    """A hand-built fragment may carry no tblGrid; the shape still holds."""
+    xml = document("<w:tbl>" + row("a", "b") + "</w:tbl>")
+    t = read_all(xml)[0]
+    assert t.grid_rows(xml) == [["a", "b"]]
+
+
 # ------------------------------------------------------ stale offsets -----
 
 
