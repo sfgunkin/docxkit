@@ -145,9 +145,229 @@ the repo parses PDFs elsewhere.
 one session on `Parental_style`: sampling the bottom 12 % of each page
 for a digit, and reading `page.rect` for orientation.
 
+### S1 `replace_in_para` guards hyperlinks but NOT footnote references, and a match hops over one invisibly
+
+`labels_a_link` refuses a match that starts inside or spans a hyperlink, with
+`allow_hyperlink` as the deliberate escape hatch — the entry above records what
+that guard is worth. **A `w:footnoteReference` carries no visible text at all**,
+so a visible-text match spans one without any signal, and the rebuild moves the
+reference. There is no `spans_a_footnote` check and no flag to acknowledge one.
+
+**Hit on LI7 2026-08-15.** The Figure-1 paragraph reads:
+
+    ... from South Korea (UN 2024).  <<FN11>>   The left panel of Figure 1 ...
+
+The obvious anchor for a sentence inserted after the opening — `"). The left
+panel of "` — is contiguous in visible text and spans FN11. Word's Compare then
+re-emitted **footnote 12**, which holds an OMML formula, as an insertion with no
+matching deletion; reject-all stopped reproducing the baseline, so the author
+could not refuse it.
+
+Measured, three scratch redlines off the same baseline:
+
+| build | result |
+|---|---|
+| that edit alone | reject-all FAILS, one footnote paragraph unrejectable |
+| every other edit in the batch, without it | clean, 5 revisions |
+| same edit anchored AFTER the reference | clean, **1** revision |
+
+Note what each layer said: `lint` clean, `compare` 0 hyperlink diffs and
+integrity clean, the caller's own assertion satisfied because the words really
+are in that order. **`reject_check` is what refused it** — which is exactly the
+argument for that gate, and also why this needs fixing upstream: the paper only
+learned the anchor was wrong because a build failed, not because the edit was
+refused where it was made.
+
+**Suggested shape.** Mirror `labels_a_link` — refuse a match that spans a
+`w:footnoteReference` / `w:endnoteReference` / `w:commentReference` unless
+`allow_notes=True`, and say which note in the message. The scan already walks
+the runs; this is a second predicate on the same walk. A hyperlink and a
+footnote anchor fail the same way and deserve the same guard.
+
+**Workaround in use** anchor on the run AFTER the reference and let the marker
+stay where it is, asserting the footnote reference ids and their order in the
+body are unchanged before and after the edit.
+
 ---
 
 ## Fixed
+
+### S1 `_resolve_math` accepts revisions that merely INTERSECT an equation, and takes hundreds of unrelated ones with them — `a03d9d1`
+
+`tracked.build` calls `_resolve_math` unconditionally. With `classify=None`
+that is `_accept_math_via_equations`, which walks `doc.OMaths` and accepts
+**every revision in each equation's `Range`**. A revision does not have to BE
+a math change to be in that range — it only has to overlap it — so one long
+formatting or move revision that happens to span an equation is accepted
+whole, along with every revision inside it.
+
+**Measured on LI7 2026-08-15**, one Compare of the same pair saved three ways:
+
+| route | package revisions | reject-all == submitted |
+|---|---|---|
+| A `SaveAs2`, math kept | 1870 | **319/319 PASS** |
+| B Flat OPC, math kept | 1870 | **319/319 PASS** |
+| C Flat OPC, math resolved (what `build` does) | 1555 | **FAIL — 35 units** |
+
+Thirteen `Accept()` calls destroyed **315 revisions**, and the collateral
+reached the abstract, which contains no equation at all: its rejected text
+came back as "…in aging populations.  the theoretical foundation…", the words
+"The paper presents" simply gone, unrejectable. A/B also settle the premise in
+the docstring — *"Word cannot serialize a compare result containing tracked
+math"* — for this manuscript at least: **both** SaveAs2 and Flat OPC serialized
+1870 revisions with the math tracked, and both round-tripped exactly.
+
+So the accept is not paying for a save that would otherwise fail; on this
+paper it is pure loss, and the loss is the one thing a redline exists to
+prevent. It is also invisible: `build` reports `math_resolved` as a count, the
+deliverable opens cleanly, Word's own numbers look plausible, and nothing
+fails until someone diffs a reject-all against the baseline.
+
+Fixes, in the order they seem right:
+
+1. `resolve_math: bool = True` on `tracked.build`, so a paper that has proved
+   it does not need it can turn it off. Cheapest, and unblocks LI7.
+2. Narrow the selection: accept only revisions CONTAINED in an equation range,
+   not merely intersecting it. `_comment_and_accept_math_revisions` already
+   selects by `rev.Range.OMaths.Count`, which is closer — the note at
+   `_resolve_math` explains the two paths select differently and keeps both,
+   but does not consider that the cheap one is also the destructive one.
+3. Try the save first and resolve only on failure, which is what the premise
+   actually justifies.
+4. Whatever else: `build` should not report success when reject-all no longer
+   reproduces the original. It has both documents; it could check.
+
+Per-paper workaround to delete when fixed: LI7's
+`revision/scripts/word_compare.py` assembles the same pipeline out of
+`word.compare_documents` + `extract_flat_opc` + `lint_parts` + `verify` +
+`guard` + `restore_parts` specifically to skip `_resolve_math`, and runs the
+reject-all gate itself before publishing.
+
+**Fixed.** Four changes, in the order this entry proposed them.
+
+1. `resolve_math=False` on `tracked.build`, passed through
+   `revision.build` and `docxkit revision build --keep-math`. Nothing is
+   accepted on the paper's behalf. The comment scaffold an annotated
+   build needs is still seeded — skipping the math pass skips the only
+   place Word made one, and the build would otherwise fail far away with
+   `ScaffoldMissing` and no hint of the flag that caused it.
+2. The equation walk selects revisions CONTAINED in the equation's range
+   (`Start`/`End` re-read per revision, because accepting shifts them),
+   not revisions that touch it. One that merely runs through an equation
+   is counted and reported as `math_kept`, never accepted.
+   `_comment_and_accept_math_revisions` is deliberately NOT narrowed: its
+   selection was verified revision by revision on AFI, and (4) now
+   catches its collateral before anything is published.
+3. "Try the save first, resolve only on failure" is NOT implemented —
+   with (1) available and (4) gating, the cost of guessing wrong is a
+   loud failure rather than a silent loss, and the retry needs a
+   manuscript that actually refuses to serialize before it can be
+   written against anything.
+4. `untracked` — the reject-all comparison — moved out of `revision.py`
+   into `tracked.py` and became a gate: `build` refuses to publish when
+   rejecting every revision does not reproduce the original, and names
+   the paragraphs. The check EXISTED; it lived one layer up, in a
+   protocol LI7 does not use. `revision.build` keeps its
+   report-and-let-gate-5-decide behaviour (`reject_check=False`) because
+   one cause of a reject-all difference is legitimate and visible only
+   from there: a moved footnote REFERENCE makes Compare emit the whole
+   note as an insertion.
+
+Found on the way: `revision.build` detected resolved math by GREPPING
+`tracked.build`'s progress lines for "math revision" plus a number. It
+reads `report.math_resolved` now. Rewording that sentence — which this
+change does — would have disabled the protocol's math refusal in silence.
+
+Tests that fail without it:
+`test_a_revision_that_only_RUNS_THROUGH_an_equation_stays_tracked` (the
+LI7 shape — one equation at 100–200, a revision inside it, and one
+spanning 10–400 that must stay tracked),
+`test_build_REFUSES_a_redline_that_cannot_be_REJECTED`,
+`test_the_reject_gate_can_be_turned_off_and_still_SAYS_it`,
+`test_a_faithful_redline_passes_the_reject_gate`,
+`test_build_can_KEEP_the_math_tracked`,
+`test_keeping_the_math_still_SEEDS_the_comment_scaffold`,
+`test_keep_math_REACHES_the_build`. Suite 2150 green; ruff, mypy and
+pyright clean.
+
+**Still open, and the last step of this entry:** LI7's
+`revision/scripts/word_compare.py` still assembles the pipeline by hand.
+Reverting it to `tracked.build(..., resolve_math=False)` needs a Word run
+against the manuscript, so it is not done here.
+
+### S1 Compare REGENERATES `docProps/core.xml` empty, and `compare_collateral` calls that "not a loss" — `a03d9d1`
+
+`tracked.build` carries `customXml/` back and then classifies the
+`docProps/*` parts as regenerated rather than lost — correct at the part
+level, and the docstring in `compare_collateral` says so explicitly. But
+Word regenerates `core.xml` with only `lastModifiedBy`/`revision`/
+`created`/`modified`. **Every property the document actually carried —
+`dc:title`, `dc:creator`, `dc:subject`, `cp:keywords` — is gone, and the
+build reports success.** The part-level check is what hides it: the part
+is present, the same size class, and nothing in the report distinguishes
+"Word rewrote this" from "Word emptied this".
+
+**Hit on LI7 twice, unnoticed for four days.** `dc:title` = "Loneliness
+Risk Index" was set deliberately on 2026-08-08 as its own batch, because
+Word, Explorer and PDF export were all falling back on the filename. The
+LANG promote (2026-08-11) emitted a `core.xml` with no `dc:title`; the
+N5/M5 promote (2026-08-12) dropped `docProps/core.xml`, `app.xml` and
+`custom.xml` out of the package entirely, and the author's accept-and-save
+put two of the three back — still untitled. Nothing surfaced it: metadata
+is not tracked-changeable, so there is no revision for an author to
+reject, and no text/link/format layer of `compare` looks at `docProps`.
+Found by diffing the part list by hand while resuming the paper.
+
+`carry` is not the fix. `restore_parts` copies a whole part back, and
+`core.xml`'s `modified`/`revision` legitimately belong to the redline,
+not to the input — copying it wholesale would backdate the deliverable.
+What is needed is a FIELD-level carry: take `dc:title`, `dc:creator`,
+`dc:subject`, `cp:keywords`, `cp:category` from the revised input when
+the regenerated part lacks them, leave the timestamps alone, and say so
+in the report. Same argument as the customXml default: "three mechanical
+edits and no judgment" belongs here, not in a paper's script directory.
+
+Minimum acceptable fix if the carry is judged too clever: make
+`compare_collateral` compare the CONTENT of a regenerated `core.xml`
+against the input's and warn per lost property. A warning would have
+caught this on 2026-08-11.
+
+Per-paper workaround to delete when fixed: LI7's
+`revision/scripts/qa_metadata.py` (asserts `dc:title` + the part list
+against `prev.docx`, and is wired into its `paper.toml` `[verify]`) and
+`revision/scripts/apply_title.py` (re-sets the title, and rebuilds the
+part, its content-type override and its package relationship because it
+has had to).
+
+**Fixed.** `hygiene.carry_properties(parts, source)`, the field-level
+carry this entry asked for, called by `tracked.build` between
+`restore_parts` and `compare_collateral`. It copies `dc:title`,
+`dc:subject`, `dc:creator`, `cp:keywords`, `dc:description` and
+`cp:category` from the revised input wherever the regenerated part lacks
+them, and never `cp:lastModifiedBy`, `cp:revision`, `dcterms:created` or
+`dcterms:modified` — those belong to the file being written, which is why
+this is field by field and not `restore_parts`. A value already present
+is left alone: a rescue, not a sync. When Compare dropped the part
+outright — Flat OPC always does — the part, its content-type Override and
+a package relationship on a FREE rId are rebuilt, which is the whole of
+LI7's `apply_title.py` minus the paper's own title string.
+
+The "minimum acceptable fix" landed as well, for what a carry cannot
+reach: `compare_collateral` compares the regenerated part's CONTENT and
+says `property LOST: dc:title = 'Loneliness Risk Index'`. A save field is
+not a document property, so `cp:revision` changing is not reported.
+
+Tests that fail without it, in `test_parts_gaps.py`:
+`test_carry_properties_puts_back_what_a_regenerated_core_xml_lost`,
+`test_carry_properties_leaves_the_TIMESTAMPS_to_the_new_file`,
+`test_carry_properties_rebuilds_the_part_word_dropped_entirely`,
+`test_carry_properties_never_overwrites_a_value_that_is_there`,
+`test_carry_properties_on_a_source_with_nothing_to_say_is_a_noop`,
+`test_compare_collateral_reports_a_property_the_part_no_longer_carries`.
+
+**Still open, and the last step of this entry:** LI7's `qa_metadata.py`
+and `apply_title.py`. The title string is the paper's, so `qa_metadata`
+keeps a job; `apply_title`'s part-rebuilding half is now redundant.
 
 ### S1 `Cascade` skips the DEFAULT paragraph style, so a paragraph that names none resolves through docDefaults instead — `a87f201`
 
