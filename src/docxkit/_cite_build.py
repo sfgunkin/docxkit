@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE
@@ -197,10 +198,50 @@ class LinkAllReport:
         return "\n".join(lines)
 
 
+def _named(r: Reference, convention: Callable[[str, str], str] | None,
+           taken: set[str], report: LinkAllReport) -> str:
+    """The paper's name for this entry, or the one this module mints.
+
+    The convention wins where it can, and says so where it cannot:
+    a collision mis-targets a link, and a name over Word's cap is
+    truncated ON SAVE with every hyperlink left pointing at the full
+    name — both silent, both worse than an unconventional name.
+    """
+    if convention is None:
+        return _mint_name(r, taken)
+    proposed = convention(r.surname, r.year)
+    if len(proposed) > _NAME_BUDGET:
+        report.skipped.append(
+            f"{proposed!r} is {len(proposed)} characters and its in-text "
+            f"twin {proposed}txt would pass Word's {WORD_BOOKMARK_LIMIT}-"
+            f"character cap, which Word applies ON SAVE without retargeting "
+            f"the links — minted instead")
+    elif proposed in taken or proposed + "txt" in taken:
+        report.skipped.append(
+            f"{proposed!r} is already taken by another anchor — minted "
+            f"instead, because a collision mis-targets a link")
+    else:
+        return proposed
+    return _mint_name(r, taken)
+
+
+def _wanted(only: Collection[str] | None, entries: list[Reference],
+            names: dict[str, str]) -> set[str] | None:
+    """The keys `only` selects — by key, surname or bookmark name."""
+    if only is None:
+        return None
+    asked = {str(o).casefold() for o in only}
+    return {r.key for r in entries
+            if {r.key.casefold(), r.surname.casefold(),
+                names[r.key].casefold()} & asked}
+
+
 def link_all(parts: dict[str, bytes], *,
              aliases: dict[str, str] | None = None,
              heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
              ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+             naming: Callable[[str, str], str] | None = None,
+             only: Collection[str] | None = None,
              ) -> LinkAllReport:
     """Build the bidirectional citation-link apparatus document-wide.
 
@@ -217,6 +258,24 @@ def link_all(parts: dict[str, bytes], *,
     Anchors that cannot be resolved safely (a citation repeated inside
     one paragraph, an unfindable head) are REPORTED and skipped, never
     guessed at. Exhibits are :func:`docxkit.crossrefs.link`'s job.
+
+    `naming` is the paper's own CONVENTION: ``(surname, year) ->
+    bookmark name``. The names minted here are this module's —
+    ``UnitedNations2024``, ``Schunemann2017_2`` — and a manuscript that
+    already wires 79 pairs as ``Kanbur2007`` / ``Kanbur2007txt`` had no
+    way to say so, so its six new citations were hand-wired instead
+    (LI7, 2026-08-15). An entry's OWN key-shaped bookmark still wins
+    over both: an existing anchor is never renamed. A convention that
+    collides with a name already taken, or that Word's 40-character cap
+    would truncate, falls back to the minted form and SAYS so — a
+    truncated bookmark orphans every link pointing at it, silently.
+
+    `only` scopes the pass to named works: keys (``kanbur_2007``),
+    surnames, or bookmark names. Everything else is left exactly as
+    found, which is what a repair of six citations needs — the same
+    builder took one paper's audit from 26 findings to 56 when it was
+    turned loose on the whole document. The reference block is still
+    read whole, because that is what tells prose from entries.
     """
     doc = parts[DOCUMENT].decode("utf-8")
     foot = parts.get(FOOTNOTES, b"").decode("utf-8")
@@ -240,17 +299,22 @@ def link_all(parts: dict[str, bytes], *,
     gaps = {i: doc[(paras[i - 1].end() if i else 0):m.start()]
             for i, m in enumerate(paras)}
 
-    # Names: reuse an entry's own key-shaped bookmark; mint otherwise.
+    # Names: reuse an entry's own key-shaped bookmark; then the paper's
+    # convention if it states one; mint otherwise.
     names: dict[str, str] = {}
     answers: dict[str, str] = {}
     by_key = {r.key: r for r in entries}
     for r in entries:
         own = _own_bookmark(paras[r.index].group(0), r, gaps[r.index])
-        name = own or _mint_name(r, taken)
-        taken.add(name)
-        names[r.key] = name
+        names[r.key] = own or _named(r, naming, taken, report)
+        taken.add(names[r.key])
         for k in _entry_keys(r):
             answers.setdefault(k, r.key)
+
+    # The whole reference block is read either way: `only` decides what
+    # is WRITTEN, not what is understood, and the block's bounds below
+    # are what tell an entry from a sentence.
+    wanted = _wanted(only, entries, names)
 
     # First mentions: body prose (outside the reference block), then
     # footnotes. Planned per paragraph, applied bottom-up so earlier
@@ -278,6 +342,8 @@ def link_all(parts: dict[str, bytes], *,
                     continue
                 if key in claimed:
                     continue
+                if wanted is not None and key not in wanted:
+                    continue
                 claimed.add(key)
                 name = names[key]
                 if name in linked_anchors:
@@ -297,7 +363,8 @@ def link_all(parts: dict[str, bytes], *,
     bids = iter(range(bid, bid + 4096))
 
     def rebuild(i: int, para: str, where: str) -> str:
-        if (r := by_entry.get(i)) is not None and where == "¶":
+        if (r := by_entry.get(i)) is not None and where == "¶" \
+                and (wanted is None or r.key in wanted):
             name = names[r.key]
             # the gap counts too: a marker Word hoisted out of this
             # paragraph is still this entry's marker, and adding a second

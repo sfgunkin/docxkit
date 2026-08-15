@@ -28,7 +28,14 @@ from __future__ import annotations
 
 import re
 
-from ._xml import escape, visible_text
+from ._xml import (
+    HYPERLINK_ANY_RE,
+    RUN_RE,
+    escape,
+    field_spans,
+    own_properties,
+    visible_text,
+)
 from .errors import AnchorError
 from .find import para_slice
 
@@ -38,11 +45,17 @@ __all__ = [
     "insert_after",
     "insert_before",
     "para",
+    "prose_props",
     "row",
     "run",
     "table",
     "visible_text",
 ]
+
+#: The character style Word puts on a link label. A run carrying
+#: it is a label even where no `w:hyperlink` element encloses it,
+#: which is the field form.
+_HYPERLINK_STYLE = 'w:val="Hyperlink"'
 
 #: A plain bordered table. Papers that want their own look pass `tblpr`.
 DEFAULT_TBLPR = (
@@ -190,3 +203,34 @@ def insert_before(xml: str, sig: str, content: str, *,
     """Insert `content` immediately before the paragraph containing `sig`."""
     start, _ = para_slice(xml, sig, normalize=normalize)
     return xml[:start] + content + xml[start:]
+
+
+def prose_props(para_xml: str) -> tuple[str, str]:
+    """``(pPr, rPr)`` to clone from a paragraph — from its PROSE runs.
+
+    The obvious version lifts the FIRST ``w:rPr`` in the paragraph, and
+    a paragraph that opens on a citation is ordinary: its first run
+    properties belong to the LINK. The new paragraph then renders blue
+    and underlined, linking nowhere, and no text-layer check can see it
+    — the words are right, the style is a lie (LI7, 2026-08-15).
+
+    So runs inside a ``w:hyperlink`` element, runs inside a fldChar
+    field, and runs carrying the ``Hyperlink`` character style are all
+    skipped. A paragraph whose runs are ALL link labels answers with an
+    empty ``rPr`` rather than a link's, because no properties at all is
+    a template a caller can see through, and a link's are not.
+    """
+    ppr = own_properties(para_xml, "pPr")
+    masked = para_xml
+    for lo, hi in [(m.start(), m.end())
+                   for m in HYPERLINK_ANY_RE.finditer(para_xml)] + \
+                  [(lo, hi) for lo, hi, _ in field_spans(para_xml)]:
+        masked = masked[:lo] + " " * (hi - lo) + masked[hi:]
+    for run_match in RUN_RE.finditer(masked):
+        run_xml = para_xml[run_match.start():run_match.end()]
+        if _HYPERLINK_STYLE in run_xml:
+            continue
+        own = own_properties(run_xml, "rPr")
+        return (ppr[2] if ppr else "",
+                f"<w:rPr>{own[2]}</w:rPr>" if own else "")
+    return (ppr[2] if ppr else ""), ""

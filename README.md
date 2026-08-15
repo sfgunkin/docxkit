@@ -41,9 +41,9 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
 | `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk |
 | `edit` | anchor-asserting replace, run-aware replace and INSERT, span italics, `xml:space` repair |
-| `body` | build new content: paragraphs, grouped-header tables, guarded insertion |
+| `body` | build new content: paragraphs, grouped-header tables, guarded insertion; `prose_props` clones a paragraph's style without a link's |
 | `revisions` | read tracked changes; accept/reject, wholesale or by predicate (`by_author`, `whitespace_only`) |
-| `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved |
+| `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved; `house` sets the paper's style in one call |
 | `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints, run `face` |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
@@ -54,7 +54,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `citations` | the grammar, the link audit, and `link_all` — build the whole citation<->entry apparatus document-wide |
 | `refstyle` | reference/citation FORMAT audit against the house author-date style (initials, "(2020).", en-dashes, order, cited↔listed); `HOUSE` and `CHICAGO` presets |
 | `crossrefs` | bidirectional figure/table links, the bookmark convention |
-| `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass |
+| `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass; and footnote ids back into reference order |
 | `wordcount` | words per bucket (prose/tables/captions/footnotes/references/appendix) for journal caps |
 | `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes |
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
@@ -76,7 +76,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 ```
 docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json report.json]
 docxkit citations PAPER.docx
-docxkit link PAPER.docx [--write] [--alias "WHO=World Health Organization"]
+docxkit link PAPER.docx [--write] [--only NAME,...] [--alias "WHO=WHO"]
 docxkit linkfix PAPER.docx                 # audit findings -> proposed repair plan
 docxkit refstyle PAPER.docx [--chicago] [--json R.json]
 docxkit inspect PAPER.docx [--comments] [--revisions]

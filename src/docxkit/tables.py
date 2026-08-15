@@ -52,6 +52,7 @@ from ._table_layout import _SPAN_RE as _SPAN_RE
 from ._table_layout import BooktabsPlan as BooktabsPlan
 from ._table_layout import ColumnFit as ColumnFit
 from ._table_layout import FitReport as FitReport
+from ._table_layout import HouseReport as HouseReport
 from ._table_layout import _bump as _bump
 from ._table_layout import _const as _const
 from ._table_layout import _round_to as _round_to
@@ -59,6 +60,9 @@ from ._table_layout import booktabs as booktabs
 from ._table_layout import bottom_border as bottom_border
 from ._table_layout import drop_blank_rows as drop_blank_rows
 from ._table_layout import fit_columns as fit_columns
+from ._table_layout import house as house
+from ._table_layout import house_ppr as house_ppr
+from ._table_layout import house_rpr as house_rpr
 from ._table_layout import plan_booktabs as plan_booktabs
 from ._table_layout import superscript_stars as superscript_stars
 
@@ -67,6 +71,7 @@ __all__ = [
     "CellChange",
     "ColumnFit",
     "FitReport",
+    "HouseReport",
     "Table",
     "booktabs",
     "bottom_border",
@@ -74,6 +79,9 @@ __all__ = [
     "drop_blank_rows",
     "find",
     "fit_columns",
+    "house",
+    "house_ppr",
+    "house_rpr",
     "parse_number",
     "plan_booktabs",
     "read_all",

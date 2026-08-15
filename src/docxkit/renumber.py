@@ -27,14 +27,23 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from itertools import pairwise
 
-from ._xml import DOCUMENT, RUN_RE, set_run_text, text_parts, visible_text
+from ._xml import (
+    DOCUMENT,
+    FOOTNOTES,
+    RUN_RE,
+    set_run_text,
+    text_parts,
+    visible_text,
+)
 from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
 
-__all__ = ["ShiftReport", "audit", "audit_parts", "numbers_in_order",
-           "remap", "remap_parts", "shift"]
+__all__ = ["ShiftReport", "audit", "audit_parts", "footnote_audit",
+           "footnote_order", "footnotes", "numbers_in_order", "remap",
+           "remap_parts", "shift"]
 
 # a mention number engaged in a range or list — the continuation the
 # labelled match must not have after it
@@ -381,3 +390,132 @@ def remap(xml: str, label: str, mapping: dict[int, int], *,
         raise AnchorError("remap: empty mapping")
     _check_permutation(mapping, xml, label, prefix)
     return _apply(xml, label, prefix, lambda n: mapping.get(n, n))
+
+
+# ------------------------------------------------- footnote ids ----------
+#
+# A different namespace with the same problem, and nothing addressed it.
+# A footnote's DISPLAYED number comes from where its reference sits, so
+# Word does not care what the `w:id` is and neither does any gate here:
+# restore a note the author deleted and it takes the next FREE id while
+# its reference sits fifteenth, and the paper still reads correctly.
+#
+# What cares is anything that ADDRESSES a footnote by id. LI7's
+# acceptance suite does, re-keyed to baseline numbering, so an id out of
+# reference order silently shifted what `acc_fn["16"]` returned and two
+# criteria began failing on footnotes nobody had touched (2026-08-15).
+# The content was never wrong; the index into it was. Restoring the
+# invariant is the fix rather than loosening the test: ids following
+# reference order is what every other note in that manuscript does, what
+# its submitted baseline does, and what Word produces unaided.
+
+_FN_REF_RE = re.compile(r'(<w:footnoteReference\b[^>]*?w:id=")(-?\d+)(")')
+_FN_NOTE_RE = re.compile(r'(<w:footnote\b[^>]*?w:id=")(-?\d+)(")')
+_FN_EL_RE = re.compile(r'<w:footnote\b[^>]*?w:id="(-?\d+)".*?</w:footnote>',
+                       re.DOTALL)
+#: Word's separator and continuation notes. They have no reference, so
+#: they are never renumbered and never sorted into the sequence.
+_RESERVED = {0, -1}
+
+
+def footnote_order(parts: dict[str, bytes]) -> tuple[list[int], list[int]]:
+    """``(ids in REFERENCE order, ids as the notes part STORES them)``.
+
+    The two disagreeing is the defect; both are returned because the
+    report a reader wants names them side by side.
+    """
+    doc = parts.get(DOCUMENT, b"").decode("utf-8", "replace")
+    notes = parts.get(FOOTNOTES, b"").decode("utf-8", "replace")
+    referenced = [int(m.group(2)) for m in _FN_REF_RE.finditer(doc)]
+    stored = [int(m.group(1)) for m in _FN_EL_RE.finditer(notes)
+              if int(m.group(1)) not in _RESERVED]
+    return referenced, stored
+
+
+def footnote_audit(parts: dict[str, bytes]) -> list[str]:
+    """Where the footnote ids and the reference order disagree.
+
+    The check that would have caught it, and cheap enough to run in any
+    gate ladder: a note that exists with no reference, a reference with
+    no note, and ids that do not ascend in reference order.
+    """
+    referenced, stored = footnote_order(parts)
+    out: list[str] = []
+    if not referenced and not stored:
+        return out
+    seen = set(referenced)
+    out += [f"note {i} has no reference in the body"
+            for i in stored if i not in seen]
+    out += [f"reference to footnote {i}, which has no note"
+            for i in referenced if i not in set(stored)]
+    if referenced != sorted(referenced):
+        at = next(n for n, (a, b) in enumerate(pairwise(referenced))
+                  if b < a)
+        out.append(
+            f"footnote ids do not follow reference order: "
+            f"{referenced[max(at - 1, 0):at + 3]} at reference {at + 1} of "
+            f"{len(referenced)} — anything addressing a note BY ID is "
+            f"reading the wrong one")
+    return out
+
+
+def footnotes(parts: dict[str, bytes]) -> dict[int, int]:
+    """Renumber footnote ids into reference order. Returns what moved.
+
+    Mutates `parts`: the references in ``document.xml``, the ids in
+    ``footnotes.xml``, and the ORDER the note elements are stored in —
+    Word does not require the last one, but a note stored out of
+    sequence is what made this hard to see in the first place.
+
+    Structural, and carries no revision: an id is not text, so this
+    ships as a clean edit rather than through a redline.
+
+    The remap goes through a PLACEHOLDER. A direct substitution collides
+    — 19 -> 15 while 15 -> 16 shares the same id space — and the second
+    pass would then rewrite what the first had already moved.
+    """
+    doc = parts.get(DOCUMENT, b"").decode("utf-8", "replace")
+    notes = parts.get(FOOTNOTES, b"").decode("utf-8", "replace")
+    referenced, stored = footnote_order(parts)
+    if not referenced:
+        return {}
+    missing = sorted(set(referenced) - set(stored))
+    if missing:
+        raise AnchorError(
+            f"footnotes: reference(s) to {missing}, which no note defines "
+            f"— renumbering would point them somewhere else again")
+    mapping = {old: new for new, old in enumerate(referenced, start=1)}
+    moved = {old: new for old, new in mapping.items() if old != new}
+    if not moved:
+        return {}
+
+    def remap_ids(xml: str, pattern: re.Pattern[str]) -> str:
+        xml = pattern.sub(
+            lambda m: (m.group(1) + f"@{mapping[int(m.group(2))]}@"
+                       + m.group(3)) if int(m.group(2)) in mapping
+            else m.group(0), xml)
+        return re.sub(r'"@(-?\d+)@"', r'"\1"', xml)
+
+    doc = remap_ids(doc, _FN_REF_RE)
+    notes = remap_ids(notes, _FN_NOTE_RE)
+
+    elements = list(_FN_EL_RE.finditer(notes))
+    if elements:
+        reserved = [m.group(0) for m in elements
+                    if int(m.group(1)) in _RESERVED]
+        real = sorted((m for m in elements
+                       if int(m.group(1)) not in _RESERVED),
+                      key=lambda m: int(m.group(1)))
+        head = notes[:elements[0].start()]
+        tail = notes[elements[-1].end():]
+        notes = (head + "".join(reserved)
+                 + "".join(m.group(0) for m in real) + tail)
+
+    parts[DOCUMENT] = doc.encode("utf-8")
+    parts[FOOTNOTES] = notes.encode("utf-8")
+    after, stored_after = footnote_order(parts)
+    if after != sorted(after) or stored_after != after:
+        raise AnchorError(
+            f"footnotes: renumbering did not settle — references "
+            f"{after}, notes {stored_after}")
+    return moved

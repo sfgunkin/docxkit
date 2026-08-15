@@ -185,7 +185,11 @@ def cmd_link(args: argparse.Namespace) -> int:
     """
     from .citations import link_all
     parts = _package(args.docx)
-    report = link_all(parts, aliases=_aliases(args))
+    # --only scopes a REPAIR. Turned loose on a whole manuscript this
+    # builder took one paper's audit from 26 findings to 56, so "wire
+    # these six" has to be sayable.
+    only = [t.strip() for t in (args.only or "").split(",") if t.strip()]
+    report = link_all(parts, aliases=_aliases(args), only=only or None)
     print(report.format())
     if not args.write:
         print("(dry run — nothing written; pass --write to apply)")
@@ -1083,6 +1087,10 @@ def main() -> None:
     p.add_argument("--write", action="store_true")
     p.add_argument("--alias", action="append", metavar="CITED=FILED",
                    help='e.g. --alias "WHO=World Health Organization"')
+    p.add_argument("--only", metavar="NAME,...", default="",
+                   help="wire these works only — key, surname or bookmark "
+                        "name. A repair is usually six citations, not a "
+                        "document")
     p.set_defaults(fn=cmd_link)
 
     p = sub.add_parser(

@@ -207,3 +207,60 @@ def test_a_deliberately_borderless_table_is_allowed():
 
 def test_the_default_template_is_styled():
     assert "<w:tblStyle" in table(["A"], [["1"]])
+
+
+# ------------------------------------------- properties worth cloning ----
+
+def test_prose_props_skips_a_LINK_LABELS_properties():
+    """The obvious version lifts the FIRST w:rPr in the paragraph, and a
+    paragraph that opens on a citation is ordinary: its first run
+    properties belong to the link, so the new paragraph renders blue and
+    underlined, linking nowhere, with every text check passing."""
+    from docxkit.body import prose_props
+
+    p = ('<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>'
+         '<w:hyperlink w:anchor="ref_B2020"><w:r><w:rPr>'
+         '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>Bhalotra (2020)</w:t>'
+         "</w:r></w:hyperlink>"
+         '<w:r><w:rPr><w:i/></w:rPr><w:t> shows that</w:t></w:r></w:p>')
+
+    ppr, rpr = prose_props(p)
+    assert '<w:spacing w:after="120"/>' in ppr
+    assert rpr == "<w:rPr><w:i/></w:rPr>", rpr
+    assert "Hyperlink" not in rpr
+
+
+def test_prose_props_skips_a_FIELD_form_label_too():
+    from docxkit.body import prose_props
+
+    p = ("<w:p>"
+         '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+         r'<w:r><w:instrText xml:space="preserve"> HYPERLINK \l "x" '
+         "</w:instrText></w:r>"
+         '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+         '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+         "<w:t>Smith (2019)</w:t></w:r>"
+         '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+         '<w:r><w:rPr><w:b/></w:rPr><w:t> argues</w:t></w:r></w:p>')
+
+    assert prose_props(p)[1] == "<w:rPr><w:b/></w:rPr>"
+
+
+def test_a_paragraph_that_is_ALL_link_answers_with_no_rPr():
+    """No properties at all is a template a caller can see through; a
+    link's are not."""
+    from docxkit.body import prose_props
+
+    p = ('<w:p><w:hyperlink w:anchor="a"><w:r><w:rPr>'
+         '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>only</w:t></w:r>'
+         "</w:hyperlink></w:p>")
+    assert prose_props(p) == ("", "")
+
+
+def test_prose_props_on_an_ordinary_paragraph():
+    from docxkit.body import prose_props
+
+    p = ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+         '<w:r><w:rPr><w:b/></w:rPr><w:t>Table A4</w:t></w:r></w:p>')
+    assert prose_props(p) == ('<w:jc w:val="center"/>',
+                              "<w:rPr><w:b/></w:rPr>")

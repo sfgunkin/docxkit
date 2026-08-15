@@ -18,6 +18,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from typing import NamedTuple
 
 from ._table_core import (
@@ -34,6 +35,7 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     T_PARTS_RE,
+    escape_attr,
     live_properties,
     matching_close,
     own_properties,
@@ -1140,3 +1142,216 @@ def _group_columns(cells: list[_Span]) -> set[int]:
         if span and int(span.group(1)) > 1 and _cell_text(tc.group(0)):
             out.add(j)
     return out
+
+
+# --------------------------------------------------------- house style ---
+#
+# `booktabs` sets the RULES and stops there. Everything else the house
+# style specifies had no home in the toolkit and was re-derived per
+# paper: the face at run level AND in each cell's paragraph default so
+# an EMPTY cell inherits it, full width with autofit, `cantSplit` on
+# every row, `keepNext` on the caption.
+#
+# What that cost, on LI7 2026-08-15: a new appendix table was built with
+# `body.table`'s defaults — whose `tblStyle` is `TableGrid`, a full box
+# grid, the exact opposite of the three-line house style — and its
+# caption's properties were cloned from the nearest existing table.
+# That paper has two generations of table in it, and the nearest one was
+# the OLD generation, so "match the neighbouring table" propagated the
+# wrong style. Matching a CAPTION turned out not to match a TABLE at
+# all. The author caught it by eye.
+
+#: Word stores a point size doubled, and the complex-script mirror has
+#: to move with it or a run reads at two sizes in one cell.
+_HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
+_TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
+_TBLPR_RE = re.compile(r"<w:tblPr\b[^>]*(?<!/)>.*?</w:tblPr>", re.DOTALL)
+_TCPR_END_RE = re.compile(r"</w:tcPr>")
+
+
+@dataclass
+class HouseReport:
+    """What :func:`house` set."""
+
+    runs: int = 0            # cell runs given the face
+    paragraphs: int = 0      # cell paragraph defaults given it too
+    rows: int = 0            # rows given cantSplit
+    width: bool = False      # tblW/tblLayout written
+    caption: bool = False    # keepNext added
+
+    def format(self) -> str:
+        return (f"house style: {self.runs} run(s) and {self.paragraphs} "
+                f"cell paragraph(s) set, {self.rows} row(s) cantSplit"
+                + (", full width" if self.width else "")
+                + (", caption kept with the table" if self.caption else ""))
+
+
+def house_rpr(font: str, size: float, *, bold: bool = False) -> str:
+    """The house run properties: face on all four attributes, both sizes.
+
+    `w:cs` and `w:eastAsia` are not decoration. A cell holding a
+    non-Latin character or a complex script falls back to a different
+    face for exactly that character otherwise, which reads as a stray
+    glyph in one cell of an otherwise uniform table.
+    """
+    fonts = " ".join(f'{a}="{escape_attr(font)}"' for a in _HOUSE_FONT_ATTRS)
+    half = round(size * 2)
+    return (f"<w:rPr>{'<w:b/>' if bold else ''}<w:rFonts {fonts}/>"
+            f'<w:sz w:val="{half}"/><w:szCs w:val="{half}"/></w:rPr>')
+
+
+def house_ppr(font: str, size: float) -> str:
+    """A cell paragraph's default: no spacing, single line, the face.
+
+    The face belongs HERE as well as on the runs, because an empty cell
+    has no run to carry it and would otherwise sit at the document
+    default — visible as soon as a column has a gap in it.
+    """
+    return ('<w:pPr><w:spacing w:after="0" w:line="240" '
+            f'w:lineRule="auto"/>{house_rpr(font, size)}</w:pPr>')
+
+
+def house(xml: str, table: Table, *, font: str = "Arial Narrow",
+          size: float = 10, header_bold: bool = True,
+          width: bool = True, caption: str | None = None,
+          ) -> tuple[str, HouseReport]:
+    """Set `table` in the house style: face, width, unbreakable rows.
+
+    Composes with :func:`booktabs`, which draws the rules — run this
+    first, re-read the table, then rule it. Neither touches the other's
+    settings.
+
+    `caption` is the caption paragraph's text (or a unique part of it):
+    it gets ``keepNext``, so the caption never sits alone at the foot of
+    the page before its table. Omitted, the caption is left alone.
+
+    A row may carry only ONE ``w:trPr``, and `body.table` already gives
+    the header row one for ``tblHeader`` — a second is invalid and
+    `lint` reports it, so `cantSplit` MERGES into an existing element
+    and creates one only where there is none.
+
+    Refuses a table carrying tracked changes, like every other mutator
+    here: style the clean build and rebuild the redline from it.
+    """
+    _fresh(xml, table, "house")
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes — style the "
+            f"clean build and rebuild the redline from it")
+    report = HouseReport()
+    cell_ppr = house_ppr(font, size)
+    head_rpr = house_rpr(font, size, bold=True)
+    cell_rpr = house_rpr(font, size)
+
+    edits: list[tuple[int, int, str]] = []
+    for i, tr in enumerate(rows_of(body)):
+        row = tr.group(0)
+        rpr = head_rpr if (i == 0 and header_bold) else cell_rpr
+        new_row = row
+        for tc in reversed(cells_of(row)):
+            cell, runs, paras = _house_cell(tc.group(0), rpr, cell_ppr)
+            report.runs += runs
+            report.paragraphs += paras
+            new_row = new_row[:tc.start()] + cell + new_row[tc.end():]
+        if "<w:cantSplit/>" not in new_row:
+            if (m := _TRPR_RE.search(new_row)) is not None:
+                new_row = (new_row[:m.end()] + "<w:cantSplit/>"
+                           + new_row[m.end():])
+            else:
+                at = new_row.index(">") + 1
+                new_row = (new_row[:at] + "<w:trPr><w:cantSplit/></w:trPr>"
+                           + new_row[at:])
+            report.rows += 1
+        if new_row != row:
+            edits.append((tr.start(), tr.end(), new_row))
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+
+    if width:
+        body, report.width = _house_width(body)
+    out = xml[:table.start] + body + xml[table.end:]
+    if caption is not None:
+        out, report.caption = _keep_with_table(out, caption)
+    return out, report
+
+
+def _set_properties(element: str, tag: str, wanted: str) -> tuple[str, bool]:
+    """Give `element` exactly `wanted` as its own ``w:tag``. Idempotent.
+
+    `own_properties` answers with the INNER text and a span covering the
+    whole element, so the comparison and the write read different halves
+    of it — comparing against the wrapped form never matches, and this
+    would report every run as changed on every run of the pass.
+    """
+    inner = wanted[wanted.index(">") + 1:wanted.rindex("</")]
+    existing = own_properties(element, tag)
+    if existing is not None:
+        if existing[2] == inner:
+            return element, False
+        return element[:existing[0]] + wanted + element[existing[1]:], True
+    at = element.index(">") + 1
+    return element[:at] + wanted + element[at:], True
+
+
+def _house_cell(tc: str, rpr: str, ppr: str) -> tuple[str, int, int]:
+    """One cell's runs and paragraph defaults, set to the house face."""
+    runs = paragraphs = 0
+    out = tc
+    for para in reversed(list(PARA_RE.finditer(tc))):
+        new = para.group(0)
+        for run in reversed(list(RUN_RE.finditer(new))):
+            body, changed = _set_properties(run.group(0), "rPr", rpr)
+            runs += changed
+            new = new[:run.start()] + body + new[run.end():]
+        new, changed = _set_properties(new, "pPr", ppr)
+        paragraphs += changed
+        out = out[:para.start()] + new + out[para.end():]
+    return out, runs, paragraphs
+
+
+#: Full width, laid out from the content rather than from fixed column
+#: widths — `fit_columns` is the deliberate opposite, and a paper that
+#: wants measured widths runs it AFTER this.
+_HOUSE_WIDTH = ('<w:tblW w:w="5000" w:type="pct"/>'
+                '<w:tblLayout w:type="autofit"/>')
+
+
+def _house_width(body: str) -> tuple[str, bool]:
+    m = _TBLPR_RE.search(body)
+    if m is None:
+        # A table with no properties element at all is ordinary in a
+        # hand-built fragment, and it still has to end up full width.
+        at = body.index(">") + 1
+        return (body[:at] + f"<w:tblPr>{_HOUSE_WIDTH}</w:tblPr>"
+                + body[at:]), True
+    props = m.group(0)
+    if '<w:tblW w:w="5000" w:type="pct"/>' in props \
+            and '<w:tblLayout w:type="autofit"/>' in props:
+        return body, False
+    props = _TBLW_RE.sub("", props)
+    props = _TBLLAYOUT_RE.sub("", props)
+    at = props.index(">") + 1
+    props = props[:at] + _HOUSE_WIDTH + props[at:]
+    return body[:m.start()] + props + body[m.end():], True
+
+
+def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
+    """`keepNext` on the caption paragraph, so it travels with its table."""
+    hits = [m for m in PARA_RE.finditer(xml)
+            if caption in visible_text(m.group(0))]
+    if len(hits) != 1:
+        raise AnchorError(
+            f"house: caption {caption[:40]!r} matched {len(hits)} "
+            f"paragraphs, need exactly 1")
+    para = hits[0].group(0)
+    if "<w:keepNext/>" in para:
+        return xml, False
+    existing = own_properties(para, "pPr")
+    if existing is None:
+        at = para.index(">") + 1
+        new = para[:at] + "<w:pPr><w:keepNext/></w:pPr>" + para[at:]
+    else:
+        at = existing[0] + existing[2].index(">") + 1
+        new = para[:at] + "<w:keepNext/>" + para[at:]
+    return xml[:hits[0].start()] + new + xml[hits[0].end():], True
