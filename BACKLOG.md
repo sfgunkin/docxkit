@@ -72,15 +72,54 @@ terminated run leaving its mutation in the tree, which produced a
 1383/1385 "kill rate" on a red baseline; and the same termination
 leaving null-outcome rows that make the session unresumable.
 
-### S2 half the mutations to `_cite_build.py` survive
+### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
-Same session, same method: 996 mutants, 505 killed, **491 survived --
-49.3 %**, against `test_citations` + `test_link_convention`, which cover
-84 % of the module. Recorded rather than diagnosed -- the run that
-produced it has been deleted, so the survivor list needs regenerating
-(about five chunks) before anything can be said about WHICH paths are
-unpinned. The headline is enough to know it is worse than `edit.py` and
-much worse than `revisions.py`.
+Regenerated 2026-08-15 after the first run's database was deleted; the
+two runs agree (49.3 % raw then, 49.0 % now).
+
+    996 mutants, 508 killed, 488 survived          raw 49.0 %
+    134 on signature/docstring rows                un-killable
+    REAL survival 354 / 862                        41.1 %
+
+`edit.py` is 17.3 % and `revisions.py` 7.3 % on the same treatment, so
+this is the least-pinned module measured. What makes it worth its own
+entry is that the survivors split almost evenly into two DIFFERENT
+problems, and they want different fixes:
+
+| | survivors | by function |
+|---|---|---|
+| **never executed** — a coverage gap | 169 (48 %) | `link_all` 44, `rewrite` 41, `_dedup_name` 18, `rebuild` 17, `unlink_by_anchor` 15 |
+| **executed, nothing asserts** — an assertion gap | 185 (52 %) | `rewrite` 41, `_entry_keys` 38, `scan` 38, `rebuild` 29 |
+
+The harness is `test_citations` + `test_link_convention`, 84 % of the
+module by line. The uncovered 16 % is where the first column lives:
+the FOOTNOTE citation path (`fn_plan`, the `foot[m.end():]` splice),
+the back-link undo when a wrapped mention never appeared, and
+`unlink_by_anchor`'s error paths. A mutation there survives because the
+line never runs — an arithmetic operator swapped into a string
+concatenation would raise `TypeError` if anything reached it.
+
+The second column is the same class as the `edit.py` entry above:
+`_entry_keys` builds the multi-word surname keys an entry can be found
+by, and `scan` decides which mention is the FIRST one; both run on every
+test and neither is asserted at the value level, so an off-by-one in a
+slice bound is invisible. `NumberReplacer` is again the dominant
+operator (78).
+
+**Suggested shape**, in the order that buys most:
+
+1. a footnote-citation case in `test_citations` — one work cited only
+   in a footnote, one cited in both prose and a footnote. That reaches
+   most of the never-executed column, and it is the path LI7 uses;
+2. value assertions on `_entry_keys` (given "van der Berg, A. and
+   B. Smith (2019)", exactly which keys?) and on `scan`'s choice of
+   first mention when a work appears three times;
+3. `unlink_by_anchor`'s refusals, which currently have no test at all.
+
+**Reproducing it:** `scratchpad/chunk.sh` in the session that produced
+this, or the three hazards recorded in `REVIEW_2026-08-15.md` if the
+harness is rebuilt from scratch. The numbers are only comparable against
+the same test set, so quote the coverage beside any future figure.
 
 ---
 
