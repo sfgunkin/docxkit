@@ -842,10 +842,7 @@ def losses(working: dict[str, bytes],
     was, now = _links(prev), _links(working)
     out += [Loss("link", f"{anchor} ({label[:40]})")
             for anchor, label in sorted((was - now).elements())]
-    for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
-        before = Counter(f.text for f in _notes(prev, part, kind))
-        after = Counter(f.text for f in _notes(working, part, kind))
-        out += [Loss(kind, text) for text in sorted(before - after)]
+    out += _lost_notes(working, prev)
     out += [Loss("bookmark", name)
             for name in sorted(_bookmarks(prev) - _bookmarks(working))]
     lost_comments = (tracked.package_counts(prev)["comments"]
@@ -865,6 +862,48 @@ def _notes(parts: dict[str, bytes], part: str, kind: str) -> list[Any]:
             if f.text]
 
 
+def _lost_notes(working: dict[str, bytes],
+                prev: dict[str, bytes]) -> list[Loss]:
+    """Notes the hand-back no longer HAS — never merely reworded ones.
+
+    The first version compared note TEXT as a multiset, so editing one
+    character inside a footnote read as the old note having vanished.
+    LI7 hit it the same day (2026-08-15) and it BLOCKED the paper: gate
+    D4 split a section, footnote 13's "throughout Sections 4-6" became
+    "4-7", and `baseline` refused to record a manuscript that had lost
+    nothing. Text is the right identity for a link LABEL and the wrong
+    one for a note, because a note is prose an author edits.
+
+    So the decision is made on the REFERENCE: a note whose marker is
+    still in the body has not been lost, however much its wording
+    changed. Counting rather than matching ids, because Word renumbers
+    ids on save — that is the whole reason the ids cannot be trusted
+    here (see :func:`docxkit.renumber.footnotes`).
+
+    The text is still used, but only to SAY which note went: a
+    description for the reader, never the test.
+    """
+    out: list[Loss] = []
+    for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
+        was = _notes(prev, part, kind)
+        now = _notes(working, part, kind)
+        gone = len(was) - len(now)
+        if gone <= 0:
+            continue
+        # which ones, best effort: the notes whose text no longer
+        # appears anywhere. A reworded note matches nothing either, so
+        # take only as many as the COUNT says are really missing, and
+        # say plainly when we cannot name them.
+        texts = Counter(f.text for f in now)
+        missing = [f.text for f in was if not texts[f.text]]
+        named = sorted(missing)[:gone]
+        out += [Loss(kind, text) for text in named]
+        if len(named) < gone:
+            out.append(Loss(kind, f"{gone - len(named)} more, unnamed — "
+                                  f"{len(was)} {kind}s before, {len(now)} now"))
+    return out
+
+
 def _unmet(accepted: tuple[str, ...], found: list[Loss]) -> list[str]:
     """Declared losses that did NOT happen.
 
@@ -872,9 +911,26 @@ def _unmet(accepted: tuple[str, ...], found: list[Loss]) -> list[str]:
     gate that reads as a switched-on one, and the next real loss goes
     through it silently. So naming something that is still present is
     itself a refusal.
+
+    Matched by PREFIX, in both directions, because the refusal prints a
+    truncated description and a reader copies what they were shown. A
+    hatch that will not accept the message's own words is not a hatch —
+    LI7 tried all three documented forms of the same footnote and every
+    one came back "has NOT lost" while the refusal insisted it had
+    (2026-08-15).
     """
-    keys = {loss.key for loss in found} | {loss.what for loss in found}
-    return [token for token in accepted if token not in keys]
+    return [token for token in accepted
+            if not any(_names(token, loss) for loss in found)]
+
+
+def _names(token: str, loss: Loss) -> bool:
+    """Does `token` identify `loss`? Prefixes count, either way round."""
+    token = token.strip()
+    for candidate in (loss.key, loss.what, f"{loss.kind}:{loss.what}"):
+        if token == candidate or candidate.startswith(token) \
+                or token.startswith(candidate):
+            return True
+    return False
 
 
 def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
@@ -1203,10 +1259,15 @@ def baseline(paper: Paper, *, force: bool = False,
                 f"did not happen is an exemption with nothing under it, "
                 f"and it would pass the next real one through in silence.")
         unacknowledged = [loss for loss in gone
-                          if loss.key not in accept_loss
-                          and loss.what not in accept_loss]
+                          if not any(_names(token, loss)
+                                     for token in accept_loss)]
         if unacknowledged:
-            listed = "\n  - ".join(str(loss) for loss in unacknowledged)
+            # Print the token that WORKS, not a description of it. The
+            # first version printed a 70-character truncation and the
+            # hatch then rejected the words it had just shown.
+            listed = "\n  - ".join(
+                f"{loss}\n      --accept-loss {loss.key[:60]!r}"
+                for loss in unacknowledged)
             raise HandbackLoss(
                 f"{paper.working.name} lost {len(unacknowledged)} thing(s) "
                 f"since {paper.prev.name}, and baselining makes that "
@@ -1215,7 +1276,7 @@ def baseline(paper: Paper, *, force: bool = False,
                 f"\n  - {listed}\n"
                 f"Word does this silently when it collapses a paragraph to "
                 f"make an edit. Put them back, or name the deliberate ones "
-                f"with accept_loss=(...) / --accept-loss.")
+                f"with the flag shown above (a prefix is enough).")
     current = state(paper.working)
     if not current.is_truth and not force:
         where = ", ".join(f"{n} in {p.split('/')[-1]}"

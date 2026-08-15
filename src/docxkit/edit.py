@@ -53,6 +53,9 @@ _ANY_T_RE = re.compile(r"<w:t((?:\s+[^<>]*?)?)>([^<]*)</w:t>")
 _XML_SPACE_RE = re.compile(r"""xml:space\s*=\s*["']preserve["']""")
 _JUNK_SPACE_RE = re.compile(r"""\s+w:space\s*=\s*["']preserve["']""")
 _HYPERLINK_RUN = 'w:val="Hyperlink"'
+#: The regions an insertion must not land inside, as
+#: (spans, is-it-allowed, what a refusal should say).
+_Protected = tuple[tuple[list[tuple[int, int]], bool, str], ...]
 #: A note's MARKER in the body: the element that says "footnote 11 is
 #: anchored here". It carries no visible text at all, which is the whole
 #: problem — a visible-text match spans one with nothing to see. The id
@@ -673,39 +676,58 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
 
     if (inside := next(((i, s) for i, (s, e) in enumerate(spans)
                         if s < at < e), None)) is not None:
-        idx, start = inside
-        run = runs[idx]
-        if not allow_hyperlink and _HYPERLINK_RUN in run.group(0):
-            raise AnchorError(
-                "insert_in_para: the offset falls INSIDE a hyperlink's "
-                "label — splitting it there puts the new content in the "
-                "link, blue and underlined, which no text diff shows. "
-                "Insert on one side of the label, or pass "
-                "allow_hyperlink=True.")
-        for regions, allowed, what in protected:
-            if not allowed and any(lo <= run.start() < hi
-                                   for lo, hi in regions):
-                raise AnchorError(
-                    f"insert_in_para: offset {at} splits a run that is "
-                    f"inside {what}. Insert on one side of it, or pass "
-                    f"the matching allow_ flag.")
-        body = visible_text(run.group(0))
-        return (para_xml[:run.start()]
-                + set_run_text(run.group(0), body[:at - start]) + content
-                + set_run_text(run.group(0), body[at - start:])
-                + para_xml[run.end():])
-
+        return _split_run(para_xml, runs[inside[0]], at - inside[1], content,
+                          protected=protected,
+                          allow_hyperlink=allow_hyperlink, at=at)
     if not runs:
         close = para_xml.rindex("</w:p>")
         return para_xml[:close] + content + para_xml[close:]
-    # The LAST run that starts here, not the first: several can share one
-    # visible offset — a field's `end` marker, a note reference, a
-    # bookmarkEnd all have zero width — and "at offset N" means after
-    # everything that ended there.
+    pos = _between_runs(runs, spans, at, cursor, protected)
+    return para_xml[:pos] + content + para_xml[pos:]
+
+
+def _split_run(para_xml: str, run: re.Match[str], offset: int, content: str,
+               *, protected: _Protected, allow_hyperlink: bool,
+               at: int) -> str:
+    """Rebuild ONE run as two, with `content` between the halves.
+
+    Rebuilt through `set_run_text` rather than spliced: locating the
+    reopening tag by hand with ``rfind("<w:r")`` matches ``<w:rPr`` too,
+    and that spliced a paragraph mid-properties and destroyed an
+    equation label two screens away.
+    """
+    if not allow_hyperlink and _HYPERLINK_RUN in run.group(0):
+        raise AnchorError(
+            "insert_in_para: the offset falls INSIDE a hyperlink's "
+            "label — splitting it there puts the new content in the "
+            "link, blue and underlined, which no text diff shows. "
+            "Insert on one side of the label, or pass "
+            "allow_hyperlink=True.")
+    for regions, allowed, what in protected:
+        if not allowed and any(lo <= run.start() < hi for lo, hi in regions):
+            raise AnchorError(
+                f"insert_in_para: offset {at} splits a run that is inside "
+                f"{what}. Insert on one side of it, or pass the matching "
+                f"allow_ flag.")
+    body = visible_text(run.group(0))
+    return (para_xml[:run.start()]
+            + set_run_text(run.group(0), body[:offset]) + content
+            + set_run_text(run.group(0), body[offset:])
+            + para_xml[run.end():])
+
+
+def _between_runs(runs: list[re.Match[str]], spans: list[tuple[int, int]],
+                  at: int, cursor: int, protected: _Protected) -> int:
+    """The XML offset for a visible position that falls BETWEEN runs.
+
+    The LAST run that starts here, not the first: several can share one
+    visible offset — a field's ``end`` marker, a note reference and a
+    ``bookmarkEnd`` all have zero width — and "at offset N" means after
+    everything that ended there.
+    """
     pos = (runs[-1].end() if at == cursor else
            max(r.start() for r, (s, _) in zip(runs, spans, strict=True)
                if s == at))
-
     for regions, allowed, what in protected:
         if (span := _enclosing(regions, pos)) is None:
             continue
@@ -715,4 +737,4 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
             raise AnchorError(
                 f"insert_in_para: offset {at} falls inside {what}. Insert "
                 f"on one side of it, or pass the matching allow_ flag.")
-    return para_xml[:pos] + content + para_xml[pos:]
+    return pos

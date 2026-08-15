@@ -32,7 +32,7 @@ from conftest import (
     write,
 )
 
-from docxkit import revision
+from docxkit import package, revision
 from docxkit.errors import (
     BaselinePending,
     DocumentLocked,
@@ -1351,3 +1351,81 @@ def test_a_bookmark_the_BUILD_invented_is_not_the_authors_deletion():
     clean = make_parts(para(run("Lari, A. (2023). Title.")))
     built = make_parts(para(minted + run("Lari, A. (2023). Title.")))
     assert revision.restored_bookmarks(baseline, clean, built) == []
+
+
+# ------------------------------------- the gate that could not be passed --
+
+#: LI7 2026-08-15, BLOCKING. Gate D4 split section 6 in two, so footnote
+#: 13's cross-reference "throughout Sections 4-6" became "4-7" — one
+#: character in a 489-character note. The loss check compared note TEXT,
+#: so the old wording had "vanished"; `baseline` refused to record a
+#: manuscript that had lost nothing, and every documented form of
+#: --accept-loss came back "has NOT lost" about the same string. The
+#: refusal path and the exemption path were computing "lost" differently
+#: and between them there was no way through.
+
+_NOTE = ("For interpretability, empirical LII and LBI values throughout "
+         "Sections 4{}6 are reported on the same scale as the headline "
+         "index, so a reader comparing two panels is comparing like with "
+         "like rather than two normalisations of the same quantity.")
+
+
+def _with_note(text: str) -> dict[str, bytes]:
+    return make_parts(para(run("body "), _ref(13)),
+                      footnotes=notes("footnotes", note(text, nid=13)))
+
+
+def _ref(nid: int) -> str:
+    return f'<w:r><w:footnoteReference w:id="{nid}"/></w:r>'
+
+
+def test_an_EDITED_footnote_is_not_a_lost_one(project):
+    """A note is prose an author edits. Its identity is its REFERENCE,
+    which is still in the body — not its text, which is the thing that
+    changed."""
+    write(project.prev, _with_note(_NOTE.format("–6")))
+    write(project.working, _with_note(_NOTE.format("–7")))
+
+    assert revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev)) == []
+    revision.baseline(project)          # the whole point: it goes through
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
+def test_a_note_that_really_went_is_still_caught(project):
+    """The fix must not switch the gate off: fewer notes than before,
+    with a reference gone, is still a loss."""
+    write(project.prev, _with_note(_NOTE.format("–6")))
+    write(project.working, make_parts(para(run("body")),
+                                      footnotes=notes("footnotes")))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+    assert [loss.kind for loss in lost] == ["footnote"]
+    with pytest.raises(HandbackLoss):
+        revision.baseline(project)
+
+
+def test_the_exemption_accepts_the_words_the_refusal_PRINTED(project):
+    """A hatch that will not accept the message's own words is not a
+    hatch. The refusal truncates for readability; the flag must take
+    that truncation."""
+    write(project.prev, _with_note(_NOTE.format("–6")))
+    write(project.working, make_parts(para(run("body")),
+                                      footnotes=notes("footnotes")))
+
+    with pytest.raises(HandbackLoss) as exc:
+        revision.baseline(project)
+    shown = re.search(r"--accept-loss '([^']+)'", str(exc.value))
+    assert shown is not None, str(exc.value)
+
+    revision.baseline(project, accept_loss=(shown.group(1),))
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
+def test_a_PREFIX_of_the_loss_identifies_it(project):
+    write(project.prev, _with_note(_NOTE.format("–6")))
+    write(project.working, make_parts(para(run("body")),
+                                      footnotes=notes("footnotes")))
+    revision.baseline(project, accept_loss=("footnote:For interpretability",))
+    assert project.prev.read_bytes() == project.working.read_bytes()
