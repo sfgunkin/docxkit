@@ -17,11 +17,151 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-Nothing. Every entry filed so far is in `## Fixed` below, with its commit.
+### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
+
+Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
+the structural review asked for it.
+
+    1385 mutants, 1061 killed, 324 survived        raw 23.4 %
+    102 of those sit on signature/docstring rows   -- annotations under
+    `from __future__ import annotations` are never evaluated, so no test
+    can kill them
+    REAL survival 222 / 1283                       17.3 %
+
+For comparison `revisions.py` is 7.3 % on the same treatment. The
+harness is `test_find_edit` + `test_edit_branches` +
+`test_normalize_anchors`, which reach **95 % of the module by line** --
+so this is not a coverage gap, it is an ASSERTION gap: the lines run and
+nothing checks what they compute.
+
+| survivors | function |
+|---|---|
+| 58 | `label_extent` |
+| 37 | `replace_in_para` |
+| 31 | `_outside` |
+| 20 | `_restyle` |
+| 17 | `_locate` |
+| 14 | `insert_in_para` |
+
+`NumberReplacer` is the dominant operator (69) -- an off-by-one in an
+offset, invisible.
+
+**Why this is worth an entry rather than a shrug.** `label_extent` walks
+outward from a run to find where a FIELD-FORM hyperlink's label really
+ends, and `_outside` decides whether an insertion point may move outside
+a link or a bookmark. Both exist to serve the two S1 entries about a
+link swallowing prose -- the failures where the words read correctly,
+the anchor resolves, and only `compare`'s review-not-gated HYPERLINK
+layer sees the damage. Mutating `lo_i -= 1` or `hi_i += 1` in that walk
+leaves all 103 tests passing. The tests assert THAT a refusal happens;
+they never assert WHERE the label ends, which is what the guard decides.
+
+**Suggested shape.** Tests that state the extent as a VALUE: a paragraph
+with a field-form link split across three runs, asserting the span
+covers exactly the label; the same for `_outside`'s three answers (span
+start, span end, None). A cheap first pass is to assert the LABEL TEXT
+after every operation in the existing link tests -- which is the
+assertion the S1 entries say no other layer makes.
+
+**Caveat on the numbers:** they are only comparable against the same
+harness, and three cosmic-ray hazards had to be handled to get them at
+all (all recorded in `REVIEW_2026-08-15.md`): killed mutants
+misclassified through a UTF-8 decode of cp1252 output, which also cost
+60x in wall clock and understated the morning's `revisions.py` run; a
+terminated run leaving its mutation in the tree, which produced a
+1383/1385 "kill rate" on a red baseline; and the same termination
+leaving null-outcome rows that make the session unresumable.
+
+### S2 half the mutations to `_cite_build.py` survive
+
+Same session, same method: 996 mutants, 505 killed, **491 survived --
+49.3 %**, against `test_citations` + `test_link_convention`, which cover
+84 % of the module. Recorded rather than diagnosed -- the run that
+produced it has been deleted, so the survivor list needs regenerating
+(about five chunks) before anything can be said about WHICH paths are
+unpinned. The headline is enough to know it is worse than `edit.py` and
+much worse than `revisions.py`.
 
 ---
 
 ## Fixed
+
+### S3 the hand-back loss gate calls an EDITED footnote a lost one, and then refuses the exemption for it — the two paths disagree and the gate cannot be passed — `17701a5`
+
+The new `baseline` loss check (exit 5) is the fix for the S1 entry below, and
+it is the right idea. But it identifies a footnote by its TEXT, so editing one
+character inside a footnote reads as the old footnote having disappeared.
+
+**Hit on LI7 2026-08-15, blocking.** Gate D4 split section 6 into two, so
+footnote 13's cross-reference "throughout Sections 4–6" became "Sections 4–7" —
+a one-character edit. The footnote is 489 characters before and after, and the
+only diff is `'6'` → `'7'`. `baseline` refused:
+
+    docxkit: working.docx lost 1 thing(s) since prev.docx …
+      - footnote 'For interpretability, empirical LII and LBI values throughout Sections'
+
+**And the escape hatch refuses it too**, which is what makes this S3 rather
+than S2. All three documented forms were tried:
+
+    --accept-loss "For interpretability, … throughout Sections"          -> "has NOT lost"
+    --accept-loss "footnote:For interpretability, … throughout Sections" -> "has NOT lost"
+    --accept-loss "<the full old sentence, verbatim>"                    -> "has NOT lost"
+
+So the refusal path says the footnote WAS lost and the exemption path says it
+was NOT, about the same string, in the same invocation pair. The two are
+computing "lost" differently — the refusal appears to compare full note text
+while the exemption resolves the argument against something else — and between
+them there is no way through. A paper cannot baseline after editing any
+footnote.
+
+**Suggested shape.** Identify notes by `w:id` and by their REFERENCE in the
+body, not by their text: a footnote whose reference still exists has not been
+lost, however much its wording changed. Text is the right identity for a
+*link label*, never for a note that authors edit. Failing that, at minimum
+make the exemption resolve against exactly the string the refusal printed —
+a hatch that will not accept the message's own words is not a hatch.
+
+**Workaround in use** LI7 2026-08-15: verified the footnote by hand (489 chars
+both sides, one digit changed), confirmed `qa_links.py` PASS on prev → working
+with 29 anchors and none lost, then copied `working.docx` over
+`build/prev.docx` to do what `baseline` does. Recorded in `revision/log.md`.
+
+**Fixed.** Both halves, because the entry is right that they were two
+different questions being asked of one word.
+
+*What "lost" means for a note.* The check compared note TEXT as a
+multiset, so a reworded note read as a vanished one. It now decides on
+the REFERENCE: a note whose marker is still in the body has not been
+lost, however much its wording changed. Text is the right identity for a
+link LABEL — a label is markup — and the wrong one for a note, which is
+prose an author edits. Counting rather than matching ids, because Word
+renumbers ids on save; that is the same fact `renumber.footnotes` exists
+for. The text is still used to SAY which note went, and when the count
+and the text disagree the report says so ("2 more, unnamed — 19
+footnotes before, 17 now") instead of naming the wrong ones.
+
+*The hatch that would not take the message's own words.* The refusal
+printed a 70-character truncation and the exemption then demanded an
+exact match against the full string, so the reader was shown a token
+that could not work. `--accept-loss` now matches by PREFIX in either
+direction, and the refusal PRINTS the flag to pass:
+
+      - footnote 'For interpretability, empirical LII and LBI values th…'
+          --accept-loss 'footnote:For interpretability, empirical LII a…'
+
+Tests that fail without it, in `test_revision.py`:
+`test_an_EDITED_footnote_is_not_a_lost_one` (the LI7 note, one character
+changed in 489, asserting `baseline` goes through),
+`test_a_note_that_really_went_is_still_caught` (the fix must not switch
+the gate off), `test_the_exemption_accepts_the_words_the_refusal_PRINTED`
+(which parses the flag out of the refusal and feeds it straight back),
+and `test_a_PREFIX_of_the_loss_identifies_it`.
+
+**Worth saying plainly:** this shipped this afternoon and blocked a
+paper within hours. The gate was tested against a link Word had eaten
+and never against an author EDITING a footnote, which is the ordinary
+case — the S1 it fixes was about Word destroying structure, and the
+test set inherited that framing whole.
 
 ### S2 `body.table` builds a table in NO house style, so every paper re-derives the same six settings — and copying a neighbouring table propagates the wrong one — `edd0202`
 
