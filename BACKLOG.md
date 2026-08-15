@@ -17,7 +17,309 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 no public way to ask whether a MATH run is bold, so every guard written against `w:b` guards NOTHING
+### S2 `body.table` builds a table in NO house style, so every paper re-derives the same six settings — and copying a neighbouring table propagates the wrong one
+
+`booktabs` sets the RULES beautifully and stops there. Everything else the
+house style specifies — Arial Narrow 10 pt at run level *and* in each cell's
+paragraph default so empty cells inherit it, `tblW 5000 pct` + autofit,
+`cantSplit` on every row, `keepNext` on the caption, landscape for a wide one —
+has no home in the toolkit. `body.table`'s default is `TableGrid`: a full box
+grid, which is the exact opposite of the house three-line style.
+
+**Hit on LI7 2026-08-15, and the failure mode is the interesting part.** A new
+Appendix 5 table was built with `body.table`'s defaults and its caption's
+properties cloned from the nearest existing table — **Table A3, one of that
+paper's un-converted ones**. Table 1 and Table A2 are the two in house style;
+A1 and A3 predate it. So "match the neighbouring table" propagated the wrong
+generation, and matching a *caption* turned out not to match a *table* at all.
+The author caught it by eye: *"Table A4 should be build accourding to the house
+style and place in landscape, use Areal Narrow 10 font — why this has not
+happened?"*
+
+Two further defects rode in with it, neither visible to any text-layer gate:
+the lead paragraph carried `rStyle=Hyperlink` (blue, underlined, linking
+nowhere) because the caller's `props()` helper lifts the FIRST `w:rPr` in a
+template paragraph and in that paragraph the first one belongs to a citation
+link; and a blank trailing page, from a pre-existing empty paragraph with no
+`pPr` inheriting 13 pt of default spacing.
+
+**Suggested shape.** `tables.house(xml, table, *, font="Arial Narrow",
+size=10, landscape=False)` — or a `style=` argument on `body.table` — applying
+the run/paragraph fonts, width, `cantSplit` and caption `keepNext` in one call,
+with `booktabs` composing onto it. The settings are not in dispute; they are
+written down in the user's house-style note and reimplemented per paper.
+Separately, a `props`-style helper that lifts a paragraph's PROSE properties
+should skip runs inside hyperlinks — lifting a link's `rPr` as a prose template
+is a trap with no signal.
+
+**Workaround in use** LI7's `apply_r2b.py`: `CELL_RPR`/`HEAD_RPR`/`CELL_PPR`
+literals, a local `cant_split()` that merges into an existing `w:trPr` rather
+than adding a second (a second one is invalid — `lint` catches it), and an
+explicit section-break paragraph for the landscape run.
+
+### S2 `link --write` names bookmarks in ITS convention, not the paper's, and cannot be told otherwise
+
+`docxkit link` builds citation↔entry links document-wide, and the names it
+mints are its own: `UnitedNations2024`, `WorldHealthOrganization2024`,
+`Schunemann2017_2`. LI7's convention — used by all 79 of its existing wired
+pairs — is `<Surname><Year>` for the entry and `+txt` for the in-text anchor:
+`Kanbur2007` / `Kanbur2007txt`. There is no `--convention`, no naming hook, and
+no way to say "these six only".
+
+**Hit on LI7 2026-08-15.** Six citations needed wiring: four new references on
+one page, one in a footnote, one whose link the author's Word session had
+emptied. The dry run offered `linked 7, back-links added 5, unmatched 5,
+skipped 11` — more than asked for, under the wrong names, and with a `_2`
+collision suffix. The same builder took this paper's audit from 26 findings to
+56 once before, which is recorded in its own log. So all six were hand-wired
+from the field-form pattern read off an existing pair.
+
+**Suggested shape.** A `key=` callable (surname, year → name) so a paper can
+state its convention once, and a `only=`/`--only` filter so a repair can be
+scoped to named citations instead of the whole document. Both are small next to
+the audit that already finds the work.
+
+**Workaround in use** LI7's `apply_r2b.py`: `FWD`/`ANCHORED` XML templates
+cloned from the `Kanbur2007` pair, applied to an explicit six-item list.
+
+### S4 `renumber` handles caption numbers but not footnote/endnote ids
+
+`renumber` remaps "Figure N"/"Table N" labels and their bookmarks. Footnote
+`w:id`s are a different namespace with the same problem, and nothing addresses
+them: restore or move a footnote and its id no longer follows reference order.
+
+**Hit on LI7 2026-08-15.** A footnote the author had deleted was restored with
+the next FREE id (19) while its reference sits fifteenth. Word does not care —
+displayed numbers come from reference position — and every gate passed. But
+`qa_acceptance` addresses footnotes by `w:id`, so two criteria began failing on
+footnotes nobody had touched: the content was right and the index into it was
+wrong. Diagnosing that cost more than the fix.
+
+**Suggested shape.** `renumber.footnotes(parts)` — reorder `w:id`s to match
+reference order across `document.xml` and `footnotes.xml` (two-pass through a
+placeholder, since the old and new id spaces overlap), and sort the note
+elements to match. Worth pairing with an `audit` that simply reports when ids
+and reference order disagree; that is the check that would have caught it.
+
+**Workaround in use** LI7's `revision/scripts/fix_footnote_ids.py`.
+
+---
+
+## Fixed
+
+### S1 `RUN_RE` reads a self-closing `<w:r/>` as an OPENING tag — the defect `PARA_RE` was fixed for, in the walk nine modules use — `865faa8`
+
+Found by the structural review of 2026-08-15, not by a paper — which is
+the point: it had been there since the pattern was written, and every
+gate in the package was green over it.
+
+`_xml.RUN_RE` was `<w:r\b[^>]*>.*?</w:r>`. `[^>]*` swallows the slash of
+an EMPTY run, so the match opened at `<w:r/>` and closed at the NEXT
+run's `</w:r>`, returning one match spanning two elements. Demonstrated
+on a paragraph holding one empty run between two real ones:
+
+    runs found by RUN_RE: 3          <- three real runs, and one empty
+       run 1: '<w:r><w:t xml:space="preserve">The share rose to </w:t></w:r>'
+       run 2: '<w:r/><w:r><w:t>0.15</w:t></w:r>'      <- two elements, one match
+       run 3: '<w:r><w:t xml:space="preserve"> in 2024.</w:t></w:r>'
+
+**Corpus scan, 899 manuscripts:** 28 carry a `<w:r/>`; 32 carry the
+`<w:p/>` that `PARA_RE` was fixed for in `6acc545`.
+
+**Why it survived, and why it is S1 anyway.** An empty run contributes
+no visible text, so every OFFSET stayed correct and every text assertion
+passed — `replace_in_para` on the paragraph above still produced exactly
+the right words. What was wrong was run IDENTITY: the count, the
+boundaries, and which `w:rPr` a walk believes belongs to a run, which
+for a merged pair is the EMPTY one's. Fourteen call sites in nine
+modules walk runs with this, including `_xml.editable_text`,
+`edit._locate`, `renumber`, `footnotes`, `_cite_grammar`,
+`_table_layout` and `_compare_read`, and the property-reading ones are
+where it would have surfaced as a wrong answer rather than a silent one.
+
+**Fixed.** `(?<!/)>` on `_xml.RUN_RE`, `_xml.RUN_OPEN_RE`,
+`_compare_read.RUN_RE`, `_compare_read.MATH_RUN_RE` (`<m:r/>`),
+`_compare_read.STRUCT_TAG_RE` (`<w:p/>`), `_table_core._TR_RE`
+(`<w:tr/>`) and `crossrefs._P_OPEN_RE` — the last being the pre-fix
+`PARA_RE` spelling, latent because its one caller is only ever handed a
+caption paragraph, and fixed anyway because "latent" is a claim about
+today's callers.
+
+**And the class is closed.** `tests/test_regex_registry.py` walks every
+module-level `re.compile` in the package (158 of them) and asserts that
+none reads an empty container as an opening tag. It probes rather than
+reads the source, so an alternation like
+`<(/?)w:(tbl|tr|tc|p)\b[^>]*?>` is covered too, and it auto-exempts the
+patterns that CAPTURE the slash — `_ELEMENT_OPEN_RE`, `_RPR_CHILD_RE`,
+`revisions._OPEN_RE` — because those hand the answer to their caller.
+
+The same review measured what does NOT matter: attribute-tolerance
+divergence, where 22 elements are spelled several ways across the
+package. **0 of 899 manuscripts** carry an attribute on `m:oMath`,
+`w:rPr`, `w:tc`, `w:sz`, `w:pStyle` or `w:rStyle`, so consolidating
+those spellings would buy nothing. Recorded so the next reader does not
+re-derive it.
+
+
+### S1 `replace_in_para` guards hyperlinks but NOT footnote references, and a match hops over one invisibly — `865faa8`
+
+`labels_a_link` refuses a match that starts inside or spans a hyperlink, with
+`allow_hyperlink` as the deliberate escape hatch — the entry above records what
+that guard is worth. **A `w:footnoteReference` carries no visible text at all**,
+so a visible-text match spans one without any signal, and the rebuild moves the
+reference. There is no `spans_a_footnote` check and no flag to acknowledge one.
+
+**Hit on LI7 2026-08-15.** The Figure-1 paragraph reads:
+
+    ... from South Korea (UN 2024).  <<FN11>>   The left panel of Figure 1 ...
+
+The obvious anchor for a sentence inserted after the opening — `"). The left
+panel of "` — is contiguous in visible text and spans FN11. Word's Compare then
+re-emitted **footnote 12**, which holds an OMML formula, as an insertion with no
+matching deletion; reject-all stopped reproducing the baseline, so the author
+could not refuse it.
+
+Measured, three scratch redlines off the same baseline:
+
+| build | result |
+|---|---|
+| that edit alone | reject-all FAILS, one footnote paragraph unrejectable |
+| every other edit in the batch, without it | clean, 5 revisions |
+| same edit anchored AFTER the reference | clean, **1** revision |
+
+Note what each layer said: `lint` clean, `compare` 0 hyperlink diffs and
+integrity clean, the caller's own assertion satisfied because the words really
+are in that order. **`reject_check` is what refused it** — which is exactly the
+argument for that gate, and also why this needs fixing upstream: the paper only
+learned the anchor was wrong because a build failed, not because the edit was
+refused where it was made.
+
+**Suggested shape.** Mirror `labels_a_link` — refuse a match that spans a
+`w:footnoteReference` / `w:endnoteReference` / `w:commentReference` unless
+`allow_notes=True`, and say which note in the message. The scan already walks
+the runs; this is a second predicate on the same walk. A hyperlink and a
+footnote anchor fail the same way and deserve the same guard.
+
+**Workaround in use** anchor on the run AFTER the reference and let the marker
+stay where it is, asserting the footnote reference ids and their order in the
+body are unchanged before and after the edit.
+
+**Fixed.** `replace_in_para` refuses a match that CROSSES a
+`w:footnoteReference`, `w:endnoteReference` or `w:commentReference`,
+naming the note, with `allow_notes=True` as the deliberate escape.
+
+The boundary cases are why it took a rule rather than a check. A marker
+has ZERO visible width, so a match that merely ABUTS one does not touch
+it and is not refused — anchoring beside a marker is the correct way to
+edit that sentence, and a guard that forbade it would be switched off
+within a week. A single touched run cannot move a marker either: the
+text is rewritten where it stands and nothing after it is emptied. What
+is refused is exactly "the marker is strictly inside the replaced span",
+which is the shape that bit.
+
+Tests: `test_replace_in_para_refuses_to_cross_a_NOTE_reference` (the LI7
+Figure-1 paragraph), `test_the_guard_covers_endnotes_and_comments_too`,
+`test_a_match_that_ABUTS_a_marker_is_not_refused`,
+`test_a_match_after_the_marker_is_not_refused`,
+`test_the_note_guard_has_its_own_opt_in`.
+
+**Workaround to retire:** LI7 can anchor its R2a edits normally again.
+
+### S1 nothing GATES a hand-back: `ingest` reports what the author's Word session destroyed, `validate` does not look, and `baseline` records it as truth — `865faa8`
+
+The protocol's whole safety claim is that `working.docx` is the one file and
+its state is readable. But between the author handing it back and
+`revision baseline` writing it over `prev.docx`, **nothing fails on lost
+content**. `ingest` sees it and prints it. `validate` checks lint, counts, the
+accept/reject round-trip and the math — all of which are about the BATCH, and
+there is no batch on a hand-back. `baseline` just copies.
+
+So the failure mode is: the author edits normally, Word removes structure
+silently, the operator reads a long `ingest` dump, and one line in it scrolls
+past. Then `baseline` makes the loss the new truth and the previous state is
+gone from the compare chain.
+
+**Hit on LI7 2026-08-15, and it is worth being precise about who did what,
+because the first diagnosis was wrong.** The manuscript came back missing three
+`Figure 4` cross-references, a `European Commission 2024` citation, and
+footnote 15 in full — note, reference, and the `Ritchie 2023b` link inside it.
+It was reported as the *generated* file having lost them. Measured through the
+chain, it had not:
+
+| stage | body `w:hyperlink` | footnote `w:hyperlink` | footnotes |
+|---|---|---|---|
+| `prev` | 33 | 15 | 19 |
+| the edited clean build | 33 | 15 | 19 |
+| the Compare redline | 33 | 15 | 19 |
+| after the author's session | **28** | **14** | **18** |
+
+and accepting the redline preserved everything three ways — Word's
+`AcceptAllRevisions`, the XML accept, and accept-then-**Save through Word**,
+which is the path a human takes and which the first test had bypassed by
+reading Flat OPC. Word had collapsed one paragraph into a single run to make
+four copyedits, and every link and the footnote reference in it went at once.
+
+**Word then renumbered.** 19 notes became 18 with the ids still contiguous, so
+there is no gap to notice and no id to miss — the only way to see it is to
+count. `ingest` DID count it, and said `stripped_fields: lost 1 footnote
+ref(s)`, and that is the whole of the protection.
+
+**Suggested shape.** `revision ingest --check`, exiting non-zero when the
+hand-back lost a hyperlink (BOTH forms — this paper carries 33 element-form
+and 130 field-form), a footnote or endnote, a bookmark, or a comment; and
+`baseline` refusing while such a loss is unacknowledged, the way it already
+refuses on pending revisions. An `--accept-loss ANCHOR,…` escape hatch keeps
+the deliberate case honest — here one of the six was a *repair*, a link whose
+label had bled across a whole sentence, and a gate with no way to say so is a
+gate that gets switched off.
+
+**Workaround in use** LI7's `revision/scripts/qa_links.py`: surveys both link
+forms in `document.xml` and `footnotes.xml`, plus the footnote reference and
+note counts, exits 1 on any loss, `--expect-lost` declares a deliberate one,
+and a declared loss that did NOT happen is itself a failure so a stale
+exemption cannot hide the next real one. Wired into `paper.toml` `[verify]`.
+Control run `prev → batch` PASSES, which is what proved the redline clean.
+
+**Fixed.** `revision.losses(working, prev)` names what an author's Word
+session destroyed — links (both forms), footnotes, endnotes, bookmarks,
+comments — and two gates consume it:
+
+* `revision ingest --check` exits 5 (`HandbackLoss.exit_code`) when the
+  hand-back lost something. Without the flag it still SAYS it and still
+  exits 0: `ingest` is the command that is safe to run before every
+  task, and that has to stay true;
+* `revision.baseline` REFUSES while a loss is unacknowledged, because
+  that is the step that makes it permanent — `prev.docx` is what the
+  compare chain measures against afterwards. `accept_loss=(...)` /
+  `--accept-loss` names the deliberate ones, by anchor, note text or
+  `kind:what`. **`force` does not override it**: `force` is the flag
+  reached for by reflex, and the acknowledgement costs one anchor.
+
+Naming a loss that did NOT happen is itself refused, which is the rule
+LI7's `qa_links.py` arrived at: a stale exemption is a switched-off gate
+that reads as a switched-on one, and it would pass the next real loss in
+silence.
+
+Notes are matched on their TEXT, never their id — the entry's own
+finding: Word renumbered 19 notes to 18 with the ids still contiguous,
+so there is no gap to notice. `footnotes.find_all(kind="endnote")` was
+added for the same reason a footnote-only check would have been a gate
+that cannot fail for any paper using the other kind.
+
+Tests: `test_ingest_names_a_link_the_authors_word_session_ATE`,
+`test_a_lost_FOOTNOTE_is_found_by_text_not_by_id`,
+`test_a_lost_ENDNOTE_is_found_too`,
+`test_an_ordinary_author_edit_loses_NOTHING`,
+`test_baseline_REFUSES_while_a_loss_is_unacknowledged`,
+`test_force_does_not_override_the_loss_refusal`,
+`test_a_deliberate_loss_can_be_NAMED_and_then_baselines`,
+`test_a_DECLARED_loss_that_did_not_happen_is_itself_refused`,
+`test_a_first_baseline_with_no_prev_is_not_blocked`, plus two in the CLI
+suite for the exit codes.
+
+**Workaround to retire:** LI7's `revision/scripts/qa_links.py`.
+
+### S2 no public way to ask whether a MATH run is bold, so every guard written against `w:b` guards NOTHING — `865faa8`
 
 A paper that renames one symbol and must not touch its bold twin has to
 ask "is this `m:r` bold?" and there is no API for it. The obvious
@@ -52,7 +354,26 @@ the parsing exists.
 **Workaround in use** `re.search(r'<m:sty m:val="b[i]?"/>', run)`,
 asserted against a known-good count before and after the edit.
 
-### S2 replacement is guarded against links, INSERTION is not offered at all — so callers hand-roll it and land inside one
+**Fixed.** `equations.face(run) -> "p" | "b" | "i" | "bi"`, plus
+`is_bold` and `is_italic`, reading `m:sty` first and `w:rPr` second.
+
+One thing the entry did not say and the API must: **the default is
+ITALIC**, not plain. A maths run with no face markup renders
+math-italic, because that is what a variable is — which is why a
+manuscript full of italic symbols carries no markup for it.
+`DEFAULT_FACE` is exported so the assumption is visible rather than
+buried, and `is_bold` — the predicate the guard actually wanted — is
+false for it either way.
+
+Tests: `test_face_reads_m_sty_not_w_b`,
+`test_an_unmarked_maths_run_renders_ITALIC`,
+`test_is_bold_separates_the_two_X_populations`,
+`test_the_rarer_w_rPr_spelling_is_read_second`,
+`test_a_switched_OFF_w_b_is_not_bold`.
+
+**Workaround to retire:** `Parental_style`'s regex against `m:sty`.
+
+### S2 replacement is guarded against links, INSERTION is not offered at all — so callers hand-roll it and land inside one — `865faa8`
 
 `replace_in_para` takes this class seriously: `labels_a_link` refuses a
 match that starts inside a hyperlink *or* spans one, with
@@ -104,7 +425,49 @@ first `<w:r>` rather than into it; and assert the LABEL — the visible
 text between `fldCharType="separate"` and `"end"` — rather than the
 paragraph text, which cannot distinguish the two states.
 
-### S2 `pages` returns a count and nothing else, so pagination defects ship
+**Hand-rolled TWICE MORE on LI7, 2026-08-15**, in `fix_r2a_links.py`
+(`split_run`) and `apply_r2b.py` (`_wrap`) — near-identical functions in
+one session, because there is still nothing to call. Between them they
+re-derived, independently, two guards this entry already names: skip runs
+already inside an element-form `w:hyperlink`, and skip runs already inside
+a field-form HYPERLINK, or wrapping the second of three identical "Figure
+4" labels nests a link inside a link. That is four copies of this hack
+across two papers. A per-occurrence detail worth folding into the fix:
+after the first wrap the target legitimately appears in more than one run,
+so "exactly one run" stops being the right invariant — count the
+OCCURRENCES up front and take the leftmost each pass.
+
+**Fixed.** `edit.insert_in_para(para_xml, at, content)` — offset in
+VISIBLE text, content spliced as XML when it starts with `<` and wrapped
+in a run otherwise (escaped, `xml:space="preserve"` when it has edge
+whitespace). Inside a run the run is REBUILT as two through
+`set_run_text`, never spliced, which is the workaround's own recipe
+promoted into the toolkit.
+
+The placement rule is where the thinking went. **On the EDGE of a link
+or a bookmark the content lands OUTSIDE it** — that is precisely the
+Bhalotra-Clarke failure: at offset 0 of a paragraph that opens on a
+link, "before the first run" is a position INSIDE the `w:hyperlink`, and
+what the caller means is before the element. Strictly inside a label it
+refuses, with `allow_hyperlink` / `allow_bookmark` as the escapes. A
+fldChar FIELD is never split, flag or no flag: the halves would not be
+two fields, they would be one broken one.
+
+"Outside" is decided by what the element SHOWS: an edge is available
+only when nothing the element displays lies on that side of the offset.
+With text on both sides the caller really is splitting a label, and that
+is the refusal.
+
+Tests: `test_insert_at_the_front_of_a_LINK_LED_paragraph_stays_outside_it`
+(the measured failure, asserting the LABEL did not grow),
+`test_xml_content_goes_in_verbatim_and_splits_the_run`,
+`test_inserting_INSIDE_a_label_is_refused`,
+`test_a_bookmark_span_is_not_grown_by_an_insert_at_its_edge`,
+`test_a_fldChar_FIELD_is_never_split`, and five more.
+
+**Workaround to retire:** `Parental_style`'s hand-rolled splices.
+
+### S2 `pages` returns a count and nothing else, so pagination defects ship — `865faa8`
 
 `docxkit pages PAPER.docx` prints `52`. Everything a pagination question
 actually needs is absent: which sheets are BLANK, what number each sheet
@@ -145,52 +508,84 @@ the repo parses PDFs elsewhere.
 one session on `Parental_style`: sampling the bottom 12 % of each page
 for a digit, and reading `page.rect` for orientation.
 
-### S1 `replace_in_para` guards hyperlinks but NOT footnote references, and a match hops over one invisibly
+**A FOURTH hand-roll, LI7 2026-08-15.** Appendix 5 went in landscape and
+shipped a **blank trailing sheet**, invisible to `lint`, `compare`,
+`citations` and the paper's own link gate — `docxkit pages` said `47` and
+nothing else. Finding it took PyMuPDF again: `page.rect` per sheet for
+orientation, `get_text()` length to spot the blank, and then
+`get_drawings()` to measure that the table's bottom rule rendered at
+y=519.6 against a margin at 540 — 20 pt left, and the trailing empty
+paragraph needed 13. **The measurement was the whole diagnosis**: two
+plausible causes were derived from the XML first and both were wrong.
+Add `--rules` or expose the lowest drawn Y per page alongside the blank
+flag; "how much room is left on this sheet" is the question every
+table-placement defect actually asks.
 
-`labels_a_link` refuses a match that starts inside or spans a hyperlink, with
-`allow_hyperlink` as the deliberate escape hatch — the entry above records what
-that guard is worth. **A `w:footnoteReference` carries no visible text at all**,
-so a visible-text match spans one without any signal, and the rebuild moves the
-reference. There is no `spans_a_footnote` check and no flag to acknowledge one.
+**Fixed.** A new module, `docxkit.pages`, and `docxkit pages --sheets /
+--check`: one row per sheet — index, orientation, printed number, BLANK
+— with `--check` exiting 2 on a blank sheet, a numbering RESTART or a
+GAP in the printed sequence.
 
-**Hit on LI7 2026-08-15.** The Figure-1 paragraph reads:
+The entry's diagnostic lesson is built into the shape. It measures the
+RENDER, and the analysis is split so that only the first step needs Word
+at all: `sheets(docx)` renders and reads, `read_pdf(pdf)` reads,
+`problems(rows)` is pure. The tests BUILD their PDFs with PyMuPDF rather
+than shipping fixtures, so the whole layer is testable on a machine with
+no Word on it.
 
-    ... from South Korea (UN 2024).  <<FN11>>   The left panel of Figure 1 ...
+A sheet that prints NOTHING is reported and does not fail: a title page
+legitimately carries no number, and a gate that fails on every paper is
+a gate nobody runs. The RESTART and the GAP are what fail — which is
+exactly what `… 28, -, -, 3, -, 5 …` is.
 
-The obvious anchor for a sentence inserted after the opening — `"). The left
-panel of "` — is contiguous in visible text and spans FN11. Word's Compare then
-re-emitted **footnote 12**, which holds an OMML formula, as an insertion with no
-matching deletion; reject-all stopped reproducing the baseline, so the author
-could not refuse it.
+PyMuPDF is a new optional extra (`docxkit[pdf]`), imported lazily with a
+message naming it, the same shape as `latex` and `pandas`.
 
-Measured, three scratch redlines off the same baseline:
+Tests: eight in `tests/test_pages.py`.
 
-| build | result |
-|---|---|
-| that edit alone | reject-all FAILS, one footnote paragraph unrejectable |
-| every other edit in the batch, without it | clean, 5 revisions |
-| same edit anchored AFTER the reference | clean, **1** revision |
+**Workaround to retire:** `Parental_style`'s ~40 lines of PyMuPDF,
+hand-rolled three times in one session.
 
-Note what each layer said: `lint` clean, `compare` 0 hyperlink diffs and
-integrity clean, the caller's own assertion satisfied because the words really
-are in that order. **`reject_check` is what refused it** — which is exactly the
-argument for that gate, and also why this needs fixing upstream: the paper only
-learned the anchor was wrong because a build failed, not because the edit was
-refused where it was made.
+### S4 `visible_text` is public API in practice but exported from no public module, so a typed caller must import a private one — `865faa8`
 
-**Suggested shape.** Mirror `labels_a_link` — refuse a match that spans a
-`w:footnoteReference` / `w:endnoteReference` / `w:commentReference` unless
-`allow_notes=True`, and say which note in the message. The scan already walks
-the runs; this is a second predicate on the same walk. A hyperlink and a
-footnote anchor fail the same way and deserve the same guard.
+`visible_text` is the reader's text — the entry in Fixed below settles that it
+lives in `_xml` and names the reading `para_slice`, `crossrefs`, `citations`
+and `compare` all locate with. It is re-exported through `body` and `edit`, but
+it is in neither `__all__`, so with `py.typed` in force Pyright rejects both
+spellings and points the caller at `docxkit._xml` — a private module — as the
+only accepted import.
 
-**Workaround in use** anchor on the run AFTER the reference and let the marker
-stay where it is, asserting the footnote reference ids and their order in the
-body are unchanged before and after the edit.
+**Hit in three scripts on LI7 2026-08-15** (`fix_r2a_links.py`, `apply_r2b.py`,
+`qa_links.py`), each of which needs exactly this reading to assert that run
+surgery left the paragraph's visible text byte-identical. `from docxkit.body import visible_text` and
+`from docxkit.edit import visible_text` both draw
+`reportPrivateImportUsage`; the suggested fix is to import the underscore
+module, which is worse advice than the diagnostic it replaces.
 
----
+**Suggested shape.** Add `visible_text` (and `editable_text`, which has the
+same problem) to `__all__` wherever it is meant to be reached — most naturally
+`docxkit.body` — or re-export both from the package root beside `read_parts`
+and `write_docx`. Same class as the `RUN_RE`/`T_RUN_RE` `__all__` gap already
+fixed below.
 
-## Fixed
+**Workaround in use** import from `docxkit.body` and live with the diagnostic;
+ruff and mypy are both clean on it, so only Pyright complains.
+
+**Fixed**, and much wider than the one name. Sixteen modules defined
+public names they did not declare — including `revision.validate`, the
+protocol's whole gate ladder, and `crossrefs.link_more`, which five
+`Parental_style` scripts already call. All filled.
+
+The class is closed rather than the instance: `tests/test_api_surface.py`
+walks every module and asserts (a) every public function, class and
+constant is in `__all__`, (b) every name in `__all__` actually exists,
+and (c) each facade re-exports everything public behind it — which found
+six more names `citations`, `tables` and `compare` were not passing
+through. `compare.py` gained the `__all__` it never had.
+
+Namespace-URI shorthands (`W`, `M`, `WP`, `MATH`) are the one exemption,
+listed in the test with its reason: declaring them would bless four
+copies of a constant that belongs in `_xml`.
 
 ### S1 `_resolve_math` accepts revisions that merely INTERSECT an equation, and takes hundreds of unrelated ones with them — `a03d9d1`
 
