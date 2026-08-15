@@ -13,7 +13,8 @@ from conftest import NS, comment, make_parts, para, run
 from docxkit.comments import read_all, remove
 from docxkit.errors import AnchorError
 from docxkit.footnotes import append, find, find_all, remap, renumber_map
-from docxkit.hygiene import restore_parts, strip_parts
+from docxkit.hygiene import carry_properties, restore_parts, strip_parts
+from docxkit.package import core_property
 
 # --------------------------------------------------------------- comments ---
 
@@ -239,6 +240,135 @@ def test_restore_parts_leaves_a_part_that_is_already_there():
     live["customXml/item1.xml"] = b"<b:Sources>newer</b:Sources>"
     assert restore_parts(live, source) == []
     assert live["customXml/item1.xml"] == b"<b:Sources>newer</b:Sources>"
+
+
+# The same loss one level down, on the FIELDS of docProps/core.xml. Word
+# rebuilds that part with only lastModifiedBy/revision/created/modified,
+# so the part-level check above is SATISFIED while the title, author and
+# keywords are gone — LI7's dc:title was missing for four days, twice,
+# with nothing anywhere reporting it (2026-08-15).
+
+_CORE = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/'
+    'package/2006/metadata/core-properties" '
+    'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    'xmlns:dcterms="http://purl.org/dc/terms/">'
+    "<dc:title>Loneliness Risk Index</dc:title>"
+    "<dc:creator>Michael Lokshin</dc:creator>"
+    "<cp:keywords>loneliness; index</cp:keywords>"
+    "<cp:revision>7</cp:revision>"
+    '<dcterms:modified xsi:type="dcterms:W3CDTF">2026-08-08T10:00:00Z'
+    "</dcterms:modified></cp:coreProperties>")
+
+#: What Word's Compare hands back: the part, holding its own save fields
+#: and nothing the document said about itself.
+_REGENERATED_CORE = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/'
+    'package/2006/metadata/core-properties" '
+    'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    'xmlns:dcterms="http://purl.org/dc/terms/">'
+    "<cp:lastModifiedBy>Word</cp:lastModifiedBy>"
+    "<cp:revision>1</cp:revision>"
+    '<dcterms:modified xsi:type="dcterms:W3CDTF">2026-08-15T09:00:00Z'
+    "</dcterms:modified></cp:coreProperties>")
+
+
+def _titled() -> dict[str, bytes]:
+    parts = make_parts(para(run("body")))
+    parts["docProps/core.xml"] = _CORE.encode("utf-8")
+    parts["_rels/.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="word/document.xml"/></Relationships>')
+    return parts
+
+
+def test_carry_properties_puts_back_what_a_regenerated_core_xml_lost():
+    source = _titled()
+    rebuilt = _titled()
+    rebuilt["docProps/core.xml"] = _REGENERATED_CORE.encode("utf-8")
+
+    carried = carry_properties(rebuilt, source)
+
+    assert carried == ["dc:title", "dc:creator", "cp:keywords"]
+    core = rebuilt["docProps/core.xml"].decode("utf-8")
+    assert "<dc:title>Loneliness Risk Index</dc:title>" in core
+    assert "<dc:creator>Michael Lokshin</dc:creator>" in core
+
+
+def test_carry_properties_leaves_the_TIMESTAMPS_to_the_new_file():
+    """core.xml's `modified` and `revision` belong to the file being
+    written; carrying the part wholesale would backdate a deliverable to
+    its source, which is why this is field by field."""
+    source = _titled()
+    rebuilt = _titled()
+    rebuilt["docProps/core.xml"] = _REGENERATED_CORE.encode("utf-8")
+
+    carry_properties(rebuilt, source)
+
+    core = rebuilt["docProps/core.xml"].decode("utf-8")
+    assert "2026-08-15T09:00:00Z" in core, "the redline's own save time"
+    assert "2026-08-08" not in core
+    assert "<cp:revision>1</cp:revision>" in core
+
+
+def test_carry_properties_rebuilds_the_part_word_dropped_entirely():
+    """Flat OPC carries no docProps at all, so the deliverable a journal
+    opens is untitled unless the part, its content type and its package
+    relationship are all put back."""
+    source = _titled()
+    rebuilt = make_parts(para(run("body")))
+    rebuilt["_rels/.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="word/document.xml"/></Relationships>')
+    rebuilt["[Content_Types].xml"] = b"<Types></Types>"
+
+    assert "dc:title" in carry_properties(rebuilt, source)
+
+    assert "docProps/core.xml" in rebuilt
+    ct = rebuilt["[Content_Types].xml"].decode("utf-8")
+    rels = rebuilt["_rels/.rels"].decode("utf-8")
+    assert 'PartName="/docProps/core.xml"' in ct
+    assert 'Target="docProps/core.xml"' in rels
+    ids = re.findall(r'Id="(rId\d+)"', rels)
+    assert len(ids) == len(set(ids)), rels
+    assert core_property(rebuilt, "dc:title") == "Loneliness Risk Index"
+
+
+def test_carry_properties_never_overwrites_a_value_that_is_there():
+    """A rescue, not a sync — the same contract as restore_parts."""
+    source = _titled()
+    live = _titled()
+    live["docProps/core.xml"] = _CORE.replace(
+        "Loneliness Risk Index", "Loneliness Risk Index, revised").encode()
+
+    assert carry_properties(live, source) == []
+    assert core_property(live, "dc:title") == "Loneliness Risk Index, revised"
+
+
+def test_carry_properties_on_a_source_with_nothing_to_say_is_a_noop():
+    """No part is invented for a document that never had one."""
+    source = make_parts(para(run("body")))
+    rebuilt = make_parts(para(run("body")))
+    assert carry_properties(rebuilt, source) == []
+    assert "docProps/core.xml" not in rebuilt
+
+
+def test_compare_collateral_reports_a_property_the_part_no_longer_carries():
+    """The minimum the build owes a reader when the carry cannot reach
+    it: the part is present, the same size class, and the value is gone."""
+    from docxkit.tracked import compare_collateral
+
+    source = _titled()
+    rebuilt = _titled()
+    rebuilt["docProps/core.xml"] = _REGENERATED_CORE.encode("utf-8")
+
+    notes = compare_collateral(source, rebuilt)
+
+    assert any("property LOST: dc:title" in n for n in notes), notes
+    assert not any("cp:revision" in n for n in notes), \
+        "a save field is not a document property"
 
 
 def test_missing_parts_ignores_what_word_regenerates():

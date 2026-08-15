@@ -106,10 +106,29 @@ they do.
   comment, ~3.4s at the 250th. Three hundred comments cost 15–20 minutes.
   `comments.annotate()` writes them into the package instead: ~1s. Word
   still does the diff (~3.5s); it just does not do the annotation.
-- **Word cannot serialize tracked math.** `SaveAs2` and
-  `Content.WordOpenXML` both raise *"A file error has occurred"* on a
-  compare result containing equation changes. Accept those revisions first
-  (comment them while they still exist), then extract.
+- **Word sometimes cannot serialize tracked math — but check before
+  believing it.** `SaveAs2` and `Content.WordOpenXML` have both raised
+  *"A file error has occurred"* on a compare result containing equation
+  changes, which is why `tracked.build` accepts those revisions first
+  (commenting them while they still exist). On LI7 (2026-08-15) BOTH
+  routes serialized 1870 revisions with the math left tracked, and both
+  round-tripped exactly, while resolving the math cost 315 revisions —
+  a revision only has to *overlap* an equation to be accepted, and
+  `Accept()` applies its whole span. Hence `build(..., resolve_math=
+  False)` / `revision build --keep-math`: every accepted revision is one
+  the author can no longer refuse, so measure before paying that.
+- **Reject-all is the gate, not the count.** `tracked.build` refuses to
+  publish a redline whose reject-all does not reproduce the original
+  (`tracked.untracked` names the paragraphs). Nothing else sees that
+  failure: the package lints, opens, verifies in Word and counts
+  plausibly while carrying edits the author was never offered.
+- **Word's Compare empties `docProps/core.xml`.** The part comes back
+  holding `lastModifiedBy`/`revision`/`created`/`modified` and nothing
+  the document said about itself, so a part-level check passes with the
+  title, author and keywords gone — LI7's `dc:title` was missing for
+  four days, twice. Metadata is not tracked-changeable, so no redline
+  can show it. `hygiene.carry_properties` copies the fields back (never
+  the timestamps); `tracked.build` calls it.
 - **Word's save path can hang** outright, on any drive. `extract_flat_opc`
   + `flat_opc_to_docx` bypass it. `ExportAsFixedFormat` (PDF) still works.
 - **A page number belongs to the file it was measured in.** A redline

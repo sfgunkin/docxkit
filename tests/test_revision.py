@@ -288,6 +288,10 @@ class _FakeBuild:
         say(f"resolved {self.math} math revisions")
         report = revision.tracked.BuildReport()
         report.revisions = 4
+        # the NUMBER is what the protocol reads; the line above is a
+        # sentence tracked.build is free to reword, and the refusal used
+        # to be a grep over it
+        report.math_resolved = self.math
         return report
 
 

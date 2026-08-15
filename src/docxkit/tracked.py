@@ -15,14 +15,25 @@ drifted apart in three paragraphs.
 The pipeline:
 
 1. Word compares the two documents (seconds).
-2. The MATH revisions are resolved — Word cannot serialize a compare
-   result that contains tracked math at all, so they must be accepted,
-   and commented first if the paper annotates. This also leaves behind
-   Word's own comment scaffold for step 4.
+2. The MATH revisions are resolved — accepted, and commented first if
+   the paper annotates. This also leaves behind Word's own comment
+   scaffold for step 4. Only revisions CONTAINED in an equation: see
+   :func:`_accept_math_via_equations` for what accepting a merely
+   overlapping one costs.
 3. The package is extracted as Flat OPC, bypassing Word's save path.
 4. Every remaining revision is commented in XML (:mod:`docxkit.comments`).
-5. The result is linted, then reopened in Word: it must read back exactly
-   the comment count the package holds, or Word repaired it on open.
+5. The result is linted, and REJECT-ALL must reproduce the original —
+   a redline whose changes the author cannot refuse is the one failure
+   a redline exists to prevent (:func:`untracked`).
+6. The result is reopened in Word: it must read back exactly the comment
+   count the package holds, or Word repaired it on open.
+
+The premise the math step was built on — *Word cannot serialize a
+compare result containing tracked math at all* — is not general. On LI7
+(2026-08-15) both ``SaveAs2`` and Flat OPC serialized 1870 revisions
+with the math left tracked, and both round-tripped exactly. Hence
+``resolve_math=False``: a paper that has measured its own case can keep
+the math tracked and lose nothing.
 """
 from __future__ import annotations
 
@@ -30,8 +41,10 @@ import shutil
 import tempfile
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from . import comments as _comments
 from . import guard as _guard
@@ -41,13 +54,18 @@ from ._xml import (
     BOOKMARK_NAME_RE,
     COMMENT_ID_RE,
     COMMENTS,
+    DOCUMENT,
+    FOOTNOTES,
+    TEXT_PARTS,
     internal_links,
     text_parts,
 )
 from .comments import RevisionContext
 from .errors import PackageError
+from .hygiene import CARRIED_PROPERTIES
 from .lint import lint_parts
-from .package import REGENERATED_BY_WORD, read_parts, write_docx
+from .package import REGENERATED_BY_WORD, core_property, read_parts, write_docx
+from .revisions import reject as _reject
 from .revisions import revision_elements
 
 # Bound directly, NOT reached through `_word`: tests replace that
@@ -55,8 +73,10 @@ from .revisions import revision_elements
 # carry a suppression helper. The seam is for Word, not for this.
 from .word import _suppress_com
 
-__all__ = ["BuildReport", "build", "compare_collateral", "package_counts",
-           "verify"]
+__all__ = ["BuildReport", "Untracked", "build", "compare_collateral",
+           "package_counts", "untracked", "verify"]
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 
@@ -102,6 +122,20 @@ def compare_collateral(revised: dict[str, bytes],
     and for the customXml data store, which nothing puts back. Those are
     named separately and first, because a signal buried in ignorable
     noise is not a signal.
+
+    **But "regenerated" is a claim about the PART, not about what was in
+    it.** Word rewrites ``docProps/core.xml`` with only
+    ``lastModifiedBy``/``revision``/``created``/``modified``: the part is
+    present, the same size class, and every property the document
+    actually carried — ``dc:title``, ``dc:creator``, ``dc:subject``,
+    ``cp:keywords`` — is gone. LI7's ``dc:title`` was set deliberately in
+    a batch of its own on 2026-08-08 and was missing for four days
+    afterwards, twice, unnoticed: metadata is not tracked-changeable, so
+    there is no revision for an author to reject and no text, link or
+    format layer looks at ``docProps``. So the properties are compared
+    by VALUE here, and :func:`docxkit.hygiene.carry_properties` puts
+    them back in :func:`build` before this runs — what survives to be
+    reported is what the carry could not reach.
     """
     lost = sorted(set(revised) - set(redline))
     notes = [f"part LOST: {p} — nothing regenerates this; it is gone from "
@@ -115,7 +149,101 @@ def compare_collateral(revised: dict[str, bytes],
               for b in sorted(was_names - now_names)]
     notes += [f"link dropped: -> {t}"
               for t in sorted(was_targets - now_targets)]
+    notes += [f"property LOST: {tag} = {was!r} — the part is there and "
+              f"the value is not; nothing else in this build looks at "
+              f"docProps"
+              for tag in CARRIED_PROPERTIES
+              if (was := core_property(revised, tag))
+              and not core_property(redline, tag)]
     return notes
+
+
+def _root(parts: dict[str, bytes], name: str = DOCUMENT) -> Any | None:
+    from lxml import etree
+
+    blob = parts.get(name)
+    return etree.fromstring(blob) if blob else None
+
+
+def _paras(root: Any | None) -> list[str]:
+    """Every paragraph's ``w:t`` text, in order, empties included.
+
+    ``w:t`` ONLY, and that is a decision rather than an oversight: this
+    reading is what makes the reject-all gate blind to an equation whose
+    glyphs changed — an accepted math revision legitimately leaves the
+    revised equation behind — while it still sees every word of prose
+    the same accept took with it. The empties stay so ``¶n`` counts the
+    paragraph a reader would count.
+    """
+    if root is None:
+        return []
+    return ["".join((t.text or "") for t in p.iter(W + "t"))
+            for p in root.iter(W + "p")]
+
+
+def _simulate(parts: dict[str, bytes], how: Any) -> dict[str, bytes]:
+    """XML-level accept/reject of every text-bearing part."""
+    out = dict(parts)
+    for name in TEXT_PARTS:
+        if name in out:
+            out[name] = how(out[name].decode("utf-8")).encode("utf-8")
+    return out
+
+
+@dataclass(frozen=True)
+class Untracked:
+    """A paragraph the batch changed with NO revision mark on it."""
+
+    part: str               # "body" or "footnotes"
+    index: int              # paragraph index in the rejected view, 0-based
+    baseline: str           # what the baseline says there
+    batch: str              # what rejecting everything leaves
+
+    def __str__(self) -> str:
+        where = f"{self.part} ¶{self.index + 1}"
+        return (f"{where}: baseline {self.baseline[:70]!r}\n"
+                f"{' ' * len(where)}  batch    {self.batch[:70]!r}")
+
+
+def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
+              limit: int = 8) -> list[Untracked]:
+    """Paragraphs where reject-all does NOT reproduce the baseline.
+
+    The batch changed them and no revision covers the change, so the
+    author cannot refuse it — and the headline revision count says
+    nothing about it. Parental Style shipped a merged, rewritten
+    math-bearing paragraph this way while its batch read "7 revisions, 6
+    of them in the body": all six were two word-swaps in an unrelated
+    paragraph, and the central edit had no marks at all. LI7 shipped 315
+    revisions' worth the same way, from an over-eager math accept.
+
+    The same computation gate 5 already performs, named and returned
+    rather than reduced to a boolean — which is what made the failure
+    cost a bespoke difflib script to diagnose. Three callers: :func:`build`
+    REFUSES to publish on it, `revision.build` reports it before the
+    handback (it turns the refusal off, and says why), and gate 5 says it
+    after. It lives here, in the module that MAKES redlines, so that a
+    paper driving `build` directly is gated too — LI7 was, and the check
+    it needed sat one layer up, in a protocol it does not use.
+    """
+    out: list[Untracked] = []
+    rejected = _simulate(parts, _reject)
+    for label, name in (("body", DOCUMENT), ("footnotes", FOOTNOTES)):
+        got = _paras(_root(rejected, name))
+        want = _paras(_root(baseline, name))
+        for tag, i1, i2, j1, j2 in SequenceMatcher(
+                None, want, got, autojunk=False).get_opcodes():
+            if tag == "equal":
+                continue
+            for k in range(max(i2 - i1, j2 - j1)):
+                out.append(Untracked(
+                    label, j1 + k,
+                    want[i1 + k] if i1 + k < i2 else "",
+                    got[j1 + k] if j1 + k < j2 else ""))
+                if len(out) >= limit:
+                    return out
+    return out
+
 
 Classifier = Callable[[RevisionContext], str | None]
 
@@ -192,6 +320,10 @@ class BuildReport:
         self.revisions = 0
         self.body_revisions = 0
         self.math_resolved = 0
+        #: Revisions that TOUCH an equation and were left tracked because
+        #: they are not of it. Accepting these is what cost LI7 315
+        #: revisions — see :func:`_accept_math_via_equations`.
+        self.math_kept = 0
         self.comments_added = 0
         self.unclassified = 0
         self.comments_total = 0
@@ -207,10 +339,19 @@ class BuildReport:
         #: bookmarks, links. See :func:`compare_collateral`. Advisory:
         #: some of it is legitimate tidying, and only a person can tell.
         self.dropped: list[str] = []
+        #: Paragraphs a reject-all does not restore. Always computed, so
+        #: the report carries the finding either way; NOT advisory when
+        #: `reject_check` is on, which is the default — the build then
+        #: refuses to publish while this is non-empty.
+        self.unrejectable: list[Untracked] = []
         #: Part-trees Compare dropped and the build put BACK — the
         #: customXml data store, by default. See
         #: :func:`docxkit.hygiene.restore_parts`.
         self.carried: list[str] = []
+        #: Core properties Compare's regenerated ``docProps/core.xml``
+        #: no longer carried, and the build copied back by VALUE. See
+        #: :func:`docxkit.hygiene.carry_properties`.
+        self.carried_properties: list[str] = []
         self.phases: list[tuple[str, float]] = []
         self._t0 = self._last = time.perf_counter()
 
@@ -234,9 +375,15 @@ class BuildReport:
             lines += [f"    - {note}" for note in self.suppressed[:10]]
             if len(self.suppressed) > 10:
                 lines.append(f"    ... and {len(self.suppressed) - 10} more")
+        if self.math_kept:
+            lines.append(f"  {self.math_kept} revision(s) overlap an "
+                         "equation without being of it, and stay tracked")
         if self.carried:
             lines.append(f"  carried back across the Compare: "
                          f"{', '.join(self.carried)}")
+        if self.carried_properties:
+            lines.append(f"  properties carried back into core.xml: "
+                         f"{', '.join(self.carried_properties)}")
         if self.dropped:
             lines.append(f"  Word's Compare dropped {len(self.dropped)} "
                          "thing(s) the revised copy had:")
@@ -246,25 +393,32 @@ class BuildReport:
         return "\n".join(lines)
 
 
+class MathOutcome(NamedTuple):
+    """What the math pass accepted, and what it deliberately left alone."""
+
+    accepted: int
+    kept: int = 0
+
+
 def _resolve_math(doc: Any, classify: Classifier | None,
                   generic: str | None,
-                  notes: list[str] | None = None) -> int:
-    """Comment (if the paper annotates) and accept every math revision.
+                  notes: list[str] | None = None) -> MathOutcome:
+    """Comment (if the paper annotates) and accept the math revisions.
 
-    Word cannot serialize a compare result containing tracked math, so
-    these have to go regardless. Commenting them is the only chance to
-    explain an equation change, and it leaves the comment scaffold the
-    XML pass clones.
+    Word's save path cannot always serialize a compare result containing
+    tracked math, and where it cannot, these have to go. Commenting them
+    is the only chance to explain an equation change, and it leaves the
+    comment scaffold the XML pass clones.
 
     The two routes below look like duplicates and are NOT: they select
-    different revisions. Walking the equations finds revisions that
-    INTERSECT a math range; asking each revision whether it contains math
-    finds revisions that CONTAIN one. Substituting the first for the
-    second on the AFI paper left 41 extra revisions un-accepted (291
-    annotated became 332), so each path keeps the scan it was verified
-    with. The equation walk is much cheaper — ~15ms per equation against
-    ~20ms per revision, which was 27s of a 1359-revision compare — and is
-    used where no comments are needed and it was validated.
+    different revisions. Walking the equations finds revisions in a math
+    RANGE; asking each revision whether it contains math finds revisions
+    that CONTAIN one. Substituting the first for the second on the AFI
+    paper left 41 extra revisions un-accepted (291 annotated became 332),
+    so each path keeps the scan it was verified with. The equation walk
+    is much cheaper — ~15ms per equation against ~20ms per revision,
+    which was 27s of a 1359-revision compare — and is used where no
+    comments are needed and it was validated.
     """
     notes = [] if notes is None else notes
     if classify is None:
@@ -273,39 +427,86 @@ def _resolve_math(doc: Any, classify: Classifier | None,
 
 
 def _accept_math_via_equations(doc: Any,
-                               notes: list[str] | None = None) -> int:
-    """Accept revisions touching math, found by walking ``doc.OMaths``."""
+                               notes: list[str] | None = None
+                               ) -> MathOutcome:
+    """Accept revisions CONTAINED in an equation, walking ``doc.OMaths``.
+
+    CONTAINED, not overlapping, and the difference is the whole entry.
+    A revision appears in an equation's ``Range.Revisions`` if it merely
+    TOUCHES that range, and accepting one applies its ENTIRE span — so a
+    long formatting or move revision that happens to run through an
+    equation is applied whole, along with every revision inside it.
+
+    **Measured on LI7, 2026-08-15**, one compare of the same pair: with
+    the math kept tracked the package held 1870 revisions and reject-all
+    reproduced the submitted paper 319/319; with the math "resolved" by
+    the overlapping rule, thirteen ``Accept()`` calls left 1555 and
+    reject-all FAILED on 35 units. The collateral reached the abstract,
+    which contains no equation at all — its rejected text came back as
+    "…in aging populations.  the theoretical foundation…", the words
+    "The paper presents" simply gone and unrejectable. Nothing failed:
+    the deliverable opened, the counts looked plausible, and only a
+    reject-all diff against the baseline said otherwise. Hence
+    :func:`untracked`, which now runs on every build.
+
+    A revision left tracked is COUNTED and returned, not swallowed: the
+    caller reports it, and if the save then refuses the math, the number
+    is the first thing to look at.
+    """
     notes = [] if notes is None else notes
     try:
         if not doc.OMaths.Count:
-            return 0
+            return MathOutcome(0)
     except Exception as exc:
         notes.append(f"could not read doc.OMaths: {exc}")
-        return 0
-    accepted = 0
+        return MathOutcome(0)
+    accepted = kept = 0
     for i in range(doc.OMaths.Count, 0, -1):   # backwards: accepting shifts
         try:
-            revisions = doc.OMaths(i).Range.Revisions
+            math_range = doc.OMaths(i).Range
+            revisions = math_range.Revisions
         except Exception as exc:
             notes.append(f"equation {i}: unreachable ({exc})")
             continue
         for j in range(revisions.Count, 0, -1):
             try:
-                revisions(j).Accept()
+                revision = revisions(j)
+                # re-read per revision: accepting one inside the equation
+                # shifts the range's own end, and a stale bound is a
+                # bound that over-includes
+                lo, hi = int(math_range.Start), int(math_range.End)
+                span = (int(revision.Range.Start), int(revision.Range.End))
+            except Exception as exc:
+                notes.append(f"equation {i} revision {j}: "
+                             f"could not be placed ({exc})")
+                continue
+            if not (lo <= span[0] and span[1] <= hi):
+                kept += 1          # overlaps the equation; is not OF it
+                continue
+            try:
+                revision.Accept()
                 accepted += 1
             except Exception as exc:
                 notes.append(f"equation {i} revision {j}: "
                              f"not accepted ({exc})")
-    return accepted
+    return MathOutcome(accepted, kept)
 
 
 def _comment_and_accept_math_revisions(
         doc: Any, classify: Classifier, generic: str | None,
-        notes: list[str] | None = None) -> int:
+        notes: list[str] | None = None) -> MathOutcome:
     """Comment then accept each revision that CONTAINS math.
 
     Scans the revisions rather than the equations — see
     :func:`_resolve_math` for why the cheaper walk is not a substitute.
+
+    This route selects a revision by what it CONTAINS, so a long one
+    that runs through an equation is still applied whole, with the same
+    collateral :func:`_accept_math_via_equations` documents. It is not
+    narrowed here because the selection was verified revision by
+    revision on AFI and narrowing it blind would change a shipped
+    deliverable's shape; :func:`untracked` is what catches the case, on
+    every build, before anything is published.
     """
     notes = [] if notes is None else notes
     math_revs = []
@@ -326,7 +527,7 @@ def _comment_and_accept_math_revisions(
             notes.append(f"math revision not accepted ({exc}) — Word "
                          "cannot serialize a compare result containing "
                          "tracked math, so this build may fail to save")
-    return seeded or _seed_scaffold(doc, classify, generic, notes)
+    return MathOutcome(seeded or _seed_scaffold(doc, classify, generic, notes))
 
 
 def _comment_revision(doc: Any, rev: Any, classify: Classifier,
@@ -381,6 +582,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
           tables: str = _comments.COALESCE,
           whitespace: bool = True, formatting: bool = True,
+          resolve_math: bool = True, reject_check: bool = True,
           verify_in_word: bool = True, force: bool = False,
           carry: tuple[str, ...] = (_hygiene.CUSTOM_XML,),
           progress: Callable[[str], None] | None = None,
@@ -399,6 +601,21 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     hundreds of them. The default coalesces those to one balloon per
     distinct comment per table. Pass ``tables=comments.ALL`` only to
     reproduce a deliverable built before that existed.
+
+    `resolve_math` accepts the revisions inside an equation, because
+    Word's save path may refuse to serialize them. Pass ``False`` where
+    the paper has MEASURED that it does not have to: on LI7 the Flat OPC
+    route carried 1870 revisions with the math tracked and reject-all
+    reproduced the submitted paper exactly, while resolving the math cost
+    315 revisions. Every accepted revision is one the author can no
+    longer refuse, so the burden of proof is on resolving, not on
+    keeping.
+
+    `reject_check` is the gate that would have caught that: rejecting
+    every revision in the built package must reproduce `original`, and
+    the build refuses to publish when it does not (:func:`untracked`).
+    Turn it off only to obtain the artifact for diagnosis — the paragraph
+    listing in the error says what differs without it.
 
     `verify_in_word` reopens the result and fails the build if Word had to
     repair it. `force` overrides the refusal to overwrite a deliverable
@@ -448,11 +665,28 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             report.mark("compared")
             _word.draft_view(cmp_)
 
-            report.math_resolved = _resolve_math(
-                cmp_, classify, generic, report.suppressed)
-            report.mark("resolved math revisions")
-            say(f"resolved {report.math_resolved} math revisions "
-                "(Word cannot serialize tracked math)")
+            if resolve_math:
+                math = _resolve_math(cmp_, classify, generic,
+                                     report.suppressed)
+                report.math_resolved, report.math_kept = math
+                report.mark("resolved math revisions")
+                say(f"resolved {report.math_resolved} math revisions "
+                    "(Word's save path may refuse to serialize them)")
+                if report.math_kept:
+                    say(f"  {report.math_kept} revision(s) merely OVERLAP "
+                        f"an equation and stay tracked — accepting one "
+                        f"applies its whole span")
+            else:
+                # The scaffold is not optional for an annotated build:
+                # `comments.annotate` CLONES a Word-made comment, and
+                # without one the build fails later with ScaffoldMissing,
+                # a long way from the flag that caused it. It is NOT
+                # counted as a resolved math revision — nothing was
+                # resolved, and `revision.build` refuses a batch on that
+                # number.
+                _seed_scaffold(cmp_, classify, generic, report.suppressed)
+                report.mark("math left tracked")
+                say("math left tracked (resolve_math=False)")
             for note in report.suppressed:
                 say(f"  WARNING: {note}")
 
@@ -493,6 +727,19 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             say(f"  carried across: {name} (Compare drops it; it is not "
                 f"referenced from the body, so it goes back with its "
                 f"content type and a free rId)")
+        # And the same argument one level down, on the FIELDS of
+        # docProps/core.xml: Word rebuilds that part with its own four
+        # save fields and nothing else, so a titled manuscript becomes an
+        # untitled deliverable with the part still in place. Timestamps
+        # are left to the redline; only what the document says about
+        # itself is carried.
+        report.carried_properties = _hygiene.carry_properties(parts,
+                                                              revised_parts)
+        if report.carried_properties:
+            say(f"  carried across: {', '.join(report.carried_properties)} "
+                f"(Compare regenerates core.xml with only its own save "
+                f"fields; metadata is not tracked-changeable, so nothing "
+                f"else would ever report this)")
         report.dropped = compare_collateral(revised_parts, parts)
         for note in report.dropped:
             say(f"  WARNING: Compare {note}")
@@ -512,6 +759,27 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             listed = "\n  - ".join(problems)
             raise PackageError(
                 f"the package would not open cleanly in Word:\n  - {listed}")
+
+        # The gate the whole deliverable exists for: everything in it
+        # must be REFUSABLE. A redline that cannot be rejected back to
+        # the original carries edits the author was never offered, and
+        # every other signal here reads as success while it does — LI7
+        # shipped one, and found it two rounds later with a hand-written
+        # difflib script.
+        report.unrejectable = untracked(parts, read_parts(original))
+        report.mark("checked reject-all against the original")
+        for para in report.unrejectable:
+            say(f"  UNREJECTABLE {para}")
+        if report.unrejectable and reject_check:
+            listed = "\n  ".join(str(u) for u in report.unrejectable)
+            raise PackageError(
+                f"rejecting every revision does NOT reproduce "
+                f"{original.name} — {len(report.unrejectable)} paragraph(s) "
+                f"differ with no revision on them, so the author cannot "
+                f"refuse those edits:\n  {listed}\n"
+                f"An over-eager math accept is the usual cause: try "
+                f"resolve_math=False. Pass reject_check=False to build the "
+                f"file anyway and inspect it.")
         write_docx(building, parts)
         report.comments_total = package_counts(parts)["comments"]
 

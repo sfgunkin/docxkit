@@ -24,10 +24,13 @@ import re
 from dataclasses import dataclass, field
 
 from ._xml import PARA_RE, T_PARTS_RE, element_spans, escape, visible_text
+from .package import CORE_PART, core_property, set_core_property
 
 __all__ = [
+    "CARRIED_PROPERTIES",
     "SmartenReport",
     "SpacingReport",
+    "carry_properties",
     "restore_parts",
     "smarten",
     "strip_parts",
@@ -37,8 +40,31 @@ __all__ = [
 CUSTOM_XML = "customXml/"
 _CONTENT_TYPES = "[Content_Types].xml"
 _DOC_RELS = "word/_rels/document.xml.rels"
+_PKG_RELS = "_rels/.rels"
 _ID_RE = re.compile(r'\bId="rId(\d+)"')
 _TARGET_RE = re.compile(r'\bTarget="([^"]+)"')
+
+#: What ``docProps/core.xml`` says about the DOCUMENT, as against what it
+#: says about the last save. ``cp:lastModifiedBy``, ``cp:revision``,
+#: ``dcterms:created`` and ``dcterms:modified`` are deliberately not here:
+#: they belong to whichever file is being written, and carrying them over
+#: would backdate a deliverable to its source.
+CARRIED_PROPERTIES = ("dc:title", "dc:subject", "dc:creator",
+                      "cp:keywords", "dc:description", "cp:category")
+
+_CORE_CT = ('<Override PartName="/docProps/core.xml" ContentType='
+            '"application/vnd.openxmlformats-package.core-properties+xml"/>')
+_CORE_REL_TYPE = ("http://schemas.openxmlformats.org/package/2006/"
+                  "relationships/metadata/core-properties")
+_EMPTY_CORE = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package'
+    '/2006/metadata/core-properties"'
+    ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+    ' xmlns:dcterms="http://purl.org/dc/terms/"'
+    ' xmlns:dcmitype="http://purl.org/dc/dcmitype/"'
+    ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+    "</cp:coreProperties>")
 
 #: What opens a table's note. A note belongs to the table above it — it is
 #: set tight against the bottom rule, at 0 before — so it is never the
@@ -158,6 +184,61 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
             rels = rels[:at] + entry + rels[at:]
         parts[_DOC_RELS] = rels.encode("utf-8")
     return missing
+
+
+def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],
+                     tags: tuple[str, ...] = CARRIED_PROPERTIES) -> list[str]:
+    """Copy what a document says about ITSELF across a rebuild.
+
+    :func:`restore_parts` one level down. Word's Compare regenerates
+    ``docProps/core.xml`` holding only ``lastModifiedBy``, ``revision``,
+    ``created`` and ``modified`` — so the part is present, the part-level
+    check is satisfied, and ``dc:title``, ``dc:creator``, ``dc:subject``
+    and ``cp:keywords`` are gone. LI7's title was set on 2026-08-08 in a
+    batch of its own, because Word, Explorer and PDF export were all
+    falling back on the filename; it was missing again by 2026-08-11 and
+    nobody saw it for four days. Metadata is not tracked-changeable, so
+    there is no revision to reject and no text, link or format layer that
+    looks at ``docProps`` — only a carry or a warning can catch it.
+
+    Copying the PART wholesale is what this deliberately does not do:
+    ``core.xml``'s ``modified`` and ``revision`` belong to the file being
+    written, and a redline stamped with its source's save time is a
+    worse defect than an untitled one. Hence field by field, and only
+    the fields in :data:`CARRIED_PROPERTIES`.
+
+    A value already present is left alone — the target's is the newer
+    one, and this is a rescue, not a sync. The part is REBUILT if it is
+    missing entirely (Flat OPC carries no ``docProps`` at all), with its
+    content-type override and a package relationship on a free id.
+
+    Mutates `parts`; returns the tags carried.
+    """
+    wanted = {tag: value for tag in tags
+              if (value := core_property(source, tag))
+              and not core_property(parts, tag)}
+    if not wanted:
+        return []
+
+    if CORE_PART not in parts:
+        parts[CORE_PART] = _EMPTY_CORE.encode("utf-8")
+        if _CONTENT_TYPES in parts:
+            types = parts[_CONTENT_TYPES].decode("utf-8")
+            if f'PartName="/{CORE_PART}"' not in types:
+                at = types.rindex("</Types>")
+                parts[_CONTENT_TYPES] = (types[:at] + _CORE_CT
+                                         + types[at:]).encode("utf-8")
+        if _PKG_RELS in parts:
+            rels = parts[_PKG_RELS].decode("utf-8")
+            if f'Target="{CORE_PART}"' not in rels:
+                entry = (f'<Relationship Id="{_free_rid(rels, "")}" '
+                         f'Type="{_CORE_REL_TYPE}" Target="{CORE_PART}"/>')
+                at = rels.rindex("</Relationships>")
+                parts[_PKG_RELS] = (rels[:at] + entry
+                                    + rels[at:]).encode("utf-8")
+
+    return [tag for tag, value in wanted.items()
+            if set_core_property(parts, tag, value)]
 
 
 # ------------------------------------------------------------- smarten ------

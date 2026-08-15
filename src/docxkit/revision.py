@@ -61,7 +61,6 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +83,15 @@ from .errors import (
     ProtocolError,
     StaleBatch,
 )
+
+# The reject-all comparison and its three helpers live in `tracked`, with
+# the code that MAKES a redline, so that a paper calling `tracked.build`
+# directly is gated by the same computation this protocol gates on. LI7
+# was such a paper, and shipped an unrejectable redline while this
+# module held the only copy of the check. Imported rather than
+# re-implemented: two readings of "what does this paragraph say" is a
+# defect this package has already paid for once.
+from .tracked import Untracked, _paras, _root, _simulate, untracked
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
@@ -439,7 +447,8 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
 
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
-          allow_pending_baseline: bool = False, force: bool = False,
+          allow_pending_baseline: bool = False, resolve_math: bool = True,
+          force: bool = False,
           progress: Any = None) -> tracked.BuildReport:
     """Clean-build plus Word Compare: a redline from an edited copy.
 
@@ -462,6 +471,14 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     two refusals below: a batch that touches equations must be authored
     by hand instead, and one built on a baseline that still carries
     pending revisions must wait for the author to adjudicate them.
+
+    `resolve_math=False` is the third answer to the first of those, and
+    the one to try first now: it leaves the equation revisions TRACKED
+    rather than accepting them, so there is something to review and
+    reject-all still restores the baseline. It is off by default only
+    because the premise above held for years on Word's own save path;
+    the Flat OPC route this build uses carried 1870 tracked revisions
+    with the math kept on LI7 (2026-08-15), reject-all included.
 
     `force` overrides the third refusal — the one
     :func:`docxkit.guard.check` raises when ``build/batch.docx`` has
@@ -505,8 +522,18 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
         if progress:
             progress(line)
 
+    # `reject_check=False` — the refusal, not the check: `tracked.build`
+    # computes it either way and its notes come through `_say`. The
+    # protocol REPORTS an unrejectable paragraph and lets gate 5 decide,
+    # because one cause of it is legitimate and only visible from here:
+    # a moved footnote REFERENCE makes Compare emit the whole note as an
+    # insertion, so rejecting empties it. Refusing to produce the batch
+    # would leave the author with the paragraph names and no file to look
+    # at. A paper calling `tracked.build` directly has no gate 5, which
+    # is why the default there is to refuse.
     report = tracked.build(paper.prev, revised, out, None,
                            author=paper.author, verify_in_word=True,
+                           resolve_math=resolve_math, reject_check=False,
                            force=force, progress=_say)
 
     for name in restored_bookmarks(package.read_parts(paper.prev),
@@ -521,7 +548,9 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # What Compare baked in with no revision on it, named paragraph by
     # paragraph. The math count alone understated this badly: a merged,
     # rewritten math-bearing paragraph shipped WHOLE and untracked while
-    # the batch read "7 revisions, 6 of them in the body".
+    # the batch read "7 revisions, 6 of them in the body". Read off the
+    # WRITTEN file, so what is said describes the deliverable the author
+    # is about to open rather than the parts that made it.
     base_parts = package.read_parts(paper.prev)
     built = package.read_parts(out)
     lost = untracked(built, base_parts)
@@ -537,20 +566,22 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
              f"with no revision on them: the author cannot refuse those "
              f"edits, and reject-all will not restore the baseline.")
 
-    # docxkit emits this note even when the count is zero, so read the
-    # number rather than matching the sentence
-    resolved = [n for n in notes if "math revision" in n
-                and any(int(t) > 0 for t in re.findall(r"\b(\d+)\b", n))]
-    if resolved and not allow_math_resolve:
+    # The REPORT's own number, not a grep over the progress lines. The
+    # note it used to match is a sentence `tracked.build` is free to
+    # rewrite, and rewriting it would have disabled this refusal in
+    # silence — a guard whose trigger is another module's prose is a
+    # guard that stops guarding without anybody editing it.
+    if report.math_resolved and not allow_math_resolve:
         raise MathResolved(
-            "; ".join(resolved) + f" — Word cannot serialize tracked "
-            f"math, so those edits are baked into {out.name} with "
-            f"nothing to accept or reject, and reject-all will not "
-            f"restore the baseline. This batch has NO reviewable redline: "
-            f"either ship it clean and record that in the log, or make "
-            f"the edit by hand-authored markup on working.docx (the DSI "
-            f"vehicle) — Compare cannot represent it, and building it "
-            f"again will not change that.")
+            f"{report.math_resolved} math revision(s) were accepted while "
+            f"building {out.name}: those edits are baked in with nothing "
+            f"to accept or reject, and reject-all will not restore the "
+            f"baseline. This batch has NO reviewable redline as built. "
+            f"Three ways on, in order: rebuild with "
+            f"resolve_math=False, which keeps them tracked and is what "
+            f"the Flat OPC route measured on LI7 supports; ship the batch "
+            f"clean and record that in the log; or make the edit by "
+            f"hand-authored markup on working.docx (the DSI vehicle).")
     return report
 
 
@@ -632,14 +663,6 @@ def _norm(text: str) -> str:
     return "".join(re.sub(r"[\x00-\x1f]", "", folded).split())
 
 
-def _root(parts: dict[str, bytes], name: str = DOCUMENT
-          ) -> Any | None:
-    from lxml import etree
-
-    blob = parts.get(name)
-    return etree.fromstring(blob) if blob else None
-
-
 #: What Word's ``Range.Text`` returns where an INLINE ``w:drawing``
 #: sits: one U+002F SOLIDUS, measured on a synthetic package whose only
 #: content was a picture and two letters (``'A/B\r'``, ord 47).
@@ -700,13 +723,6 @@ def _glyph(root: Any | None, *, main_story: bool = False) -> str:
     return "".join(out)
 
 
-def _paras(root: Any | None) -> list[str]:
-    if root is None:
-        return []
-    return ["".join((t.text or "") for t in p.iter(W + "t"))
-            for p in root.iter(W + "p")]
-
-
 def _counts(root: Any | None) -> dict[str, int]:
     if root is None:
         return {}
@@ -723,65 +739,6 @@ def _counts(root: Any | None) -> dict[str, int]:
                             if not any((t.text or "")
                                        for t in om.iter(M + "t"))),
     }
-
-
-def _simulate(parts: dict[str, bytes], how: Any) -> dict[str, bytes]:
-    """XML-level accept/reject of every text-bearing part."""
-    out = dict(parts)
-    for name in TEXT_PARTS:
-        if name in out:
-            out[name] = how(out[name].decode("utf-8")).encode("utf-8")
-    return out
-
-
-@dataclass(frozen=True)
-class Untracked:
-    """A paragraph the batch changed with NO revision mark on it."""
-
-    part: str               # "body" or "footnotes"
-    index: int              # paragraph index in the rejected view, 0-based
-    baseline: str           # what the baseline says there
-    batch: str              # what rejecting everything leaves
-
-    def __str__(self) -> str:
-        where = f"{self.part} ¶{self.index + 1}"
-        return (f"{where}: baseline {self.baseline[:70]!r}\n"
-                f"{' ' * len(where)}  batch    {self.batch[:70]!r}")
-
-
-def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
-              limit: int = 8) -> list[Untracked]:
-    """Paragraphs where reject-all does NOT reproduce the baseline.
-
-    The batch changed them and no revision covers the change, so the
-    author cannot refuse it — and the headline revision count says
-    nothing about it. Parental Style shipped a merged, rewritten
-    math-bearing paragraph this way while its batch read "7 revisions, 6
-    of them in the body": all six were two word-swaps in an unrelated
-    paragraph, and the central edit had no marks at all.
-
-    The same computation gate 5 already performs, named and returned
-    rather than reduced to a boolean — which is what made the failure
-    cost a bespoke difflib script to diagnose. Both callers use it: the
-    build says it BEFORE the handback, the gate says it after.
-    """
-    out: list[Untracked] = []
-    rejected = _simulate(parts, revisions.reject)
-    for label, name in (("body", DOCUMENT), ("footnotes", FOOTNOTES)):
-        got = _paras(_root(rejected, name))
-        want = _paras(_root(baseline, name))
-        for tag, i1, i2, j1, j2 in SequenceMatcher(
-                None, want, got, autojunk=False).get_opcodes():
-            if tag == "equal":
-                continue
-            for k in range(max(i2 - i1, j2 - j1)):
-                out.append(Untracked(
-                    label, j1 + k,
-                    want[i1 + k] if i1 + k < i2 else "",
-                    got[j1 + k] if j1 + k < j2 else ""))
-                if len(out) >= limit:
-                    return out
-    return out
 
 
 def _links(parts: dict[str, bytes]) -> Counter[tuple[str, str]]:

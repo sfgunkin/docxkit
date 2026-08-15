@@ -878,6 +878,7 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
     report = build(paper, args.revised, args.out,
                    allow_math_resolve=args.allow_math_resolve,
                    allow_pending_baseline=args.allow_pending_baseline,
+                   resolve_math=not args.keep_math,
                    force=args.force,
                    progress=lambda line: print("   ", line))
     out = Path(args.out) if args.out else paper.batch
@@ -1238,6 +1239,14 @@ def main() -> None:
     r.add_argument("--allow-math-resolve", action="store_true",
                    help="ship equations Word baked in unreviewable "
                         "(they almost never are meant to be)")
+    # The other answer to the same refusal, and the better one: keep the
+    # equation revisions TRACKED instead of accepting them. Measured on
+    # LI7 (2026-08-15) — the Flat OPC route serialized 1870 revisions
+    # with the math kept, reject-all included.
+    r.add_argument("--keep-math", action="store_true",
+                   help="leave equation revisions TRACKED rather than "
+                        "accepting them (try this before "
+                        "--allow-math-resolve)")
     r.add_argument("--allow-pending-baseline", action="store_true",
                    help="absorb the baseline's pending revisions "
                         "deliberately")

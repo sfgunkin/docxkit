@@ -89,6 +89,7 @@ def _fake_build(math: int = 0, revisions: int = 7):
             f"resolved {math} math revisions")
         report = tracked.BuildReport()
         report.revisions = revisions
+        report.math_resolved = math       # the number the protocol reads
         return report
 
     return build
@@ -412,6 +413,41 @@ def test_build_to_an_explicit_out(monkeypatch, project, tmp_path, capsys):
     assert code == 0
     assert dest.exists()
     assert str(dest) in capsys.readouterr().out
+
+
+def test_keep_math_REACHES_the_build(monkeypatch, project):
+    """A flag that does not arrive is worse than no flag: the redline
+    ships with the equations accepted and the run reports success."""
+    from docxkit import revision
+    seen: dict[str, object] = {}
+    inner = _fake_build()
+
+    def build(*a, **kw):
+        seen.update(kw)
+        return inner(*a, **kw)
+
+    monkeypatch.setattr(revision.tracked, "build", build)
+    code, _ = run_cli(monkeypatch, "revision", "build",
+                      str(project.working), "--keep-math",
+                      "--paper", str(project.root))
+    assert code == 0
+    assert seen["resolve_math"] is False
+
+
+def test_the_math_is_resolved_when_nobody_says_otherwise(monkeypatch,
+                                                         project):
+    from docxkit import revision
+    seen: dict[str, object] = {}
+    inner = _fake_build()
+
+    def build(*a, **kw):
+        seen.update(kw)
+        return inner(*a, **kw)
+
+    monkeypatch.setattr(revision.tracked, "build", build)
+    run_cli(monkeypatch, "revision", "build", str(project.working),
+            "--paper", str(project.root))
+    assert seen["resolve_math"] is True
 
 
 def test_build_refuses_resolved_math_with_exit_2(monkeypatch, project):

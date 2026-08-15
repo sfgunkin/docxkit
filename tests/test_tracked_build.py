@@ -165,6 +165,18 @@ def sources(tmp_path: Path) -> tuple[Path, Path, Path]:
             tmp_path / "redline.docx")
 
 
+def _baseline(path: Path, text: str) -> None:
+    """Rewrite `path` to say `text` — what the redline must reject BACK to.
+
+    The fake's compare output is not derived from the fixture inputs, so
+    a test whose body is not `_clean_document()` has to say what its
+    original was; `build` now refuses to publish a redline whose
+    reject-all does not reproduce it.
+    """
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", document(para(run(text))))
+
+
 def _build(monkeypatch, body: str, sources, **kw):
     fake = _FakeWordModule(body)
     monkeypatch.setattr(tracked, "_word", fake)
@@ -407,7 +419,7 @@ def test_a_suppressed_word_call_is_SAID_too(monkeypatch, sources):
 
     def _resolve(cmp_, classify, generic, suppressed):
         suppressed.append("comment on revision 7: rejected by callee")
-        return 0
+        return tracked.MathOutcome(0)
 
     monkeypatch.setattr(tracked, "_resolve_math", _resolve)
     original, revised, out = sources
@@ -415,6 +427,147 @@ def test_a_suppressed_word_call_is_SAID_too(monkeypatch, sources):
                   progress=said.append)
     assert any("rejected by callee" in line for line in said), \
         "a swallowed Word call was recorded and never said"
+
+
+def test_the_build_carries_the_TITLE_across_the_compare(monkeypatch,
+                                                        sources):
+    """Compare regenerates docProps/core.xml with its own save fields
+    only — and Flat OPC carries no docProps at all — so a titled
+    manuscript becomes an untitled deliverable with nothing reporting
+    it: metadata is not tracked-changeable, so no redline can show the
+    loss. LI7's dc:title was gone for four days, twice."""
+    from docxkit.package import core_property, read_parts
+
+    _original, revised, out = sources
+    with zipfile.ZipFile(revised, "w") as z:
+        z.writestr("word/document.xml", _clean_document())
+        z.writestr("docProps/core.xml",
+                   '<cp:coreProperties xmlns:cp="http://schemas.'
+                   'openxmlformats.org/package/2006/metadata/core-'
+                   'properties" xmlns:dc="http://purl.org/dc/elements/'
+                   '1.1/"><dc:title>Loneliness Risk Index</dc:title>'
+                   "</cp:coreProperties>")
+
+    report, _ = _build(monkeypatch, _clean_document(), sources)
+
+    assert report.carried_properties == ["dc:title"]
+    assert core_property(read_parts(out), "dc:title") == \
+        "Loneliness Risk Index"
+    assert "dc:title" in report.format()
+
+
+# ------------------------------------------- the reject-all gate ---------
+
+
+def test_build_REFUSES_a_redline_that_cannot_be_REJECTED(monkeypatch,
+                                                         sources):
+    """The failure a redline exists to prevent, and the one every other
+    signal calls success.
+
+    LI7 (2026-08-15) shipped one: an over-eager math accept applied 13
+    revisions' whole spans, 315 revisions went with them, and rejecting
+    everything no longer gave back the submitted paper — collateral as
+    far as the abstract, which holds no equation. The package linted,
+    opened, verified in Word and counted plausibly throughout.
+    """
+    fake = _FakeWordModule(_revised_document())     # rejects to "Employment"
+    monkeypatch.setattr(tracked, "_word", fake)
+    original, revised, out = sources                # baseline says otherwise
+    out.write_bytes(b"THE PREVIOUS DELIVERABLE")
+
+    with pytest.raises(PackageError) as exc:
+        tracked.build(original, revised, out, verify_in_word=False,
+                      force=True)
+
+    assert "does NOT reproduce" in str(exc.value)
+    assert "The revised sentence." in str(exc.value), "say WHICH paragraph"
+    assert out.read_bytes() == b"THE PREVIOUS DELIVERABLE", \
+        "a failed gate must not destroy the redline that was there"
+
+
+def test_the_reject_gate_can_be_turned_off_and_still_SAYS_it(monkeypatch,
+                                                             sources):
+    """Turning it off is for getting the artifact to look at — not for
+    making the finding go away, so it is computed and said either way."""
+    said: list[str] = []
+    fake = _FakeWordModule(_revised_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+    original, revised, out = sources
+
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           reject_check=False, progress=said.append)
+
+    assert out.is_file()
+    assert len(report.unrejectable) == 1
+    assert any("UNREJECTABLE" in line for line in said), said
+
+
+def test_a_faithful_redline_passes_the_reject_gate(monkeypatch, sources):
+    report, _ = _build(monkeypatch, _clean_document(), sources)
+    assert report.unrejectable == []
+    assert "checked reject-all against the original" in \
+        [label for label, _ in report.phases]
+
+
+# ------------------------------------------- keeping the math tracked -----
+
+
+def test_build_can_KEEP_the_math_tracked(monkeypatch, sources):
+    """`resolve_math=False`: nothing is accepted on the paper's behalf.
+
+    Measured on LI7: Flat OPC serialized 1870 revisions with the math
+    tracked and reject-all reproduced the submitted paper 319/319, while
+    resolving the math cost 315 revisions. A paper that has measured its
+    own case must be able to say so.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(tracked, "_resolve_math",
+                        lambda *a, **kw: called.append("resolved"))
+    said: list[str] = []
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+    original, revised, out = sources
+
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           resolve_math=False, progress=said.append)
+
+    assert called == [], "the math pass ran anyway"
+    assert report.math_resolved == 0
+    assert out.is_file()
+    assert any("math left tracked" in line for line in said), said
+
+
+def test_keeping_the_math_still_SEEDS_the_comment_scaffold(monkeypatch,
+                                                           sources):
+    """`comments.annotate` CLONES a Word-made comment. Skipping the math
+    pass skips the only place one was made, and the build would fail far
+    away with ScaffoldMissing and no hint of the flag that caused it."""
+    seeded: list[str] = []
+    monkeypatch.setattr(tracked, "_seed_scaffold",
+                        lambda *a, **kw: seeded.append("seeded") or 0)
+    fake = _FakeWordModule(_revised_document(), scaffold=True)
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           classify=lambda ctx: "R1: sharpened",
+                           resolve_math=False, verify_in_word=False)
+
+    assert seeded == ["seeded"]
+    # a scaffold comment is not a resolved math revision, and the
+    # protocol refuses a whole batch on that number
+    assert report.math_resolved == 0
+
+
+def test_an_unannotated_build_seeds_NO_scaffold_when_math_is_kept(
+        monkeypatch, sources):
+    """classify=None means no comments at all; there is nothing to clone
+    and nothing to seed."""
+    seeded: list[str] = []
+    monkeypatch.setattr(tracked, "_seed_scaffold",
+                        lambda doc, classify, *a: seeded.append(classify))
+    _build(monkeypatch, _clean_document(), sources, resolve_math=False)
+    assert seeded == [None], "seeding is the classifier's business to refuse"
 
 
 def test_build_report_formats_its_phases(monkeypatch, sources):
@@ -507,18 +660,19 @@ class _Count:
 
 
 class _MathRange:
-    def __init__(self, text="", omaths=0, revisions=()):
+    def __init__(self, text="", omaths=0, revisions=(), span=(0, 0)):
         self.Text = text
         self.OMaths = _Count([object()] * omaths)
         self.Revisions = _Count(revisions)
+        self.Start, self.End = span
 
     def Paragraphs(self, i):
         return type("P", (), {"Range": type("R", (), {"Text": self.Text})})
 
 
 class _Rev:
-    def __init__(self, text="", omaths=0):
-        self.Range = _MathRange(text, omaths=omaths)
+    def __init__(self, text="", omaths=0, span=(0, 0)):
+        self.Range = _MathRange(text, omaths=omaths, span=span)
         self.accepted = False
 
     def Accept(self):
@@ -528,24 +682,30 @@ class _Rev:
 class _OMath:
     """doc.OMaths(i) is an OMath OBJECT carrying a .Range, not a range."""
 
-    def __init__(self, revisions=()):
-        self.Range = _MathRange(revisions=revisions)
+    def __init__(self, revisions=(), span=(0, 0)):
+        self.Range = _MathRange(revisions=revisions, span=span)
 
 
 class _MathDoc:
     """A document where the two math scans see DIFFERENT revisions.
 
-    One equation whose range INTERSECTS two revisions, and three
+    One equation at 100–200 whose ``Range.Revisions`` holds both a
+    revision INSIDE it and one that merely runs THROUGH it, plus three
     revisions of which only one CONTAINS math — the shape that made
-    substituting one scan for the other drop 41 revisions on AFI.
+    substituting one scan for the other drop 41 revisions on AFI, and
+    the shape that cost LI7 315 revisions when the equation walk
+    accepted the straddler.
     """
 
     def __init__(self):
-        self.intersecting = [_Rev("dropped-1"), _Rev("dropped-2")]
+        self.inside = _Rev("of the equation", span=(120, 150))
+        self.straddling = _Rev("abstract .. equation .. §6", span=(10, 400))
+        self.intersecting = [self.inside, self.straddling]
         self.containing = _Rev("has math", omaths=1)
         self.all_revisions = [_Rev("prose a"), self.containing,
                               _Rev("prose b")]
-        self.OMaths = _Count([_OMath(revisions=self.intersecting)])
+        self.OMaths = _Count([_OMath(revisions=self.intersecting,
+                                     span=(100, 200))])
         self.Revisions = _Count(self.all_revisions)
         self.added: list[str] = []
         self.Comments = type("C", (), {
@@ -553,13 +713,33 @@ class _MathDoc:
             "Count": 0})()
 
 
+def test_a_revision_that_only_RUNS_THROUGH_an_equation_stays_tracked():
+    """The LI7 regression, pinned (2026-08-15).
+
+    A revision appears in an equation's ``Range.Revisions`` if it merely
+    OVERLAPS it, and ``Accept()`` applies the revision's WHOLE span. On
+    LI7 thirteen such accepts destroyed 315 revisions and reject-all
+    stopped reproducing the submitted paper — collateral as far as the
+    abstract, which holds no equation at all.
+    """
+    from docxkit.tracked import _accept_math_via_equations
+
+    doc = _MathDoc()
+    outcome = _accept_math_via_equations(doc)
+
+    assert doc.inside.accepted, "a revision OF the equation is resolved"
+    assert not doc.straddling.accepted, \
+        "accepting this one applies its whole span, abstract included"
+    assert outcome == (1, 1)         # accepted, kept
+
+
 def test_the_two_math_scans_select_different_revisions():
     """The AFI regression, pinned.
 
-    The equation walk finds revisions INTERSECTING a math range; the
-    revision scan finds revisions CONTAINING math. They are not
-    substitutes — swapping them left 41 revisions un-accepted, and the
-    counts here differ for exactly that reason.
+    The equation walk finds revisions in a math RANGE; the revision scan
+    finds revisions CONTAINING math. They are not substitutes — swapping
+    them left 41 revisions un-accepted, and the counts here differ for
+    exactly that reason.
     """
     from docxkit.tracked import (
         _accept_math_via_equations,
@@ -572,9 +752,10 @@ def test_the_two_math_scans_select_different_revisions():
     via_revisions = _comment_and_accept_math_revisions(
         doc, lambda ctx: "R1: equation revised", None)
 
-    assert via_equations == 2          # both revisions touching the math
-    assert via_revisions == 1          # only the one that contains math
-    assert via_equations != via_revisions, "the scans must not coincide"
+    assert via_equations.accepted == 1     # the revision inside the math
+    assert via_revisions.accepted == 1     # the one that contains math
+    assert via_equations.kept == 1 and via_revisions.kept == 0, \
+        "the scans must not coincide"
     assert doc.containing.accepted
     assert doc.added == ["R1: equation revised"]
 
@@ -603,7 +784,7 @@ def test_a_document_with_no_equations_resolves_nothing():
 
     class NoMath:
         OMaths = _Count()
-    assert _accept_math_via_equations(NoMath()) == 0
+    assert _accept_math_via_equations(NoMath()).accepted == 0
 
 
 def test_the_scaffold_comment_is_seeded_when_no_math_revision_exists(
@@ -618,7 +799,7 @@ def test_the_scaffold_comment_is_seeded_when_no_math_revision_exists(
                         raising=False)
     seeded = T._comment_and_accept_math_revisions(
         doc, lambda ctx: "generic note", None)
-    assert seeded == 1
+    assert seeded.accepted == 1
     assert doc.added == ["generic note"]
 
 
@@ -720,6 +901,7 @@ def test_a_build_that_annotates_comments_every_revision(monkeypatch,
     clones it, and the package must hold both comments afterwards."""
     fake = _FakeWordModule(_revised_document(), scaffold=True)
     monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
     out = sources[2]
 
     report = tracked.build(sources[0], sources[1], out,
@@ -741,6 +923,7 @@ def test_a_successful_verify_is_recorded_on_the_report(monkeypatch,
     fake.session = saying.session                            # type: ignore
     fake.open_doc = saying.open_doc                          # type: ignore
     monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
 
     report = tracked.build(sources[0], sources[1], sources[2],
                            verify_in_word=True)
@@ -784,7 +967,7 @@ def test_one_unreachable_equation_does_not_abort_the_math_pass():
 
     class Doc:
         OMaths = _Exploding()
-    assert _accept_math_via_equations(Doc()) == 0    # skipped, not raised
+    assert _accept_math_via_equations(Doc()).accepted == 0   # skipped
 
 
 def test_a_revision_that_raises_is_skipped_not_fatal(monkeypatch):
@@ -800,7 +983,7 @@ def test_a_revision_that_raises_is_skipped_not_fatal(monkeypatch):
                         lambda d: iter([Hostile(), doc.containing]),
                         raising=False)
     assert T._comment_and_accept_math_revisions(
-        doc, lambda ctx: "note", None) == 1
+        doc, lambda ctx: "note", None).accepted == 1
 
 
 # ------------------------------------------- failure is not advisory ------
@@ -819,7 +1002,7 @@ def test_a_swallowed_word_failure_is_recorded_not_hidden():
         OMaths = _Exploding()
 
     notes: list[str] = []
-    assert _accept_math_via_equations(Doc(), notes) == 0
+    assert _accept_math_via_equations(Doc(), notes).accepted == 0
     assert notes and "unreachable" in notes[0]
 
 
