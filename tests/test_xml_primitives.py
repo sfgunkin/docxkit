@@ -435,3 +435,53 @@ def test_an_ordinary_paragraph_still_matches_whole():
     xml = ('<w:p w:rsidR="00A/B"><w:pPr><w:jc w:val="center"/></w:pPr>'
            "<w:r><w:t>x</w:t></w:r></w:p>")
     assert [m.group(0) for m in PARA_RE.finditer(xml)] == [xml]
+
+
+# ------------------------------------------ the SELF-CLOSING run ---------
+
+#: Word writes `<w:r/>` for an empty run, and 28 of 899 manuscripts
+#: carry one (2026-08-15). `<w:r\b[^>]*>` swallowed the slash and paired
+#: it with the NEXT close tag, merging the empty run with the real run
+#: after it — the same defect PARA_RE was fixed for in 6acc545, and
+#: harder to see: an empty run has no visible text, so every offset and
+#: every text assertion stayed correct while the run IDENTITY was wrong.
+
+_EMPTY_RUN_PARA = (
+    '<w:p><w:r><w:t xml:space="preserve">The share rose to </w:t></w:r>'
+    "<w:r/>"
+    '<w:r><w:rPr><w:i/></w:rPr><w:t>0.15</w:t></w:r>'
+    '<w:r><w:t xml:space="preserve"> in 2024.</w:t></w:r></w:p>')
+
+
+def test_RUN_RE_does_not_read_a_self_closing_run_as_an_open_tag():
+    from docxkit._xml import RUN_RE
+
+    runs = [m.group(0) for m in RUN_RE.finditer(_EMPTY_RUN_PARA)]
+    assert len(runs) == 3, runs
+    assert not any(r.startswith("<w:r/>") for r in runs), \
+        "the empty run was merged with the run after it"
+    assert "<w:i/>" in runs[1], "the italic run kept its own properties"
+
+
+def test_RUN_OPEN_RE_does_not_match_an_empty_run():
+    from docxkit._xml import RUN_OPEN_RE
+
+    assert [m.group(0) for m in RUN_OPEN_RE.finditer(_EMPTY_RUN_PARA)] == \
+        ["<w:r>", "<w:r>", "<w:r>"]
+
+
+def test_an_edit_across_an_empty_run_keeps_it_and_the_text():
+    from docxkit._xml import visible_text
+    from docxkit.edit import replace_in_para
+
+    out = replace_in_para(_EMPTY_RUN_PARA, "0.15", "0.17")
+    assert visible_text(out) == "The share rose to 0.17 in 2024."
+    assert "<w:r/>" in out, "the empty run was consumed by the rewrite"
+    assert out.count("<w:i/>") == 1
+
+
+def test_the_paragraph_open_pattern_in_crossrefs_is_guarded_too():
+    from docxkit.crossrefs import _P_OPEN_RE
+
+    assert _P_OPEN_RE.match("<w:p/>") is None
+    assert _P_OPEN_RE.match('<w:p w14:paraId="1">') is not None

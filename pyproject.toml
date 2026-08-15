@@ -32,6 +32,10 @@ word = ["pywin32>=306"]
 # checkout — installed on the author's machine, invisible everywhere
 # else, and nothing told a user what to install when the ImportError hit.
 latex = ["latex2mathml>=3.75"]
+# Reading the RENDER (`docxkit pages --check`): the only way to see a
+# blank sheet or a numbering restart, neither of which is inferable from
+# the XML. Optional for the same reason as `word`, which it needs anyway.
+pdf = ["pymupdf>=1.24"]
 # `tables.to_frame` only. pandas is heavy and the toolkit reads tables
 # perfectly well without it, so it stays out of the core dependency the
 # same way — and, like latex2mathml, it was undeclared until a clean
@@ -64,8 +68,8 @@ line-length = 79
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "PL", "FURB",
-          "ISC", "PIE", "RUF"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "C90", "PL",
+          "FURB", "ISC", "PIE", "RUF"]
 ignore = [
     "PLR0912",  # branch count: the XML passes are legitimately branchy
     "PLR0913",  # argument count: keyword-only options read better than dicts
@@ -73,7 +77,26 @@ ignore = [
     "PLR2004",  # magic values: OOXML constants are clearer inline
 ]
 
+# The three PLR ignores above are right — an XML pass IS branchy — but
+# with mccabe unselected as well, NOTHING watched size at all, and that
+# is how `cli.main` reached 289 lines and `_audit_findings` a complexity
+# of 38. A threshold rather than a rule: 20 leaves the branchy passes
+# alone and catches the next function that grows past them. The six
+# already above it are listed under per-file-ignores, which is the debt
+# stated in one place instead of a gate nobody can turn on.
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
 [tool.ruff.lint.per-file-ignores]
+# ---- C901: six functions are over the threshold TODAY, and each file
+# is pinned here so the rest of the package is gated rather than the
+# rule being left off. Every one is a single pass over one document with
+# many cases, not a function doing several jobs, so splitting one is a
+# batch of its own — with the number to beat recorded here:
+#   _cite_audit._audit_findings  38     lint.lint                 31
+#   _cite_build.link_all         27     refstyle.audit            27
+#   edit.replace_in_para         26     revisions._simulate_where 24
+"src/docxkit/edit.py" = ["C901"]
 # compare.py IS a facade now (see citations.py): `from x import y as y`
 # is the PEP 484 signal for a deliberate re-export, and every line of
 # its import block is one. It also parses the glyphs Word emits and
@@ -116,8 +139,8 @@ ignore = [
 # the others defer imports to keep the layering acyclic.
 "src/docxkit/_cite_grammar.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/_cite_repair.py" = ["RUF001", "PLC0415"]
-"src/docxkit/_cite_audit.py" = ["RUF001", "PLC0415"]
-"src/docxkit/_cite_build.py" = ["RUF001", "PLC0415"]
+"src/docxkit/_cite_audit.py" = ["C901", "RUF001", "PLC0415"]
+"src/docxkit/_cite_build.py" = ["C901", "RUF001", "PLC0415"]
 "src/docxkit/crossrefs.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 # equations maps the Unicode math glyphs themselves to LaTeX commands,
@@ -127,14 +150,17 @@ ignore = [
 "src/docxkit/renumber.py" = ["RUF001", "RUF002"]
 # refstyle's whole subject is the en dash and the curly apostrophe: its
 # messages must SHOW the wanted glyph ("pp. 45–48"), not describe it.
-"src/docxkit/refstyle.py" = ["RUF001", "RUF002"]
+"src/docxkit/refstyle.py" = ["C901", "RUF001", "RUF002"]
 "src/docxkit/wordcount.py" = ["RUF001"]
 "src/docxkit/hygiene.py" = ["RUF001", "RUF002"]
-"src/docxkit/lint.py" = ["PLC0415"]
-"src/docxkit/revisions.py" = ["PLC0415"]
+"src/docxkit/lint.py" = ["C901", "PLC0415"]
+"src/docxkit/revisions.py" = ["C901", "PLC0415"]
 # same lazy lxml: the reject-all gate parses, `package_counts` does not,
 # and `import docxkit` must not pay for the parser.
 "src/docxkit/tracked.py" = ["PLC0415"]
+# pymupdf is an optional extra and `word` is Windows-only: `import
+# docxkit` must not need either.
+"src/docxkit/pages.py" = ["PLC0415"]
 # revision.py holds the log.md and paper.toml TEMPLATES it writes into a
 # migrating project. Their line length is the generated file's business —
 # a markdown table row cannot be wrapped without changing what is emitted

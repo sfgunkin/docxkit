@@ -62,6 +62,9 @@ from .citations import next_bookmark_id
 from .errors import AnchorError, ConversionGap
 
 __all__ = [
+    "DEFAULT_LABELS",
+    "LABEL_FORMS",
+    "NUMBER_END",
     "Caption",
     "LinkReport",
     "anchor_names",
@@ -70,6 +73,7 @@ __all__ = [
     "field_targets",
     "find_captions",
     "link",
+    "link_more",
     "unlink",
 ]
 
@@ -97,7 +101,12 @@ _BOOKMARK_RE = BOOKMARK_ID_RE          # the shared definition
 # one copy.
 _HYPERLINK_RE = HYPERLINK_ANY_RE
 _PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
-_P_OPEN_RE = re.compile(r"<w:p\b[^>]*>")
+# `(?<!/)>`: the pre-fix PARA_RE spelling, which reads a self-closing
+# `<w:p/>` as an open tag — 32 of 899 manuscripts carry one. Latent
+# here, since the one caller is only ever handed a caption paragraph and
+# a caption has text; fixed anyway, because "latent" is a claim about
+# today's callers.
+_P_OPEN_RE = re.compile(r"<w:p\b[^>]*(?<!/)>")
 _RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)
 # a bookmark name Word will accept: letters, digits, underscore
 _UNSAFE_RE = re.compile(r"[^0-9A-Za-z_]")

@@ -33,9 +33,11 @@ from ._table_core import _cell_text as _cell_text
 from ._table_core import _render_value as _render_value
 from ._table_core import _table_spans as _table_spans
 from ._table_core import by_caption as by_caption
+from ._table_core import cells_of as cells_of
 from ._table_core import find as find
 from ._table_core import parse_number as parse_number
 from ._table_core import read_all as read_all
+from ._table_core import rows_of as rows_of
 from ._table_core import set_cell as set_cell
 from ._table_core import to_frame as to_frame
 from ._table_core import tolerance_for as tolerance_for

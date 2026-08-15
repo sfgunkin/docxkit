@@ -37,6 +37,7 @@ from .styles import Cascade
 __all__ = [
     "FontReport",
     "Footnote",
+    "SizeOutlier",
     "SizeReport",
     "append",
     "find",
@@ -50,6 +51,13 @@ __all__ = [
 
 _FOOTNOTE_RE = re.compile(r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)'
                           r"</w:footnote>", re.DOTALL)
+_ENDNOTE_RE = re.compile(r'<w:endnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)'
+                         r"</w:endnote>", re.DOTALL)
+#: An endnote is a footnote at the back of the paper: same element shape,
+#: same reserved ids, same reason a lost one is invisible. A check that
+#: covered only the footnotes would be a gate that cannot fail for any
+#: paper that uses the other kind.
+_NOTE_RE = {"footnote": _FOOTNOTE_RE, "endnote": _ENDNOTE_RE}
 _REFERENCE_RE = re.compile(r'(w:footnoteReference\b[^>]*?w:id=")(-?\d+)(")')
 # Word's own separator/continuation notes, present in every document
 _RESERVED_IDS = {"0", "-1"}
@@ -71,11 +79,16 @@ class Footnote:
         return f"Footnote(id={self.id!r}, text={self.text[:40]!r})"
 
 
-def find_all(footnotes_xml: str, *, include_reserved: bool = False
-             ) -> list[Footnote]:
-    """Every real footnote, Word's separator notes excluded."""
+def find_all(footnotes_xml: str, *, include_reserved: bool = False,
+             kind: str = "footnote") -> list[Footnote]:
+    """Every real footnote, Word's separator notes excluded.
+
+    `kind` reads ``word/endnotes.xml`` instead — the same element shape
+    under a different name, and the caller that must not stop at the
+    footnotes is the hand-back gate.
+    """
     out = []
-    for m in _FOOTNOTE_RE.finditer(footnotes_xml):
+    for m in _NOTE_RE[kind].finditer(footnotes_xml):
         if not include_reserved and m.group(1) in _RESERVED_IDS:
             continue
         out.append(Footnote(m.group(1), m.group(0), m.start(), m.end()))

@@ -29,7 +29,7 @@ from ._xml import (
 from .errors import AnchorError
 from .revisions import FINAL, _has_revisions, view_transform
 
-_TR_RE = re.compile(r"<w:tr\b[^>]*>.*?</w:tr>", re.DOTALL)
+_TR_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>", re.DOTALL)
 _TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
 # a merged cell: structure, which is why it lives here and
 # not with the width fitting that also consumes it

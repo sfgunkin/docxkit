@@ -23,6 +23,7 @@ __all__ = [
     "P_RE",
     "body_elements",
     "edit_para",
+    "find_para",
     "heading_level",
     "page_break_before",
     "para_slice",

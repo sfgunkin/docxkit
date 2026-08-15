@@ -43,7 +43,14 @@ from typing import NamedTuple
 from ._xml import escape_attr
 from .package import set_core_property
 
-__all__ = ["AuthorReport", "initials_for", "read_authors", "set_author"]
+__all__ = [
+    "CORE_PART",
+    "PEOPLE_PART",
+    "AuthorReport",
+    "initials_for",
+    "read_authors",
+    "set_author",
+]
 
 #: The attribute, not the elements that take it. Attribute order is not
 #: meaningful in XML, so matching `<w:ins w:id=... w:author=...>` by

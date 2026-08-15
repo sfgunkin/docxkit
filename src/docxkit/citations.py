@@ -85,6 +85,7 @@ from ._cite_grammar import extend_to_name as extend_to_name
 from ._cite_grammar import find_citations as find_citations
 from ._cite_grammar import hyperlink_field as hyperlink_field
 from ._cite_grammar import key_for as key_for
+from ._cite_grammar import lead_surname as lead_surname
 from ._cite_grammar import link_in_para as link_in_para
 from ._cite_grammar import masked_visible_text as masked_visible_text
 from ._cite_grammar import parse_reference as parse_reference
@@ -96,13 +97,13 @@ from ._cite_grammar import wrap_visible_span as wrap_visible_span
 # re-exported from _cite_repair: `as` form marks it deliberate
 from ._cite_repair import _BOOKMARK_ID_RE as _BOOKMARK_ID_RE
 from ._cite_repair import _mark_para_head as _mark_para_head
-from ._cite_repair import _run_open_before as _run_open_before
 from ._cite_repair import delete_bookmark as delete_bookmark
 from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
 from ._cite_repair import wrap_link_in_bookmark as wrap_link_in_bookmark
 from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, internal_links, visible_text
+from ._xml import run_open_before as run_open_before
 from .package import read_parts
 
 __all__ = [
@@ -132,6 +133,7 @@ __all__ = [
     "parse_reference",
     "references",
     "remove_outer_field",
+    "repair_plan",
     "unlink_by_anchor",
     "wrap_link_in_bookmark",
     "wrap_visible_span",

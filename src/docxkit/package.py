@@ -32,6 +32,8 @@ from ._xml import escape, text_parts
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
+    "CORE_ORDER",
+    "CORE_PART",
     "REGENERATED_BY_WORD",
     "assert_unlocked",
     "backup",

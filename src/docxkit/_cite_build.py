@@ -29,7 +29,6 @@ from ._cite_grammar import (
 )
 from ._cite_repair import (
     _mark_para_head,
-    _run_open_before,
     next_bookmark_id,
     wrap_link_in_bookmark,
 )
@@ -39,6 +38,7 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     internal_links,
+    run_open_before,
     visible_text,
 )
 from .errors import AnchorError
@@ -603,7 +603,7 @@ def unlink_by_anchor(xml: str, pattern: str) -> tuple[str, int, int]:
         am = INSTR_ANCHOR_RE.search(instr)
         if am is None or not anchor_re.search(am.group(1)):
             continue
-        s = _run_open_before(xml, m.start())
+        s = run_open_before(xml, m.start())
         e = xml.find("</w:r>", m.end())
         if s < 0 or e < 0 or s < pos:      # pragma: no cover - defensive
             continue

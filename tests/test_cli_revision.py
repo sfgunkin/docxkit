@@ -296,6 +296,60 @@ def test_ingest_reports_the_authors_edit(monkeypatch, project, tmp_path,
     assert json.loads(out_json.read_text(encoding="utf-8"))["content"]
 
 
+_LINKED = ('<w:hyperlink w:anchor="ref_Ritchie2023b">'
+           "<w:r><w:t>Ritchie (2023b)</w:t></w:r></w:hyperlink>")
+
+
+def _ate_a_link(project) -> None:
+    """The author's Word session collapsed the paragraph and the link
+    element went with it — the words all survive."""
+    write(project.prev, make_parts(para(run("see "), _LINKED)))
+    write(project.working,
+          make_parts(para(run("see "), "<w:r><w:t>Ritchie (2023b)</w:t>"
+                                       "</w:r>")))
+
+
+def test_ingest_check_EXITS_on_a_hand_back_that_lost_something(monkeypatch,
+                                                               project,
+                                                               capsys):
+    """Reporting it and exiting 0 is what let six losses scroll past on
+    LI7. `--check` is what a paper can put in its own gate list."""
+    from docxkit.errors import HandbackLoss
+
+    _ate_a_link(project)
+    code, _ = run_cli(monkeypatch, "revision", "ingest", "--check",
+                      "--paper", str(project.root))
+    assert code == HandbackLoss.exit_code
+    assert "LOST" in capsys.readouterr().out
+
+
+def test_ingest_without_check_still_only_REPORTS(monkeypatch, project,
+                                                 capsys):
+    """Read-only and exit 0 stays the default: `ingest` is the command
+    that is safe to run before every task."""
+    _ate_a_link(project)
+    code, _ = run_cli(monkeypatch, "revision", "ingest",
+                      "--paper", str(project.root))
+    assert code == 0
+    assert "LOST" in capsys.readouterr().out
+
+
+def test_baseline_refuses_the_loss_and_accept_loss_lets_it_through(
+        monkeypatch, project, capsys):
+    from docxkit.errors import HandbackLoss
+
+    _ate_a_link(project)
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--paper", str(project.root))
+    assert code == HandbackLoss.exit_code
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--accept-loss", "link:ref_Ritchie2023b (Ritchie "
+                      "(2023b))", "--paper", str(project.root))
+    assert code == 0
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
 def test_ingest_flags_a_style_edit_and_the_parts_that_moved(monkeypatch,
                                                             project,
                                                             capsys):

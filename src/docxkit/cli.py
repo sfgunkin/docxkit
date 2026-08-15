@@ -16,17 +16,17 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit lint PAPER.docx
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
-    docxkit pages PAPER.docx
+    docxkit pages PAPER.docx [--sheets] [--check]
 
 and the single-file revision protocol, which finds its own paths in
 ``revision/paper.toml`` and so takes almost no arguments::
 
     docxkit revision status
-    docxkit revision ingest [--json R.json]
-    docxkit revision build REVISED.docx [--out PATH]
+    docxkit revision ingest [--check] [--json R.json]
+    docxkit revision build REVISED.docx [--out PATH] [--keep-math]
     docxkit revision validate [BATCH.docx] [--no-word]
     docxkit revision promote [BATCH.docx]
-    docxkit revision baseline [--force]
+    docxkit revision baseline [--force] [--accept-loss A,...]
     docxkit revision rescues [--prune KEEP]
     docxkit revision init PAPER.docx [--root DIR] [--name NAME]
 """
@@ -49,7 +49,12 @@ from ._xml import (
     FOOTNOTES,
 )
 from .console import utf8_console
-from .errors import DocxKitError, PackageError, ProtocolError
+from .errors import (
+    DocxKitError,
+    HandbackLoss,
+    PackageError,
+    ProtocolError,
+)
 from .find import P_RE, text_of
 
 
@@ -737,9 +742,28 @@ def cmd_pdf(args: argparse.Namespace) -> int:
 
 
 def cmd_pages(args: argparse.Namespace) -> int:
-    from .word import page_count
-    print(page_count(args.docx))
-    return 0
+    """The page COUNT, or -- with --check -- what the render looks like."""
+    if not (args.check or args.sheets):
+        from .word import page_count
+        print(page_count(args.docx))
+        return 0
+
+    from .pages import problems, sheets
+    rows = sheets(args.docx, keep_pdf=args.keep_pdf)
+    print(f"{len(rows)} sheet(s)")
+    for row in rows:
+        print(f"  {row}")
+    found = problems(rows)
+    for note in found:
+        print(f"  ** {note}")
+    if not args.check:
+        return 0
+    if found:
+        print("\nPagination cannot be inferred from the markup: two "
+              "plausible causes for a blank page were derived from the "
+              "XML on Parental_style and BOTH were falsified by "
+              "re-rendering. Fix, then re-run this.")
+    return 2 if found else 0
 
 
 # --- the single-file revision protocol -------------------------------
@@ -856,6 +880,15 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
     if report.style_edit:
         print("   ** a STYLE-level edit, not just content **")
 
+    if report.lost:
+        print(f"\n== LOST ({len(report.lost)}) ==")
+        for loss in report.lost:
+            print("   ", loss)
+        print("   Word does this silently when it collapses a paragraph "
+              "to make an edit;\n   the words all survive, so no content "
+              "layer above shows it. `revision baseline`\n   will refuse "
+              "until these are restored or named with --accept-loss.")
+
     print("\n== state ==")
     _show_state("working", report.working_state)
     _show_state("prev", report.prev_state)
@@ -867,8 +900,11 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
             "content": report.content,
             "changed_parts": report.changed_parts,
             "working_pending": report.working_state.pending,
+            "lost": [loss.key for loss in report.lost],
         })
-    return 0
+    # HandbackLoss.exit_code: `ingest --check` and the `baseline` refusal
+    # report the same finding, so a script reads one number for it
+    return HandbackLoss.exit_code if (args.check and report.lost) else 0
 
 
 def cmd_revision_build(args: argparse.Namespace) -> int:
@@ -999,7 +1035,11 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
     """The author accepted: record working.docx as the new truth."""
     from .revision import baseline
     paper = _paper(args)
-    written = baseline(paper, force=args.force)
+    accepted = tuple(t.strip() for t in args.accept_loss.split(",")
+                     if t.strip())
+    written = baseline(paper, force=args.force, accept_loss=accepted)
+    for token in accepted:
+        print(f"  accepted loss: {token}")
     print(f"baseline updated: {written}")
     return 0
 
@@ -1205,8 +1245,19 @@ def main() -> None:
                    help="a page or an inclusive range, e.g. 3 or 1-3")
     p.set_defaults(fn=cmd_pdf)
 
-    p = sub.add_parser("pages", help="laid-out page count (needs Word)")
+    p = sub.add_parser("pages",
+                       help="laid-out page count, or --check the render")
     p.add_argument("docx")
+    # The count alone shipped two pagination defects: nothing said which
+    # sheets are blank, what each one PRINTS, or which way round it is.
+    p.add_argument("--sheets", action="store_true",
+                   help="one row per sheet: orientation, printed number, "
+                        "BLANK (renders through Word)")
+    p.add_argument("--check", action="store_true",
+                   help="exit 2 on a blank sheet, a numbering restart or "
+                        "a gap in the printed sequence")
+    p.add_argument("--keep-pdf", metavar="PATH",
+                   help="keep the render instead of using a temp file")
     p.set_defaults(fn=cmd_pages)
 
     p = sub.add_parser(
@@ -1230,6 +1281,12 @@ def main() -> None:
     r = _rev("ingest", cmd_revision_ingest,
              "what the author changed since the last truth (read-only)")
     r.add_argument("--json", metavar="PATH")
+    # Reporting a loss and exiting 0 is what let six of them scroll past
+    # on LI7. The report stays read-only either way; only the exit code
+    # changes, so this is safe to wire into a paper's own gate list.
+    r.add_argument("--check", action="store_true",
+                   help="exit 2 when the hand-back LOST a link, a note, "
+                        "a bookmark or a comment")
 
     r = _rev("build", cmd_revision_build,
              "clean edit -> redline, via Word Compare")
@@ -1277,6 +1334,10 @@ def main() -> None:
     r.add_argument("--force", action="store_true",
                    help="adopt a file that still carries revisions "
                         "(migration only)")
+    r.add_argument("--accept-loss", metavar="ANCHOR,...", default="",
+                   help="the hand-back lost these DELIBERATELY (anchor, "
+                        "note text, or kind:what); naming one that is "
+                        "still present is itself refused")
 
     r = _rev("rescues", cmd_revision_rescues,
              "the undo copies promote leaves in build/rescue/")

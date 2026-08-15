@@ -73,8 +73,16 @@ from .revisions import revision_elements
 # carry a suppression helper. The seam is for Word, not for this.
 from .word import _suppress_com
 
-__all__ = ["BuildReport", "Untracked", "build", "compare_collateral",
-           "package_counts", "untracked", "verify"]
+__all__ = [
+    "BuildReport",
+    "MathOutcome",
+    "Untracked",
+    "build",
+    "compare_collateral",
+    "package_counts",
+    "untracked",
+    "verify",
+]
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 

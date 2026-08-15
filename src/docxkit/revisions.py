@@ -47,6 +47,7 @@ from .errors import DocxKitError
 __all__ = [
     "FINAL",
     "ORIGINAL",
+    "REVISION_RE",
     "ParagraphChange",
     "Revision",
     "accept",
@@ -54,6 +55,7 @@ __all__ = [
     "changed_paragraphs",
     "counts",
     "reject",
+    "revision_elements",
     "revision_text",
     "spans",
     "text",

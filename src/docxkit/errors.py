@@ -20,6 +20,7 @@ __all__ = [
     "DocumentLocked",
     "DocxKitError",
     "FontMissing",
+    "HandbackLoss",
     "MathResolved",
     "PackageError",
     "ProtocolError",
@@ -128,6 +129,25 @@ class MathResolved(ProtocolError):
     """
 
     exit_code = 2
+
+
+class HandbackLoss(ProtocolError):
+    """The author's Word session destroyed structure no text diff shows.
+
+    Word collapses a paragraph into a single run to make an edit, and
+    every hyperlink, note reference and bookmark inside it goes at once
+    — then it renumbers the notes so the ids stay contiguous and there
+    is no gap to notice. The words are all still there, so `ingest`'s
+    content layers, `citations` and `crossrefs` are all clean. Raised by
+    `revision.baseline`, which is the step that would make the loss
+    permanent — `prev.docx` is what the compare chain measures against
+    afterwards, so a link Word ate becomes a link that was never there.
+
+    ``revision ingest --check`` reports the same finding one step
+    earlier and without touching anything; it exits on this code.
+    """
+
+    exit_code = 5
 
 
 class StaleBatch(ProtocolError):

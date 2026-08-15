@@ -22,12 +22,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import document, make_parts, para, run, write
+from conftest import (
+    document,
+    make_parts,
+    note,
+    notes,
+    para,
+    run,
+    write,
+)
 
 from docxkit import revision
 from docxkit.errors import (
     BaselinePending,
     DocumentLocked,
+    HandbackLoss,
     MathResolved,
     ProtocolError,
     StaleBatch,
@@ -269,6 +278,121 @@ def test_baseline_names_the_part_a_revision_hides_in(project):
         footnotes=footnotes_part(para(run("n "), ins("hidden")))))
     with pytest.raises(BaselinePending, match="footnotes"):
         revision.baseline(project)
+
+
+# -------------------------------------------- what the hand-back LOST ----
+
+#: The shape Word leaves behind when it collapses a paragraph to make an
+#: edit: the words survive, the link element does not.
+LINKED = ('<w:hyperlink w:anchor="ref_Ritchie2023b">'
+          "<w:r><w:t>Ritchie (2023b)</w:t></w:r></w:hyperlink>")
+FLAT = "<w:r><w:t>Ritchie (2023b)</w:t></w:r>"
+
+
+def _handback(project, body: str, **kw) -> None:
+    """Write `body` as the author's returned working.docx."""
+    write(project.working, make_parts(body, **kw))
+
+
+def test_ingest_names_a_link_the_authors_word_session_ATE(project):
+    """LI7 2026-08-15: 33 body links in, 28 out, and every content layer
+    clean — the words are all still there."""
+    write(project.prev, make_parts(para(run("see "), LINKED)))
+    _handback(project, para(run("see "), FLAT))
+
+    report = revision.ingest(project.working, project.prev)
+
+    assert [loss.kind for loss in report.lost] == ["link"]
+    assert "ref_Ritchie2023b" in report.lost[0].what
+
+
+def test_a_lost_FOOTNOTE_is_found_by_text_not_by_id(project):
+    """Word renumbers on save: 19 notes become 18 with the ids still
+    contiguous, so there is no gap to notice and no id to miss."""
+    write(project.prev, make_parts(
+        para(run("body")),
+        footnotes=notes("footnotes", note("kept", nid=2),
+                        note("the vanished note", nid=3))))
+    _handback(project, para(run("body")),
+              footnotes=notes("footnotes", note("kept", nid=2)))
+
+    lost = revision.ingest(project.working, project.prev).lost
+
+    assert [loss.kind for loss in lost] == ["footnote"]
+    assert lost[0].what == "the vanished note"
+
+
+def test_a_lost_ENDNOTE_is_found_too(project):
+    """A check that stopped at the footnotes would be a gate that cannot
+    fail for any paper using the other kind."""
+    write(project.prev, make_parts(
+        para(run("body")),
+        extra={"word/endnotes.xml":
+               notes("endnotes", note("an endnote", nid=2, kind="endnote"))}))
+    _handback(project, para(run("body")),
+              extra={"word/endnotes.xml": notes("endnotes")})
+
+    lost = revision.ingest(project.working, project.prev).lost
+    assert [(loss.kind, loss.what) for loss in lost] == \
+        [("endnote", "an endnote")]
+
+
+def test_an_ordinary_author_edit_loses_NOTHING(project):
+    """The gate must be silent on the normal round-trip, or it will be
+    switched off inside a week."""
+    write(project.prev, make_parts(para(run("see "), LINKED)))
+    _handback(project, para(run("look at "), LINKED))
+
+    assert revision.ingest(project.working, project.prev).lost == []
+
+
+def test_baseline_REFUSES_while_a_loss_is_unacknowledged(project):
+    """This is the step that makes it permanent: prev.docx is what the
+    compare chain measures against afterwards."""
+    write(project.prev, make_parts(para(run("see "), LINKED)))
+    _handback(project, para(run("see "), FLAT))
+    before = project.prev.read_bytes()
+
+    with pytest.raises(HandbackLoss, match="ref_Ritchie2023b"):
+        revision.baseline(project)
+    assert project.prev.read_bytes() == before, "the baseline was written"
+
+
+def test_force_does_not_override_the_loss_refusal(project):
+    """`force` is the flag reached for by reflex, and the whole point is
+    that the acknowledgement is specific."""
+    write(project.prev, make_parts(para(run("see "), LINKED)))
+    _handback(project, para(run("see "), FLAT))
+    with pytest.raises(HandbackLoss):
+        revision.baseline(project, force=True)
+
+
+def test_a_deliberate_loss_can_be_NAMED_and_then_baselines(project):
+    write(project.prev, make_parts(para(run("see "), LINKED)))
+    _handback(project, para(run("see "), FLAT))
+    lost = revision.ingest(project.working, project.prev).lost
+
+    revision.baseline(project, accept_loss=(lost[0].key,))
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
+def test_a_DECLARED_loss_that_did_not_happen_is_itself_refused(project):
+    """A stale exemption is a switched-off gate that reads as a
+    switched-on one, and it would pass the next real loss in silence."""
+    write(project.prev, make_parts(para(run("see "), LINKED)))
+    _handback(project, para(run("see "), LINKED))
+
+    with pytest.raises(HandbackLoss, match="has NOT lost"):
+        revision.baseline(project, accept_loss=("link:ref_Gone2024 (x)",))
+
+
+def test_a_first_baseline_with_no_prev_is_not_blocked(tmp_path):
+    """`init` seeds prev from working, but a paper that has lost its
+    build/ directory must still be able to record a truth."""
+    src = write(tmp_path / "m.docx", make_parts(para(run("body"))))
+    paper = revision.init(tmp_path / "p2", src)
+    paper.prev.unlink()
+    assert revision.baseline(paper) == paper.prev
 
 
 # -------------------------------------------------------------- build

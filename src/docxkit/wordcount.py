@@ -31,7 +31,13 @@ from .equations import MT_RE, OMATH_RE
 from .find import body_elements, heading_level
 from .revisions import FINAL, view_transform
 
-__all__ = ["Counts", "count", "words"]
+__all__ = [
+    "APPENDIX_RE",
+    "REFERENCES_RE",
+    "Counts",
+    "count",
+    "words",
+]
 
 #: Paragraphs that OPEN the references / appendix zones. The heading's
 #: own words land in the zone it opens, because that is how the caps are

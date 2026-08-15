@@ -33,6 +33,7 @@ from .errors import AnchorError
 from .find import para_slice
 
 __all__ = [
+    "DEFAULT_TBLPR",
     "cell",
     "insert_after",
     "insert_before",
@@ -40,6 +41,7 @@ __all__ = [
     "row",
     "run",
     "table",
+    "visible_text",
 ]
 
 #: A plain bordered table. Papers that want their own look pass `tblpr`.

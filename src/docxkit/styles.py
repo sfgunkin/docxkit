@@ -164,9 +164,23 @@ def _own_rpr(style_xml: str) -> str:
     return style_xml if at == -1 else style_xml[:at]
 
 
+#: One compiled pattern per property, kept. This is the innermost call
+#: of the whole package: `_compare_read._char_fmt` asks the cascade for
+#: several properties of every RUN, and on a real pair (LI7 prev ->
+#: working, 1.1 M chars) `compare.load` was 278 ms against the 34 ms the
+#: comparison itself took, with `Cascade.of` -> `explain` -> `resolve`
+#: 0.35 s of it across four loads. Building the pattern with an f-string
+#: and handing it to `re.search` paid a cache probe per lookup.
+_VAL_RE: dict[str, re.Pattern[str]] = {}
+
+
 def _val(rpr: str, prop: str) -> str | None:
     """``w:val`` of ``w:<prop>`` — attribute order not assumed."""
-    m = re.search(rf'<w:{prop}\b[^>]*\bw:val="([^"]*)"', rpr)
+    pattern = _VAL_RE.get(prop)
+    if pattern is None:
+        pattern = _VAL_RE[prop] = re.compile(
+            rf'<w:{prop}\b[^>]*\bw:val="([^"]*)"')
+    m = pattern.search(rpr)
     return m.group(1) if m else None
 
 
@@ -178,13 +192,20 @@ class Cascade:
     than a guess about a part nobody handed over.
     """
 
-    __slots__ = ("_based", "_default", "_default_pstyle", "_own")
+    __slots__ = ("_based", "_default", "_default_pstyle", "_memo", "_own")
 
     def __init__(self, styles_xml: str | None = None) -> None:
         self._own: dict[str, str] = {}
         self._based: dict[str, str] = {}
         self._default = ""
         self._default_pstyle: str | None = None
+        #: Resolution is a pure function of (prop, rpr, rstyle, pstyle)
+        #: and a Cascade never changes after this constructor, so the
+        #: answer is worth keeping: a manuscript repeats the same `w:rPr`
+        #: blob across thousands of runs, and this is the innermost call
+        #: in the package (see :data:`_VAL_RE`).
+        self._memo: dict[tuple[str, str | None, str | None, str | None],
+                         Resolved] = {}
         if not styles_xml:
             return
         block = _DOC_DEFAULTS_RE.search(styles_xml)
@@ -215,7 +236,20 @@ class Cascade:
         and matching on the prose ``explain`` builds ("the FootnoteText
         style") would be a parser for our own wording — the sort of
         coupling that survives exactly until someone rewords a message.
+
+        MEMOISED per instance — see ``_memo``. The cache is keyed on
+        everything the answer depends on, and a Cascade is immutable
+        after construction, so a hit is the same object the miss would
+        have built.
         """
+        key = (prop, rpr, rstyle, pstyle)
+        if (cached := self._memo.get(key)) is not None:
+            return cached
+        self._memo[key] = got = self._resolve(prop, rpr, rstyle, pstyle)
+        return got
+
+    def _resolve(self, prop: str, rpr: str | None, rstyle: str | None,
+                 pstyle: str | None) -> Resolved:
         if rpr and (direct := _val(rpr, prop)) is not None:
             return Resolved(direct, "", RUN)
         # A paragraph that NAMES no style is not a paragraph with no

@@ -68,6 +68,7 @@ import sys
 from collections import Counter
 
 from ._compare_diff import GATED as GATED
+from ._compare_diff import FormulaChange as FormulaChange
 from ._compare_diff import Report as Report
 from ._compare_diff import bookmark_names as bookmark_names
 from ._compare_diff import compare_comments as compare_comments
@@ -77,12 +78,14 @@ from ._compare_diff import formula_diff as formula_diff
 from ._compare_diff import hyperlink_labels as hyperlink_labels
 from ._compare_diff import integrity as integrity
 from ._compare_diff import label_moves as label_moves
+from ._compare_diff import stripped_block as stripped_block
 from ._compare_diff import stripped_fields as stripped_fields
 from ._compare_diff import word_diff as word_diff
 from ._compare_read import COMMENTS_PART as COMMENTS_PART
 from ._compare_read import TEXT_PART_RE as TEXT_PART_RE
 from ._compare_read import VOLATILE_FIELDS as VOLATILE_FIELDS
 from ._compare_read import Doc as Doc
+from ._compare_read import Fields as Fields
 from ._compare_read import Para as Para
 from ._compare_read import Part as Part
 from ._compare_read import load as load
@@ -90,6 +93,38 @@ from ._compare_read import load_parts as load_parts
 from ._compare_read import mask_volatile_fields as mask_volatile_fields
 from ._compare_read import pair_parts as pair_parts
 from ._compare_render import render as render
+
+__all__ = [
+    "COMMENTS_PART",
+    "GATED",
+    "TEXT_PART_RE",
+    "VOLATILE_FIELDS",
+    "Doc",
+    "Fields",
+    "FormulaChange",
+    "Para",
+    "Part",
+    "Report",
+    "bookmark_names",
+    "compare",
+    "compare_comments",
+    "compare_docs",
+    "compare_paras",
+    "fmt_diff",
+    "formula_diff",
+    "hyperlink_labels",
+    "integrity",
+    "label_moves",
+    "load",
+    "load_parts",
+    "main",
+    "mask_volatile_fields",
+    "pair_parts",
+    "render",
+    "stripped_block",
+    "stripped_fields",
+    "word_diff",
+]
 
 
 def compare(path_a: str, path_b: str) -> Report:

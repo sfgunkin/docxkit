@@ -40,11 +40,11 @@ from docxkit.errors import DocxKitError          # everything catchable
 |---|---|
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
 | `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk |
-| `edit` | anchor-asserting replace, run-aware replace, span italics, `xml:space` repair |
+| `edit` | anchor-asserting replace, run-aware replace and INSERT, span italics, `xml:space` repair |
 | `body` | build new content: paragraphs, grouped-header tables, guarded insertion |
 | `revisions` | read tracked changes; accept/reject, wholesale or by predicate (`by_author`, `whitespace_only`) |
 | `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved |
-| `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints |
+| `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints, run `face` |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/formula-typography/format/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments — with each entry addressed to its part and table cell. FORMAT covers emphasis **and size and colour**, resolved through `styles.Cascade` rather than read off the run |
@@ -59,6 +59,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes |
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
 | `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass |
+| `pages` | what the RENDER says: blank sheets, printed numbers, orientation |
 | `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
 | `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
 | `tracked` | build a tracked-changes deliverable end to end |
@@ -89,7 +90,7 @@ docxkit footnotes PAPER.docx [--check]      # the size they agree on, and who do
 docxkit authors PAPER.docx [--set NAME] [--only A,B] [--initials XX] [--write]
 docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
-docxkit pages PAPER.docx
+docxkit pages PAPER.docx [--sheets] [--check]
 ```
 
 ## The expensive lessons, encoded

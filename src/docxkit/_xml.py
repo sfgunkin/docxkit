@@ -42,11 +42,13 @@ __all__ = [
     "element_spans",
     "escape",
     "escape_attr",
+    "field_spans",
     "internal_links",
     "live_properties",
     "matching_close",
     "normalize_glyphs",
     "own_properties",
+    "run_open_before",
     "set_run_property",
     "set_run_text",
     "text_parts",
@@ -128,7 +130,21 @@ MT_RE = re.compile(r"<m:t[^>]*>([^<]*)</m:t>")
 # Text nodes including deletions — what a tracked revision spans.
 T_DEL_RE = re.compile(
     r"<(?:w|m):(?:t|delText)[^>]*>([^<]*)</(?:w|m):(?:t|delText)>")
-RUN_RE = re.compile(r"<w:r\b[^>]*>.*?</w:r>", re.DOTALL)
+# `(?<!/)>` — the same guard PARA_RE carries, for the same reason and
+# with the same evidence. A SELF-CLOSING `<w:r/>` is an EMPTY run, not
+# an open tag: `[^>]*` swallowed the slash and paired it with the next
+# `</w:r>` downstream, so the walk returned one match spanning the empty
+# run AND the real run after it.
+#
+# Measured 2026-08-15 over 899 manuscripts: 28 carry a `<w:r/>` (32
+# carry the `<w:p/>` PARA_RE was fixed for). The damage is subtler than
+# the paragraph case and that is why it survived: an empty run
+# contributes no visible text, so every OFFSET stayed correct and every
+# text assertion passed. What was wrong was run IDENTITY — the count,
+# the boundaries, and which `w:rPr` a walk believes belongs to a run,
+# which is the empty one's when two are merged. Fourteen call sites in
+# nine modules walk runs with this.
+RUN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>.*?</w:r>", re.DOTALL)
 # A w:t split into (open tag, close tag) so the body can be swapped.
 T_RUN_RE = re.compile(r"(<w:t[^>]*>)[^<]*(</w:t>)")
 # The same, keeping the text as its own group, for callers that rewrite
@@ -141,7 +157,8 @@ T_PARTS_RE = re.compile(r"(<w:t[^>]*>)([^<]*)(</w:t>)")
 # An opening run tag. `\b` is load-bearing: without it this matches the
 # `<w:rPr` INSIDE a styled run, and a field-boundary scan that cut there
 # split the XML mid-element and produced a file Word would not open.
-RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*>")
+# `(?<!/)` for the same reason as RUN_RE above: `<w:r/>` opens nothing.
+RUN_OPEN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>")
 # A bookmark id, on either end of the pair, and each end on its own.
 # `[^>]*` before every w:id here is load-bearing, not defensive noise:
 # XML attribute order carries no meaning, so `<w:comment w:author="A"
@@ -335,6 +352,60 @@ INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
 #: starts here, and kept its own copy of this until it was promoted.
 SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 _SEPARATE_RE = SEPARATE_RE
+
+
+def run_open_before(xml: str, pos: int) -> int:
+    """Where the run CONTAINING `pos` opens, or -1.
+
+    Public and here rather than in a citation module because three
+    of them need it and the fourth (`edit`) is where it was reached
+    through a private alias — a splice that finds its own run
+    boundary with `rfind("<w:r")` matches `<w:rPr` too, which cost
+    Parental_style an equation label two screens away.
+    """
+    starts = [m.start() for m in RUN_OPEN_RE.finditer(xml, 0, pos)]
+    return starts[-1] if starts else -1
+
+
+def field_spans(xml: str) -> list[tuple[int, int, str]]:
+    """Every fldChar field as ``(start, end, body)``, run boundaries in.
+
+    THE field walk. It existed three times with three different guards
+    — only one defended against a field whose end tag is missing — and a
+    walk that lives in three places is a walk that will disagree with
+    itself. An unclosable span is SKIPPED rather than guessed at:
+    `xml.find(...) + len(...)` on a miss yields 5, which slices from the
+    top of the document, and a splice built on that lands mid-element.
+
+    Fields NEST — Word writes a HYPERLINK inside a REF, and everything
+    inside a TOC — so the end is matched by depth, not by taking the
+    first one after the begin. Taking the first ended the outer field at
+    the INNER field's end: a fragment with two begins and one end, which
+    never reached the content past the nested field. The repair that
+    consumed it then cut there, leaving the outer field's tail and its
+    now-unmatched end marker behind in the document.
+
+    Nested fields are returned alongside their parents, in document
+    order, each with its own correct extent. The callers here all
+    demand a UNIQUE match and raise otherwise, so a nested hit surfaces
+    as a loud "found 2 fields" rather than a quiet half-field splice.
+    """
+    out: list[tuple[int, int, str]] = []
+    open_marks: list[re.Match[str]] = []
+    for m in FLDCHAR_RE.finditer(xml):
+        kind = m.group(1)
+        if kind == "begin":
+            open_marks.append(m)
+        elif kind == "end" and open_marks:
+            bm = open_marks.pop()
+            r_start = run_open_before(xml, bm.start())
+            close = xml.find("</w:r>", m.end())
+            if r_start < 0 or close < 0:
+                continue
+            r_end = close + len("</w:r>")
+            out.append((r_start, r_end, xml[r_start:r_end]))
+    out.sort(key=lambda span: (span[0], -span[1]))
+    return out
 
 
 def internal_links(xml: str) -> list[tuple[str, str]]:

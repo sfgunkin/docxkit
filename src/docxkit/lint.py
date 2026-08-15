@@ -16,7 +16,11 @@ from typing import Any
 
 from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES, MATH_OBJECTS, XML_WS
 
-__all__ = ["lint", "lint_parts"]
+__all__ = [
+    "XML_SPACE",
+    "lint",
+    "lint_parts",
+]
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"

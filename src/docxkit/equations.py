@@ -43,7 +43,11 @@ from .errors import AnchorError, PackageError
 from .revisions import _fragment_declarations
 
 __all__ = [
+    "DEFAULT_FACE",
+    "EQ_NUMBER_RE",
+    "M_NS",
     "OMATH_RE",
+    "XSL_ENV",
     "Equation",
     "ProseMath",
     "clone",
@@ -51,11 +55,14 @@ __all__ = [
     "display_equations",
     "document_symbols",
     "equations",
+    "face",
     "find_mml2omml_xsl",
     "harvest",
     "in_display_mode",
     "inline_display",
+    "is_bold",
     "is_display",
+    "is_italic",
     "latex_to_omml",
     "prose_math",
     "skeleton",
@@ -292,6 +299,69 @@ def tokens(omml: str) -> str:
 def skeleton(omml: str) -> str:
     """The structural shape of an equation (sSub/nary/f/...)."""
     return "/".join(_STRUCT_RE.findall(omml))
+
+
+#: OMML states a run's FACE in its own element, not in ``w:rPr``.
+_STY_RE = re.compile(r'<m:sty\b[^>]*\bm:val="(p|b|i|bi)"')
+#: The rarer spelling: a maths run may also carry a ``w:rPr``, and some
+#: producers put the bold there. Read second, never instead.
+_W_BOLD_RE = re.compile(r'<w:b\b(?![^>]*w:val="(?:0|false|none)")[^>]*/?>')
+_W_ITALIC_RE = re.compile(r'<w:i\b(?![^>]*w:val="(?:0|false|none)")[^>]*/?>')
+#: What Word renders when nothing states a face. OMML's default is
+#: MATH-ITALIC — a variable is italic because it is a variable, which is
+#: why a manuscript full of italic symbols carries no markup for it.
+DEFAULT_FACE = "i"
+
+
+def face(run_xml: str) -> str:
+    """A maths run's face: ``"p"``, ``"b"``, ``"i"`` or ``"bi"``.
+
+    **The guard written the natural way is wrong and reports success.**
+    An OMML run states its face through ``<m:sty m:val="…"/>``, and
+    ``<w:b/>`` — the spelling every prose pass uses — is a different,
+    rarer one. On `Parental_style` (2026-08-13) a protocol read *"Zero
+    bold-X instances may be edited"*, enumerated with ``'<w:b/>' in
+    run``, and got::
+
+        italic X: 32   bold X: 0
+
+    All four covariate **X**'s were counted as italic and would have
+    been swept into a rename, silently corrupting equations (5)-(6).
+    They carry ``<m:sty m:val="bi"/>``. Correct detection gives 28 not
+    bold and 4 bold, which reconciles with the protocol's independently
+    derived count.
+
+    ``m:sty`` first, ``w:rPr`` second, and :data:`DEFAULT_FACE` when
+    neither states anything — a maths run with no markup renders ITALIC,
+    because that is what a variable is. A caller that means "carries no
+    face markup at all" wants the empty string from ``m:sty``, not this.
+
+    The toolkit already knew this privately: `_compare_read` folds
+    ``m:sty`` with ``w:b``/``w:i`` when it fingerprints FORMULA
+    TYPOGRAPHY, which is why that layer stayed clean throughout. Every
+    caller re-deriving it got it wrong, so it is public here.
+    """
+    if (m := _STY_RE.search(run_xml)) is not None:
+        return m.group(1)
+    bold = _W_BOLD_RE.search(run_xml) is not None
+    italic = _W_ITALIC_RE.search(run_xml) is not None
+    if bold and italic:
+        return "bi"
+    if bold:
+        return "b"
+    if italic:
+        return "i"
+    return DEFAULT_FACE
+
+
+def is_bold(run_xml: str) -> bool:
+    """Does this maths run render BOLD? (``m:sty`` b/bi, or ``w:b``)"""
+    return face(run_xml) in ("b", "bi")
+
+
+def is_italic(run_xml: str) -> bool:
+    """Does this maths run render ITALIC? Includes the unmarked default."""
+    return face(run_xml) in ("i", "bi")
 
 
 def harvest(xml: str, contains: str, *, index: int = 0,

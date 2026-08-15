@@ -19,7 +19,6 @@ import zipfile
 from difflib import SequenceMatcher
 from typing import TypedDict
 
-from ._cite_repair import field_spans
 from ._xml import (
     COMMENTS,
     INSTR_RE,
@@ -28,6 +27,7 @@ from ._xml import (
     SEPARATE_RE,
     T_PARTS_RE,
     WT_RE,
+    field_spans,
 )
 from .comments import read_all as _read_comments
 from .styles import Cascade
@@ -35,7 +35,11 @@ from .styles import Cascade
 # ------------------------------------------------------------- extraction
 P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
 OMATH_RE = re.compile(r"<m:oMath>.*?</m:oMath>", re.DOTALL)
-RUN_RE = re.compile(r"<w:r\b[^>]*>(.*?)</w:r>", re.DOTALL)
+# `(?<!/)>`: a self-closing `<w:r/>` is an EMPTY run, and pairing it
+# with the next close merged it with the real run after it, so this
+# layer read the EMPTY run's properties as that run's. See `_xml.RUN_RE`
+# — 28 of 899 manuscripts carry one.
+RUN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>(.*?)</w:r>", re.DOTALL)
 RPR_RE = re.compile(r"<w:rPr>(.*?)</w:rPr>", re.DOTALL)
 PARAID_RE = re.compile(r'w14:paraId="([0-9A-Fa-f]+)"')
 
@@ -139,7 +143,7 @@ def _char_fmt(p_xml: str, cascade: Cascade | None = None
     return "".join(text), fmt
 
 
-MATH_RUN_RE = re.compile(r"<m:r\b[^>]*>.*?</m:r>", re.DOTALL)
+MATH_RUN_RE = re.compile(r"<m:r\b[^>]*(?<!/)>.*?</m:r>", re.DOTALL)
 
 #: Typography inside an equation that changes what a symbol IS: upright
 #: against math-italic, bold, script, size. A change to any of these was
@@ -207,7 +211,11 @@ def _fields(p_xml: str) -> Fields:
 #: The container tags that give a paragraph an address. `\b` keeps
 #: <w:tblPr>, <w:trPr>, <w:tcPr> and <w:pPr> out of it: after "tbl"
 #: comes "P", both word characters, so there is no boundary to match.
-STRUCT_TAG_RE = re.compile(r"<(/?)w:(tbl|tr|tc|p)\b[^>]*?>")
+#: `(?<!/)>` keeps an EMPTY `<w:p/>` out of the walk, matching the
+#: reading `_xml.PARA_RE` has: an empty paragraph is not a paragraph a
+#: report addresses. The close-tag form is unaffected — the character
+#: before its `>` is the tag name, not a slash.
+STRUCT_TAG_RE = re.compile(r"<(/?)w:(tbl|tr|tc|p)\b[^>]*?(?<!/)>")
 
 
 def _addresses(xml: str) -> dict[int, str]:

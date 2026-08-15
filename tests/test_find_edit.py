@@ -12,7 +12,7 @@ from docxkit import (
     table_spans,
     text_of,
 )
-from docxkit.edit import replace_in_para
+from docxkit.edit import insert_in_para, replace_in_para
 from docxkit.errors import AnchorError
 from docxkit.find import (
     find_para,
@@ -219,6 +219,70 @@ def test_replace_in_para_refuses_to_cross_a_hyperlink(link):
         replace_in_para(p, "the practices of Table 5 as well",
                         "the harsher practices of Table 5 persist")
     assert text_of(p) == "the practices of Table 5 as well"
+
+
+# ------------------------------------------------- note references -------
+
+#: Word puts a note's marker in its own run, styled, carrying NO text.
+FN_REF = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+          '<w:footnoteReference w:id="11"/></w:r>')
+
+
+def _noted(ref: str = FN_REF) -> str:
+    return ('<w:p><w:r><w:t xml:space="preserve">from South Korea (UN 2024).'
+            "</w:t></w:r>" + ref
+            + '<w:r><w:t xml:space="preserve"> The left panel of Figure 1'
+            "</w:t></w:r></w:p>")
+
+
+def test_replace_in_para_refuses_to_cross_a_NOTE_reference():
+    """The LI7 regression (2026-08-15).
+
+    A `w:footnoteReference` carries no visible text, so the anchor reads
+    as contiguous prose. The replacement goes into the run holding the
+    start of the match and the tail is emptied, so the MARKER moves to
+    the end of the new text — and Word's Compare then re-emitted the
+    note as an insertion with no matching deletion, which reject-all
+    could not undo.
+    """
+    p = _noted()
+    with pytest.raises(AnchorError, match="crosses footnote 11"):
+        replace_in_para(p, "). The left panel of ",
+                        "), and Figure 1 shows. The left panel of ")
+    assert text_of(p) == \
+        "from South Korea (UN 2024). The left panel of Figure 1"
+
+
+@pytest.mark.parametrize("kind,ident", [("endnote", "3"), ("comment", "7")])
+def test_the_guard_covers_endnotes_and_comments_too(kind, ident):
+    """All three anchor the same way and move the same way."""
+    ref = f'<w:r><w:{kind}Reference w:id="{ident}"/></w:r>'
+    with pytest.raises(AnchorError, match=f"crosses {kind} {ident}"):
+        replace_in_para(_noted(ref), "). The left panel of ", "). Figure 1 ")
+
+
+def test_a_match_that_ABUTS_a_marker_is_not_refused():
+    """The marker has zero visible width, so "up to it" does not cross
+    it. Refusing here would make the guard unusable: anchoring beside a
+    marker is the correct way to edit that sentence."""
+    out = replace_in_para(_noted(), "from South Korea (UN 2024).",
+                          "from Japan (UN 2024).")
+    assert text_of(out) == "from Japan (UN 2024). The left panel of Figure 1"
+    assert '<w:footnoteReference w:id="11"/>' in out
+
+
+def test_a_match_after_the_marker_is_not_refused():
+    out = replace_in_para(_noted(), " The left panel of Figure 1",
+                          " The right panel of Figure 2")
+    assert text_of(out) == \
+        "from South Korea (UN 2024). The right panel of Figure 2"
+    assert '<w:footnoteReference w:id="11"/>' in out
+
+
+def test_the_note_guard_has_its_own_opt_in():
+    out = replace_in_para(_noted(), "). The left panel of ", "). Figure 1 ",
+                          allow_notes=True)
+    assert '<w:footnoteReference w:id="11"/>' in out
 
 
 def test_the_opt_in_still_crosses_a_hyperlink():
@@ -511,3 +575,121 @@ def test_an_ordinary_miss_is_still_an_ordinary_message():
 def test_the_editor_still_works_either_side_of_the_maths():
     out = replace_in_para(MATH_PARA, "where ", "wherever ")
     assert "wherever " in out and "<m:t>x</m:t>" in out
+
+
+# --------------------------------------------- inserting between runs ----
+
+#: `Parental_style` 2026-08-13: the paragraph OPENS on its citation's
+#: link, so its first `w:t` IS the label and "prepend to the paragraph"
+#: means "prepend inside the link" unless something knows better.
+_LED_BY_LINK = (
+    '<w:p><w:hyperlink w:anchor="ref_B2020"><w:r><w:rPr><w:rStyle '
+    'w:val="Hyperlink"/></w:rPr><w:t>Bhalotra and Clarke (2020)</w:t>'
+    "</w:r></w:hyperlink>"
+    '<w:r><w:t xml:space="preserve"> show that twins are not random.'
+    "</w:t></w:r></w:p>")
+
+
+def _label(para: str) -> str:
+    return text_of(para[para.index("<w:hyperlink"):
+                        para.index("</w:hyperlink>")])
+
+
+def test_insert_at_the_front_of_a_LINK_LED_paragraph_stays_outside_it():
+    """The measured failure: the connective sentence went INSIDE the
+    link and rendered blue and underlined across the whole sentence,
+    with every text-layer check passing because the words really are in
+    that order."""
+    out = insert_in_para(_LED_BY_LINK, 0, "A further consideration. ")
+
+    assert text_of(out) == ("A further consideration. Bhalotra and Clarke "
+                            "(2020) show that twins are not random.")
+    assert _label(out) == "Bhalotra and Clarke (2020)", "the link GREW"
+    assert out.index("A further") < out.index("<w:hyperlink")
+
+
+def test_text_is_wrapped_in_a_run_and_edge_space_is_preserved():
+    out = insert_in_para(_LED_BY_LINK, 0, "See also. ")
+    assert '<w:t xml:space="preserve">See also. </w:t>' in out
+
+
+def test_xml_content_goes_in_verbatim_and_splits_the_run():
+    """Splicing an inline equation into prose: the run is REBUILT as two
+    through set_run_text, never cut at a hand-found boundary --
+    `head.rfind("<w:r")` matches `<w:rPr` and destroyed an equation
+    label two screens away."""
+    p = ("<w:p><w:r><w:rPr><w:i/></w:rPr>"
+         "<w:t>the parameter is small</w:t></w:r></w:p>")
+    out = insert_in_para(p, len("the parameter "), "<m:oMath/>")
+
+    assert text_of(out) == "the parameter is small"
+    assert "<m:oMath/>" in out
+    assert out.count("<w:i/>") == 2, "both halves keep the run's italics"
+    assert out.index("<m:oMath/>") > out.index("the parameter ")
+
+
+def test_inserting_INSIDE_a_label_is_refused():
+    with pytest.raises(AnchorError, match="INSIDE a hyperlink"):
+        insert_in_para(_LED_BY_LINK, 5, "X")
+
+
+def test_the_label_split_has_its_own_opt_in():
+    out = insert_in_para(_LED_BY_LINK, 5, "X", allow_hyperlink=True)
+    assert text_of(out) == ("BhaloXtra and Clarke (2020) show that twins "
+                            "are not random.")
+
+
+def test_inserting_at_the_END_of_a_link_lands_after_the_element():
+    out = insert_in_para(_LED_BY_LINK, len("Bhalotra and Clarke (2020)"),
+                         " (their Table 2)")
+    assert _label(out) == "Bhalotra and Clarke (2020)"
+    assert out.index("their Table 2") > out.index("</w:hyperlink>")
+
+
+def test_a_bookmark_span_is_not_grown_by_an_insert_at_its_edge():
+    p = ('<w:p><w:bookmarkStart w:id="7" w:name="B2020txt"/>'
+         "<w:r><w:t>Bhalotra (2020)</w:t></w:r>"
+         '<w:bookmarkEnd w:id="7"/>'
+         '<w:r><w:t xml:space="preserve"> and others</w:t></w:r></w:p>')
+    out = insert_in_para(p, 0, "See ")
+    assert out.index("See ") < out.index("<w:bookmarkStart")
+    assert text_of(out) == "See Bhalotra (2020) and others"
+
+
+def test_a_fldChar_FIELD_is_never_split():
+    """The halves would not be two fields; they would be one broken
+    one -- so there is no opt-in for this."""
+    p = ("<w:p>"
+         '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+         '<w:r><w:instrText xml:space="preserve"> REF Table5 </w:instrText>'
+         "</w:r>"
+         '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+         "<w:r><w:t>Table 5</w:t></w:r>"
+         '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+         "<w:r><w:t> follows</w:t></w:r></w:p>")
+    # offset 3 splits the field's own RESULT: "Tab|le 5". The whole
+    # field is one element, so there is nowhere outside it that holds
+    # that position.
+    with pytest.raises(AnchorError, match="fldChar field"):
+        insert_in_para(p, 3, "X")
+    # ...while prepending to the paragraph lands BEFORE the field, which
+    # is where a field-led paragraph's new sentence belongs
+    out = insert_in_para(p, 0, "See ")
+    assert out.index("See ") < out.index("<w:fldChar")
+    assert text_of(out) == "See Table 5 follows"
+
+
+def test_an_offset_past_the_end_is_an_AnchorError_not_a_silent_append():
+    with pytest.raises(AnchorError, match="outside the paragraph"):
+        insert_in_para(_LED_BY_LINK, 9999, "x")
+
+
+def test_inserting_at_the_very_end_appends_after_the_last_run():
+    out = insert_in_para(_LED_BY_LINK, len(text_of(_LED_BY_LINK)), " QED.")
+    assert text_of(out).endswith("not random. QED.")
+
+
+def test_an_empty_paragraph_takes_the_content_inside_the_w_p():
+    out = insert_in_para("<w:p><w:pPr/></w:p>", 0, "first words")
+    assert text_of(out) == "first words"
+    assert out.endswith("</w:p>")

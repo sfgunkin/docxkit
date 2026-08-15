@@ -28,6 +28,8 @@ from .package import CORE_PART, core_property, set_core_property
 
 __all__ = [
     "CARRIED_PROPERTIES",
+    "CUSTOM_XML",
+    "NOTE_LEADS",
     "SmartenReport",
     "SpacingReport",
     "carry_properties",

@@ -297,3 +297,35 @@ def test_a_package_missing_a_referring_part_keeps_going():
     report = apply_template(parts, {"word/styles.xml": styles_part(
         style("X", "x"))}, remap={"A": "X"})
     assert report.remapped == {"A": 2}, "the comments part was skipped"
+
+
+# ------------------------------------------------- the resolution cache --
+
+def test_resolve_is_memoised_and_keyed_on_everything_it_reads():
+    """`Cascade.of` is the innermost call in the package: `_char_fmt`
+    asks for several properties of every RUN, and it was 43 % of
+    `compare.load` (278 ms against the 34 ms the comparison itself took,
+    LI7 prev -> working). A Cascade never changes after construction, so
+    the answer is worth keeping — as long as the key holds everything
+    the answer depends on."""
+    from docxkit.styles import Cascade
+
+    styles = (
+        '<w:styles><w:docDefaults><w:rPrDefault><w:rPr>'
+        '<w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:rPr><w:sz w:val="24"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Quote">'
+        '<w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>')
+    c = Cascade(styles)
+
+    first = c.resolve("sz", pstyle="Quote")
+    again = c.resolve("sz", pstyle="Quote")
+    assert first.value == "20"
+    assert again is first, "the second lookup rebuilt the answer"
+
+    # every part of the key changes the answer, so every part must be IN it
+    assert c.resolve("sz", pstyle=None).value == "24"      # default style
+    assert c.resolve("sz", rstyle="Quote", pstyle=None).value == "20"
+    assert c.resolve("sz", rpr='<w:sz w:val="18"/>').value == "18"
+    assert c.resolve("szCs", pstyle="Quote").value is None

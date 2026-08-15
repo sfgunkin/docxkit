@@ -565,7 +565,7 @@ def test_a_nested_field_does_not_close_its_parent():
     consumed it cut there, leaving the outer field's tail and its
     unmatched end marker behind.
     """
-    from docxkit._cite_repair import field_spans
+    from docxkit._xml import field_spans
 
     spans = field_spans(NESTED_FIELD)
     assert len(spans) == 2

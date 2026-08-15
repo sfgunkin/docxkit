@@ -430,3 +430,63 @@ def test_an_unknown_namespace_prefix_is_named_not_swallowed():
     from docxkit.equations import standalone
     with pytest.raises(AnchorError, match="zz"):
         standalone("<m:oMath><zz:thing/></m:oMath>")
+
+
+# ------------------------------------------- the FACE of a maths run -----
+
+#: `Parental_style` 2026-08-13: the covariate vector X is bold-italic and
+#: must not be renamed; the theory's X is not. The natural guard --
+#: `'<w:b/>' in run` -- counted all 32 as italic and 0 as bold, and would
+#: have swept four bold X's into the rename.
+BOLD_X = ('<m:r><m:rPr><m:sty m:val="bi"/></m:rPr>'
+          "<w:rPr><w:rFonts w:ascii=\"Cambria Math\"/></w:rPr>"
+          "<m:t>X</m:t></m:r>")
+PLAIN_X = ('<m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>X</m:t></m:r>')
+UNMARKED_X = ('<m:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr>'
+              "<m:t>X</m:t></m:r>")
+
+
+def test_face_reads_m_sty_not_w_b():
+    from docxkit.equations import face
+
+    assert face(BOLD_X) == "bi"
+    assert face(PLAIN_X) == "p"
+    assert "<w:b/>" not in BOLD_X, "the whole point: w:b is not there"
+
+
+def test_an_unmarked_maths_run_renders_ITALIC():
+    """OMML's default face is math-italic — a variable is italic because
+    it is a variable, which is why a manuscript full of italic symbols
+    carries no markup for it."""
+    from docxkit.equations import DEFAULT_FACE, face
+
+    assert face(UNMARKED_X) == "i" == DEFAULT_FACE
+
+
+def test_is_bold_separates_the_two_X_populations():
+    from docxkit.equations import is_bold, is_italic
+
+    assert is_bold(BOLD_X)
+    assert not is_bold(PLAIN_X)
+    assert not is_bold(UNMARKED_X), "the enumeration that said 'bold: 0'"
+    assert is_italic(BOLD_X) and is_italic(UNMARKED_X)
+    assert not is_italic(PLAIN_X)
+
+
+def test_the_rarer_w_rPr_spelling_is_read_second():
+    """Some producers put the bold in w:rPr instead. Read after m:sty,
+    never instead of it."""
+    from docxkit.equations import face
+
+    assert face('<m:r><w:rPr><w:b/><w:i/></w:rPr><m:t>X</m:t></m:r>') == "bi"
+    assert face('<m:r><w:rPr><w:b/></w:rPr><m:t>X</m:t></m:r>') == "b"
+    # m:sty wins when both are stated
+    assert face('<m:r><m:rPr><m:sty m:val="p"/></m:rPr>'
+                "<w:rPr><w:b/></w:rPr><m:t>X</m:t></m:r>") == "p"
+
+
+def test_a_switched_OFF_w_b_is_not_bold():
+    from docxkit.equations import face
+
+    assert face('<m:r><w:rPr><w:b w:val="0"/></w:rPr>'
+                "<m:t>X</m:t></m:r>") == "i"

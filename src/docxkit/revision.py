@@ -79,6 +79,7 @@ from ._xml import (
 from .errors import (
     BaselinePending,
     DocumentLocked,
+    HandbackLoss,
     MathResolved,
     ProtocolError,
     StaleBatch,
@@ -97,7 +98,11 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 
 __all__ = [
+    "RESCUE_KEEP",
+    "SAVE_NOISE",
+    "TEXT_PARTS",
     "IngestReport",
+    "Loss",
     "Paper",
     "PromoteReport",
     "State",
@@ -109,11 +114,15 @@ __all__ = [
     "ingest",
     "init",
     "load_paper",
+    "losses",
+    "moved_footnotes",
     "promote",
     "prune_rescues",
     "rescue_path",
     "rescues",
+    "restored_bookmarks",
     "state",
+    "validate",
 ]
 
 #: Parts that carry revisable text. ``document.xml`` is not the whole
@@ -387,6 +396,10 @@ class IngestReport:
     removed: list[str]
     working_state: State
     prev_state: State
+    #: Links, notes, bookmarks and comments the hand-back no longer
+    #: carries. The one part of this report that is a FINDING rather
+    #: than a description — see :func:`losses`.
+    lost: list[Loss] = field(default_factory=list)
 
     @property
     def style_edit(self) -> bool:
@@ -427,9 +440,11 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
     from . import compare as _compare  # deferred: heavy import chain
 
     working, prev = Path(working), Path(prev)
-    parts = package.changed_parts(package.read_parts(prev),
-                                  package.read_parts(working))
+    prev_parts = package.read_parts(prev)
+    working_parts = package.read_parts(working)
+    parts = package.changed_parts(prev_parts, working_parts)
     return IngestReport(
+        lost=losses(working_parts, prev_parts),
         working=working,
         prev=prev,
         content=dict(_compare.compare(str(prev), str(working))),
@@ -772,6 +787,96 @@ def _bookmarks(parts: dict[str, bytes]) -> set[str]:
             if not n.startswith("_")}       # Word's own _Toc/_Heading names
 
 
+@dataclass(frozen=True)
+class Loss:
+    """Structure the hand-back no longer carries, named so it can be OK'd."""
+
+    kind: str        # link | footnote | endnote | bookmark | comment
+    what: str        # the anchor, the note's text, the bookmark's name
+
+    @property
+    def key(self) -> str:
+        return f"{self.kind}:{self.what}"
+
+    def __str__(self) -> str:
+        return f"{self.kind} {self.what[:70]!r}"
+
+
+def losses(working: dict[str, bytes],
+           prev: dict[str, bytes]) -> list[Loss]:
+    """What an author's Word session destroyed, and no text diff shows.
+
+    The protocol's safety claim is that ``working.docx`` is the one file
+    and its state is readable. Between the hand-back and
+    :func:`baseline`, nothing used to fail on lost CONTENT: `ingest`
+    printed it, `validate` checked the batch (and on a hand-back there
+    is no batch), and `baseline` copied.
+
+    **LI7, 2026-08-15.** The manuscript came back missing three Figure 4
+    cross-references, a European Commission 2024 citation, and footnote
+    15 entire — note, reference, and the link inside it. Measured
+    through the chain, nothing the toolkit built had lost them:
+
+    ======================  =====  =====  =====
+    stage                   body   note   notes
+                            links  links
+    ======================  =====  =====  =====
+    prev                    33     15     19
+    the edited clean build  33     15     19
+    the Compare redline     33     15     19
+    after the author's      **28** **14** **18**
+    session
+    ======================  =====  =====  =====
+
+    Word had collapsed one paragraph into a single run to make four
+    copyedits, and every link and the note reference in it went at once.
+    Then it RENUMBERED: 19 notes became 18 with the ids still
+    contiguous, so there is no gap to notice and no id to miss. Counting
+    is the only way to see it, which is why the notes are matched on
+    their TEXT here rather than on their id.
+
+    Returns one entry per lost thing. Empty is the ordinary case: an
+    author who edits prose loses none of this.
+    """
+    out: list[Loss] = []
+    was, now = _links(prev), _links(working)
+    out += [Loss("link", f"{anchor} ({label[:40]})")
+            for anchor, label in sorted((was - now).elements())]
+    for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
+        before = Counter(f.text for f in _notes(prev, part, kind))
+        after = Counter(f.text for f in _notes(working, part, kind))
+        out += [Loss(kind, text) for text in sorted(before - after)]
+    out += [Loss("bookmark", name)
+            for name in sorted(_bookmarks(prev) - _bookmarks(working))]
+    lost_comments = (tracked.package_counts(prev)["comments"]
+                     - tracked.package_counts(working)["comments"])
+    if lost_comments > 0:
+        out.append(Loss("comment", f"{lost_comments} comment(s) gone"))
+    return out
+
+
+def _notes(parts: dict[str, bytes], part: str, kind: str) -> list[Any]:
+    from .footnotes import find_all
+
+    blob = parts.get(part)
+    if blob is None:
+        return []
+    return [f for f in find_all(blob.decode("utf-8", "replace"), kind=kind)
+            if f.text]
+
+
+def _unmet(accepted: tuple[str, ...], found: list[Loss]) -> list[str]:
+    """Declared losses that did NOT happen.
+
+    A stale exemption is worse than no exemption: it is a switched-off
+    gate that reads as a switched-on one, and the next real loss goes
+    through it silently. So naming something that is still present is
+    itself a refusal.
+    """
+    keys = {loss.key for loss in found} | {loss.what for loss in found}
+    return [token for token in accepted if token not in keys]
+
+
 def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
                        built: dict[str, bytes]) -> list[str]:
     """Bookmarks the clean edit REMOVED and Compare put back.
@@ -1046,7 +1151,8 @@ def _sha(path: str | Path) -> str:
 
 # ------------------------------------------------------------- baseline
 
-def baseline(paper: Paper, *, force: bool = False) -> Path:
+def baseline(paper: Paper, *, force: bool = False,
+             accept_loss: tuple[str, ...] = ()) -> Path:
     """Record the current ``working.docx`` as the new accepted truth.
 
     Run this after the author has accepted (or rejected) everything: it
@@ -1066,12 +1172,50 @@ def baseline(paper: Paper, *, force: bool = False) -> Path:
     every later Compare and every reject-all is measured against. `force`
     does NOT override this: a locked file is not a decision the author
     has made, it is a file that cannot be copied safely.
+
+    And it refuses while the hand-back has LOST something — a link, a
+    note, a bookmark, a comment (:func:`losses`). This is the step that
+    makes such a loss permanent: `prev.docx` is what the compare chain
+    measures against afterwards, so a link Word ate on the way in
+    becomes a link that was never there. `accept_loss` names the ones
+    that are deliberate, by anchor, note text or ``kind:what`` key —
+    including the case that made the check hard to write, a loss that is
+    a REPAIR (LI7's link whose label had bled across a whole sentence).
+    Naming something that is NOT lost is itself refused: a stale
+    exemption is a switched-off gate that reads as a switched-on one.
+
+    `force` does not override this either. The unacknowledged loss is
+    exactly the case `force` would be reached for by reflex, and the
+    acknowledgement costs one anchor.
     """
     if package.is_locked(paper.working):
         raise DocumentLocked(
             f"{paper.working.name} is open in Word. Close it first — a "
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
+    if paper.prev.exists():
+        gone = losses(package.read_parts(paper.working),
+                      package.read_parts(paper.prev))
+        if stale := _unmet(accept_loss, gone):
+            raise HandbackLoss(
+                f"--accept-loss named {', '.join(stale)}, which "
+                f"{paper.working.name} has NOT lost. A declared loss that "
+                f"did not happen is an exemption with nothing under it, "
+                f"and it would pass the next real one through in silence.")
+        unacknowledged = [loss for loss in gone
+                          if loss.key not in accept_loss
+                          and loss.what not in accept_loss]
+        if unacknowledged:
+            listed = "\n  - ".join(str(loss) for loss in unacknowledged)
+            raise HandbackLoss(
+                f"{paper.working.name} lost {len(unacknowledged)} thing(s) "
+                f"since {paper.prev.name}, and baselining makes that "
+                f"permanent — the compare chain measures against prev.docx, "
+                f"so a link Word ate becomes a link that was never there:"
+                f"\n  - {listed}\n"
+                f"Word does this silently when it collapses a paragraph to "
+                f"make an edit. Put them back, or name the deliberate ones "
+                f"with accept_loss=(...) / --accept-loss.")
     current = state(paper.working)
     if not current.is_truth and not force:
         where = ", ".join(f"{n} in {p.split('/')[-1]}"

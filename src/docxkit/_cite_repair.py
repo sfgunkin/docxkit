@@ -12,10 +12,9 @@ import re
 from ._cite_grammar import bookmark
 from ._xml import (
     BOOKMARK_ID_RE,
-    FLDCHAR_RE,
+    field_spans,
     own_properties,
 )
-from .edit import _RUN_OPEN_RE
 from .errors import AnchorError
 from .find import para_slice
 
@@ -65,52 +64,6 @@ def marker_bookmark(xml: str, sig: str, name: str, bid: int) -> str:
 # carries run properties lands on the rPr and the cut leaves mismatched
 # tags — LI7's round-2 field removal produced XML Word refuses before
 # this. (lint caught it; the audit and compare are regex-blind to it.)
-def _run_open_before(xml: str, pos: int) -> int:
-    starts = [m.start() for m in _RUN_OPEN_RE.finditer(xml, 0, pos)]
-    return starts[-1] if starts else -1
-
-
-def field_spans(xml: str) -> list[tuple[int, int, str]]:
-    """Every fldChar field as ``(start, end, body)``, run boundaries in.
-
-    THE field walk. It existed three times with three different guards
-    — only one defended against a field whose end tag is missing — and a
-    walk that lives in three places is a walk that will disagree with
-    itself. An unclosable span is SKIPPED rather than guessed at:
-    `xml.find(...) + len(...)` on a miss yields 5, which slices from the
-    top of the document, and a splice built on that lands mid-element.
-
-    Fields NEST — Word writes a HYPERLINK inside a REF, and everything
-    inside a TOC — so the end is matched by depth, not by taking the
-    first one after the begin. Taking the first ended the outer field at
-    the INNER field's end: a fragment with two begins and one end, which
-    never reached the content past the nested field. The repair that
-    consumed it then cut there, leaving the outer field's tail and its
-    now-unmatched end marker behind in the document.
-
-    Nested fields are returned alongside their parents, in document
-    order, each with its own correct extent. The callers here all
-    demand a UNIQUE match and raise otherwise, so a nested hit surfaces
-    as a loud "found 2 fields" rather than a quiet half-field splice.
-    """
-    out: list[tuple[int, int, str]] = []
-    open_marks: list[re.Match[str]] = []
-    for m in FLDCHAR_RE.finditer(xml):
-        kind = m.group(1)
-        if kind == "begin":
-            open_marks.append(m)
-        elif kind == "end" and open_marks:
-            bm = open_marks.pop()
-            r_start = _run_open_before(xml, bm.start())
-            close = xml.find("</w:r>", m.end())
-            if r_start < 0 or close < 0:
-                continue
-            r_end = close + len("</w:r>")
-            out.append((r_start, r_end, xml[r_start:r_end]))
-    out.sort(key=lambda span: (span[0], -span[1]))
-    return out
-
-
 def wrap_link_in_bookmark(xml: str, anchor: str, name: str, bid: int,
                           *, which: str = "only") -> str:
     """Recreate `name` around the ONE link that points at `anchor`.

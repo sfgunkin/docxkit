@@ -16,6 +16,8 @@ from ._xml import (
     T_RUN_RE,
     XML_WS,
     editable_text,
+    escape,
+    field_spans,
     live_properties,
     normalize_glyphs,
     own_properties,
@@ -25,10 +27,11 @@ from ._xml import (
 from .errors import AnchorError
 
 __all__ = [
-    # re-exported: callers building a run from scratch need the same rule
     "RUN_RE",
     "T_RUN_RE",
+    "editable_text",
     "find_normalized",
+    "insert_in_para",
     "italicize",
     "preserve_space",
     "rep",
@@ -36,6 +39,7 @@ __all__ = [
     "set_run_text",
     "subscript",
     "superscript",
+    "visible_text",
 ]
 
 # any <w:t ...> that does NOT carry a real xml:space="preserve". The
@@ -49,6 +53,21 @@ _ANY_T_RE = re.compile(r"<w:t((?:\s+[^<>]*?)?)>([^<]*)</w:t>")
 _XML_SPACE_RE = re.compile(r"""xml:space\s*=\s*["']preserve["']""")
 _JUNK_SPACE_RE = re.compile(r"""\s+w:space\s*=\s*["']preserve["']""")
 _HYPERLINK_RUN = 'w:val="Hyperlink"'
+#: A note's MARKER in the body: the element that says "footnote 11 is
+#: anchored here". It carries no visible text at all, which is the whole
+#: problem — a visible-text match spans one with nothing to see. The id
+#: is read separately because attribute order is not meaningful in XML
+#: and a `w:id`-second spelling has already read as zero once here.
+_NOTE_REF_RE = re.compile(r"<w:(footnote|endnote|comment)Reference\b[^>]*/>")
+_ID_ATTR_RE = re.compile(r'\bw:id="([^"]+)"')
+
+
+def _note_in(run_xml: str) -> str | None:
+    """``"footnote 11"`` if this run anchors a note, else None."""
+    if (m := _NOTE_REF_RE.search(run_xml)) is None:
+        return None
+    nid = _ID_ATTR_RE.search(m.group(0))
+    return f"{m.group(1)} {nid.group(1)}" if nid else m.group(1)
 
 
 def rep(xml: str, old: str, new: str, n: int = 1, tag: str = "",
@@ -326,6 +345,7 @@ def superscript(para_xml: str, text: str, *, normalize: bool = False,
 def replace_in_para(para_xml: str, old: str, new: str,
                     *, allow_hyperlink: bool = False,
                     grow_link_label: bool = False,
+                    allow_notes: bool = False,
                     normalize: bool = False) -> str:
     """Run-aware text replace inside one paragraph.
 
@@ -375,6 +395,23 @@ def replace_in_para(para_xml: str, old: str, new: str,
     outside it is refused; ``grow_link_label=True`` is the deliberate
     retitle, and the usual answer is to replace only a span lying wholly
     on one side of the link.
+
+    Refuses for the same reason when the match CROSSES a footnote,
+    endnote or comment REFERENCE. A hyperlink at least has a label to
+    see; a ``w:footnoteReference`` carries no visible text at all, so
+    the anchor reads as contiguous prose and nothing signals that a
+    marker sits inside it. The reference itself survives — it lives in
+    its own run, which `set_run_text` leaves alone — but the whole
+    replacement is written into the run holding the START of the match
+    and the text after the marker is emptied, so the MARKER MOVES to the
+    end of the new text. On LI7 (2026-08-15) the anchor ``"). The left
+    panel of "`` spanned footnote 11 in the Figure 1 paragraph; Word's
+    Compare then re-emitted footnote 12 — a note holding an equation —
+    as an insertion with no matching deletion, and reject-all stopped
+    reproducing the baseline, so the author could not refuse it. `lint`
+    was clean, `compare` reported no hyperlink difference, and the
+    caller's own assertion passed because the words really were in that
+    order. Anchor after the marker, or pass ``allow_notes=True``.
 
     `normalize` matches through Word's typographic substitutions (curly vs
     straight quotes, dash variants) — see :func:`find_normalized`. `new` is
@@ -455,6 +492,25 @@ def replace_in_para(para_xml: str, old: str, new: str,
             hi_i += 1
         return spans[lo_i][0], spans[hi_i][1]
 
+    # A note reference is a run of ZERO visible width, so `at < p < end`
+    # below is exactly "the marker sits strictly inside the match" — a
+    # match that merely ABUTS one does not touch it and is not refused.
+    # A single touched run cannot move a marker either: the text is
+    # rewritten where it stands and nothing is emptied after it.
+    touched = [i for i, (start, stop) in enumerate(spans)
+               if not (stop <= at or start >= end)]
+    if not allow_notes and len(touched) > 1:
+        for i in touched:
+            if (note := _note_in(runs[i].group(0))) is not None:
+                raise AnchorError(
+                    f"replace_in_para: the match crosses {note} — the "
+                    f"replacement goes into the run holding the start of "
+                    f"the match and the text after the marker is emptied, "
+                    f"so the marker MOVES to the end of {new[:30]!r}. "
+                    f"Nothing downstream shows that: the words read in "
+                    f"the same order and the note still resolves. Anchor "
+                    f"on one side of the marker, or pass allow_notes=True.")
+
     edits, first = [], True
     for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
         if stop <= at or start >= end:
@@ -501,3 +557,162 @@ def replace_in_para(para_xml: str, old: str, new: str,
     for run, replacement in reversed(edits):
         out = out[:run.start()] + replacement + out[run.end():]
     return out
+
+
+def _enclosing(spans: list[tuple[int, int]], pos: int
+               ) -> tuple[int, int] | None:
+    """The span STRICTLY containing `pos`, if any."""
+    return next(((lo, hi) for lo, hi in spans if lo < pos < hi), None)
+
+
+_BOOKMARK_RE = re.compile(r"<w:bookmark(Start|End)\b[^>]*?/>")
+
+
+def _bookmark_spans(xml: str) -> list[tuple[int, int]]:
+    """``bookmarkStart`` -> its matching ``bookmarkEnd``, paired by id."""
+    out: list[tuple[int, int]] = []
+    open_at: dict[str, int] = {}
+    for m in _BOOKMARK_RE.finditer(xml):
+        bid = _ID_ATTR_RE.search(m.group(0))
+        if bid is None:
+            continue
+        if m.group(1) == "Start":
+            open_at[bid.group(1)] = m.start()
+        elif (lo := open_at.pop(bid.group(1), None)) is not None:
+            out.append((lo, m.end()))
+    return out
+
+
+def _outside(runs: list[re.Match[str]], span: tuple[int, int],
+             pos: int) -> int | None:
+    """The edge of `span` that holds `pos`'s VISIBLE position, or None.
+
+    A position inside a protected element is only movable when nothing
+    the element shows lies on one side of it: then the same place on the
+    page is available outside, before or after the whole element. With
+    text on BOTH sides the caller really is asking to split a label, and
+    that is the refusal.
+    """
+    inner = [r for r in runs if span[0] <= r.start() < span[1]
+             and visible_text(r.group(0))]
+    if not any(r.end() <= pos for r in inner):
+        return span[0]
+    if not any(r.start() >= pos for r in inner):
+        return span[1]
+    return None
+
+
+def insert_in_para(para_xml: str, at: int, content: str, *,
+                   allow_hyperlink: bool = False,
+                   allow_bookmark: bool = False) -> str:
+    """Splice `content` into a paragraph at VISIBLE offset `at`.
+
+    The other half of :func:`replace_in_para`, and it did not exist:
+    `body` stops at whole paragraphs and `edit` had `set_run_text`,
+    `replace_in_para`, `rep` and nothing that puts a run BETWEEN runs.
+    So every caller wrote the string surgery itself, and the obvious
+    version is wrong twice over — both failures on `Parental_style`,
+    2026-08-13:
+
+    * **prepending to a paragraph whose first run is a link label.** The
+      Bhalotra-Clarke paragraph opens directly on its citation's
+      field-form hyperlink, so its first ``w:t`` IS the label. Fronting
+      the paragraph by prepending there put the sentence INSIDE the
+      link — ``'A further consideration concerns the twin instrument
+      itself. Bhalotra and Clarke (2020)'``, blue and underlined across
+      the whole sentence. Every text-layer check passed, because the
+      words really are in that order; only `compare`'s HYPERLINK layer
+      sees it, and that layer is review-not-gated;
+    * **finding the run boundary by hand.** ``head.rfind("<w:r")``
+      matches ``<w:rPr`` too. That spliced a paragraph mid-properties
+      and destroyed the ``(B.2)`` equation label two screens away.
+
+    `content` goes in as XML when it starts with ``<`` — a run, an
+    ``m:oMath``, a whole hyperlink — and is wrapped in a run otherwise,
+    escaped, with ``xml:space="preserve"`` when it has edge whitespace.
+
+    At a run boundary nothing is split. INSIDE a run the run is REBUILT
+    as two through :func:`set_run_text` — never spliced — so its
+    properties and its style survive on both halves.
+
+    **Where the offset falls on the EDGE of a link or a bookmark, the
+    content lands OUTSIDE it.** That is the first failure above: at
+    offset 0 of a paragraph that opens on a link, "before the first run"
+    is a position inside the ``w:hyperlink`` element, and what the
+    caller means is before the element. Strictly inside a label or a
+    bookmark span it refuses, mirroring `replace_in_para`;
+    ``allow_hyperlink`` / ``allow_bookmark`` are the deliberate escapes.
+    A fldChar FIELD is never split, flag or no flag: the halves are not
+    two fields, they are one broken one.
+    """
+    runs, spans, cursor = [], [], 0
+    for r in RUN_RE.finditer(para_xml):
+        runs.append(r)
+        body = visible_text(r.group(0))
+        spans.append((cursor, cursor + len(body)))
+        cursor += len(body)
+    if at < 0 or at > cursor:
+        raise AnchorError(
+            f"insert_in_para: offset {at} is outside the paragraph's "
+            f"{cursor} visible characters")
+    if not content.lstrip().startswith("<"):
+        tag = ('<w:t xml:space="preserve">'
+               if content != content.strip() else "<w:t>")
+        content = f"<w:r>{tag}{escape(content)}</w:t></w:r>"
+
+    protected = (
+        ([(m.start(), m.end())
+          for m in HYPERLINK_ANY_RE.finditer(para_xml)], allow_hyperlink,
+         "a hyperlink — the content would become part of its label"),
+        ([(lo, hi) for lo, hi, _ in field_spans(para_xml)], False,
+         ("a fldChar field — the halves would not be two fields, they "
+          "would be one broken one")),
+        (_bookmark_spans(para_xml), allow_bookmark,
+         "a bookmark — the anchor would grow to cover the new text"),
+    )
+
+    if (inside := next(((i, s) for i, (s, e) in enumerate(spans)
+                        if s < at < e), None)) is not None:
+        idx, start = inside
+        run = runs[idx]
+        if not allow_hyperlink and _HYPERLINK_RUN in run.group(0):
+            raise AnchorError(
+                "insert_in_para: the offset falls INSIDE a hyperlink's "
+                "label — splitting it there puts the new content in the "
+                "link, blue and underlined, which no text diff shows. "
+                "Insert on one side of the label, or pass "
+                "allow_hyperlink=True.")
+        for regions, allowed, what in protected:
+            if not allowed and any(lo <= run.start() < hi
+                                   for lo, hi in regions):
+                raise AnchorError(
+                    f"insert_in_para: offset {at} splits a run that is "
+                    f"inside {what}. Insert on one side of it, or pass "
+                    f"the matching allow_ flag.")
+        body = visible_text(run.group(0))
+        return (para_xml[:run.start()]
+                + set_run_text(run.group(0), body[:at - start]) + content
+                + set_run_text(run.group(0), body[at - start:])
+                + para_xml[run.end():])
+
+    if not runs:
+        close = para_xml.rindex("</w:p>")
+        return para_xml[:close] + content + para_xml[close:]
+    # The LAST run that starts here, not the first: several can share one
+    # visible offset — a field's `end` marker, a note reference, a
+    # bookmarkEnd all have zero width — and "at offset N" means after
+    # everything that ended there.
+    pos = (runs[-1].end() if at == cursor else
+           max(r.start() for r, (s, _) in zip(runs, spans, strict=True)
+               if s == at))
+
+    for regions, allowed, what in protected:
+        if (span := _enclosing(regions, pos)) is None:
+            continue
+        if (edge := _outside(runs, span, pos)) is not None:
+            pos = edge              # an EDGE is not "inside": go outside
+        elif not allowed:
+            raise AnchorError(
+                f"insert_in_para: offset {at} falls inside {what}. Insert "
+                f"on one side of it, or pass the matching allow_ flag.")
+    return para_xml[:pos] + content + para_xml[pos:]
