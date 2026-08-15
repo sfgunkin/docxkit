@@ -17,7 +17,13 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 `body.table` builds a table in NO house style, so every paper re-derives the same six settings — and copying a neighbouring table propagates the wrong one
+Nothing. Every entry filed so far is in `## Fixed` below, with its commit.
+
+---
+
+## Fixed
+
+### S2 `body.table` builds a table in NO house style, so every paper re-derives the same six settings — and copying a neighbouring table propagates the wrong one — `edd0202`
 
 `booktabs` sets the RULES beautifully and stops there. Everything else the
 house style specifies — Arial Narrow 10 pt at run level *and* in each cell's
@@ -57,7 +63,45 @@ literals, a local `cant_split()` that merges into an existing `w:trPr` rather
 than adding a second (a second one is invalid — `lint` catches it), and an
 explicit section-break paragraph for the landscape run.
 
-### S2 `link --write` names bookmarks in ITS convention, not the paper's, and cannot be told otherwise
+**Fixed.** `tables.house(xml, table, *, font, size, caption=None)` sets
+the whole thing in one call: the face on all four ``w:rFonts``
+attributes and both size fields, at RUN level and in each cell's
+PARAGRAPH default; ``tblW 5000 pct`` + autofit; ``cantSplit`` on every
+row; and ``keepNext`` on the caption when one is named. `booktabs`
+composes onto it — one sets the face and the width, the other the
+rules, and neither touches the other's settings.
+
+Three details the entry did not have to state and the implementation
+does. `w:cs` and `w:eastAsia` are not decoration: a cell holding one
+non-Latin character falls back to another face for exactly that
+character, which reads as a stray glyph in one cell of an otherwise
+uniform table. `cantSplit` MERGES into an existing ``w:trPr`` rather
+than adding a second, because `body.table` already gives the header row
+one for ``tblHeader`` and a second is invalid — `lint` catches it, which
+is how the workaround learned. And the pass is IDEMPOTENT, which took
+knowing that `own_properties` answers with the INNER text while its span
+covers the whole element: comparing the two halves against each other
+reported every run as changed on every run.
+
+The second defect that rode in with it is fixed too:
+`body.prose_props(para)` lifts a paragraph's ``pPr`` and the ``rPr`` of
+its first PROSE run, skipping runs inside a ``w:hyperlink``, inside a
+fldChar field, or carrying the ``Hyperlink`` style. The obvious version
+lifts the first ``w:rPr`` in the paragraph, and a paragraph that opens
+on a citation is ordinary — so the new paragraph renders blue and
+underlined, linking nowhere, with every text-layer check passing. A
+paragraph whose runs are ALL labels answers with an empty ``rPr``:
+no properties is a template a caller can see through, a link's are not.
+
+Tests: thirteen in `tests/test_tables_house.py` (including the
+composition with `booktabs`, the second-`trPr` refusal, idempotence, and
+the tracked-table refusal) and four in `test_body.py`.
+
+**Workaround retired:** the `CELL_RPR`/`HEAD_RPR`/`CELL_PPR` literals
+and local `cant_split()` in LI7's `apply_r2b.py` — an applied script, so
+it stays as the record of that batch; the next paper calls `house`.
+
+### S2 `link --write` names bookmarks in ITS convention, not the paper's, and cannot be told otherwise — `edd0202`
 
 `docxkit link` builds citation↔entry links document-wide, and the names it
 mints are its own: `UnitedNations2024`, `WorldHealthOrganization2024`,
@@ -82,7 +126,31 @@ the audit that already finds the work.
 **Workaround in use** LI7's `apply_r2b.py`: `FWD`/`ANCHORED` XML templates
 cloned from the `Kanbur2007` pair, applied to an explicit six-item list.
 
-### S4 `renumber` handles caption numbers but not footnote/endnote ids
+**Fixed.** `link_all(parts, naming=..., only=...)` and `docxkit link
+--only`.
+
+`naming` is ``(surname, year) -> bookmark name``, so a paper states its
+convention once: LI7's ``Kanbur2007`` / ``Kanbur2007txt`` instead of
+this module's minted form. An entry's OWN key-shaped bookmark still
+wins over both — an existing anchor is never renamed — and a convention
+name that COLLIDES, or that Word's 40-character cap would truncate on
+save, falls back to the minted form and says so in the report. Both of
+those are silent otherwise, and the truncation is the worse one: Word
+applies it on SAVE without retargeting the links, so every anchor to
+that name is orphaned.
+
+`only` scopes the pass to named works — by key, surname or bookmark
+name. The reference BLOCK is still read whole, and that is not an
+oversight: its bounds are what tell an entry from a sentence, and
+narrowing them would set the builder loose inside the reference list.
+The test asserting exactly that is the one worth keeping.
+
+Tests: six in `tests/test_link_convention.py`.
+
+**Workaround retired:** the `FWD`/`ANCHORED` templates and the explicit
+six-item list in LI7's `apply_r2b.py`.
+
+### S4 `renumber` handles caption numbers but not footnote/endnote ids — `edd0202`
 
 `renumber` remaps "Figure N"/"Table N" labels and their bookmarks. Footnote
 `w:id`s are a different namespace with the same problem, and nothing addresses
@@ -103,9 +171,28 @@ and reference order disagree; that is the check that would have caught it.
 
 **Workaround in use** LI7's `revision/scripts/fix_footnote_ids.py`.
 
----
+**Fixed.** `renumber.footnotes(parts)` renumbers footnote ids into
+reference order and returns what moved; `renumber.footnote_audit(parts)`
+is the cheap check that would have caught it, and
+`renumber.footnote_order(parts)` gives the two orders side by side.
 
-## Fixed
+The remap goes through a PLACEHOLDER, which is the whole trick: a direct
+substitution collides — 19 -> 15 while 15 -> 16 shares one id space —
+and the second pass rewrites what the first had already moved. The note
+ELEMENTS are sorted to match as well; Word does not require it, but a
+note stored out of sequence is what made this hard to see. Word's own
+separator and continuation notes (ids 0 and -1) are never renumbered and
+stay at the head of the part. A reference to a note that does not exist
+is REFUSED rather than renumbered onto something else.
+
+The audit also reports a note nothing references and a reference with no
+note, because those are the same question asked from the other side.
+
+Tests: nine in `tests/test_footnote_ids.py`, including that the note
+TEXT follows its id — the property the whole entry is about.
+
+**Workaround retired:** LI7's `revision/scripts/fix_footnote_ids.py`
+(already applied; `renumber.footnotes` is what the next paper calls).
 
 ### S1 `RUN_RE` reads a self-closing `<w:r/>` as an OPENING tag — the defect `PARA_RE` was fixed for, in the walk nine modules use — `865faa8`
 
