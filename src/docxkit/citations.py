@@ -44,6 +44,7 @@ from ._cite_build import (
     _entry_names_from_document as _entry_names_from_document,
 )
 from ._cite_build import _own_bookmark as _own_bookmark
+from ._cite_build import _own_bookmarks as _own_bookmarks
 from ._cite_build import link_all as link_all
 from ._cite_build import link_rest as link_rest
 from ._cite_build import unlink_by_anchor as unlink_by_anchor
@@ -174,13 +175,10 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     # already knows both stems and reads the body-level gap Word hoists
     # a marker into.
     entries = references(texts)
-    live: set[str] = set()
-    for r in entries:
-        m = paras[r.index]
-        before = doc[(paras[r.index - 1].end() if r.index else 0):m.start()]
-        own = _own_bookmark(m.group(0), r, before)
-        if own:
-            live.add(own)
+    # the SET of names, not `_entry_names_from_document`'s mapping: two
+    # entries under one key have two names and that dict keeps only one,
+    # so the other would read as debris and be proposed for deletion
+    live = {own for _, own in _own_bookmarks(doc, entries, paras)}
 
     buckets: dict[str, list[str]] = {
         "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],

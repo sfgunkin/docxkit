@@ -575,14 +575,36 @@ def _entry_names_from_document(doc: str, entries: list[Reference],
     safe — a marker hoisted out of the previous entry cannot match this
     one.
     """
-    names: dict[str, str] = {}
+    return {r.key: own for r, own in _own_bookmarks(doc, entries, paras)}
+
+
+def _own_bookmarks(doc: str, entries: list[Reference],
+                   paras: list[re.Match[str]]
+                   ) -> list[tuple[Reference, str]]:
+    """Every entry that carries its own bookmark, and the name of it.
+
+    THE walk, returning PAIRS rather than a mapping, because its two
+    callers cannot share a container. `_entry_names_from_document`
+    wants `key -> name` and `citations.repair_plan` wants the set of
+    live names — and two entries under one key have two distinct names
+    (`Kanbur2007` and `Kanbur2007_2`), so a dict keyed by `r.key` keeps
+    only the second. `repair_plan` reading that dict would find the
+    first name unaccounted for and propose it for deletion as debris,
+    which is the 2026-08-09 failure its own comment describes: a live
+    reference proposed for deletion.
+
+    So the duplication here was load-bearing in one direction and not
+    the other. What is shared is the WALK — including the body-level
+    gap Word hoists a marker into, whose arithmetic is pinned by
+    `tests/test_cite_anchor_reuse.py`.
+    """
+    out: list[tuple[Reference, str]] = []
     for r in entries:
         m = paras[r.index]
         before = doc[(paras[r.index - 1].end() if r.index else 0):m.start()]
-        own = _own_bookmark(m.group(0), r, before)
-        if own:
-            names[r.key] = own
-    return names
+        if own := _own_bookmark(m.group(0), r, before):
+            out.append((r, own))
+    return out
 
 
 def link_rest(parts: dict[str, bytes], *,

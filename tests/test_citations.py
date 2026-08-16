@@ -1816,3 +1816,35 @@ def test_repair_plan_still_calls_a_bookmark_with_no_entry_debris():
             + P(R("Aksoy, C. (2026). Working from home. JEP.")))
     plan = repair_plan(xml_parts(body))
     assert "Ghost2019" in plan and "debris" in plan.lower(), plan
+
+
+def test_repair_plan_calls_BOTH_names_of_a_collided_entry_live():
+    """Two entries under one key have two distinct bookmark names, and
+    both belong to an entry still in the list — so neither is debris.
+
+    The regression this pins is a refactor that nearly happened
+    (2026-08-17). `repair_plan` walks the entries for their own
+    bookmarks, and `_entry_names_from_document` does the same walk;
+    sharing the latter looks obvious and is wrong, because it returns a
+    mapping keyed by `r.key` and a collision keeps only the second name.
+    The first would then be unaccounted for and proposed for DELETION —
+    which is the 2026-08-09 failure the comment above that walk
+    describes: a live reference proposed for deletion.
+    """
+    from conftest import make_parts, para, run
+
+    from docxkit.citations import link_all, repair_plan
+
+    parts = make_parts(
+        para(run("Both (Kanbur 2007) agree."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty. Journal."))
+        + para(run("Kanbur, A. (2007). Distribution. Another Journal.")))
+    link_all(parts)
+
+    plan = repair_plan(parts)
+
+    for name in ("Kanbur2007", "Kanbur2007_2"):
+        assert f'delete_bookmark(doc, "{name}"' not in plan, \
+            f"{name} belongs to a live entry and was proposed for deletion"
+    assert plan.count("not debris") == 2, plan

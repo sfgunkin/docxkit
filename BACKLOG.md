@@ -101,6 +101,38 @@ skips a self-closing `<w:p/>` — and `tests/test_paragraph_numbering.py`
 now says so, with an empty paragraph in the fixture to prove the skip is
 uniform. A test, not a refactor, was the right output here.
 
+**The eyeballed list ran out, so the next one was found by tool**
+(2026-08-17): `pylint --enable=duplicate-code --min-similarity-lines=4`
+over `src/`, which reported exactly one block — the entry-bookmark walk,
+in `_cite_build._entry_names_from_document` and in
+`citations.repair_plan`. `citations.py` ALREADY imports the former and
+re-implements it anyway.
+
+**And the obvious extraction would have introduced a defect.** The two
+accumulate differently: a dict keyed by `r.key`, and a set of names. Two
+entries under one key have two distinct names — `Kanbur2007` and
+`Kanbur2007_2` — so the dict keeps only the second. Measured:
+
+    dict (key -> name) : {'kanbur_2007': 'Kanbur2007_2'}
+    set  (repair_plan) : ['Kanbur2007', 'Kanbur2007_2']
+    lost by the dict   : ['Kanbur2007']
+
+`repair_plan` reading that dict would find `Kanbur2007` unaccounted for
+and propose it for DELETION as debris — the 2026-08-09 failure the
+comment directly above that walk describes, a live reference proposed
+for deletion. So the duplication was load-bearing in one direction and
+not the other.
+
+What is shared is the WALK, extracted as `_own_bookmarks` returning
+PAIRS; each caller builds its own container. The near-miss is pinned by
+`test_repair_plan_calls_BOTH_names_of_a_collided_entry_live`, which
+fails against the naive version. And the gap arithmetic is now guarded
+by BOTH suites rather than one — better than the `in_span` case, where
+only the strongest suite saw it.
+
+`duplicate-code` at that threshold now reports nothing across the
+package.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
