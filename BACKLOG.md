@@ -17,6 +17,45 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S4 `_HEAD_RE` and `_REF_YEAR_RE` disagree about a space, and the entry silently loses its back-link
+
+Found 2026-08-16 while building a fixture for `rebuild`'s "no head"
+path. Both regexes decide where a reference's year ends, and they
+differ by one token:
+
+    _REF_YEAR_RE = r"\(?\b(YEAR)\b\)?\s*[.,]"      # space allowed
+    _HEAD_RE     = r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]"   # space NOT allowed
+
+So "Kanbur, R. (2007) . Poverty and distribution. Journal." — a stray
+space before the period, which hand-typed lists really do carry —
+parses as a reference entry and then has no recognisable head:
+
+    link_all: linked 1, back-links added 0, skipped 1
+              SKIPPED: no head on entry ¶6
+
+The in-text mention is linked; the entry gets NO back-link, so the pair
+is half-built and the reader cannot get back from the reference to the
+sentence. **S4 rather than S2 because it is reported** — the line names
+the paragraph, and `crossrefs --audit` would find the missing partner.
+
+**Fix.** Allow the same `\s*` in `_HEAD_RE`, outside the capturing
+group so the head text stays clean:
+
+    r"\s*(.*?\(?\b\d{4}[a-z]?\)?)\s*[.,]"
+
+Better still, have one definition of "where a reference head ends" and
+call it twice. Two regexes for one concept is what produced the
+disagreement.
+
+**Check when fixing:** `_HEAD_RE` matches any `\d{4}` where
+`_REF_YEAR_RE` matches a plausible YEAR, so widening it also widens
+what counts as a head on an entry beginning with a number — "1000 Days
+Partnership. (2019)." is the shape to test.
+
+**Workaround in use:** none. `tests/test_cite_rebuild_paths.py` uses
+this entry shape deliberately, to pin that the case is REPORTED; that
+test will need its fixture changed when this is fixed, and it says so.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
@@ -205,6 +244,41 @@ report used to attribute a survivor to the last `def` ABOVE its line,
 which hands a function's own body to whichever nested helper was
 defined last. It now attributes by AST span.)
 
+
+**Fourth pass, 2026-08-16.** `insert_in_para` and `_between_runs`
+pinned by `tests/test_insert_spans.py`, `_locate`'s residue by three
+more tests in `tests/test_locate_spans.py`. **Ten of ten targeted
+mutants die**, verified by hand-mutation with the killing test named;
+four more are confirmed EQUIVALENT and recorded in the test files.
+
+The survivors here were the arithmetic that decides WHERE content
+lands, against tests that checked only whether it was refused. The
+offsets in the new fixtures are chosen so a wrong operator gives a
+wrong answer: `at - start` mutates to `at | start` and `at ^ start`,
+and for most small pairs those land past the end of the run, where the
+slice yields the whole body and an empty tail — the content then
+appears AFTER the run rather than inside it, which a text assertion
+sees and a "did it raise" assertion does not.
+
+Two things recur, and both are worth knowing rather than counting:
+
+* **the keyword-only marker again.** `insert_in_para` carries the same
+  `*` -> `/` mutation as `replace_in_para`, with the same consequence:
+  `insert_in_para(p, at, content, True)` becomes legal and silently
+  disables the hyperlink guard. Every function in this package taking
+  `allow_*` flags has this hole until a test says otherwise;
+* **the integer-identity trap, twice more.** `at == cursor` and `s ==
+  at` in `_between_runs` both survive as `is`, because CPython interns
+  integers to 256 and no fixture in the file had a paragraph longer
+  than that. Any comparison of two COMPUTED offsets in this module has
+  the same blind spot, and a short fixture cannot see it.
+
+**Still open** on the last paired sample, less what this pass took:
+`label_end` 6, `_outside` 3, `_split_run` 3, and a tail of ones and
+twos across `rep`, `_restyle`, `italicize` and the nested helpers. Not
+re-measured — the next run should be a survivor re-run of
+`.mutation-edit-paired.sqlite`, not a fresh draw.
+
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
@@ -367,6 +441,40 @@ the `<<` survivor.
 `_entry_keys` 12, `link_all` 10, `_dedup_name` 8, `_mint_name` 8,
 `unlink_by_anchor` 8. `rewrite` was pinned last round and remains the
 largest — the widening rules are where its residue sits.
+
+
+**Fourth pass, 2026-08-16.** `rebuild` and `_entry_keys`, the two
+clusters after `rewrite`.
+
+**`rebuild`, 15 survivors, every one of them on a `report.skipped` line
+or the `except` above one.** Nothing asserted what a REFUSAL says —
+only that linking worked when it worked, which is the wrong half to
+leave open. A citation that was linked is visible in the document; a
+citation that was not is visible only in that report, so the line is
+the entire output for the case, and the paragraph number is most of the
+line. `tests/test_cite_rebuild_paths.py` drives all three refusals — a
+citation too ambiguous to wrap, in the body and in a footnote; an entry
+whose head repeats, so its back-link would be a guess; an entry with no
+head at all — and **23 of 23 mutants die**, including the two
+`ExceptionReplacer`s that would have let the error out of `link_all`
+instead of into a line.
+
+**`_entry_keys`, 12 survivors, four of them in code that cannot change
+the answer.** The all-caps lead-token rule added `key_for(words[0])`,
+and that key is already there both ways: with one word `words[0]` IS
+the surname, so its key is `r.key`; with more, the word RUN at i=0, j=1
+is exactly that word. Provable, and checked against nine institutional
+entry shapes before deleting it. Same shape as `label_extent`'s dead
+leftward walk, found the same way, and the behaviour it was meant to
+provide now has the test it never had. Six more die against new value
+tests (the word-run bounds, and that every key NAMES something — an
+empty name is what an off-by-one there produces, silently, because the
+real keys are all still beside it). One is equivalent and recorded.
+
+**Still open**, less what this pass took: `rewrite` 19, `link_all` 10,
+`_dedup_name` 8, `_mint_name` 8, `unlink_by_anchor` 8, `_own_bookmark`
+5. Not re-measured; the next run should be a survivor re-run of
+`.mutation-cite_build-paired.sqlite`.
 
 ---
 

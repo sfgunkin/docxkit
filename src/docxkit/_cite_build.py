@@ -146,7 +146,8 @@ def _entry_keys(r: Reference) -> set[str]:
     - the acronym it names itself by — "Health Promotion Board (HPB).
       (2023)." is what "(HPB 2023)" cites;
     - its all-caps lead token — "UNDP (United Nations Development
-      Programme). (2025)." files under the acronym itself;
+      Programme). (2025)." files under the acronym itself, which falls
+      out of the word-run rule below rather than needing its own;
     - its own initialism — "United Nations, Department of..." is cited
       "(UN 2024)" and "World Health Organization" "(WHO 2015)"; the
       reader connects those without a map, so the audit must too;
@@ -166,8 +167,13 @@ def _entry_keys(r: Reference) -> set[str]:
     for acro in _ACRONYM_RE.findall(head):
         keys.add(key_for(acro, r.year))
     words = r.surname.split()
-    if len(words[0]) >= 2 and words[0].isupper():
-        keys.add(key_for(words[0], r.year))
+    # The all-caps lead token needs no rule of its own. It had one, and
+    # four mutants lived in it because it could not change the answer:
+    # with a single word `words[0]` IS the surname, so its key is
+    # `r.key`; with more, the word RUN at i=0, j=1 is exactly that word.
+    # Found the same way as `label_extent`'s dead leftward walk
+    # (2026-08-16), and `test_an_ALL_CAPS_lead_token_is_a_key_of_its_own`
+    # holds the behaviour it was meant to provide.
     if len(words) > 1:
         for i in range(len(words)):
             for j in range(i + 1, len(words) + 1):

@@ -123,6 +123,53 @@ def test_normalize_matches_through_words_glyph_substitutions():
         _locate(p, "workers' productivity")
 
 
+SENTENCE = ("the share of workers aged 55 and over in the region rose "
+            "steadily over the decade")
+
+
+def test_a_SCOPE_is_quoted_in_the_refusal_but_not_dumped():
+    """`within` is routinely a whole sentence — that is what makes it
+    able to disambiguate — so every message carrying it cuts it, and at
+    the same length in each. A refusal that prints a paragraph is a
+    refusal read to the first line and no further.
+    """
+    p = para(run(f"{SENTENCE} A {SENTENCE} B"))
+    absent = f"no such {SENTENCE}"
+
+    with pytest.raises(AnchorError) as missing:
+        _locate(p, "share", within=absent)
+    with pytest.raises(AnchorError) as twice:
+        _locate(p, "share", within=SENTENCE)
+
+    for excinfo, scope, expect in ((missing, absent, "not in paragraph"),
+                                   (twice, SENTENCE, "occurs twice in")):
+        message = str(excinfo.value)
+        assert expect in message
+        assert scope[:60] in message, message
+        assert scope[:61] not in message, "the scope was not cut"
+
+
+def test_the_ANCHOR_refusal_names_the_scope_it_searched():
+    """A shorter cut, because this one is the WHERE of another message
+    and not its subject."""
+    p = para(run(f"{SENTENCE} A {SENTENCE} B"))
+
+    with pytest.raises(AnchorError) as excinfo:
+        _locate(p, "elsewhere", within=f"{SENTENCE} A")
+
+    message = str(excinfo.value)
+    assert f"within={SENTENCE[:40]!r}"[:-1] in message, message
+    assert SENTENCE[:41] not in message, "the scope was not cut"
+
+
+# Three mutants in `_locate` are EQUIVALENT and left alive: `len(scope)
+# > 1` -> `!= 1` (the line above raises when the scope is empty, so it is
+# never 0 here), and `scope[0]` -> `scope[-1]` and `hits[0]` -> `hits[-1]`
+# (both lists hold exactly one element by the time they are read, for the
+# same reason). Recorded so the next reader does not write three
+# contrived tests to kill them.
+
+
 def test_the_runs_returned_are_the_paragraphs_own_matches():
     """Callers splice with `run.start()`/`run.end()`, so the matches must
     index the paragraph they were given."""

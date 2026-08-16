@@ -124,6 +124,56 @@ def test_entry_keys_names_every_form_the_entry_answers_to(entry, expected):
     assert expected <= keys, f"missing {sorted(expected - keys)}"
 
 
+def _keys_for(entry: str) -> set[str]:
+    from docxkit._cite_build import _entry_keys
+    from docxkit.citations import references
+
+    refs = references(["References", entry], heading=("References",))
+    assert refs, f"not parsed as an entry: {entry!r}"
+    return _entry_keys(refs[0])
+
+
+def test_an_ALL_CAPS_lead_token_is_a_key_of_its_own():
+    """"UNDP (United Nations Development Programme). (2025)." is cited
+    "(UNDP 2025)". The parenthesised-acronym rule cannot supply that
+    one — the parentheses here hold the expansion, not the acronym — so
+    the lead token is its own rule, and the entry is unfindable without
+    it.
+    """
+    keys = _keys_for("UNDP (United Nations Development Programme). (2025). "
+                     "Human development report.")
+    assert "undp_2025" in keys, sorted(keys)
+
+
+def test_a_TWO_word_institution_answers_to_each_of_its_words():
+    """The word-run rule has to start at two words, not three: the
+    citation grammar refuses free capitalised adjacency, so "World Bank
+    (2024)" is captured as "Bank (2024)" and the entry filed under
+    "World Bank" has to answer to "Bank" alone.
+    """
+    keys = _keys_for("World Bank. (2024). World development report.")
+    assert {"world_2024", "bank_2024", "worldbank_2024"} <= keys, sorted(keys)
+
+
+# `if len(words) > 1:` mutated to `>= 1` is EQUIVALENT and left alive: a
+# one-word surname entering the loop yields i=0, j=1, whose key is the
+# surname's own — already there as `r.key` — and an initialism of one
+# letter, which the `len(initials) >= 2` guard drops. Nothing changes.
+
+
+def test_every_key_NAMES_something():
+    """A key is a name and a year. One with an empty name answers to a
+    citation with no author, which is not a thing — and it is what an
+    off-by-one in the word-run bounds produces, silently, because the
+    real keys are all still there beside it.
+    """
+    for entry in ("World Bank Group. (2024). World development report.",
+                  "Kanbur, R. (2007). Poverty and distribution. Journal.",
+                  "United Nations. (2024). World population prospects."):
+        for key in _keys_for(entry):
+            assert key.rsplit("_", 1)[0], f"{key!r} names nobody ({entry})"
+
+
 # --------------------------------------------- unlink_by_anchor refusals --
 
 LEGACY = (
