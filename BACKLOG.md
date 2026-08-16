@@ -17,64 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S4 `_HEAD_RE` and `_REF_YEAR_RE` disagree about a space, and the entry silently loses its back-link
-
-Found 2026-08-16 while building a fixture for `rebuild`'s "no head"
-path. Both regexes decide where a reference's year ends, and they
-differ by one token:
-
-    _REF_YEAR_RE = r"\(?\b(YEAR)\b\)?\s*[.,]"      # space allowed
-    _HEAD_RE     = r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]"   # space NOT allowed
-
-So "Kanbur, R. (2007) . Poverty and distribution. Journal." — a stray
-space before the period, which hand-typed lists really do carry —
-parses as a reference entry and then has no recognisable head:
-
-    link_all: linked 1, back-links added 0, skipped 1
-              SKIPPED: no head on entry ¶6
-
-The in-text mention is linked; the entry gets NO back-link, so the pair
-is half-built and the reader cannot get back from the reference to the
-sentence. **S4 rather than S2 because it is reported** — the line names
-the paragraph, and `crossrefs --audit` would find the missing partner.
-
-**Fix.** Allow the same `\s*` in `_HEAD_RE`, outside the capturing
-group so the head text stays clean:
-
-    r"\s*(.*?\(?\b\d{4}[a-z]?\)?)\s*[.,]"
-
-Better still, have one definition of "where a reference head ends" and
-call it twice. Two regexes for one concept is what produced the
-disagreement.
-
-**Check when fixing:** `_HEAD_RE` matches any `\d{4}` where
-`_REF_YEAR_RE` matches a plausible YEAR, so widening it also widens
-what counts as a head on an entry beginning with a number — "1000 Days
-Partnership. (2019)." is the shape to test.
-
-**The fix has a consequence, and it is the reason this is filed rather
-than done.** Once the two agree, "parsed as an entry but has no head"
-becomes unreachable by construction: `_HEAD_RE` is the more permissive
-of the two on every other axis (`\d{4}` against a constrained YEAR),
-and `.*?` reaches any year on the line. The other candidate route was
-checked and does not exist — a manual line break does NOT defeat the
-match, because `visible_text` drops `<w:br/>` rather than emitting a
-newline.
-
-So the branch would become dead code, and the choice is between
-deleting it — twice today dead code found this way was deleted, in
-`label_extent` and in `_entry_keys` — and keeping it as a documented
-defensive guard against a future edit to either regex. That decision
-also costs the seven mutants
-`tests/test_cite_rebuild_paths.py::test_an_entry_with_no_recognisable_HEAD_is_reported`
-currently kills, which become permanent residue either way. Worth a
-minute's thought rather than a reflex; the entry is here so the thought
-happens once.
-
-**Workaround in use:** none. `tests/test_cite_rebuild_paths.py` uses
-this entry shape deliberately, to pin that the case is REPORTED; that
-test will need its fixture changed when this is fixed, and it says so.
-
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
@@ -498,6 +440,78 @@ real keys are all still beside it). One is equivalent and recorded.
 ---
 
 ## Fixed
+
+### S4 `_HEAD_RE` and `_REF_YEAR_RE` disagree about a space, and the entry silently loses its back-link — `0f12e2a`
+
+Found 2026-08-16 while building a fixture for `rebuild`'s "no head"
+path. Both regexes decide where a reference's year ends, and they
+differ by one token:
+
+    _REF_YEAR_RE = r"\(?\b(YEAR)\b\)?\s*[.,]"      # space allowed
+    _HEAD_RE     = r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]"   # space NOT allowed
+
+So "Kanbur, R. (2007) . Poverty and distribution. Journal." — a stray
+space before the period, which hand-typed lists really do carry —
+parses as a reference entry and then has no recognisable head:
+
+    link_all: linked 1, back-links added 0, skipped 1
+              SKIPPED: no head on entry ¶6
+
+The in-text mention is linked; the entry gets NO back-link, so the pair
+is half-built and the reader cannot get back from the reference to the
+sentence. **S4 rather than S2 because it is reported** — the line names
+the paragraph, and `crossrefs --audit` would find the missing partner.
+
+**Fix.** Allow the same `\s*` in `_HEAD_RE`, outside the capturing
+group so the head text stays clean:
+
+    r"\s*(.*?\(?\b\d{4}[a-z]?\)?)\s*[.,]"
+
+Better still, have one definition of "where a reference head ends" and
+call it twice. Two regexes for one concept is what produced the
+disagreement.
+
+**Check when fixing:** `_HEAD_RE` matches any `\d{4}` where
+`_REF_YEAR_RE` matches a plausible YEAR, so widening it also widens
+what counts as a head on an entry beginning with a number — "1000 Days
+Partnership. (2019)." is the shape to test.
+
+**The fix has a consequence, and it is the reason this is filed rather
+than done.** Once the two agree, "parsed as an entry but has no head"
+becomes unreachable by construction: `_HEAD_RE` is the more permissive
+of the two on every other axis (`\d{4}` against a constrained YEAR),
+and `.*?` reaches any year on the line. The other candidate route was
+checked and does not exist — a manual line break does NOT defeat the
+match, because `visible_text` drops `<w:br/>` rather than emitting a
+newline.
+
+So the branch would become dead code, and the choice is between
+deleting it — twice today dead code found this way was deleted, in
+`label_extent` and in `_entry_keys` — and keeping it as a documented
+defensive guard against a future edit to either regex. That decision
+also costs the seven mutants
+`tests/test_cite_rebuild_paths.py::test_an_entry_with_no_recognisable_HEAD_is_reported`
+currently kills, which become permanent residue either way. Worth a
+minute's thought rather than a reflex; the entry is here so the thought
+happens once.
+
+**Workaround in use:** none. `tests/test_cite_rebuild_paths.py` uses
+this entry shape deliberately, to pin that the case is REPORTED; that
+test will need its fixture changed when this is fixed, and it says so.
+
+
+**Fixed 2026-08-16** (`0f12e2a`). By removing the second definition, not
+by adding the missing token to it: `reference_head` sits beside
+`parse_reference` and reads the year with the expression that decides the
+paragraph IS an entry. Checked against fourteen entry shapes, including
+the "1000 Days Partnership. (2019)." case flagged above; the new
+definition agrees with the old on all but the one this was about.
+
+The branch it makes unreachable is KEPT, and the decision recorded where
+it will be read: `tests/test_cite_rebuild_paths.py` notes that its seven
+mutants are permanent residue, so the next survivor report is not read as
+a gap. A guard across a module boundary is not dead computation — the
+two sides drifting apart is what this entry was.
 
 ### S1 a sentence in the back matter parses as a reference ENTRY, and a real citation then links to it — reported as "linked 1, unmatched 0" — `1f4f7e9`
 
