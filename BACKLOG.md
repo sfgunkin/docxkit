@@ -98,6 +98,29 @@ of `_outside` are the stronger evidence.
 `_locate` cluster is the next worth doing — it computes the run spans
 every other function here consumes.
 
+
+**Second pass, 2026-08-16** (`e5c23cb`). `_locate` pinned:
+`tests/test_locate_spans.py` states the spans as literal values — that
+they tile the visible text, that an equation between two runs shifts
+every later span by ITS width (one for ``τ``, two for ``xy``), that a
+note marker takes an empty span in place, that `within` answers with
+offsets into the WHOLE paragraph rather than the scoped slice, and that
+ambiguity is an error. Six of six targeted mutants die, including the
+one that mattered most: the between-run width, which is the DSI §6.3
+incident in one line.
+
+**Re-measured on the SAME 460 mutants** (seed 20260816, identical draw,
+source unchanged, only the tests differ — so this is paired, and since
+tests were only added no mutant can move the other way):
+
+    real survival  17.3 %  ->  14.8 %  ->  12.0 %
+
+`_locate` itself went from 10 survivors in the sample to 6.
+
+**Still open:** `replace_in_para` 10, `label_end` 8, `insert_in_para` 6,
+`_locate` 6, `_between_runs` 4. `replace_in_para` is now the largest,
+and it is the function every paper calls most.
+
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
@@ -167,6 +190,34 @@ bookmarks with the SAME name.
 **Still open:** `rewrite` 36, `scan` 25, `rebuild` 17, `_entry_keys` 17,
 `link_all` 12. `rewrite` is the biggest single cluster in the package
 and nothing asserts on what it produces at the value level.
+
+
+**Second pass, 2026-08-16** (`e5c23cb`). `rewrite` pinned:
+`tests/test_link_rest_paths.py` states which span is wrapped, the exact
+report line (`Kanbur2007 @ ¶2`), idempotence through the already-linked
+mask, bottom-up ordering across paragraphs, the splice, and the widening
+guard — the one that abandons widening over an institution's name when
+the wider span would reach into somebody else's link. Five of six
+targeted mutants die.
+
+The sixth is `sorted(todo, reverse=True)`, left unkilled DELIBERATELY
+and documented in the test file: mutating it to `sorted(todo)` produces
+an identical document, because `wrap_visible_span` takes VISIBLE offsets
+and wrapping changes no visible text, so for non-overlapping spans the
+order cannot be observed. It is an equivalent mutant, and writing a
+contrived test for it would make the suite slower without making it
+stronger.
+
+**Re-measured on the SAME 460 mutants** (same draw, paired):
+
+    real survival  41.1 %  ->  35.0 %  ->  31.1 %
+
+`rewrite` went from 36 survivors in the sample to 24.
+
+**Still open:** `rewrite` 24, `scan` 23, `rebuild` 15, `_entry_keys` 12,
+`link_all` 10, `_dedup_name` 8. `scan` is the next one worth doing — it
+decides which mention of a work is the FIRST, which is the decision the
+whole first pass is built on.
 
 ---
 
