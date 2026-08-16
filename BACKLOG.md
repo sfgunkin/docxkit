@@ -556,6 +556,39 @@ to `WORD_BOOKMARK_LIMIT` is exactly what it is for.
 **Still open:** `link_all` 10, `unlink_by_anchor` 8, `_own_bookmark` 5,
 `_entry_names_from_document` 4.
 
+
+**Seventh pass, 2026-08-16.** The last four named clusters, in
+`tests/test_cite_anchor_reuse.py` and `tests/test_cite_link_all_paths.py`.
+**18 of 23 targeted mutants die**; five are confirmed EQUIVALENT and
+recorded, and three more are the `# pragma: no cover - defensive` guard
+in the field walk, which is residue by an earlier decision rather than
+by oversight.
+
+`_own_bookmark`, `_entry_names_from_document` and `unlink_by_anchor`
+all answer one kind of question — is this marker mine? — and all three
+were asserted only where the answer was yes. The failures behind them
+are in their docstrings and none was loud: a name not recognised is
+minted again, so a second run silently DOUBLES the scheme; a name
+recognised too eagerly points every link at another work; a hoisted
+bookmark not found made `link_rest` decline nine mentions across six
+works, which the author noticed before any tool did.
+
+Two of those now have the tests they were missing. **Idempotence** —
+`link_all` run twice leaves the document byte-identical — is the
+property `_own_bookmark` exists for and nothing had stated it. And the
+**gap** before an entry is read as that entry's own: widening it by one
+paragraph reaches into the previous entry's gap, where a stale marker
+from an earlier scheme is then answered to while the entry's own sits
+unused. The same arithmetic appears in `link_all` and in
+`_entry_names_from_document`, and both are pinned.
+
+`link_all`'s residue was the parts of the document that are NOT the
+body: the footnotes it also links, also reads existing links from, and
+also has to write back — three separate mutants, each of which loses
+footnote work silently. Plus the two report `format` loops, which every
+other test in the suite ignores because they all read the report's
+LISTS; the printed text is what a paper's build log actually shows.
+
 **The paired session for this module is now VOID, and that is worth
 knowing before the next measurement.** `.mutation-cite_build-paired.sqlite`
 holds specs addressed by (row, column) in the source as it stood before
