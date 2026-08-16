@@ -113,7 +113,14 @@ incident in one line.
 source unchanged, only the tests differ — so this is paired, and since
 tests were only added no mutant can move the other way):
 
-    real survival  17.3 %  ->  14.8 %  ->  12.0 %
+    real survival  17.3 %  ->  14.8 %  ->  13.0 %
+
+The last figure is the repo's OWN classifier
+(`tools/mutation_survivors.py`, which discounts annotation mutants by
+AST span). The two before it were computed by hand with a cruder
+line-based rule, which errs in both directions — it read this run as
+12.0 %. Quote the tool's number from here on; it already existed, and
+re-deriving it by hand is what made these three not quite comparable.
 
 `_locate` itself went from 10 survivors in the sample to 6.
 
@@ -210,7 +217,10 @@ stronger.
 
 **Re-measured on the SAME 460 mutants** (same draw, paired):
 
-    real survival  41.1 %  ->  35.0 %  ->  31.1 %
+    real survival  41.1 %  ->  35.0 %  ->  29.3 %
+
+Again the last figure is `tools/mutation_survivors.py`'s; the hand
+rule read it as 31.1 %.
 
 `rewrite` went from 36 survivors in the sample to 24.
 
