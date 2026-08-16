@@ -259,6 +259,37 @@ four times over: the walk that lives in four places is the walk that
 will disagree with itself, which is the argument `field_spans`'s own
 docstring already makes about its three predecessors.
 
+
+**Seventh pass, 2026-08-16.** All four sites, in one file —
+`tests/test_span_membership.py`. **11 of 17 mutants die and the other
+6 are confirmed EQUIVALENT**, each with the reason recorded. Paired
+again, same 460:
+
+    real survival  11.6 %  ->  8.4 %  ->  6.3 % (27/431)
+
+`_outside` has left the survivor list entirely; `label_end` is 6 -> 3,
+`_split_run` 3 -> 1, `labels_a_link` 2 -> 1, and what remains at those
+three is the equivalences.
+
+The fixtures needed two things the module's earlier tests never had.
+**A styled run OUTSIDE the element**: Word leaves `rStyle Hyperlink` on
+runs beside a link as freely as on the label itself, so "looks like a
+link" and "is inside the link element" are different questions —
+`label_end` asks the element first and falls back to the styled
+neighbours, and the two answers only differ where such a run sits.
+**A `w:proofErr` between runs**: without a gap the run after an element
+begins exactly where the element closes, so `run.start()` and `hi` are
+the same small integer and therefore the same OBJECT — `is not` then
+answers what `<` answers, and the mutant hides. That is the third time
+the small-integer cache has decided a test in this module; it is worth
+treating as a rule rather than a surprise, because every one of these
+comparisons is between two computed offsets.
+
+**Still open:** 27 in the paired sample, of which at least 11 are the
+equivalences recorded in the test files. The remainder is a long tail
+of ones and twos — `rep`, `_restyle`, `italicize`, `_enclosing`,
+`_note_in`, `_hits`, `subscript` — with no cluster left worth naming.
+
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
