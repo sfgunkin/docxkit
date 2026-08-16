@@ -105,6 +105,34 @@ def test_a_back_link_whose_target_is_in_a_FOOTNOTE_is_kept():
         report.format()
 
 
+def test_a_FOOTNOTE_paragraph_is_never_marked_as_an_entry():
+    """Paragraph indices are per PART, so footnote ¶3 and body ¶3 are
+    different paragraphs with the same number — and the entries are
+    indexed by body number. Only `where == "¶"` keeps the entry-marking
+    branch off the footnotes; loosen it and a note carrying a citation
+    is stamped with the entry's own bookmark name, so the document ends
+    up with that name twice and Word resolves every link to it by
+    whichever it finds first.
+
+    The fixture puts a cited footnote at the index an entry occupies.
+    """
+    parts = make_parts(
+        para(run("Two works are discussed."))          # ¶0
+        + ENTRIES,                                     # ¶1 heading, ¶2, ¶3
+        footnotes=_notes("A note with nothing in it.",          # fn ¶0
+                         "Another note with nothing.",          # fn ¶1
+                         "See (Kanbur 2007) here.",             # fn ¶2
+                         "And (Ravallion 2016) too."))          # fn ¶3
+
+    report = link_all(parts)
+
+    marks = BOOKMARK_NAME_RE.findall(
+        parts["word/footnotes.xml"].decode("utf-8"))
+    assert marks, report.format()
+    assert all(n.endswith("txt") for n in marks), (
+        f"an ENTRY bookmark was written into the footnotes: {marks}")
+
+
 # ------------------------------------------------ the gap before an entry --
 
 def test_the_gap_read_for_an_entry_is_ITS_OWN():

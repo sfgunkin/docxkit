@@ -605,6 +605,41 @@ byte-identical, so fixing a defect in it ends the series that measured
 the defect. The edit-side session is unaffected: nothing in `edit.py`
 changed, only tests were added.
 
+
+**The new series, 2026-08-16** — fresh 460-mutant draw, seed 20260816,
+harness the ten cite test files:
+
+    real survival  11.4 % (46/405)     <- new series, starts here
+
+**Read the 46 before reading the percentage**, because most of it is
+residue this session created on purpose. Nine sit on `"no head on entry
+¶{i + 1}"`, the line the S4 fix made unreachable — recorded in
+`tests/test_cite_rebuild_paths.py` when that decision was taken, and
+this is what it looks like in a report. Another nine or so are the
+equivalences recorded across the test files. The rest is a thin tail:
+`unlink_by_anchor` 6, `scan` 5, `_mint_name` 4, `_entry_keys` 3,
+`rewrite` 3.
+
+The draw also turned up four live ones the earlier sample had missed,
+all now pinned: the truncation in `_prose_entries`' report line; a
+NON-matching ghost hyperlink returning its anchor instead of itself;
+`link_rest`'s options taking a positional bool; and `where == "¶"`,
+which is the only thing keeping the entry-marking branch off the
+FOOTNOTES — paragraph indices are per part, so footnote ¶3 and body ¶3
+are different paragraphs with the same number, and loosening that
+comparison stamps a note carrying a citation with the entry's own
+bookmark name.
+
+**One finding was systematic and is now a gate.** The keyword-only
+marker `*` mutates to the positional-only `/`, which is valid Python,
+and the mutant survived in `replace_in_para`, then `insert_in_para`,
+then `link_rest` — three functions, one hole. Every flag in this
+package turns a guard OFF, and a positional bool says nothing about
+which. `test_a_BOOL_option_is_always_keyword_only` walks all 43 modules
+and holds every public signature to it, so the fourth one cannot
+happen. The package passed it unmodified, which is why it could be
+added as a gate rather than a fix.
+
 ---
 
 ## Fixed

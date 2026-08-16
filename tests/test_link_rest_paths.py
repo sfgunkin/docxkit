@@ -19,6 +19,7 @@ Four decisions live in it, and each was unasserted:
 """
 from __future__ import annotations
 
+import pytest
 from conftest import make_parts, para, run
 
 from docxkit._xml import internal_links, visible_text
@@ -170,6 +171,19 @@ def test_a_citation_with_NO_entry_is_reported_with_its_paragraph():
     # location is off by one sends the reader to the sentence before,
     # and an off-by-one is what an index arithmetic slip produces
     assert report.unmatched == ["'Nobody 1999' (¶2)"], report.unmatched
+
+
+def test_link_rests_options_are_KEYWORD_only():
+    """The third function in this package found with the same hole:
+    cosmic-ray mutates the keyword-only `*` to a positional-only `/`,
+    and `link_rest(parts, aliases)` then becomes legal. `aliases`,
+    `heading` and `ignore` each change which works are found, and a
+    caller that passes one by position says nothing about which.
+    """
+    parts = make_parts(para(run("A point (Kanbur 2007).")) + ENTRIES)
+
+    with pytest.raises(TypeError):
+        link_rest(parts, {"WHO": "World Health Organization"})  # type: ignore[misc]
 
 
 def test_link_rest_REFUSES_a_document_link_all_has_not_touched():

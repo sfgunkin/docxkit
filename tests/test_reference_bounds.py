@@ -109,6 +109,22 @@ def test_a_sentence_filed_as_an_entry_is_REPORTED():
     assert "suspect 1" in report.format()
 
 
+def test_the_suspect_line_QUOTES_the_surname_but_does_not_dump_it():
+    """A surname that reads as prose is a sentence, and a sentence in a
+    report line is a line nobody reads to the end. Cut at the same
+    length the anchor refusals use."""
+    long_name = ("The data in this table are drawn from the register held "
+                 "by Eurostat and the national statistical offices")
+    parts = make_parts(
+        BODY + ENTRIES + para(run(f"{long_name} (2023).")))
+
+    report = link_all(parts)
+
+    assert len(report.suspect) == 1, report.format()
+    assert long_name[:60] in report.suspect[0]
+    assert long_name[:61] not in report.suspect[0], "the surname was not cut"
+
+
 @pytest.mark.parametrize("surname", [
     "The data are drawn from Eurostat",
     "Note: the poverty line follows (Kanbur",

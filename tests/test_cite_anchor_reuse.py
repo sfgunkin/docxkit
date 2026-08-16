@@ -205,6 +205,33 @@ def test_TWO_matching_field_links_are_both_unwrapped():
     assert "fldChar" not in out and "instrText" not in out
 
 
+def test_a_NON_matching_ghost_link_is_left_exactly_as_it_was():
+    """A self-closing `<w:hyperlink/>` is pure junk and gets dropped
+    when its anchor matches — but one that does not match has to come
+    back UNTOUCHED, element and all. Returning the anchor instead of the
+    element replaces markup with a bare word, which reads as prose and
+    is invisible to a text diff of the paragraph's visible text.
+    """
+    xml = ('<w:p><w:hyperlink w:anchor="Table3txt"/>'
+           + run("Table 3 sets it out.") + "</w:p>")
+
+    out, links, marks = unlink_by_anchor(xml, r"^id\.")
+
+    assert (links, marks) == (0, 0)
+    assert out == xml
+
+
+def test_a_MATCHING_ghost_link_is_dropped():
+    xml = ('<w:p><w:hyperlink w:anchor="id.abc123"/>'
+           + run("Table 3 sets it out.") + "</w:p>")
+
+    out, links, _ = unlink_by_anchor(xml, r"^id\.")
+
+    assert links == 1
+    assert "<w:hyperlink" not in out
+    assert "<w:t>Table 3 sets it out.</w:t>" in out
+
+
 def test_only_the_MATCHING_bookmarks_are_dropped_and_BOTH_their_ends():
     """A bookmark is a pair, and leaving the end behind is what makes a
     document unopenable. The non-matching pair comes first, so a scan

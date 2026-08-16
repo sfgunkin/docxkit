@@ -87,6 +87,59 @@ def test_everything_DECLARED_can_actually_be_imported(path):
             f"docxkit.{path.stem}.__all__ names {name}, which is not there"
 
 
+#: Every module, including the private halves: a positional bool is as
+#: bad in `_cite_build.link_all` as in `edit.replace_in_para`, and the
+#: papers import both.
+ALL_MODULES = sorted(p for p in SRC.glob("*.py") if p.name != "__init__.py")
+
+
+def _bool_positionals(path: pathlib.Path) -> list[str]:
+    """Public functions taking a bool that is not keyword-only."""
+    out: list[str] = []
+
+    def check(node: ast.FunctionDef | ast.AsyncFunctionDef,
+              owner: str = "") -> None:
+        if node.name.startswith("_"):
+            return
+        args = node.args
+        positional = args.posonlyargs + args.args
+        offset = len(positional) - len(args.defaults)
+        for i, default in enumerate(args.defaults):
+            if isinstance(default, ast.Constant) \
+                    and isinstance(default.value, bool):
+                out.append(f"{owner}{node.name}({positional[offset + i].arg})")
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            check(node)
+        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+            for sub in node.body:
+                if isinstance(sub, ast.FunctionDef | ast.AsyncFunctionDef):
+                    check(sub, owner=f"{node.name}.")
+    return out
+
+
+@pytest.mark.parametrize("path", ALL_MODULES, ids=lambda p: p.name)
+def test_a_BOOL_option_is_always_keyword_only(path):
+    """Every flag in this package turns a guard OFF — `allow_hyperlink`,
+    `allow_notes`, `grow_link_label`, `normalize`. Passed by position a
+    bool says nothing about which guard it just disabled, and the diff
+    that introduces it says nothing either.
+
+    This is a gate rather than three tests because it was found three
+    times: cosmic-ray mutates the keyword-only marker `*` to the
+    positional-only `/`, which is valid Python, and the mutant survived
+    in `replace_in_para`, then `insert_in_para`, then `link_rest`. The
+    signature is the only place that can refuse it.
+    """
+    offenders = _bool_positionals(path)
+    assert not offenders, (
+        f"{path.name}: {offenders} take a bool by position — put a `*` "
+        f"before it, or a caller will one day pass True and mean nothing "
+        f"by it")
+
+
 #: The facades and the halves they cover. `citations.py` is 275 lines of
 #: which about a hundred are `from _x import y as y`; a hand-maintained
 #: re-export list is exactly the thing that quietly falls behind.
