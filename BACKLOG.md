@@ -475,6 +475,37 @@ The naming trio (`_dedup_name`, `_mint_name`, `_named`) is 19 between
 them and is the next worth doing — it decides the bookmark names every
 link in the document points at.
 
+
+**Sixth pass, 2026-08-16.** The naming trio, by
+`tests/test_cite_names.py`. **11 of 11 targeted mutants die**; three
+more are equivalent or unreachable and recorded.
+
+The names carry two constraints that pull against each other — Word's
+cap, which truncates ON SAVE without retargeting the links that pointed
+at the full name, and uniqueness, where a collision mis-targets a link
+rather than merely breaking it — and both had been asserted only
+through their consequences. Nothing said what a name IS. The tests now
+state them: the surname and the year; the exact cut for an
+institutional author (Parental Style's 90-character one); `_2` then
+`_3` with no gaps; and that a name whose `…txt` twin is taken is
+already a collision, because the pair is the unit.
+
+Two paths had never run. `_dedup_name` was never called with a FRESH
+name, which is why four `name + "txt"` mutants lived there — every one
+would raise `TypeError` the moment the line ran. And the pathological
+fallback, where all ninety-nine truncated candidates are taken and the
+answer is a name too long rather than one that collides, had never been
+reached at all.
+
+`_mint_name`'s `if keep < 1: break` is UNREACHABLE and its two mutants
+are permanent residue: the budget is 37, a year is 4 or 5 characters
+and the widest suffix is 3, so `keep` never falls below 29. A test
+states that arithmetic instead, and the guard is kept because a change
+to `WORD_BOOKMARK_LIMIT` is exactly what it is for.
+
+**Still open:** `link_all` 10, `unlink_by_anchor` 8, `_own_bookmark` 5,
+`_entry_names_from_document` 4.
+
 ---
 
 ## Fixed
