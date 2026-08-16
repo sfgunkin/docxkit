@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from collections.abc import Collection
 from dataclasses import dataclass, replace
 
@@ -94,8 +95,21 @@ _ZOTERO_RE = (
 # methodology document files its under «Литература».
 _DEFAULT_HEADINGS = ("References", "Bibliography", "Литература",
                      "Список литературы")
-_DEFAULT_STOPS = ("Appendix", "Appendices", "Figures", "Tables",
-                  "Приложение", "Приложения")
+# What comes AFTER a reference list and must not be read as part of it.
+# The exhibits, and the journal back matter — a paper whose "Data
+# availability" sentence carried a year had that sentence parsed as an
+# entry, filed under the surname "The data are drawn from Eurostat", and
+# a real "(Eurostat 2023)" then linked to it.
+_DEFAULT_STOPS = (
+    "Appendix", "Appendices", "Figures", "Tables",
+    "Acknowledgement", "Acknowledgements", "Acknowledgment",
+    "Acknowledgments", "Data availability", "Data and code",
+    "Funding", "Notes", "Endnotes", "Supplementary", "Supporting",
+    "Declaration", "Declarations", "Disclosure", "Conflict",
+    "Conflicts", "Competing", "Author contributions", "Abbreviations",
+    "Ethics", "ORCID",
+    "Приложение", "Приложения", "Благодарности", "Финансирование",
+    "Примечания", "Сокращения", "Конфликт")
 # In these papers the figures and tables are moved below the references,
 # so their captions end the list just as a heading would.
 _CAPTION_START_RE = re.compile(
@@ -399,6 +413,42 @@ def parse_reference(text: str, index: int = -1) -> Reference | None:
                      index=index)
 
 
+# Words that legitimately sit lowercase inside an author field, so that
+# "van der Berg" and "Ministry of Health of the Republic" are names and
+# "The data are drawn from Eurostat" is not.
+_CONNECTIVES = frozenset((
+    "of", "for", "and", "the", "in", "on", "at", "de", "del", "della",
+    "der", "den", "des", "di", "do", "dos", "du", "da", "el", "la", "le",
+    "van", "von", "y", "ter", "ten", "af", "av", "bin", "ibn", "al"))
+
+
+def _reads_as_prose(surname: str) -> bool:
+    """Does this author field read as a SENTENCE rather than a name?
+
+    A paragraph of back matter carrying a year parses as a reference
+    entry — `parse_reference` cannot tell "The data are drawn from
+    Eurostat (2023)." from "World Bank Group. (2024)." because they have
+    the same shape — and the entry then answers to a real citation. The
+    bounds in `references` are the fix; this is what catches the case
+    the bounds miss, so that it is REPORTED rather than silent.
+
+    The test is a lowercase word that is not a connective, which is why
+    it is limited to Latin script: a Cyrillic institution is full of
+    lowercase content words ("Министерство здравоохранения Республики
+    Казахстан") and would be called prose every time. Being wrong there
+    would cost the DSI paper a false line on every build, and a report
+    nobody believes is worse than no report.
+    """
+    words = [w.strip(".,;:()[]") for w in surname.split()]
+    if len(words) < 4:
+        return False                  # "de Souza", "U.S. Census Bureau"
+    if not all(unicodedata.name(ch, "").startswith("LATIN")
+               for ch in surname if ch.isalpha()):
+        return False
+    return any(w and w[0].islower() and w.casefold() not in _CONNECTIVES
+               for w in words)
+
+
 def _ends_the_list(text: str, stops: set[str]) -> bool:
     """Does this paragraph end the reference list?
 
@@ -413,12 +463,18 @@ def _ends_the_list(text: str, stops: set[str]) -> bool:
     So a stop word now counts at the START of the paragraph too — but only
     when the paragraph is not itself an entry. A reference is never a heading,
     and that is what stops an author named Tables from ending the list.
+
+    The start is matched as a PREFIX at a word boundary rather than as the
+    first word, because the back-matter headings are two words ("Data
+    availability", "Author contributions") and a first-word test can only
+    ever see one of them.
     """
     flat = text.rstrip(":").casefold()
     if flat in stops:
         return True
-    head = re.match(r"[^\W\d_]+", text, re.UNICODE)
-    if head is None or head.group(0).casefold() not in stops:
+    if not any(flat.startswith(stop)
+               and (len(flat) == len(stop) or not flat[len(stop)].isalnum())
+               for stop in stops):
         return False
     return parse_reference(text) is None
 

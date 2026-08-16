@@ -19,6 +19,7 @@ from ._cite_grammar import (
     _REF_YEAR_RE,
     IGNORED_LEADS,
     Reference,
+    _reads_as_prose,
     extend_to_name,
     find_citations,
     key_for,
@@ -186,16 +187,37 @@ class LinkAllReport:
     backlinked: list[str] = field(default_factory=list)
     unmatched: list[str] = field(default_factory=list)   # cite, no entry
     skipped: list[str] = field(default_factory=list)     # anchor trouble
+    suspect: list[str] = field(default_factory=list)     # entry reads as prose
 
     def format(self) -> str:
+        more = f", suspect {len(self.suspect)}" if self.suspect else ""
         lines = [(f"linked {len(self.linked)}, already linked "
                   f"{len(self.already)}, back-links added "
                   f"{len(self.backlinked)}, unmatched "
-                  f"{len(self.unmatched)}, skipped {len(self.skipped)}")]
+                  f"{len(self.unmatched)}, skipped {len(self.skipped)}{more}")]
         for tag, items in (("UNMATCHED", self.unmatched),
+                           ("SUSPECT", self.suspect),
                            ("SKIPPED", self.skipped)):
             lines += [f"  {tag}: {x}" for x in items]
         return "\n".join(lines)
+
+
+def _prose_entries(entries: list[Reference]) -> list[str]:
+    """Report entries whose author field reads as a sentence.
+
+    Back matter the block bounds failed to exclude, usually — and it is
+    dangerous rather than untidy, because `_entry_keys` licenses every
+    word RUN of a supposed institutional name, so a real citation
+    resolves through one of them and lands on a data-availability line
+    instead of on a work. Reported, not refused: the rule cannot be made
+    to hold across scripts (see `_reads_as_prose`), and refusing on a
+    rule that is wrong somewhere would drop real entries.
+    """
+    return [f"¶{r.index + 1} is filed under {r.surname[:60]!r}, which reads "
+            f"as a sentence rather than an author — if it is not a "
+            f"reference, the block runs past where it should end, and a "
+            f"citation can resolve to it"
+            for r in entries if _reads_as_prose(r.surname)]
 
 
 def _named(r: Reference, convention: Callable[[str, str], str] | None,
@@ -289,6 +311,8 @@ def link_all(parts: dict[str, bytes], *,
     if not entries:
         report.skipped.append("no reference section found")
         return report
+
+    report.suspect += _prose_entries(entries)
     bid = next_bookmark_id(doc, foot)
     taken = set(_BOOKMARK_NAME_RE.findall(doc))
     linked_anchors = {a for m in paras for a, _ in internal_links(m.group(0))}
