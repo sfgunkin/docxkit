@@ -151,10 +151,19 @@ sat at 87% coverage while 82 of its 204 mutants survived.
 
 ```
 python tools/mutation_session.py src/docxkit/edit.py \
-    --tests tests/test_find_edit.py tests/test_edit_boundaries.py \
-    --sample 460 --chunks 0
+    --tests tests/test_find_edit.py tests/test_edit_branches.py \
+            tests/test_normalize_anchors.py tests/test_edit_boundaries.py \
+            tests/test_locate_spans.py tests/test_replace_spans.py \
+    --sample 460 --seed 20260816 --chunks 0
 python tools/mutation_survivors.py .mutation-edit.sqlite src/docxkit/edit.py
 ```
+
+Pass the module's WHOLE harness, and write down which files it was:
+every number below is a statement about a module *and* a set of tests,
+and re-running one module against a different harness later gives a
+figure that looks comparable and is not. `edit.py` is the six files
+above; `_cite_build.py` is `test_citations`, `test_link_convention`,
+`test_cite_build_paths`, `test_link_rest_paths`, `test_cite_scan_paths`.
 
 `mutation_session.py` drives cosmic-ray the safe way, and each of the
 four things it does was learned by getting a plausible WRONG number
@@ -174,11 +183,36 @@ first (2026-08-15/16; the detail is in its docstring):
   into INCOMPETENT, dropping them out of the denominator, and cost 60x
   in wall clock as well.
 
-`--sample N` with a fixed `--seed` is worth using deliberately: the same
-draw against a later suite is a PAIRED comparison, and since tests are
-only ever added, no mutant can move back from killed to surviving. That
-turns "17.3 % -> 14.8 %, about one standard error" into "these 13
-mutants now die".
+A chunk is also the unit that survives being KILLED. When the run is
+backgrounded under anything that caps runtime — CI, an agent harness —
+size the chunk to fit inside the cap (`--chunks 1 --minutes 8`) and call
+it again rather than asking for `--chunks 0` and hoping. Measured
+2026-08-16: a capped background run was killed at 367 of 460 mutants,
+having left its mutation in the worktree file and a row unfinished, and
+the next chunk restored the file, cleared the row, re-verified the
+baseline and carried on. Nothing was lost but the mutant in flight.
+
+`--sample N` with a fixed `--seed` redraws the same mutants across
+`init`s — cosmic-ray enumerates specs in a stable order — but only
+against a session THIS tool sampled. Two 460-draws of `edit.py` made by
+different code, same seed, overlapped by 33 %.
+
+**To compare two suites, re-run the earlier session's SURVIVORS, not a
+fresh sample.** Under a harness that only gained files a mutant can move
+survived -> killed and not back, so the survivors are the entire
+question: 85 mutants instead of 460, and the answer is exact instead of
+sampled. Copy the old session, delete its `SURVIVED` rows, and exec it
+against the new harness — cosmic-ray re-runs only the specs with no
+result. Recover the old harness before trusting the comparison: the
+session database does NOT record the test command, and a number measured
+against a different set of test files is not comparable however
+identical the mutants are. Keep the `cr-*.toml` beside the database.
+
+Measured on `edit.py`, 2026-08-16: **13.0 % -> 11.6 %** real survival,
+six of fifty-six, no new survivors. A FRESH 460-draw of the same source
+under the same six test files read **15.5 %** — same population, other
+mutants. That gap is what a single sample is worth, and why the survivor
+re-run is the design to reach for.
 
 **Do not read `cr-report`'s percentage.** Every module here carries
 `from __future__ import annotations`, so annotations are strings that are
@@ -207,14 +241,22 @@ What five real runs cost and bought, for calibration:
 | `edit.py` | 1,361 | 56* | — |
 | `_cite_build.py` | 1,026 | 114* | — |
 
-\* sampled (460 mutants, seed 20260816), not a full run — and both were
-measured twice, before and after the tests the numbers asked for:
-`edit.py` 17.3 % -> 13.0 % real survival, `_cite_build.py` 41.1 % ->
-29.3 %. Writing those tests found more than the percentages did: a
+\* sampled (460 mutants), not a full run, and each measured across
+several rounds of the tests the numbers asked for: `edit.py` 17.3 % ->
+11.6 % real survival, `_cite_build.py` 41.1 % -> 25.2 %. The last figure
+in each is PAIRED against the round before it (survivor re-run, same
+mutants, harness a checked superset); the earlier ones are separate
+draws and carry a couple of points of sampling noise.
+
+Writing those tests found more than the percentages did, every round: a
 function computing a value no caller read (58 mutants were living in
-`label_extent`'s dead leftward walk), and an S1 where two reference
-entries sharing a surname and year shared one bookmark, so every link to
-it landed on a coin flip.
+`label_extent`'s dead leftward walk); an S1 where two reference entries
+sharing a surname and year shared one bookmark, so every link to it
+landed on a coin flip; and an S1 where a sentence in the back matter
+parses as a reference entry, which a real citation then links to while
+the report says it matched everything. **That is the argument for the
+technique** — three defects a green suite of 2,500 tests was already
+passing, each found by asking what a test would NOTICE.
 
 **A suite that is too narrow INVENTS survivors, and that costs more than
 one that is too broad.** `comments.py` came back as the worst module in

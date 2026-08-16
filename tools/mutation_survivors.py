@@ -47,13 +47,24 @@ def annotation_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
     return spans
 
 
-def owner_of(defs: list[tuple[int, str]], line: int) -> str:
-    name = "<module>"
-    for at, label in defs:
-        if at > line:
-            break
-        name = label
-    return name
+def definitions(tree: ast.Module) -> list[tuple[int, int, str]]:
+    """Every def/class as (first line, last line, name)."""
+    kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    return [(n.lineno, n.end_lineno or n.lineno, n.name)
+            for n in ast.walk(tree) if isinstance(n, kinds)]
+
+
+def owner_of(defs: list[tuple[int, int, str]], line: int) -> str:
+    """The INNERMOST definition containing `line`.
+
+    By span, not by "the last `def` above it". A function with nested
+    helpers — `replace_in_para` has four — otherwise hands every survivor
+    in its own body to whichever helper was defined last, which is how
+    three mutants sat under `label_end` in a report that decided which
+    cluster to work on next.
+    """
+    holding = [(hi - lo, name) for lo, hi, name in defs if lo <= line <= hi]
+    return min(holding)[1] if holding else "<module>"
 
 
 def main() -> int:
@@ -63,7 +74,8 @@ def main() -> int:
     db_path, src_path = sys.argv[1], sys.argv[2]
     text = Path(src_path).read_text(encoding="utf-8")
     lines = text.splitlines()
-    spans = annotation_spans(ast.parse(text))
+    tree = ast.parse(text)
+    spans = annotation_spans(tree)
 
     def in_annotation(row: int, col: int) -> bool:
         return any(r1 <= row <= r2
@@ -81,19 +93,31 @@ def main() -> int:
         print("no results in that database — has `cosmic-ray exec` run?")
         return 2
 
-    survived = [r for r in rows if r[3] == "SURVIVED"]
+    # SKIPPED rows are the ones `mutation_session.py --sample` marked so
+    # they would not run. Counting them as killed reads a 460-mutant
+    # sample as 1361 mutants with 901 free kills, and the share then
+    # answers a question nobody asked.
+    skipped = [r for r in rows if r[3] == "SKIPPED"]
+    ran = [r for r in rows if r[3] != "SKIPPED"]
+    survived = [r for r in ran if r[3] == "SURVIVED"]
     real = [r for r in survived if not in_annotation(r[0], r[1])]
-    killed = len(rows) - len(survived)
-    print(f"{len(rows)} mutants · {killed} killed · {len(survived)} survived")
-    print(f"  {len(survived) - len(real)} of the survivors are inside a TYPE "
+    annotated = len(survived) - len(real)
+    killed = len(ran) - len(survived)
+    sample = f" (sampled from {len(rows)})" if skipped else ""
+    print(f"{len(ran)} mutants run{sample} · {killed} killed · "
+          f"{len(survived)} survived")
+    print(f"  {annotated} of the survivors are inside a TYPE "
           f"ANNOTATION — equivalent by\n  construction (PEP 563: never "
           f"evaluated), so they are not a question")
-    share = len(real) / len(rows) * 100 if rows else 0.0
-    print(f"  {len(real)} to actually look at ({share:.1f}% of all mutants)\n")
+    # An annotation mutant cannot be killed, so every one that ran also
+    # survived: taking them out of the numerator means taking the same
+    # count out of the denominator, or the rate is quietly deflated.
+    base = len(ran) - annotated
+    share = len(real) / base * 100 if base else 0.0
+    print(f"  {len(real)} to actually look at — REAL SURVIVAL "
+          f"{share:.1f}% ({len(real)}/{base})\n")
 
-    defs = [(i, ln.lstrip().split("(")[0].split(":")[0])
-            for i, ln in enumerate(lines, 1)
-            if ln.lstrip().startswith(("def ", "class "))]
+    defs = definitions(tree)
     by_line: dict[int, list[str]] = {}
     for row, _col, op, _ in real:
         by_line.setdefault(row, []).append(op.replace("core/", ""))

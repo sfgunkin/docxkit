@@ -127,7 +127,8 @@ def sample(session: Path, keep: int, seed: int) -> None:
         "insert into work_results (job_id, worker_outcome, test_outcome, "
         "output) values (?, 'SKIPPED', 'SKIPPED', '')", [(j,) for j in skip])
     con.commit()
-    print(f"  sampling {keep} of {len(jobs)} mutants (seed {seed})")
+    print(f"  sampling {keep} of {len(jobs)} mutants (seed {seed})",
+          flush=True)
 
 
 def progress(session: Path) -> tuple[int, int, int]:
@@ -146,9 +147,12 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
         "delete from work_results where test_outcome is null").rowcount
     con.commit()
     if cleared:
-        print(f"  cleared {cleared} row(s) a terminated chunk left unfinished")
+        print(f"  cleared {cleared} row(s) a terminated chunk left "
+              f"unfinished", flush=True)
 
     shutil.copy2(ROOT / module, WORKTREE / module)      # undo any mutation
+    print(f"  verifying the unmutated harness ({len(tests)} files)...",
+          flush=True)
     baseline = _run([sys.executable, "-m", "pytest", "-q", *tests],
                     cwd=WORKTREE, env=_env())
     if baseline.returncode:
@@ -165,8 +169,12 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
     killed, survived, planned = progress(session)
     done = killed + survived
     rate = f" ({survived / done:.1%} survive)" if done else ""
+    # flushed, because a chunk is minutes long and these runs are
+    # backgrounded: block-buffered stdout makes an hour-long session look
+    # like a hung one, and `--report` should be the second question, not
+    # the only way to ask the first
     print(f"  {done}/{planned} run — killed {killed}, "
-          f"survived {survived}{rate}")
+          f"survived {survived}{rate}", flush=True)
     return done < planned
 
 
@@ -230,10 +238,11 @@ def main() -> int:
         n += 1
     if more:
         print("\nmore to do — run again, or --chunks 0 to finish. "
-              "The tree is clean either way.")
+              "The tree is clean either way.", flush=True)
     else:
         print(f"\nfinished. Read it with:\n"
-              f"  python tools/mutation_survivors.py {session.name} {module}")
+              f"  python tools/mutation_survivors.py {session.name} {module}",
+              flush=True)
     return 0
 
 
