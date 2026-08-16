@@ -25,6 +25,7 @@ from ._cite_grammar import (
     key_for,
     link_in_para,
     masked_visible_text,
+    reference_head,
     references,
     resolve_lead,
     wrap_visible_span,
@@ -46,9 +47,6 @@ from ._xml import (
 from .errors import AnchorError
 
 # --------------------------------------------------- the link BUILDER ---
-
-_HEAD_RE = re.compile(r"\s*(.*?\(?\b\d{4}[a-z]?\)?)[.,]")
-
 
 _ACRONYM_RE = re.compile(r"\(([A-Z]{2,})\)")
 
@@ -432,13 +430,20 @@ def link_all(parts: dict[str, bytes], *,
             # run before this guard.
             if (r.key in claimed or name + "txt" in taken) \
                     and not internal_links(para):
-                head = _HEAD_RE.match(texts[i])
-                if head is None:
+                # Kept although an entry that PARSED always has a head —
+                # `reference_head` reads the year with the expression
+                # that made the paragraph an entry, so the two cannot
+                # disagree. It is a guard across a module boundary, not
+                # a branch with a case behind it: `references` decides
+                # what an entry is and this decides what to wrap, and a
+                # later edit to either is exactly how they drifted apart
+                # the first time.
+                head = reference_head(texts[i])
+                if head is None:                            # unreachable
                     report.skipped.append(f"no head on entry ¶{i + 1}")
                 else:
                     try:
-                        para = link_in_para(para, head.group(1),
-                                            name + "txt")
+                        para = link_in_para(para, head, name + "txt")
                         report.backlinked.append(name)
                     except AnchorError as exc:
                         report.skipped.append(f"back-link ¶{i + 1}: {exc}")

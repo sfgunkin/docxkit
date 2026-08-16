@@ -34,7 +34,6 @@ from ._cite_audit import _doubled_links as _doubled_links
 from ._cite_audit import _Finding as _Finding
 from ._cite_audit import audit_links as audit_links
 from ._cite_build import _ACRONYM_RE as _ACRONYM_RE
-from ._cite_build import _HEAD_RE as _HEAD_RE
 
 # re-exported from _cite_build: `as` form marks it deliberate
 from ._cite_build import LinkAllReport as LinkAllReport
@@ -89,6 +88,7 @@ from ._cite_grammar import lead_surname as lead_surname
 from ._cite_grammar import link_in_para as link_in_para
 from ._cite_grammar import masked_visible_text as masked_visible_text
 from ._cite_grammar import parse_reference as parse_reference
+from ._cite_grammar import reference_head as reference_head
 from ._cite_grammar import references as references
 from ._cite_grammar import resolve_lead as resolve_lead
 from ._cite_grammar import strip_lead as strip_lead

@@ -413,6 +413,29 @@ def parse_reference(text: str, index: int = -1) -> Reference | None:
                      index=index)
 
 
+def reference_head(text: str) -> str | None:
+    """An entry's head: everything through the year, terminator dropped.
+
+    "Kanbur, R. (2007). Poverty and distribution. Journal." has the head
+    "Kanbur, R. (2007)", and that is the span `link_all` wraps to point
+    the entry back at the sentence citing it.
+
+    It reads the year with :data:`_REF_YEAR_RE`, the same expression
+    :func:`parse_reference` uses to decide the paragraph IS an entry.
+    That is the point of the function. `_cite_build` had its own regex
+    for the head, and the two disagreed over one token — `_REF_YEAR_RE`
+    allows whitespace before the year's terminator and the other did
+    not — so "Kanbur, R. (2007) . Poverty." parsed as an entry and then
+    had no head, and the entry shipped with no back-link while its
+    in-text mention was linked: half a pair, and only a line in the
+    report to say so.
+    """
+    m = _REF_YEAR_RE.search(text)
+    if m is None:
+        return None
+    return text[:m.end()].rstrip().rstrip(".,").rstrip() or None
+
+
 # Words that legitimately sit lowercase inside an author field, so that
 # "van der Berg" and "Ministry of Health of the Republic" are names and
 # "The data are drawn from Eurostat" is not.

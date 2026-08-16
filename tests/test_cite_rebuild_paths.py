@@ -92,16 +92,16 @@ def test_a_BACK_LINK_that_cannot_be_placed_is_reported_with_its_paragraph():
     assert not report.backlinked
 
 
-def test_an_entry_with_no_recognisable_HEAD_is_reported():
-    """The head is everything up to the year and its terminator. An
-    entry that parses as a reference but offers no head gets no
-    back-link, and the line is the only sign of it.
+def test_an_entry_with_a_STRAY_SPACE_before_its_period_still_back_links():
+    """The S4, fixed. `_REF_YEAR_RE` allows whitespace before the
+    year's terminator and `_cite_build`'s own head regex did not, so
+    "Kanbur, R. (2007) ." — which hand-typed lists really do carry —
+    parsed as an entry and then had no head. The mention was linked and
+    the entry was not, so the pair shipped half-built, with one line in
+    the report to say so.
 
-    The fixture is an entry with a space before the period after the
-    year — `_REF_YEAR_RE` allows that space and `_HEAD_RE` does not, so
-    the two disagree about where a head ends. That disagreement is
-    filed separately; what is pinned here is that the disagreement is
-    REPORTED rather than swallowed.
+    One definition now, `reference_head`, reading the year with the
+    expression that decides the paragraph IS an entry.
     """
     parts = make_parts(
         LEAD + para(run("A point (Kanbur 2007)."))
@@ -111,6 +111,41 @@ def test_an_entry_with_no_recognisable_HEAD_is_reported():
 
     report = link_all(parts)
 
-    assert report.skipped == ["no head on entry ¶6"], report.skipped
-    assert not report.backlinked
+    assert not report.skipped, report.format()
+    assert report.backlinked == ["Kanbur2007"], report.format()
     assert report.linked, "the in-text mention should still be linked"
+
+
+def test_the_back_link_wraps_the_HEAD_and_not_the_whole_entry():
+    """The label stops at the year. Wrapping further would draw the
+    title and the journal blue and underlined — which is the failure
+    `compare`'s HYPERLINK layer exists to catch, and which no text diff
+    would show.
+    """
+    from docxkit._xml import internal_links
+
+    parts = make_parts(
+        LEAD + para(run("A point (Kanbur 2007)."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty and distribution. "
+                   "Journal of Development Economics.")))
+
+    link_all(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    labels = [label for anchor, label in internal_links(doc)
+              if anchor.endswith("txt")]
+    assert labels == ["Kanbur, R. (2007)"], labels
+
+
+# `rebuild`'s remaining line, `"no head on entry ¶{i + 1}"`, is now
+# UNREACHABLE and its seven mutants are permanent residue. An entry
+# exists because `_REF_YEAR_RE` found its year, and `reference_head`
+# reads the year with that same expression, so it cannot come back
+# empty. The guard is kept anyway: it spans a module boundary —
+# `references` decides what an entry is, this decides what to wrap —
+# and the two drifting apart is precisely what the S4 was.
+#
+# Recorded here so the next survivor report is not read as a gap. A test
+# for it would have to break the invariant to reach the line, and a test
+# that fakes its way into dead code proves nothing about the document.
