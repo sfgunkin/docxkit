@@ -43,9 +43,18 @@ def _wired(body: str, footnotes: str | None = None) -> dict[str, bytes]:
     return parts
 
 
+FILLER = para(run("A sentence with nothing to link in it.")) * 2
+
+
 def test_a_LATER_mention_is_linked_and_the_first_one_is_left_alone():
+    """The reported paragraph sits at index 3. `¶{i + 1}` mutates to
+    eleven arithmetic operators and several agree with the original at
+    any given index — this assertion read ¶2 until 2026-08-16, where
+    `i << 1` gives the same 2 and lived through the round.
+    """
     parts = _wired(
         para(run("First (Kanbur 2007) here."))
+        + FILLER
         + para(run("Again (Kanbur 2007) there.")))
 
     before = _linked(parts)
@@ -57,7 +66,7 @@ def test_a_LATER_mention_is_linked_and_the_first_one_is_left_alone():
     # entry's own back-link is the `…txt` one link_all wrote
     assert [a for a, _ in after].count("Kanbur2007") == 2
     assert ("Kanbur2007txt", "Kanbur, R. (2007)") in after
-    assert report.linked == ["Kanbur2007 @ ¶2"], report.linked
+    assert report.linked == ["Kanbur2007 @ ¶4"], report.linked
 
 
 def test_the_span_wrapped_is_the_CITATION_not_the_sentence():
@@ -205,6 +214,110 @@ def test_widening_is_ABANDONED_when_it_would_reach_into_a_link():
         assert "</w:hyperlink>" in token, "an unclosed link element"
         depth -= 1
     assert depth == 0
+
+
+# --------------------------- the skips, and what a refusal has to say --
+
+CROSS_CITING = (
+    para(run("References"))
+    + para(run("Kanbur, R. (2007). Poverty, extending Ravallion (2016). "
+               "Journal of Development Economics."))
+    + para(run("Ravallion, M. (2016). The Economics of Poverty, after "
+               "Kanbur (2007). Oxford University Press.")))
+
+
+def test_the_reference_BLOCK_is_skipped_at_both_of_its_ends():
+    """Entries cite each other — "extending Ravallion (2016)" inside a
+    reference is ordinary — and those are not mentions to link. The
+    block is skipped as a RANGE, and a range has two ends: mutated to
+    an equality it protects one entry and rewrites the rest, which
+    turns the bibliography into cross-linked prose.
+    """
+    parts = make_parts(para(run("A point (Kanbur 2007) and (Ravallion "
+                                "2016).")) + CROSS_CITING)
+    link_all(parts)
+    entries_before = parts["word/document.xml"]
+
+    report = link_rest(parts)
+
+    assert parts["word/document.xml"] == entries_before, report.format()
+    assert not report.linked, report.format()
+
+
+def test_an_IGNORED_citation_does_not_stop_the_paragraph():
+    """`ignore` drops a lead the grammar mistakes for an author. The
+    citation after it in the same paragraph is a different work and
+    still has to be linked."""
+    parts = _wired(
+        para(run("First (Kanbur 2007) and (World Bank Group 2024)."))
+        + FILLER
+        + para(run("Again (Kanbur 2007), and (World Bank Group 2024).")))
+
+    report = link_rest(parts, ignore={"Kanbur"})
+
+    assert not any("Kanbur" in entry for entry in report.linked), report.linked
+    assert any(entry.startswith("WorldBankGroup2024") for entry in
+               report.linked), report.format()
+
+
+def test_an_ALREADY_linked_citation_does_not_stop_the_paragraph():
+    """The mask is what makes this pass idempotent, and a paragraph
+    holding one linked citation and one plain one is what every round
+    after the first looks like."""
+    parts = _wired(
+        para(run("First (World Bank Group 2024) here."))
+        + para(run("Then (Kanbur 2007) and again (World Bank Group 2024).")))
+
+    report = link_rest(parts)
+
+    assert any(entry.startswith("WorldBankGroup2024") for entry in
+               report.linked), report.format()
+
+
+def test_an_entry_with_NO_bookmark_is_reported_with_its_paragraph():
+    """`link_all(only=...)` names some entries and not others, and the
+    second pass cannot link to a bookmark that was never written. It
+    says which citation and where, because the fix is to widen `only`.
+    """
+    parts = make_parts(
+        para(run("First (Kanbur 2007) and (World Bank Group 2024)."))
+        + FILLER
+        + para(run("Again (Kanbur 2007) and (World Bank Group 2024)."))
+        + ENTRIES)
+    link_all(parts, only=["kanbur_2007"])
+
+    report = link_rest(parts)
+
+    # the NARROW capture, because the widening over an institution's
+    # name happens after this check — the citation grammar refuses free
+    # capitalised adjacency, so "(World Bank Group 2024)" is caught as
+    # "Group 2024" and the line quotes what was caught
+    assert "'Group 2024' (¶4): entry has no bookmark" in report.skipped, \
+        report.skipped
+
+
+def test_a_citation_INSIDE_an_equation_is_reported_not_crashed():
+    """The span comes from `visible_text`, which counts the maths; the
+    wrap walks `w:r` runs, which do not contain it. So a citation typed
+    into an equation object has offsets that no run covers. It is
+    reported with its paragraph and the document is left exactly as it
+    was — the alternative is an AnchorError out of `link_rest` and a
+    build that stops on one odd paragraph.
+    """
+    maths = ('<m:oMath xmlns:m="http://schemas.openxmlformats.org/'
+             'officeDocument/2006/math"><m:r><m:t>(Kanbur 2007)</m:t>'
+             "</m:r></m:oMath>")
+    parts = _wired(
+        para(run("First (Kanbur 2007) here."))
+        + FILLER
+        + "<w:p>" + run("As ") + maths + run(" shows.") + "</w:p>")
+    before = parts["word/document.xml"]
+
+    report = link_rest(parts)
+
+    assert any(entry.startswith("¶4: wrap_visible_span:")
+               for entry in report.skipped), report.format()
+    assert parts["word/document.xml"] == before, "the paragraph was rewritten"
 
 
 # `sorted(todo, reverse=True)` in `rewrite` is deliberately NOT pinned.

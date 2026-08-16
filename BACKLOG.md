@@ -437,6 +437,44 @@ real keys are all still beside it). One is equivalent and recorded.
 5. Not re-measured; the next run should be a survivor re-run of
 `.mutation-cite_build-paired.sqlite`.
 
+
+**Fifth pass, 2026-08-16.** `rewrite`, the largest cluster, taken to
+its documented equivalent. **27 of 27 targeted mutants die**, verified
+by hand-mutation with the killing test named. The nineteen were three
+families, and this module keeps producing the same three:
+
+* **the block skip, as a RANGE.** Entries cite each other — "extending
+  Ravallion (2016)" inside a reference is ordinary — and mutating
+  `skip[0] <= i <= skip[1]` to an equality protects ONE entry and
+  rewrites the rest, turning the bibliography into cross-linked prose.
+  The old fixture had nothing citable inside the block, so both ends
+  went unchecked;
+* **`continue` turned into `break`**, in the two places the scan skips a
+  citation: an ignored lead, and one already inside a link. The second
+  is what every round after the first looks like — a paragraph holding
+  one linked citation and one plain one — and a `break` there makes the
+  pass blinder the more of the paper is already done;
+* **`¶{i + 1}` on all three report lines** — linked, no-bookmark,
+  refused. The existing assertion read `¶2`, where `i << 1` gives the
+  same answer; at index 3 all eleven operators differ.
+
+Two paths had never been run at all. `link_all(only=...)` names some
+entries and not others, so `names.get(key)` returns None and the pass
+says which citation and where. And a citation typed INSIDE an equation
+object has offsets from `visible_text`, which counts the maths, that no
+`w:r` covers — `wrap_visible_span` refuses, and the refusal is reported
+with the paragraph rather than thrown out of `link_rest`, which would
+stop a build on one odd paragraph.
+
+`rewrite`'s only remaining survivor is the `sorted(todo, reverse=True)`
+recorded as equivalent last round.
+
+**Still open:** `link_all` 10, `_dedup_name` 8, `_mint_name` 8,
+`unlink_by_anchor` 8, `_own_bookmark` 5, `_entry_names_from_document` 4.
+The naming trio (`_dedup_name`, `_mint_name`, `_named`) is 19 between
+them and is the next worth doing — it decides the bookmark names every
+link in the document points at.
+
 ---
 
 ## Fixed
