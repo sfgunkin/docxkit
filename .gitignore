@@ -9,3 +9,6 @@ tests/corpus/*.docx
 !tests/corpus/README.md
 .coverage
 *.sqlite
+# a mutation session's config and database (tools/mutation_session.py):
+# derived, restartable, and megabytes of it
+.mutation-*

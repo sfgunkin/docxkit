@@ -150,10 +150,35 @@ that line changed, which is the question worth asking — `_compare_render`
 sat at 87% coverage while 82 of its 204 mutants survived.
 
 ```
-cosmic-ray init cr.toml run.sqlite      # module-path = ONE source file
-cosmic-ray exec cr.toml run.sqlite      # test-command = the narrow suite
-python tools/mutation_survivors.py run.sqlite src/docxkit/styles.py
+python tools/mutation_session.py src/docxkit/edit.py \
+    --tests tests/test_find_edit.py tests/test_edit_boundaries.py \
+    --sample 460 --chunks 0
+python tools/mutation_survivors.py .mutation-edit.sqlite src/docxkit/edit.py
 ```
+
+`mutation_session.py` drives cosmic-ray the safe way, and each of the
+four things it does was learned by getting a plausible WRONG number
+first (2026-08-15/16; the detail is in its docstring):
+
+* it runs in a **git worktree** with `PYTHONPATH` pointed at it, and
+  refuses to start unless `docxkit.__file__` resolves there — otherwise
+  it mutates the tree the papers import, editable-installed;
+* it **verifies the unmutated harness is green before every chunk**,
+  because a terminated run leaves its mutation in the file, and the next
+  session then reads 1383 of 1385 "killed" off a red baseline;
+* it **clears the null-outcome rows** a termination leaves, or the
+  session resumes nothing at all and reports instant completion;
+* it forces `PYTHONIOENCODING=utf-8`, because cosmic-ray decodes a
+  KILLED mutant's pytest output as UTF-8 while pytest writes the console
+  codepage — the em-dashes in this package's messages then turn kills
+  into INCOMPETENT, dropping them out of the denominator, and cost 60x
+  in wall clock as well.
+
+`--sample N` with a fixed `--seed` is worth using deliberately: the same
+draw against a later suite is a PAIRED comparison, and since tests are
+only ever added, no mutant can move back from killed to surviving. That
+turns "17.3 % -> 14.8 %, about one standard error" into "these 13
+mutants now die".
 
 **Do not read `cr-report`'s percentage.** Every module here carries
 `from __future__ import annotations`, so annotations are strings that are
@@ -179,6 +204,17 @@ What five real runs cost and bought, for calibration:
 | `crossrefs.py` | 841 | 168 | — |
 | `comments.py` | 732 | 244 | — |
 | `_table_layout.py` | 2,217 | 382 | — |
+| `edit.py` | 1,361 | 56* | — |
+| `_cite_build.py` | 1,026 | 114* | — |
+
+\* sampled (460 mutants, seed 20260816), not a full run — and both were
+measured twice, before and after the tests the numbers asked for:
+`edit.py` 17.3 % -> 13.0 % real survival, `_cite_build.py` 41.1 % ->
+29.3 %. Writing those tests found more than the percentages did: a
+function computing a value no caller read (58 mutants were living in
+`label_extent`'s dead leftward walk), and an S1 where two reference
+entries sharing a surname and year shared one bookmark, so every link to
+it landed on a coin flip.
 
 **A suite that is too narrow INVENTS survivors, and that costs more than
 one that is too broad.** `comments.py` came back as the worst module in
