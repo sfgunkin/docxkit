@@ -17,71 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 a sentence in the back matter parses as a reference ENTRY, and a real citation then links to it — reported as "linked 1, unmatched 0"
-
-Found 2026-08-16 while writing the `scan` tests, from a fixture that
-would not link: a paragraph placed after the reference block had been
-swallowed by the block.
-
-    body:   "Employment rates come from the register (Eurostat 2023)."
-            "References"
-            "Kanbur, R. (2007). Poverty and distribution. Journal."
-            "Data availability"
-            "The data are drawn from Eurostat (2023)."
-
-    link_all: linked 1, already linked 0, back-links added 1,
-              unmatched 0, skipped 0
-    written:  'Eurostat 2023' -> ThedataaredrawnfromEurostat2023
-              'The data are drawn from Eurostat (2023)' -> ...txt
-
-The citation resolves to the DATA-AVAILABILITY SENTENCE, and the reader
-who clicks it lands there instead of on the entry. Nothing shows it: the
-anchor resolves, so `crossrefs --audit` passes; the words read correctly,
-so no text diff moves; and the report says it linked one and missed
-none, which is the definition of S1.
-
-**Diagnosis.** `references()` reads from the heading to the paragraph
-that ENDS the list, and the stops are `Appendix`/`Appendices`/`Figures`/
-`Tables`, the Russian pair, and a figure or table caption. The back
-matter journals print after the references — "Data availability",
-"Acknowledgements", "Funding", "Notes" — ends nothing, so its paragraphs
-are offered to `parse_reference`, which accepts any of them carrying a
-"(year)". The sentence above becomes an entry filed under the surname
-"The data are drawn from Eurostat", and `_entry_keys` then licenses
-every word RUN of that supposed institutional name, `eurostat_2023`
-among them. That is the key the citation resolves through.
-
-`_ends_the_list`'s own docstring records this failure once already — a
-prose paragraph in an appendix parsing as an entry, "(Jensen 1906)",
-minting a bookmark out of the surrounding equation glyphs. This is the
-same defect through the one door that fix did not close.
-
-**Measured on three back-matter sections**, one sentence each: "Data
-availability" produces the junk entry; "Acknowledgements" ("We thank the
-World Bank (2024) team for comments.") and "Funding" ("Supported by the
-Research Council (2021) under grant 4.") do not — `parse_reference`
-refuses those two shapes. So it is neither every paper nor a rarity: one
-sentence shape in three. No live manuscript has been checked.
-
-**Suggested fix, in two layers**, because the stop list alone is a patch
-on the symptom:
-
-1. add the back-matter headings to `_DEFAULT_STOPS`. Cheap, targeted,
-   and no real entry is a heading;
-2. bound the author field. A six-word surname containing "are", "drawn"
-   and "from" is a sentence, and `parse_reference` accepting it is the
-   root of both this and the appendix incident. The bound has to be
-   lenient — "United Nations, Department of Economic and Social Affairs"
-   is a real entry with two lowercase words — so it is a shape rule
-   rather than a word count. Whatever the rule, an entry that only just
-   clears it is worth REPORTING: `link_all` already has an `unmatched`
-   channel, and "filed an entry under a six-word surname" is a line an
-   author can act on.
-
-**Workaround in use:** none. This came from a fixture, not from a paper,
-and the fixture now carries the table caption that a real exhibit would
-have — which is what ends the block properly.
-
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
@@ -436,6 +371,81 @@ largest — the widening rules are where its residue sits.
 ---
 
 ## Fixed
+
+### S1 a sentence in the back matter parses as a reference ENTRY, and a real citation then links to it — reported as "linked 1, unmatched 0" — `1f4f7e9`
+
+Found 2026-08-16 while writing the `scan` tests, from a fixture that
+would not link: a paragraph placed after the reference block had been
+swallowed by the block.
+
+    body:   "Employment rates come from the register (Eurostat 2023)."
+            "References"
+            "Kanbur, R. (2007). Poverty and distribution. Journal."
+            "Data availability"
+            "The data are drawn from Eurostat (2023)."
+
+    link_all: linked 1, already linked 0, back-links added 1,
+              unmatched 0, skipped 0
+    written:  'Eurostat 2023' -> ThedataaredrawnfromEurostat2023
+              'The data are drawn from Eurostat (2023)' -> ...txt
+
+The citation resolves to the DATA-AVAILABILITY SENTENCE, and the reader
+who clicks it lands there instead of on the entry. Nothing shows it: the
+anchor resolves, so `crossrefs --audit` passes; the words read correctly,
+so no text diff moves; and the report says it linked one and missed
+none, which is the definition of S1.
+
+**Diagnosis.** `references()` reads from the heading to the paragraph
+that ENDS the list, and the stops are `Appendix`/`Appendices`/`Figures`/
+`Tables`, the Russian pair, and a figure or table caption. The back
+matter journals print after the references — "Data availability",
+"Acknowledgements", "Funding", "Notes" — ends nothing, so its paragraphs
+are offered to `parse_reference`, which accepts any of them carrying a
+"(year)". The sentence above becomes an entry filed under the surname
+"The data are drawn from Eurostat", and `_entry_keys` then licenses
+every word RUN of that supposed institutional name, `eurostat_2023`
+among them. That is the key the citation resolves through.
+
+`_ends_the_list`'s own docstring records this failure once already — a
+prose paragraph in an appendix parsing as an entry, "(Jensen 1906)",
+minting a bookmark out of the surrounding equation glyphs. This is the
+same defect through the one door that fix did not close.
+
+**Measured on three back-matter sections**, one sentence each: "Data
+availability" produces the junk entry; "Acknowledgements" ("We thank the
+World Bank (2024) team for comments.") and "Funding" ("Supported by the
+Research Council (2021) under grant 4.") do not — `parse_reference`
+refuses those two shapes. So it is neither every paper nor a rarity: one
+sentence shape in three. No live manuscript has been checked.
+
+**Suggested fix, in two layers**, because the stop list alone is a patch
+on the symptom:
+
+1. add the back-matter headings to `_DEFAULT_STOPS`. Cheap, targeted,
+   and no real entry is a heading;
+2. bound the author field. A six-word surname containing "are", "drawn"
+   and "from" is a sentence, and `parse_reference` accepting it is the
+   root of both this and the appendix incident. The bound has to be
+   lenient — "United Nations, Department of Economic and Social Affairs"
+   is a real entry with two lowercase words — so it is a shape rule
+   rather than a word count. Whatever the rule, an entry that only just
+   clears it is worth REPORTING: `link_all` already has an `unmatched`
+   channel, and "filed an entry under a six-word surname" is a line an
+   author can act on.
+
+**Workaround in use:** none. This came from a fixture, not from a paper,
+and the fixture now carries the table caption that a real exhibit would
+have — which is what ends the block properly.
+
+
+**Fixed 2026-08-16** (`1f4f7e9`). Both layers, and neither gate that fired
+was relaxed: `_DEFAULT_STOPS` gained the journal back matter with stops
+matched as a word-boundary prefix, and `_reads_as_prose` reports the
+case no bound can catch on a new `LinkAllReport.suspect` channel. The
+measured document now reports `linked 0, unmatched 2` and writes no link.
+`tests/test_reference_bounds.py` fails without it — including the two
+Cyrillic institution names, which are why the prose test is Latin-script
+only.
 
 ### S1 two reference entries with the same surname AND year get the SAME bookmark name, and every link to it lands on a coin flip — `36a569f`
 
