@@ -72,6 +72,32 @@ terminated run leaving its mutation in the tree, which produced a
 1383/1385 "kill rate" on a red baseline; and the same termination
 leaving null-outcome rows that make the session unresumable.
 
+
+**Partly paid, 2026-08-16** (`36a569f`). `tests/test_edit_boundaries.py`
+states the boundaries as VALUES: where a field-form label ends, in both
+link forms and anchored from a middle run; `_outside`'s three answers;
+`_restyle`'s split at both edges of a span. Hand-mutating the six exact
+lines the survivors sat on now kills all of them, and `_outside` has
+left the survivor list entirely.
+
+One of those six could not be killed by any test, and that was the
+finding: `label_extent` returned a ``(start, end)`` pair and walked LEFT
+to compute a start **no caller ever read** — the guard asks only "does
+the match run past the label". Dead computation, which is why 58 mutants
+lived in it. It is now `label_end`, returning an int, and the leftward
+walk is gone.
+
+Re-measured on a reproducible random sample of 460 mutants (seed
+20260816): **real survival 17.3 % -> 14.8 %**. Worth reading with its
+error bar — at n=460 that is about one standard error, so the sample
+alone would not settle it; the hand-mutation result and the disappearance
+of `_outside` are the stronger evidence.
+
+**Still open**, because the residue is real: `label_end` 14,
+`replace_in_para` 10, `_locate` 10, `_restyle` 5, `_split_run` 5. The
+`_locate` cluster is the next worth doing — it computes the run spans
+every other function here consumes.
+
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
@@ -121,9 +147,63 @@ this, or the three hazards recorded in `REVIEW_2026-08-15.md` if the
 harness is rebuilt from scratch. The numbers are only comparable against
 the same test set, so quote the coverage beside any future figure.
 
+
+**Partly paid, 2026-08-16** (`36a569f`).
+`tests/test_cite_build_paths.py` runs the never-run column: a work cited
+ONLY in a footnote, a work cited in both (the body mention wins), the
+footnote splice leaving the note readable, `_dedup_name`'s collision,
+the back-link undo when a wrapped mention never appeared, and
+`unlink_by_anchor`'s three cases including the field form. Plus value
+assertions on `_entry_keys` — which keys "World Bank Group. (2024)"
+answers to, exactly.
+
+Re-measured on a random sample of 460 (seed 20260816): **real survival
+41.1 % -> 35.0 %**, about 2.5 standard errors, and coverage 84 % -> 86 %.
+
+**Writing those tests found an S1**, which is the point of the exercise
+and is filed below: two entries sharing a surname AND year produced two
+bookmarks with the SAME name.
+
+**Still open:** `rewrite` 36, `scan` 25, `rebuild` 17, `_entry_keys` 17,
+`link_all` 12. `rewrite` is the biggest single cluster in the package
+and nothing asserts on what it produces at the value level.
+
 ---
 
 ## Fixed
+
+### S1 two reference entries with the same surname AND year get the SAME bookmark name, and every link to it lands on a coin flip — `36a569f`
+
+Found 2026-08-16 while writing the tests the mutation entries asked for
+— not by mutation testing itself, but by the case a test needed.
+
+"Smith, J. (2020)" and "Smith, A. (2020)" are two people, and a
+reference list carrying both is ordinary; so is one that has dropped its
+2020a/2020b suffixes. `link_all` keyed its `names` map on the entry's
+surname+year KEY, so the second entry's name overwrote the first, and
+both entry paragraphs were then marked with it:
+
+    bookmark names, in order: ['Smith2020_2txt', 'Smith2020_2', 'Smith2020_2']
+    report: linked 1, already linked 0, back-links added 2, skipped 0
+
+Two bookmarks of one name in one document. Word keeps whichever it finds
+first, so the in-text link resolves to one of the two works at random —
+and the report says it linked 1 and skipped nothing. Silent, and no gate
+sees it: the anchor resolves, the words read correctly, `citations`
+passes.
+
+**Fixed.** `names` is keyed by the entry's PARAGRAPH, so every entry
+gets its own name and `_dedup_name`'s suffix does what it was written to
+do. And the citation itself is genuinely ambiguous — "(Smith 2020)"
+names both works — so it is no longer linked to either: it is REPORTED
+as unmatched, naming the count and suggesting the 'a'/'b' suffixes,
+which is something an author can act on. Linking it to whichever entry
+came second was the wrong kind of helpful.
+
+Tests: `test_two_entries_with_the_SAME_surname_and_year_get_distinct_names`.
+`link_all` grew from 28 to 29 by the added branch, recorded in
+pyproject.toml and in `tests/test_complexity_debt.py` — which is what
+made me notice the growth at all.
 
 ### S3 the hand-back loss gate calls an EDITED footnote a lost one, and then refuses the exemption for it — the two paths disagree and the gate cannot be passed — `17701a5`
 
