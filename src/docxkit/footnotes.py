@@ -28,6 +28,7 @@ from ._xml import (
     live_properties,
     own_properties,
     set_run_property,
+    span_holding,
     visible_text,
 )
 from .errors import AnchorError
@@ -238,7 +239,7 @@ def set_font(footnotes_xml: str, *, name: str = "Times New Roman",
         pieces: list[str] = []
         at = 0
         for m in RUN_RE.finditer(note.xml):
-            if any(s <= m.start() < e for s, e in math):
+            if span_holding(m.start(), math) is not None:
                 report.math_runs_skipped += 1
                 continue
             fixed = set_run_property(m.group(0), "rFonts", rfonts)
@@ -287,7 +288,7 @@ def fonts(footnotes_xml: str, *, include_reserved: bool = False
     for note in find_all(footnotes_xml, include_reserved=include_reserved):
         math = _math_spans(note.xml)
         for m in RUN_RE.finditer(note.xml):
-            if any(s <= m.start() < e for s, e in math):
+            if span_holding(m.start(), math) is not None:
                 continue
             face, sz = _run_font(m.group(0))
             if face is None and sz is None:

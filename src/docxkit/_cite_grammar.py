@@ -21,6 +21,7 @@ from ._xml import (
     escape,
     run_spans,
     set_run_text,
+    span_holding,
     visible_text,
 )
 from .edit import _locate
@@ -648,7 +649,7 @@ def masked_visible_text(para_xml: str) -> str:
     out = []
     for tm in T_RE.finditer(para_xml):
         txt = html.unescape(tm.group(1))
-        if any(s <= tm.start() < e for s, e in regions):
+        if span_holding(tm.start(), regions) is not None:
             out.append("\x00" * len(txt))
         else:
             out.append(txt)

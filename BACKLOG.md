@@ -56,6 +56,26 @@ measured: `lo <= X.start() < hi` in 7 places across 3 modules, `¶{i +
 candidate on the same evidence, and each should be checked for a copy
 that missed a fix before being extracted.
 
+**The span shape was done next, and the check came back NEGATIVE** —
+eight sites (not seven; two more surfaced on a wider search), and every
+one spelled the comparison the same way. No copy was missing a fix. It
+was extracted anyway as `_xml.in_span` / `span_holding`, on a weaker and
+different argument, measured after the fact:
+
+| suite | kills `lo <=` -> `lo <` | kills `< hi` -> `<= hi` |
+|---|---|---|
+| edit | yes | yes |
+| footnotes | no | yes |
+| citations | no | no |
+
+The extraction does not give `footnotes` and `citations` boundary tests
+of their own — it makes it impossible for them to HAVE a boundary of
+their own to get wrong. The least-tested callers are now guarded by the
+best-tested one, which is not something a comment in each copy could
+arrange. That is the honest case for this one, and it is worth less than
+the `run_spans` case; recorded so the difference between the two is not
+flattened later into "duplication was removed".
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after

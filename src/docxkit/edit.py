@@ -18,11 +18,13 @@ from ._xml import (
     editable_text,
     escape,
     field_spans,
+    in_span,
     live_properties,
     normalize_glyphs,
     own_properties,
     run_spans,
     set_run_text,
+    span_holding,
     visible_text,
 )
 from .errors import AnchorError
@@ -461,7 +463,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
 
     def labels_a_link(run: re.Match[str]) -> bool:
         return (_HYPERLINK_RUN in run.group(0)
-                or any(lo <= run.start() < hi for lo, hi in link_spans))
+                or span_holding(run.start(), link_spans) is not None)
 
     def label_end(idx: int) -> int:
         """Where the VISIBLE label the idx-th run belongs to ENDS.
@@ -481,11 +483,10 @@ def replace_in_para(para_xml: str, old: str, new: str,
         changed nothing observable, because nothing observed it.
         """
         run = runs[idx]
-        for lo, hi in link_spans:
-            if lo <= run.start() < hi:
-                inside = [i for i, r in enumerate(runs)
-                          if lo <= r.start() < hi]
-                return spans[inside[-1]][1]
+        if (element := span_holding(run.start(), link_spans)) is not None:
+            inside = [i for i, r in enumerate(runs)
+                      if in_span(r.start(), element)]
+            return spans[inside[-1]][1]
 
         def styled(i: int) -> bool:
             return 0 <= i < len(runs) and _HYPERLINK_RUN in runs[i].group(0)
@@ -596,7 +597,7 @@ def _outside(runs: list[re.Match[str]], span: tuple[int, int],
     text on BOTH sides the caller really is asking to split a label, and
     that is the refusal.
     """
-    inner = [r for r in runs if span[0] <= r.start() < span[1]
+    inner = [r for r in runs if in_span(r.start(), span)
              and visible_text(r.group(0))]
     if not any(r.end() <= pos for r in inner):
         return span[0]
@@ -699,7 +700,7 @@ def _split_run(para_xml: str, run: re.Match[str], offset: int, content: str,
             "Insert on one side of the label, or pass "
             "allow_hyperlink=True.")
     for regions, allowed, what in protected:
-        if not allowed and any(lo <= run.start() < hi for lo, hi in regions):
+        if not allowed and span_holding(run.start(), regions) is not None:
             raise AnchorError(
                 f"insert_in_para: offset {at} splits a run that is inside "
                 f"{what}. Insert on one side of it, or pass the matching "

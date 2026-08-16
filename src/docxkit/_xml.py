@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Iterable
 
 __all__ = [
     "BOOKMARK_END_ID_RE",
@@ -43,6 +44,7 @@ __all__ = [
     "escape",
     "escape_attr",
     "field_spans",
+    "in_span",
     "internal_links",
     "live_properties",
     "matching_close",
@@ -52,6 +54,7 @@ __all__ = [
     "run_spans",
     "set_run_property",
     "set_run_text",
+    "span_holding",
     "text_parts",
     "used_prefixes",
     "visible_text",
@@ -241,6 +244,37 @@ def visible_text(xml: str) -> str:
     ``"R&D spending"`` matches a paragraph stored as ``R&amp;D spending``.
     """
     return html.unescape("".join(T_RE.findall(xml)))
+
+
+def in_span(pos: int, span: tuple[int, int]) -> bool:
+    """Does something starting at `pos` begin inside `span`?
+
+    Start-INCLUSIVE, end-EXCLUSIVE, and both halves are load-bearing.
+
+    A span here is XML offsets around an element — a ``w:hyperlink``, a
+    fldChar field, a bookmark pair, an ``m:oMath``. The element's own
+    opening tag occupies the first bytes, so nothing can start exactly
+    at `lo` for an element span and the inclusive end is free there; a
+    span from :func:`field_spans` has RUN boundaries, and its begin run
+    starts exactly at `lo`, so the inclusive end is the whole answer.
+    At the other edge the run after an element begins exactly at `hi`,
+    and it is OUTSIDE — an exclusive end is what keeps a cross-reference
+    from swallowing the rest of the sentence.
+
+    Written out eight times across `edit`, `footnotes` and
+    `_cite_grammar` before it was named. Unlike :func:`run_spans` the
+    copies had not drifted, which is the honest reason this is one
+    function now: not a defect already paid for, but one place to state
+    a convention that four of the eight sites had no test for.
+    """
+    lo, hi = span
+    return lo <= pos < hi
+
+
+def span_holding(pos: int, spans: Iterable[tuple[int, int]]
+                 ) -> tuple[int, int] | None:
+    """The first of `spans` that `pos` starts inside, or None."""
+    return next((span for span in spans if in_span(pos, span)), None)
 
 
 def run_spans(para_xml: str) -> tuple[

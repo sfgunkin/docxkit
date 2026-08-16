@@ -485,3 +485,39 @@ def test_the_paragraph_open_pattern_in_crossrefs_is_guarded_too():
 
     assert _P_OPEN_RE.match("<w:p/>") is None
     assert _P_OPEN_RE.match('<w:p w14:paraId="1">') is not None
+
+
+# ------------------------------------------- in_span, at both of its edges --
+#
+# Eight call sites across `edit`, `footnotes` and `_cite_grammar` wrote
+# `lo <= x.start() < hi` by hand before this was one function. The copies
+# had NOT drifted — unlike `run_spans`, where two of three carried a fix
+# the third did not — so this is stated here rather than inferred from
+# any one caller.
+#
+# Measured after the extraction (2026-08-16): the edit suite kills a
+# change at either edge, the footnotes suite kills one, and the citation
+# suite kills neither. That asymmetry is the point of having one
+# definition: the least-tested callers are now guarded by the
+# best-tested one, which is not something a comment in each copy could
+# have arranged.
+
+def test_in_span_includes_the_START_and_excludes_the_END():
+    from docxkit._xml import in_span
+
+    assert in_span(5, (5, 9)), "a span from field_spans starts ON a run"
+    assert in_span(8, (5, 9))
+    assert not in_span(9, (5, 9)), \
+        "the run after an element begins exactly at its end, and is outside"
+    assert not in_span(4, (5, 9))
+
+
+def test_span_holding_answers_WHICH_span_and_None_for_none():
+    from docxkit._xml import span_holding
+
+    spans = [(0, 4), (10, 20)]
+    assert span_holding(0, spans) == (0, 4)
+    assert span_holding(15, spans) == (10, 20)
+    assert span_holding(4, spans) is None, "the end of the first is outside it"
+    assert span_holding(20, spans) is None
+    assert span_holding(3, []) is None
