@@ -226,14 +226,14 @@ def _named(r: Reference, convention: Callable[[str, str], str] | None,
 
 
 def _wanted(only: Collection[str] | None, entries: list[Reference],
-            names: dict[str, str]) -> set[str] | None:
+            names: dict[int, str]) -> set[str] | None:
     """The keys `only` selects — by key, surname or bookmark name."""
     if only is None:
         return None
     asked = {str(o).casefold() for o in only}
     return {r.key for r in entries
             if {r.key.casefold(), r.surname.casefold(),
-                names[r.key].casefold()} & asked}
+                names[r.index].casefold()} & asked}
 
 
 def link_all(parts: dict[str, bytes], *,
@@ -301,13 +301,25 @@ def link_all(parts: dict[str, bytes], *,
 
     # Names: reuse an entry's own key-shaped bookmark; then the paper's
     # convention if it states one; mint otherwise.
-    names: dict[str, str] = {}
+    #
+    # Keyed by the entry's PARAGRAPH, not by its surname+year key. Two
+    # entries can share a key and routinely do -- "Smith, J. (2020)" and
+    # "Smith, A. (2020)" are two people, and a reference list that has
+    # dropped its 2020a/2020b suffixes has two entries reading the same.
+    # Keying the names by `r.key` overwrote the first with the second,
+    # so BOTH paragraphs were marked with one name: two bookmarks of the
+    # same name in one document, which Word resolves by keeping whichever
+    # it finds first, and every link to it then lands on a coin flip.
+    # The report said "linked 1, back-links added 2, skipped 0" (found by
+    # a test written for the mutation-survivor entry, 2026-08-16).
+    names: dict[int, str] = {}
     answers: dict[str, str] = {}
-    by_key = {r.key: r for r in entries}
+    by_key: dict[str, list[Reference]] = {}
     for r in entries:
+        by_key.setdefault(r.key, []).append(r)
         own = _own_bookmark(paras[r.index].group(0), r, gaps[r.index])
-        names[r.key] = own or _named(r, naming, taken, report)
-        taken.add(names[r.key])
+        names[r.index] = own or _named(r, naming, taken, report)
+        taken.add(names[r.index])
         for k in _entry_keys(r):
             answers.setdefault(k, r.key)
 
@@ -344,12 +356,25 @@ def link_all(parts: dict[str, bytes], *,
                     continue
                 if wanted is not None and key not in wanted:
                     continue
+                # Two entries under one key: the citation names both and
+                # this pass cannot choose. Linking it to either sends the
+                # reader to a work the sentence may not mean, silently --
+                # so it is REPORTED, which is what an author can act on.
+                if len(by_key[key]) > 1:
+                    report.unmatched.append(
+                        f"{text[c.start:c.end]!r} (\u00b6{i + 1}) matches "
+                        f"{len(by_key[key])} entries "
+                        f"({by_key[key][0].surname} {by_key[key][0].year}) "
+                        f"-- give them 'a'/'b' year suffixes to tell them "
+                        f"apart")
+                    continue
                 claimed.add(key)
-                name = names[key]
+                name = names[by_key[key][0].index]
                 if name in linked_anchors:
                     report.already.append(name)
                     continue
-                c = extend_to_name(text, c, by_key[key].surname)
+                c = extend_to_name(text, c,
+                                   by_key[key][0].surname)
                 into.setdefault(i, []).append((text[c.start:c.end], name))
 
     scan(texts, plan, (head_idx, last_idx))
@@ -365,7 +390,7 @@ def link_all(parts: dict[str, bytes], *,
     def rebuild(i: int, para: str, where: str) -> str:
         if (r := by_entry.get(i)) is not None and where == "¶" \
                 and (wanted is None or r.key in wanted):
-            name = names[r.key]
+            name = names[r.index]
             # the gap counts too: a marker Word hoisted out of this
             # paragraph is still this entry's marker, and adding a second
             # one inside would leave two bookmarks of the same name

@@ -469,31 +469,37 @@ def replace_in_para(para_xml: str, old: str, new: str,
         return (_HYPERLINK_RUN in run.group(0)
                 or any(lo <= run.start() < hi for lo, hi in link_spans))
 
-    def label_extent(idx: int) -> tuple[int, int]:
-        """The VISIBLE span of the whole label the idx-th run belongs to.
+    def label_end(idx: int) -> int:
+        """Where the VISIBLE label the idx-th run belongs to ENDS.
 
         Element form first: every run inside the ``w:hyperlink`` is part
         of one label, and Word fragments a label across runs as freely
         as it fragments prose. Field form has no element to ask, so the
-        label is the run's styled neighbours — which is the same answer
-        for the same reason.
+        label is the run's styled neighbours — the same answer for the
+        same reason.
+
+        The END alone, not the span. This returned a ``(start, end)``
+        pair and walked LEFT to find the start, which no caller ever
+        read — the one question asked of it is "does the match run on
+        past the label", and a match reaching this guard already starts
+        inside one. Mutation testing found it: 58 survivors sat in this
+        function on 2026-08-15, and hand-mutating the leftward walk
+        changed nothing observable, because nothing observed it.
         """
         run = runs[idx]
         for lo, hi in link_spans:
             if lo <= run.start() < hi:
                 inside = [i for i, r in enumerate(runs)
                           if lo <= r.start() < hi]
-                return spans[inside[0]][0], spans[inside[-1]][1]
+                return spans[inside[-1]][1]
 
         def styled(i: int) -> bool:
             return 0 <= i < len(runs) and _HYPERLINK_RUN in runs[i].group(0)
 
-        lo_i = hi_i = idx
-        while styled(lo_i - 1):
-            lo_i -= 1
+        hi_i = idx
         while styled(hi_i + 1):
             hi_i += 1
-        return spans[lo_i][0], spans[hi_i][1]
+        return spans[hi_i][1]
 
     # A note reference is a run of ZERO visible width, so `at < p < end`
     # below is exactly "the marker sits strictly inside the match" — a
@@ -534,7 +540,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
             # were outside it (Parental Style's Table 4 caption, two
             # thirds of it drawn as a link).
             if (labels_a_link(run) and not grow_link_label
-                    and end > label_extent(idx)[1]):
+                    and end > label_end(idx)):
                 raise AnchorError(
                     "replace_in_para: the match starts in a hyperlink's "
                     f"label and ends outside it -- writing {new[:40]!r} "
