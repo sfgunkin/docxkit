@@ -52,6 +52,25 @@ disagreement.
 what counts as a head on an entry beginning with a number — "1000 Days
 Partnership. (2019)." is the shape to test.
 
+**The fix has a consequence, and it is the reason this is filed rather
+than done.** Once the two agree, "parsed as an entry but has no head"
+becomes unreachable by construction: `_HEAD_RE` is the more permissive
+of the two on every other axis (`\d{4}` against a constrained YEAR),
+and `.*?` reaches any year on the line. The other candidate route was
+checked and does not exist — a manual line break does NOT defeat the
+match, because `visible_text` drops `<w:br/>` rather than emitting a
+newline.
+
+So the branch would become dead code, and the choice is between
+deleting it — twice today dead code found this way was deleted, in
+`label_extent` and in `_entry_keys` — and keeping it as a documented
+defensive guard against a future edit to either regex. That decision
+also costs the seven mutants
+`tests/test_cite_rebuild_paths.py::test_an_entry_with_no_recognisable_HEAD_is_reported`
+currently kills, which become permanent residue either way. Worth a
+minute's thought rather than a reflex; the entry is here so the thought
+happens once.
+
 **Workaround in use:** none. `tests/test_cite_rebuild_paths.py` uses
 this entry shape deliberately, to pin that the case is REPORTED; that
 test will need its fixture changed when this is fixed, and it says so.
