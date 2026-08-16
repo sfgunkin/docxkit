@@ -208,6 +208,15 @@ session database does NOT record the test command, and a number measured
 against a different set of test files is not comparable however
 identical the mutants are. Keep the `cr-*.toml` beside the database.
 
+**A survivor re-run needs the module BYTE-IDENTICAL.** Specs are
+addressed by (row, column), so a line added anywhere above them
+re-points every one below it at code nobody chose — and the run
+completes and reports a number either way. Fixing a defect in the
+module therefore ENDS the series that measured it, and the next
+measurement is a fresh draw starting a new one. Say so when you record
+it; two numbers from either side of a source change are not a
+comparison however carefully the seed was kept.
+
 Measured on `edit.py`, 2026-08-16: **13.0 % -> 11.6 %** real survival,
 six of fifty-six, no new survivors. A FRESH 460-draw of the same source
 under the same six test files read **15.5 %** — same population, other

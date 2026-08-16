@@ -234,11 +234,30 @@ Two things recur, and both are worth knowing rather than counting:
   than that. Any comparison of two COMPUTED offsets in this module has
   the same blind spot, and a short fixture cannot see it.
 
-**Still open** on the last paired sample, less what this pass took:
-`label_end` 6, `_outside` 3, `_split_run` 3, and a tail of ones and
-twos across `rep`, `_restyle`, `italicize` and the nested helpers. Not
-re-measured — the next run should be a survivor re-run of
-`.mutation-edit-paired.sqlite`, not a fresh draw.
+**Re-measured, paired again** — the same 460 mutants, harness now seven
+files:
+
+    real survival  13.0 %  ->  11.6 %  ->  8.4 % (36/431)
+
+Fourteen more die, none appears. The chain from 13.0 % is sound
+throughout: one draw, and every step added test files without touching
+`edit.py`.
+
+**Still open:** `label_end` 6, `_outside` 3, `_split_run` 3,
+`replace_in_para` 3 (the documented equivalents), `_locate` 3 (likewise),
+and a tail of ones and twos.
+
+What is left in this module is now mostly ONE shape: `lo <= run.start()
+< hi`, the question "does this span contain this run", asked in
+`labels_a_link`, `label_end`, `_split_run` and `_outside`. Its mutants
+move a boundary by one run, and several are equivalent because a run
+cannot start exactly where a hyperlink ELEMENT opens — the tag is in
+the way. Distinguishing the rest needs a field-form span, whose bounds
+are run boundaries and can coincide. That is the next pass here, and it
+is worth doing as one test file for all four call sites rather than
+four times over: the walk that lives in four places is the walk that
+will disagree with itself, which is the argument `field_spans`'s own
+docstring already makes about its three predecessors.
 
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
@@ -505,6 +524,22 @@ to `WORD_BOOKMARK_LIMIT` is exactly what it is for.
 
 **Still open:** `link_all` 10, `unlink_by_anchor` 8, `_own_bookmark` 5,
 `_entry_names_from_document` 4.
+
+**The paired session for this module is now VOID, and that is worth
+knowing before the next measurement.** `.mutation-cite_build-paired.sqlite`
+holds specs addressed by (row, column) in the source as it stood before
+2026-08-16's fixes — and this module has since lost `_HEAD_RE` and the
+dead lead-token branch and gained `_prose_entries`, so every position
+below the first change points at the wrong code. Re-running it would
+mutate lines nobody chose and report the result as a comparison.
+
+So the next measurement here is a FRESH draw at the recorded seed and
+harness, and it starts a new series: it cannot be compared with the
+25.2 % above, because that figure belongs to a source this one no
+longer is. The rule generalises — a survivor re-run needs the module
+byte-identical, so fixing a defect in it ends the series that measured
+the defect. The edit-side session is unaffected: nothing in `edit.py`
+changed, only tests were added.
 
 ---
 
