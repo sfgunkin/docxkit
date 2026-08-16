@@ -44,6 +44,43 @@ def test_an_insert_INSIDE_a_run_splits_it_at_the_right_character():
     assert text_of(out) == "The share of older female workers"
 
 
+MATH = ('<m:oMath xmlns:m="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/math"><m:r><m:t>{}</m:t></m:r></m:oMath>')
+
+
+def test_an_offset_after_an_EQUATION_counts_the_equation():
+    """The DSI incident, third instance. Offsets index `visible_text`,
+    which counts everything a reader sees — and the maths lives in an
+    `m:r` inside an `m:oMath` SIBLING of the runs, so a cursor advanced
+    across `w:r` alone is short by the equation's glyph count and every
+    offset after it lands early.
+
+    That was diagnosed and fixed twice, in two copies of the walk (DSI
+    §6.2 in `wrap_visible_span`, §6.3 in `_locate`). This function had a
+    third copy and neither fix: on 2026-08-16 it put the content four
+    characters late, inside the following word, and no test in the suite
+    noticed because none inserted near an equation.
+    """
+    p = ("<w:p>" + run("where ") + MATH.format("τxyz")
+         + run(" is time, in years.") + "</w:p>")
+    at = len("where τxyz is time,")
+
+    out = insert_in_para(p, at, " measured")
+
+    assert text_of(out) == "where τxyz is time, measured in years."
+
+
+def test_the_END_of_a_paragraph_counts_the_equation_too():
+    """The bound `at > cursor` is measured by the same walk, so an
+    undercount also refuses a legitimate offset near the end."""
+    p = "<w:p>" + run("where ") + MATH.format("τxyz") + run(" is time")
+    p += "</w:p>"
+
+    out = insert_in_para(p, len("where τxyz is time"), " in years")
+
+    assert text_of(out) == "where τxyz is time in years"
+
+
 def test_the_run_SPANS_are_measured_from_the_running_cursor():
     """Each span ends at `cursor + len(body)`. Mutated to `cursor |
     len(body)` the end lands short, the offset stops looking like it is

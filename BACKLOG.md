@@ -17,6 +17,45 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S1 `insert_in_para` places content by a count that ignores the MATHS — the DSI defect, still live in the third copy of the walk
+
+Found 2026-08-16 by asking whether the package was ready for a refactor,
+and looking for duplication to justify the answer. The run-span walk
+exists three times. Two copies count what sits BETWEEN the runs; the
+third does not.
+
+    where τxyz is time, in years.        (visible text, 29 characters)
+    insert " measured" at offset 19
+
+    got     'where τxyz is time, in  measuredyears.'
+    wanted  'where τxyz is time, measured in years.'
+
+Four characters late — exactly the width of the equation. Offsets index
+`visible_text`, which counts everything a reader sees; the maths lives
+in an `m:r` inside an `m:oMath` SIBLING of the runs, so a cursor
+advanced across `w:r` alone is short by its glyph count and every offset
+after it lands early. S1: the content goes in, nothing raises, and the
+words are simply in the wrong place.
+
+**The same defect was diagnosed and fixed TWICE already** — DSI §6.2 in
+`wrap_visible_span`, where a citation link wrapped the closing full stop
+instead of "(Foster et al. 2013a)", and DSI §6.3 in `_locate`, where it
+wrapped «ему (Friedman» four characters early. Neither fix reached
+`insert_in_para`, because nothing connected the three copies. The whole
+2,700-test suite passed over it: no test inserted near an equation.
+
+**Fixed in the same pass** by extracting `_xml.run_spans` and having all
+three read it. `tests/test_insert_spans.py` states the property, and
+removing the between-runs term from the shared walk now fails that test.
+
+**What this says about the refactoring question.** The duplication was
+not a tidiness complaint — it was a defect that had already been paid
+for twice and was still being carried. The remaining shapes are
+measured: `lo <= X.start() < hi` in 7 places across 3 modules, `¶{i +
+1}` in 14 across 3, `stop <= at or start >= end` in 3. Each is a
+candidate on the same evidence, and each should be checked for a copy
+that missed a fix before being extracted.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after

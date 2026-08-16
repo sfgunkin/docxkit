@@ -21,6 +21,7 @@ from ._xml import (
     live_properties,
     normalize_glyphs,
     own_properties,
+    run_spans,
     set_run_text,
     visible_text,
 )
@@ -182,14 +183,7 @@ def _locate(para_xml: str, old: str, *, normalize: bool = False,
     function had already been fixed to count between-run content; this one had
     not, and two definitions of "visible" in one call path is one too many.
     """
-    runs, spans, cursor, prev_end = [], [], 0, 0
-    for r in RUN_RE.finditer(para_xml):
-        cursor += len(visible_text(para_xml[prev_end:r.start()]))
-        body = visible_text(r.group(0))
-        runs.append(r)
-        spans.append((cursor, cursor + len(body)))
-        cursor += len(body)
-        prev_end = r.end()
+    runs, spans, _cursor = run_spans(para_xml)
 
     visible = visible_text(para_xml)
     base = 0
@@ -654,12 +648,7 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
     A fldChar FIELD is never split, flag or no flag: the halves are not
     two fields, they are one broken one.
     """
-    runs, spans, cursor = [], [], 0
-    for r in RUN_RE.finditer(para_xml):
-        runs.append(r)
-        body = visible_text(r.group(0))
-        spans.append((cursor, cursor + len(body)))
-        cursor += len(body)
+    runs, spans, cursor = run_spans(para_xml)
     if at < 0 or at > cursor:
         raise AnchorError(
             f"insert_in_para: offset {at} is outside the paragraph's "

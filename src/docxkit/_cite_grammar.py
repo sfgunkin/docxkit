@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from ._xml import (
     RUN_RE,
     escape,
+    run_spans,
     set_run_text,
     visible_text,
 )
@@ -604,14 +605,7 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
     # span after the maths landed short by its glyph count: on DSI §6.2 the
     # citation moved 20 characters and the link wrapped the closing full stop
     # instead of "(Foster et al. 2013a)".
-    runs, spans, cursor, prev_end = [], [], 0, 0
-    for r in RUN_RE.finditer(para_xml):
-        cursor += len(visible_text(para_xml[prev_end:r.start()]))
-        body = visible_text(r.group(0))
-        runs.append(r)
-        spans.append((cursor, cursor + len(body)))
-        cursor += len(body)
-        prev_end = r.end()
+    runs, spans, _cursor = run_spans(para_xml)
     covered = [(sp, r) for sp, r in zip(spans, runs, strict=True)
                if sp[1] > at and sp[0] < end]
     if not covered:

@@ -49,6 +49,7 @@ __all__ = [
     "normalize_glyphs",
     "own_properties",
     "run_open_before",
+    "run_spans",
     "set_run_property",
     "set_run_text",
     "text_parts",
@@ -240,6 +241,42 @@ def visible_text(xml: str) -> str:
     ``"R&D spending"`` matches a paragraph stored as ``R&amp;D spending``.
     """
     return html.unescape("".join(T_RE.findall(xml)))
+
+
+def run_spans(para_xml: str) -> tuple[
+        list[re.Match[str]], list[tuple[int, int]], int]:
+    """Each ``w:r`` and the span it occupies in VISIBLE text, plus the end.
+
+    THE run walk. Offsets index :func:`visible_text`, which counts
+    everything a reader sees — including the maths, which lives in an
+    ``m:r`` inside an ``m:oMath`` SIBLING of the runs, not in a ``w:r``.
+    So the cursor has to advance across what sits BETWEEN the runs as
+    well as across the runs themselves, or every span after an equation
+    is short by its glyph count.
+
+    That defect was diagnosed and fixed twice, in two copies of this
+    walk: DSI §6.2, where a citation link wrapped the closing full stop
+    instead of "(Foster et al. 2013a)" twenty characters earlier, and
+    DSI §6.3, where it wrapped «ему (Friedman» four characters early. A
+    THIRD copy, in `edit.insert_in_para`, never got either fix and was
+    still placing content by its own count on 2026-08-16 — the same
+    failure, silent, in the one function that inserts rather than
+    replaces.
+
+    One walk now. `_locate`, `insert_in_para` and `wrap_visible_span`
+    all read it, which is why it lives here rather than in any of them.
+    """
+    runs: list[re.Match[str]] = []
+    spans: list[tuple[int, int]] = []
+    cursor = prev_end = 0
+    for r in RUN_RE.finditer(para_xml):
+        cursor += len(visible_text(para_xml[prev_end:r.start()]))
+        body = visible_text(r.group(0))
+        runs.append(r)
+        spans.append((cursor, cursor + len(body)))
+        cursor += len(body)
+        prev_end = r.end()
+    return runs, spans, cursor
 
 
 def editable_text(para_xml: str) -> str:
