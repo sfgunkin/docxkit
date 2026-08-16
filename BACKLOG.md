@@ -76,6 +76,31 @@ arrange. That is the honest case for this one, and it is worth less than
 the `run_spans` case; recorded so the difference between the two is not
 flattened later into "duplication was removed".
 
+**The other two candidates were taken, and split.**
+
+`stop <= at or start >= end` — three copies, all in `edit.py`, all
+identical. Extracted as `_xml.overlaps` on the same weaker argument, and
+worth it for one reason the copies did not state: a zero-width span
+overlaps only when the position is STRICTLY inside, which is what makes
+"the match abuts a note marker" a different answer from "the match
+crosses it". Crossing one moves the marker to the end of the
+replacement, silently — the LI7 regression the note guard exists for.
+That property now has a test of its own rather than being implied by
+three inequalities.
+
+`¶{i + 1}` — 19 sites in 8 modules, and **NOT extracted**. The check
+found no divergence, and more than that, no arithmetic worth sharing:
+`crossrefs` and `equations` carry an already-1-based number, so their
+missing `+ 1` is correct, and every site computes its own `i`, so a
+shared formatter would move a display convention while leaving every
+mutant exactly where it was. What the examination DID turn up is a
+property nothing stated: an author reading "¶4" from `docxkit citations`
+and "¶4" from `docxkit refstyle` must be sent to the same paragraph.
+That holds only because every module enumerates with `PARA_RE`, which
+skips a self-closing `<w:p/>` — and `tests/test_paragraph_numbering.py`
+now says so, with an empty paragraph in the fixture to prove the skip is
+uniform. A test, not a refactor, was the right output here.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after

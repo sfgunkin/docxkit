@@ -49,6 +49,7 @@ __all__ = [
     "live_properties",
     "matching_close",
     "normalize_glyphs",
+    "overlaps",
     "own_properties",
     "run_open_before",
     "run_spans",
@@ -275,6 +276,21 @@ def span_holding(pos: int, spans: Iterable[tuple[int, int]]
                  ) -> tuple[int, int] | None:
     """The first of `spans` that `pos` starts inside, or None."""
     return next((span for span in spans if in_span(pos, span)), None)
+
+
+def overlaps(span: tuple[int, int], other: tuple[int, int]) -> bool:
+    """Do two half-open spans share a position?
+
+    The question `edit` asks of every run against the span being
+    rewritten, and the ZERO-WIDTH case is the one that matters: a
+    footnote reference is a run of no visible width, so its span is
+    ``(s, s)``, and it overlaps only when ``s`` lies STRICTLY inside the
+    other. That is what makes "the match merely abuts a marker" a
+    different answer from "the match crosses it" — and crossing one is
+    what moves the marker to the end of the replacement, silently,
+    which is the LI7 regression the note guard exists for.
+    """
+    return span[0] < other[1] and other[0] < span[1]
 
 
 def run_spans(para_xml: str) -> tuple[

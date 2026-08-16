@@ -521,3 +521,27 @@ def test_span_holding_answers_WHICH_span_and_None_for_none():
     assert span_holding(4, spans) is None, "the end of the first is outside it"
     assert span_holding(20, spans) is None
     assert span_holding(3, []) is None
+
+
+def test_overlaps_treats_a_ZERO_WIDTH_span_as_strictly_inside():
+    """A footnote reference is a run of no visible width, span ``(s,
+    s)``. It overlaps only when `s` lies strictly inside the other span
+    — which is what makes "the match ABUTS a marker" a different answer
+    from "the match CROSSES it", and crossing one moves the marker to
+    the end of the replacement, silently.
+    """
+    from docxkit._xml import overlaps
+
+    assert not overlaps((5, 5), (5, 9)), "abutting the start is not crossing"
+    assert not overlaps((9, 9), (5, 9)), "abutting the end is not crossing"
+    assert overlaps((7, 7), (5, 9)), "strictly inside IS crossing"
+
+
+def test_overlaps_at_the_edges_of_two_real_spans():
+    from docxkit._xml import overlaps
+
+    assert not overlaps((0, 5), (5, 9)), "touching end-to-start is not overlap"
+    assert not overlaps((9, 12), (5, 9))
+    assert overlaps((4, 6), (5, 9))
+    assert overlaps((8, 12), (5, 9))
+    assert overlaps((0, 20), (5, 9)), "a span containing the other overlaps it"

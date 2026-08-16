@@ -21,6 +21,7 @@ from ._xml import (
     in_span,
     live_properties,
     normalize_glyphs,
+    overlaps,
     own_properties,
     run_spans,
     set_run_text,
@@ -279,7 +280,7 @@ def _restyle(para_xml: str, text: str, style: Callable[[str], str],
 
     edits = []
     for (start, stop), run in zip(spans, runs, strict=True):
-        if stop <= at or start >= end:
+        if not overlaps((start, stop), (at, end)):
             continue
         run_xml = run.group(0)
         body = visible_text(run_xml)
@@ -501,8 +502,8 @@ def replace_in_para(para_xml: str, old: str, new: str,
     # match that merely ABUTS one does not touch it and is not refused.
     # A single touched run cannot move a marker either: the text is
     # rewritten where it stands and nothing is emptied after it.
-    touched = [i for i, (start, stop) in enumerate(spans)
-               if not (stop <= at or start >= end)]
+    touched = [i for i, span in enumerate(spans)
+               if overlaps(span, (at, end))]
     if not allow_notes and len(touched) > 1:
         for i in touched:
             if (note := _note_in(runs[i].group(0))) is not None:
@@ -517,7 +518,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
 
     edits, first = [], True
     for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
-        if stop <= at or start >= end:
+        if not overlaps((start, stop), (at, end)):
             continue
         run_xml = run.group(0)
         body = visible_text(run_xml)
