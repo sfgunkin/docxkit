@@ -17,6 +17,71 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S1 a sentence in the back matter parses as a reference ENTRY, and a real citation then links to it — reported as "linked 1, unmatched 0"
+
+Found 2026-08-16 while writing the `scan` tests, from a fixture that
+would not link: a paragraph placed after the reference block had been
+swallowed by the block.
+
+    body:   "Employment rates come from the register (Eurostat 2023)."
+            "References"
+            "Kanbur, R. (2007). Poverty and distribution. Journal."
+            "Data availability"
+            "The data are drawn from Eurostat (2023)."
+
+    link_all: linked 1, already linked 0, back-links added 1,
+              unmatched 0, skipped 0
+    written:  'Eurostat 2023' -> ThedataaredrawnfromEurostat2023
+              'The data are drawn from Eurostat (2023)' -> ...txt
+
+The citation resolves to the DATA-AVAILABILITY SENTENCE, and the reader
+who clicks it lands there instead of on the entry. Nothing shows it: the
+anchor resolves, so `crossrefs --audit` passes; the words read correctly,
+so no text diff moves; and the report says it linked one and missed
+none, which is the definition of S1.
+
+**Diagnosis.** `references()` reads from the heading to the paragraph
+that ENDS the list, and the stops are `Appendix`/`Appendices`/`Figures`/
+`Tables`, the Russian pair, and a figure or table caption. The back
+matter journals print after the references — "Data availability",
+"Acknowledgements", "Funding", "Notes" — ends nothing, so its paragraphs
+are offered to `parse_reference`, which accepts any of them carrying a
+"(year)". The sentence above becomes an entry filed under the surname
+"The data are drawn from Eurostat", and `_entry_keys` then licenses
+every word RUN of that supposed institutional name, `eurostat_2023`
+among them. That is the key the citation resolves through.
+
+`_ends_the_list`'s own docstring records this failure once already — a
+prose paragraph in an appendix parsing as an entry, "(Jensen 1906)",
+minting a bookmark out of the surrounding equation glyphs. This is the
+same defect through the one door that fix did not close.
+
+**Measured on three back-matter sections**, one sentence each: "Data
+availability" produces the junk entry; "Acknowledgements" ("We thank the
+World Bank (2024) team for comments.") and "Funding" ("Supported by the
+Research Council (2021) under grant 4.") do not — `parse_reference`
+refuses those two shapes. So it is neither every paper nor a rarity: one
+sentence shape in three. No live manuscript has been checked.
+
+**Suggested fix, in two layers**, because the stop list alone is a patch
+on the symptom:
+
+1. add the back-matter headings to `_DEFAULT_STOPS`. Cheap, targeted,
+   and no real entry is a heading;
+2. bound the author field. A six-word surname containing "are", "drawn"
+   and "from" is a sentence, and `parse_reference` accepting it is the
+   root of both this and the appendix incident. The bound has to be
+   lenient — "United Nations, Department of Economic and Social Affairs"
+   is a real entry with two lowercase words — so it is a shape rule
+   rather than a word count. Whatever the rule, an entry that only just
+   clears it is worth REPORTING: `link_all` already has an `unmatched`
+   channel, and "filed an entry under a six-word surname" is a line an
+   author can act on.
+
+**Workaround in use:** none. This came from a fixture, not from a paper,
+and the fixture now carries the table caption that a real exhibit would
+have — which is what ends the block properly.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
@@ -128,6 +193,83 @@ re-deriving it by hand is what made these three not quite comparable.
 `_locate` 6, `_between_runs` 4. `replace_in_para` is now the largest,
 and it is the function every paper calls most.
 
+
+**Third pass, 2026-08-16.** `replace_in_para` pinned:
+`tests/test_replace_spans.py`. Nine survivors show in the sample: four
+are BOUNDARY comparisons — which runs the note guard inspects, which
+runs the edit loop rewrites, whether the match runs on past a
+hyperlink's label — three are equivalent by construction, and the last
+two are the signature's keyword-only marker and the truncation in an
+error message. A boundary cannot be checked from the middle of it. Every
+fixture the function had put its run edges away from the offset in
+question, so the comparisons were free to be one character out. Each new
+test puts a run edge exactly ON it: a note marker beyond a match that
+ends mid-run, a link run starting exactly where the match ends, a match
+ending strictly inside a longer label (the whole-caption link several
+papers write on purpose).
+
+**Seven of seven targeted mutants die**, verified one at a time by
+mutating the source and running the harness, with the killing test named
+for each — a suite that is green after a test is written is not evidence
+that the test kills anything.
+
+Two are worth remembering beyond the count:
+
+* `end > label_end(idx)` mutated to `end is not label_end(idx)` passed
+  every fixture in the file, because CPython interns integers to 256 and
+  every test paragraph was shorter than that. An identity comparison on
+  two computed offsets is a live bug that short fixtures cannot see; the
+  new test uses prose long enough to leave the cache.
+* cosmic-ray mutates the keyword-only marker `*` in the signature to
+  `/`, which is valid Python and makes `replace_in_para(p, old, new,
+  True)` legal — a positional bool that silently disables the hyperlink
+  guard and reads like data in the diff. The flags are now pinned as
+  keyword-only.
+
+Three mutants are left alive DELIBERATELY and recorded in the test file
+so the next reader does not spend the afternoon twice: `strict=True` in
+the `zip` (the invariant is pinned at its source in
+`test_locate_spans.py`), `hits[0]` -> `hits[-1]` (the line above raises
+unless the list has exactly one element), and `stop > end` -> `stop !=
+end` (the slice is empty either way).
+
+**Re-measured, and this time PAIRED properly.** Yesterday's session was
+re-run over its own survivors under today's harness — the same mutant
+objects, not a fresh draw, and the old cosmic-ray config was recovered
+from `cr-edit.toml` so the superset claim is checked rather than
+assumed (five test files then, the same five plus
+`test_replace_spans.py` now):
+
+    real survival  13.0 % (56/431)  ->  11.6 % (50/431)
+
+Six of yesterday's fifty-six real survivors now die and **no new one
+appeared**, which is what a superset harness has to produce. The six are
+exactly the sampled targets — the seventh verified kill, the same
+truncation in the non-normalized message, was not in the draw.
+
+`replace_in_para`'s own body now has no unexplained survivor in this
+sample: the three that remain are the three documented as equivalent
+above. Its nested helpers are a separate matter and still carry eleven
+between them — `label_end` 6, `labels_a_link` 2, `styled` 2, `missing`
+1 — and `label_end` is where the next pass in this function belongs.
+
+**A caveat that cost most of the afternoon.** A fresh 460-draw at the
+same seed does NOT reproduce a draw some other script made — yesterday's
+databases came from the hand-rolled scripts, and the two draws overlap
+by 33 %. Run through that fresh draw, the same source under the same
+six test files reads **15.5 %**, against 11.6 % on the paired one. Same
+code, same tests, different mutants. Quote the paired number; a single
+sample of 460 is worth a couple of points either way, and two of the
+three figures in the progression above were read off draws that cannot
+be compared with each other at all.
+
+**Still open:** 50 real survivors in the paired sample, led by `_locate`
+7, `insert_in_para` 7, `label_end` 6, `_between_runs` 4. (These counts
+moved slightly against the previous note for a second reason: the
+report used to attribute a survivor to the last `def` ABOVE its line,
+which hands a function's own body to whichever nested helper was
+defined last. It now attributes by AST span.)
+
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
@@ -228,6 +370,68 @@ rule read it as 31.1 %.
 `link_all` 10, `_dedup_name` 8. `scan` is the next one worth doing — it
 decides which mention of a work is the FIRST, which is the decision the
 whole first pass is built on.
+
+
+**Third pass, 2026-08-16.** `scan` pinned:
+`tests/test_cite_scan_paths.py`. Eighteen of its twenty-three survivors
+are outside an annotation, and they fall into three groups: four
+`continue`s turned into `break`, ten on the arithmetic of the two
+report lines, four on the ambiguity finding.
+
+The `continue`s are the four places the scan skips something — a
+reference paragraph, a citation with no entry, a work already claimed,
+an anchor already linked. `continue` and `break` differ only in what
+happens to the REST of the list, and every fixture the function had
+carried one interesting citation per paragraph, where they cannot
+differ at all.
+
+Each test now puts a citation the pass must still find AFTER the one it
+skips. Two of the four arrangements are what manuscripts actually look
+like: the source line under a table, which sits below the reference
+block because these papers put their exhibits at the end, and a sentence
+citing a new work beside one already cited upstream.
+
+The two report lines are pinned by value. `¶{i + 1}` mutates to six
+different arithmetic operators and four of them agree with the original
+whenever `i` is even, so the citations in these fixtures sit at
+paragraph index 1, where every variant reads differently.
+
+**Twelve of twelve targeted mutants die**, each verified by hand-mutation
+with the killing test named. One is left alive as equivalent and
+recorded in the file: `by_key[key][0].year` -> `[1].year`. Two entries
+share a key only when `key_for(surname, year)` agrees and the year goes
+into that key verbatim, so every entry under one key has the same year.
+The SURNAME in the same line is a different matter — the key strips
+punctuation and case first, so "O'Brien" and "OBrien" are one key and
+two spellings, and the report names the one the list spells first.
+
+Writing these found the S1 at the top of this file: the fixture for the
+table note would not link, because the note had been parsed as a
+reference entry.
+
+**Re-measured, PAIRED** — yesterday's session re-run over its own
+survivors under today's harness, which `cr-cite.toml` confirms is the
+same four test files plus `test_cite_scan_paths.py`:
+
+    real survival  29.3 % (114/389)  ->  25.2 % (98/389)
+
+Sixteen of the hundred-and-fourteen die, none appears. **`scan` itself
+goes from 18 to 2**, and one of the two is the equivalent above.
+
+The other was a fixture defect worth recording. `¶{i + 1}` mutates to
+eleven operators, and several agree with the original at any given `i`:
+index 0 agrees with `|`, index 1 with `<<`, index 2 with `|` again.
+These fixtures used index 1, so `i << 1` printed the same ¶2 and lived
+through the round. **Index 3 is the smallest that separates all
+eleven**; the reported citations now sit there, and all twenty-two
+arithmetic mutations across the two report lines die by hand-mutation.
+That fix landed after the paired run, so the 25.2 % above still counts
+the `<<` survivor.
+
+**Still open** (paired sample): `rewrite` 19, `rebuild` 15,
+`_entry_keys` 12, `link_all` 10, `_dedup_name` 8, `_mint_name` 8,
+`unlink_by_anchor` 8. `rewrite` was pinned last round and remains the
+largest — the widening rules are where its residue sits.
 
 ---
 
