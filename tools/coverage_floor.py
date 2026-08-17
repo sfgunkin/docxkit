@@ -54,9 +54,12 @@ FLOORS = {
     # that failed SILENTLY in a real paper, and an uncovered refusal is
     # one nobody would notice had stopped working.
     "revision.py": 97,
-    # Guarded stdout reconfigure: the branches are for a machine with no
-    # console attached, which pytest always has.
-    "console.py": 73,
+    # Was 73, described as "the branches are for a machine with no
+    # console attached, which pytest always has". They are not: a real
+    # `io.TextIOWrapper` over a `BytesIO` IS what a console stream is,
+    # and reconfiguring one is the whole function. 100% since
+    # `tests/test_console.py` (2026-08-17).
+    "console.py": 100,
     # The facade. Its main() is the CLI's job and is covered there.
     "compare.py": 98,
     # Report renderers: every branch prints, and pinning the exact
