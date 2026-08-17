@@ -86,329 +86,6 @@ file reads the way it renders.
 should be a survivor re-run, but `renumber.py` has CHANGED, so that
 session is void and it must be a fresh draw.
 
-### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
-
-Measured 2026-08-17, the first time this module has been looked at —
-and it is the bottom of the package: 33 modules import it, and today it
-also gained `run_spans`, `in_span`, `overlaps` and `span_holding`, so a
-defect here reaches everything and the consolidations rest on it.
-
-    538 mutants, 471 killed, 67 survived
-    22 inside a type annotation (PEP 563: unkillable)
-    REAL SURVIVAL 8.7 % (45/516)
-
-Harness: `test_xml_primitives`, `test_find_edit`, `test_compare`,
-`test_citations`, `test_revisions`, `test_footnotes`, `test_body`,
-`test_package` — 97 % of the module by line, against 98 % for the whole
-suite at eight times the wall clock. Quote the harness beside the
-number.
-
-8.7 % is respectable for a module nobody had measured, and it sits
-between `edit.py` (6.3 %) and `_cite_build.py` (11.4 %). The
-DISTRIBUTION is the finding, not the rate:
-
-| survivors | function |
-|---|---|
-| 17 | `field_spans` |
-| 10 | `run_open_before` |
-| 4 | `set_run_text` |
-| 4 | `own_properties` |
-| 3 | `element_spans` |
-
-**The two at the top are one walk** — `field_spans` asks
-`run_open_before` where a field's begin run opens — and it is the walk
-whose own docstring says it "existed three times with three different
-guards, only one of which defended against a field whose end tag is
-missing". It was consolidated for that reason and then never pinned:
-one test reached it, about nesting, in `test_pathological.py`.
-
-**Pinned, 2026-08-17** (`tests/test_field_walk.py`). 10 of 13 targeted
-mutants die; 3 are equivalent because the values reaching them are a
-closed set (`FLDCHAR_RE` captures only begin/end/separate, and
-`str.find` past position 0 never returns 0). What the tests state that
-nothing did: the span opens on the RUN and not the marker; the sentinel
-for "no run" is negative because every caller tests `< 0`, and 0 would
-read as the top of the document; a field that cannot be closed is
-skipped and does not stop the walk finding the next one; and the sort
-tie-break puts the wider span first, reachable only when two begin
-markers share a run.
-
-**Still open:** `set_run_text` 4, `own_properties` 4, `element_spans` 3,
-and a tail of ones and twos. Not re-measured since the tests landed.
-
-### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
-
-Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
-the structural review asked for it.
-
-    1385 mutants, 1061 killed, 324 survived        raw 23.4 %
-    102 of those sit on signature/docstring rows   -- annotations under
-    `from __future__ import annotations` are never evaluated, so no test
-    can kill them
-    REAL survival 222 / 1283                       17.3 %
-
-For comparison `revisions.py` is 7.3 % on the same treatment. The
-harness is `test_find_edit` + `test_edit_branches` +
-`test_normalize_anchors`, which reach **95 % of the module by line** --
-so this is not a coverage gap, it is an ASSERTION gap: the lines run and
-nothing checks what they compute.
-
-| survivors | function |
-|---|---|
-| 58 | `label_extent` |
-| 37 | `replace_in_para` |
-| 31 | `_outside` |
-| 20 | `_restyle` |
-| 17 | `_locate` |
-| 14 | `insert_in_para` |
-
-`NumberReplacer` is the dominant operator (69) -- an off-by-one in an
-offset, invisible.
-
-**Why this is worth an entry rather than a shrug.** `label_extent` walks
-outward from a run to find where a FIELD-FORM hyperlink's label really
-ends, and `_outside` decides whether an insertion point may move outside
-a link or a bookmark. Both exist to serve the two S1 entries about a
-link swallowing prose -- the failures where the words read correctly,
-the anchor resolves, and only `compare`'s review-not-gated HYPERLINK
-layer sees the damage. Mutating `lo_i -= 1` or `hi_i += 1` in that walk
-leaves all 103 tests passing. The tests assert THAT a refusal happens;
-they never assert WHERE the label ends, which is what the guard decides.
-
-**Suggested shape.** Tests that state the extent as a VALUE: a paragraph
-with a field-form link split across three runs, asserting the span
-covers exactly the label; the same for `_outside`'s three answers (span
-start, span end, None). A cheap first pass is to assert the LABEL TEXT
-after every operation in the existing link tests -- which is the
-assertion the S1 entries say no other layer makes.
-
-**Caveat on the numbers:** they are only comparable against the same
-harness, and three cosmic-ray hazards had to be handled to get them at
-all (all recorded in `REVIEW_2026-08-15.md`): killed mutants
-misclassified through a UTF-8 decode of cp1252 output, which also cost
-60x in wall clock and understated the morning's `revisions.py` run; a
-terminated run leaving its mutation in the tree, which produced a
-1383/1385 "kill rate" on a red baseline; and the same termination
-leaving null-outcome rows that make the session unresumable.
-
-
-**Partly paid, 2026-08-16** (`36a569f`). `tests/test_edit_boundaries.py`
-states the boundaries as VALUES: where a field-form label ends, in both
-link forms and anchored from a middle run; `_outside`'s three answers;
-`_restyle`'s split at both edges of a span. Hand-mutating the six exact
-lines the survivors sat on now kills all of them, and `_outside` has
-left the survivor list entirely.
-
-One of those six could not be killed by any test, and that was the
-finding: `label_extent` returned a ``(start, end)`` pair and walked LEFT
-to compute a start **no caller ever read** — the guard asks only "does
-the match run past the label". Dead computation, which is why 58 mutants
-lived in it. It is now `label_end`, returning an int, and the leftward
-walk is gone.
-
-Re-measured on a reproducible random sample of 460 mutants (seed
-20260816): **real survival 17.3 % -> 14.8 %**. Worth reading with its
-error bar — at n=460 that is about one standard error, so the sample
-alone would not settle it; the hand-mutation result and the disappearance
-of `_outside` are the stronger evidence.
-
-**Still open**, because the residue is real: `label_end` 14,
-`replace_in_para` 10, `_locate` 10, `_restyle` 5, `_split_run` 5. The
-`_locate` cluster is the next worth doing — it computes the run spans
-every other function here consumes.
-
-
-**Second pass, 2026-08-16** (`e5c23cb`). `_locate` pinned:
-`tests/test_locate_spans.py` states the spans as literal values — that
-they tile the visible text, that an equation between two runs shifts
-every later span by ITS width (one for ``τ``, two for ``xy``), that a
-note marker takes an empty span in place, that `within` answers with
-offsets into the WHOLE paragraph rather than the scoped slice, and that
-ambiguity is an error. Six of six targeted mutants die, including the
-one that mattered most: the between-run width, which is the DSI §6.3
-incident in one line.
-
-**Re-measured on the SAME 460 mutants** (seed 20260816, identical draw,
-source unchanged, only the tests differ — so this is paired, and since
-tests were only added no mutant can move the other way):
-
-    real survival  17.3 %  ->  14.8 %  ->  13.0 %
-
-The last figure is the repo's OWN classifier
-(`tools/mutation_survivors.py`, which discounts annotation mutants by
-AST span). The two before it were computed by hand with a cruder
-line-based rule, which errs in both directions — it read this run as
-12.0 %. Quote the tool's number from here on; it already existed, and
-re-deriving it by hand is what made these three not quite comparable.
-
-`_locate` itself went from 10 survivors in the sample to 6.
-
-**Still open:** `replace_in_para` 10, `label_end` 8, `insert_in_para` 6,
-`_locate` 6, `_between_runs` 4. `replace_in_para` is now the largest,
-and it is the function every paper calls most.
-
-
-**Third pass, 2026-08-16.** `replace_in_para` pinned:
-`tests/test_replace_spans.py`. Nine survivors show in the sample: four
-are BOUNDARY comparisons — which runs the note guard inspects, which
-runs the edit loop rewrites, whether the match runs on past a
-hyperlink's label — three are equivalent by construction, and the last
-two are the signature's keyword-only marker and the truncation in an
-error message. A boundary cannot be checked from the middle of it. Every
-fixture the function had put its run edges away from the offset in
-question, so the comparisons were free to be one character out. Each new
-test puts a run edge exactly ON it: a note marker beyond a match that
-ends mid-run, a link run starting exactly where the match ends, a match
-ending strictly inside a longer label (the whole-caption link several
-papers write on purpose).
-
-**Seven of seven targeted mutants die**, verified one at a time by
-mutating the source and running the harness, with the killing test named
-for each — a suite that is green after a test is written is not evidence
-that the test kills anything.
-
-Two are worth remembering beyond the count:
-
-* `end > label_end(idx)` mutated to `end is not label_end(idx)` passed
-  every fixture in the file, because CPython interns integers to 256 and
-  every test paragraph was shorter than that. An identity comparison on
-  two computed offsets is a live bug that short fixtures cannot see; the
-  new test uses prose long enough to leave the cache.
-* cosmic-ray mutates the keyword-only marker `*` in the signature to
-  `/`, which is valid Python and makes `replace_in_para(p, old, new,
-  True)` legal — a positional bool that silently disables the hyperlink
-  guard and reads like data in the diff. The flags are now pinned as
-  keyword-only.
-
-Three mutants are left alive DELIBERATELY and recorded in the test file
-so the next reader does not spend the afternoon twice: `strict=True` in
-the `zip` (the invariant is pinned at its source in
-`test_locate_spans.py`), `hits[0]` -> `hits[-1]` (the line above raises
-unless the list has exactly one element), and `stop > end` -> `stop !=
-end` (the slice is empty either way).
-
-**Re-measured, and this time PAIRED properly.** Yesterday's session was
-re-run over its own survivors under today's harness — the same mutant
-objects, not a fresh draw, and the old cosmic-ray config was recovered
-from `cr-edit.toml` so the superset claim is checked rather than
-assumed (five test files then, the same five plus
-`test_replace_spans.py` now):
-
-    real survival  13.0 % (56/431)  ->  11.6 % (50/431)
-
-Six of yesterday's fifty-six real survivors now die and **no new one
-appeared**, which is what a superset harness has to produce. The six are
-exactly the sampled targets — the seventh verified kill, the same
-truncation in the non-normalized message, was not in the draw.
-
-`replace_in_para`'s own body now has no unexplained survivor in this
-sample: the three that remain are the three documented as equivalent
-above. Its nested helpers are a separate matter and still carry eleven
-between them — `label_end` 6, `labels_a_link` 2, `styled` 2, `missing`
-1 — and `label_end` is where the next pass in this function belongs.
-
-**A caveat that cost most of the afternoon.** A fresh 460-draw at the
-same seed does NOT reproduce a draw some other script made — yesterday's
-databases came from the hand-rolled scripts, and the two draws overlap
-by 33 %. Run through that fresh draw, the same source under the same
-six test files reads **15.5 %**, against 11.6 % on the paired one. Same
-code, same tests, different mutants. Quote the paired number; a single
-sample of 460 is worth a couple of points either way, and two of the
-three figures in the progression above were read off draws that cannot
-be compared with each other at all.
-
-**Still open:** 50 real survivors in the paired sample, led by `_locate`
-7, `insert_in_para` 7, `label_end` 6, `_between_runs` 4. (These counts
-moved slightly against the previous note for a second reason: the
-report used to attribute a survivor to the last `def` ABOVE its line,
-which hands a function's own body to whichever nested helper was
-defined last. It now attributes by AST span.)
-
-
-**Fourth pass, 2026-08-16.** `insert_in_para` and `_between_runs`
-pinned by `tests/test_insert_spans.py`, `_locate`'s residue by three
-more tests in `tests/test_locate_spans.py`. **Ten of ten targeted
-mutants die**, verified by hand-mutation with the killing test named;
-four more are confirmed EQUIVALENT and recorded in the test files.
-
-The survivors here were the arithmetic that decides WHERE content
-lands, against tests that checked only whether it was refused. The
-offsets in the new fixtures are chosen so a wrong operator gives a
-wrong answer: `at - start` mutates to `at | start` and `at ^ start`,
-and for most small pairs those land past the end of the run, where the
-slice yields the whole body and an empty tail — the content then
-appears AFTER the run rather than inside it, which a text assertion
-sees and a "did it raise" assertion does not.
-
-Two things recur, and both are worth knowing rather than counting:
-
-* **the keyword-only marker again.** `insert_in_para` carries the same
-  `*` -> `/` mutation as `replace_in_para`, with the same consequence:
-  `insert_in_para(p, at, content, True)` becomes legal and silently
-  disables the hyperlink guard. Every function in this package taking
-  `allow_*` flags has this hole until a test says otherwise;
-* **the integer-identity trap, twice more.** `at == cursor` and `s ==
-  at` in `_between_runs` both survive as `is`, because CPython interns
-  integers to 256 and no fixture in the file had a paragraph longer
-  than that. Any comparison of two COMPUTED offsets in this module has
-  the same blind spot, and a short fixture cannot see it.
-
-**Re-measured, paired again** — the same 460 mutants, harness now seven
-files:
-
-    real survival  13.0 %  ->  11.6 %  ->  8.4 % (36/431)
-
-Fourteen more die, none appears. The chain from 13.0 % is sound
-throughout: one draw, and every step added test files without touching
-`edit.py`.
-
-**Still open:** `label_end` 6, `_outside` 3, `_split_run` 3,
-`replace_in_para` 3 (the documented equivalents), `_locate` 3 (likewise),
-and a tail of ones and twos.
-
-What is left in this module is now mostly ONE shape: `lo <= run.start()
-< hi`, the question "does this span contain this run", asked in
-`labels_a_link`, `label_end`, `_split_run` and `_outside`. Its mutants
-move a boundary by one run, and several are equivalent because a run
-cannot start exactly where a hyperlink ELEMENT opens — the tag is in
-the way. Distinguishing the rest needs a field-form span, whose bounds
-are run boundaries and can coincide. That is the next pass here, and it
-is worth doing as one test file for all four call sites rather than
-four times over: the walk that lives in four places is the walk that
-will disagree with itself, which is the argument `field_spans`'s own
-docstring already makes about its three predecessors.
-
-
-**Seventh pass, 2026-08-16.** All four sites, in one file —
-`tests/test_span_membership.py`. **11 of 17 mutants die and the other
-6 are confirmed EQUIVALENT**, each with the reason recorded. Paired
-again, same 460:
-
-    real survival  11.6 %  ->  8.4 %  ->  6.3 % (27/431)
-
-`_outside` has left the survivor list entirely; `label_end` is 6 -> 3,
-`_split_run` 3 -> 1, `labels_a_link` 2 -> 1, and what remains at those
-three is the equivalences.
-
-The fixtures needed two things the module's earlier tests never had.
-**A styled run OUTSIDE the element**: Word leaves `rStyle Hyperlink` on
-runs beside a link as freely as on the label itself, so "looks like a
-link" and "is inside the link element" are different questions —
-`label_end` asks the element first and falls back to the styled
-neighbours, and the two answers only differ where such a run sits.
-**A `w:proofErr` between runs**: without a gap the run after an element
-begins exactly where the element closes, so `run.start()` and `hi` are
-the same small integer and therefore the same OBJECT — `is not` then
-answers what `<` answers, and the mutant hides. That is the third time
-the small-integer cache has decided a test in this module; it is worth
-treating as a rule rather than a surprise, because every one of these
-comparisons is between two computed offsets.
-
-**Still open:** 27 in the paired sample, of which at least 11 are the
-equivalences recorded in the test files. The remainder is a long tail
-of ones and twos — `rep`, `_restyle`, `italicize`, `_enclosing`,
-`_note_in`, `_hits`, `subscript` — with no cluster left worth naming.
-
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
@@ -762,6 +439,350 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
+
+Measured 2026-08-17, the first time this module has been looked at —
+and it is the bottom of the package: 33 modules import it, and today it
+also gained `run_spans`, `in_span`, `overlaps` and `span_holding`, so a
+defect here reaches everything and the consolidations rest on it.
+
+    538 mutants, 471 killed, 67 survived
+    22 inside a type annotation (PEP 563: unkillable)
+    REAL SURVIVAL 8.7 % (45/516)
+
+Harness: `test_xml_primitives`, `test_find_edit`, `test_compare`,
+`test_citations`, `test_revisions`, `test_footnotes`, `test_body`,
+`test_package` — 97 % of the module by line, against 98 % for the whole
+suite at eight times the wall clock. Quote the harness beside the
+number.
+
+8.7 % is respectable for a module nobody had measured, and it sits
+between `edit.py` (6.3 %) and `_cite_build.py` (11.4 %). The
+DISTRIBUTION is the finding, not the rate:
+
+| survivors | function |
+|---|---|
+| 17 | `field_spans` |
+| 10 | `run_open_before` |
+| 4 | `set_run_text` |
+| 4 | `own_properties` |
+| 3 | `element_spans` |
+
+**The two at the top are one walk** — `field_spans` asks
+`run_open_before` where a field's begin run opens — and it is the walk
+whose own docstring says it "existed three times with three different
+guards, only one of which defended against a field whose end tag is
+missing". It was consolidated for that reason and then never pinned:
+one test reached it, about nesting, in `test_pathological.py`.
+
+**Pinned, 2026-08-17** (`tests/test_field_walk.py`). 10 of 13 targeted
+mutants die; 3 are equivalent because the values reaching them are a
+closed set (`FLDCHAR_RE` captures only begin/end/separate, and
+`str.find` past position 0 never returns 0). What the tests state that
+nothing did: the span opens on the RUN and not the marker; the sentinel
+for "no run" is negative because every caller tests `< 0`, and 0 would
+read as the top of the document; a field that cannot be closed is
+skipped and does not stop the walk finding the next one; and the sort
+tie-break puts the wider span first, reachable only when two begin
+markers share a run.
+
+**Closed 2026-08-17.** Re-measured as a fresh 460-draw (the module has
+changed, so the paired series was void): **5.4 % real survival, 24 of
+441**, against 8.7 % when it was first measured. The largest cluster is
+two, and what is left reads as the equivalences the tests already
+record — `==` mutated to `<=` on comparisons whose values are a closed
+set, `!=` to `is not` where `str.strip` returns the same object, and
+`-span[1]` to `~span[1]`, which sorts identically.
+
+The named leftovers were checked by hand-mutation rather than waiting
+for the draw: `set_run_text`, `own_properties` and `element_spans` each
+have their decisions held by a test (the first run takes the text and
+the rest are blanked, the properties element is the child right after
+the open tag and its span covers the close, a self-closing element has
+no properties and no span).
+
+### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
+
+Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
+the structural review asked for it.
+
+    1385 mutants, 1061 killed, 324 survived        raw 23.4 %
+    102 of those sit on signature/docstring rows   -- annotations under
+    `from __future__ import annotations` are never evaluated, so no test
+    can kill them
+    REAL survival 222 / 1283                       17.3 %
+
+For comparison `revisions.py` is 7.3 % on the same treatment. The
+harness is `test_find_edit` + `test_edit_branches` +
+`test_normalize_anchors`, which reach **95 % of the module by line** --
+so this is not a coverage gap, it is an ASSERTION gap: the lines run and
+nothing checks what they compute.
+
+| survivors | function |
+|---|---|
+| 58 | `label_extent` |
+| 37 | `replace_in_para` |
+| 31 | `_outside` |
+| 20 | `_restyle` |
+| 17 | `_locate` |
+| 14 | `insert_in_para` |
+
+`NumberReplacer` is the dominant operator (69) -- an off-by-one in an
+offset, invisible.
+
+**Why this is worth an entry rather than a shrug.** `label_extent` walks
+outward from a run to find where a FIELD-FORM hyperlink's label really
+ends, and `_outside` decides whether an insertion point may move outside
+a link or a bookmark. Both exist to serve the two S1 entries about a
+link swallowing prose -- the failures where the words read correctly,
+the anchor resolves, and only `compare`'s review-not-gated HYPERLINK
+layer sees the damage. Mutating `lo_i -= 1` or `hi_i += 1` in that walk
+leaves all 103 tests passing. The tests assert THAT a refusal happens;
+they never assert WHERE the label ends, which is what the guard decides.
+
+**Suggested shape.** Tests that state the extent as a VALUE: a paragraph
+with a field-form link split across three runs, asserting the span
+covers exactly the label; the same for `_outside`'s three answers (span
+start, span end, None). A cheap first pass is to assert the LABEL TEXT
+after every operation in the existing link tests -- which is the
+assertion the S1 entries say no other layer makes.
+
+**Caveat on the numbers:** they are only comparable against the same
+harness, and three cosmic-ray hazards had to be handled to get them at
+all (all recorded in `REVIEW_2026-08-15.md`): killed mutants
+misclassified through a UTF-8 decode of cp1252 output, which also cost
+60x in wall clock and understated the morning's `revisions.py` run; a
+terminated run leaving its mutation in the tree, which produced a
+1383/1385 "kill rate" on a red baseline; and the same termination
+leaving null-outcome rows that make the session unresumable.
+
+
+**Partly paid, 2026-08-16** (`36a569f`). `tests/test_edit_boundaries.py`
+states the boundaries as VALUES: where a field-form label ends, in both
+link forms and anchored from a middle run; `_outside`'s three answers;
+`_restyle`'s split at both edges of a span. Hand-mutating the six exact
+lines the survivors sat on now kills all of them, and `_outside` has
+left the survivor list entirely.
+
+One of those six could not be killed by any test, and that was the
+finding: `label_extent` returned a ``(start, end)`` pair and walked LEFT
+to compute a start **no caller ever read** — the guard asks only "does
+the match run past the label". Dead computation, which is why 58 mutants
+lived in it. It is now `label_end`, returning an int, and the leftward
+walk is gone.
+
+Re-measured on a reproducible random sample of 460 mutants (seed
+20260816): **real survival 17.3 % -> 14.8 %**. Worth reading with its
+error bar — at n=460 that is about one standard error, so the sample
+alone would not settle it; the hand-mutation result and the disappearance
+of `_outside` are the stronger evidence.
+
+**Still open**, because the residue is real: `label_end` 14,
+`replace_in_para` 10, `_locate` 10, `_restyle` 5, `_split_run` 5. The
+`_locate` cluster is the next worth doing — it computes the run spans
+every other function here consumes.
+
+
+**Second pass, 2026-08-16** (`e5c23cb`). `_locate` pinned:
+`tests/test_locate_spans.py` states the spans as literal values — that
+they tile the visible text, that an equation between two runs shifts
+every later span by ITS width (one for ``τ``, two for ``xy``), that a
+note marker takes an empty span in place, that `within` answers with
+offsets into the WHOLE paragraph rather than the scoped slice, and that
+ambiguity is an error. Six of six targeted mutants die, including the
+one that mattered most: the between-run width, which is the DSI §6.3
+incident in one line.
+
+**Re-measured on the SAME 460 mutants** (seed 20260816, identical draw,
+source unchanged, only the tests differ — so this is paired, and since
+tests were only added no mutant can move the other way):
+
+    real survival  17.3 %  ->  14.8 %  ->  13.0 %
+
+The last figure is the repo's OWN classifier
+(`tools/mutation_survivors.py`, which discounts annotation mutants by
+AST span). The two before it were computed by hand with a cruder
+line-based rule, which errs in both directions — it read this run as
+12.0 %. Quote the tool's number from here on; it already existed, and
+re-deriving it by hand is what made these three not quite comparable.
+
+`_locate` itself went from 10 survivors in the sample to 6.
+
+**Still open:** `replace_in_para` 10, `label_end` 8, `insert_in_para` 6,
+`_locate` 6, `_between_runs` 4. `replace_in_para` is now the largest,
+and it is the function every paper calls most.
+
+
+**Third pass, 2026-08-16.** `replace_in_para` pinned:
+`tests/test_replace_spans.py`. Nine survivors show in the sample: four
+are BOUNDARY comparisons — which runs the note guard inspects, which
+runs the edit loop rewrites, whether the match runs on past a
+hyperlink's label — three are equivalent by construction, and the last
+two are the signature's keyword-only marker and the truncation in an
+error message. A boundary cannot be checked from the middle of it. Every
+fixture the function had put its run edges away from the offset in
+question, so the comparisons were free to be one character out. Each new
+test puts a run edge exactly ON it: a note marker beyond a match that
+ends mid-run, a link run starting exactly where the match ends, a match
+ending strictly inside a longer label (the whole-caption link several
+papers write on purpose).
+
+**Seven of seven targeted mutants die**, verified one at a time by
+mutating the source and running the harness, with the killing test named
+for each — a suite that is green after a test is written is not evidence
+that the test kills anything.
+
+Two are worth remembering beyond the count:
+
+* `end > label_end(idx)` mutated to `end is not label_end(idx)` passed
+  every fixture in the file, because CPython interns integers to 256 and
+  every test paragraph was shorter than that. An identity comparison on
+  two computed offsets is a live bug that short fixtures cannot see; the
+  new test uses prose long enough to leave the cache.
+* cosmic-ray mutates the keyword-only marker `*` in the signature to
+  `/`, which is valid Python and makes `replace_in_para(p, old, new,
+  True)` legal — a positional bool that silently disables the hyperlink
+  guard and reads like data in the diff. The flags are now pinned as
+  keyword-only.
+
+Three mutants are left alive DELIBERATELY and recorded in the test file
+so the next reader does not spend the afternoon twice: `strict=True` in
+the `zip` (the invariant is pinned at its source in
+`test_locate_spans.py`), `hits[0]` -> `hits[-1]` (the line above raises
+unless the list has exactly one element), and `stop > end` -> `stop !=
+end` (the slice is empty either way).
+
+**Re-measured, and this time PAIRED properly.** Yesterday's session was
+re-run over its own survivors under today's harness — the same mutant
+objects, not a fresh draw, and the old cosmic-ray config was recovered
+from `cr-edit.toml` so the superset claim is checked rather than
+assumed (five test files then, the same five plus
+`test_replace_spans.py` now):
+
+    real survival  13.0 % (56/431)  ->  11.6 % (50/431)
+
+Six of yesterday's fifty-six real survivors now die and **no new one
+appeared**, which is what a superset harness has to produce. The six are
+exactly the sampled targets — the seventh verified kill, the same
+truncation in the non-normalized message, was not in the draw.
+
+`replace_in_para`'s own body now has no unexplained survivor in this
+sample: the three that remain are the three documented as equivalent
+above. Its nested helpers are a separate matter and still carry eleven
+between them — `label_end` 6, `labels_a_link` 2, `styled` 2, `missing`
+1 — and `label_end` is where the next pass in this function belongs.
+
+**A caveat that cost most of the afternoon.** A fresh 460-draw at the
+same seed does NOT reproduce a draw some other script made — yesterday's
+databases came from the hand-rolled scripts, and the two draws overlap
+by 33 %. Run through that fresh draw, the same source under the same
+six test files reads **15.5 %**, against 11.6 % on the paired one. Same
+code, same tests, different mutants. Quote the paired number; a single
+sample of 460 is worth a couple of points either way, and two of the
+three figures in the progression above were read off draws that cannot
+be compared with each other at all.
+
+**Still open:** 50 real survivors in the paired sample, led by `_locate`
+7, `insert_in_para` 7, `label_end` 6, `_between_runs` 4. (These counts
+moved slightly against the previous note for a second reason: the
+report used to attribute a survivor to the last `def` ABOVE its line,
+which hands a function's own body to whichever nested helper was
+defined last. It now attributes by AST span.)
+
+
+**Fourth pass, 2026-08-16.** `insert_in_para` and `_between_runs`
+pinned by `tests/test_insert_spans.py`, `_locate`'s residue by three
+more tests in `tests/test_locate_spans.py`. **Ten of ten targeted
+mutants die**, verified by hand-mutation with the killing test named;
+four more are confirmed EQUIVALENT and recorded in the test files.
+
+The survivors here were the arithmetic that decides WHERE content
+lands, against tests that checked only whether it was refused. The
+offsets in the new fixtures are chosen so a wrong operator gives a
+wrong answer: `at - start` mutates to `at | start` and `at ^ start`,
+and for most small pairs those land past the end of the run, where the
+slice yields the whole body and an empty tail — the content then
+appears AFTER the run rather than inside it, which a text assertion
+sees and a "did it raise" assertion does not.
+
+Two things recur, and both are worth knowing rather than counting:
+
+* **the keyword-only marker again.** `insert_in_para` carries the same
+  `*` -> `/` mutation as `replace_in_para`, with the same consequence:
+  `insert_in_para(p, at, content, True)` becomes legal and silently
+  disables the hyperlink guard. Every function in this package taking
+  `allow_*` flags has this hole until a test says otherwise;
+* **the integer-identity trap, twice more.** `at == cursor` and `s ==
+  at` in `_between_runs` both survive as `is`, because CPython interns
+  integers to 256 and no fixture in the file had a paragraph longer
+  than that. Any comparison of two COMPUTED offsets in this module has
+  the same blind spot, and a short fixture cannot see it.
+
+**Re-measured, paired again** — the same 460 mutants, harness now seven
+files:
+
+    real survival  13.0 %  ->  11.6 %  ->  8.4 % (36/431)
+
+Fourteen more die, none appears. The chain from 13.0 % is sound
+throughout: one draw, and every step added test files without touching
+`edit.py`.
+
+**Still open:** `label_end` 6, `_outside` 3, `_split_run` 3,
+`replace_in_para` 3 (the documented equivalents), `_locate` 3 (likewise),
+and a tail of ones and twos.
+
+What is left in this module is now mostly ONE shape: `lo <= run.start()
+< hi`, the question "does this span contain this run", asked in
+`labels_a_link`, `label_end`, `_split_run` and `_outside`. Its mutants
+move a boundary by one run, and several are equivalent because a run
+cannot start exactly where a hyperlink ELEMENT opens — the tag is in
+the way. Distinguishing the rest needs a field-form span, whose bounds
+are run boundaries and can coincide. That is the next pass here, and it
+is worth doing as one test file for all four call sites rather than
+four times over: the walk that lives in four places is the walk that
+will disagree with itself, which is the argument `field_spans`'s own
+docstring already makes about its three predecessors.
+
+
+**Seventh pass, 2026-08-16.** All four sites, in one file —
+`tests/test_span_membership.py`. **11 of 17 mutants die and the other
+6 are confirmed EQUIVALENT**, each with the reason recorded. Paired
+again, same 460:
+
+    real survival  11.6 %  ->  8.4 %  ->  6.3 % (27/431)
+
+`_outside` has left the survivor list entirely; `label_end` is 6 -> 3,
+`_split_run` 3 -> 1, `labels_a_link` 2 -> 1, and what remains at those
+three is the equivalences.
+
+The fixtures needed two things the module's earlier tests never had.
+**A styled run OUTSIDE the element**: Word leaves `rStyle Hyperlink` on
+runs beside a link as freely as on the label itself, so "looks like a
+link" and "is inside the link element" are different questions —
+`label_end` asks the element first and falls back to the styled
+neighbours, and the two answers only differ where such a run sits.
+**A `w:proofErr` between runs**: without a gap the run after an element
+begins exactly where the element closes, so `run.start()` and `hi` are
+the same small integer and therefore the same OBJECT — `is not` then
+answers what `<` answers, and the mutant hides. That is the third time
+the small-integer cache has decided a test in this module; it is worth
+treating as a rule rather than a surprise, because every one of these
+comparisons is between two computed offsets.
+
+**Closed 2026-08-17.** Re-measured as a fresh 460-draw: **11.5 % real
+survival, 49 of 425**, against 15.5 % for the last fresh draw of the
+older source (the 6.3 % above is a PAIRED figure and not comparable
+with either). No cluster above eight, and the largest are the
+equivalences these test files already record.
+
+Two real gaps came out of the new draw and are fixed: `rep` refused too
+FEW anchors and would have accepted too MANY — the dangerous direction,
+since the replace then succeeds and edits a sentence nobody looked at —
+and `preserve_space`'s three attribute cases were one test wide, so a
+run that already carried the real `xml:space` and a run carrying only
+the junk one were indistinguishable to the suite.
+
 
 ### S1 WORD downgrades U+2212 to an ASCII hyphen inside OMML — on Compare AND on the author's own accept-and-save — and `validate` reports it as an unattributed `glyphs: False`
 
