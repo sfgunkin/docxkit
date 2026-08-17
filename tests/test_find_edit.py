@@ -806,3 +806,78 @@ def test_body_elements_are_in_DOCUMENT_order_not_by_kind():
     xml = document(table(row("a")) + para(run("after the table")))
 
     assert [kind for kind, _s, _e in body_elements(xml)] == ["tbl", "p"]
+
+
+def test_rep_refuses_MORE_anchors_than_it_was_told_to_expect():
+    """`!= n`, not `< n`. Too many hits is the dangerous direction: the
+    replace succeeds, silently edits a sentence nobody looked at, and
+    the build reports the edit it was asked for."""
+    with pytest.raises(AnchorError, match=r"found 3x \(need 2\)"):
+        rep("a b a b a b", "a", "A", 2, tag="R7")
+
+
+def test_the_anchor_count_refusal_QUOTES_the_anchor():
+    """A build passes dozens of anchors; "found 3x" without saying which
+    sends the reader back through all of them."""
+    with pytest.raises(AnchorError, match="the missing sentence"):
+        rep("some text", "the missing sentence", "x", 1, tag="R7")
+
+
+def test_rep_counts_NORMALIZED_hits_the_same_way():
+    """The glyph-folding path has its own count, and its own guard."""
+    xml = "workers’ pay and workers' hours and workers’ rights"
+
+    with pytest.raises(AnchorError, match=r"found 3x \(need 1\)"):
+        rep(xml, "workers' ", "staff ", 1, tag="R8", normalize=True)
+
+    out = rep(xml, "workers' ", "staff ", 3, tag="R8", normalize=True)
+    assert out.count("staff ") == 3
+
+
+def test_a_normalized_rep_writes_the_replacement_VERBATIM():
+    """Matching through Word's substitutions does not mean writing
+    through them: the caller's text lands exactly as typed."""
+    out = rep("the workers’ share", "workers' share", "workers’ take",
+              normalize=True)
+
+    assert out == "the workers’ take"
+
+
+def test_preserve_space_strips_the_WRONG_NAMESPACE_attribute():
+    """`w:space="preserve"` is a no-op Word ignores — it is `xml:space`
+    that protects an edge space. Left in place it reads as protection to
+    a person looking at the XML, which is how one went unfixed."""
+    xml = '<w:p><w:r><w:t w:space="preserve">no edge space</w:t></w:r></w:p>'
+
+    out, fixed = preserve_space(xml)
+
+    assert 'w:space="preserve"' not in out
+    assert "<w:t>no edge space</w:t>" in out
+    assert fixed == 1
+
+
+def test_a_run_that_is_ALREADY_protected_is_left_exactly_as_it_is():
+    """The real attribute is there, so nothing is at risk and nothing is
+    rewritten — junk beside it included. `preserve_space` runs on every
+    build and a pass that rewrites runs it does not have to is a diff
+    the next comparison has to explain."""
+    xml = ('<w:p><w:r><w:t w:space="preserve" xml:space="preserve"> pad '
+           "</w:t></w:r></w:p>")
+
+    out, fixed = preserve_space(xml)
+
+    assert out == xml
+    assert fixed == 0
+
+
+def test_the_junk_attribute_goes_from_a_run_with_NO_edge_space():
+    """Stripped on its own account, not as a side effect of adding the
+    real one: a `w:space="preserve"` that never did anything reads as
+    protection to whoever looks at the XML next."""
+    xml = ('<w:p><w:r><w:t w:space="preserve" w:val="x">no edge space'
+           "</w:t></w:r></w:p>")
+
+    out, fixed = preserve_space(xml)
+
+    assert '<w:t w:val="x">no edge space</w:t>' in out
+    assert fixed == 1
