@@ -881,3 +881,58 @@ def test_the_junk_attribute_goes_from_a_run_with_NO_edge_space():
 
     assert '<w:t w:val="x">no edge space</w:t>' in out
     assert fixed == 1
+
+
+def test_italicize_a_WHOLE_run_leaves_it_one_run():
+    """`lo == 0 and hi == len(body)`: the span covers the run exactly,
+    so it is styled where it stands. Splitting it into empty pieces
+    either side would rewrite the run for nothing — three runs where the
+    manuscript had one, in a comparison the author then has to read."""
+    from docxkit.edit import italicize
+
+    p = para(run("See the "), run("British Medical Journal"), run(" here."))
+
+    out = italicize(p, "British Medical Journal")
+
+    assert out.count("<w:r>") == 3                  # unchanged
+    assert out.count("<w:i/>") == 1
+    assert text_of(out) == "See the British Medical Journal here."
+
+
+def test_italicize_a_WHOLE_run_does_not_REWRITE_its_text():
+    """The fast path styles the run where it stands rather than
+    rebuilding its `w:t`. Rebuilding is not wrong — it would add
+    `xml:space="preserve"` to this one — but it is a change to a run
+    nobody edited, and every one of those is a line the next comparison
+    has to explain."""
+    from docxkit.edit import italicize
+
+    p = para(run("See "), run("Journal of Things "), run("here."))
+
+    out = italicize(p, "Journal of Things ")
+
+    assert "xml:space" not in out
+    assert "<w:t>Journal of Things </w:t>" in out
+
+
+def test_italicize_a_run_PREFIX_splits_it_in_two():
+    from docxkit.edit import italicize
+
+    p = para(run("Journal of Things, 12(3)."))
+
+    out = italicize(p, "Journal of Things")
+
+    assert out.count("<w:r>") == 2
+    assert out.count("<w:i/>") == 1
+
+
+def test_italicize_a_run_SUFFIX_splits_it_in_two():
+    from docxkit.edit import italicize
+
+    p = para(run("in the Journal of Things"))
+
+    out = italicize(p, "Journal of Things")
+
+    assert out.count("<w:r>") == 2
+    assert out.count("<w:i/>") == 1
+    assert text_of(out) == "in the Journal of Things"
