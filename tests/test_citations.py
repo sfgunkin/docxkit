@@ -2033,3 +2033,99 @@ def test_a_link_with_no_target_yet_reports_nothing_about_itself():
 # would differ only where the innermost open frame at the moment an
 # instruction is read is an ELEMENT, and a field's instruction always
 # follows its own `begin`.
+
+
+# ------------------------------------------- the audit's findings, as text --
+#
+# 106 of `_cite_audit`'s 188 survivors are in `_audit_findings`, and
+# most of those are the MESSAGES: `¶{i + 1}`, `where(idx)`, `name[:-3]`,
+# the cuts at 30 and 40. Every existing test asserts the CODE and that
+# the name appears somewhere in the line, so the sentence a reader has
+# to act on — which paragraph, which bookmark, what to do — was free.
+#
+# `docxkit citations PAPER.docx` prints exactly these lines, and a
+# paragraph number one out sends the reader to the wrong place in a
+# hundred-page manuscript.
+
+def _messages(*paras: str) -> list[str]:
+    issues, _report = audit_links(make_doc(*paras))
+    return issues
+
+
+def test_an_ORPHAN_REF_names_the_bookmark_and_its_paragraph():
+    """Five filler paragraphs come first, so the entry is ¶7 — one-based,
+    as Word's own navigation counts."""
+    msgs = _messages(P(R("Prose without the citation.")),
+                     P(R("References")),
+                     P(bookmark("Ghost2019", 30)
+                       + R("Ghost, A. (2019). Unseen.")))
+
+    assert ("ORPHAN REF: bookmark 'Ghost2019' (¶8) has no in-text "
+            "hyperlink pointing to it") in msgs
+
+
+def test_a_MISSING_REF_names_the_entry_bookmark_it_looked_for():
+    """`name[:-3]` — the in-text mark is `<key>txt` and the entry it
+    wants is `<key>`. Printing the mark twice tells the reader nothing
+    about what is missing."""
+    msgs = _messages(P(bookmark("Lost2020txt", 40)
+                       + hfield("Lost2020", "Lost 2020")))
+
+    assert ("MISSING REF: in-text citation 'Lost2020txt' (¶6) links to "
+            "'Lost2020' but no reference bookmark exists") in msgs
+
+
+def test_a_NO_BACK_LINK_names_the_in_text_bookmark():
+    msgs = _messages(P(bookmark("Lost2020txt", 40)
+                       + hfield("Lost2020", "Lost 2020")))
+
+    assert ("NO BACK-LINK: in-text bookmark 'Lost2020txt' (¶6) has no "
+            "reference back-link") in msgs
+
+
+def test_a_BROKEN_LINK_quotes_the_LABEL_the_reader_will_see():
+    """The label is how a person finds it on the page — the anchor is
+    invisible in Word."""
+    msgs = _messages(P(hfield("Nowhere2020", "Nowhere (2020)")))
+
+    assert ("BROKEN LINK: hyperlink to 'Nowhere2020' (¶6, "
+            '"Nowhere (2020)") — no such bookmark') in msgs
+
+
+def test_a_BROKEN_LINK_label_is_cut_at_forty_characters():
+    """A link that swallowed a sentence is exactly the case that
+    produces a long label, and printing it whole buries the finding."""
+    label = "Nowhere (2020) and a great deal of the sentence after it"
+    msgs = _messages(P(hfield("Nowhere2020", label)))
+
+    broken = next(m for m in msgs if m.startswith("BROKEN LINK"))
+    assert f'"{label[:40]}"' in broken
+    assert label[:41] not in broken
+
+
+def test_a_DOUBLED_LINK_names_both_targets_and_the_paragraph():
+    msgs = _messages(P(R("Prose. ")
+                       + '<w:hyperlink w:anchor="Outer2020txt">'
+                       + '<w:hyperlink w:anchor="Inner2019txt">'
+                       + R("both") + "</w:hyperlink></w:hyperlink>"))
+
+    assert ("DOUBLED LINK: 'Inner2019txt' is nested inside a link to "
+            "'Outer2020txt' (¶6) — the click goes to the outer one") in msgs
+
+
+def test_a_body_level_bookmark_is_located_as_BODY_not_a_paragraph():
+    """Word hoists a collapsed bookmark out of the paragraph it marks,
+    and the first audit round printed those as `fn` — which sent the
+    API repair hunting in footnotes.xml for bookmarks that were never
+    there."""
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("References"))
+            + '<w:bookmarkStart w:id="30" w:name="Ghost2019"/>'
+              '<w:bookmarkEnd w:id="30"/>'
+            + P(R("Ghost, A. (2019). Unseen.")))
+
+    issues, _report = audit_links(xml_parts(body))
+
+    assert ("ORPHAN REF: bookmark 'Ghost2019' (body) has no in-text "
+            "hyperlink pointing to it") in issues
