@@ -287,7 +287,7 @@ def test_shifting_down_to_ONE_is_allowed():
     guard written `<= 1` refuses exactly it."""
     xml = _captions("Table 2. Second.", "Table 3. Third.")
 
-    out, report = shift(xml, "Table", frm=2, by=-1)
+    out, _report = shift(xml, "Table", frm=2, by=-1)
 
     assert "Table 1. Second." in text_of_doc(out)
     assert "Table 2. Third." in text_of_doc(out)
