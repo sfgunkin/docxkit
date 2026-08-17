@@ -752,6 +752,47 @@ def test_audit_distinguishes_body_level_from_footnote_bookmarks():
     assert "(body)" in orphan and "(fn)" not in orphan
 
 
+def test_a_bookmark_defined_in_a_FOOTNOTE_is_located_as_fn():
+    """The mirror of the body-level case: -1 means "between paragraphs
+    of the body" and -2 means "in footnotes.xml", and the repair goes to
+    a different file for each."""
+    from conftest import NS, make_parts
+
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5)) + P(R("Prose.")))
+    foot = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:footnotes {NS}><w:footnote w:id="2"><w:p>'
+            + bookmark("Ghost2019", 30) + R("Ghost, A. (2019). Unseen.")
+            + "</w:p></w:footnote></w:footnotes>")
+
+    issues, _report = audit_links(make_parts(body, footnotes=foot))
+
+    orphan = next(i for i in issues if i.startswith("ORPHAN REF"))
+    assert "(fn)" in orphan and "(body)" not in orphan
+
+
+def test_a_marker_is_owned_only_when_ONE_entry_fits_it():
+    """`_marker_owner` is shared by MISPLACED MARKER and the UNLINKED
+    scan, and it stays quiet unless exactly one entry matches by surname
+    prefix AND year — two entries fitting is a guess, and a wrong owner
+    reports a marker as stranded when it is where it belongs."""
+    from docxkit._cite_audit import _marker_owner
+    from docxkit.citations import parse_reference
+
+    buys = parse_reference("Buys, L. (2012). Active ageing. J, 1(1): 3-4.")
+    buys_other = parse_reference("Buys, R. (2012). Another paper. J, 2: 1.")
+    burnes = parse_reference("Burnes, D. (2019). Interventions. J, 1: 1-2.")
+
+    assert _marker_owner("Buys2012", [buys, burnes]) is buys
+    assert _marker_owner("Buys2012", [buys, buys_other]) is None
+    assert _marker_owner("Buys2019", [buys, burnes]) is None   # wrong year
+    # the same surname in a LATER year is a different work, and an
+    # ordering comparison would hand the marker to it
+    later = parse_reference("Buys, L. (2019). A later paper. J, 3: 5-6.")
+    assert _marker_owner("Buys2012", [later, burnes]) is None
+    assert _marker_owner("notakey", [buys, burnes]) is None
+
+
 def test_a_dotted_acronym_lead_keeps_its_full_name():
     """'U.S. Census Bureau. (2023)' filed under "U" — the first-period
     split read the acronym's dot as a sentence end (LI7 fn6/¶184), which
