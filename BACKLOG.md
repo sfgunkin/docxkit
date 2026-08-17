@@ -17,158 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 `insert_in_para` places content by a count that ignores the MATHS — the DSI defect, still live in the third copy of the walk
-
-Found 2026-08-16 by asking whether the package was ready for a refactor,
-and looking for duplication to justify the answer. The run-span walk
-exists three times. Two copies count what sits BETWEEN the runs; the
-third does not.
-
-    where τxyz is time, in years.        (visible text, 29 characters)
-    insert " measured" at offset 19
-
-    got     'where τxyz is time, in  measuredyears.'
-    wanted  'where τxyz is time, measured in years.'
-
-Four characters late — exactly the width of the equation. Offsets index
-`visible_text`, which counts everything a reader sees; the maths lives
-in an `m:r` inside an `m:oMath` SIBLING of the runs, so a cursor
-advanced across `w:r` alone is short by its glyph count and every offset
-after it lands early. S1: the content goes in, nothing raises, and the
-words are simply in the wrong place.
-
-**The same defect was diagnosed and fixed TWICE already** — DSI §6.2 in
-`wrap_visible_span`, where a citation link wrapped the closing full stop
-instead of "(Foster et al. 2013a)", and DSI §6.3 in `_locate`, where it
-wrapped «ему (Friedman» four characters early. Neither fix reached
-`insert_in_para`, because nothing connected the three copies. The whole
-2,700-test suite passed over it: no test inserted near an equation.
-
-**Fixed in the same pass** by extracting `_xml.run_spans` and having all
-three read it. `tests/test_insert_spans.py` states the property, and
-removing the between-runs term from the shared walk now fails that test.
-
-**What this says about the refactoring question.** The duplication was
-not a tidiness complaint — it was a defect that had already been paid
-for twice and was still being carried. The remaining shapes are
-measured: `lo <= X.start() < hi` in 7 places across 3 modules, `¶{i +
-1}` in 14 across 3, `stop <= at or start >= end` in 3. Each is a
-candidate on the same evidence, and each should be checked for a copy
-that missed a fix before being extracted.
-
-**The span shape was done next, and the check came back NEGATIVE** —
-eight sites (not seven; two more surfaced on a wider search), and every
-one spelled the comparison the same way. No copy was missing a fix. It
-was extracted anyway as `_xml.in_span` / `span_holding`, on a weaker and
-different argument, measured after the fact:
-
-| suite | kills `lo <=` -> `lo <` | kills `< hi` -> `<= hi` |
-|---|---|---|
-| edit | yes | yes |
-| footnotes | no | yes |
-| citations | no | no |
-
-The extraction does not give `footnotes` and `citations` boundary tests
-of their own — it makes it impossible for them to HAVE a boundary of
-their own to get wrong. The least-tested callers are now guarded by the
-best-tested one, which is not something a comment in each copy could
-arrange. That is the honest case for this one, and it is worth less than
-the `run_spans` case; recorded so the difference between the two is not
-flattened later into "duplication was removed".
-
-**The other two candidates were taken, and split.**
-
-`stop <= at or start >= end` — three copies, all in `edit.py`, all
-identical. Extracted as `_xml.overlaps` on the same weaker argument, and
-worth it for one reason the copies did not state: a zero-width span
-overlaps only when the position is STRICTLY inside, which is what makes
-"the match abuts a note marker" a different answer from "the match
-crosses it". Crossing one moves the marker to the end of the
-replacement, silently — the LI7 regression the note guard exists for.
-That property now has a test of its own rather than being implied by
-three inequalities.
-
-`¶{i + 1}` — 19 sites in 8 modules, and **NOT extracted**. The check
-found no divergence, and more than that, no arithmetic worth sharing:
-`crossrefs` and `equations` carry an already-1-based number, so their
-missing `+ 1` is correct, and every site computes its own `i`, so a
-shared formatter would move a display convention while leaving every
-mutant exactly where it was. What the examination DID turn up is a
-property nothing stated: an author reading "¶4" from `docxkit citations`
-and "¶4" from `docxkit refstyle` must be sent to the same paragraph.
-That holds only because every module enumerates with `PARA_RE`, which
-skips a self-closing `<w:p/>` — and `tests/test_paragraph_numbering.py`
-now says so, with an empty paragraph in the fixture to prove the skip is
-uniform. A test, not a refactor, was the right output here.
-
-**The eyeballed list ran out, so the next one was found by tool**
-(2026-08-17): `pylint --enable=duplicate-code --min-similarity-lines=4`
-over `src/`, which reported exactly one block — the entry-bookmark walk,
-in `_cite_build._entry_names_from_document` and in
-`citations.repair_plan`. `citations.py` ALREADY imports the former and
-re-implements it anyway.
-
-**And the obvious extraction would have introduced a defect.** The two
-accumulate differently: a dict keyed by `r.key`, and a set of names. Two
-entries under one key have two distinct names — `Kanbur2007` and
-`Kanbur2007_2` — so the dict keeps only the second. Measured:
-
-    dict (key -> name) : {'kanbur_2007': 'Kanbur2007_2'}
-    set  (repair_plan) : ['Kanbur2007', 'Kanbur2007_2']
-    lost by the dict   : ['Kanbur2007']
-
-`repair_plan` reading that dict would find `Kanbur2007` unaccounted for
-and propose it for DELETION as debris — the 2026-08-09 failure the
-comment directly above that walk describes, a live reference proposed
-for deletion. So the duplication was load-bearing in one direction and
-not the other.
-
-What is shared is the WALK, extracted as `_own_bookmarks` returning
-PAIRS; each caller builds its own container. The near-miss is pinned by
-`test_repair_plan_calls_BOTH_names_of_a_collided_entry_live`, which
-fails against the naive version. And the gap arithmetic is now guarded
-by BOTH suites rather than one — better than the `in_span` case, where
-only the strongest suite saw it.
-
-`duplicate-code` at that threshold now reports nothing across the
-package.
-
-**Then the same detector over `tests/`** (2026-08-17), and the criterion
-there is not the same. Duplicated FIXTURES are usually right: a test
-that builds its own document reads standalone, and sharing a constant
-couples two tests so that changing one breaks the other. What is worth
-removing is a duplicated HELPER, especially one that already exists.
-
-    min-similarity-lines   before   after
-    8                      1        0
-    5                      2        0
-    4                      4        2   (both fixture DATA, left)
-
-Three findings, in descending order of what they cost:
-
-1. **`tables` had no layering check at all.** `test_citations.py` and
-   `test_compare.py` each carried a copy of the intra-family import-order
-   walk — which `test_layering.py` does NOT cover, because it steps over
-   any dependency starting with an underscore. Two of the three facade
-   families were checked and the third was not, and a per-family copy is
-   exactly how that happens: nobody wrote one for `tables`. Now one
-   parametrized test over `FACADE_HALVES`, verified to bite for all
-   three by reversing each declared order in turn.
-
-   The copies had NOT drifted from each other — but `FACADE_HALVES`
-   spelled `citations` in a different order from the one
-   `test_citations.py` enforced, and nothing noticed because that dict
-   was only ever read as a set. It is an order now, and says so.
-
-2. **Two files defined `make_parts` shadowing conftest's, with a
-   different contract**: `footnotes=` took the inner note elements in
-   one and a whole part in the other. One name, two meanings, in a suite
-   where every other file uses conftest's. Both now use the shared one.
-
-3. Three cite test files hand-rolled a footnotes-part builder that
-   `conftest.notes`/`note` already provided — all three written the same
-   day, which is how that happens.
-
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
@@ -795,6 +643,159 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S1 `insert_in_para` places content by a count that ignores the MATHS — the DSI defect, still live in the third copy of the walk — `b34cb12`
+
+Found 2026-08-16 by asking whether the package was ready for a refactor,
+and looking for duplication to justify the answer. The run-span walk
+exists three times. Two copies count what sits BETWEEN the runs; the
+third does not.
+
+    where τxyz is time, in years.        (visible text, 29 characters)
+    insert " measured" at offset 19
+
+    got     'where τxyz is time, in  measuredyears.'
+    wanted  'where τxyz is time, measured in years.'
+
+Four characters late — exactly the width of the equation. Offsets index
+`visible_text`, which counts everything a reader sees; the maths lives
+in an `m:r` inside an `m:oMath` SIBLING of the runs, so a cursor
+advanced across `w:r` alone is short by its glyph count and every offset
+after it lands early. S1: the content goes in, nothing raises, and the
+words are simply in the wrong place.
+
+**The same defect was diagnosed and fixed TWICE already** — DSI §6.2 in
+`wrap_visible_span`, where a citation link wrapped the closing full stop
+instead of "(Foster et al. 2013a)", and DSI §6.3 in `_locate`, where it
+wrapped «ему (Friedman» four characters early. Neither fix reached
+`insert_in_para`, because nothing connected the three copies. The whole
+2,700-test suite passed over it: no test inserted near an equation.
+
+**Fixed in the same pass** by extracting `_xml.run_spans` and having all
+three read it. `tests/test_insert_spans.py` states the property, and
+removing the between-runs term from the shared walk now fails that test.
+
+**What this says about the refactoring question.** The duplication was
+not a tidiness complaint — it was a defect that had already been paid
+for twice and was still being carried. The remaining shapes are
+measured: `lo <= X.start() < hi` in 7 places across 3 modules, `¶{i +
+1}` in 14 across 3, `stop <= at or start >= end` in 3. Each is a
+candidate on the same evidence, and each should be checked for a copy
+that missed a fix before being extracted.
+
+**The span shape was done next, and the check came back NEGATIVE** —
+eight sites (not seven; two more surfaced on a wider search), and every
+one spelled the comparison the same way. No copy was missing a fix. It
+was extracted anyway as `_xml.in_span` / `span_holding`, on a weaker and
+different argument, measured after the fact:
+
+| suite | kills `lo <=` -> `lo <` | kills `< hi` -> `<= hi` |
+|---|---|---|
+| edit | yes | yes |
+| footnotes | no | yes |
+| citations | no | no |
+
+The extraction does not give `footnotes` and `citations` boundary tests
+of their own — it makes it impossible for them to HAVE a boundary of
+their own to get wrong. The least-tested callers are now guarded by the
+best-tested one, which is not something a comment in each copy could
+arrange. That is the honest case for this one, and it is worth less than
+the `run_spans` case; recorded so the difference between the two is not
+flattened later into "duplication was removed".
+
+**The other two candidates were taken, and split.**
+
+`stop <= at or start >= end` — three copies, all in `edit.py`, all
+identical. Extracted as `_xml.overlaps` on the same weaker argument, and
+worth it for one reason the copies did not state: a zero-width span
+overlaps only when the position is STRICTLY inside, which is what makes
+"the match abuts a note marker" a different answer from "the match
+crosses it". Crossing one moves the marker to the end of the
+replacement, silently — the LI7 regression the note guard exists for.
+That property now has a test of its own rather than being implied by
+three inequalities.
+
+`¶{i + 1}` — 19 sites in 8 modules, and **NOT extracted**. The check
+found no divergence, and more than that, no arithmetic worth sharing:
+`crossrefs` and `equations` carry an already-1-based number, so their
+missing `+ 1` is correct, and every site computes its own `i`, so a
+shared formatter would move a display convention while leaving every
+mutant exactly where it was. What the examination DID turn up is a
+property nothing stated: an author reading "¶4" from `docxkit citations`
+and "¶4" from `docxkit refstyle` must be sent to the same paragraph.
+That holds only because every module enumerates with `PARA_RE`, which
+skips a self-closing `<w:p/>` — and `tests/test_paragraph_numbering.py`
+now says so, with an empty paragraph in the fixture to prove the skip is
+uniform. A test, not a refactor, was the right output here.
+
+**The eyeballed list ran out, so the next one was found by tool**
+(2026-08-17): `pylint --enable=duplicate-code --min-similarity-lines=4`
+over `src/`, which reported exactly one block — the entry-bookmark walk,
+in `_cite_build._entry_names_from_document` and in
+`citations.repair_plan`. `citations.py` ALREADY imports the former and
+re-implements it anyway.
+
+**And the obvious extraction would have introduced a defect.** The two
+accumulate differently: a dict keyed by `r.key`, and a set of names. Two
+entries under one key have two distinct names — `Kanbur2007` and
+`Kanbur2007_2` — so the dict keeps only the second. Measured:
+
+    dict (key -> name) : {'kanbur_2007': 'Kanbur2007_2'}
+    set  (repair_plan) : ['Kanbur2007', 'Kanbur2007_2']
+    lost by the dict   : ['Kanbur2007']
+
+`repair_plan` reading that dict would find `Kanbur2007` unaccounted for
+and propose it for DELETION as debris — the 2026-08-09 failure the
+comment directly above that walk describes, a live reference proposed
+for deletion. So the duplication was load-bearing in one direction and
+not the other.
+
+What is shared is the WALK, extracted as `_own_bookmarks` returning
+PAIRS; each caller builds its own container. The near-miss is pinned by
+`test_repair_plan_calls_BOTH_names_of_a_collided_entry_live`, which
+fails against the naive version. And the gap arithmetic is now guarded
+by BOTH suites rather than one — better than the `in_span` case, where
+only the strongest suite saw it.
+
+`duplicate-code` at that threshold now reports nothing across the
+package.
+
+**Then the same detector over `tests/`** (2026-08-17), and the criterion
+there is not the same. Duplicated FIXTURES are usually right: a test
+that builds its own document reads standalone, and sharing a constant
+couples two tests so that changing one breaks the other. What is worth
+removing is a duplicated HELPER, especially one that already exists.
+
+    min-similarity-lines   before   after
+    8                      1        0
+    5                      2        0
+    4                      4        2   (both fixture DATA, left)
+
+Three findings, in descending order of what they cost:
+
+1. **`tables` had no layering check at all.** `test_citations.py` and
+   `test_compare.py` each carried a copy of the intra-family import-order
+   walk — which `test_layering.py` does NOT cover, because it steps over
+   any dependency starting with an underscore. Two of the three facade
+   families were checked and the third was not, and a per-family copy is
+   exactly how that happens: nobody wrote one for `tables`. Now one
+   parametrized test over `FACADE_HALVES`, verified to bite for all
+   three by reversing each declared order in turn.
+
+   The copies had NOT drifted from each other — but `FACADE_HALVES`
+   spelled `citations` in a different order from the one
+   `test_citations.py` enforced, and nothing noticed because that dict
+   was only ever read as a set. It is an order now, and says so.
+
+2. **Two files defined `make_parts` shadowing conftest's, with a
+   different contract**: `footnotes=` took the inner note elements in
+   one and a whole part in the other. One name, two meanings, in a suite
+   where every other file uses conftest's. Both now use the shared one.
+
+3. Three cite test files hand-rolled a footnotes-part builder that
+   `conftest.notes`/`note` already provided — all three written the same
+   day, which is how that happens.
+
 
 ### S4 `_HEAD_RE` and `_REF_YEAR_RE` disagree about a space, and the entry silently loses its back-link — `0f12e2a`
 
