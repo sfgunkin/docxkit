@@ -29,6 +29,7 @@ from .errors import DocumentLocked, PackageError
 __all__ = [
     "DOCUMENT",
     "FOOTNOTES",
+    "PackageError",
     "latest_version",
     "load_xml",
     "load_zip",

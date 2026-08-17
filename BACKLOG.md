@@ -65,33 +65,6 @@ their own, and `doctor` is not yet wired into any gate. Worth settling
 before it is: a `[verify]` line that prints 134 lines of noise gets
 switched off rather than fixed.
 
-### S4 `footnotes()` refuses a document with a spare note, and blames the renumbering for it
-
-Found 2026-08-17 by a test written on the assumption that it would not.
-
-A note nobody references is only untidy — `footnote_audit` reports it
-and carries on. But `footnotes()` renumbers the referenced notes to
-1..n and then checks that the STORED ids equal the referenced ones,
-which a spare note breaks:
-
-    footnotes: renumbering did not settle — references [1, 2],
-    notes [1, 2, 9]
-
-Refusing is defensible: the spare note may already hold an id the
-renumber wants, and two notes on one id is worse than a refusal. The
-MESSAGE is not. It reads as a fault in the tool, names no remedy, and
-does not mention note 9 — while the audit, one function away, says
-"note 9 has no reference in the body" in as many words.
-
-**Suggested fix.** When the settle check fails and the difference is
-exactly `set(stored_after) - set(after)`, say so: name the spare notes
-and point at `footnote_audit`. Keep the refusal.
-
-**Workaround in use:** none. Pinned by
-`test_an_UNREFERENCED_note_makes_the_whole_renumber_REFUSE`, which
-holds the BEHAVIOUR so that a fix to the message cannot quietly become
-a change to the answer.
-
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
@@ -160,44 +133,6 @@ file reads the way it renders.
 **Still open:** nothing named. Not re-measured since; the next run
 should be a survivor re-run, but `renumber.py` has CHANGED, so that
 session is void and it must be a fresh draw.
-
-### S4 `revision` raises six exception types and exports none of them, so `except` must import from a module the caller never called
-
-`docxkit.revision` raises `ProtocolError` in eight places — `find_config`
-documents it as the failure mode when a tree has not migrated — but it is
-absent from `revision.__all__`, so with `py.typed` in force
-`from docxkit.revision import ProtocolError` draws
-`reportPrivateImportUsage`. The accepted spelling is
-`from docxkit.errors import ProtocolError`: a caller must import the
-exception from a different module than the function whose contract raises
-it, and must know `docxkit.errors` exists to guess it.
-
-**Hit on AFI 2026-08-17** wrapping `load_paper` so a tree without
-`revision/paper.toml` falls back instead of exploding.
-
-**Same class as the `visible_text` entry below, which is Fixed** —
-including `tests/test_api_surface.py`, which walks every module and
-asserts each facade re-exports everything public behind it. It does not
-catch this one: `ProtocolError` is *defined* in `docxkit.errors` and only
-*raised* by `revision`, so no clause covers it. **The blind spot is
-exception types** — the one part of a module's contract that lives in
-another module by design.
-
-**It is the whole module, not one name.** `revision` raises six types —
-`ProtocolError` (8), `BaselinePending` (2), `DocumentLocked` (2),
-`HandbackLoss` (2), `MathResolved` (1), `StaleBatch` (1) — and
-`revision.__all__` carries none of them, although the documented refusal
-codes (`BaselinePending` 3, `MathResolved` 2, `StaleBatch` 4) are exactly
-what a caller is expected to branch on.
-
-**Fix sketch.** Re-export from each module the exceptions it raises, and
-extend `test_api_surface` with the clause that would
-have caught it: every exception name appearing in a `raise` in module M is
-importable from M. That closes the class rather than the instance, as the
-`visible_text` fix did.
-
-**Workaround in use** import from `docxkit.errors` and accept that the
-`except` clause names a module the code otherwise never touches.
 
 ### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
 
@@ -875,6 +810,99 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S4 `footnotes()` refuses a document with a spare note, and blames the renumbering for it — the message names the note now
+
+Found 2026-08-17 by a test written on the assumption that it would not.
+
+A note nobody references is only untidy — `footnote_audit` reports it
+and carries on. But `footnotes()` renumbers the referenced notes to
+1..n and then checks that the STORED ids equal the referenced ones,
+which a spare note breaks:
+
+    footnotes: renumbering did not settle — references [1, 2],
+    notes [1, 2, 9]
+
+Refusing is defensible: the spare note may already hold an id the
+renumber wants, and two notes on one id is worse than a refusal. The
+MESSAGE is not. It reads as a fault in the tool, names no remedy, and
+does not mention note 9 — while the audit, one function away, says
+"note 9 has no reference in the body" in as many words.
+
+**Suggested fix.** When the settle check fails and the difference is
+exactly `set(stored_after) - set(after)`, say so: name the spare notes
+and point at `footnote_audit`. Keep the refusal.
+
+**Workaround in use:** none. Pinned by
+`test_an_UNREFERENCED_note_makes_the_whole_renumber_REFUSE`, which
+holds the BEHAVIOUR so that a fix to the message cannot quietly become
+a change to the answer.
+
+
+**Fixed 2026-08-17.** The refusal is unchanged, which is the point: a
+spare note may hold an id the renumber wants, and two notes on one id is
+worse than refusing. What changed is that it says so —
+
+    footnotes: note(s) [9] have no reference in the body, so
+    renumbering the rest would leave them holding ids it needs —
+    delete them, or add the references. `footnote_audit` lists them.
+
+rather than "renumbering did not settle", which read as a fault in the
+tool and never mentioned the note. The generic settle check stays behind
+it for anything else that fails to converge.
+
+### S4 `revision` raises six exception types and exports none of them, so `except` must import from a module the caller never called — `test_an_exception_a_module_RAISES_is_importable_from_it`
+
+`docxkit.revision` raises `ProtocolError` in eight places — `find_config`
+documents it as the failure mode when a tree has not migrated — but it is
+absent from `revision.__all__`, so with `py.typed` in force
+`from docxkit.revision import ProtocolError` draws
+`reportPrivateImportUsage`. The accepted spelling is
+`from docxkit.errors import ProtocolError`: a caller must import the
+exception from a different module than the function whose contract raises
+it, and must know `docxkit.errors` exists to guess it.
+
+**Hit on AFI 2026-08-17** wrapping `load_paper` so a tree without
+`revision/paper.toml` falls back instead of exploding.
+
+**Same class as the `visible_text` entry below, which is Fixed** —
+including `tests/test_api_surface.py`, which walks every module and
+asserts each facade re-exports everything public behind it. It does not
+catch this one: `ProtocolError` is *defined* in `docxkit.errors` and only
+*raised* by `revision`, so no clause covers it. **The blind spot is
+exception types** — the one part of a module's contract that lives in
+another module by design.
+
+**It is the whole module, not one name.** `revision` raises six types —
+`ProtocolError` (8), `BaselinePending` (2), `DocumentLocked` (2),
+`HandbackLoss` (2), `MathResolved` (1), `StaleBatch` (1) — and
+`revision.__all__` carries none of them, although the documented refusal
+codes (`BaselinePending` 3, `MathResolved` 2, `StaleBatch` 4) are exactly
+what a caller is expected to branch on.
+
+**Fix sketch.** Re-export from each module the exceptions it raises, and
+extend `test_api_surface` with the clause that would
+have caught it: every exception name appearing in a `raise` in module M is
+importable from M. That closes the class rather than the instance, as the
+`visible_text` fix did.
+
+**Workaround in use** import from `docxkit.errors` and accept that the
+`except` clause names a module the code otherwise never touches.
+
+
+**Fixed 2026-08-17.** Every public module now exports the exceptions it
+raises — 18 modules, 23 names — and the class is closed rather than the
+instance: `test_api_surface` gained a clause walking every `raise` and
+asserting the type is importable from the module that raises it. Verified
+by removing `ProtocolError` from `revision.__all__` again and watching it
+fail.
+
+`from docxkit.revision import ProtocolError, BaselinePending` and
+`from docxkit.edit import AnchorError` are the spelling now. One knock-on
+the existing gate caught: `equations` declared `ConversionGap` while
+importing it inside a function, beside an `lxml` import it had been
+grouped with by habit — `errors` is the bottom layer and costs nothing to
+import at module level.
 
 ### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file — `revision doctor`
 

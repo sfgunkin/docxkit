@@ -126,25 +126,26 @@ def test_a_document_with_no_footnotes_at_all():
 # ---------------------- what the first mutation run left here (2026-08-17)
 
 def test_an_UNREFERENCED_note_makes_the_whole_renumber_REFUSE():
-    """Current behaviour, pinned because it is not obvious and the
-    message does not say it.
+    """Refusing is right, and the message has to say WHY.
 
     A note nobody references is only untidy — `footnote_audit` reports
     it and carries on. But `footnotes()` renumbers the referenced notes
-    to 1..n and then checks that the STORED ids equal the referenced
-    ones, which a spare note breaks. Refusing is defensible: the spare
-    note may already hold an id the renumber wants, and two notes on one
-    id is worse than a refusal.
+    to 1..n, and a spare note may already hold an id that pass wants;
+    two notes on one id is worse than a refusal.
 
-    What the author sees is "renumbering did not settle", which reads as
-    a fault in the tool rather than as "note 9 has nothing pointing at
-    it". Filed as an S4; this test holds the behaviour so a fix to the
-    MESSAGE does not quietly become a change to the ANSWER.
+    It used to fail the generic settle check with "renumbering did not
+    settle", which reads as a fault in the tool and never mentions the
+    note. Now it names the spare ones and says what to do about them.
+    The refusal itself is unchanged, which is what this test holds: a
+    fix to the wording must not become a change to the answer.
     """
     parts = _parts([2, 1], stored=[1, 2, 9])
 
-    with pytest.raises(AnchorError, match="did not settle"):
+    with pytest.raises(AnchorError, match=r"note\(s\) \[9\] have no "
+                       r"reference") as excinfo:
         renumber.footnotes(parts)
+
+    assert "footnote_audit" in str(excinfo.value), str(excinfo.value)
 
     assert any("note 9 has no reference" in f
                for f in renumber.footnote_audit(parts)), \

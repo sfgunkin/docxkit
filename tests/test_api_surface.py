@@ -162,3 +162,55 @@ def test_a_facade_re_exports_everything_public_behind_it(facade, halves):
         assert not missing, (
             f"docxkit.{facade} does not re-export {missing} from "
             f"{half} — a caller has to import the private module")
+
+
+#: Exception types this package defines. A module's contract includes
+#: what it RAISES, and that is the one part of it that lives in another
+#: module by design.
+def _our_exceptions() -> set[str]:
+    from docxkit import errors
+    return {n for n in dir(errors) if not n.startswith("_")
+            and isinstance(getattr(errors, n), type)
+            and issubclass(getattr(errors, n), BaseException)}
+
+
+def _raises(tree: ast.Module, known: set[str]) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+        exc = node.exc
+        name = (exc.func.id if isinstance(exc, ast.Call)
+                and isinstance(exc.func, ast.Name)
+                else exc.id if isinstance(exc, ast.Name) else None)
+        if name in known:
+            out.add(name)
+    return out
+
+
+@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
+def test_an_exception_a_module_RAISES_is_importable_from_it(path):
+    """`except` should name the module whose function raised.
+
+    `docxkit.revision` raised six types and exported none, so a caller
+    wrapping `load_paper` had to write `from docxkit.errors import
+    ProtocolError` — importing the exception from a different module
+    than the function whose contract raises it, and having to know
+    `docxkit.errors` exists in order to guess it. Under `py.typed` the
+    obvious spelling drew `reportPrivateImportUsage` instead.
+
+    The facade rule above does not cover this and could not: the class
+    is DEFINED in `errors` and only RAISED here, so no re-export clause
+    reaches it. Exception types are the blind spot, and this is the
+    clause that closes the class rather than the instance — the same
+    move the `visible_text` entry needed.
+    """
+    if path.name in NO_ALL:
+        pytest.skip("an entry point, not a library surface")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    _public, declared = _public_names(path)
+    missing = sorted(_raises(tree, _our_exceptions()) - (declared or set()))
+    assert not missing, (
+        f"{path.name} raises {missing} and does not export them — a "
+        f"caller writing `except` must import from docxkit.errors, a "
+        f"module it never called. Add them to __all__.")

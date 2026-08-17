@@ -19,7 +19,12 @@ from pathlib import Path
 from .errors import DeliverableModified
 from .package import backup as _backup
 
-__all__ = ["check", "stamp", "stamp_path"]
+__all__ = [
+    "DeliverableModified",
+    "check",
+    "stamp",
+    "stamp_path",
+]
 
 
 def stamp_path(out: str | Path) -> Path:

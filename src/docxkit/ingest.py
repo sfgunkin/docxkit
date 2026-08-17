@@ -27,6 +27,7 @@ from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, normalize_glyphs, visible_text
 from .errors import AnchorError
 
 __all__ = [
+    "AnchorError",
     "apply_overrides",
     "build_overrides",
     "load_paragraphs",

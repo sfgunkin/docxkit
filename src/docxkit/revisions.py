@@ -48,6 +48,7 @@ __all__ = [
     "FINAL",
     "ORIGINAL",
     "REVISION_RE",
+    "DocxKitError",
     "ParagraphChange",
     "Revision",
     "accept",

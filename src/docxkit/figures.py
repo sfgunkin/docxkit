@@ -30,7 +30,9 @@ from .errors import AnchorError, PackageError
 __all__ = [
     "EMU_PER_INCH",
     "AltText",
+    "AnchorError",
     "Figure",
+    "PackageError",
     "alt_texts",
     "find",
     "find_all",

@@ -39,7 +39,7 @@ from ._xml import (
     used_prefixes,
     visible_text,
 )
-from .errors import AnchorError, PackageError
+from .errors import AnchorError, ConversionGap, PackageError
 from .revisions import _fragment_declarations
 
 __all__ = [
@@ -48,7 +48,10 @@ __all__ = [
     "M_NS",
     "OMATH_RE",
     "XSL_ENV",
+    "AnchorError",
+    "ConversionGap",
     "Equation",
+    "PackageError",
     "ProseMath",
     "clone",
     "display",
@@ -810,8 +813,6 @@ def to_latex(omml: str, *, strict: bool = False) -> str:
     nothing, matching how Word renders them.
     """
     from lxml import etree
-
-    from .errors import ConversionGap
 
     # a slice out of document.xml declares no namespaces of its own, and
     # a redline's math carries prefixes like w16du that even a full list

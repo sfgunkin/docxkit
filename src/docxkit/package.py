@@ -35,6 +35,8 @@ __all__ = [
     "CORE_ORDER",
     "CORE_PART",
     "REGENERATED_BY_WORD",
+    "DocumentLocked",
+    "PackageError",
     "assert_unlocked",
     "backup",
     "changed_parts",

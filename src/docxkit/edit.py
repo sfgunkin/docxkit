@@ -33,6 +33,7 @@ from .errors import AnchorError
 __all__ = [
     "RUN_RE",
     "T_RUN_RE",
+    "AnchorError",
     "editable_text",
     "find_normalized",
     "insert_in_para",

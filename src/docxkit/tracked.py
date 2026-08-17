@@ -76,6 +76,7 @@ from .word import _suppress_com
 __all__ = [
     "BuildReport",
     "MathOutcome",
+    "PackageError",
     "Untracked",
     "build",
     "compare_collateral",

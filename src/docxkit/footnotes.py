@@ -36,6 +36,7 @@ from .styles import STYLE as _STYLE
 from .styles import Cascade
 
 __all__ = [
+    "AnchorError",
     "FontReport",
     "Footnote",
     "SizeOutlier",

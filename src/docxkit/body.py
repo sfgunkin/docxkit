@@ -41,6 +41,7 @@ from .find import para_slice
 
 __all__ = [
     "DEFAULT_TBLPR",
+    "AnchorError",
     "cell",
     "insert_after",
     "insert_before",

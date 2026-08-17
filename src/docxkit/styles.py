@@ -19,8 +19,22 @@ from dataclasses import dataclass, field
 from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES
 from .errors import AnchorError, PackageError
 
-__all__ = ["DEFAULT", "NOWHERE", "RUN", "STYLE", "Cascade", "Resolved",
-           "Style", "StyleReport", "apply_template", "ensure", "read", "used"]
+__all__ = [
+    "DEFAULT",
+    "NOWHERE",
+    "RUN",
+    "STYLE",
+    "AnchorError",
+    "Cascade",
+    "PackageError",
+    "Resolved",
+    "Style",
+    "StyleReport",
+    "apply_template",
+    "ensure",
+    "read",
+    "used",
+]
 
 _STYLE_EL_RE = re.compile(r"<w:style\b[^>]*>.*?</w:style>", re.DOTALL)
 _STYLES_PART = "word/styles.xml"

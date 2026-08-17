@@ -42,9 +42,19 @@ from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
 
-__all__ = ["ShiftReport", "audit", "audit_parts", "footnote_audit",
-           "footnote_order", "footnotes", "numbers_in_order", "remap",
-           "remap_parts", "shift"]
+__all__ = [
+    "AnchorError",
+    "ShiftReport",
+    "audit",
+    "audit_parts",
+    "footnote_audit",
+    "footnote_order",
+    "footnotes",
+    "numbers_in_order",
+    "remap",
+    "remap_parts",
+    "shift",
+]
 
 # a mention number engaged in a range or list — the continuation the
 # labelled match must not have after it
@@ -523,6 +533,18 @@ def footnotes(parts: dict[str, bytes]) -> dict[int, int]:
     parts[DOCUMENT] = doc.encode("utf-8")
     parts[FOOTNOTES] = notes.encode("utf-8")
     after, stored_after = footnote_order(parts)
+    # A note nobody references is the ordinary way this fails, and it is
+    # not a fault in the renumbering: the spare note keeps an id the
+    # pass may want, and two notes on one id is worse than a refusal.
+    # Saying "did not settle" for it sent the reader looking for a bug
+    # here while `footnote_audit`, one function away, names the note.
+    spare = sorted(set(stored_after) - set(after))
+    if spare:
+        raise AnchorError(
+            f"footnotes: note(s) {spare} have no reference in the body, "
+            f"so renumbering the rest would leave them holding ids it "
+            f"needs — delete them, or add the references. "
+            f"`footnote_audit` lists them.")
     if after != sorted(after) or stored_after != after:
         raise AnchorError(
             f"footnotes: renumbering did not settle — references "

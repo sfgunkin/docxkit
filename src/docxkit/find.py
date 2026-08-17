@@ -21,6 +21,7 @@ from .errors import AnchorError
 
 __all__ = [
     "P_RE",
+    "AnchorError",
     "body_elements",
     "edit_para",
     "find_para",
