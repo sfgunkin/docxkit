@@ -13,7 +13,12 @@ from conftest import NS, comment, make_parts, para, run
 from docxkit.comments import read_all, remove
 from docxkit.errors import AnchorError
 from docxkit.footnotes import append, find, find_all, remap, renumber_map
-from docxkit.hygiene import carry_properties, restore_parts, strip_parts
+from docxkit.hygiene import (
+    carry_properties,
+    restore_math_glyphs,
+    restore_parts,
+    strip_parts,
+)
 from docxkit.package import core_property
 
 # --------------------------------------------------------------- comments ---
@@ -397,3 +402,100 @@ def test_remove_keeps_the_text_the_comment_was_anchored_on():
     assert "text 1" in doc, "the commented prose went with the reference run"
     assert "text 2" in doc
     assert 'w:id="1"' not in doc
+
+
+# ------------------------------------- math glyphs a round-trip flattens ---
+#
+# Word rewrites the OMML while deriving a redline and turns U+2212 into
+# an ASCII hyphen doing it. Measured on AFI (2026-08-17): 2 minus signs
+# in the baseline, 0 in the built batch, and the 57 in the PROSE of both
+# untouched. Nothing else in the toolkit sees it — the text layer reads
+# the same words and the equation still renders.
+
+def _parts_with(math: str, *, prose: str = "unchanged prose") -> dict:
+    doc = (f"<w:document><w:body><w:p><w:r><w:t>{prose}</w:t></w:r>"
+           f"<m:oMath><m:r><m:t>{math}</m:t></m:r></m:oMath>"
+           "</w:p></w:body></w:document>")
+    return {"word/document.xml": doc.encode("utf-8")}
+
+
+def test_a_flattened_MINUS_is_put_back():
+    built = _parts_with("a - b")
+    source = _parts_with("a − b")
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+    assert "a − b" in built["word/document.xml"].decode("utf-8")
+
+
+def test_PROSE_is_never_touched():
+    """Only `m:t`. A hyphen in a sentence is a hyphen, and the
+    round-trip does not rewrite prose in the first place."""
+    built = _parts_with("a - b", prose="a well-known result")
+    source = _parts_with("a − b", prose="a well−known result")
+
+    restore_math_glyphs(built, source)
+
+    assert "well-known" in built["word/document.xml"].decode("utf-8")
+
+
+def test_a_run_the_source_spells_with_a_HYPHEN_is_left_alone():
+    """A hyphen inside maths is a legitimate character — a range, a
+    variable name — and the repair only puts back what a source really
+    spells with the glyph."""
+    built = _parts_with("x-y")
+    source = _parts_with("x-y")
+
+    assert restore_math_glyphs(built, source) == []
+    assert "x-y" in built["word/document.xml"].decode("utf-8")
+
+
+def test_an_AMBIGUOUS_form_is_dropped_rather_than_guessed():
+    """Two source runs that flatten to the same text and disagree about
+    WHICH character is the minus: one equation subtracts and hyphenates,
+    the other hyphenates and subtracts. Nothing here can tell which this
+    run was, and repairing on a coin flip rewrites the author's own
+    character in whichever it guessed wrong."""
+    built = _parts_with("a - b - c")
+    a = {"word/document.xml": "<m:t>a − b - c</m:t>".encode()}
+    b = {"word/document.xml": "<m:t>a - b − c</m:t>".encode()}
+
+    assert restore_math_glyphs(built, a, b) == []
+    assert "a - b - c" in built["word/document.xml"].decode("utf-8")
+
+
+def test_a_source_that_spells_it_PLAINLY_vetoes_the_repair():
+    """One source has the glyph and another does not: the same coin
+    flip, and the same answer — leave it."""
+    built = _parts_with("a - b")
+    with_glyph = {"word/document.xml": "<m:t>a − b</m:t>".encode()}
+    without = {"word/document.xml": b"<m:t>a - b</m:t>"}
+
+    assert restore_math_glyphs(built, with_glyph, without) == []
+
+
+def test_a_run_that_already_has_the_glyph_is_not_reported():
+    built = _parts_with("a − b")
+    source = _parts_with("a − b")
+
+    assert restore_math_glyphs(built, source) == []
+
+
+def test_footnotes_and_headers_are_repaired_too():
+    """The equation the author is watching is as likely to be in a note
+    as in the body, and Compare rewrites every part it touches."""
+    built = {"word/footnotes.xml": b"<m:t>c - d</m:t>"}
+    source = {"word/footnotes.xml": "<m:t>c − d</m:t>".encode()}
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == ["word/footnotes.xml: 'c - d' -> 'c − d'"]
+
+
+def test_a_document_with_no_math_glyphs_anywhere_is_a_no_op():
+    built = _parts_with("a - b")
+    before = dict(built)
+
+    assert restore_math_glyphs(built, _parts_with("p + q")) == []
+    assert built == before

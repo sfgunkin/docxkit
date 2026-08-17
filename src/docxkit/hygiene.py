@@ -29,10 +29,12 @@ from .package import CORE_PART, core_property, set_core_property
 __all__ = [
     "CARRIED_PROPERTIES",
     "CUSTOM_XML",
+    "MATH_DOWNGRADES",
     "NOTE_LEADS",
     "SmartenReport",
     "SpacingReport",
     "carry_properties",
+    "restore_math_glyphs",
     "restore_parts",
     "smarten",
     "strip_parts",
@@ -496,3 +498,80 @@ def smarten(xml: str) -> tuple[str, SmartenReport]:
     report = SmartenReport()
     out = PARA_RE.sub(lambda m: _smarten_para(m.group(0), report), xml)
     return out, report
+
+#: What a Word round-trip downgrades inside OMML, and what it becomes.
+#: MINUS SIGN is the one that keeps happening: this toolchain writes
+#: U+2212 in generated maths (it is the character a minus IS, and it
+#: sets with the right width beside a digit), Word's Compare rewrites
+#: the OMML while deriving a redline, and the character comes back as
+#: an ASCII hyphen. Measured on AFI 2026-08-17: 2 in the baseline, 0 in
+#: the built batch, 57 in the PROSE of both — only maths is rewritten.
+MATH_DOWNGRADES = {"−": "-"}
+
+_MATH_T_RE = re.compile(r"(<m:t[^>]*>)([^<]*)(</m:t>)")
+
+
+def _downgraded(text: str) -> str:
+    for glyph, plain in MATH_DOWNGRADES.items():
+        text = text.replace(glyph, plain)
+    return text
+
+
+def restore_math_glyphs(parts: dict[str, bytes],
+                        *sources: dict[str, bytes]) -> list[str]:
+    """Put back math glyphs a Word round-trip flattened, per ``m:t``.
+
+    `sources` are the documents this one was DERIVED from — for a
+    redline, the original and the clean edit — and they are the
+    statement of intent: if the text a run should hold is spelled with
+    U+2212 there and with a hyphen here, Word did that, not an author.
+
+    Conservative on purpose, because the two are indistinguishable
+    character by character:
+
+    * a run is only repaired when its exact text appears in a source
+      with a downgraded glyph put back, so nothing is inferred from
+      context;
+    * an ambiguous key is dropped — if two source runs share a
+      downgraded form and disagree about the glyphs, neither is used,
+      since a hyphen inside maths is a legitimate character (a range, a
+      variable name) and guessing would rewrite the author's;
+    * prose is never touched: only ``m:t``, which is what the
+      round-trip rewrites.
+
+    Mutates `parts`; returns one line per run repaired.
+    """
+    # EVERY source run, not only the ones carrying a glyph: a source
+    # that spells this run with a plain hyphen is exactly the evidence
+    # that says "leave it alone", and collecting only the glyph-bearing
+    # ones would make that vote invisible.
+    intent: dict[str, set[str]] = {}
+    for source in sources:
+        for name, blob in source.items():
+            if not name.endswith(".xml"):
+                continue
+            for m in _MATH_T_RE.finditer(blob.decode("utf-8")):
+                text = m.group(2)
+                intent.setdefault(_downgraded(text), set()).add(text)
+    wanted = {plain: next(iter(texts)) for plain, texts in intent.items()
+              if len(texts) == 1 and next(iter(texts)) != plain}
+    if not wanted:
+        return []
+
+    restored: list[str] = []
+    for name, blob in list(parts.items()):
+        if not name.endswith(".xml"):
+            continue
+        text = blob.decode("utf-8")
+
+        def fix(m: re.Match[str], part: str = name) -> str:
+            back = wanted.get(m.group(2))
+            if back is None or back == m.group(2):
+                return m.group(0)
+            restored.append(f"{part}: {m.group(2)!r} -> {back!r}")
+            return m.group(1) + back + m.group(3)
+
+        out = _MATH_T_RE.sub(fix, text)
+        if out != text:
+            parts[name] = out.encode("utf-8")
+    return restored

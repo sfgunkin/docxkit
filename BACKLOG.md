@@ -17,99 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 WORD downgrades U+2212 to an ASCII hyphen inside OMML — on Compare AND on the author's own accept-and-save — and `validate` reports it as an unattributed `glyphs: False`
-
-**Widened 2026-08-17, hours after filing.** This entry first blamed
-`CompareDocuments`. That is too narrow, and the narrower claim would have
-sent the fix to the wrong place. Traced through the whole chain on AFI,
-counting U+2212 in `m:t`:
-
-    prev.docx      (baseline)                    2
-    r3_clean.docx  (edited clean copy)           2
-    batch.docx     (Compare + repair pass)       2
-    rescue copy    (byte-for-byte as promoted)   2
-    working.docx   (after the AUTHOR accepted)   0   <-- here
-
-The repair survived Compare and promote intact. The glyphs were lost when
-the author opened the promoted redline in Word, accepted the revisions and
-saved. So a post-build repair is NOT sufficient: **any Word round-trip can
-strip the character**, and on this manuscript the accept step re-serialises
-the OMML (`ingest` also reports the formula's tokens and structure
-changing). A paper cannot hold U+2212 in maths across an author round
-unless something puts it back afterwards.
-
-Implication for the fix: repairing inside `revision build` would not have
-helped. The check belongs where a Word round-trip is detected —
-`ingest`/`baseline` should report a maths glyph regression the way
-`baseline` already refuses a lost link, so the author's accept cannot
-silently degrade an equation.
-
-Measured on AFI 2026-08-17. A batch built through `revision build`
-reaches `validate` with:
-
-    reject-all == baseline ? {paragraphs: True, glyphs: False,
-                              footnotes: True, links: True} -> MISMATCH
-
-and nothing says what moved. The difference is **two characters**, both
-in an Appendix A equation:
-
-    baseline  AFIi,1990 + t−199030 · (AFIi,2020 − AFIi,1990)   U+2212
-    rejected  AFIi,1990 + t-199030 · (AFIi,2020 - AFIi,1990)   U+002D
-
-Counting `m:t` across the package confirms it is not a reject-path
-artefact — it is in the built batch, so **promote ships it**:
-
-    prev.docx    math U+2212: 2    math hyphen: 14
-    batch.docx   math U+2212: 0    math hyphen: 16
-
-Prose is untouched (57 U+2212 on both sides); only OMML is rewritten.
-S1 because it is a silent wrong answer in the output: the build reports
-success, the equation renders with hyphens where the author typed minus
-signs, and this toolchain's house style explicitly keeps U+2212 in
-generated math. On AFI it also has history — earlier rounds repeatedly
-recorded "differed only by the minus glyph (kept U+2212)".
-
-**Two separate defects here, and the second is the expensive one:**
-
-1. Compare's OMML rewrite loses the character. Detect it and restore, or
-   refuse; a `glyph_repair` pass over `m:t` comparing against the
-   baseline would do it, since the baseline is already in hand.
-2. **`glyphs: False` names nothing.** `links` prints the anchor and label
-   it lost; `paragraphs` and `footnotes` have their own detail lines.
-   The glyph gate prints one boolean for a 68,829-character stream, so
-   the reader learns only that *something* moved. Finding these two
-   characters took a bespoke `difflib.SequenceMatcher` over
-   `_glyph(_root(...))` with private imports. Print the first few
-   differing runs with their code points, exactly as `links` prints its
-   pairs.
-
-Defect 2 is why this sat unexplained through three builds while I
-attributed it to my own edits.
-
-**Defect 2 FIXED 2026-08-17.** `revision.glyph_runs(before, after)`
-names the runs where two rendered-character streams differ, with their
-code points, in reading order, and `validate` fills `report.glyph_diff`
-whenever gate 5 goes red — the CLI prints each as `GLYPH at 41520:
-'−' U+2212 -> '-' U+002D   after ...(AFIi,2020 `. Offsets and context
-come from the BASELINE side, six runs at most with the rest counted, cut
-to twelve characters, code points only for runs of four or fewer (a
-hundred of them is the dump this avoids). The bespoke difflib script is
-no longer the way to find out what moved.
-
-**Defect 1 is still open**: Compare's OMML rewrite still loses the
-character, and so does the author's own accept-and-save, so a paper
-cannot hold U+2212 in maths across a Word round unless something puts it
-back afterwards. The gate now says so out loud instead of printing one
-boolean.
-
-**Repro:** `docxkit revision build` any text-only batch on
-`F:\OneDrive\__Documents\Aging_Update\Projects\AFI` and run `validate`;
-`glyphs` is False even for a batch containing **zero** edits.
-
-**Workaround in use** — none yet; the AFI round restores the two glyphs
-in a post-build pass before promote. Per-paper workaround to delete when
-the build does it.
-
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
@@ -855,6 +762,114 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S1 WORD downgrades U+2212 to an ASCII hyphen inside OMML — on Compare AND on the author's own accept-and-save — and `validate` reports it as an unattributed `glyphs: False`
+
+**Widened 2026-08-17, hours after filing.** This entry first blamed
+`CompareDocuments`. That is too narrow, and the narrower claim would have
+sent the fix to the wrong place. Traced through the whole chain on AFI,
+counting U+2212 in `m:t`:
+
+    prev.docx      (baseline)                    2
+    r3_clean.docx  (edited clean copy)           2
+    batch.docx     (Compare + repair pass)       2
+    rescue copy    (byte-for-byte as promoted)   2
+    working.docx   (after the AUTHOR accepted)   0   <-- here
+
+The repair survived Compare and promote intact. The glyphs were lost when
+the author opened the promoted redline in Word, accepted the revisions and
+saved. So a post-build repair is NOT sufficient: **any Word round-trip can
+strip the character**, and on this manuscript the accept step re-serialises
+the OMML (`ingest` also reports the formula's tokens and structure
+changing). A paper cannot hold U+2212 in maths across an author round
+unless something puts it back afterwards.
+
+Implication for the fix: repairing inside `revision build` would not have
+helped. The check belongs where a Word round-trip is detected —
+`ingest`/`baseline` should report a maths glyph regression the way
+`baseline` already refuses a lost link, so the author's accept cannot
+silently degrade an equation.
+
+Measured on AFI 2026-08-17. A batch built through `revision build`
+reaches `validate` with:
+
+    reject-all == baseline ? {paragraphs: True, glyphs: False,
+                              footnotes: True, links: True} -> MISMATCH
+
+and nothing says what moved. The difference is **two characters**, both
+in an Appendix A equation:
+
+    baseline  AFIi,1990 + t−199030 · (AFIi,2020 − AFIi,1990)   U+2212
+    rejected  AFIi,1990 + t-199030 · (AFIi,2020 - AFIi,1990)   U+002D
+
+Counting `m:t` across the package confirms it is not a reject-path
+artefact — it is in the built batch, so **promote ships it**:
+
+    prev.docx    math U+2212: 2    math hyphen: 14
+    batch.docx   math U+2212: 0    math hyphen: 16
+
+Prose is untouched (57 U+2212 on both sides); only OMML is rewritten.
+S1 because it is a silent wrong answer in the output: the build reports
+success, the equation renders with hyphens where the author typed minus
+signs, and this toolchain's house style explicitly keeps U+2212 in
+generated math. On AFI it also has history — earlier rounds repeatedly
+recorded "differed only by the minus glyph (kept U+2212)".
+
+**Two separate defects here, and the second is the expensive one:**
+
+1. Compare's OMML rewrite loses the character. Detect it and restore, or
+   refuse; a `glyph_repair` pass over `m:t` comparing against the
+   baseline would do it, since the baseline is already in hand.
+2. **`glyphs: False` names nothing.** `links` prints the anchor and label
+   it lost; `paragraphs` and `footnotes` have their own detail lines.
+   The glyph gate prints one boolean for a 68,829-character stream, so
+   the reader learns only that *something* moved. Finding these two
+   characters took a bespoke `difflib.SequenceMatcher` over
+   `_glyph(_root(...))` with private imports. Print the first few
+   differing runs with their code points, exactly as `links` prints its
+   pairs.
+
+Defect 2 is why this sat unexplained through three builds while I
+attributed it to my own edits.
+
+**Defect 2 FIXED 2026-08-17.** `revision.glyph_runs(before, after)`
+names the runs where two rendered-character streams differ, with their
+code points, in reading order, and `validate` fills `report.glyph_diff`
+whenever gate 5 goes red — the CLI prints each as `GLYPH at 41520:
+'−' U+2212 -> '-' U+002D   after ...(AFIi,2020 `. Offsets and context
+come from the BASELINE side, six runs at most with the rest counted, cut
+to twelve characters, code points only for runs of four or fewer (a
+hundred of them is the dump this avoids). The bespoke difflib script is
+no longer the way to find out what moved.
+
+**Defect 1 FIXED 2026-08-17.** `hygiene.restore_math_glyphs(parts,
+*sources)` puts the character back, per `m:t`, and `tracked.build` runs
+it over the redline against BOTH the original and the clean edit before
+the package is written — so the file Word verifies and the author opens
+already has it, and `report.restored_glyphs` names every run repaired.
+
+Conservative, because a hyphen and a minus are indistinguishable
+character by character: a run is repaired only when its exact text
+appears in a source with the glyph put back, an ambiguous form (two
+source runs sharing a flattened form and disagreeing about which
+character is the minus) is dropped rather than guessed, and prose is
+never touched. That leaves the author's own hyphen alone, which was the
+alternative failure.
+
+It does NOT survive what comes next: the author accepting the revisions
+in Word and saving re-serialises the OMML and eats it again. A paper
+that must hold U+2212 through an author round still needs the repair run
+after the promote — the toolkit now provides the pass, and the paper
+decides where in its pipeline it belongs.
+
+**Repro:** `docxkit revision build` any text-only batch on
+`F:\OneDrive\__Documents\Aging_Update\Projects\AFI` and run `validate`;
+`glyphs` is False even for a batch containing **zero** edits.
+
+**Workaround in use** — none yet; the AFI round restores the two glyphs
+in a post-build pass before promote. Per-paper workaround to delete when
+the build does it.
+
 
 ### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
 

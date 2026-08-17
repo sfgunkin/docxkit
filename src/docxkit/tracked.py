@@ -361,6 +361,10 @@ class BuildReport:
         #: no longer carried, and the build copied back by VALUE. See
         #: :func:`docxkit.hygiene.carry_properties`.
         self.carried_properties: list[str] = []
+        #: Math runs whose glyph Word flattened while rewriting the
+        #: OMML, put back from what a source really spells. See
+        #: :func:`docxkit.hygiene.restore_math_glyphs`.
+        self.restored_glyphs: list[str] = []
         self.phases: list[tuple[str, float]] = []
         self._t0 = self._last = time.perf_counter()
 
@@ -789,6 +793,19 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"An over-eager math accept is the usual cause: try "
                 f"resolve_math=False. Pass reject_check=False to build the "
                 f"file anyway and inspect it.")
+        # Word rewrites the OMML while deriving the redline and flattens
+        # U+2212 to an ASCII hyphen doing it — measured on AFI: 2 minus
+        # signs in the baseline, 0 in the built batch, and the 57 in the
+        # PROSE of both untouched. Nothing else sees it: the text layer
+        # reads the same words, `validate`'s glyph gate says only that
+        # SOMETHING moved, and the equation still renders. Put back only
+        # what a source really spells that way (see the docstring for
+        # what is deliberately not inferred).
+        report.restored_glyphs = _hygiene.restore_math_glyphs(
+            parts, revised_parts, read_parts(original))
+        for note in report.restored_glyphs:
+            say(f"  restored math glyph — {note}")
+
         write_docx(building, parts)
         report.comments_total = package_counts(parts)["comments"]
 
