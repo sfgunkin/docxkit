@@ -955,6 +955,12 @@ so two identical "Notes:" lines under two tables are the same anchor and
 an edit to the second is applied to the first. `compare --expect-clean`
 sees it; nothing in `ingest` does.
 
+**Checked against a real round.** AFI's `batch.docx` ->
+`batch_user_edited1.docx`: 11 overrides, 0 missed, and applying them to
+the build reproduces the author's file paragraph for paragraph — 1362
+of 1362, no differences. That pair is the case the fix is about, since
+it holds edits in several sections at once.
+
 **Workaround while it was open:** none — it was not known. Any paper
 that integrated an author round with an inserted paragraph should be
 checked with `compare --expect-clean` against the author's file, which
