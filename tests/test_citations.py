@@ -781,7 +781,17 @@ def test_a_marker_stranded_at_the_wrong_entry_reports():
     parts = xml_parts(body)
     issues, _ = audit_links(parts)
     mis = [i for i in issues if i.startswith("MISPLACED MARKER")]
-    assert len(mis) == 1 and "'Buys2012'" in mis[0] and "Burnes" in mis[0]
+    # the whole sentence: both paragraph numbers are what a reader acts
+    # on — one to take the marker from, one to put it at — and thirty
+    # characters of the entry it landed at to recognise it by
+    assert mis == ["MISPLACED MARKER: 'Buys2012' sits at ¶8 "
+                   '("Burnes, D. (2019). Interventio") but its entry is ¶9']
+
+
+# The two boundary comparisons that locate the marker — `start() <= pos`
+# and the body-level fallback's `start() >= pos` — are EQUIVALENT to
+# their strict forms: `pos` is the offset of a `w:name="…"` ATTRIBUTE,
+# which is inside a tag and can never equal a paragraph's own start.
 
 
 # ------------------------------------------------------------ link_all ---
