@@ -497,3 +497,31 @@ def test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside():
 
     text = p["docProps/core.xml"].decode("utf-8")
     assert text.index("<dc:title>") > text.index("<cp:coreProperties")
+
+
+def test_an_UNCHANGED_part_does_not_stop_the_walk():
+    """`continue`, not `break`: the parts are sorted by name, so the
+    first unchanged one is usually `[Content_Types].xml` — stopping
+    there would report a package where nothing changed at all."""
+    from docxkit.package import changed_parts
+
+    before = {"[Content_Types].xml": b"<Types/>", "word/document.xml": b"a"}
+    after = {"[Content_Types].xml": b"<Types/>", "word/document.xml": b"b"}
+
+    report = changed_parts(before, after)
+
+    assert report["changed"] == ["word/document.xml"]
+
+
+def test_a_NON_XML_part_does_not_stop_the_malformed_walk():
+    """Media comes first alphabetically in `word/`, and a document.xml
+    that does not parse is the finding this exists for."""
+    from docxkit.package import malformed_parts
+
+    parts = {"word/media/image1.png": b"\x89PNG not xml at all",
+             "word/document.xml": b"<w:document><w:body></w:document>"}
+
+    bad = malformed_parts(parts)
+
+    assert len(bad) == 1
+    assert bad[0].startswith("word/document.xml: ")
