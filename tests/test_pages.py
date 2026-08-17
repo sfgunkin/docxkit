@@ -23,9 +23,11 @@ A4_LANDSCAPE = (842, 595)
 
 
 def _render(tmp_path, pages):
-    """`pages` is a list of (size, body_text, footer_text | None)."""
+    """`pages` is a list of (size, body, footer) or (size, body, footer,
+    header) — the text of one sheet, placed where Word would place it."""
     doc = pymupdf.open()
-    for size, body, footer in pages:
+    for size, body, footer, *rest in pages:
+        header = rest[0] if rest else None
         page = doc.new_page(width=size[0], height=size[1])
         if body:
             page.insert_text((72, 200), body, fontsize=11)
@@ -33,6 +35,8 @@ def _render(tmp_path, pages):
             # the footer band: Word prints the number inside the margin
             page.insert_text((size[0] / 2, size[1] - 40), footer,
                              fontsize=11)
+        if header is not None:
+            page.insert_text((size[0] / 2, 40), header, fontsize=11)
     out = tmp_path / "render.pdf"
     doc.save(str(out))
     doc.close()
@@ -62,6 +66,37 @@ def test_a_BLANK_sheet_is_found(tmp_path):
     assert "sheet 2 is BLANK" in problems(rows)
 
 
+def test_a_sheet_holding_only_a_DRAWING_is_not_blank(tmp_path):
+    """A figure page can be vector graphics and nothing else — no text,
+    no embedded image. Reading it as BLANK fails `--check` on a paper
+    whose figures are fine, and a gate that cries wolf on figures is one
+    the next batch turns off."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4[0], height=A4[1])
+    page.draw_line((72, 200), (400, 500))
+    page.draw_rect(pymupdf.Rect(72, 520, 400, 700))
+    out = tmp_path / "figure.pdf"
+    doc.save(str(out))
+    doc.close()
+
+    assert read_pdf(out)[0].blank is False
+
+
+def test_a_sheet_holding_only_an_IMAGE_is_not_blank(tmp_path):
+    """The other way a figure page carries nothing readable: one raster,
+    a scanned or pasted exhibit, and not a character of text."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4[0], height=A4[1])
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8), False)
+    pix.set_rect(pix.irect, (200, 30, 30))
+    page.insert_image(pymupdf.Rect(72, 200, 400, 500), pixmap=pix)
+    out = tmp_path / "scan.pdf"
+    doc.save(str(out))
+    doc.close()
+
+    assert read_pdf(out)[0].blank is False
+
+
 def test_a_sheet_that_prints_NOTHING_is_reported_but_does_not_fail():
     """A title page legitimately carries no number, and a gate that
     fails on every paper is a gate nobody runs."""
@@ -84,7 +119,32 @@ def test_the_numbering_RESTART_is_caught():
 
 def test_a_GAP_in_the_printed_sequence_is_caught():
     rows = [Sheet(1, "portrait", 5, False), Sheet(2, "portrait", 7, False)]
-    assert any("JUMP on sheet 2: 5 -> 7" in n for n in problems(rows))
+    # the whole note: the parenthetical is what tells a reader the gap
+    # is unnumbered sheets rather than missing pages
+    assert problems(rows) == ["printed numbers JUMP on sheet 2: 5 -> 7 "
+                              "(the sheets between print nothing)"]
+
+
+def test_a_REPEATED_number_is_NOT_a_gap_but_a_restart():
+    """`now <= was`, not `<`. Two sheets printing 7 is the same defect as
+    going backwards: something addressing page 7 finds whichever the
+    reader turns to first."""
+    rows = [Sheet(1, "portrait", 7, False), Sheet(2, "portrait", 7, False)]
+
+    assert problems(rows) == ["printed numbering RESTARTS on sheet 2: "
+                              "7 -> 7"]
+
+
+def test_CONSECUTIVE_numbers_are_not_a_jump():
+    """`now > was + 1`. Off by one here calls every sound document
+    broken, which is the loudest way for a gate to stop being read."""
+    assert problems([Sheet(1, "portrait", 3, False),
+                     Sheet(2, "portrait", 4, False)]) == []
+
+
+def test_a_blank_sheet_carries_its_flag_in_the_row():
+    assert str(Sheet(4, "portrait", 4, True)).endswith(" BLANK")
+    assert not str(Sheet(4, "portrait", 4, False)).endswith(" BLANK")
 
 
 def test_a_clean_render_has_no_problems():
@@ -100,12 +160,46 @@ def test_an_ambiguous_footer_answers_None_rather_than_guessing(tmp_path):
 
 
 def test_the_header_is_read_when_the_footer_carries_no_number(tmp_path):
-    doc = pymupdf.open()
-    page = doc.new_page(width=A4[0], height=A4[1])
-    page.insert_text((A4[0] / 2, 40), "7", fontsize=11)     # header band
-    page.insert_text((72, 300), "body text", fontsize=11)
-    out = tmp_path / "header.pdf"
-    doc.save(str(out))
-    doc.close()
+    """A paper that numbers in the header is not a paper with no numbers.
 
-    assert read_pdf(out)[0].printed == 7
+    The body text is not decoration: the band is 12 % of the height, and
+    mutated to `height / band` it is eight times too tall — it would
+    still find the header on a sheet with nothing else on it. With a
+    number in the body, the honest band reads the header alone and the
+    swollen one sees two numbers and answers None.
+    """
+    pdf = _render(tmp_path, [(A4, "42", None, "7")])
+
+    assert read_pdf(pdf)[0].printed == 7
+
+
+def test_the_FOOTER_wins_when_a_sheet_numbers_in_BOTH(tmp_path):
+    """The bands are tried bottom first, and a running head repeating
+    the number is common enough that the order has to be stated: the
+    footer is where Word's own page field goes."""
+    pdf = _render(tmp_path, [(A4, "Section 1", "12", "7")])
+
+    assert read_pdf(pdf)[0].printed == 12
+
+
+def test_a_sheet_with_no_number_in_either_band_reads_as_None(tmp_path):
+    """Not 0, and not the physical index — the whole defect class here
+    is the printed number and the sheet's position disagreeing."""
+    pdf = _render(tmp_path, [(A4, "Title page", None)])
+
+    assert read_pdf(pdf)[0].printed is None
+
+
+# What the first mutation run (2026-08-17, 24.3 % real survival) left
+# alive here that is not worth chasing, recorded so the next reader does
+# not re-derive it:
+#
+# * `sheets()` — 15 survivors, all in the half that drives Word. Killing
+#   them needs a machine with Word, which the everyday suite must not;
+#   `pytest -m word` is where such a test would go.
+# * `problems`: `now > was + 1` -> `now != was + 1` is EQUIVALENT. That
+#   branch is an `elif` under `now <= was`, so `now < was + 1` never
+#   reaches it and the two conditions differ nowhere.
+# * `read_pdf`: `width > height` -> `>=` differs only on an exactly
+#   square sheet, which no paper size is.
+
