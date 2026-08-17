@@ -36,6 +36,14 @@ measured, 1383 of 1385 "killed" off one stray `>=` turned into `is not`.
 null outcome, and cosmic-ray treats a spec with any row as done — so
 `exec` resumes nothing at all and reports instant completion.
 
+**Count what FINISHED, not what was graded.** A mutant can come back
+INCOMPETENT — cosmic-ray could not run it at all — which is neither a
+kill nor a survival and is still done. Treating "killed + survived" as
+the progress made `--chunks 0` spin forever on the last mutant of
+`package.py`, asking for another chunk every few seconds while `exec`
+had nothing left to run, and the sequential sweep behind it never
+reached its next module.
+
 **Force UTF-8 out of the child.** When a mutant is KILLED, cosmic-ray
 decodes pytest's output as UTF-8 while pytest writes the console
 codepage; this package's messages are full of em-dashes, the decode
@@ -166,12 +174,25 @@ def sample(session: Path, keep: int, seed: int) -> None:
           flush=True)
 
 
-def progress(session: Path) -> tuple[int, int, int]:
+def progress(session: Path) -> tuple[int, int, int, int]:
+    """(killed, survived, FINISHED, planned) — finished, not killed+survived.
+
+    A mutant can also come back INCOMPETENT: cosmic-ray could not even
+    run it (the worker raised), which is neither a kill nor a survival
+    and is still DONE. Counting only the two outcomes made
+    ``--chunks 0`` spin forever on `package.py` — 434 of 435, one
+    INCOMPETENT, nothing left for `exec` to run, and the loop asking for
+    another chunk every few seconds for two hours (2026-08-17). The tell
+    was a sequential sweep that never reached its next module.
+    """
     con = sqlite3.connect(session)
     counts = Counter((r[0] or "PENDING").upper() for r in
                      con.execute("select test_outcome from work_results"))
     total = con.execute("select count(*) from mutation_specs").fetchone()[0]
-    return counts["KILLED"], counts["SURVIVED"], total - counts["SKIPPED"]
+    planned = total - counts["SKIPPED"]
+    finished = sum(n for outcome, n in counts.items()
+                   if outcome not in ("SKIPPED", "PENDING"))
+    return counts["KILLED"], counts["SURVIVED"], finished, planned
 
 
 def chunk(module: Path, tests: list[str], config: Path, session: Path,
@@ -201,15 +222,16 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
         _run([sys.executable, "-m", "cosmic_ray.cli", "exec",
               str(config), str(session)], cwd=WORKTREE, env=_env(),
              timeout=seconds)
-    killed, survived, planned = progress(session)
-    done = killed + survived
-    rate = f" ({survived / done:.1%} survive)" if done else ""
+    killed, survived, done, planned = progress(session)
+    graded = killed + survived
+    rate = f" ({survived / graded:.1%} survive)" if graded else ""
+    other = f", {done - graded} INCOMPETENT" if done > graded else ""
     # flushed, because a chunk is minutes long and these runs are
     # backgrounded: block-buffered stdout makes an hour-long session look
     # like a hung one, and `--report` should be the second question, not
     # the only way to ask the first
     print(f"  {done}/{planned} run — killed {killed}, "
-          f"survived {survived}{rate}", flush=True)
+          f"survived {survived}{other}{rate}", flush=True)
     return done < planned
 
 
@@ -243,8 +265,8 @@ def main() -> int:
     if args.report:
         if not session.exists():
             return print(f"no session at {session.name}") or 1
-        killed, survived, planned = progress(session)
-        print(f"{session.name}: {killed + survived}/{planned} run — "
+        killed, survived, done, planned = progress(session)
+        print(f"{session.name}: {done}/{planned} run — "
               f"killed {killed}, survived {survived}")
         print(f"read it with:\n  python tools/mutation_survivors.py "
               f"{session.name} {module}")
