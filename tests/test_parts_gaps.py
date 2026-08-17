@@ -219,6 +219,25 @@ def test_restore_parts_puts_the_tree_back_with_its_references():
     assert ct.count("</Types>") == 1 and rels.count("</Relationships>") == 1
 
 
+def test_a_relationship_ALREADY_pointing_at_the_tree_is_not_doubled():
+    """Word drops the PART and can leave the reference behind. Adding a
+    second relationship to the same target — on a fresh id, so nothing
+    downstream sees a duplicate — is what makes Word open the file with
+    a repair warning, which is the failure this whole function exists to
+    avoid."""
+    source = _with_custom_xml()
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+    # the rels entry survived the rebuild; the part did not
+    rebuilt["word/_rels/document.xml.rels"] = (
+        source["word/_rels/document.xml.rels"])
+
+    restore_parts(rebuilt, source)
+
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert rels.count('Target="../customXml/item1.xml"') == 1
+
+
 def test_a_restored_relationship_takes_a_FREE_id():
     """The source's rId is somebody else's relationship in the rebuild,
     and Word opens a duplicated id with a repair warning."""
