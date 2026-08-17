@@ -208,6 +208,22 @@ session database does NOT record the test command, and a number measured
 against a different set of test files is not comparable however
 identical the mutants are. Keep the `cr-*.toml` beside the database.
 
+**To check a TEST refactor, compare survivor SETS, not percentages.**
+The source is unchanged, so the specs line up exactly: run the module
+once against the old test file and once against the new, and diff the
+survivors. Equal counts are not equal sets, and only the set answers
+"does the consolidated suite still kill everything it killed?".
+Measured 2026-08-17 after four test files were consolidated onto
+`conftest`: `wordcount.py` 28 survivors of 98, `export.py` 18 of 194,
+both sets IDENTICAL either way.
+
+The same caveat applies one level up: a hand-written kill check goes
+STALE the moment the source it names changes. Re-running yesterday's
+scripts today reported seven "regressions" in `rebuild` that were the
+S4 fix making that line unreachable, exactly as recorded when the fix
+landed. Read a red line against what the source has done since before
+believing it.
+
 **A survivor re-run needs the module BYTE-IDENTICAL.** Specs are
 addressed by (row, column), so a line added anywhere above them
 re-points every one below it at code nobody chose — and the run
