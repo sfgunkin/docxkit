@@ -86,7 +86,17 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
         if out.returncode:
             sys.exit(f"could not create the worktree: {out.stderr.strip()}")
     # the point of measuring is to measure what is in the working tree,
-    # including what is not committed yet
+    # including what is not committed yet.
+    #
+    # ALL of src/, not just the module under test. The worktree is created
+    # once at HEAD and reused, so refreshing only the target left every
+    # other module at whatever HEAD was that day — invisible until a
+    # harness contains a test that reads the WHOLE package. Measuring
+    # `errors.py` on 2026-08-17 did: `test_api_surface`'s exception gate
+    # walks every module, read 42 stale ones, and failed the baseline
+    # check with sixteen errors that had nothing to do with the mutation.
+    for src in sorted(ROOT.glob("src/docxkit/*.py")):
+        shutil.copy2(src, WORKTREE / "src" / "docxkit" / src.name)
     for rel in [str(module), *tests]:
         target = WORKTREE / rel
         target.parent.mkdir(parents=True, exist_ok=True)
