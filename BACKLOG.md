@@ -17,6 +17,56 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
+
+Measured 2026-08-17, the first time this module has been looked at —
+and it is the bottom of the package: 33 modules import it, and today it
+also gained `run_spans`, `in_span`, `overlaps` and `span_holding`, so a
+defect here reaches everything and the consolidations rest on it.
+
+    538 mutants, 471 killed, 67 survived
+    22 inside a type annotation (PEP 563: unkillable)
+    REAL SURVIVAL 8.7 % (45/516)
+
+Harness: `test_xml_primitives`, `test_find_edit`, `test_compare`,
+`test_citations`, `test_revisions`, `test_footnotes`, `test_body`,
+`test_package` — 97 % of the module by line, against 98 % for the whole
+suite at eight times the wall clock. Quote the harness beside the
+number.
+
+8.7 % is respectable for a module nobody had measured, and it sits
+between `edit.py` (6.3 %) and `_cite_build.py` (11.4 %). The
+DISTRIBUTION is the finding, not the rate:
+
+| survivors | function |
+|---|---|
+| 17 | `field_spans` |
+| 10 | `run_open_before` |
+| 4 | `set_run_text` |
+| 4 | `own_properties` |
+| 3 | `element_spans` |
+
+**The two at the top are one walk** — `field_spans` asks
+`run_open_before` where a field's begin run opens — and it is the walk
+whose own docstring says it "existed three times with three different
+guards, only one of which defended against a field whose end tag is
+missing". It was consolidated for that reason and then never pinned:
+one test reached it, about nesting, in `test_pathological.py`.
+
+**Pinned, 2026-08-17** (`tests/test_field_walk.py`). 10 of 13 targeted
+mutants die; 3 are equivalent because the values reaching them are a
+closed set (`FLDCHAR_RE` captures only begin/end/separate, and
+`str.find` past position 0 never returns 0). What the tests state that
+nothing did: the span opens on the RUN and not the marker; the sentinel
+for "no run" is negative because every caller tests `< 0`, and 0 would
+read as the top of the document; a field that cannot be closed is
+skipped and does not stop the walk finding the next one; and the sort
+tie-break puts the wider span first, reachable only when two begin
+markers share a run.
+
+**Still open:** `set_run_text` 4, `own_properties` 4, `element_spans` 3,
+and a tail of ones and twos. Not re-measured since the tests landed.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
