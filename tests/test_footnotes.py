@@ -588,3 +588,40 @@ def test_a_mark_whose_size_does_not_resolve_is_not_judged():
     assert report.mark_house == 20
     assert report.mark_outliers == [], report.format()
     assert report.ok
+
+
+def test_the_size_audit_skips_an_equation_run_in_a_LATER_paragraph():
+    """The offset asked of the math spans is the run's position in the
+    NOTE, not in its paragraph — `para.start() + r.start()`. With a
+    single short paragraph the two are close enough that most ways of
+    getting it wrong still land outside the span; with the equation in
+    the second paragraph of the note they do not, and a 12pt Cambria
+    Math run then reads as a footnote set in the wrong size."""
+    long_first = run("A first paragraph long enough to move the offsets "
+                     "well past anything the second one could reach.",
+                     SZ10)
+    second = MATH_WITH_A_TEXT_RUN + run(" and prose after it.", SZ10)
+
+    two_paragraphs = long_first + "</w:p><w:p>" + second
+    report = footnotes.sizes(part(
+        note(2, two_paragraphs),
+        note(3, run("an ordinary note", SZ10))))
+
+    assert report.ok, [str(o) for o in report.outliers]
+    assert report.house == 20
+
+
+def test_the_run_IMMEDIATELY_after_an_equation_is_still_sized():
+    """The span is half-open: a run starting exactly where the equation
+    ends is outside it. Read as closed, the first run after every
+    display equation drops out of the audit — and that is where a
+    footnote's prose usually resumes."""
+    odd = MATH_WITH_A_TEXT_RUN + run("resumes at the wrong size", SZ12)
+
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, odd)))
+
+    assert not report.ok
+    assert [o.id for o in report.outliers] == ["4"]
+    assert "12pt" in str(report.outliers[0])
