@@ -12,6 +12,11 @@ is meant to be started and left.
 SEQUENTIAL on purpose: the sessions share one worktree, and two of them
 mutating it at once makes each read the other's mutations. The session
 tool holds a lock and would refuse, but the reason it refuses is here.
+
+To run two sweeps at once, give the second one its own checkout:
+``DOCXKIT_MUT_WORKTREE=D:/docxkit-mut2``. The lock is per worktree, the
+session files are per module, so two sweeps over DIFFERENT modules are
+safe — over the same module they would fight for one session file.
 """
 from __future__ import annotations
 
@@ -27,13 +32,13 @@ from harness_map import harness_for
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(module: str, minutes: float) -> None:
+def run(module: str, minutes: float, sample: int = 0) -> None:
     tests = harness_for(module)
     print(f"### {module}  ({len(tests)} test file(s))", flush=True)
     session = subprocess.run(
         [sys.executable, "tools/mutation_session.py", f"src/docxkit/{module}",
          "--tests", *tests, "--minutes", str(minutes), "--chunks", "0",
-         "--fresh"],
+         "--fresh", *(["--sample", str(sample)] if sample else [])],
         cwd=ROOT, capture_output=True, text=True,
         encoding="utf-8", errors="replace")
     tail = [ln for ln in session.stdout.splitlines() if " run — " in ln]
@@ -67,6 +72,10 @@ def main() -> int:
                     help="every module in src/docxkit, smallest first")
     ap.add_argument("--minutes", type=float, default=7,
                     help="per chunk; each one is restartable")
+    ap.add_argument("--sample", type=int, default=0,
+                    help="run N mutants per module instead of all of them; "
+                         "the seed is the session tool's default, so two "
+                         "sampled runs of one module draw the same mutants")
     args = ap.parse_args()
 
     modules = list(args.modules)
@@ -78,7 +87,7 @@ def main() -> int:
     if not modules:
         ap.error("name some modules, or pass --all")
     for module in modules:
-        run(module, args.minutes)
+        run(module, args.minutes, args.sample)
     return 0
 
 
