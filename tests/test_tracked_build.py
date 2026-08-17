@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import NS, document, para, run
+from conftest import NS, dele, document, ins, make_parts, para, run
 
 from docxkit import tracked
+from docxkit.tracked import untracked
 from docxkit.errors import PackageError
 
 FLAT_TEMPLATE = """<?xml version="1.0" standalone="yes"?>
@@ -1144,3 +1145,113 @@ def test_a_clean_build_reports_nothing_dropped(monkeypatch, sources):
     report, _ = _build(monkeypatch, _clean_document(), sources)
     assert report.dropped == []
     assert "dropped" not in report.format()
+
+
+# ------------------------------------- the gate the deliverable exists for --
+#
+# `untracked` is what makes a redline REFUSABLE: a paragraph the batch
+# changed with no revision covering it is an edit the author was never
+# offered. Parental Style shipped a merged, rewritten math-bearing
+# paragraph that way while its batch read "7 revisions, 6 of them in the
+# body"; LI7 shipped 315 revisions' worth from an over-eager math accept.
+#
+# 44 survivors, the largest cluster in this module: it was reached only
+# through `build`, which asks whether the list is EMPTY, so everything
+# the list says — which paragraph, which side, how many — was free.
+
+def _parts(*paras: str, footnotes: str | None = None) -> dict[str, bytes]:
+    return make_parts("".join(paras), footnotes=footnotes)
+
+
+def test_a_paragraph_changed_with_NO_revision_is_named():
+    baseline = _parts(para(run("The index rose to 0.35 in 2024.")))
+    batch = _parts(para(run("The index rose to 0.37 in 2024.")))
+
+    (found,) = untracked(batch, baseline)
+
+    assert found.part == "body"
+    assert found.index == 0
+    assert found.baseline == "The index rose to 0.35 in 2024."
+    assert found.batch == "The index rose to 0.37 in 2024."
+
+
+def test_a_properly_TRACKED_change_is_not_a_finding():
+    """Rejecting it restores the baseline, which is the whole test."""
+    baseline = _parts(para(run("The index rose.")))
+    batch = _parts(para(dele("The index rose.") + ins("The index fell.")))
+
+    assert untracked(batch, baseline) == []
+
+
+def test_a_paragraph_the_batch_ADDED_reports_an_empty_baseline():
+    """The two sides are what a reader compares, and one of them being
+    empty is the finding: nothing was there before."""
+    baseline = _parts(para(run("Alpha.")))
+    batch = _parts(para(run("Alpha.")), para(run("Beta, out of nowhere.")))
+
+    (found,) = untracked(batch, baseline)
+
+    assert (found.baseline, found.batch) == ("", "Beta, out of nowhere.")
+    assert found.index == 1
+
+
+def test_a_paragraph_the_batch_LOST_reports_an_empty_batch():
+    baseline = _parts(para(run("Alpha.")), para(run("Beta, now gone.")))
+    batch = _parts(para(run("Alpha.")))
+
+    (found,) = untracked(batch, baseline)
+
+    assert (found.baseline, found.batch) == ("Beta, now gone.", "")
+
+
+def test_a_MERGE_reports_every_paragraph_of_the_block():
+    """Three paragraphs replaced by one is the shape that shipped: the
+    walk covers the LONGER side, so the two that vanished are named as
+    well as the one that stayed."""
+    baseline = _parts(para(run("First.")), para(run("Second.")),
+                      para(run("Third.")))
+    batch = _parts(para(run("All three, merged.")))
+
+    found = untracked(batch, baseline)
+
+    assert [(f.baseline, f.batch) for f in found] == [
+        ("First.", "All three, merged."), ("Second.", ""), ("Third.", "")]
+
+
+def test_the_FOOTNOTES_are_checked_too_and_labelled():
+    """An edit the author cannot refuse is as bad in a note as in the
+    body, and the label is which file to open."""
+    notes = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             f'<w:footnotes {NS}><w:footnote w:id="2">'
+             f"{para(run('The note, as built.'))}</w:footnote></w:footnotes>")
+    changed = notes.replace("as built", "as edited")
+
+    (found,) = untracked(_parts(para(run("x")), footnotes=changed),
+                         _parts(para(run("x")), footnotes=notes))
+
+    assert found.part == "footnotes"
+    assert found.batch == "The note, as edited."
+
+
+def test_the_list_STOPS_at_eight():
+    """A batch that lost its revisions entirely would otherwise print
+    the manuscript, and the first eight are enough to say the batch is
+    not reviewable."""
+    baseline = _parts(*(para(run(f"Paragraph {i}.")) for i in range(12)))
+    batch = _parts(*(para(run(f"Paragraph {i} rewritten.")) for i in range(12)))
+
+    assert len(untracked(batch, baseline)) == 8
+    assert len(untracked(batch, baseline, limit=3)) == 3
+
+
+def test_the_finding_PRINTS_where_it_is_and_both_sides():
+    """One-based in the message, because that is how Word counts, and
+    zero-based in the field, because that is how a caller indexes."""
+    baseline = _parts(para(run("Alpha.")), para(run("Beta.")))
+    batch = _parts(para(run("Alpha.")), para(run("Beta, changed.")))
+
+    (found,) = untracked(batch, baseline)
+
+    printed = str(found)
+    assert printed.startswith("body ¶2: baseline 'Beta.'")
+    assert "batch    'Beta, changed.'" in printed
