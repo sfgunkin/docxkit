@@ -113,8 +113,8 @@ def test_bookmarks_are_counted_WITH_how_many_are_body_level(tmp_path):
             + '<w:p><w:bookmarkStart w:id="2" w:name="Inside"/>'
             + run("text") + '<w:bookmarkEnd w:id="2"/></w:p>')
 
-    line = [ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
-            if "bookmarks" in ln][0]
+    line = next(ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
+                if "bookmarks" in ln)
 
     assert line == "  bookmarks   2 (1 body-level)"
 
@@ -122,8 +122,8 @@ def test_bookmarks_are_counted_WITH_how_many_are_body_level(tmp_path):
 def test_a_document_with_ONE_section_says_one(tmp_path):
     """`' -> '.join(...) or 'one'` — an empty join is the empty string,
     which would print a blank where the answer belongs."""
-    line = [ln for ln in probe(_doc(tmp_path, para(run("x")))).report()
-            .splitlines() if "sections" in ln][0]
+    line = next(ln for ln in probe(_doc(tmp_path, para(run("x")))).report()
+                .splitlines() if "sections" in ln)
 
     assert line == "  sections    one"
 
@@ -179,7 +179,7 @@ def test_the_field_anchor_list_is_CUT_not_dumped(tmp_path, count):
     body = "".join("<w:p>" + _field_link(f"T{n}", f"Table {n}") + "</w:p>"
                    for n in range(count))
 
-    line = [ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
-            if "field-form anchors" in ln][0]
+    line = next(ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
+                if "field-form anchors" in ln)
 
     assert line.count(",") == count - 1, line
