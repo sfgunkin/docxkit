@@ -1,0 +1,123 @@
+#!/usr/bin/env python
+"""Apply ONE mutation at a time and report whether the suite kills it.
+
+The other half of `mutation_session.py`. That one asks "how much of this
+module would nobody notice changing"; this one asks "does the test I
+just wrote actually hold the line I aimed it at" — which is the step
+CONTRIBUTING requires after writing a test, and the step that turns a
+survivor list into a list of REAL gaps rather than harness artifacts.
+
+    from tools.kill_check import check
+    check("src/docxkit/edit.py", ["tests/test_find_edit.py"], [
+        ("rep  count != n -> < n", "    if count != n:",
+         "    if count < n:", True),          # True = expect a KILL
+        ("hits[0] -> hits[-1]  [claimed equivalent]",
+         "    at, end = hits[0]", "    at, end = hits[-1]", False),
+    ])
+
+Each case is `(label, old, new, expect_kill)`. The anchor must occur
+EXACTLY once, or the case is skipped rather than mutating something
+else. `expect_kill=False` records an equivalence you have argued for:
+the run then reports it as expected when it survives, so the claim is
+checked rather than assumed.
+
+Three things this does that a hand-rolled loop does not, each of which
+produced a wrong answer first:
+
+**A private checkout.** The live tree is what `mutation_session` copies
+from at every chunk boundary, so mutating it while a measuring run is
+going hands that run a mutation of a module it is not measuring; its
+baseline check then fails and the whole module's measurement aborts.
+
+**A compile check before running.** A mutation that does not parse makes
+pytest exit non-zero on the import, which reads exactly like a test
+failure — so a case with the wrong indentation reports a confident
+false KILL. One did, and hid a piece of dead code for an afternoon.
+
+**Naming the test that killed it.** "Killed" is not the finding; WHICH
+test noticed is, because a kill by an unrelated test usually means the
+mutation broke something else on the way.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+LIVE = Path(__file__).resolve().parents[1]
+#: Its own worktree, refreshed from the live tree on every call.
+ROOT = Path(os.environ.get("DOCXKIT_KILL_CHECK_WORKTREE",
+                           str(LIVE.parent / f"{LIVE.name}-kc")))
+
+
+def sync() -> None:
+    """Refresh the private checkout from the live tree."""
+    if not ROOT.exists():
+        subprocess.run(["git", "worktree", "add", "-q", str(ROOT),
+                        "HEAD", "--detach"], cwd=LIVE, check=True)
+    for sub in ("src/docxkit", "tests"):
+        for src in sorted((LIVE / sub).glob("*.py")):
+            shutil.copy2(src, ROOT / sub / src.name)
+    probe = (f"import docxkit, sys; "
+             f"sys.exit(0 if {ROOT.name!r} in docxkit.__file__ else 1)")
+    if subprocess.run([sys.executable, "-c", probe], cwd=ROOT,
+                      env=_env()).returncode:
+        sys.exit(f"{ROOT} does not win on sys.path — refusing to mutate, "
+                 f"because the LIVE tree is what would be mutated")
+
+
+def _env() -> dict[str, str]:
+    return {**os.environ, "PYTHONPATH": str(ROOT / "src"),
+            "PYTHONIOENCODING": "utf-8"}
+
+
+def check(module: str, tests: list[str],
+          cases: list[tuple[str, str, str, bool]]) -> int:
+    """Run every case; return how many did NOT match their expectation."""
+    sync()
+    path = ROOT / module
+    original = path.read_text(encoding="utf-8")
+    bad = 0
+    try:
+        for label, old, new, expect_kill in cases:
+            n = original.count(old)
+            if n != 1:
+                print(f"  ?? {label}: anchor occurs {n} times — SKIPPED")
+                bad += 1
+                continue
+            mutated = original.replace(old, new)
+            try:
+                compile(mutated, str(path), "exec")
+            except SyntaxError as exc:
+                print(f"  ?? {label}: does not compile ({exc.msg}) — "
+                      f"SKIPPED, since pytest would exit non-zero on the "
+                      f"import and that reads as a kill")
+                bad += 1
+                continue
+            path.write_text(mutated, encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, "-m", "pytest", "-x", "-q",
+                 "-p", "no:cacheprovider", *tests],
+                cwd=ROOT, capture_output=True, text=True,
+                # utf-8 explicitly: `text=True` decodes with the PARENT's
+                # locale, and this package's messages are full of
+                # em-dashes — one in a failing test's output crashed the
+                # reader thread mid-run
+                encoding="utf-8", errors="replace", env=_env())
+            killed = proc.returncode != 0
+            mark = "OK " if killed == expect_kill else "!! "
+            verb = "killed" if killed else "SURVIVED"
+            want = "kill" if expect_kill else "equivalent"
+            print(f"  {mark}{label}: {verb} (wanted {want})")
+            if killed:
+                first = [line.split(" - ")[0].removeprefix("FAILED ")
+                         for line in proc.stdout.splitlines()
+                         if line.startswith("FAILED")]
+                print(f"       by: {(first or ['?'])[0].strip()[:88]}")
+            if killed != expect_kill:
+                bad += 1
+    finally:
+        path.write_text(original, encoding="utf-8")
+    return bad

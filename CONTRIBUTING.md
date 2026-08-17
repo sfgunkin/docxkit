@@ -391,6 +391,26 @@ candidates that filtered 17 artifacts out of 31 real gaps — and it is
 the same "apply the mutation and watch it go red" step already required
 after writing a test, run in the other direction.
 
+`tools/kill_check.py` is that step:
+
+```python
+from tools.kill_check import check
+check("src/docxkit/edit.py", ["tests/test_find_edit.py"], [
+    ("rep  count != n -> < n", "    if count != n:",
+     "    if count < n:", True),                    # expect a KILL
+    ("hits[0] -> hits[-1]  [claimed equivalent]",
+     "    at, end = hits[0]", "    at, end = hits[-1]", False),
+])
+```
+
+It mutates in its OWN worktree (the live tree is what a measuring run
+copies from), refuses an anchor that is not unique, and COMPILES the
+mutant before running it — a mutation that does not parse makes pytest
+exit non-zero on the import, which reads exactly like a test failure and
+reports a confident false kill. One did, and hid a piece of dead code
+for an afternoon. Cases marked `False` are the equivalences you have
+argued for, checked rather than assumed.
+
 Expect a quarter of the tests written this way not to kill what they
 were aimed at. Four of the last batch did not, and each miss was worth
 more than the test: the `w:hAnsi` fallback needs a run that states NO
