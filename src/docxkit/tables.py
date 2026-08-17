@@ -28,6 +28,7 @@ from ._table_core import _TR_RE as _TR_RE
 # re-exported from _table_core: `as` marks it deliberate, or
 # ruff --fix strips it and the papers stop importing
 from ._table_core import CellChange as CellChange
+from ._table_core import RowsReport as RowsReport
 from ._table_core import Table as Table
 from ._table_core import _cell_text as _cell_text
 from ._table_core import _render_value as _render_value
@@ -37,8 +38,11 @@ from ._table_core import cells_of as cells_of
 from ._table_core import find as find
 from ._table_core import parse_number as parse_number
 from ._table_core import read_all as read_all
+from ._table_core import row_signature as row_signature
 from ._table_core import rows_of as rows_of
+from ._table_core import rows_preserved as rows_preserved
 from ._table_core import set_cell as set_cell
+from ._table_core import tables_after as tables_after
 from ._table_core import to_frame as to_frame
 from ._table_core import tolerance_for as tolerance_for
 from ._table_core import update as update
@@ -72,6 +76,7 @@ __all__ = [
     "ColumnFit",
     "FitReport",
     "HouseReport",
+    "RowsReport",
     "Table",
     "booktabs",
     "bottom_border",
@@ -85,8 +90,11 @@ __all__ = [
     "parse_number",
     "plan_booktabs",
     "read_all",
+    "row_signature",
+    "rows_preserved",
     "set_cell",
     "superscript_stars",
+    "tables_after",
     "to_frame",
     "tolerance_for",
     "update",

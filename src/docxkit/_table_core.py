@@ -15,6 +15,7 @@ accepted or the original side.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple, overload
@@ -23,6 +24,7 @@ from ._xml import (
     PARA_RE,
     element_spans,
     matching_close,
+    normalize_glyphs,
     set_run_text,
     visible_text,
 )
@@ -308,6 +310,101 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
     if required:
         raise AnchorError(f"caption {caption!r} has no table after it")
     return None
+
+
+def tables_after(xml: str, caption: str, *, view: str = FINAL,
+                 count: int = 1) -> list[Table]:
+    """The `count` tables following `caption`, in body order.
+
+    One caption can front SEVERAL ``<w:tbl>`` elements — AFI's Table A3
+    is a country-rowed table and a 5x4 regression block under one
+    caption — and :func:`by_caption` silently addresses the first of
+    them. So the count is stated rather than discovered: an exhibit that
+    grows or loses a block fails here instead of quietly rewriting half
+    of itself, the same bargain as ``table_spans(expect=)``.
+
+    There is no rule for where such a group ENDS that a document can be
+    asked: a caption is text, and the next one may be a figure's. The
+    caller knows how many blocks the exhibit has; this asserts it.
+    """
+    if count < 1:
+        raise AnchorError(f"tables_after: count must be at least 1, not "
+                          f"{count}")
+    para = next((m for m in PARA_RE.finditer(xml)
+                 if caption in visible_text(m.group(0))), None)
+    if para is None:
+        raise AnchorError(f"no paragraph containing caption {caption!r}")
+    found = [t for t in read_all(xml, view=view) if t.start > para.start()]
+    if len(found) < count:
+        raise AnchorError(
+            f"caption {caption!r} is followed by {len(found)} table(s), "
+            f"expected {count}")
+    return found[:count]
+
+
+def row_signature(table: Table, *, skip_header: bool = True
+                  ) -> Counter[tuple[str, ...]]:
+    """The multiset of a table's rows, as normalized cell tuples.
+
+    Whitespace is collapsed and Word's save-time glyph substitutions are
+    folded (the shared table, as everywhere here), so a round-trip
+    through Word is not a changed row.
+
+    A COUNTER, not a set: two identical rows are two rows, and a reorder
+    that dropped one of them is exactly the kind of loss this exists to
+    catch.
+    """
+    rows = table.rows[1:] if skip_header else table.rows
+    return Counter(tuple(" ".join(normalize_glyphs(cell).split())
+                         for cell in row) for row in rows)
+
+
+@dataclass(frozen=True)
+class RowsReport:
+    """What :func:`rows_preserved` found. Falsy when rows changed."""
+
+    lost: list[tuple[str, ...]]
+    """Rows in `before` that `after` does not have — with multiplicity."""
+    gained: list[tuple[str, ...]]
+    """Rows in `after` that `before` did not have."""
+    rows: int
+    """How many rows were compared, on the `before` side."""
+
+    @property
+    def ok(self) -> bool:
+        return not (self.lost or self.gained)
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    def format(self) -> str:
+        if self.ok:
+            return f"rows preserved: {self.rows} row(s), same multiset"
+        out = [(f"{len(self.lost)} row(s) LOST, {len(self.gained)} GAINED "
+                f"(of {self.rows} compared)")]
+        out += [f"  lost   {row}" for row in self.lost]
+        out += [f"  gained {row}" for row in self.gained]
+        return "\n".join(out)
+
+
+def rows_preserved(before: Table, after: Table, *,
+                   skip_header: bool = True) -> RowsReport:
+    """Did `after` keep exactly `before`'s rows, in any order?
+
+    The question a REORDER raises, and the one a rendered diff cannot
+    answer: it reports "rows moved", which is what was asked for, so the
+    eye passes over the row whose values slipped a column. Order is
+    deliberately ignored — that is the edit being checked — and a cell
+    that moved WITHIN its row still shows up, because the tuple changed.
+
+    Reports which rows appeared and vanished rather than a bare False:
+    on a 30-row table "these two are not the same" is the whole finding.
+    """
+    a, b = (row_signature(before, skip_header=skip_header),
+            row_signature(after, skip_header=skip_header))
+    return RowsReport(lost=sorted((a - b).elements()),
+                      gained=sorted((b - a).elements()),
+                      rows=sum(a.values()))
 
 
 def parse_number(text: str) -> float | None:

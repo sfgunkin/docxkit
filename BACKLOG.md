@@ -94,41 +94,6 @@ attributed it to my own edits.
 in a post-build pass before promote. Per-paper workaround to delete when
 the build does it.
 
-### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
-
-`tables` can `update`, `set_cell` and `to_frame`, but nothing answers the
-question a row reorder raises: *is the multiset of row tuples the same as
-before?* Reordering is where a row's values get shifted a column — the
-row moves, one cell stays — and a diff of the rendered table reads as
-"rows moved", which is what you asked for, so the eye passes it.
-
-**Hit on AFI 2026-08-17**, r3 task TE15.2: seven tables (1, 3, 4, 5, A2,
-A3, A4) have their country rows reordered into one common order, and the
-protocol's own acceptance criterion is a row-tuple multiset comparison
-against a pre-edit snapshot. With no toolkit support that means
-snapshotting every table to TSV first and comparing by hand afterwards.
-
-Two traps a shared implementation should own, both found while writing
-the snapshot:
-
-* **one caption can front several `<w:tbl>` elements.** AFI's Table A3 is
-  two of them — the first country-rowed, the second a 5×4 regression
-  block — so `by_caption`-style resolution silently addresses one of two.
-* **layout tables are indistinguishable by index.** AFI's `tbl#0` is a
-  2×2 grid holding Figure 5's panel labels ("a. Tajikistan", "b.
-  Albania"), not data. Anything iterating tables by position hits it
-  first.
-
-**Fix sketch.** A `tables.row_signature(table)` (sorted tuple multiset,
-cells normalized) plus a `tables.assert_rows_preserved(before, after)`
-that reports which row tuples appeared or vanished rather than a bare
-False. `by_caption` should return every table under a caption, or say
-how many it found.
-
-**Workaround in use** — `AFI/revision/scripts/baseline_r3.py` snapshots
-all 11 tables to `revision/baseline_r3/table_NN.tsv` before any edit.
-Per-paper workaround to delete when the toolkit can state it.
-
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
@@ -874,6 +839,63 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
+
+`tables` can `update`, `set_cell` and `to_frame`, but nothing answers the
+question a row reorder raises: *is the multiset of row tuples the same as
+before?* Reordering is where a row's values get shifted a column — the
+row moves, one cell stays — and a diff of the rendered table reads as
+"rows moved", which is what you asked for, so the eye passes it.
+
+**Hit on AFI 2026-08-17**, r3 task TE15.2: seven tables (1, 3, 4, 5, A2,
+A3, A4) have their country rows reordered into one common order, and the
+protocol's own acceptance criterion is a row-tuple multiset comparison
+against a pre-edit snapshot. With no toolkit support that means
+snapshotting every table to TSV first and comparing by hand afterwards.
+
+Two traps a shared implementation should own, both found while writing
+the snapshot:
+
+* **one caption can front several `<w:tbl>` elements.** AFI's Table A3 is
+  two of them — the first country-rowed, the second a 5×4 regression
+  block — so `by_caption`-style resolution silently addresses one of two.
+* **layout tables are indistinguishable by index.** AFI's `tbl#0` is a
+  2×2 grid holding Figure 5's panel labels ("a. Tajikistan", "b.
+  Albania"), not data. Anything iterating tables by position hits it
+  first.
+
+**Fix sketch.** A `tables.row_signature(table)` (sorted tuple multiset,
+cells normalized) plus a `tables.assert_rows_preserved(before, after)`
+that reports which row tuples appeared or vanished rather than a bare
+False. `by_caption` should return every table under a caption, or say
+how many it found.
+
+**Workaround in use** — `AFI/revision/scripts/baseline_r3.py` snapshots
+all 11 tables to `revision/baseline_r3/table_NN.tsv` before any edit.
+Per-paper workaround to delete when the toolkit can state it.
+
+**Fixed 2026-08-17.** `tables.row_signature(table)` is the multiset —
+a Counter, because two identical rows are two rows and a reorder that
+dropped one is what this catches — with whitespace collapsed and the
+shared glyph table folded, so a round trip through Word is not a
+changed row. `tables.rows_preserved(before, after)` returns a
+`RowsReport`: falsy when rows changed, `.lost` and `.gained` naming
+the row tuples, `.format()` printing them. The header is excluded by
+default (`skip_header=False` to include it), since a reorder does not
+touch it and a retitled column is not a lost row.
+
+The multi-table caption is `tables.tables_after(xml, caption,
+count=N)`, which returns exactly N tables or raises. There is no rule
+for where such a group ENDS that a document can be asked — a caption
+is text and the next one may be a figure's — so the count is stated,
+the same bargain as `table_spans(expect=)`. The layout-table trap is
+answered by addressing tables through a caption at all.
+
+Held by `tests/test_rows_preserved.py` (17 tests), including the
+failure this exists for: a row that moved with one value left behind,
+which every other layer reads as "rows moved".
+
 
 ### S1 `build_overrides` put a newly INSERTED paragraph wherever the author's last other edit was — and refused the edit outright when there was no other edit
 
