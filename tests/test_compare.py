@@ -1423,3 +1423,61 @@ def test_word_diff_pinpoints_a_single_edit_in_a_repetitive_paragraph():
     # localised to the clause that changed, not the 440-word paragraph
     assert sum(len(line) for line in out) < 150, out
     assert any("service" in line for line in out), out
+
+
+# --- what the first mutation run found (2026-08-17, 5.3 % survival) ---
+#
+# The lowest-survival module measured, and what it left was the report's
+# SHAPE: the width of the rules that separate its sections, and a loop
+# that must not stop at the first entry of its kind.
+
+def test_the_section_rules_are_seventy_two_characters():
+    """`_section` above splits on the rule as a SHAPE so that re-flowing
+    the report is a cosmetic change — which leaves the width itself
+    unasserted anywhere. It is read in a terminal beside a diff, and a
+    rule of a different width from the one above reads as a different
+    level of heading."""
+    _code, out = _out(_empty_report())
+
+    rules = {ln for ln in out.splitlines() if set(ln) in ({"="}, {"-"})}
+
+    assert rules, out
+    assert all(len(rule) == 72 for rule in rules), sorted(rules)
+
+
+def test_every_HYPERLINK_entry_prints_not_just_the_first():
+    """`continue`, not `break`. The entry naming both sides of a label
+    prints on its own line and the loop goes on; stopping there hides
+    every link after it — and this layer exists because a label that
+    swallowed prose is invisible to all the others."""
+    report = _empty_report()
+    report["hyperlinks"] = [
+        {"side": "grew", "label": "Table 4", "to": "Table 4: The gap",
+         "n": 1},
+        {"side": "user-only", "label": "Table 5", "n": 1}]
+
+    _code, out = _out(report)
+
+    assert "'Table 4'" in out
+    assert "'Table 5'" in out
+
+
+def test_a_stripped_FIELD_prints_the_context_it_has():
+    report = _empty_report()
+    report["stripped_fields"] = [
+        {"part": "document", "context": "the sentence about coverage",
+         "lost": "HYPERLINK"}]
+
+    _code, out = _out(report)
+
+    assert "the sentence about coverage…" in out
+
+
+def test_a_stripped_field_with_NO_context_still_prints_what_was_lost():
+    report = _empty_report()
+    report["stripped_fields"] = [
+        {"part": "document", "context": "", "lost": "HYPERLINK"}]
+
+    _code, out = _out(report)
+
+    assert "HYPERLINK" in out

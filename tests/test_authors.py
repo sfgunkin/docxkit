@@ -230,3 +230,41 @@ def test_the_result_still_parses():
         b"<cp:lastModifiedBy>Someone</cp:lastModifiedBy>")
     set_author(p, "Michael Lokshin")
     etree.fromstring(p["docProps/core.xml"])      # raises if malformed
+
+
+# --- what the first mutation run found (2026-08-17, 8.3 % survival) -----
+
+def test_the_revision_count_counts_REVISIONS_not_people_entries():
+    """`m.group(1) == "w"`. The same attribute name lives in two
+    namespaces: `w:author` on a change, `w15:author` on a people-registry
+    entry. Counting both makes the report claim more revisions than the
+    document has — and the count is what a caller checks to see the
+    restamp reached anything."""
+    p = parts()
+    ins_del_comment = 3          # w:ins, w:del, and the comment
+
+    report = set_author(p, "Michael Lokshin")
+
+    assert report.revisions == ins_del_comment
+    assert "w15:person" in text(p, "word/people.xml")     # still there
+
+
+def test_people_entries_for_DIFFERENT_authors_are_both_kept():
+    """The collapse folds duplicates of ONE name, keyed on the name
+    itself. Keying on anything else — the namespace prefix, the whole
+    element — either folds two real reviewers into one or folds
+    nothing."""
+    p = parts()
+
+    report = set_author(p, "Michael Lokshin", only=["Tester"])
+
+    people = text(p, "word/people.xml")
+    assert report.people == 2
+    assert 'w15:author="Michael Lokshin"' in people
+    assert 'w15:author="Revision"' in people
+
+
+# `m.group(1) == "w"` mutated to `is "w"` survives and is EQUIVALENT:
+# CPython interns single-character strings, so the group really is that
+# object. Recorded here rather than chased — it is a property of the
+# interpreter, not a gap in these tests.
