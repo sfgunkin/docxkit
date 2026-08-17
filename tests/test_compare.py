@@ -2134,7 +2134,8 @@ def test_a_CITATION_bookmark_is_named_as_one():
     for a link or for the bookmark it points at."""
     from docxkit._compare_diff import stripped_block
 
-    notes = stripped_block([_para("a", cites=["cite_Smith2020"])], [_para("a")])
+    notes = stripped_block([_para("a", cites=["cite_Smith2020"])],
+                           [_para("a")])
 
     assert notes[0][0] == "lost citation bookmark(s): ['cite_Smith2020']"
 
@@ -2168,7 +2169,8 @@ def test_FEWER_footnote_references_is_reported_as_a_count():
     one."""
     from docxkit._compare_diff import stripped_block
 
-    notes = stripped_block([_para("a", footnotes=3)], [_para("a", footnotes=1)])
+    notes = stripped_block([_para("a", footnotes=3)],
+                           [_para("a", footnotes=1)])
 
     assert notes == [("lost 2 footnote ref(s)", None)]
 
@@ -2178,3 +2180,58 @@ def test_MORE_footnote_references_is_not_a_loss():
 
     assert stripped_block([_para("a", footnotes=1)],
                           [_para("a", footnotes=3)]) == []
+
+
+# ------------------------------------------- the format layer's own guard --
+
+def test_the_format_layer_names_the_SEGMENT_that_changed():
+    """Character by character, so the entry says which words took the
+    emphasis rather than that the paragraph did — the same argument
+    `word_diff` makes about a sentence."""
+    from docxkit._compare_diff import fmt_diff
+    from docxkit._compare_read import Para
+
+    plain = Para('<w:p><w:r><w:t>See the Journal here.</w:t></w:r></w:p>')
+    part = Para('<w:p><w:r><w:t xml:space="preserve">See the </w:t></w:r>'
+                "<w:r><w:rPr><w:i/></w:rPr><w:t>Journal</w:t></w:r>"
+                '<w:r><w:t xml:space="preserve"> here.</w:t></w:r></w:p>')
+
+    (segment, was, now), = fmt_diff(plain, part)
+
+    assert segment == "Journal"
+    assert "italic" in now and "italic" not in was
+
+
+def test_the_format_layer_says_NOTHING_when_the_prose_differs():
+    """A character-by-character comparison of two different strings
+    reports the offset, not the emphasis — so the layer declines, and
+    the text layer is what reports that pair."""
+    from docxkit._compare_diff import fmt_diff
+    from docxkit._compare_read import Para
+
+    # the SAME LENGTH, deliberately: the length check alone would let
+    # this pair through, and then every character of it reads as a
+    # formatting change at an offset that means nothing
+    one = Para("<w:p><w:r><w:t>See the Journal here.</w:t></w:r></w:p>")
+    other = Para('<w:p><w:r><w:rPr><w:i/></w:rPr>'
+                 "<w:t>See the Gazette here.</w:t></w:r></w:p>")
+
+    assert len(one.wtext_f) == len(other.wtext_f)
+    assert fmt_diff(one, other) == []
+
+
+def test_a_format_run_that_reaches_the_END_is_still_reported():
+    """The loop closes a run when the flags agree again; one that never
+    does has to be flushed after it, or emphasis on the last words of a
+    paragraph is invisible."""
+    from docxkit._compare_diff import fmt_diff
+    from docxkit._compare_read import Para
+
+    plain = Para("<w:p><w:r><w:t>See the Journal</w:t></w:r></w:p>")
+    tail = Para('<w:p><w:r><w:t xml:space="preserve">See the </w:t></w:r>'
+                "<w:r><w:rPr><w:b/></w:rPr><w:t>Journal</w:t></w:r></w:p>")
+
+    (segment, _was, now), = fmt_diff(plain, tail)
+
+    assert segment == "Journal"
+    assert "bold" in now
