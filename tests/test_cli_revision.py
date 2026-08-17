@@ -849,3 +849,29 @@ def test_promote_reports_what_it_pruned(monkeypatch, project, capsys):
     # reported relative to the project, not as an absolute path
     assert r"build\rescue" in out or "build/rescue" in out
     assert str(project.root) not in out
+
+
+def test_doctor_is_quiet_on_a_project_that_agrees(monkeypatch, project,
+                                                  capsys):
+    code, _ = run_cli(monkeypatch, "revision", "doctor",
+                      "--paper", str(project.root))
+
+    assert code == 0
+    assert "nothing else" in capsys.readouterr().out
+
+
+def test_doctor_exits_2_and_names_the_line(monkeypatch, project, capsys):
+    """A migration can gate on this, and it has to run on a tree that is
+    otherwise GREEN — that is the state it exists to break."""
+    stale = project.root / "tests" / "helpers.py"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text('PAPER = next(root.glob("Report/le_v*.docx"))\n',
+                     encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "doctor",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "tests/helpers.py:1" in out, out
+    assert "pattern" in out and "Report/le_v*.docx" in out

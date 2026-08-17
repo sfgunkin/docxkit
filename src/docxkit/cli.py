@@ -854,6 +854,33 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     return 0 if st.is_truth else 1
 
 
+def cmd_revision_doctor(args: argparse.Namespace) -> int:
+    """Who else in the repo thinks they know where the manuscript is.
+
+    Exits 2 on a finding, so a migration can gate on it. It has to run
+    on a tree that is otherwise GREEN, because that is the state it
+    exists to break: the AFI suite that selected a manuscript three
+    generations stale was red only by luck, and would have stayed green
+    had the two generations agreed on the counts it happened to check.
+    """
+    from .revision import doctor
+    paper = _paper(args)
+    found = doctor(paper)
+    print(f"{paper.name}")
+    print(f"  declared  {paper.working}")
+    if not found:
+        print("  nothing else in the project selects a manuscript")
+        return 0
+    print(f"\n{len(found)} other selection(s) — each picks a document "
+          f"that is NOT the declared one:")
+    for doubt in found:
+        print(f"  {doubt}")
+    print("\nA `pattern` is the dangerous kind: it names no file, so a "
+          "rename does not\nbreak it — it quietly selects whatever else "
+          "is on disk.")
+    return 2
+
+
 def cmd_revision_ingest(args: argparse.Namespace) -> int:
     """What did the author change while I was away? (read-only)"""
     from .revision import ingest
@@ -1285,6 +1312,9 @@ def main() -> None:
 
     _rev("status", cmd_revision_status,
          "truth or proposal? (exit 1 pending, 4 stale baseline)")
+
+    _rev("doctor", cmd_revision_doctor,
+         "who else in the repo selects a manuscript (exit 2 on a finding)")
 
     r = _rev("ingest", cmd_revision_ingest,
              "what the author changed since the last truth (read-only)")

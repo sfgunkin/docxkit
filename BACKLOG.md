@@ -113,70 +113,6 @@ file reads the way it renders.
 should be a survivor re-run, but `renumber.py` has CHANGED, so that
 session is void and it must be a fresh draw.
 
-### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file
-
-`revision init` scaffolds the layout and the manuscript takes its final
-name, `working.docx`. Retiring the old name is left to the migrator, who
-greps for it. **A grep cannot find the references that matter**, because
-the dangerous ones do not contain the filename: they select the paper by
-PATTERN, and a pattern that no longer matches falls back to whatever else
-is on disk — an older generation of the same paper, sitting right there.
-
-**Observed on AFI, 2026-08-17, nine days after its migration.** The
-paper's pytest suite chose its subject by globbing the highest
-`afi_vN.docx` across `Report/` and `revision/`. Renaming
-`revision/afi_v14_clean.docx` → `revision/working.docx` made the glob
-miss, so it selected `Report/afi_v11.docx` — three generations stale.
-Eleven tests failed with messages describing the OLD paper (caption count
-7≠9, 22≠25 references, Table 3/4/5 cell drift) and nothing naming the
-rename. The migration commit had already repointed the three scripts that
-DID name `afi_v14_clean.docx` literally; the resolver was missed precisely
-because it never spelled the name.
-
-Red was luck. v11 and v14 disagreed on those counts; had they agreed, the
-suite would have stayed green while gating a manuscript untouched since
-July. That is the S3 shape — a gate that is alive, passing, and aimed at
-the wrong document.
-
-**Third occurrence of one class.** `Parental_style`: 20 revision scripts
-hard-coded to `ps5_r1.docx` while the live paper was `ps5_r2.docx`.
-API/HPPA: every script defaulted to API10 with API11 live (they compared
-identical, so nothing was lost *yet*). AFI: the glob above. Each was
-caught by hand, by someone who happened to look.
-
-**Repro**
-
-    # in a migrated paper, before the fix
-    python -c "import sys; sys.path.insert(0,'Programs/v3/tests'); \
-               from paper_doc_helpers import PAPER_DOCX; print(PAPER_DOCX)"
-    # -> ...\Report\afi_v11.docx        while paper.toml declares
-    #    ...\revision\working.docx
-    docxkit revision status              # TRUTH / TRUTH — sees nothing wrong
-
-**Fix sketch.** A `revision doctor` (or a `validate` layer) that reports
-who else in the repo thinks they know where the paper is:
-
-* every `.docx` path literal under the project that is not the declared
-  `working`/`prev` — the Parental_style and API/HPPA shape;
-* every glob or regex over `*.docx` in project code that does NOT match
-  the declared manuscript — the AFI shape, and the one no grep finds.
-  A pattern that matches nothing, or matches only files outside
-  `revision/`, is the signal;
-* it must run on a tree that is otherwise green, since that is exactly
-  the state it is meant to break.
-
-Cheap first cut: resolve each candidate and compare against
-`load_paper(root).working`, reporting any that disagree.
-
-**Workaround in use** — `AFI/Programs/v3/tests/paper_doc_helpers.py` now
-reads `[paper] working` via `load_paper`, keeping its version glob only as
-a no-config fallback, and `AFI/Programs/v3/tests/test_paper_resolution.py`
-asserts the resolution itself so the next rename fails by name rather than
-as table drift (mutation-verified against the pre-fix resolver). Per-paper
-workaround to delete when a repo-wide check exists — and note that the
-guard is per-paper by nature, so each migrated paper currently owes its
-own copy.
-
 ### S4 `revision` raises six exception types and exports none of them, so `except` must import from a module the caller never called
 
 `docxkit.revision` raises `ProtocolError` in eight places — `find_config`
@@ -891,6 +827,86 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file — `revision doctor`
+
+`revision init` scaffolds the layout and the manuscript takes its final
+name, `working.docx`. Retiring the old name is left to the migrator, who
+greps for it. **A grep cannot find the references that matter**, because
+the dangerous ones do not contain the filename: they select the paper by
+PATTERN, and a pattern that no longer matches falls back to whatever else
+is on disk — an older generation of the same paper, sitting right there.
+
+**Observed on AFI, 2026-08-17, nine days after its migration.** The
+paper's pytest suite chose its subject by globbing the highest
+`afi_vN.docx` across `Report/` and `revision/`. Renaming
+`revision/afi_v14_clean.docx` → `revision/working.docx` made the glob
+miss, so it selected `Report/afi_v11.docx` — three generations stale.
+Eleven tests failed with messages describing the OLD paper (caption count
+7≠9, 22≠25 references, Table 3/4/5 cell drift) and nothing naming the
+rename. The migration commit had already repointed the three scripts that
+DID name `afi_v14_clean.docx` literally; the resolver was missed precisely
+because it never spelled the name.
+
+Red was luck. v11 and v14 disagreed on those counts; had they agreed, the
+suite would have stayed green while gating a manuscript untouched since
+July. That is the S3 shape — a gate that is alive, passing, and aimed at
+the wrong document.
+
+**Third occurrence of one class.** `Parental_style`: 20 revision scripts
+hard-coded to `ps5_r1.docx` while the live paper was `ps5_r2.docx`.
+API/HPPA: every script defaulted to API10 with API11 live (they compared
+identical, so nothing was lost *yet*). AFI: the glob above. Each was
+caught by hand, by someone who happened to look.
+
+**Repro**
+
+    # in a migrated paper, before the fix
+    python -c "import sys; sys.path.insert(0,'Programs/v3/tests'); \
+               from paper_doc_helpers import PAPER_DOCX; print(PAPER_DOCX)"
+    # -> ...\Report\afi_v11.docx        while paper.toml declares
+    #    ...\revision\working.docx
+    docxkit revision status              # TRUTH / TRUTH — sees nothing wrong
+
+**Fix sketch.** A `revision doctor` (or a `validate` layer) that reports
+who else in the repo thinks they know where the paper is:
+
+* every `.docx` path literal under the project that is not the declared
+  `working`/`prev` — the Parental_style and API/HPPA shape;
+* every glob or regex over `*.docx` in project code that does NOT match
+  the declared manuscript — the AFI shape, and the one no grep finds.
+  A pattern that matches nothing, or matches only files outside
+  `revision/`, is the signal;
+* it must run on a tree that is otherwise green, since that is exactly
+  the state it is meant to break.
+
+Cheap first cut: resolve each candidate and compare against
+`load_paper(root).working`, reporting any that disagree.
+
+**Workaround in use** — `AFI/Programs/v3/tests/paper_doc_helpers.py` now
+reads `[paper] working` via `load_paper`, keeping its version glob only as
+a no-config fallback, and `AFI/Programs/v3/tests/test_paper_resolution.py`
+asserts the resolution itself so the next rename fails by name rather than
+as table drift (mutation-verified against the pre-fix resolver). Per-paper
+workaround to delete when a repo-wide check exists — and note that the
+guard is per-paper by nature, so each migrated paper currently owes its
+own copy.
+
+
+**Fixed 2026-08-17.** `revision.doctor` and `docxkit revision doctor`.
+It reads only text, opens no document, and reports rather than refuses —
+exiting 2 so a migration can gate on it. Both shapes are found: a stale
+LITERAL (the Parental_style and API/HPPA case) and a PATTERN that no
+longer matches the manuscript (the AFI case, and the one no grep for the
+filename can find). The declared `working`/`prev` pair is accepted, and
+`build/`, the attic and the config itself are skipped: all three
+legitimately name a document that is not the live one.
+
+`tests/test_revision_doctor.py` builds a migrated project and puts each
+shape in it; `tests/test_cli_revision.py` holds the exit codes. The
+report prints paths with forward slashes whatever the platform, because
+a line copied into an issue should read the same on the machine that
+reads it.
 
 ### S1 `insert_in_para` places content by a count that ignores the MATHS — the DSI defect, still live in the third copy of the walk — `b34cb12`
 

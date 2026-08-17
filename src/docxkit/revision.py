@@ -101,6 +101,7 @@ __all__ = [
     "RESCUE_KEEP",
     "SAVE_NOISE",
     "TEXT_PARTS",
+    "Doubt",
     "IngestReport",
     "Loss",
     "Paper",
@@ -109,6 +110,7 @@ __all__ = [
     "ValidateReport",
     "baseline",
     "build",
+    "doctor",
     "drift",
     "find_config",
     "ingest",
@@ -1427,3 +1429,125 @@ def init(root: str | Path, source: str | Path, *, name: str = "",
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+# ------------------------------------------------ who else knows the paper --
+
+#: Where a project keeps code, and what a survey should not read. `build`
+#: holds this protocol's own artefacts and `attic` holds retired ones —
+#: both legitimately name old manuscripts.
+_DOCTOR_SKIP = {".git", "__pycache__", ".venv", "venv", "node_modules",
+                ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+#: Source that can SELECT a manuscript. Notebooks are read as text: a
+#: glob in a cell selects a paper exactly as one in a module does.
+_DOCTOR_SUFFIXES = {".py", ".ipynb", ".toml", ".cfg", ".ini", ".do",
+                    ".sh", ".ps1", ".bat", ".R", ".r"}
+_DOCX_LITERAL_RE = re.compile(r"""['"]([^'"\n]*?\.docx)['"]""")
+#: A glob or regex that SELECTS by shape rather than by name — the case
+#: no grep for the filename can find.
+_DOCX_PATTERN_RE = re.compile(
+    r"""['"]([^'"\n]*?\*[^'"\n]*?\.docx|[^'"\n]*?\.docx[^'"\n]*?\*)['"]""")
+
+
+@dataclass
+class Doubt:
+    """One place that thinks it knows where the manuscript is."""
+
+    path: Path
+    """The file that selects it, relative to the project root."""
+    line: int
+    text: str
+    """The literal or pattern as written."""
+    kind: str
+    """``"literal"`` or ``"pattern"``."""
+
+    def __str__(self) -> str:
+        # forward slashes whatever the platform, like every other path
+        # this package prints — a report copied into an issue should
+        # read the same on the machine that reads it
+        return (f"{self.path.as_posix()}:{self.line}  {self.kind}  "
+                f"{self.text!r}")
+
+
+def _selects_declared(text: str, paper: Paper) -> bool:
+    """Does this literal or glob select a manuscript the protocol owns?
+
+    Both ends of the pair count. `prev.docx` is the baseline every
+    reject-all check reads, so a script naming it is doing the right
+    thing, and reporting it would train the reader to skim this.
+    """
+    candidate = Path(text)
+    globbed = "*" in text or "?" in text
+    for target in (paper.working.resolve(), paper.prev.resolve()):
+        if globbed:
+            if target.match(text) or target.match(f"**/{text.lstrip('/')}"):
+                return True
+            continue
+        if candidate.name != target.name:
+            continue
+        # a bare name, or a path whose tail matches the declared one
+        if len(candidate.parts) == 1 or target.match(
+                str(Path(*candidate.parts[-2:]))):
+            return True
+    return False
+
+
+def doctor(paper: Paper | None = None, *,
+           start: str | Path | None = None) -> list[Doubt]:
+    """Every place in the project that selects a manuscript OTHER than
+    the declared one.
+
+    The survey a migration needs and a grep cannot do. Retiring the old
+    filename is left to the migrator, who searches for it — and the
+    references that matter are the ones that never spell it: they pick
+    the paper by PATTERN, and a pattern that stops matching falls back
+    to whatever else is on disk, which is an older generation of the
+    same paper sitting right there.
+
+    Observed three times before this existed. `Parental_style` had 20
+    scripts hard-coded to `ps5_r1.docx` with `ps5_r2.docx` live;
+    API/HPPA defaulted every script to API10 with API11 live; and AFI's
+    own pytest suite globbed the highest `afi_vN.docx`, so the rename to
+    `working.docx` sent it to `Report/afi_v11.docx`, three generations
+    stale. Eleven tests failed with messages about caption counts and
+    table cells, and not one of them named the rename. Red was luck:
+    had the two generations agreed on those counts, the suite would
+    have stayed green while gating a manuscript untouched for a month.
+
+    Reports rather than refuses, and reads only text — it opens no
+    document and changes nothing. `build/` and the attic are skipped:
+    both legitimately hold older manuscripts.
+    """
+    paper = paper or load_paper(start)
+    # the config DECLARES the pair; it does not select one
+    skip_files = {paper.config.resolve()}
+    skip = {paper.build_dir.resolve()}
+    if paper.attic is not None:
+        skip.add(paper.attic.resolve())
+
+    out: list[Doubt] = []
+    for path in sorted(paper.root.rglob("*")):
+        if path.suffix not in _DOCTOR_SUFFIXES or not path.is_file():
+            continue
+        if any(part in _DOCTOR_SKIP for part in path.parts):
+            continue
+        if path.resolve() in skip_files:
+            continue
+        if any(parent in skip for parent in path.resolve().parents):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):        # pragma: no cover
+            continue
+        for n, line in enumerate(lines, 1):
+            seen: set[str] = set()
+            for rx, kind in ((_DOCX_PATTERN_RE, "pattern"),
+                             (_DOCX_LITERAL_RE, "literal")):
+                for m in rx.finditer(line):
+                    text = m.group(1)
+                    if text in seen or _selects_declared(text, paper):
+                        continue
+                    seen.add(text)
+                    out.append(Doubt(path.relative_to(paper.root), n,
+                                     text, kind))
+    return out
