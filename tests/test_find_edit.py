@@ -693,3 +693,116 @@ def test_an_empty_paragraph_takes_the_content_inside_the_w_p():
     out = insert_in_para("<w:p><w:pPr/></w:p>", 0, "first words")
     assert text_of(out) == "first words"
     assert out.endswith("</w:p>")
+
+
+# ---- what the first mutation run found unasserted (2026-08-17, 13.4 %) ---
+
+def test_a_page_break_goes_FIRST_in_a_pPr_that_has_no_style():
+    """Eleven mutants lived on the offset this branch computes, because
+    the styled case was asserted by value and this one only by "the flag
+    is in there somewhere". Word reads `w:pPr` as an ordered sequence and
+    a flag in the wrong place is dropped on the next save — the caption
+    stops breaking, weeks later, with nothing in any diff.
+    """
+    xml = document('<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+                   + run("Table 6: Results") + "</w:p>")
+
+    out = page_break_before(xml, "Table 6:")
+
+    assert '<w:pPr><w:pageBreakBefore/><w:jc w:val="center"/></w:pPr>' in out
+
+
+def test_para_text_at_includes_the_paragraphs_FIRST_offset():
+    """`m.start() <= pos`. Half-open the other way, an offset landing on
+    the opening `<w:p>` — which is what every span-based caller hands in
+    — reads as outside every paragraph."""
+    xml = document(para(run("alpha")) + para(run("beta")))
+    start = xml.index("<w:p ")
+
+    assert para_text_at(xml, start) == "alpha"
+
+
+def test_para_text_at_treats_the_END_offset_as_the_NEXT_paragraph():
+    """`pos < m.end()`. Paragraphs are adjacent, so one paragraph's end
+    IS the next one's start, and an inclusive test would answer with the
+    paragraph that just closed."""
+    xml = document(para(run("alpha")) + para(run("beta")))
+    end_of_first = xml.index("</w:p>") + len("</w:p>")
+
+    assert para_text_at(xml, end_of_first) == "beta"
+
+
+def test_a_table_SPAN_covers_the_whole_table_and_stops_there():
+    """The end offset was only ever used as an opaque number. It has to
+    be one past the closing tag: short, and `xml[s:e]` hands a caller a
+    truncated table; long, and it swallows the prose after it."""
+    xml = document(table(row("a", "b")) + para(run("between"))
+                   + table(row("c")) + para(run("after"))
+                   + table(row("d", "e", "f")))
+
+    spans = table_spans(xml)
+
+    assert len(spans) == 3
+    for s, e in spans:
+        assert xml[s:e].startswith("<w:tbl>"), xml[s:e][:40]
+        assert xml[s:e].endswith("</w:tbl>"), xml[s:e][-40:]
+    assert "between" not in xml[spans[0][0]:spans[0][1]]
+
+
+def test_expect_fails_on_TOO_MANY_tables_as_well_as_too_few():
+    """`!=`, not `<`. The guard exists because a table added upstream
+    shifts every later index — which is the too-many direction."""
+    xml = document(table(row("a")) + table(row("b")))
+
+    with pytest.raises(AnchorError, match="2 tables, expected 1"):
+        table_spans(xml, expect=1)
+
+
+def test_table_index_at_counts_the_tables_FIRST_offset_as_inside_it():
+    """`s <= pos`, and callers pass the span start straight back in."""
+    xml = document(table(row("a")) + para(run("between"))
+                   + table(row("b")))
+    spans = table_spans(xml)
+
+    assert table_index_at(spans, spans[1][0]) == 1
+    assert table_index_at(spans, spans[0][1]) is None    # one past the end
+
+
+@pytest.mark.parametrize("val,level", [
+    ("0", 1),        # outlineLvl is 0-based and the levels here are 1-based
+    ("2", 3),
+    ("8", 6),        # capped: markdown has no deeper heading to render
+])
+def test_an_outline_level_is_read_ONE_BASED_and_capped(val, level):
+    xml = f'<w:p><w:pPr><w:outlineLvl w:val="{val}"/></w:pPr></w:p>'
+
+    assert heading_level(xml) == level
+
+
+def test_a_GERMAN_heading_style_keeps_its_own_level():
+    """`style == "Title"` mutated to `>=` catches every style that sorts
+    after it — and Word's German heading id, which the umlaut drops out
+    of, does: `berschrift3` would come back as a level 1 Title, so a
+    third-level heading renders as the document's title.
+    """
+    xml = '<w:p><w:pPr><w:pStyle w:val="berschrift3"/></w:pPr></w:p>'
+
+    assert heading_level(xml) == 3
+
+
+def test_a_heading_DEEPER_than_six_is_capped_not_dropped():
+    xml = '<w:p><w:pPr><w:pStyle w:val="Heading9"/></w:pPr></w:p>'
+
+    assert heading_level(xml) == 6
+
+
+def test_body_elements_are_in_DOCUMENT_order_not_by_kind():
+    """`sort(key=el[1])` — the offset. Keyed on the tag instead, every
+    paragraph sorts before every table, and a reader walking the result
+    (word count, markdown export) renders the whole paper and then the
+    exhibits."""
+    from docxkit.find import body_elements
+
+    xml = document(table(row("a")) + para(run("after the table")))
+
+    assert [kind for kind, _s, _e in body_elements(xml)] == ["tbl", "p"]

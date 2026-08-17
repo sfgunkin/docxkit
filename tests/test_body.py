@@ -264,3 +264,147 @@ def test_prose_props_on_an_ordinary_paragraph():
          '<w:r><w:rPr><w:b/></w:rPr><w:t>Table A4</w:t></w:r></w:p>')
     assert prose_props(p) == ('<w:jc w:val="center"/>',
                               "<w:rPr><w:b/></w:rPr>")
+
+
+# --- what the first mutation run found unasserted (2026-08-17, 14.7 %) ---
+#
+# The shape of a built table was pinned — counts of `w:tr`, `w:gridCol`,
+# a gridSpan — and none of its NUMBERS were. Eleven mutants lived on the
+# one line that sizes the grid.
+
+def test_the_GRID_divides_the_text_column_between_the_columns():
+    """A `w:gridCol` is a width, and Word lays the table out on it. The
+    line computing it carried eleven live mutants — floor division into
+    addition, into a shift, into a bitwise and — because every table
+    test counted the columns and none read their width. A table whose
+    grid says 9360 twips per column renders three times wider than the
+    page."""
+    t = table(["a", "b", "c"], [["1", "2", "3"]])
+
+    assert t.count('<w:gridCol w:w="3120"/>') == 3       # 9360 // 3
+
+
+def test_ONE_column_takes_the_WHOLE_text_column():
+    """9360 twips, a US-Letter text column. Floor division hides a
+    number that is off by one at every other width — 9361 // 3 is 3120
+    too — so the single-column table is where the constant itself is
+    readable."""
+    t = table(["Note"], [["a"]])
+
+    assert '<w:gridCol w:w="9360"/>' in t
+
+
+def test_the_grid_is_sized_by_COLUMNS_not_by_HEADERS():
+    """Grouped headings: three header cells over seven columns. Sizing
+    by the header count would give each column more than double its
+    width, and the table would run off the page."""
+    t = table(["Country", "Gap", "OASI"], [["Albania"] + ["x"] * 6],
+              spans=[1, 3, 3])
+
+    assert t.count('<w:gridCol w:w="1337"/>') == 7       # 9360 // 7
+
+
+def test_FEWER_spans_than_headers_is_refused_too():
+    """`!=`, not `>`. A short `spans` list would otherwise reach the
+    zip and fail there — as a ValueError about argument 2, from inside a
+    builder, instead of the sentence naming what the caller got wrong."""
+    with pytest.raises(AnchorError, match="3 headers but 2 spans"):
+        table(["a", "b", "c"], [["1", "2", "3"]], spans=[1, 2])
+
+
+def test_a_row_with_TOO_MANY_cells_is_refused():
+    """`!=`, not `<`. A long row is the same lost value as a short one —
+    a column inserted upstream and nothing told the header."""
+    with pytest.raises(AnchorError, match="row 0 has 4 cells"):
+        table(["a", "b", "c"], [["1", "2", "3", "4"]])
+
+
+def test_a_PLAIN_cell_carries_no_gridSpan():
+    """`span > 1`, and the default is 1. Mutated to `>=`, or to a default
+    of 2, every ordinary cell claims to span a column it does not own and
+    the row no longer lines up with the grid."""
+    assert "gridSpan" not in cell("Albania")
+
+
+def test_a_cell_KEEPS_a_tcPr_it_was_given():
+    """`tcpr or <default>`. Mutated to `and`, a caller's cell properties
+    — a shaded cell, a border — are silently replaced by the default."""
+    mine = '<w:tcPr><w:shd w:val="clear" w:fill="D9D9D9"/></w:tcPr>'
+
+    assert mine in cell("x", tcpr=mine)
+
+
+def test_a_cell_given_no_tcPr_gets_an_AUTO_WIDTH_one():
+    assert '<w:tcW w:w="0" w:type="auto"/>' in cell("x")
+
+
+def test_a_spanning_cell_needs_somewhere_to_put_the_gridSpan():
+    with pytest.raises(AnchorError, match="span needs a tcPr"):
+        cell("x", span=2, tcpr="<w:tcPr2/>")
+
+
+def test_insert_before_does_NOT_fold_typography_unless_asked():
+    """`normalize` defaults to False here as everywhere: folding glyphs
+    silently is how an anchor matches a paragraph the caller did not
+    mean. The curly apostrophe is the one that keeps happening —
+    autocorrect ran on some paragraphs and not others."""
+    xml = "<w:body>" + para(run("workers’ productivity")) + "</w:body>"
+
+    with pytest.raises(AnchorError):
+        insert_before(xml, "workers' productivity", para(run("new")))
+
+    assert "new" in insert_before(xml, "workers' productivity",
+                                  para(run("new")), normalize=True)
+
+
+def test_the_colon_refusal_QUOTES_the_anchor_it_refused():
+    """The message is the whole value of the refusal: a build script
+    passes several anchors, and "that paragraph ends in a colon" without
+    saying WHICH sends the reader back through all of them."""
+    xml = "<w:body>" + para(run("The index is defined as:")) + "</w:body>"
+
+    with pytest.raises(AnchorError, match="insert_after\\('defined as'\\)"):
+        insert_after(xml, "defined as", para(run("x")))
+
+
+def test_a_LONG_anchor_is_cut_in_the_message_not_dumped():
+    """40 characters. A build script anchors on whole sentences, and a
+    refusal that reprints one buries the instruction after it."""
+    sentence = ("The age-friendliness index is defined for every "
+                "occupation in the sample as:")
+    xml = "<w:body>" + para(run(sentence)) + "</w:body>"
+
+    with pytest.raises(AnchorError) as exc:
+        insert_after(xml, sentence, para(run("x")))
+
+    quoted = str(exc.value).split("'")[1]
+    assert quoted == sentence[:40], quoted
+
+
+def test_prose_props_walks_PAST_a_styled_link_run_to_the_prose():
+    """`continue`, not `break`. Word leaves runs carrying the Hyperlink
+    character style with no `w:hyperlink` around them — a link the
+    author deleted the address of. Stopping at the first one answers
+    "no properties" for a paragraph that has them two runs later."""
+    from docxkit.body import prose_props
+
+    p = ('<w:p><w:pPr><w:jc w:val="both"/></w:pPr>'
+         '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+         "<w:t>Bhalotra (2020)</w:t></w:r>"
+         '<w:r><w:rPr><w:i/></w:rPr><w:t> shows that</w:t></w:r></w:p>')
+
+    assert prose_props(p) == ('<w:jc w:val="both"/>', "<w:rPr><w:i/></w:rPr>")
+
+
+def test_an_ALL_LINK_paragraph_still_answers_with_its_pPr():
+    """Only the rPr is refused. The paragraph properties — centred, the
+    spacing — belong to the paragraph and are what a caller cloning a
+    caption is usually after."""
+    from docxkit.body import prose_props
+
+    p = ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+         '<w:hyperlink w:anchor="a"><w:r><w:rPr>'
+         '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>only</w:t></w:r>'
+         "</w:hyperlink></w:p>")
+
+    assert prose_props(p) == ('<w:jc w:val="center"/>', "")
