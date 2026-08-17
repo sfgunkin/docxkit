@@ -2235,3 +2235,50 @@ def test_a_format_run_that_reaches_the_END_is_still_reported():
 
     assert segment == "Journal"
     assert "bold" in now
+
+
+def test_the_paragraph_pairing_keeps_its_OFFSET_across_a_matched_block(
+        tmp_path):
+    """`b[j1 + (k - i1)]` — the two sides of an equal block are walked in
+    step, and an offset slip pairs a paragraph with its neighbour. Both
+    would then report as glyph changes against each other, which reads
+    as two edits where there was one."""
+    a, b = docs(tmp_path,
+                para(run("Alpha “one”.")) + para(run("Beta “two”."))
+                + para(run("Gamma three.")),
+                para(run("Changed opening.")) + para(run('Alpha "one".'))
+                + para(run('Beta "two".')) + para(run("Gamma three.")))
+
+    report = compare(a, b)
+
+    pairs = [(g["from"], g["to"]) for g in report["glyph"]]
+    assert pairs == [("Alpha “one”.", 'Alpha "one".'),
+                     ("Beta “two”.", 'Beta "two".')]
+
+
+def test_a_COMMENT_only_one_side_carries_is_reported_with_its_side(tmp_path):
+    """Never gated — an author round legitimately adds comments — and
+    which side it is on is the whole content of the finding: one is the
+    author's note to read, the other is a comment the build carries and
+    their copy does not."""
+    from conftest import comment
+
+    a, b = docs(tmp_path, para(run("Text.")), para(run("Text.")),
+                comment_items=((comment(1, "built note"),), ()))
+
+    report = compare(a, b)
+
+    assert [(c["side"], c["text"]) for c in report["comments"]] == [
+        ("built-only", "Tester: built note")]
+
+
+def test_a_comment_the_AUTHOR_added_is_reported_as_user_only(tmp_path):
+    from conftest import comment
+
+    a, b = docs(tmp_path, para(run("Text.")), para(run("Text.")),
+                comment_items=((), (comment(1, "please check"),)))
+
+    report = compare(a, b)
+
+    assert [(c["side"], c["text"]) for c in report["comments"]] == [
+        ("user-only", "Tester: please check")]
