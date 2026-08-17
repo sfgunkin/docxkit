@@ -127,3 +127,61 @@ def test_a_tracked_table_refuses():
 def test_empty_input_refuses():
     with pytest.raises(AnchorError, match="no rows"):
         update(BASE, one_table(BASE), [])
+
+
+# --- what the first HONEST measurement found (2026-08-17, 12.9 %) -------
+#
+# The first run of this module reported 44.9 % with 216 survivors in
+# `update`, because this file was not in the harness. With it in, the
+# figure is 12.9 % and what is left in `update` is its REPORT: the
+# coordinates each CellChange carries and the sentence the refusals
+# print. A paper reads that report to check a regeneration — "13 cells
+# changed, none by more than 0.01" is the whole verification — so a
+# coordinate that is off by row0 is a check of the wrong cell.
+
+def test_a_change_carries_the_cell_it_HAPPENED_IN():
+    """Absolute row and column, not the offset within the block: a
+    caller reading the report against its own data is looking at the
+    table, where row 2 is row 2."""
+    xml, changes = update(BASE, one_table(BASE),
+                          [["Chile", -0.641, 6.02]], row0=2, col0=0)
+
+    assert [(c.row, c.col) for c in changes] == [(2, 1), (2, 2)]
+
+
+def test_a_block_written_at_an_OFFSET_reports_the_real_columns():
+    xml, changes = update(BASE, one_table(BASE), [[0.298], [-0.641]],
+                          row0=1, col0=1)
+
+    assert [(c.row, c.col) for c in changes] == [(1, 1), (2, 1)]
+    assert one_table(xml).rows[1] == ["Poland", "0.30", "1,234"]
+
+
+def test_a_change_reports_the_RAW_jump_and_the_printed_sides():
+    """`moved` is the distance in the data, not in the rendering: a cell
+    that prints 0.30 either way moved 0.002, and that is the number a
+    reader gates on."""
+    _xml, changes = update(BASE, one_table(BASE), [["Poland", 0.3, 1234]])
+
+    (change,) = changes
+    assert (change.old, change.new) == ("0.31", "0.30")
+    assert change.moved == pytest.approx(0.01)
+
+
+def test_the_row_overrun_refusal_names_the_ROW_and_both_counts():
+    """The message is the finding: a vanished column means the data and
+    the manuscript disagree, and which row it was seen in is where the
+    reader starts."""
+    with pytest.raises(AnchorError) as exc:
+        update(BASE, one_table(BASE), [["a", "b", "c"], ["d", "e", "f", "g"]])
+
+    assert "row 2 of table 0 has 3 cells; 4 values at column 0" in str(
+        exc.value)
+
+
+def test_the_block_overrun_refusal_counts_the_rows_it_would_need():
+    with pytest.raises(AnchorError) as exc:
+        update(BASE, one_table(BASE), [["a"], ["b"], ["c"]], row0=1)
+
+    assert "block of 3 rows at row 1 overruns table 0, which has 3 rows" \
+        in str(exc.value)

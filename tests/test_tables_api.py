@@ -229,6 +229,44 @@ def test_grid_rows_falls_back_to_the_widest_row_without_a_grid():
     assert t.grid_rows(xml) == [["a", "b"]]
 
 
+def test_the_fallback_width_COUNTS_a_span_rather_than_the_cell():
+    """Without a tblGrid the width is the widest row, and a row with a
+    merged cell is wider than its cell count says — measured as cells,
+    the rectangle comes out one column short and every value after the
+    merge lands under the wrong heading."""
+    def tc(text, span=None):
+        s = f'<w:gridSpan w:val="{span}"/>' if span else ""
+        return (f"<w:tc><w:tcPr>{s}</w:tcPr>"
+                f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
+
+    xml = document("<w:tbl>"                       # no tblGrid at all
+                   + "<w:tr>" + tc("MERGED", span=3) + "</w:tr>"
+                   + "<w:tr>" + tc("a") + tc("b") + tc("c") + "</w:tr>"
+                   + "</w:tbl>")
+
+    grid = read_all(xml)[0].grid_rows(xml)
+
+    assert grid == [["MERGED", "MERGED", "MERGED"], ["a", "b", "c"]]
+
+
+def test_an_EMPTY_table_has_a_width_of_none_rather_than_raising():
+    xml = document("<w:tbl></w:tbl>")
+
+    assert read_all(xml)[0].grid_rows(xml) == []
+
+
+# The fallback width's `default=` is EQUIVALENT at any value: it is
+# reached only when the table has no rows at all, and the loop that uses
+# the width then produces nothing either way.
+#
+# `_Span.group(n)` returns the located XML whatever `n` is — it exists to
+# offer `re.Match`'s slice, not its groups — so every mutation of the
+# argument in a `tc.group(0)` / `tr.group(0)` call in this module is
+# EQUIVALENT by construction. That is most of what a mutation run leaves
+# here, and it is a property of the type rather than a gap in these
+# tests.
+
+
 # ------------------------------------------------------ stale offsets -----
 
 
