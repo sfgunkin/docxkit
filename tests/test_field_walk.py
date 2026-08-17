@@ -197,6 +197,28 @@ def test_two_fields_OPENING_IN_ONE_RUN_sort_wider_first():
 #   below it;
 # * `kind == "end"` -> `kind <= "end"`, in the `elif` — so "begin" is
 #   already excluded and "separate" sorts above;
-# * `close < 0` -> `close <= 0`. `close` is `xml.find(..., m.end())` and
-#   `m.end()` is past the start of the string, so a hit is never 0 and
-#   only the -1 miss is negative.
+# * `close < 0` -> `close <= 0`, and `-> close < 1` with it. `close` is
+#   `xml.find(..., m.end())` and `m.end()` is past the start of the
+#   string, so a hit is never 0 and only the -1 miss is negative. The
+#   OTHER half of that line is not equivalent and has a test:
+#   `r_start` really can be 0, because a fragment opens its first run
+#   at the first byte;
+# * `-span[1]` -> `~span[1]` in the sort key. `~x` is `-x - 1`, which
+#   orders identically to `-x` — a monotone relabelling cannot change
+#   a sort.
+
+
+def test_a_field_whose_BEGIN_RUN_starts_at_offset_ZERO():
+    """The guard is `r_start < 0`, and 0 is a valid answer: a fragment
+    handed over on its own — a paragraph's runs, a cell's contents —
+    opens its first run at the very first byte. A guard written `< 1`
+    would discard exactly those fields, and only those, so every
+    fixture with a `<w:p>` wrapper around it passes either way.
+    """
+    xml = _field("Table3txt", "Table 3")
+
+    (start, end, body), = field_spans(xml)
+
+    assert start == 0, "the field opens at the first byte and is real"
+    assert end == len(xml)
+    assert "Table 3" in body
