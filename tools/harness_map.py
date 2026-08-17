@@ -45,7 +45,17 @@ HARNESS: dict[str, list[str]] = {
                         "tests/test_cite_anchor_reuse.py"],
     "_compare_diff.py": ["tests/test_compare.py"],
     "_compare_render.py": ["tests/test_compare.py"],
-    "_table_core.py": ["tests/test_tables_api.py", "tests/test_tables_nested.py",
+    # test_tables_update and test_tables were MISSING here on the first
+    # sweep, and the run came back at 44.9 % with 216 survivors in
+    # `update` — a module reported as the worst in the package because
+    # the file that tests it was not in the harness. Exactly the trap
+    # CONTRIBUTING records for `comments` and `_table_layout`, walked
+    # into again with a map that was supposed to prevent it.
+    "_table_core.py": ["tests/test_tables_api.py",
+                       "tests/test_tables.py",
+                       "tests/test_tables_update.py",
+                       "tests/test_tables_house.py",
+                       "tests/test_tables_nested.py",
                        "tests/test_tables_blank_rows.py",
                        "tests/test_booktabs_plan.py",
                        "tests/test_booktabs_rules.py",
@@ -87,14 +97,48 @@ HARNESS: dict[str, list[str]] = {
                     "tests/test_paragraph_numbering.py"],
     "renumber.py": ["tests/test_renumber.py", "tests/test_footnote_ids.py",
                     "tests/test_footnote_audit.py"],
-    "tables.py": ["tests/test_tables_api.py", "tests/test_tables_nested.py",
+    "tables.py": ["tests/test_tables_api.py", "tests/test_tables.py",
+                  "tests/test_tables_update.py", "tests/test_tables_nested.py",
                   "tests/test_booktabs_plan.py"],
     "testing.py": ["tests/test_testing_helpers.py"],
-    "word.py": ["tests/test_word_session_ruler.py", "tests/test_locate.py",
+    "word.py": ["tests/test_word_session_ruler.py",
+                "tests/test_word_open.py", "tests/test_locate.py",
                 "tests/test_tracked_build.py", "tests/test_revision.py",
                 "tests/test_flatopc.py", "tests/test_equations.py"],
     "wordcount.py": ["tests/test_wordcount.py"],
 }
+
+
+#: A module's tests are conventionally named after it or after the
+#: facade it sits behind, so `tests/test_<name>*.py` is a claim about
+#: coverage that a harness entry must answer. Anything deliberately left
+#: out belongs here with its reason — `test_tables_fit*` exercises the
+#: LAYOUT half, not the core, and putting it in every core run would
+#: cost wall clock on every mutant for nothing.
+FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
+          "_compare_diff.py": "compare", "_compare_render.py": "compare",
+          "_compare_read.py": "compare"}
+EXCLUDED: dict[str, tuple[str, ...]] = {
+    "_table_core.py": ("tests/test_tables_fit.py",
+                       "tests/test_tables_fit_edges.py"),
+    "tables.py": ("tests/test_tables_fit.py",
+                  "tests/test_tables_fit_edges.py",
+                  "tests/test_tables_house.py",
+                  "tests/test_tables_blank_rows.py"),
+}
+
+
+def named_after(module: str) -> list[str]:
+    """Test files whose NAME claims to be about this module.
+
+    The stem must be followed by `_` or end the name: `test_word.py` and
+    `test_word_open.py` are claims about `word.py`, and
+    `test_wordcount.py` is not — it is a claim about `wordcount.py`,
+    which has an entry of its own.
+    """
+    stem = FACADE.get(module, module.removesuffix(".py").lstrip("_"))
+    return [f"tests/{p.name}" for p in sorted(TESTS.glob(f"test_{stem}*.py"))
+            if p.stem == f"test_{stem}" or p.stem.startswith(f"test_{stem}_")]
 
 
 def _imports(path: Path, stem: str) -> bool:

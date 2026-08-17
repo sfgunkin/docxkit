@@ -58,3 +58,25 @@ def test_a_module_nothing_names_is_an_ERROR_not_an_empty_run():
     suite of nothing passes."""
     with pytest.raises(SystemExit, match="no harness"):
         HARNESS_MAP.harness_for("no_such_module.py")
+
+
+@pytest.mark.parametrize("module", sorted(HARNESS_MAP.HARNESS))
+def test_a_test_file_NAMED_after_a_module_is_in_its_harness(module):
+    """`tests/test_tables_update.py` was missing from `_table_core`'s
+    entry, and the sweep came back with 216 survivors in `update` and
+    the module reported as the worst in the package — because the file
+    that tests it was not in the run.
+
+    A test file named after a module is a claim about what it covers.
+    Answer it: put it in the entry, or list it in EXCLUDED with the
+    reason (the layout half's fixtures are slow and cover the other
+    module, which is a reason).
+    """
+    entry = set(HARNESS_MAP.HARNESS[module])
+    excluded = set(HARNESS_MAP.EXCLUDED.get(module, ()))
+    named = set(HARNESS_MAP.named_after(module))
+
+    assert named <= entry | excluded, (
+        f"{module}: {sorted(named - entry - excluded)} is named after it "
+        f"and is neither in its harness nor excluded — a run without it "
+        f"invents survivors in whatever it covers")
