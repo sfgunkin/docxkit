@@ -17,7 +17,32 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 Word's Compare downgrades U+2212 to an ASCII hyphen inside OMML, and `validate` reports it as an unattributed `glyphs: False`
+### S1 WORD downgrades U+2212 to an ASCII hyphen inside OMML — on Compare AND on the author's own accept-and-save — and `validate` reports it as an unattributed `glyphs: False`
+
+**Widened 2026-08-17, hours after filing.** This entry first blamed
+`CompareDocuments`. That is too narrow, and the narrower claim would have
+sent the fix to the wrong place. Traced through the whole chain on AFI,
+counting U+2212 in `m:t`:
+
+    prev.docx      (baseline)                    2
+    r3_clean.docx  (edited clean copy)           2
+    batch.docx     (Compare + repair pass)       2
+    rescue copy    (byte-for-byte as promoted)   2
+    working.docx   (after the AUTHOR accepted)   0   <-- here
+
+The repair survived Compare and promote intact. The glyphs were lost when
+the author opened the promoted redline in Word, accepted the revisions and
+saved. So a post-build repair is NOT sufficient: **any Word round-trip can
+strip the character**, and on this manuscript the accept step re-serialises
+the OMML (`ingest` also reports the formula's tokens and structure
+changing). A paper cannot hold U+2212 in maths across an author round
+unless something puts it back afterwards.
+
+Implication for the fix: repairing inside `revision build` would not have
+helped. The check belongs where a Word round-trip is detected —
+`ingest`/`baseline` should report a maths glyph regression the way
+`baseline` already refuses a lost link, so the author's accept cannot
+silently degrade an equation.
 
 Measured on AFI 2026-08-17. A batch built through `revision build`
 reaches `validate` with:
