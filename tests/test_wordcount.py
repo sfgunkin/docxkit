@@ -5,6 +5,8 @@ each expected number can be checked by reading the fixture.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from conftest import dele, ins, make_parts, notes, para, run
 
@@ -116,3 +118,86 @@ def test_para_fixture_from_conftest_is_compatible():
     # guard against the two test harnesses drifting apart
     counts = count(make_parts(para(run("three plain words"))))
     assert counts.prose == 3
+
+
+# --- what the first mutation run found (2026-08-17, 28.6 % survival) -----
+#
+# Twelve of the twenty-eight survivors were the bucket DEFAULTS: nothing
+# said an untouched bucket is zero, so `prose: int = 1` passed. The rest
+# were the arithmetic inside the zone loop, which the fixture above
+# exercises but only through totals that a bitwise slip can reproduce.
+
+def test_an_untouched_bucket_is_ZERO():
+    """`Counts()` is what every count starts from, and a default of 1
+    would add a word per bucket to every manuscript in the package —
+    under a journal cap, silently."""
+    assert Counts().as_dict() == {
+        "prose": 0, "headings": 0, "captions": 0, "tables": 0,
+        "equations": 0, "footnotes": 0, "references": 0, "appendix": 0}
+    assert Counts().total() == 0
+
+
+def test_a_document_with_only_prose_leaves_the_other_buckets_at_zero():
+    counts = count(make_parts(p("Four words in prose.")))
+
+    assert counts.as_dict() == {
+        "prose": 4, "headings": 0, "captions": 0, "tables": 0,
+        "equations": 0, "footnotes": 0, "references": 0, "appendix": 0}
+
+
+def test_a_count_cannot_be_EDITED_after_it_is_made():
+    """Frozen on purpose: a Counts is passed around a paper's test suite
+    as the answer, and a bucket assigned to somewhere downstream would
+    make the cap check agree with whoever wrote last."""
+    counts = count(make_parts(p("Four words in prose.")))
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        counts.prose = 0            # type: ignore[misc]
+
+
+def test_a_BLANK_paragraph_does_not_stop_the_count():
+    """`continue`, not `break`. Manuscripts are full of blank spacer
+    paragraphs, and stopping at the first one would count the opening
+    section and call it the paper."""
+    body = (p("Four words in prose.") + p(" ")
+            + p("Four more words here."))
+
+    assert count(make_parts(body)).prose == 8
+
+
+def test_a_REFERENCE_entry_counts_its_prose_AND_its_math():
+    """`prose + math`, and a bitwise slip reproduces plenty of small
+    sums: 5 | 3 is 7, 5 ^ 3 is 6, 5 + 3 is 8. A reference entry carrying
+    an equation is unusual; a reference entry carrying a DOI that Word
+    typeset as math is not."""
+    body = (p("References")
+            + '<w:p><w:r><w:t>Author, A. 2020. On five words</w:t></w:r>'
+            + equation("x y z") + "</w:p>")
+
+    counts = count(make_parts(body))
+
+    assert counts.references == 1 + 6 + 3
+    assert counts.equations == 0        # inside a zone, nothing splits out
+
+
+def test_a_CAPTION_counts_its_prose_AND_its_math():
+    body = ('<w:p><w:r><w:t>Table 1. The elasticity of</w:t></w:r>'
+            + equation("a b c") + "</w:p>")
+
+    counts = count(make_parts(body))
+
+    # five and three, not five and two: 5 | 2 and 5 ^ 2 are both 7, so a
+    # bitwise slip would read as the right answer
+    assert counts.captions == 5 + 3
+    assert counts.prose == 0
+
+
+def test_MAIN_TEXT_math_is_counted_apart_from_the_prose():
+    """The one place the two are NOT summed: a journal that excludes
+    equations needs them in their own bucket."""
+    body = ('<w:p><w:r><w:t>The estimator is</w:t></w:r>'
+            + equation("a b c") + "</w:p>")
+
+    counts = count(make_parts(body))
+
+    assert (counts.prose, counts.equations) == (3, 3)
