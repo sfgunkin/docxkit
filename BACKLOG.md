@@ -17,6 +17,49 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
+
+Measured 2026-08-17, never looked at before. It rewrites caption numbers
+and cross-references across a whole manuscript, and `shift()` is what a
+paper runs when an exhibit is inserted.
+
+    815 mutants, 692 killed, 123 survived
+    REAL SURVIVAL 15.1 % (123/815)
+
+Harness: `test_renumber` + `test_footnote_ids`, 95 % of the module by
+line — the same figure the WHOLE suite reaches, so nothing else
+exercises it.
+
+| survivors | function |
+|---|---|
+| 40 | `footnote_audit` |
+| 19 | `_shift_in_para` |
+| 11 | `shift` |
+| 10 | `footnotes` |
+| 9 | `remap_parts` |
+
+**The footnote half is the weakest, and it is the newest code** — added
+this same week to close the S4 about `renumber` handling caption numbers
+but not note ids. `footnote_audit`, `footnotes` and `remap_parts` are 59
+of the 123 between them.
+
+**`footnote_audit` pinned** (`tests/test_footnote_audit.py`), 12 of 13
+targeted mutants dead. Thirty of its forty survivors sat on ONE line —
+the message naming where the ids stop following the reference order,
+which is the entire output for that case: a note out of order is
+invisible in the document, because Word renders the marks 1, 2, 3 down
+the page by position whatever the ids say.
+
+Three of my own fixtures reached the wrong branch and the check caught
+them: the early return is `not referenced AND not stored`, so
+distinguishing it needs a document with notes and NO references (and the
+mirror); and `b < a` against `b <= a` needs a REPEATED id before the
+real descent, since equal ids are the same note twice and not a break.
+
+**Still open:** `_shift_in_para` 19, `shift` 11, `footnotes` 10,
+`remap_parts` 9 — the caption-shifting half and the footnote renumberer
+itself. `shift` is what papers call.
+
 ### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file
 
 `revision init` scaffolds the layout and the manuscript takes its final
