@@ -1066,3 +1066,65 @@ def test_pages_prints_the_laid_out_page_count(monkeypatch, paper, capsys):
     code, _ = run_cli(monkeypatch, "pages", str(paper))
     assert code == 0
     assert capsys.readouterr().out.strip() == "41"
+
+
+def test_pages_check_prints_the_RENDER_and_exits_on_a_defect(
+        monkeypatch, paper, capsys):
+    """The half of `docxkit pages` that needs Word, and the only CLI
+    path the coverage floor could not see: one row per sheet, then the
+    verdicts, then a non-zero exit so a build step can gate on it."""
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    rows = [Sheet(1, "portrait", 1, False),
+            Sheet(2, "landscape", None, True),
+            Sheet(3, "portrait", 3, False)]
+    monkeypatch.setattr(pages_mod, "sheets",
+                        lambda docx, keep_pdf=None: rows)
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--check")
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "3 sheet(s)" in out
+    assert "sheet 2 is BLANK" in out
+    assert "cannot be inferred from the markup" in out
+
+
+def test_pages_check_on_a_SOUND_render_passes_quietly(monkeypatch, paper,
+                                                      capsys):
+    """A gate that lectures on a clean run is one people stop reading."""
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    monkeypatch.setattr(pages_mod, "sheets",
+                        lambda docx, keep_pdf=None: [
+                            Sheet(1, "portrait", 1, False),
+                            Sheet(2, "portrait", 2, False)])
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--check")
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "cannot be inferred" not in out
+
+
+def test_pages_sheets_prints_the_table_without_gating(
+        monkeypatch, paper, capsys):
+    """--sheets is the same render, reported and not gated: a title page
+    printing no number is a fact about the paper, not a defect."""
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    monkeypatch.setattr(pages_mod, "sheets",
+                        lambda docx, keep_pdf=None: [
+                            Sheet(1, "portrait", None, False),
+                            Sheet(2, "portrait", 2, False)])
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--sheets")
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2 sheet(s)" in out
+    assert "prints    -" in out
+    assert "**" not in out

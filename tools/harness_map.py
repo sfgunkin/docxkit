@@ -1,0 +1,128 @@
+"""Which test files exercise a module — the HARNESS a mutation run needs.
+
+`tools/mutation_session.py` takes `--tests`, and that choice bounds
+everything the run can say: a suite that is too narrow INVENTS survivors
+(`comments.py` came back as the worst module in the package because
+`test_parts_gaps.py`, which tests `remove` exhaustively, was not in the
+run), and one that is too broad costs wall clock on every mutant.
+
+So the mapping is recorded rather than re-derived each time, and the
+figures in CONTRIBUTING's calibration table are only comparable against
+the same entry. Quote the harness beside any number this produces.
+
+Entries are hand-checked. When a module has none, `harness_for` falls
+back to scanning `tests/` for files that import it — enough to get a
+first run out of a new module, and worth replacing with a checked entry
+once the run says which files actually reach it.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TESTS = ROOT / "tests"
+
+#: module file name -> the test files that exercise it
+HARNESS: dict[str, list[str]] = {
+    "_cite_audit.py": ["tests/test_citations.py", "tests/test_crossrefs.py",
+                       "tests/test_link_convention.py"],
+    # the five CONTRIBUTING records for the paired runs, plus the four
+    # files written since to pin what those runs found
+    "_cite_build.py": ["tests/test_citations.py",
+                       "tests/test_link_convention.py",
+                       "tests/test_cite_build_paths.py",
+                       "tests/test_link_rest_paths.py",
+                       "tests/test_cite_scan_paths.py",
+                       "tests/test_cite_rebuild_paths.py",
+                       "tests/test_cite_link_all_paths.py",
+                       "tests/test_cite_names.py",
+                       "tests/test_cite_anchor_reuse.py"],
+    "_cite_grammar.py": ["tests/test_citations.py", "tests/test_cite_names.py",
+                         "tests/test_reference_bounds.py",
+                         "tests/test_xml_primitives.py"],
+    "_cite_repair.py": ["tests/test_citations.py", "tests/test_pathological.py",
+                        "tests/test_cite_anchor_reuse.py"],
+    "_compare_diff.py": ["tests/test_compare.py"],
+    "_compare_render.py": ["tests/test_compare.py"],
+    "_table_core.py": ["tests/test_tables_api.py", "tests/test_tables_nested.py",
+                       "tests/test_tables_blank_rows.py",
+                       "tests/test_booktabs_plan.py",
+                       "tests/test_booktabs_rules.py",
+                       "tests/test_table_measure_divide.py",
+                       "tests/test_table_spacing.py",
+                       "tests/test_rows_preserved.py"],
+    "_xml.py": ["tests/test_xml_primitives.py", "tests/test_span_membership.py",
+                "tests/test_field_walk.py", "tests/test_find_edit.py",
+                "tests/test_locate_spans.py"],
+    "authors.py": ["tests/test_authors.py", "tests/test_authors_parts.py"],
+    "body.py": ["tests/test_body.py", "tests/test_booktabs_plan.py"],
+    "citations.py": ["tests/test_citations.py",
+                     "tests/test_cite_anchor_reuse.py",
+                     "tests/test_cite_names.py"],
+    "compare.py": ["tests/test_compare.py", "tests/test_cli.py"],
+    "console.py": ["tests/test_console.py", "tests/test_cli_guards.py"],
+    "edit.py": ["tests/test_find_edit.py", "tests/test_edit_boundaries.py",
+                "tests/test_edit_branches.py",
+                "tests/test_normalize_anchors.py",
+                "tests/test_locate_spans.py", "tests/test_replace_spans.py"],
+    "errors.py": ["tests/test_api_surface.py", "tests/test_cli_guards.py"],
+    "export.py": ["tests/test_export_md.py"],
+    "figures.py": ["tests/test_figures.py", "tests/test_alt_text.py"],
+    "find.py": ["tests/test_find_edit.py", "tests/test_body.py",
+                "tests/test_probe.py", "tests/test_crossrefs.py",
+                "tests/test_export_md.py", "tests/test_wordcount.py"],
+    "guard.py": ["tests/test_tracked_guard.py", "tests/test_cli_guards.py"],
+    "hygiene.py": ["tests/test_smarten.py", "tests/test_properties.py",
+                   "tests/test_parts_gaps.py", "tests/test_pathological.py",
+                   "tests/test_table_spacing.py"],
+    "ingest.py": ["tests/test_ingest.py", "tests/test_revision.py"],
+    "lint.py": ["tests/test_lint.py", "tests/test_cli_guards.py",
+                "tests/test_crossrefs.py"],
+    "package.py": ["tests/test_package.py", "tests/test_parts_gaps.py",
+                   "tests/test_pathological.py"],
+    "pages.py": ["tests/test_pages.py", "tests/test_locate.py"],
+    "probe.py": ["tests/test_probe.py", "tests/test_probe_report.py"],
+    "refstyle.py": ["tests/test_refstyle.py",
+                    "tests/test_paragraph_numbering.py"],
+    "renumber.py": ["tests/test_renumber.py", "tests/test_footnote_ids.py",
+                    "tests/test_footnote_audit.py"],
+    "tables.py": ["tests/test_tables_api.py", "tests/test_tables_nested.py",
+                  "tests/test_booktabs_plan.py"],
+    "testing.py": ["tests/test_testing_helpers.py"],
+    "word.py": ["tests/test_word_session_ruler.py", "tests/test_locate.py",
+                "tests/test_tracked_build.py", "tests/test_revision.py",
+                "tests/test_flatopc.py", "tests/test_equations.py"],
+    "wordcount.py": ["tests/test_wordcount.py"],
+}
+
+
+def _imports(path: Path, stem: str) -> bool:
+    """Does this test file reach `stem`, by any of the import spellings?"""
+    text = path.read_text(encoding="utf-8")
+    return bool(re.search(rf"\bdocxkit\.{stem}\b|import .*\b{stem}\b", text))
+
+
+def harness_for(module: str) -> list[str]:
+    """The recorded harness, or every test file that imports the module.
+
+    The fallback is a starting point, not an entry: it finds the files
+    that NAME the module, which is neither everything that exercises it
+    (a facade hides its halves) nor only what does.
+    """
+    if module in HARNESS:
+        return HARNESS[module]
+    stem = module.removesuffix(".py")
+    found = [f"tests/{p.name}" for p in sorted(TESTS.glob("test_*.py"))
+             if _imports(p, stem)]
+    if not found:
+        raise SystemExit(
+            f"no harness for {module}: add one to HARNESS in {__file__}, "
+            f"or pass --tests yourself")
+    return found
+
+
+if __name__ == "__main__":                      # pragma: no cover
+    import sys
+    for name in sys.argv[1:]:
+        print(name, harness_for(name))

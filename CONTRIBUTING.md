@@ -161,9 +161,11 @@ python tools/mutation_survivors.py .mutation-edit.sqlite src/docxkit/edit.py
 Pass the module's WHOLE harness, and write down which files it was:
 every number below is a statement about a module *and* a set of tests,
 and re-running one module against a different harness later gives a
-figure that looks comparable and is not. `edit.py` is the six files
-above; `_cite_build.py` is `test_citations`, `test_link_convention`,
-`test_cite_build_paths`, `test_link_rest_paths`, `test_cite_scan_paths`.
+figure that looks comparable and is not. That mapping now lives in
+`tools/harness_map.py`, one entry per module, and `measure_all.py` reads
+it — so a re-run is comparable by construction, and a module with no
+entry falls back to "every test file that names it", which is a starting
+point rather than a checked harness.
 
 `mutation_session.py` drives cosmic-ray the safe way, and each of the
 four things it does was learned by getting a plausible WRONG number
@@ -274,7 +276,9 @@ mutants, harness a checked superset); the earlier ones are separate
 draws and carry a couple of points of sampling noise.
 
 **The sweep of 2026-08-17**, one module at a time, whole runs rather
-than samples, each against the harness `tools/harness_map` names for it:
+than samples, each against the harness `tools/harness_map.py` names for
+it (`python tools/measure_all.py --all` is the sweep; it is sequential
+because the sessions share one worktree):
 
 | module | mutants | real survival | worst cluster |
 |---|---|---|---|
