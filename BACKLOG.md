@@ -52,54 +52,6 @@ how many it found.
 all 11 tables to `revision/baseline_r3/table_NN.tsv` before any edit.
 Per-paper workaround to delete when the toolkit can state it.
 
-### S3 `revision doctor` reports 134 selections on AFI and about three of them matter — a paper with a build archive drowns the signal
-
-Run against AFI 2026-08-17, the day `doctor` shipped, on the very repo
-whose defect motivated it. It is correct: every line really is a
-selection of some document other than the declared one. It is also
-unreadable, and an unreadable gate is one people stop running — the S3
-shape this file reserves for gates that cannot usefully fail.
-
-    134 other selection(s) — each picks a document that is NOT the declared one
-
-The breakdown is the finding. Roughly 130 are **spent one-off builders
-kept as history** — `v8_restructure/phase*.py`, `v9_literature/*.py`,
-`build_v10`/`build_v11`, twenty `swap_*`/`integrate_*` figure surgeries,
-and `Report/replication/code/**`, which are *frozen copies inside a
-shipped package* naming `afi_v14_clean.docx` correctly, because the
-package keeps that filename. Under the protocol's own forward-only rule a
-spent script naming an old generation is not a defect; it is the record.
-
-What deserved a reader's eye: the three `pattern` hits
-(`tests/paper_doc_helpers.py`, `swap_figure8.py`,
-`reproducibility/make_replication_package.py`) — and two are already
-inert, one being a retired module behind an `exit 2` guard.
-
-**Repro:** `docxkit revision doctor` in
-`F:\OneDrive\__Documents\Aging_Update\Projects\AFI` (exit 2).
-
-**Fix sketch.** The docstring already reasons about exclusions —
-`build/` and the attic are skipped as legitimately holding older
-manuscripts — so the concept exists and needs only to reach the cases
-that matter:
-
-* **rank `pattern` above `literal`, and say so in the summary.** The
-  docstring argues a pattern is the dangerous kind; the output buries the
-  three among 131 literals. Print patterns first, or alone by default
-  with literals behind a flag;
-* **let a project mark spent directories** — a `[doctor] skip` list in
-  `paper.toml`, defaulting to `scripts/applied/` (already the protocol's
-  word for "spent") plus any packaged-code tree. AFI would declare
-  `v8_restructure`, `v9_literature`, `v10_build` and
-  `Report/replication/code`;
-* consider skipping files git says have not changed in N months — the
-  archive is exactly the code nobody touches.
-
-**No workaround written** — the AFI resolver fix and its guard stand on
-their own, and `doctor` is not yet wired into any gate. Worth settling
-before it is: a `[verify]` line that prints 134 lines of noise gets
-switched off rather than fixed.
-
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
@@ -845,6 +797,73 @@ added as a gate rather than a fix.
 ---
 
 ## Fixed
+
+### S3 `revision doctor` reports 134 selections on AFI and about three of them matter — a paper with a build archive drowns the signal — patterns first, spent folders declarable
+
+Run against AFI 2026-08-17, the day `doctor` shipped, on the very repo
+whose defect motivated it. It is correct: every line really is a
+selection of some document other than the declared one. It is also
+unreadable, and an unreadable gate is one people stop running — the S3
+shape this file reserves for gates that cannot usefully fail.
+
+    134 other selection(s) — each picks a document that is NOT the declared one
+
+The breakdown is the finding. Roughly 130 are **spent one-off builders
+kept as history** — `v8_restructure/phase*.py`, `v9_literature/*.py`,
+`build_v10`/`build_v11`, twenty `swap_*`/`integrate_*` figure surgeries,
+and `Report/replication/code/**`, which are *frozen copies inside a
+shipped package* naming `afi_v14_clean.docx` correctly, because the
+package keeps that filename. Under the protocol's own forward-only rule a
+spent script naming an old generation is not a defect; it is the record.
+
+What deserved a reader's eye: the three `pattern` hits
+(`tests/paper_doc_helpers.py`, `swap_figure8.py`,
+`reproducibility/make_replication_package.py`) — and two are already
+inert, one being a retired module behind an `exit 2` guard.
+
+**Repro:** `docxkit revision doctor` in
+`F:\OneDrive\__Documents\Aging_Update\Projects\AFI` (exit 2).
+
+**Fix sketch.** The docstring already reasons about exclusions —
+`build/` and the attic are skipped as legitimately holding older
+manuscripts — so the concept exists and needs only to reach the cases
+that matter:
+
+* **rank `pattern` above `literal`, and say so in the summary.** The
+  docstring argues a pattern is the dangerous kind; the output buries the
+  three among 131 literals. Print patterns first, or alone by default
+  with literals behind a flag;
+* **let a project mark spent directories** — a `[doctor] skip` list in
+  `paper.toml`, defaulting to `scripts/applied/` (already the protocol's
+  word for "spent") plus any packaged-code tree. AFI would declare
+  `v8_restructure`, `v9_literature`, `v10_build` and
+  `Report/replication/code`;
+* consider skipping files git says have not changed in N months — the
+  archive is exactly the code nobody touches.
+
+**No workaround written** — the AFI resolver fix and its guard stand on
+their own, and `doctor` is not yet wired into any gate. Worth settling
+before it is: a `[verify]` line that prints 134 lines of noise gets
+switched off rather than fixed.
+
+
+**Fixed 2026-08-17**, the same day, on the first two of the three
+suggestions.
+
+`doctor` now returns PATTERNS first and the CLI prints those in full while
+COUNTING the literals, naming the remedy in the same breath: `--literals`
+lists them, and `[doctor] skip` in `paper.toml` retires a folder. The
+default skip is `scripts/applied`, since "applied" is already the
+protocol's word for a batch that has been used. On the AFI run that
+would have printed three pattern lines and one counting line instead of
+134.
+
+The third suggestion — skipping files git says are untouched for N
+months — is DECLINED rather than deferred. It would make the report
+depend on repository history, so the same tree answers differently after
+a fresh clone or a reformat, and a gate whose findings move on their own
+is the thing this file keeps reserving an S3 for. A declared skip list is
+explicit, reviewable in the diff, and wrong in a way somebody can see.
 
 ### S4 `footnotes()` refuses a document with a spare note, and blames the renumbering for it — the message names the note now
 

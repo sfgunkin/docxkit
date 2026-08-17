@@ -871,13 +871,30 @@ def cmd_revision_doctor(args: argparse.Namespace) -> int:
     if not found:
         print("  nothing else in the project selects a manuscript")
         return 0
-    print(f"\n{len(found)} other selection(s) — each picks a document "
-          f"that is NOT the declared one:")
-    for doubt in found:
-        print(f"  {doubt}")
-    print("\nA `pattern` is the dangerous kind: it names no file, so a "
-          "rename does not\nbreak it — it quietly selects whatever else "
-          "is on disk.")
+
+    patterns = [d for d in found if d.kind == "pattern"]
+    literals = [d for d in found if d.kind == "literal"]
+
+    # PATTERNS in full, literals counted. The first version printed all
+    # of them and AFI answered with 134 lines, three of which mattered;
+    # about 130 were spent builders and a shipped replication package,
+    # which under the forward-only rule are the record rather than a
+    # defect. An unreadable gate is one people switch off.
+    if patterns:
+        print(f"\n{len(patterns)} PATTERN selection(s) — these name no "
+              f"file, so a rename does\nnot break them: they quietly "
+              f"select whatever else is on disk.")
+        for doubt in patterns:
+            print(f"  {doubt}")
+    if literals and args.literals:
+        print(f"\n{len(literals)} literal selection(s):")
+        for doubt in literals:
+            print(f"  {doubt}")
+    elif literals:
+        print(f"\n{len(literals)} literal selection(s) not shown — "
+              f"`--literals` to list them.\nA spent builder naming an "
+              f"old generation is the record, not a defect;\ndeclare its "
+              f"folder under `[doctor] skip` in paper.toml to retire it.")
     return 2
 
 
@@ -1313,8 +1330,12 @@ def main() -> None:
     _rev("status", cmd_revision_status,
          "truth or proposal? (exit 1 pending, 4 stale baseline)")
 
-    _rev("doctor", cmd_revision_doctor,
-         "who else in the repo selects a manuscript (exit 2 on a finding)")
+    r = _rev("doctor", cmd_revision_doctor,
+             "who else in the repo selects a manuscript (exit 2 on a finding)")
+    r.add_argument("--literals", action="store_true",
+                   help="list the literal selections too, not just the "
+                        "patterns (a spent builder naming an old "
+                        "generation is the record, not a defect)")
 
     r = _rev("ingest", cmd_revision_ingest,
              "what the author changed since the last truth (read-only)")

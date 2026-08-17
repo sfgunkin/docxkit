@@ -151,6 +151,14 @@ SAVE_NOISE = ("docProps/app.xml", "docProps/core.xml", "word/settings.xml")
 _CONFIG = "paper.toml"
 _DIR = "revision"
 
+#: Directories a paper keeps SPENT builders in, skipped unless
+#: ``[doctor] skip`` says otherwise. "applied" is already the protocol's
+#: word for a batch that has been used, and under the forward-only rule
+#: a spent script naming an old generation is the record rather than a
+#: defect. AFI reported 134 selections with three worth reading, and
+#: about 130 of the rest were an archive of exactly this kind.
+_DOCTOR_SPENT = ("scripts/applied",)
+
 #: How many rescue copies survive a promote, newest first. Five covers
 #: "undo the last few promotes", which is all a rescue is for: anything
 #: older is better served by the safekit vault, the attic and git, none
@@ -200,6 +208,15 @@ class Paper:
     :func:`validate`."""
     attic: Path | None
     rescue_keep: int = RESCUE_KEEP
+    doctor_skip: tuple[str, ...] = ()
+    """Directories `doctor` should not survey, from ``[doctor] skip``.
+
+    A paper accumulates SPENT builders — the phase scripts of a
+    restructure, a shipped replication package with its own frozen copy
+    of the manuscript — and under the forward-only rule those are not
+    defects but the record. AFI reported 134 selections with three worth
+    reading; declaring the archive is how the three stay visible.
+    """
     """How many rescue copies to keep. See :func:`prune_rescues`."""
 
     @property
@@ -275,6 +292,7 @@ def load_paper(start: str | Path | None = None) -> Paper:
         gates=tuple(verify.get("commands", ())),
         attic=Path(attic) if attic else None,
         rescue_keep=int(batch_cfg.get("rescue_keep", RESCUE_KEEP)),
+        doctor_skip=tuple(data.get("doctor", {}).get("skip", _DOCTOR_SPENT)),
     )
 
 
@@ -1530,6 +1548,8 @@ def doctor(paper: Paper | None = None, *,
     skip = {paper.build_dir.resolve()}
     if paper.attic is not None:
         skip.add(paper.attic.resolve())
+    for spent in paper.doctor_skip:
+        skip.add((paper.root / spent).resolve())
 
     out: list[Doubt] = []
     for path in sorted(paper.root.rglob("*")):
@@ -1556,4 +1576,8 @@ def doctor(paper: Paper | None = None, *,
                     seen.add(text)
                     out.append(Doubt(path.relative_to(paper.root), n,
                                      text, kind))
-    return out
+    # PATTERNS first. The docstring argues a pattern is the dangerous
+    # kind and the first report buried three of them among 131 literals
+    # on AFI — an unreadable gate is one people stop running, which is
+    # the failure this whole file reserves an S3 for.
+    return sorted(out, key=lambda d: (d.kind != "pattern", d.path, d.line))

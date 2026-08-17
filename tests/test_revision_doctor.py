@@ -111,3 +111,43 @@ def test_a_doubt_prints_as_a_line_a_human_can_act_on(paper):
     assert "scripts/build.py:1" in line
     assert "afi_v11.docx" in line
     assert "literal" in line
+
+
+def test_PATTERNS_come_before_literals(paper):
+    """The output is ranked because the first version was not. AFI
+    answered with 134 lines, three of them patterns, and they were
+    buried among 131 literals — an unreadable gate is one people stop
+    running, which is the whole reason this is an S3 and not an S4.
+    """
+    _write(paper, "z_pattern.py", 'P = root.glob("Report/afi_v*.docx")\n')
+    _write(paper, "a_literal.py", 'P = "Report/afi_v11.docx"\n')
+
+    found = doctor(paper)
+
+    assert [d.kind for d in found] == ["pattern", "literal"], found
+
+
+def test_a_SPENT_directory_can_be_declared_and_is_skipped(paper):
+    """`[doctor] skip`. A paper accumulates one-off builders — the phase
+    scripts of a restructure, a shipped replication package with its own
+    frozen copy of the manuscript — and under the forward-only rule
+    those name an old generation correctly.
+    """
+    _write(paper, "v8_restructure/phase1.py", 'P = "Report/afi_v8.docx"\n')
+    assert len(doctor(paper)) == 1, "the fixture should be found by default"
+
+    config = paper.config.read_text(encoding="utf-8")
+    paper.config.write_text(
+        config + '\n[doctor]\nskip = ["v8_restructure"]\n', encoding="utf-8")
+
+    from docxkit.revision import load_paper
+    assert doctor(load_paper(paper.root)) == []
+
+
+def test_scripts_applied_is_skipped_by_DEFAULT(paper):
+    """"applied" is already the protocol's word for a batch that has been
+    used, so a paper that follows the layout needs no configuration."""
+    _write(paper, "scripts/applied/r1_captions.py",
+           'P = "Report/afi_v11.docx"\n')
+
+    assert doctor(paper) == []

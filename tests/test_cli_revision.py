@@ -875,3 +875,39 @@ def test_doctor_exits_2_and_names_the_line(monkeypatch, project, capsys):
     assert code == 2
     assert "tests/helpers.py:1" in out, out
     assert "pattern" in out and "Report/le_v*.docx" in out
+
+
+def test_doctor_shows_patterns_and_COUNTS_the_literals(monkeypatch, project,
+                                                       capsys):
+    """AFI's 134 lines are why. The patterns are the dangerous kind and
+    they print in full; the literals are counted, with the remedy named,
+    because most of them are a spent archive."""
+    for n, body in ((1, 'P = next(root.glob("Report/le_v*.docx"))\n'),
+                    (2, 'P = "Report/le_v3.docx"\n'),
+                    (3, 'P = "Report/le_v4.docx"\n')):
+        f = project.root / f"s{n}.py"
+        f.write_text(body, encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "doctor",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "1 PATTERN selection(s)" in out, out
+    assert "s1.py:1" in out
+    assert "2 literal selection(s) not shown" in out, out
+    assert "s2.py" not in out, "the literals should be counted, not listed"
+    assert "[doctor] skip" in out, "the remedy has to be in the message"
+
+
+def test_doctor_lists_the_literals_when_asked(monkeypatch, project, capsys):
+    (project.root / "s2.py").write_text('P = "Report/le_v3.docx"\n',
+                                        encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "doctor", "--literals",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "1 literal selection(s):" in out, out
+    assert "s2.py:1" in out
