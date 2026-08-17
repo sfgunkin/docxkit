@@ -133,6 +133,42 @@ only the strongest suite saw it.
 `duplicate-code` at that threshold now reports nothing across the
 package.
 
+**Then the same detector over `tests/`** (2026-08-17), and the criterion
+there is not the same. Duplicated FIXTURES are usually right: a test
+that builds its own document reads standalone, and sharing a constant
+couples two tests so that changing one breaks the other. What is worth
+removing is a duplicated HELPER, especially one that already exists.
+
+    min-similarity-lines   before   after
+    8                      1        0
+    5                      2        0
+    4                      4        2   (both fixture DATA, left)
+
+Three findings, in descending order of what they cost:
+
+1. **`tables` had no layering check at all.** `test_citations.py` and
+   `test_compare.py` each carried a copy of the intra-family import-order
+   walk — which `test_layering.py` does NOT cover, because it steps over
+   any dependency starting with an underscore. Two of the three facade
+   families were checked and the third was not, and a per-family copy is
+   exactly how that happens: nobody wrote one for `tables`. Now one
+   parametrized test over `FACADE_HALVES`, verified to bite for all
+   three by reversing each declared order in turn.
+
+   The copies had NOT drifted from each other — but `FACADE_HALVES`
+   spelled `citations` in a different order from the one
+   `test_citations.py` enforced, and nothing noticed because that dict
+   was only ever read as a set. It is an order now, and says so.
+
+2. **Two files defined `make_parts` shadowing conftest's, with a
+   different contract**: `footnotes=` took the inner note elements in
+   one and a whole part in the other. One name, two meanings, in a suite
+   where every other file uses conftest's. Both now use the shared one.
+
+3. Three cite test files hand-rolled a footnotes-part builder that
+   `conftest.notes`/`note` already provided — all three written the same
+   day, which is how that happens.
+
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after

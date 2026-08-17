@@ -13,7 +13,7 @@ not notice — and that text is what a paper's build log shows.
 """
 from __future__ import annotations
 
-from conftest import make_parts, para, run
+from conftest import make_parts, note, notes, para, run
 
 from docxkit._xml import BOOKMARK_NAME_RE, internal_links
 from docxkit.citations import link_all, link_rest
@@ -25,11 +25,8 @@ ENTRIES = (
 
 
 def _notes(*texts: str) -> str:
-    body = "".join(f'<w:footnote w:id="{i + 2}">{para(run(t))}</w:footnote>'
-                   for i, t in enumerate(texts))
-    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
-            f'wordprocessingml/2006/main">{body}</w:footnotes>')
+    return notes("footnotes",
+                 *(note(t, i + 2) for i, t in enumerate(texts)))
 
 
 def _links(parts: dict[str, bytes], part: str = "word/document.xml"):
@@ -46,12 +43,10 @@ def test_a_link_ALREADY_in_a_footnote_is_recognised_as_a_link():
     linked = ('<w:hyperlink w:anchor="Kanbur2007">'
               '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
               "<w:t>Kanbur 2007</w:t></w:r></w:hyperlink>")
-    note = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
-            'wordprocessingml/2006/main"><w:footnote w:id="2"><w:p>'
-            + run("See ") + linked + "</w:p></w:footnote></w:footnotes>")
+    part = notes("footnotes", '<w:footnote w:id="2"><w:p>'
+                 + run("See ") + linked + "</w:p></w:footnote>")
     parts = make_parts(
-        para(run("A point (Kanbur 2007).")) + ENTRIES, footnotes=note)
+        para(run("A point (Kanbur 2007).")) + ENTRIES, footnotes=part)
 
     report = link_all(parts)
 
@@ -101,7 +96,7 @@ def test_a_back_link_whose_target_is_in_a_FOOTNOTE_is_kept():
     assert report.backlinked == ["Kanbur2007"], report.format()
     assert ("Kanbur2007txt", "Kanbur, R. (2007)") in _links(parts), \
         "the entry lost its back-link"
-    assert not any("removed" in note for note in report.skipped), \
+    assert not any("removed" in line for line in report.skipped), \
         report.format()
 
 

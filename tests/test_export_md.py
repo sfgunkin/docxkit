@@ -1,7 +1,7 @@
 """Markdown export: structure survives, nothing is silently dropped."""
 from __future__ import annotations
 
-from conftest import NS, dele, ins, para, run
+from conftest import dele, ins, make_parts, notes, para, run
 
 from docxkit.export import to_markdown
 
@@ -23,17 +23,6 @@ def tbl(*rows: tuple[str, ...]) -> str:
                            "</w:tc>" for c in row) + "</w:tr>"
         for row in rows)
     return f"<w:tbl>{trs}</w:tbl>"
-
-
-def make_parts(body: str, *, footnotes: str | None = None
-               ) -> dict[str, bytes]:
-    parts = {"word/document.xml":
-             f"<w:document {NS}><w:body>{body}</w:body></w:document>"
-             .encode()}
-    if footnotes is not None:
-        parts["word/footnotes.xml"] = (
-            f"<w:footnotes {NS}>{footnotes}</w:footnotes>").encode()
-    return parts
 
 
 def test_headings_map_by_style_and_outline_level():
@@ -72,9 +61,9 @@ def test_footnote_marker_and_definition():
     body = ('<w:p><w:r><w:t>Claim.</w:t></w:r>'
             '<w:r><w:footnoteReference w:id="2"/></w:r>'
             "<w:r><w:t> More.</w:t></w:r></w:p>")
-    notes = ('<w:footnote w:id="2"><w:p><w:r><w:t>The small print.'
+    notes_xml = ('<w:footnote w:id="2"><w:p><w:r><w:t>The small print.'
              "</w:t></w:r></w:p></w:footnote>")
-    md = to_markdown(make_parts(body, footnotes=notes))
+    md = to_markdown(make_parts(body, footnotes=notes("footnotes", notes_xml)))
     assert "Claim.[^2] More." in md
     assert "[^2]: The small print." in md
 

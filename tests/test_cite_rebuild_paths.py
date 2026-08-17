@@ -19,7 +19,7 @@ them. Odd indices from 3 up do.
 """
 from __future__ import annotations
 
-from conftest import make_parts, para, run
+from conftest import make_parts, note, notes, para, run
 
 from docxkit.citations import link_all
 
@@ -29,11 +29,7 @@ LEAD = (para(run("Ageing raises the risk of isolation."))
 
 
 def _note(text: str, nid: int = 2) -> str:
-    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
-            'wordprocessingml/2006/main">'
-            f'<w:footnote w:id="{nid}">{para(run(text))}</w:footnote>'
-            "</w:footnotes>")
+    return notes("footnotes", note(text, nid))
 
 
 def test_a_citation_that_cannot_be_WRAPPED_is_reported_with_its_paragraph():

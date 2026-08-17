@@ -6,7 +6,7 @@ each expected number can be checked by reading the fixture.
 from __future__ import annotations
 
 import pytest
-from conftest import NS, dele, ins, para, run
+from conftest import dele, ins, make_parts, notes, para, run
 
 from docxkit.wordcount import Counts, count, words
 
@@ -24,17 +24,6 @@ def tbl(*cells: str) -> str:
 
 def equation(tokens: str) -> str:
     return f"<m:oMath><m:r><m:t>{tokens}</m:t></m:r></m:oMath>"
-
-
-def make_parts(body: str, *, footnotes: str | None = None
-               ) -> dict[str, bytes]:
-    parts = {"word/document.xml":
-             f"<w:document {NS}><w:body>{body}</w:body></w:document>"
-             .encode()}
-    if footnotes is not None:
-        parts["word/footnotes.xml"] = (
-            f"<w:footnotes {NS}>{footnotes}</w:footnotes>").encode()
-    return parts
 
 
 BODY = (
@@ -85,11 +74,12 @@ def test_equations_counted_once_and_separately():
 
 
 def test_footnotes_counted_from_their_own_part():
-    notes = ('<w:footnote w:id="0"><w:p><w:r><w:separator/></w:r></w:p>'
+    notes_xml = ('<w:footnote w:id="0"><w:p><w:r><w:separator/></w:r></w:p>'
              "</w:footnote>"
              '<w:footnote w:id="2"><w:p><w:r><w:t>Four words of note.'
              "</w:t></w:r></w:p></w:footnote>")
-    counts = count(make_parts(p("Body."), footnotes=notes))
+    counts = count(make_parts(p("Body."),
+                              footnotes=notes("footnotes", notes_xml)))
     assert counts.footnotes == 4
 
 

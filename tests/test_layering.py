@@ -46,9 +46,15 @@ _CYCLE = frozenset({"cli", "compare", "revision"})
 
 #: A facade and the private modules only it may reach into. The halves
 #: exist to keep one file readable, not to widen the surface.
+#:
+#: BOTTOM FIRST — the tuples are an order, not a list, and the test
+#: below holds the halves to it. `citations` used to be spelled here in
+#: a different order from the one `test_citations.py` enforced, because
+#: nothing read this one as an order; reading it as a set is what let
+#: the two disagree unnoticed.
 FACADE_HALVES = {
-    "citations": ("_cite_grammar", "_cite_audit", "_cite_build",
-                  "_cite_repair"),
+    "citations": ("_cite_grammar", "_cite_repair", "_cite_audit",
+                  "_cite_build"),
     "tables": ("_table_core", "_table_layout"),
     "compare": ("_compare_read", "_compare_diff", "_compare_render"),
 }
@@ -136,3 +142,33 @@ def test_a_private_half_is_reached_only_through_its_facade(facade, halves):
             f"{sorted(importers - allowed)} import docxkit.{half} "
             f"directly — it exists to keep {facade}.py readable, not to "
             f"widen the surface. Import docxkit.{facade}.")
+
+
+@pytest.mark.parametrize("facade,halves", sorted(FACADE_HALVES.items()))
+def test_a_HALF_imports_only_the_halves_below_it(facade, halves):
+    """The order INSIDE a family, which the layer rule above skips.
+
+    `test_a_module_imports_only_what_is_BELOW_it` steps over any
+    dependency whose name starts with an underscore, because the halves
+    belong to their facade's layer — so nothing there says
+    `_cite_build` may read `_cite_grammar` and not the reverse.
+
+    Two files said it instead, `test_citations.py` and
+    `test_compare.py`, each with its own copy of the walk and its own
+    spelling of the order. The third family had NO check at all:
+    `tables` was split the same way and its halves were never held to
+    anything. That is what a per-family copy costs — not drift between
+    the copies, which had not happened, but the family nobody wrote one
+    for.
+    """
+    for i, half in enumerate(halves):
+        for dep in sorted(GRAPH.get(half, ())):
+            assert dep != facade, (
+                f"docxkit.{half} imports its own facade docxkit.{facade} "
+                f"— that is a cycle, and the halves exist to avoid one")
+            if dep in halves:
+                assert halves.index(dep) < i, (
+                    f"docxkit.{half} imports docxkit.{dep}, which is not "
+                    f"below it in {facade}'s halves. Either it belongs "
+                    f"lower or the import belongs elsewhere; a layering "
+                    f"nobody checks is a layering that will not hold")

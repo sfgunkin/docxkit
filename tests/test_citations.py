@@ -1473,34 +1473,6 @@ def test_the_facade_still_offers_every_name_it_ever_did():
         assert hasattr(C, name), f"{name} vanished from the facade"
 
 
-def test_the_citation_layers_stay_acyclic():
-    """Each layer may import only from the ones below it.
-
-    grammar <- repair <- audit <- build.  The one back-edge the split
-    had to remove was marker_bookmark reaching forward for a helper
-    that lived with the builder; letting one back in would make the
-    layering a fiction.
-    """
-    import ast
-    from pathlib import Path
-
-    import docxkit
-    src = Path(docxkit.__file__).parent
-    order = ["_cite_grammar", "_cite_repair", "_cite_audit", "_cite_build"]
-    for i, mod in enumerate(order):
-        tree = ast.parse((src / f"{mod}.py").read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom) or not node.module:
-                continue
-            if node.module in order:
-                assert order.index(node.module) < i, (
-                    f"{mod} imports from {node.module}, which is not "
-                    "below it")
-            assert node.module != "citations", (
-                f"{mod} imports the facade — that is a cycle")
-
-
-# ------------------------------------------------ wiring the right entry --
 
 
 def _parts(*paras):

@@ -21,7 +21,7 @@ LI7 uses.
 from __future__ import annotations
 
 import pytest
-from conftest import make_parts, para, run
+from conftest import make_parts, note, notes, para, run
 
 from docxkit._xml import BOOKMARK_NAME_RE, internal_links
 from docxkit.citations import link_all, unlink_by_anchor
@@ -44,11 +44,7 @@ REFERENCES = (
 
 
 def _footnote(text: str, nid: int = 2) -> str:
-    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
-            'wordprocessingml/2006/main">'
-            f'<w:footnote w:id="{nid}">{para(run(text))}</w:footnote>'
-            "</w:footnotes>")
+    return notes("footnotes", note(text, nid))
 
 
 # ------------------------------------------- the footnote citation path --
