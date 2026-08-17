@@ -875,6 +875,68 @@ added as a gate rather than a fix.
 
 ## Fixed
 
+### S1 `build_overrides` put a newly INSERTED paragraph wherever the author's last other edit was — and refused the edit outright when there was no other edit
+
+Found by measuring `ingest.py` (2026-08-17): 35.1 % real survival, the
+worst module in the package, with 33 of its 65 survivors on one line —
+`overrides[-1] = (overrides[-1][0], overrides[-1][1] + extra)`.
+
+An inserted paragraph has no baseline paragraph of its own, so it has to
+ride on an override anchored somewhere. That line anchored it on
+`overrides[-1]`, the last CHANGED paragraph, which is the paragraph
+before it only when the author's previous edit happened to be adjacent.
+Measured on a three-paragraph document:
+
+    baseline  intro          / middle / conclusion
+    author    intro edited   / middle / brand new / conclusion
+    integrated intro edited  / brand new / middle / conclusion   <-- wrong
+
+Two paragraphs early, silently, with `apply_overrides` reporting every
+override applied. Fix a typo in the introduction and add a paragraph in
+section 5 and the new paragraph lands in the introduction.
+
+And when there was NO other edit, `overrides` was empty, so the same
+branch fell through to `raise AnchorError("leading insert with no anchor
+paragraph")` — for an insert in the MIDDLE of the document. An author
+who adds a paragraph and changes nothing else, which is the most
+ordinary round there is, got a refusal naming their new text as a
+"leading insert".
+
+**Fix.** Anchor a pure insert on the paragraph BEFORE it,
+`base_paras[i1 - 1]`, as `(prev, prev + extra)`; keep the refusal only
+for `i1 == 0`, where it is true. Seven tests in `test_ingest.py`
+(`test_an_added_paragraph_lands_where_the_AUTHOR_put_it` and around it)
+assert the integrated ORDER rather than the override list, which is what
+was wrong.
+
+**Known limit, now in the module docstring.** The anchor is a
+paragraph's XML, so two byte-identical paragraphs are one anchor. Word's
+own files are safe (every paragraph carries a `w14:paraId`), but a
+baseline BUILT here need not be — `docxkit.body.para` emits no paraId,
+so two identical "Notes:" lines under two tables are the same anchor and
+an edit to the second is applied to the first. `compare --expect-clean`
+sees it; nothing in `ingest` does.
+
+**Workaround while it was open:** none — it was not known. Any paper
+that integrated an author round with an inserted paragraph should be
+checked with `compare --expect-clean` against the author's file, which
+does catch it.
+
+### S2 `ingest` alignment broke at a run of blank paragraphs in any manuscript over 200 paragraphs
+
+Same measurement. `SequenceMatcher(..., autojunk=False)` carried a live
+mutant, and the setting is load-bearing: above 200 elements difflib calls
+any line appearing in more than 1 % of the sequence "popular" and refuses
+to match it. A paper's blank spacer paragraphs are exactly that.
+
+With the paragraphs either side of a five-blank run rewritten, autojunk
+sweeps all seven into one replace block: five overrides rewriting a blank
+paragraph as itself, and the two real edits paired positionally inside a
+block that has nothing to do with them. `autojunk=False` was already
+there — what was missing was any test holding it, which is why this is
+filed as a gap rather than a bug. `test_a_LONG_document_aligns_ACROSS_a_
+run_of_blank_paragraphs` now does, at 250 paragraphs.
+
 ### S3 `revision doctor` reports 134 selections on AFI and about three of them matter — a paper with a build archive drowns the signal — patterns first, spent folders declarable
 
 Run against AFI 2026-08-17, the day `doctor` shipped, on the very repo

@@ -14,6 +14,14 @@ changed, stop — that is the habit that loses edits.
 Overrides are ``{"old": <paragraph xml>, "new": <paragraph xml>}`` pairs
 anchored on the BUILD OUTPUT, so they compose with whatever footnotes,
 links and fixes the pipeline already applied. ``new: ""`` deletes.
+
+The anchor is therefore a paragraph's XML, which assumes two paragraphs
+are never byte-identical. Word's own files satisfy that — every
+paragraph carries its own ``w14:paraId`` — but a baseline BUILT here
+need not: :func:`docxkit.body.para` emits none, so two identical "Notes:"
+lines under two tables are the same anchor, and an edit to the second is
+applied to the first. Give generated paragraphs a paraId, or gate the
+round with ``compare --expect-clean``, which sees the moved text.
 """
 from __future__ import annotations
 
@@ -138,8 +146,25 @@ def build_overrides(baseline: str | Path,
             if block:
                 block[-1] = (block[-1][0], block[-1][1] + extra)
                 overrides.extend(block)
-            elif extra and overrides:
-                overrides[-1] = (overrides[-1][0], overrides[-1][1] + extra)
+            elif extra and i1:
+                # A PURE insert: nothing in this block came from the
+                # baseline, so it has no override of its own to ride on
+                # and must be anchored on the paragraph BEFORE it.
+                #
+                # This used to attach to `overrides[-1]`, the last
+                # CHANGED paragraph — which is only the paragraph before
+                # when the author's previous edit happened to be
+                # adjacent. Fixing a typo in the introduction and adding
+                # a paragraph in section 5 put the new paragraph in the
+                # introduction, silently, with nothing raised (measured
+                # 2026-08-17; 33 mutants were living on that line).
+                # A second entry with the same `old` is safe even when
+                # the manuscript repeats a paragraph verbatim (a bare
+                # "Notes:" line under every table): `apply_overrides`
+                # replaces ONE occurrence per entry, in order, so the
+                # entries land on successive copies.
+                overrides.append((base_paras[i1 - 1],
+                                  base_paras[i1 - 1] + extra))
             elif extra:
                 raise AnchorError(
                     "leading insert with no anchor paragraph: "
