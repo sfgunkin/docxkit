@@ -1589,3 +1589,111 @@ def test_marker_segments_falls_back_when_the_MARKERS_do_not_match_the_text():
     segs = _marker_segments("x=y", ["i", "i"], ["i", "up"])
 
     assert segs == [("x=y", "i", "i,up")]
+
+
+# ---------------------------------------------- the INTEGRITY layer, alone --
+#
+# The one layer of the comparison that is a gate on the BUILT document
+# rather than a difference between two — "must be clean" — and twelve of
+# _compare_diff's survivors were in it. Each one is a way for it to
+# report nothing: a set operation that drops the ids present on both
+# sides, a comparison that only looks one way, a field depth that only
+# counts up.
+
+def _integrity(xml: str, names=None):
+    from docxkit._compare_diff import integrity
+
+    return integrity(xml, "built", names)
+
+
+def test_a_bookmark_with_TWO_starts_and_one_end_is_reported():
+    """`set(starts) | set(ends)` — the ids to CHECK are all of them.
+    Mutated to a symmetric difference, an id present on both sides is
+    dropped, which is every imbalance there can be: an id missing from
+    one side entirely has no pair to be unbalanced against."""
+    xml = ('<w:p><w:bookmarkStart w:id="7" w:name="Table1"/>'
+           '<w:bookmarkStart w:id="7" w:name="Table1"/>'
+           '<w:bookmarkEnd w:id="7"/></w:p>')
+
+    assert any("imbalance" in i for i in _integrity(xml))
+
+
+def test_a_bookmark_with_MORE_ends_than_starts_is_reported_too():
+    """`!=`, not `>`. Word writes the stray end when a bookmark is
+    copied, and an end with no start is what makes it 'unreadable
+    content'."""
+    xml = ('<w:p><w:bookmarkStart w:id="7" w:name="Table1"/>'
+           '<w:bookmarkEnd w:id="7"/><w:bookmarkEnd w:id="7"/></w:p>')
+
+    assert any("imbalance" in i for i in _integrity(xml))
+
+
+def test_a_balanced_bookmark_is_no_finding():
+    xml = ('<w:p><w:bookmarkStart w:id="7" w:name="Table1"/>'
+           '<w:bookmarkEnd w:id="7"/></w:p>')
+
+    assert _integrity(xml) == []
+
+
+def test_an_anchor_in_BOTH_forms_is_still_checked():
+    """`anchors = element anchors | field targets`. A manuscript
+    mid-round holds both forms of the same link — Word rewrites a field
+    into an element whenever the author saves — and a symmetric
+    difference drops exactly the anchors that appear twice, which are
+    the ones a half-finished repair leaves behind."""
+    xml = ('<w:p><w:hyperlink w:anchor="Gone2020txt"><w:r><w:t>x</w:t>'
+           "</w:r></w:hyperlink>"
+           r'<w:r><w:instrText> HYPERLINK \l "Gone2020txt" \h </w:instrText>'
+           "</w:r></w:p>")
+
+    found = _integrity(xml)
+
+    assert any("dangling" in i and "Gone2020txt" in i for i in found)
+
+
+def test_a_field_MISSING_ITS_END_is_reported_with_the_sign():
+    """The depth counts begin as +1 and end as -1, and the sign in the
+    report is what says which half is missing — the fix for one is to
+    delete the marker and for the other to add it."""
+    xml = ('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           "<w:r><w:t>Table 4</w:t></w:r></w:p>")
+
+    found = _integrity(xml)
+
+    assert any("unbalanced field (+1)" in i for i in found)
+
+
+def test_a_field_MISSING_ITS_BEGIN_is_reported_too():
+    """`depth != 0`, not `> 0`: an end with no begin is -1, and it
+    renders as literal field code exactly as the other does."""
+    xml = ('<w:p><w:r><w:t>Table 4</w:t></w:r>'
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+    found = _integrity(xml)
+
+    assert any("unbalanced field (-1)" in i for i in found)
+
+
+def test_a_balanced_field_is_no_finding():
+    xml = ('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           r'<w:r><w:instrText> HYPERLINK \l "T1" \h </w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           "<w:r><w:t>Table 1</w:t></w:r>"
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+           '<w:p><w:bookmarkStart w:id="1" w:name="T1"/>'
+           '<w:bookmarkEnd w:id="1"/></w:p></w:p>')
+
+    assert _integrity(xml) == []
+
+
+def test_the_unbalanced_field_report_QUOTES_the_paragraph_it_is_in():
+    """Forty characters of it: a document with three unbalanced fields
+    is three paragraphs to find, and the id is not in the text."""
+    long_text = "The age-friendliness index is defined for every occupation"
+    xml = ('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           f"<w:r><w:t>{long_text}</w:t></w:r></w:p>")
+
+    found = next(i for i in _integrity(xml) if "unbalanced" in i)
+
+    assert repr(long_text[:40]) in found
+    assert long_text[:41] not in found
