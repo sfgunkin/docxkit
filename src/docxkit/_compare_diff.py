@@ -495,10 +495,14 @@ class _Alignment:
                 pending.pop(id(pa), None)
                 self.deleted.append(pa)
                 continue
-            if _norm_glyph(pa.text) == _norm_glyph(pb.text):
-                self.add("glyph", {"from": pa.text[:120],
-                                   "to": pb.text[:120]}, pa)
-                continue
+            # No glyph branch here. A `replace` opcode is BY
+            # CONSTRUCTION a region with no matching elements, and the
+            # matcher's elements ARE the glyph-normalized texts (see
+            # `compare_paras`), so a pair inside one can never be
+            # glyph-identical — `matched` is where that case lives.
+            # There was one, and it was the second piece of dead code
+            # this same invariant has produced: it could not be killed
+            # by any input, and removing it changes no report.
             entry = self.place({"context": pa.text[:60],
                                 "word_diff": word_diff(pa.text, pb.text)},
                                pa)
