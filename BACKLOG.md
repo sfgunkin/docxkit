@@ -17,6 +17,17 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+*Nothing, as of 2026-08-17* — the first time this file has been empty
+here since it was started. The last five closed that day: the U+2212
+downgrade (both halves), the missing row-multiset check for a reorder,
+and the four survivor ledgers, each on a fresh measurement rather than
+on the work having been done.
+
+Append the next one as you hit it. An empty section is a statement about
+today, not about the toolkit.
+
+## Fixed
+
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
@@ -82,9 +93,17 @@ against `^`, where the symmetric difference calls a spare note
 elements being re-sorted by ID rather than by anything else, so the
 file reads the way it renders.
 
-**Still open:** nothing named. Not re-measured since; the next run
-should be a survivor re-run, but `renumber.py` has CHANGED, so that
-session is void and it must be a fresh draw.
+**Closed 2026-08-17.** Re-measured as a fresh 460-draw (the module has
+changed since, so the earlier session was void): **5.7 % real survival,
+26 of 460**, against 15.1 % when it was first looked at. It is now among
+the best-pinned modules in the package, beside `_cite_repair` and
+`_compare_render`.
+
+Nothing is left worth naming: the largest cluster is five, spread over
+`footnotes`, `_shift_in_para` and `shift`, and it reads as the shape
+these tests already record — `==` mutated to `is` between two computed
+values, a default on a report field nothing asserts by number, a
+`max(0, ...)` clamp no fixture reaches from the far side.
 
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
 
@@ -152,293 +171,19 @@ Re-measured on a random sample of 460 (seed 20260816): **real survival
 and is filed below: two entries sharing a surname AND year produced two
 bookmarks with the SAME name.
 
-**Still open:** `rewrite` 36, `scan` 25, `rebuild` 17, `_entry_keys` 17,
-`link_all` 12. `rewrite` is the biggest single cluster in the package
-and nothing asserts on what it produces at the value level.
+**Closed 2026-08-17.** Re-measured as a fresh 460-draw: **9.4 % real
+survival, 37 of 392**, against 41.1 % at the first measurement and
+25.2 % at the paired one. The harness is the nine files
+`tools/harness_map.py` now records for it.
 
+The largest remaining cluster is ten in `unlink_by_anchor`, and six of
+those sit on a line the source itself marks `# pragma: no cover -
+defensive`. The rest is ones and twos across the message strings and the
+name-minting loop. The three defects this entry's rounds turned up — a
+sentence in the back matter parsing as a reference entry, two entries
+sharing one bookmark, and a dead lead-token branch in `_entry_keys` —
+are fixed and held by tests.
 
-**Second pass, 2026-08-16** (`e5c23cb`). `rewrite` pinned:
-`tests/test_link_rest_paths.py` states which span is wrapped, the exact
-report line (`Kanbur2007 @ ¶2`), idempotence through the already-linked
-mask, bottom-up ordering across paragraphs, the splice, and the widening
-guard — the one that abandons widening over an institution's name when
-the wider span would reach into somebody else's link. Five of six
-targeted mutants die.
-
-The sixth is `sorted(todo, reverse=True)`, left unkilled DELIBERATELY
-and documented in the test file: mutating it to `sorted(todo)` produces
-an identical document, because `wrap_visible_span` takes VISIBLE offsets
-and wrapping changes no visible text, so for non-overlapping spans the
-order cannot be observed. It is an equivalent mutant, and writing a
-contrived test for it would make the suite slower without making it
-stronger.
-
-**Re-measured on the SAME 460 mutants** (same draw, paired):
-
-    real survival  41.1 %  ->  35.0 %  ->  29.3 %
-
-Again the last figure is `tools/mutation_survivors.py`'s; the hand
-rule read it as 31.1 %.
-
-`rewrite` went from 36 survivors in the sample to 24.
-
-**Still open:** `rewrite` 24, `scan` 23, `rebuild` 15, `_entry_keys` 12,
-`link_all` 10, `_dedup_name` 8. `scan` is the next one worth doing — it
-decides which mention of a work is the FIRST, which is the decision the
-whole first pass is built on.
-
-
-**Third pass, 2026-08-16.** `scan` pinned:
-`tests/test_cite_scan_paths.py`. Eighteen of its twenty-three survivors
-are outside an annotation, and they fall into three groups: four
-`continue`s turned into `break`, ten on the arithmetic of the two
-report lines, four on the ambiguity finding.
-
-The `continue`s are the four places the scan skips something — a
-reference paragraph, a citation with no entry, a work already claimed,
-an anchor already linked. `continue` and `break` differ only in what
-happens to the REST of the list, and every fixture the function had
-carried one interesting citation per paragraph, where they cannot
-differ at all.
-
-Each test now puts a citation the pass must still find AFTER the one it
-skips. Two of the four arrangements are what manuscripts actually look
-like: the source line under a table, which sits below the reference
-block because these papers put their exhibits at the end, and a sentence
-citing a new work beside one already cited upstream.
-
-The two report lines are pinned by value. `¶{i + 1}` mutates to six
-different arithmetic operators and four of them agree with the original
-whenever `i` is even, so the citations in these fixtures sit at
-paragraph index 1, where every variant reads differently.
-
-**Twelve of twelve targeted mutants die**, each verified by hand-mutation
-with the killing test named. One is left alive as equivalent and
-recorded in the file: `by_key[key][0].year` -> `[1].year`. Two entries
-share a key only when `key_for(surname, year)` agrees and the year goes
-into that key verbatim, so every entry under one key has the same year.
-The SURNAME in the same line is a different matter — the key strips
-punctuation and case first, so "O'Brien" and "OBrien" are one key and
-two spellings, and the report names the one the list spells first.
-
-Writing these found the S1 at the top of this file: the fixture for the
-table note would not link, because the note had been parsed as a
-reference entry.
-
-**Re-measured, PAIRED** — yesterday's session re-run over its own
-survivors under today's harness, which `cr-cite.toml` confirms is the
-same four test files plus `test_cite_scan_paths.py`:
-
-    real survival  29.3 % (114/389)  ->  25.2 % (98/389)
-
-Sixteen of the hundred-and-fourteen die, none appears. **`scan` itself
-goes from 18 to 2**, and one of the two is the equivalent above.
-
-The other was a fixture defect worth recording. `¶{i + 1}` mutates to
-eleven operators, and several agree with the original at any given `i`:
-index 0 agrees with `|`, index 1 with `<<`, index 2 with `|` again.
-These fixtures used index 1, so `i << 1` printed the same ¶2 and lived
-through the round. **Index 3 is the smallest that separates all
-eleven**; the reported citations now sit there, and all twenty-two
-arithmetic mutations across the two report lines die by hand-mutation.
-That fix landed after the paired run, so the 25.2 % above still counts
-the `<<` survivor.
-
-**Still open** (paired sample): `rewrite` 19, `rebuild` 15,
-`_entry_keys` 12, `link_all` 10, `_dedup_name` 8, `_mint_name` 8,
-`unlink_by_anchor` 8. `rewrite` was pinned last round and remains the
-largest — the widening rules are where its residue sits.
-
-
-**Fourth pass, 2026-08-16.** `rebuild` and `_entry_keys`, the two
-clusters after `rewrite`.
-
-**`rebuild`, 15 survivors, every one of them on a `report.skipped` line
-or the `except` above one.** Nothing asserted what a REFUSAL says —
-only that linking worked when it worked, which is the wrong half to
-leave open. A citation that was linked is visible in the document; a
-citation that was not is visible only in that report, so the line is
-the entire output for the case, and the paragraph number is most of the
-line. `tests/test_cite_rebuild_paths.py` drives all three refusals — a
-citation too ambiguous to wrap, in the body and in a footnote; an entry
-whose head repeats, so its back-link would be a guess; an entry with no
-head at all — and **23 of 23 mutants die**, including the two
-`ExceptionReplacer`s that would have let the error out of `link_all`
-instead of into a line.
-
-**`_entry_keys`, 12 survivors, four of them in code that cannot change
-the answer.** The all-caps lead-token rule added `key_for(words[0])`,
-and that key is already there both ways: with one word `words[0]` IS
-the surname, so its key is `r.key`; with more, the word RUN at i=0, j=1
-is exactly that word. Provable, and checked against nine institutional
-entry shapes before deleting it. Same shape as `label_extent`'s dead
-leftward walk, found the same way, and the behaviour it was meant to
-provide now has the test it never had. Six more die against new value
-tests (the word-run bounds, and that every key NAMES something — an
-empty name is what an off-by-one there produces, silently, because the
-real keys are all still beside it). One is equivalent and recorded.
-
-**Still open**, less what this pass took: `rewrite` 19, `link_all` 10,
-`_dedup_name` 8, `_mint_name` 8, `unlink_by_anchor` 8, `_own_bookmark`
-5. Not re-measured; the next run should be a survivor re-run of
-`.mutation-cite_build-paired.sqlite`.
-
-
-**Fifth pass, 2026-08-16.** `rewrite`, the largest cluster, taken to
-its documented equivalent. **27 of 27 targeted mutants die**, verified
-by hand-mutation with the killing test named. The nineteen were three
-families, and this module keeps producing the same three:
-
-* **the block skip, as a RANGE.** Entries cite each other — "extending
-  Ravallion (2016)" inside a reference is ordinary — and mutating
-  `skip[0] <= i <= skip[1]` to an equality protects ONE entry and
-  rewrites the rest, turning the bibliography into cross-linked prose.
-  The old fixture had nothing citable inside the block, so both ends
-  went unchecked;
-* **`continue` turned into `break`**, in the two places the scan skips a
-  citation: an ignored lead, and one already inside a link. The second
-  is what every round after the first looks like — a paragraph holding
-  one linked citation and one plain one — and a `break` there makes the
-  pass blinder the more of the paper is already done;
-* **`¶{i + 1}` on all three report lines** — linked, no-bookmark,
-  refused. The existing assertion read `¶2`, where `i << 1` gives the
-  same answer; at index 3 all eleven operators differ.
-
-Two paths had never been run at all. `link_all(only=...)` names some
-entries and not others, so `names.get(key)` returns None and the pass
-says which citation and where. And a citation typed INSIDE an equation
-object has offsets from `visible_text`, which counts the maths, that no
-`w:r` covers — `wrap_visible_span` refuses, and the refusal is reported
-with the paragraph rather than thrown out of `link_rest`, which would
-stop a build on one odd paragraph.
-
-`rewrite`'s only remaining survivor is the `sorted(todo, reverse=True)`
-recorded as equivalent last round.
-
-**Still open:** `link_all` 10, `_dedup_name` 8, `_mint_name` 8,
-`unlink_by_anchor` 8, `_own_bookmark` 5, `_entry_names_from_document` 4.
-The naming trio (`_dedup_name`, `_mint_name`, `_named`) is 19 between
-them and is the next worth doing — it decides the bookmark names every
-link in the document points at.
-
-
-**Sixth pass, 2026-08-16.** The naming trio, by
-`tests/test_cite_names.py`. **11 of 11 targeted mutants die**; three
-more are equivalent or unreachable and recorded.
-
-The names carry two constraints that pull against each other — Word's
-cap, which truncates ON SAVE without retargeting the links that pointed
-at the full name, and uniqueness, where a collision mis-targets a link
-rather than merely breaking it — and both had been asserted only
-through their consequences. Nothing said what a name IS. The tests now
-state them: the surname and the year; the exact cut for an
-institutional author (Parental Style's 90-character one); `_2` then
-`_3` with no gaps; and that a name whose `…txt` twin is taken is
-already a collision, because the pair is the unit.
-
-Two paths had never run. `_dedup_name` was never called with a FRESH
-name, which is why four `name + "txt"` mutants lived there — every one
-would raise `TypeError` the moment the line ran. And the pathological
-fallback, where all ninety-nine truncated candidates are taken and the
-answer is a name too long rather than one that collides, had never been
-reached at all.
-
-`_mint_name`'s `if keep < 1: break` is UNREACHABLE and its two mutants
-are permanent residue: the budget is 37, a year is 4 or 5 characters
-and the widest suffix is 3, so `keep` never falls below 29. A test
-states that arithmetic instead, and the guard is kept because a change
-to `WORD_BOOKMARK_LIMIT` is exactly what it is for.
-
-**Still open:** `link_all` 10, `unlink_by_anchor` 8, `_own_bookmark` 5,
-`_entry_names_from_document` 4.
-
-
-**Seventh pass, 2026-08-16.** The last four named clusters, in
-`tests/test_cite_anchor_reuse.py` and `tests/test_cite_link_all_paths.py`.
-**18 of 23 targeted mutants die**; five are confirmed EQUIVALENT and
-recorded, and three more are the `# pragma: no cover - defensive` guard
-in the field walk, which is residue by an earlier decision rather than
-by oversight.
-
-`_own_bookmark`, `_entry_names_from_document` and `unlink_by_anchor`
-all answer one kind of question — is this marker mine? — and all three
-were asserted only where the answer was yes. The failures behind them
-are in their docstrings and none was loud: a name not recognised is
-minted again, so a second run silently DOUBLES the scheme; a name
-recognised too eagerly points every link at another work; a hoisted
-bookmark not found made `link_rest` decline nine mentions across six
-works, which the author noticed before any tool did.
-
-Two of those now have the tests they were missing. **Idempotence** —
-`link_all` run twice leaves the document byte-identical — is the
-property `_own_bookmark` exists for and nothing had stated it. And the
-**gap** before an entry is read as that entry's own: widening it by one
-paragraph reaches into the previous entry's gap, where a stale marker
-from an earlier scheme is then answered to while the entry's own sits
-unused. The same arithmetic appears in `link_all` and in
-`_entry_names_from_document`, and both are pinned.
-
-`link_all`'s residue was the parts of the document that are NOT the
-body: the footnotes it also links, also reads existing links from, and
-also has to write back — three separate mutants, each of which loses
-footnote work silently. Plus the two report `format` loops, which every
-other test in the suite ignores because they all read the report's
-LISTS; the printed text is what a paper's build log actually shows.
-
-**The paired session for this module is now VOID, and that is worth
-knowing before the next measurement.** `.mutation-cite_build-paired.sqlite`
-holds specs addressed by (row, column) in the source as it stood before
-2026-08-16's fixes — and this module has since lost `_HEAD_RE` and the
-dead lead-token branch and gained `_prose_entries`, so every position
-below the first change points at the wrong code. Re-running it would
-mutate lines nobody chose and report the result as a comparison.
-
-So the next measurement here is a FRESH draw at the recorded seed and
-harness, and it starts a new series: it cannot be compared with the
-25.2 % above, because that figure belongs to a source this one no
-longer is. The rule generalises — a survivor re-run needs the module
-byte-identical, so fixing a defect in it ends the series that measured
-the defect. The edit-side session is unaffected: nothing in `edit.py`
-changed, only tests were added.
-
-
-**The new series, 2026-08-16** — fresh 460-mutant draw, seed 20260816,
-harness the ten cite test files:
-
-    real survival  11.4 % (46/405)     <- new series, starts here
-
-**Read the 46 before reading the percentage**, because most of it is
-residue this session created on purpose. Nine sit on `"no head on entry
-¶{i + 1}"`, the line the S4 fix made unreachable — recorded in
-`tests/test_cite_rebuild_paths.py` when that decision was taken, and
-this is what it looks like in a report. Another nine or so are the
-equivalences recorded across the test files. The rest is a thin tail:
-`unlink_by_anchor` 6, `scan` 5, `_mint_name` 4, `_entry_keys` 3,
-`rewrite` 3.
-
-The draw also turned up four live ones the earlier sample had missed,
-all now pinned: the truncation in `_prose_entries`' report line; a
-NON-matching ghost hyperlink returning its anchor instead of itself;
-`link_rest`'s options taking a positional bool; and `where == "¶"`,
-which is the only thing keeping the entry-marking branch off the
-FOOTNOTES — paragraph indices are per part, so footnote ¶3 and body ¶3
-are different paragraphs with the same number, and loosening that
-comparison stamps a note carrying a citation with the entry's own
-bookmark name.
-
-**One finding was systematic and is now a gate.** The keyword-only
-marker `*` mutates to the positional-only `/`, which is valid Python,
-and the mutant survived in `replace_in_para`, then `insert_in_para`,
-then `link_rest` — three functions, one hole. Every flag in this
-package turns a guard OFF, and a positional bool says nothing about
-which. `test_a_BOOL_option_is_always_keyword_only` walks all 43 modules
-and holds every public signature to it, so the fourth one cannot
-happen. The package passed it unmodified, which is why it could be
-added as a gate rather than a fix.
-
----
-
-## Fixed
 
 ### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
 
