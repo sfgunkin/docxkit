@@ -308,3 +308,109 @@ def test_a_drawing_BEFORE_any_caption_belongs_to_no_figure():
     figure, = find_all(xml)
 
     assert figure.embeds == ["rId7"]
+
+
+def test_an_INCH_is_914400_EMU():
+    """The scaling test computes its expected width FROM this constant,
+    so a mutation moves both sides together and the test cannot see it.
+    An inch is an inch: state the number."""
+    assert EMU_PER_INCH == 914400
+
+
+def test_scale_to_width_gives_a_six_inch_drawing_its_EMU(tmp_path):
+    img = tmp_path / "i.png"
+    img.write_bytes(png(1000, 500))
+
+    out = scale_to_width(drawing("rId7"), img, 6.0)
+
+    assert 'cx="5486400" cy="2743200"' in out
+
+
+def test_a_replaced_image_keeps_its_WIDTH_and_ROUNDS_the_height(tmp_path):
+    """`round`, not floor. The rounding is a single EMU and no reader
+    could see it; stating it is how the arithmetic stays the arithmetic
+    that was chosen, in a function whose whole job is not to stretch the
+    author's picture."""
+    new = tmp_path / "new.png"
+    new.write_bytes(png(7, 2))
+    parts = _parts()
+
+    replace_image(parts, "Figure 1.", new)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    cx = 5486400
+    assert f'cx="{cx}" cy="1567543"' in doc          # round(cx * 2 / 7)
+    assert f'cx="{cx}" cy="{cx * 2 // 7}"' not in doc
+
+
+def test_isolating_takes_the_NEXT_free_media_number(tmp_path):
+    """image1..image4 exist, so the new part is image5 — not a name that
+    overwrites one of them, which is the whole point of isolating."""
+    new = tmp_path / "new.png"
+    new.write_bytes(png(800, 400))
+    parts = _parts()
+
+    target = replace_image(parts, "Figure 2.", new, isolate=True)
+
+    assert target == "word/media/image5.png"
+
+
+def test_isolating_takes_the_NEXT_free_RELATIONSHIP_id(tmp_path):
+    """rId7..rId10 are taken, so the new one is rId11. Reusing a live id
+    would point another drawing at this figure's image."""
+    new = tmp_path / "new.png"
+    new.write_bytes(png(800, 400))
+    parts = _parts()
+
+    replace_image(parts, "Figure 2.", new, isolate=True)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert find(doc, "Figure 2.").embeds[0] == "rId11"
+
+
+def test_isolate_on_an_UNSHARED_image_still_writes_over_its_media(tmp_path):
+    """`uses > 1 and isolate`, not `or`: isolate answers the question
+    "what about the other drawings", and with no other drawings there is
+    nothing to isolate from. Making a second copy would leave the
+    original media part orphaned in the package."""
+    new = tmp_path / "new.png"
+    new.write_bytes(png(800, 400))
+    parts = _parts()
+    before = {n for n in parts if n.startswith("word/media/")}
+
+    target = replace_image(parts, "Figure 1.", new, isolate=True)
+
+    assert target == "word/media/image1.png"
+    assert {n for n in parts if n.startswith("word/media/")} == before
+
+
+def test_the_next_relationship_id_is_one_PAST_the_highest():
+    """Tested here rather than only through `replace_image`, because
+    the fixture's highest id is even and `max | 1` reads the same on an
+    even number — the parity of a fixture is not a proof."""
+    from docxkit.figures import _next_rid
+
+    assert _next_rid('<Relationships><Relationship Id="rId11"/>'
+                     '<Relationship Id="rId3"/></Relationships>') == "rId12"
+
+
+def test_the_next_relationship_id_in_an_EMPTY_rels_is_rId1():
+    """rId0 is not a name Word writes, and starting there would collide
+    with nothing today and everything the first time one is added."""
+    from docxkit.figures import _next_rid
+
+    assert _next_rid("<Relationships></Relationships>") == "rId1"
+
+
+def test_the_next_media_part_is_one_PAST_the_highest(tmp_path):
+    from docxkit.figures import _new_media_part
+
+    parts = {"word/media/image5.png": b"x", "word/media/image2.png": b"y"}
+
+    assert _new_media_part(parts, b"z") == "word/media/image6.png"
+
+
+def test_the_first_media_part_in_a_package_with_none_is_image1():
+    from docxkit.figures import _new_media_part
+
+    assert _new_media_part({}, b"z") == "word/media/image1.png"
