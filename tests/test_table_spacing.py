@@ -156,3 +156,80 @@ def test_the_paragraph_keeps_its_text_and_the_document_still_parses():
     out, _ = table_spacing(xml)
     ET.fromstring(out)
     assert visible_text(out).count("Prose about it.") == 1
+
+
+# --- what the first mutation run found (2026-08-17, hygiene 21.2 %) -----
+#
+# 51 of the 116 survivors were in `_set_before`, and all of them on the
+# branch that INSERTS a `w:spacing` into an existing `w:pPr` — where in
+# the pPr it goes. The tests reached the two easy shapes (a spacing
+# element already there, no pPr at all) and never that one. Word reads
+# CT_PPr as an ordered sequence: an element out of place is dropped on
+# the next save, so the spacing silently stops applying, weeks later,
+# with nothing in any diff.
+
+def _spaced(ppr: str) -> str:
+    """The pPr of the paragraph after a table, once the rule has run."""
+    body = (table("cell") + f"<w:p>{ppr}<w:r><w:t>resumes</w:t></w:r></w:p>")
+    out, _report = table_spacing(doc(body))
+    para_xml = re.findall(r"<w:p\b(?![^>]*/>).*?</w:p>", out, re.DOTALL)[-1]
+    return re.search(r"<w:pPr>.*?</w:pPr>", para_xml, re.DOTALL).group(0)
+
+
+def test_the_spacing_goes_BEFORE_jc_and_after_pStyle():
+    """CT_PPr fixes the order: pStyle, then spacing, then ind / jc, then
+    rPr last."""
+    got = _spaced('<w:pPr><w:pStyle w:val="Body"/><w:jc w:val="both"/>'
+                  "</w:pPr>")
+
+    assert got == ('<w:pPr><w:pStyle w:val="Body"/>'
+                   '<w:spacing w:before="120"/><w:jc w:val="both"/></w:pPr>')
+
+
+def test_the_spacing_goes_BEFORE_ind():
+    got = _spaced('<w:pPr><w:ind w:left="720"/></w:pPr>')
+
+    assert got == ('<w:pPr><w:spacing w:before="120"/>'
+                   '<w:ind w:left="720"/></w:pPr>')
+
+
+def test_the_spacing_goes_BEFORE_rPr():
+    """rPr is the LAST child of a pPr, so everything else precedes it —
+    including a spacing inserted here."""
+    got = _spaced("<w:pPr><w:rPr><w:b/></w:rPr></w:pPr>")
+
+    assert got == ('<w:pPr><w:spacing w:before="120"/>'
+                   "<w:rPr><w:b/></w:rPr></w:pPr>")
+
+
+def test_with_nothing_to_precede_the_spacing_goes_LAST():
+    """A pPr holding only a pStyle: there is no anchor element, so the
+    spacing goes at the end — which is still after pStyle, and still in
+    order."""
+    got = _spaced('<w:pPr><w:pStyle w:val="Body"/></w:pPr>')
+
+    assert got == ('<w:pPr><w:pStyle w:val="Body"/>'
+                   '<w:spacing w:before="120"/></w:pPr>')
+
+
+def test_an_EMPTY_pPr_gets_the_spacing_and_nothing_else():
+    got = _spaced("<w:pPr></w:pPr>")
+
+    assert got == '<w:pPr><w:spacing w:before="120"/></w:pPr>'
+
+
+def test_a_paragraph_with_NO_pPr_gets_one_holding_the_spacing():
+    body = table("cell") + "<w:p><w:r><w:t>resumes</w:t></w:r></w:p>"
+
+    out, _report = table_spacing(doc(body))
+
+    assert '<w:p><w:pPr><w:spacing w:before="120"/></w:pPr>' in out
+
+
+def test_an_existing_spacing_KEEPS_its_other_attributes():
+    """`w:after` belongs to the paragraph and this rule is about
+    `w:before`; rewriting the element wholesale would drop it."""
+    got = _spaced('<w:pPr><w:spacing w:after="240" w:line="276"/></w:pPr>')
+
+    assert 'w:after="240"' in got and 'w:line="276"' in got
+    assert 'w:before="120"' in got
