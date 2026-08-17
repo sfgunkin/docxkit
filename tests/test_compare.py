@@ -1964,3 +1964,107 @@ def test_a_text_entry_CUTS_its_context(tmp_path):
 
     assert entry["context"] == long_a[:60]
     assert len(entry["context"]) == 60
+
+
+# ------------------------------------------------------ moves, then the rest
+#
+# `structure` pairs a deleted paragraph with an inserted one that is
+# nearly the same text and calls it a MOVE; what it cannot pair is a
+# plain DELETE or INSERT. 15 survivors: the similarity threshold, the
+# ratio it prints, the bookkeeping that stops one paragraph being
+# matched twice, and the cuts.
+
+def test_a_paragraph_that_MOVED_is_one_finding_not_two(tmp_path):
+    """Otherwise a reordered section reads as a deletion and an
+    unrelated insertion, and the reader checks both."""
+    moved = para(run("The methods section, moved to the end."))
+    a, b = docs(tmp_path,
+                moved + para(run("Alpha.")) + para(run("Beta.")),
+                para(run("Alpha.")) + para(run("Beta.")) + moved)
+
+    kinds = [s["type"] for s in compare(a, b)["structure"]]
+
+    assert kinds == ["MOVE"]
+
+
+def test_a_MOVE_prints_the_ratio_it_matched_on(tmp_path):
+    """The ratio is how a reader tells a clean move from one that was
+    moved AND rewritten — the second wants reading, the first does not.
+    Three decimals, because the interesting values sit just above the
+    threshold and rounding them to none says 1.0 for all of them."""
+    moved = "The methods section, moved to the end of the paper."
+    a, b = docs(tmp_path,
+                para(run(moved)) + para(run("Alpha.")),
+                para(run("Alpha."))
+                + para(run(moved.replace("methods", "results"))))
+
+    move = compare(a, b)["structure"][0]
+
+    assert move["type"] == "MOVE"
+    assert move["ratio"] == 0.922
+
+
+def test_a_paragraph_REWRITTEN_past_the_threshold_is_not_a_move(tmp_path):
+    """0.85 of the characters. Below it the two paragraphs are not the
+    same text in a new place, and calling them a move hides an edit
+    nobody would then read."""
+    moved = "The methods section, moved to the end of the paper."
+    a, b = docs(tmp_path,
+                para(run(moved)) + para(run("Alpha.")),
+                para(run("Alpha.")) + para(run(
+                    "The methods section, now rewritten and placed "
+                    "elsewhere.")))                      # ratio 0.54
+
+    kinds = {s["type"] for s in compare(a, b)["structure"]}
+
+    assert kinds == {"DELETE", "INSERT"}
+
+
+# Three near-identical paragraphs, all within the 0.85 threshold of each
+# other — the shape a reordered results section produces when the
+# sentences differ only in which exhibit they name.
+_S1 = "The methods section, moved to the end of the paper."
+_S2 = "The methods section, moved to the end of the report."
+_S3 = "The methods section, moved to the end of the article."
+
+
+def test_ONE_inserted_paragraph_cannot_match_TWO_deleted_ones(tmp_path):
+    """A paragraph already claimed as the other end of a move is not
+    available to claim again — otherwise two deletions both report as
+    moves into the same place, and one of those moves never happened."""
+    a, b = docs(tmp_path,
+                para(run(_S1)) + para(run(_S2)) + para(run("Alpha.")),
+                para(run("Alpha.")) + para(run(_S3)))
+
+    kinds = sorted(s["type"] for s in compare(a, b)["structure"])
+
+    assert kinds == ["DELETE", "MOVE"]
+
+
+def test_ONE_deleted_paragraph_cannot_match_TWO_inserted_ones(tmp_path):
+    """The same rule from the other side: the walk stops at the first
+    insertion it pairs with, or one deletion reports as two moves and
+    the reader is told a paragraph is in two places."""
+    a, b = docs(tmp_path,
+                para(run(_S1)) + para(run("Alpha.")),
+                para(run("Alpha.")) + para(run(_S2)) + para(run(_S3)))
+
+    kinds = sorted(s["type"] for s in compare(a, b)["structure"])
+
+    assert kinds == ["INSERT", "MOVE"]
+
+
+def test_a_DELETE_reports_what_the_paragraph_TOOK_WITH_IT(tmp_path):
+    """A deleted paragraph takes its links and bookmarks, and the entry
+    names them: that is the difference between "a paragraph went" and "a
+    citation's target went"."""
+    a, b = docs(tmp_path,
+                para(run("Alpha."))
+                + ('<w:p><w:hyperlink w:anchor="Smith2020txt">'
+                   "<w:r><w:t>Smith (2020)</w:t></w:r></w:hyperlink></w:p>"),
+                para(run("Alpha.")))
+
+    entry = next(s for s in compare(a, b)["structure"]
+                 if s["type"] == "DELETE")
+
+    assert entry["lost_fields"]["anchors"] == ["Smith2020txt"]
