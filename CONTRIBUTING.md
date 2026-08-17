@@ -273,6 +273,41 @@ in each is PAIRED against the round before it (survivor re-run, same
 mutants, harness a checked superset); the earlier ones are separate
 draws and carry a couple of points of sampling noise.
 
+**The sweep of 2026-08-17**, one module at a time, whole runs rather
+than samples, each against the harness `tools/harness_map` names for it:
+
+| module | mutants | real survival | worst cluster |
+|---|---|---|---|
+| `probe.py` | 168 | 36.9 % | `probe` 40 |
+| `ingest.py` | 185 | 35.1 % | `build_overrides` 50 |
+| `figures.py` | 653 | 30.8 % | `set_alt_text` 49 |
+| `wordcount.py` | 98 | 28.6 % | the bucket defaults 12 |
+| `pages.py` | 136 | 24.3 % | `sheets` 15 (needs Word) |
+| `console.py` | 29 | 24.1 % | `_reconfigure` 6 (needs a console) |
+| `testing.py` | 87 | 23.0 % | `prose_numbers` 16 |
+| `body.py` | 251 | 14.7 % | `table` 17 |
+| `find.py` | 262 | 13.4 % | `page_break_before` 11 |
+| `export.py` | 194 | 9.3 % | `_pipe_table` 12 |
+| `authors.py` | 108 | 8.3 % | `_collapse_people` 3 |
+| `lint.py` | 506 | 8.3 % | `lint` 37 |
+| `guard.py` | 50 | 6.0 % | — |
+| `_compare_render.py` | 207 | 5.3 % | `_head` 4 |
+| `_cite_repair.py` | 199 | 4.5 % | `wrap_link_in_bookmark` 4 |
+| `errors.py` | 10 | 100 % | the exception classes |
+| `tables.py` | 0 | — | a re-export facade: nothing to mutate |
+
+`errors.py` is not a failure: ten mutants, all of them renaming an
+exception's docstring or its base, and the module IS the names. It is
+listed so the next reader does not re-run it expecting a number.
+
+The ORDER is the finding. The modules that rewrite a manuscript sit at
+4–9 %; the ones that REPORT on it — probe, pages, console, testing — sit
+at 23–37 %. Defensible as far as consequence goes, and not as far as
+trust: `probe` exists to be believed BEFORE a batch picks its approach,
+and its own argument is that a two-table swap took forty minutes because
+nobody knew which form the links took. Every one of those has since been
+pinned by value.
+
 Writing those tests found more than the percentages did, every round: a
 function computing a value no caller read (58 mutants were living in
 `label_extent`'s dead leftward walk); an S1 where two reference entries
@@ -282,6 +317,29 @@ parses as a reference entry, which a real citation then links to while
 the report says it matched everything. **That is the argument for the
 technique** — three defects a green suite of 2,500 tests was already
 passing, each found by asking what a test would NOTICE.
+
+The sweep above added four more of the same kind, and every one of them
+sat under a cluster of survivors rather than being visible in the
+percentage:
+
+* `build_overrides` placed a newly INSERTED paragraph after the last
+  paragraph that happened to CHANGE — sections away from where the
+  author put it — and refused the edit outright when nothing else had
+  changed. 33 of `ingest.py`'s 65 survivors were on that one line;
+* `find`, `set_alt_text` and `_repoint_one_drawing` each carried their
+  own copy of the figure drawing WINDOW and none of them stopped at the
+  next caption, so a figure whose own image was missing adopted the
+  following figure's — and the accessibility check then reported both
+  as described;
+* `lint`'s two newest checks (the ones added for "Word says the document
+  is unreadable") had no test at all: emptying their loops changed
+  nothing any test could see;
+* `prose_numbers` guarded a conversion that cannot raise, and three
+  mutants were living inside the dead branch.
+
+The pattern behind all four: a check asserted on the case it FIRES on
+and never on the case it must stay quiet for, and a value returned but
+never read back by anything.
 
 **A suite that is too narrow INVENTS survivors, and that costs more than
 one that is too broad.** `comments.py` came back as the worst module in
