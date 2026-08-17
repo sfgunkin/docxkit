@@ -50,6 +50,7 @@ and three bite. Each chunk is restartable and leaves the tree clean.
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import os
 import random
@@ -63,6 +64,30 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKTREE = Path(os.environ.get("DOCXKIT_MUT_WORKTREE", r"D:/docxkit-mut"))
+#: One session at a time, because they share the worktree.
+#:
+#: Two runs measuring DIFFERENT modules still mutate one checkout, so
+#: each reads the other's mutation and every result is suspect —
+#: silently, because both complete and both print a plausible number.
+#: Four batches were launched on 2026-08-17 behind shell wait-loops that
+#: did not match, and the tell was a later batch finishing before an
+#: earlier one. A lock in the tool is worth more than care in the caller.
+LOCK = WORKTREE.parent / f"{WORKTREE.name}.lock"
+
+
+def _take_lock() -> None:
+    """Refuse to start while another session holds the worktree."""
+    try:
+        fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        holder = LOCK.read_text(encoding="utf-8").strip() or "unknown"
+        sys.exit(f"another mutation session holds {WORKTREE} (pid {holder}). "
+                 f"They share one checkout, so running both makes each read "
+                 f"the other's mutations. Wait for it, or delete {LOCK} if "
+                 f"it is stale.")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(str(os.getpid()))
+    atexit.register(lambda: LOCK.unlink(missing_ok=True))
 
 
 def _run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
@@ -231,6 +256,7 @@ def main() -> int:
     if args.fresh:
         session.unlink(missing_ok=True)
 
+    _take_lock()
     ensure_worktree(module, args.tests)
     write_config(module, args.tests, config)
     if not session.exists():
