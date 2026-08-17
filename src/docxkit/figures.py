@@ -23,6 +23,7 @@ import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ._xml import DOCUMENT, PARA_RE, SECTPR_RE, visible_text
 from .errors import AnchorError, PackageError
@@ -59,6 +60,24 @@ _CAPTION_RE = re.compile(
 _DRAWING_WINDOW = 6
 
 
+def _window(texts: list[str], caption_index: int) -> range:
+    """Paragraph indices this caption's drawings may sit in.
+
+    Up to `_DRAWING_WINDOW` paragraphs after the caption, stopping early
+    at the NEXT caption: a figure whose own drawing is missing must not
+    adopt the following figure's. This walk had five copies and only
+    `alt_texts` stopped — so `find`, and everything addressing a drawing
+    through it, could hand back a neighbour's image. `set_alt_text` on a
+    captionless figure would then describe the next figure's picture,
+    and the accessibility check would report both as done.
+    """
+    stop = min(caption_index + 1 + _DRAWING_WINDOW, len(texts))
+    for j in range(caption_index + 1, stop):
+        if _CAPTION_RE.match(texts[j]):
+            return range(caption_index + 1, j)
+    return range(caption_index + 1, stop)
+
+
 @dataclass(frozen=True)
 class Figure:
     """A caption and the images belonging to it."""
@@ -89,22 +108,29 @@ def find_all(doc_xml: str) -> list[Figure]:
     for i, text in enumerate(texts):
         if not _CAPTION_RE.match(text):
             continue
-        embeds: list[str] = []
-        for p in paras[i + 1:i + 1 + _DRAWING_WINDOW]:
-            found = _EMBED_RE.findall(p.group(0))
-            if found:
-                embeds.extend(found)
-            elif embeds:
-                break              # drawings ended; the figure is complete
-        out.append(Figure(caption=text, caption_index=i, embeds=embeds))
+        out.append(Figure(caption=text, caption_index=i,
+                          embeds=_embeds_in(paras, texts, i)))
     return out
+
+
+def _embeds_in(paras: list[Any], texts: list[str], i: int) -> list[str]:
+    """The ``r:embed`` ids belonging to the caption at `i`."""
+    embeds: list[str] = []
+    for j in _window(texts, i):
+        found = _EMBED_RE.findall(paras[j].group(0))
+        if found:
+            embeds.extend(found)
+        elif embeds:
+            break              # drawings ended; the figure is complete
+    return embeds
 
 
 def find(doc_xml: str, caption_prefix: str) -> Figure:
     """The single figure whose caption starts with `caption_prefix`."""
     paras = list(PARA_RE.finditer(doc_xml))
-    hits = [i for i, p in enumerate(paras)
-            if visible_text(p.group(0)).strip().startswith(caption_prefix)]
+    texts = [visible_text(p.group(0)).strip() for p in paras]
+    hits = [i for i, text in enumerate(texts)
+            if text.startswith(caption_prefix)]
     if not hits:
         raise AnchorError(f"no caption starting {caption_prefix!r}")
     if len(hits) > 1:
@@ -112,15 +138,8 @@ def find(doc_xml: str, caption_prefix: str) -> Figure:
             f"{len(hits)} captions start {caption_prefix!r} — "
             "'Figure 1.' also prefixes 'Figure 10.', so include the dot")
     i = hits[0]
-    embeds: list[str] = []
-    for p in paras[i + 1:i + 1 + _DRAWING_WINDOW]:
-        found = _EMBED_RE.findall(p.group(0))
-        if found:
-            embeds.extend(found)
-        elif embeds:
-            break
-    return Figure(caption=visible_text(paras[i].group(0)).strip(),
-                  caption_index=i, embeds=embeds)
+    return Figure(caption=texts[i], caption_index=i,
+                  embeds=_embeds_in(paras, texts, i))
 
 
 def shared_relationships(doc_xml: str) -> dict[str, int]:
@@ -252,9 +271,7 @@ def alt_texts(doc_xml: str) -> list[AltText]:
     owner: dict[int, str] = {}
     for i, text in enumerate(texts):
         if _CAPTION_RE.match(text):
-            for j in range(i + 1, min(i + 1 + _DRAWING_WINDOW, len(paras))):
-                if _CAPTION_RE.match(texts[j]):
-                    break            # the next figure's window starts here
+            for j in _window(texts, i):
                 owner[j] = text
     out = []
     for j, p in enumerate(paras):
@@ -285,9 +302,10 @@ def set_alt_text(doc_xml: str, caption_prefix: str, text: str, *,
     """
     figure = find(doc_xml, caption_prefix)
     paras = list(PARA_RE.finditer(doc_xml))
+    texts = [visible_text(p.group(0)).strip() for p in paras]
     blocks: list[tuple[int, int, str]] = []
-    stop = min(figure.caption_index + 1 + _DRAWING_WINDOW, len(paras))
-    for p in paras[figure.caption_index + 1:stop]:
+    for j in _window(texts, figure.caption_index):
+        p = paras[j]
         for dm in _DRAWING_RE.finditer(p.group(0)):
             blocks.append((p.start() + dm.start(), p.start() + dm.end(),
                            dm.group(0)))
@@ -327,8 +345,9 @@ def _repoint_one_drawing(doc: str, figure: Figure, old_rid: str,
     """Repoint only THIS figure's drawing, leaving its siblings on the
     shared relationship."""
     paras = list(PARA_RE.finditer(doc))
-    for p in paras[figure.caption_index + 1:
-                   figure.caption_index + 1 + _DRAWING_WINDOW]:
+    texts = [visible_text(p.group(0)).strip() for p in paras]
+    for j in _window(texts, figure.caption_index):
+        p = paras[j]
         block = p.group(0)
         if f'r:embed="{old_rid}"' in block:
             fixed = block.replace(f'r:embed="{old_rid}"',

@@ -207,3 +207,104 @@ def test_section_properties_returns_the_body_sectpr():
 def test_landscape_rejects_a_sectpr_without_page_size():
     with pytest.raises(AnchorError, match="no w:pgSz"):
         landscape("<w:sectPr><w:pgMar w:top='1440'/></w:sectPr>")
+
+
+# --- what the first mutation run found (2026-08-17, 30.8 %, 201 alive) ---
+#
+# Half of those survivors were the drawing WINDOW — `paras[i + 1:i + 1 +
+# _DRAWING_WINDOW]`, written out five times, none of it asserted by
+# value. Writing the tests found that only one of the five copies
+# stopped at the next caption, so `find` could hand back a neighbour's
+# image; the walk is now one function and the tests hold its edges.
+
+def test_a_drawing_in_the_LAST_paragraph_of_the_window_belongs_to_the_figure():
+    """Six paragraphs after the caption. A figure whose image sits
+    behind a source note, a spacer and a panel label is ordinary, and
+    a window one short drops it from the paper's figure list."""
+    xml = document(para(run("Figure 1. Average AFI by country"))
+                   + para(run("spacer")) * 5
+                   + drawing("rId7"))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rId7"]
+
+
+def test_a_drawing_JUST_PAST_the_window_is_not_the_figures():
+    """...and the window has to end somewhere, or a figure adopts
+    whatever image appears later in the section."""
+    xml = document(para(run("Figure 1. Average AFI by country"))
+                   + para(run("spacer")) * 6
+                   + drawing("rId7"))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == []
+
+
+def test_the_CAPTION_paragraph_itself_is_not_searched():
+    """The window opens at the paragraph AFTER the caption. A caption
+    that happens to carry an inline image — a small panel letter — is
+    still a caption, and off-by-one here reads it as the figure."""
+    caption = ('<w:p><w:r><w:t>Figure 1. Average AFI</w:t></w:r>'
+               '<w:r><w:drawing><wp:inline><a:blip r:embed="rIdCAPTION"/>'
+               "</wp:inline></w:drawing></w:r></w:p>")
+    xml = document(caption + drawing("rId7"))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rId7"]
+
+
+def test_a_figure_with_NO_image_does_not_adopt_the_NEXT_figures():
+    """The defect the five copies of this walk disagreed about: only
+    `alt_texts` stopped at the next caption. A figure whose own drawing
+    is missing — the panel that failed to embed, the placeholder a
+    co-author left — took the following figure's, and every caller
+    downstream believed it: `set_alt_text` would describe Figure 2's
+    picture under Figure 1, and the accessibility check would report
+    both as done.
+    """
+    xml = document(para(run("Figure 1. The one that lost its image"))
+                   + para(run("Figure 2. Average AFI by country"))
+                   + drawing("rId7"))
+
+    first, second = find_all(xml)
+
+    assert first.embeds == []
+    assert second.embeds == ["rId7"]
+    assert find(xml, "Figure 1.").embeds == []
+
+
+def test_a_MULTI_IMAGE_figure_keeps_its_drawings_in_document_order():
+    """AFI's Figure 5 is three Lorenz curves; each needs its own alt
+    text, addressed by position."""
+    xml = document(para(run("Figure 5. Three panels"))
+                   + drawing("rIdA") + drawing("rIdB") + drawing("rIdC"))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rIdA", "rIdB", "rIdC"]
+
+
+def test_the_drawings_END_at_the_first_paragraph_without_one():
+    """Prose after the panels is not another panel: once a figure's
+    drawings have started, the first paragraph without one closes it."""
+    xml = document(para(run("Figure 5. Two panels"))
+                   + drawing("rIdA")
+                   + para(run("Source: authors' calculations."))
+                   + drawing("rIdSTRAY"))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rIdA"]
+
+
+def test_a_drawing_BEFORE_any_caption_belongs_to_no_figure():
+    xml = document(drawing("rIdLOGO")
+                   + para(run("Figure 1. Average AFI"))
+                   + drawing("rId7"))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rId7"]
