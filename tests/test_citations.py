@@ -1896,3 +1896,140 @@ def test_remove_outer_field_refuses_when_TWO_fields_match():
 # is EQUIVALENT: "first" sorts before "only" so the comparison agrees
 # everywhere it is reached, and CPython interns the literal both sides
 # come from.
+
+
+# ------------------------------------------------- links nested in links ---
+#
+# `_cite_audit` measured 41.1 % real survival, the worst in the package,
+# and 61 of its survivors are in `_doubled_links` — the walk that finds
+# a link inside another link with a different target, where the click
+# goes to the outer one. Two real shapes produced it: API10 P30, where
+# two citations rendered as ONE link because the first field never
+# ended, and LI7's WHO back-link nested inside a dead absolute-URL field
+# Word had written around it.
+#
+# The walk keeps a STACK, and everything about the stack was free: which
+# frame a close tag pops, whether a close pops the right KIND, and
+# whether two links side by side look nested.
+
+def _field(target: str) -> str:
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            rf'<w:r><w:instrText> HYPERLINK \l "{target}" \h </w:instrText>'
+            '</w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>')
+
+
+_FIELD_END = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+
+
+def _element(anchor: str, label: str = "x") -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+            "</w:r></w:hyperlink>")
+
+
+def test_a_FIELD_inside_a_field_is_reported_with_both_targets():
+    """API10 P30: the first field never ends, so the second citation is
+    drawn inside it and both click through to the first."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("Finsel2023txt") + _field("Wohrmann2018txt")
+            + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == [("Finsel2023txt", "Wohrmann2018txt")]
+
+
+def test_an_ELEMENT_inside_a_field_is_reported():
+    """LI7: the correct back-link, wrapped in a dead absolute-URL field
+    Word had written around it."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("http://dead.example/old")
+            + _element("WHO2019txt") + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == [("http://dead.example/old", "WHO2019txt")]
+
+
+def test_the_SAME_target_twice_is_form_churn_and_stays_quiet():
+    """Word rewrites a field into an element whenever the author saves,
+    so a manuscript mid-round holds both forms of one link. That is not
+    a doubled link."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("WHO2019txt") + _element("WHO2019txt")
+            + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == []
+
+
+def test_two_links_SIDE_BY_SIDE_are_not_nested():
+    """The commonest paragraph in any of these papers — two citations in
+    one sentence. A close tag that popped the wrong frame would report
+    every later link as inside every earlier one."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("Smith2020txt") + _FIELD_END
+            + _field("Jones2021txt") + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == []
+
+
+def test_an_element_close_pops_the_ELEMENT_not_the_field_around_it():
+    """`</w:hyperlink>` ends the innermost ELEMENT. Popping a field
+    frame instead loses the outer field, and the citation that really is
+    inside it goes unreported."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("Outer2020txt")
+            + _element("First2019txt") + _element("Second2018txt")
+            + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == [("Outer2020txt", "First2019txt"),
+                                    ("Outer2020txt", "Second2018txt")]
+
+
+def test_a_field_end_pops_the_INNERMOST_field():
+    """Two fields open, one closes: the one still open is the OUTER, and
+    a link after it is nested in that one and not in the closed one."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("Outer2020txt") + _field("Inner2019txt")
+            + _FIELD_END + _element("Third2018txt") + _FIELD_END + "</w:p>")
+
+    assert ("Outer2020txt", "Third2018txt") in _doubled_links(para)
+    assert ("Inner2019txt", "Third2018txt") not in _doubled_links(para)
+
+
+def test_an_element_close_pops_the_INNERMOST_element():
+    """Nested element links are what the Kazenin spiral looked like on
+    Parental Style — four deep before the audit caught it. Popping the
+    outermost instead leaves the wrong frame open, and every link after
+    it is attributed to a link that has already closed."""
+    from docxkit.citations import _doubled_links
+
+    para = ('<w:p><w:hyperlink w:anchor="Outer2020txt">'
+            '<w:hyperlink w:anchor="Inner2019txt"><w:r><w:t>x</w:t></w:r>'
+            "</w:hyperlink>" + _element("Third2018txt")
+            + "</w:hyperlink></w:p>")
+
+    found = _doubled_links(para)
+
+    assert ("Outer2020txt", "Third2018txt") in found
+    assert ("Inner2019txt", "Third2018txt") not in found
+
+
+def test_a_link_with_no_target_yet_reports_nothing_about_itself():
+    """A field frame carries no target until its instruction is read, so
+    the frames above an inner link are asked for a target and the empty
+    ones say nothing rather than reporting a pair with no outer."""
+    from docxkit.citations import _doubled_links
+
+    para = ('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            + _element("Inner2019txt") + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == []
+
+
+# `open_fields = [f for f in stack if f[0] == "field"]` mutated to the
+# whole stack survives, and is unreachable rather than untested: it
+# would differ only where the innermost open frame at the moment an
+# instruction is read is an ELEMENT, and a field's instruction always
+# follows its own `begin`.
