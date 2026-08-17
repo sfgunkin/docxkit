@@ -499,3 +499,45 @@ def test_a_document_with_no_math_glyphs_anywhere_is_a_no_op():
 
     assert restore_math_glyphs(built, _parts_with("p + q")) == []
     assert built == before
+
+
+# ---------------------------------------------- the relationship ids ------
+#
+# `_free_rid` decides which id a restored part is referenced by, and it
+# had 8 survivors: the fixtures never made the WANTED id collide, which
+# is the whole case it exists for — Compare renumbers the relationships
+# it keeps, so the id a part had is routinely somebody else's now.
+
+def test_the_id_a_part_HAD_is_reused_when_it_is_free():
+    from docxkit.hygiene import _free_rid
+
+    rels = '<Relationships><Relationship Id="rId1"/></Relationships>'
+
+    assert _free_rid(rels, "rId7") == "rId7"
+
+
+def test_a_TAKEN_id_moves_to_one_past_the_highest():
+    """Not the next free NUMBER — one past the highest. Filling a gap
+    would be legal and is not what Word does, and matching Word keeps a
+    rebuilt package diffable against one it wrote."""
+    from docxkit.hygiene import _free_rid
+
+    rels = ('<Relationships><Relationship Id="rId7"/>'
+            '<Relationship Id="rId3"/></Relationships>')
+
+    assert _free_rid(rels, "rId7") == "rId8"
+
+
+def test_with_no_id_wanted_the_next_one_is_taken():
+    from docxkit.hygiene import _free_rid
+
+    rels = '<Relationships><Relationship Id="rId4"/></Relationships>'
+
+    assert _free_rid(rels, "") == "rId5"
+
+
+def test_an_EMPTY_rels_file_starts_at_rId1():
+    """rId0 is not a name Word writes."""
+    from docxkit.hygiene import _free_rid
+
+    assert _free_rid("<Relationships/>", "") == "rId1"

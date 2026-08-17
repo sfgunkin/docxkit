@@ -33,6 +33,18 @@ def test_a_leading_apostrophe_is_ambiguous_and_left():
     assert (report.apostrophes, report.ambiguous) == (1, 1)
 
 
+def test_a_paragraph_STARTING_with_an_apostrophe_is_ambiguous_too():
+    """The lookback starts empty at each paragraph: there is no previous
+    character, so the first one cannot be "after a word". Carrying a
+    word character in from nowhere would curl an opening quote into a
+    closing one, at the start of the sentence, where it is most visible.
+    """
+    xml, report = smarten(para(run("'tis the season, workers' hours")))
+
+    assert visible_text(xml) == "'tis the season, workers’ hours"
+    assert (report.apostrophes, report.ambiguous) == (1, 1)
+
+
 def test_paired_double_quotes_alternate():
     xml, report = smarten(para(run('she said "no" and "yes"')))
     assert visible_text(xml) == "she said “no” and “yes”"
