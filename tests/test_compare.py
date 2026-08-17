@@ -678,6 +678,32 @@ def test_an_equation_present_on_one_side_only_is_reported(tmp_path):
     assert any("<none>" in str(f["to"]) for f in report["formula"]), report
 
 
+def test_an_equation_ADDED_is_reported_from_the_other_side(tmp_path):
+    """The mirror of the padding above, and the direction a rebuild
+    produces: an equation appears where the baseline had none, and the
+    entry says so with <none> on the side that did not have it."""
+    one = para(run("Equation (3): "), math(mrun("x"), mrun("y")))
+    two = para(run("Equation (3): "), math(mrun("x")), math(mrun("y")))
+
+    report = compare(*docs(tmp_path, one, two))
+
+    assert report["text"] == [], "the visible text is identical"
+    assert any("<none>" in str(f["from"]) for f in report["formula"]), report
+
+
+def test_the_typography_of_an_added_equation_is_padded_too(tmp_path):
+    """The format lists are indexed with the same bound as the equations
+    they belong to; reading past one of them raises from inside the
+    comparison rather than reporting the difference."""
+    plain = para(run("See "), math(mrun("x"), mrun("y")))
+    extra = para(run("See "), math(mrun("x")),
+                 math('<m:r><m:rPr><m:nor/></m:rPr><m:t>y</m:t></m:r>'))
+
+    report = compare(*docs(tmp_path, plain, extra))
+
+    assert any("<none>" in str(f["from"]) for f in report["formula"]), report
+
+
 def test_a_math_minus_against_a_hyphen_is_a_glyph_artifact(tmp_path):
     """Word rewrites the math minus U+2212 as a hyphen on save. That is
     an artifact, not an edit, so it belongs in formula_glyph — which
