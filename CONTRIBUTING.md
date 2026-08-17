@@ -305,13 +305,21 @@ and the second wave, of the modules the survivor ledgers were open on
 
 | module | mutants | real survival | first measured |
 |---|---|---|---|
-| `_compare_diff.py` | 605 | 28.4 % | — |
+| `_cite_audit.py` | 457 | 41.1 % -> **15.1 %** | — |
+| `_compare_diff.py` | 605 | 28.4 % -> **16.2 %** | — |
 | `package.py` | 336 | 25.6 % | — |
 | `hygiene.py` | 536 | 19.6 % | — |
 | `edit.py` | 425* | 11.5 % | 17.3 % |
 | `_cite_build.py` | 392* | 9.4 % | 41.1 % |
 | `renumber.py` | 460* | 5.7 % | 15.1 % |
 | `_xml.py` | 441* | 5.4 % | 8.7 % |
+
+The two arrows are a full run followed by a 460-sample of the same
+module after the tests the first run asked for, so the PERCENTAGES are
+not strictly comparable — the clusters are: `_cite_audit`'s
+`_audit_findings` went 106 -> 36 and `_doubled_links` 61 -> 18,
+`_compare_diff`'s `label_moves` 31 -> 8, `replaced` 21 -> 6,
+`formula_diff` 17 -> 8, and `integrity` 12 -> 0.
 
 \* sampled. The four with a "first measured" figure are the ones whose
 BACKLOG ledgers this closed; each is a FRESH draw, because every one of
