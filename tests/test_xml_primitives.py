@@ -545,3 +545,70 @@ def test_overlaps_at_the_edges_of_two_real_spans():
     assert overlaps((4, 6), (5, 9))
     assert overlaps((8, 12), (5, 9))
     assert overlaps((0, 20), (5, 9)), "a span containing the other overlaps it"
+
+
+# ------------------------------- set_run_text and element_spans, by value --
+#
+# The residue of the first `_xml.py` mutation run (2026-08-17) after the
+# field walk was pinned. Three of it is real and below; the rest is
+# equivalent, and recorded at the foot of this file so a later survivor
+# report is not read as a gap.
+
+def test_set_run_text_puts_the_text_in_the_FIRST_run_of_four():
+    """It writes into the first `w:t` and empties the rest, so a caller
+    can rewrite a phrase Word fragmented across runs without losing the
+    run properties on any of them.
+
+    Four runs, not two: the index is `len(runs) - 1 - i` over a REVERSED
+    walk, and with two or three runs several wrong arithmetics still
+    identify the first one. At four they part company.
+    """
+    from docxkit._xml import set_run_text
+
+    xml = ("<w:r>" + "".join(f"<w:t>{part}</w:t>"
+                             for part in ("Ta", "ble", " ", "4")) + "</w:r>")
+
+    out = set_run_text(xml, "Table 5")
+
+    assert out.count("<w:t>") == 4, "runs must survive, emptied"
+    assert "<w:t>Table 5</w:t>" in out
+    assert out.index("Table 5") < out.index("</w:r>")
+    assert out.count("<w:t></w:t>") == 3
+
+
+def test_set_run_text_adds_xml_space_ONLY_for_an_edge_space():
+    """The attribute is not free: Word writes it, diffs show it, and a
+    build that adds it everywhere makes every run look edited."""
+    from docxkit._xml import set_run_text
+
+    plain = set_run_text("<w:r><w:t>x</w:t></w:r>", "Table 4")
+    spaced = set_run_text("<w:r><w:t>x</w:t></w:r>", " Table 4")
+
+    assert "xml:space" not in plain, plain
+    assert 'xml:space="preserve"' in spaced, spaced
+
+
+# Equivalent mutants in this module, left alive with their reasons:
+#
+# * `group(1) == "/"` -> `>= "/"` or `is "/"`, at all FOUR self-closing
+#   tests (`matching_close`, `element_spans`, `own_properties` twice).
+#   The regexes capture with `(/?)`, which always participates, so the
+#   value is "/" or "" and nothing else: "" sorts below "/" and a
+#   one-character string is interned, so all three spellings agree;
+# * `set_run_text`'s `len(runs) - 1 - i` -> `^`. The index is read only
+#   as `idx == 0`, and `(n - 1) ^ i` is zero exactly when `i == n - 1`
+#   — the same run, by a different arithmetic;
+# * `idx == 0` -> `<= 0`, where the index is never negative;
+# * `internal_links` and `dead_links` slicing `m.group(1)` -> `group(0)`.
+#   Group 0 adds the `fldChar` and `instrText` markup around the field's
+#   content, and neither carries visible text, so the label is the same
+#   string either way;
+# * `set_run_property`'s `_RPR_RANK.get(name, ...) > rank` -> `>=`. An
+#   equal rank means the same property name, and that case returns above
+#   this line by replacing in place;
+# * `body != body.strip()` -> `body is not body.strip()`, in
+#   `set_run_text`. CPython's `str.strip()` returns the SAME OBJECT
+#   when it removes nothing, so identity and equality agree at both
+#   ends of the question. The test above states the behaviour anyway,
+#   because "only for an edge space" is worth saying out loud — it
+#   just does not kill that mutant, and claiming it would be false.
