@@ -1481,3 +1481,111 @@ def test_a_stripped_field_with_NO_context_still_prints_what_was_lost():
     _code, out = _out(report)
 
     assert "HYPERLINK" in out
+
+
+# --- what the first mutation run found (2026-08-17, _compare_diff 28.4 %) --
+#
+# 172 survivors, the second-worst measured, in the engine behind
+# `compare --expect-clean` — the gate every integration round is decided
+# by. The clusters are the same shape throughout: a function with three
+# branches tested through one of them, so which branch ran was never
+# asserted.
+
+def test_word_diff_names_a_REPLACEMENT_with_both_sides():
+    from docxkit.compare import word_diff
+
+    assert word_diff("the index rose to 0.35",
+                     "the index rose to 0.37") == ['"0.35" -> "0.37"']
+
+
+def test_word_diff_names_a_DELETION_as_a_deletion():
+    """Not as a replacement with an empty side: the three verbs are what
+    a reader skims for, and "x -> " reads as an edit that lost its
+    text."""
+    from docxkit.compare import word_diff
+
+    assert word_diff("the index rose sharply to 0.35",
+                     "the index rose to 0.35") == ['DEL "sharply"']
+
+
+def test_word_diff_names_an_INSERTION_as_an_insertion():
+    from docxkit.compare import word_diff
+
+    assert word_diff("the index rose to 0.35",
+                     "the index rose sharply to 0.35") == ['INS "sharply"']
+
+
+def test_word_diff_says_nothing_about_the_words_that_did_not_change():
+    from docxkit.compare import word_diff
+
+    assert word_diff("identical prose here", "identical prose here") == []
+
+
+def test_word_diff_reports_every_edit_in_the_paragraph():
+    """Three verbs in one paragraph, in reading order."""
+    from docxkit.compare import word_diff
+
+    out = word_diff("alpha beta gamma delta epsilon",
+                    "alpha GAMMA delta epsilon zeta")
+
+    assert out == ['"beta gamma" -> "GAMMA"', 'INS "zeta"']
+
+
+# ------------------------------------------------- the typography segments --
+
+def test_marker_segments_names_the_SYMBOL_that_changed():
+    """The equation-side twin of the format diff: a report that named
+    the whole formula would be a report nobody can act on, which is the
+    same argument `word_diff` makes about a paragraph."""
+    from docxkit._compare_diff import _marker_segments
+
+    segs = _marker_segments("x=y", ["i", "i", "i"], ["i", "i", "up"])
+
+    assert segs == [("y", "i", "up")]
+
+
+def test_marker_segments_joins_a_CONTIGUOUS_run_of_changes():
+    from docxkit._compare_diff import _marker_segments
+
+    segs = _marker_segments("abcd", ["i", "i", "i", "i"],
+                            ["i", "up", "up", "i"])
+
+    assert segs == [("bc", "i", "up")]
+
+
+def test_marker_segments_reports_a_run_that_reaches_the_END():
+    """The loop closes a run when the markers agree again; a run that
+    never does has to be flushed after it."""
+    from docxkit._compare_diff import _marker_segments
+
+    segs = _marker_segments("abc", ["i", "i", "i"], ["i", "up", "up"])
+
+    assert segs == [("bc", "i", "up")]
+
+
+@pytest.mark.parametrize("before,after", [
+    (["i", "i", "i"], ["i", "up"]),          # more markers than after
+    (["i", "i", "i"], ["i", "up", "i", "i"]),   # fewer
+])
+def test_marker_segments_falls_back_to_the_WHOLE_formula_either_way(
+        before, after):
+    """Different lengths mean the character-by-character comparison
+    would be reporting an offset rather than a symbol — so it says so
+    about the formula as a whole instead of inventing a position. Both
+    directions: a one-sided guard walks off the shorter list."""
+    from docxkit._compare_diff import _marker_segments
+
+    segs = _marker_segments("x=y", before, after)
+
+    assert len(segs) == 1
+    assert segs[0][0] == "x=y"
+
+
+def test_marker_segments_falls_back_when_the_MARKERS_do_not_match_the_text():
+    """Same count on both sides and neither matches the symbols: the
+    lists and the text have to agree before an index means anything."""
+    from docxkit._compare_diff import _marker_segments
+
+    segs = _marker_segments("x=y", ["i", "i"], ["i", "up"])
+
+    assert segs == [("x=y", "i", "i,up")]
