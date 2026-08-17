@@ -17,6 +17,58 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S1 Word's Compare downgrades U+2212 to an ASCII hyphen inside OMML, and `validate` reports it as an unattributed `glyphs: False`
+
+Measured on AFI 2026-08-17. A batch built through `revision build`
+reaches `validate` with:
+
+    reject-all == baseline ? {paragraphs: True, glyphs: False,
+                              footnotes: True, links: True} -> MISMATCH
+
+and nothing says what moved. The difference is **two characters**, both
+in an Appendix A equation:
+
+    baseline  AFIi,1990 + t−199030 · (AFIi,2020 − AFIi,1990)   U+2212
+    rejected  AFIi,1990 + t-199030 · (AFIi,2020 - AFIi,1990)   U+002D
+
+Counting `m:t` across the package confirms it is not a reject-path
+artefact — it is in the built batch, so **promote ships it**:
+
+    prev.docx    math U+2212: 2    math hyphen: 14
+    batch.docx   math U+2212: 0    math hyphen: 16
+
+Prose is untouched (57 U+2212 on both sides); only OMML is rewritten.
+S1 because it is a silent wrong answer in the output: the build reports
+success, the equation renders with hyphens where the author typed minus
+signs, and this toolchain's house style explicitly keeps U+2212 in
+generated math. On AFI it also has history — earlier rounds repeatedly
+recorded "differed only by the minus glyph (kept U+2212)".
+
+**Two separate defects here, and the second is the expensive one:**
+
+1. Compare's OMML rewrite loses the character. Detect it and restore, or
+   refuse; a `glyph_repair` pass over `m:t` comparing against the
+   baseline would do it, since the baseline is already in hand.
+2. **`glyphs: False` names nothing.** `links` prints the anchor and label
+   it lost; `paragraphs` and `footnotes` have their own detail lines.
+   The glyph gate prints one boolean for a 68,829-character stream, so
+   the reader learns only that *something* moved. Finding these two
+   characters took a bespoke `difflib.SequenceMatcher` over
+   `_glyph(_root(...))` with private imports. Print the first few
+   differing runs with their code points, exactly as `links` prints its
+   pairs.
+
+Defect 2 is why this sat unexplained through three builds while I
+attributed it to my own edits.
+
+**Repro:** `docxkit revision build` any text-only batch on
+`F:\OneDrive\__Documents\Aging_Update\Projects\AFI` and run `validate`;
+`glyphs` is False even for a batch containing **zero** edits.
+
+**Workaround in use** — none yet; the AFI round restores the two glyphs
+in a post-build pass before promote. Per-paper workaround to delete when
+the build does it.
+
 ### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
 
 `tables` can `update`, `set_cell` and `to_frame`, but nothing answers the
