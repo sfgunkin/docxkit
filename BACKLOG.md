@@ -17,6 +17,41 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
+
+`tables` can `update`, `set_cell` and `to_frame`, but nothing answers the
+question a row reorder raises: *is the multiset of row tuples the same as
+before?* Reordering is where a row's values get shifted a column — the
+row moves, one cell stays — and a diff of the rendered table reads as
+"rows moved", which is what you asked for, so the eye passes it.
+
+**Hit on AFI 2026-08-17**, r3 task TE15.2: seven tables (1, 3, 4, 5, A2,
+A3, A4) have their country rows reordered into one common order, and the
+protocol's own acceptance criterion is a row-tuple multiset comparison
+against a pre-edit snapshot. With no toolkit support that means
+snapshotting every table to TSV first and comparing by hand afterwards.
+
+Two traps a shared implementation should own, both found while writing
+the snapshot:
+
+* **one caption can front several `<w:tbl>` elements.** AFI's Table A3 is
+  two of them — the first country-rowed, the second a 5×4 regression
+  block — so `by_caption`-style resolution silently addresses one of two.
+* **layout tables are indistinguishable by index.** AFI's `tbl#0` is a
+  2×2 grid holding Figure 5's panel labels ("a. Tajikistan", "b.
+  Albania"), not data. Anything iterating tables by position hits it
+  first.
+
+**Fix sketch.** A `tables.row_signature(table)` (sorted tuple multiset,
+cells normalized) plus a `tables.assert_rows_preserved(before, after)`
+that reports which row tuples appeared or vanished rather than a bare
+False. `by_caption` should return every table under a caption, or say
+how many it found.
+
+**Workaround in use** — `AFI/revision/scripts/baseline_r3.py` snapshots
+all 11 tables to `revision/baseline_r3/table_NN.tsv` before any edit.
+Per-paper workaround to delete when the toolkit can state it.
+
 ### S3 `revision doctor` reports 134 selections on AFI and about three of them matter — a paper with a build archive drowns the signal
 
 Run against AFI 2026-08-17, the day `doctor` shipped, on the very repo
