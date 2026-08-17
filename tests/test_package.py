@@ -490,8 +490,8 @@ def test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside():
     from docxkit.package import set_core_property
 
     p = {"docProps/core.xml": (
-        '<?xml version="1.0"?><cp:coreProperties xmlns:cp="x" '
-        'xmlns:dc="y"/>').encode("utf-8")}
+        b'<?xml version="1.0"?><cp:coreProperties xmlns:cp="x" '
+        b'xmlns:dc="y"/>')}
 
     assert set_core_property(p, "dc:title", "Salvaged") is True
 
@@ -525,3 +525,31 @@ def test_a_NON_XML_part_does_not_stop_the_malformed_walk():
 
     assert len(bad) == 1
     assert bad[0].startswith("word/document.xml: ")
+
+
+def test_clearing_read_only_leaves_the_file_READABLE_too(tmp_path):
+    """`st_mode | S_IWRITE` — the flag is ADDED to the mode. Masked with
+    `&` instead, the file comes back with almost no permissions at all,
+    which on a manuscript is worse than the read-only flag that started
+    it."""
+    import stat as stat_mod
+
+    from docxkit.package import _clear_readonly
+
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"content")
+    os.chmod(target, stat_mod.S_IREAD)
+
+    _clear_readonly(target)
+
+    assert os.access(target, os.W_OK)
+    assert target.read_bytes() == b"content"
+    target.write_bytes(b"replaced")          # and it really is writable
+
+
+def test_clearing_read_only_on_a_MISSING_file_is_quiet(tmp_path):
+    """It runs on the way to a retry, and the target not existing yet is
+    the ordinary case for a first write."""
+    from docxkit.package import _clear_readonly
+
+    _clear_readonly(tmp_path / "not there.docx")      # must not raise
