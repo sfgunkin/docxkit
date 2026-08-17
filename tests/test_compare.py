@@ -2068,3 +2068,113 @@ def test_a_DELETE_reports_what_the_paragraph_TOOK_WITH_IT(tmp_path):
                  if s["type"] == "DELETE")
 
     assert entry["lost_fields"]["anchors"] == ["Smith2020txt"]
+
+
+# ----------------------------------------- machinery a block really lost ---
+#
+# The "Word deleted my hyperlink field" layer, and the one whose false
+# positives cost a diagnosis every time — a dangling-link flag is one
+# this project may never wave away. Ten survivors: the three rules that
+# make it worth reading (per block, not per pair; a name still present
+# anywhere is not lost; counters cancel a move) were each reachable from
+# one direction only.
+
+def _para(text: str, *, anchors=(), cites=(), footnotes=0):
+    """A Para built the way the comparison builds them — from XML, so
+    the fields are the ones `_fields` really extracts."""
+    from docxkit._compare_read import Para
+
+    inner = "".join(f'<w:hyperlink w:anchor="{a}">{_R(a)}</w:hyperlink>'
+                    for a in anchors)
+    inner += "".join(f'<w:bookmarkStart w:id="7" w:name="{c}"/>'
+                     f'<w:bookmarkEnd w:id="7"/>' for c in cites)
+    inner += "<w:r><w:footnoteReference w:id=\"2\"/></w:r>" * footnotes
+    return Para(f"<w:p>{_R(text)}{inner}</w:p>")
+
+
+def _R(text: str) -> str:
+    return f"<w:r><w:t>{text}</w:t></w:r>"
+
+
+def test_a_target_the_block_LOST_is_named():
+    from docxkit._compare_diff import stripped_block
+
+    notes = stripped_block([_para("a", anchors=["Smith2020txt"])],
+                           [_para("a")])
+
+    assert notes[0][0] == "lost hyperlink target(s): ['Smith2020txt']"
+
+
+def test_a_target_that_MOVED_between_paragraphs_is_not_lost():
+    """The block is the unit the answer is true of. Asked per pair, this
+    is a loss and a gain — and 594 of 1,463 "losses" over 748 real
+    comparisons were exactly this."""
+    from docxkit._compare_diff import stripped_block
+
+    left = [_para("a", anchors=["Smith2020txt"]), _para("b")]
+    right = [_para("a"), _para("b", anchors=["Smith2020txt"])]
+
+    assert stripped_block(left, right) == []
+
+
+def test_a_target_still_PRESENT_elsewhere_in_the_part_is_not_lost():
+    """`present` is every name the other side's whole part carries. A
+    citation that went from the prose into a footnote accounted for the
+    last 27 of the false losses."""
+    from docxkit._compare_diff import stripped_block
+
+    notes = stripped_block([_para("a", anchors=["Smith2020txt"])],
+                           [_para("a")], present={"Smith2020txt"})
+
+    assert notes == []
+
+
+def test_a_CITATION_bookmark_is_named_as_one():
+    """Two kinds, and the label is what tells a reader whether to look
+    for a link or for the bookmark it points at."""
+    from docxkit._compare_diff import stripped_block
+
+    notes = stripped_block([_para("a", cites=["cite_Smith2020"])], [_para("a")])
+
+    assert notes[0][0] == "lost citation bookmark(s): ['cite_Smith2020']"
+
+
+def test_the_note_carries_the_paragraph_that_HELD_the_target():
+    """So the report can still say where to look — the LAST paragraph on
+    the left that had it, since that is where a reader will find its
+    remains."""
+    from docxkit._compare_diff import stripped_block
+
+    first = _para("first", anchors=["Smith2020txt"])
+    last = _para("last", anchors=["Smith2020txt"])
+
+    (_note, holder), = stripped_block([first, _para("x"), last],
+                                      [_para("a")])
+
+    assert holder is last
+
+
+def test_a_target_the_block_GAINED_is_not_a_loss():
+    """Counter subtraction keeps the positive side only."""
+    from docxkit._compare_diff import stripped_block
+
+    assert stripped_block([_para("a")],
+                          [_para("a", anchors=["New2021txt"])]) == []
+
+
+def test_FEWER_footnote_references_is_reported_as_a_count():
+    """A footnote reference has no name to report, so the finding is how
+    many went — and the holder is None, because a number does not have
+    one."""
+    from docxkit._compare_diff import stripped_block
+
+    notes = stripped_block([_para("a", footnotes=3)], [_para("a", footnotes=1)])
+
+    assert notes == [("lost 2 footnote ref(s)", None)]
+
+
+def test_MORE_footnote_references_is_not_a_loss():
+    from docxkit._compare_diff import stripped_block
+
+    assert stripped_block([_para("a", footnotes=1)],
+                          [_para("a", footnotes=3)]) == []
