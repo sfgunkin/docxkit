@@ -117,11 +117,12 @@ def prose_numbers(text: str, *, context: int = 60) -> list[tuple[float, str]]:
     """
     out = []
     for m in _PROSE_NUM_RE.finditer(text):
-        raw = m.group(0).rstrip("%").replace("−", "-")
-        try:
-            value = float(raw)
-        except ValueError:
-            continue
+        # every match of `_PROSE_NUM_RE` is a float literal once the
+        # percent sign is off and U+2212 is an ASCII minus, so there is
+        # no ValueError to guard against here. There was a guard, and a
+        # mutation run found it dead (2026-08-17) — it can only come
+        # back if the pattern above grows a form float() will not take.
+        value = float(m.group(0).rstrip("%").replace("−", "-"))
         lo = max(0, m.start() - context)
         out.append((value, text[lo:m.end() + context].replace("\n", " ")))
     return out
