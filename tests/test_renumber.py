@@ -269,3 +269,103 @@ def test_tables_content_is_untouched():
     xml = doc(caption(5) + tbl)
     out, _ = shift(xml, "Table", frm=5)
     assert read_all(out)[0].rows == [["5"]]       # a bare cell "5" is data
+
+
+# ------------------------------------ shift's guards, stated as values ----
+#
+# The first mutation run on this module (2026-08-17) left 11 survivors in
+# `shift`. The tests above drive what it DOES; these are the refusals and
+# the edges, which nothing had asked about.
+
+def _captions(*lines: str) -> str:
+    return doc("".join(para(run(line)) for line in lines))
+
+
+def test_shifting_down_to_ONE_is_allowed():
+    """The guard refuses numbers below 1, and 1 is a number. Table 2
+    becoming Table 1 is the ordinary case for removing Table 1, and a
+    guard written `<= 1` refuses exactly it."""
+    xml = _captions("Table 2. Second.", "Table 3. Third.")
+
+    out, report = shift(xml, "Table", frm=2, by=-1)
+
+    assert "Table 1. Second." in text_of_doc(out)
+    assert "Table 2. Third." in text_of_doc(out)
+
+
+def test_shifting_to_ZERO_is_refused():
+    with pytest.raises(AnchorError, match="below 1"):
+        shift(_captions("Table 1. First."), "Table", frm=1, by=-1)
+
+
+def test_shift_options_are_KEYWORD_only():
+    """`frm` and `by` decide which exhibits move and in which direction.
+    Passed by position they read as bare numbers at the call site, and
+    the two are trivially swappable."""
+    with pytest.raises(TypeError):
+        shift(_captions("Table 1. First."), "Table", 1)  # type: ignore[misc]
+
+
+def test_a_MAIN_sequence_caption_before_an_appendix_one_is_skipped():
+    """With `prefix="A"` the main sequence is not this shift's business,
+    and the scan has to walk PAST it rather than stop: a paper numbers
+    its main tables before its appendix ones, so the first caption it
+    meets is always the wrong one.
+    """
+    xml = _captions("Table 1. Main.", "Table A2. Appendix.",
+                    "Table A3. More.")
+
+    out, _report = shift(xml, "Table", frm=2, prefix="A")
+
+    text = text_of_doc(out)
+    assert "Table 1. Main." in text, "the main sequence moved"
+    assert "Table A3. Appendix." in text and "Table A4. More." in text, text
+
+
+def test_a_collision_names_both_sets_of_numbers():
+    """Removing a caption's number without removing the caption puts two
+    exhibits on one number, and the refusal has to say which."""
+    xml = _captions("Table 1. First.", "Table 2. Second.")
+
+    with pytest.raises(AnchorError, match="collide"):
+        shift(xml, "Table", frm=2, by=-1)
+
+
+def test_a_RANGE_mention_does_not_stop_the_scan_of_its_paragraph():
+    """"Tables 5–7" is flagged for the author rather than half-shifted,
+    and the scan carries on: a sentence that mentions a range usually
+    mentions single exhibits too, and stopping there leaves them at
+    their old numbers with nothing to say so."""
+    xml = doc(para(run("See Tables 5-7 and also Table 9 for detail.")))
+
+    out, report = shift(xml, "Table", frm=5)
+
+    assert "Table 10" in text_of_doc(out), text_of_doc(out)
+    assert "Tables 5-7" in text_of_doc(out), "the range was rewritten"
+    assert report.flagged, "the range should be flagged for the author"
+
+
+def test_TWO_mentions_in_one_paragraph_both_widen_correctly():
+    """Runs are rewritten bottom-up. Each rewrite changes the length of
+    the paragraph, so the offsets of every run after it go stale —
+    applied top-down the second splice lands inside the wrong run, and
+    9 -> 10 is the case that grows rather than merely swapping a digit.
+    """
+    xml = doc(para(run("See Table 9 "), run("and Table 9 again.")))
+
+    out, _report = shift(xml, "Table", frm=9)
+
+    assert text_of_doc(out) == "See Table 10 and Table 10 again."
+
+
+def test_an_APPENDIX_collision_is_refused_like_any_other():
+    """The collision check reads the same prefix filter the shift does,
+    and it has to walk past the main sequence to find the appendix
+    captions at all. Skipping the wrong ones — or stopping at the first
+    — leaves the check with nothing to compare, so it passes and the
+    shift puts two appendix tables on one number.
+    """
+    xml = _captions("Table 1. Main.", "Table A1. First.", "Table A2. Second.")
+
+    with pytest.raises(AnchorError, match="collide"):
+        shift(xml, "Table", frm=2, by=-1, prefix="A")

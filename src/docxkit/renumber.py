@@ -33,6 +33,7 @@ from ._xml import (
     DOCUMENT,
     FOOTNOTES,
     RUN_RE,
+    overlaps,
     set_run_text,
     text_parts,
     visible_text,
@@ -135,7 +136,7 @@ def _shift_in_para(para_xml: str, pattern: re.Pattern[str],
         first = True
         for i in range(len(runs)):
             rs, re_ = starts[i], starts[i] + lens[i]
-            if re_ <= a or rs >= b:
+            if not overlaps((rs, re_), (a, b)):
                 continue
             head = texts[i][:max(0, a - rs)]
             tail = texts[i][max(0, min(len(texts[i]), b - rs)):]
