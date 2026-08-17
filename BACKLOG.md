@@ -17,6 +17,108 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file
+
+`revision init` scaffolds the layout and the manuscript takes its final
+name, `working.docx`. Retiring the old name is left to the migrator, who
+greps for it. **A grep cannot find the references that matter**, because
+the dangerous ones do not contain the filename: they select the paper by
+PATTERN, and a pattern that no longer matches falls back to whatever else
+is on disk — an older generation of the same paper, sitting right there.
+
+**Observed on AFI, 2026-08-17, nine days after its migration.** The
+paper's pytest suite chose its subject by globbing the highest
+`afi_vN.docx` across `Report/` and `revision/`. Renaming
+`revision/afi_v14_clean.docx` → `revision/working.docx` made the glob
+miss, so it selected `Report/afi_v11.docx` — three generations stale.
+Eleven tests failed with messages describing the OLD paper (caption count
+7≠9, 22≠25 references, Table 3/4/5 cell drift) and nothing naming the
+rename. The migration commit had already repointed the three scripts that
+DID name `afi_v14_clean.docx` literally; the resolver was missed precisely
+because it never spelled the name.
+
+Red was luck. v11 and v14 disagreed on those counts; had they agreed, the
+suite would have stayed green while gating a manuscript untouched since
+July. That is the S3 shape — a gate that is alive, passing, and aimed at
+the wrong document.
+
+**Third occurrence of one class.** `Parental_style`: 20 revision scripts
+hard-coded to `ps5_r1.docx` while the live paper was `ps5_r2.docx`.
+API/HPPA: every script defaulted to API10 with API11 live (they compared
+identical, so nothing was lost *yet*). AFI: the glob above. Each was
+caught by hand, by someone who happened to look.
+
+**Repro**
+
+    # in a migrated paper, before the fix
+    python -c "import sys; sys.path.insert(0,'Programs/v3/tests'); \
+               from paper_doc_helpers import PAPER_DOCX; print(PAPER_DOCX)"
+    # -> ...\Report\afi_v11.docx        while paper.toml declares
+    #    ...\revision\working.docx
+    docxkit revision status              # TRUTH / TRUTH — sees nothing wrong
+
+**Fix sketch.** A `revision doctor` (or a `validate` layer) that reports
+who else in the repo thinks they know where the paper is:
+
+* every `.docx` path literal under the project that is not the declared
+  `working`/`prev` — the Parental_style and API/HPPA shape;
+* every glob or regex over `*.docx` in project code that does NOT match
+  the declared manuscript — the AFI shape, and the one no grep finds.
+  A pattern that matches nothing, or matches only files outside
+  `revision/`, is the signal;
+* it must run on a tree that is otherwise green, since that is exactly
+  the state it is meant to break.
+
+Cheap first cut: resolve each candidate and compare against
+`load_paper(root).working`, reporting any that disagree.
+
+**Workaround in use** — `AFI/Programs/v3/tests/paper_doc_helpers.py` now
+reads `[paper] working` via `load_paper`, keeping its version glob only as
+a no-config fallback, and `AFI/Programs/v3/tests/test_paper_resolution.py`
+asserts the resolution itself so the next rename fails by name rather than
+as table drift (mutation-verified against the pre-fix resolver). Per-paper
+workaround to delete when a repo-wide check exists — and note that the
+guard is per-paper by nature, so each migrated paper currently owes its
+own copy.
+
+### S4 `revision` raises six exception types and exports none of them, so `except` must import from a module the caller never called
+
+`docxkit.revision` raises `ProtocolError` in eight places — `find_config`
+documents it as the failure mode when a tree has not migrated — but it is
+absent from `revision.__all__`, so with `py.typed` in force
+`from docxkit.revision import ProtocolError` draws
+`reportPrivateImportUsage`. The accepted spelling is
+`from docxkit.errors import ProtocolError`: a caller must import the
+exception from a different module than the function whose contract raises
+it, and must know `docxkit.errors` exists to guess it.
+
+**Hit on AFI 2026-08-17** wrapping `load_paper` so a tree without
+`revision/paper.toml` falls back instead of exploding.
+
+**Same class as the `visible_text` entry below, which is Fixed** —
+including `tests/test_api_surface.py`, which walks every module and
+asserts each facade re-exports everything public behind it. It does not
+catch this one: `ProtocolError` is *defined* in `docxkit.errors` and only
+*raised* by `revision`, so no clause covers it. **The blind spot is
+exception types** — the one part of a module's contract that lives in
+another module by design.
+
+**It is the whole module, not one name.** `revision` raises six types —
+`ProtocolError` (8), `BaselinePending` (2), `DocumentLocked` (2),
+`HandbackLoss` (2), `MathResolved` (1), `StaleBatch` (1) — and
+`revision.__all__` carries none of them, although the documented refusal
+codes (`BaselinePending` 3, `MathResolved` 2, `StaleBatch` 4) are exactly
+what a caller is expected to branch on.
+
+**Fix sketch.** Re-export from each module the exceptions it raises, and
+extend `test_api_surface` with the clause that would
+have caught it: every exception name appearing in a `raise` in module M is
+importable from M. That closes the class rather than the instance, as the
+`visible_text` fix did.
+
+**Workaround in use** import from `docxkit.errors` and accept that the
+`except` clause names a module the code otherwise never touches.
+
 ### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
 
 Measured 2026-08-17, the first time this module has been looked at —
