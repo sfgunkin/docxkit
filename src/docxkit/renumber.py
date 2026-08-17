@@ -320,16 +320,24 @@ def remap_parts(parts: dict[str, bytes], label: str, mapping: dict[int, int],
     collision check needs them) and the rewrite reaches the footnotes and
     endnotes too.
     """
+    if not mapping:
+        raise AnchorError("remap: empty mapping")
     doc = parts[DOCUMENT].decode("utf-8")
+    # ONE check, against the BODY, whichever part is being rewritten:
+    # captions live there and a footnote holds mentions only. This used
+    # to be a branch — `remap` for the body, `_check_permutation` plus
+    # `_apply` for everything else — and `remap` IS those two calls, so
+    # the two arms differed only in which XML the check read. For the
+    # body they were the same string; for a footnote the check was
+    # vacuous either way, because a footnote has no captions in it.
+    # Eight mutants lived in that condition on 2026-08-17 because
+    # swapping the arms changed nothing (found the same way as
+    # `label_extent`'s dead walk and `_entry_keys`' lead token).
+    _check_permutation(mapping, doc, label, prefix)
     total = ShiftReport()
     for name, xml in text_parts(parts):
-        if name == DOCUMENT:
-            new_xml, rep = remap(xml, label, mapping, prefix=prefix)
-        else:
-            # captions live in the body; here only mentions and names move
-            _check_permutation(mapping, doc, label, prefix)
-            new_xml, rep = _apply(xml, label, prefix,
-                                  lambda n: mapping.get(n, n))
+        new_xml, rep = _apply(xml, label, prefix,
+                              lambda n: mapping.get(n, n))
         parts[name] = new_xml.encode("utf-8")
         total.mentions += rep.mentions
         total.bookmarks += rep.bookmarks

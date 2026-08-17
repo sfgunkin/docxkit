@@ -17,6 +17,33 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S4 `footnotes()` refuses a document with a spare note, and blames the renumbering for it
+
+Found 2026-08-17 by a test written on the assumption that it would not.
+
+A note nobody references is only untidy — `footnote_audit` reports it
+and carries on. But `footnotes()` renumbers the referenced notes to
+1..n and then checks that the STORED ids equal the referenced ones,
+which a spare note breaks:
+
+    footnotes: renumbering did not settle — references [1, 2],
+    notes [1, 2, 9]
+
+Refusing is defensible: the spare note may already hold an id the
+renumber wants, and two notes on one id is worse than a refusal. The
+MESSAGE is not. It reads as a fault in the tool, names no remedy, and
+does not mention note 9 — while the audit, one function away, says
+"note 9 has no reference in the body" in as many words.
+
+**Suggested fix.** When the settle check fails and the difference is
+exactly `set(stored_after) - set(after)`, say so: name the spare notes
+and point at `footnote_audit`. Keep the refusal.
+
+**Workaround in use:** none. Pinned by
+`test_an_UNREFERENCED_note_makes_the_whole_renumber_REFUSE`, which
+holds the BEHAVIOUR so that a fix to the message cannot quietly become
+a change to the answer.
+
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
@@ -56,9 +83,35 @@ distinguishing it needs a document with notes and NO references (and the
 mirror); and `b < a` against `b <= a` needs a REPEATED id before the
 real descent, since equal ids are the same note twice and not a break.
 
-**Still open:** `_shift_in_para` 19, `shift` 11, `footnotes` 10,
-`remap_parts` 9 — the caption-shifting half and the footnote renumberer
-itself. `shift` is what papers call.
+**Second pass, 2026-08-17.** `_shift_in_para` and `shift` pinned; the
+overlap test in `_shift_in_para` turned out to be a FOURTH copy of the
+predicate consolidated into `_xml.overlaps` that morning, spelled
+`re_ <= a or rs >= b` — which is why the grep that found the other
+three missed it.
+
+**Third pass, 2026-08-17.** `footnotes` and `remap_parts`.
+
+**Eight of `remap_parts`' nine survivors were in a branch with no
+effect.** It read `remap` for the body and `_check_permutation` plus
+`_apply` for every other part — and `remap` IS those two calls, so the
+arms differed only in which XML the permutation check reads. For the
+body that is the same string; for a footnote the check is vacuous
+either way, because a footnote holds no captions. Swapping the arms
+changed nothing, which is why the mutants lived. The branch is gone,
+the check is hoisted (it took identical arguments on every pass of the
+loop), and the empty-mapping refusal that `remap` provided incidentally
+is now explicit. Third piece of dead code this technique has found
+here, after `label_extent`'s walk and `_entry_keys`' lead token.
+
+`footnotes` gave up two real ones: `set(referenced) - set(stored)`
+against `^`, where the symmetric difference calls a spare note
+"missing" and refuses a document that is only untidy; and the note
+elements being re-sorted by ID rather than by anything else, so the
+file reads the way it renders.
+
+**Still open:** nothing named. Not re-measured since; the next run
+should be a survivor re-run, but `renumber.py` has CHANGED, so that
+session is void and it must be a fresh draw.
 
 ### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file
 

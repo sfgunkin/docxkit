@@ -8,10 +8,17 @@ be REFUSED rather than half-shifted.
 from __future__ import annotations
 
 import pytest
-from conftest import NS, para, run
+from conftest import NS, note, notes, para, run
 
+from docxkit._xml import visible_text
 from docxkit.errors import AnchorError
-from docxkit.renumber import audit, numbers_in_order, remap, shift
+from docxkit.renumber import (
+    audit,
+    numbers_in_order,
+    remap,
+    remap_parts,
+    shift,
+)
 from docxkit.tables import read_all
 
 
@@ -369,3 +376,39 @@ def test_an_APPENDIX_collision_is_refused_like_any_other():
 
     with pytest.raises(AnchorError, match="collide"):
         shift(xml, "Table", frm=2, by=-1, prefix="A")
+
+
+def test_remap_parts_treats_the_BODY_and_the_NOTES_differently():
+    """Captions live in the body; a footnote holds mentions only. So
+    the body goes through `remap` (captions, mentions and bookmarks)
+    and every other part through `_apply` (mentions and names), and the
+    branch that decides is `name == DOCUMENT`.
+
+    Mutated to `>=` the footnotes take the body path — "word/footnotes"
+    sorts above "word/document" — and their mentions are then read as
+    captions. Mutated to `!=` the two swap outright. Either way the
+    document still LOOKS renumbered, because the mentions move; what
+    moves wrongly is the caption, and only in one part.
+    """
+    body = doc(para(run("Table 1. First.")) + para(run("Table 2. Second."))
+               + para(run("As Table 2 shows.")))
+    foot = notes("footnotes", note("But see Table 2 as well.", 2))
+    parts = {"word/document.xml": body.encode("utf-8"),
+             "word/footnotes.xml": foot.encode("utf-8")}
+
+    report = remap_parts(parts, "Table", {2: 3})
+
+    text = text_of_doc(parts["word/document.xml"].decode("utf-8"))
+    assert "Table 3. Second." in text, text
+    assert "Table 1. First." in text, text
+    assert "As Table 3 shows." in text, text
+    assert "But see Table 3 as well." in \
+        visible_text(parts["word/footnotes.xml"].decode("utf-8"))
+    assert report.mentions == 3, report.format()
+
+
+def test_remap_parts_options_are_KEYWORD_only():
+    parts = {"word/document.xml": doc(para(run("Table 1. First."))).encode()}
+
+    with pytest.raises(TypeError):
+        remap_parts(parts, "Table", {1: 2}, "A")   # type: ignore[misc]
