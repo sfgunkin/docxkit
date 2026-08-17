@@ -83,12 +83,39 @@ WORKTREE = Path(os.environ.get("DOCXKIT_MUT_WORKTREE", r"D:/docxkit-mut"))
 LOCK = WORKTREE.parent / f"{WORKTREE.name}.lock"
 
 
+def _alive(pid: int) -> bool:
+    """Is that process still running? NOT `os.kill(pid, 0)` on Windows,
+    where any signal other than CTRL_C/CTRL_BREAK calls TerminateProcess
+    — the existence check would kill the holder it asked about."""
+    if sys.platform == "win32":
+        out = _run(["tasklist", "/FI", f"PID eq {pid}", "/NH"])
+        return str(pid) in out.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _take_lock() -> None:
-    """Refuse to start while another session holds the worktree."""
+    """Refuse to start while another session holds the worktree.
+
+    A lock whose holder is GONE is taken over rather than obeyed: the
+    release is an `atexit` handler, so a session that is killed — which
+    is how an unattended sweep gets stopped — leaves the file behind,
+    and the next run then refuses for a process that no longer exists.
+    """
     try:
         fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         holder = LOCK.read_text(encoding="utf-8").strip() or "unknown"
+        if holder.isdigit() and not _alive(int(holder)):
+            print(f"  taking over a stale lock on {WORKTREE} — pid {holder} "
+                  f"is gone", flush=True)
+            LOCK.unlink(missing_ok=True)
+            return _take_lock()
         sys.exit(f"another mutation session holds {WORKTREE} (pid {holder}). "
                  f"They share one checkout, so running both makes each read "
                  f"the other's mutations. Wait for it, or delete {LOCK} if "
@@ -96,6 +123,7 @@ def _take_lock() -> None:
     with os.fdopen(fd, "w") as fh:
         fh.write(str(os.getpid()))
     atexit.register(lambda: LOCK.unlink(missing_ok=True))
+    return None
 
 
 def _run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
