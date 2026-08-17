@@ -384,6 +384,14 @@ which was not in the run. `_table_layout`'s `drop_blank_rows` had 77 for
 the same reason (`test_tables_blank_rows.py`). The three "real survivor"
 numbers above are therefore upper bounds, not findings.
 
+It happened a third time on 2026-08-17, with the map that exists to
+prevent it: `_table_core` came back at 44.9 % with 216 survivors in
+`update`, because `tests/test_tables_update.py` — the file that tests
+that function — was not in its entry. Six mutants of `update` picked by
+hand all died against the corrected harness. `tests/test_harness_map.py`
+now answers the claim a file's NAME makes: `test_<module>*.py` is in the
+entry or in `EXCLUDED` with a reason.
+
 The cure is not a wider run: it is to let the sweep PROPOSE and the full
 suite DISPOSE. Apply each candidate by hand and run everything; green
 means a real gap, red names the test that already covers it. Over 48
