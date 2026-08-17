@@ -583,8 +583,39 @@ def test_unlinked_citation_text_is_reported_on_the_shared_grammar():
         P(R("References")))
     issues, _ = audit_links(parts)
     unlinked = [i for i in issues if i.startswith("UNLINKED")]
-    assert len(unlinked) == 1
-    assert "Mühlbach 2022" in unlinked[0]
+    assert unlinked == ['UNLINKED: "Mühlbach 2022" (¶6) — looks like a '
+                        "citation but is not hyperlinked"]
+
+
+def test_the_FIRST_FIVE_paragraphs_are_not_scanned_for_citations():
+    """A title page carries "(2024)" and an affiliation carries a year in
+    brackets; treating those as unlinked citations put a finding at the
+    top of every report, which is where a reader decides whether to keep
+    reading. Five is the window, and the sixth paragraph IS scanned."""
+    cite = P(R("Ranges shift with age (Mühlbach 2022)."))
+    filler = "".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                     for i in range(4))
+    quiet = xml_parts(filler + cite + P(R("References")))       # ¶5
+    scanned = xml_parts(filler + P(R("One more.")) + cite
+                        + P(R("References")))                   # ¶6
+
+    assert not [i for i in audit_links(quiet)[0] if i.startswith("UNLINKED")]
+    assert [i for i in audit_links(scanned)[0] if i.startswith("UNLINKED")]
+
+
+def test_a_citation_whose_LABEL_is_linked_elsewhere_is_not_UNLINKED():
+    """The convention links a work's FIRST mention only. A later mention
+    in the same words is deliberate, and reporting it turns the audit
+    into a list of the house style."""
+    parts = make_doc(
+        P(_linked_cite("Muhlbach2022", "(Mühlbach 2022)")),
+        P(R("Repeated later (Mühlbach 2022) without a link.")),
+        P(R("References")),
+        P(_entry("Muhlbach2022", "Mühlbach, I. (2022). Ranges.")))
+
+    unlinked = [i for i in audit_links(parts)[0] if i.startswith("UNLINKED")]
+
+    assert unlinked == []
 
 
 def test_a_footnote_link_keeps_the_entry_cited():
