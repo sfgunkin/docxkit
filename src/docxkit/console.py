@@ -45,13 +45,19 @@ def utf8_stdout(*, line_buffering: bool | None = None) -> bool:
 
 
 def utf8_console(*, line_buffering: bool | None = None) -> bool:
-    """Both streams. Returns whether stdout was reconfigured.
+    """Both streams. Returns whether STDOUT was reconfigured.
 
     What a command prints and what it fails with belong to the same
     console, and every caller that wanted one wanted the other — which
     is why there is no `utf8_stderr` beside this. There was one, reached
     by nothing in four trees and bypassed by this function, which called
     `_reconfigure` directly rather than going through it.
+
+    The answer is stdout's, as the name of the sibling function says:
+    this used to return `stdout or stderr`, so a caller asking "can I
+    print a curly quote" was told yes when only the ERROR stream had
+    been fixed. Nothing read it, which is why the two disagreed
+    unnoticed until a mutation run asked what the `or` was for.
     """
-    err = _reconfigure(sys.stderr, line_buffering)
-    return _reconfigure(sys.stdout, line_buffering) or err
+    _reconfigure(sys.stderr, line_buffering)
+    return _reconfigure(sys.stdout, line_buffering)
