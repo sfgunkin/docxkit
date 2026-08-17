@@ -300,6 +300,27 @@ because the sessions share one worktree):
 | `errors.py` | 10 | 100 % | the exception classes |
 | `tables.py` | 0 | — | a re-export facade: nothing to mutate |
 
+and the second wave, of the modules the survivor ledgers were open on
+(sampled at 460 where the module is bigger than that, seed 20260816):
+
+| module | mutants | real survival | first measured |
+|---|---|---|---|
+| `_compare_diff.py` | 605 | 28.4 % | — |
+| `package.py` | 336 | 25.6 % | — |
+| `hygiene.py` | 536 | 19.6 % | — |
+| `edit.py` | 425* | 11.5 % | 17.3 % |
+| `_cite_build.py` | 392* | 9.4 % | 41.1 % |
+| `renumber.py` | 460* | 5.7 % | 15.1 % |
+| `_xml.py` | 441* | 5.4 % | 8.7 % |
+
+\* sampled. The four with a "first measured" figure are the ones whose
+BACKLOG ledgers this closed; each is a FRESH draw, because every one of
+those modules changed under the tests written for it and a paired series
+does not survive that (see the byte-identical rule above). Fresh draws
+read a few points higher than paired ones on the same source — `edit.py`
+was 15.5 % fresh against 11.6 % paired on one occasion — so compare
+fresh with fresh.
+
 `errors.py` is not a failure: ten mutants, all of them renaming an
 exception's docstring or its base, and the module IS the names. It is
 listed so the next reader does not re-run it expecting a number.
@@ -344,6 +365,16 @@ percentage:
 The pattern behind all four: a check asserted on the case it FIRES on
 and never on the case it must stay quiet for, and a value returned but
 never read back by anything.
+
+The second wave adds a third shape, and it is the one to look for first
+in anything that REFUSES: **a guard asserted from one side only.**
+`rep` refused too FEW anchors and would have accepted too many;
+`delete_bookmark` refused two ends and not none; `remove_outer_field`
+refused none and not two; `integrity` reported a bookmark with a missing
+end and not one with a spare, and a field missing its end and not one
+missing its begin. Every one of those is a gate that fires on the
+example somebody wrote it for and stays silent on the other half of its
+own contract.
 
 **A suite that is too narrow INVENTS survivors, and that costs more than
 one that is too broad.** `comments.py` came back as the worst module in
