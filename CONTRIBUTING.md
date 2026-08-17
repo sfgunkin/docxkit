@@ -309,13 +309,17 @@ and the second wave, of the modules the survivor ledgers were open on
 | `_compare_diff.py` | 605 | 28.4 % -> **16.2 %** | — |
 | `package.py` | 336 | 25.6 % | — |
 | `hygiene.py` | 536 | 19.6 % | — |
+| `_table_core.py` | 821 | 44.9 % -> **12.9 %** | — |
 | `edit.py` | 425* | 11.5 % | 17.3 % |
 | `_cite_build.py` | 392* | 9.4 % | 41.1 % |
 | `renumber.py` | 460* | 5.7 % | 15.1 % |
 | `_xml.py` | 441* | 5.4 % | 8.7 % |
 
-The two arrows are a full run followed by a 460-sample of the same
-module after the tests the first run asked for, so the PERCENTAGES are
+`_table_core`'s two figures are the SAME run with the harness corrected:
+the first was missing `tests/test_tables_update.py` and reported 216
+survivors in `update`, which came back as 32 once the file that tests it
+was in the run. The other two arrows are a full run followed by a
+460-sample after the tests the first asked for, so those PERCENTAGES are
 not strictly comparable — the clusters are: `_cite_audit`'s
 `_audit_findings` went 106 -> 36 and `_doubled_links` 61 -> 18,
 `_compare_diff`'s `label_moves` 31 -> 8, `replaced` 21 -> 6,
