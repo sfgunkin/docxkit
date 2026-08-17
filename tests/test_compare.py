@@ -1697,3 +1697,152 @@ def test_the_unbalanced_field_report_QUOTES_the_paragraph_it_is_in():
 
     assert repr(long_text[:40]) in found
     assert long_text[:41] not in found
+
+
+# ------------------------------------------- pairing the two sides of a label
+#
+# 31 survivors, the largest cluster in the module. This layer is the
+# ONLY place the swallowed-label defect is visible — Parental Style's
+# Table 4 caption came back with two thirds of it drawn blue and
+# underlined — and it was reached through `compare()` on documents where
+# exactly one label had changed, so which way it paired, in what order,
+# and what it consumed were all free.
+
+def _moves(gone: dict[str, int], gained: dict[str, int]):
+    from collections import Counter
+
+    from docxkit._compare_diff import label_moves
+
+    return label_moves(Counter(gone), Counter(gained))
+
+
+def test_a_label_that_GREW_is_paired_with_what_it_swallowed():
+    out = _moves({"Table 4": 1},
+                 {"Table 4: The likelihood of using discipline": 1})
+
+    assert out == [{"side": "grew", "label": "Table 4",
+                    "to": "Table 4: The likelihood of using discipline",
+                    "n": 1}]
+
+
+def test_a_label_that_SHRANK_is_the_same_edit_caught_the_other_way():
+    """The emptying case partway through — `citations` reports the fully
+    emptied one as EMPTY LINK, and this is what it looks like before
+    that."""
+    out = _moves({"Table 4: The likelihood of using discipline": 1},
+                 {"Table 4": 1})
+
+    assert out[0]["side"] == "shrank"
+    assert out[0]["label"] == "Table 4: The likelihood of using discipline"
+    assert out[0]["to"] == "Table 4"
+
+
+def test_two_labels_that_merely_DIFFER_are_not_a_pair():
+    """Containment is the pairing rule, because that is what the
+    mechanism leaves: the old label's own text survives inside the new
+    one. Two unrelated labels are two findings, not one move."""
+    out = _moves({"Table 4": 1}, {"Figure 9": 1})
+
+    assert out == []
+
+
+def test_the_pair_is_CONSUMED_so_it_is_not_also_printed_twice():
+    """`gone` and `gained` are counters the caller then prints the
+    leftovers of; a pair left in them appears again as two singletons,
+    which is the report this function exists to replace."""
+    from collections import Counter
+
+    from docxkit._compare_diff import label_moves
+
+    gone, gained = Counter({"Table 4": 1}), Counter({"Table 4: results": 1})
+
+    label_moves(gone, gained)
+
+    assert not gone and not gained          # both empty, no zero entries
+
+
+def test_a_label_of_TWO_characters_is_not_paired_from_either_side():
+    """Three characters is the floor. Two contain each other by accident
+    all the time — an exhibit number, a footnote mark, a year — and a
+    pairing rule on those marries unrelated links across a document.
+    Both sides of the pairing are held to it: the label that grew and
+    the one it grew from."""
+    assert _moves({"T4": 1}, {"T4: the results": 1}) == []
+    assert _moves({"T4: the results": 1}, {"T4": 1}) == []
+
+
+def test_a_label_present_on_BOTH_sides_is_not_paired_with_itself():
+    """`o != new`. A link whose label did not change at all — removed
+    here, added there, which is what a MOVED link looks like to this
+    layer — would otherwise be reported as having grown into itself."""
+    out = _moves({"Table 4": 1}, {"Table 4": 1})
+
+    assert out == []
+
+
+def test_the_pairing_stops_when_ONE_side_runs_out():
+    """`and`, not `or`. Two links lost that label and only one gained
+    the longer one: pairing past the gained side invents a move, and the
+    counter it decrements goes negative behind it."""
+    from collections import Counter
+
+    from docxkit._compare_diff import label_moves
+
+    gone, gained = Counter({"Table 4": 2}), Counter({"Table 4: results": 1})
+
+    out = label_moves(gone, gained)
+
+    assert len(out) == 1
+    assert gone == Counter({"Table 4": 1})      # the other is still gone
+
+
+# `side = "grew" if len(new) > len(old)` mutated to `>=` is EQUIVALENT:
+# the pair is chosen by containment with `o != new`, so equal lengths
+# would mean equal labels, which never reach it.
+
+
+def test_the_LONGEST_candidate_wins_the_pairing():
+    """Both old labels sit inside the new one; the longer is the one
+    that grew into it. Pairing the shorter leaves the longer to print as
+    an unexplained singleton."""
+    out = _moves({"Table 4": 1, "Table 4: the likelihood": 1},
+                 {"Table 4: the likelihood of using discipline": 1})
+
+    assert len(out) == 1
+    assert out[0]["label"] == "Table 4: the likelihood"
+
+
+def test_a_label_that_moved_TWICE_is_reported_twice():
+    """Two links with the same label, both swallowed: the counts are
+    what say how many, and stopping at the first leaves one of them
+    printed as a singleton somewhere else in the report."""
+    out = _moves({"Table 4": 2}, {"Table 4: results": 2})
+
+    assert len(out) == 2
+
+
+def test_a_pairing_stops_when_the_gained_side_runs_out():
+    """One link grew, two labels could have been its source: the second
+    is still gone and is still reported as gone, but not as this move."""
+    from collections import Counter
+
+    from docxkit._compare_diff import label_moves
+
+    gone = Counter({"Table 4": 1, "Table 4: the likelihood": 1})
+    gained = Counter({"Table 4: the likelihood of using discipline": 1})
+
+    out = label_moves(gone, gained)
+
+    assert len(out) == 1
+    assert gone == Counter({"Table 4": 1})
+
+
+def test_the_labels_are_CUT_in_the_report():
+    """Ninety characters. A swallowed label is long by definition —
+    that is what makes it a finding — and printing both sides of it in
+    full is a report nobody reads to the end of."""
+    long_label = "Table 4: " + "the likelihood of using discipline " * 5
+    out = _moves({"Table 4": 1}, {long_label: 1})
+
+    assert out[0]["to"] == long_label[:90]
+    assert len(out[0]["to"]) == 90
