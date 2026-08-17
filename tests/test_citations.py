@@ -1820,3 +1820,79 @@ def test_repair_plan_calls_BOTH_names_of_a_collided_entry_live():
         assert f'delete_bookmark(doc, "{name}"' not in plan, \
             f"{name} belongs to a live entry and was proposed for deletion"
     assert plan.count("not debris") == 2, plan
+
+
+# --- what the first mutation run found (2026-08-17, 4.5 % survival) -----
+#
+# The repairs REFUSE rather than guess, and each refusal was asserted
+# from one side only: the count that is too high, or the one that is too
+# low, never both. A guard that fires in one direction and not the other
+# is a repair that runs on a document it was never shown.
+
+def test_delete_bookmark_refuses_a_pair_with_NO_end():
+    """`count != 1`, not `> 1`. A Start with no End is what a half-done
+    repair leaves behind, and removing the Start silently would balance
+    the document by deleting the evidence."""
+    from docxkit.citations import delete_bookmark
+
+    xml = P('<w:bookmarkStart w:id="3" w:name="halfgone"/>' + R("text"))
+
+    with pytest.raises(AnchorError, match="end of halfgone not unique"):
+        delete_bookmark(xml, "halfgone")
+
+
+def test_delete_bookmark_refuses_TWO_ends_with_one_id():
+    """...and `< 1` is the same guard from the other side: Word writes a
+    second End when a bookmark is copied, and removing both would close
+    a bookmark that is still open somewhere else."""
+    from docxkit.citations import delete_bookmark
+
+    xml = P('<w:bookmarkStart w:id="3" w:name="twice"/>' + R("text")
+            + '<w:bookmarkEnd w:id="3"/>' + R("more")
+            + '<w:bookmarkEnd w:id="3"/>')
+
+    with pytest.raises(AnchorError, match="not unique"):
+        delete_bookmark(xml, "twice")
+
+
+def _doubled(outer: str, inner: str, label: str = "Head. (2022)") -> str:
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            rf'<w:r><w:instrText>HYPERLINK \l "{outer}"</w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f'<w:hyperlink w:anchor="{inner}">' + R(label)
+            + "</w:hyperlink>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_remove_outer_field_needs_BOTH_halves_to_match():
+    """`and`, not `or`. The repair is addressed by the PAIR — the stale
+    outer target and the correct link inside it — because a manuscript
+    holds several fields naming the same dead anchor. Matching either
+    half alone unnests whichever field came first and leaves the
+    doubled link the caller was pointing at."""
+    from docxkit.citations import remove_outer_field
+
+    other = P(_doubled("Stale2021txt", "Elsewhere2019txt", "Else (2019)"))
+
+    with pytest.raises(AnchorError, match="0 fields"):
+        remove_outer_field(other, "Stale2021txt", "Fresh2022txt")
+
+
+def test_remove_outer_field_refuses_when_TWO_fields_match():
+    """`!= 1`, not `< 1`. Two identical doubled links is the state a
+    copy-pasted paragraph leaves, and repairing the first of them
+    reports success while the second still clicks to the wrong place."""
+    from docxkit.citations import remove_outer_field
+
+    twice = P(_doubled("Stale2021txt", "Fresh2022txt")
+              + R(" and again ")
+              + _doubled("Stale2021txt", "Fresh2022txt"))
+
+    with pytest.raises(AnchorError, match="2 fields"):
+        remove_outer_field(twice, "Stale2021txt", "Fresh2022txt")
+
+
+# `which == "only"` mutated to `>= "only"` or to `is "only"` survives and
+# is EQUIVALENT: "first" sorts before "only" so the comparison agrees
+# everywhere it is reached, and CPython interns the literal both sides
+# come from.
