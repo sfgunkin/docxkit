@@ -41,6 +41,7 @@ from docxkit.errors import (
     ProtocolError,
     StaleBatch,
 )
+from docxkit.revision import glyph_runs
 
 NS_M = 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
 
@@ -1429,3 +1430,106 @@ def test_a_PREFIX_of_the_loss_identifies_it(project):
                                       footnotes=notes("footnotes")))
     revision.baseline(project, accept_loss=("footnote:For interpretability",))
     assert project.prev.read_bytes() == project.working.read_bytes()
+
+
+
+# ---------------------------------------------- naming the glyph that moved --
+#
+# The glyph gate compared two streams of 68,829 characters and answered
+# `glyphs: False`. On AFI the answer was TWO characters — a minus sign
+# Word's Compare had rewritten as a hyphen inside an Appendix equation —
+# and finding them took a bespoke difflib script over private imports,
+# three builds after the gate first went red.
+
+def test_two_identical_streams_have_nothing_to_report():
+    assert glyph_runs("the same", "the same") == []
+
+
+def test_a_swapped_MINUS_is_named_with_its_code_points():
+    """The finding, exactly as it happened: a hyphen-minus and a minus
+    sign print identically at 10pt, so the characters have to be spelled
+    out or the reader learns nothing they did not already know."""
+    was = "AFIi,2020 − AFIi,1990"
+    now = "AFIi,2020 - AFIi,1990"
+
+    run, = glyph_runs(was, now)
+
+    assert "U+2212" in run and "U+002D" in run
+    assert run.startswith("at 10: ")
+
+
+def test_the_offset_is_the_BASELINE_stream_not_the_batch():
+    """One number, and it has to mean one document: the baseline is the
+    reference the batch is being held against, so it is the side both
+    the offset and the quoted context come from."""
+    was = "the estimator is − 0.15"
+    now = "in fact the estimator is - 0.15"
+
+    _inserted, swapped = glyph_runs(was, now)
+
+    # 17 in the baseline, 25 in the batch, which now opens with 8 more
+    # characters — and the reader is holding the baseline
+    assert swapped.startswith("at 17: ")
+    assert swapped.endswith("after ...the estimator is ")
+
+
+def test_a_run_says_WHERE_it_is_by_quoting_what_precedes_it():
+    """An offset into a 68,000-character stream is not a location a
+    reader can act on; the words before it are."""
+    was = "in the pooled sample the estimator is − 0.15 everywhere"
+    now = "in the pooled sample the estimator is - 0.15 everywhere"
+
+    run, = glyph_runs(was, now)
+
+    lead = run.split("after ...")[1]
+    assert lead == "he pooled sample the estimator is "[-24:]
+    assert len(lead) == 24              # twenty-four characters of it
+
+
+def test_the_quoted_CONTEXT_reads_as_one_line():
+    """The glyph stream is the whole document run together, so the
+    characters before a run routinely include a paragraph break; left
+    raw it breaks the report into pieces that no longer line up."""
+    was = "para one\nthe value is − 0.15"
+    now = "para one\nthe value is - 0.15"
+
+    run, = glyph_runs(was, now)
+
+    assert "\n" not in run
+    assert run.endswith("after ...para one the value is ")
+
+
+def test_a_LONG_changed_run_is_cut_not_dumped():
+    """A batch that really did lose a paragraph would otherwise print
+    the paragraph, once per gate, above the instruction that matters."""
+    was = "keep " + "a long stretch of prose that vanished " * 3 + "keep"
+    now = "keep keep"
+
+    run, = glyph_runs(was, now)
+
+    assert run.count("...") >= 1
+    assert len(run) < 120
+
+
+def test_the_number_of_runs_is_CAPPED_and_the_rest_counted():
+    was = "".join(f"{i}x" for i in range(20))
+    now = "".join(f"{i}y" for i in range(20))
+
+    runs = glyph_runs(was, now, limit=3)
+
+    assert len(runs) == 4
+    assert runs[-1] == "... and 17 more run(s)"
+
+
+def test_a_CHARACTER_COUNT_is_not_printed_for_a_long_run():
+    """Code points are printed for short runs only — four or fewer.
+    Spelling out a hundred of them is the dump this avoids."""
+    runs = glyph_runs("abcdefgh", "")
+
+    assert "U+" not in runs[0]
+
+
+def test_an_INSERTED_run_reports_an_empty_left_side():
+    runs = glyph_runs("ab", "aXb")
+
+    assert runs[0].startswith("at 1: '' -> 'X' U+0058")

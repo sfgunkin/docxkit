@@ -86,6 +86,22 @@ recorded "differed only by the minus glyph (kept U+2212)".
 Defect 2 is why this sat unexplained through three builds while I
 attributed it to my own edits.
 
+**Defect 2 FIXED 2026-08-17.** `revision.glyph_runs(before, after)`
+names the runs where two rendered-character streams differ, with their
+code points, in reading order, and `validate` fills `report.glyph_diff`
+whenever gate 5 goes red — the CLI prints each as `GLYPH at 41520:
+'−' U+2212 -> '-' U+002D   after ...(AFIi,2020 `. Offsets and context
+come from the BASELINE side, six runs at most with the rest counted, cut
+to twelve characters, code points only for runs of four or fewer (a
+hundred of them is the dump this avoids). The bespoke difflib script is
+no longer the way to find out what moved.
+
+**Defect 1 is still open**: Compare's OMML rewrite still loses the
+character, and so does the author's own accept-and-save, so a paper
+cannot hold U+2212 in maths across a Word round unless something puts it
+back afterwards. The gate now says so out loud instead of printing one
+boolean.
+
 **Repro:** `docxkit revision build` any text-only batch on
 `F:\OneDrive\__Documents\Aging_Update\Projects\AFI` and run `validate`;
 `glyphs` is False even for a batch containing **zero** edits.

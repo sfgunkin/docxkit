@@ -61,6 +61,7 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +120,7 @@ __all__ = [
     "doctor",
     "drift",
     "find_config",
+    "glyph_runs",
     "ingest",
     "init",
     "load_paper",
@@ -650,6 +652,12 @@ class ValidateReport:
     #: Links the rejected view does not have and the baseline does. See
     #: :func:`_links` for why rejecting a batch can lose one.
     lost_links: list[str] = field(default_factory=list)
+    #: WHICH characters the glyph gate disagrees on. One boolean for a
+    #: 68,000-character stream tells its reader only that something
+    #: moved: on AFI the answer was two characters, and finding them
+    #: took a bespoke difflib script over private imports while three
+    #: builds went by blaming the edits. See :func:`glyph_runs`.
+    glyph_diff: list[str] = field(default_factory=list)
     #: Whole PARTS the baseline has and the batch does not. See
     #: :func:`docxkit.package.missing_parts`.
     lost_parts: list[str] = field(default_factory=list)
@@ -1017,6 +1025,49 @@ def moved_footnotes(parts: dict[str, bytes],
     return out
 
 
+def _shown(text: str, *, limit: int = 12) -> str:
+    """A run of characters, with its code points when it is short.
+
+    The code points are the point: a hyphen-minus and a MINUS SIGN print
+    identically in a terminal at 10pt, and telling them apart is the
+    whole finding.
+    """
+    cut = text[:limit]
+    tail = "..." if len(text) > limit else ""
+    points = (" " + " ".join(f"U+{ord(c):04X}" for c in cut)
+              if 0 < len(cut) <= 4 else "")
+    return f"{cut + tail!r}{points}"
+
+
+def glyph_runs(before: str, after: str, *, limit: int = 6,
+               context: int = 24) -> list[str]:
+    """Where two rendered-character streams differ, in reading order.
+
+    The glyph gate compares two streams tens of thousands of characters
+    long and answers with one boolean, which tells its reader only that
+    SOMETHING moved. On AFI the answer was two characters — a minus sign
+    Word's Compare had rewritten as a hyphen inside an equation — and
+    finding them took a bespoke difflib script over private imports,
+    three builds after the gate first went red.
+
+    `limit` runs, because a batch that really did lose a paragraph would
+    otherwise print the paragraph; the count of the rest is kept.
+    """
+    if before == after:
+        return []
+    out: list[str] = []
+    blocks = SequenceMatcher(None, before, after,
+                             autojunk=False).get_opcodes()
+    changed = [op for op in blocks if op[0] != "equal"]
+    for _tag, i1, i2, j1, j2 in changed[:limit]:
+        lead = before[max(0, i1 - context):i1].replace("\n", " ")
+        out.append(f"at {i1}: {_shown(before[i1:i2])} -> "
+                   f"{_shown(after[j1:j2])}   after ...{lead}")
+    if len(changed) > limit:
+        out.append(f"... and {len(changed) - limit} more run(s)")
+    return out
+
+
 def validate(path: str | Path, baseline: str | Path | None = None,
              *, use_word: bool = True) -> ValidateReport:
     """Run the gate ladder over a batch, fast to slow, failing early.
@@ -1083,17 +1134,23 @@ def validate(path: str | Path, baseline: str | Path | None = None,
         # for it to read.
         report.lost_parts = package.missing_parts(parts, base)
         was, now = _links(base), _links(rejected)
+        body_now, body_was = _glyph(_root(rejected)), _glyph(_root(base))
+        notes_now = _glyph(_root(rejected, FOOTNOTES))
+        notes_was = _glyph(_root(base, FOOTNOTES))
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
-            "glyphs": _glyph(_root(rejected)) == _glyph(_root(base)),
-            "footnotes": (_glyph(_root(rejected, FOOTNOTES))
-                          == _glyph(_root(base, FOOTNOTES))),
+            "glyphs": body_now == body_was,
+            "footnotes": notes_now == notes_was,
             "links": was == now,
         }
         report.reject_detail = detail
         report.reject_matches_baseline = all(detail.values())
         if not report.reject_matches_baseline:
             report.reject_diff = untracked(parts, base)
+            report.glyph_diff = (
+                glyph_runs(body_was, body_now)
+                + [f"(footnotes) {run}"
+                   for run in glyph_runs(notes_was, notes_now)])
             report.moved_footnotes = moved_footnotes(parts, base)
             report.lost_links = [f"-> {a} ({label[:40]!r})"
                                  for a, label in sorted((was - now).elements())]

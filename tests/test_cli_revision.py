@@ -590,6 +590,28 @@ def test_validate_fails_an_unreviewable_batch(monkeypatch, project,
     assert "quietly rewritten" in out, out
 
 
+def test_validate_names_the_GLYPH_that_changed(monkeypatch, project,
+                                              capsys):
+    """`glyphs: False` for a 68,000-character stream says only that
+    SOMETHING moved. On AFI the answer was two characters — a minus sign
+    Word's Compare had rewritten as a hyphen inside an equation — and
+    three builds went by blaming the edits before a bespoke difflib
+    script over private imports found them."""
+    write(project.prev, make_parts(
+        para(run("the gap is − 0.15 in every year"))))
+    write(project.batch, make_parts(
+        para(run("the gap is - 0.15 in every year"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "GLYPH" in out, out
+    assert "U+2212" in out and "U+002D" in out, out
+    assert "after ...the gap is " in out, out
+
+
 def test_validate_names_a_moved_footnote_anchor(monkeypatch, project,
                                                 capsys):
     """Compare emits a re-anchored footnote as one insertion with no

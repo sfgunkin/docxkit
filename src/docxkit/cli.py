@@ -1027,6 +1027,10 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                       f"so rejecting empties it")
             for u in report.reject_diff:
                 print(f"   {u}")
+            for run in report.glyph_diff:
+                # a boolean for a 68,000-character stream says only that
+                # SOMETHING moved; on AFI the answer was two characters
+                print(f"   GLYPH {run}")
             for link in report.lost_links:
                 print(f"   LINK LOST {link}: the baseline has this "
                       f"hyperlink and the rejected batch does not — Word's "
