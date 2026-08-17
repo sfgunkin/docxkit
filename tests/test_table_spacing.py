@@ -233,3 +233,90 @@ def test_an_existing_spacing_KEEPS_its_other_attributes():
 
     assert 'w:after="240"' in got and 'w:line="276"' in got
     assert 'w:before="120"' in got
+
+
+def test_a_table_BEFORE_an_equation_carrier_is_still_spaced():
+    """`continue`, not `break`: the walk goes over the tables in reverse,
+    so stopping at a carrier leaves every table EARLIER in the document
+    unspaced — and a paper's carriers are in the middle of the methods,
+    with its results tables after them."""
+    body = (table("Level") + para(run("Text after the real table."))
+            + table("DRI = ...", "(3)") + para(run("где k — компонент.")))
+
+    out, report = table_spacing(doc(body))
+
+    assert before_of(out, "Text after") == "120"
+    assert any("carrier" in s for s in report.skipped)
+
+
+def test_a_TWO_ROW_table_is_a_table_however_its_last_cell_reads():
+    """One row, two cells: a results table whose final cell happens to
+    hold «(3)» is not an equation, and skipping it would leave the text
+    under it hard against the rule."""
+    body = ("<w:tbl><w:tblPr/>"
+            f"<w:tr><w:tc><w:tcPr/>{para(run('Coefficient'))}</w:tc>"
+            f"<w:tc><w:tcPr/>{para(run('(1)'))}</w:tc></w:tr>"
+            f"<w:tr><w:tc><w:tcPr/>{para(run('0.15'))}</w:tc>"
+            f"<w:tc><w:tcPr/>{para(run('(3)'))}</w:tc></w:tr></w:tbl>"
+            + para(run("The text below it.")))
+
+    out, report = table_spacing(doc(body))
+
+    assert before_of(out, "The text below") == "120"
+    assert report.skipped == []
+
+
+def test_a_ONE_ROW_table_of_THREE_cells_is_a_table():
+    """Two cells exactly. The number sits in the LAST one here too, so
+    the count is what decides — a three-column layout row is not an
+    equation however its last cell reads."""
+    body = (table("DRI = ...", "note", "(3)") + para(run("Text below.")))
+
+    out, _report = table_spacing(doc(body))
+
+    assert before_of(out, "Text below") == "120"
+
+
+def test_a_final_cell_that_is_not_a_NUMBER_in_brackets_is_a_table():
+    """«(3)», «(A.1)» — a label, not a sentence. A 1x2 table whose second
+    cell reads «(see the appendix)» is a layout table."""
+    body = (table("Some text", "(see the appendix)")
+            + para(run("Text below.")))
+
+    out, _report = table_spacing(doc(body))
+
+    assert before_of(out, "Text below") == "120"
+
+
+def test_a_final_cell_that_MERELY_CONTAINS_a_number_is_a_table():
+    """The whole cell is the label, not a cell with one in it: matched
+    loosely, a results row ending «(3) see notes» reads as an equation
+    and the text under the table stays hard against the rule."""
+    body = table("Some text", "(3) see notes") + para(run("Text below."))
+
+    out, report = table_spacing(doc(body))
+
+    assert before_of(out, "Text below") == "120"
+    assert report.skipped == []
+
+
+def test_the_number_is_read_from_the_LAST_cell_not_the_first():
+    """A carrier is «equation ... (3)», in that order. Reading the first
+    cell makes every equation a table and the «where …» after it gets a
+    gap in the middle of its own sentence."""
+    body = table("(3)", "AFI = ...") + para(run("Text below."))
+
+    out, _report = table_spacing(doc(body))
+
+    assert before_of(out, "Text below") == "120"
+
+
+def test_a_LETTERED_equation_number_is_still_a_carrier():
+    """Appendix equations are «(A.1)», and the pattern takes word
+    characters and dots for that reason."""
+    body = table("AFI = ...", "(A.1)") + para(run("where the weights"))
+
+    out, report = table_spacing(doc(body))
+
+    assert before_of(out, "where the weights") is None
+    assert any("carrier" in s for s in report.skipped)
