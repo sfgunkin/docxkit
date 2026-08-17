@@ -1846,3 +1846,95 @@ def test_the_labels_are_CUT_in_the_report():
 
     assert out[0]["to"] == long_label[:90]
     assert len(out[0]["to"]) == 90
+
+
+# -------------------------------------------- pairing a replaced block -----
+#
+# `replaced` walks the two sides of one replace opcode in step. 21
+# survivors: which side runs out first, what happens to the leftover,
+# and whether the walk goes on after a paragraph it has nothing to say
+# about were all unasserted — the fixtures all had the same number of
+# paragraphs on both sides.
+
+def test_a_block_where_the_LEFT_is_longer_reports_the_leftover_as_gone(
+        tmp_path):
+    a, b = docs(tmp_path,
+                para(run("Alpha one changed here."))
+                + para(run("Beta two changed here."))
+                + para(run("Gamma three, deleted entirely.")),
+                para(run("Alpha ONE rewritten."))
+                + para(run("Beta TWO rewritten.")))
+
+    report = compare(a, b)
+
+    kinds = {s["type"] for s in report["structure"]}
+    assert "DELETE" in kinds
+    assert any("Gamma three" in s.get("text", "")
+               for s in report["structure"])
+
+
+def test_a_block_where_the_RIGHT_is_longer_reports_the_leftover_as_new(
+        tmp_path):
+    a, b = docs(tmp_path,
+                para(run("Alpha one changed here."))
+                + para(run("Beta two changed here.")),
+                para(run("Alpha ONE rewritten."))
+                + para(run("Beta TWO rewritten."))
+                + para(run("Gamma three, brand new.")))
+
+    report = compare(a, b)
+
+    assert any(s["type"] == "INSERT" and "Gamma three" in s.get("text", "")
+               for s in report["structure"])
+
+
+def test_a_GLYPH_only_change_inside_a_replaced_block_is_not_a_text_edit(
+        tmp_path):
+    """Word straightens a quote on save. Inside a block where something
+    else really changed, that paragraph still belongs in the glyph
+    bucket — reporting it as an edit is how a round of "the author
+    changed 40 paragraphs" turns out to be one."""
+    a, b = docs(tmp_path,
+                para(run("The “gap” is 0.35 here."))
+                + para(run("Methods follow the standard approach.")),
+                para(run('The "gap" is 0.35 here.'))
+                + para(run("Methods follow a different approach.")))
+
+    report = compare(a, b)
+
+    assert any("gap" in g["from"] for g in report["glyph"])
+    assert not any("gap" in t.get("context", "") for t in report["text"])
+    assert any("different" in str(t.get("word_diff")) for t in report["text"])
+
+
+def test_a_glyph_change_beside_a_real_edit_reaches_BOTH_layers(tmp_path):
+    """The two paragraphs are matched independently — the straightened
+    quote is `equal` to the matcher, which normalizes glyphs — so one
+    lands in the glyph bucket and the other in text. A round of "the
+    author changed 40 paragraphs" that is really one edit is what this
+    separation prevents."""
+    a, b = docs(tmp_path,
+                para(run("The “gap” is 0.35 here."))
+                + para(run("Methods follow the standard approach.")),
+                para(run('The "gap" is 0.35 here.'))
+                + para(run("Methods follow a different approach.")))
+
+    report = compare(a, b)
+
+    assert [g["from"][:9] for g in report["glyph"]] == ["The “gap”"]
+    assert len(report["text"]) == 1
+    assert "different" in str(report["text"][0]["word_diff"])
+
+
+def test_a_text_entry_CUTS_its_context(tmp_path):
+    """Sixty characters. The context is there to recognise the paragraph
+    by, not to reproduce it — the word diff beside it says what changed."""
+    long_a = ("The age-friendliness index is defined for every occupation "
+              "in the sample as the weighted mean of ten indicators.")
+    a, b = docs(tmp_path, para(run(long_a)),
+                para(run(long_a.replace("ten", "twelve"))))
+
+    entry = compare(a, b)["text"][0]
+
+    assert entry["context"] == long_a[:60]
+    assert len(entry["context"]) == 60
