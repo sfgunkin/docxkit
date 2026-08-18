@@ -17,12 +17,13 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*One, as of 2026-08-18.* This section was empty on the 17th, for the
+*Nothing, as of 2026-08-18.* This section was empty on the 17th, for the
 first time since the file was started, on five closed that day: the
 U+2212 downgrade (both halves), the missing row-multiset check for a
 reorder, and the four survivor ledgers.
 
-Then THIRTEEN were opened on the 18th and twelve closed the same day.
+Then THIRTEEN were opened on the 18th and all thirteen closed the same
+day.
 Not one came from a manuscript: eight came from the mutation rounds and
 five from a review of that same day's commits, which is the first time
 this file has been filled by looking rather than by being bitten.
@@ -44,6 +45,8 @@ second reader is for.
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
+
+## Fixed
 
 ### S4 a fifth writer of CT_PPr order, when the package already had four
 
@@ -73,7 +76,26 @@ one of those writers is under test now, and the consolidation is a
 refactor that wants its own round with the mutation runs re-measured
 after it.
 
-## Fixed
+**Closed 2026-08-18** (`ee7a7c7`), and it was not only a refactor:
+`find.page_break_before` still carried ALL THREE of the defects fixed in
+`_keep_with_table` hours earlier — the flag read out of a `w:pPrChange`
+snapshot so the break was never set, the `w:val="0"` given a second
+element beside it, and `<w:pPr/>` written past, which left two `w:pPr`
+in one paragraph. That is the cost of a fifth copy stated as a
+measurement: the same three bugs, in a public path a paper uses to open
+a table on a fresh page, found only because the copies were being
+collapsed.
+
+`_xml.set_para_property` now holds CT_PPr's order, both spellings of an
+empty element, ST_OnOff, `<w:pPr/>` and `<w:p/>` expansion, live
+properties only, and a top-level child scan that does not descend into
+`w:pBdr` or `w:tabs`. It repairs a misplaced property rather than
+overwriting it where it stands, as `_set_tbl_pr` has since that morning.
+Four call sites moved; five one-off helpers went with them.
+
+CT_TblPr is still its own thing (`_set_tbl_pr` with the `_AFTER_*`
+tuples) — a different sequence, and rewriting it as a rank table is a
+separate round.
 
 ### S1 four more shapes in the two S1 fixes of the same day, each reported as success — `04472c1`, `f5336ea`
 
