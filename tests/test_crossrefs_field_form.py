@@ -5,6 +5,8 @@ Parental_style holds 53 element-form and 160 field-form links at once.
 link live — a wrong answer wearing a healthy number.
 """
 
+import re
+
 import pytest
 from conftest import make_parts, para, run
 
@@ -66,3 +68,70 @@ def test_link_reports_a_field_linked_object_instead_of_doubling_it():
     # nothing added on top of the field
     assert out.count('w:anchor="Table1"') == 0
     assert "ALREADY LINKED BY A WORD FIELD" in report.format()
+
+
+# --- what the crossrefs sweeps of 2026-08-18 left in `unlink` -----------
+#
+# 13 survivors, and five of them on the ellipsis that says the refusal's
+# list is not the whole list. The message is the whole of what a paper
+# gets: `unlink` raises rather than removing bookmarks and leaving field
+# links live, so the names in it are what a person goes and retargets.
+
+
+def _exhibits(n: int, *, field: bool) -> str:
+    """`n` exhibits, each mentioned once — as a field link or plainly."""
+    out = ""
+    for i in range(1, n + 1):
+        mention = (field_link(f"Table{i}", f"Table {i}") if field
+                   else run(f"Table {i}"))
+        out += (para(run("As reported in ")).replace("</w:p>", "")
+                + mention + "<w:r><w:t>, rates differ.</w:t></w:r></w:p>"
+                + para(run(f"Table {i}: Descriptive statistics.")))
+    return out
+
+
+def test_the_refusal_names_SIX_and_says_there_are_more():
+    """Six is what fits in a message a person reads; the ellipsis is what
+    stops the seventh from being invisible. Without it a paper retargets
+    the six it was told about, re-runs, and gets the same refusal."""
+    xml = doc(_exhibits(7, field=True))
+
+    with pytest.raises(ConversionGap) as exc:
+        crossrefs.unlink(xml)
+
+    message = str(exc.value)
+    assert "7 exhibit link(s) are Word FIELD form" in message
+    listed = message.split("remove: ", 1)[1].split(" ...", 1)[0]
+    assert len(listed.split(", ")) == 6, listed
+    assert " ..." in message, "and there are more than it listed"
+
+
+def test_the_refusal_does_NOT_trail_off_when_it_named_them_all():
+    """Six exactly: the list IS the whole list, and an ellipsis there
+    sends a reader looking for a seventh that does not exist."""
+    xml = doc(_exhibits(6, field=True))
+
+    with pytest.raises(ConversionGap) as exc:
+        crossrefs.unlink(xml)
+
+    message = str(exc.value)
+    assert "6 exhibit link(s) are Word FIELD form" in message
+    assert " ..." not in message
+
+
+def test_a_bookmark_that_is_already_gone_does_not_stop_the_removal():
+    """`continue`, not `break`. The names come from the CAPTIONS, so a
+    scheme half-removed by hand — or one where the mention was never
+    bookmarked — leaves gaps in the middle of the list. Under `break`
+    every bookmark after the first gap survives, and `unlink` reports the
+    count it managed as if it were the whole job."""
+    linked, _ = crossrefs.link(doc(_exhibits(3, field=False)))
+    # take Table1's own bookmark out by hand, leaving the rest
+    gapped = re.sub(r'<w:bookmarkStart[^>]*w:name="Table1"\s*/>', "",
+                    linked, count=1)
+
+    out, removed = crossrefs.unlink(gapped)
+
+    assert removed == 5, "six names, one already gone"
+    assert "w:bookmarkStart" not in out
+    assert "w:anchor=" not in out, "and every hyperlink unwrapped"
