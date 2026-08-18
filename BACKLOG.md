@@ -108,7 +108,7 @@ already names it for `<w:tcPr/>`. Three instances of one shape: an EMPTY
 element is self-closing, and a pattern written for the paired form calls
 it absent.
 
-**Closed 2026-08-19** (`this commit`). `set_run_text` expands the
+**Closed 2026-08-19** (`e91f09d`). `set_run_text` expands the
 self-closing form before it writes, so the run keeps its properties and
 its attributes — `<w:t xml:space="preserve"/>` is what Word leaves when
 it empties a run that had edge whitespace, and that attribute is the one
