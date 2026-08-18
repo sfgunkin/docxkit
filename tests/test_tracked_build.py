@@ -1570,3 +1570,42 @@ def test_an_untracked_finding_names_the_paragraph_WORD_shows():
     assert len(long_baseline) > 70, "the fixture has to be cut to say so"
     assert second == (" " * len("body ¶3") + "  batch    "
                       + repr("What the batch has instead."))
+
+
+# --- the move that duplicates a table (DSI, 2026-08-19) -----------------
+#
+# Word's Compare answers a moved block by writing the table TWICE and
+# marking neither copy. On DSI the redline carried 28 tables against the
+# baseline's 27, and BOTH accept and reject left 28 — so the author could
+# not get rid of it, and every other signal read as success. A move whose
+# rows Word DOES flag is handled (`revisions._row_flag` reads `w:trPr`);
+# this is the shape that cannot be resolved, only refused.
+
+
+def _table_xml(cell: str = "cell") -> str:
+    return ("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>" + cell
+            + "</w:t></w:r></w:p></w:tc></w:tr></w:tbl>")
+
+
+def test_build_REFUSES_a_redline_that_carries_a_table_twice(monkeypatch,
+                                                            sources):
+    """The refusal names both counts. Nothing here can tell which copy
+    is the spurious one — an unmarked table is not a revision — so the
+    answer is to say so before the file reaches an author."""
+    doubled = _clean_document().replace(
+        "</w:body>", _table_xml() + _table_xml() + "</w:body>")
+    with pytest.raises(PackageError, match="STRUCTURE"):
+        _build(monkeypatch, doubled, sources)
+
+
+def test_the_structure_refusal_can_be_turned_off_like_the_other_one(
+        monkeypatch, sources):
+    """`reject_check=False` builds the file anyway, which is what a
+    person inspecting the damage needs."""
+    doubled = _clean_document().replace(
+        "</w:body>", _table_xml() + _table_xml() + "</w:body>")
+
+    report, _ = _build(monkeypatch, doubled, sources, reject_check=False)
+
+    assert report.structure_diff, "still reported, just not fatal"
+    assert any("tbl:" in d for d in report.structure_diff)

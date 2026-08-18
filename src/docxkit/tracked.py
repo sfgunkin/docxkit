@@ -66,6 +66,7 @@ from .errors import PackageError
 from .hygiene import CARRIED_PROPERTIES
 from .lint import lint_parts
 from .package import REGENERATED_BY_WORD, core_property, read_parts, write_docx
+from .revisions import accept as _accept
 from .revisions import reject as _reject
 from .revisions import revision_elements
 
@@ -400,6 +401,10 @@ class BuildReport:
         #: `reject_check` is on, which is the default — the build then
         #: refuses to publish while this is non-empty.
         self.unrejectable: list[Untracked] = []
+        #: Counts of the glyph-less carriers — tables, rows, bookmarks,
+        #: section breaks — that the built redline does not resolve back
+        #: to the documents it came from. See :func:`structure_counts`.
+        self.structure_diff: list[str] = []
         #: Part-trees Compare dropped and the build put BACK — the
         #: customXml data store, by default. See
         #: :func:`docxkit.hygiene.restore_parts`.
@@ -826,10 +831,38 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # every other signal here reads as success while it does — LI7
         # shipped one, and found it two rounds later with a hand-written
         # difflib script.
-        report.unrejectable = untracked(parts, read_parts(original))
+        base_parts = read_parts(original)
+        report.unrejectable = untracked(parts, base_parts)
+        # What a MOVE can duplicate, and what neither view can undo.
+        # Word's Compare answers a moved block by writing the table
+        # TWICE and marking neither copy: on DSI (2026-08-19) a redline
+        # carried 28 tables against the baseline's 27 and BOTH accept and
+        # reject left 28, so the author could not get rid of it and
+        # nothing said it was there. A move whose rows Word DOES flag is
+        # handled — `revisions._row_flag` reads `w:trPr` — and this is
+        # the shape it cannot: an unmarked copy is not a revision, so it
+        # is refused rather than resolved.
+        report.structure_diff = (
+            [f"rejected: {d}" for d in structure_diff(
+                structure_counts(base_parts),
+                structure_counts(_simulate(parts, _reject)))]
+            + [f"accepted: {d}" for d in structure_diff(
+                structure_counts(read_parts(revised)),
+                structure_counts(_simulate(parts, _accept)))])
         report.mark("checked reject-all against the original")
         for para in report.unrejectable:
             say(f"  UNREJECTABLE {para}")
+        if report.structure_diff and reject_check:
+            listed = "\n  ".join(report.structure_diff)
+            raise PackageError(
+                f"the redline does not carry the same STRUCTURE as the "
+                f"documents it was built from:\n  {listed}\n"
+                f"A move is the usual cause: Word's Compare answers a "
+                f"moved block by writing the table twice and marking "
+                f"neither copy, so neither accepting nor rejecting "
+                f"removes the duplicate. Move the block in the CLEAN "
+                f"copy in a separate round, or pass reject_check=False "
+                f"to build the file anyway and inspect it.")
         if report.unrejectable and reject_check:
             listed = "\n  ".join(str(u) for u in report.unrejectable)
             raise PackageError(
