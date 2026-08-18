@@ -141,3 +141,102 @@ def test_an_empty_self_closing_paragraph_does_not_swallow_the_next_block(
     label, follows, _orient = rep.exhibits[0]
     assert label == "Table 1"
     assert follows.startswith("table,"), follows
+
+
+# --- what the probe run of 2026-08-17 found ------------------------------
+#
+# 36.9 % real survival, the highest in the package — and probe is the
+# report a batch reads BEFORE it picks an approach, which is the whole
+# argument for pinning it: the two-table swap that cost forty minutes
+# cost them because nobody knew which form the links took.
+#
+# Twenty of the survivors sit on the two WINDOWS below: how far after a
+# caption a table still counts as its table, and how far a section break
+# still counts as its orientation. Every fixture here puts them
+# adjacent, where every arithmetic spelling of the window agrees.
+
+
+def _caption_para(text: str = "Table 1: Descriptive statistics.") -> str:
+    return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+
+
+def _filler(n: int) -> str:
+    return "".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                   for i in range(n))
+
+
+def _table(rows: int = 2) -> str:
+    return ("<w:tbl>" + "<w:tr><w:tc><w:p/></w:tc></w:tr>" * rows
+            + "</w:tbl>")
+
+
+def test_a_table_TWO_blocks_after_the_caption_is_still_its_table(tmp_path):
+    """`blocks[i + 1:i + 3]` — a caption is routinely followed by a note
+    or a blank paragraph before the table, and a paper's own note sits
+    there by house rule. Three blocks away it belongs to something
+    else."""
+    near = probe(make_docx(tmp_path, _caption_para() + _filler(1)
+                           + _table(3)))
+    far = probe(make_docx(tmp_path, _caption_para() + _filler(2)
+                          + _table(3)))
+
+    assert near.exhibits == [("Table 1", "table, 3 rows", "")]
+    assert far.exhibits == [("Table 1", "(no table follows)", "")]
+
+
+def test_the_orientation_is_read_from_a_section_break_EIGHT_blocks_out(
+        tmp_path):
+    """`blocks[i:i + 8]`: the break that turns the page landscape closes
+    the section the exhibit is IN, so it sits after the table and after
+    whatever notes follow it. Too short a window and a landscape table
+    is reported as portrait — which is the report a batch uses to decide
+    whether the table has to be re-fitted at all."""
+    landscape = ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" '
+                 'w:orient="landscape"/></w:sectPr></w:pPr></w:p>')
+
+    # the caption is block i, the table i+1, so six fillers put the
+    # break at i+8 — one past the window, and the only distance that
+    # tells a window of eight from one of nine
+    inside = probe(make_docx(tmp_path, _caption_para() + _table()
+                             + _filler(5) + landscape))
+    outside = probe(make_docx(tmp_path, _caption_para() + _table()
+                              + _filler(6) + landscape))
+
+    assert inside.exhibits[0][2] == "landscape"
+    assert outside.exhibits[0][2] == "", "beyond the window, and not guessed"
+
+
+def test_a_bookmark_INSIDE_a_paragraph_is_not_body_level(tmp_path):
+    """`closed > before`: a body-level bookmark sits BETWEEN paragraphs
+    and a block move has to carry it; one inside a paragraph travels
+    with the paragraph and needs nothing. The test above has only the
+    body-level case, where both spellings of the comparison agree."""
+    between = ('<w:p><w:r><w:t>Before.</w:t></w:r></w:p>'
+               '<w:bookmarkStart w:id="1" w:name="between_paras"/>'
+               '<w:bookmarkEnd w:id="1"/>')
+    within = ('<w:p><w:bookmarkStart w:id="2" w:name="inside_para"/>'
+              "<w:r><w:t>Held.</w:t></w:r>"
+              '<w:bookmarkEnd w:id="2"/></w:p>')
+
+    rep = probe(make_docx(tmp_path, between + within))
+
+    assert ("between_paras", "body") in rep.bookmarks
+    assert ("inside_para", "nested") in rep.bookmarks
+
+
+def test_a_bookmark_ABOVE_every_paragraph_is_body_level(tmp_path):
+    """Found by mutation testing, 2026-08-18: `closed > before` reported
+    this one as nested, and the two searches are equal only here —
+    `</w:p>` does not contain `<w:p`, so both are -1 exactly when no
+    paragraph precedes the bookmark at all.
+
+    A bookmark at the top of the body has no paragraph to travel with,
+    so a paragraph-oriented edit does not carry it and a block move must
+    — which is the one thing this field is read for."""
+    top = ('<w:bookmarkStart w:id="1" w:name="doc_top"/>'
+           '<w:bookmarkEnd w:id="1"/>'
+           "<w:p><w:r><w:t>First paragraph.</w:t></w:r></w:p>")
+
+    rep = probe(make_docx(tmp_path, top))
+
+    assert rep.bookmarks == [("doc_top", "body")]

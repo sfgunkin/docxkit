@@ -144,7 +144,13 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
     for m in BOOKMARK_NAME_RE.finditer(body):
         before = body.rfind("<w:p", 0, m.start())
         closed = body.rfind("</w:p>", 0, m.start())
-        where = "body" if closed > before else "nested"
+        # `>=`, not `>`: the two are equal only when both are -1, which
+        # is a bookmark that precedes every paragraph in the body — a
+        # sibling of them, with no paragraph to travel with. Reported as
+        # "nested" it reads as one a paragraph-oriented edit carries for
+        # free, and a block move then drops it. (`</w:p>` does not
+        # contain `<w:p`, so the two searches cannot otherwise agree.)
+        where = "body" if closed >= before else "nested"
         rep.bookmarks.append((m.group(1), where))
 
     for sect in SECTPR_RE.findall(doc):
