@@ -17,44 +17,23 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-Three open, from ONE manuscript round (DSI: the §6 restructure, the C/B
-exposition batches and F1). The fourth — the gate that let the other two
-through — was closed on the 19th: `reject-all == baseline` now compares
-STRUCTURE COUNTS as well as text, so a duplicated table, a dropped bookmark and
-a destroyed section break fail it by name. See the entry at the top of Fixed.
+One open, from a manuscript round on the 18th–19th (DSI: the §6 restructure,
+the C/B exposition batches and F1). The other three closed on the 19th:
 
-The two S1s below are still defects: the gate catches them now, but catching a
-move that duplicates a table is not the same as being able to move a block.
+* the gate that let the rest through — `reject-all == baseline` compares
+  STRUCTURE COUNTS as well as text now, so a duplicated table, a dropped
+  bookmark and a destroyed section break fail it BY NAME;
+* the anchors a move used to lose, which are lifted out of a revision before it
+  is removed rather than going with it;
+* the table Word's Compare writes twice and marks neither copy of, which
+  `build` now refuses at build time.
 
-### S1 Word Compare duplicates a table when a block containing it is MOVED
-
-Move body children so a `w:tbl` and its caption change position, then
-`tracked.build` (clean edit + Word `CompareDocuments`). Word emits
-`w:moveFrom`/`w:moveTo` rather than `w:ins`/`w:del`, and the result carries
-**one table too many**. Measured on DSI: baseline 27 tables, clean permutation
-27, redline **28**, and *both* `revisions.accept` and `revisions.reject` leave
-28 — the moved table appears twice in the accepted view. `build` reported
-success and `reject-all == baseline` passed.
-
-Move tracking is modelled correctly for the paragraph-only case: two plain
-paragraphs moved gave 8 move revisions, 27 tables held, reject-all equal to the
-baseline, XML accept equal to Word accept.
-
-**Suggested:** detect `w:moveFrom`/`w:moveTo` spanning a `w:tbl` and refuse, the
-way `build` already refuses resolved math revisions.
-
-### S1 a moved paragraph carrying BOOKMARKS loses them on reject
-
-Same mechanism, different casualty. A paragraph holding three citation anchors,
-moved through Compare: accept is correct, but **reject returns 125 bookmarks
-against the baseline's 127**. The anchors the bidirectional citation links
-depend on are dropped, and `reject-all == baseline` passes because a bookmark
-carries no glyph — so `paper.toml`'s `require_reject_all_equals_baseline` is
-satisfied by a document that does not reproduce the baseline.
-
-**Workaround in use:** refuse to move a paragraph whose bookmarkStart/End ids
-are not balanced within itself, and do not move bookmarked paragraphs at all —
-which cost that manuscript two of its planned exposition moves.
+Two of those three are refusals rather than repairs, and deliberately: an
+unmarked duplicate is not a revision, and an anchor cannot be put back around
+words that are being restored elsewhere without pairing information this side
+cannot verify. **A moved block containing a table, or a bookmarked paragraph,
+still cannot go through Compare and come back cleanly** — what changed is that
+nothing ships silently now.
 
 ### S2 `link_all` makes no back-link for a newly-cited entry
 
@@ -101,6 +80,71 @@ The four above break that run — all four came from a manuscript, and being
 bitten is still how the gate-shaped ones get found.
 
 ## Fixed
+
+### S1 Word Compare duplicates a table when a block containing it is MOVED
+
+Move body children so a `w:tbl` and its caption change position, then
+`tracked.build` (clean edit + Word `CompareDocuments`). Word emits
+`w:moveFrom`/`w:moveTo` rather than `w:ins`/`w:del`, and the result carries
+**one table too many**. Measured on DSI: baseline 27 tables, clean permutation
+27, redline **28**, and *both* `revisions.accept` and `revisions.reject` leave
+28 — the moved table appears twice in the accepted view. `build` reported
+success and `reject-all == baseline` passed.
+
+Move tracking is modelled correctly for the paragraph-only case: two plain
+paragraphs moved gave 8 move revisions, 27 tables held, reject-all equal to the
+baseline, XML accept equal to Word accept.
+
+**Suggested:** detect `w:moveFrom`/`w:moveTo` spanning a `w:tbl` and refuse, the
+way `build` already refuses resolved math revisions.
+
+**Closed 2026-08-19** (`4480971`), as a REFUSAL — both shapes reproduced first.
+A move whose rows Word flags (`<w:trPr><w:moveTo/></w:trPr>`) was already
+handled: `revisions._row_flag` reads it and 2 tables resolve to 1 in both views.
+The shape that bit DSI is the other one — an unmarked copy, which is not a
+revision at all, so there is nothing to accept or reject and no way to tell
+which of the two is spurious.
+
+`build` now compares `structure_counts` on both sides (rejected against the
+original, accepted against the revised copy) and refuses, naming what moved:
+`rejected: tbl: 27 -> 28`. `reject_check=False` still builds for inspection.
+Caught at build time now rather than by counting tables by hand afterwards —
+but a moved block containing a table still cannot be delivered, and that part
+is Word's.
+
+
+### S1 a moved paragraph carrying BOOKMARKS loses them on reject
+
+Same mechanism, different casualty. A paragraph holding three citation anchors,
+moved through Compare: accept is correct, but **reject returns 125 bookmarks
+against the baseline's 127**. The anchors the bidirectional citation links
+depend on are dropped, and `reject-all == baseline` passes because a bookmark
+carries no glyph — so `paper.toml`'s `require_reject_all_equals_baseline` is
+satisfied by a document that does not reproduce the baseline.
+
+**Workaround in use:** refuse to move a paragraph whose bookmarkStart/End ids
+are not balanced within itself, and do not move bookmarked paragraphs at all —
+which cost that manuscript two of its planned exposition moves.
+
+**Closed 2026-08-19** (`e3931b7`), for the loss; the misplacement stands.
+Reproduced from the XML Word writes: the anchor sits INSIDE the `w:moveTo`, and
+removing that element on reject took it along. Position markers —
+`bookmarkStart`/`End`, `commentRangeStart`/`End`, `commentReference` — are now
+LIFTED out of a revision element before it is removed, in document order so a
+start still precedes its end. That also covers the same shape one revision kind
+over: a comment range start inside a rejected insertion, which leaves an end
+with no start, which Word calls damage.
+
+What it does NOT do is put the anchor back AROUND the restored words: on a move
+those words come back somewhere else, and pairing the two halves needs the range
+names in output that cannot be verified against Word from here. So the anchor
+stays where the revision stood, the link resolves, and gate 5 decides — it sees
+both the count and the empty paragraph the move leaves behind. Losing an anchor
+silently was the defect; refusing loudly is the honest answer while the rest is
+unknown.
+
+**Still true for the paper:** a bookmarked paragraph cannot be moved through
+Compare and rejected back cleanly. Move it in the clean copy in its own round.
 
 ### S3 `reject-all == baseline` is blind to everything that carries no glyph
 
