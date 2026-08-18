@@ -75,6 +75,40 @@ what `test_tables_fit.py` does with `read_all` and `Table`.
 
 ## Fixed
 
+### S1 `comments.remove` deletes the paragraph when the reference mark is not in a run — `d5c9e25`
+
+Found 2026-08-18 by mutation testing `_drop_reference_run` (7 real
+survivors, all on the branch below), and reproduced before it was
+believed:
+
+    parts = ... two comments, comment 1's mark BARE in the paragraph
+    remove(parts, ["1", "2"])            -> returns 2
+    body                                 -> <w:p></w:p>
+
+Every word of both paragraphs gone, and the call reporting success.
+
+**Diagnosis.** The walk finds the run around the mark by taking the last
+run to START before it. A run that CLOSED before the mark is a
+NEIGHBOUR, not the enclosure, so the deletion ran from that neighbour's
+start to the first `</w:r>` after the mark — across the rest of the
+paragraph and into the next one. The branch meant to catch "no run
+around it" asked `if not starts`, i.e. whether any run started earlier
+at all, which is true of every paragraph with prose in it.
+
+**Fixed in the same session** (`d5c9e25`). The test is whether that run
+is still OPEN at the mark: `doc.find("</w:r>", starts[-1], at) == -1`.
+Where it is not, there is no run to drop and the MARK goes instead —
+a reference to a comment that no longer exists is itself what Word
+reports as unreadable content, so keeping it (what the old branch did)
+was the other half of the same repair prompt.
+`tests/test_parts_gaps.py` carries both directions; each fails without
+the fix.
+
+**Reach.** Word always wraps the mark, and `_anchor` here writes it
+wrapped too, so this needs a foreign or repaired document — which is
+the kind this toolkit is pointed at, and the reason `remove` exists at
+all is the DSI paper's five resolved review comments.
+
 ### S4 `tools/mutation_survivors.py` dies on the one module whose source it cannot print
 
 Found 2026-08-18, reading the survivor report for `_table_layout.py` —
