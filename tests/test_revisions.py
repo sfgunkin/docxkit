@@ -537,14 +537,14 @@ def test_a_block_of_paragraphs_deep_in_the_document_is_quoted_by_PAIR():
     handed a pair of sentences that were never opposite each other."""
     from docxkit.revisions import changed_paragraphs
     keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
-    before = document("".join(keep + [para(run("Alpha was.")),
-                                      para(run("Beta was.")),
-                                      para(run("Gamma was.")),
-                                      para(run("Tail."))]))
-    after = document("".join(keep + [para(run("Alpha is now.")),
-                                     para(run("Beta is now.")),
-                                     para(run("Gamma is now.")),
-                                     para(run("Tail."))]))
+    before = document("".join([*keep, para(run("Alpha was.")),
+                               para(run("Beta was.")),
+                               para(run("Gamma was.")),
+                               para(run("Tail."))]))
+    after = document("".join([*keep, para(run("Alpha is now.")),
+                              para(run("Beta is now.")),
+                              para(run("Gamma is now.")),
+                              para(run("Tail."))]))
 
     got = changed_paragraphs(before, after)
 
@@ -560,12 +560,12 @@ def test_a_paragraph_the_batch_DROPPED_deep_in_the_document():
     and each must still quote the paragraph it LOST, not its neighbour."""
     from docxkit.revisions import changed_paragraphs
     keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
-    before = document("".join(keep + [para(run("Alpha.")),
-                                      para(run("Beta.")),
-                                      para(run("Gamma.")),
-                                      para(run("Tail."))]))
-    after = document("".join(keep + [para(run("All three, merged.")),
-                                     para(run("Tail."))]))
+    before = document("".join([*keep, para(run("Alpha.")),
+                               para(run("Beta.")),
+                               para(run("Gamma.")),
+                               para(run("Tail."))]))
+    after = document("".join([*keep, para(run("All three, merged.")),
+                              para(run("Tail."))]))
 
     got = changed_paragraphs(before, after)
 
