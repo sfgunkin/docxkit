@@ -13,6 +13,7 @@ import re
 import pytest
 from conftest import (
     comment,
+    document,
     field,
     hdr,
     make_parts,
@@ -2457,3 +2458,86 @@ def test_a_part_too_UNLIKE_anything_is_added_and_removed(tmp_path):
     assert sorted((s["type"], s["part"]) for s in report["structure"]) == [
         ("PART ADDED", "header2"), ("PART REMOVED", "header1")], report
     assert report["text"] == []
+
+
+# `_addresses` had 8 survivors — the counters that turn a paragraph
+# offset into "table 1 r3c2". The tests above ask for ONE address, and
+# one address cannot tell a counter that starts at the wrong number from
+# one that does not: every cell of a one-cell fixture is r1c1 whatever
+# the arithmetic. These ask for the whole map.
+#
+# Four of the eight are equivalent by construction, argued rather than
+# assumed (`tools/kill_check.py`, expect_kill=False) and worth writing
+# down because each looks like a gap:
+#
+# * the CELL counter's initial value, `[tables, 0, 1]`. A table's first
+#   `w:tr` sets it to 0 before any `w:tc` is seen, so the value the stack
+#   was pushed with is never read — the ROW counter's initial value is a
+#   real check, and dies here;
+# * `tag >= "tr"` and `tag >= "tc"` for `==`. The only tags reaching
+#   those arms are `p`, `tc`, `tr`, and they sort in that order — `"p"`
+#   is below both and `"tr"` is consumed by the arm above `tc`;
+# * `tag is "p"` for `==`. CPython caches every one-character latin-1
+#   string, so a regex group of `"p"` IS the literal. `"tc"` is not, and
+#   an `is` there does die.
+
+
+def test_every_cell_of_a_table_gets_its_own_address():
+    """Rows and cells both count from ONE, the way a person reads a
+    table and the way `tables.read_all` numbers them. Starting either at
+    zero sends a reader one row up or one column left — into the header,
+    usually, which is the cell most likely to look plausible."""
+    from docxkit._compare_read import _addresses
+    xml = document(table(row("a", "b"), row("c", "d")))
+
+    got = sorted(_addresses(xml).values())
+
+    assert got == ["table 1 r1c1", "table 1 r1c2",
+                   "table 1 r2c1", "table 1 r2c2"]
+
+
+def test_a_paragraph_outside_any_table_has_no_entry():
+    """The map is only consulted for paragraphs it holds, so prose must
+    not appear in it — an address on a paragraph that has none reads as
+    a cell of whatever table happens to be open."""
+    xml = document(para(run("prose")) + table(row("a"))
+                   + para(run("more prose")))
+
+    got = _sorted_addresses(xml)
+
+    assert got == ["table 1 r1c1"], "one cell, and nothing else addressed"
+
+
+def _sorted_addresses(xml: str) -> list[str]:
+    from docxkit._compare_read import _addresses
+    return sorted(_addresses(xml).values())
+
+
+def test_the_cell_counter_RESTARTS_on_every_row():
+    """`stack[-1][2] = 0` when a row opens. Without it the second row's
+    first cell is c3 — a column that may not exist, and a reader sent to
+    a table's edge looking for a number that is in the middle."""
+    xml = document(table(row("a", "b", "c"), row("d", "e", "f")))
+
+    assert _sorted_addresses(xml) == [
+        "table 1 r1c1", "table 1 r1c2", "table 1 r1c3",
+        "table 1 r2c1", "table 1 r2c2", "table 1 r2c3"]
+
+
+def test_two_tables_are_numbered_in_DOCUMENT_order():
+    """Which is what makes the address agree with `tables.read_all` —
+    the numbering a paper's own scripts index by."""
+    xml = document(table(row("a")) + para(run("between")) + table(row("b")))
+
+    assert _sorted_addresses(xml) == ["table 1 r1c1", "table 2 r1c1"]
+
+
+def test_a_nested_table_reads_OUTER_then_inner():
+    """And the outer table's own cell keeps its address: the inner
+    table's paragraphs carry both, so a reader walks in from the outside."""
+    inner = table(row("x"))
+    xml = document("<w:tbl><w:tr><w:tc>" + para(run("lead")) + inner
+                   + "</w:tc></w:tr></w:tbl>")
+
+    assert _sorted_addresses(xml) == [
+        "table 1 r1c1", "table 1 r1c1 > table 2 r1c1"]
