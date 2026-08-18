@@ -92,6 +92,33 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### S1 a GHOST hyperlink made the repair helpers wrap the wrong span
+
+`<w:hyperlink w:anchor="X"/>` is an empty ghost Word leaves behind when
+it strips a link's contents, and `_xml._HYPERLINK_EL_RE` carries a
+`(?<!/)>` guard because pairing one with the next `</w:hyperlink>`
+downstream spanned 14 paragraphs on Parental Style. Both helpers in
+`_cite_repair` were written without that guard.
+
+`wrap_link_in_bookmark(doc, "Smith2020", "Smith2020txt", bid)` on a
+paragraph holding a ghost for Smith2020 opened the bookmark at the ghost
+and closed it at the next link's close tag — around the prose between
+them and around another work's citation. No exception, nothing in any
+report: the bookmark exists, so `audit_links` calls it healthy, and the
+back-link to it lands on the wrong sentence.
+
+`remove_outer_field` had the same span on its inner link, and kept the
+ghost alongside the real one.
+
+Both are REPAIR helpers, so the shape they are handed is by definition a
+damaged document — which is where a ghost lives.
+
+**Closed 2026-08-19** (`this commit`). The guard is on both patterns
+now. A ghost is not a link to wrap, so `wrap_link_in_bookmark` refuses
+with "no link to X", which is the honest answer: what the caller wanted
+to wrap is not there.
+
+
 ### S1 a write into an EMPTY run landed nowhere and reported success
 
 `set_run_text` matched only the paired `<w:t>…</w:t>`, and a run whose

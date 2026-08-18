@@ -2786,3 +2786,69 @@ def test_a_prose_line_read_as_an_entry_names_its_paragraph():
     (note,) = _prose_entries(entries)
 
     assert note.startswith("¶4 is filed under 'The authors declare")
+
+
+# --- the ghost hyperlink, in the repair helpers (2026-08-19) -----------
+#
+# S1. `<w:hyperlink w:anchor="X"/>` is an empty ghost Word leaves behind,
+# and `_xml._HYPERLINK_EL_RE` carries a `(?<!/)>` guard because pairing
+# one with the next `</w:hyperlink>` downstream spanned 14 paragraphs on
+# Parental Style. The two repair helpers were written without it.
+
+def test_a_GHOST_hyperlink_is_not_a_link_to_wrap():
+    """The bookmark would otherwise open at the ghost and close at the
+    next link's close tag — around the prose between them and around
+    another work's citation, with no exception and nothing in any report
+    to say so. A back-link to that anchor then lands on the wrong
+    sentence, and the audit calls it healthy because the bookmark
+    exists."""
+    from docxkit.citations import wrap_link_in_bookmark
+    from docxkit.errors import AnchorError
+
+    para = ('<w:p><w:hyperlink w:anchor="Smith2020"/>'
+            "<w:r><w:t>Prose between them.</w:t></w:r>"
+            '<w:hyperlink w:anchor="Jones2021"><w:r><w:t>Jones 2021</w:t>'
+            "</w:r></w:hyperlink><w:r><w:t> tail.</w:t></w:r></w:p>")
+
+    with pytest.raises(AnchorError, match="no link to Smith2020"):
+        wrap_link_in_bookmark(para, "Smith2020", "Smith2020txt", 9)
+
+
+def test_a_REAL_link_beside_a_ghost_still_wraps():
+    """The other half: a ghost in the paragraph must not stop the repair
+    of the link that is really there."""
+    from docxkit.citations import wrap_link_in_bookmark
+
+    para = ('<w:p><w:hyperlink w:anchor="Ghost1899"/>'
+            '<w:hyperlink w:anchor="Smith2020"><w:r><w:t>Smith 2020</w:t>'
+            "</w:r></w:hyperlink></w:p>")
+
+    out = wrap_link_in_bookmark(para, "Smith2020", "Smith2020txt", 9)
+
+    assert out.index('w:name="Smith2020txt"') < out.index('"Smith2020"')
+    assert out.index("</w:hyperlink>") < out.index("<w:bookmarkEnd")
+    assert 'w:anchor="Ghost1899"/>' in out, "the ghost is left alone"
+
+
+def test_remove_outer_field_keeps_the_REAL_inner_link_not_the_ghost():
+    """The same guard on the inner link `remove_outer_field` keeps. A
+    ghost carrying the inner anchor sits before the real one — Word
+    leaves both when it rewrites a link it has already emptied — and
+    without the guard the kept span runs from the GHOST to the real
+    link's close tag, so the unwrapped result carries an empty
+    hyperlink element beside the good one."""
+    from docxkit.citations import remove_outer_field
+
+    body = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            r'<w:r><w:instrText>HYPERLINK \l "Stale2021txt"</w:instrText>'
+            '</w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<w:hyperlink w:anchor="Fresh2022txt"/>'
+            '<w:hyperlink w:anchor="Fresh2022txt"><w:r><w:t>Head. (2022)'
+            "</w:t></w:r></w:hyperlink>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    out = remove_outer_field("<w:p>" + body + "</w:p>",
+                             "Stale2021txt", "Fresh2022txt")
+
+    assert out.count("<w:hyperlink") == 1, out
+    assert "Head. (2022)" in out

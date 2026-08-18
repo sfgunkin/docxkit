@@ -91,7 +91,14 @@ def wrap_link_in_bookmark(xml: str, anchor: str, name: str, bid: int,
     start = f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
     end = f'<w:bookmarkEnd w:id="{bid}"/>'
 
-    el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*>'
+    # `(?<!/)>` — a self-closing `<w:hyperlink w:anchor=".."/>` is an
+    # empty ghost Word leaves behind, and pairing one with the next
+    # `</w:hyperlink>` downstream wraps the bookmark around everything
+    # between: the prose, and whatever OTHER link is in it. The same
+    # guard is on `_xml._HYPERLINK_EL_RE` and for the same reason
+    # (Parental Style, 14 paragraphs). A ghost is not a link to wrap, so
+    # not matching it is the right answer and the refusal below says so.
+    el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*(?<!/)>'
                     r".*?</w:hyperlink>", re.DOTALL)
     spans = [(m.start(), m.end()) for m in el.finditer(xml)]
     spans += [(s, e) for s, e, body in field_spans(xml)
@@ -135,7 +142,7 @@ def remove_outer_field(xml: str, outer: str, inner: str) -> str:
         raise AnchorError(
             f"remove_outer_field: {outer}>{inner}: {len(spans)} fields")
     s, e, body = spans[0]
-    m = re.search(rf'<w:hyperlink\b[^>]*w:anchor="{inner}"[^>]*>'
+    m = re.search(rf'<w:hyperlink\b[^>]*w:anchor="{inner}"[^>]*(?<!/)>'
                   r".*?</w:hyperlink>", body, re.DOTALL)
     assert m is not None
     return xml[:s] + m.group(0) + xml[e:]
