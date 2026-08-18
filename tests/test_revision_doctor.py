@@ -151,3 +151,75 @@ def test_scripts_applied_is_skipped_by_DEFAULT(paper):
            'P = "Report/afi_v11.docx"\n')
 
     assert doctor(paper) == []
+
+
+# --- which names count as the declared manuscript (2026-08-19) ---------
+#
+# `_selects_declared` decides what `doctor` stays quiet about, and six
+# of revision.py's fifty survivors were in it. Everything it is asked
+# about here is either the bare name of the manuscript or a name from
+# another paper entirely — and between those two lies the case the
+# function was written for: a path that ENDS in the right file name and
+# points somewhere else.
+
+
+def test_a_path_whose_DIRECTORY_is_wrong_is_still_a_doubt(paper):
+    """`len(candidate.parts) == 1` — a BARE name is the tail of every
+    path and matches by definition; a two-part path has to match as a
+    path. Under `> 1` or `>= 1` the length test carries the decision on
+    its own and any file called `working.docx`, in any directory, reads
+    as the declared manuscript. A script pointing at a copy under
+    `backup/` is the whole reason this survey exists."""
+    _write(paper, "scripts/build.py", 'PAPER = "backup/working.docx"\n')
+
+    (doubt,) = doctor(paper)
+
+    assert doubt.text == "backup/working.docx"
+
+
+def test_a_LONGER_path_ending_in_the_right_two_parts_is_not_a_doubt(paper):
+    """`candidate.parts[-2:]`: a script that spells the project out from
+    somewhere else ("proj/revision/working.docx") is naming the declared
+    manuscript, and the last two components are what say so."""
+    _write(paper, "scripts/build.py",
+           'PAPER = "some_project/revision/working.docx"\n')
+
+    assert doctor(paper) == []
+
+
+def test_naming_the_BASELINE_is_not_a_doubt(paper):
+    """`continue`, not `break`: the loop looks at working.docx and then
+    at prev.docx, and a script naming the baseline is doing the right
+    thing — every reject-all check reads it. Under `break` the pair
+    stops at its first member and every mention of prev.docx is
+    reported, which trains a reader to skim this list."""
+    _write(paper, "scripts/check.py", 'BASE = "prev.docx"\n')
+
+    assert doctor(paper) == []
+
+
+def test_the_ATTIC_is_not_surveyed(tmp_path):
+    """It legitimately holds older manuscripts — that is what an attic
+    is. Reporting the retired names stored there is reporting the
+    project for being tidy.
+
+    Its own project, because the fixture's attic defaults to a path
+    outside the root (the paper attic on another drive), where the
+    survey would never look whatever this skip did.
+    """
+    from conftest import make_parts, para, run, write
+    source = tmp_path / "Report" / "afi_v14.docx"
+    source.parent.mkdir(parents=True)
+    write(source, make_parts(para(run("The paper."))))
+    paper = init(tmp_path / "proj", source, attic=tmp_path / "proj" / "attic")
+    stale = 'PAPER = "afi_v11.docx"\n'
+    (paper.root / "attic").mkdir(parents=True, exist_ok=True)
+    (paper.root / "attic" / "old_build.py").write_text(stale,
+                                                       encoding="utf-8")
+
+    assert doctor(paper) == []
+
+    # and the same file OUTSIDE the attic is reported, so the test above
+    # is the skip talking and not the survey missing the file
+    (paper.root / "live_build.py").write_text(stale, encoding="utf-8")
+    assert [d.text for d in doctor(paper)] == ["afi_v11.docx"]
