@@ -108,7 +108,7 @@ real survivors sat on the `f.kind == "..."` tests, which is what a branch
 nothing ever reaches looks like from outside. Writing a fixture per damage class
 surfaced the hole.
 
-**Closed 2026-08-19** (`this commit`). The unclassified finding goes to
+**Closed 2026-08-19** (`659af9b`). The unclassified finding goes to
 `investigate`, where "no mechanical reading" is the honest answer. Pinned as an
 INVARIANT — printed lines == the header count — over four fixtures, so any later
 branch that forgets its `else` fails on the arithmetic whatever its damage class
