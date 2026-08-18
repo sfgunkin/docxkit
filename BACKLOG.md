@@ -92,6 +92,29 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### S1 a write into an EMPTY run landed nowhere and reported success
+
+`set_run_text` matched only the paired `<w:t>…</w:t>`, and a run whose
+text has been deleted arrives as `<w:t/>`. The write found no `w:t` to
+rewrite, returned the fragment unchanged, and every caller reported
+success. `tables.set_cell` into a blank cell is the shape a paper script
+meets: a table typed with its value column left empty is the ordinary
+starting point for a generated table, and the call came back with the
+document exactly as it was.
+
+Found by reading, not by the sweep, the day the SAME blindness turned up
+in `package.set_core_property` (`<dc:title/>`) — and `lint`'s check 7c
+already names it for `<w:tcPr/>`. Three instances of one shape: an EMPTY
+element is self-closing, and a pattern written for the paired form calls
+it absent.
+
+**Closed 2026-08-19** (`this commit`). `set_run_text` expands the
+self-closing form before it writes, so the run keeps its properties and
+its attributes — `<w:t xml:space="preserve"/>` is what Word leaves when
+it empties a run that had edge whitespace, and that attribute is the one
+thing on the tag that must survive being filled.
+
+
 ### S2 setting a core property Word left EMPTY wrote it twice
 
 `docProps/core.xml` carries an unset property as `<dc:title/>`, and the

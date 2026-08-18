@@ -153,6 +153,12 @@ T_DEL_RE = re.compile(
 RUN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>.*?</w:r>", re.DOTALL)
 # A w:t split into (open tag, close tag) so the body can be swapped.
 T_RUN_RE = re.compile(r"(<w:t[^>]*>)[^<]*(</w:t>)")
+# …and the EMPTY form Word writes beside it. `<w:t/>` is what a run
+# whose text was deleted looks like, and the paired pattern above cannot
+# see it: `set_run_text` then rewrote nothing and reported success —
+# `tables.set_cell` into a blank cell came back with the document
+# unchanged (2026-08-19).
+_T_EMPTY_RE = re.compile(r"<w:t\b([^>]*?)\s*/>")
 # The same, keeping the text as its own group, for callers that rewrite
 # it. THE definition: hygiene and tables each had their own copy, and a
 # pattern that lives in two modules is a pattern that will disagree with
@@ -399,6 +405,10 @@ def set_run_text(xml: str, text: str) -> str:
     ``<w:t> x</w:t>`` loses that space on every Word save, which then
     reappears as a phantom author edit each round.
     """
+    # An empty `w:t` arrives self-closing, and a run with one is exactly
+    # the run a caller writes INTO — a blank table cell, a run an edit
+    # emptied. Expanding it first is what makes the write land.
+    xml = _T_EMPTY_RE.sub(r"<w:t\1></w:t>", xml)
     runs = list(T_RUN_RE.finditer(xml))
     if not runs:
         return xml

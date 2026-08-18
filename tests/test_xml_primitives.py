@@ -737,3 +737,60 @@ def test_an_element_can_be_REMOVED():
 
 def test_something_that_is_not_a_paragraph_is_left_alone():
     assert _keep("<w:r><w:t>x</w:t></w:r>") == "<w:r><w:t>x</w:t></w:r>"
+
+
+# --- the empty w:t Word writes (2026-08-19) ----------------------------
+#
+# S1: `set_run_text` matched only the paired `<w:t>…</w:t>`, and a run
+# whose text has been deleted arrives as `<w:t/>`. The write landed
+# nowhere and every caller reported success — `tables.set_cell` handed
+# back the document unchanged, which is the shape a paper script uses to
+# fill a blank cell.
+#
+# Found while reading `package.set_core_property`, which had the same
+# blindness on `<dc:title/>`, and which `lint`'s check 7c already names
+# for `<w:tcPr/>`. Three instances of one shape: an EMPTY element is
+# self-closing, and a pattern written for the paired form calls it
+# absent.
+
+
+def test_set_run_text_writes_into_an_EMPTY_run():
+    from docxkit._xml import set_run_text
+
+    out = set_run_text('<w:r><w:rPr><w:b/></w:rPr><w:t/></w:r>', "0.31")
+
+    assert out == ('<w:r><w:rPr><w:b/></w:rPr><w:t>0.31</w:t></w:r>')
+
+
+def test_an_empty_run_KEEPS_its_attributes_when_it_is_filled():
+    """`<w:t xml:space="preserve"/>` is what Word leaves when it empties
+    a run that had edge whitespace, and the attribute is the one thing
+    on the tag that must survive being filled."""
+    from docxkit._xml import set_run_text
+
+    out = set_run_text('<w:r><w:t xml:space="preserve"/></w:r>', "x")
+
+    assert out == '<w:r><w:t xml:space="preserve">x</w:t></w:r>'
+
+
+def test_set_cell_fills_a_BLANK_cell():
+    """The S1 as a caller meets it. A table typed with its value column
+    left empty is the ordinary starting point for a generated table, and
+    `set_cell` reported success on every one of them while changing
+    nothing."""
+    from docxkit import tables
+
+    doc = ("<w:document><w:body><w:tbl><w:tblPr/><w:tblGrid>"
+           '<w:gridCol w:w="900"/><w:gridCol w:w="900"/></w:tblGrid>'
+           "<w:tr><w:tc><w:p><w:r><w:t>Country</w:t></w:r></w:p></w:tc>"
+           "<w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>"
+           "<w:tr><w:tc><w:p><w:r><w:t>Poland</w:t></w:r></w:p></w:tc>"
+           "<w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t/></w:r></w:p>"
+           "</w:tc></w:tr></w:tbl></w:body></w:document>")
+    t = tables.read_all(doc)[0]
+
+    out = tables.set_cell(doc, t, 1, 1, "0.31")
+
+    assert tables.read_all(out)[0].rows == [["Country", "Value"],
+                                            ["Poland", "0.31"]]
+    assert "<w:b/>" in out, "the cell's formatting is the paper's"
