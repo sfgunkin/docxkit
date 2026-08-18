@@ -1215,3 +1215,108 @@ def test_math_numbers_a_stranded_equation_by_ITS_paragraph(monkeypatch,
     assert "¶2" in out and "¶1" not in out
     assert repr("x" * 60) in out, "the preview is cut at 60 characters"
     assert repr("x" * 61) not in out
+
+
+# `cmd_inspect` 7 survivors and `cmd_count` 4, from the same run. Both
+# are report commands whose tests asked whether a word appeared.
+
+
+def _bookmarked(tmp_path, starts: tuple[str, ...], ends: tuple[str, ...],
+                name="marks.docx"):
+    from docxkit.package import write_docx
+    body = "".join(f'<w:bookmarkStart w:id="{i}" w:name="ref{i}"/>'
+                   + run(f"Paragraph {i}.")
+                   for i in starts)
+    body += "".join(f'<w:bookmarkEnd w:id="{i}"/>' for i in ends)
+    path = tmp_path / name
+    write_docx(path, make_parts(para(body)))
+    return path
+
+
+def test_inspect_calls_bookmarks_unbalanced_on_the_IDS_not_the_TALLY(
+        monkeypatch, tmp_path, capsys):
+    """Two starts and two ends is balanced only if they are the same two.
+    A start whose end went missing while another end lost its start
+    counts 2/2 either way — and that is the shape a Compare leaves
+    behind, which is why the check is on the sorted ids and not on the
+    two lengths."""
+    high = _bookmarked(tmp_path, ("1", "2"), ("1", "3"), "high.docx")
+    low = _bookmarked(tmp_path, ("1", "3"), ("1", "2"), "low.docx")
+    matched = _bookmarked(tmp_path, ("1", "2"), ("1", "2"), "matched.docx")
+
+    # both directions: an ordering comparison in place of the inequality
+    # is right about exactly one of these two and silent about the other
+    for path in (high, low):
+        run_cli(monkeypatch, "inspect", str(path))
+        assert "bookmarks   2/2  UNBALANCED" in capsys.readouterr().out
+
+    run_cli(monkeypatch, "inspect", str(matched))
+    out = capsys.readouterr().out
+    assert "bookmarks   2/2" in out
+    assert "UNBALANCED" not in out
+
+
+def test_inspect_cuts_a_long_comment_and_a_long_revision(monkeypatch,
+                                                         tmp_path, capsys):
+    """Both previews are one line each in a list an author reads down.
+    The comment is cut at 110 characters and the revision at 100, and
+    the point of a cut is that it is the same every time — a report
+    whose lines wrap is a report nobody reads twice."""
+    from conftest import comment, ins
+
+    from docxkit.package import write_docx
+    long_comment = "C" * 200
+    long_revision = "R" * 200
+    parts = make_parts(para(ins(long_revision)),
+                       comment_items=(comment(1, long_comment),))
+    path = tmp_path / "long.docx"
+    write_docx(path, parts)
+
+    run_cli(monkeypatch, "inspect", str(path), "--comments", "--revisions")
+    out = capsys.readouterr().out
+
+    assert "C" * 110 in out and "C" * 111 not in out
+    assert "[ins] " + repr("R" * 100) in out
+    assert "R" * 101 not in out
+
+
+def _counted(tmp_path, words: int, name="words.docx"):
+    from docxkit.package import write_docx
+    body = para(run(" ".join(f"w{i}" for i in range(words))))
+    path = tmp_path / name
+    write_docx(path, make_parts(body))
+    return path
+
+
+def test_count_prints_EVERY_bucket_and_the_total(monkeypatch, tmp_path,
+                                                 capsys):
+    """The buckets are the report: a journal's cap is phrased in some of
+    them and not others, so which bucket a word landed in is the whole
+    question. A loop that runs zero times still prints a total, and the
+    total is the number nobody is arguing about."""
+    run_cli(monkeypatch, "count", str(_counted(tmp_path, 12)))
+    out = capsys.readouterr().out
+
+    assert "prose            12" in out
+    assert "references        0" in out, "an empty bucket is still reported"
+    assert "total            12" in out
+
+
+def test_count_is_over_a_limit_only_when_it_EXCEEDS_it(monkeypatch, tmp_path,
+                                                       capsys):
+    """`counted > limit`, not `>=`: a document of exactly twelve words
+    meets a twelve-word cap, and a paper trimmed to the number in the
+    call for papers must not fail the check that told it to trim.
+
+    The overage is a subtraction — `12 ^ 5` is 9 and `12 >> 5` is 0,
+    both of which read as a plausible number of words."""
+    path = _counted(tmp_path, 12)
+
+    code, _ = run_cli(monkeypatch, "count", str(path), "--limit", "12")
+    assert code == 0, capsys.readouterr().out
+    assert "OVER" not in capsys.readouterr().out
+
+    code, _ = run_cli(monkeypatch, "count", str(path), "--limit", "5")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "OVER the 5-word limit by 7" in out
