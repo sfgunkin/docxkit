@@ -192,3 +192,39 @@ def test_italicize_across_FRAGMENTED_runs_styles_every_piece():
     italic = "".join(text_of(m.group(0)) for m in RUN_RE.finditer(out)
                      if "<w:i/>" in m.group(0))
     assert italic == "Journal of Ageing"
+
+
+# --- offsets that are not run boundaries (2026-08-19) ------------------
+#
+# Every `_outside` fixture above asks about a position that IS a run
+# edge — `runs[0].end()`, `runs[1].start()` — and both of its tests are
+# `<=` and `>=` against a position that satisfies them by equality. A
+# position strictly INSIDE a run is the ordinary case: an insertion
+# offset is a visible-text position and has nothing to do with where
+# Word happened to split its runs.
+
+def test_outside_answers_the_END_from_INSIDE_the_last_run():
+    """`r.end() <= pos`, not `== pos`. Nothing shown follows the offset,
+    so the same place on the page is available after the whole element —
+    and no run ends exactly there, which is what `<=` is for."""
+    p = "<w:p>" + _styled("Kan") + _styled("bur") + "</w:p>"
+    runs = _runs(p)
+    span = (runs[0].start(), runs[-1].end())
+
+    inside_last = runs[1].start() + 3
+
+    assert _outside(runs, span, inside_last) == span[1]
+
+
+def test_outside_answers_NONE_from_inside_a_MIDDLE_run():
+    """`r.start() >= pos`, not `== pos`. A run still to come shows text
+    after the offset, so the position cannot move outside the element —
+    the refusal — and no run starts exactly at it."""
+    p = ("<w:p>" + _styled("Kan") + _styled("bur") + _styled(" (2007)")
+         + "</w:p>")
+    runs = _runs(p)
+    span = (runs[0].start(), runs[-1].end())
+
+    inside_middle = runs[1].start() + 3
+
+    assert _outside(runs, span, inside_middle) is None
