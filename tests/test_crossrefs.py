@@ -978,3 +978,60 @@ def test_a_caption_in_the_FIRST_paragraph_still_finds_its_own_bookmarks():
 
     assert report.linked == ["Table1"]
     assert "retargeted legacy anchor 'tbl1_caption'" in report.notes["Table1"]
+
+
+# `_run_parts` had 11 survivors — the three offsets that cut one run
+# into "before the label", "the label" and "after it". The docstring
+# names what they cost: a caption stored as two `w:t` elements came back
+# reading "Table 1." with the title gone, and no text-level check shows
+# it, because the linker is not supposed to change text at all.
+
+
+def _parses(xml: str) -> None:
+    """The three fragments have to be well-formed XML, which is what the
+    open tag's own slice and the body's end offset decide: one character
+    either way emits `<w:r ...><` or a run that closes twice, and every
+    text-level assertion in this file still passes over it."""
+    from lxml import etree
+    ns = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+          '2006/main"')
+    etree.fromstring(xml.replace("<w:document>", f"<w:document {ns}>", 1)
+                     .encode("utf-8"))
+
+
+def test_splitting_a_run_keeps_its_attributes_properties_and_SIBLINGS():
+    """Everything the run carried has to ride out on one of the three
+    fragments: the open tag with its `w:rsidR`, the `w:rPr` on each
+    piece, and — the finding this function exists for — the SECOND
+    `w:t`, which sits after the matched one and belongs to the trailing
+    fragment."""
+    from docxkit import text_of
+    rich = ('<w:r w:rsidR="00AB12CD">'
+            '<w:rPr><w:i/><w:lang w:val="ru-RU"/></w:rPr>'
+            '<w:t xml:space="preserve">As Table 1 shows, </w:t>'
+            "<w:t>the gap is wide.</w:t></w:r>")
+    xml = doc(para(rich), para(run("Table 1. Employment by age")))
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table1"]
+    _parses(out)
+    mention = paragraph_holding(out, "the gap is wide.")
+    assert text_of(mention) == "As Table 1 shows, the gap is wide."
+    assert mention.count('w:rsidR="00AB12CD"') == 3, "one per fragment"
+    assert mention.count("<w:lang w:val=\"ru-RU\"/>") == 3
+    assert "<w:t>the gap is wide.</w:t>" in mention, "the second w:t"
+    assert mention.count('<w:rStyle w:val="Hyperlink"/>') == 1
+
+
+def test_the_label_fragment_takes_the_hyperlink_style_FIRST():
+    """CT_RPr is a sequence and `rStyle` opens it, so the style goes
+    ahead of what the run already declared rather than beside it."""
+    rich = ('<w:r><w:rPr><w:i/></w:rPr>'
+            "<w:t>As Table 1 shows.</w:t></w:r>")
+
+    out, _ = crossrefs.link(doc(para(rich),
+                                para(run("Table 1. Employment by age"))))
+
+    assert ('<w:rPr><w:rStyle w:val="Hyperlink"/><w:i/></w:rPr>'
+            in paragraph_holding(out, "As Table 1 shows."))
