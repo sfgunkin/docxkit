@@ -1507,3 +1507,51 @@ def test_a_json_report_keeps_the_CHARACTERS_the_document_used(monkeypatch,
     assert "Уточните, пожалуйста — источник?" in raw
     assert "\\u" not in raw, "escaped, and unreadable to both audiences"
     assert raw.splitlines()[1].startswith("  {"), "indent=2"
+
+
+# --- the line the staleness report prints (2026-08-19) -----------------
+#
+# `_summarize` turns a list of diverged part names into one line, and
+# its only test asks a seven-name list to end in "and 3 more". Every
+# other decision in it — how many names are shown before the count, what
+# happens to a list SHORTER than the cap, and whether a directory
+# holding one part is folded — was free. cli measured 8.6 % and six of
+# its 39 survivors were here.
+
+def test_a_SHORT_list_of_parts_prints_in_full():
+    """`len(out) <= keep`. Fewer names than the cap is the ordinary
+    case: two or three parts diverge and a person reads all of them.
+    Under `is` in place of `<=` the short list takes the truncating
+    branch instead, and the line ends "and -1 more"."""
+    from docxkit.cli import _summarize
+
+    assert _summarize(["a.xml", "b.xml", "c.xml"]) == "a.xml, b.xml, c.xml"
+
+
+def test_exactly_FOUR_names_are_shown_before_the_count():
+    """`keep: int = 4` and `out[:keep]`: the cap is what makes this one
+    line rather than a paragraph, and the number after it has to be what
+    is missing from the line — `len(out) - keep`, which for a
+    seven-name list is `7 ^ 4` as well, and for a ten-name list is not.
+    """
+    from docxkit.cli import _summarize
+
+    line = _summarize([f"part{i}.xml" for i in range(10)])
+
+    assert line == ("part0.xml, part1.xml, part2.xml, part3.xml, "
+                    "and 6 more")
+
+
+def test_a_directory_holding_ONE_part_is_not_folded_into_a_count():
+    """`if n > 1`: folding exists because twelve embedded fonts from one
+    tick of Word's box filled the first report. A directory with a
+    single part in it is that part — printed as "word/settings.xml (1
+    parts)" it is both wrong English and less information than the name
+    it replaced, and under `>= 1` the part appears twice, once each
+    way."""
+    from docxkit.cli import _summarize
+
+    line = _summarize(["word/settings.xml", "word/fonts/f1.odttf",
+                       "word/fonts/f2.odttf"])
+
+    assert line == "word/fonts/ (2 parts), word/settings.xml"
