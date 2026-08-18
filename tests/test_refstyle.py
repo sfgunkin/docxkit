@@ -1034,3 +1034,109 @@ def test_an_empty_report_counts_nothing():
     been audited."""
     assert RefStyleReport().format().startswith(
         "0 reference entries, 0 works cited in text")
+
+
+# --- the second refstyle pass, from the re-measurement ------------------
+#
+# 44.1 % -> 8.9 % after the two rounds above, and what is left clusters
+# on the CONTINUATION-entry rule: three conditions that only ever fired
+# together, so a fixture where one holds and the others do not tells the
+# `and` from the `or` and the `<` from the `<=`.
+
+
+def _same_author(second: str, *, cite: str = "(WHO 2019) and (WHO 2018)"
+                 ) -> str:
+    return (para(run(f"Cited {cite}."))
+            + para(run("References"))
+            + para(run("WHO. (2019). "), irun("Estimates"), run(". Geneva."))
+            + para(run(second), irun("Network"), run(". Geneva.")))
+
+
+def test_an_entry_that_SPELLS_ITS_AUTHOR_OUT_is_not_a_year_order_issue():
+    """`and r.text.lstrip()[:1] in "—–-_"` — a CONTINUATION entry only.
+    A shared lead surname over different co-author lists orders by
+    co-author, not by year (Alkire & Foster after Alkire, Roche et al.),
+    and flagging those buried the real findings on API10.
+
+    Two mutants live in that condition and this fixture is both their
+    counter-example: `or` in place of `and` flags every same-author pair
+    whose years run backwards, and `[:0]` — the empty string, which is
+    "in" every string — flags them too."""
+    body = _same_author("WHO. (2018). ")
+
+    report = audit(make_parts(body))
+
+    assert not [i for i in report.issues if i.code == "year-order"]
+
+
+def test_two_entries_of_the_SAME_year_are_not_out_of_order():
+    """`r.year[:4] < prev.year[:4]`, not `<=`: an author with two works
+    in one year is the ordinary case — that is what 2013a and 2013b are
+    for — and the pair is reported by `ambiguous-cite`, which asks for
+    the suffixes, not by `year-order`, which would ask the author to
+    swap them."""
+    body = _same_author("———. (2019). ",
+                        cite="(WHO 2019) and (WHO 2019)")
+
+    report = audit(make_parts(body))
+
+    assert not [i for i in report.issues if i.code == "year-order"]
+
+
+def test_a_SUFFIXED_year_is_compared_on_its_first_four_characters():
+    """`r.year[:4]`: "2019a" and "2019b" are the same YEAR, and this
+    rule is about years. Suffixes are assigned in citation order as
+    often as alphabetically, so a list running 2019b then 2019a is not
+    an author whose works are out of order — under `[:5]` the letters
+    join the comparison and it is reported as one."""
+    body = (para(run("Cited (WHO 2019b) and (WHO 2019a)."))
+            + para(run("References"))
+            + para(run("WHO. (2019b). "), irun("Estimates"), run(". Geneva."))
+            + para(run("———. (2019a). "), irun("Network"), run(". Geneva.")))
+
+    report = audit(make_parts(body))
+
+    assert not [i for i in report.issues if i.code == "year-order"]
+
+
+def test_the_year_order_finding_quotes_the_first_fifty_characters():
+    """The snippet is what a person finds the entry by, and a
+    continuation entry begins with a dash — the fifty characters after
+    it are the only thing telling one from the next."""
+    long_second = ("———. (2018). A very long entry title that runs past "
+                   "the fifty-character cut by a good margin. ")
+    body = (para(run("Cited (WHO 2019) and (WHO 2018)."))
+            + para(run("References"))
+            + para(run("WHO. (2019). "), irun("Estimates"), run(". Geneva."))
+            + para(run(long_second), irun("Network"), run(". Geneva.")))
+
+    (order,) = [i for i in audit(make_parts(body)).issues
+                if i.code == "year-order"]
+
+    assert order.snippet == ("———. (2018). A very long entry title that "
+                             "runs pas")
+    assert len(order.snippet) == 50
+    assert "(2018) follows (2019)" in order.message
+
+
+def test_a_DOI_token_is_exempt_from_the_hyphen_rule_on_its_own():
+    """`"http" in low OR "doi" in low OR token.startswith("10.")` — three
+    independent marks, and the fixtures had only the first two together.
+    A bare DOI ("10.1257/aer.20-1234") carries neither word."""
+    doi_only = ('Smith, J. (2020). "Title." Journal, 1(1): 1–2. '
+                "doi:10.1257/aer.20-1234")
+    bare = ('Smith, J. (2020). "Title." Journal, 1(1): 1–2. '
+            "10.1257/aer.20-1234")
+
+    assert "en-dash" not in _codes(check_entry(doi_only))
+    assert "en-dash" not in _codes(check_entry(bare))
+
+
+def test_the_year_the_refusal_QUOTES_is_the_year_itself():
+    """`m.group(2)` — the year, not the parenthesis either side of it.
+    The message shows the corrected form, and a reader checks it against
+    the entry in front of them."""
+    (issue,) = [i for i in check_entry('Smith, J. 2020. "Title." J, 1: 1.')
+                if i.code == "year-parens"]
+
+    assert issue.message == 'the year takes parentheses: "(2020)."'
