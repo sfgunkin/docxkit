@@ -2671,3 +2671,98 @@ def test_a_long_hyperlink_LABEL_is_cut_at_ninety_characters(tmp_path):
     assert only["label"] == long_label[:90]
     assert len(only["label"]) == 90
     assert only["n"] == 1
+
+
+# --- the leftovers, and where they are cut (2026-08-19) ----------------
+#
+# `structure` pairs what was deleted with what was inserted and calls
+# the close matches MOVES. Its fixtures each have one of each, so the
+# inner loop's `break` — one insert per delete — never had to hold, and
+# the three extracts it prints (90 characters for a move, 110 for a
+# delete or an insert) were read by nothing.
+
+def _report():
+    from docxkit._compare_diff import Report
+    return Report(structure=[], text=[], glyph=[], formula=[],
+                  formula_glyph=[], formula_format=[], format=[],
+                  hyperlinks=[], integrity=[], stripped_fields=[],
+                  comments=[])
+
+
+def _walk(left: list[str], right: list[str]):
+    from docxkit._compare_diff import compare_paras
+    report = _report()
+    compare_paras([_para(t) for t in left], [_para(t) for t in right],
+                  report)
+    return report
+
+
+LONG = ("The decomposition in this section is sensitive to the ranking of "
+        "its components, which the appendix sets out in full, with the "
+        "standard errors alongside.")
+
+
+def test_one_deleted_paragraph_matches_ONE_move_not_two():
+    """`break` after a match: a paragraph moved once is one finding. Two
+    near-identical destinations is the ordinary case in a reordered
+    section — a heading repeated, a caption reused — and reporting the
+    same deletion as two moves reads as content duplicated."""
+    report = _walk([LONG, "Untouched."],
+                   ["Untouched.", LONG + " One.", LONG + " Two."])
+
+    moves = [s for s in report["structure"] if s["type"] == "MOVE"]
+
+    assert len(moves) == 1
+
+
+def test_a_MOVE_quotes_ninety_characters_of_what_moved():
+    """The move is reported against the deletion, so the extract has to
+    name the paragraph as it WAS — that is the one a person searches the
+    old document for."""
+    report = _walk([LONG, "A.", "B."], ["A.", "B.", LONG + " With a tail."])
+
+    (move,) = [s for s in report["structure"] if s["type"] == "MOVE"]
+
+    assert move["text"] == LONG[:90] and len(move["text"]) == 90
+
+
+def test_a_DELETE_and_an_INSERT_quote_a_hundred_and_ten():
+    """More than a move, because there is no counterpart to compare
+    against: the whole finding is this text, and 110 characters is what
+    makes an unfamiliar paragraph recognisable."""
+    other = ("A wholly unrelated paragraph about something else entirely, "
+             "added in this round and long enough to be cut by the same "
+             "hundred and ten characters.")
+    report = _walk([LONG, "A."], ["A.", other])
+
+    kinds = {s["type"]: s for s in report["structure"]}
+
+    assert kinds["DELETE"]["text"] == LONG[:110]
+    assert kinds["INSERT"]["text"] == other[:110]
+    assert len(kinds["DELETE"]["text"]) == len(kinds["INSERT"]["text"]) == 110
+
+
+def test_an_EQUAL_block_after_an_insertion_pairs_the_right_paragraphs():
+    """`b[j1 + (k - i1)]` — the partner's index, measured from where the
+    equal block starts on each side. With a paragraph inserted at the
+    top the two offsets differ, and `|` in place of `+` pairs paragraph
+    2 with paragraph 1: every later finding is then reported against the
+    wrong text, and a document with one added heading reads as rewritten
+    throughout."""
+    same = ["First paragraph, unchanged.", "Second paragraph, unchanged.",
+            "Third paragraph, unchanged."]
+    report = _walk(same, ["A new opening paragraph.", *same])
+
+    assert report["text"] == [], "nothing but the insertion changed"
+    inserts = [s for s in report["structure"] if s["type"] == "INSERT"]
+    assert [s["text"] for s in inserts] == ["A new opening paragraph."]
+
+    # and the same block after a REPLACE, where the equal run starts at
+    # 1 on BOTH sides: `k >> i1` is 0, 1, 1 where `k - i1` is 0, 1, 2,
+    # so the last two paragraphs pair with one and the same partner
+    edited = _walk(["The opening, as it was.", *same],
+                   ["The opening, rewritten.", *same])
+
+    assert [t["context"] for t in edited["text"]] == [
+        "The opening, as it was."], "one edit, and it is the first"
+    assert not edited["structure"] and not edited["glyph"]
