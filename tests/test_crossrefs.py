@@ -1035,3 +1035,60 @@ def test_the_label_fragment_takes_the_hyperlink_style_FIRST():
 
     assert ('<w:rPr><w:rStyle w:val="Hyperlink"/><w:i/></w:rPr>'
             in paragraph_holding(out, "As Table 1 shows."))
+
+
+# Six of `link`'s survivors are its `continue`s mutated to `break`. Every
+# fixture in this file has one caption, or a set where the first is the
+# one that links — so the loop never had to carry on past a caption it
+# declined. A paper has fifteen exhibits and any of them can be the one
+# nobody mentions.
+
+
+def _numbered_caption(n: int, kind: str = "Table") -> str:
+    return para(run(f"{kind} {n}. The {kind.lower()} {n} caption"))
+
+
+def _numbered_mention(n: int, kind: str = "Table") -> str:
+    return para(run(f"As {kind} {n} shows, the gap is wide."))
+
+
+def test_a_caption_NOBODY_mentions_does_not_stop_the_ones_after_it():
+    """`continue`, not `break`. Table 1 has no mention anywhere, and
+    under `break` Table 2 and Table 3 are never looked at — a report
+    that reads "1 unmentioned" on a paper with two unlinked exhibits and
+    no sign that the pass stopped early."""
+    xml = doc(_numbered_caption(1),
+              _numbered_mention(2), _numbered_caption(2),
+              _numbered_mention(3), _numbered_caption(3))
+
+    _out, report = crossrefs.link(xml)
+
+    assert report.no_mention == ["Table1"]
+    assert report.linked == ["Table2", "Table3"]
+
+
+def test_a_DUPLICATE_caption_does_not_stop_the_ones_after_it():
+    """Two exhibits numbered the same is an ordinary manuscript error —
+    a copied block, usually — and the note says only the first is
+    linked. The pass still has the rest of the paper to do."""
+    xml = doc(_numbered_mention(1), _numbered_caption(1), _numbered_caption(1),
+              _numbered_mention(2), _numbered_caption(2))
+
+    _out, report = crossrefs.link(xml)
+
+    assert "duplicate caption" in report.notes["Table1"]
+    assert report.linked == ["Table1", "Table2"]
+
+
+def test_a_caption_ALREADY_linked_does_not_stop_the_ones_after_it():
+    """Re-running the linker is the ordinary case — it is how a paper
+    checks the job is done — and the second run must still reach the
+    exhibits added since."""
+    first, _ = crossrefs.link(doc(_numbered_mention(1), _numbered_caption(1)))
+    added = _numbered_mention(2) + _numbered_caption(2)
+    xml = first.replace("</w:body>", added + "</w:body>")
+
+    _out, report = crossrefs.link(xml)
+
+    assert report.already_linked == ["Table1"]
+    assert report.linked == ["Table2"]
