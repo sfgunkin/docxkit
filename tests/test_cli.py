@@ -1128,3 +1128,90 @@ def test_pages_sheets_prints_the_table_without_gating(
     assert "2 sheet(s)" in out
     assert "prints    -" in out
     assert "**" not in out
+
+
+# --- what the cli mutation run of 2026-08-18 found ------------------------
+#
+# cli.py: 17.7 % real survival at 100 % line coverage, and `cmd_math` was
+# the second-largest cluster with 11. Every test above asks for the exit
+# code and one line of the output; the REPORT — which kinds it groups
+# into, in what order, the vocabulary line, and which paragraph a
+# stranded equation is in — was free.
+
+
+def _math_doc(tmp_path, body, name="math.docx"):
+    from docxkit.package import write_docx
+    path = tmp_path / name
+    write_docx(path, make_parts(body))
+    return path
+
+
+OMATH = "<m:oMath><m:r><m:t>θ</m:t></m:r></m:oMath>"
+
+
+def test_math_groups_its_findings_by_kind_and_prints_only_what_it_found(
+        monkeypatch, tmp_path, capsys):
+    """`f.kind == kind` decides which findings land under which heading:
+    `!=` puts all of them under the first, `>` under whichever heading
+    sorts lowest, and `is` loses the two kinds whose names hold a space
+    and are therefore not interned. The headings a reader gets are the
+    index to the whole report."""
+    path = _math_doc(tmp_path, (
+        para(OMATH)
+        + para(run("The parameter θ is estimated on x₁ here."))
+        + para(run("A later sentence mentions θ again."))))
+
+    code, _ = run_cli(monkeypatch, "math", str(path))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "TYPED SCRIPT (1)" in out
+    assert "SYMBOL (2)" in out
+    assert "SPLIT EXPRESSION" not in out, "no finding of that kind"
+    assert "INTERVAL" not in out
+    assert out.index("TYPED SCRIPT") < out.index("SYMBOL"), \
+        "the order is the one the report declares"
+    assert "'₁'" in out and "'θ'" in out
+    assert "3 finding(s)" in out
+
+
+def test_math_names_the_vocabulary_the_document_TYPESETS(monkeypatch,
+                                                         tmp_path, capsys):
+    """The header answers "what does this paper set as maths at all",
+    which is what makes the findings below it readable. Under `and` in
+    place of `or`, a document with symbols reports that it has none."""
+    path = _math_doc(tmp_path, para(OMATH) + para(run("Prose.")))
+
+    run_cli(monkeypatch, "math", str(path))
+    out = capsys.readouterr().out
+
+    assert "(math vocabulary: θ)" in out
+
+
+def test_math_says_when_a_document_typesets_NOTHING(monkeypatch, tmp_path,
+                                                    capsys):
+    path = _math_doc(tmp_path, para(run("Plain prose only.")), "plain.docx")
+
+    run_cli(monkeypatch, "math", str(path))
+    out = capsys.readouterr().out
+
+    assert "math vocabulary: none — the document typesets no symbols" in out
+
+
+def test_math_numbers_a_stranded_equation_by_ITS_paragraph(monkeypatch,
+                                                           tmp_path, capsys):
+    """`enumerate(..., 1)` — Word counts the first paragraph 1, and the
+    number is how an author finds the equation to promote. The equation
+    is in the SECOND paragraph here, which is the only way to tell a
+    wrong start from a wrong index."""
+    long_eq = "<m:oMath><m:r><m:t>" + "x" * 100 + "</m:t></m:r></m:oMath>"
+    path = _math_doc(tmp_path, para(run("Prose first.")) + para(long_eq),
+                     "stranded.docx")
+
+    run_cli(monkeypatch, "math", str(path))
+    out = capsys.readouterr().out
+
+    assert "1 display equation(s), 1 still in INLINE mode" in out
+    assert "¶2" in out and "¶1" not in out
+    assert repr("x" * 60) in out, "the preview is cut at 60 characters"
+    assert repr("x" * 61) not in out
