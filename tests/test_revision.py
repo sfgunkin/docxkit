@@ -1533,3 +1533,47 @@ def test_an_INSERTED_run_reports_an_empty_left_side():
     runs = glyph_runs("ab", "aXb")
 
     assert runs[0].startswith("at 1: '' -> 'X' U+0058")
+
+
+# --- what the revision.py run of 2026-08-18 found -----------------------
+#
+# `_shown` had 4 survivors, all on its two thresholds. It is the half of
+# a glyph report a reader acts on — the characters themselves, and their
+# code points when the run is short enough for them to mean anything —
+# and the tests above only ever gave it a one-character run, where every
+# threshold agrees.
+
+
+def test_a_run_is_quoted_whole_at_TWELVE_characters_and_cut_after():
+    """Twelve is what fits beside the offset and the context on one
+    line, and the cut has to be visible: a run quoted whole that is not
+    whole tells a reader the difference is shorter than it is."""
+    def quoted(n: int) -> str:
+        was = "a" * n + " tail"
+        return glyph_runs(was, was.upper())[0]
+
+    assert "'" + "a" * 12 + "'" in quoted(12), "twelve is not cut"
+    assert "'" + "a" * 12 + "...'" in quoted(13)
+    assert "a" * 13 not in quoted(13)
+
+
+def test_the_CODE_POINTS_are_printed_only_for_a_short_run():
+    """A hyphen-minus and a MINUS SIGN print identically at 10pt, so for
+    a run of one or two characters the code points ARE the finding. Past
+    four they are a wall of hex either side of an arrow, and the
+    characters are legible on their own."""
+    four = glyph_runs("abcd tail", "wxyz tail")[0]
+    five = glyph_runs("abcde tail", "vwxyz tail")[0]
+
+    assert "U+0061 U+0062 U+0063 U+0064" in four
+    assert "U+0077" in four, "and for the batch's side too"
+    assert "U+" not in five
+
+
+def test_nothing_is_spelled_out_for_a_run_with_no_characters():
+    """`0 < len(cut)`: an insertion has an empty side, and `U+` with
+    nothing after it is a report of a character that is not there."""
+    (run,) = glyph_runs("the value is 0.15", "the value is − 0.15")
+
+    assert "'' ->" in run, "the empty side spells out nothing at all"
+    assert run.count("U+") == 2, "and the two characters added do"
