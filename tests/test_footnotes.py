@@ -625,3 +625,78 @@ def test_the_run_IMMEDIATELY_after_an_equation_is_still_sized():
     assert not report.ok
     assert [o.id for o in report.outliers] == ["4"]
     assert "12pt" in str(report.outliers[0])
+
+
+# --- what the footnotes run of 2026-08-18 found -------------------------
+#
+# 15 survivors in `SizeReport.format`, and ten of them on the ONE
+# expression that turns the marks' house size from half-points into
+# points. The body half of the same line is asserted twice over,
+# half-point included; the mark half was only ever checked for the words
+# "reference marks", so `/ 2` could be `// 2`, `+ 2`, `& 2` or `>> 2`
+# and every test still passed.
+
+
+def _mark(sz: str = "") -> str:
+    return ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+            f'{sz}</w:rPr><w:footnoteRef/></w:r>')
+
+
+def test_the_MARK_house_size_is_printed_in_points_and_halves():
+    """Word records half-points. The marks' line is the one a paper acts
+    on — `set_font` writes the body, and a mark that disagrees is
+    usually a paragraph that lost its style — so the number in it has to
+    be the number to type. 21 half-points is 10.5pt, and every mutant of
+    the arithmetic prints something that looks like a size."""
+    house, odd = '<w:sz w:val="21"/>', '<w:sz w:val="25"/>'
+    report = footnotes.sizes(part(
+        note(2, _mark(house) + run("a", house)),
+        note(3, _mark(house) + run("b", house)),
+        note(4, _mark(odd) + run("c", house))))
+
+    line = report.format()
+
+    assert "reference marks: house 10.5pt" in line
+    assert "1 disagreeing" in line
+
+
+def test_the_marks_line_says_the_house_came_from_a_STYLE():
+    """Which is a claim about confidence: a styled mark is well-formed
+    however few of them there are, and that sentence is what stops a
+    paper acting on the majority — the Parental Style report was exactly
+    backwards, and flagged the two correct notes."""
+    styles = ('<w:styles><w:docDefaults><w:rPrDefault><w:rPr>'
+              '<w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>'
+              '<w:style w:type="paragraph" w:styleId="FootnoteText">'
+              f'<w:rPr>{SZ10}</w:rPr></w:style></w:styles>')
+
+    def styled(nid: int) -> str:
+        return (f'<w:footnote w:id="{nid}"><w:p><w:pPr><w:pStyle '
+                f'w:val="FootnoteText"/></w:pPr>{MARK}{run("a", SZ10)}'
+                "</w:p></w:footnote>")
+
+    bare = (f'<w:footnote w:id="9"><w:p>{MARK}{run("b", SZ10)}'
+            "</w:p></w:footnote>")
+
+    line = footnotes.sizes(part(styled(2), bare), styles_xml=styles).format()
+
+    assert "reference marks: house 10pt" in line
+    assert "resolve through a STYLE" in line
+    assert "commonest value" not in line
+
+
+def test_the_marks_line_says_when_it_is_only_a_MAJORITY():
+    """No mark in the document resolves through a style, so there is
+    nothing better to go on than the count — and the report says so
+    rather than letting a majority read as a standard."""
+    house, odd = '<w:sz w:val="20"/>', '<w:sz w:val="24"/>'
+    report = footnotes.sizes(part(
+        note(2, _mark(house) + run("a", house)),
+        note(3, _mark(house) + run("b", house)),
+        note(4, _mark(odd) + run("c", house))))
+
+    line = report.format()
+
+    assert "reference marks: house 10pt" in line
+    assert "commonest value" in line
+    assert "resolve through a STYLE" not in line
