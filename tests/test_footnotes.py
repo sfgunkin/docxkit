@@ -700,3 +700,20 @@ def test_the_marks_line_says_when_it_is_only_a_MAJORITY():
     assert "reference marks: house 10pt" in line
     assert "commonest value" in line
     assert "resolve through a STYLE" not in line
+
+
+def test_a_report_BUILT_BY_HAND_prints_rather_than_raising():
+    """`SizeReport` is a public dataclass and `format()` a public method.
+    Through `sizes()` the mark house is never None while there are mark
+    outliers — the two mutants in that arm are unreachable that way, and
+    the arm stays for this: an `assert` in its place raised for a caller
+    that filled the list itself, and under `python -O` it was stripped
+    and left `None / 2`."""
+    report = footnotes.SizeReport()
+    report.mark_outliers = [footnotes.SizeOutlier("2 (reference mark)",
+                                                  (24,), "x", "direct")]
+
+    line = report.format()
+
+    assert "reference marks: house none stated" in line
+    assert "1 disagreeing" in line

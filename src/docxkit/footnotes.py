@@ -384,12 +384,15 @@ class SizeReport:
                 f"{len(self.outliers)} disagreeing")
         lines = [head] + [f"  {o}" for o in self.outliers]
         if self.mark_outliers:
-            # An outlier is a mark that differs FROM `mark_house`, so the
-            # list is empty whenever the house is None — the "none
-            # stated" arm this used to carry could not be reached, and
-            # two mutants lived in it.
-            assert self.mark_house is not None
-            mark = f"{self.mark_house / 2:g}pt"
+            # An outlier is a mark that differs FROM `mark_house`, so
+            # through `sizes()` the house is never None here and two
+            # mutants live in the other arm. It stays anyway: this is a
+            # public dataclass with public fields and `format()` is a
+            # public method, so a caller that fills the list itself gets
+            # a report rather than an exception — and an `assert` here
+            # would be stripped by `python -O` and leave `None / 2`.
+            mark = ("none stated" if self.mark_house is None
+                    else f"{self.mark_house / 2:g}pt")
             how = (" (the marks that resolve through a STYLE, whatever "
                    "their number — the styled ones are the well-formed "
                    "ones)" if self.mark_house_from == "style"
