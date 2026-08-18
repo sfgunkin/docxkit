@@ -1773,3 +1773,48 @@ def test_a_loss_PRINTS_the_first_seventy_characters_of_what_went():
     assert printed == (
         "footnote 'The normalisation is by the sample mean rather than by "
         "the base year, '")
+
+
+def test_the_printed_token_is_the_first_SIXTY_characters_of_the_key(project):
+    """The refusal prints a token a person can paste back, and it has to
+    be short enough to read on the line it shares with the loss. The
+    test above reads the token out of the message and feeds it back,
+    which is self-consistent whatever the cut is — this one says where
+    the cut is."""
+    write(project.prev, _with_note(_NOTE.format("–6")))
+    write(project.working, make_parts(para(run("body")),
+                                      footnotes=notes("footnotes")))
+
+    with pytest.raises(HandbackLoss) as exc:
+        revision.baseline(project)
+
+    shown = re.search(r"--accept-loss '([^']+)'", str(exc.value))
+    assert shown is not None, str(exc.value)
+    assert shown.group(1) == (
+        "footnote:For interpretability, empirical LII and LBI values ")
+
+
+@pytest.mark.parametrize("token", ["aaa-not-this-loss", "zzz-not-this-loss"])
+def test_an_exemption_that_names_NOTHING_does_not_pass_a_real_loss(
+        project, token):
+    """`token == candidate or candidate.startswith(token) or
+    token.startswith(candidate)` — three ways of matching, and the first
+    is subsumed by the other two. What it must never be is an ORDER
+    comparison: under `>=` any token sorting above the loss's key names
+    it and under `<=` any token below does, so `--accept-loss` with a
+    typo in it acknowledges a lost footnote and the baseline goes
+    through. Both directions, because one wrong token can only be on one
+    side of the key.
+
+    A stale exemption that reads as a live one is the failure this
+    refusal exists to prevent, in its worst form: the flag is misspelled
+    and the gate opens."""
+    write(project.prev, _with_note(_NOTE.format("–6")))
+    write(project.working, make_parts(para(run("body")),
+                                      footnotes=notes("footnotes")))
+    before = project.prev.read_bytes()
+
+    with pytest.raises(HandbackLoss):
+        revision.baseline(project, accept_loss=(token,))
+
+    assert project.prev.read_bytes() == before
