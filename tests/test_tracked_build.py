@@ -13,6 +13,7 @@ untouched when one fails.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import tempfile
 import zipfile
 from pathlib import Path
@@ -1459,3 +1460,113 @@ def test_a_revision_ON_the_equation_boundary_is_OF_the_equation():
     assert not doc.overhangs_left.accepted, "it starts in the prose"
     assert not doc.overhangs_right.accepted, "it ends in the prose"
     assert outcome == (2, 2)          # accepted, kept
+
+
+# --- the report itself, from the same re-measurement --------------------
+#
+# `format` 9 survivors, `__init__` 8, `mark` and `seconds` 5 between
+# them, `__str__` 4. This is the text a paper's author reads to decide
+# whether a redline is worth opening, and the numbers in it were free:
+# every counter's initial 0, the cap on the two lists, the "and N more"
+# arithmetic, and every phase duration.
+
+
+def test_a_FRESH_report_counts_nothing():
+    """Every counter starts at 0 and every list empty, so a build that
+    fails before its first phase reports a build that did nothing —
+    rather than one that resolved a revision it never saw."""
+    report = tracked.BuildReport()
+
+    assert (report.revisions, report.body_revisions) == (0, 0)
+    assert (report.math_resolved, report.math_kept) == (0, 0)
+    assert (report.comments_added, report.comments_total) == (0, 0)
+    assert report.unclassified == 0
+    assert report.verified_comments is None
+    assert report.verified_revisions is None
+    assert report.suppressed == report.dropped == []
+    assert report.carried == report.carried_properties == []
+    assert report.restored_glyphs == []
+    assert report.unrejectable == []
+    assert report.phases == []
+
+
+@pytest.mark.parametrize("field,head", [
+    ("suppressed", "Word call(s) failed"),
+    ("dropped", "thing(s) the revised copy had"),
+])
+def test_the_two_lists_print_TEN_and_then_a_count(field, head):
+    """Ten is the cap, and the line after it is a subtraction, not a
+    remainder: with 21 notes `21 % 10` also reads "1 more", which is
+    what a 12-item fixture cannot tell apart from `21 - 10`."""
+    def rendered(n: int) -> list[str]:
+        report = tracked.BuildReport()
+        setattr(report, field, [f"note {i}" for i in range(n)])
+        return report.format().splitlines()
+
+    at_three = rendered(3)
+    assert sum("- note" in ln for ln in at_three) == 3
+    assert not [ln for ln in at_three if "more" in ln], (
+        "under the cap there is no remainder, and `!= 10` prints -7 more")
+
+    at_ten = rendered(10)
+    assert sum("- note" in ln for ln in at_ten) == 10
+    assert not [ln for ln in at_ten if "more" in ln], "ten is not capped"
+    assert any(head in ln for ln in at_ten)
+
+    at_eleven = rendered(11)
+    assert sum("- note" in ln for ln in at_eleven) == 10
+    assert "    ... and 1 more" in at_eleven
+
+    assert "    ... and 11 more" in rendered(21)
+
+
+def test_the_math_KEPT_line_appears_only_when_something_was_kept():
+    """A revision that overlaps an equation without being of it is left
+    tracked on purpose, and saying so is how a reader knows the number
+    is a decision rather than a failure. Saying it when the count is
+    zero — "0 revision(s) overlap an equation" — is noise on every
+    clean build there is."""
+    quiet = tracked.BuildReport()
+    loud = tracked.BuildReport()
+    loud.math_kept = 3
+
+    assert "overlap an equation" not in quiet.format()
+    assert "3 revision(s) overlap an equation" in loud.format()
+
+
+def test_a_phase_is_timed_from_the_one_BEFORE_it(monkeypatch):
+    """`now - self._last` is the phase; `now - self._t0` is the build.
+    Mutated to `+` the phases read as clock readings, and every one of
+    them looks like the slowest step there has ever been."""
+    # every reading after the marks is 104.0, because `seconds` is a
+    # property and the assertions below ask for it more than once
+    ticks = itertools.chain([100.0, 101.0, 103.0], itertools.repeat(104.0))
+    monkeypatch.setattr(tracked, "time", type("T", (), {
+        "perf_counter": staticmethod(lambda: next(ticks))}))
+
+    report = tracked.BuildReport()       # 100.0
+    report.mark("compare")               # 101.0
+    report.mark("comments")              # 103.0
+
+    assert report.phases == [("compare", 1.0), ("comments", 2.0)]
+    assert report.seconds == 4.0         # 104.0, from the start
+    assert "[   1.0s] compare" in report.format()
+
+
+def test_an_untracked_finding_names_the_paragraph_WORD_shows():
+    """Word numbers the third paragraph 3, and the field counts from 0,
+    so the message adds one — `index << 1` is 4 for the same finding,
+    and the author opens the wrong paragraph. Both sides are cut at 70
+    characters, and the second line is padded to the width of the first
+    so the two read as a column."""
+    long_baseline = "The sentence as the baseline has it, " + "x" * 60
+    finding = tracked.Untracked("body", 2, long_baseline,
+                                "What the batch has instead.")
+
+    first, second = str(finding).splitlines()
+
+    assert first.startswith("body ¶3: baseline ")
+    assert first.endswith(repr(long_baseline[:70]))
+    assert len(long_baseline) > 70, "the fixture has to be cut to say so"
+    assert second == (" " * len("body ¶3") + "  batch    "
+                      + repr("What the batch has instead."))
