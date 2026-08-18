@@ -17,6 +17,8 @@ off-by-one in the walk fails a test instead of shipping.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import para, run
 
@@ -110,7 +112,7 @@ def test_a_replacement_wholly_OUTSIDE_the_label_needs_no_flag():
 # position is available before the whole element), its end (available
 # after it), or None (the caller really is splitting a label).
 
-def _runs(para_xml: str) -> list:
+def _runs(para_xml: str) -> list[re.Match[str]]:
     return list(RUN_RE.finditer(para_xml))
 
 

@@ -22,8 +22,8 @@ import pytest
 from conftest import NS, dele, document, ins, make_parts, para, run
 
 from docxkit import tracked
-from docxkit.tracked import untracked
 from docxkit.errors import PackageError
+from docxkit.tracked import untracked
 
 FLAT_TEMPLATE = """<?xml version="1.0" standalone="yes"?>
 <?mso-application progid="Word.Document"?>
@@ -544,8 +544,12 @@ def test_keeping_the_math_still_SEEDS_the_comment_scaffold(monkeypatch,
     pass skips the only place one was made, and the build would fail far
     away with ScaffoldMissing and no hint of the flag that caused it."""
     seeded: list[str] = []
-    monkeypatch.setattr(tracked, "_seed_scaffold",
-                        lambda *a, **kw: seeded.append("seeded") or 0)
+
+    def _seed(*a, **kw):
+        seeded.append("seeded")
+        return 0
+
+    monkeypatch.setattr(tracked, "_seed_scaffold", _seed)
     fake = _FakeWordModule(_revised_document(), scaffold=True)
     monkeypatch.setattr(tracked, "_word", fake)
     _baseline(sources[0], "Employment rises ")
@@ -767,16 +771,17 @@ def test_resolve_math_picks_the_cheap_walk_when_nothing_is_commented(
     seen = []
     def _equations(doc, *args, **kw):
         seen.append("equations")
-        return 7
+        return T.MathOutcome(7)
 
     def _revisions(*args, **kw):
         seen.append("revisions")
-        return 3
+        return T.MathOutcome(3)
 
     monkeypatch.setattr(T, "_accept_math_via_equations", _equations)
     monkeypatch.setattr(T, "_comment_and_accept_math_revisions", _revisions)
-    assert T._resolve_math(_MathDoc(), None, None) == 7
-    assert T._resolve_math(_MathDoc(), lambda ctx: "x", None) == 3
+    assert T._resolve_math(_MathDoc(), None, None) == T.MathOutcome(7)
+    assert (T._resolve_math(_MathDoc(), lambda ctx: "x", None)
+            == T.MathOutcome(3))
     assert seen == ["equations", "revisions"]
 
 
@@ -1238,7 +1243,8 @@ def test_the_list_STOPS_at_eight():
     the manuscript, and the first eight are enough to say the batch is
     not reviewable."""
     baseline = _parts(*(para(run(f"Paragraph {i}.")) for i in range(12)))
-    batch = _parts(*(para(run(f"Paragraph {i} rewritten.")) for i in range(12)))
+    batch = _parts(*(para(run(f"Paragraph {i} rewritten."))
+                     for i in range(12)))
 
     assert len(untracked(batch, baseline)) == 8
     assert len(untracked(batch, baseline, limit=3)) == 3

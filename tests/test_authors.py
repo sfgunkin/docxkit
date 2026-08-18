@@ -256,7 +256,7 @@ def test_people_entries_for_DIFFERENT_authors_are_both_kept():
     nothing."""
     p = parts()
 
-    report = set_author(p, "Michael Lokshin", only=["Tester"])
+    report = set_author(p, "Michael Lokshin", only={"Tester"})
 
     people = text(p, "word/people.xml")
     assert report.people == 2

@@ -310,7 +310,7 @@ def test_shift_options_are_KEYWORD_only():
     Passed by position they read as bare numbers at the call site, and
     the two are trivially swappable."""
     with pytest.raises(TypeError):
-        shift(_captions("Table 1. First."), "Table", 1)  # type: ignore[misc]
+        shift(_captions("Table 1. First."), "Table", 1)  # type: ignore[call-arg]
 
 
 def test_a_MAIN_sequence_caption_before_an_appendix_one_is_skipped():
@@ -411,4 +411,4 @@ def test_remap_parts_options_are_KEYWORD_only():
     parts = {"word/document.xml": doc(para(run("Table 1. First."))).encode()}
 
     with pytest.raises(TypeError):
-        remap_parts(parts, "Table", {1: 2}, "A")   # type: ignore[misc]
+        remap_parts(parts, "Table", {1: 2}, "A")   # type: ignore[call-arg]

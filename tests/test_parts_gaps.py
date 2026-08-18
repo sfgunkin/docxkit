@@ -431,7 +431,8 @@ def test_remove_keeps_the_text_the_comment_was_anchored_on():
 # untouched. Nothing else in the toolkit sees it — the text layer reads
 # the same words and the equation still renders.
 
-def _parts_with(math: str, *, prose: str = "unchanged prose") -> dict:
+def _parts_with(math: str, *, prose: str = "unchanged prose"
+                ) -> dict[str, bytes]:
     doc = (f"<w:document><w:body><w:p><w:r><w:t>{prose}</w:t></w:r>"
            f"<m:oMath><m:r><m:t>{math}</m:t></m:r></m:oMath>"
            "</w:p></w:body></w:document>")

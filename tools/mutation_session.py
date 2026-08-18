@@ -83,11 +83,19 @@ WORKTREE = Path(os.environ.get("DOCXKIT_MUT_WORKTREE", r"D:/docxkit-mut"))
 LOCK = WORKTREE.parent / f"{WORKTREE.name}.lock"
 
 
+# Through a name rather than `if sys.platform == "win32":` at the branch:
+# mypy folds that comparison to the platform it is RUNNING on, so the
+# posix half reads as plain unreachable code on Windows (`warn_unreachable`
+# fails the gate) and the Windows half goes unchecked on the Linux CI.
+# A `bool` is opaque to both, so each arm is type-checked on both.
+_WINDOWS = sys.platform == "win32"
+
+
 def _alive(pid: int) -> bool:
     """Is that process still running? NOT `os.kill(pid, 0)` on Windows,
     where any signal other than CTRL_C/CTRL_BREAK calls TerminateProcess
     — the existence check would kill the holder it asked about."""
-    if sys.platform == "win32":
+    if _WINDOWS:
         out = _run(["tasklist", "/FI", f"PID eq {pid}", "/NH"])
         return str(pid) in out.stdout
     try:

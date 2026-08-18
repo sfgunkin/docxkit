@@ -24,6 +24,8 @@ either side of a run start — and a gap is the only thing that tells
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import run
 
@@ -180,7 +182,7 @@ def test_a_styled_run_AFTER_the_element_has_its_own_extent():
 
 # ------------------------------------------------ _outside, across a GAP --
 
-def _runs(para_xml: str) -> list:
+def _runs(para_xml: str) -> list[re.Match[str]]:
     return list(RUN_RE.finditer(para_xml))
 
 

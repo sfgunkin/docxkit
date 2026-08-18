@@ -143,8 +143,8 @@ def test_a_change_carries_the_cell_it_HAPPENED_IN():
     """Absolute row and column, not the offset within the block: a
     caller reading the report against its own data is looking at the
     table, where row 2 is row 2."""
-    xml, changes = update(BASE, one_table(BASE),
-                          [["Chile", -0.641, 6.02]], row0=2, col0=0)
+    _xml, changes = update(BASE, one_table(BASE),
+                           [["Chile", -0.641, 6.02]], row0=2, col0=0)
 
     assert [(c.row, c.col) for c in changes] == [(2, 1), (2, 2)]
 

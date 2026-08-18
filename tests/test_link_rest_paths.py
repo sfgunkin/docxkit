@@ -38,8 +38,7 @@ def _linked(parts: dict[str, bytes], part: str = "word/document.xml"):
 
 def _wired(body: str, footnotes: str | None = None) -> dict[str, bytes]:
     """A document with link_all already run, which is link_rest's input."""
-    kw = {"footnotes": footnotes} if footnotes else {}
-    parts = make_parts(body + ENTRIES, **kw)
+    parts = make_parts(body + ENTRIES, footnotes=footnotes)
     link_all(parts)
     return parts
 
@@ -183,7 +182,7 @@ def test_link_rests_options_are_KEYWORD_only():
     parts = make_parts(para(run("A point (Kanbur 2007).")) + ENTRIES)
 
     with pytest.raises(TypeError):
-        link_rest(parts, {"WHO": "World Health Organization"})  # type: ignore[misc]
+        link_rest(parts, {"WHO": "World Health Organization"})  # type: ignore[call-arg]
 
 
 def test_link_rest_REFUSES_a_document_link_all_has_not_touched():

@@ -173,7 +173,9 @@ def _spaced(ppr: str) -> str:
     body = (table("cell") + f"<w:p>{ppr}<w:r><w:t>resumes</w:t></w:r></w:p>")
     out, _report = table_spacing(doc(body))
     para_xml = re.findall(r"<w:p\b(?![^>]*/>).*?</w:p>", out, re.DOTALL)[-1]
-    return re.search(r"<w:pPr>.*?</w:pPr>", para_xml, re.DOTALL).group(0)
+    ppr_out = re.search(r"<w:pPr>.*?</w:pPr>", para_xml, re.DOTALL)
+    assert ppr_out, "the rule left the paragraph with no pPr at all"
+    return ppr_out.group(0)
 
 
 def test_the_spacing_goes_BEFORE_jc_and_after_pStyle():

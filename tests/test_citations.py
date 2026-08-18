@@ -6,6 +6,7 @@ import re
 import pytest
 
 from docxkit.citations import (
+    Reference,
     anchor_names,
     audit_links,
     bookmark,
@@ -779,16 +780,24 @@ def test_a_marker_is_owned_only_when_ONE_entry_fits_it():
     from docxkit._cite_audit import _marker_owner
     from docxkit.citations import parse_reference
 
-    buys = parse_reference("Buys, L. (2012). Active ageing. J, 1(1): 3-4.")
-    buys_other = parse_reference("Buys, R. (2012). Another paper. J, 2: 1.")
-    burnes = parse_reference("Burnes, D. (2019). Interventions. J, 1: 1-2.")
+    def ref(text: str) -> Reference:
+        """`parse_reference` returns None on a line it cannot read, and
+        an unparsed fixture would make every assertion below vacuous —
+        `_marker_owner` matches nothing against a list of Nones."""
+        parsed = parse_reference(text)
+        assert parsed is not None, text
+        return parsed
+
+    buys = ref("Buys, L. (2012). Active ageing. J, 1(1): 3-4.")
+    buys_other = ref("Buys, R. (2012). Another paper. J, 2: 1.")
+    burnes = ref("Burnes, D. (2019). Interventions. J, 1: 1-2.")
 
     assert _marker_owner("Buys2012", [buys, burnes]) is buys
     assert _marker_owner("Buys2012", [buys, buys_other]) is None
     assert _marker_owner("Buys2019", [buys, burnes]) is None   # wrong year
     # the same surname in a LATER year is a different work, and an
     # ordering comparison would hand the marker to it
-    later = parse_reference("Buys, L. (2019). A later paper. J, 3: 5-6.")
+    later = ref("Buys, L. (2019). A later paper. J, 3: 5-6.")
     assert _marker_owner("Buys2012", [later, burnes]) is None
     assert _marker_owner("notakey", [buys, burnes]) is None
 
