@@ -368,7 +368,7 @@ figure and nothing more, and the tests named beside them are not in it:
 | `comments.py` | 17.4 %\* | **24.2 %** | the two rewrites, and the two distances |
 | `footnotes.py` | 15.6 % | — | — |
 | `revision.py` | 14.3 % | — | — |
-| `_compare_read.py` | 12.6 % (full run) | — | `mask_volatile_fields`' scan, and two argued equivalences |
+| `_compare_read.py` | 12.6 % (full run) | **9.8 %** | `mask_volatile_fields`' scan, then `pair_parts`' threshold |
 | `styles.py` | 8.7 % | — | — |
 
 \* incomplete: 178 of the 450 it sampled, and the percentage is over
