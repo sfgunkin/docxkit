@@ -2541,3 +2541,84 @@ def test_a_nested_table_reads_OUTER_then_inner():
 
     assert _sorted_addresses(xml) == [
         "table 1 r1c1", "table 1 r1c1 > table 2 r1c1"]
+
+
+# --- what the facade LABELS things (2026-08-19) ------------------------
+#
+# `compare.py` is the only module in the package that has never been
+# measured — the sweep reads the three layers behind it and the facade
+# itself was never a target. Reading it for what a test would notice
+# turned up the same shape the sweep keeps finding: three values that go
+# into the report and are read by nobody.
+#
+# The report is the deliverable. "BUILT" against "BUILT/footnotes" is
+# which document a person opens; the 110-character extract is how they
+# recognise a part they have never heard of; the 90-character cut is
+# what keeps a reference entry's label from filling the screen.
+
+def test_an_integrity_flag_says_which_PART_of_the_built_doc_it_is_in(
+        tmp_path):
+    """`"BUILT" if part.label == "body" else f"BUILT/{part.label}"`. The
+    flags are read next to the document, and a dangling anchor in a
+    footnote is found by opening the notes — not by scrolling the body
+    looking for a link that is not there."""
+    body = para(run("See ") + '<w:hyperlink w:anchor="NowhereBody">'
+                + run("here") + "</w:hyperlink>")
+    foot = notes("footnotes",
+                 '<w:footnote w:id="2"><w:p>'
+                 '<w:hyperlink w:anchor="NowhereNote">'
+                 "<w:r><w:t>there</w:t></w:r></w:hyperlink>"
+                 "</w:p></w:footnote>")
+    a, b = docs(tmp_path, body, body, footnotes=foot)
+
+    flags = compare(a, b)["integrity"]
+
+    assert any(f.startswith("BUILT:") and "NowhereBody" in f for f in flags)
+    assert any(f.startswith("BUILT/footnotes:") and "NowhereNote" in f
+               for f in flags)
+
+
+def test_a_part_that_was_REMOVED_carries_an_extract_of_itself(tmp_path):
+    """`pa.blob[:110]`: the label alone is "header1", which says nothing
+    about what was in it. A hundred and ten characters is enough to
+    recognise a running head and short enough for one line."""
+    head = ("The Age-Friendly Index for the Republic of Kazakhstan — "
+            "running head, second draft, revised after the referee round")
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml": hdr(para(run(head)))}, {}))
+
+    (removed,) = compare(a, b)["structure"]
+
+    assert removed["type"] == "PART REMOVED" and removed["part"] == "header1"
+    assert len(removed["text"]) == 110
+    assert removed["text"].startswith("The Age-Friendly Index")
+    assert removed["text"].endswith("after the referee "), "cut mid-word"
+
+    # and the same part on the other side, which is the other branch:
+    # a header the USER's document has and the build does not
+    a2, b2 = docs(tmp_path, BASE, BASE,
+                  extra=({}, {"word/header1.xml": hdr(para(run(head)))}))
+
+    (added,) = compare(a2, b2)["structure"]
+
+    assert added["type"] == "PART ADDED" and added["part"] == "header1"
+    assert added["text"] == removed["text"]
+
+
+def test_a_long_hyperlink_LABEL_is_cut_at_ninety_characters(tmp_path):
+    """A reference entry is a link whose label is the whole entry, and
+    an untruncated one fills the line the finding shares with its count.
+    """
+    long_label = ("Acemoglu, D., and P. Restrepo. (2020). Robots and Jobs: "
+                  "Evidence from US Labor Markets. Journal of Political "
+                  "Economy, 128(6): 2188-2244.")
+    linked = para(run("See ") + f'<w:hyperlink w:anchor="Ref1">'
+                  + run(long_label) + "</w:hyperlink>")
+    a, b = docs(tmp_path, linked, para(run("See nothing at all.")))
+
+    (only,) = [h for h in compare(a, b)["hyperlinks"]
+               if h.get("side") == "built-only"]
+
+    assert only["label"] == long_label[:90]
+    assert len(only["label"]) == 90
+    assert only["n"] == 1
