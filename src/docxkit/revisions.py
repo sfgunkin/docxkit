@@ -159,6 +159,46 @@ def _serialize(root: Any, was_wrapped: bool) -> str:
 _FLAG_PARENTS = (W + "rPr", W + "trPr")
 
 
+#: Position markers that belong to the DOCUMENT, not to the revision
+#: they happen to sit inside. Word writes a moved paragraph's citation
+#: anchors INSIDE its `w:moveTo`, so rejecting the move removed the
+#: element and took them with it — measured on DSI (2026-08-19): 127
+#: bookmarks in the baseline, 125 in the rejected view, and the
+#: bidirectional citation links the paper depends on quietly
+#: one-directional. Comment markers are the same shape: a comment whose
+#: range start is inside a rejected insertion is one Word reports as
+#: damaged.
+_ANCHOR_TAGS = ("bookmarkStart", "bookmarkEnd", "commentRangeStart",
+                "commentRangeEnd", "commentReference")
+
+
+def _lift_anchors(el: Any) -> None:
+    """Move `el`'s position markers out to where `el` stands.
+
+    Called before a revision element is REMOVED. The markers keep their
+    order and their nesting relative to each other, so a start still
+    precedes its end; what they no longer wrap is the text, because on
+    a move that text is being restored somewhere else. Gate 5 is what
+    says whether that is acceptable — `reject-all == baseline` sees both
+    the count (`structure_counts`) and the empty paragraph left behind
+    (`_paras`), which is the honest answer for a move this tool cannot
+    undo cleanly.
+    """
+    wanted = {W + tag for tag in _ANCHOR_TAGS}
+    # `iter()` walks in document order, so the markers keep theirs and a
+    # start still precedes its end
+    markers = [m for m in el.iter() if m.tag in wanted]
+    if not markers:
+        return
+    parent = el.getparent()
+    if parent is None:
+        return
+    at = list(parent).index(el)
+    for offset, marker in enumerate(markers):
+        marker.getparent().remove(marker)
+        parent.insert(at + offset, marker)
+
+
 def _content_elements(root: Any, tag: str) -> list[Any]:
     """Elements of `tag` that wrap CONTENT, not a property-level flag."""
     return [el for el in root.iter(W + tag)
@@ -554,6 +594,7 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
                 om = _enclosing_math(el)
                 if om is not None and not any(om is seen for seen in touched):
                     touched.append(om)
+                _lift_anchors(el)
                 el.getparent().remove(el)
     for tag in keep:
         for el in _content_elements(root, tag):

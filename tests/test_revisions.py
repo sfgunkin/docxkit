@@ -573,3 +573,95 @@ def test_a_paragraph_the_batch_DROPPED_deep_in_the_document():
         (3, "Alpha.", "All three, merged."),
         (4, "Beta.", ""),
         (5, "Gamma.", "")]
+
+
+# --- what a MOVE does to the anchors inside it (DSI, 2026-08-19) --------
+#
+# Word writes a moved paragraph twice: the old place wrapped in
+# `w:moveFrom`, the new one in `w:moveTo`. When the moved run sequence
+# carries a citation anchor, the `w:bookmarkStart` sits INSIDE the
+# `w:moveTo` — and rejecting the move removed that element with the
+# anchor in it. 127 bookmarks in the baseline, 125 in the rejected view,
+# `reject-all == baseline` passing because a bookmark carries no glyph,
+# and the paper's bidirectional citation links quietly one-directional.
+
+_WHEN = 'w:id="{i}" w:author="A" w:date="2026-08-19T00:00:00Z"'
+
+
+def _moved_with_anchor() -> str:
+    """A paragraph moved through Compare, its citation anchor inside the
+    `w:moveTo` — which is where Word puts it."""
+    old_place = (f'<w:p><w:moveFrom {_WHEN.format(i=2)}>'
+                 f"<w:r><w:t>As Moran (1950) showed.</w:t></w:r>"
+                 "</w:moveFrom></w:p>")
+    new_place = (f'<w:p><w:moveTo {_WHEN.format(i=4)}>'
+                 '<w:bookmarkStart w:id="9" w:name="Moran1950"/>'
+                 "<w:r><w:t>As Moran (1950) showed.</w:t></w:r>"
+                 '<w:bookmarkEnd w:id="9"/></w:moveTo></w:p>')
+    return document(para(run("Before.")) + new_place
+                    + para(run("Between.")) + old_place)
+
+
+def test_rejecting_a_MOVE_keeps_the_anchors_it_carried():
+    """The anchor is the document's, not the revision's. It no longer
+    wraps the sentence — that text is being restored somewhere else, and
+    gate 5 is what decides whether the result is acceptable — but it is
+    still there, and a link to it still resolves."""
+    xml = _moved_with_anchor()
+
+    out = reject(xml)
+
+    assert out.count("<w:bookmarkStart") == 1
+    assert out.count("<w:bookmarkEnd") == 1
+    assert 'w:name="Moran1950"' in out
+    assert text(out, ORIGINAL) == ["Before.", "Between.",
+                                   "As Moran (1950) showed."]
+
+
+def test_accepting_the_same_move_keeps_them_where_they_were():
+    xml = _moved_with_anchor()
+
+    out = accept(xml)
+
+    assert out.count("<w:bookmarkStart") == 1
+    assert text(out, FINAL) == ["Before.", "As Moran (1950) showed.",
+                               "Between."]
+
+
+def test_rejecting_an_INSERTION_keeps_a_comment_anchor_inside_it():
+    """The same shape one revision kind over: a comment whose range
+    start sits inside a rejected insertion is a comment Word reports as
+    damaged, and `commentRangeEnd` without its start is what does it."""
+    xml = document(
+        para(run("Kept. "),
+             f'<w:ins {_WHEN.format(i=7)}>'
+             '<w:commentRangeStart w:id="3"/>'
+             "<w:r><w:t>added text</w:t></w:r>"
+             '<w:commentRangeEnd w:id="3"/>'
+             '<w:r><w:commentReference w:id="3"/></w:r>'
+             "</w:ins>"))
+
+    out = reject(xml)
+
+    assert "added text" not in out, "the insertion goes"
+    assert out.count("<w:commentRangeStart") == 1
+    assert out.count("<w:commentRangeEnd") == 1
+    assert out.count("<w:commentReference") == 1
+
+
+def test_the_anchors_keep_their_ORDER_when_they_are_lifted():
+    """A start still precedes its end, or the pair is worse than lost:
+    Word reads a `bookmarkEnd` before its `bookmarkStart` as damage."""
+    xml = document(
+        para(f'<w:ins {_WHEN.format(i=8)}>'
+             '<w:bookmarkStart w:id="1" w:name="first"/>'
+             "<w:r><w:t>one</w:t></w:r>"
+             '<w:bookmarkEnd w:id="1"/>'
+             '<w:bookmarkStart w:id="2" w:name="second"/>'
+             "<w:r><w:t>two</w:t></w:r>"
+             '<w:bookmarkEnd w:id="2"/></w:ins>'))
+
+    out = reject(xml)
+
+    assert (out.index('w:name="first"') < out.index("<w:bookmarkEnd")
+            < out.index('w:name="second"'))
