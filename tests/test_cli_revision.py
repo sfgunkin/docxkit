@@ -933,3 +933,69 @@ def test_doctor_lists_the_literals_when_asked(monkeypatch, project, capsys):
     assert code == 2
     assert "1 literal selection(s):" in out, out
     assert "s2.py:1" in out
+
+
+# --- what the cli run of 2026-08-18 found here ---------------------------
+#
+# `cmd_revision_ingest` was cli.py's largest cluster with 13, and twelve
+# of those were the cap on the per-bucket listing — the twelve lines an
+# author reads to find out what happened while the batch was away, and
+# the count of what did not fit. Nothing here had ever handed it more
+# than a handful of changes.
+
+
+def _reworded(project, n: int) -> None:
+    """`n` paragraphs, every one of them changed."""
+    write(project.prev, make_parts("".join(
+        para(run(f"Original sentence {i}.")) for i in range(n))))
+    write(project.working, make_parts("".join(
+        para(run(f"Reworded sentence {i}.")) for i in range(n))))
+
+
+def test_ingest_lists_TWELVE_changes_and_counts_the_rest(monkeypatch,
+                                                         project, capsys):
+    """Twenty-five reworded paragraphs: twelve are printed and the rest
+    are a number. Which number matters — `25 - 12` is 13, and the
+    operators that survived in its place read 1, 21, 8, 29 and 0, every
+    one of them a plausible count of edits to a paper."""
+    _reworded(project, 25)
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "-- text (25)" in out
+    assert sum("Original sentence" in ln for ln in out.splitlines()) == 12
+    assert "... and 13 more" in out
+
+
+def test_ingest_counts_NOTHING_extra_under_the_cap(monkeypatch, project,
+                                                   capsys):
+    """`len(items) > 12`: under the cap there is nothing left over, and
+    `!= 12` prints "and -9 more" for a paper with three edits in it."""
+    _reworded(project, 3)
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert "-- text (3)" in out
+    assert sum("Original sentence" in ln for ln in out.splitlines()) == 3
+    assert "more" not in out
+
+
+def test_ingest_names_every_LOST_element_not_just_the_count(monkeypatch,
+                                                            project, capsys):
+    """The heading says how many; the lines say WHICH, and which is the
+    whole of what a person can act on — `revision baseline` refuses
+    until each one is restored or named."""
+    _ate_a_link(project)
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    lines = out.splitlines()
+    at = lines.index("== LOST (1) ==")
+    assert "ref_Ritchie2023b" in lines[at + 1], (
+        "the anchor is the thing to restore; the heading only counts")
+    assert "link" in lines[at + 1], "and what KIND of thing it was"
