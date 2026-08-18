@@ -676,3 +676,50 @@ def test_a_reference_run_that_is_never_closed_stops_the_walk():
     assert "the sentence someone queried" in doc
     assert doc.count("<w:p>") == before.count("<w:p>")
     assert 'w:commentRangeStart w:id="1"' not in doc, "the anchor still goes"
+    assert "commentReference" not in doc, (
+        "and so does the mark: a reference to a comment that no longer "
+        "exists is what Word calls unreadable, whatever shape the run "
+        "around it was left in")
+
+
+def test_a_mark_sharing_its_run_with_PROSE_costs_only_the_mark():
+    """The second half of the same S1, found by review on 2026-08-18 —
+    the first fix told a NEIGHBOUR run from an enclosing one, and this
+    is an enclosing run that also carries the author's sentence.
+
+    Word writes the reference alone in its own run; another producer
+    need not, and dropping the run took the sentence with it and
+    reported success."""
+    body = ('<w:p><w:commentRangeStart w:id="1"/>'
+            '<w:r><w:t>Prose the author wrote.</w:t>'
+            '<w:commentReference w:id="1"/></w:r>'
+            '<w:commentRangeEnd w:id="1"/>'
+            + run("and the paragraph goes on.") + "</w:p>")
+    parts = make_parts(body, comment_items=(
+        comment(1, "note 1", para_id="AAAA0001"),))
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "Prose the author wrote." in doc
+    assert "and the paragraph goes on." in doc
+    assert "commentReference" not in doc, "the mark itself still goes"
+
+
+def test_a_run_holding_ONLY_the_mark_goes_with_it():
+    """The other side of that test, and the shape Word writes: a run
+    whose whole content is the reference, carrying nothing but the
+    CommentReference style. Leaving it behind is an empty styled run in
+    the middle of a sentence."""
+    body = (para(run("Prose."), '<w:commentRangeStart w:id="1"/>',
+                 run("anchored"), '<w:commentRangeEnd w:id="1"/>',
+                 '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+                 '<w:commentReference w:id="1"/></w:r>'))
+    parts = make_parts(body, comment_items=(
+        comment(1, "note 1", para_id="AAAA0001"),))
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "CommentReference" not in doc, "the run went with the mark"
+    assert "Prose." in doc and "anchored" in doc

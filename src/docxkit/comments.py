@@ -500,11 +500,34 @@ def _drop_reference_run(doc: str, cid: str) -> str:
             continue
         close = doc.find("</w:r>", at)
         if close == -1:
-            break
+            # Malformed: no run to end. Drop the MARK and carry on, for
+            # the reason the branch above does — a reference to a comment
+            # that no longer exists is what Word calls unreadable.
+            out.append(doc[pos:at])
+            pos = at + len(needle)
+            continue
+        run_end = close + len("</w:r>")
+        run_xml = doc[starts[-1]:run_end]
+        if _carries_more_than(run_xml, needle):
+            # The mark shares its run with the author's own content —
+            # Word writes it alone, another producer need not. Dropping
+            # the run took the sentence with it and reported success,
+            # which is the same loss as the neighbour case above.
+            out.append(doc[pos:at])
+            pos = at + len(needle)
+            continue
         out.append(doc[pos:starts[-1]])
-        pos = close + len("</w:r>")
+        pos = run_end
     out.append(doc[pos:])
     return "".join(out)
+
+
+def _carries_more_than(run_xml: str, needle: str) -> bool:
+    """Does this run hold anything besides its properties and `needle`?"""
+    rpr = own_properties(run_xml, "rPr")
+    body_from = rpr[1] if rpr else run_xml.index(">") + 1
+    body = run_xml[body_from:run_xml.rfind("</w:r>")]
+    return bool(body.replace(needle, "").strip())
 
 
 # ----------------------------------------------------- threads / tasks ------

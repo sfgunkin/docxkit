@@ -120,8 +120,20 @@ def _own_grid(body: str) -> re.Match[str] | None:
     counted a nested table's columns as this one's: a two-column table
     was rewritten with a four-column grid, whose widths then summed to
     the wrong total and whose extra columns no row had cells for.
+
+    "The first match is always its own" holds only while the table HAS
+    one. A hand-built fragment need not, and the first `w:tblGrid` in
+    the body is then a NESTED table's — reached by everything that asks
+    this: `fit_columns` rewrote the inner table's grid, and `house`
+    wrote the outer table's width into the inner table's properties and
+    reported success. A grid that starts after the first row cannot be
+    this table's, because CT_Tbl puts the grid before the rows.
     """
-    return _TBLGRID_RE.search(body)
+    grid = _TBLGRID_RE.search(body)
+    first_row = body.find("<w:tr")
+    if grid is not None and first_row != -1 and grid.start() > first_row:
+        return None
+    return grid
 
 
 def _own_tblpr(body: str) -> tuple[int, int, str] | None:
