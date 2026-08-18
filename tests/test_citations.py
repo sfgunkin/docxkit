@@ -1213,6 +1213,98 @@ def test_a_stripped_lead_takes_the_span_with_it():
     assert _links(parts)[0] == "Liebman and Luttmer (2015)"
 
 
+# --- where the widening stops, and what it settles on (2026-08-19) ------
+#
+# `extend_to_name` had 12 survivors, second only to the wrapper it feeds.
+# Every fixture above uses one long institution name whose words are all
+# lower-case except the first, and that shape hides three separate
+# decisions: how short a name may be, whose word the walk starts from,
+# and which word the span finally settles on.
+
+
+def test_a_TWO_word_institution_is_widened_too():
+    """`len(words) < 2` — two is enough to be a name; the rule exists to
+    exclude a name of ONE word, where there is nothing to widen to and
+    every capitalised word before the citation would be swallowed."""
+    text = "Still lawful (Corporal Punishment 2024)."
+
+    assert _extended(text, "Corporal Punishment") == "Corporal Punishment 2024"
+
+
+def test_a_ONE_word_name_widens_to_nothing():
+    """The other side of the same number. `_extended` reads the span
+    back, so a name of one word must leave it exactly where the grammar
+    put it."""
+    text = "Reported by the Punishment (2024) review."
+
+    assert _extended(text, "Punishment") == "Punishment (2024)"
+
+
+def test_an_acronym_is_not_widened_over_the_name_it_stands_for():
+    """`len(words) < 2 OR the lead word is not one of them` — either
+    disqualifies. The acronym case is the second: "WHO" is not a word of
+    "World Health Organization", so there is nothing here to take.
+
+    Under `and` the walk runs anyway, and the second sentence is where
+    that shows: the words to its left ARE the name, so the link would be
+    underlined from "Global" — over the spelled-out name as well as the
+    acronym, which is the defect this function exists to fix, in the
+    other direction. Papers write the pair that way ("the Global Burden
+    of Disease GBD (2019) study") whenever the acronym is the one the
+    reference list files under."""
+    bracketed = "As the World Health Organization (WHO 2015) reports."
+    spelled = "Estimates from the Global Burden of Disease GBD (2019) agree."
+
+    assert _extended(bracketed, "World Health Organization") == "WHO 2015"
+    assert _extended(spelled, "Global Burden of Disease") == "GBD (2019)"
+
+
+def test_a_SENTENCE_BOUNDARY_stops_the_walk_however_well_the_words_match():
+    """`word[-1] in _STOPS_A_NAME` — the LAST character of the word, and
+    the check that cannot be replaced by "is this word one of the
+    name's": `_bare` strips punctuation, so "Punishment." reads as
+    "punishment" and matches.
+
+    The previous fixture for this crossed only lower-case words, and the
+    settle-on-a-capital rule then put the span back where it started —
+    so every index into `word` passed. Here the words before the full
+    stop are capitalised, and a walk that crosses it underlines a
+    sentence that belongs to the author."""
+    text = "The report covers Corporal Punishment. Punishment (2024) says."
+
+    assert _extended(text) == "Punishment (2024)"
+
+
+def test_a_name_that_OPENS_with_a_number_settles_on_the_first_letter():
+    """Two lines, one fixture. The settle loop skips a word with no
+    letter in it — "2030 Water Resources Group" is an institution, and
+    `first` is None for its first word — so `first is not None AND
+    isupper()` has to be an AND, or the check reads a group off None.
+    And the span lands at `at + wm.start() + first.start()`: the offset
+    of the word it settled on, which is zero in every fixture where the
+    first word settles."""
+    text = "See 2030 Water Resources Group (2024) for the target."
+
+    assert _extended(text, "2030 Water Resources Group") == (
+        "Water Resources Group (2024)")
+
+
+def test_a_SHORT_name_behind_a_long_lead_moves_the_span_by_the_lead():
+    """`c.start + len(c.authors) - len(authors)`: the span moves right
+    by exactly what was trimmed off its front. `%` agrees with `-`
+    whenever the lead is shorter than what remains, which is every
+    fixture written so far — "Similarly, Liebman and Luttmer" trims 11
+    characters off 30 and `30 % 19` is 11 too. One short surname is
+    where they part: 16 and 5, `-` gives 11 and `%` gives 1."""
+    from docxkit.citations import resolve_lead
+
+    text = "Similarly, Smith (2015) shows a gap."
+    c = resolve_lead(find_citations(text)[0])
+
+    assert c.authors == "Smith"
+    assert text[c.start:c.end] == "Smith (2015)"
+
+
 # ---------------------------------------------------------- repair_plan ---
 
 def test_repair_plan_classifies_the_known_damage_classes():
