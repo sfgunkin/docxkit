@@ -153,3 +153,36 @@ def test_reads_as_prose_leaves_a_NAME_alone(surname):
     that fires on every DSI build is a line nobody reads.
     """
     assert not reads_as_prose(surname)
+
+
+# --- the blank line in the middle of a reference list (2026-08-19) -----
+
+def test_a_BLANK_paragraph_inside_the_list_does_not_end_it():
+    """`continue`, not `break`. Word documents are full of empty spacer
+    paragraphs and a reference list typed by hand has them between
+    entries — under `break` the first one ends the list, every entry
+    below it is invisible, and every citation to those works reports as
+    having no entry."""
+    from docxkit.citations import references
+
+    entries = references(["Body prose.", "References",
+                          "Aksoy, C. (2026). A first paper. JEP.",
+                          "",
+                          "Brown, A. (2020). A second paper. AER.",
+                          "   ",
+                          "Chen, D. (2019). A third paper. QJE."])
+
+    assert [r.surname for r in entries] == ["Aksoy", "Brown", "Chen"]
+
+
+def test_a_reference_parsed_on_its_own_carries_NO_paragraph():
+    """`index: int = -1`: the default says "this came from nowhere in
+    particular", and every report that prints a paragraph number adds
+    one to it. A default of 0 or 1 makes a reference parsed in isolation
+    claim to be the first paragraph of the document."""
+    from docxkit.citations import parse_reference
+
+    ref = parse_reference("Aksoy, C. (2026). A paper. JEP.")
+
+    assert ref is not None
+    assert ref.index == -1
