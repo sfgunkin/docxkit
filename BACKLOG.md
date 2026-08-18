@@ -31,6 +31,51 @@ today, not about the toolkit.
 
 ## Fixed
 
+### S2 `house` put the table width ahead of the style CT_TblPr requires first — `f1b101b`
+
+Found 2026-08-18 by asking WHERE the 12 survivors in `_house_width` put
+the element, rather than whether it was in the output. CT_TblPr is a
+sequence — tblStyle, tblW, tblLayout, tblLook — and the splice was at
+`props.index(">") + 1`, the FRONT:
+
+    <w:tblPr><w:tblW .../><w:tblLayout .../><w:tblStyle w:val="TableGrid"/>
+
+Every table `body.table` builds carries a tblStyle, so every one that
+`house` touched came out this way. Word repairs a table whose properties
+are out of order by dropping the misplaced ones on the next save: the
+width stops applying some weeks later, in the author's copy, with
+nothing in any diff. The same failure `hygiene.table_spacing` records
+for CT_PPr, one element up.
+
+The tests said `'<w:tblW w:w="5000" w:type="pct"/>' in out`, which is
+true wherever it lands. That is the shape to watch for in this package:
+an assertion that the right string appears somewhere is an assertion
+about a `find`, not about the document.
+
+**Fixed the same session** (`f1b101b`), by routing both properties
+through `_set_tbl_pr` — the ordered writer `fit_columns` has used all
+along. It closed a second defect on the way: the old path wrote into
+whichever `w:tblPr` came FIRST, which is a nested table's whenever the
+outer table has none, so an outer table with no properties got none.
+
+Two holes in the shared writer had to close for that, and both were
+reachable only by a caller that does not write a grid first:
+
+* no `w:tblGrid` to insert before meant `at = len(body)` — the
+  properties appended AFTER the last row, which is not a table. Now
+  before the first row, or after the open tag when there are no rows;
+* `_own_tblpr` bounded its search by the grid and searched the WHOLE
+  body without one, reaching the nested table's properties — the exact
+  defect its own docstring exists for.
+
+`tests/test_tables_house.py` carries four: the schema slot, the replace
+in place, the fragment with no properties at all, and the nested table.
+The first three fail without the fix; the fourth fails without the
+`_own_tblpr` half.
+
+**The module's 21.0 % figure is now void** — the source changed under
+it, which ends the series. The next measurement is a fresh draw.
+
 ### S2 three of `_table_layout`'s five harness exclusions were never true, and the number it produced is void
 
 Found 2026-08-18 while reading the sweep's survivor list. Twelve of the
