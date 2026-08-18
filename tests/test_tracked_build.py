@@ -1261,3 +1261,85 @@ def test_the_finding_PRINTS_where_it_is_and_both_sides():
     printed = str(found)
     assert printed.startswith("body ¶2: baseline 'Beta.'")
     assert "batch    'Beta, changed.'" in printed
+
+
+# --- the second round, from the re-measurement of 2026-08-18 -------------
+#
+# 36.3 % -> 28.5 % after the tests above, and `untracked` was STILL the
+# largest cluster with 23. Seventeen of them sat on `i1 + k` and `j1 + k`
+# mutated to `|`, `^`, `>>` — which agree with `+` whenever the left
+# operand is 0, and every fixture above starts its changed block at
+# paragraph 0 or 1. A paper's untracked edit is on page nine.
+
+
+def test_a_block_deep_in_the_document_reports_the_paragraphs_it_IS():
+    """`i1 + k` with `i1` at 3: `3|1` is 3 and `3^1` is 2, where `3+1`
+    is 4. At index 0 every one of those is the same number, which is why
+    a fixture that starts at the top cannot tell them apart — and the
+    report would then name the wrong three paragraphs of a manuscript
+    whose author is looking for the one nobody offered them."""
+    keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
+    baseline = _parts(*keep, para(run("Alpha original.")),
+                      para(run("Beta original.")),
+                      para(run("Gamma original.")), para(run("Tail.")))
+    batch = _parts(*keep, para(run("Alpha rewritten.")),
+                   para(run("Beta rewritten.")),
+                   para(run("Gamma rewritten.")), para(run("Tail.")))
+
+    found = untracked(batch, baseline)
+
+    assert [(f.index, f.baseline, f.batch) for f in found] == [
+        (3, "Alpha original.", "Alpha rewritten."),
+        (4, "Beta original.", "Beta rewritten."),
+        (5, "Gamma original.", "Gamma rewritten.")]
+
+
+def test_an_INSERTED_paragraph_shifts_the_batch_side_and_not_the_other():
+    """The two offsets are different numbers here, so `j1` cannot stand
+    in for `i1`: the batch has one paragraph more, the baseline runs out
+    first, and the last finding is a paragraph that exists on one side
+    only. It is also what an untracked insertion looks like — the
+    paragraphs after it all read as changed, because they have moved."""
+    keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
+    baseline = _parts(*keep, para(run("Alpha original.")),
+                      para(run("Beta original.")), para(run("Tail.")))
+    batch = _parts(*keep, para(run("New paragraph.")),
+                   para(run("Alpha rewritten.")),
+                   para(run("Beta rewritten.")), para(run("Tail.")))
+
+    found = untracked(batch, baseline)
+
+    assert [(f.index, f.baseline, f.batch) for f in found] == [
+        (3, "Alpha original.", "New paragraph."),
+        (4, "Beta original.", "Alpha rewritten."),
+        (5, "", "Beta rewritten.")]
+
+
+def test_the_limit_is_KEYWORD_only():
+    """A bare number at the call site would read as a third document."""
+    baseline = _parts(para(run("Alpha.")))
+    batch = _parts(para(run("Beta.")))
+
+    with pytest.raises(TypeError):
+        untracked(batch, baseline, 3)          # type: ignore[call-arg]
+
+
+def test_a_MERGE_deep_in_the_document_covers_the_LONGER_side():
+    """`max(i2 - i1, j2 - j1)` decides how far the walk goes, and only a
+    block where the two sides differ in LENGTH says which term won: three
+    paragraphs became one, so the baseline side is the longer one. With
+    `i1` at 3, `i2 >> i1` is 0 and the walk stops after the first — the
+    two paragraphs that vanished go unnamed, which is the Parental Style
+    shape exactly, one page further in."""
+    keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
+    baseline = _parts(*keep, para(run("First.")), para(run("Second.")),
+                      para(run("Third.")), para(run("Tail.")))
+    batch = _parts(*keep, para(run("All three, merged.")),
+                   para(run("Tail.")))
+
+    found = untracked(batch, baseline)
+
+    assert [(f.index, f.baseline, f.batch) for f in found] == [
+        (3, "First.", "All three, merged."),
+        (4, "Second.", ""),
+        (5, "Third.", "")]
