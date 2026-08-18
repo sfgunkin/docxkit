@@ -31,6 +31,39 @@ today, not about the toolkit.
 
 ## Fixed
 
+### S1 `set_done` wrote a SECOND `w15:done` beside the one it could not see — `bf30a89`
+
+Found 2026-08-18 by asking what the `done_m.group(1) == "1"` survivor in
+`threads` would mean if the attribute were spelled the other legal way.
+`w15:done` is ST_OnOff: Word writes 1 and 0, and the schema also allows
+true/false and on/off. The pattern was `w15:done="(\d)"` — one digit.
+
+Read side: a comment another producer had resolved came back OPEN. A
+settled query returns to the work list, and `docxkit tasks --check`
+fails a round that is finished.
+
+Write side, and worse, because the writer used the same pattern:
+
+    <w15:commentEx w15:paraId="AAAA0001" w15:done="true" w15:done="1"/>
+
+    lxml: Attribute w15:done redefined
+
+`set_done` could not see the flag, so it took the "add one" branch. The
+part stops parsing, Word calls the document unreadable, and the only
+tool that could say why is the one that wrote it. Reproduced before it
+was believed.
+
+**Fixed the same session** (`bf30a89`): the pattern reads the whole
+attribute value and the truthiness is a set — `{"1", "true", "on"}`,
+lowercased — so the reader and the writer agree about what the flag
+says. `tests/test_comment_threads.py` carries three, two of which fail
+without it.
+
+**Reach.** Word writes `"1"`, so no paper here has hit it; a package
+that has been through LibreOffice or a comment add-in can carry the
+other spelling, and `_compare_read.on()` in this same package already
+reads `0/false/none`, which is the shape this should have had.
+
 ### S1 `house(caption=...)` wrote keepNext into the middle of the caption's style name — `2ea64f5`
 
 Found 2026-08-18, the same cluster as the entry below and worse.
