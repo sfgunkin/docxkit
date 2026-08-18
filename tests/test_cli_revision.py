@@ -572,6 +572,7 @@ def test_validate_passes_a_faithful_batch(monkeypatch, project, capsys):
     assert code == 0
     assert "VERDICT: PASS" in out
     assert "-> OK" in out
+    assert "== lint == clean" in out, "a clean batch says so"
 
 
 def test_validate_fails_an_unreviewable_batch(monkeypatch, project,
@@ -999,3 +1000,29 @@ def test_ingest_names_every_LOST_element_not_just_the_count(monkeypatch,
     assert "ref_Ritchie2023b" in lines[at + 1], (
         "the anchor is the thing to restore; the heading only counts")
     assert "link" in lines[at + 1], "and what KIND of thing it was"
+
+
+def test_validate_ABORTS_before_word_on_a_lint_problem(monkeypatch, project,
+                                                       capsys):
+    """The ladder stops at its first rung on purpose: Word is minutes,
+    and a batch that fails lint is a batch to fix, not to open. The
+    heading has to say WHICH way round it went — inverted, a clean batch
+    reports "0 problem(s)" and a broken one reports "clean" — and the
+    lines under it name the problem, because "1 problem(s)" is not
+    something a person can fix.
+
+    Edge whitespace with no `xml:space="preserve"` is the shape: Word
+    drops the space on save, and two words run together in a sentence
+    the author never touched."""
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins(" and more"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 2, out
+    assert "== lint == 1 problem(s)" in out
+    assert "FAIL: w:t has edge whitespace" in out
+    assert "ABORT before Word" in out
+    assert "== counts ==" not in out, "it stopped at the first rung"
