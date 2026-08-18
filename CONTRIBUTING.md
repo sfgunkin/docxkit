@@ -363,7 +363,7 @@ figure and nothing more, and the tests named beside them are not in it:
 |---|---|---|---|
 | `tracked.py` | 36.3 % | **9.4 %** | three rounds, below |
 | `equations.py` | 24.9 % | — | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
-| `_table_layout.py` | 18.4 % VOID | **21.0 %** | none: the harness was missing three of its own test files |
+| `_table_layout.py` | 18.4 % VOID | 21.0 %, then void | the harness was missing three of its own test files; the round after it found an S2 |
 | `cli.py` | 17.7 % | — | what `math`, `inspect`, `count`, `tasks` and `figures` PRINT |
 | `comments.py` | 17.4 %\* | — | — |
 | `footnotes.py` | 15.6 % | — | — |
@@ -390,6 +390,14 @@ moment `tests/test_tables_blank_rows.py` joined the run.
 The largest cluster now is 16 in `<module>` — the glyph-width table,
 whose numbers are the one thing in this package that only
 `pytest -m word` can really check, since the answer lives in Word.
+
+**And 21.0 % is itself void now**, for the ordinary reason: reading the
+next cluster down — 12 survivors in `_house_width` — found an S2 (the
+table width written ahead of the `tblStyle` CT_TblPr wants first, which
+Word drops on the next save), and fixing it changed the source. A
+survivor series ends where the module does. What the round bought is in
+the BACKLOG entry; the number to compare against is the next fresh
+draw.
 
 **`tracked.py` 36.3 % -> 28.5 % -> 9.4 %** in one day, three rounds,
 and what each round found is the shape to expect:
