@@ -239,3 +239,78 @@ def test_the_width_is_written_into_the_OUTER_table_not_a_nested_one():
     assert '<w:tblW w:w="5000" w:type="pct"/>' in outer, \
         "the outer table is the one that was asked for"
     assert 'w:val="Inner"' in out, "and the nested one keeps its own"
+
+
+# The other half of the same cluster: 10 survivors in `_keep_with_table`,
+# every one on the branch for a caption paragraph that ALREADY has a
+# `w:pPr`. Every caption in a real manuscript has one — a Caption style,
+# a justification, or both — and `_doc()` above builds one that has
+# none, so the branch had never run.
+
+
+def _captioned(ppr: str, text: str = "Table A4: Data sources") -> str:
+    return document(f"<w:p>{ppr}<w:r><w:t>{text}</w:t></w:r></w:p>"
+                    + table(row("Country", "Source"),
+                            row("Kazakhstan", "UNFPA")))
+
+
+def _parses(xml: str) -> None:
+    from lxml import etree
+    etree.fromstring(xml.encode("utf-8"))
+
+
+def test_keepNext_goes_after_the_pStyle_and_INSIDE_the_pPr():
+    """S1: `existing[0] + existing[2].index(">") + 1` adds an offset
+    INTO the properties' content to the offset OF the properties
+    element, which are different coordinate systems. On a caption styled
+    `Caption` it spliced the tag into the middle of an attribute —
+    `w:val="Cap<w:keepNext/>tion"` — and reported success. The document
+    does not open.
+
+    CT_PPr also fixes where it belongs once it is inside: pStyle first,
+    keepNext straight after it."""
+    xml = _captioned('<w:pPr><w:pStyle w:val="Caption"/></w:pPr>')
+
+    out, report = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    assert report.caption
+    _parses(out)
+    assert '<w:pStyle w:val="Caption"/><w:keepNext/>' in out
+    assert 'w:val="Caption"' in out, "the style survived intact"
+
+
+def test_keepNext_goes_FIRST_when_there_is_no_pStyle():
+    """Nothing in CT_PPr may precede keepNext except pStyle, so a
+    paragraph that only carries a justification takes it at the front."""
+    xml = _captioned('<w:pPr><w:jc w:val="center"/></w:pPr>')
+
+    out, _ = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    _parses(out)
+    assert '<w:pPr><w:keepNext/><w:jc w:val="center"/></w:pPr>' in out
+
+
+def test_an_EMPTY_pPr_is_expanded_rather_than_written_past():
+    """`<w:pPr/>` is real Word output, and its span covers a
+    self-closing tag: inserting after it puts `keepNext` outside the
+    properties, where it is a paragraph child the schema has no slot
+    for."""
+    xml = _captioned("<w:pPr/>")
+
+    out, _ = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    _parses(out)
+    assert "<w:pPr><w:keepNext/></w:pPr>" in out
+
+
+def test_keepNext_is_not_added_TWICE_to_a_styled_caption():
+    """The idempotence the file already asserts, on the branch that had
+    never run."""
+    xml = _captioned('<w:pPr><w:pStyle w:val="Caption"/></w:pPr>')
+
+    once, _ = house(xml, read_all(xml)[0], caption="Table A4:")
+    twice, report = house(once, read_all(once)[0], caption="Table A4:")
+
+    assert twice == once
+    assert not report.caption
+    assert once.count("<w:keepNext/>") == 1

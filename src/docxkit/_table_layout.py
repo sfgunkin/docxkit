@@ -1184,6 +1184,9 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 #: to move with it or a run reads at two sizes in one cell.
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
 _TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
+#: The only child CT_PPr allows BEFORE `w:keepNext`, and the one every
+#: styled caption carries.
+_PSTYLE_RE = re.compile(r"<w:pStyle\b[^>]*/>")
 
 
 @dataclass
@@ -1368,6 +1371,25 @@ def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
         at = para.index(">") + 1
         new = para[:at] + "<w:pPr><w:keepNext/></w:pPr>" + para[at:]
     else:
-        at = existing[0] + existing[2].index(">") + 1
-        new = para[:at] + "<w:keepNext/>" + para[at:]
+        start, end, inner = existing
+        if not inner and para[start:end].endswith("/>"):
+            # `<w:pPr/>` is real Word output. Expand it: writing after
+            # its span puts keepNext outside the properties, where the
+            # schema has no slot for it.
+            new = (para[:start] + "<w:pPr><w:keepNext/></w:pPr>"
+                   + para[end:])
+        else:
+            # `start` is where `<w:pPr` begins and `inner` is its
+            # CONTENT: adding an offset into the one to the offset of the
+            # other spliced the tag into the middle of an attribute —
+            # `w:val="Cap<w:keepNext/>tion"` on a caption styled
+            # `Caption`, reported as success, and the document then does
+            # not open. Only `w:pStyle` precedes keepNext in CT_PPr, so
+            # the slot is right after the open tag, or right after the
+            # style when there is one.
+            at = start + para[start:].index(">") + 1
+            style = _PSTYLE_RE.match(inner)
+            if style is not None:
+                at += style.end()
+            new = para[:at] + "<w:keepNext/>" + para[at:]
     return xml[:hits[0].start()] + new + xml[hits[0].end():], True
