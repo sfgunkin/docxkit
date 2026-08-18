@@ -27,13 +27,22 @@ TESTS = ROOT / "tests"
 HARNESS: dict[str, list[str]] = {
     "_compare_read.py": ["tests/test_compare.py",
                          "tests/test_pathological.py"],
+    # the last three joined on 2026-08-18, measured rather than argued:
+    # importing the module alone covers 13 % of it, and these three take
+    # it to 22, 40 and 26 — they were in EXCLUDED as "the DATA half's
+    # files", which is true of `test_tables.py` and
+    # `test_tables_update.py` (13 %, an import and nothing more) and was
+    # never true of these. `drop_blank_rows` IS this module.
     "_table_layout.py": ["tests/test_booktabs_plan.py",
                          "tests/test_booktabs_rules.py",
                          "tests/test_table_layout_branches.py",
                          "tests/test_table_measure_divide.py",
+                         "tests/test_tables_api.py",
+                         "tests/test_tables_blank_rows.py",
                          "tests/test_tables_fit.py",
                          "tests/test_tables_fit_edges.py",
                          "tests/test_tables_house.py",
+                         "tests/test_tables_nested.py",
                          "tests/test_width_model.py"],
     "cli.py": ["tests/test_cli.py", "tests/test_cli_guards.py",
                "tests/test_cli_revision.py"],
@@ -148,6 +157,16 @@ HARNESS: dict[str, list[str]] = {
 #: out belongs here with its reason — `test_tables_fit*` exercises the
 #: LAYOUT half, not the core, and putting it in every core run would
 #: cost wall clock on every mutant for nothing.
+#:
+#: MEASURE the reason before writing it here. An exclusion is the one
+#: claim in this file the gate cannot check, and a wrong one invents
+#: survivors in whatever the file covered — `_table_core` reported 216
+#: in `update` that way, and `_table_layout` carried three misfiled
+#: exclusions from 2026-08-16 until they were measured on the 18th.
+#: The one-liner, against the import-only baseline the module shows for
+#: a file that merely imports it (13 % for `_table_layout`):
+#:
+#:     python -m pytest -q --cov=docxkit._table_layout #:         --cov-report=term tests/test_tables_nested.py
 FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
           "_compare_diff.py": "compare", "_compare_render.py": "compare",
           "_compare_read.py": "compare"}
@@ -156,11 +175,11 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
                        "tests/test_tables_fit_edges.py"),
     # the DATA half's files: they read cells and rewrite values, which
     # the layout module has no part in, and each costs wall clock on
-    # every one of its 2,217 mutants
-    "_table_layout.py": ("tests/test_tables_api.py", "tests/test_tables.py",
-                         "tests/test_tables_update.py",
-                         "tests/test_tables_nested.py",
-                         "tests/test_tables_blank_rows.py"),
+    # every one of its 2,217 mutants. MEASURED, on 2026-08-18, after
+    # three of the five turned out to exercise it after all — see the
+    # note above EXCLUDED for the one-liner.
+    "_table_layout.py": ("tests/test_tables.py",
+                         "tests/test_tables_update.py"),
     "tables.py": ("tests/test_tables_fit.py",
                   "tests/test_tables_fit_edges.py",
                   "tests/test_tables_house.py",
