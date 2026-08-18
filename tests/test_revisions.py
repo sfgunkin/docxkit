@@ -520,3 +520,56 @@ def test_whitespace_only_still_does_not_touch_formatting():
         f'<w:rPr><w:sz w:val="24"/></w:rPr></w:rPrChange></w:rPr>'
         f"<w:t>note</w:t></w:r></w:p>")
     assert "rPrChange" in accept(xml, where=whitespace_only)
+
+
+# `changed_paragraphs` had 5 survivors, four of them on `old[i1 + k]`
+# and `new[j1 + k]` — the same shape `tracked.untracked` had, and for
+# the same reason: the fixtures above change ONE paragraph, or two at
+# index 1, where `i1 | k` and `i1 ** k` agree with the sum. This is the
+# verification a redline is accepted on, so which paragraph it names and
+# what it quotes are the whole of it.
+
+
+def test_a_block_of_paragraphs_deep_in_the_document_is_quoted_by_PAIR():
+    """Three rewritten paragraphs starting at index 3. At index 0 or 1
+    every bitwise spelling of `i1 + k` lands on the same entry; here they
+    name the wrong before-and-after, and a reader checking a redline is
+    handed a pair of sentences that were never opposite each other."""
+    from docxkit.revisions import changed_paragraphs
+    keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
+    before = document("".join(keep + [para(run("Alpha was.")),
+                                      para(run("Beta was.")),
+                                      para(run("Gamma was.")),
+                                      para(run("Tail."))]))
+    after = document("".join(keep + [para(run("Alpha is now.")),
+                                     para(run("Beta is now.")),
+                                     para(run("Gamma is now.")),
+                                     para(run("Tail."))]))
+
+    got = changed_paragraphs(before, after)
+
+    assert [(c.paragraph, c.before, c.after) for c in got] == [
+        (3, "Alpha was.", "Alpha is now."),
+        (4, "Beta was.", "Beta is now."),
+        (5, "Gamma was.", "Gamma is now.")]
+
+
+def test_a_paragraph_the_batch_DROPPED_deep_in_the_document():
+    """The `else ""` on the other side, at an offset: three paragraphs
+    become one, so two of the three entries have nothing after them —
+    and each must still quote the paragraph it LOST, not its neighbour."""
+    from docxkit.revisions import changed_paragraphs
+    keep = [para(run(f"Paragraph {i} is untouched.")) for i in range(3)]
+    before = document("".join(keep + [para(run("Alpha.")),
+                                      para(run("Beta.")),
+                                      para(run("Gamma.")),
+                                      para(run("Tail."))]))
+    after = document("".join(keep + [para(run("All three, merged.")),
+                                     para(run("Tail."))]))
+
+    got = changed_paragraphs(before, after)
+
+    assert [(c.paragraph, c.before, c.after) for c in got] == [
+        (3, "Alpha.", "All three, merged."),
+        (4, "Beta.", ""),
+        (5, "Gamma.", "")]
