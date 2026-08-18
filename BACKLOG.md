@@ -109,7 +109,7 @@ Found by mutation testing the INSERT POSITION (`CORE_ORDER.index(tag) +
 1`): the mutant that included the tag's own slot survived, which is only
 possible if a document can hold the tag and still reach that branch.
 
-**Closed 2026-08-19** (`this commit`). `_core_re` matches both forms and
+**Closed 2026-08-19** (`ff63c99`). `_core_re` matches both forms and
 group 1 is None for the empty one, so an empty property now reads as `""`
 rather than as absent — which is the distinction `core_property`'s
 docstring already drew and could not honour.
