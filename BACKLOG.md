@@ -17,36 +17,119 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*Nothing, as of 2026-08-18.* This section was empty on the 17th, for the
-first time since the file was started, on five closed that day: the
-U+2212 downgrade (both halves), the missing row-multiset check for a
-reorder, and the four survivor ledgers.
+Three open, from ONE manuscript round (DSI: the §6 restructure, the C/B
+exposition batches and F1). The fourth — the gate that let the other two
+through — was closed on the 19th: `reject-all == baseline` now compares
+STRUCTURE COUNTS as well as text, so a duplicated table, a dropped bookmark and
+a destroyed section break fail it by name. See the entry at the top of Fixed.
 
-Then THIRTEEN were opened on the 18th and all thirteen closed the same
-day.
-Not one came from a manuscript: eight came from the mutation rounds and
-five from a review of that same day's commits, which is the first time
-this file has been filled by looking rather than by being bitten.
+The two S1s below are still defects: the gate catches them now, but catching a
+move that duplicates a table is not the same as being able to move a block.
 
-The two sources found different things, and both are worth knowing.
-**The mutation rounds found offsets nothing asserted** — a tag spliced
-into the middle of an attribute value, two paragraphs of prose deleted
-with a reported success, a duplicate attribute beside the one the writer
-could not see. The question that finds those is not "is the element in
-the output" but "WHERE did it go".
+### S1 Word Compare duplicates a table when a block containing it is MOVED
 
-**The review found the case each fix's own test did not build.** Four of
-the five are a second shape of a defect fixed hours earlier the same
-day: the enclosing run that also carries prose, the caption whose
-keepNext is in the tracked-change SNAPSHOT, the `w:pStyle` written with
-a closing tag, the `keepNext` that says no. A fix and its test are
-written together and share an author's blind spot; that is what the
-second reader is for.
+Move body children so a `w:tbl` and its caption change position, then
+`tracked.build` (clean edit + Word `CompareDocuments`). Word emits
+`w:moveFrom`/`w:moveTo` rather than `w:ins`/`w:del`, and the result carries
+**one table too many**. Measured on DSI: baseline 27 tables, clean permutation
+27, redline **28**, and *both* `revisions.accept` and `revisions.reject` leave
+28 — the moved table appears twice in the accepted view. `build` reported
+success and `reject-all == baseline` passed.
 
-Append the next one as you hit it. An empty section is a statement about
-today, not about the toolkit.
+Move tracking is modelled correctly for the paragraph-only case: two plain
+paragraphs moved gave 8 move revisions, 27 tables held, reject-all equal to the
+baseline, XML accept equal to Word accept.
+
+**Suggested:** detect `w:moveFrom`/`w:moveTo` spanning a `w:tbl` and refuse, the
+way `build` already refuses resolved math revisions.
+
+### S1 a moved paragraph carrying BOOKMARKS loses them on reject
+
+Same mechanism, different casualty. A paragraph holding three citation anchors,
+moved through Compare: accept is correct, but **reject returns 125 bookmarks
+against the baseline's 127**. The anchors the bidirectional citation links
+depend on are dropped, and `reject-all == baseline` passes because a bookmark
+carries no glyph — so `paper.toml`'s `require_reject_all_equals_baseline` is
+satisfied by a document that does not reproduce the baseline.
+
+**Workaround in use:** refuse to move a paragraph whose bookmarkStart/End ids
+are not balanced within itself, and do not move bookmarked paragraphs at all —
+which cost that manuscript two of its planned exposition moves.
+
+### S2 `link_all` makes no back-link for a newly-cited entry
+
+Five bibliography entries that had never been cited gained in-text citations.
+`citations.find_citations` finds all five — e.g. `Citation(authors='Moran',
+year='1950', narrative=False)` — but `citations.link_all` reports **linked 0,
+already linked 54, back-links added 0, unmatched 0, skipped 0**, on the tracked
+file AND on the clean target. `link_rest` then links them as "further mentions",
+so the result is one-directional: `Moran1950` exists as an entry bookmark, but
+`Moran1950txt` — the back-link target `link_all`'s own docstring promises for
+"every work's FIRST in-text mention" — does not, while works cited earlier
+(`Friedman1992`, `Rey1999`) have both.
+
+`audit_links` does not flag it: it pairs bookmarks that exist (66/66), and a
+work with no `*txt` bookmark has nothing to pair.
+
+**Reproduce:** a work whose only in-text mention is a parenthetical,
+non-narrative citation added after its entry was already in the bibliography.
+
+### Not a defect — recorded so it is not chased twice
+
+Editing a table CELL, or deleting paragraphs just above a table caption, makes
+Word's Compare rewrite that caption's HYPERLINK FIELD as a `w:hyperlink`
+ELEMENT. The count moves (16 -> 17, in the accepted and the rejected view alike)
+and neither accept nor reject removes it. It is a representation change only:
+the caption already rendered blue and underlined via `rStyle=Hyperlink` inside
+the field, and both audits stay clean. Unwrapping it makes things WORSE —
+`audit_links` then reports NO BACK-LINK, because that element has become the
+link's only remaining form.
+
+---
+
+*Kept for the shape of the file.* This section was empty on 2026-08-18, the
+first time since it was started. Thirteen were opened and closed on the 17th–
+18th and not one came from a manuscript: eight from the mutation rounds and five
+from a review of that day's commits — the first time this file had been filled
+by looking rather than by being bitten. **The mutation rounds found offsets
+nothing asserted**; the question that finds those is not "is the element in the
+output" but "WHERE did it go". **The review found the case each fix's own test
+did not build:** a fix and its test are written together and share an author's
+blind spot, which is what the second reader is for.
+
+The four above break that run — all four came from a manuscript, and being
+bitten is still how the gate-shaped ones get found.
 
 ## Fixed
+
+### S3 `reject-all == baseline` is blind to everything that carries no glyph
+
+`tracked.build`'s reject check — the one that proves a batch is fully
+reviewable — compares paragraph text, the glyph stream and footnotes. It does
+not compare `w:tbl`, `w:tr`, `w:bookmarkStart`, `w:sectPr` or `w:hyperlink`
+counts. Three separate defects below were found only by counting those by hand,
+AFTER the gate had already said OK. A gate that cannot fail buys false
+confidence, which is why S3 outranks S2 here.
+
+**Suggested:** fold a structure-count comparison into whatever
+`reject-all == baseline` compares, and name the first count that differs. The
+per-paper workaround is a `counts()` helper copied into five batch scripts.
+
+**Fixed 2026-08-19** (`e727117`). `tracked.structure_counts` is the fifth
+thing gate 5 compares — a dict of counts over every text-bearing part, pure and
+testable without Word, sitting beside `package_counts` for the same reasons. The
+failure NAMES the count that moved (`STRUCTURE tbl: 0 -> 1`) rather than adding
+a fifth boolean, and the `counts()` helper copied into five batch scripts is
+replaced by one public function.
+
+`w:hyperlink` is deliberately NOT counted, and has a test saying so: the
+field-to-element rewrite recorded below as "not a defect" would fail a gate that
+counted it, while `_links` already compares links by (anchor, label) across both
+forms.
+
+Tags counted: `tbl`, `tr`, `tc`, `bookmarkStart`, `sectPr`, `drawing`,
+`footnoteReference`. The two S1s below are what it catches; both are still open
+as DEFECTS, but neither can now reach a paper through a green gate.
 
 ### S4 a fifth writer of CT_PPr order, when the package already had four
 
