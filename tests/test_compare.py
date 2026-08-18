@@ -2815,3 +2815,53 @@ def test_a_text_edit_quotes_SIXTY_characters_of_context(tmp_path):
 
     (edit,) = report["text"]
     assert edit["context"] == long[:60] and len(edit["context"]) == 60
+
+
+def test_a_SECOND_field_after_a_nested_one_is_still_masked():
+    """A running head holds a DATE and a PAGEREF wrapping a PAGE, and
+    the walk has to mask two of the three: the nested one is inside a
+    region already claimed and the one after it is not.
+
+    The two index mutants on that guard (`regions[0]` for `regions[-1]`,
+    and the region's start for its end) both SURVIVE this and are argued
+    equivalent rather than pinned: letting the nested field through
+    appends a region the outer one covers exactly, and masking it first
+    leaves the same string. What the guard buys is the work, not the
+    output."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    nested = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+              '<w:r><w:instrText> PAGEREF _Toc1 </w:instrText></w:r>'
+              '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+              + field("PAGE", "7")
+              + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    # the DATE comes FIRST, so two regions are already claimed when the
+    # nested PAGE is judged — with one region the last and the first are
+    # the same entry and every index agrees
+    out = mask_volatile_fields("<w:p>" + field("DATE", "8 May") + nested
+                               + "</w:p>")
+
+    assert re.findall(r"«F:\w+»", out) == ["«F:DATE»", "«F:PAGEREF»"], out
+    assert out.count("PAGEREF _Toc1") == 1, "the instruction is not masked"
+
+
+def test_the_FIRST_of_two_equally_similar_parts_is_the_pair(tmp_path):
+    """`r > score`, not `>=`: with two candidates that match a leftover
+    part equally well the walk keeps the first, so the same pair of
+    documents gives the same report twice running. Under `>=` the last
+    one wins, and which part is reported ADDED depends on the order
+    `read_parts` happened to yield them in."""
+    head = "Age-Friendly Index — running head"
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml": hdr(para(run(head)))},
+                       {"word/header2.xml": hdr(para(run(head + " (v2)"))),
+                        "word/header3.xml": hdr(para(run(head + " (v3)")))}))
+
+    report = compare(a, b)
+
+    # header1 pairs with header2 — the first equally-good candidate —
+    # so header3 is the one reported as added
+    assert [(s["type"], s["part"]) for s in report["structure"]] == [
+        ("PART ADDED", "header3")]
+    assert [t.get("part") for t in report["text"]] == ["header1"]
