@@ -25,6 +25,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from docxkit.console import utf8_stdout
+
 
 def annotation_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
     """Every (row, col, row, col) span that belongs to an annotation."""
@@ -68,6 +72,12 @@ def owner_of(defs: list[tuple[int, int, str]], line: int) -> str:
 
 
 def main() -> int:
+    # This report QUOTES the module's source, and a module that lays out
+    # glyph widths or parses Word's typography holds characters cp1252
+    # cannot encode. Without this the run raises part way down the list,
+    # after printing enough to look like a report and before the tally
+    # that says which definition to write tests for.
+    utf8_stdout()
     if len(sys.argv) < 3:
         print(__doc__)
         return 2
