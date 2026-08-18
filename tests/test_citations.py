@@ -2105,8 +2105,12 @@ _FIELD_END = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
 
 
 def _element(anchor: str, label: str = "x") -> str:
-    return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
-            "</w:r></w:hyperlink>")
+    return (_element_open(anchor) + f"<w:r><w:t>{label}</w:t></w:r>"
+            + "</w:hyperlink>")
+
+
+def _element_open(anchor: str) -> str:
+    return f'<w:hyperlink w:anchor="{anchor}">'
 
 
 def test_a_FIELD_inside_a_field_is_reported_with_both_targets():
@@ -2523,3 +2527,104 @@ def test_an_unlinked_MENTION_is_not_offered_a_field_repair():
     assert not _bucket(plan, "doubled link")
     assert any('UNLINKED: "Smith (2020)"' in ln
                for ln in _bucket(plan, "investigate"))
+
+
+# --- the stack, three deep (2026-08-19) --------------------------------
+#
+# The fixtures above open at most two links at once, and a stack of two
+# hides most of what a stack does: which frame a close pops, whether the
+# scan reaches every frame, and whether a close of one KIND can pop the
+# other. `"element" <= "field"` and `"field" >= "element"` are both true,
+# so a comparison written the wrong way round pops the wrong frame and
+# the walk goes on with the outer link still open.
+
+def _instr(code: str) -> str:
+    """A field code that is NOT a hyperlink — a page reference."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f"<w:r><w:instrText> {code} </w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>')
+
+
+def test_two_ELEMENT_links_side_by_side_are_not_nested():
+    """The field pair has this test and the element pair did not. With
+    one frame on the stack the close scan is `range(0, -1, -1)`, and a
+    stop of 0 examines nothing — the first link stays open and every
+    link after it in the paragraph reads as inside it."""
+    from docxkit.citations import _doubled_links
+
+    para = "<w:p>" + _element("Smith2020txt") + _element("Jones2021txt") \
+        + "</w:p>"
+
+    assert _doubled_links(para) == []
+
+
+def test_a_field_END_reaches_past_an_element_to_the_field_below_it():
+    """Three frames, and the one to close is in the MIDDLE: a field, a
+    second field inside it, an element inside that. The end has to skip
+    the element and take the field under it — `stack[i][0] == "field"`,
+    scanned one at a time from the top.
+
+    A step of -2 skips the element and lands on the OUTER field, so the
+    wrong link stays open; `<=` stops at the element, because "element"
+    sorts before "field". Both leave the rest of the paragraph reported
+    against a link that is not around it."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _field("Outer2020txt") + _field("Inner2019txt")
+            + _element_open("Middle2018txt") + _FIELD_END   # closes Inner
+            + _element("Last2017txt")
+            + "</w:hyperlink>" + _FIELD_END + "</w:p>")
+
+    assert _doubled_links(para) == [
+        ("Outer2020txt", "Inner2019txt"),
+        ("Outer2020txt", "Middle2018txt"),
+        ("Inner2019txt", "Middle2018txt"),
+        ("Outer2020txt", "Last2017txt"),
+        ("Middle2018txt", "Last2017txt")]
+
+
+def test_an_element_CLOSE_does_not_pop_a_field_inside_it():
+    """`stack[i][0] == "element"`, and "field" >= "element" is true — so
+    under `>=` the close takes the field it contains and leaves the
+    element open. The field here never ends, which is API10 P30's own
+    shape: everything after it is drawn inside it, and which link the
+    reader actually clicks is the finding."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _element_open("Outer2020txt") + _field("Inner2019txt")
+            + "</w:hyperlink>" + _element("Last2018txt") + "</w:p>")
+
+    assert _doubled_links(para) == [("Outer2020txt", "Inner2019txt"),
+                                    ("Inner2019txt", "Last2018txt")]
+
+
+def test_a_field_code_that_is_not_a_hyperlink_closes_nothing():
+    """`fld is None AND instr is None AND el_anchor is None` — the
+    `</w:hyperlink>` token is the one with nothing in it. Under `or` an
+    ordinary field code inside a link closes the link, and the citation
+    that really is inside it goes unreported."""
+    from docxkit.citations import _doubled_links
+
+    para = ("<w:p>" + _element_open("Outer2020txt")
+            + _instr("PAGEREF _Ref1") + _FIELD_END
+            + _element("Inner2019txt") + "</w:hyperlink></w:p>")
+
+    assert _doubled_links(para) == [("Outer2020txt", "Inner2019txt")]
+
+
+def test_a_marker_is_owned_by_the_entry_of_ITS_OWN_year():
+    """`r.year == year`, not `>=` or `<=`: an author with two works is
+    the ordinary reference list, and a comparison that matches both
+    leaves two candidates — which the function reads as "cannot tell"
+    and answers None. The MISPLACED MARKER check then goes quiet on
+    exactly the lists most likely to have one."""
+    from docxkit._cite_audit import _marker_owner
+    from docxkit.citations import references
+
+    entries = references(["References",
+                          "Smith, J. (2018). An earlier paper. JEP.",
+                          "Smith, J. (2019). A later paper. AER."])
+
+    owner = _marker_owner("Smith2018", entries)
+
+    assert owner is not None and owner.year == "2018"

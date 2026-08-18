@@ -87,6 +87,18 @@ def check(module: str, tests: list[str],
                 print(f"  ?? {label}: anchor occurs {n} times — SKIPPED")
                 bad += 1
                 continue
+            if new == old:
+                # A case built with `old.replace(...)` whose inner
+                # pattern does not match leaves `new` identical to
+                # `old`: the file is rewritten with itself, the suite
+                # passes, and the case reports SURVIVED — a missing test
+                # where there is none. Twice on 2026-08-19, both times
+                # on `len(stack) - 1, -1, -1)`, where the source has a
+                # space after the minus and the pattern did not.
+                print(f"  ?? {label}: the replacement changes nothing — "
+                      f"SKIPPED, since an unmutated file always survives")
+                bad += 1
+                continue
             mutated = original.replace(old, new)
             try:
                 compile(mutated, str(path), "exec")
