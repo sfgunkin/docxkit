@@ -17,14 +17,18 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*Empty on 2026-08-17* — the first time this file has been empty
-here since it was started. The last five closed that day: the U+2212
-downgrade (both halves), the missing row-multiset check for a reorder,
-and the four survivor ledgers, each on a fresh measurement rather than
-on the work having been done.
+*Nothing, as of 2026-08-18.* Empty on 2026-08-17 for the first time
+since this file was started, and empty again the next day: the one entry
+opened since — the survivor report dying on a module it could not spell
+— was closed in the session that filed it. The last five closed on the
+17th: the U+2212 downgrade (both halves), the missing row-multiset check
+for a reorder, and the four survivor ledgers, each on a fresh
+measurement rather than on the work having been done.
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
+
+## Fixed
 
 ### S4 `tools/mutation_survivors.py` dies on the one module whose source it cannot print
 
@@ -66,7 +70,16 @@ tools/mutation_survivors.py .mutation-table_layout.sqlite
 src/docxkit/_table_layout.py`, which is how `_table_layout`'s 18.4 %
 (79 of 429) was read at all.
 
-## Fixed
+**Fixed 2026-08-18** (`3178e8a`), in the session that filed it.
+`utf8_stdout()` is called first thing in `main()`, behind the `sys.path`
+line `coverage_floor.py` already carries so the import works from a bare
+checkout. `tests/test_mutation_survivors.py` runs the report over a
+module holding both an en dash and U+2212 with `PYTHONIOENCODING` forced
+to cp1252 and to ascii and asserts the `by definition:` tally arrives:
+both fail without the call, the utf-8 case is the control that passes
+either way, and a fourth test holds the replacement to being a FALLBACK
+rather than the behaviour — where the console can hold the minus sign it
+is printed as written. The `PYTHONIOENCODING=utf-8` workaround is gone.
 
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
 
