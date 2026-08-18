@@ -432,3 +432,54 @@ def test_a_table_rule_needs_a_table():
     prose = RevisionContext(text="added", para="added", window="added",
                             table_index=None, start=0, end=1)
     assert classify(prose) == "R2: prose rule"
+
+
+# --- what the comments run of 2026-08-18 found ---------------------------
+#
+# Seven survivors in `_write`, six of them on the two derived ids. A
+# comment is one element in `comments.xml` and three more in the parts
+# beside it, and the ONLY thing tying the four together is the paraId —
+# with the durableId tying the "extensible" entry to the rest. Nothing
+# asserted either, so `+` could be `&`, `%` or `<<` and the tests read
+# the same: the counts are right, the anchors are right, and two
+# comments quietly share one identity.
+
+
+def _ids(parts, name, attr):
+    import re
+    return re.findall(rf'{attr}="([0-9A-F]+)"',
+                      parts[name].decode("utf-8"))
+
+
+def test_every_comment_gets_ids_of_its_OWN(monkeypatch):
+    """`_PARA_ID_BASE + cid` — under `&` two consecutive ids collide, and
+    a collision is not a crash: Word links the second comment's done
+    state, and any reply to it, to the first one. The author resolves a
+    query and a different query goes quiet.
+
+    Both ids are derived the same way and both are checked, because the
+    two parts they live in are read by different halves of Word."""
+    parts = make_parts(para(run("keep "), ins("first"), ins("second")),
+                       comment_items=(comment(1, "seed"),))
+
+    added, _ = annotate(parts, always("R1: reason"))
+
+    assert added == 2
+    para_ids = _ids(parts, "word/commentsExtended.xml", "w15:paraId")
+    durables = _ids(parts, "word/commentsIds.xml", "w16cid:durableId")
+    assert len(set(para_ids)) == len(para_ids) == 3, para_ids
+    assert len(set(durables)) == len(durables) == 3, durables
+
+    # ST_LongHexNumber: eight hex digits, no more. A shift for the sum
+    # keeps them unique and overflows the type, which Word reads as a
+    # damaged part rather than as an id it disagrees with
+    assert all(len(v) == 8 for v in para_ids + durables), para_ids + durables
+
+    # and the two derivations do not collide with each other either: the
+    # bases are 0x5A000000 and 0x6B000000, seventeen million apart
+    assert not set(para_ids) & set(durables)
+
+    # every comment element carries the paraId its commentEx entry names
+    body_ids = _ids(parts, "word/comments.xml", "w14:paraId")
+    assert sorted(body_ids) == sorted(para_ids), \
+        "a comment whose paraId is not in commentsExtended has no state"
