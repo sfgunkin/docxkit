@@ -17,25 +17,171 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*Nothing, as of 2026-08-18.* This section was empty on the 17th, for the
+*One, as of 2026-08-18.* This section was empty on the 17th, for the
 first time since the file was started, on five closed that day: the
 U+2212 downgrade (both halves), the missing row-multiset check for a
 reorder, and the four survivor ledgers.
 
-Then EIGHT were opened on the 18th and all eight closed the same day —
-three S1, three S2, an S3 and an S4 — and every one came out of the same
-day's mutation rounds rather than out of a manuscript. All three S1s
-are the same shape — an offset or a pattern nothing had ever asserted —
-and all three produce a file Word calls unreadable: a tag spliced into
-the middle of an attribute value, two paragraphs of prose deleted with
-a reported success, a duplicate attribute added beside the one the
-writer could not see. The question that found them is not "is the
-element in the output" but "WHERE did it go".
+Then THIRTEEN were opened on the 18th and twelve closed the same day.
+Not one came from a manuscript: eight came from the mutation rounds and
+five from a review of that same day's commits, which is the first time
+this file has been filled by looking rather than by being bitten.
+
+The two sources found different things, and both are worth knowing.
+**The mutation rounds found offsets nothing asserted** — a tag spliced
+into the middle of an attribute value, two paragraphs of prose deleted
+with a reported success, a duplicate attribute beside the one the writer
+could not see. The question that finds those is not "is the element in
+the output" but "WHERE did it go".
+
+**The review found the case each fix's own test did not build.** Four of
+the five are a second shape of a defect fixed hours earlier the same
+day: the enclosing run that also carries prose, the caption whose
+keepNext is in the tracked-change SNAPSHOT, the `w:pStyle` written with
+a closing tag, the `keepNext` that says no. A fix and its test are
+written together and share an author's blind spot; that is what the
+second reader is for.
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
 
+### S4 a fifth writer of CT_PPr order, when the package already had four
+
+Raised by the same review, and not fixed: `_keep_with_table` now carries
+its own `w:pStyle` regex and its own "only pStyle precedes keepNext"
+rule. The package already knows this in four places —
+`_xml.set_run_property` (RPR_ORDER and its rank table),
+`_table_layout._set_tbl_pr` (the `_AFTER_*` tuples),
+`hygiene._set_before` (CT_PPr placement for `w:spacing`, with a third
+pStyle regex), and now this.
+
+The duplication is what made three of the four defects above possible:
+`_set_tbl_pr` handles a non-self-closing property and an
+existing-but-off one; the ad-hoc match handled neither, and each was
+found separately.
+
+What it wants is a `PPR_ORDER` in `_xml.py` mirroring `RPR_ORDER`, with
+one `set_para_property(para_xml, tag, element)` that every CT_PPr writer
+goes through — the same shape `set_run_property` already has, including
+its `live_properties` discipline. Three call sites move; the fourth
+(`_set_tbl_pr`) stays, since CT_TblPr is a different sequence, but it
+should be rewritten as a rank table too rather than one `_AFTER_*` tuple
+per property.
+
+Not a defect today, and the reason it is filed rather than done: every
+one of those writers is under test now, and the consolidation is a
+refactor that wants its own round with the mutation runs re-measured
+after it.
+
 ## Fixed
+
+### S1 four more shapes in the two S1 fixes of the same day, each reported as success — `04472c1`, `f5336ea`
+
+Found by `/code-review` over the day's 58 commits (2026-08-18), every
+one reproduced before it was believed. All four are the case the fix's
+OWN test did not build, which is the pattern worth keeping:
+
+**`_drop_reference_run` still deleted the author's sentence.** The
+morning's fix told a NEIGHBOUR run from an enclosing one; this is an
+enclosing run that also carries prose —
+`<w:r><w:t>Prose.</w:t><w:commentReference/></w:r>` — and `remove`
+dropped the whole run and returned 1. Word writes the mark alone in its
+own run; another producer need not. The run goes only when the mark is
+all it holds.
+
+**`_keep_with_table` read the HISTORY.** `if "<w:keepNext/>" in para`
+searched the whole paragraph, `w:pPrChange` included — the formatting a
+tracked change replaced. A caption whose history carried keepNext was
+reported as done while the live properties never got it.
+`live_properties` exists for exactly this and the function did not call
+it.
+
+**The slot regex knew one spelling.** `<w:pStyle .../>` matched,
+`<w:pStyle ...></w:pStyle>` did not, and keepNext went in ahead of the
+style — the out-of-order property the whole change exists to prevent.
+
+**`<w:keepNext w:val="0"/>` got a second one beside it.** ST_OnOff
+again, three hours after `w15:done` was widened for the same reason:
+a keepNext that says NO is still a keepNext, CT_PPr allows one, and Word
+chooses between two on open — possibly the one that says no.
+
+**Fixed** in `04472c1` (the run) and `f5336ea` (the three caption
+shapes), with a test for each shape.
+
+### S2 `_own_grid` handed every caller a NESTED table's grid — `04472c1`
+
+Found in the same review. The docstring said "everything before the
+first `w:tblGrid` belongs to the outer table and the first match is
+always its own", which holds only while the table HAS one. An outer
+table with no grid whose nested table has one sent every caller inside:
+
+    house(xml, outer)   ->  the inner table's tblW becomes 5000pct,
+                            the outer table gets nothing, report.width True
+
+`fit_columns` would rewrite the inner table's grid the same way. A grid
+that starts after the first row cannot be this table's, because CT_Tbl
+puts the grid before the rows — that is the fix. The nested fixture
+written that morning had no grid on the inner table, which is why it
+passed.
+
+### S2 the fix for the misordered properties could not repair what the last release wrote — `eefa243`
+
+Also from the review, and the one that decides whether the CT_TblPr fix
+was worth anything. Every table `house` touched before it carries
+`w:tblW` and `w:tblLayout` ahead of `w:tblStyle`; re-running the
+corrected pass is the remediation, and `_set_tbl_pr` replaced a property
+where it stood rather than moving it — so the table came back
+byte-identical and reported as already correct.
+
+The element is now taken OUT and put back in its slot. That alone was
+not enough: `_set_tbl_pr` anchors on the first element that must FOLLOW
+the one being written, and on a misordered table `w:tblLayout` is itself
+misplaced, so `w:tblW` anchored on a wrong position and stayed first.
+Writing the LAST property first fixes the anchor before it is used —
+tblLayout against `w:tblLook`, then tblW against the now-correct
+tblLayout. The repair settles: a second run changes nothing.
+
+### S3 `!cancelled()` ran four gates that could not run, and the floors ran the suite twice — `pushed 2026-08-18`
+
+The condition added that morning so a red gate stops hiding the ones
+behind it said too much. It did not cover ruff (whose default is
+`success()`), and it did not exclude an INSTALL failure: a missing wheel
+therefore skipped ruff and ran the four behind it, each failing with
+`No module named …`. Five red steps, four of them noise, and the one
+real cause the only one that did not look like a gate failure.
+
+All five now carry `steps.install.outcome == 'success'`, and the
+coverage floors carry `steps.pytest.outcome == 'success'` instead —
+`tools/coverage_floor.py` runs the whole suite again in a subprocess, so
+on a red suite it costs a second full run per version to report every
+module under its floor.
+
+### S4 four notes that were wrong about the code beside them — `eefa243`, `33f1b8b`, and the CI commit
+
+Small, and all four would mislead the next reader:
+
+* `set_done` counted every entry it MATCHED as changed. The number goes
+  back to the author as how many comments were resolved, and a resolve
+  pass is re-run — it is how a paper checks the job is done — so a
+  finished round reported itself as freshly resolved.
+* the pymupdf override said "an optional extra is ABSENT on CI by
+  design" in the same commit range that made CI install `.[dev,pdf]`.
+  Read as written, the next person removes the extra and puts
+  `pages.py` back under its coverage floor. What it answers is a
+  `.[dev]`-only checkout.
+* `harness_map`'s new measurement one-liner was mangled onto one line
+  with a `#:` in the middle, so pasting it fed `#:` to pytest as a path.
+  And the rule it stated was wrong: a file's coverage ON ITS OWN is the
+  wrong measurement, because fixture use looks like exercise.
+  `test_tables_fit.py` covers 32 % of `_table_core` alone and adds
+  NOTHING to its harness, which sits at 97 % either way — so
+  `_table_core`'s two exclusions are sound, and the note now says to
+  measure MARGINAL coverage.
+* `footnotes.SizeReport.format` lost its degradation path to an
+  `assert` written to kill two mutants. The class is public and its
+  fields are writable, so a caller filling `mark_outliers` got an
+  AssertionError — and under `python -O` the assert is stripped and the
+  line becomes `None / 2`.
 
 ### S2 `probe` called a bookmark above every paragraph "nested", so a block move would drop it — `98a522f`
 
