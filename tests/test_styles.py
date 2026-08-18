@@ -329,3 +329,83 @@ def test_resolve_is_memoised_and_keyed_on_everything_it_reads():
     assert c.resolve("sz", rstyle="Quote", pstyle=None).value == "20"
     assert c.resolve("sz", rpr='<w:sz w:val="18"/>').value == "18"
     assert c.resolve("szCs", pstyle="Quote").value is None
+
+
+# --- the cascade, tested where it lives (2026-08-19) -------------------
+#
+# `Cascade` is styles.py's innermost call — `_compare_read._char_fmt`
+# asks it for every run of every paragraph — and the tests that exercise
+# its `basedOn` chain live in `tests/test_footnotes.py`, which reads a
+# size through it. That file is not in styles.py's harness, so the walk
+# came back unasserted in the module's own measurement: the loop guard
+# and the group the parent id is read from were both free.
+
+
+def _cascade(*defs: str) -> Cascade:
+    return Cascade(styles_part(*defs).decode("utf-8"))
+
+
+def _sized(sid: str, half_points: int, *, based_on: str | None = None) -> str:
+    base = f'<w:basedOn w:val="{based_on}"/>' if based_on else ""
+    return (f'<w:style w:type="paragraph" w:styleId="{sid}">'
+            f'<w:name w:val="{sid}"/>{base}'
+            f'<w:rPr><w:sz w:val="{half_points}"/></w:rPr></w:style>')
+
+
+def _unsized(sid: str, *, based_on: str) -> str:
+    return (f'<w:style w:type="paragraph" w:styleId="{sid}">'
+            f'<w:name w:val="{sid}"/><w:basedOn w:val="{based_on}"/>'
+            "</w:style>")
+
+
+def test_a_style_INHERITS_from_the_one_it_is_based_on():
+    """`self._based[sid] = m.group(1)` — the id inside `w:basedOn`, not
+    the whole element. With the element, the next hop looks up
+    `'<w:basedOn w:val="Parent"/>'` as a style id, finds nothing, and
+    the chain ends one step early: the property reads as unset and the
+    caller falls back to the document default."""
+    cascade = _cascade(_sized("Parent", 24), _unsized("Child",
+                                                      based_on="Parent"))
+
+    assert cascade.resolve("sz", pstyle="Child").value == "24"
+
+
+def test_a_basedOn_pointing_at_a_MISSING_style_is_not_an_error():
+    """`while sid and sid in self._own and …` — all three, in that
+    order. A template stripped of a parent style is an ordinary hand-off
+    (the journal sends the styles it uses), and under `or` the loop
+    enters on a style it has no body for and raises KeyError from inside
+    a formatting lookup."""
+    cascade = _cascade(_unsized("Orphan", based_on="GoneFromThisFile"))
+
+    assert cascade.resolve("sz", pstyle="Orphan").value is None
+
+
+def test_a_basedOn_CYCLE_ends_rather_than_hanging():
+    """`sid not in seen`: two styles based on each other is a real file
+    — Word writes one when a style is renamed into its own parent —
+    and the walk has to stop rather than spin."""
+    cascade = _cascade(_unsized("A", based_on="B"), _unsized("B",
+                                                            based_on="A"))
+
+    assert cascade.resolve("sz", pstyle="A").value is None
+
+
+def test_a_style_the_document_never_uses_is_not_MISSING():
+    """`referenced - defined`, not the symmetric difference. A template
+    defines every style the journal has and a paper uses a handful, so
+    `^` reports the whole unused remainder as dangling references — and
+    a report that lists forty is one nobody reads."""
+    parts = make_parts()
+    template = dict(TEMPLATE)
+    template["word/styles.xml"] = styles_part(
+        style("MyEmphasis", "Emphasis", kind="character"),
+        style("JnlHeading", "Heading"),
+        style("JnlNote", "Note"),
+        style("JnlUnusedByThisPaper", "Unused"))
+
+    report = apply_template(parts, template,
+                            remap={"MyHeading": "JnlHeading",
+                                   "MyNote": "JnlNote"})
+
+    assert report.missing == ["MyTable"]
