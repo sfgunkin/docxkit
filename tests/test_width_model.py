@@ -183,12 +183,35 @@ def test_every_alias_scale_zeroes_the_mean_error(measure):
     assert not off, "\n  " + "\n  ".join(off)
 
 
+#: What a WHOLE-string measurement carries that a per-character one does
+#: not: side bearings at the two ends, and Word rounding each advance to
+#: a whole twip. `word.ruler`'s own docstring names the first and says to
+#: cancel it with the `(w(c*40) - w(c*20)) / 20` difference — which the
+#: per-character test above does and this one cannot, because whole cells
+#: are the subject. Measured on 2026-08-18 against Word: +2.6 dxa on
+#: 'No', +3.0 on '12.7', -3.6 on '-0.008' — both signs, a few twips, and
+#: no relation to length. Four is that spread rounded up.
+_EDGE_DXA = 4.0
+
+
 def test_the_method_agrees_with_the_afm_tables(measure):
     """A guard on the measurement itself. Times New Roman IS the Adobe
     AFM table, to a fraction of a percent — so if this one drifts, the
     ruler has changed, not the font, and the other failures here are
-    telling you about the wrong thing."""
+    telling you about the wrong thing.
+
+    One percent OF THE STRING plus the edge term. Purely relative, the
+    two-character 'No' fails at 1.05 % on 2.6 dxa while a thirty-
+    character cell with the same absolute error reads 0.1 % — so the
+    tolerance was a statement about cell LENGTH, not about the model,
+    and the shortest cell in the list decided it.
+    """
     widths = measure("Times New Roman", CELLS)
-    errs = [abs(predicted("Times New Roman", t) - w) / w
-            for t, w in zip(CELLS, widths, strict=True) if w]
-    assert max(errs) < 0.01, f"worst {max(errs) * 100:.1f}%"
+
+    def model(text: str) -> float:
+        return predicted("Times New Roman", text)
+
+    off = [f"{t!r}: model {model(t):.1f} vs Word {w:.0f}"
+           for t, w in zip(CELLS, widths, strict=True)
+           if w and abs(model(t) - w) > 0.01 * w + _EDGE_DXA]
+    assert not off, "\n  " + "\n  ".join(off)
