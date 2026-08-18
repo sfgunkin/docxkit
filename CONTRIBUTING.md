@@ -392,6 +392,44 @@ justifies calling them paired. What IS a comparison is the function the
 exclusion hid: `drop_blank_rows` went from 12 survivors to **1** the
 moment `tests/test_tables_blank_rows.py` joined the run.
 
+**The fourth sweep, 2026-08-18 (evening)** — the modules that changed
+under a fix that day, plus the two whose lists had been unusable:
+
+| module | figure | against |
+|---|---|---|
+| `probe.py` | **25.0 %** (42/168) | 36.9 % before its round |
+| `comments.py` | 18.4 % (71/386) | a FRESH draw: the module changed |
+| `crossrefs.py` | **16.0 %** (71/445) | 20.8 % before its three rounds |
+| `_table_layout.py` | 15.0 % (66/441) | a FRESH draw: the module changed |
+| `hygiene.py` | **10.4 %** (47/451) | first measured |
+| `figures.py` | **6.6 %** (28/427) | 34.1 % on 08-17 |
+| `ingest.py` | **6.3 %** (12/189) | 35.1 % on 08-17 |
+| `_xml.py` | **4.5 %** (20/444) | 5.4 % in the second wave |
+| `find.py` | **4.5 %** (9/202) | 13.4 % in the first sweep |
+
+Two of those need saying out loud.
+
+**`comments.py` and `_table_layout.py` read HIGHER than their previous
+figures and are not regressions.** Both had a defect fixed that evening,
+which ends the series: a fresh draw of a changed module is a different
+population, and the numbers either side of a source change are not a
+comparison however carefully the seed was kept. The rule is in this file
+already; these two are what it looks like in practice.
+
+**`figures.py` was called the largest unpinned pool in the package on
+the strength of a stale list, and it was not.** Its 08-17 run measured
+34.1 % with 234 real survivors, the source changed eight minutes later
+(`90eb4ed`, the drawing-window fix and its tests), and nothing
+re-measured it — so the number went on being quoted while the work that
+answered it had already been done. Freshly drawn it is 6.6 %, the
+same evening's `ingest.py` 35.1 % is 6.3 %, and the largest pools left
+are `crossrefs` and `comments` at 71 survivors each.
+
+A figure whose source has moved is not a small inaccuracy: it points the
+next round at the wrong module. Re-measure before quoting, and the
+cheapest way to know is `git log -1 -- src/docxkit/<mod>.py` against the
+session file's mtime.
+
 The largest cluster now is 16 in `<module>` — the glyph-width table,
 whose numbers are the one thing in this package that only
 `pytest -m word` can really check, since the answer lives in Word.
