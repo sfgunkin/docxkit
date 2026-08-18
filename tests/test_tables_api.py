@@ -339,3 +339,55 @@ def test_the_table_layers_stay_one_directional():
         if isinstance(node, ast.ImportFrom) and node.module:
             assert node.module not in ("_table_layout", "tables"), (
                 f"_table_core imports {node.module} — that is a cycle")
+
+
+# --- finding a table by its header, at the edges (2026-08-19) ----------
+#
+# `find` walks the tables and skips the ones too NARROW to carry the
+# header asked for. Both ends of that test were free: no fixture asked
+# for a header exactly as wide as the table's, and none put a narrow
+# table BEFORE the matching one — which is the ordinary manuscript,
+# because a one-column layout table is how these papers set a display
+# equation.
+
+
+def test_a_header_exactly_as_wide_as_the_table_matches():
+    """`len(cells) < len(header)`, not `<=`: asking for every column by
+    name is the precise form of the query, and skipping it would leave
+    only the loose ones — the shape most likely to match two tables."""
+    tables = read_all(_doc())
+
+    found = find(tables, ["Country", "AFI (initial)", "Dif."])
+
+    assert found.index == 0
+
+
+def test_a_NARROW_table_before_the_match_does_not_end_the_search():
+    """`continue`, not `break`. A display equation in these papers is a
+    one-column table, so the manuscript's first table is routinely
+    narrower than anything a caller asks for — under `break` the search
+    stops there and the paper's real tables become unfindable."""
+    xml = document(
+        table(row("θ = 1"))
+        + table(row("Country", "AFI (initial)"), row("Poland", "0.31")))
+
+    found = find(read_all(xml), ["Country", "AFI"])
+
+    assert found.index == 1
+    assert found.rows[1] == ["Poland", "0.31"]
+
+
+def test_the_refusal_shows_the_first_THREE_columns_of_each_table():
+    """`t.header[:3]`: the message is read next to the document and its
+    job is to let a person recognise the table they meant. A whole
+    twelve-column header per table is a paragraph, and the first three
+    are what a header is recognised by."""
+    xml = document(
+        table(row("Country", "AFI (initial)", "Dif.", "Rank", "Weight"),
+              row("Poland", "0.31", "0.02", "4", "1.0")))
+
+    with pytest.raises(AnchorError) as exc:
+        find(read_all(xml), ["Nonexistent"])
+
+    assert "['Country', 'AFI (initial)', 'Dif.']" in str(exc.value)
+    assert "Rank" not in str(exc.value)
