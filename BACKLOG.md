@@ -17,7 +17,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*Nothing, as of 2026-08-17* — the first time this file has been empty
+*Empty on 2026-08-17* — the first time this file has been empty
 here since it was started. The last five closed that day: the U+2212
 downgrade (both halves), the missing row-multiset check for a reorder,
 and the four survivor ledgers, each on a fresh measurement rather than
@@ -25,6 +25,46 @@ on the work having been done.
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
+
+### S4 `tools/mutation_survivors.py` dies on the one module whose source it cannot print
+
+Found 2026-08-18, reading the survivor report for `_table_layout.py` —
+the module the current wave is measuring:
+
+    L188   x1   in <module>
+              500: "#$*_0123456789bdghknopquvxy–", 564: "+<=>−",
+    UnicodeEncodeError: 'charmap' codec can't encode character
+    '\u2212' (the typographic minus) in position 57
+
+The report prints the SOURCE LINE each survivor sits on, and
+`_table_layout`'s glyph-width table is a literal roll of the characters
+a proportional font renders: en dash, curly quotes, the typographic
+minus. On a Windows console that is cp1252, and the print raises.
+
+It dies PART WAY. Everything above L188 had already printed, and the
+`by definition:` tally at the end — which is how a round picks what to
+write tests for — never printed at all. Loud enough to notice, hence S4
+and not S2; but the module with the widest survivor list is the one the
+tool cannot read to the end.
+
+`console.utf8_stdout()` is in the package for exactly this, and
+`tools/sweep.py` and `tools/coverage_floor.py` both call it first thing
+in `main()`. `mutation_survivors.py` does not — nor do `harness_map`,
+`kill_check`, `measure_all`, `mutate` or `mutation_session`, though it
+is the only one of the six that prints a line of somebody's source,
+which is why it is the only one that has hit this.
+
+**Fix:** import and call `utf8_stdout()` at the top of `main()`, the way
+the other two tools do (`coverage_floor.py` also carries the
+`sys.path.insert` that makes the import work from a bare checkout). The
+test is the report run over a module holding a non-cp1252 glyph with
+stdout forced to cp1252 — which is the only way it fails, so it is the
+only way it can be gated.
+
+**Workaround in use:** `PYTHONIOENCODING=utf-8 python
+tools/mutation_survivors.py .mutation-table_layout.sqlite
+src/docxkit/_table_layout.py`, which is how `_table_layout`'s 18.4 %
+(79 of 429) was read at all.
 
 ## Fixed
 
