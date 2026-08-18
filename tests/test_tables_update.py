@@ -7,6 +7,8 @@ the report separates re-rendering from data that actually moved.
 """
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 from conftest import NS, para, run
 
@@ -185,3 +187,69 @@ def test_the_block_overrun_refusal_counts_the_rows_it_would_need():
 
     assert "block of 3 rows at row 1 overruns table 0, which has 3 rows" \
         in str(exc.value)
+
+
+# --- what the _table_core run of 2026-08-18 found ------------------------
+#
+# `update` is the largest cluster left in the package at 32, and the
+# three below are the ones a fixture cannot reach by accident: the row
+# it writes into is `trs[row0 + i]`, and at the DEFAULT row0 of 1 with
+# two rows, `1 << 1` is 2 — the same cell the addition names. Three rows
+# at row 2 tell them apart.
+
+TALL = doc(para(run("Table 1. Results"))
+           + table_xml([["Country", "AFI", "Gap"],
+                        ["Poland", "0.31", "1,234"],
+                        ["Chile", "−0.62**", "5.0%"],
+                        ["Kenya", "0.44", "2.1%"],
+                        ["Nepal", "0.09", "0.4%"]]))
+
+
+def test_a_MULTI_ROW_block_at_an_offset_lands_row_by_row():
+    """`trs[row0 + i]`. At row0=1 with two rows every shift-shaped
+    mutation coincides with the sum; at row0=2 with three they part, and
+    a block written to rows 2, 4, 8 either overruns the table or
+    overwrites the wrong countries — which is a results table saying
+    something nobody computed."""
+    xml, changes = update(TALL, one_table(TALL),
+                          [[0.401], [0.402], [0.403]], row0=2, col0=1)
+
+    rows = one_table(xml).rows
+    # row 2's old cell carried significance stars, and they survive a
+    # regeneration — which is the other half of what `update` promises
+    assert [r[1] for r in rows] == ["AFI", "0.31", "0.40**", "0.40", "0.40"]
+    assert [(c.row, c.col) for c in changes] == [(2, 1), (3, 1), (4, 1)]
+
+
+def test_a_block_that_overruns_the_COLUMNS_from_an_offset_refuses():
+    """`col0 + len(incoming) > len(tcs)`: three values starting at
+    column 1 need four columns and the table has three. Written with a
+    bitwise operator in place of the sum, `1 | 3` is 3 and the check
+    passes — then the write runs off the end of the row."""
+    with pytest.raises(AnchorError, match="overrun"):
+        update(TALL, one_table(TALL), [[1, 2, 3]], row0=1, col0=1)
+
+
+def test_the_row_and_column_offsets_are_KEYWORD_only():
+    """Two small integers at a call site, and swapping them silently
+    writes a block into the wrong quadrant of the table."""
+    with pytest.raises(TypeError):
+        update(TALL, one_table(TALL), [[0.4]], 2, 1)  # type: ignore[call-arg]
+
+
+def test_an_object_with_VALUES_but_no_tolist_is_iterated_as_rows():
+    """`values is not None and hasattr(values, "tolist")` — the pandas
+    duck-type. Under `or`, anything carrying a `values` attribute (a
+    mapping, a namedtuple, a paper's own wrapper) is asked for `.tolist`
+    and raises inside docxkit rather than being read as the rows it is."""
+    class Wrapper:
+        values: ClassVar[list[list[str]]] = [["not", "the", "rows"]]
+
+        def __iter__(self):
+            return iter([[0.401]])
+
+    xml, changes = update(TALL, one_table(TALL), Wrapper(),
+                          row0=2, col0=1)
+
+    assert one_table(xml).rows[2][1] == "0.40**"
+    assert [(c.row, c.col) for c in changes] == [(2, 1)]
