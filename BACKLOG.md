@@ -17,16 +17,61 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*Nothing, as of 2026-08-18.* Empty on 2026-08-17 for the first time
-since this file was started, and empty again the next day: the one entry
-opened since — the survivor report dying on a module it could not spell
-— was closed in the session that filed it. The last five closed on the
-17th: the U+2212 downgrade (both halves), the missing row-multiset check
-for a reorder, and the four survivor ledgers, each on a fresh
-measurement rather than on the work having been done.
+*One, as of 2026-08-18.* This section was empty on the 17th, for the
+first time since the file was started, on five closed that day: the
+U+2212 downgrade (both halves), the missing row-multiset check for a
+reorder, and the four survivor ledgers, each on a fresh measurement
+rather than on the work having been done. Two were opened on the 18th
+and one of them — the survivor report dying on a module it could not
+spell — was closed in the session that filed it.
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
+
+### S2 three of `_table_layout`'s five harness exclusions were never true, and the number it produced is void
+
+Found 2026-08-18 while reading the sweep's survivor list. Twelve of the
+79 real survivors were in `drop_blank_rows`, whose whole test file —
+`tests/test_tables_blank_rows.py`, sixteen calls to it — was in
+EXCLUDED for that module. `drop_blank_rows` IS `_table_layout.py`.
+
+The exclusion said "the DATA half's files: they read cells and rewrite
+values, which the layout module has no part in". Measured with
+`--cov=docxkit._table_layout`, against the 13 % that merely importing
+the module covers:
+
+| file | covers | excluded as |
+|---|---|---|
+| `test_tables.py` | 13 % | the data half — TRUE |
+| `test_tables_update.py` | 13 % | the data half — TRUE |
+| `test_tables_api.py` | 22 % | the data half — false |
+| `test_tables_blank_rows.py` | 26 % | the data half — false |
+| `test_tables_nested.py` | 40 % | the data half — false |
+
+This is the `_table_core` failure a second time — 216 survivors in
+`update` from a harness missing `test_tables_update.py` — and it got
+past the gate written for that one, because the gate accepts EXCLUDED
+as an answer and an exclusion is the single claim in `harness_map.py`
+that nothing checks.
+
+**S2 rather than S3:** the gate is green and correct as far as it goes.
+What is wrong is a NUMBER, published in CONTRIBUTING's sweep table
+(18.4 %, 79 survivors, `drop_blank_rows` named as the second-largest
+cluster), which reads as a statement about the module and is a
+statement about a run missing three of its test files.
+
+**Fix (already in):** the three files moved out of EXCLUDED into the
+harness, and the note above EXCLUDED now carries the one-liner that
+measures an exclusion, plus the reason to run it before writing one.
+The 18.4 % is void until re-measured; that re-measurement, and the
+correction in CONTRIBUTING beside the figure it replaces, close this.
+
+**What would gate it properly:** coverage per excluded pair, which is a
+minute of wall clock over eleven pairs — too slow for the default
+suite, and the reason it is documented rather than gated. A cheaper
+static rule was tried and rejected: an excluded file that merely NAMES
+something the module defines is usually using it as a fixture, which is
+what `test_tables_fit.py` does with `read_all` and `Table`.
 
 ## Fixed
 
