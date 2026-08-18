@@ -33,25 +33,39 @@ jobs:
         # here — and without it `pages.py` covers 53 % against a floor of
         # 85 %, which is what stopped this workflow the first time ruff
         # let it reach the last step.
+        id: install
         run: pip install -e ".[dev,pdf]"
-      # Every gate runs even when an earlier one is red — `!cancelled()`
+      # Every gate runs even when an earlier GATE is red — `!cancelled()`
       # rather than `always()`, so a cancelled run still stops. The job
       # still FAILS on any red step; what changes is that the report is
       # complete. Four days of August were spent with three independent
       # failures stacked behind one ruff error nobody looked past: an
       # unsorted import block hid mypy, which hid a coverage floor, and
       # each only appeared once the one in front of it was fixed.
+      #
+      # But not when the INSTALL is red. Without the condition below a
+      # failed install skipped ruff (its default is `success()`) and ran
+      # the four behind it, each failing with `No module named …`: five
+      # red steps, four of them noise, and the one real cause the only
+      # one that does not look like a gate failure.
       - name: Ruff
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m ruff check .
       - name: Mypy
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m mypy
       - name: Pyright
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m pyright
       - name: Pytest
-        if: ${{ !cancelled() }}
+        id: pytest
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m pytest -q
+      # The floors are the exception, and gated on PYTEST rather than on
+      # the install: `tools/coverage_floor.py` runs the whole suite again
+      # in a subprocess to collect coverage, so on a red suite it costs a
+      # second full run to report every module under its floor — a wall
+      # of failures on top of the one that matters.
       - name: Coverage floors
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.pytest.outcome == 'success' }}
         run: python tools/coverage_floor.py

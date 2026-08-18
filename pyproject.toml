@@ -225,8 +225,13 @@ disallow_untyped_defs = true
 # pymupdf joined it for the same reason on 2026-08-18, and the same way
 # — `pages.py` gained `import pymupdf` on the 15th, CI was already red on
 # ruff by then, and mypy on all three versions had been failing on a
-# clean checkout unseen ever since. An optional extra is ABSENT on CI by
-# design; the import needs both this and the `pyright: ignore` beside it.
+# clean checkout unseen ever since.
+#
+# CI installs `.[dev,pdf]` NOW, so pymupdf is present there; what this
+# entry and the `pyright: ignore` beside it answer is the environment
+# that installs `.[dev]` alone, which is every contributor who does not
+# want a 20 MB wheel to run the tests. An optional extra is absent
+# SOMEWHERE by definition, and both checkers have to be told so.
 module = ["win32com.*", "pythoncom", "latex2mathml.*", "pymupdf.*"]
 ignore_missing_imports = true
 
