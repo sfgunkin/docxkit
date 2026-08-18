@@ -82,6 +82,7 @@ HARNESS: dict[str, list[str]] = {
                        "tests/test_cite_anchor_reuse.py"],
     "_cite_grammar.py": ["tests/test_citations.py", "tests/test_cite_names.py",
                          "tests/test_reference_bounds.py",
+                         "tests/test_wrap_span.py",
                          "tests/test_xml_primitives.py"],
     "_cite_repair.py": ["tests/test_citations.py", "tests/test_pathological.py",
                         "tests/test_cite_anchor_reuse.py"],
