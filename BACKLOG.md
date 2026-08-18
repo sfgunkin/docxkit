@@ -113,7 +113,7 @@ ghost alongside the real one.
 Both are REPAIR helpers, so the shape they are handed is by definition a
 damaged document — which is where a ghost lives.
 
-**Closed 2026-08-19** (`this commit`). The guard is on both patterns
+**Closed 2026-08-19** (`e30d359`). The guard is on both patterns
 now. A ghost is not a link to wrap, so `wrap_link_in_bookmark` refuses
 with "no link to X", which is the honest answer: what the caller wanted
 to wrap is not there.
