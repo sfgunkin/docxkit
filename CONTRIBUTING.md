@@ -359,18 +359,19 @@ second wave had not reached, and the tests written off them the same
 day. Only `tracked.py` has been re-measured; the rest are the FIRST
 figure and nothing more, and the tests named beside them are not in it:
 
-| module | measured | after | the tests that round wrote |
-|---|---|---|---|
-| `tracked.py` | 36.3 % | **9.4 %** | three rounds, below |
-| `equations.py` | 24.9 % | **10.6 %** | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
-| `_table_layout.py` | 18.4 % VOID | 21.0 %, then **12.2 %** | the harness was missing three of its test files; the round after it found an S2 and an S1 |
-| `cli.py` | 17.7 % | **9.1 %** | what `math`, `inspect`, `count`, `tasks`, `figures`, `revision ingest` and `validate` PRINT |
-| `comments.py` | 17.4 %\* | **24.2 %** | the two rewrites, and the two distances |
-| `crossrefs.py` | **20.8 %** | — | the caption-bookmark window, and one run cut into three |
-| `footnotes.py` | 15.6 % | — | the MARKS' half of the size report |
-| `revision.py` | 14.3 % | — | the glyph report's two thresholds |
-| `_compare_read.py` | 12.6 % (full run) | **9.8 %** | `mask_volatile_fields`' scan, then `pair_parts`' threshold |
-| `styles.py` | 8.7 % | — | — |
+| module | measured | after one round | after the next | what the rounds wrote |
+|---|---|---|---|---|
+| `tracked.py` | 36.3 % | 28.5 % | **9.4 %** | the untracked report, the Word path, the build report |
+| `equations.py` | 24.9 % | 10.6 % | **10.4 %** | `prose_math`'s window, five OMML shapes, the interval branch |
+| `_table_layout.py` | 18.4 % VOID | 21.0 % VOID | **12.2 %** | the harness lacked three of its files; then an S2 and an S1 |
+| `cli.py` | 17.7 % | **9.1 %** | — | what `math`, `inspect`, `count`, `tasks`, `figures`, `revision ingest` and `validate` PRINT |
+| `comments.py` | 17.4 %\* | 24.2 % | **14.7 %** | the two rewrites, the two distances, and an S1 in the flag |
+| `crossrefs.py` | **20.8 %** | — | — | the caption-bookmark window, one run cut into three, the loop |
+| `footnotes.py` | 15.6 % | **7.9 %** | — | the MARKS' half of the size report |
+| `revision.py` | 14.3 % | — | — | the glyph report's two thresholds |
+| `_compare_read.py` | 12.6 % (full run) | 9.8 % | **8.8 %** | `mask_volatile_fields`' scan, `pair_parts`' threshold, the address map |
+| `_table_core.py` | 12.9 % | **9.6 %** | — | `update`'s block arithmetic |
+| `styles.py` | 8.7 % | — | — | — |
 
 \* incomplete: 178 of the 450 it sampled, and the percentage is over
 what ran — which is why the complete run beside it reads HIGHER, not
