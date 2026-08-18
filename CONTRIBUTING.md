@@ -362,9 +362,9 @@ figure and nothing more, and the tests named beside them are not in it:
 | module | measured | after | the tests that round wrote |
 |---|---|---|---|
 | `tracked.py` | 36.3 % | **9.4 %** | three rounds, below |
-| `equations.py` | 24.9 % | — | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
+| `equations.py` | 24.9 % | **10.6 %** | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
 | `_table_layout.py` | 18.4 % VOID | 21.0 %, then void | the harness was missing three of its own test files; the round after it found an S2 |
-| `cli.py` | 17.7 % | — | what `math`, `inspect`, `count`, `tasks` and `figures` PRINT |
+| `cli.py` | 17.7 % | **9.1 %** | what `math`, `inspect`, `count`, `tasks`, `figures`, `revision ingest` and `validate` PRINT |
 | `comments.py` | 17.4 %\* | **24.2 %** | the two rewrites, and the two distances |
 | `footnotes.py` | 15.6 % | — | — |
 | `revision.py` | 14.3 % | — | — |
@@ -401,6 +401,14 @@ Word drops on the next save), and fixing it changed the source. A
 survivor series ends where the module does. What the round bought is in
 the BACKLOG entry; the number to compare against is the next fresh
 draw.
+
+All five re-measurements landed the same day, and the shape is the
+same in each: the survivors were the values a report or a rewrite
+produces, and the tests that killed them assert what the code SAYS
+rather than that it ran. `comments.py` is the odd one out only because
+its first figure was over 178 mutants and its second over 460 — the
+number went up because the run got longer, not because the module got
+worse.
 
 **`tracked.py` 36.3 % -> 28.5 % -> 9.4 %** in one day, three rounds,
 and what each round found is the shape to expect:
