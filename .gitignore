@@ -12,3 +12,6 @@ tests/corpus/*.docx
 # a mutation session's config and database (tools/mutation_session.py):
 # derived, restartable, and megabytes of it
 .mutation-*
+# and the log a backgrounded `tools/measure_all.py` writes: the figure
+# in it belongs in CONTRIBUTING, not in the tree
+.measure-*.log
