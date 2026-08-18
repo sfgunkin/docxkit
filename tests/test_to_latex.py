@@ -185,3 +185,76 @@ def test_round_trip_through_words_own_xsl():
     out = to_latex(omml)
     assert r"\frac" in out and r"\alpha" in out
     assert "^" in out and "[?" not in out
+
+
+# --- what the equations mutation run of 2026-08-18 found ------------------
+#
+# 24.9 % real survival, and after `prose_math` the clusters were all in
+# this converter: 19 in `e_sPre`, 7 in `e_groupChr`, 7 in `e_borderBox`,
+# 5 in `e_phant`, 4 in `e_r`. Every one sat on a `+` between two strings
+# — mutated to `&`, `|`, `^`, which would raise on the first call — so
+# they were not weak assertions but shapes NOTHING here had ever built.
+# Word writes all of them: prescripts in isotope and tensor notation,
+# an over-arrow on a vector, `\boxed` for a highlighted result, and
+# `\phantom` wherever an author aligned two lines by hand.
+
+
+def test_a_PRESCRIPT_puts_sub_and_sup_BEFORE_the_base():
+    """`m:sPre` is Word's prescript — isotope and tensor notation. LaTeX
+    has no operator for it, so the sub and the sup hang off an empty
+    group `{}` and the base follows: order the four pieces any other way
+    and the carbon-14 reads as an exponent on the element."""
+    body = ("<m:sPre><m:sub>" + r("2") + "</m:sub><m:sup>" + r("14")
+            + "</m:sup><m:e>" + r("C") + "</m:e></m:sPre>")
+    assert to_latex(m(body)) == "{}_{2}^{14}{C}"
+
+
+def test_an_OVERBRACE_is_told_from_an_underbrace_by_its_character():
+    """The default `groupChr` is U+23DF and the test above covers it;
+    U+23DE is the same element with the brace the other way up, and only
+    the character says which."""
+    body = ('<m:groupChr><m:groupChrPr><m:chr m:val="⏞"/></m:groupChrPr>'
+            "<m:e>" + r("abc") + "</m:e></m:groupChr>")
+    assert to_latex(m(body)) == r"\overbrace{abc}"
+
+
+def test_ANY_OTHER_grouping_character_sits_above_or_below_by_pos():
+    r"""A vector's arrow, a tilde, an author's own glyph: not a brace, so
+    it becomes `\overset` or `\underset` around the character itself —
+    and `pos` is the only thing that decides which. `top` is the sole
+    value that lifts it; Word writes `bot` and omits the element
+    entirely, and both mean below."""
+    def grouped(pos: str) -> str:
+        return ('<m:groupChr><m:groupChrPr><m:chr m:val="→"/>'
+                + pos + "</m:groupChrPr><m:e>" + r("abc")
+                + "</m:e></m:groupChr>")
+
+    assert to_latex(m(grouped('<m:pos m:val="top"/>'))) \
+        == r"\overset{\to}{abc}"
+    assert to_latex(m(grouped('<m:pos m:val="bot"/>'))) \
+        == r"\underset{\to}{abc}"
+    assert to_latex(m(grouped(""))) == r"\underset{\to}{abc}"
+
+
+def test_a_BOXED_result_and_a_PHANTOM_spacer_keep_their_argument():
+    """`borderBox` is how a paper highlights the result it wants read,
+    and `phant` is how an author lines two rows up by hand. Both are one
+    command and one braced argument, and dropping the argument leaves a
+    command LaTeX will not compile."""
+    box = "<m:borderBox><m:e>" + r("x=1") + "</m:e></m:borderBox>"
+    phantom = "<m:phant><m:e>" + r("xy") + "</m:e></m:phant>"
+
+    assert to_latex(m(box)) == r"\boxed{x=1}"
+    assert to_latex(m(phantom)) == r"\phantom{xy}"
+
+
+def test_a_run_styled_PLAIN_is_upright_the_same_as_one_marked_nor():
+    """Two spellings of the same intent: `m:nor` and `sty="p"`. Word
+    writes the second when the author set the style rather than the
+    property, and a function name left in math italic is the error this
+    prevents — `max` as m·a·x, three variables multiplied."""
+    plain = '<m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>max</m:t></m:r>'
+    italic = '<m:r><m:rPr><m:sty m:val="i"/></m:rPr><m:t>max</m:t></m:r>'
+
+    assert to_latex(m(plain)) == r"\text{max}"
+    assert to_latex(m(italic)) == "max", "only 'p' is upright"
