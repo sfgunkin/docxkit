@@ -363,7 +363,7 @@ figure and nothing more, and the tests named beside them are not in it:
 |---|---|---|---|
 | `tracked.py` | 36.3 % | **9.4 %** | three rounds, below |
 | `equations.py` | 24.9 % | — | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
-| `_table_layout.py` | 18.4 % VOID | — | none: the harness was missing three of its own test files |
+| `_table_layout.py` | 18.4 % VOID | **21.0 %** | none: the harness was missing three of its own test files |
 | `cli.py` | 17.7 % | — | what `math`, `inspect`, `count`, `tasks` and `figures` PRINT |
 | `comments.py` | 17.4 %\* | — | — |
 | `footnotes.py` | 15.6 % | — | — |
@@ -372,10 +372,24 @@ figure and nothing more, and the tests named beside them are not in it:
 | `styles.py` | 8.7 % | — | — |
 
 \* incomplete: 178 of the 450 it sampled, and the percentage is over
-what ran. `_table_layout`'s figure is void for a different reason — see
-the BACKLOG entry: three of its five harness exclusions were never
+what ran. `_table_layout`'s first figure is void for a different reason
+— see the BACKLOG entry: three of its five harness exclusions were never
 true, and a run missing the files that cover a function invents
 survivors in it.
+
+**The two `_table_layout` figures are not a comparison, and the second
+is the real one.** 18.4 % came from a run whose harness was missing
+three of its test files; 21.0 % (92 of 439) is the same module under all
+eleven. A corrected harness reading HIGHER is not a paradox — the two
+runs are different draws of a 2,834-mutant module sampled at 460, and
+the earlier session's parameters are not recorded anywhere, so nothing
+justifies calling them paired. What IS a comparison is the function the
+exclusion hid: `drop_blank_rows` went from 12 survivors to **1** the
+moment `tests/test_tables_blank_rows.py` joined the run.
+
+The largest cluster now is 16 in `<module>` — the glyph-width table,
+whose numbers are the one thing in this package that only
+`pytest -m word` can really check, since the answer lives in Word.
 
 **`tracked.py` 36.3 % -> 28.5 % -> 9.4 %** in one day, three rounds,
 and what each round found is the shape to expect:
