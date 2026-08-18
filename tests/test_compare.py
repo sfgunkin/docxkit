@@ -2766,3 +2766,52 @@ def test_an_EQUAL_block_after_an_insertion_pairs_the_right_paragraphs():
     assert [t["context"] for t in edited["text"]] == [
         "The opening, as it was."], "one edit, and it is the first"
     assert not edited["structure"] and not edited["glyph"]
+
+
+def test_a_glyph_substitution_the_OTHER_WAY_ROUND_is_still_reported(tmp_path):
+    """`pa.text != pb.text`, not `>`. The existing fixture has the curly
+    apostrophe on the A side, where every comparison operator fires;
+    with the straight one there — which is what a round that ran
+    `hygiene.smarten` produces — `>` is False and the finding vanishes
+    entirely. Not into TEXT: nowhere."""
+    a, b = docs(tmp_path,
+                para(run("the workers' index rose")),
+                para(run("the workers’ index rose")))
+
+    report = compare(a, b)
+
+    assert report["text"] == []
+    assert len(report["glyph"]) == 1
+    assert report["glyph"][0]["from"] == "the workers' index rose"
+    assert report["glyph"][0]["to"] == "the workers’ index rose"
+
+
+def test_a_glyph_finding_quotes_a_hundred_and_twenty_characters(tmp_path):
+    """Both sides, because the finding IS the pair — a reader compares
+    them character by character to see which glyph moved, and a cut that
+    lands differently on the two sides is a diff of the cut."""
+    long = ("The estimate is robust to the specification and to the "
+            "sample, as the appendix sets out at length, with the "
+            "standard errors in the second panel of each table.")
+    a, b = docs(tmp_path, para(run(long.replace("'", "'") + " it's fine")),
+                para(run(long + " it’s fine")))
+
+    report = compare(a, b)
+
+    (glyph,) = report["glyph"]
+    assert len(glyph["from"]) == 120 and len(glyph["to"]) == 120
+    assert glyph["from"] == (long + " it's fine")[:120]
+
+
+def test_a_text_edit_quotes_SIXTY_characters_of_context(tmp_path):
+    """`pa.text[:60]` — the context is what places the word diff in the
+    document, and the word diff itself carries the change."""
+    long = ("The estimate is robust to the specification and to the "
+            "sample, as the appendix sets out at length.")
+    a, b = docs(tmp_path, para(run(long)),
+                para(run(long.replace("robust", "sensitive"))))
+
+    report = compare(a, b)
+
+    (edit,) = report["text"]
+    assert edit["context"] == long[:60] and len(edit["context"]) == 60
