@@ -2744,3 +2744,45 @@ def test_an_entry_nothing_cites_is_not_reported_as_a_CITE_WITHOUT_REF():
 
     assert not [i for i in issues if i.startswith("CITE WITHOUT REF")]
     assert [i for i in issues if i.startswith("REF WITHOUT CITE")]
+
+
+def test_unlink_takes_the_bookmarkEnd_of_ITS_OWN_bookmark_only():
+    """`count=1`. A bookmark id is unique in a healthy document and this
+    package has a lint check for the case where it is not, because Word
+    merges revisions that share one. With two ends carrying the same id,
+    removing both leaves the OTHER bookmark unclosed — a start with no
+    end, which is what Word calls unreadable content and what
+    `citations.integrity` reports."""
+    xml = ('<w:document><w:body>'
+           '<w:p><w:bookmarkStart w:id="4" w:name="bookmark=id.abc123"/>'
+           '<w:bookmarkEnd w:id="4"/>'
+           "<w:r><w:t>Smith, J. (2020). Title.</w:t></w:r></w:p>"
+           '<w:p><w:bookmarkStart w:id="4" w:name="Kept2020"/>'
+           '<w:bookmarkEnd w:id="4"/>'
+           "<w:r><w:t>Jones, A. (2021). Title.</w:t></w:r></w:p>"
+           "</w:body></w:document>")
+    from docxkit import citations as C
+
+    out, _links, marks = C.unlink_by_anchor(xml, r"^bookmark=id\.")
+
+    assert marks == 1
+    assert 'w:name="Kept2020"' in out
+    assert out.count("<w:bookmarkEnd") == 1, "the other bookmark's end went"
+
+
+def test_a_prose_line_read_as_an_entry_names_its_paragraph():
+    """`¶{r.index + 1}` — one-based, because that is how Word counts,
+    and the whole finding is WHICH line the reference block ran on to.
+    The message is advisory (the rule cannot hold across scripts), so
+    the paragraph number is the only actionable thing in it."""
+    from docxkit._cite_build import _prose_entries
+    from docxkit.citations import references
+
+    texts = ["Body prose.", "References",
+             "Smith, J. (2020). A real entry. JEP.",
+             "The authors declare no competing interests. (2024). Note."]
+    entries = references(texts)
+
+    (note,) = _prose_entries(entries)
+
+    assert note.startswith("¶4 is filed under 'The authors declare")
