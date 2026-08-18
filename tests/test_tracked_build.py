@@ -16,7 +16,7 @@ import contextlib
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from conftest import NS, dele, document, ins, make_parts, para, run
@@ -1343,3 +1343,119 @@ def test_a_MERGE_deep_in_the_document_covers_the_LONGER_side():
         (3, "First.", "All three, merged."),
         (4, "Second.", ""),
         (5, "Third.", "")]
+
+
+# --- the Word path's own report, from the same re-measurement ------------
+#
+# `_comment_revision` 13 survivors and `_accept_math_via_equations` 11,
+# the two largest after `untracked`. Both run only through Word, so the
+# fakes above are the whole harness — and they asserted what the
+# functions DID (a comment added, a revision accepted) and never what
+# they were told. Eight of the thirteen sat on the two sentinels the
+# context carries, which is what a paper's classifier reads.
+
+
+class _ClassifierRange:
+    """A revision's range: its own text, and the paragraph around it."""
+
+    Text: str | None = "the revised phrase"
+    PARAGRAPHS: ClassVar[dict[int, str]] = {
+        1: "The paragraph the revision sits in.",
+        2: "A different paragraph entirely."}
+
+    def Paragraphs(self, i):
+        text = self.PARAGRAPHS[i]
+        return type("P", (), {"Range": type("R", (), {"Text": text})})
+
+
+class _NullTextRange(_ClassifierRange):
+    """Word hands back None for an empty range, not an empty string."""
+
+    Text = None
+
+
+class _CommentDoc:
+    def __init__(self):
+        self.added: list[str] = []
+        self.Comments = type("C", (), {
+            "Add": lambda _s, rng, text: self.added.append(text),
+            "Count": 0})()
+
+
+def test_what_the_CLASSIFIER_is_handed_on_the_Word_path():
+    """The paper's own function reads this, and a build makes one call
+    per revision. `window` is the paragraph because Word gives no wider
+    scope here, `table_index` is None because it cannot say, and the two
+    offsets are -1: a sentinel that means "not located", where 0 and 1
+    are real positions a rule could match on."""
+    from docxkit.comments import RevisionContext
+    from docxkit.tracked import _comment_revision
+    seen: list[RevisionContext] = []
+
+    def classify(ctx):
+        seen.append(ctx)
+        return "R1: the comment"
+
+    doc = _CommentDoc()
+    _comment_revision(doc, type("Rev", (), {"Range": _ClassifierRange()}),
+                      classify, None)
+
+    (ctx,) = seen
+    assert ctx.text == "the revised phrase"
+    assert ctx.para == "The paragraph the revision sits in."
+    assert ctx.window == ctx.para
+    assert ctx.table_index is None
+    assert (ctx.start, ctx.end) == (-1, -1)
+    assert doc.added == ["R1: the comment"]
+
+
+def test_a_range_Word_reports_as_None_reaches_the_classifier_as_TEXT():
+    """`rng.Text or ""` — with `and` in its place the context carries
+    None, and a classifier doing `"table" in ctx.text` raises inside the
+    paper's own code, one revision into a build of fourteen hundred."""
+    from docxkit.tracked import _comment_revision
+    seen = []
+
+    def classify(ctx):
+        seen.append(ctx.text)
+        return "R1"
+
+    _comment_revision(_CommentDoc(),
+                      type("Rev", (), {"Range": _NullTextRange()}),
+                      classify, None)
+
+    assert seen == [""]
+
+
+class _BoundedMathDoc:
+    """One equation at 100-200 and four revisions around its edges."""
+
+    def __init__(self):
+        self.exact = _Rev("exactly the equation", span=(100, 200))
+        self.inside = _Rev("well within it", span=(120, 150))
+        self.overhangs_left = _Rev("starts in the prose", span=(90, 150))
+        self.overhangs_right = _Rev("runs past the end", span=(150, 250))
+        self.revisions = [self.exact, self.inside,
+                          self.overhangs_left, self.overhangs_right]
+        self.OMaths = _Count([_OMath(revisions=self.revisions,
+                                     span=(100, 200))])
+        self.Revisions = _Count(self.revisions)
+
+
+def test_a_revision_ON_the_equation_boundary_is_OF_the_equation():
+    """`lo <= span[0] and span[1] <= hi`, at the two places it is
+    decided. A revision that covers the equation exactly is the whole of
+    it and must be accepted; one that starts a character earlier, or
+    ends a character later, carries prose with it — and `Accept()`
+    applies the WHOLE span, which is how thirteen accepts destroyed 315
+    revisions on LI7."""
+    from docxkit.tracked import _accept_math_via_equations
+
+    doc = _BoundedMathDoc()
+    outcome = _accept_math_via_equations(doc)
+
+    assert doc.exact.accepted, "a revision covering it exactly is OF it"
+    assert doc.inside.accepted
+    assert not doc.overhangs_left.accepted, "it starts in the prose"
+    assert not doc.overhangs_right.accepted, "it ends in the prose"
+    assert outcome == (2, 2)          # accepted, kept
