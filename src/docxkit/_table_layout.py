@@ -138,7 +138,17 @@ def _own_tblpr(body: str) -> tuple[int, int, str] | None:
     writing a second properties element beside it.
     """
     grid = _own_grid(body)
-    head = body[:grid.start()] if grid is not None else body
+    if grid is not None:
+        head = body[:grid.start()]
+    else:
+        # No grid to bound the search, so the first ROW does it: a
+        # table's own properties precede its first row, and a nested
+        # table can only live inside a cell of one. Unbounded, an outer
+        # table with no properties of its own reached the inner table's
+        # — the same defect this function exists for, one fragment
+        # further out.
+        first_row = body.find("<w:tr")
+        head = body[:first_row] if first_row != -1 else body
     m = re.search(r"<w:tblPr\b[^>]*?(/?)>", head)
     if m is None:
         return None
@@ -161,9 +171,18 @@ def _set_tbl_pr(body: str, pattern: re.Pattern[str], element: str,
     own = _own_tblpr(body)
     if own is None:
         grid = _own_grid(body)
-        # tblPr sits immediately before the grid — after any range
-        # markup, which CT_Tbl allows to precede it.
-        at = grid.start() if grid is not None else len(body)
+        if grid is not None:
+            # tblPr sits immediately before the grid — after any range
+            # markup, which CT_Tbl allows to precede it.
+            at = grid.start()
+        else:
+            # No grid: before the first row instead, and after the open
+            # tag when a fragment has neither. `len(body)` was here, and
+            # it appended the properties AFTER the last row — which is
+            # not a table, and only a caller that writes the grid first
+            # (`fit_columns` does) never reached it.
+            first_row = body.find("<w:tr")
+            at = first_row if first_row != -1 else body.index(">") + 1
         return body[:at] + f"<w:tblPr>{element}</w:tblPr>" + body[at:]
     start, end, inner = own
     live = live_properties(inner)
@@ -1165,8 +1184,6 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 #: to move with it or a run reads at two sizes in one cell.
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
 _TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
-_TBLPR_RE = re.compile(r"<w:tblPr\b[^>]*(?<!/)>.*?</w:tblPr>", re.DOTALL)
-_TCPR_END_RE = re.compile(r"</w:tcPr>")
 
 
 @dataclass
@@ -1310,30 +1327,29 @@ def _house_cell(tc: str, rpr: str, ppr: str) -> tuple[str, int, int]:
     return out, runs, paragraphs
 
 
-#: Full width, laid out from the content rather than from fixed column
-#: widths — `fit_columns` is the deliberate opposite, and a paper that
-#: wants measured widths runs it AFTER this.
-_HOUSE_WIDTH = ('<w:tblW w:w="5000" w:type="pct"/>'
-                '<w:tblLayout w:type="autofit"/>')
-
-
 def _house_width(body: str) -> tuple[str, bool]:
-    m = _TBLPR_RE.search(body)
-    if m is None:
-        # A table with no properties element at all is ordinary in a
-        # hand-built fragment, and it still has to end up full width.
-        at = body.index(">") + 1
-        return (body[:at] + f"<w:tblPr>{_HOUSE_WIDTH}</w:tblPr>"
-                + body[at:]), True
-    props = m.group(0)
-    if '<w:tblW w:w="5000" w:type="pct"/>' in props \
-            and '<w:tblLayout w:type="autofit"/>' in props:
-        return body, False
-    props = _TBLW_RE.sub("", props)
-    props = _TBLLAYOUT_RE.sub("", props)
-    at = props.index(">") + 1
-    props = props[:at] + _HOUSE_WIDTH + props[at:]
-    return body[:m.start()] + props + body[m.end():], True
+    """Full width and autofit, through the table's OWN ordered `tblPr`.
+
+    Laid out from the CONTENT rather than from fixed column widths —
+    `fit_columns` is the deliberate opposite, and a paper that wants
+    measured widths runs it after this.
+
+    Both properties go in with :func:`_set_tbl_pr`, which `fit_columns`
+    has used all along and this path did not. Splicing them at the front
+    of `w:tblPr` put `w:tblW` AHEAD of the `w:tblStyle` that CT_TblPr
+    requires before it, and Word repairs a table whose properties are
+    out of order by dropping the misplaced ones on the next save — so
+    the width stopped applying some weeks later with nothing in any
+    diff. `hygiene.table_spacing` records the same failure for CT_PPr.
+
+    The old path also wrote into whichever `w:tblPr` came first, which
+    is a NESTED table's whenever the outer table has none.
+    """
+    out = _set_tbl_pr(body, _TBLW_RE, '<w:tblW w:w="5000" w:type="pct"/>',
+                      _AFTER_TBLW)
+    out = _set_tbl_pr(out, _TBLLAYOUT_RE, '<w:tblLayout w:type="autofit"/>',
+                      _AFTER_TBLLAYOUT)
+    return out, out != body
 
 
 def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:

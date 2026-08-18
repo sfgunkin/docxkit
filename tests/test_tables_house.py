@@ -155,3 +155,87 @@ def test_by_caption_finds_the_table_this_styles():
     xml = _doc()
     _, report = house(xml, by_caption(xml, "Table A4:"))
     assert report.runs
+
+
+# --- what the _table_layout run of 2026-08-18 found ----------------------
+#
+# 12 survivors in `_house_width`, every one on the arithmetic that
+# splices the width into the properties — and the tests above assert
+# that the two elements are somewhere `in out`, which is true wherever
+# they land. Asking WHERE found an S2: `<w:tblW>` was going in FIRST,
+# ahead of the `<w:tblStyle>` that CT_TblPr requires before it.
+
+
+def _styled_doc() -> str:
+    """A table built the way `body.table` builds one — with a tblStyle,
+    which is what makes the order visible."""
+    from docxkit.body import table as body_table
+    return document(para(run("Table A4: Data sources"))
+                    + body_table(["Country", "Source"], [["KZ", "UNFPA"]]))
+
+
+def test_the_width_goes_in_its_SCHEMA_SLOT_not_at_the_front():
+    """CT_TblPr is a sequence: tblStyle, then tblW, then tblLayout, then
+    tblLook. Word repairs a table whose properties are out of order — it
+    drops the misplaced ones on the next save, so the width silently
+    stops applying some weeks later with nothing in any diff. The same
+    failure `table_spacing` records for CT_PPr, and the same shape.
+
+    `fit_columns` has done this correctly through `_set_tbl_pr` all
+    along; this path spliced at `props.index(">") + 1` instead."""
+    xml = _styled_doc()
+
+    out, report = house(xml, read_all(xml)[0])
+
+    assert report.width
+    props = out[out.index("<w:tblPr>"):out.index("</w:tblPr>")]
+    order = [props.index(t) for t in ("<w:tblStyle", "<w:tblW",
+                                      "<w:tblLayout", "<w:tblLook")]
+    assert order == sorted(order), props
+
+
+def test_the_width_REPLACES_one_already_there_in_its_own_slot():
+    """`body.table`'s default already carries a tblW — in the right
+    place. Replacing it must not move it to the front either."""
+    xml = _styled_doc()
+    assert '<w:tblW w:w="5000" w:type="pct"/>' in xml
+
+    out, _ = house(xml, read_all(xml)[0])
+
+    props = out[out.index("<w:tblPr>"):out.index("</w:tblPr>")]
+    assert props.count("<w:tblW") == 1
+    assert props.count("<w:tblLayout") == 1
+    assert props.index("<w:tblStyle") < props.index("<w:tblW")
+
+
+def test_a_table_with_NO_properties_still_gets_them_first():
+    """`w:tblPr` is CT_Tbl's first child, and a hand-built fragment has
+    none at all — the other half of the same function."""
+    xml = _doc()                      # conftest's bare <w:tbl>
+
+    out, report = house(xml, read_all(xml)[0])
+
+    assert report.width
+    at = out.index("<w:tbl>")
+    assert out[at:].startswith("<w:tbl><w:tblPr>")
+    assert '<w:tblW w:w="5000" w:type="pct"/>' in out
+    assert '<w:tblLayout w:type="autofit"/>' in out
+
+
+def test_the_width_is_written_into_the_OUTER_table_not_a_nested_one():
+    """`_set_tbl_pr`'s own warning, which this path did not have: a
+    `re.sub` over the body writes into whichever tblPr comes first, and
+    a nested table's is first whenever the outer table has none."""
+    inner = ('<w:tbl><w:tblPr><w:tblStyle w:val="Inner"/></w:tblPr>'
+             + row("x", "y") + "</w:tbl>")
+    xml = document(para(run("Table A4: Data sources"))
+                   + ("<w:tbl>" + "<w:tr><w:tc>" + inner + "</w:tc></w:tr>"
+                      + "</w:tbl>"))
+
+    out, _ = house(xml, read_all(xml)[0])
+
+    start = out.index("<w:tbl>")
+    outer = out[start:out.index("<w:tbl>", start + 1)]
+    assert '<w:tblW w:w="5000" w:type="pct"/>' in outer, \
+        "the outer table is the one that was asked for"
+    assert 'w:val="Inner"' in out, "and the nested one keeps its own"
