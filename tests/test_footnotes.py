@@ -717,3 +717,120 @@ def test_a_report_BUILT_BY_HAND_prints_rather_than_raising():
 
     assert "reference marks: house none stated" in line
     assert "1 disagreeing" in line
+
+
+# --- the size walk, note by note (2026-08-19) --------------------------
+#
+# footnotes measured at 7.8 % with 16 of its 31 survivors inside
+# `sizes`. Every one of them is a `continue` in the run walk or a term
+# in the vote that decides the house size — and every fixture above has
+# ONE run per note, so a walk that stopped early would look exactly like
+# one that carried on.
+
+_LONG = ("The normalisation is by the sample mean rather than by the "
+         "base year, so the two panels are comparable throughout.")
+
+
+def test_an_outlier_names_its_note_in_forty_eight_characters():
+    """The finding is read next to the document and the text is how a
+    person finds the note — the id alone is Word's numbering, which the
+    next save changes."""
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, run(_LONG, SZ12))))
+
+    (odd,) = report.outliers
+    assert odd.text == "The normalisation is by the sample mean rather t"
+    assert len(odd.text) == 48
+
+
+def test_a_note_whose_MARK_comes_first_still_has_its_text_sized():
+    """`continue`, not `break`, after the reference mark. Word writes
+    the mark as the first run of the note, so under `break` no footnote
+    in a real document would ever be sized — every one of them would
+    stop at its own first run."""
+    marked = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+              "<w:footnoteRef/></w:r>")
+    report = footnotes.sizes(part(note(2, marked + run("a", SZ10)),
+                                  note(3, marked + run("b", SZ10)),
+                                  note(4, marked + run("c", SZ12))))
+
+    assert report.counted == 3
+    assert [o.id for o in report.outliers] == ["4"]
+
+
+def test_an_EMPTY_run_does_not_end_the_note_either():
+    """The other `continue`. A run holding a space, or nothing at all,
+    is what an edit leaves behind — and the size that disagrees is
+    routinely in the run after it."""
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, run(" ", SZ10) + run("c", SZ12))))
+
+    (odd,) = report.outliers
+    assert odd.id == "4"
+    assert odd.stated == (24,), "the empty run states 10pt and is skipped"
+
+
+def test_a_note_with_NOTHING_VISIBLE_does_not_end_the_walk():
+    """`if not seen: continue` — a note holding only its mark says
+    nothing about sizes, and the notes after it still do. Under `break`
+    a single separator-shaped note early in the part hides every finding
+    below it."""
+    marked = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+              "<w:footnoteRef/></w:r>")
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, marked),
+                                  note(5, run("c", SZ12))))
+
+    assert [o.id for o in report.outliers] == ["5"]
+
+
+def test_a_MIXED_note_does_not_vote_for_the_house_size():
+    """`len(s) == 1`: a note that states two sizes is the finding, not
+    the evidence. Under `>=` its first size joins the vote, and with two
+    of them it wins — so the house becomes the size the broken notes
+    share and every correct note is reported as an outlier."""
+    # both of the mixed note's sizes are LARGER than the good one's, so
+    # its smallest — the value `s[0]` a wrong filter would let vote — is
+    # not the house value. With the two overlapping, the vote is the
+    # same either way and the mutant is invisible.
+    sz14 = '<w:sz w:val="28"/>'
+    mixed = run("c", SZ12) + run("d", sz14)
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, mixed),
+                                  note(4, mixed)))
+
+    assert report.house == 20, "the one note that states a single size"
+    assert [o.id for o in report.outliers] == ["3", "4"]
+
+
+def test_the_notes_that_state_NOTHING_do_not_vote_either():
+    """`and s[0] is not None`: a silent note inherits, and there is no
+    value in it to count. Under `or` the Nones join the vote and win,
+    and the house size becomes "no size at all"."""
+    report = footnotes.sizes(part(note(2, run("a")),
+                                  note(3, run("b")),
+                                  note(4, run("c", SZ10))))
+
+    assert report.house == 20
+    assert sorted(o.id for o in report.outliers) == ["2", "3"]
+
+
+def test_a_mark_finding_names_its_note_in_forty_eight_characters_too():
+    """The mark half of the report carries the same 48-character
+    extract, written on its own line of the source and read by nothing
+    — and a mark finding is the harder one to place by hand, because
+    the mark itself is a number Word renumbers."""
+    def mark(sz: str) -> str:
+        return ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+                f'{sz}</w:rPr><w:footnoteRef/></w:r>')
+
+    report = footnotes.sizes(part(note(2, mark(SZ10) + run("a", SZ10)),
+                                  note(3, mark(SZ10) + run("b", SZ10)),
+                                  note(4, mark(SZ12) + run(_LONG, SZ10))))
+
+    (found,) = report.mark_outliers
+    assert found.text == "The normalisation is by the sample mean rather t"
+    assert len(found.text) == 48
