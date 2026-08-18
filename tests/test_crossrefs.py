@@ -1170,3 +1170,154 @@ def test_a_continuation_number_ALREADY_linked_by_hand_is_left_alone():
     assert links == [("Table3", "Tables 3"), ("Table5", "5")]
     assert "<w:hyperlink" not in p[p.index("</w:hyperlink>"):
                                    p.rindex("<w:hyperlink")], "not nested"
+
+
+# --- offsets that are not near zero (2026-08-19) ------------------------
+#
+# Both rewrites here cut a run at `tm.start() - r_open`: where the text
+# node starts, measured from where its run starts. Every fixture in this
+# file uses a run with no properties, so that distance is five
+# characters and the subtraction agrees with `%`, `//` and `>>` on
+# numbers that small. crossrefs measured 12.9 % with its survivors
+# clustered on exactly those two lines.
+#
+# What makes the distance real is `w:rPr`. Word writes one on every run
+# it has ever touched — fonts, size, language, and the complex-script
+# twin of each — and 210 characters of properties between `<w:r>` and
+# `<w:t>` is an ordinary paragraph, not a constructed one.
+
+FAT_RPR = ('<w:rPr><w:rFonts w:ascii="Times New Roman" '
+           'w:hAnsi="Times New Roman" w:eastAsia="Times New Roman" '
+           'w:cs="Times New Roman"/><w:sz w:val="24"/>'
+           '<w:szCs w:val="24"/><w:lang w:val="en-GB" '
+           'w:eastAsia="ru-RU"/></w:rPr>')
+
+
+def _visible(xml: str) -> str:
+    """Every w:t in document order, joined — what a reader sees."""
+    return "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml))
+
+
+def test_a_mention_behind_a_run_full_of_PROPERTIES_is_cut_at_the_label():
+    """`tm.start() - r_open` in `_link_mention`. With 210 characters of
+    run properties in front of the text node the distance is 215, and
+    `%` gives 0, `//` gives 43 and `>>` gives 6 — each of them cuts the
+    sentence somewhere else and re-emits the pieces in order, so the
+    visible text still reads right and only the position of the link
+    says it went wrong."""
+    xml = doc(
+        para(run("As shown in Table 1 below, it rises.", rpr=FAT_RPR)),
+        para(run("Table 1. Employment by age group")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table1"]
+    mention = paragraph_holding(out, "As shown in ")
+    assert _visible(mention) == "As shown in Table 1 below, it rises."
+    link = re.search(r'<w:hyperlink w:anchor="Table1">.*?</w:hyperlink>',
+                     mention, re.DOTALL)
+    assert link is not None
+    assert _visible(link.group(0)) == "Table 1"
+
+
+def test_a_caption_LABEL_behind_the_same_properties_is_cut_at_the_label():
+    """The back-link half, in `_wrap_label`, on the same arithmetic —
+    and the caption is where Word's properties actually pile up, since a
+    caption style sets the font and the size explicitly."""
+    xml = doc(
+        para(run("Employment rises with age, see Table 2 below.")),
+        para(run("Table 2. Employment by age group", rpr=FAT_RPR)),
+    )
+
+    out, _report = crossrefs.link(xml)
+
+    caption = paragraph_holding(out, "Table 2. Employment")
+    assert _visible(caption) == "Table 2. Employment by age group"
+    link = re.search(r'<w:hyperlink w:anchor="Table2txt">.*?</w:hyperlink>',
+                     caption, re.DOTALL)
+    assert link is not None
+    assert _visible(link.group(0)) == "Table 2"
+
+
+def test_an_INDENTED_caption_keeps_its_leading_space_outside_the_link():
+    """`content[:len(content) - len(content.lstrip())]` — the run's own
+    leading whitespace stays outside the link, because a blue run of
+    spaces before a caption is a rendering defect a reader reports.
+
+    Fifteen spaces, deliberately: the two lengths this line subtracts
+    are 30 and 15, and `%` gives 0 where `-` gives 15. With an ordinary
+    indent the leading space is shorter than the caption text and the
+    two agree, which is why every fixture passed either way."""
+    xml = doc(
+        para(run("See Table 3 for detail.")),
+        para(run(" " * 15 + "Table 3. Detail")),
+    )
+
+    out, _report = crossrefs.link(xml)
+
+    caption = paragraph_holding(out, "Table 3. Detail")
+    link = re.search(r'<w:hyperlink w:anchor="Table3txt">.*?</w:hyperlink>',
+                     caption, re.DOTALL)
+    assert link is not None
+    assert _visible(link.group(0)) == "Table 3"
+    assert _visible(caption) == " " * 15 + "Table 3. Detail"
+
+
+def test_a_MENTION_outside_any_run_is_reported_not_spliced():
+    """`r_open < 0`, the guard. A `w:t` that no run opens before it is
+    malformed — and the mention is IN it, so the walk reaches the line
+    that measures from the run's start with no run to measure from.
+    `< 0` steps over it and the caption is reported as having no
+    mention; `== 0` (r_open is never 0, since every paragraph opens
+    with `<w:p>`) slices from -1 instead and hands an empty string to
+    the rewrite, which raises."""
+    xml = doc(
+        para('<w:t xml:space="preserve">As shown in Table 4 below.</w:t>'),
+        para(run("Table 4. Employment")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == []
+    assert report.no_mention == ["Table4"]
+    assert "As shown in Table 4 below." in out
+
+
+def test_a_TAB_between_the_properties_and_the_text_survives_the_split():
+    """`t_span`'s first half. `pre` is what sits between the run's
+    properties and the text node being cut — a rendered tab, a footnote
+    reference, a second text node — and in a run with nothing there it
+    is empty whatever the arithmetic says, which is every fixture above.
+    A tab is the common one: Word writes `<w:tab/>` inside the run for a
+    caption or an indented sentence, and losing it moves the line."""
+    xml = doc(
+        para('<w:r>' + FAT_RPR + '<w:tab/><w:t xml:space="preserve">'
+             "As shown in Table 5 below, it rises.</w:t></w:r>"),
+        para(run("Table 5. Employment by age group")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table5"]
+    mention = paragraph_holding(out, "As shown in ")
+    assert mention.count("<w:tab/>") == 1
+    assert _visible(mention) == "As shown in Table 5 below, it rises."
+    head = mention[:mention.index("<w:hyperlink")]
+    assert head.index("<w:tab/>") < head.index("As shown in ")
+
+
+def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
+    """The same, in `_wrap_label`: a caption numbered from a list opens
+    with a tab, and the label follows it in the same run."""
+    xml = doc(
+        para(run("Employment rises, see Table 6 below.")),
+        para('<w:r>' + FAT_RPR + '<w:tab/><w:t xml:space="preserve">'
+             "Table 6. Employment by age group</w:t></w:r>"),
+    )
+
+    out, _report = crossrefs.link(xml)
+
+    caption = paragraph_holding(out, "Table 6. Employment")
+    assert caption.count("<w:tab/>") == 1
+    assert _visible(caption) == "Table 6. Employment by age group"
