@@ -910,3 +910,71 @@ def test_audit_reads_both_halves_of_a_misnamed_bookmark(bookmark, caption,
                    '<w:bookmarkEnd w:id="1"/>' + run(caption)))
     got = crossrefs.audit(xml)["misnamed"]
     assert bool(got) is misnamed, got
+
+
+# --- what the crossrefs run of 2026-08-18 found -------------------------
+#
+# 20.8 % real survival, the least-pinned module in the package now that
+# the others have had their rounds, and 14 of the 91 survivors sit on ONE
+# line of `_caption_bookmarks`:
+#
+#     gap_from = prev_close + len("</w:p>") if prev_close != -1 else 0
+#
+# It decides how far back the scan for "bookmarks that already point at
+# this caption" reaches. The test above proves it reaches into the GAP
+# before the caption; nothing proved where it STOPS, and a scan that
+# starts at the top of the document calls every bookmark in the paper a
+# legacy name for this one caption.
+#
+# Two of the fourteen cannot be killed, and the argument is short enough
+# to keep (`tools/kill_check.py`, expect_kill=False):
+#
+# * `prev_close | 6` and `prev_close - 6` both move the window's start by
+#   at most six characters, and those six ARE the `</w:p>` tag — no
+#   `<w:bookmarkStart` can begin inside it, so the scope holds the same
+#   bookmarks either way;
+# * the `prev_close != -1` fallback is unobservable for the same reason.
+#   Without it a caption in the first paragraph scans from offset 5
+#   instead of 0, and the first five characters of any document are
+#   `<w:do`.
+
+
+def test_a_bookmark_in_an_EARLIER_paragraph_is_not_this_captions():
+    """`prev_close + len("</w:p>")` — the scan starts after the previous
+    paragraph closes, so what is inside that paragraph belongs to it.
+    Mutated to `&` or `|` the window opens near the start of the
+    document, and a link to something else entirely is reported as a
+    legacy name for this caption and retargeted away from the object the
+    author pointed it at."""
+    elsewhere = para('<w:bookmarkStart w:id="5" w:name="other_thing"/>',
+                     run("An earlier paragraph with a bookmark of its own."),
+                     '<w:bookmarkEnd w:id="5"/>')
+    mention = para(run("As "),
+                   '<w:hyperlink w:anchor="other_thing">' + run("Table 1")
+                   + "</w:hyperlink>", run(" shows."))
+    xml = doc(elsewhere, mention, para(run("Table 1. Employment by age")))
+
+    _out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table1"]
+    assert "kept the author's own anchor" in report.notes["Table1"]
+    assert "retargeted" not in report.notes["Table1"]
+
+
+def test_a_caption_in_the_FIRST_paragraph_still_finds_its_own_bookmarks():
+    """`if prev_close != -1 else 0`: there is no previous `</w:p>` to
+    measure from, and the fallback is the top of the document. Without
+    it the window starts at 5 — `-1 + len("</w:p>")` — and a legacy
+    bookmark on the caption itself goes unseen, so a link that already
+    resolves is reported as unlinked and rewritten."""
+    caption = para('<w:bookmarkStart w:id="9" w:name="tbl1_caption"/>',
+                   run("Table 1. Employment by age"),
+                   '<w:bookmarkEnd w:id="9"/>')
+    mention = para(run("As "),
+                   '<w:hyperlink w:anchor="tbl1_caption">' + run("Table 1")
+                   + "</w:hyperlink>", run(" shows."))
+
+    _out, report = crossrefs.link(doc(caption, mention))
+
+    assert report.linked == ["Table1"]
+    assert "retargeted legacy anchor 'tbl1_caption'" in report.notes["Table1"]
