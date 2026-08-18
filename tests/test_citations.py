@@ -2628,3 +2628,119 @@ def test_a_marker_is_owned_by_the_entry_of_ITS_OWN_year():
     owner = _marker_owner("Smith2018", entries)
 
     assert owner is not None and owner.year == "2018"
+
+
+# --- the parts a bookmark can live in (2026-08-19) ---------------------
+#
+# `_audit_findings` reads the body and then the FOOTNOTES, and the
+# footnote half was free: the loop that registers a note's bookmarks
+# could be emptied, and the sentinel that says WHERE one was found could
+# be any number, and every fixture in this file went on passing. A
+# citation living in a footnote is the ordinary case in these papers —
+# the retracted backlog entry of 2026-08-19 was exactly that, a
+# back-link reported missing because the check looked in one part.
+
+def _with_note(body: str, note_body: str) -> dict[str, bytes]:
+    from conftest import make_parts, notes
+    return make_parts(
+        body, footnotes=notes("footnotes",
+                              f'<w:footnote w:id="2"><w:p>{note_body}'
+                              "</w:p></w:footnote>"))
+
+
+def test_a_bookmark_defined_in_a_FOOTNOTE_answers_a_body_link():
+    """The loop that registers them, emptied, makes every link into the
+    notes read as dangling — and the repair for a dangling link is to
+    delete the anchor, which is the one thing that would really break
+    it."""
+    parts = _with_note(
+        P(R("As shown ") + hfield("Moran1950txt", "Moran (1950)") + R(".")),
+        bookmark("Moran1950txt", 9, R("Moran, P. (1950).")))
+
+    issues, _stats = audit_links(parts)
+
+    assert not [i for i in issues if i.startswith("BROKEN LINK")]
+
+
+def test_a_finding_in_a_FOOTNOTE_says_fn_rather_than_a_paragraph():
+    """The sentinel is -2 and the printed answer is "fn". The first
+    audit round printed body-level bookmarks as "fn" too, and the repair
+    went hunting in footnotes.xml for bookmarks that were never there —
+    so the two have their own numbers and their own words."""
+    parts = _with_note(P(R("Nothing links to it.")),
+                       bookmark("Ghost1899", 9, R("A note.")))
+
+    (orphan,) = [i for i in audit_links(parts)[0]
+                 if i.startswith("ORPHAN REF")]
+
+    assert "(fn)" in orphan, orphan
+
+
+def test_a_BROKEN_link_in_a_footnote_says_fn_where_it_is():
+    """The link's own sentinel, which is what a finding ABOUT the link
+    prints. A dangling link is repaired by opening the part it is in,
+    and "¶-1" sends a person to the top of the body."""
+    parts = _with_note(
+        P(R("Body prose.")),
+        R("See ") + hfield("Ghost1899txt", "Ghost (1899)"))
+
+    (broken,) = [i for i in audit_links(parts)[0]
+                 if i.startswith("BROKEN LINK")]
+
+    assert "(fn," in broken, broken
+
+
+def test_a_LINK_in_a_footnote_counts_as_a_link_to_its_target():
+    """The other half: a citation whose only mention is in a note still
+    links its entry, and an entry linked from a note is not an ORPHAN
+    REF."""
+    parts = _with_note(
+        P(R("Body prose.")) + P(R("References"))
+        + P(bookmark("Moran1950", 20) + R("Moran, P. (1950). A paper. JRSS.")),
+        R("See ") + hfield("Moran1950", "Moran (1950)"))
+
+    issues, _stats = audit_links(parts)
+
+    assert not [i for i in issues if i.startswith("ORPHAN REF")]
+
+
+def test_an_Eq_bookmark_is_an_EQUATION_mark_and_not_a_reference_one():
+    """`not n.startswith("_") and n.startswith("Eq")`: an equation
+    anchor is not a reference marker, and reading it as one reports
+    every numbered equation in the paper as an entry nothing cites."""
+    body = (P(R("Body prose.")) + P(R("References"))
+            + P(bookmark("Eq3", 30) + R("(3)")))
+
+    issues, _stats = audit_links(xml_parts(body))
+
+    assert not [i for i in issues if "Eq3" in i]
+
+
+def test_a_SUFFIXED_year_in_the_list_is_not_a_missing_entry():
+    """`r.year[:4]`: the entry is dated 2013a and the bookmark is
+    `Foster2013`, so the years compared have to be the same four
+    characters. Under `[:5]` the list's own year never matches a
+    bookmark's and every marker in a paper that uses suffixes reads as
+    STALE — the finding whose repair is to delete the anchor."""
+    body = (P(R("Cited (Foster et al. 2013a).")) + P(R("References"))
+            + P(bookmark("Foster2013", 20)
+                + R("Foster, J. (2013a). A paper. JRSS.")))
+
+    issues, _stats = audit_links(xml_parts(body))
+
+    assert not [i for i in issues if i.startswith("STALE BOOKMARK")]
+
+
+def test_an_entry_nothing_cites_is_not_reported_as_a_CITE_WITHOUT_REF():
+    """`cited_keys - ref_marks.keys()`, not the symmetric difference:
+    the two findings are opposites — one says the text cites a work the
+    list does not carry, the other says the list carries a work nothing
+    cites — and `^` reports every uncited entry as both."""
+    body = (P(R("Body prose with no citations.")) + P(R("References"))
+            + P(bookmark("Moran1950", 20)
+                + R("Moran, P. (1950). A paper. JRSS.")))
+
+    issues, _stats = audit_links(xml_parts(body))
+
+    assert not [i for i in issues if i.startswith("CITE WITHOUT REF")]
+    assert [i for i in issues if i.startswith("REF WITHOUT CITE")]
