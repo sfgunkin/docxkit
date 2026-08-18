@@ -290,3 +290,21 @@ def test_the_view_split_says_NOTHING_where_a_view_sees_nothing(tmp_path):
                  if "the two views disagree" in ln)
     assert "find/para_slice [0]" in split, "the view that DID see it"
     assert "edit/replace_in_para nothing" in split
+
+
+def test_an_anchor_that_WAS_found_prints_a_line_per_paragraph(tmp_path):
+    """The whole point of asking about an anchor: which paragraph, and
+    how the phrase is split across runs. The `NOT FOUND` line is
+    asserted above and this one — the answer when it IS found — was
+    not, so the loop that prints it could be emptied and the report
+    would say nothing at all about a phrase it located."""
+    body = (para(run("The index"), run(" is defined below."))
+            + para(run("filler"))
+            + para(run("The index is defined below.")))
+
+    lines = probe(_doc(tmp_path, body),
+                  anchors=("index is defined",)).report().splitlines()
+
+    at = lines.index("  anchor 'index is defined'")
+    assert lines[at + 1] == "    para 0: ['The index', ' is defined below.']"
+    assert lines[at + 2] == "    para 2: ['The index is defined below.']"

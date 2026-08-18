@@ -367,3 +367,31 @@ def test_an_anchor_found_TWICE_reports_both_paragraphs(tmp_path):
     rep = probe(make_docx(tmp_path, body), anchors=("index is defined",))
 
     assert [i for i, _ in rep.anchors["index is defined"]] == [0, 2]
+
+
+def test_a_caption_BELOW_its_table_has_no_table_after_it(tmp_path):
+    """`blocks[i + 1:…]` starts AFTER the caption, and the arithmetic
+    that says so is invisible while the caption is the first block:
+    `i * 1`, `i | 1`, `i % 1` and `i & 1` all give 0 or 1 there. With
+    the caption at block 3 and a table at block 1 — a table with its
+    caption underneath, which is a house style, not a corner case —
+    a window that starts at 0 or 1 reports the table ABOVE the caption
+    as the one it introduces."""
+    body = (_filler(1) + _table(3) + _filler(1)
+            + _caption_para("Table 1: Descriptive statistics."))
+
+    got = probe(make_docx(tmp_path, body))
+
+    assert got.exhibits == [("Table 1", "(no table follows)", "")]
+
+
+def test_a_caption_DEEP_in_the_document_still_finds_its_table(tmp_path):
+    """The other side: at block 3 a doubled index (`i << 1`) puts the
+    window past the table entirely, and the paper's fourth exhibit
+    reports as having none."""
+    body = (_filler(3) + _caption_para("Table 1: Descriptive statistics.")
+            + _table(3))
+
+    got = probe(make_docx(tmp_path, body))
+
+    assert got.exhibits == [("Table 1", "table, 3 rows", "")]
