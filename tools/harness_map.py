@@ -163,10 +163,25 @@ HARNESS: dict[str, list[str]] = {
 #: survivors in whatever the file covered — `_table_core` reported 216
 #: in `update` that way, and `_table_layout` carried three misfiled
 #: exclusions from 2026-08-16 until they were measured on the 18th.
-#: The one-liner, against the import-only baseline the module shows for
-#: a file that merely imports it (13 % for `_table_layout`):
 #:
-#:     python -m pytest -q --cov=docxkit._table_layout #:         --cov-report=term tests/test_tables_nested.py
+#: MARGINAL coverage is the measurement, not the file's own. Run the
+#: harness, then run it with the candidate added, and compare:
+#:
+#:     python -m pytest -q --cov=docxkit._table_core \
+#:            --cov-report=term <the harness>
+#:     python -m pytest -q --cov=docxkit._table_core \
+#:            --cov-report=term <the harness> tests/test_tables_fit.py
+#:
+#: A file's coverage ON ITS OWN answers a different question and gets
+#: the answer wrong in both directions. Measured 2026-08-18:
+#: `test_tables_fit.py` covers 32 % of `_table_core` alone — well past
+#: the 23 % that merely importing it costs — and adds NOTHING to the
+#: harness, which sits at 97 % with and without it. Those lines are
+#: `read_all` and `Table` used as fixtures for what the file really
+#: tests. `test_tables_blank_rows.py` looked the same at 26 % of
+#: `_table_layout` and was not the same at all: it was the only file
+#: covering `drop_blank_rows`, whose survivors went 12 -> 1 when it
+#: joined that run.
 FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
           "_compare_diff.py": "compare", "_compare_render.py": "compare",
           "_compare_read.py": "compare"}
