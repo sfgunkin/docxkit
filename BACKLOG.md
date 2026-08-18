@@ -17,8 +17,10 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-One open, from a manuscript round on the 18th–19th (DSI: the §6 restructure,
-the C/B exposition batches and F1). The other three closed on the 19th:
+*Nothing open, as of 2026-08-19.* Four were raised from one manuscript round
+(DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
+and closed the same day; the fourth was **retracted — it was never a defect**,
+and is kept below because the mistake is instructive. The three that were real:
 
 * the gate that let the rest through — `reject-all == baseline` compares
   STRUCTURE COUNTS as well as text now, so a duplicated table, a dropped
@@ -35,23 +37,28 @@ cannot verify. **A moved block containing a table, or a bookmarked paragraph,
 still cannot go through Compare and come back cleanly** — what changed is that
 nothing ships silently now.
 
-### S2 `link_all` makes no back-link for a newly-cited entry
+### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
-Five bibliography entries that had never been cited gained in-text citations.
-`citations.find_citations` finds all five — e.g. `Citation(authors='Moran',
-year='1950', narrative=False)` — but `citations.link_all` reports **linked 0,
-already linked 54, back-links added 0, unmatched 0, skipped 0**, on the tracked
-file AND on the clean target. `link_rest` then links them as "further mentions",
-so the result is one-directional: `Moran1950` exists as an entry bookmark, but
-`Moran1950txt` — the back-link target `link_all`'s own docstring promises for
-"every work's FIRST in-text mention" — does not, while works cited earlier
-(`Friedman1992`, `Rey1999`) have both.
+**Not a defect. `link_all` was right and the report was wrong.** It said
+`linked 0, already linked 54, back-links added 0, unmatched 0, skipped 0` for
+five works that had just been given in-text citations, and that reads like a
+no-op on new work. It was an accurate description: all five were **already
+cited, in FOOTNOTES**, in the baseline, and already carried both bookmarks —
+the entry anchor and the `…txt` back-link target. `link_all`'s docstring says it
+takes a work's first mention "body first, then footnotes", and that is what it
+had done, on an earlier run.
 
-`audit_links` does not flag it: it pairs bookmarks that exist (66/66), and a
-work with no `*txt` bookmark has nothing to pair.
+The check that produced the report looked for `Moran1950txt` in
+`word/document.xml` only. The bookmark lives in `word/footnotes.xml`. **A
+back-link that is not where you looked is not a back-link that is missing** —
+and `audit_links` reporting 66/66 with 0 issues was telling the truth the whole
+time.
 
-**Reproduce:** a work whose only in-text mention is a parenthetical,
-non-narrative citation added after its entry was already in the bibliography.
+Kept rather than deleted because the shape recurs: a report of "nothing to do"
+is indistinguishable from a report of "nothing was done", and the way to tell
+them apart is to look for the artefact in every part of the package, not in the
+one the work happened to touch.
+
 
 ### Not a defect — recorded so it is not chased twice
 
@@ -76,8 +83,12 @@ output" but "WHERE did it go". **The review found the case each fix's own test
 did not build:** a fix and its test are written together and share an author's
 blind spot, which is what the second reader is for.
 
-The four above break that run — all four came from a manuscript, and being
-bitten is still how the gate-shaped ones get found.
+The four raised on the 19th broke that run — all four came from a manuscript,
+and being bitten is still how the gate-shaped ones get found. **Three of the
+four were found by comparing STRUCTURE across the baseline, accepted, rejected
+and target views** of the same redline, which is a check no gate was making.
+The fourth was found the same way and was wrong anyway, because the artefact it
+looked for was in a part of the package it never opened.
 
 ## Fixed
 
