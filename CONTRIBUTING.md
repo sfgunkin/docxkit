@@ -354,6 +354,57 @@ fresh with fresh.
 exception's docstring or its base, and the module IS the names. It is
 listed so the next reader does not re-run it expecting a number.
 
+**The third wave, 2026-08-18** — 460-sample draws of the modules the
+second wave had not reached, and the tests written off them the same
+day. Only `tracked.py` has been re-measured; the rest are the FIRST
+figure and nothing more, and the tests named beside them are not in it:
+
+| module | measured | after | the tests that round wrote |
+|---|---|---|---|
+| `tracked.py` | 36.3 % | **9.4 %** | three rounds, below |
+| `equations.py` | 24.9 % | — | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
+| `_table_layout.py` | 18.4 % VOID | — | none: the harness was missing three of its own test files |
+| `cli.py` | 17.7 % | — | what `math`, `inspect`, `count`, `tasks` and `figures` PRINT |
+| `comments.py` | 17.4 %\* | — | — |
+| `footnotes.py` | 15.6 % | — | — |
+| `revision.py` | 14.3 % | — | — |
+| `_compare_read.py` | 12.6 % (full run) | — | `mask_volatile_fields`' scan, and two argued equivalences |
+| `styles.py` | 8.7 % | — | — |
+
+\* incomplete: 178 of the 450 it sampled, and the percentage is over
+what ran. `_table_layout`'s figure is void for a different reason — see
+the BACKLOG entry: three of its five harness exclusions were never
+true, and a run missing the files that cover a function invents
+survivors in it.
+
+**`tracked.py` 36.3 % -> 28.5 % -> 9.4 %** in one day, three rounds,
+and what each round found is the shape to expect:
+
+1. **What `untracked` SAYS**, not whether the list is empty. It was
+   reached only through `build`, which asks whether it is empty, so
+   every value in it was free. 36.3 -> 28.5.
+2. **The same report at an offset that is not zero.** Seventeen
+   survivors sat on `i1 + k` and `j1 + k` mutated to `|`, `^` and `>>`,
+   and every fixture started its changed block at paragraph 0 or 1 —
+   where all four operators agree. See the note below; this is the most
+   reusable thing the day produced.
+3. **What the Word path TELLS the paper**, and the build report's own
+   numbers: the sentinel offsets a classifier reads, the equation
+   boundary an accept is decided on, every counter's initial 0, the cap
+   on the two lists, and each phase's duration. 28.5 -> 9.4.
+
+**An arithmetic mutant survives at zero.** `i1 + k` with `i1` at 0 is
+`i1 | k`, `i1 ^ k` and `i1 >> k` all at once — four operators, one
+answer, and a fixture whose interesting block starts at the top of the
+document cannot tell them apart however carefully it asserts. The same
+goes for `max(a - b, c - d)` where one term is the whole answer: only a
+fixture where the two sides differ in LENGTH says which term won. When
+a cluster of `+`/`-` survivors will not die, look at what the operands
+are in the fixture before looking at the assertion — and note that the
+converse holds too, `start | sep.end()` in `_compare_read` being
+genuinely equivalent because an OR is never larger than the sum and the
+region it moves into holds nothing the mask can find.
+
 The ORDER is the finding. The modules that rewrite a manuscript sit at
 4–9 %; the ones that REPORT on it — probe, pages, console, testing — sit
 at 23–37 %. Defensible as far as consequence goes, and not as far as
