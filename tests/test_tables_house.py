@@ -314,3 +314,82 @@ def test_keepNext_is_not_added_TWICE_to_a_styled_caption():
     assert twice == once
     assert not report.caption
     assert once.count("<w:keepNext/>") == 1
+
+
+# --- what a review of the fix above found (2026-08-18) -------------------
+#
+# Three more shapes on the same branch, each reported as success:
+
+
+def test_keepNext_is_read_from_the_LIVE_properties_not_the_history():
+    """`w:pPrChange` carries the formatting a tracked change REPLACED,
+    and a caption whose history had keepNext was reported as already
+    done while its live properties never got it. The caption then splits
+    from its table at the page break, and `house` said it was fine."""
+    xml = _captioned('<w:pPr><w:pStyle w:val="Caption"/>'
+                     '<w:pPrChange w:id="1" w:author="a"><w:pPr>'
+                     "<w:keepNext/></w:pPr></w:pPrChange></w:pPr>")
+
+    out, report = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    assert report.caption
+    _parses(out)
+    assert '<w:pStyle w:val="Caption"/><w:keepNext/><w:pPrChange' in out
+    assert out.count("<w:keepNext/>") == 2, "the snapshot keeps its own"
+
+
+def test_a_pStyle_written_with_a_CLOSING_tag_still_comes_first():
+    """`<w:pStyle .../>` and `<w:pStyle ...></w:pStyle>` are the same
+    element; matching only the first put keepNext ahead of the style,
+    which is the out-of-order property Word drops on the next save."""
+    xml = _captioned('<w:pPr><w:pStyle w:val="Caption"></w:pStyle></w:pPr>')
+
+    out, _ = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    _parses(out)
+    assert ('<w:pStyle w:val="Caption"></w:pStyle><w:keepNext/>' in out)
+
+
+def test_a_keepNext_declared_OFF_is_rewritten_not_doubled():
+    """ST_OnOff again: `w:val="0"` is a keepNext that says no. CT_PPr
+    allows one, so adding a second leaves Word to choose between them on
+    open — and it may choose the one that says no."""
+    xml = _captioned('<w:pPr><w:pStyle w:val="Caption"/>'
+                     '<w:keepNext w:val="0"/></w:pPr>')
+
+    out, report = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    assert report.caption
+    _parses(out)
+    assert out.count("<w:keepNext") == 1
+    assert 'w:val="0"' not in out
+
+
+def test_a_keepNext_already_ON_is_left_alone():
+    xml = _captioned('<w:pPr><w:pStyle w:val="Caption"/><w:keepNext/></w:pPr>')
+
+    out, report = house(xml, read_all(xml)[0], caption="Table A4:")
+
+    assert not report.caption
+    assert out.count("<w:keepNext/>") == 1
+
+
+def test_the_width_reaches_an_outer_table_that_has_NO_GRID_of_its_own():
+    """The nested-table guard, in the case the fixture above missed: the
+    outer table has no `w:tblGrid`, so the first one in the body is the
+    INNER table's. `house` wrote the outer table's width into the inner
+    table's properties and reported success."""
+    inner = ('<w:tbl><w:tblPr><w:tblStyle w:val="Inner"/>'
+             '<w:tblW w:w="1234" w:type="dxa"/></w:tblPr>'
+             '<w:tblGrid><w:gridCol w:w="800"/></w:tblGrid>'
+             + row("x") + "</w:tbl>")
+    xml = document(para(run("Table A4: Data sources"))
+                   + "<w:tbl><w:tr><w:tc>" + inner + "</w:tc></w:tr></w:tbl>")
+
+    out, report = house(xml, read_all(xml)[0])
+
+    assert report.width
+    start = out.index("<w:tbl>")
+    outer = out[start:out.index("<w:tbl>", start + 1)]
+    assert '<w:tblW w:w="5000" w:type="pct"/>' in outer
+    assert 'w:w="1234"' in out, "the nested table keeps its own width"

@@ -1197,8 +1197,24 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
 _TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
 #: The only child CT_PPr allows BEFORE `w:keepNext`, and the one every
-#: styled caption carries.
-_PSTYLE_RE = re.compile(r"<w:pStyle\b[^>]*/>")
+#: styled caption carries. BOTH spellings: an empty element may be
+#: written `<w:pStyle .../>` or `<w:pStyle ...></w:pStyle>`, and matching
+#: only the first put `keepNext` ahead of the style on the second — the
+#: out-of-order property Word drops on the next save.
+_PSTYLE_RE = re.compile(r"<w:pStyle\b[^>]*(?:/>|>.*?</w:pStyle>)",
+                        re.DOTALL)
+_KEEPNEXT_RE = re.compile(r"<w:keepNext\b[^>]*(?:/>|>.*?</w:keepNext>)",
+                          re.DOTALL)
+#: ST_OnOff, as `w15:done` in `comments.py` is: an absent `w:val` means
+#: ON, and the schema spells the rest 1/0, true/false, on/off.
+_ON_VALUES = frozenset({"1", "true", "on"})
+_VAL_RE = re.compile(r'w:val="([^"]*)"')
+
+
+def _property_on(tag: str) -> bool:
+    """Is this on/off property element in force?"""
+    val = _VAL_RE.search(tag)
+    return val is None or val.group(1).lower() in _ON_VALUES
 
 
 @dataclass
@@ -1376,15 +1392,30 @@ def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
             f"house: caption {caption[:40]!r} matched {len(hits)} "
             f"paragraphs, need exactly 1")
     para = hits[0].group(0)
-    if "<w:keepNext/>" in para:
-        return xml, False
     existing = own_properties(para, "pPr")
     if existing is None:
         at = para.index(">") + 1
         new = para[:at] + "<w:pPr><w:keepNext/></w:pPr>" + para[at:]
     else:
         start, end, inner = existing
-        if not inner and para[start:end].endswith("/>"):
+        # LIVE properties only, and the prefix shares offsets with
+        # `inner`. Searching the whole paragraph found the `keepNext` in
+        # a `w:pPrChange` snapshot — the formatting a tracked change
+        # REPLACED — and reported the caption as done while the live
+        # properties never got it.
+        live = live_properties(inner)
+        inner_at = start + para[start:].index(">") + 1
+        have = _KEEPNEXT_RE.search(live)
+        if have is not None and _property_on(have.group(0)):
+            return xml, False
+        if have is not None:
+            # Declared OFF (`w:val="0"`, or "false"). CT_PPr allows one
+            # `w:keepNext`, so adding a second leaves Word to choose
+            # between them on open — and it may choose the one that
+            # says no. Rewrite the element that is there.
+            new = (para[:inner_at + have.start()] + "<w:keepNext/>"
+                   + para[inner_at + have.end():])
+        elif not inner and para[start:end].endswith("/>"):
             # `<w:pPr/>` is real Word output. Expand it: writing after
             # its span puts keepNext outside the properties, where the
             # schema has no slot for it.
@@ -1399,8 +1430,8 @@ def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
             # not open. Only `w:pStyle` precedes keepNext in CT_PPr, so
             # the slot is right after the open tag, or right after the
             # style when there is one.
-            at = start + para[start:].index(">") + 1
-            style = _PSTYLE_RE.match(inner)
+            at = inner_at
+            style = _PSTYLE_RE.match(live)
             if style is not None:
                 at += style.end()
             new = para[:at] + "<w:keepNext/>" + para[at:]
