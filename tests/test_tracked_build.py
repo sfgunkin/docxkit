@@ -20,7 +20,16 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-from conftest import NS, dele, document, ins, make_parts, para, run
+from conftest import (
+    NS,
+    dele,
+    document,
+    ins,
+    make_parts,
+    notes,
+    para,
+    run,
+)
 
 from docxkit import tracked
 from docxkit.errors import PackageError
@@ -1609,3 +1618,143 @@ def test_the_structure_refusal_can_be_turned_off_like_the_other_one(
 
     assert report.structure_diff, "still reported, just not fatal"
     assert any("tbl:" in d for d in report.structure_diff)
+
+
+# --- the structure counts, read directly (2026-08-19) -------------------
+#
+# `structure_counts` and `structure_diff` were added on 2026-08-18 to
+# close the S1 where Word's Compare duplicated a moved table and every
+# gate passed. They went in through `build` and `validate`, which is
+# where they matter, and were never called directly — so the module came
+# back at 12.0 % with 7 of its 39 survivors in a two-line function.
+#
+# Both are public (`__all__`), and a per-paper script is the caller the
+# docstring is written for.
+
+
+def test_a_tag_MISSING_from_a_count_reads_as_zero():
+    """`was.get(tag, 0)`. `structure_counts` fills every tag in, but the
+    function is public and takes any two mappings — a script that
+    counted only the tags it cared about is the ordinary caller, and a
+    default of anything but zero turns "this document has no tables"
+    into "this document has one"."""
+    from docxkit.tracked import structure_diff
+
+    assert structure_diff({"tbl": 1}, {}) == ["tbl: 1 -> 0"]
+    assert structure_diff({}, {"tbl": 1}) == ["tbl: 0 -> 1"]
+    assert structure_diff({}, {}) == []
+
+
+def test_the_diff_reads_in_TAG_order_not_dict_order():
+    """The order is STRUCTURE_TAGS', so two runs over two documents
+    produce lines a person can compare down the column."""
+    from docxkit.tracked import STRUCTURE_TAGS, structure_diff
+
+    was = {"drawing": 2, "tbl": 27}
+    now = {"drawing": 1, "tbl": 28}
+
+    assert structure_diff(was, now) == ["tbl: 27 -> 28", "drawing: 2 -> 1"]
+    assert STRUCTURE_TAGS.index("tbl") < STRUCTURE_TAGS.index("drawing")
+
+
+def test_counts_that_are_EQUAL_and_large_are_not_a_difference():
+    """`!=`, not `is not`. Python caches small integers and creates the
+    rest, so two counts of 300 are equal and are not the same object —
+    and under `is not` every long manuscript reports a structural change
+    that did not happen, which `build` raises on under `reject_check`.
+    A paper with 300 table rows is an ordinary paper."""
+    from docxkit.tracked import structure_diff
+
+    was = {"tr": len(range(300))}
+    now = {"tr": len([0] * 300)}
+
+    assert was["tr"] == now["tr"] and was["tr"] is not now["tr"]
+    assert structure_diff(was, now) == []
+
+
+def test_the_counts_come_from_every_text_bearing_part():
+    """A bookmark in a footnote is a bookmark, and a batch that edits
+    only the notes must not read as a batch that changed nothing."""
+    from docxkit.tracked import structure_counts
+
+    parts = make_parts(
+        para(run("body")),
+        footnotes=notes("footnotes",
+                        '<w:footnote w:id="2"><w:p>'
+                        '<w:bookmarkStart w:id="4" w:name="InANote"/>'
+                        "<w:r><w:t>note</w:t></w:r></w:p></w:footnote>"))
+
+    assert structure_counts(parts)["bookmarkStart"] == 1
+
+
+def test_a_row_PROPERTY_is_not_counted_as_a_row():
+    """`<w:tr\\b` does not match `<w:trPr` — there is no word boundary
+    between two word characters — and a table whose rows all carry
+    properties would otherwise count double."""
+    from docxkit.tracked import structure_counts
+
+    parts = make_parts(
+        "<w:tbl><w:tblPr/><w:tr><w:trPr><w:cantSplit/></w:trPr>"
+        "<w:tc><w:tcPr/><w:p/></w:tc></w:tr></w:tbl>")
+
+    counts = structure_counts(parts)
+    assert (counts["tbl"], counts["tr"], counts["tc"]) == (1, 1, 1)
+
+
+# --- what `untracked` prints, and how it matches --------------------------
+
+def test_a_long_document_matches_without_the_junk_heuristic():
+    """`autojunk=False`. difflib treats an element appearing in more
+    than 1 % of a sequence longer than 200 as junk and refuses to anchor
+    on it — and a manuscript is exactly that: two hundred paragraphs of
+    which many repeat. With the heuristic on, the ONE paragraph the
+    batch really changed is reported along with a stretch of its
+    neighbours, and the finding a person is meant to act on is buried in
+    a list of paragraphs that are identical on both sides."""
+    same = [para(run("The same boilerplate sentence.")) for _ in range(250)]
+    baseline = _parts(*same)
+    changed = list(same)
+    changed[200] = para(run("The one sentence the batch rewrote."))
+    batch = _parts(*changed)
+
+    found = untracked(batch, baseline)
+
+    # an insert at 200 and the delete that balances it at the end: two
+    # findings, not the eight the limit truncates a whole-tail replace to
+    assert len(found) == 2
+    assert found[0].index == 200
+    assert found[0].batch == "The one sentence the batch rewrote."
+
+
+def test_the_printed_finding_cuts_each_side_at_seventy_characters():
+    """A finding is one line per side in a report a person reads next to
+    the document; a paragraph printed whole would be the manuscript."""
+    long_line = ("The decomposition is sensitive to the ranking of its "
+                 "components, which the appendix sets out in full.")
+    baseline = _parts(para(run(long_line)))
+    batch = _parts(para(run(long_line.replace("sensitive", "robust"))))
+
+    (found,) = untracked(batch, baseline)
+
+    lines = str(found).splitlines()
+    assert lines[0] == ("body ¶1: baseline 'The decomposition is sensitive "
+                        "to the ranking of its components, which'")
+    assert lines[1].endswith("'The decomposition is robust to the ranking "
+                             "of its components, which th'")
+
+
+def test_a_part_OUTSIDE_word_is_not_read_for_anchors():
+    """`startswith("word/") AND endswith(".xml")` — both. Under `or`,
+    `[Content_Types].xml` and `docProps/core.xml` join the walk, and a
+    bookmark named in a custom XML data store reads as one the document
+    carries. The collateral check then compares two different sets."""
+    from docxkit.tracked import _anchors
+
+    parts = make_parts(para('<w:bookmarkStart w:id="1" w:name="Real"/>'
+                            + run("text") + '<w:bookmarkEnd w:id="1"/>'))
+    parts["customXml/item1.xml"] = (
+        b'<b:Sources><w:bookmarkStart w:name="NotOurs"/></b:Sources>')
+
+    names, _targets = _anchors(parts)
+
+    assert names == {"Real"}
