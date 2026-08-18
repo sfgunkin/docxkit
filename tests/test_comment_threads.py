@@ -150,3 +150,54 @@ def test_set_done_ADDS_the_flag_to_an_element_that_carries_none():
     assert '<w15:commentEx w15:paraId="AAAA0002" w15:done="0"/>' in out
     etree.fromstring(out.encode("utf-8"))
     assert {t.comment.cid: t.done for t in threads(parts)}["1"]
+
+
+def _ext_part(*elements: str) -> bytes:
+    return (f"<w15:commentsEx {NS}>" + "".join(elements)
+            + "</w15:commentsEx>").encode("utf-8")
+
+
+def test_a_done_flag_spelled_TRUE_is_read_as_done():
+    """`w15:done` is ST_OnOff. Word writes 1 and 0; the schema also
+    allows true/false and on/off, and a comment another producer
+    resolved was read as OPEN — which puts a settled query back on the
+    work list and fails `tasks --check` on a round that is finished."""
+    parts = make_parts()
+    parts["word/commentsExtended.xml"] = _ext_part(
+        '<w15:commentEx w15:paraId="AAAA0001" w15:done="true"/>',
+        '<w15:commentEx w15:paraId="AAAA0002" w15:done="false"/>')
+
+    done = {t.comment.cid: t.done for t in threads(parts)}
+
+    assert done["1"] is True
+    assert done["2"] is False
+
+
+def test_set_done_REPLACES_a_flag_spelled_the_other_way():
+    """The worse half: the writer used the same narrow pattern, so it
+    could not SEE a flag spelled `true` and added a second `w15:done`
+    beside it. The part then stops parsing — "Attribute w15:done
+    redefined" — and Word calls the document unreadable."""
+    from lxml import etree
+    parts = make_parts()
+    parts["word/commentsExtended.xml"] = _ext_part(
+        '<w15:commentEx w15:paraId="AAAA0001" w15:done="true"/>')
+
+    assert set_done(parts, ["1"], done=False) == 1
+
+    out = parts["word/commentsExtended.xml"].decode("utf-8")
+    assert out.count("w15:done=") == 1
+    assert 'w15:done="0"' in out
+    etree.fromstring(out.encode("utf-8"))
+
+
+def test_a_commentEx_with_NO_paraId_does_not_stop_the_scan():
+    """`continue`, not `break`: an entry with nothing to key on is
+    skipped, and the flags after it are still read. Under `break` every
+    comment below it reads as open."""
+    parts = make_parts()
+    parts["word/commentsExtended.xml"] = _ext_part(
+        '<w15:commentEx w15:done="1"/>',            # no paraId at all
+        '<w15:commentEx w15:paraId="AAAA0001" w15:done="1"/>')
+
+    assert {t.comment.cid: t.done for t in threads(parts)}["1"]

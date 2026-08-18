@@ -551,8 +551,14 @@ _EXT_RE = re.compile(r"<w15:commentEx [^/>]*/>")
 _W15_ATTR = {
     "para": re.compile(r'w15:paraId="([0-9A-Fa-f]+)"'),
     "parent": re.compile(r'w15:paraIdParent="([0-9A-Fa-f]+)"'),
-    "done": re.compile(r'w15:done="(\d)"'),
+    "done": re.compile(r'w15:done="([^"]*)"'),
 }
+#: ST_OnOff, which is what `w15:done` is: Word writes 1 and 0, and the
+#: schema also allows true/false and on/off. Reading only `"(\d)"` made
+#: a comment resolved by another producer read as OPEN — and made
+#: `set_done` add a SECOND `w15:done` beside the one it could not see,
+#: which no XML parser accepts ("Attribute w15:done redefined").
+_ON_VALUES = frozenset({"1", "true", "on"})
 
 
 def _comment_records(com: str) -> list[dict[str, str]]:
@@ -594,7 +600,8 @@ def threads(parts: dict[str, bytes]) -> list[Thread]:
             continue
         parent = _W15_ATTR["parent"].search(m.group(0))
         done_m = _W15_ATTR["done"].search(m.group(0))
-        flags[pid.group(1)] = (bool(done_m and done_m.group(1) == "1"),
+        done = done_m is not None and done_m.group(1).lower() in _ON_VALUES
+        flags[pid.group(1)] = (done,
                                parent.group(1) if parent else None)
 
     records = _comment_records(com)
