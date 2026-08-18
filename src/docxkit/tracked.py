@@ -37,6 +37,7 @@ the math tracked and lose nothing.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 import time
@@ -74,6 +75,7 @@ from .revisions import revision_elements
 from .word import _suppress_com
 
 __all__ = [
+    "STRUCTURE_TAGS",
     "BuildReport",
     "MathOutcome",
     "PackageError",
@@ -81,6 +83,8 @@ __all__ = [
     "build",
     "compare_collateral",
     "package_counts",
+    "structure_counts",
+    "structure_diff",
     "untracked",
     "verify",
 ]
@@ -286,6 +290,49 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
         # know the same seven kinds `revision.state` does.
         "revisions": len(revision_elements(text_xml)),
     }
+
+
+#: What a docx carries that a reader never reads AS CHARACTERS.
+#:
+#: `reject-all == baseline` — the gate that proves a batch is fully
+#: reviewable — compared paragraph text, the glyph stream, footnotes and
+#: links, and passed three different losses on one manuscript round (DSI,
+#: 2026-08-19): a table DUPLICATED by a move (27 -> 28, in the accepted
+#: and the rejected view alike), a moved paragraph's three citation
+#: bookmarks dropped on reject (127 -> 125), and a destroyed section
+#: break. None of them is a character, so none of them was compared.
+#:
+#: `w:hyperlink` is deliberately NOT here: Word rewrites a caption's
+#: HYPERLINK FIELD into an element on an ordinary edit, the count moves,
+#: and nothing is lost — `_links` already compares links by (anchor,
+#: label) across both forms, which is the comparison that means
+#: something.
+STRUCTURE_TAGS = ("tbl", "tr", "tc", "bookmarkStart", "sectPr",
+                  "drawing", "footnoteReference")
+
+
+def structure_counts(parts: dict[str, bytes]) -> dict[str, int]:
+    """Every glyph-less carrier in the package, counted.
+
+    The sibling of :func:`package_counts`, and pure for the same reason:
+    the check that needs it runs before Word is asked anything, and five
+    paper scripts had copied a `counts()` helper to do this by hand.
+
+    EVERY text-bearing part, as everywhere else here — a section break
+    lives in the body, a bookmark can sit in a footnote, and a batch that
+    edits only a note must not read as a batch that changed nothing.
+    """
+    text_xml = "".join(xml for _name, xml in text_parts(parts))
+    # `<w:tr\b` does not match `<w:trPr` — the boundary is between two
+    # word characters, so there is none — and the same holds for tbl/tc.
+    return {tag: len(re.findall(rf"<w:{tag}\b", text_xml))
+            for tag in STRUCTURE_TAGS}
+
+
+def structure_diff(was: dict[str, int], now: dict[str, int]) -> list[str]:
+    """``"tbl: 27 -> 28"`` for every count that moved, in tag order."""
+    return [f"{tag}: {was.get(tag, 0)} -> {now.get(tag, 0)}"
+            for tag in STRUCTURE_TAGS if was.get(tag, 0) != now.get(tag, 0)]
 
 
 def verify(path: str | Path) -> dict[str, Any]:

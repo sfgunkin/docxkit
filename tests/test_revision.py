@@ -1577,3 +1577,74 @@ def test_nothing_is_spelled_out_for_a_run_with_no_characters():
 
     assert "'' ->" in run, "the empty side spells out nothing at all"
     assert run.count("U+") == 2, "and the two characters added do"
+
+
+def test_validate_reject_all_counts_the_STRUCTURE(tmp_path):
+    """The fifth thing gate 5 compares, and the one it was blind to on
+    the DSI round of 2026-08-19: a table DUPLICATED by a move (27 -> 28
+    in the accepted and the rejected view alike), a moved paragraph's
+    three citation bookmarks dropped on reject (127 -> 125), and a
+    destroyed section break. None of them is a character, so paragraphs,
+    glyphs, footnotes and links all said yes.
+
+    The fixture is the same words in a different carrier: one paragraph
+    of prose, wrapped in a table. Every text arm of the gate passes."""
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("The index rose to 0.35 in 2024."))))
+    in_a_table = write(tmp_path / "batch.docx", make_parts(
+        "<w:tbl><w:tr><w:tc>"
+        + para(run("The index rose to 0.35 in 2024."))
+        + "</w:tc></w:tr></w:tbl>"))
+
+    report = revision.validate(in_a_table, baseline_path, use_word=False)
+
+    assert report.reject_detail["paragraphs"] is True
+    assert report.reject_detail["glyphs"] is True
+    assert report.reject_detail["links"] is True
+    assert report.reject_detail["structure"] is False
+    assert not report.ok
+    assert report.structure_diff == ["tbl: 0 -> 1", "tr: 0 -> 1",
+                                     "tc: 0 -> 1"]
+
+
+def test_the_structure_gate_names_a_BOOKMARK_the_reject_dropped(tmp_path):
+    """The second casualty of the same mechanism: a moved paragraph
+    carrying three citation anchors comes back through Compare with the
+    anchors gone. `reject-all == baseline` passed, and the paper's
+    `require_reject_all_equals_baseline` was satisfied by a document
+    that does not reproduce the baseline."""
+    anchored = ('<w:bookmarkStart w:id="9" w:name="Moran1950"/>'
+                + run("Moran (1950)") + '<w:bookmarkEnd w:id="9"/>')
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("As ", preserve=True), anchored,
+             run(" showed.", preserve=True))))
+    stripped = write(tmp_path / "batch.docx", make_parts(
+        para(run("As ", preserve=True), run("Moran (1950)"),
+             run(" showed.", preserve=True))))
+
+    report = revision.validate(stripped, baseline_path, use_word=False)
+
+    assert report.reject_detail["paragraphs"] is True
+    assert report.reject_detail["glyphs"] is True
+    assert report.structure_diff == ["bookmarkStart: 1 -> 0"]
+
+
+def test_the_structure_gate_is_blind_to_which_FORM_a_link_takes(tmp_path):
+    """`w:hyperlink` is deliberately NOT counted. Word rewrites a
+    caption's HYPERLINK FIELD into an element on an ordinary edit — DSI
+    saw 16 -> 17 with nothing lost — and a gate that counted elements
+    would fail on that. `_links` compares (anchor, label) across both
+    forms, which is the comparison that means something."""
+    from docxkit.citations import hyperlink_field
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("see ", preserve=True),
+             hyperlink_field("Table5", "Table 5"))))
+    as_element = write(tmp_path / "batch.docx", make_parts(
+        para(run("see ", preserve=True),
+             '<w:hyperlink w:anchor="Table5">' + run("Table 5")
+             + "</w:hyperlink>")))
+
+    report = revision.validate(as_element, baseline_path, use_word=False)
+
+    assert report.reject_detail["structure"] is True
+    assert report.reject_detail["links"] is True

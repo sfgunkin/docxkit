@@ -93,7 +93,15 @@ from .errors import (
 # module held the only copy of the check. Imported rather than
 # re-implemented: two readings of "what does this paragraph say" is a
 # defect this package has already paid for once.
-from .tracked import Untracked, _paras, _root, _simulate, untracked
+from .tracked import (
+    Untracked,
+    _paras,
+    _root,
+    _simulate,
+    structure_counts,
+    structure_diff,
+    untracked,
+)
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
@@ -658,6 +666,12 @@ class ValidateReport:
     #: took a bespoke difflib script over private imports while three
     #: builds went by blaming the edits. See :func:`glyph_runs`.
     glyph_diff: list[str] = field(default_factory=list)
+    #: Structure the rejected view does not carry in the same numbers
+    #: as the baseline: a table DUPLICATED by a move, a moved
+    #: paragraph's bookmarks, a destroyed section break. None of those
+    #: is a character, so the other four comparisons here are blind to
+    #: all of them. See :func:`docxkit.tracked.structure_counts`.
+    structure_diff: list[str] = field(default_factory=list)
     #: Whole PARTS the baseline has and the batch does not. See
     #: :func:`docxkit.package.missing_parts`.
     lost_parts: list[str] = field(default_factory=list)
@@ -1137,11 +1151,14 @@ def validate(path: str | Path, baseline: str | Path | None = None,
         body_now, body_was = _glyph(_root(rejected)), _glyph(_root(base))
         notes_now = _glyph(_root(rejected, FOOTNOTES))
         notes_was = _glyph(_root(base, FOOTNOTES))
+        struct_was = structure_counts(base)
+        struct_now = structure_counts(rejected)
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
             "glyphs": body_now == body_was,
             "footnotes": notes_now == notes_was,
             "links": was == now,
+            "structure": struct_was == struct_now,
         }
         report.reject_detail = detail
         report.reject_matches_baseline = all(detail.values())
@@ -1154,6 +1171,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             report.moved_footnotes = moved_footnotes(parts, base)
             report.lost_links = [f"-> {a} ({label[:40]!r})"
                                  for a, label in sorted((was - now).elements())]
+            report.structure_diff = structure_diff(
+                struct_was, struct_now)
 
     if word_accept_glyph is not None:
         report.accept_paths_agree = (

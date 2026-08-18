@@ -1026,3 +1026,24 @@ def test_validate_ABORTS_before_word_on_a_lint_problem(monkeypatch, project,
     assert "FAIL: w:t has edge whitespace" in out
     assert "ABORT before Word" in out
     assert "== counts ==" not in out, "it stopped at the first rung"
+
+
+def test_validate_says_WHICH_structure_the_reject_lost(monkeypatch, project,
+                                                       capsys):
+    """The fifth arm of gate 5, printed. A batch whose words round-trip
+    can still fail it — a move duplicates a table, a moved paragraph
+    loses its bookmarks — and none of that is a character, so the line
+    has to name the count that moved or the reader is told only that
+    something did."""
+    write(project.batch, make_parts(
+        "<w:tbl><w:tr><w:tc>"
+        + para(run("The paper as it stands.")) + "</w:tc></w:tr></w:tbl>"))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 1, out
+    assert "NOT fully reviewable" in out
+    assert "STRUCTURE tbl: 0 -> 1" in out
+    assert "duplicate a table" in out

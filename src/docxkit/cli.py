@@ -1031,6 +1031,12 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                 # a boolean for a 68,000-character stream says only that
                 # SOMETHING moved; on AFI the answer was two characters
                 print(f"   GLYPH {run}")
+            for moved in report.structure_diff:
+                print(f"   STRUCTURE {moved}: the rejected batch does not "
+                      f"carry what the baseline does, and it is not a "
+                      f"character — a move can duplicate a table or drop a "
+                      f"paragraph's bookmarks, and the text gates see "
+                      f"neither")
             for link in report.lost_links:
                 print(f"   LINK LOST {link}: the baseline has this "
                       f"hyperlink and the rejected batch does not — Word's "
