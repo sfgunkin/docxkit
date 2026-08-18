@@ -1092,3 +1092,81 @@ def test_a_caption_ALREADY_linked_does_not_stop_the_ones_after_it():
 
     assert report.already_linked == ["Table1"]
     assert report.linked == ["Table2"]
+
+
+def test_a_CONTINUATION_already_linked_is_not_linked_again():
+    """The masking check on the continuation branch, which the repeat
+    branch's idempotence test does not reach: `masked_visible_text`
+    fills a linked span with NULs, and a second pass has to see them.
+    Under `and` in place of `or` the bare "5" is wrapped a second time,
+    nesting a hyperlink inside a hyperlink — which Word opens and no
+    text-level check sees.
+
+    It also says WHAT each link covers: the head takes "Tables 3" and
+    the continuation takes the bare number alone, which is the whole
+    point of the capture group."""
+    import re as _re
+
+    from docxkit import text_of
+    xml = doc(
+        para(run("Table 3 shows one thing.")),
+        para(run("Table 5 shows a third.")),
+        para(run("Results appear in Tables 3 to 5, as noted.")),
+        para(run("Table 3. First")),
+        para(run("Table 5. Third")),
+    )
+    xml, _ = crossrefs.link(xml)
+
+    once, first = crossrefs.link_more(xml)
+    twice, second = crossrefs.link_more(once)
+
+    assert first == {"Table3": 1, "Table5": 1}
+    assert second == {} and twice == once, "a second pass links nothing"
+    p = paragraph_holding(once, "as noted")
+    wrapped = [(m.group(1), text_of(m.group(2))) for m in _re.finditer(
+        r'<w:hyperlink w:anchor="([^"]+)">(.*?)</w:hyperlink>', p, _re.DOTALL)]
+    assert wrapped == [("Table3", "Tables 3"), ("Table5", "5")]
+
+
+def test_a_continuation_number_ALREADY_linked_by_hand_is_left_alone():
+    """A paper that linked one number by hand: the label is plain, the
+    number is inside somebody else's hyperlink, and `link_more` has to
+    leave it there rather than wrap a hyperlink around a hyperlink.
+
+    What does the leaving is the MASK, not the check beside it.
+    `masked_visible_text` fills linked characters with NUL, so the
+    pattern then has no "5" to match at all. The NUL check in
+    `link_more` is unreachable in both branches and its mutants
+    survive on purpose: every element of `_mention_re`, and of the
+    continuation's CAPTURE, is a literal, a whitespace class, a word
+    boundary or a zero-width lookahead — none of which matches NUL,
+    so a match cannot contain one. The guard stays for the day a
+    pattern grows a character class that can (the continuation's own
+    "[^.;:()]" repeat already does, outside the capture), and
+    `tools/kill_check.py` records the two as expect_kill=False.
+    """
+    import re as _re
+
+    from docxkit import text_of
+    hand_linked = (
+        '<w:p><w:r><w:t xml:space="preserve">Results appear in Tables 3 to '
+        '</w:t></w:r><w:hyperlink w:anchor="Table5"><w:r><w:t>5</w:t></w:r>'
+        "</w:hyperlink><w:r><w:t>, as noted.</w:t></w:r></w:p>")
+    xml = doc(
+        para(run("Table 3 shows one thing.")),
+        para(run("Table 5 shows a third.")),
+        hand_linked,
+        para(run("Table 3. First")),
+        para(run("Table 5. Third")),
+    )
+    xml, _ = crossrefs.link(xml)
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table3": 1}, "the 5 was already somebody's link"
+    p = paragraph_holding(out, "as noted")
+    links = [(m.group(1), text_of(m.group(2))) for m in _re.finditer(
+        r'<w:hyperlink w:anchor="([^"]+)">(.*?)</w:hyperlink>', p, _re.DOTALL)]
+    assert links == [("Table3", "Tables 3"), ("Table5", "5")]
+    assert "<w:hyperlink" not in p[p.index("</w:hyperlink>"):
+                                   p.rindex("<w:hyperlink")], "not nested"
