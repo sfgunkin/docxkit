@@ -17,16 +17,19 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*One, as of 2026-08-18.* This section was empty on the 17th, for the
+*Nothing, as of 2026-08-18.* This section was empty on the 17th, for the
 first time since the file was started, on five closed that day: the
 U+2212 downgrade (both halves), the missing row-multiset check for a
 reorder, and the four survivor ledgers, each on a fresh measurement
-rather than on the work having been done. Two were opened on the 18th
-and one of them — the survivor report dying on a module it could not
-spell — was closed in the session that filed it.
+rather than on the work having been done. Three were opened on the 18th
+and all three closed the same day: the survivor report dying on a module
+it could not spell, the harness exclusions that voided a published
+number, and an S1 in `comments.remove` that a mutation run walked into.
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
+
+## Fixed
 
 ### S2 three of `_table_layout`'s five harness exclusions were never true, and the number it produced is void
 
@@ -73,7 +76,18 @@ static rule was tried and rejected: an excluded file that merely NAMES
 something the module defines is usually using it as a fixture, which is
 what `test_tables_fit.py` does with `read_all` and `Table`.
 
-## Fixed
+**Closed 2026-08-18** (`b5a96a5` the harness, `92e00f7` the figure).
+Re-measured under all eleven files: **21.0 % real survival, 92 of
+439**, against 18.4 % under eight. The corrected harness reads HIGHER,
+and that is not a paradox — the two runs are different draws of a
+2,834-mutant module sampled at 460, and the earlier session's
+parameters are recorded nowhere, so they were never a pair. The
+comparison that IS one is the function the exclusion hid:
+`drop_blank_rows` went from **12 survivors to 1**.
+
+Both figures now stand in CONTRIBUTING with that said beside them,
+which is the point of the entry: not that 18.4 % was too low, but that
+it was a number about a run rather than about the module.
 
 ### S1 `comments.remove` deletes the paragraph when the reference mark is not in a run — `d5c9e25`
 
