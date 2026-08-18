@@ -363,7 +363,7 @@ figure and nothing more, and the tests named beside them are not in it:
 |---|---|---|---|
 | `tracked.py` | 36.3 % | **9.4 %** | three rounds, below |
 | `equations.py` | 24.9 % | **10.6 %** | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
-| `_table_layout.py` | 18.4 % VOID | 21.0 %, then void | the harness was missing three of its own test files; the round after it found an S2 |
+| `_table_layout.py` | 18.4 % VOID | 21.0 %, then **12.2 %** | the harness was missing three of its test files; the round after it found an S2 and an S1 |
 | `cli.py` | 17.7 % | **9.1 %** | what `math`, `inspect`, `count`, `tasks`, `figures`, `revision ingest` and `validate` PRINT |
 | `comments.py` | 17.4 %\* | **24.2 %** | the two rewrites, and the two distances |
 | `crossrefs.py` | **20.8 %** | — | the caption-bookmark window, and one run cut into three |
@@ -395,13 +395,18 @@ The largest cluster now is 16 in `<module>` — the glyph-width table,
 whose numbers are the one thing in this package that only
 `pytest -m word` can really check, since the answer lives in Word.
 
-**And 21.0 % is itself void now**, for the ordinary reason: reading the
-next cluster down — 12 survivors in `_house_width` — found an S2 (the
-table width written ahead of the `tblStyle` CT_TblPr wants first, which
-Word drops on the next save), and fixing it changed the source. A
-survivor series ends where the module does. What the round bought is in
-the BACKLOG entry; the number to compare against is the next fresh
-draw.
+**21.0 % was then void in turn**, for the ordinary reason: reading the
+next two clusters down found an S2 and an S1 — the table width written
+ahead of the `tblStyle` CT_TblPr wants first, which Word drops on the
+next save, and `keepNext` spliced into the middle of a caption's style
+name — and fixing them changed the source. A survivor series ends where
+the module does.
+
+The fresh draw after those fixes and the tests that came with them
+reads **12.2 % (54 of 442)**. Three figures for one module in one day,
+and only the last one describes the module as it stands: the first was
+measured without three of its test files, the second against code that
+had two defects in it.
 
 All five re-measurements landed the same day, and the shape is the
 same in each: the survivors were the values a report or a rewrite
