@@ -365,14 +365,17 @@ figure and nothing more, and the tests named beside them are not in it:
 | `equations.py` | 24.9 % | — | `prose_math`'s context window; five OMML shapes `to_latex` claims and nothing built |
 | `_table_layout.py` | 18.4 % VOID | 21.0 %, then void | the harness was missing three of its own test files; the round after it found an S2 |
 | `cli.py` | 17.7 % | — | what `math`, `inspect`, `count`, `tasks` and `figures` PRINT |
-| `comments.py` | 17.4 %\* | — | — |
+| `comments.py` | 17.4 %\* | **24.2 %** | the two rewrites, and the two distances |
 | `footnotes.py` | 15.6 % | — | — |
 | `revision.py` | 14.3 % | — | — |
 | `_compare_read.py` | 12.6 % (full run) | — | `mask_volatile_fields`' scan, and two argued equivalences |
 | `styles.py` | 8.7 % | — | — |
 
 \* incomplete: 178 of the 450 it sampled, and the percentage is over
-what ran. `_table_layout`'s first figure is void for a different reason
+what ran — which is why the complete run beside it reads HIGHER, not
+because anything got worse. 24.2 % (93 of 385) is the module's first
+whole figure, and the tests written off it are not in that number
+either. `_table_layout`'s first figure is void for a different reason
 — see the BACKLOG entry: three of its five harness exclusions were never
 true, and a run missing the files that cover a function invents
 survivors in it.
