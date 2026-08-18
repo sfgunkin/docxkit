@@ -366,8 +366,9 @@ figure and nothing more, and the tests named beside them are not in it:
 | `_table_layout.py` | 18.4 % VOID | 21.0 %, then void | the harness was missing three of its own test files; the round after it found an S2 |
 | `cli.py` | 17.7 % | **9.1 %** | what `math`, `inspect`, `count`, `tasks`, `figures`, `revision ingest` and `validate` PRINT |
 | `comments.py` | 17.4 %\* | **24.2 %** | the two rewrites, and the two distances |
-| `footnotes.py` | 15.6 % | — | — |
-| `revision.py` | 14.3 % | — | — |
+| `crossrefs.py` | **20.8 %** | — | the caption-bookmark window, and one run cut into three |
+| `footnotes.py` | 15.6 % | — | the MARKS' half of the size report |
+| `revision.py` | 14.3 % | — | the glyph report's two thresholds |
 | `_compare_read.py` | 12.6 % (full run) | **9.8 %** | `mask_volatile_fields`' scan, then `pair_parts`' threshold |
 | `styles.py` | 8.7 % | — | — |
 
