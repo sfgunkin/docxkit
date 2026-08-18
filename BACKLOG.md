@@ -31,6 +31,46 @@ today, not about the toolkit.
 
 ## Fixed
 
+### S3 the Word-driven width gate failed on a clean machine, on the shortest cell in its list — `984156f`
+
+Run on 2026-08-18 because CONTRIBUTING says to run `pytest -m word`
+after any edit to `_table_layout`, and that day had two. Result: 7
+passed, 1 failed —
+
+    test_the_method_agrees_with_the_afm_tables: worst 1.1%
+
+against a 1 % bound. Nothing to do with the day's edits, and nothing to
+do with the model either.
+
+**Measured before touching it**, which is the whole of the diagnosis:
+
+    +2.6 dxa  'No'          model 244.4  Word 247
+    +3.0 dxa  '12.7'        model 350.0  Word 353
+    -3.6 dxa  '-0.008'      model 516.6  Word 513
+
+A few twips, both signs, no relation to length — the side bearings and
+the whole-twip rounding a WHOLE-string measurement carries.
+`word.ruler`'s docstring names the first and says to cancel it with the
+`(w(c*40) - w(c*20)) / 20` difference; the per-character test above does
+exactly that, and this one cannot, because whole cells are its subject.
+
+So the bound was a statement about cell LENGTH: 2.6 dxa is 1.05 % of a
+two-character cell and 0.1 % of a thirty-character one, and the shortest
+string in the list decided the gate.
+
+**Fixed** (`984156f`): one percent of the string plus four dxa, the
+measurement recorded in the comment beside it, and the failure now
+lists WHICH cells rather than one percentage. The guard still catches
+what it exists for — a substituted face or a broken ruler is out by tens
+of percent, not by three twips.
+
+**S3 because of what a red gate costs here**: this one is deselected by
+default and takes a minute, so it is run on purpose or not at all. A
+gate that fails on a clean machine for a reason nobody has written down
+is a gate people stop running, and the width model has no other check —
+a 10 % error in the Arial Narrow digits survived months for exactly
+that reason (V4 in ROBUSTNESS_PLAN.md).
+
 ### S1 `set_done` wrote a SECOND `w15:done` beside the one it could not see — `bf30a89`
 
 Found 2026-08-18 by asking what the `done_m.group(1) == "1"` survivor in
