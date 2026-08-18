@@ -2414,3 +2414,46 @@ def test_the_masked_region_starts_at_the_CACHED_RESULT_at_any_offset(lead):
 
     assert lead + "before " in out and " after" in out
     assert "«F:PAGE»" in out and ">7<" not in out
+
+
+# `pair_parts` had 6 survivors: the similarity score that decides
+# whether a RENAMED part is the same part. The test above renames a
+# header whose content is IDENTICAL, where every spelling of "best
+# match" and every threshold agrees.
+
+_RUNNING_HEAD = "Age-Friendly Index — running head, 2026 revision"
+
+
+def test_a_renamed_header_pairs_with_the_CLOSEST_candidate(tmp_path):
+    """Two spare parts on the far side and only one of them is this
+    header renumbered. Pairing it with the other reports the running
+    head as rewritten from end to end, and buries the one word that
+    changed."""
+    near = hdr(para(run(_RUNNING_HEAD.replace("2026", "2027"))))
+    far = hdr(para(run("Zeta Omicron Pi: an unrelated banner entirely!!")))
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml": hdr(para(run(_RUNNING_HEAD)))},
+                       {"word/header2.xml": near, "word/header3.xml": far}))
+
+    report = compare(a, b)
+
+    assert [(s["type"], s["part"]) for s in report["structure"]] == [
+        ("PART ADDED", "header3")], report
+    assert [t["part"] for t in report["text"]] == ["header1"]
+
+
+def test_a_part_too_UNLIKE_anything_is_added_and_removed(tmp_path):
+    """The threshold is what stops the pairing being a guess: below it
+    the two are different parts, and saying so is the honest report —
+    one lost, one gained — rather than a text diff of two unrelated
+    running heads."""
+    far = hdr(para(run("Zeta Omicron Pi: an unrelated banner entirely!!")))
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml": hdr(para(run(_RUNNING_HEAD)))},
+                       {"word/header2.xml": far}))
+
+    report = compare(a, b)
+
+    assert sorted((s["type"], s["part"]) for s in report["structure"]) == [
+        ("PART ADDED", "header2"), ("PART REMOVED", "header1")], report
+    assert report["text"] == []
