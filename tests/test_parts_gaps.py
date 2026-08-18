@@ -612,3 +612,67 @@ def test_removing_ONE_of_two_comments_leaves_the_other_mark_alone():
     assert 'w:commentReference w:id="2"' in doc
     assert 'w:id="1"' not in doc
     assert "text 1" in doc and "text 2" in doc
+
+
+def _mark_run(cid: int, *, closed: bool = True) -> str:
+    ref = (f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+           f'<w:commentReference w:id="{cid}"/>')
+    return ref + ("</w:r>" if closed else "")
+
+
+def _prose_then_mark(cid: int, *, closed: bool = True,
+                     lead: str = "") -> tuple[dict[str, bytes], str]:
+    """Prose in its own run, then the reference in its own — which is
+    what Word writes, and the shape that tells the ENCLOSING run from
+    the neighbour before it. Returns the parts and the mark's run, so a
+    caller can say exactly what removal should leave behind."""
+    mark = _mark_run(cid, closed=closed)
+    body = (f'<w:p>{run(lead) if lead else ""}'
+            f'<w:commentRangeStart w:id="{cid}"/>'
+            f'{run("the sentence someone queried")}'
+            f'<w:commentRangeEnd w:id="{cid}"/>{mark}'
+            f'{run("and the paragraph goes on.")}</w:p>')
+    return make_parts(body, comment_items=(
+        comment(cid, f"note {cid}", para_id=f"AAAA{cid:04d}"),)), mark
+
+
+@pytest.mark.parametrize("lead", ["", "A", "ABC", "A longer opening clause, ",
+                                  "Prose of some other length entirely so "
+                                  "the offsets are nothing like round. "])
+def test_removing_a_comment_drops_ITS_run_and_NOTHING_else(lead):
+    """Two things at once, and the offsets decide both.
+
+    `starts[-1]`, not `starts[0]`: both runs start before the mark, and
+    taking the first deletes the sentence the comment was ABOUT along
+    with the mark on it. Then `pos = close + len("</w:r>")` decides
+    where the walk resumes — `close | 6` agrees with `close + 6`
+    whenever the low bits happen to be clear, which one fixture settles
+    by luck, so the lead varies the offset five ways.
+
+    The assertion is the whole document: what removal leaves must be the
+    original minus the three pieces that belong to the comment."""
+    parts, mark = _prose_then_mark(1, lead=lead)
+    before = parts["word/document.xml"].decode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    want = (before.replace('<w:commentRangeStart w:id="1"/>', "")
+            .replace('<w:commentRangeEnd w:id="1"/>', "").replace(mark, ""))
+    assert doc == want
+
+
+def test_a_reference_run_that_is_never_closed_stops_the_walk():
+    """`close == -1`. Malformed, and the only question is what it costs:
+    the walk stops and everything already gathered plus the rest of the
+    document is handed back, rather than a slice taken to an index that
+    is not there."""
+    parts, _mark = _prose_then_mark(1, closed=False)
+    before = parts["word/document.xml"].decode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "the sentence someone queried" in doc
+    assert doc.count("<w:p>") == before.count("<w:p>")
+    assert 'w:commentRangeStart w:id="1"' not in doc, "the anchor still goes"

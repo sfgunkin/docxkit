@@ -118,3 +118,35 @@ def test_a_comment_with_no_extended_entry_is_not_done():
     found = {t.comment.cid: t.comment.done for t in threads(parts)}
     assert found["1"] is False, "an unflagged comment reads as resolved"
     assert found["2"] is True, "the flagged one must still read as done"
+
+
+# --- the second comments round, from the complete run of 2026-08-18 -----
+#
+# 24.2 % over a full 460-sample (the first run stopped at 178), and the
+# two largest clusters were the two rewrites: 13 on the element
+# `set_done` builds when there is no flag to change, and 20 on the walk
+# that drops a reference run.
+
+
+def test_set_done_ADDS_the_flag_to_an_element_that_carries_none():
+    """Word writes `w15:commentEx` both ways, and only one of them was
+    tested. This branch rebuilds the element by hand —
+    `el[:-2] + ' w15:done="1"/>'` — so an off-by-one in the slice leaves
+    `.../ w15:done="1"/>` or eats the closing quote, and the part stops
+    parsing. `threads` then reports no done flags at all, which reads
+    exactly like a round nobody has resolved."""
+    from lxml import etree
+    parts = make_parts()
+    bare = (f"<w15:commentsEx {NS}>"
+            '<w15:commentEx w15:paraId="AAAA0001"/>'
+            '<w15:commentEx w15:paraId="AAAA0002" w15:done="0"/>'
+            "</w15:commentsEx>")
+    parts["word/commentsExtended.xml"] = bare.encode("utf-8")
+
+    assert set_done(parts, ["1"]) == 1
+
+    out = parts["word/commentsExtended.xml"].decode("utf-8")
+    assert '<w15:commentEx w15:paraId="AAAA0001" w15:done="1"/>' in out
+    assert '<w15:commentEx w15:paraId="AAAA0002" w15:done="0"/>' in out
+    etree.fromstring(out.encode("utf-8"))
+    assert {t.comment.cid: t.done for t in threads(parts)}["1"]
