@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import NS, make_parts, para, run
+from conftest import NS, make_parts, note, notes, para, run
 
 from docxkit.refstyle import (
     CHICAGO,
@@ -590,3 +590,210 @@ def test_same_author_entries_run_oldest_first():
     report = audit(make_parts(body))
     orders = [i for i in report.issues if i.code == "year-order"]
     assert len(orders) == 1 and "(2018)" in orders[0].message
+
+
+# --- WHERE the audit says an issue is (2026-08-19) ----------------------
+#
+# refstyle re-measured at 44.1 % real survival — the worst module in the
+# package by a factor of three — with 87 of its 173 survivors in `audit`
+# alone. Almost all of them sit on `f"¶{r.index + 1}"` and the snippet
+# slices beside it: not one of this file's 47 tests read `i.where`, so
+# every issue could have been reported against the wrong paragraph and
+# the suite would have stayed green.
+#
+# `where` is the whole usefulness of the report. A style audit that says
+# "the list is not alphabetical" without saying which entry is a list of
+# forty entries to re-read by eye, which is the job the module exists to
+# remove. Indices are chosen ODD on purpose: `3 + 1` is 4, `3 | 1` is 3
+# and `3 ^ 1` is 2, while at an even index `+` and `|` agree.
+
+
+def _rows(report) -> list[tuple[str, str]]:
+    return [(i.code, i.where) for i in report.issues]
+
+
+def _entry_paragraphs() -> str:
+    """Two prose paragraphs, a heading, three entries — entries at
+    indices 3, 4 and 5, so the paragraph numbers they report are 4, 5
+    and 6."""
+    return (
+        para(run("Robots reduce employment (Acemoglu and Restrepo 2020) "
+                 "and Maestas et al. (2023) concur."))
+        + para(run("Angrist and Pischke (2009) survey the toolkit."))
+        + para(run("References"))
+        + para(run("Acemoglu, D., and P. Restrepo. (2020). "), irun("JPE"),
+               run(", 128(6): 2188–2244."))
+        + para(run("Angrist, J., and J. Pischke. (2009). "),
+               irun("Mostly Harmless Econometrics"),
+               run(". Princeton, NJ: Princeton University Press."))
+        + para(run("Brown, A. (2020). “A Quoted Title Long Enough To Be "
+                   "Cut By The Sixty Character Limit.” Some Journal, "
+                   "pp. 45-48."))
+    )
+
+
+def test_every_issue_names_the_paragraph_it_was_found_in():
+    """The third entry is the sixth paragraph, and all three of its
+    issues have to say so. `¶6` against `¶5` sends a person to the entry
+    above the one that is wrong — in a list where every line looks like
+    every other, that is worse than no location at all."""
+    report = audit(make_parts(_entry_paragraphs()))
+
+    assert sorted(_rows(report)) == [
+        ("en-dash", "¶6"),          # "pp. 45-48" wants an en-dash
+        ("italics", "¶6"),          # Brown's journal lost its italics
+        ("missing-ref", "¶1"),      # Maestas, cited in the first paragraph
+        ("uncited-ref", "¶6"),      # Brown, listed and never cited
+    ]
+
+
+def test_the_entry_snippet_is_the_first_sixty_characters():
+    """`r.text[:60]` — enough to recognise the entry, short enough for a
+    terminal line. The report is read next to the document, so the
+    snippet's job is to confirm the paragraph number found the right
+    entry."""
+    report = audit(make_parts(_entry_paragraphs()))
+
+    brown = [i for i in report.issues if i.where == "¶6" and i.snippet]
+    assert {i.snippet for i in brown} == {
+        "Brown, A. (2020). “A Quoted Title Long Enough To Be Cut By T"}
+
+
+def test_the_LAST_entry_is_not_also_read_as_prose():
+    """`head_idx <= i <= last_entry`, inclusive at the top: with `<` the
+    final entry falls through to the prose checks as well as the entry
+    checks. Brown's "pp. 45-48" is what makes that visible — the entry
+    rule calls a hyphen range `en-dash`, the PROSE rule calls it
+    `page-dash`, and both firing on one paragraph is the report
+    describing a document that does not exist."""
+    report = audit(make_parts(_entry_paragraphs()))
+
+    assert not [i for i in report.issues if i.code == "page-dash"]
+
+
+def test_a_footnote_issue_numbers_the_FOOTNOTE_paragraph():
+    """`fn ¶4`, not `¶4`: footnote paragraphs and body paragraphs are
+    numbered in separate sequences, and a report that mixed them would
+    send a person to the fourth paragraph of the paper."""
+    foot = notes("footnotes", note("First note.", nid=2),
+                 note("Second.", nid=3), note("Third.", nid=4),
+                 note("As shown (Smith, 2020) here.", nid=5))
+    body = para(run("Prose (Acemoglu and Restrepo 2020)."))
+
+    report = audit(make_parts(body, footnotes=foot))
+
+    assert ("year-comma", "fn ¶4") in _rows(report)
+
+
+def test_a_reference_HEADING_with_nothing_under_it_swallows_nothing():
+    """`max(..., default=-1)`: with no entries parsed there is no
+    reference section, and every paragraph is prose. A default of 0 or 1
+    instead makes the paragraphs right after the heading disappear from
+    the audit — the shape a paper has while its list is still in another
+    file, and exactly when a person runs this."""
+    body = (para(run("References"))
+            + para(run("As stated (Smith, 2020) elsewhere."))
+            + para(run("And again (Jones, 2021) here.")))
+
+    report = audit(make_parts(body))
+
+    assert report.entries == 0
+    assert sorted(_rows(report)) == [("year-comma", "¶2"),
+                                     ("year-comma", "¶3")]
+
+
+def test_two_entries_that_cite_alike_are_lettered_a_then_b():
+    """`chr(ord("a") + i)` — the suffixes the style asks for, in order.
+    Under `|` the second is "a" again, which reads as a report that has
+    not understood its own recommendation."""
+    body = (para(run("Two works (Foster et al. 2013)."))
+            + para(run("References"))
+            + para(run("Foster, J., McGillivray, M., and S. Seth. (2013). "),
+                   irun("J"), run(", 1(1): 1–2."))
+            + para(run("Foster, J., Seth, S., and M. Lokshin. (2013). "),
+                   irun("J"), run(", 2(2): 3–4.")))
+
+    issues = [i for i in audit(make_parts(body)).issues
+              if i.code == "ambiguous-cite"]
+
+    assert [i.where for i in issues] == ["¶3", "¶4"]
+    assert all("distinguish them as 2013a, 2013b" in i.message
+               for i in issues)
+    assert issues[0].snippet == ("Foster, J., McGillivray, M., and S. Seth. "
+                                 "(2013). J, 1(1): 1")
+
+
+# --- the SNIPPET a prose issue carries ----------------------------------
+#
+# `_snippet` takes 20 characters either side, and 22 of the module's
+# survivors were on that one line. Every fixture in this file was short
+# enough that both margins clamped, where `start - 20`, `start | 20` and
+# `start % 20` are one number. These are long enough to cut.
+
+LONG_PROSE = ("The estimates in this section follow the identification "
+              "strategy set out by (Smith, 2020) and extended in later "
+              "work by several other authors working on the same panel.")
+
+
+def test_the_snippet_is_twenty_characters_either_side():
+    """Enough context to find the phrase in the paragraph, little enough
+    to stay on one line. The offsets here are 76 and 88 against a margin
+    of 20 — no two of `-`, `|`, `^`, `&` and `%` agree on either."""
+    issue, = check_prose(LONG_PROSE)
+
+    assert issue.code == "year-comma"
+    assert issue.snippet == ("strategy set out by (Smith, 2020) and "
+                             "extended in la")
+
+
+def test_a_snippet_at_the_START_of_a_paragraph_keeps_its_first_letter():
+    """`max(0, start - margin)`: the margin runs off the front here, and
+    0 is where the text begins. A floor of 1 drops the opening
+    character, which for a citation-shaped snippet is the parenthesis
+    the check is about."""
+    issue, = check_prose("(Smith, 2020) is the earliest estimate of the "
+                         "elasticity anyone has published.")
+
+    assert issue.snippet.startswith("(Smith, 2020)")
+
+
+def test_the_page_snippet_reaches_PAST_the_match_to_show_the_number():
+    """`m.end() + 6`: the match is "p." and a lookahead, so it ends
+    before the digits. Without the six the snippet stops at the very
+    thing the reader has to see — the page number that is jammed
+    against the period."""
+    issue, = check_prose("The result is reported on p.45 of the working "
+                         "paper, which surveys the earlier literature in "
+                         "some detail.")
+
+    assert issue.code == "page-space"
+    assert issue.snippet == "sult is reported on p.45 of the working paper, w"
+
+
+# --- the SNIPPET an entry issue carries ---------------------------------
+
+MANY_AUTHORS = ('Acemoglu, D., Autor, D., Dorn, D., Hanson, G., Price, B., '
+                'Restrepo, P. & Johnson, S. (2020). "Title." Journal, '
+                "1(1): 1–2.")
+
+
+def test_an_ampersand_snippet_shows_the_END_of_the_author_list():
+    """`authors[-40:]`: the "&" is between the last two authors, so the
+    tail is where it is. The head of a seven-author list does not
+    contain the thing being reported."""
+    amp, = [i for i in check_entry(MANY_AUTHORS) if i.code == "ampersand"]
+
+    assert amp.snippet == "G., Price, B., Restrepo, P. & Johnson, S"
+    assert len(amp.snippet) == 40
+
+
+def test_a_name_snippet_shows_the_START_of_the_author_list():
+    """`authors[:70]` — the other direction, because a spelled-out given
+    name or a missing serial comma is a fault of the list's shape and
+    the shape is legible from its beginning. Seventy characters, not the
+    whole of a seven-author list."""
+    entry = MANY_AUTHORS.replace("Johnson, S.", "Johnson, Simon")
+    named, = [i for i in check_entry(entry) if i.code == "and-comma"]
+
+    assert len(named.snippet) == 70
+    assert named.snippet == entry[:70]
