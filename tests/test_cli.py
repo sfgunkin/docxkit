@@ -1439,3 +1439,71 @@ def test_footnotes_lists_the_faces_MOST_USED_first(monkeypatch, tmp_path,
     assert len(faces) == 2, out
     assert "Cambria" in faces[0] and "3" in faces[0]
     assert "Times New Roman" in faces[1]
+
+
+# `cmd_figures` 4 survivors and `_write_json` 2, from the same run.
+
+
+def test_figures_marks_the_ones_WITHOUT_alt_text(monkeypatch, tmp_path,
+                                                 capsys):
+    """One line per drawing, and the mark at the left is what a reader
+    scans for — inverted, every described figure is flagged and the bare
+    one is not. The alt text itself is quoted at 50 characters, enough
+    to tell "A chart of..." from "Chart", and `d.descr or ''` is what
+    keeps a drawing with no description from quoting an empty one."""
+    from docxkit.package import write_docx
+    ns = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+          'wordprocessingDrawing" '
+          'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+          'relationships"')
+
+    def inline(rid, name, descr=""):
+        attr = f' descr="{descr}"' if descr else ""
+        return ('<w:p><w:r><w:drawing><wp:inline ' + ns + ">"
+                f'<wp:docPr id="1" name="{name}"{attr}/>'
+                f'<a:blip r:embed="{rid}"/>'
+                "</wp:inline></w:drawing></w:r></w:p>")
+
+    long_alt = "A described chart, " + "D" * 80
+    path = tmp_path / "mixed.docx"
+    write_docx(path, make_parts(
+        para(run("Figure 1. Described")) + inline("rId4", "Chart 1", long_alt)
+        + para(run("Figure 2. Bare")) + inline("rId5", "Chart 2")))
+
+    run_cli(monkeypatch, "figures", str(path))
+    lines = [ln for ln in capsys.readouterr().out.splitlines()
+             if "Figure" in ln]
+
+    assert len(lines) == 2, lines
+    assert lines[0].startswith("    Figure 1"), "described: no mark"
+    assert lines[1].startswith("  ! Figure 2"), "bare: flagged"
+    assert repr(long_alt[:50]) in lines[0]
+    assert long_alt[:51] not in lines[0]
+    assert "alt:" not in lines[1], "nothing to quote"
+
+
+def test_a_json_report_keeps_the_CHARACTERS_the_document_used(monkeypatch,
+                                                              tmp_path,
+                                                              capsys):
+    """`ensure_ascii=False`. These reports are read by people and by
+    scripts that grep them, and a Russian manuscript's task list under
+    the default escaping is a file of `\\u0417` where the word was — the
+    same file, unusable for both readers. The indent is two, which is
+    what makes it diffable."""
+    from conftest import comment
+
+    from docxkit.package import write_docx
+    path = tmp_path / "ru.docx"
+    write_docx(path, make_parts(
+        para(run("Абзац с замечанием.")),
+        comment_items=(comment(1, "Уточните, пожалуйста — источник?"),)))
+    dest = tmp_path / "tasks.json"
+
+    run_cli(monkeypatch, "tasks", str(path), "--json", str(dest))
+    capsys.readouterr()
+    raw = dest.read_text(encoding="utf-8")
+
+    assert "Уточните, пожалуйста — источник?" in raw
+    assert "\\u" not in raw, "escaped, and unreadable to both audiences"
+    assert raw.splitlines()[1].startswith("  {"), "indent=2"
