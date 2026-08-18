@@ -7,6 +7,8 @@ from conftest import NS, make_parts, note, notes, para, run
 from docxkit.refstyle import (
     CHICAGO,
     HOUSE,
+    Issue,
+    RefStyleReport,
     audit,
     check_entry,
     check_prose,
@@ -797,3 +799,238 @@ def test_a_name_snippet_shows_the_START_of_the_author_list():
 
     assert len(named.snippet) == 70
     assert named.snippet == entry[:70]
+
+
+# --- the rules' other side (2026-08-19) ---------------------------------
+#
+# The second half of the same measurement: 28 survivors in `check_entry`
+# and 15 in `_check_prose`. The shape is the one CONTRIBUTING calls a
+# guard asserted from one side only — every exemption in the token loop
+# was tested by the case it fires on and none by the case it must stay
+# quiet for, and the loop's own `continue`s were free.
+
+
+def test_a_URL_with_a_hyphenated_path_is_not_a_page_range():
+    """The exemption is `http` OR `doi` OR a bare DOI prefix, not all
+    three: a publisher URL carrying a year range in its path
+    ("/2020-2021/") is the ordinary case, and under `and` a URL without
+    the word "doi" in it stops being exempt."""
+    entry = ('Smith, J. (2020). "Title." Journal, 1(1): 1–2. '
+             "http://example.org/reports/2020-2021/summary.pdf")
+
+    assert "en-dash" not in _codes(check_entry(entry))
+
+
+def test_a_real_range_AFTER_a_url_is_still_flagged():
+    """`continue`, not `break`: the loop skips the URL and keeps
+    reading. Under `break` every entry that cites a DOI before its page
+    numbers is silently exempt — which is most of a modern list."""
+    entry = ('Smith, J. (2020). "Title." https://doi.org/10.1234/abc '
+             "Journal, 1(1): 45-48.")
+
+    assert "en-dash" in _codes(check_entry(entry))
+
+
+def test_an_ISBN_is_not_a_page_range():
+    """`>= 3` hyphens, not `> 3`: an ISBN-13 written in the short form
+    carries exactly three, and a book entry flagged for its ISBN teaches
+    a person to stop reading the en-dash findings."""
+    entry = ("Angrist, J. (2009). Mostly Harmless Econometrics. "
+             "Princeton University Press. ISBN 0-262-03384-8.")
+
+    assert "en-dash" not in _codes(check_entry(entry))
+
+
+def test_a_real_range_AFTER_an_isbn_is_still_flagged():
+    entry = ("Angrist, J. (2009). Mostly Harmless Econometrics. "
+             "ISBN 0-262-03384-8, pp. 45-48.")
+
+    assert "en-dash" in _codes(check_entry(entry))
+
+
+def test_only_the_FIRST_range_in_an_entry_is_reported():
+    """`break`: the finding is "this entry uses hyphens", and an entry
+    with a volume range and a page range would otherwise report the same
+    fault twice. One line per entry is what makes a forty-entry audit
+    readable."""
+    entry = ('Smith, J. (2020). "Title." Journal, Vol. 3, 1801-1863, '
+             "pp. 45-48.")
+
+    ranges = [i for i in check_entry(entry) if i.code == "en-dash"]
+    assert len(ranges) == 1
+    assert ranges[0].message.endswith('"1801-1863"'), "the first one"
+
+
+def test_an_institution_named_by_its_department_needs_no_acronym():
+    """`_ACRONYM_RE.search(...) or " of " in authors` — either mark is
+    enough. "Ministry of Health, Labour and Welfare" carries commas and
+    no acronym at all, and under `and` its department names read as
+    spelled-out given names (LE le15 ¶254 reported "Labour" and
+    "Welfare" as authors' first names)."""
+    entry = ("Ministry of Health, Labour and Welfare. (2013). "
+             "Vital Statistics of Japan. Tokyo.")
+
+    assert "initials" not in _codes(check_entry(entry))
+
+
+def test_a_year_with_ONE_parenthesis_still_flags():
+    """`not (m.group(1) and m.group(3))` — both or neither. A half-open
+    "(2020." or "2020)." is what a hand edit leaves behind, and under
+    `or` the check passes anything with a parenthesis on either side."""
+    opened = check_entry('Smith, J. (2020. "Title." Journal, 1(1): 1–2.')
+    closed = check_entry('Smith, J. 2020). "Title." Journal, 1(1): 1–2.')
+
+    assert "year-parens" in _codes(opened)
+    assert "year-parens" in _codes(closed)
+
+
+def test_chicago_flags_a_year_with_ONE_parenthesis_too():
+    """The mirror: `m.group(1) or m.group(3)` — a style that writes the
+    year bare wants NEITHER parenthesis, and under `and` a half-open
+    year passes both checks and is reported by nobody."""
+    closed = check_entry('Smith, J. 2020). "Title." Journal, 1(1): 1–2.',
+                         CHICAGO)
+
+    assert "year-parens" in _codes(closed)
+
+
+def test_at_most_three_spelled_out_names_are_quoted_in_one_message():
+    """`suspects[:3]` — the message names examples, not the whole list.
+    A five-author entry with every given name spelled out would put five
+    quoted words on a line that already carries the rule."""
+    entry = ("Smith, John and Jones, Mary and Brown, Sara and Davis, "
+             'Paul. (2020). "Title." Journal, 1(1): 1–2.')
+
+    named, = [i for i in check_entry(entry) if i.code == "initials"]
+    assert named.message == ('given names as single initials — "John", '
+                             '"Jones", "Brown" spelled out')
+    assert "Davis" not in named.message, "four found, three shown"
+
+
+def test_FOUR_authors_named_in_text_flag_under_house_style():
+    """`len(names) >= style.etal_from`, not `==`: the house rule is "et
+    al. from three", and four is more than three. `==` would report the
+    three-author case and let every longer list through — the lists most
+    in need of the abbreviation."""
+    text = ("Acemoglu, Autor, Dorn and Hanson (2020) estimate the effect.")
+
+    assert "et-al" in _codes(check_prose(text))
+
+
+def test_chicago_abbreviates_from_FOUR_authors_not_three():
+    """The preset's own number, from both sides. AFI's style spells
+    three authors out and abbreviates four — a preset that agreed with
+    HOUSE on this would make the CHICAGO option pointless."""
+    three = "Acemoglu, Autor and Dorn (2020) estimate the effect."
+    four = "Acemoglu, Autor, Dorn and Hanson (2020) estimate the effect."
+
+    assert "et-al" not in _codes(check_prose(three, CHICAGO))
+    assert "et-al" in _codes(check_prose(four, CHICAGO))
+
+
+def test_chicago_leaves_spelled_out_given_names_alone():
+    """`initials=False`: Chicago author-date writes "Acemoglu, Daron",
+    and the house rule would report every entry in an AFI list."""
+    entry = ("Acemoglu, Daron, and Simon Johnson. 2020. "
+             '"Title." Journal, 1(1): 1–2.')
+
+    assert _codes(check_entry(entry, CHICAGO)) == set()
+
+
+def test_THREE_entries_that_cite_alike_are_lettered_a_b_c():
+    """`len(group) < 2`, not `!= 2`: a group of three is the case that
+    most needs the suffixes, and `!=` skips exactly it while still
+    reporting pairs."""
+    body = (para(run("Three works (Foster et al. 2013)."))
+            + para(run("References"))
+            + para(run("Foster, J., McGillivray, M., and S. Seth. (2013). "),
+                   irun("J"), run(", 1(1): 1–2."))
+            + para(run("Foster, J., Seth, S., and M. Lokshin. (2013). "),
+                   irun("J"), run(", 2(2): 3–4."))
+            + para(run("Foster, J., and A. Shorrocks. (2013). "),
+                   irun("J"), run(", 3(3): 5–6.")))
+
+    issues = [i for i in audit(make_parts(body)).issues
+              if i.code == "ambiguous-cite"]
+
+    assert [i.where for i in issues] == ["¶3", "¶4", "¶5"]
+    assert all("2013a, 2013b, 2013c" in i.message for i in issues)
+
+
+def test_a_paragraph_AFTER_the_reference_list_is_still_prose():
+    """`continue`, not `break`: the reference section is skipped, not
+    the rest of the document. An appendix, a data statement or an
+    acknowledgements paragraph sits after the list in most of these
+    papers, and under `break` none of them is ever audited."""
+    body = (para(run("Cited (Acemoglu and Restrepo 2020)."))
+            + para(run("References"))
+            + para(run("Acemoglu, D., and P. Restrepo. (2020). "),
+                   irun("JPE"), run(", 128(6): 2188–2244."))
+            + para(run("Appendix A. The instrument follows (Smith, 2020) "
+                       "closely.")))
+
+    report = audit(make_parts(body))
+
+    assert ("year-comma", "¶4") in _rows(report)
+
+
+def test_two_entries_by_the_SAME_author_are_not_out_of_order():
+    """`>` on the folded surname, not `>=`: an author with two works is
+    the ordinary case in every list, and `>=` reports every one of them
+    as misfiled. The finding then appears once per repeated author and
+    the real transposition is lost in it."""
+    body = (para(run("Cited (Smith 2019) and (Smith 2020)."))
+            + para(run("References"))
+            + para(run("Smith, J. (2019). “First.” "), irun("J"),
+                   run(", 1(1): 1–2."))
+            + para(run("Smith, J. (2020). “Second.” "), irun("J"),
+                   run(", 2(2): 3–4.")))
+
+    report = audit(make_parts(body))
+
+    assert not [i for i in report.issues if i.code == "order"]
+
+
+# --- what the report PRINTS ---------------------------------------------
+
+def test_an_issue_with_no_paragraph_prints_as_list():
+    """`i.where or "list"` — the cross-check findings that belong to the
+    list as a whole carry no paragraph, and a blank column reads as a
+    location that failed to print rather than one that does not apply.
+    """
+    report = RefStyleReport(issues=[Issue("no-list", "nothing found")])
+
+    line = report.format().splitlines()[1]
+    assert line.startswith("  list    no-list")
+
+
+def test_a_snippet_is_quoted_after_the_message():
+    report = RefStyleReport(
+        issues=[Issue("order", "out of order", where="¶4", snippet="Zebra")])
+
+    assert report.format().splitlines()[1].endswith('out of order  "Zebra"')
+
+
+def test_an_issue_with_no_snippet_prints_no_trailing_quotes():
+    """`if i.snippet else ""`: an empty pair of quotes at the end of a
+    line reads as a snippet that came out blank — which is a different
+    finding from an issue that carries none."""
+    report = RefStyleReport(issues=[Issue("order", "out of order",
+                                          where="¶4")])
+
+    assert report.format().splitlines()[1].endswith("out of order")
+
+
+def test_a_clean_report_says_so_rather_than_printing_nothing():
+    """A report whose second line is absent is indistinguishable from a
+    command that failed to run."""
+    assert RefStyleReport(entries=12, cited=12).format() == (
+        "12 reference entries, 12 works cited in text\n"
+        "  clean — no style departures found")
+
+
+def test_an_empty_report_counts_nothing():
+    """The dataclass defaults, which the CLI prints before anything has
+    been audited."""
+    assert RefStyleReport().format().startswith(
+        "0 reference entries, 0 works cited in text")
