@@ -327,3 +327,56 @@ def test_an_interval_in_a_paragraph_with_NO_maths_is_left_alone():
     xml = doc(p(t("The estimate is 0.42 with a 95% CI of [0.19, 0.47].")))
 
     assert [f for f in prose_math(xml) if f.kind == "interval"] == []
+
+
+# --- the same window, on the branches that had no fixture (2026-08-19) --
+#
+# `piece[max(0, at - 36):at + 36]` is written twice — once for a typed
+# script and once for a symbol — and `(before[-36:] + sym + after[:36])`
+# is written twice too, once for an expression the equation TRAILS and
+# once for one it LEADS. Each pair reads identically and each half needs
+# its own fixture: the start-of-paragraph case was written for the
+# symbol arm and the interval arm never had one at all.
+
+
+def test_a_TYPED_SCRIPT_at_the_start_of_a_paragraph_is_not_cut_backwards():
+    """`max(0, at - 36)` on the typed-script arm. A negative start
+    counts from the END in Python, so the context would come from the
+    last words of the paragraph and read as if the subscript were
+    there — and a floor of 1 drops the character being reported."""
+    xml = doc(p(t("x₂ opens this paragraph and the rest follows on.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "typed script"]
+
+    assert found.symbol == "₂"
+    assert found.context == "x₂ opens this paragraph and the rest"
+
+
+def test_an_INTERVAL_at_the_start_of_a_piece_is_not_cut_backwards():
+    """The same floor on the interval arm, which had no fixture near an
+    edge: every lead the test above uses is longer than the window, so
+    `max(0, ...)` never had to do anything."""
+    # the interval opens the piece BEFORE the equation, so its offset is
+    # 0 rather than 1: after `.strip()` a window starting at 1 is
+    # indistinguishable from one starting at 0 whenever the character
+    # there is a space, which it is on every piece that follows maths
+    xml = doc(p(t("[0, 1] bounds it, as "), math("θ"), t(" shows.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "interval"]
+
+    assert found.symbol == "[0, 1]"
+    assert found.context == "[0, 1] bounds it, as"
+
+
+def test_an_expression_the_equation_LEADS_carries_the_same_window():
+    """`after[:36]` on the second arm — the one where the operand sits
+    BEFORE the maths ("θ = " typed as prose, then the equation). Its
+    fixture stopped a few characters after the equation, so the forward
+    window was never full."""
+    xml = doc(p(t(f"{LEFT} R² = "), math("θ"), t(f" {RIGHT} and more.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "split expression"]
+
+    assert found.symbol == "R² =θ"
+    assert found.context == ("ce of exactly thirty-six chars R² = θ and "
+                             "then thirty-six more after that")
