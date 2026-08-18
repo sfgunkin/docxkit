@@ -22,8 +22,8 @@ first time since the file was started, on five closed that day: the
 U+2212 downgrade (both halves), the missing row-multiset check for a
 reorder, and the four survivor ledgers.
 
-Then SEVEN were opened on the 18th and all seven closed the same day —
-three S1, two S2, an S3 and an S4 — and every one came out of the same
+Then EIGHT were opened on the 18th and all eight closed the same day —
+three S1, three S2, an S3 and an S4 — and every one came out of the same
 day's mutation rounds rather than out of a manuscript. All three S1s
 are the same shape — an offset or a pattern nothing had ever asserted —
 and all three produce a file Word calls unreadable: a tag spliced into
@@ -36,6 +36,34 @@ Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
 
 ## Fixed
+
+### S2 `probe` called a bookmark above every paragraph "nested", so a block move would drop it — `98a522f`
+
+Found 2026-08-18 by mutation testing, and the surviving mutant was the
+CORRECT spelling — the first time that has happened here.
+
+    where = "body" if closed > before else "nested"
+
+classifies a bookmark by whether a paragraph closed more recently than
+one opened. The two searches are equal only when both are -1, and
+`</w:p>` does not contain `<w:p`, so that is exactly one case: a
+bookmark that precedes EVERY paragraph in the body. Word writes them —
+a document-wide bookmark sits there.
+
+Such a bookmark is a sibling of the paragraphs with none to travel with,
+which is precisely what the field is read for: "a block move has to
+carry those, and they are invisible to a paragraph-oriented edit".
+Reported as nested it reads as one the edit carries for free, and the
+move drops it silently.
+
+    [('doc_top', 'nested'), ('between', 'body'), ('inside', 'nested')]
+
+**Fixed the same session** (`98a522f`): `>=`, with the argument in a
+comment beside it, and `tests/test_probe.py` carrying the case.
+
+**S2 rather than S4** because probe is advisory only in the sense that
+nothing gates on it — a batch reads it to choose an approach, and this
+one understates what a move must carry.
 
 ### S3 the Word-driven width gate failed on a clean machine, on the shortest cell in its list — `984156f`
 
