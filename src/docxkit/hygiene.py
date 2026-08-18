@@ -577,8 +577,12 @@ def restore_math_glyphs(parts: dict[str, bytes],
         text = blob.decode("utf-8")
 
         def fix(m: re.Match[str], part: str = name) -> str:
+            # `back == m.group(2)` was a second guard here and could not
+            # fire: `wanted` is keyed on the DOWNGRADED form and drops
+            # every entry whose value equals its key, so a hit is always
+            # a change. Four mutants were living inside it (2026-08-19).
             back = wanted.get(m.group(2))
-            if back is None or back == m.group(2):
+            if back is None:
                 return m.group(0)
             restored.append(f"{part}: {m.group(2)!r} -> {back!r}")
             return m.group(1) + back + m.group(3)

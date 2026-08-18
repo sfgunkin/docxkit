@@ -723,3 +723,140 @@ def test_a_run_holding_ONLY_the_mark_goes_with_it():
     doc = parts["word/document.xml"].decode("utf-8")
     assert "CommentReference" not in doc, "the run went with the mark"
     assert "Prose." in doc and "anchored" in doc
+
+
+# --- the parts a scan must not stop at (2026-08-19) ---------------------
+#
+# hygiene's remaining survivors, and all of one kind: every `continue`
+# in these two functions was free, because each fixture's parts happened
+# to be in an order where stopping early and skipping one item come to
+# the same thing. A package is a dict of a dozen parts in no particular
+# order, and "the media file came first this time" is not a property any
+# of them can rely on.
+
+
+def test_a_BINARY_part_in_the_source_does_not_end_the_glyph_scan():
+    """`continue`, not `break`: a real package carries images, fonts and
+    a thumbnail, and the one that sorts first is nobody's choice. Under
+    `break` a manuscript with a picture in it silently loses the repair
+    — and the whole point of the function is that nothing else in the
+    toolkit can see the difference."""
+    built = _parts_with("a - b")
+    source = {"word/media/image1.png": b"\x89PNG\r\n\x1a\n not xml",
+              **_parts_with("a − b")}
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+
+
+def test_a_BINARY_part_in_the_package_does_not_end_the_repair():
+    """The same walk over the document being repaired."""
+    built = {"word/media/image1.png": b"\x89PNG\r\n\x1a\n not xml",
+             **_parts_with("a - b")}
+
+    restored = restore_math_glyphs(built, _parts_with("a − b"))
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+    assert built["word/media/image1.png"].startswith(b"\x89PNG")
+
+
+def test_a_math_run_the_sources_say_nothing_about_is_left_exactly_as_it_is():
+    """`return m.group(0)` — the whole match, not a piece of it. Every
+    fixture until now had one equation and something to say about it, so
+    the arm that declines to touch a run had never run. A document with
+    two equations and evidence for one is the ordinary case."""
+    doc = ("<w:document><w:body><w:p>"
+           "<m:oMath><m:r><m:t>a - b</m:t></m:r></m:oMath>"
+           "<m:oMath><m:r><m:t>x-y</m:t></m:r></m:oMath>"
+           "</w:p></w:body></w:document>")
+    built = {"word/document.xml": doc.encode("utf-8")}
+    source = {"word/document.xml": "<m:t>a − b</m:t>".encode()}
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+    out = built["word/document.xml"].decode("utf-8")
+    assert "<m:t>x-y</m:t>" in out, "untouched, tag and text"
+    assert out.count("<m:t") == 2 and out.count("</m:t>") == 2
+
+
+def test_a_relationship_the_rebuild_kept_does_not_end_the_restore():
+    """`continue`, not `break`: Word drops some parts of a tree and
+    keeps the references to others, so an entry already present is
+    routinely followed by one that is missing. Under `break` the second
+    tree is never restored and the package is left half repaired —
+    which is the dangling-reference state this function exists to
+    prevent."""
+    source = _with_custom_xml()
+    source["customXml/item2.xml"] = b"<b:Sources/>"
+    source["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="../customXml/item1.xml"/>'
+        b'<Relationship Id="rId3" Target="../customXml/item2.xml"/>'
+        b'<Relationship Id="rId2" Target="styles.xml"/></Relationships>')
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+    rebuilt["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="../customXml/item1.xml"/></Relationships>')
+
+    restore_parts(rebuilt, source)
+
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert rels.count('Target="../customXml/item1.xml"') == 1
+    assert 'Target="../customXml/item2.xml"' in rels
+
+
+def test_a_relationship_to_something_ELSE_does_not_end_the_restore():
+    """The other `continue`: the relationships that are not ours come
+    first as often as not, and every package has more of them than of
+    ours."""
+    source = _with_custom_xml()
+    source["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId2" Target="styles.xml"/>'
+        b'<Relationship Id="rId9" Target="fontTable.xml"/>'
+        b'<Relationship Id="rId1" '
+        b'Target="../customXml/item1.xml"/></Relationships>')
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+
+    restore_parts(rebuilt, source)
+
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert 'Target="../customXml/item1.xml"' in rels
+
+
+def test_a_package_with_no_relationships_part_is_left_alone():
+    """`_DOC_RELS in parts AND in source` — both, not either. A fragment
+    assembled in memory has no rels part at all, and `or` reaches into
+    the one that is missing and raises KeyError on a rescue that is
+    supposed to be safe to attempt."""
+    source = _with_custom_xml()
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+    del rebuilt["word/_rels/document.xml.rels"]
+
+    back = restore_parts(rebuilt, source)
+
+    assert back == ["customXml/item1.xml", "customXml/itemProps1.xml"]
+    assert "word/_rels/document.xml.rels" not in rebuilt
+
+
+def test_a_restored_relationship_KEEPS_its_own_id_when_that_id_is_free():
+    """`f"rId{was.group(1)}" if was else ""` — the id the source used is
+    the one to ask for, so a package rebuilt from a source whose ids are
+    still free comes back byte-comparable to it. Only a collision moves
+    it."""
+    source = _with_custom_xml()
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+    rebuilt["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId5" '
+        b'Target="styles.xml"/></Relationships>')
+
+    restore_parts(rebuilt, source)
+
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert ('<Relationship Id="rId1" Target="../customXml/item1.xml"/>'
+            in rels)

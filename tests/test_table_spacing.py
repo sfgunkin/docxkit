@@ -322,3 +322,65 @@ def test_a_LETTERED_equation_number_is_still_a_carrier():
 
     assert before_of(out, "where the weights") is None
     assert any("carrier" in s for s in report.skipped)
+
+
+# --- what the spacing report SAYS (2026-08-19) --------------------------
+#
+# The behaviour above is pinned by reading the XML back; the report is
+# what a person reads, and none of it was asserted by value. `table_
+# spacing` is run over a manuscript and its three lists are the record
+# of what happened to forty tables — a truncation at the wrong length or
+# a skip line naming the wrong equation is a record that has to be
+# checked against the document it describes, which is the work it exists
+# to save.
+
+
+def test_the_report_names_the_paragraph_it_spaced_up_to_48_characters():
+    """Long enough to identify the paragraph, short enough that forty of
+    them read as a list."""
+    resumes = ("The decomposition in this section is sensitive to the "
+               "ranking of the components.")
+    xml = doc(table("Region", "Value") + para(run(resumes)))
+
+    _out, report = table_spacing(xml)
+
+    assert report.spaced == [
+        "The decomposition in this section is sensitive t"]
+    assert len(report.spaced[0]) == 48
+
+
+def test_the_report_names_the_NOTE_it_corrected_the_same_way():
+    long_note = ("Примечание. D — база сравнения, а остальные компоненты "
+                 "нормированы по ней.")
+    p = ('<w:p><w:pPr><w:spacing w:before="120"/></w:pPr>'
+         f"{run(long_note)}</w:p>")
+
+    _out, report = table_spacing(doc(table("Region") + p))
+
+    assert report.notes == ["Примечание. D — база сравнения, а остальные комп"]
+    assert len(report.notes[0]) == 48
+
+
+def test_a_skipped_carrier_is_named_by_its_equation_NUMBER():
+    """`visible_text(tbl)[-8:]` — the tail, which is where the number
+    is. The head of a carrier is the equation itself, and a report line
+    reading "equation DRI = Σ(w" names nothing a person can look up."""
+    carrier = table("DRI=Σw", "(3)")
+
+    _out, report = table_spacing(doc(carrier + para(run("где k."))))
+
+    assert report.skipped == ["equation RI=Σw(3): a carrier, not a table"]
+
+
+def test_a_note_that_declares_LESS_than_the_house_value_is_corrected_too():
+    """`declared != note_before`, not `>`: the rule is that a note's
+    declared space must be the house one, and a note declaring 0 under a
+    house `note_before` of 60 is as wrong as one declaring 120. Only the
+    inherited case is left alone."""
+    p = ('<w:p><w:pPr><w:spacing w:before="0"/></w:pPr>'
+         f'{run("Примечание. D — база.")}</w:p>')
+
+    out, report = table_spacing(doc(table("Region") + p), note_before=60)
+
+    assert before_of(out, "Примечание") == "60"
+    assert report.notes == ["Примечание. D — база."]

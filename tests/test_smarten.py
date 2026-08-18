@@ -92,3 +92,63 @@ def test_untouched_document_comes_back_identical():
     xml, report = smarten(doc)
     assert xml == doc
     assert report.apostrophes == report.quotes == 0
+
+
+# --- the report, and the order the edits go back in (2026-08-19) --------
+#
+# hygiene measured at 10.9 % real survival with 10 survivors in
+# `_smarten_para`. Two of them are the shape this repo keeps finding: a
+# guard read only from the side it fires on (`unbalanced` was asserted
+# for the odd-count paragraph and never for the even one), and a value
+# printed but never read back (the 70-character cut on the snippet).
+#
+# The third is the sort. Replacements go back RIGHT TO LEFT so that each
+# one lands at an offset the earlier ones have not moved, and in a
+# document whose runs are all the same length after smartening that
+# ordering is invisible — every fixture here was one. An entity is what
+# changes a run's length: `&#39;` is five characters in the XML and one
+# after `html.unescape`, so a run holding one SHRINKS when it is written
+# back, and every offset after it in the paragraph moves.
+
+
+def test_a_paragraph_whose_quotes_BALANCE_is_not_reported_unbalanced():
+    """`not quotes_pair and '"' in stream` — both, not either. Under
+    `or` every paragraph carrying a straight double quote is reported,
+    including the ones that were just smartened correctly, and the
+    report's one job is to name the paragraphs a person still has to
+    decide by hand."""
+    _xml, report = smarten(para(run('she said "no" and "yes"')))
+
+    assert report.quotes == 4
+    assert report.unbalanced == []
+
+
+def test_the_unbalanced_snippet_is_the_first_seventy_characters():
+    """Long enough to find the paragraph in the document, short enough
+    to stay on one terminal line — and normalised, because the run
+    boundaries a fragmented paragraph carries are not the reader's
+    problem."""
+    long = ("This section of the argument runs on for a while before it "
+            'opens a "quotation that never closes, and then continues '
+            "for some distance after that.")
+
+    _xml, report = smarten(para(run(long)))
+
+    assert report.unbalanced == [
+        "This section of the argument runs on for a while before it opens "
+        'a "qu']
+    assert len(report.unbalanced[0]) == 70
+
+
+def test_two_runs_that_SHRINK_are_written_back_right_to_left():
+    """`key=lambda pair: -pair[0].start()`. `&#39;` is five characters
+    in the XML and one after unescaping, so the first run written back
+    is four characters shorter than the slice it replaced — and every
+    match offset after it in the paragraph is stale. Ascending, the
+    second replacement lands four characters early: inside the first
+    run's closing tag."""
+    xml, report = smarten(para(run("don&#39;t"), run(" it&#39;s so")))
+
+    assert report.apostrophes == 2
+    assert visible_text(xml) == "don’t it’s so"
+    assert xml == para(run("don’t"), run(" it’s so"))
