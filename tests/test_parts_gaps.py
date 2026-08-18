@@ -561,3 +561,54 @@ def test_an_EMPTY_rels_file_starts_at_rId1():
     from docxkit.hygiene import _free_rid
 
     assert _free_rid("<Relationships/>", "") == "rId1"
+
+
+def _bare_mark(*ids: int) -> dict[str, bytes]:
+    """Comment 1's reference mark sits BARE in the paragraph, with a
+    text run before it — the shape a foreign or repaired document can
+    carry, and the one the walk had never seen."""
+    body = ""
+    for i in ids:
+        mark = (f'<w:commentReference w:id="{i}"/>' if i == 1 else
+                f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+                f'<w:commentReference w:id="{i}"/></w:r>')
+        body += (f'<w:p><w:commentRangeStart w:id="{i}"/>{run(f"text {i}")}'
+                 f'<w:commentRangeEnd w:id="{i}"/>{mark}</w:p>')
+    return make_parts(body, comment_items=tuple(
+        comment(i, f"note {i}", para_id=f"AAAA{i:04d}") for i in ids))
+
+
+def test_removing_a_comment_whose_mark_is_NOT_in_a_run_keeps_the_prose():
+    """S1, found 2026-08-18 by mutation testing `_drop_reference_run`.
+
+    The walk took the last run to START before the mark as the run
+    around it. A run that CLOSED before the mark is a neighbour, so the
+    deletion ran from that neighbour's start to the next `</w:r>` after
+    the mark — across the paragraph and into the next one. `remove`
+    returned 2 and the body came back as `<w:p></w:p>`: every word of
+    both paragraphs gone, reported as success.
+
+    The mark itself goes, because a reference to a deleted comment is
+    what Word calls unreadable content."""
+    parts = _bare_mark(1, 2)
+
+    assert remove(parts, ["1", "2"]) == 2
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "text 1" in doc and "text 2" in doc, "the author's prose"
+    assert "commentReference" not in doc, "and nothing left pointing at it"
+    assert 'w:id="1"' not in doc and 'w:id="2"' not in doc
+
+
+def test_removing_ONE_of_two_comments_leaves_the_other_mark_alone():
+    """The same walk, run to the end: dropping comment 1's bare mark
+    must not disturb comment 2's run, which is what the offsets after
+    the skipped mark decide."""
+    parts = _bare_mark(1, 2)
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert 'w:commentReference w:id="2"' in doc
+    assert 'w:id="1"' not in doc
+    assert "text 1" in doc and "text 2" in doc

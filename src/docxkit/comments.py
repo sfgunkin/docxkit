@@ -484,8 +484,18 @@ def _drop_reference_run(doc: str, cid: str) -> str:
     out, pos = [], 0
     while (at := doc.find(needle, pos)) != -1:
         starts = [m.start() for m in _RUN_START_RE.finditer(doc, pos, at)]
-        if not starts:
-            out.append(doc[pos:at + len(needle)])
+        # The last run to START before the mark encloses it only if that
+        # run is still OPEN there. A run that closed before the mark is a
+        # NEIGHBOUR, and deleting from its start through the next
+        # `</w:r>` takes the author's prose with it — measured on a
+        # document whose reference mark sat bare in the paragraph: two
+        # paragraphs of text gone, `remove` reporting success.
+        inside = bool(starts) and doc.find("</w:r>", starts[-1], at) == -1
+        if not inside:
+            # no run to drop; drop the MARK, or the deleted comment
+            # leaves a reference pointing at nothing and Word calls the
+            # document unreadable
+            out.append(doc[pos:at])
             pos = at + len(needle)
             continue
         close = doc.find("</w:r>", at)
