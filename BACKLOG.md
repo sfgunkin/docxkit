@@ -20,11 +20,17 @@ fixed entries; "did we ever fix that?" is a real question later.
 *Nothing, as of 2026-08-18.* This section was empty on the 17th, for the
 first time since the file was started, on five closed that day: the
 U+2212 downgrade (both halves), the missing row-multiset check for a
-reorder, and the four survivor ledgers, each on a fresh measurement
-rather than on the work having been done. Three were opened on the 18th
-and all three closed the same day: the survivor report dying on a module
-it could not spell, the harness exclusions that voided a published
-number, and an S1 in `comments.remove` that a mutation run walked into.
+reorder, and the four survivor ledgers.
+
+Then SEVEN were opened on the 18th and all seven closed the same day —
+three S1, two S2, an S3 and an S4 — and every one came out of the same
+day's mutation rounds rather than out of a manuscript. All three S1s
+are the same shape — an offset or a pattern nothing had ever asserted —
+and all three produce a file Word calls unreadable: a tag spliced into
+the middle of an attribute value, two paragraphs of prose deleted with
+a reported success, a duplicate attribute added beside the one the
+writer could not see. The question that found them is not "is the
+element in the output" but "WHERE did it go".
 
 Append the next one as you hit it. An empty section is a statement about
 today, not about the toolkit.
