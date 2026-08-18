@@ -200,3 +200,72 @@ def test_findings_come_back_in_document_order():
               p(t("First θ appears here.")),
               p(t("Later x₁ appears here.")))
     assert [f.para for f in prose_math(xml)] == [2, 3]
+
+
+# --- what the first mutation run found (2026-08-18, equations 24.9 %) ---
+#
+# 36 survivors in this function, and all but a handful were the CONTEXT
+# each finding carries — 36 characters either side of the symbol. The
+# findings' kinds and symbols were asserted; the words a reader has to
+# find them by were not, and this report is read against a manuscript
+# where the same symbol appears fifty times.
+
+LEFT = "a sentence of exactly thirty-six chars"
+RIGHT = "and then thirty-six more after that!!"
+
+
+def test_a_SYMBOL_finding_quotes_thirty_six_characters_either_side():
+    xml = doc(p(math("θ"), t(" is the parameter.")),
+              p(t(f"{LEFT} θ {RIGHT} and more that is cut off.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "symbol"]
+
+    # 36 back from the symbol, 36 forward from it, and the ends are cut
+    assert found.context == ("entence of exactly thirty-six chars θ "
+                             "and then thirty-six more after tha")
+
+
+def test_a_TYPED_SCRIPT_finding_carries_the_same_window():
+    xml = doc(p(t(f"{LEFT} x₂ {RIGHT} and more that is cut off.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "typed script"]
+
+    assert found.symbol == "₂"
+    assert found.context == ("ntence of exactly thirty-six chars x₂ "
+                             "and then thirty-six more after tha")
+
+
+def test_a_finding_at_the_START_of_a_paragraph_is_not_cut_backwards():
+    """`max(0, at - 36)` — a negative start counts from the END in
+    Python, so the context would come from the last words of the
+    paragraph and read as if the symbol were there."""
+    xml = doc(p(math("θ"), t(" is the parameter.")),
+              p(t("θ opens this paragraph and the rest follows on.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "symbol"]
+
+    assert found.context.startswith("θ opens this paragraph")
+
+
+def test_a_SPLIT_expression_quotes_the_prose_on_BOTH_sides():
+    xml = doc(p(t(f"{LEFT} "), math("θi"), t(f"=0 {RIGHT} and more.")))
+
+    (found,) = [f for f in prose_math(xml) if f.kind == "split expression"]
+
+    assert found.symbol == "θi=0"
+    assert found.context == ("entence of exactly thirty-six chars θi=0 "
+                             "and then thirty-six more after th")
+
+
+def test_a_split_expression_pairs_an_equation_with_the_piece_AFTER_it():
+    """`pieces[k + 1]` — the prose that follows THIS equation. Off by
+    one, a symbol is reported with the words after the NEXT one, and the
+    reader is sent to the wrong sentence."""
+    xml = doc(p(t("first "), math("α"), t("=1 middle "), math("β"),
+                t("=2 last.")))
+
+    found = [f for f in prose_math(xml) if f.kind == "split expression"]
+
+    assert [f.symbol for f in found] == ["α=1", "β=2"]
+    assert "first α=1 middle" in found[0].context
+    assert "middle β=2 last." in found[1].context
