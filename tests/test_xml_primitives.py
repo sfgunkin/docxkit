@@ -35,6 +35,7 @@ from docxkit._xml import (
     live_properties,
     matching_close,
     own_properties,
+    set_para_property,
     set_run_property,
     set_run_text,
     used_prefixes,
@@ -612,3 +613,127 @@ def test_set_run_text_adds_xml_space_ONLY_for_an_edge_space():
 #   ends of the question. The test above states the behaviour anyway,
 #   because "only for an edge space" is worth saying out loud — it
 #   just does not kill that mutant, and claiming it would be false.
+
+
+# --- CT_PPr, in one place instead of four -------------------------------
+#
+# `set_para_property` is the paragraph's answer to `set_run_property`.
+# Four writers had a copy of this — keepNext, jc, spacing,
+# pageBreakBefore — and every defect the copies had, they had
+# SEPARATELY: `find.page_break_before` still carried all three that were
+# fixed in `_keep_with_table` hours earlier, including the one that put
+# two `w:pPr` in a paragraph.
+
+
+def _keep(para: str) -> str:
+    return set_para_property(para, "keepNext", "<w:keepNext/>")
+
+
+def test_a_paragraph_with_no_properties_gets_them():
+    assert _keep("<w:p><w:r><w:t>x</w:t></w:r></w:p>") == (
+        "<w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>")
+
+
+def test_a_SELF_CLOSING_paragraph_is_expanded():
+    """`<w:p/>` is a real empty paragraph. Writing after its open tag
+    puts the properties outside the paragraph they belong to."""
+    assert _keep("<w:p/>") == "<w:p><w:pPr><w:keepNext/></w:pPr></w:p>"
+
+
+def test_an_EMPTY_pPr_is_expanded_rather_than_written_past():
+    """`<w:pPr/>` is real Word output, and its span covers a
+    self-closing tag: `find.page_break_before` wrote a SECOND `w:pPr`
+    beside it, which is two properties elements in one paragraph."""
+    assert _keep("<w:p><w:pPr/><w:r/></w:p>") == (
+        "<w:p><w:pPr><w:keepNext/></w:pPr><w:r/></w:p>")
+
+
+def test_the_property_lands_in_its_SCHEMA_SLOT():
+    """CT_PPr is a sequence: only `pStyle` precedes `keepNext`, and
+    everything from `spacing` on follows it. Word drops a misplaced
+    property on the next save."""
+    para = ('<w:p><w:pPr><w:pStyle w:val="C"/>'
+            '<w:spacing w:before="120"/><w:jc w:val="both"/></w:pPr></w:p>')
+
+    out = _keep(para)
+
+    inner = out[out.index("<w:pPr>"):out.index("</w:pPr>")]
+    order = [inner.index(t) for t in ("<w:pStyle", "<w:keepNext",
+                                      "<w:spacing", "<w:jc")]
+    assert order == sorted(order), inner
+
+
+def test_BOTH_spellings_of_the_preceding_property_are_recognised():
+    """`<w:pStyle .../>` and `<w:pStyle ...></w:pStyle>` are the same
+    element; matching one put keepNext ahead of the other."""
+    out = _keep('<w:p><w:pPr><w:pStyle w:val="C"></w:pStyle></w:pPr></w:p>')
+
+    assert '<w:pStyle w:val="C"></w:pStyle><w:keepNext/>' in out
+
+
+def test_a_property_that_says_NO_is_rewritten_not_doubled():
+    """ST_OnOff: `w:val="0"` is the property present and switched off.
+    CT_PPr allows one, and Word chooses between two on open."""
+    out = _keep('<w:p><w:pPr><w:keepNext w:val="0"/></w:pPr></w:p>')
+
+    assert out == "<w:p><w:pPr><w:keepNext/></w:pPr></w:p>"
+
+
+def test_the_TRACKED_CHANGE_snapshot_is_neither_read_nor_written():
+    """`w:pPrChange` holds the properties a tracked change REPLACED.
+    Reading it answered for the past — the paragraph looked done and the
+    live properties never got the flag — and writing into it edits the
+    historical record while the page stays as it was."""
+    para = ('<w:p><w:pPr><w:pStyle w:val="C"/>'
+            '<w:pPrChange w:id="1" w:author="a"><w:pPr><w:keepNext/>'
+            "</w:pPr></w:pPrChange></w:pPr></w:p>")
+
+    out = _keep(para)
+
+    assert '<w:pStyle w:val="C"/><w:keepNext/><w:pPrChange' in out
+    assert out.count("<w:keepNext/>") == 2, "the snapshot keeps its own"
+
+
+def test_a_property_already_in_place_is_left_BYTE_identical():
+    """Which is how every caller tells "already done" from "changed":
+    they compare the string they got back."""
+    para = '<w:p><w:pPr><w:pStyle w:val="C"/><w:keepNext/></w:pPr></w:p>'
+
+    assert _keep(para) == para
+
+
+def test_a_MISPLACED_property_is_moved_into_its_slot():
+    """An older writer leaves one behind, and replacing an element where
+    it stands cannot repair that — the same argument as `_set_tbl_pr`'s,
+    for the same reason."""
+    para = ('<w:p><w:pPr><w:keepNext/><w:pStyle w:val="C"/></w:pPr></w:p>')
+
+    out = _keep(para)
+
+    assert out == ('<w:p><w:pPr><w:pStyle w:val="C"/><w:keepNext/>'
+                   "</w:pPr></w:p>")
+
+
+def test_a_property_is_not_written_INSIDE_a_complex_sibling():
+    """`w:pBdr`, `w:tabs`, `w:rPr` and `w:sectPr` hold elements of their
+    own. A flat scan for `<w:...>` reads those as siblings and ranks
+    `w:top` inside `w:pBdr` as an unknown property — putting the new one
+    inside the border definition."""
+    para = ('<w:p><w:pPr><w:pBdr><w:top w:val="single"/></w:pBdr>'
+            "</w:pPr></w:p>")
+
+    out = _keep(para)
+
+    assert out.index("<w:keepNext/>") < out.index("<w:pBdr>")
+
+
+def test_an_element_can_be_REMOVED():
+    para = '<w:p><w:pPr><w:pStyle w:val="C"/><w:keepNext/></w:pPr></w:p>'
+
+    out = set_para_property(para, "keepNext", "")
+
+    assert out == '<w:p><w:pPr><w:pStyle w:val="C"/></w:pPr></w:p>'
+
+
+def test_something_that_is_not_a_paragraph_is_left_alone():
+    assert _keep("<w:r><w:t>x</w:t></w:r>") == "<w:r><w:t>x</w:t></w:r>"

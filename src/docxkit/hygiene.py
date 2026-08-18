@@ -23,7 +23,16 @@ import html
 import re
 from dataclasses import dataclass, field
 
-from ._xml import PARA_RE, T_PARTS_RE, element_spans, escape, visible_text
+from ._xml import (
+    PARA_RE,
+    T_PARTS_RE,
+    element_spans,
+    escape,
+    live_properties,
+    own_properties,
+    set_para_property,
+    visible_text,
+)
 from .package import CORE_PART, core_property, set_core_property
 
 __all__ = [
@@ -297,38 +306,41 @@ def _is_equation_carrier(tbl_xml: str) -> bool:
 
 
 def _declared_before(para_xml: str) -> int | None:
-    """The paragraph's OWN `w:before`, or None when it inherits one."""
-    m = re.search(r'<w:spacing\b[^>]*w:before="(\d+)"', para_xml)
+    """The paragraph's OWN `w:before`, or None when it inherits one.
+
+    LIVE properties only: a `w:pPrChange` snapshot records the spacing a
+    tracked change REPLACED, and reading it answers for the past.
+    """
+    m = re.search(r'<w:spacing\b[^>]*w:before="(\d+)"', _live_ppr(para_xml))
     return int(m.group(1)) if m else None
 
 
+def _live_ppr(para_xml: str) -> str:
+    """The paragraph's own properties, minus the tracked-change snapshot."""
+    own = own_properties(para_xml, "pPr")
+    return live_properties(own[2]) if own is not None else ""
+
+
 def _set_before(para_xml: str, twentieths: int) -> tuple[str, bool]:
-    """Set `w:spacing/@w:before` on a paragraph, inserting pPr if need be."""
-    m = re.search(r"<w:spacing\b[^>]*/>", para_xml)
-    if m:
+    """Set `w:spacing/@w:before` on a paragraph, inserting pPr if need be.
+
+    The PLACEMENT is `_xml.set_para_property`'s; what stays here is the
+    element itself, because a `w:spacing` tag carries `w:after` and
+    `w:line` beside the value being set and those are the paragraph's
+    own.
+    """
+    m = re.search(r"<w:spacing\b[^>]*/>", _live_ppr(para_xml))
+    if m is not None:
         tag = m.group(0)
         if re.search(rf'w:before="{twentieths}"', tag):
             return para_xml, False
         stripped = re.sub(r'\s*w:before="[^"]*"', "", tag)
-        new = stripped.replace(
+        spacing = stripped.replace(
             "<w:spacing", f'<w:spacing w:before="{twentieths}"', 1)
-        return para_xml[:m.start()] + new + para_xml[m.end():], True
-    spacing = f'<w:spacing w:before="{twentieths}"/>'
-    ppr = re.search(r"<w:pPr>", para_xml)
-    if ppr:
-        # CT_PPr order: spacing precedes ind / jc / rPr, follows pStyle
-        body_start = ppr.end()
-        rest = para_xml[body_start:]
-        anchor = re.search(r"<w:(ind|jc|rPr|sectPr)\b", rest)
-        at = body_start + (anchor.start() if anchor else 0)
-        if not anchor:
-            close = rest.find("</w:pPr>")
-            at = body_start + close
-        return para_xml[:at] + spacing + para_xml[at:], True
-    open_tag = re.match(r"<w:p\b[^>]*>", para_xml)
-    assert open_tag is not None
-    return (para_xml[:open_tag.end()] + f"<w:pPr>{spacing}</w:pPr>"
-            + para_xml[open_tag.end():], True)
+    else:
+        spacing = f'<w:spacing w:before="{twentieths}"/>'
+    out = set_para_property(para_xml, "spacing", spacing)
+    return out, out != para_xml
 
 
 def table_spacing(xml: str, *, before: int = 120,

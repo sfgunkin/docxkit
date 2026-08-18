@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 __all__ = [
     "BOOKMARK_END_ID_RE",
@@ -53,6 +53,7 @@ __all__ = [
     "own_properties",
     "run_open_before",
     "run_spans",
+    "set_para_property",
     "set_run_property",
     "set_run_text",
     "span_holding",
@@ -710,6 +711,107 @@ def live_properties(inner: str) -> str:
     """
     m = _PROPERTY_CHANGE_RE.search(inner)
     return inner if m is None else inner[:m.start()]
+
+
+#: ``CT_PPr`` in schema order, the paragraph's answer to
+#: :data:`RPR_ORDER`. Word repairs a paragraph whose properties are out
+#: of it by DROPPING the misplaced one, which is silent and arrives a
+#: save later: the caption stops travelling with its table, the spacing
+#: stops applying, weeks after the edit and with nothing in any diff.
+PPR_ORDER = (
+    "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr",
+    "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd",
+    "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap",
+    "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN",
+    "bidi", "adjustRightInd", "snapToGrid", "spacing", "ind",
+    "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc",
+    "textDirection", "textAlignment", "textboxTightWrap", "outlineLvl",
+    "divId", "cnfStyle", "rPr", "sectPr", "pPrChange",
+)
+_PPR_RANK = {name: i for i, name in enumerate(PPR_ORDER)}
+_CHILD_OPEN_RE = re.compile(r"<w:(\w+)\b[^>]*?(/?)>")
+_PARA_OPEN_RE = re.compile(r"<w:p\b[^>]*?(/?)>")
+
+
+def _own_children(inner: str) -> Iterator[tuple[str, int, int]]:
+    """``(tag, start, end)`` of each DIRECT child of a properties element.
+
+    Skipping over what a child contains is the point: ``w:tabs``,
+    ``w:pBdr``, ``w:rPr`` and ``w:sectPr`` all hold elements of their
+    own, and a flat scan for ``<w:...>`` reads those as siblings —
+    ranking `w:top` inside `w:pBdr` as an unknown property and inserting
+    the new one INSIDE the border definition.
+    """
+    pos = 0
+    while (m := _CHILD_OPEN_RE.search(inner, pos)) is not None:
+        tag = m.group(1)
+        end = m.end() if m.group(2) == "/" else matching_close(
+            inner, m.end(), tag)
+        yield tag, m.start(), end
+        pos = end
+
+
+def _para_with_properties(para_xml: str, element: str) -> str:
+    """`para_xml` given a `w:pPr` holding `element`, or left alone."""
+    m = _PARA_OPEN_RE.match(para_xml)
+    if not element or m is None:            # nothing to add, or not a `w:p`
+        return para_xml
+    if m.group(1) == "/":                   # `<w:p/>`: expand it
+        return (para_xml[:m.start()] + f"<w:p><w:pPr>{element}</w:pPr></w:p>"
+                + para_xml[m.end():])
+    return (para_xml[:m.end()] + f"<w:pPr>{element}</w:pPr>"
+            + para_xml[m.end():])
+
+
+def set_para_property(para_xml: str, tag: str, element: str) -> str:
+    """The same paragraph carrying `element` as its ``w:tag`` property.
+
+    The paragraph's answer to :func:`set_run_property`, and the one
+    place CT_PPr order is known. Four writers had their own copy of this
+    — `keepNext`, `jc`, `spacing`, `pageBreakBefore` — and every defect
+    the copies had, they had separately: the flag read out of a
+    ``w:pPrChange`` snapshot so the live properties never got it, a
+    ``w:pStyle`` written with a closing tag that the slot regex did not
+    recognise, an on/off property already present with ``w:val="0"``
+    that got a SECOND element beside it, and a ``<w:pPr/>`` written past
+    rather than expanded — which left two ``w:pPr`` in one paragraph.
+
+    Pass ``element=""`` to REMOVE the property.
+
+    The existing element is taken OUT and re-inserted at its slot rather
+    than replaced where it stands: a property in the wrong place is
+    exactly what an older writer leaves behind, and replacing in place
+    cannot repair it. For one already in its slot the two cancel.
+    """
+    own = own_properties(para_xml, "pPr")
+    if own is None:
+        return _para_with_properties(para_xml, element)
+
+    start, end, inner = own
+    if not inner and para_xml[start:end].endswith("/>"):
+        # `<w:pPr/>` is real Word output, and writing past its span left
+        # two `w:pPr` in one paragraph. Expand it.
+        return (para_xml if not element else
+                para_xml[:start] + f"<w:pPr>{element}</w:pPr>"
+                + para_xml[end:])
+
+    live = live_properties(inner)
+    for name, c_start, c_end in _own_children(live):
+        if name == tag:
+            inner = inner[:c_start] + inner[c_end:]
+            live = live_properties(inner)
+            break
+    if not element:
+        return para_xml[:start] + f"<w:pPr>{inner}</w:pPr>" + para_xml[end:]
+
+    rank = _PPR_RANK.get(tag, len(PPR_ORDER))
+    at = len(live)                          # before `w:pPrChange`, if any
+    for name, c_start, _c_end in _own_children(live):
+        if _PPR_RANK.get(name, len(PPR_ORDER)) > rank:
+            at = c_start
+            break
+    inner = inner[:at] + element + inner[at:]
+    return para_xml[:start] + f"<w:pPr>{inner}</w:pPr>" + para_xml[end:]
 
 
 #: ``EG_RPrBase`` in schema order. Word REJECTS a run whose properties

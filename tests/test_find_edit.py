@@ -936,3 +936,50 @@ def test_italicize_a_run_SUFFIX_splits_it_in_two():
     assert out.count("<w:r>") == 2
     assert out.count("<w:i/>") == 1
     assert text_of(out) == "in the Journal of Things"
+
+
+# The three shapes `find` carried from before CT_PPr order lived in one
+# place. Each was fixed in `_table_layout._keep_with_table` hours
+# earlier and each was still here, which is the whole argument for
+# `set_para_property`.
+
+
+def test_a_page_break_in_the_tracked_change_SNAPSHOT_is_not_current():
+    """`w:pPrChange` holds what a tracked change REPLACED. Read as the
+    paragraph's own, the caption looked done and never got the break —
+    the table then opens mid-page and the pass reports success."""
+    xml = document(
+        '<w:p><w:pPr><w:pStyle w:val="Caption"/>'
+        '<w:pPrChange w:id="1" w:author="a"><w:pPr><w:pageBreakBefore/>'
+        "</w:pPr></w:pPrChange></w:pPr>" + run("Table 3: Results")
+        + "</w:p>")
+
+    out = page_break_before(xml, "Table 3:")
+
+    assert '<w:pStyle w:val="Caption"/><w:pageBreakBefore/><w:pPrChange' in out
+
+
+def test_a_page_break_declared_OFF_is_rewritten_not_doubled():
+    """ST_OnOff: `w:val="0"` is the flag present and switched off. Two
+    `w:pageBreakBefore` siblings is a schema violation Word repairs by
+    choosing one — possibly the one that says no."""
+    xml = document('<w:p><w:pPr><w:pageBreakBefore w:val="0"/></w:pPr>'
+                   + run("Table 3: Results") + "</w:p>")
+
+    out = page_break_before(xml, "Table 3:")
+
+    assert out.count("<w:pageBreakBefore") == 1
+    assert 'w:val="0"' not in out
+
+
+def test_an_EMPTY_pPr_does_not_get_a_SECOND_one_beside_it():
+    """`<w:pPr/>` is real Word output. The old path tested for
+    `"<w:pPr>" in para`, missed it, and wrote a second properties
+    element after the paragraph's open tag — two `w:pPr` in one
+    paragraph, which is not a paragraph."""
+    xml = document("<w:p><w:pPr/>" + run("Table 3: Results") + "</w:p>")
+
+    out = page_break_before(xml, "Table 3:")
+
+    assert out.count("<w:pPr") == 1
+    assert "<w:pPr><w:pageBreakBefore/></w:pPr>" in out

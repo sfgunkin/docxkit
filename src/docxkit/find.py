@@ -15,6 +15,7 @@ from ._xml import (
     PARA_RE,
     matching_close,
     normalize_glyphs,
+    set_para_property,
     visible_text,
 )
 from .errors import AnchorError
@@ -86,17 +87,8 @@ def page_break_before(xml: str, sig: str) -> str:
     alone. (In the pPr schema the flag sorts after ``pStyle``.)
     """
     def add(para: str) -> str:
-        if "<w:pageBreakBefore/>" in para:
-            return para
-        if "<w:pPr>" in para:
-            style = re.search(r'<w:pStyle w:val="[^"]*"/>', para)
-            at = style.end() if style else \
-                para.find("<w:pPr>") + len("<w:pPr>")
-            return para[:at] + "<w:pageBreakBefore/>" + para[at:]
-        m = re.match(r"<w:p\b[^>]*>", para)
-        assert m is not None
-        return (para[:m.end()] + "<w:pPr><w:pageBreakBefore/></w:pPr>"
-                + para[m.end():])
+        return set_para_property(para, "pageBreakBefore",
+                                 "<w:pageBreakBefore/>")
     return edit_para(xml, sig, add)
 
 

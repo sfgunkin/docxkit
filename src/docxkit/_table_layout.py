@@ -39,6 +39,7 @@ from ._xml import (
     live_properties,
     matching_close,
     own_properties,
+    set_para_property,
     set_run_text,
     visible_text,
 )
@@ -861,34 +862,11 @@ _STATS_RE = re.compile(
     re.IGNORECASE)
 
 
-_JC_RE = re.compile(r"<w:jc\b[^>]*/>")
-#: Everything that follows w:jc in the CT_PPr sequence. Alignment is a
-#: PARAGRAPH property even inside a table, so this is the pPr order, not
-#: the tcPr one.
-_AFTER_JC = ("<w:textDirection", "<w:textAlignment", "<w:textboxTightWrap",
-             "<w:outlineLvl", "<w:divId", "<w:cnfStyle", "<w:rPr",
-             "<w:sectPr", "<w:pPrChange")
 
 
 def _set_jc(para: str, val: str) -> str:
     """`para` aligned `val`, in the one place ``CT_PPr`` allows."""
-    own = own_properties(para, "pPr")
-    if own is None:
-        m = re.match(r"<w:p\b[^>]*>", para)
-        if m is None:
-            return para
-        return (para[:m.end()] + f'<w:pPr><w:jc w:val="{val}"/></w:pPr>'
-                + para[m.end():])
-    start, end, inner = own
-    live = live_properties(inner)
-    tag = f'<w:jc w:val="{val}"/>'
-    if (was := _JC_RE.search(live)) is not None:
-        inner = inner[:was.start()] + tag + inner[was.end():]
-    else:
-        at = min((p for p in (live.find(t) for t in _AFTER_JC) if p != -1),
-                 default=len(live))
-        inner = inner[:at] + tag + inner[at:]
-    return para[:start] + f"<w:pPr>{inner}</w:pPr>" + para[end:]
+    return set_para_property(para, "jc", f'<w:jc w:val="{val}"/>')
 
 
 def _align_cell(tc: str, val: str) -> str:
@@ -1202,25 +1180,6 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 #: to move with it or a run reads at two sizes in one cell.
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
 _TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
-#: The only child CT_PPr allows BEFORE `w:keepNext`, and the one every
-#: styled caption carries. BOTH spellings: an empty element may be
-#: written `<w:pStyle .../>` or `<w:pStyle ...></w:pStyle>`, and matching
-#: only the first put `keepNext` ahead of the style on the second — the
-#: out-of-order property Word drops on the next save.
-_PSTYLE_RE = re.compile(r"<w:pStyle\b[^>]*(?:/>|>.*?</w:pStyle>)",
-                        re.DOTALL)
-_KEEPNEXT_RE = re.compile(r"<w:keepNext\b[^>]*(?:/>|>.*?</w:keepNext>)",
-                          re.DOTALL)
-#: ST_OnOff, as `w15:done` in `comments.py` is: an absent `w:val` means
-#: ON, and the schema spells the rest 1/0, true/false, on/off.
-_ON_VALUES = frozenset({"1", "true", "on"})
-_VAL_RE = re.compile(r'w:val="([^"]*)"')
-
-
-def _property_on(tag: str) -> bool:
-    """Is this on/off property element in force?"""
-    val = _VAL_RE.search(tag)
-    return val is None or val.group(1).lower() in _ON_VALUES
 
 
 @dataclass
@@ -1396,7 +1355,14 @@ def _house_width(body: str) -> tuple[str, bool]:
 
 
 def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
-    """`keepNext` on the caption paragraph, so it travels with its table."""
+    """`keepNext` on the caption paragraph, so it travels with its table.
+
+    Through `_xml.set_para_property`, which knows CT_PPr's order and the
+    four shapes this used to get wrong on its own: the flag read out of a
+    `w:pPrChange` snapshot, a `w:pStyle` written with a closing tag, a
+    `w:keepNext w:val="0"` given a second element beside it, and a
+    `<w:pPr/>` written past rather than expanded.
+    """
     hits = [m for m in PARA_RE.finditer(xml)
             if caption in visible_text(m.group(0))]
     if len(hits) != 1:
@@ -1404,47 +1370,7 @@ def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
             f"house: caption {caption[:40]!r} matched {len(hits)} "
             f"paragraphs, need exactly 1")
     para = hits[0].group(0)
-    existing = own_properties(para, "pPr")
-    if existing is None:
-        at = para.index(">") + 1
-        new = para[:at] + "<w:pPr><w:keepNext/></w:pPr>" + para[at:]
-    else:
-        start, end, inner = existing
-        # LIVE properties only, and the prefix shares offsets with
-        # `inner`. Searching the whole paragraph found the `keepNext` in
-        # a `w:pPrChange` snapshot — the formatting a tracked change
-        # REPLACED — and reported the caption as done while the live
-        # properties never got it.
-        live = live_properties(inner)
-        inner_at = start + para[start:].index(">") + 1
-        have = _KEEPNEXT_RE.search(live)
-        if have is not None and _property_on(have.group(0)):
-            return xml, False
-        if have is not None:
-            # Declared OFF (`w:val="0"`, or "false"). CT_PPr allows one
-            # `w:keepNext`, so adding a second leaves Word to choose
-            # between them on open — and it may choose the one that
-            # says no. Rewrite the element that is there.
-            new = (para[:inner_at + have.start()] + "<w:keepNext/>"
-                   + para[inner_at + have.end():])
-        elif not inner and para[start:end].endswith("/>"):
-            # `<w:pPr/>` is real Word output. Expand it: writing after
-            # its span puts keepNext outside the properties, where the
-            # schema has no slot for it.
-            new = (para[:start] + "<w:pPr><w:keepNext/></w:pPr>"
-                   + para[end:])
-        else:
-            # `start` is where `<w:pPr` begins and `inner` is its
-            # CONTENT: adding an offset into the one to the offset of the
-            # other spliced the tag into the middle of an attribute —
-            # `w:val="Cap<w:keepNext/>tion"` on a caption styled
-            # `Caption`, reported as success, and the document then does
-            # not open. Only `w:pStyle` precedes keepNext in CT_PPr, so
-            # the slot is right after the open tag, or right after the
-            # style when there is one.
-            at = inner_at
-            style = _PSTYLE_RE.match(live)
-            if style is not None:
-                at += style.end()
-            new = para[:at] + "<w:keepNext/>" + para[at:]
+    new = set_para_property(para, "keepNext", "<w:keepNext/>")
+    if new == para:
+        return xml, False
     return xml[:hits[0].start()] + new + xml[hits[0].end():], True
