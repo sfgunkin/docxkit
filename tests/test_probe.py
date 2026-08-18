@@ -1,6 +1,6 @@
 """probe answers the questions a batch has to know before it starts."""
 
-from conftest import make_parts, write
+from conftest import make_parts, notes, para, run, write
 
 from docxkit.probe import probe
 
@@ -240,3 +240,130 @@ def test_a_bookmark_ABOVE_every_paragraph_is_body_level(tmp_path):
     rep = probe(make_docx(tmp_path, top))
 
     assert rep.bookmarks == [("doc_top", "body")]
+
+
+# --- counting, not just noticing (2026-08-19) ---------------------------
+#
+# Every link in this file's fixtures is one link to one anchor, and
+# `n + 1` starting from zero is one whichever operator stands in its
+# place. What the count is consulted for is the opposite case: an anchor
+# cited three times is the one whose unlink leaves two dead references.
+
+
+def _field_link(anchor: str) -> str:
+    return (
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        f'<w:r><w:instrText>HYPERLINK \\l "{anchor}" \\h</w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        "<w:r><w:t>see</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def _el_link(anchor: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>see</w:t></w:r>'
+            "</w:hyperlink>")
+
+
+def test_an_anchor_cited_THREE_times_is_counted_three_times(tmp_path):
+    """`element (3)` is the number that says an unlink costs three
+    references, not one. Reached only from a count above one: the first
+    citation is `0 + 1`, which any arithmetic in that slot agrees on."""
+    body = "".join(f"<w:p>{_el_link('Smith2020')}</w:p>" for _ in range(3))
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.element_links == {"Smith2020": 3}
+    assert rep.link_form == "element (3)"
+
+
+def test_a_FIELD_anchor_cited_twice_is_counted_twice(tmp_path):
+    """And the field count is what the warning quantifies — 'CANNOT see
+    these' is advice about a number of references, not a yes/no."""
+    body = "".join(f"<w:p>{_field_link('Table1txt')}</w:p>" for _ in range(2))
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.field_links == {"Table1txt": 2}
+    assert "FIELD (2)" in rep.link_form
+
+
+def test_links_in_the_FOOTNOTES_are_counted_with_the_body_ones(tmp_path):
+    """A citation living only in a footnote is still a citation, and a
+    manuscript whose field links are all in its notes would otherwise
+    read as element-form — the approach that then fails."""
+    parts = make_parts(
+        f"<w:p>{_el_link('Smith2020')}</w:p>",
+        footnotes=notes("footnotes",
+                        f'<w:footnote w:id="2"><w:p>{_field_link("Ntable")}'
+                        "</w:p></w:footnote>"))
+
+    rep = probe(write(tmp_path / "notes.docx", parts))
+
+    assert rep.element_links == {"Smith2020": 1}
+    assert rep.field_links == {"Ntable": 1}
+    assert rep.link_form == "MIXED (1 element, 1 field)"
+
+
+def test_a_missing_footnotes_part_does_not_end_the_scan(tmp_path):
+    """`continue`, not `break`: the parts are looked at in a fixed order
+    and most manuscripts have no footnotes. Stopping at the first one
+    absent would leave every endnote link uncounted — and a paper that
+    cites only in its endnotes would read as having no links at all."""
+    parts = make_parts(
+        f"<w:p>{_el_link('Smith2020')}</w:p>",
+        extra={"word/endnotes.xml":
+               notes("endnotes",
+                     f'<w:endnote w:id="2"><w:p>{_el_link("Moran1950")}'
+                     "</w:p></w:endnote>")})
+    assert "word/footnotes.xml" not in parts
+
+    rep = probe(write(tmp_path / "endnotes.docx", parts))
+
+    assert rep.element_links == {"Smith2020": 1, "Moran1950": 1}
+
+
+def test_only_TWELVE_field_anchors_are_listed(tmp_path):
+    """The line is a sample, not an inventory — `len(field_links)` above
+    it carries the total. Thirteen anchors printed in full would push
+    the rest of the report off a terminal.
+
+    Written into the document backwards, so that the order printed is
+    the sort's and not the document's: two runs of probe over the same
+    manuscript edited in between should differ where the manuscript
+    does, and nowhere else."""
+    body = "".join(f"<w:p>{_field_link(f'Anchor{i:02d}')}</w:p>"
+                   for i in reversed(range(13)))
+
+    line = next(ln for ln in probe(make_docx(tmp_path, body)).report()
+                .splitlines() if "field-form anchors" in ln)
+
+    assert line.endswith("Anchor00, Anchor01, Anchor02, Anchor03, Anchor04, "
+                         "Anchor05, Anchor06, Anchor07, Anchor08, Anchor09, "
+                         "Anchor10, Anchor11")
+    assert "Anchor12" not in line, "last alphabetically, written first"
+
+
+def test_at_most_TEN_runs_of_a_split_anchor_are_shown(tmp_path):
+    """Word can split a sentence into a run per word after a spell-check
+    pass; the point of the list is the shape of the split, and the first
+    ten carry it."""
+    body = "<w:p>" + "".join(f"<w:r><w:t>w{i} </w:t></w:r>"
+                            for i in range(12)) + "</w:p>"
+
+    rep = probe(make_docx(tmp_path, body), anchors=("w0 w1",))
+
+    (_, runs), = rep.anchors["w0 w1"]
+    assert len(runs) == 10
+    assert runs[0] == "w0 " and runs[-1] == "w9 "
+
+
+def test_an_anchor_found_TWICE_reports_both_paragraphs(tmp_path):
+    """Which paragraph to edit is the question being asked, and a phrase
+    the author reused answers it with two — a report naming one would
+    send the edit to a paragraph chosen by position in the file."""
+    body = (para(run("The index is defined below.")) + para(run("filler"))
+            + para(run("The index is defined below.")))
+
+    rep = probe(make_docx(tmp_path, body), anchors=("index is defined",))
+
+    assert [i for i, _ in rep.anchors["index is defined"]] == [0, 2]

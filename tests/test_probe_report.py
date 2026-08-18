@@ -106,17 +106,23 @@ def test_bookmarks_are_counted_WITH_how_many_are_body_level(tmp_path):
     and a body-level marker is a different thing to address than one
     inside a paragraph. The count alone would not say which."""
     # BETWEEN paragraphs is what body-level means: Word writes
-    # `…</w:p><w:bookmarkStart/><w:p …>` when it hoists a collapsed one
+    # `…</w:p><w:bookmarkStart/><w:p …>` when it hoists a collapsed one.
+    # TWO hoisted against ONE inside, deliberately: with one of each the
+    # count of body-level and the count of nested are the same number,
+    # and a report that had counted the wrong kind would still read "1".
     body = (para(run("first"))
             + '<w:bookmarkStart w:id="1" w:name="Hoisted"/>'
               '<w:bookmarkEnd w:id="1"/>'
             + '<w:p><w:bookmarkStart w:id="2" w:name="Inside"/>'
-            + run("text") + '<w:bookmarkEnd w:id="2"/></w:p>')
+            + run("text") + '<w:bookmarkEnd w:id="2"/></w:p>'
+            + '<w:bookmarkStart w:id="3" w:name="AlsoHoisted"/>'
+              '<w:bookmarkEnd w:id="3"/>'
+            + para(run("last")))
 
     line = next(ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
                 if "bookmarks" in ln)
 
-    assert line == "  bookmarks   2 (1 body-level)"
+    assert line == "  bookmarks   3 (2 body-level)"
 
 
 def test_a_document_with_ONE_section_says_one(tmp_path):
@@ -183,3 +189,104 @@ def test_the_field_anchor_list_is_CUT_not_dumped(tmp_path, count):
                 if "field-form anchors" in ln)
 
     assert line.count(",") == count - 1, line
+
+
+# --- the lines of the report nothing had read (2026-08-19) --------------
+#
+# probe re-measured at 25.0 % — still the highest in the package — with
+# 13 of the 42 survivors in `report` itself. What was left is the shape
+# of each line rather than the numbers in it: whether a section prints
+# at all, what an exhibit looks like without an orientation, and the
+# fallbacks that keep a blank out of an answer.
+
+
+def _exhibit_doc(orient: str = "") -> str:
+    """A caption, a table under it, and optionally a landscape break."""
+    sect = ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" '
+            f'w:orient="{orient}"/></w:sectPr></w:pPr></w:p>'
+            ) if orient else ""
+    return (para(run("Table 1: Descriptive statistics."))
+            + "<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr>"
+              "<w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>" + sect)
+
+
+def test_a_document_with_NO_exhibits_prints_no_exhibit_section(tmp_path):
+    """The heading is worth its line only when something follows it. A
+    report that lists "exhibits" and then nothing reads as a paper whose
+    captions were not recognised — which is the failure this command is
+    consulted about."""
+    lines = probe(_doc(tmp_path, para(run("Plain prose, no captions.")))
+                  ).report().splitlines()
+
+    assert not [ln for ln in lines if "exhibits" in ln]
+
+
+def test_an_exhibit_prints_its_LABEL_what_follows_it_and_nothing_else(
+        tmp_path):
+    """No section break anywhere, so the orientation is unknown and the
+    line ends after what follows the caption. `[  ]` in its place is a
+    reader asking what the empty brackets mean."""
+    got = probe(_doc(tmp_path, _exhibit_doc()))
+
+    lines = got.report().splitlines()
+    at = lines.index("  exhibits")
+    assert lines[at + 1] == "    Table 1      table, 2 rows"
+
+
+def test_an_exhibit_in_a_LANDSCAPE_section_says_so_on_the_same_line(
+        tmp_path):
+    """Which is the answer a batch wants before it re-fits a table: a
+    landscape table has half again the width to work with."""
+    got = probe(_doc(tmp_path, _exhibit_doc("landscape")))
+
+    lines = got.report().splitlines()
+    at = lines.index("  exhibits")
+    assert lines[at + 1] == "    Table 1      table, 2 rows  [landscape]"
+
+
+def test_TWO_sections_are_printed_in_order_with_their_orientations(
+        tmp_path):
+    """`' -> '.join(...)`: the order is the document's, and a paper that
+    turns landscape for its appendix and back reads as three sections,
+    not as "portrait" once."""
+    def sect(orient: str) -> str:
+        return ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" '
+                f'w:orient="{orient}"/></w:sectPr></w:pPr></w:p>')
+
+    body = para(run("prose")) + sect("landscape") + sect("portrait")
+
+    line = next(ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
+                if "sections" in ln)
+
+    assert line == "  sections    landscape -> portrait"
+
+
+def test_a_section_with_no_ORIENTATION_attribute_reads_portrait(tmp_path):
+    """Word omits `w:orient` for the default, and "portrait" is what the
+    reader would otherwise have to know to infer from silence."""
+    body = (para(run("prose"))
+            + '<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240"/></w:sectPr>'
+              "</w:pPr></w:p>")
+
+    line = next(ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
+                if "sections" in ln)
+
+    assert line == "  sections    portrait"
+
+
+def test_the_view_split_says_NOTHING_where_a_view_sees_nothing(tmp_path):
+    """`seen or 'nothing'` — the sentence exists to contrast the two
+    views, and under `and` the side that DID see something prints
+    "nothing" while the empty one prints an empty string. Both halves
+    then read as the same answer, which is the opposite of the finding.
+    """
+    maths = ('<m:oMath xmlns:m="http://schemas.openxmlformats.org/'
+             'officeDocument/2006/math"><m:r><m:t>τ</m:t></m:r></m:oMath>')
+    body = "<w:p>" + run("where ") + maths + run(" is time") + "</w:p>"
+
+    got = probe(_doc(tmp_path, body), anchors=("where τ is",))
+
+    split = next(ln for ln in got.report().splitlines()
+                 if "the two views disagree" in ln)
+    assert "find/para_slice [0]" in split, "the view that DID see it"
+    assert "edit/replace_in_para nothing" in split
