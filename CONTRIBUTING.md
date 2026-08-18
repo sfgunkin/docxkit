@@ -90,6 +90,23 @@ Install what they need with `pip install -e .[dev]` — hypothesis is in
 there because the property suite imports it at module level, so a clone
 without it does not lose those tests quietly, it fails at collection.
 
+**What CI installs is `.[dev,pdf]`, and the difference is a gate.**
+pymupdf is not Windows-only and `tests/test_pages.py` builds its PDFs
+with pymupdf itself, so those 15 tests run anywhere — and `pages.py`'s
+85 % floor assumes they did. The other extras stay out, which makes
+their imports ABSENT rather than untyped on a clean checkout: that needs
+an entry in the mypy override list AND a `pyright: ignore` on the import
+line. latex2mathml taught this in August and pymupdf repeated it three
+days later.
+
+**The gates run in SERIES, and a red step hides every step behind it.**
+From 2026-08-14 to 08-18 an unused variable and an unsorted import block
+kept ruff red for 57 consecutive runs, and behind them sat a mypy error
+on all three Python versions and a module 32 points under its coverage
+floor. Each became visible only when the one in front of it was fixed.
+Every step after ruff now carries `if: ${{ !cancelled() }}`: the job
+still fails on any red gate, and the report says how many are red.
+
 ```
 python tools/coverage_floor.py    # per-module floors, as a ratchet
 ```

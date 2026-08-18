@@ -34,13 +34,24 @@ jobs:
         # 85 %, which is what stopped this workflow the first time ruff
         # let it reach the last step.
         run: pip install -e ".[dev,pdf]"
+      # Every gate runs even when an earlier one is red — `!cancelled()`
+      # rather than `always()`, so a cancelled run still stops. The job
+      # still FAILS on any red step; what changes is that the report is
+      # complete. Four days of August were spent with three independent
+      # failures stacked behind one ruff error nobody looked past: an
+      # unsorted import block hid mypy, which hid a coverage floor, and
+      # each only appeared once the one in front of it was fixed.
       - name: Ruff
         run: python -m ruff check .
       - name: Mypy
+        if: ${{ !cancelled() }}
         run: python -m mypy
       - name: Pyright
+        if: ${{ !cancelled() }}
         run: python -m pyright
       - name: Pytest
+        if: ${{ !cancelled() }}
         run: python -m pytest -q
       - name: Coverage floors
+        if: ${{ !cancelled() }}
         run: python tools/coverage_floor.py
