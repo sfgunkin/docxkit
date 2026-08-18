@@ -92,6 +92,29 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### S4 `repair_plan` promised three issues and printed two
+
+The header counts findings (`REPAIR PLAN — N audit issue(s)`) and the buckets
+are what a person actually works through, so the two have to agree. They did
+not for one shape: a reference-section bookmark whose name does not parse as
+author+year — `Anhang`, an appendix marker — draws BOTH an `ORPHAN REF` and a
+`REF WITHOUT CITE`, and the second fits none of the three readings inside that
+branch (no key to check against the citations, no entry owning it). It fell out
+of the loop unfiled. The plan said 3 and listed 2, and which one had been
+swallowed was left to the reader.
+
+Found by mutation testing rather than by a manuscript: 27 of citations.py's 29
+real survivors sat on the `f.kind == "..."` tests, which is what a branch
+nothing ever reaches looks like from outside. Writing a fixture per damage class
+surfaced the hole.
+
+**Closed 2026-08-19** (`this commit`). The unclassified finding goes to
+`investigate`, where "no mechanical reading" is the honest answer. Pinned as an
+INVARIANT — printed lines == the header count — over four fixtures, so any later
+branch that forgets its `else` fails on the arithmetic whatever its damage class
+turns out to be.
+
+
 ### S1 Word Compare duplicates a table when a block containing it is MOVED
 
 Move body children so a `w:tbl` and its caption change position, then

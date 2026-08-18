@@ -219,6 +219,15 @@ def repair_plan(parts: dict[str, bytes]) -> str:
                 buckets["relink"].append(
                     f'link_in_para(para, CITE_TEXT, "{name}")   # first '
                     f"mention, then wrap {name}txt; {issue}")
+            else:
+                # A REF WITHOUT CITE none of the three readings fits: no
+                # key to check against the citations, or a name whose
+                # entry is not the one it sits at. It used to fall out
+                # of the loop unfiled, and the header counts FINDINGS --
+                # so the plan promised three issues and printed two, and
+                # which one it had swallowed was left to the reader
+                # (2026-08-19).
+                buckets["investigate"].append(issue)
         elif f.kind == "MISPLACED MARKER":
             buckets["moved"].append(
                 f'delete_bookmark(doc, "{name}") then '

@@ -2220,3 +2220,214 @@ def test_a_body_level_bookmark_is_located_as_BODY_not_a_paragraph():
 
     assert ("ORPHAN REF: bookmark 'Ghost2019' (body) has no in-text "
             "hyperlink pointing to it") in issues
+
+
+# --- one test per bucket of the repair plan (2026-08-19) ----------------
+#
+# citations re-measured at 32.2 % real survival, 27 of the 29 survivors
+# inside `repair_plan` — and every one of them on a `f.kind == "..."`
+# test, which is what a branch nothing ever reaches looks like from the
+# outside. Three of the six damage classes had no fixture at all, so the
+# routing could send a finding anywhere and the suite would agree.
+#
+# The plan is a script a person edits and runs against a real
+# manuscript; a finding filed under the wrong heading is a wrong repair
+# proposed with the confidence of a right one.
+
+def _plan(*paras: str) -> str:
+    from docxkit.citations import repair_plan
+    filler = "".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                     for i in range(5))
+    return repair_plan(xml_parts(filler + "".join(paras)))
+
+
+def _bucket(plan: str, title: str) -> list[str]:
+    """The lines under one `== heading`, without their indent."""
+    keep, out = False, []
+    for line in plan.splitlines():
+        if line.startswith("== "):
+            keep = title in line
+        elif keep and line.startswith("  "):
+            out.append(line.strip())
+    return out
+
+
+def test_a_broken_back_link_whose_citation_link_SURVIVES_is_a_wrap():
+    """The commonest damage: the in-text bookmark went with an edit, so
+    the entry's back-link points at nothing — but the citation still
+    links to the entry, and that link is the anchor to wrap. Nothing has
+    to be located by hand, which is what makes this its own bucket."""
+    plan = _plan(
+        P(R("As ") + hfield("Smith2020", "Smith (2020)") + R(" showed.")),
+        P(R("References")),
+        P(bookmark("Smith2020", 20,
+                   hfield("Smith2020txt", "Smith, J. (2020). A paper."))))
+
+    assert _bucket(plan, "wrap the surviving link") == [
+        'wrap_link_in_bookmark(doc, "Smith2020", "Smith2020txt", bid)   '
+        "# BROKEN LINK: hyperlink to 'Smith2020txt' "
+        '(¶8, "Smith, J. (2020). A paper.") — no such bookmark']
+    assert not _bucket(plan, "investigate")
+
+
+def test_a_broken_back_link_with_NO_surviving_link_needs_the_citation_found():
+    """Same broken back-link, but nothing in the prose links to the entry
+    either — so there is no anchor to wrap and the repair has to start by
+    locating the mention. Filed under wrap it would be handed to a helper
+    that raises."""
+    plan = _plan(
+        P(R("As Smith (2020) showed.")),
+        P(R("References")),
+        P(bookmark("Smith2020", 20,
+                   hfield("Smith2020txt", "Smith, J. (2020). A paper."))))
+
+    assert not _bucket(plan, "wrap the surviving link")
+    assert ('link_in_para(para, CITE_TEXT, "Smith2020") + wrap "Smith2020txt"'
+            in "\n".join(_bucket(plan, "recreate the lost link")))
+
+
+def test_a_back_link_whose_ENTRY_MARKER_is_gone_too_has_no_reading():
+    """Neither conjunct holds: nothing links to `Smith2020` and no such
+    bookmark exists, so both repairs would name an anchor that is not
+    there. Which entry the back-link belonged to is a question for a
+    person -- `investigate` is the honest answer, and a proposed
+    `link_in_para` here is a wrong repair stated as a right one."""
+    plan = _plan(
+        P(R("As Smith (2020) showed.")),
+        P(R("References")),
+        P(hfield("Smith2020txt", "Smith, J. (2020). A paper.")))
+
+    assert not _bucket(plan, "wrap the surviving link")
+    assert not _bucket(plan, "recreate the lost link")
+    assert any("BROKEN LINK" in ln for ln in _bucket(plan, "investigate"))
+
+
+def test_a_link_to_a_name_that_is_no_back_link_at_all_is_INVESTIGATE():
+    """`endswith("txt") AND base in anchors`, not `or`: every broken
+    link's own target is in `anchors` by construction -- it is a link,
+    and `anchors` is the set of everything linked to. Under `or` the
+    first conjunct never has to hold, and a citation pointing at a
+    deleted entry would be answered by wrapping it in a bookmark named
+    after itself."""
+    plan = _plan(
+        P(R("As ") + hfield("Ghost2019", "Ghost (2019)") + R(" showed.")),
+        P(R("References")),
+        P(R("Smith, J. (2020). A paper.")))
+
+    assert not _bucket(plan, "wrap the surviving link")
+    assert any("BROKEN LINK: hyperlink to 'Ghost2019'" in ln
+               for ln in _bucket(plan, "investigate"))
+
+
+def test_a_marker_sitting_at_the_WRONG_entry_is_re_placed_not_deleted():
+    """A paragraph move takes the `<w:p>` and nothing beside it, so a
+    reordered reference list leaves body-level markers one entry off --
+    13 of them on API10. The bookmark is not debris and the link to it
+    is not broken; what is wrong is where it sits."""
+    plan = _plan(
+        P(R("As Smith (2020) and Zhang (2021) showed.")),
+        P(R("References")),
+        P(bookmark("Zhang2021", 21) + R("Smith, J. (2020). A paper.")),
+        P(R("Zhang, Q. (2021). Another paper.")))
+
+    assert _bucket(plan, "re-place") == [
+        'delete_bookmark(doc, "Zhang2021") then marker_bookmark(doc, '
+        "ENTRY_SIG, ...)   # MISPLACED MARKER: 'Zhang2021' sits at "
+        '¶8 ("Smith, J. (2020). A paper.") but its entry is ¶9']
+    assert not _bucket(plan, "debris")
+
+
+def test_an_entry_nothing_links_to_but_the_paper_CITES_is_relinked():
+    """`key_for(km.group(1), km.group(2))` -- the surname and the year,
+    in that order. The key is what decides between "the work is cited,
+    so this is a lost link" and "nothing mentions it, so the bookmark is
+    debris", and the two proposals are opposites: one restores a link,
+    the other deletes the anchor a link would need."""
+    plan = _plan(
+        P(R("As Zhang (2021) showed.")),
+        P(R("References")),
+        P(bookmark("Zhang2021", 21) + R("Zhang, Q. (2021). Another paper.")))
+
+    assert not _bucket(plan, "debris")
+    assert ('link_in_para(para, CITE_TEXT, "Zhang2021")   # first mention'
+            in "\n".join(_bucket(plan, "recreate the lost link")))
+
+
+def test_a_bookmark_for_a_work_the_paper_never_mentions_is_debris():
+    """The other side of the same test, and the destructive one: no
+    citation, no back-link bookmark, no entry owning it. The proposal
+    still says VERIFY -- two of three Lutz diagnoses were wrong before
+    the right one -- but it says delete."""
+    plan = _plan(
+        P(bookmark("Zhang2021", 21) + R("As Smith (2020) showed.")),
+        P(R("References")),
+        P(R("Smith, J. (2020). A paper.")),
+        P(R("Wong, Q. (2021). Another paper.")))
+
+    assert any('delete_bookmark(doc, "Zhang2021")' in ln
+               for ln in _bucket(plan, "debris"))
+    assert not _bucket(plan, "recreate the lost link")
+
+
+def _counted(plan: str) -> tuple[int, int]:
+    """(what the header promises, how many proposals are printed)."""
+    head = re.match(r"REPAIR PLAN — (\d+) audit issue", plan)
+    assert head, plan
+    return int(head.group(1)), sum(
+        1 for ln in plan.splitlines()
+        if ln.startswith("  ") and not ln.startswith("== "))
+
+
+def test_EVERY_finding_reaches_a_bucket():
+    """The header counts findings and the buckets are what a person
+    works through, so the two have to agree or the plan is a list that
+    silently omits an item. `Anhang` is the shape that broke it: a
+    bookmark whose name does not parse as author+year gets a REF WITHOUT
+    CITE that no reading fits, and it fell out of the loop unfiled --
+    three issues promised, two printed (2026-08-19).
+
+    Asserted as an INVARIANT rather than on that one name: any later
+    branch that forgets its `else` fails here, whatever the damage class
+    turns out to be."""
+    plan = _plan(
+        P(R("As Smith (2020) showed.")),
+        P(R("References")),
+        P(R("Smith, J. (2020). A paper.")),
+        P(bookmark("Anhang", 33) + R("Appendix material.")))
+
+    promised, printed = _counted(plan)
+    assert promised == 3
+    assert printed == promised
+    assert any("REF WITHOUT CITE" in ln for ln in _bucket(plan, "investigate"))
+
+
+@pytest.mark.parametrize("body", [
+    # a clean-ish paper with one unlinked mention
+    (P(R("As Smith (2020) showed.")) + P(R("References"))
+     + P(R("Smith, J. (2020). A paper."))),
+    # a stranded marker and two unlinked mentions
+    (P(R("As Smith (2020) and Zhang (2021) showed.")) + P(R("References"))
+     + P(bookmark("Zhang2021", 21) + R("Smith, J. (2020). A paper."))
+     + P(R("Zhang, Q. (2021). Another paper."))),
+    # a bookmark for a work no longer in the list
+    (P(R("As Smith (2020) showed.")) + P(R("References"))
+     + P(bookmark("Ghost1899", 71) + R("Smith, J. (2020). A paper."))),
+])
+def test_the_header_count_and_the_printed_lines_agree(body):
+    promised, printed = _counted(_plan(body))
+    assert printed == promised
+
+
+def test_an_unlinked_MENTION_is_not_offered_a_field_repair():
+    """`f.kind == "DOUBLED LINK"`, not `>=`: UNLINKED, EMPTY LINK and NO
+    BACK-LINK all sort above it, and under `>=` each would be answered
+    by `remove_outer_field` naming an outer target that does not exist.
+    The last bucket is deliberately the one with no call in it."""
+    plan = _plan(
+        P(R("As Smith (2020) showed.")),
+        P(R("References")),
+        P(R("Smith, J. (2020). A paper.")))
+
+    assert not _bucket(plan, "doubled link")
+    assert any('UNLINKED: "Smith (2020)"' in ln
+               for ln in _bucket(plan, "investigate"))
