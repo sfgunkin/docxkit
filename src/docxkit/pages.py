@@ -75,7 +75,7 @@ class Sheet(NamedTuple):
 
 def _import_pymupdf() -> Any:
     try:
-        import pymupdf
+        import pymupdf  # pyright: ignore[reportMissingImports]
     except ImportError as exc:                          # pragma: no cover
         raise ImportError(
             "reading the render needs PyMuPDF: pip install "

@@ -222,7 +222,12 @@ disallow_untyped_defs = true
 # helper was the package's LAST touch of python-docx, and the README's
 # first non-negotiable is never to save through it. The source now does
 # not import it at all.
-module = ["win32com.*", "pythoncom", "latex2mathml.*"]
+# pymupdf joined it for the same reason on 2026-08-18, and the same way
+# — `pages.py` gained `import pymupdf` on the 15th, CI was already red on
+# ruff by then, and mypy on all three versions had been failing on a
+# clean checkout unseen ever since. An optional extra is ABSENT on CI by
+# design; the import needs both this and the `pyright: ignore` beside it.
+module = ["win32com.*", "pythoncom", "latex2mathml.*", "pymupdf.*"]
 ignore_missing_imports = true
 
 [tool.pyright]
