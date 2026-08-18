@@ -31,6 +31,36 @@ today, not about the toolkit.
 
 ## Fixed
 
+### S1 `house(caption=...)` wrote keepNext into the middle of the caption's style name — `2ea64f5`
+
+Found 2026-08-18, the same cluster as the entry below and worse.
+`_keep_with_table` computed where to insert as
+`existing[0] + existing[2].index(">") + 1`: the offset OF the `w:pPr`
+element plus an offset INTO its content, which are different coordinate
+systems. On a caption paragraph styled `Caption`:
+
+    <w:pPr><w:pStyle w:val="Cap<w:keepNext/>tion"/><w:jc .../></w:pPr>
+
+A tag inside an attribute value. `house` returned `caption=True`, and
+Word opens the file with "unreadable content".
+
+**Every caption in a real manuscript reaches this branch** — a Caption
+style, a justification, or both — and `tests/test_tables_house.py` built
+its fixture with `para(run(...))`, which carries no `w:pPr` at all. So
+the branch that runs on a paper had never run in the suite, and 10 of
+the module's survivors were sitting in it.
+
+**Fixed the same session** (`2ea64f5`): the slot is after the `w:pPr`
+open tag, or after the `w:pStyle` if there is one, that being the only
+child CT_PPr allows before `keepNext`; and `<w:pPr/>` is EXPANDED rather
+than written past, since writing after a self-closing tag's span puts
+the property outside the element it belongs to. Four tests on that
+branch, three of which fail without the fix.
+
+**Both defects in this pair came from the same question**: not "is the
+element in the output" but "WHERE did it go". The tests that missed them
+asserted the first.
+
 ### S2 `house` put the table width ahead of the style CT_TblPr requires first — `f1b101b`
 
 Found 2026-08-18 by asking WHERE the 12 survivors in `_house_width` put
