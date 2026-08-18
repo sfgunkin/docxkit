@@ -2282,3 +2282,135 @@ def test_a_comment_the_AUTHOR_added_is_reported_as_user_only(tmp_path):
 
     assert [(c["side"], c["text"]) for c in report["comments"]] == [
         ("user-only", "Tester: please check")]
+
+
+# --- what the _compare_read run of 2026-08-18 found -----------------------
+#
+# 12.6 % real survival over a full run, and the largest cluster by far was
+# `mask_volatile_fields` with 16 — every one of them on the SCAN rather
+# than on the masking, which the tests above cover well. The fixtures all
+# held one field, or one inside another, so nothing said what happens
+# after a field the scan declines: the two `continue`s survived as
+# `break`, and the guard that recognises a nested field survived every
+# way of spelling it, including reading the FIRST region instead of the
+# last.
+#
+# It matters because the scan is what keeps a page number out of a
+# redline. One `break` in the wrong place and every volatile field after
+# the first non-volatile one is compared by its cached value — "7" against
+# "9" — and the review fills with changes nobody made.
+
+
+def _uncalculated(instr: str) -> str:
+    """A field Word has never calculated: begin, instruction, end. No
+    separator, so there is no cached result to mask."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> {instr} '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def _wrapping(instr: str, inner: str) -> str:
+    """A field whose cached result CONTAINS another field."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> {instr} '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + inner
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_a_field_the_scan_DECLINES_does_not_end_the_scan():
+    """`continue` mutated to `break`. AUTHOR is not volatile and keeps
+    its result; the PAGE field after it must still be masked, or a
+    document with an author field near the top compares every page
+    number in it by value."""
+    from docxkit._compare_read import mask_volatile_fields
+    xml = ("<w:p>" + field("AUTHOR", "M. Lokshin")
+           + run(" wrote page ") + field("PAGE", "7") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert "M. Lokshin" in out, "AUTHOR is not volatile"
+    assert "«F:PAGE»" in out and ">7<" not in out
+
+
+def test_a_volatile_field_with_NO_cached_result_does_not_end_the_scan():
+    """The other `continue`. A field Word never calculated has nothing
+    to mask and is not a reason to stop looking."""
+    from docxkit._compare_read import mask_volatile_fields
+    xml = ("<w:p>" + _uncalculated("PAGE")
+           + field("DATE", "3 March 2026") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert "«F:DATE»" in out and "3 March 2026" not in out
+
+
+def test_TWO_volatile_fields_in_a_row_are_masked_separately():
+    """Neither is inside the other, so the nesting guard must not read
+    the second as covered by the first."""
+    from docxkit._compare_read import mask_volatile_fields
+    xml = ("<w:p>" + field("PAGE", "7") + run(" of ")
+           + field("NUMPAGES", "12") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert re.findall(r"«F:\w+»", out) == ["«F:PAGE»", "«F:NUMPAGES»"]
+    assert ">7<" not in out and ">12<" not in out
+    assert " of " in out
+
+
+def test_a_field_nested_in_a_claimed_region_does_not_end_the_scan():
+    """The third `continue`, and the one a nesting fixture alone cannot
+    see: the inner PAGE is the last span in a document that ends there,
+    so `break` and `continue` agree. Put a volatile field AFTER the
+    nested one and they part company — `break` leaves the page count
+    unmasked, and a redline then reports "12" against "14".
+
+    The two mutants this does NOT kill are equivalent by construction,
+    argued rather than assumed (`tools/kill_check.py`, expect_kill=False):
+
+    * `regions[-1]` -> `regions[0]` registers the inner field as a region
+      of its own, and the right-to-left rewrite then cuts the outer slice
+      seven characters early — but those seven characters are TAG text
+      either side of the split, `_mask_text` rewrites only `w:t` content,
+      and the concatenation puts the same string back. It stops being
+      equivalent the moment a boundary falls inside a `w:t`, which no
+      field Word writes does.
+    * `start + sep.end()` -> `start | sep.end()` moves the region's start
+      EARLIER (an OR is never larger than the sum) into the field's code
+      region, which holds `instrText` and no `w:t` — so the first `w:t`
+      the mask finds is the cached result either way."""
+    from lxml import etree
+
+    from docxkit._compare_read import mask_volatile_fields
+    xml = ("<w:p>" + field("DATE", "3 March 2026")
+           + _wrapping("PAGEREF _Toc1", field("PAGE", "7"))
+           + run(" of ") + field("NUMPAGES", "12") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert re.findall(r"«F:\w+»", out) == [
+        "«F:DATE»", "«F:PAGEREF»", "«F:NUMPAGES»"]
+    assert out.count("w:fldChar") == xml.count("w:fldChar")
+    etree.fromstring(('<w:p xmlns:w="http://schemas.openxmlformats.org/'
+                      'wordprocessingml/2006/main">'
+                      + out[len("<w:p>"):]).encode())
+
+
+@pytest.mark.parametrize("lead", ["", "A", "ABC", "A longer opening line. ",
+                                  "Prose of some other length entirely, so "
+                                  "the offsets are nothing like round. "])
+def test_the_masked_region_starts_at_the_CACHED_RESULT_at_any_offset(lead):
+    """`result_at = start + sep.end()` with `+` mutated to `|` or `^`
+    agrees with addition whenever the two operands share no bits, which
+    a single fixture decides by luck. Five lead lengths do not."""
+    from docxkit._compare_read import mask_volatile_fields
+    xml = ("<w:p>" + run(lead + "before ") + field("PAGE", "7")
+           + run(" after") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert lead + "before " in out and " after" in out
+    assert "«F:PAGE»" in out and ">7<" not in out
