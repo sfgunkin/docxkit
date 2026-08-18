@@ -483,3 +483,61 @@ def test_every_comment_gets_ids_of_its_OWN(monkeypatch):
     body_ids = _ids(parts, "word/comments.xml", "w14:paraId")
     assert sorted(body_ids) == sorted(para_ids), \
         "a comment whose paraId is not in commentsExtended has no state"
+
+
+# `_context` 5 survivors and `_already_anchored` 7, both on the two
+# DISTANCES this module works in: 3,000 characters of markup behind a
+# revision for the window a classifier reads, and 60 either side for
+# "is there already a comment range here". Every fixture put the marker
+# right next to the revision, where each arithmetic spelling agrees.
+
+
+def _windows(parts) -> list[str]:
+    seen: list[str] = []
+
+    def classify(ctx):
+        seen.append(ctx.window)
+        return "R1: reason"
+
+    annotate(parts, classify)
+    return seen
+
+
+def test_the_classifier_window_reaches_BACK_and_stops():
+    """3,000 characters of markup, tags stripped — the widest scope a
+    rule may match on, and the reason `match` tries it last. Too short
+    and a rule keyed on the sentence that introduces a table stops
+    firing; too long and a revision is labelled by whatever appears
+    anywhere on the page."""
+    far = run("FARAWAY")
+    near = run("NEARBY")
+    filler = para(run("f" * 400)) * 8          # >3,000 chars of markup
+    body = (para(far) + filler + para(near) + para(run("keep "), ins("added")))
+    parts = make_parts(body, comment_items=(comment(1, "seed"),))
+
+    (window,) = _windows(parts)
+
+    assert "NEARBY" in window, "the sentence before is what a rule reads"
+    assert "FARAWAY" not in window, "and the page before it is not"
+    assert "<" not in window, "tags stripped: a rule matches prose"
+
+
+def test_a_comment_range_FAR_from_the_revision_does_not_anchor_it():
+    """60 characters either side, which is about one run. A range
+    further off belongs to something else — the sentence before, say —
+    and treating it as this revision's leaves the revision with no
+    comment at all, which is the failure this whole pass exists to
+    prevent."""
+    def body(before: str = "", after: str = "") -> str:
+        return para('<w:commentRangeStart w:id="1"/>', run(before),
+                    ins("added"), run(after),
+                    '<w:commentRangeEnd w:id="1"/>')
+
+    def parts(**gaps: str) -> dict[str, bytes]:
+        return make_parts(body(**gaps), comment_items=(comment(1, "seed"),))
+
+    # a range that wraps the revision, both ends within the slack
+    assert annotate(parts(), always("R1"))[0] == 0, "already anchored"
+    # the same range with the START pushed out of reach, and the END
+    assert annotate(parts(before="x" * 200), always("R1"))[0] == 1
+    assert annotate(parts(after="x" * 200), always("R1"))[0] == 1
