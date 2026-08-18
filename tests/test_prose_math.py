@@ -269,3 +269,61 @@ def test_a_split_expression_pairs_an_equation_with_the_piece_AFTER_it():
     assert [f.symbol for f in found] == ["α=1", "β=2"]
     assert "first α=1 middle" in found[0].context
     assert "middle β=2 last." in found[1].context
+
+
+# --- the second prose_math round, from the re-measurement ---------------
+#
+# equations.py 24.9 % -> 10.6 % after the round above, and `prose_math`
+# is still the largest cluster with 15. What is left is the pairing
+# between an equation and the prose pieces around it — asserted for two
+# equations, where `k + 1` and `k - 1` can still coincide — and the
+# INTERVAL branch, which needs a paragraph that both typesets maths and
+# writes an interval in prose, and which no fixture here had built.
+
+
+def test_THREE_equations_each_pair_with_their_own_piece_of_prose():
+    """`pieces[k + 1]` against `k - 1`, `k + 2` and the rest: with two
+    equations a wrong index can still land on a piece that yields the
+    same finding, and with three every one of them is distinguishable.
+    Each equation carries its own trailing operand and its own words."""
+    xml = doc(p(t("first "), math("α"), t("=1 middle "), math("β"),
+                t("=2 then "), math("γ"), t("=3 last.")))
+
+    found = [f for f in prose_math(xml) if f.kind == "split expression"]
+
+    assert [f.symbol for f in found] == ["α=1", "β=2", "γ=3"]
+    assert "first α=1 middle" in found[0].context
+    assert "middle β=2 then" in found[1].context
+    assert "then γ=3 last." in found[2].context
+
+
+def test_an_INTERVAL_in_a_paragraph_that_TYPESETS_maths_is_a_finding():
+    """A confidence interval in a results table is prose and stays
+    prose; the same brackets in a paragraph that sets equations are a
+    formula somebody typed. The window is the same 36 characters either
+    side, and it is what tells a reader which interval was meant."""
+    # Both ends of the window fall INSIDE a word on purpose: with a
+    # space there, 35 and 37 characters strip back to the same string.
+    # And the lead varies, because `m.end() | 36` agrees with `+ 36`
+    # whenever the offset's low bits happen to be clear.
+    sentence = ("The estimated parameter is bounded, unambiguously, "
+                "within [0, 1] throughout every specification reported "
+                "hereafter, without exception.")
+    for lead in ("", "In brief: ", "As reported in the appendix table, "):
+        prose = f" {lead}{sentence}"
+        xml = doc(p(math("θ"), t(prose)))
+
+        (found,) = [f for f in prose_math(xml) if f.kind == "interval"]
+
+        at = prose.index("[0, 1]")
+        assert found.symbol == "[0, 1]"
+        assert found.context == prose[at - 36:at + len("[0, 1]") + 36].strip()
+
+
+def test_an_interval_in_a_paragraph_with_NO_maths_is_left_alone():
+    """The other half of the same rule, and the reason it exists: a
+    results paragraph full of confidence intervals is not a paper
+    typing formulas into prose."""
+    xml = doc(p(t("The estimate is 0.42 with a 95% CI of [0.19, 0.47].")))
+
+    assert [f for f in prose_math(xml) if f.kind == "interval"] == []
