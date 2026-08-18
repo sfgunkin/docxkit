@@ -1320,3 +1320,122 @@ def test_count_is_over_a_limit_only_when_it_EXCEEDS_it(monkeypatch, tmp_path,
     out = capsys.readouterr().out
     assert code == 1
     assert "OVER the 5-word limit by 7" in out
+
+
+# `cmd_tasks` 6 survivors and `cmd_footnotes` 4, from the same run.
+
+
+def _two_threads(tmp_path, name="two.docx"):
+    """One thread resolved, one open — the open one with everything the
+    listing truncates: its own text, what it is attached to, and a
+    reply."""
+    from conftest import NS
+
+    from docxkit.package import write_docx
+
+    def note(cid, text, para_id, author="Referee"):
+        return (f'<w:comment w:id="{cid}" w:author="{author}" '
+                f'w:initials="R" w:date="2026-07-30T01:00:00Z">'
+                f'<w:p w14:paraId="{para_id}"><w:r><w:t>{text}</w:t></w:r>'
+                f"</w:p></w:comment>")
+
+    body = para(run("Alpha "),
+                '<w:commentRangeStart w:id="1"/>', run("Settled already."),
+                '<w:commentRangeEnd w:id="1"/>',
+                '<w:r><w:commentReference w:id="1"/></w:r>')
+    body += para('<w:commentRangeStart w:id="2"/>', run("A" * 200),
+                 '<w:commentRangeEnd w:id="2"/>',
+                 '<w:r><w:commentReference w:id="2"/></w:r>')
+    parts = make_parts(body)
+    parts["word/comments.xml"] = (
+        f"<w:comments {NS}>"
+        + note(1, "The settled question.", "AAAA0001")
+        + note(2, "Q" * 200, "AAAA0002")
+        + note(3, "R" * 200, "AAAA0003", author="Author")
+        + "</w:comments>").encode("utf-8")
+    parts["word/commentsExtended.xml"] = (
+        f"<w15:commentsEx {NS}>"
+        '<w15:commentEx w15:paraId="AAAA0001" w15:done="1"/>'
+        '<w15:commentEx w15:paraId="AAAA0002" w15:done="0"/>'
+        '<w15:commentEx w15:paraId="AAAA0003" '
+        'w15:paraIdParent="AAAA0002" w15:done="0"/>'
+        "</w15:commentsEx>").encode()
+    path = tmp_path / name
+    write_docx(path, parts)
+    return path
+
+
+def test_tasks_keeps_LISTING_after_a_thread_it_skips(monkeypatch, tmp_path,
+                                                     capsys):
+    """`continue`, not `break`: the resolved thread is first here, and
+    under `break` the work list ends at the first thing already done —
+    an empty list that looks exactly like a finished round."""
+    path = _two_threads(tmp_path)
+
+    code, _ = run_cli(monkeypatch, "tasks", str(path))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "(2 thread(s), 1 open)" in out
+    assert "The settled question." not in out, "resolved, and --all not given"
+    assert "Q" * 70 in out, "the open thread is still listed"
+
+
+def test_tasks_cuts_the_three_things_it_quotes(monkeypatch, tmp_path,
+                                               capsys):
+    """A work list is read down the left edge, so every entry is one
+    line: the comment at 70 characters, what it is attached to at 60,
+    and each reply at 60."""
+    path = _two_threads(tmp_path)
+
+    run_cli(monkeypatch, "tasks", str(path))
+    out = capsys.readouterr().out
+
+    assert "Q" * 70 in out and "Q" * 71 not in out
+    assert "on: " + repr("A" * 60) in out
+    assert "A" * 61 not in out
+    assert "re: Author: " + "R" * 60 in out
+    assert "R" * 61 not in out
+
+
+def _footnote_faces(tmp_path, name="faces.docx"):
+    """Three runs in Cambria 9pt and one in Times 12pt."""
+    from conftest import NS
+
+    from docxkit.package import write_docx
+
+    def styled(face, half_points, text):
+        return (f'<w:r><w:rPr><w:rFonts w:ascii="{face}"/>'
+                f'<w:sz w:val="{half_points}"/></w:rPr>'
+                f"<w:t>{text}</w:t></w:r>")
+
+    body = "".join(
+        f'<w:footnote w:id="{i}"><w:p>'
+        + styled("Cambria", 18, f"note {i}") + "</w:p></w:footnote>"
+        for i in (2, 3, 4))
+    body += ('<w:footnote w:id="5"><w:p>'
+             + styled("Times New Roman", 24, "the odd one") + "</w:p>"
+             "</w:footnote>")
+    parts = make_parts(para(run("Body.")))
+    parts["word/footnotes.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f"<w:footnotes {NS}>{body}</w:footnotes>").encode()
+    path = tmp_path / name
+    write_docx(path, parts)
+    return path
+
+
+def test_footnotes_lists_the_faces_MOST_USED_first(monkeypatch, tmp_path,
+                                                   capsys):
+    """`key=lambda kv: -kv[1]` — the list answers "what is this document
+    set in", and the answer is the first line. Ascending puts the single
+    outlier at the top and reads as if the whole apparatus were in it."""
+    path = _footnote_faces(tmp_path)
+
+    run_cli(monkeypatch, "footnotes", str(path))
+    out = capsys.readouterr().out
+
+    faces = [ln for ln in out.splitlines() if "Cambria" in ln or "Times" in ln]
+    assert len(faces) == 2, out
+    assert "Cambria" in faces[0] and "3" in faces[0]
+    assert "Times New Roman" in faces[1]
