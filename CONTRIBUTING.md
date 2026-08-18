@@ -548,6 +548,103 @@ loss, and under `>=` every token sorting above the key names it — a
 misspelled flag acknowledges a footnote that really went. One wrong
 token can only be on one side of the key, so the test needs both.
 
+**The rest of the fifth sweep**, once the queue reached them:
+
+| module | figure | against |
+|---|---|---|
+| `cli.py` | **8.6 %** (39/454) | 9.1 % after its round |
+| `footnotes.py` | **7.8 %** (31/399) | 7.9 % after its round |
+
+**And the same night, measured again.** The rounds above wrote tests;
+this is what a second sweep said about them, run in a third worktree
+(`DOCXKIT_MUT_WORKTREE=D:/docxkit-mut3`) while the writing went on:
+
+| module | before | after | what the round wrote |
+|---|---|---|---|
+| `refstyle.py` | 44.1 % | **8.9 %** | where every issue says it is, and both sides of every exemption |
+| `citations.py` | 32.2 % | **6.7 %** | one fixture per damage class in `repair_plan` |
+| `probe.py` | 25.0 % | **12.5 %** | what the report prints, not just what it counts |
+| `_cite_grammar.py` | 14.9 % | **7.6 %** | offsets where subtraction is not addition |
+| `revision.py` | 13.7 % | **9.3 %** | the arithmetic in the gate before the baseline |
+| `hygiene.py` | 10.9 % | **4.4 %** | the scans that must not stop, and a guard that could not fire |
+| `comments.py` | 15.8 % | 13.6 % | the reference walk, read as a string |
+| `crossrefs.py` | 12.9 % | 11.2 % | offsets measured from a run Word actually wrote |
+| `tracked.py` | 12.0 % | **8.6 %** | the structure counts, called directly |
+
+**These are floors, not finals.** The sweep ran while the tests were
+still being written, so several modules' harnesses grew after their own
+run — `refstyle` took two more rounds after its 8.9 %, `probe` one. A
+figure measured against a harness that is still moving is worth less
+than one measured against a still tree, and the honest way to read the
+table is "at least this much better".
+
+The two modest ones say something too. `comments` and `crossrefs` each
+had ONE cluster addressed out of several, and each moved by about what
+that cluster was worth. A round that reads one function deeply moves a
+module's figure a little; a round that reads what the module SAYS moves
+it a lot, because the unread values are spread across every function
+that reports.
+
+### An empty element is self-closing
+
+Three defects in one night, all the same shape, and none of them found
+by the sweep — they were found by reading for the shape after the first
+one turned up:
+
+* `set_core_property` matched only `<dc:title>…</dc:title>`, so a
+  document whose title Word had emptied (`<dc:title/>`) took the
+  "absent" branch and ended with TWO title elements, which
+  CT_CoreProperties forbids;
+* `set_run_text` matched only the paired `<w:t>…</w:t>`, so a write into
+  a run whose text had been deleted landed nowhere and reported success.
+  `tables.set_cell` into a blank cell handed back the document
+  unchanged;
+* the two repair helpers in `_cite_repair` paired a GHOST
+  `<w:hyperlink w:anchor="X"/>` with the next `</w:hyperlink>`
+  downstream, so `wrap_link_in_bookmark` wrapped its bookmark around the
+  prose between them and around another work's citation.
+
+The package already knew the shape four times over — `own_properties`
+handles `<w:tcPr/>`, `_table_layout`'s border and cell-margin patterns
+carry BOTH forms with a comment saying why, `lint` check 7c exists
+because a border writer once inserted a second element beside an empty
+one, and `_xml._HYPERLINK_EL_RE` carries `(?<!/)>` for the ghost.
+Knowing it in four places did not stop three more from being written.
+
+**So it is worth a grep rather than a memory.** Every pattern in this
+package that ends `</w:something>` or `</dc:something>` is a claim that
+the element is never empty. For a READER an empty element read as absent
+is usually harmless; for a WRITER it is the defect, because the answer
+to "absent" is to insert one — beside the one that is already there.
+
+### A figure is void when the HARNESS moves, too
+
+The rule above checks the source's commit time against the session file.
+The other half cost this round an hour: `equations.py`'s survivor list
+reported the `pieces[k + 1]` mutants as live, and they had been killed
+an hour before the run by a fixture committed into their own harness.
+Tests were written for mutants that were already dead.
+
+`python tools/stale_figures.py --stale` answers it for every module at
+once — the session file's mtime against the newest change to the module
+AND to every test file `harness_map` names for it, commit time and
+working-tree mtime both, because an uncommitted test is the one a run is
+most likely to have picked up by accident. Run against the package at
+the end of this round, 36 of 38 entries are stale and two modules have
+never been measured at all.
+
+### `kill_check` used to lie about a case that changed nothing
+
+A case built with `old.replace(...)` whose inner pattern does not match
+leaves `new` identical to `old`: the file is rewritten with itself, the
+suite passes, and the case reports SURVIVED. That is a confident false
+SURVIVOR — it sends someone to write a test that already exists — and it
+happened four times in one run, on `len(stack) - 1, -1, -1)`, where the
+source has a space after the minus and the pattern was written without
+one. The tool refuses such a case now, the way it already refused one
+that does not compile.
+
+
 ---
 
 *The rest of this section is the fourth sweep's, kept in its own order.*
