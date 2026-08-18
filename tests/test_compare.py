@@ -1798,6 +1798,55 @@ def test_a_label_of_TWO_characters_is_not_paired_from_either_side():
     assert _moves({"T4: the results": 1}, {"T4": 1}) == []
 
 
+def test_the_LONGEST_candidate_is_paired_first():
+    """`sorted(gained, key=lambda s: (-len(s), s))`. Two labels can both
+    contain the one that went, and the longer is the one that swallowed
+    it — pairing the shorter first leaves the long one to be reported as
+    a bare user-only label, which is the two-line report this function
+    replaces."""
+    out = _moves({"Table 4": 2},
+                 {"Table 4: the results": 1,
+                  "Table 4: the results of the full model": 1})
+
+    assert [m["to"] for m in out] == [
+        "Table 4: the results of the full model", "Table 4: the results"]
+
+
+def test_a_label_of_exactly_THREE_characters_still_pairs():
+    """`len(o) >= _LABEL_KEEP`, not `>`: three is the floor, and the
+    floor is inclusive on both sides. "T44" is an exhibit back-link in
+    these papers, and excluding it drops a real pairing into the
+    singleton lists."""
+    out = _moves({"T44": 1}, {"T44: the results": 1})
+
+    assert [m["label"] for m in out] == ["T44"]
+
+
+def test_ONE_new_label_can_swallow_TWO_old_ones():
+    """`if not gained[new]: break` — stop when this label has no copies
+    left, not when it still has some. A caption assembled from two links
+    is what a paste does, and under the inverted test the second one is
+    reported as a bare built-only label."""
+    long_label = "Table 4: the results of the full model"
+    out = _moves({"Table 4": 1, "the results": 1}, {long_label: 2})
+
+    assert sorted(m["label"] for m in out) == ["Table 4", "the results"]
+    assert {m["to"] for m in out} == {long_label}
+
+
+def test_a_long_label_is_cut_at_ninety_characters_on_BOTH_sides():
+    """The pair is printed as one line: `label` -> `to`. A reference
+    entry linked whole is 200 characters, and two of them on a line is
+    a paragraph."""
+    old = "Table 4: " + "the results of the full model, " * 4
+    new = old + "with the appendix specifications and their standard errors"
+
+    (move,) = _moves({old: 1}, {new: 1})
+
+    assert move["label"] == old[:90] and len(move["label"]) == 90
+    assert move["to"] == new[:90] and len(move["to"]) == 90
+
+
 def test_a_label_present_on_BOTH_sides_is_not_paired_with_itself():
     """`o != new`. A link whose label did not change at all — removed
     here, added there, which is what a MOVED link looks like to this
