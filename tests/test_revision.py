@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 from conftest import (
+    comment,
     document,
     make_parts,
     note,
@@ -1648,3 +1649,127 @@ def test_the_structure_gate_is_blind_to_which_FORM_a_link_takes(tmp_path):
 
     assert report.reject_detail["structure"] is True
     assert report.reject_detail["links"] is True
+
+
+# --- what the loss walk COUNTS (2026-08-19) -----------------------------
+#
+# `losses` is the gate between a hand-back and the baseline, and its
+# arithmetic had 11 survivors across `losses` and `_lost_notes`. The
+# tests above ask whether the gate fires, which is the right question
+# and answers only half of it: a gate that fires on the right document
+# and says the wrong thing about it sends a person looking for a note
+# that never went.
+
+def _notes_doc(*texts: str, refs: int = 0) -> dict[str, bytes]:
+    """A body carrying `refs` markers and one footnote per text."""
+    body = "".join(_ref(i + 13) for i in range(refs or len(texts)))
+    return make_parts(
+        para(run("body "), body),
+        footnotes=notes("footnotes", *(note(t, nid=i + 13)
+                                       for i, t in enumerate(texts))))
+
+
+def test_two_notes_gone_and_one_of_them_UNNAMEABLE_says_so(project):
+    """`len(named) < gone`, and the count in the sentence. Two notes of
+    the same wording — "Ibid." is the ordinary one — cannot be told
+    apart by text, so when one of them goes the walk can name the OTHER
+    loss and only count this one. Saying "1 more, unnamed" and giving
+    both totals is what lets a person check by hand; naming a note that
+    is still there sends them looking for it."""
+    write(project.prev, _notes_doc("Ibid.", "Ibid.", "A note that went."))
+    write(project.working, _notes_doc("Ibid."))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+
+    assert [loss.what for loss in lost] == [
+        "A note that went.",
+        "1 more, unnamed — 3 footnotes before, 1 now"]
+
+
+def test_notes_ADDED_while_others_are_reworded_are_not_losses(project):
+    """`gone <= 0` — the walk runs only when there are FEWER notes than
+    before. An author who rewords three notes and adds a fourth has lost
+    nothing, and every reworded note matches nothing by text: under
+    `== 0` the walk proceeds on a negative count and reports two of the
+    three rewordings as vanished notes, which refuses the baseline."""
+    write(project.prev, _notes_doc("First note.", "Second note.",
+                                   "Third note."))
+    write(project.working, _notes_doc("First note, edited.",
+                                      "Second note, edited.",
+                                      "Third note, edited.", "A fourth."))
+
+    assert revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev)) == []
+
+
+def test_a_bookmark_that_SURVIVED_is_not_reported_as_lost(project):
+    """`_bookmarks(prev) - _bookmarks(working)`, not `&`: the difference
+    is what went, the intersection is what stayed, and the two are the
+    same size whenever exactly one of two bookmarks goes."""
+    def _marked(*names: str) -> dict[str, bytes]:
+        marks = "".join(f'<w:bookmarkStart w:id="{i}" w:name="{n}"/>'
+                        f'<w:bookmarkEnd w:id="{i}"/>'
+                        for i, n in enumerate(names, start=20))
+        return make_parts(para(marks, run("body")))
+
+    write(project.prev, _marked("Kept2020", "Gone2019"))
+    write(project.working, _marked("Kept2020"))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+
+    assert [(loss.kind, loss.what) for loss in lost] == [
+        ("bookmark", "Gone2019")]
+
+
+def test_the_number_of_comments_lost_is_the_DIFFERENCE(project):
+    """`before - after`, and the message carries the number. Three
+    comments against one is two gone; `^` makes it 2 as well on some
+    pairs and 4 on others, and nothing but the sentence says which."""
+    def _commented(n: int) -> dict[str, bytes]:
+        return make_parts(
+            para(run("body")),
+            comment_items=tuple(comment(i, f"note {i}",
+                                        para_id=f"AAAA{i:04d}")
+                                for i in range(1, n + 1)))
+
+    write(project.prev, _commented(3))
+    write(project.working, _commented(1))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+
+    assert [(loss.kind, loss.what) for loss in lost] == [
+        ("comment", "2 comment(s) gone")]
+
+
+def test_comments_ADDED_are_not_a_loss(project):
+    """`> 0`, not `!= 0`: an author who answers a query by adding a
+    comment would otherwise be told "-1 comment(s) gone" and refused."""
+    def _commented(n: int) -> dict[str, bytes]:
+        return make_parts(
+            para(run("body")),
+            comment_items=tuple(comment(i, f"note {i}",
+                                        para_id=f"AAAA{i:04d}")
+                                for i in range(1, n + 1)))
+
+    write(project.prev, _commented(1))
+    write(project.working, _commented(3))
+
+    assert revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev)) == []
+
+
+def test_a_loss_PRINTS_the_first_seventy_characters_of_what_went():
+    """The refusal lists them one per line, and the exemption flag takes
+    the message's own words — so the cut is part of the contract with
+    the person reading it, not a display detail."""
+    long_note = ("The normalisation is by the sample mean rather than by "
+                 "the base year, so the two panels are comparable.")
+
+    printed = str(revision.Loss("footnote", long_note))
+
+    assert printed == (
+        "footnote 'The normalisation is by the sample mean rather than by "
+        "the base year, '")
