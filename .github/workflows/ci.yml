@@ -27,7 +27,13 @@ jobs:
         # No `word` extra: pywin32 is Windows-only, and every gate below
         # runs without Word. The 8 tests that drive it are marked and
         # deselected by default.
-        run: pip install -e ".[dev]"
+        #
+        # `pdf` IS installed. It is not Windows-only and the tests that
+        # need it build their PDFs with pymupdf itself, so all 15 run
+        # here — and without it `pages.py` covers 53 % against a floor of
+        # 85 %, which is what stopped this workflow the first time ruff
+        # let it reach the last step.
+        run: pip install -e ".[dev,pdf]"
       - name: Ruff
         run: python -m ruff check .
       - name: Mypy
