@@ -2612,7 +2612,7 @@ def test_a_long_hyperlink_LABEL_is_cut_at_ninety_characters(tmp_path):
     long_label = ("Acemoglu, D., and P. Restrepo. (2020). Robots and Jobs: "
                   "Evidence from US Labor Markets. Journal of Political "
                   "Economy, 128(6): 2188-2244.")
-    linked = para(run("See ") + f'<w:hyperlink w:anchor="Ref1">'
+    linked = para(run("See ") + '<w:hyperlink w:anchor="Ref1">'
                   + run(long_label) + "</w:hyperlink>")
     a, b = docs(tmp_path, linked, para(run("See nothing at all.")))
 
