@@ -92,6 +92,29 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### S2 setting a core property Word left EMPTY wrote it twice
+
+`docProps/core.xml` carries an unset property as `<dc:title/>`, and the
+reader matched only the paired `<dc:title>…</dc:title>` form. So
+`set_core_property` took its "absent" branch on a document that HAS the
+element: the new value was inserted beside the empty one and the package
+came back with two `dc:title`s. CT_CoreProperties allows one of each,
+and Word repairs the file on open without saying what it changed.
+
+Nothing downstream could see it. The value reads back correctly — the
+reader finds the new element first — so `docxkit authors set`, the
+`revision` stamp and every round that sets a title reported success.
+
+Found by mutation testing the INSERT POSITION (`CORE_ORDER.index(tag) +
+1`): the mutant that included the tag's own slot survived, which is only
+possible if a document can hold the tag and still reach that branch.
+
+**Closed 2026-08-19** (`this commit`). `_core_re` matches both forms and
+group 1 is None for the empty one, so an empty property now reads as `""`
+rather than as absent — which is the distinction `core_property`'s
+docstring already drew and could not honour.
+
+
 ### S4 `repair_plan` promised three issues and printed two
 
 The header counts findings (`REPAIR PLAN — N audit issue(s)`) and the buckets

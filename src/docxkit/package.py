@@ -74,7 +74,15 @@ _CORE_OPEN_RE = re.compile(r"(<cp:coreProperties\b[^>]*>)")
 
 
 def _core_re(tag: str) -> re.Pattern[str]:
-    return re.compile(rf"<{tag}\b[^>]*>([^<]*)</{tag}>")
+    """The element, in either of the two forms Word writes it.
+
+    An EMPTY property is `<dc:title/>`, and reading only the paired form
+    made `set_core_property` take its "absent" branch on a document that
+    HAS the element: the new value was inserted beside the empty one and
+    the package came back with two `dc:title`s, which the schema forbids
+    (2026-08-19). Group 1 is the value, and None for the empty form.
+    """
+    return re.compile(rf"<{tag}\b[^>]*?(?:/>|>([^<]*)</{tag}>)")
 
 
 def core_property(parts: dict[str, bytes], tag: str) -> str | None:
@@ -89,7 +97,7 @@ def core_property(parts: dict[str, bytes], tag: str) -> str | None:
     if blob is None:
         return None
     m = _core_re(tag).search(blob.decode("utf-8"))
-    return m.group(1) if m else None
+    return (m.group(1) or "") if m else None
 
 
 def set_core_property(parts: dict[str, bytes], tag: str, value: str) -> bool:
@@ -107,7 +115,7 @@ def set_core_property(parts: dict[str, bytes], tag: str, value: str) -> bool:
     core = blob.decode("utf-8")
     element = f"<{tag}>{escape(value)}</{tag}>"
     if (m := _core_re(tag).search(core)) is not None:
-        if m.group(1) == escape(value):
+        if (m.group(1) or "") == escape(value):
             return False
         core = core[:m.start()] + element + core[m.end():]
     else:

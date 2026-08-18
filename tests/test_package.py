@@ -400,6 +400,53 @@ def test_the_retries_RUN_OUT_and_the_error_is_raised(monkeypatch,
     assert target.read_bytes() == b"old"
 
 
+def test_the_wait_between_retries_GROWS(monkeypatch, tmp_path):
+    """`delay * (attempt + 1)`. Both tests above replace `sleep` with a
+    no-op, which is right — they are about the retries, not the clock —
+    and it leaves the only thing the loop computes unread. The schedule
+    is what decides whether a build rides out a OneDrive sync: 0.2s
+    against a total of 3.0s across six attempts, where a flat 0.2 gives
+    up after 1.0 and a shrinking one after less.
+
+    Linear rather than exponential on purpose: the lock this waits for
+    is a file being written by another process, not a server."""
+    from docxkit import package as pkg
+
+    target, tmp = tmp_path / "paper.docx", tmp_path / "paper.tmp"
+    target.write_bytes(b"old")
+    tmp.write_bytes(b"new")
+    calls: list[int] = []
+    waits: list[float] = []
+    monkeypatch.setattr(os, "replace", _flaky_replace(99, calls))
+    monkeypatch.setattr(pkg.time, "sleep", waits.append)
+
+    with pytest.raises(PermissionError):
+        pkg._replace_atomically(tmp, target)
+
+    assert [round(w, 3) for w in waits] == [0.2, 0.4, 0.6, 0.8, 1.0]
+    assert sum(waits) == pytest.approx(3.0), "three seconds of patience"
+
+
+def test_the_LAST_attempt_does_not_sleep(monkeypatch, tmp_path):
+    """`attempt < retries - 1`: the wait exists to let the other process
+    finish, and after the final attempt there is nothing left to wait
+    for. Five waits for six attempts."""
+    from docxkit import package as pkg
+
+    target, tmp = tmp_path / "paper.docx", tmp_path / "paper.tmp"
+    target.write_bytes(b"old")
+    tmp.write_bytes(b"new")
+    calls: list[int] = []
+    waits: list[float] = []
+    monkeypatch.setattr(os, "replace", _flaky_replace(99, calls))
+    monkeypatch.setattr(pkg.time, "sleep", waits.append)
+
+    with pytest.raises(PermissionError):
+        pkg._replace_atomically(tmp, target)
+
+    assert len(calls) == 6 and len(waits) == 5
+
+
 def test_the_WAIT_grows_with_each_attempt(monkeypatch, tmp_path):
     """A fixed delay is six tries inside a second and a quarter; Word's
     save takes longer than that. The wait steps up so the last attempt
@@ -553,3 +600,64 @@ def test_clearing_read_only_on_a_MISSING_file_is_quiet(tmp_path):
     from docxkit.package import _clear_readonly
 
     _clear_readonly(tmp_path / "not there.docx")      # must not raise
+
+
+def test_setting_a_property_Word_left_EMPTY_does_not_double_it():
+    """S2, found 2026-08-19 by mutation testing the insert position.
+
+    Word writes an unset core property as `<dc:title/>`, and the reader
+    matched only the paired form — so `set_core_property` took its
+    "absent" branch on a document that HAS the element, inserted the new
+    value beside the empty one, and left two `dc:title`s in core.xml.
+    CT_CoreProperties allows one of each; Word repairs the file on open
+    and says nothing about what it changed.
+
+    Nothing downstream could see it: the value reads back correctly,
+    because the reader finds the new element first."""
+    from docxkit.package import core_property, set_core_property
+
+    p = core("<dc:title/><dc:creator>M</dc:creator>")
+
+    assert set_core_property(p, "dc:title", "Loneliness Risk Index") is True
+
+    text = p["docProps/core.xml"].decode("utf-8")
+    assert text.count("<dc:title") == 1, text
+    assert core_property(p, "dc:title") == "Loneliness Risk Index"
+    assert text.index("<dc:title>") < text.index("<dc:creator>")
+
+
+def test_an_EMPTY_property_reads_as_empty_and_not_as_absent():
+    """`<dc:title/>` is a title the document HAS and has not set, which
+    is a different answer from a document with no title element at all
+    — the docstring makes that distinction and the self-closing form
+    used to fall on the wrong side of it."""
+    from docxkit.package import core_property
+
+    assert core_property(core("<dc:title/>"), "dc:title") == ""
+    assert core_property(core("<dc:creator>M</dc:creator>"),
+                         "dc:title") is None
+
+
+def test_setting_the_SAME_empty_value_on_an_empty_property_is_a_no_op():
+    """The early return compares what is there with what is asked for,
+    and both are empty here."""
+    from docxkit.package import set_core_property
+
+    p = core("<dc:title/>")
+
+    assert set_core_property(p, "dc:title", "") is False
+
+
+def test_a_DUPLICATED_sibling_takes_only_one_new_element():
+    """`core.replace(nxt, element + nxt, 1)` — once, however many times
+    the anchor appears. A core.xml carrying two `dc:creator`s is damaged
+    already; answering it with two titles as well is a repair prompt on
+    open rather than a document with a title."""
+    from docxkit.package import set_core_property
+
+    p = core("<dc:creator>M</dc:creator><dc:creator>N</dc:creator>")
+
+    set_core_property(p, "dc:title", "T")
+
+    text = p["docProps/core.xml"].decode("utf-8")
+    assert text.count("<dc:title>") == 1, text
