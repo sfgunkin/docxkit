@@ -430,6 +430,128 @@ next round at the wrong module. Re-measure before quoting, and the
 cheapest way to know is `git log -1 -- src/docxkit/<mod>.py` against the
 session file's mtime.
 
+**The fifth sweep, 2026-08-19 (overnight)** — every module whose
+harness had not been read since the fourth, measured sequentially in a
+second worktree while the tests below were being written:
+
+| module | figure | against |
+|---|---|---|
+| `refstyle.py` | **44.1 %** (173/392) | first measured |
+| `citations.py` | **32.2 %** (29/90) | first measured |
+| `_cite_grammar.py` | 14.9 % (65/435) | first measured |
+| `revision.py` | 13.7 % (50/365) | 14.3 % on 08-17 |
+| `tracked.py` | 12.0 % (39/325) | 9.4 % after its three rounds |
+| `revisions.py` | 9.2 % (39/422) | first measured |
+
+`refstyle` at 44.1 % is three times the next module and the reason is
+one sentence long: **not one of its 47 tests read `i.where`.** Every
+issue the audit reports could have been filed against the wrong
+paragraph and the suite would have stayed green — and `where` is the
+whole usefulness of the report, since "the list is not alphabetical"
+without a paragraph number is a list of forty entries to re-read by eye.
+87 of its 173 survivors were in `audit` alone, sitting on
+`f"¶{r.index + 1}"` and the snippet slices beside it.
+
+`tracked` reads HIGHER than its 9.4 % and is not a regression: the S1
+fix of 2026-08-18 added `structure_counts` and `structure_diff`, and
+they went in through `build` and `validate` alone. New code arrives
+unpinned; a module's figure going up after a fix is the sweep noticing
+that.
+
+**What the round found, beyond the percentages.** Two defects and a
+dead branch, all three surfaced by writing a fixture per case rather
+than by the numbers:
+
+* `repair_plan` promised three issues and printed two. A
+  reference-section bookmark whose name does not parse as author+year
+  draws both an `ORPHAN REF` and a `REF WITHOUT CITE`, and the second
+  fits none of the three readings in that branch — it fell out of the
+  loop unfiled while the header counted it. Now filed under
+  `investigate`, with the count-vs-lines agreement pinned as an
+  invariant over four fixtures;
+* `restore_math_glyphs` and `restore_parts` each stopped their walk at
+  the first part they skipped, in the sense that nothing said otherwise:
+  every `continue` in them was free, because each fixture happened to
+  have the skipped item LAST. A package with a picture in it (the media
+  part sorts before `word/document.xml`) would have lost the glyph
+  repair entirely;
+* `fix`'s second guard could not fire. `wanted` is keyed on the
+  downgraded form and drops every entry whose value equals its key, so
+  `wanted.get(text)` never returns `text`. Four mutants were living
+  inside `or back == m.group(2)`; it is gone, with the argument in its
+  place.
+
+### Subtraction hides inside its operands
+
+The "mutant that survives at zero" note below has a second half, and it
+cost more of this round than any other single thing. `a - b` is not
+only `a + b`, `a | b` and `a ^ b` when `b` is 0 — it is also **`a % b`
+whenever `b <= a < 2b`**, which is the ordinary case for an offset
+measured from something just before it, and `a // b` whenever `a < 2b`.
+
+Both of the package's run-splitting functions cut at `tm.start() -
+r_open`: where a text node begins, measured from where its run begins.
+Every fixture used a run with no properties, so that distance is five
+characters and every operator agrees. What makes it real is `w:rPr`:
+Word writes one on every run it has touched — fonts, size, language,
+and the complex-script twin of each — and 210 characters of properties
+between `<w:r>` and `<w:t>` is an ordinary paragraph, not a constructed
+one. At that distance `%` gives 0 where `-` gives 215.
+
+The same shape in three other places, each needing its operands chosen
+rather than written:
+
+* `end - ls` against `end % ls` needs the last run to start before HALF
+  the span's end;
+* `len(content) - len(content.lstrip())` against `%` needs a caption
+  indented by MORE characters than its own text — fifteen spaces, where
+  an ordinary indent leaves the two spellings equal;
+* `index(">") + 1` against `| 1` needs the index to be ODD, so
+  `<w:r w:rsidR="00A1">` (twenty characters) and never `<w:r>` (five).
+
+The rule: before writing the assertion, put the fixture's actual numbers
+into every operator the mutation tool substitutes. If two of them agree,
+the fixture is the thing to change.
+
+### An empty run moves no glyph
+
+`sp[1] > at` against `>=`, and `end < le` against `<=`, both decide
+whether a run that touches the span's edge joins it. Under the wider
+comparison an EMPTY run is written into the output — inside the
+hyperlink at one end, after it at the other. Word renders that as a blue
+space before the citation, and every text-identity assertion in the
+suite passes straight over it, because an empty run carries no
+characters. Count runs, not text, wherever a rewrite chooses boundaries.
+
+### `is not` is not `!=`, above 256
+
+`structure_diff` compared two counts with `!=`. Python caches integers
+up to 256 and creates the rest, so two counts of 300 are equal and are
+NOT the same object: under `is not` every manuscript with more than 256
+of any structural tag reports a change that did not happen, and `build`
+raises on it under `reject_check`. A paper with 300 table rows is an
+ordinary paper. The mutation tool substitutes `is`/`is not` freely and
+most of the time it is genuinely equivalent — the exception is any
+comparison of COUNTS, and the fixture that tells them apart needs the
+count above 256.
+
+### Two more shapes worth naming
+
+**A `continue` in a walk over parts is free unless the skipped item is
+first.** Every one of them in `hygiene` and in `_cite_grammar`'s part
+loop was, because packages in fixtures hold exactly the parts the test
+needs and in the order the test wrote them. Put the skipped thing first.
+
+**An exemption matched by `==` must not become an order comparison.**
+`revision._names` decides whether `--accept-loss <token>` acknowledges a
+loss, and under `>=` every token sorting above the key names it — a
+misspelled flag acknowledges a footnote that really went. One wrong
+token can only be on one side of the key, so the test needs both.
+
+---
+
+*The rest of this section is the fourth sweep's, kept in its own order.*
+
 The largest cluster now is 16 in `<module>` — the glyph-width table,
 whose numbers are the one thing in this package that only
 `pytest -m word` can really check, since the answer lives in Word.
