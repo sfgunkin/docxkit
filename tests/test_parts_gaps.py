@@ -860,3 +860,144 @@ def test_a_restored_relationship_KEEPS_its_own_id_when_that_id_is_free():
     rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
     assert ('<Relationship Id="rId1" Target="../customXml/item1.xml"/>'
             in rels)
+
+
+# --- the reference walk, read as a string (2026-08-19) ------------------
+#
+# `_drop_reference_run` is the function the 2026-08-18 S1 lived in, and
+# it came back from the next measurement with 16 survivors — the most of
+# any function in the module. The tests above go through `remove` and
+# ask what SURVIVES, which is the right question for a data-loss defect
+# and cannot see where the cursor lands: `pos = at + len(needle)` is
+# `at | len(needle)` and `at & len(needle)` too, as long as the document
+# holds ONE mark and everything after it is appended in one go.
+#
+# So these call the walk directly and compare the whole string. Two
+# marks under one id is the shape that makes the cursor observable —
+# damaged, but so is every document this function is reached for.
+
+def _drop(doc: str, cid: str = "1") -> str:
+    from docxkit.comments import _drop_reference_run
+    return _drop_reference_run(doc, cid)
+
+
+MARK = '<w:commentReference w:id="1"/>'
+
+
+def test_TWO_marks_under_one_id_both_go_and_nothing_between_them_moves():
+    """`continue`, and the cursor it continues from. A mark left behind
+    is a reference to a comment that no longer exists, which is what
+    Word calls unreadable content — and a cursor that lands one
+    character out eats a character of the author's prose on its way to
+    the second one."""
+    doc = ("<w:p><w:r><w:t>Alpha.</w:t></w:r>"
+           f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>{MARK}'
+           "</w:r><w:r><w:t>Beta, between the two.</w:t></w:r>"
+           f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>{MARK}'
+           "</w:r><w:r><w:t>Gamma.</w:t></w:r></w:p>")
+
+    assert _drop(doc, "1") == (
+        "<w:p><w:r><w:t>Alpha.</w:t></w:r>"
+        "<w:r><w:t>Beta, between the two.</w:t></w:r>"
+        "<w:r><w:t>Gamma.</w:t></w:r></w:p>")
+
+
+def test_TWO_BARE_marks_under_one_id_both_go():
+    """The same, on the branch that drops only the mark. Both `continue`
+    statements have to keep the walk going; under `break` the second
+    mark stays in a document whose comment is gone."""
+    doc = (f"<w:p>{MARK}<w:r><w:t>Between.</w:t></w:r>{MARK}</w:p>")
+
+    assert _drop(doc, "1") == "<w:p><w:r><w:t>Between.</w:t></w:r></w:p>"
+
+
+def test_a_mark_BEFORE_any_run_in_the_document_is_dropped_alone():
+    """`bool(starts) and ...` — the guard, not an optimisation. With no
+    run open before the mark there is no `starts[-1]` to search from,
+    and under `or` the walk indexes an empty list. A mark ahead of every
+    run is what a paragraph whose comment anchors its opening looks like
+    after a merge."""
+    doc = f"<w:p>{MARK}<w:r><w:t>The opening sentence.</w:t></w:r></w:p>"
+
+    assert _drop(doc, "1") == (
+        "<w:p><w:r><w:t>The opening sentence.</w:t></w:r></w:p>")
+
+
+def test_a_run_with_NO_properties_holding_only_the_mark_goes_whole():
+    """`run_xml.index(">") + 1` — the body starts after the run's own
+    opening tag, and one character either side of that is either the
+    `>` itself (which reads as content, so the run is kept, empty, in
+    the middle of a sentence) or the first character of the mark (which
+    reads as nothing left, on a run that is holding prose)."""
+    doc = ("<w:p><w:r><w:t>Prose.</w:t></w:r>"
+           f"<w:r>{MARK}</w:r>"
+           "<w:r><w:t>More prose.</w:t></w:r></w:p>")
+
+    assert _drop(doc, "1") == (
+        "<w:p><w:r><w:t>Prose.</w:t></w:r>"
+        "<w:r><w:t>More prose.</w:t></w:r></w:p>")
+
+
+def test_a_run_with_ATTRIBUTES_and_no_properties_goes_whole_too():
+    """`<w:r w:rsidR="00A1">` — the opening tag is longer than five
+    characters, which is what makes the `index(">")` a search rather
+    than a constant."""
+    # twenty characters, so `index(">")` is 19 -- ODD, and `19 | 1` is
+    # 19 while `19 + 1` is 20. On an even index the two agree, which is
+    # every run tag whose length is odd, `<w:r>` among them
+    doc = ("<w:p><w:r><w:t>Prose.</w:t></w:r>"
+           f'<w:r w:rsidR="00A1">{MARK}</w:r>'
+           "</w:p>")
+
+    assert _drop(doc, "1") == "<w:p><w:r><w:t>Prose.</w:t></w:r></w:p>"
+
+
+def test_another_comments_mark_is_not_touched_by_the_walk():
+    """The needle carries the id, so a second comment's mark is prose as
+    far as this walk is concerned — and it must come back byte for byte,
+    the run around it included."""
+    other = '<w:commentReference w:id="2"/>'
+    doc = ("<w:p><w:r><w:t>Prose.</w:t></w:r>"
+           f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>{MARK}'
+           "</w:r>"
+           f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>{other}'
+           "</w:r></w:p>")
+
+    assert _drop(doc, "1") == (
+        "<w:p><w:r><w:t>Prose.</w:t></w:r>"
+        '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+        f"{other}</w:r></w:p>")
+
+
+def test_a_document_with_no_mark_at_all_comes_back_unchanged():
+    doc = "<w:p><w:r><w:t>Nothing to do here.</w:t></w:r></w:p>"
+
+    assert _drop(doc, "1") is not None
+    assert _drop(doc, "1") == doc
+
+
+def test_a_run_that_is_never_CLOSED_costs_the_mark_and_nothing_else():
+    """`close == -1`. The document is malformed and the walk cannot
+    know where the run ends, so it takes the mark alone and leaves the
+    rest exactly as it found it. Reached directly here because the
+    slice a wrong branch would take (`doc[starts[-1]:5]`) is an empty
+    string, and what happens to it next is an exception rather than a
+    finding."""
+    doc = f"<w:p><w:r><w:t>Prose.</w:t></w:r><w:r>{MARK}</w:p>"
+
+    assert _drop(doc, "1") == "<w:p><w:r><w:t>Prose.</w:t></w:r><w:r></w:p>"
+
+
+def test_a_SHARED_run_does_not_end_the_walk_either():
+    """The third `continue`, and its cursor. A mark sharing its run
+    with the author's prose costs only the mark -- and the walk has to
+    carry on to the second mark, landing exactly past the first."""
+    doc = ("<w:p>"
+           f"<w:r><w:t>Prose the author wrote.</w:t>{MARK}</w:r>"
+           "<w:r><w:t>Between.</w:t></w:r>"
+           f"<w:r><w:t>And more prose.</w:t>{MARK}</w:r></w:p>")
+
+    assert _drop(doc, "1") == (
+        "<w:p><w:r><w:t>Prose the author wrote.</w:t></w:r>"
+        "<w:r><w:t>Between.</w:t></w:r>"
+        "<w:r><w:t>And more prose.</w:t></w:r></w:p>")
