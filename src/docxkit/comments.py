@@ -692,10 +692,16 @@ def set_done(parts: dict[str, bytes], ids: Iterable[str],
         pid = _W15_ATTR["para"].search(el)
         if pid is None or pid.group(1) not in para_ids:
             return el
-        changed += 1
         if _W15_ATTR["done"].search(el):
-            return _W15_ATTR["done"].sub(f'w15:done="{value}"', el)
-        return el[:-2] + f' w15:done="{value}"/>'
+            new = _W15_ATTR["done"].sub(f'w15:done="{value}"', el)
+        else:
+            new = el[:-2] + f' w15:done="{value}"/>'
+        # Counted only when it MOVED. The number is printed back to the
+        # author as how many comments were resolved, so re-running a
+        # resolve pass on a finished round reported the whole round as
+        # freshly resolved.
+        changed += new != el
+        return new
 
     parts["word/commentsExtended.xml"] = _EXT_RE.sub(sub, ext).encode("utf-8")
     return changed

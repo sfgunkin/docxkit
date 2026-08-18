@@ -198,12 +198,18 @@ def _set_tbl_pr(body: str, pattern: re.Pattern[str], element: str,
         return body[:at] + f"<w:tblPr>{element}</w:tblPr>" + body[at:]
     start, end, inner = own
     live = live_properties(inner)
+    # Taken OUT and put back in its slot, rather than replaced where it
+    # stands. Replacing in place cannot repair an element that is in the
+    # wrong place — and one release of `_house_width` wrote `w:tblW`
+    # ahead of `w:tblStyle` on every table it touched, so the documents
+    # needing the repair are exactly the ones a re-run has to fix. For a
+    # property already in its slot the removal and the insert cancel.
     if (was := pattern.search(live)) is not None:
-        inner = inner[:was.start()] + element + inner[was.end():]
-    else:
-        at = min((p for p in (live.find(t) for t in after) if p != -1),
-                 default=len(live))
-        inner = inner[:at] + element + inner[at:]
+        inner = inner[:was.start()] + inner[was.end():]
+        live = live_properties(inner)
+    at = min((p for p in (live.find(t) for t in after) if p != -1),
+             default=len(live))
+    inner = inner[:at] + element + inner[at:]
     return body[:start] + f"<w:tblPr>{inner}</w:tblPr>" + body[end:]
 
 
@@ -1376,10 +1382,16 @@ def _house_width(body: str) -> tuple[str, bool]:
     The old path also wrote into whichever `w:tblPr` came first, which
     is a NESTED table's whenever the outer table has none.
     """
-    out = _set_tbl_pr(body, _TBLW_RE, '<w:tblW w:w="5000" w:type="pct"/>',
-                      _AFTER_TBLW)
-    out = _set_tbl_pr(out, _TBLLAYOUT_RE, '<w:tblLayout w:type="autofit"/>',
+    # LAST property first. `_set_tbl_pr` places an element before the
+    # first of the elements that must FOLLOW it, so those have to be in
+    # their own slots already — and on a table the previous release
+    # wrote, `w:tblLayout` is one of the misplaced ones. Repairing it
+    # first gives `w:tblW` a correct anchor to sit before; the other
+    # order leaves tblW where it was and reports success.
+    out = _set_tbl_pr(body, _TBLLAYOUT_RE, '<w:tblLayout w:type="autofit"/>',
                       _AFTER_TBLLAYOUT)
+    out = _set_tbl_pr(out, _TBLW_RE, '<w:tblW w:w="5000" w:type="pct"/>',
+                      _AFTER_TBLW)
     return out, out != body
 
 

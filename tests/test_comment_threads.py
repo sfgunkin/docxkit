@@ -201,3 +201,19 @@ def test_a_commentEx_with_NO_paraId_does_not_stop_the_scan():
         '<w15:commentEx w15:paraId="AAAA0001" w15:done="1"/>')
 
     assert {t.comment.cid: t.done for t in threads(parts)}["1"]
+
+
+def test_set_done_counts_what_it_CHANGED_not_what_it_matched():
+    """The number is printed back to the author as how many comments
+    were resolved. Counting matches instead of moves made a re-run on a
+    finished round report the whole round as freshly resolved — and a
+    resolve pass IS re-run, because it is how a paper checks the job is
+    done."""
+    parts = make_parts()
+    parts["word/commentsExtended.xml"] = _ext_part(
+        '<w15:commentEx w15:paraId="AAAA0001" w15:done="1"/>',
+        '<w15:commentEx w15:paraId="AAAA0002" w15:done="0"/>')
+
+    assert set_done(parts, ["1"]) == 0, "already resolved"
+    assert set_done(parts, ["2"]) == 1
+    assert set_done(parts, ["1", "2"]) == 0, "both resolved now"

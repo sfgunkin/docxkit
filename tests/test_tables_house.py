@@ -393,3 +393,31 @@ def test_the_width_reaches_an_outer_table_that_has_NO_GRID_of_its_own():
     outer = out[start:out.index("<w:tbl>", start + 1)]
     assert '<w:tblW w:w="5000" w:type="pct"/>' in outer
     assert 'w:w="1234"' in out, "the nested table keeps its own width"
+
+
+def test_house_REPAIRS_a_table_the_previous_release_misordered():
+    """The remediation the fix above needs to be worth anything: every
+    table `house` touched before it wrote `w:tblW` and `w:tblLayout`
+    ahead of `w:tblStyle`, and re-running the corrected pass is what a
+    paper would do about it. Replacing a property where it stands cannot
+    move it, so the run came back byte-identical and reported the table
+    as already correct."""
+    misordered = ('<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/>'
+                  '<w:tblLayout w:type="autofit"/>'
+                  '<w:tblStyle w:val="Table"/><w:tblLook w:val="04A0"/>'
+                  "</w:tblPr>"
+                  '<w:tblGrid><w:gridCol w:w="800"/><w:gridCol w:w="800"/>'
+                  "</w:tblGrid>" + row("a", "b") + "</w:tbl>")
+    xml = document(para(run("Table A4: Data sources")) + misordered)
+
+    out, report = house(xml, read_all(xml)[0])
+
+    assert report.width, "the repair is a change, and says so"
+    props = out[out.index("<w:tblPr>"):out.index("</w:tblPr>")]
+    order = [props.index(t) for t in ("<w:tblStyle", "<w:tblW",
+                                      "<w:tblLayout", "<w:tblLook")]
+    assert order == sorted(order), props
+    assert props.count("<w:tblW") == 1 and props.count("<w:tblLayout") == 1
+
+    again, second = house(out, read_all(out)[0])
+    assert again == out and not second.width, "and it settles"
