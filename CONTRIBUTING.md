@@ -1020,6 +1020,7 @@ days are gone:
 | `equations.py` | 24.9 % -> 10.6 % | 8.4 % -> **5.7 %** (24/420) | the OMML branches Word's editor reaches |
 | `_table_layout.py` | — | 14.0 % -> **7.7 %** (33/430) | the width tables, three rules off by one |
 | `cli.py` | 28.3 % (raw, 2026-08-16) | **6.9 %** (31/449) | what the commands PRINT |
+| `footnotes.py` | 15.4 % (raw, first run) | **4.5 %** (18/402) | measured only — no round needed |
 
 `_table_layout`'s second figure was read as 13.4 % until the survivor
 tool was pointed at the source the RUN was planned against rather than
