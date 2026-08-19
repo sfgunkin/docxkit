@@ -12,6 +12,7 @@ import re
 
 import pytest
 from conftest import (
+    NS,
     comment,
     document,
     field,
@@ -3186,3 +3187,62 @@ def test_a_FIELD_FORM_link_whose_label_changed_is_reported(tmp_path):
     pairs = [(h.get("side"), h.get("label"), h.get("to"))
              for h in report["hyperlinks"]]
     assert pairs == [("grew", "Table 1", "Table 1: Descriptive stats")]
+
+
+# --- what `load` OPENS, which is where compare's time goes --------------
+
+
+def test_load_reads_the_parts_it_compares_and_NOTHING_else(tmp_path,
+                                                           monkeypatch):
+    """The 2026-08-15 review measured 89 % of a compare as loading, and
+    the fix was to stop reading the package whole: the media, the
+    custom XML, the rsid-heavy settings part and the theme are
+    megabytes that no layer of this diff ever looks at.
+
+    A read scope is invisible in every other test — the report is
+    identical either way — so this asserts the ZIP entries `load`
+    actually asks for. `styles.xml` is in the list and is not compared:
+    the FORMAT layer resolves size and colour through it, and without it
+    a document that renders identically reports a difference.
+    """
+    import zipfile
+
+    from docxkit._compare_read import load
+    from docxkit.package import write_docx
+
+    path = tmp_path / "paper.docx"
+    write_docx(path, {
+        "[Content_Types].xml": b"<Types/>",
+        "word/document.xml": document(para(run("The paper."))).encode(),
+        "word/footnotes.xml": notes("footnotes",
+                                    note("A note.", 2)).encode(),
+        "word/endnotes.xml": notes("endnotes",
+                                   note("A back note.", 2,
+                                        "endnote")).encode(),
+        "word/header1.xml": f"<w:hdr {NS}>{para(run('Head'))}</w:hdr>"
+                            .encode(),
+        "word/styles.xml": f"<w:styles {NS}/>".encode(),
+        "word/comments.xml": f"<w:comments {NS}/>".encode(),
+        # none of these are prose a reader sees, and two of them are the
+        # big ones in a real manuscript
+        "word/settings.xml": f"<w:settings {NS}/>".encode(),
+        "word/theme/theme1.xml":
+            b'<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>',
+        "customXml/item1.xml": b"<props/>",
+        "word/media/image1.png": b"\x89PNG not really",
+    })
+
+    read: list[str] = []
+    original = zipfile.ZipFile.read
+
+    def recording_read(self, name, *a, **kw):
+        read.append(str(name))
+        return original(self, name, *a, **kw)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", recording_read)
+
+    load(str(path))
+
+    assert set(read) == {"word/document.xml", "word/footnotes.xml",
+                         "word/endnotes.xml", "word/header1.xml",
+                         "word/styles.xml", "word/comments.xml"}, read
