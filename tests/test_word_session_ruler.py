@@ -422,6 +422,26 @@ def test_the_comparison_flags_that_must_not_vary_do_not():
         assert word.compare_kw[flag] is True, flag
     assert word.compare_kw["Destination"] == W.WD_COMPARE_TO_NEW
     assert word.compare_kw["Granularity"] == 1          # word level
+    # and the warning dialog is suppressed: a build runs unattended, and
+    # Word's "this document contains tracked changes" prompt waits for a
+    # click that nobody is there to give
+    assert word.compare_kw["IgnoreAllComparisonWarnings"] is True
+
+
+def test_the_comparison_DEFAULTS_are_the_thorough_ones():
+    """`whitespace` and `formatting` default to True, and the author to
+    "Revision". A caller that names neither gets the comparison that
+    shows the most — a default of False is a redline missing a class of
+    change, and the only way to notice is to already know it was there.
+    The test beside this one passes both explicitly, so the defaults
+    themselves had no witness."""
+    word = RecordingWord()
+
+    W.compare_documents(word, "a.docx", "b.docx")
+
+    assert word.compare_kw["CompareWhitespace"] is True
+    assert word.compare_kw["CompareFormatting"] is True
+    assert word.compare_kw["RevisedAuthor"] == "Revision"
 
 
 @pytest.fixture
