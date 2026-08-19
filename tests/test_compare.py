@@ -3246,3 +3246,264 @@ def test_load_reads_the_parts_it_compares_and_NOTHING_else(tmp_path,
     assert set(read) == {"word/document.xml", "word/footnotes.xml",
                          "word/endnotes.xml", "word/header1.xml",
                          "word/styles.xml", "word/comments.xml"}, read
+
+
+# --- what the _compare_diff run of 2026-08-20 found -----------------------
+#
+# 460 mutants over the whole module, 8.8 % real survival, and the
+# survivors were nearly all in the layers a reader READS rather than the
+# ones the gate consults: how much of a comment the summary prints, which
+# paragraph a lost target is attributed to, how short a link label may be
+# and still count as one. None of them changes whether the round passes;
+# every one of them changes what the person doing the round is looking at.
+
+
+def test_a_long_comment_is_CUT_on_BOTH_sides_of_the_report(tmp_path):
+    """`note[:110]`, twice — the built-only line and the user-only line
+    are separate slices and a fixture that exercises one leaves the
+    other unpinned. Reviewer notes run to paragraphs; a comment layer
+    that printed them whole would push the rest of the summary off the
+    screen, which is the failure this cut is for."""
+    built = ("the 2019 wave is missing from Table 3 and the standard "
+             "errors are not clustered by region, which the referee "
+             "asked for twice")
+    user = ("please recheck whether the appendix figure still matches "
+            "the revised specification before this goes back to the "
+            "co-authors")
+
+    a, b = docs(tmp_path, para(run("Text.")), para(run("Text.")),
+                comment_items=((comment(1, built),), (comment(2, user),)))
+
+    seen = {c["side"]: c["text"] for c in compare(a, b)["comments"]}
+
+    assert len(seen["built-only"]) == 110
+    assert seen["built-only"].startswith("Tester: the 2019 wave")
+    assert seen["built-only"].endswith("which the r"), "cut mid-word"
+    assert len(seen["user-only"]) == 110
+    assert seen["user-only"].startswith("Tester: please recheck")
+    assert seen["user-only"].endswith("this goes ba"), "cut mid-word"
+
+
+def test_a_THREE_character_label_is_long_enough_to_be_a_move(tmp_path):
+    """`_LABEL_KEEP` is the length at which containment stops being a
+    coincidence, and 3 is on the KEEPING side of it: "Fig" inside
+    "Fig. 2" is the label a caption lost, while a two-character label
+    sits inside half the prose in the document.
+
+    Read from the other end, this is the difference between one finding
+    that says what happened and two that leave the reader to pair a
+    built-only label with a user-only one themselves."""
+    from docxkit.citations import hyperlink_field
+
+    a, b = docs(tmp_path,
+                para(run("As shown in ") + hyperlink_field("fig2", "Fig. 2")
+                     + run(", the trend holds.")),
+                para(run("As shown in ") + hyperlink_field("fig2", "Fig")
+                     + run(", the trend holds.")))
+
+    assert compare(a, b)["hyperlinks"] == [
+        {"side": "shrank", "label": "Fig. 2", "to": "Fig", "n": 1}]
+
+
+def test_a_label_that_is_both_LOST_and_GAINED_is_not_a_move_to_itself():
+    """`o != new`, asked of the exported function rather than of the
+    pipeline. Inside `compare` the guard cannot fire — `gone` and
+    `gained` are opposite Counter differences, so no label is in both —
+    but `label_moves` is exported, and a caller who hands it overlapping
+    counters must not be told a label moved to itself.
+
+    The label is BUILT at run time on purpose: two equal literals in one
+    module are one object, and identity would then answer this question
+    correctly by accident."""
+    from collections import Counter
+
+    from docxkit.compare import label_moves
+
+    label = " ".join(["Table 4: the discipline", "gradient"])
+    assert label == "Table 4: the discipline gradient"
+
+    assert label_moves(Counter({label: 1}),
+                       Counter({"Table 4: the discipline gradient": 1})) == []
+
+
+def test_a_move_is_still_found_PAST_an_insert_that_is_already_taken(tmp_path):
+    """The skip over an already-matched insert is a `continue`, and the
+    distance between that and a `break` is a second move: the paragraph
+    whose partner sits behind one that is already spoken for is reported
+    as a DELETE and an INSERT — two findings, in two layers, for one
+    paragraph that moved.
+
+    Two paragraphs moved as a pair is not an exotic fixture. It is what
+    a section swapped with the one before it looks like."""
+    x = para(run("Methods follow the standard approach."))
+    y = para(run("Conclusions are unchanged from the first draft."))
+    c1 = para(run("The index rose to 0.35 in 2024."))
+    c2 = para(run("Coverage is complete for every oblast."))
+
+    a, b = docs(tmp_path, x + y + c1 + c2, c1 + c2 + x + y)
+    report = compare(a, b)
+
+    assert [e["type"] for e in report["structure"]] == ["MOVE", "MOVE"]
+    assert [e["text"][:9] for e in report["structure"]] == ["The index",
+                                                            "Coverage "]
+    assert report["text"] == []
+
+
+def test_a_lost_target_is_attributed_to_the_paragraph_that_HELD_it(tmp_path):
+    """`gone[0]`: the block's losses are collected together and pinned
+    to the paragraph holding the FIRST of them, so the report says where
+    to look. With one lost target per fixture the index is invisible —
+    the second paragraph's context reads as plausibly as the first."""
+    from docxkit.citations import hyperlink_field
+
+    left = (para(run("The first paragraph cites ")
+                 + hyperlink_field("aaa_ref", "Adams 2019")
+                 + run(" for the baseline estimate."))
+            + para(run("The second paragraph cites ")
+                   + hyperlink_field("zzz_ref", "Zhang 2020")
+                   + run(" for the follow-up estimate.")))
+    right = (para(run("The opening paragraph reports the baseline instead."))
+             + para(run("The closing paragraph reports the follow-up "
+                        "instead.")))
+
+    a, b = docs(tmp_path, left, right)
+
+    (found,) = compare(a, b)["stripped_fields"]
+
+    assert found["context"].startswith("The first paragraph")
+    assert found["lost"] == [
+        "lost hyperlink target(s): ['aaa_ref', 'zzz_ref']"]
+
+
+def test_at_exactly_the_similarity_threshold_it_is_NOT_a_move(tmp_path):
+    """`r > 0.85`, and the fixture sits exactly on it: every one of the
+    51 characters of the old paragraph appears in the 69 of the new one,
+    which is 2 x 51 / 120 = 0.85 to the last bit.
+
+    The threshold is what separates "this paragraph moved and was
+    lightly edited" from "one paragraph went and another arrived", and a
+    boundary nothing tests can move by a hundredth without a single test
+    noticing — in either direction, since the two readings differ only
+    on the pairs that land on the line itself."""
+    keep = para(run("Methods follow the standard approach."))
+    old = para(run("The index rose to 0.35 in 2024 across every oblast."))
+    new = para(run("The index rose to 0.35 in 2024 across every oblast "
+                   "and again in 2025."))
+
+    report = compare(*docs(tmp_path, old + keep, keep + new))
+
+    assert [e["type"] for e in report["structure"]] == ["DELETE", "INSERT"]
+
+
+def test_a_token_change_that_sorts_BACKWARD_is_still_a_token_change(tmp_path):
+    """`ea[1] != eb[1]`. Whether an equation's tokens changed is a
+    question about equality, and every fixture that asks it with the new
+    stream sorting AFTER the old one is answered the same way by an
+    ordering comparison. An author who replaced z with x made the same
+    edit as one who replaced x with z."""
+    a, b = docs(tmp_path, omath(mrun("z"), mrun("+y")),
+                omath(mrun("x"), mrun("+y")))
+
+    report = compare(a, b)
+
+    assert [t["formula"] for t in report["text"]] == [["tokens"]]
+
+
+
+def test_a_LONG_equation_still_names_the_symbol_that_changed(tmp_path):
+    """The per-character typography lists are compared to the token
+    stream by LENGTH before they are walked, and the length of a real
+    equation is a number CPython does not cache: two lengths of 287 are
+    equal and are not the same object.
+
+    An identity test there is invisible on every short fixture and turns
+    every long one into a single blob — the whole formula reported as
+    changed, with its markers joined into a set, which is the report
+    per-symbol segmentation exists to replace."""
+    long_run = "".join(f"x_{i}+" for i in range(1, 60))
+    assert len(long_run) > 256, "the point of the fixture is the length"
+
+    a, b = docs(tmp_path,
+                omath(mrun(long_run), mrun("y")),
+                omath(mrun(long_run), mrun("y", "<w:rPr><w:i/></w:rPr>")))
+
+    assert compare(a, b)["formula_format"] == [
+        {"change": "formatting", "from": "y:plain", "to": "y:i"}]
+
+
+def test_a_symbol_that_KEPT_its_marker_is_not_reported_as_changed(tmp_path):
+    """`before[i] != after[i]`, over markers that are not single
+    characters. "nor" and "sty=bi" are built at run time — split out of
+    a tag name, or formatted from a value — so the two sides of an
+    unchanged symbol are equal strings and separate objects, and an
+    identity test calls every one of them a change.
+
+    The report then names the symbols that did not move, beside the one
+    that did, with the same marker on both sides of the arrow."""
+    upright = "<m:rPr><m:nor/></m:rPr>"
+
+    a, b = docs(tmp_path,
+                omath(mrun("x", upright), mrun("y")),
+                omath(mrun("x", upright), mrun("y", "<w:rPr><w:i/></w:rPr>")))
+
+    assert compare(a, b)["formula_format"] == [
+        {"change": "formatting", "from": "y:plain", "to": "y:i"}]
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `m.group(1)` widened to `m.group(0)` in `hyperlink_labels`, both
+#   forms. The group is the CONTENT of a link and group 0 adds its
+#   delimiters — an opening `<w:hyperlink>` tag, or a `fldChar
+#   separate` run and the field's closing run. `WT_RE` reads `<w:t>`
+#   elements, and none of those delimiters contains one, so the label
+#   comes back the same. (`m.group(2)` was killed: neither pattern has
+#   a second group.)
+# * `-len(s)` written `~len(s)` in both of `label_moves`' sort keys.
+#   `~n` is `-n - 1`: the same strictly decreasing function of length,
+#   so longest-first is still longest-first.
+# * `len(new) > len(old)` written `>=`. The pair reaching that line has
+#   passed `o != new` AND `o in new or new in o`, and two different
+#   strings where one contains the other cannot be the same length —
+#   the equal case the operators disagree on is unreachable, and it is
+#   the `o != new` guard above that makes it so.
+# * the `break` after `if not gained[new]` written `continue`. It leaves
+#   a loop whose `while gained[new] and gone[old]` is now false for
+#   every remaining candidate, so the continuation emits nothing.
+# * `holder.text[:60]` in the leftover-notes loop. Every note whose
+#   holder is a paragraph has had its key popped by the offset loop
+#   above — which visits every index of `left` — so the only notes
+#   reaching that loop are the ones with no holder at all ("lost N
+#   footnote ref(s)"), and the truncation sits on the dead side of its
+#   own guard. The `if holder` / `if not holder` mutant IS killed, by
+#   the AttributeError that reading `.text` off None raises.
+# * `self.where != "body"` in `place`, as `>` and as `is not`. The same
+#   argument compare.py makes over the same value at its own integrity
+#   loop: every part label `_compare_read` produces — footnotes,
+#   endnotes, header/footer N — sorts after "body", and the label is
+#   that literal.
+# * `len(pa.fmt) != len(pb.fmt)` in `fmt_diff` as `>`. The second half
+#   of that guard is only ever reached when the first is false — the
+#   two texts are EQUAL — and `_char_fmt` appends one flag set per
+#   character, so equal texts have equal `fmt` lengths and neither
+#   operator fires. (The `!=` in the FIRST half is pinned, by the test
+#   above that puts a straight apostrophe on the built side.)
+# * `len(before) != len(text)` in `_marker_segments` as `<`. `text` is
+#   the token stream of the whole oMath block and `before` holds one
+#   marker per character of the `m:r` runs inside it, so `before` can
+#   be SHORTER — an `m:t` outside a run — and never longer. The
+#   operators can only part company on the case that cannot happen.
+# * `self.kind == "formatting"` in `bucket` and `!=` in `entry`, as
+#   `is`, `is not` and `<=`. A FormulaChange's kind is either that
+#   literal — written at the one construction site in this module, so
+#   the same object — or `", ".join(kind)` over ["tokens"],
+#   ["structure"] or both, every one of which sorts AFTER "formatting".
+# * `starts[i] != ends[i]` in `integrity` as `is not`: both sides are
+#   bookmark COUNTS, and a document with more than 256 starts of one id
+#   is not a document.
+# * `m.group(1) == "begin"` in `integrity` as `<=`, and the difflib tag
+#   comparisons in `word_diff` and `compare_paras` as `is`, `<=`, `>=`.
+#   The value sets are fixed and small — {begin, end}, {equal, delete,
+#   insert, replace} — and over each of them the ordering operator
+#   agrees with equality on every value that can reach the line;
+#   difflib's tags are module literals, so identity agrees too.
