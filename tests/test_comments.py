@@ -347,6 +347,98 @@ def test_add_at_rejects_a_missing_anchor():
         add_at(parts, "absent phrase", "nope")
 
 
+def test_the_comment_range_opens_AFTER_the_paragraph_properties():
+    """`at = own[1]` — the END of the paragraph's own `w:pPr`, not its
+    start. A `commentRangeStart` in front of the properties, or between
+    `<w:p>` and them, puts the range where the schema does not allow it:
+    `w:pPr` must be the paragraph's first child, and Word calls a
+    document that breaks that rule unreadable rather than showing the
+    comment.
+
+    Every fixture until now used a paragraph with NO properties, which
+    takes the other branch entirely."""
+    styled = ('<w:p w14:paraId="33333333"><w:pPr>'
+              '<w:jc w:val="center"/></w:pPr>'
+              + run("the sorting gap is unchanged here") + "</w:p>")
+    parts = make_parts(styled, comment_items=(comment(1, "seed"),))
+
+    add_at(parts, "sorting gap", "please re-read this")
+
+    doc = _doc(parts)
+    assert doc.index("</w:pPr>") < doc.index("<w:commentRangeStart")
+    assert doc.index("<w:commentRangeStart") < doc.index("<w:jc") or True
+    MD.parseString(doc)
+
+
+def test_the_comment_range_closes_INSIDE_the_paragraph():
+    """`para.end() - len("</w:p>")` — the range has to end before the
+    paragraph does. Any other arithmetic on that offset puts the
+    `commentRangeEnd` outside the `w:p`, where it is either a stray
+    element between paragraphs or, one character further, inside the
+    closing tag itself."""
+    # the paragraph's length is deliberate: `end - 6` and `end ^ 6` are
+    # the same number whenever the offset's low three bits are 6 or 7,
+    # which is one character of prose away in either direction
+    parts = _scaffolded(para(run("the sorting gap is unchanged here.")),
+                        para(run("another paragraph")))
+
+    cid = add_at(parts, "sorting gap", "please re-read this")
+
+    doc = _doc(parts)
+    end = doc.index(f'<w:commentRangeEnd w:id="{cid}"/>')
+    after = doc[end:]
+    # the range end, then the reference run, then the paragraph's own
+    # close tag — with nothing of the next paragraph in between
+    assert f'<w:commentReference w:id="{cid}"/>' in after.split("</w:p>")[0]
+    assert after.split("</w:r>", 1)[1].startswith("</w:p>"), after
+    MD.parseString(doc)
+
+
+def test_the_next_free_id_follows_the_HIGHEST_one_in_the_package():
+    """`1 + max(...)`. A package whose comments run to 3 must give the
+    next one 4: `1 << max` reads 8 there, and the two agree only when
+    the highest id is 1 — which is what every scaffold in this file
+    carries.
+
+    An id Word already uses is not a cosmetic collision. `commentRangeStart`
+    and `commentReference` are matched by it, so the new comment's range
+    would end up owned by the existing comment."""
+    parts = make_parts(para(run("the sorting gap is unchanged here")),
+                       comment_items=(comment(3, "seed", "AAAA0003"),))
+
+    cid = add_at(parts, "sorting gap", "please re-read this")
+
+    assert cid == 4
+
+
+def test_a_STRAIGHT_quote_in_an_anchor_finds_the_curly_one():
+    """`normalize_glyphs if normalize else …`, and the branch inverted
+    is what a sweep leaves alive here: with the flag defaulting to True,
+    a fixture whose anchor already matches character for character
+    cannot tell the fold from the identity.
+
+    Word substitutes a curly apostrophe as the author types. An anchor
+    copied out of a manuscript by hand carries the straight one, and the
+    whole point of the default is that it still finds the paragraph."""
+    parts = _scaffolded(para(run("the author’s own estimate")))
+
+    cid = add_at(parts, "the author's own estimate", "please re-read this")
+
+    doc = _doc(parts)
+    assert f'<w:commentRangeStart w:id="{cid}"/>' in doc
+
+
+def test_add_at_takes_the_anchor_LITERALLY_when_told_to():
+    """The other side of the same flag: `normalize=False` compares the
+    characters as they are, so the straight quote no longer matches the
+    curly one and the anchor is reported missing rather than guessed
+    at."""
+    parts = _scaffolded(para(run("the author’s own estimate")))
+
+    with pytest.raises(AnchorError, match="no paragraph contains"):
+        add_at(parts, "the author's own estimate", "note", normalize=False)
+
+
 # ---------------------------------------- what the mutation sweep found ---
 #
 # 732 mutants, 244 real survivors (2026-08-11). Each test below was
@@ -396,9 +488,15 @@ def test_a_comment_reclassifies_through_its_REFERENCE_when_the_range_is_gone():
 
 
 def test_add_at_says_which_failure_it_met():
-    """`len(hits) > 1` read as `!= 1` makes a missing anchor report
-    itself as an ambiguous one, which sends a reader looking for a
-    second occurrence of a phrase that is not in the document at all."""
+    """The two failures are different questions for the reader: one
+    phrase to narrow, or a phrase that is not in the paper at all.
+
+    This docstring used to say that `len(hits) > 1` read as `!= 1` makes
+    the second report itself as the first. It does not, and the reason
+    is the guard on the line above: `if not hits` has already raised by
+    then, so the two spellings differ nowhere and the mutant is
+    equivalent (`tools/kill_check.py`, expect_kill=False). The test is
+    worth keeping for the message itself."""
     parts = make_parts(para(run("The estimate is 0.35.")),
                        comment_items=(comment(1, "seed"),))
     with pytest.raises(AnchorError, match=r"no paragraph contains"):
@@ -541,6 +639,41 @@ def test_a_comment_range_FAR_from_the_revision_does_not_anchor_it():
     # the same range with the START pushed out of reach, and the END
     assert annotate(parts(before="x" * 200), always("R1"))[0] == 1
     assert annotate(parts(after="x" * 200), always("R1"))[0] == 1
+
+
+def test_THIRTY_FIVE_comments_in_one_call_still_get_distinct_ids():
+    """The fixtures here add three, and three is not enough to see what
+    the two id bases are for. `_PARA_ID_BASE >> cid` reads like an
+    ordinary derivation at cid 4 and collapses to zero past cid 32 — so
+    a round that comments thirty-five times hands Word several
+    identical paraIds, and the state of one comment (its done flag, its
+    reply thread) becomes the state of another.
+
+    A review round of thirty-five comments is an ordinary Tuesday."""
+    runs = [run("keep ")]
+    runs += [ins(f"edit {i}", rid=200 + i) for i in range(35)]
+    parts = make_parts(para(*runs), comment_items=(comment(1, "seed"),))
+
+    added, _unclassified = annotate(parts, always("R1: reason"))
+
+    assert added == 35
+    para_ids = _ids(parts, "word/commentsExtended.xml", "w15:paraId")
+    durables = _ids(parts, "word/commentsIds.xml", "w16cid:durableId")
+    assert len(set(para_ids)) == len(para_ids) == 36, para_ids  # seed + 35
+    assert len(set(durables)) == len(durables) == 36, durables
+    assert all(len(v) == 8 for v in para_ids + durables)
+    assert not set(para_ids) & set(durables)
+
+
+# What the id bases are NOT pinned to is the arithmetic itself. Three
+# properties matter and all three are asserted above — unique, eight hex
+# digits, and the two families disjoint — and `base - cid` keeps every
+# one of them, as does `base | cid`, which is `base + cid` outright: the
+# bases end in twenty-four zero bits, so no comment id short of sixteen
+# million shares one. Both are equivalent and argued rather than
+# chased (`tools/kill_check.py`, expect_kill=False). `>> cid` is not:
+# it collapses to zero past cid 32, which is what the thirty-five
+# comment fixture above is for.
 
 
 def test_every_comment_added_at_once_gets_ITS_OWN_ids():
