@@ -2672,6 +2672,16 @@ def test_a_long_hyperlink_LABEL_is_cut_at_ninety_characters(tmp_path):
     assert len(only["label"]) == 90
     assert only["n"] == 1
 
+    # and the USER-only side, which is its own `append` with its own
+    # copy of the number
+    a2, b2 = docs(tmp_path, para(run("See nothing at all.")), linked)
+
+    (added,) = [h for h in compare(a2, b2)["hyperlinks"]
+                if h.get("side") == "user-only"]
+
+    assert added["label"] == long_label[:90]
+    assert len(added["label"]) == 90
+
 
 # --- the leftovers, and where they are cut (2026-08-19) ----------------
 #
