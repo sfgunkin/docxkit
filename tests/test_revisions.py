@@ -812,6 +812,18 @@ def test_the_text_view_is_CACHED_between_identical_calls():
 # Every element here is namespaced, so the split gives exactly two parts
 # and the last is the second.
 #
+# `whitespace_only`'s two comparisons -> `>`, `is not`, `<=`. The
+# empty string is the only one that sorts at or below `""`, and the only
+# one that is `""`, so every spelling of "has text" and "is all spaces"
+# agrees on every string.
+#
+# `if el is om or el.getparent() is None` in `_prune_math` -> `and`.
+# The first term skips the equation ROOT, which is handled after the
+# loop; the second skips an element already detached. `oMath` is not in
+# MATH_OBJECTS, so processing the root does nothing, and the iteration
+# is materialised before any removal, so nothing in it is detached —
+# the guard cannot be observed from either side.
+#
 # `if mode == ORIGINAL` in `_simulate_where` -> `is`. This one is
 # reachable in principle — a runtime-built view name flows into
 # `_simulate` from `text()` — but the branch it guards converts
@@ -819,3 +831,27 @@ def test_the_text_view_is_CACHED_between_identical_calls():
 # cannot be seen through the only public caller that forwards the
 # string. `view_transform`'s two comparisons ARE tested, because their
 # answer is the transform itself.
+
+
+def test_an_insertion_of_SEVERAL_runs_unwraps_them_in_order():
+    """`at += 1` — the cursor that walks the wrapper's children into the
+    place the wrapper stood. Word writes one `w:ins` around several runs
+    whenever the inserted text changes formatting mid-phrase (a citation
+    in italics, a superscript marker), so a multi-run insertion is the
+    ordinary shape, not an exotic one.
+
+    Stepping by two interleaves them with whatever follows: the words
+    are all present, the paragraph reads as a different sentence, and no
+    count moves.
+
+    THREE runs, because two cannot see it: the wrapper shifts right by
+    one on every insertion, so a step of two lands exactly where the
+    wrapper now stands and the second child still ends up in the right
+    place. The third is the one that overshoots the tail."""
+    xml = document(para(run("head "),
+                        '<w:ins w:id="1" w:author="A" w:date="d">'
+                        + run("one ") + run("two ") + run("three ")
+                        + "</w:ins>",
+                        run("tail")))
+
+    assert text(accept(xml)) == ["head one two three tail"]
