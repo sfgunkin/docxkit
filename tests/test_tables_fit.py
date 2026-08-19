@@ -460,13 +460,21 @@ def test_an_ALIASED_face_borrows_a_table_and_one_number():
     and the scale is the whole of the correction: Verdana at 1.145 is
     14.5 % wider than Arial, and at 1.0 every Verdana column in the
     paper is measured a seventh short."""
-    from docxkit._table_layout import _ARIAL, _FONT_ALIASES, _TIMES
+    from docxkit._table_layout import (
+        _ARIAL,
+        _ARIAL_NARROW,
+        _FONT_ALIASES,
+        _TIMES,
+    )
 
-    assert _FONT_ALIASES["times new roman"] == (_TIMES, 1.0)
-    assert _FONT_ALIASES["arial"] == (_ARIAL, 1.0)
-    assert _FONT_ALIASES["verdana"] == (_ARIAL, 1.145)
-    assert _FONT_ALIASES["calibri"] == (_ARIAL, 0.908)
-    assert all(scale > 0 for _table, scale in _FONT_ALIASES.values())
+    assert _FONT_ALIASES == {
+        "times new roman": (_TIMES, 1.0), "cambria": (_TIMES, 1.05),
+        "georgia": (_TIMES, 1.09), "garamond": (_TIMES, 0.956),
+        "arial": (_ARIAL, 1.0), "helvetica": (_ARIAL, 1.0),
+        "arial narrow": (_ARIAL_NARROW, 1.0), "calibri": (_ARIAL, 0.908),
+        "segoe ui": (_ARIAL, 0.98), "tahoma": (_ARIAL, 0.993),
+        "verdana": (_ARIAL, 1.145),
+    }
 
 
 def test_page_break_before_creates_ppr_when_missing():
@@ -548,3 +556,26 @@ def test_a_border_size_at_the_edge_is_accepted():
     d = tbl([2000], f"<w:tr>{cell(frun('x'), w=2000)}</w:tr>")
     out, n = bottom_border(d, read_all(d)[0], sz=96)
     assert n == 1 and 'w:sz="96"' in out
+
+def test_a_TAB_in_a_cell_measures_four_spaces_wide():
+    """`_TAB_SPACES = 4.0`. A tab is how these tables write an indent —
+    a nested row label, a continued category — and it is an ELEMENT,
+    `<w:tab/>`, not a character in the text: as a character it takes the
+    600 fallback, which is a different number for a different reason.
+
+    Measured as one space the label column comes up short by three per
+    level, which is where a wrapped stub row comes from."""
+    from docxkit._table_layout import _cell_extents
+
+    def width(inner: str) -> float:
+        return _cell_extents(
+            f"<w:tc><w:p><w:r>{inner}</w:r></w:p></w:tc>",
+            ("Times New Roman", 24))[1]
+
+    t = '<w:t xml:space="preserve">x</w:t>'
+    plain = width(t + t)
+    spaced = width(t + '<w:t xml:space="preserve"> </w:t>' + t)
+    tabbed = width(t + "<w:tab/>" + t)
+
+    assert spaced > plain, "the fixture has to measure a space at all"
+    assert tabbed - plain == pytest.approx(4 * (spaced - plain))
