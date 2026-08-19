@@ -380,3 +380,20 @@ def test_an_expression_the_equation_LEADS_carries_the_same_window():
     assert found.symbol == "R² =θ"
     assert found.context == ("ce of exactly thirty-six chars R² = θ and "
                              "then thirty-six more after that")
+
+
+# --- what is left on the piece walk, and why ----------------------------
+#
+# `after = pieces[k + 1] if k + 1 < len(pieces) else ""` — the INDEX is
+# pinned by the two- and three-equation tests above. The BOUND is not,
+# and cannot be: `prose_math` writes one sentinel per equation, inside a
+# `w:t` so `visible_text` keeps it, and `split` therefore returns exactly
+# one more piece than there are equations. `k` never reaches the last
+# piece, so the guard never fires and every spelling of it — `k - 1`,
+# `k * 1`, `k ** 1` — answers the same question.
+#
+# Measured rather than assumed, on the case where the two might come
+# apart: a REDLINE whose first equation sits inside a `w:del`. The
+# sentinel survives that (Word writes `w:delText`, not `w:t`, for
+# deleted prose, so the substituted `w:t` is not dropped) and the pieces
+# still line up — 2 equations, 3 pieces.
