@@ -15,10 +15,12 @@ import pytest
 from docxkit.errors import AnchorError
 from docxkit.word import (
     _REVISION_KINDS,
+    WD_FIND_STOP,
     WD_INFO_ADJUSTED_PAGE,
     WD_INFO_LINE,
     WD_INFO_PAGE,
     Location,
+    _Layout,
     locate_in,
     revision_locations,
     search_text,
@@ -33,9 +35,10 @@ class FakeFind:
     def __init__(self, rng: FakeRange) -> None:
         self._rng = rng
         self.Text = ""
+        self.cleared = 0
 
     def ClearFormatting(self) -> None:
-        pass
+        self.cleared += 1
 
     def Execute(self) -> bool:
         rng = self._rng
@@ -57,10 +60,16 @@ class FakeRange:
         self.Start = start
         self.End = end
         self.Text = text
+        self._find: FakeFind | None = None
 
     @property
     def Find(self) -> FakeFind:
-        return FakeFind(self)
+        # ONE per range, the way Word's is: the code configures it once
+        # and re-aims the range, so a fresh object on every access would
+        # hide a setting that never reached the search
+        if self._find is None:
+            self._find = FakeFind(self)
+        return self._find
 
     def SetRange(self, start: int, end: int) -> None:
         self.Start, self.End = start, end
@@ -182,6 +191,62 @@ def test_empty_anchor_is_refused():
     # for nothing at all.
     with pytest.raises(AnchorError):
         search_text("   ")
+
+
+# --- how the search itself is set up ----------------------------------
+
+def test_the_find_is_configured_before_it_is_ever_used():
+    """Nine settings on Word's Find, and not one of them had a witness.
+
+    They are not preferences. Word's Find object carries whatever the
+    last search left on it, and every one of these turns off a way of
+    matching that would answer with the WRONG place rather than with
+    nothing:
+
+    * `Wrap = wdFindStop` — with wrapping on, a forward search that
+      finds nothing ahead restarts at the top and reports a hit
+      BEHIND the cursor, which is exactly what `ordered=True` exists to
+      prevent;
+    * `MatchCase = True` — an anchor is quoted text, and "the Table"
+      and "the table" are two different sentences in a paper;
+    * `MatchWildcards = False` — `search_text` escapes `^` for Word's
+      literal syntax, which is the wrong escaping under wildcards;
+    * `MatchSoundsLike` and `MatchAllWordForms` — a fuzzy match lands on
+      a place that only sounds like the one asked for;
+    * `MatchWholeWord = False` — an anchor is a phrase and may start
+      mid-word;
+    * `Format = False` — formatting criteria left over from an earlier
+      search would filter this one silently.
+    """
+    layout = _Layout(make_doc((250, "alpha")))
+
+    find = layout._find
+    assert find.Forward is True
+    assert find.Wrap == WD_FIND_STOP
+    assert find.Format is False
+    assert find.MatchCase is True
+    assert find.MatchWholeWord is False
+    assert find.MatchWildcards is False
+    assert find.MatchSoundsLike is False
+    assert find.MatchAllWordForms is False
+    assert find.cleared == 1, "and the leftovers are cleared first"
+
+
+def test_the_layout_measures_the_document_it_was_given():
+    """`self.end = int(doc.Content.End)` is the bound every forward
+    search is capped by; read from anywhere else it either cuts the
+    document short or runs past it."""
+    doc = make_doc((250, "alpha"))
+
+    layout = _Layout(doc)
+
+    assert layout.end == len(doc.text)
+    assert doc.repaginated, "and the layout is real before anything is asked"
+    # The two `doc.Range(0, 0)` calls beside it are NOT pinned, and are
+    # argued equivalent instead: both objects are re-aimed with SetRange
+    # before anything reads them — the search range on every find, the
+    # probe on every page question — so the offsets they are born with
+    # cannot reach an answer.
 
 
 # --- locate_in -------------------------------------------------------------
