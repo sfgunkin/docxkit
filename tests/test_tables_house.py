@@ -17,7 +17,7 @@ caught it by eye.
 from __future__ import annotations
 
 import pytest
-from conftest import document, para, row, run, table
+from conftest import NS, document, para, row, run, table
 
 from docxkit.errors import AnchorError
 from docxkit.tables import by_caption, house, house_rpr, read_all
@@ -109,6 +109,12 @@ def test_running_it_twice_changes_nothing_the_second_time():
     assert twice == once
     assert (report.runs, report.paragraphs, report.rows) == (0, 0, 0)
     assert not report.width and not report.caption
+    # the counts are the half that can lie: `_set_properties` compares
+    # the INNER text of a property element against what it would write,
+    # and an off-by-one in that slice (`index(">") | 1`, which is only
+    # wrong when the tag length makes it odd — `w:trPr`, `w:tcPr`)
+    # rewrites every element with itself. The XML is identical either
+    # way; the report says the pass did work it did not do.
 
 
 def test_the_font_and_size_are_the_papers_to_choose():
@@ -445,3 +451,49 @@ def test_the_report_SAYS_what_house_set_and_what_it_did_not():
     assert plain.format().endswith("row(s) cantSplit")
     assert "full width" not in plain.format()
     assert "caption" not in plain.format()
+
+
+def test_stars_ALREADY_raised_do_not_stop_the_ones_after_them():
+    """`continue`, not `break`, and the cell that is already done has to
+    come FIRST for the fixture to say anything — a `continue` is free to
+    mutate unless the item it skips is the first one.
+
+    Half-done tables are the ordinary case here: the pass is run again
+    after a table is edited, and every cell it raised last time takes
+    this branch."""
+    from docxkit.tables import read_all, superscript_stars
+
+    def cell(text: str, *, raised: bool) -> str:
+        if not raised:
+            return (f'<w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/>'
+                    f"</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r>"
+                    "</w:p></w:tc>")
+        head, stars = text.rstrip("*"), text[len(text.rstrip("*")):]
+        return ('<w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr>'
+                f"<w:p><w:r><w:t>{head}</w:t></w:r>"
+                '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+                f"<w:t>{stars}</w:t></w:r></w:p></w:tc>")
+
+    body = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/>'
+            '<w:gridCol w:w="1000"/></w:tblGrid><w:tr>'
+            + cell("-0.250***", raised=True)
+            + cell("0.031**", raised=False) + "</w:tr></w:tbl>")
+    xml = f"<w:document {NS}><w:body>{body}</w:body></w:document>"
+
+    out, count = superscript_stars(xml, read_all(xml)[0])
+
+    assert count == 1, "the second cell was never reached"
+    assert out.count('<w:vertAlign w:val="superscript"/>') == 2
+
+
+# --- what is left in the house pass, and why ----------------------------
+#
+# `inner = wanted[wanted.index(">") + 1:...]` -> `| 1`, `^ 1`. Both
+# callers pass `rPr` or `pPr`, and `<w:rPr>` puts its `>` at index 6 —
+# an even one, where `6 | 1` and `6 ^ 1` are both 7. A tag of odd length
+# (`trPr`, `tcPr`) would separate them, and nothing calls it with one:
+# the equivalence is about the CALLERS, not the arithmetic, so a third
+# caller is where to look if these ever come back.
+#
+# `if i == 0` in `booktabs` -> `<=`. `i` enumerates rows, so it is never
+# negative and the two spellings ask the same question.
