@@ -56,9 +56,11 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import tempfile
 import tomllib
 import unicodedata
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -138,6 +140,7 @@ __all__ = [
     "promote",
     "prune_rescues",
     "relabelled_links",
+    "render_accepted",
     "rescue_path",
     "rescues",
     "restored_bookmarks",
@@ -1155,6 +1158,52 @@ def glyph_runs(before: str, after: str, *, limit: int = 6,
     if len(changed) > limit:
         out.append(f"... and {len(changed) - limit} more run(s)")
     return out
+
+
+def render_accepted(batch: str | Path, anchors: Sequence[str], *,
+                    dpi: int = 150,
+                    out_dir: str | Path | None = None,
+                    ) -> dict[str, Path | None]:
+    """Rasterise the ACCEPTED page each anchor falls on. ``{anchor: png}``.
+
+    The one check no gate in the ladder can make. Every gate here reads
+    the markup, and a glyph that went the wrong way, an equation that
+    renders wrong or a table that split across a page are all correct
+    markup — they are defects of the PAGE, and only a render shows them.
+
+    **Accepted, never the redline.** The page a reader will see is the
+    accepted one; a redline's pagination is not the deliverable's, so
+    checking a glyph against it reports on a page nobody will read.
+
+    Word is the renderer because it keeps OMML — LibreOffice does not,
+    and the papers this serves are equation-heavy. It runs read-only,
+    on a copy written beside the batch, and both temporaries go away
+    whatever happens; the PNGs are what is left.
+
+    Moved here from DSI's `revision/scripts/render_pages.py`, which was
+    the last piece of a private gate ladder still alive after that paper
+    re-pointed onto the shared commands (2026-08-19). A capability one
+    paper keeps in a script is one the next paper does without.
+    """
+    from . import pages as _pages
+    from . import word as _word
+
+    batch = Path(batch)
+    wanted = [a for a in anchors if a.strip()]
+    if not wanted:
+        return {}
+    parts = _simulate(package.read_parts(batch), revisions.accept)
+    staging = Path(tempfile.mkdtemp(prefix="docxkit_render_"))
+    try:
+        accepted_docx = staging / f"{batch.stem}__accepted.docx"
+        package.write_docx(accepted_docx, parts)
+        pdf = _word.export_pdf(accepted_docx, staging / f"{batch.stem}.pdf")
+        return _pages.render_anchors(
+            pdf, wanted, dpi=dpi,
+            out_dir=out_dir if out_dir is not None else batch.parent,
+            stem=batch.stem)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def validate(path: str | Path, baseline: str | Path | None = None,

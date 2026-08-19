@@ -17,10 +17,11 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Three open, as of 2026-08-19** — below; the last two are one afternoon's use
-of `placement`, which is a day old. Two more were closed the same day: the
-accept-all half of gate 5's text check (`unaccepted`) and the re-labelled link
-that blocked `baseline` (`relabelled_links`), both in Fixed. Four were raised from an earlier manuscript round
+**Two open, as of 2026-08-19** — below, and both are one afternoon's use of
+`placement`, which is a day old. Three more were closed the same day: the
+accept-all half of gate 5's text check (`unaccepted`), the re-labelled link
+that blocked `baseline` (`relabelled_links`), and the eye gate that had stayed
+in one paper's scripts (`render_accepted`). All three are in Fixed. Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
 and is kept below because the mistake is instructive. The three that were real:
@@ -39,32 +40,6 @@ words that are being restored elsewhere without pairing information this side
 cannot verify. **A moved block containing a table, or a bookmarked paragraph,
 still cannot go through Compare and come back cleanly** — what changed is that
 nothing ships silently now.
-
-### S4 `revision validate` has no `--render`, so the eye gate stays per-paper
-
-`docxkit revision validate` takes `[batch] [--baseline PATH] [--no-word]`. DSI's
-local ladder also took `--render "anchor" ...`: accept-all, export to PDF
-through Word, and rasterise the page containing each anchor. That is the only
-check that catches what no gate can — a glyph that went the wrong way, an
-equation that renders wrong, a table that split across a page.
-
-**Why it matters more than an ergonomics item usually does.** It is the one
-capability that kept a private copy of the ladder alive. DSI re-pointed onto
-the shared commands on 2026-08-19 and every other local script retired cleanly;
-this one had to be extracted to `revision/scripts/render_pages.py` instead,
-which is a 78-line file that will now drift on its own. The next paper to want
-an eye gate will either copy it or go without.
-
-**It is nearly free to move.** The whole step is ~20 lines over `word.export_pdf`
-(which already takes `first`/`last`) plus PyMuPDF, and `revision validate`
-already computes the accepted parts it needs to render. Two notes from the
-extraction: render the ACCEPTED view, never the redline — a redline's
-pagination is not the deliverable's — and iterate pages by index rather than
-`enumerate(doc)`, because PyMuPDF's `Document` is iterable at runtime but its
-stubs do not say so.
-
-**Found by:** DSI re-point, 2026-08-19. Workaround is
-`revision/scripts/render_pages.py`; delete it when this lands.
 
 ### S1 `placement.place` moves a block OUT of its own section, silently
 
@@ -174,6 +149,35 @@ The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
 ## Fixed
+
+### S4 `revision validate` had no `--render`, so the eye gate stayed per-paper — `render_accepted`
+
+`docxkit revision validate ... --render "anchor" ["anchor" ...]` now does what
+DSI's ladder did: accept-all, export through Word, and rasterise the page each
+anchor falls on. Split in two, along the line the module boundary already
+draws — `pages.render_anchors(pdf, anchors)` is the PyMuPDF half and
+`revision.render_accepted(batch, anchors)` the Word half, so the page-finding
+is testable against a PDF built in the test and needs no Word at all.
+
+Both notes from the extraction are kept, and both are now comments in the code
+that say why: the ACCEPTED view is rendered, never the redline — a redline's
+pagination is not the deliverable's — and pages are walked by INDEX, because
+PyMuPDF's `Document` is iterable at run time and its stubs do not say so.
+
+Three decisions the item did not specify, each with a test:
+
+* an anchor no page carries maps to None rather than raising. The caller asked
+  to LOOK at several things and half a render is worth more than none;
+* a BLANK anchor is dropped rather than matched. It is a shell artifact, and
+  it would match the first page and render it for nothing — with nothing to
+  render, Word is not started at all;
+* the accepted copy and the PDF are scratch and go away; the PNGs are the
+  answer. A gate that leaves two files per run beside a paper's batch is one
+  somebody turns off.
+
+**The workaround this replaces** is DSI's `revision/scripts/render_pages.py`,
+78 lines that would have drifted on their own. It can be deleted — not done
+here, since this repository does not edit the papers.
 
 ### S3 `losses` called a RE-LABELLED link a lost one, and blocked `baseline` — `relabelled_links`
 

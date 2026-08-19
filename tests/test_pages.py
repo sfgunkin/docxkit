@@ -17,7 +17,13 @@ from typing import IO, Any
 
 import pytest
 
-from docxkit.pages import Sheet, problems, read_pdf, sheets
+from docxkit.pages import (
+    Sheet,
+    problems,
+    read_pdf,
+    render_anchors,
+    sheets,
+)
 
 pymupdf = pytest.importorskip("pymupdf",
                               reason="the render layer needs docxkit[pdf]")
@@ -330,3 +336,84 @@ def test_an_unnamed_render_goes_to_a_staging_file_that_is_REMOVED(
     assert staged != tmp_path / "render.pdf", "not beside the document"
     assert seen["existed"], "the render is read before it is swept up"
     assert not staged.exists() and not staged.parent.exists()
+
+# --- the eye gate: render the page an anchor falls on -------------------
+#
+# BACKLOG S4. The one check no gate in the ladder can make — a glyph that
+# went the wrong way, an equation that renders wrong, a table that split
+# — because all three are correct MARKUP and defects of the page. Moved
+# in from DSI's `revision/scripts/render_pages.py`, the last piece of a
+# private gate ladder still alive after that paper re-pointed onto the
+# shared commands.
+
+
+def _pdf(tmp_path, *pages_text: str):
+    """A real PDF, one page per string."""
+    doc = pymupdf.open()
+    for text in pages_text:
+        page = doc.new_page(width=A4[0], height=A4[1])
+        page.insert_text((72, 200), text, fontsize=11)
+    out = tmp_path / "render.pdf"
+    doc.save(str(out))
+    doc.close()
+    return out
+
+
+def test_an_anchor_is_rendered_from_the_page_it_falls_on(tmp_path):
+    """The page number is the point: a PNG of the wrong page is worse
+    than none, because it looks like an answer."""
+    pdf = _pdf(tmp_path, "the opening page", "Table 3 sits here",
+               "the closing page")
+
+    made = render_anchors(pdf, ["Table 3 sits here"], dpi=40)
+
+    (png,) = made.values()
+    assert png is not None and png.exists()
+    assert png.name.endswith("__p2.png"), png.name
+    assert png.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_an_anchor_on_NO_page_is_named_rather_than_raised(tmp_path):
+    """Half a render is worth more than none: the caller asked to LOOK
+    at several things, and the one that could not be found is named in
+    the answer instead of taking the others down with it."""
+    pdf = _pdf(tmp_path, "the opening page", "Table 3 sits here")
+
+    made = render_anchors(pdf, ["Table 3 sits here", "Table 9"], dpi=40)
+
+    assert made["Table 3 sits here"] is not None
+    assert made["Table 9"] is None
+    assert list(made) == ["Table 3 sits here", "Table 9"], "asked order"
+
+
+def test_the_FIRST_page_carrying_an_anchor_is_the_one_rendered(tmp_path):
+    """A running head repeats a phrase on every page. The first one is
+    where a reader goes looking, and rendering all of them is a folder
+    of PNGs nobody reads."""
+    pdf = _pdf(tmp_path, "prose", "Employment by age", "Employment by age")
+
+    (png,) = render_anchors(pdf, ["Employment by age"], dpi=40).values()
+
+    assert png is not None and png.name.endswith("__p2.png")
+
+
+def test_the_pngs_land_where_the_caller_asked(tmp_path):
+    """`out_dir` and `stem` together: a batch renders beside itself,
+    under its own name, so two batches in one folder do not overwrite
+    each other's pages."""
+    pdf = _pdf(tmp_path, "Table 3 sits here")
+    where = tmp_path / "pages"
+
+    (png,) = render_anchors(pdf, ["Table 3"], dpi=40, out_dir=where,
+                            stem="batch_r2").values()
+
+    assert png is not None
+    assert png.parent == where and png.name == "batch_r2__p1.png"
+
+
+def test_an_empty_anchor_asks_for_nothing(tmp_path):
+    """`--render` with a stray empty string is a shell artifact, not a
+    request to render every page."""
+    pdf = _pdf(tmp_path, "Table 3 sits here")
+
+    assert render_anchors(pdf, ["", " ".strip()], dpi=40) == {}

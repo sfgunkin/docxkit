@@ -602,6 +602,52 @@ def test_validate_passes_a_faithful_batch(monkeypatch, project, capsys):
     assert "== lint == clean" in out, "a clean batch says so"
 
 
+def test_validate_RENDERS_the_anchors_it_is_given(monkeypatch, project,
+                                                  capsys, tmp_path):
+    """BACKLOG S4: the eye gate, on the shared command. DSI kept a
+    private 78-line script for this after every other part of its
+    ladder retired onto `docxkit revision`, and the next paper to want
+    one would have copied it or gone without."""
+    made = {"Table 3": tmp_path / "batch__p7.png", "Table 9": None}
+    asked: dict[str, object] = {}
+
+    def fake_render(batch, anchors, **kw):
+        asked.update(batch=Path(batch), anchors=list(anchors))
+        return made
+
+    monkeypatch.setattr("docxkit.revision.render_accepted", fake_render)
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate",
+                      "--paper", str(project.root),
+                      "--no-word", "--render", "Table 3", "Table 9")
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert asked["anchors"] == ["Table 3", "Table 9"]
+    assert asked["batch"] == project.batch
+    assert "== render ==  2 anchor(s), accepted view" in out
+    assert "batch__p7.png" in out
+    assert "'Table 9': on no page" in out, out
+
+
+def test_validate_renders_NOTHING_unless_asked(monkeypatch, project, capsys):
+    """The step costs a Word session, a render and a PDF. It runs when
+    a person asks for it and not otherwise."""
+    def refuse(*a, **kw):                        # pragma: no cover
+        raise AssertionError("rendered without --render")
+
+    monkeypatch.setattr("docxkit.revision.render_accepted", refuse)
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    run_cli(monkeypatch, "revision", "validate", "--paper",
+            str(project.root), "--no-word")
+
+    assert "== render ==" not in capsys.readouterr().out
+
+
 def test_validate_fails_an_unreviewable_batch(monkeypatch, project,
                                               capsys):
     """Rejecting everything must restore the baseline, or the author's

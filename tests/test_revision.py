@@ -1979,3 +1979,81 @@ def test_an_exemption_that_names_NOTHING_does_not_pass_a_real_loss(
         revision.baseline(project, accept_loss=(token,))
 
     assert project.prev.read_bytes() == before
+
+# --- the eye gate over a BATCH (BACKLOG S4, 2026-08-19) -----------------
+
+
+def _pdf_of(text: str, path: Path) -> Path:
+    """A one-page PDF carrying `text` — what Word would have rendered."""
+    pymupdf = pytest.importorskip("pymupdf")
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 200), text, fontsize=11)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def test_render_accepted_renders_the_ACCEPTED_view(tmp_path, monkeypatch):
+    """Accepted, never the redline: the page a reader will see is the
+    accepted one, and a redline's pagination is not the deliverable's.
+    The fake stands in for Word and renders whatever it was handed, so
+    what reaches it is the assertion — the insertion's words, with no
+    deletion left in."""
+    batch = write(tmp_path / "batch.docx", make_parts(
+        para(run("Employment rises "), ins("sharply"), dele("a little"))))
+    seen: dict[str, str] = {}
+
+    def fake_export(path, out_pdf, **kw):
+        seen["text"] = "".join(
+            re.findall(r"<w:t[^>]*>([^<]*)</w:t>",
+                       package.read_parts(path)["word/document.xml"]
+                       .decode("utf-8")))
+        return _pdf_of(seen["text"], Path(out_pdf))
+
+    monkeypatch.setattr("docxkit.word.export_pdf", fake_export)
+
+    made = revision.render_accepted(batch, ["Employment rises sharply"],
+                                    dpi=40)
+
+    assert seen["text"] == "Employment rises sharply", seen
+    (png,) = made.values()
+    assert png is not None and png.exists()
+    assert png.parent == tmp_path, "beside the batch by default"
+    assert png.name.startswith("batch__p"), png.name
+
+
+def test_render_accepted_cleans_up_after_itself(tmp_path, monkeypatch):
+    """The accepted copy and the PDF are scratch; the PNGs are the
+    answer. A gate that leaves two files per run beside a paper's batch
+    is one somebody turns off."""
+    batch = write(tmp_path / "batch.docx", make_parts(
+        para(run("Employment rises "), ins("sharply"))))
+
+    def fake_export(path, out_pdf, **kw):
+        return _pdf_of("Employment rises sharply", Path(out_pdf))
+
+    monkeypatch.setattr("docxkit.word.export_pdf", fake_export)
+
+    revision.render_accepted(batch, ["Employment rises"], dpi=40)
+
+    left = sorted(p.name for p in tmp_path.iterdir())
+    assert [n for n in left if n.endswith(".pdf")] == []
+    assert [n for n in left if "accepted" in n] == []
+    assert any(n.endswith(".png") for n in left), left
+
+
+def test_render_accepted_asks_WORD_for_nothing_when_no_anchor_is_given(
+        tmp_path, monkeypatch):
+    """`--render` with nothing after it must not start Word: the whole
+    step costs a session, a render and a PDF, and the answer is
+    empty."""
+    batch = write(tmp_path / "batch.docx", make_parts(para(run("prose"))))
+
+    def refuse(*a, **kw):                       # pragma: no cover
+        raise AssertionError("Word was started for no anchors")
+
+    monkeypatch.setattr("docxkit.word.export_pdf", refuse)
+
+    assert revision.render_accepted(batch, []) == {}
+    assert revision.render_accepted(batch, ["", "  "]) == {}

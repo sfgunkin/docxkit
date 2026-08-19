@@ -27,17 +27,23 @@ that only the first step needs Word at all:
     sheets(docx)  -> Word renders, then read_pdf reads      (Word + PyMuPDF)
     read_pdf(pdf) -> one Sheet per physical sheet           (PyMuPDF)
     problems(...) -> the verdicts --check exits on          (pure)
+
+`render_anchors` is the other thing a render is for: not the table, but
+the PAGE — the one check that catches a glyph that went the wrong way,
+an equation that renders wrong, a table that split. It rasterises the
+page each anchor falls on and leaves a PNG to look at.
 """
 from __future__ import annotations
 
 import re
 import shutil
 import tempfile
+from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, NamedTuple
 
-__all__ = ["Sheet", "problems", "read_pdf", "sheets"]
+__all__ = ["Sheet", "problems", "read_pdf", "render_anchors", "sheets"]
 
 #: How much of a sheet is footer, and how much is header. A page number
 #: printed by Word sits inside the margin band; 12 % of the height is
@@ -82,6 +88,41 @@ def _import_pymupdf() -> Any:
             "'docxkit[pdf]' (or pymupdf). Everything else in docxkit "
             "works without it.") from exc
     return pymupdf
+
+
+def render_anchors(pdf: str | Path, anchors: Sequence[str], *,
+                   dpi: int = 150, out_dir: str | Path | None = None,
+                   stem: str | None = None) -> dict[str, Path | None]:
+    """Rasterise the first page carrying each anchor. ``{anchor: png}``.
+
+    An anchor no page carries maps to None rather than raising: the
+    caller asked to LOOK at something, and half a render is worth more
+    than none — the missing one is named in the answer. A BLANK anchor
+    is dropped instead: it is a shell artifact, and it would match the
+    first page and render it for nothing.
+
+    Pages are walked by INDEX rather than `enumerate(doc)`: PyMuPDF's
+    Document is iterable at run time and its stubs do not say so, and
+    this package is type-checked twice.
+    """
+    pymupdf = _import_pymupdf()
+    pdf = Path(pdf)
+    where = Path(out_dir) if out_dir is not None else pdf.parent
+    where.mkdir(parents=True, exist_ok=True)
+    name = stem or pdf.stem
+    out: dict[str, Path | None] = {}
+    with pymupdf.open(str(pdf)) as doc:
+        for anchor in dict.fromkeys(a for a in anchors if a.strip()):
+            out[anchor] = None
+            for i in range(doc.page_count):
+                page = doc[i]
+                if anchor not in page.get_text():
+                    continue
+                png = where / f"{name}__p{i + 1}.png"
+                page.get_pixmap(dpi=dpi).save(str(png))
+                out[anchor] = png
+                break
+    return out
 
 
 def _printed_number(page: Any, band: float) -> int | None:

@@ -1054,6 +1054,13 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
     if report.accept_paths_agree is not None:
         print("== XML accept == Word accept ?",
               "OK" if report.accept_paths_agree else "MISMATCH")
+    if args.render:
+        from .revision import render_accepted
+
+        print(f"\n== render ==  {len(args.render)} anchor(s), accepted view")
+        for anchor, png in render_accepted(target, args.render).items():
+            print(f"   {anchor!r} -> {png.name}" if png
+                  else f"   {anchor!r}: on no page — check the wording")
     if paper.gates:
         print("\nThe paper's own gates (run these too):")
         for gate in paper.gates:
@@ -1400,6 +1407,10 @@ def main() -> None:
                    help="default: revision/build/prev.docx")
     r.add_argument("--no-word", action="store_true",
                    help="offline gates only; skips the two that need Word")
+    r.add_argument("--render", metavar="ANCHOR", nargs="+", default=[],
+                   help="rasterise the ACCEPTED page each anchor falls on "
+                        "(needs Word and PyMuPDF): the eye gate no markup "
+                        "check can make")
 
     r = _rev("promote", cmd_revision_promote,
              "put a validated batch onto working.docx")
