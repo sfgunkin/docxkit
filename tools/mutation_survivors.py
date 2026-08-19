@@ -16,6 +16,14 @@ So this prints the survivors that are actually a question, grouped by
 the definition they landed in, and says which line each is on. What to
 do with them is in CONTRIBUTING: a real gap, an equivalent mutant, or
 cosmetic — and only the first is a test.
+
+Each one is shown as the line it BECAME, not as the name of the
+operator that made it. A name says `ReplaceComparisonOperator_NotEq_Gt`
+where the line holds two `!=`, and a reader who guesses the wrong one
+writes a test against a mutant that was killed months ago: that is what
+happened on `_compare_diff`'s `fmt_diff` guard (2026-08-20), and the
+duplicate test passed `kill_check` because a pre-existing test failed
+under the mutation it did not aim at.
 """
 from __future__ import annotations
 
@@ -206,6 +214,19 @@ def staleness(src_path: str) -> list[str]:
             ""]
 
 
+def became(diff: str | None) -> str:
+    """The line the mutation produced, out of cosmic-ray's stored diff.
+
+    The FIRST added line: a mutation that spans several (a loop body
+    replaced by `pass`) still names itself in its first one, and the
+    rest is context a reader of a survivor list does not need.
+    """
+    for line in (diff or "").splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            return line[1:].strip()
+    return ""
+
+
 def main() -> int:
     # This report QUOTES the module's source, and a module that lays out
     # glyph widths or parses Word's typography holds characters cp1252
@@ -229,7 +250,7 @@ def main() -> int:
 
     rows = sqlite3.connect(db_path).execute("""
         SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
-               r.test_outcome
+               r.test_outcome, r.diff
         FROM mutation_specs s JOIN work_results r ON s.job_id = r.job_id
         ORDER BY s.start_pos_row
     """).fetchall()
@@ -282,13 +303,15 @@ def main() -> int:
 
     defs = definitions(tree)
     by_line: dict[int, list[str]] = {}
-    for row, _col, op, _ in real:
-        by_line.setdefault(row, []).append(op.replace("core/", ""))
+    for row, _col, op, _, diff in real:
+        by_line.setdefault(row, []).append(
+            became(diff) or op.replace("core/", ""))
 
     for line, ops in sorted(by_line.items()):
         print(f"  L{line:<5} x{len(ops):<3} in {owner_of(defs, line)}")
         print(f"          {lines[line - 1].strip()[:82]}")
-        print(f"          {', '.join(sorted(set(ops)))[:82]}")
+        for text in sorted(set(ops)):
+            print(f"       -> {text[:82]}")
 
     per_def = Counter(owner_of(defs, line) for line in by_line
                       for _ in by_line[line])

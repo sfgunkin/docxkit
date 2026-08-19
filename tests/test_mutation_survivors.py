@@ -39,23 +39,29 @@ def widen(x: int) -> int:
 '''
 
 
-def _database(path: Path, *rows: tuple[int, str] | tuple[int, str, int],
-              ) -> Path:
+def _database(path: Path,
+              *rows: (tuple[int, str] | tuple[int, str, int]
+                      | tuple[int, str, int, str])) -> Path:
     """A cosmic-ray database holding just what the report reads.
 
-    A row is (line, outcome) or, where the COLUMN is what the report
-    classifies on, (line, outcome, column).
+    A row is (line, outcome); where the COLUMN is what the report
+    classifies on, (line, outcome, column); and where the report quotes
+    the mutation itself, (line, outcome, column, diff).
     """
     db = sqlite3.connect(path)
     db.execute("CREATE TABLE mutation_specs (job_id TEXT, "
                "start_pos_row INT, start_pos_col INT, operator_name TEXT)")
-    db.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT)")
+    db.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT, "
+               "diff TEXT)")
     for i, spec in enumerate(rows):
-        row, outcome, col = (*spec, 0)[:3] if len(spec) == 2 else spec
+        row, outcome = spec[0], spec[1]
+        col = spec[2] if len(spec) > 2 else 0
+        diff = spec[3] if len(spec) > 3 else ""
         job = f"job{i}"
         db.execute("INSERT INTO mutation_specs VALUES (?, ?, ?, ?)",
                    (job, row, col, "core/NumberReplacer"))
-        db.execute("INSERT INTO work_results VALUES (?, ?)", (job, outcome))
+        db.execute("INSERT INTO work_results VALUES (?, ?, ?)",
+                   (job, outcome, diff))
     db.commit()
     db.close()
     return path
@@ -337,3 +343,57 @@ def test_a_module_with_NO_harness_is_not_an_error(monkeypatch):
     monkeypatch.setattr(harness_map, "harness_for", refuse)
 
     assert _tool_module().staleness("src/docxkit/thing.py") == []
+
+
+# --- which mutant, not which operator ------------------------------------
+
+DIFF = """--- a/widths.py
++++ b/widths.py
+@@ -1,4 +1,4 @@
+ def narrow(x: int) -> int:
+-    return x - 1
++    return x - 2
+"""
+
+
+def test_the_report_quotes_the_LINE_THE_MUTATION_MADE(tmp_path):
+    """An operator name is ambiguous wherever a line holds two of the
+    same operator: `ReplaceComparisonOperator_NotEq_Gt` on
+    `if a != b or len(c) != len(d):` names one of two mutants and the
+    reader picks the wrong one half the time.
+
+    It happened on `_compare_diff`'s `fmt_diff` guard (2026-08-20): the
+    test written from that list aimed at the first `!=`, which a test
+    from an earlier round had already pinned, and `kill_check` reported
+    a kill because the mutation broke that OTHER test. A duplicate test
+    and a survivor still alive."""
+    src = tmp_path / "widths.py"
+    src.write_text(MODULE, encoding="utf-8")
+    db = _database(tmp_path / "run.sqlite", (2, "SURVIVED", 0, DIFF))
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 0, done.stderr
+    assert "-> return x - 2" in done.stdout, done.stdout
+    assert "NumberReplacer" not in done.stdout, done.stdout
+
+
+def test_a_mutant_with_NO_stored_diff_still_says_something(tmp_path):
+    """A database from a run that did not store one — an older
+    cosmic-ray, or a row the tool wrote itself — falls back to the
+    operator name. A survivor list that silently drops the line it
+    cannot quote is worse than one that names the operator."""
+    src = tmp_path / "widths.py"
+    src.write_text(MODULE, encoding="utf-8")
+    db = _database(tmp_path / "run.sqlite", (2, "SURVIVED"))
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 0, done.stderr
+    assert "-> NumberReplacer" in done.stdout, done.stdout
