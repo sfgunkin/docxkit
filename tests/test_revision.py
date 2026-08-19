@@ -1734,6 +1734,99 @@ def test_two_notes_gone_and_one_of_them_UNNAMEABLE_says_so(project):
         "1 more, unnamed — 3 footnotes before, 1 now"]
 
 
+# --- a RE-LABELLED link is not a lost one (BACKLOG S3, 2026-08-19) ------
+#
+# `_links` keys a link by the (anchor, label) pair, which is right for
+# finding a link Word ate and wrong for an author's own edit of the
+# visible text. DSI's R24.1 re-labelled four back-link fields on purpose
+# and `baseline` refused four legitimate edits; the paper passed
+# --accept-loss four times after checking each anchor by hand. A gate
+# that refuses a correct edit teaches the person to wave it through.
+
+
+def _linked(anchor: str, label: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}">' + run(label)
+            + "</w:hyperlink>")
+
+
+def test_editing_a_links_VISIBLE_TEXT_is_not_a_loss(tmp_path):
+    """The anchor is untouched and still linked, so nothing was lost —
+    and `baseline` must not refuse. What changed is reported in its own
+    right, because a label that moved is worth seeing."""
+    before = write(tmp_path / "prev.docx", make_parts(
+        para(run("As "), _linked("UnitedNations2026", "UN 2026"),
+             run(" reports."))))
+    after = write(tmp_path / "working.docx", make_parts(
+        para(run("As "),
+             _linked("UnitedNations2026", "United Nations 2026"),
+             run(" reports."))))
+
+    lost = revision.losses(package.read_parts(after),
+                           package.read_parts(before))
+    (change,) = revision.relabelled_links(package.read_parts(after),
+                                          package.read_parts(before))
+
+    assert lost == [], lost
+    assert change.anchor == "UnitedNations2026"
+    assert (change.was, change.now) == ("UN 2026", "United Nations 2026")
+    assert "->" in str(change)
+
+
+def test_a_link_whose_ANCHOR_stopped_being_linked_is_still_a_loss(tmp_path):
+    """The half the gate was built for, and the half that still blocks:
+    Word collapsed a paragraph to make an edit and the hyperlink went
+    with it. Nothing links that anchor any more, so there is no
+    re-labelling to explain it."""
+    before = write(tmp_path / "prev.docx", make_parts(
+        para(run("As "), _linked("UnitedNations2026", "UN 2026"),
+             run(" reports."))))
+    after = write(tmp_path / "working.docx", make_parts(
+        para(run("As UN 2026 reports."))))
+
+    lost = revision.losses(package.read_parts(after),
+                           package.read_parts(before))
+
+    assert [loss.kind for loss in lost] == ["link"]
+    assert "UnitedNations2026" in lost[0].what
+    assert revision.relabelled_links(package.read_parts(after),
+                                     package.read_parts(before)) == []
+
+
+def test_a_link_LOST_beside_one_re_labelled_is_still_counted(tmp_path):
+    """Paired off one for one. An anchor linked TWICE that comes back
+    once has lost a link, however the survivor is now labelled — read
+    the other way, a re-label would absorb the loss and the paragraph
+    Word ate would go unreported."""
+    before = write(tmp_path / "prev.docx", make_parts(
+        para(run("As "), _linked("Table5", "Table 5"), run(" and "),
+             _linked("Table5", "the table"), run(" show."))))
+    after = write(tmp_path / "working.docx", make_parts(
+        para(run("As "), _linked("Table5", "Table 5 (revised)"),
+             run(" shows."))))
+
+    lost = revision.losses(package.read_parts(after),
+                           package.read_parts(before))
+    relabelled = revision.relabelled_links(package.read_parts(after),
+                                           package.read_parts(before))
+
+    assert len(relabelled) == 1, relabelled
+    assert [loss.kind for loss in lost] == ["link"], lost
+
+
+def test_baseline_does_not_refuse_a_re_labelled_link(project):
+    """The refusal is the whole point of the split: this is the run DSI
+    had to talk past with --accept-loss."""
+    write(project.prev, make_parts(
+        para(run("As "), _linked("UnitedNations2026", "UN 2026"),
+             run(" reports."))))
+    write(project.working, make_parts(
+        para(run("As "),
+             _linked("UnitedNations2026", "United Nations 2026"),
+             run(" reports."))))
+
+    assert revision.baseline(project) == project.prev
+
+
 def test_notes_ADDED_while_others_are_reworded_are_not_losses(project):
     """`gone <= 0` — the walk runs only when there are FEWER notes than
     before. An author who rewords three notes and adds a fourth has lost

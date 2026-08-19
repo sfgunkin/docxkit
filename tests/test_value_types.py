@@ -53,6 +53,7 @@ VALUES = [
     "revision.Loss",
     "revision.Paper",
     "revision.PromoteReport",
+    "revision.Relabelled",
     "revision.State",
     "revisions.Revision",
     "styles.Resolved",

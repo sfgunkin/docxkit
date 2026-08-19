@@ -309,6 +309,33 @@ def _ate_a_link(project) -> None:
                                        "</w:r>")))
 
 
+def test_ingest_reports_a_RE_LABELLED_link_apart_from_the_losses(monkeypatch,
+                                                                 project,
+                                                                 capsys):
+    """Its own section, and not under LOST. The two say opposite things
+    to a reader: one is damage to put back before baselining, the other
+    is an edit the author meant — DSI's R24.1 re-labelled four back-link
+    fields and read four losses it then had to talk past."""
+    write(project.prev, make_parts(para(run("see "), _LINKED)))
+    write(project.working, make_parts(para(
+        run("see "),
+        '<w:hyperlink w:anchor="ref_Ritchie2023b">'
+        "<w:r><w:t>Ritchie and Roser (2023b)</w:t></w:r></w:hyperlink>")))
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "== LOST" not in out, out
+    lines = out.splitlines()
+    at = lines.index("== RE-LABELLED (1) ==")
+    assert "ref_Ritchie2023b" in lines[at + 1]
+    assert "Ritchie (2023b)" in lines[at + 1]
+    assert "Ritchie and Roser (2023b)" in lines[at + 1]
+    assert "does not refuse" in out
+
+
 def test_ingest_check_EXITS_on_a_hand_back_that_lost_something(monkeypatch,
                                                                project,
                                                                capsys):

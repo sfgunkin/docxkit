@@ -937,6 +937,15 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
               "layer above shows it. `revision baseline`\n   will refuse "
               "until these are restored or named with --accept-loss.")
 
+    if report.relabelled:
+        print(f"\n== RE-LABELLED ({len(report.relabelled)}) ==")
+        for change in report.relabelled:
+            print("   ", change)
+        print("   The anchors are intact and still linked, so nothing is "
+              "lost and\n   `revision baseline` does not refuse: an author "
+              "editing the visible\n   text of a citation is an ordinary "
+              "edit, not damage.")
+
     print("\n== state ==")
     _show_state("working", report.working_state)
     _show_state("prev", report.prev_state)

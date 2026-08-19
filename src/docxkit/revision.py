@@ -120,6 +120,7 @@ __all__ = [
     "Paper",
     "PromoteReport",
     "ProtocolError",
+    "Relabelled",
     "StaleBatch",
     "State",
     "ValidateReport",
@@ -136,6 +137,7 @@ __all__ = [
     "moved_footnotes",
     "promote",
     "prune_rescues",
+    "relabelled_links",
     "rescue_path",
     "rescues",
     "restored_bookmarks",
@@ -436,6 +438,10 @@ class IngestReport:
     #: carries. The one part of this report that is a FINDING rather
     #: than a description — see :func:`losses`.
     lost: list[Loss] = field(default_factory=list)
+    #: Links the author re-labelled — anchor intact, visible text
+    #: changed. A finding too, and deliberately NOT a loss: it does not
+    #: block `baseline`. See :func:`relabelled_links`.
+    relabelled: list[Relabelled] = field(default_factory=list)
 
     @property
     def style_edit(self) -> bool:
@@ -481,6 +487,7 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
     parts = package.changed_parts(prev_parts, working_parts)
     return IngestReport(
         lost=losses(working_parts, prev_parts),
+        relabelled=relabelled_links(working_parts, prev_parts),
         working=working,
         prev=prev,
         content=dict(_compare.compare(str(prev), str(working))),
@@ -856,6 +863,68 @@ class Loss:
         return f"{self.kind} {self.what[:70]!r}"
 
 
+@dataclass(frozen=True)
+class Relabelled:
+    """A link whose ANCHOR survived and whose visible text changed."""
+
+    anchor: str
+    was: str
+    now: str
+
+    def __str__(self) -> str:
+        return f"link {self.anchor}: {self.was[:40]!r} -> {self.now[:40]!r}"
+
+
+def _link_changes(working: dict[str, bytes], prev: dict[str, bytes],
+                  ) -> tuple[list[Loss], list[Relabelled]]:
+    """Links the hand-back LOST, and links it merely RE-LABELLED.
+
+    `_links` keys a link by the (anchor, label) pair, which is right for
+    finding a link Word ate — and reads an author's own edit of the
+    visible text as a loss. DSI's R24.1 re-labelled four back-link
+    fields on purpose («UN 2026» -> «United Nations 2026»); all four
+    bookmarks were present, all four fields still named them, and
+    `citations.audit_links` reported 152 links and 0 broken. `baseline`
+    refused anyway, and the paper passed `--accept-loss` four times
+    after checking each anchor by hand (2026-08-19).
+
+    A gate that refuses a legitimate edit teaches the person to wave it
+    through, and the next real loss goes the same way. So the pair is
+    split on the one fact that decides it: a link is LOST when its
+    anchor is no longer linked from anywhere in the hand-back, and
+    RE-LABELLED when it is. Only the first blocks.
+
+    Paired off one for one, so an anchor that was linked twice and comes
+    back once still reports the link that went: each gone label consumes
+    one gained label for the same anchor, and what is left over is a
+    loss.
+    """
+    was, now = _links(prev), _links(working)
+    gained = Counter(now - was)
+    still_linked = {anchor for anchor, _label in now}
+    lost: list[Loss] = []
+    relabelled: list[Relabelled] = []
+    for anchor, label in sorted((was - now).elements()):
+        fresh = sorted(lab for (a, lab), n in gained.items()
+                       if a == anchor and n > 0)
+        if anchor in still_linked and fresh:
+            gained[(anchor, fresh[0])] -= 1
+            relabelled.append(Relabelled(anchor, label, fresh[0]))
+        else:
+            lost.append(Loss("link", f"{anchor} ({label[:40]})"))
+    return lost, relabelled
+
+
+def relabelled_links(working: dict[str, bytes],
+                     prev: dict[str, bytes]) -> list[Relabelled]:
+    """Links whose visible text an author changed, anchors intact.
+
+    Reported, never refused — see :func:`_link_changes` for why the two
+    are told apart at all.
+    """
+    return _link_changes(working, prev)[1]
+
+
 def losses(working: dict[str, bytes],
            prev: dict[str, bytes]) -> list[Loss]:
     """What an author's Word session destroyed, and no text diff shows.
@@ -890,12 +959,12 @@ def losses(working: dict[str, bytes],
     their TEXT here rather than on their id.
 
     Returns one entry per lost thing. Empty is the ordinary case: an
-    author who edits prose loses none of this.
+    author who edits prose loses none of this — and, since 2026-08-19,
+    an author who RE-LABELS a link keeps it: see
+    :func:`relabelled_links`, which is reported rather than refused.
     """
     out: list[Loss] = []
-    was, now = _links(prev), _links(working)
-    out += [Loss("link", f"{anchor} ({label[:40]})")
-            for anchor, label in sorted((was - now).elements())]
+    out += _link_changes(working, prev)[0]
     out += _lost_notes(working, prev)
     out += [Loss("bookmark", name)
             for name in sorted(_bookmarks(prev) - _bookmarks(working))]
