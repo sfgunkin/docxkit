@@ -323,6 +323,24 @@ def test_a_body_only_count_is_not_reported_as_the_whole_batch(
     assert note, "a batch whose revisions are all in footnotes said nothing"
     assert "0 of them" in note[0]
 
+    # And once more at THREE HUNDRED, agreeing. CPython hands out one
+    # object per int up to 256, so `is not` in place of `!=` is
+    # invisible on every batch this suite has ever built and fires on
+    # every real one above the cache — LI7 shipped 315 revisions, and
+    # the note would have told its author that -15 of them were in
+    # footnotes it does not have.
+    said.clear()
+    big = _FakeDoc()
+    big.Revisions = type("R", (), {"Count": len([0] * 300)})()
+    fake.compare_documents = lambda word, o, r, **kw: big   # type: ignore
+    monkeypatch.setattr(tracked, "package_counts",
+                        lambda parts: {"insertions": 0, "deletions": 0,
+                                       "comments": 0,
+                                       "revisions": len([0] * 300)})
+    tracked.build(original, revised, out, verify_in_word=False, force=True,
+                  progress=said.append)
+    assert not any("in the body" in line for line in said), said
+
 
 def test_build_passes_the_compare_options_through(monkeypatch, sources):
     _, fake = _build(monkeypatch, _clean_document(), sources,
@@ -471,12 +489,17 @@ def test_the_build_carries_the_TITLE_across_the_compare(monkeypatch,
                    '1.1/"><dc:title>Loneliness Risk Index</dc:title>'
                    "</cp:coreProperties>")
 
-    report, _ = _build(monkeypatch, _clean_document(), sources)
+    said: list[str] = []
+    report, _ = _build(monkeypatch, _clean_document(), sources,
+                       progress=said.append)
 
     assert report.carried_properties == ["dc:title"]
     assert core_property(read_parts(out), "dc:title") == \
         "Loneliness Risk Index"
     assert "dc:title" in report.format()
+    # and SAID while it happens, not only in the report: this is the
+    # one carry whose loss no later gate can see
+    assert any("carried across: dc:title" in line for line in said), said
 
 
 # ------------------------------------------- the reject-all gate ---------
@@ -933,6 +956,27 @@ def test_resolve_math_picks_the_cheap_walk_when_nothing_is_commented(
     assert seen == ["equations", "revisions"]
 
 
+def test_the_math_pass_writes_its_notes_where_the_CALLER_can_read_them():
+    """`notes = [] if notes is None else notes` fills in a list when
+    there is none — and must leave the caller's alone when there is.
+    Inverted, every note lands in a fresh list that is dropped on
+    return: the build then reports a math pass with no reasons, which
+    is exactly the shape of the LI7 failure the notes exist to explain.
+    """
+    from docxkit import tracked as T
+
+    class _Hostile:
+        @property
+        def Count(self):
+            raise RuntimeError("Word is busy")
+
+    doc = type("D", (), {"OMaths": _Hostile()})()
+    notes: list[str] = []
+
+    assert T._resolve_math(doc, None, None, notes) == T.MathOutcome(0)
+    assert any("could not read doc.OMaths" in n for n in notes), notes
+
+
 def test_a_document_with_no_equations_resolves_nothing():
     from docxkit.tracked import _accept_math_via_equations
 
@@ -962,6 +1006,53 @@ def test_no_scaffold_is_seeded_for_an_unannotated_build():
     doc = _MathDoc()
     assert _seed_scaffold(doc, None, None) == 0
     assert doc.added == []
+
+
+class _SeedDoc:
+    """A document that records which revision got the comment."""
+
+    def __init__(self, revisions):
+        self.added: list[str] = []
+        self.Revisions = _Count(revisions)
+        outer = self
+
+        class _Comments:
+            Count = 0
+
+            def Add(self, rng, text):
+                outer.added.append(text)
+
+        self.Comments = _Comments()
+
+
+def test_a_batch_with_no_revisions_seeds_NOTHING_and_says_so():
+    """The count this returns is what `_resolve_math` reports as
+    resolved, and a scaffold that was not seeded must not read as one
+    that was: the XML pass clones the comment this promises, and the
+    build fails much later with ScaffoldMissing when the promise was
+    just a number."""
+    from docxkit.tracked import _seed_scaffold
+
+    doc = _SeedDoc([])
+
+    assert _seed_scaffold(doc, lambda ctx: "a note", None, []) == 0
+    assert doc.added == []
+
+
+def test_the_scaffold_is_seeded_on_the_FIRST_revision():
+    """`doc.Revisions(1)`, and the fixture holds three so that every
+    other index is a different revision — with one, Revisions(0) and
+    Revisions(-1) read back the same object through a Python list and
+    the number is invisible.
+
+    Which revision carries it is not cosmetic: the XML pass clones this
+    comment, so it must be one Word will still have when it runs."""
+    from docxkit.tracked import _seed_scaffold
+
+    doc = _SeedDoc([_Rev("first"), _Rev("second"), _Rev("third")])
+
+    assert _seed_scaffold(doc, lambda ctx: ctx.text, None, []) == 1
+    assert doc.added == ["first"], doc.added
 
 
 # ------------------------------------------------------------- verify ----
@@ -1009,6 +1100,25 @@ def test_verify_reports_agreement_between_word_and_the_package(
     assert got["package"] == {"insertions": 1, "deletions": 0,
                               "comments": 3, "revisions": 1}
     assert got["word"]["comments"] == 3
+    assert got["comments_match"] is True
+
+
+def test_verify_compares_the_COUNTS_not_the_objects(monkeypatch, tmp_path):
+    """`==`, not `is`. Word's count and the package's are computed in
+    two different places, and CPython only hands back one object per
+    int up to 256 — so below the cache the two spellings agree on
+    every count, and above it the identity test reads every agreement
+    as a Word repair. A build then refuses a deliverable that is fine,
+    and the paper with three hundred comments is exactly the one nobody
+    wants to rebuild."""
+    path = _redline(tmp_path / "r.docx", comments=300)
+    monkeypatch.setattr(tracked, "_word",
+                        _WordSaying(comments=len([0] * 300), revisions=1))
+
+    got = tracked.verify(path)
+
+    assert got["package"]["comments"] == 300
+    assert got["word"]["comments"] == 300
     assert got["comments_match"] is True
 
 
@@ -1800,6 +1910,28 @@ def test_an_untracked_finding_names_the_paragraph_WORD_shows():
                       + repr("What the batch has instead."))
 
 
+def test_an_unaccepted_finding_names_the_paragraph_WORD_shows():
+    """The accept side's own message, and the same arithmetic: thirteen
+    mutants sat on that `+ 1` — `index | 1`, `index ^ 1`, `index << 1`
+    and the rest — because nothing had ever read a paragraph number
+    out of an Unaccepted, only out of an Untracked.
+
+    Both sides are cut at 70 and the second line is padded to the width
+    of the first, so intended and accepted read as a column."""
+    long_accepted = "What accepting everything leaves there, " + "x" * 60
+    # index 3, not 2: `2 | 1` and `2 ^ 1` are both 3, so an even index
+    # is a paragraph number two of the spellings agree on
+    finding = tracked.Unaccepted("body", 3, "What the clean copy says.",
+                                 long_accepted)
+
+    first, second = str(finding).splitlines()
+
+    assert first.startswith("body ¶4: intended ")
+    assert len(long_accepted) > 70, "the fixture has to be cut to say so"
+    assert second == (" " * len("body ¶4") + "  accepted "
+                      + repr(long_accepted[:70]))
+
+
 # --- the move that duplicates a table (DSI, 2026-08-19) -----------------
 #
 # Word's Compare answers a moved block by writing the table TWICE and
@@ -2034,8 +2166,11 @@ def test_a_revision_that_cannot_be_PLACED_is_named_and_stepped_over():
                                  "must not be accepted")
 
     good = _Rev("of the equation", span=(120, 150))
+    # the revisions are walked BACKWARDS, so the unplaceable one is
+    # LAST in the list and FIRST in the walk — placed the other way
+    # round `continue` and `break` do the same thing here
     doc = type("D", (), {
-        "OMaths": _Count([_OMath(revisions=[_NoSpan(), good],
+        "OMaths": _Count([_OMath(revisions=[good, _NoSpan()],
                                  span=(100, 200))])})()
     notes: list[str] = []
 
@@ -2303,3 +2438,26 @@ def test_a_build_verifies_in_word_and_closes_the_compare_UNSAVED(
 
     assert checked, "the default reopens the result in Word"
     assert closes == [{"SaveChanges": 0}], closes
+
+
+# --- what is left in tracked.py, and why ---------------------------------
+#
+# Four survivors after this round, each argued rather than tested:
+#
+#   `if tag == "equal"` -> `is`. The tags come from difflib as its own
+#   string literals; both sides are identifier-like constants, so
+#   CPython hands out one object and the two spellings cannot disagree.
+#   A test would pin the interning, not the walk.
+#
+#   `if len(out) >= limit` -> `==`, and -> `is`. `out` grows one finding
+#   at a time and the check runs after each, so it meets the limit
+#   exactly and never passes it; `is` adds the small-int cache, and a
+#   caller asking for more than 256 findings has already given up on
+#   reading them.
+#
+#   `if report.body_revisions != report.revisions` -> `<`. Word's count
+#   walks the main story and the package's counts every text-bearing
+#   part, so the body count is a subset by construction: it can be
+#   lower, never higher. The identity spelling of the same comparison
+#   IS tested, above the small-int cache, because that one differs on
+#   any batch of 257 revisions or more.
