@@ -826,6 +826,50 @@ It was checked three ways before deleting it: structurally, by brute
 force over 400k NUL-bearing strings, and by asserting it under the
 whole suite.
 
+**The two worst modules, measured whole and worked to the same standard**
+(2026-08-19, after the crossrefs round):
+
+| module | now | before |
+|---|---|---|
+| `word.py` | **7.4 %** (39/527) | 12.5 % measured whole, and 30.6 % at its first measurement that morning |
+| `comments.py` | **6.4 %** (42/661) | 10.1 % measured whole, 13.6 % sampled |
+
+Both were reached the same way, and it is worth naming because it is
+not "write more tests":
+
+**A fake that cannot tell two states apart hides every mutant between
+them.** The ruler's fake put each measured line at x = 0, which makes
+`tail - head` and `tail + head` the same number; three characters of
+left margin killed the subtraction and every arithmetic spelling around
+it. The same fake answered `Information` for a SPANNING range, which
+Word does not — it answers for the range's active end — and once the
+fake refused one, thirteen mutants on the pair of `max(...)` calls died
+together. Word's own objects are the specification here: where the fake
+is more forgiving than Word, the tests are measuring nothing.
+
+**A DEFAULT that every test names has no witness.** `session(fast=True)`,
+`ruler(size_pt=10.0)`, `compare_documents(whitespace=True, formatting=
+True, author="Revision")`, `locate(unique=True)`, `add_at(normalize=
+True)` — every one of them was passed explicitly by the test that
+exercised it, so the value in the signature was free. A default of
+False on any of them is a different program for every caller who does
+not name it.
+
+**What Word is ASKED to do is a separate promise from what it is asked
+about.** `open_doc`'s tests recorded which file was opened; nothing
+recorded `AddToRecentFiles=False` (a batch opens a document per step)
+or `SaveChanges=0` — which as 1 is wdSaveChanges, and every close in
+the module then writes the file back.
+
+**A fixture of three cannot see what an id base is for.**
+`_PARA_ID_BASE >> cid` reads like an ordinary derivation at cid 4 and
+collapses to zero past cid 32; thirty-five comments in one call — an
+ordinary review round — is what makes it a collision. `base - cid` and
+`base | cid` stay equivalent and are argued as such: the bases end in
+twenty-four zero bits, and every property the module needs (unique,
+eight hex digits, the two families disjoint) survives them.
+
+
 `word.py` is the one worth reading twice. Its first figure was the
 package's worst by a factor of two, and 41 of its 110 survivors were
 constants — numbers Word reads, which no test can kill by exercising
