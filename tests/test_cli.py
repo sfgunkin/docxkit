@@ -1467,9 +1467,13 @@ def test_figures_marks_the_ones_WITHOUT_alt_text(monkeypatch, tmp_path,
                 "</wp:inline></w:drawing></w:r></w:p>")
 
     long_alt = "A described chart, " + "D" * 80
+    # the CAPTION is cut too, at 56 — it is the left-hand column of the
+    # report and a caption runs to a sentence
+    long_caption = "Figure 1. Employment and the minimum wage, " + "C" * 40
+    assert len(long_caption) > 57
     path = tmp_path / "mixed.docx"
     write_docx(path, make_parts(
-        para(run("Figure 1. Described")) + inline("rId4", "Chart 1", long_alt)
+        para(run(long_caption)) + inline("rId4", "Chart 1", long_alt)
         + para(run("Figure 2. Bare")) + inline("rId5", "Chart 2")))
 
     run_cli(monkeypatch, "figures", str(path))
@@ -1481,6 +1485,8 @@ def test_figures_marks_the_ones_WITHOUT_alt_text(monkeypatch, tmp_path,
     assert lines[1].startswith("  ! Figure 2"), "bare: flagged"
     assert repr(long_alt[:50]) in lines[0]
     assert long_alt[:51] not in lines[0]
+    assert long_caption[:56] in lines[0]
+    assert long_caption[:57] not in lines[0]
     assert "alt:" not in lines[1], "nothing to quote"
 
 
@@ -1795,3 +1801,21 @@ def test_a_MISSING_anchor_is_quoted_to_sixty_characters(monkeypatch, paper,
     assert code == 1
     assert f"NOT FOUND  {long_anchor[:60]!r}" in out
     assert long_anchor[:61] not in out
+
+
+# --- what is left in cli.py, and why ------------------------------------
+#
+# Three survivors argued rather than tested:
+#
+#   `if fixed == doc` in `cmd_smarten` -> `<=`. Smartening only ever
+#   raises a code point — a straight quote becomes a curly one, "--"
+#   becomes an en dash, "..." an ellipsis — so the fixed text is never
+#   lexicographically LESS than the original and the two spellings agree
+#   on every document.
+#
+#   `part.split("/")[-1]` in `_show_state` -> `[1]`. The parts it names
+#   are `word/document.xml`, `word/footnotes.xml`, `word/endnotes.xml`:
+#   two segments each, where the last and the second are the same one.
+#
+#   `return 1 if check_citations(...) > 0 else 0` -> `!= 0`. The count
+#   is a length and cannot be negative.
