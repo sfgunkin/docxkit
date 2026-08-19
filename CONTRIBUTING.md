@@ -677,6 +677,101 @@ sees the empty form too, the tag's own slot can no longer be occupied
 when that line runs. Repairing the defect turned its neighbours into
 equivalents.
 
+**The sixth sweep, 2026-08-19, carried on into the modules the fifth
+had not reached.** Four shapes came out of it that were not in this
+file, and each one is a fixture rule rather than a fact about a module.
+
+### A bound is invisible at a distance of one
+
+`i < len(xs)` and `i != len(xs)` agree on every index a short list is
+asked for **except the ones past its end**, and the first of those is
+`len(xs)` itself, where both are false. They part company one index
+later. So a padding test built from a pair that differs by ONE — the
+obvious fixture, and the one already in the file — cannot see the
+difference: the loop reaches the length, stops, and never asks the
+question that separates them.
+
+`formula_diff` pads four such reads (the equations and their typography,
+on both sides) and `Reporter.replaced` two more, and all six survived a
+suite with three padding tests in it, each one equation or one paragraph
+apart. One fixture three apart, read in both directions, killed all six.
+
+When the fixture is a length, **make the two sides differ by two or
+more**. The same applies to `range(max(len(a), len(b)))` walks generally:
+one extra element exercises the guard, two exercise the bound.
+
+### A constant whose value belongs to another program
+
+`word.py` had never been measured, and its largest class of survivors —
+41 of 110, all in `<module>` — was bare integers: `WD_FORMAT_DOCX = 16`,
+`WD_WITHIN_TABLE = 12`, and a nineteen-entry map from `WdRevisionType` to
+the names this package prints.
+
+No test can kill those by exercising behaviour, because the behaviour is
+Word's. A wrong number does not raise: Word does something else, quietly
+and plausibly. `wdExportAllDocument` (0) in the argument that decides
+whether From/To are read at all is how every page range became a full
+render, and the families are one digit apart in exactly the way that
+produces it — `wdFormatXMLDocument` is 12 where `wdFormatDocumentDefault`
+is 16, `wdWithInTable` is 12 where `wdPrintView` is 3.
+
+Pin them **by the name of the enum member**, in a table, with a
+completeness test holding the table to the module:
+
+```python
+WD_ENUM_MEMBERS = [
+    ("WD_FORMAT_DOCX", 16, "WdSaveFormat.wdFormatDocumentDefault"),
+    ...
+]
+
+def test_every_word_constant_is_pinned():
+    assert {n for n in vars(word) if n.startswith("WD_")} \
+        == {n for n, _, _ in WD_ENUM_MEMBERS}
+```
+
+That is not a test restating the source. The number is checked against
+the documentation it came from, and the completeness test is what makes
+the table a gate rather than a copy: a constant added without a line
+here is one nothing can see. Same treatment for the map — plus `sorted(
+_REVISION_KINDS) == list(range(1, 20))`, since two entries given the same
+number is how a dict literal breaks, and the later one wins silently.
+
+### An early return that saves work is observable only as cost
+
+`_Layout.find` refuses to ask Word about an empty range:
+
+```python
+if start >= self.end:
+    return None
+```
+
+Delete the guard and every answer is unchanged — Find over an empty
+range answers no. What changes is that a COM round trip is paid for it,
+on the anchor after every ordered run's last hit. The fake counts Find
+attempts (`doc.finds`), which is what makes the guard testable at all:
+
+```python
+assert doc.finds == 2, "an empty range was searched"
+```
+
+When a guard exists for speed rather than for correctness, **the count
+is the assertion**. A fake that records how often it was called is worth
+building for that reason alone. `==` in place of `>=` stays equivalent
+here and is argued in the test's docstring: `start` is either 0 or a
+hit's end offset, so it never exceeds `self.end`.
+
+### The script guard is not a gap
+
+`if __name__ == "__main__":` cannot be reached by a test run: the module
+is IMPORTED, `__name__` is its dotted name, the guard is false however
+the comparison is mutated, and the body never runs. Counted as real,
+every module with a `main()` carries two or three permanent survivors —
+three of `compare.py`'s seven.
+
+`mutation_survivors.py` classifies them with the PEP-563 annotations now,
+out of both numerator and denominator. `compare.py` fell from 11.5 % to
+6.9 % with no test written, which is the point: the number a reader
+takes at face value has to mean something.
 
 
 ---
