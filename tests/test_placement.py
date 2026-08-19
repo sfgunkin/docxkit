@@ -261,6 +261,83 @@ def test_only_and_skip_select_without_touching_the_rest():
     assert "p:Разделитель." in seq and seq.index("p:Таблица 1. Первая") > 1
 
 
+def test_skip_leaves_a_table_alone_and_only_selects_one():
+    """`set(only) & set(blocks)` and `wanted -= set(skip)`. The test
+    beside this one passes `only` and reads the ORDER, which cannot
+    tell a selection from a coincidence — both tables move to the same
+    mention paragraph, so table 1 lands next to table 2 either way.
+    What decides it is which placements the report holds."""
+    body = (P("В таблице 1 и таблице 2 всё есть.")
+            + P("Разделитель.")
+            + P("Таблица 1. Первая") + TBL("a")
+            + P("Таблица 2. Вторая") + TBL("b"))
+
+    _out, only_two = placement.place(parts(body), only=[2])
+    _out2, not_two = placement.place(parts(body), skip=[2])
+
+    assert [p.number for p in only_two.placements] == [2]
+    assert [p.number for p in not_two.placements] == [1]
+
+
+def test_a_mention_in_the_paragraph_that_ENDS_a_section_is_inside_it():
+    """`index <= end` — a paragraph's `pPr/sectPr` describes the section
+    that ends AT it, so that paragraph is the last one INSIDE it, not
+    the first of the next. Read as `<`, the mention that closes a
+    section is read as belonging to the following one and the move is
+    refused as crossing a boundary — with a message naming a boundary
+    the table is on the same side of."""
+    landscape = ('<w:pPr><w:sectPr><w:pgSz w:orient="landscape"/>'
+                 "</w:sectPr></w:pPr>")
+    out, rep = placement.place(parts(
+        P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Как показано в таблице 1, всё сходится.", landscape)
+        + P("Проза второй секции.")))
+
+    assert rep.problems == [], rep.problems
+    assert rep.placements[0].moved
+    assert order(out)[:2] == ["p:Как показано в таблице 1, вс",
+                              "p:Таблица 1. Заголовок"]
+
+
+def test_the_last_row_is_looked_for_AFTER_the_caption_not_before():
+    """`range(start, …)`. A table's last row is searched for from the
+    caption's sheet onward, because the same words can appear earlier —
+    a row's value quoted in the prose that introduces the table is the
+    ordinary case. Searched from the top, the table reads as ending
+    before it began, which comes back as `split` and buys the table a
+    page break it did not need."""
+    def render(_parts):
+        return ["См. таблицу 1. Значение 42 обсуждается ниже.",
+                "Таблица 1. Заголовок шапка 42"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1. Значение 42 обсуждается ниже.")
+              + P("Таблица 1. Заголовок") + TBL("шапка", "42")),
+        render=render)
+
+    pl = rep.placements[0]
+    assert (pl.caption_sheet, pl.last_sheet) == (2, 2), (
+        "the row is on the caption's sheet, not on the one that quotes it")
+    assert not pl.split and not pl.own_page
+
+
+def test_the_render_is_matched_through_its_WHITESPACE():
+    """`" ".join(needle.split())` on both sides. A renderer returns the
+    text of a page as it laid it out — one space where the markup had a
+    line break, a tab or two spaces — so a caption is found only if the
+    comparison ignores the difference. Unmatched, every table reads as
+    "not found" and the whole rendered half of the report goes blank."""
+    def render(_parts):
+        return ["См. таблицу 1.", "Таблица 1. Заголовок таблицы шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.")
+              + P("Таблица 1.  Заголовок\tтаблицы") + TBL("шапка")),
+        render=render)
+
+    assert rep.placements[0].caption_sheet == 2, rep.format()
+
+
 def test_a_caption_with_no_table_under_it_is_not_a_block():
     """«Таблица 1» opening a sentence in prose is not a caption to move."""
     out, rep = placement.place(parts(
@@ -441,8 +518,41 @@ def test_own_page_writes_the_row_properties_a_raw_block_has_none_of():
 
     rows = tbl_of(body).findall(NS + "tr")
     assert rows[0].find(NS + "trPr/" + NS + "tblHeader") is not None
+    assert rows[0][0].tag == NS + "trPr", (
+        "and CT_Row wants it FIRST: a w:trPr after the first cell is "
+        "unreadable content, which `find` cannot see")
     assert body.find(NS + "p/" + NS + "pPr/" + NS + "pageBreakBefore") \
         is not None
+
+
+def test_own_page_breaks_ONCE_and_lets_the_rows_split():
+    """Three decisions in four lines, and each is the opposite of what
+    `keep_together` wrote:
+
+    * the page break goes on the FIRST paragraph and stops there.
+      `continue` in place of the `break` puts one in front of every
+      paragraph in the block, so the note starts its own sheet too;
+    * `cantSplit` is CLEARED. An oversized table has to split, and the
+      goal changes from "do not split" to "split as late as possible";
+    * the header row's `w:trPr` is the row's FIRST child, which CT_Row
+      requires — inserted anywhere else it is unreadable content, and
+      the header that repeats is the whole point of the pass."""
+    body = body_of(parts(P("Таблица 1. Заголовок")
+                         + TBL("шапка", "строка")
+                         + P("Примечание. Что-то.")))
+    block = list(body)
+    placement.keep_together(block)          # what own_page has to undo
+
+    placement.own_page(block)
+
+    breaks = [el.find(NS + "pPr/" + NS + "pageBreakBefore") is not None
+              for el in body if el.tag == NS + "p"]
+    assert breaks == [True, False], "one break, on the caption"
+    rows = tbl_of(body).findall(NS + "tr")
+    assert not any(r.find(NS + "trPr/" + NS + "cantSplit") is not None
+                   for r in rows), "an oversized table must be free to split"
+    assert rows[0][0].tag == NS + "trPr", "trPr is CT_Row's first child"
+    assert rows[0].find(NS + "trPr/" + NS + "tblHeader") is not None
 
 
 def test_own_page_on_a_table_with_no_rows_is_not_an_error():
