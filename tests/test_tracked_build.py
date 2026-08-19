@@ -33,7 +33,7 @@ from conftest import (
 
 from docxkit import tracked
 from docxkit.errors import PackageError
-from docxkit.tracked import untracked
+from docxkit.tracked import unaccepted, untracked
 
 FLAT_TEMPLATE = """<?xml version="1.0" standalone="yes"?>
 <?mso-application progid="Word.Document"?>
@@ -1385,13 +1385,42 @@ def test_an_unaccepted_paragraph_is_quoted_at_seventy_characters():
     parts = _parts(para(run("Employment rises "),
                         ins("sharply, and not what was asked for")))
 
-    from docxkit.tracked import unaccepted
-
     (missed,) = unaccepted(parts, intended)
 
     assert missed.intended == long_line
     assert repr(long_line[:70]) in str(missed)
     assert repr(long_line[:71]) not in str(missed)
+
+
+def test_unaccepted_stops_at_EIGHT_findings_by_default():
+    """`limit: int = 8`. The refusal prints every finding it is given,
+    and a batch that went wrong at the top goes wrong all the way down
+    — a document whose accept reproduces nothing would print a page per
+    paragraph. Eight is what a person reads before going to look at the
+    file, and the reject side has stopped there since it was written."""
+    intended = _parts(*[para(run(f"Intended {i}.")) for i in range(12)])
+    parts = _parts(*[para(run(f"Accepted {i}.")) for i in range(12)])
+
+    assert len(unaccepted(parts, intended)) == 8
+    assert len(unaccepted(parts, intended, limit=3)) == 3
+
+
+def test_unaccepted_compares_the_SPACING_too_unless_told_not_to():
+    """`fold_space: bool = False`. The default is the exact comparison,
+    because a build that tracks whitespace must reproduce it — only a
+    `whitespace=False` build legitimately accepts to the original's
+    spacing, and `build` passes the flag for exactly that case.
+
+    Defaulted the other way, respacing inside an insertion — which is
+    Word rewriting content, the thing this gate exists to catch — would
+    pass every build."""
+    intended = _parts(para(run("Employment rises sharply here.")))
+    parts = _parts(para(run("Employment  rises sharply here.")))
+
+    (missed,) = unaccepted(parts, intended)
+    assert missed.accepted == "Employment  rises sharply here."
+
+    assert unaccepted(parts, intended, fold_space=True) == []
 
 
 def test_a_paragraph_the_batch_LOST_reports_an_empty_batch():
@@ -1731,19 +1760,25 @@ def test_a_phase_is_timed_from_the_one_BEFORE_it(monkeypatch):
     """`now - self._last` is the phase; `now - self._t0` is the build.
     Mutated to `+` the phases read as clock readings, and every one of
     them looks like the slowest step there has ever been."""
-    # every reading after the marks is 104.0, because `seconds` is a
-    # property and the assertions below ask for it more than once
-    ticks = itertools.chain([100.0, 101.0, 103.0], itertools.repeat(104.0))
+    # every reading after the marks is 10.0, because `seconds` is a
+    # property and the assertions below ask for it more than once.
+    #
+    # The numbers are chosen so each reading is more than TWICE the one
+    # before: `a % b` is `a - b` for every b <= a < 2b, so a clock that
+    # ticks 100, 101, 103 cannot tell the subtraction from a modulo —
+    # which is what the first version of this test did, and four
+    # mutants lived behind it.
+    ticks = itertools.chain([1.0, 3.0, 8.0], itertools.repeat(10.0))
     monkeypatch.setattr(tracked, "time", type("T", (), {
         "perf_counter": staticmethod(lambda: next(ticks))}))
 
-    report = tracked.BuildReport()       # 100.0
-    report.mark("compare")               # 101.0
-    report.mark("comments")              # 103.0
+    report = tracked.BuildReport()       # 1.0
+    report.mark("compare")               # 3.0
+    report.mark("comments")              # 8.0
 
-    assert report.phases == [("compare", 1.0), ("comments", 2.0)]
-    assert report.seconds == 4.0         # 104.0, from the start
-    assert "[   1.0s] compare" in report.format()
+    assert report.phases == [("compare", 2.0), ("comments", 5.0)]
+    assert report.seconds == 9.0         # 10.0, from the start
+    assert "[   2.0s] compare" in report.format()
 
 
 def test_an_untracked_finding_names_the_paragraph_WORD_shows():
