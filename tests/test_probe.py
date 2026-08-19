@@ -271,6 +271,39 @@ def test_the_orientation_is_read_from_a_section_break_EIGHT_blocks_out(
     assert outside.exhibits[0][2] == "", "beyond the window, and not guessed"
 
 
+def test_the_FIRST_section_break_after_a_caption_gives_the_orientation(
+        tmp_path):
+    """`break`, not `continue`. The break that closes the exhibit's own
+    section is the first one after it; a second inside the window
+    belongs to whatever comes next. Under `continue` the last one wins,
+    so a landscape table followed by the return to portrait is reported
+    as portrait — the report a batch reads to decide whether the table
+    needs re-fitting says nothing needs doing."""
+    landscape = ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" '
+                 'w:orient="landscape"/></w:sectPr></w:pPr></w:p>')
+    portrait = ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240"/>'
+                "</w:sectPr></w:pPr></w:p>")
+
+    rep = probe(make_docx(tmp_path, _caption_para() + _table()
+                          + landscape + _filler(1) + portrait))
+
+    assert rep.exhibits == [("Table 1", "table, 2 rows", "landscape")]
+
+
+def test_the_orientation_window_still_reaches_from_block_EIGHT(tmp_path):
+    """`blocks[i:i + 8]`, with the caption deep in the document. Every
+    fixture until now put it in the first eight blocks, where `i + 8`
+    and `i | 8` are the same number — a paper's first exhibit is rarely
+    that early, and at block 8 the two part company: `i | 8` is 8, the
+    window closes on itself, and every exhibit past the eighth block
+    reports no orientation at all."""
+    rep = probe(make_docx(tmp_path, _filler(8) + _caption_para() + _table()
+                          + '<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" '
+                            'w:orient="landscape"/></w:sectPr></w:pPr></w:p>'))
+
+    assert rep.exhibits == [("Table 1", "table, 2 rows", "landscape")]
+
+
 def test_a_bookmark_INSIDE_a_paragraph_is_not_body_level(tmp_path):
     """`closed > before`: a body-level bookmark sits BETWEEN paragraphs
     and a block move has to carry it; one inside a paragraph travels
