@@ -878,6 +878,40 @@ def test_every_mode_reaches_the_report(anchor, note, legacy):
     assert note in rep.notes.get("Table1", ""), rep.format()
     assert rep.linked == ["Table1"]
 
+def test_a_legacy_bookmark_on_ANOTHER_caption_is_not_this_one_s_to_take():
+    """How far back `_caption_bookmarks` reaches. The scope opens just
+    after the previous paragraph's `</w:p>`, because a zero-length
+    bookmark often sits BETWEEN paragraphs rather than inside the
+    caption — and not one character further, because anything earlier
+    belongs to another exhibit.
+
+    The distinction is the difference between the two modes the linker
+    reports. A bookmark in this caption's own gap is the same
+    destination under an older name, so the link is retargeted; one on
+    a DIFFERENT caption is where the author deliberately sent a reader,
+    and repointing it at this exhibit breaks a cross-reference that was
+    right. AFI's "Figure 9.a" links to Figure 7's caption on purpose.
+
+    Every fixture for these modes puts the legacy bookmark in the gap
+    that belongs to the caption being linked, so a scope that reaches
+    back over the whole document reads the same."""
+    legacy = ('<w:bookmarkStart w:id="77" w:name="fig4_caption"/>'
+              '<w:bookmarkEnd w:id="77"/>')
+    xml = doc(
+        para(run("As "),
+             '<w:hyperlink w:anchor="fig4_caption">' + run("Table 2")
+             + "</w:hyperlink>",
+             run(" shows, the gap is wide.")),
+        legacy + para(run("Table 1. Employment by age")),
+        para(run("Table 2. Employment by sex")),
+    )
+
+    _out, report = crossrefs.link(xml)
+
+    assert "kept the author's own anchor" in report.notes.get("Table2", ""), \
+        report.format()
+    assert "retargeted" not in report.format()
+
 
 def test_a_citation_link_BEFORE_the_mention_is_stepped_over():
     """`continue`, not `break`. The walk over a paragraph's existing
@@ -1587,14 +1621,17 @@ def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
 # survivor list that does not say which are permanent gets re-derived
 # from scratch every round.
 #
-# * `_caption_bookmarks`, five of nine. `gap_from` opens the scope just
-#   after the previous paragraph's `</w:p>`, and every surviving
-#   spelling — `-`, `|`, the `!= 0` and `else 1` variants, and the
-#   rfind's own start — moves that offset by at most a handful of
-#   characters. A `<w:bookmarkStart … w:name="…"/>` element is fifty,
-#   and the regex needs all of it, so a window that short can neither
-#   gain a bookmark nor lose one. (`*` is the one that dies: it
-#   multiplies the offset past the caption and empties the scope.)
+# * `_caption_bookmarks`, six of ten. `gap_from` opens the scope just
+#   after the previous paragraph's `</w:p>`, and the spellings that
+#   survive — `-`, `|`, `^`, the `!= 0` and `!= -2` and `else 1`
+#   variants, and the rfind's own start — all move that offset by at
+#   most the six characters of the tag itself. A
+#   `<w:bookmarkStart … w:name="…"/>` element is fifty, and the regex
+#   needs all of it, so a window that short can neither gain a bookmark
+#   nor lose one. The four that die are the ones that move the offset
+#   FAR: `*`, `%`, `>>` and `&` empty the scope, and `//` opens it near
+#   the top of the document, where the test above catches it taking
+#   another caption's legacy bookmark for its own.
 # * the `rfind("<w:r>", 0, …)` start in `_wrap_label` and
 #   `_link_mention`. A paragraph string opens with `<w:p`, so no run
 #   begins at index 0 and searching from 1 finds the same run.
