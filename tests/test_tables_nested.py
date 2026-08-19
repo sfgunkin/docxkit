@@ -307,3 +307,27 @@ def test_a_row_WIDER_than_the_grid_stops_at_the_last_column():
 
     assert 'w:w="0"' not in out, "the overflow cell was measured at nothing"
     assert "overflow" in out
+
+
+def test_a_fragment_with_NEITHER_grid_nor_rows_takes_its_properties_first():
+    """`body.index(">") + 1` — the last fallback in `_set_tbl_pr`, and
+    five mutants lived on it (`& 1`, `^ 1`, `>> 1`...). A `w:tbl` with
+    no grid and no rows has nothing to insert BEFORE, so the properties
+    go straight after the opening tag; `len(body)` was there once, and
+    it appended them after the last row, which is not a table.
+
+    The arithmetic is invisible on a fragment whose opening tag is
+    `<w:tbl>`: the index of ">" is 5, and 5 & 1 is 1, so a plain tag
+    lands the element somewhere that still parses. This one carries an
+    attribute, which moves ">" far enough that every spelling is a
+    different place."""
+    body = '<w:tbl w14:paraId="0000ABCD" w14:textId="11112222"></w:tbl>'
+
+    out = _set_tbl_pr(body, _TBLLAYOUT_RE, '<w:tblLayout w:type="fixed"/>',
+                      _AFTER_TBLLAYOUT)
+
+    assert out == (body[:body.index(">") + 1]
+                   + '<w:tblPr><w:tblLayout w:type="fixed"/></w:tblPr>'
+                   + "</w:tbl>")
+    assert out.startswith('<w:tbl w14:paraId="0000ABCD" '
+                          'w14:textId="11112222"><w:tblPr>')

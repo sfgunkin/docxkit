@@ -421,3 +421,27 @@ def test_house_REPAIRS_a_table_the_previous_release_misordered():
 
     again, second = house(out, read_all(out)[0])
     assert again == out and not second.width, "and it settles"
+
+
+def test_the_report_SAYS_what_house_set_and_what_it_did_not():
+    """`HouseReport.format`, which nothing had read: five mutants lived
+    in the two optional clauses, and each of them is a line that claims
+    work the call did not do — or hides work it did.
+
+    The clauses are optional because `house` is called both ways: a
+    table already at full width, or one with no caption to keep, and a
+    report that says "full width" either way tells a person nothing
+    about the call they just made."""
+    xml = _doc()
+
+    _out, both = house(xml, read_all(xml)[0], caption="Table A4:")
+    _out, plain = house(xml, read_all(xml)[0])
+    plain.width = False
+
+    assert both.format() == (
+        f"house style: {both.runs} run(s) and {both.paragraphs} cell "
+        f"paragraph(s) set, {both.rows} row(s) cantSplit, full width, "
+        f"caption kept with the table")
+    assert plain.format().endswith("row(s) cantSplit")
+    assert "full width" not in plain.format()
+    assert "caption" not in plain.format()

@@ -174,3 +174,12 @@ def test_it_is_idempotent():
     once, first = drop_blank_rows(CATALOGUE, read_all(CATALOGUE)[0])
     twice, second = drop_blank_rows(once, read_all(once)[0])
     assert twice == once and first == [3, 5] and second == []
+
+
+# --- what is left in drop_blank_rows, and why ---------------------------
+#
+# `range(b + 1, len(trs))` -> `b * 1`, `b // 1`, `b ** 1`. The walk looks
+# for the first row AFTER a blank one that is not itself blank, and `b`
+# is by definition in `gone` — so starting at `b` rather than `b + 1`
+# skips the same row on the first step and finds the same successor.
+# Argued rather than tested: no fixture can separate them.
