@@ -1067,6 +1067,8 @@ days are gone:
 | `revisions.py` | 8.5 % (2026-08-17) | 9.2 % -> **6.7 %** (28/417) | what a paragraph MERGE carries |
 | `pages.py` | 19.1 % -> 8.1 % | **6.7 %** (12/180) | the render's own resolution, the two bands |
 | `errors.py` | 100 % | **0.0 %** (0/10) | the harness, not the tests — see below |
+| `refstyle.py` | 18.1 % | **5.8 %** (23/395) | an ISBN keeps its hyphens |
+| `edit.py` | 11.1 % | **8.5 %** (36/423) | what a refusal quotes, and where the italic goes |
 
 `_table_layout`'s second figure was read as 13.4 % until the survivor
 tool was pointed at the source the RUN was planned against rather than
@@ -1160,6 +1162,41 @@ Three things the round is worth remembering for:
   case where that might come apart is a REDLINE whose equation sits in a
   `w:del`; measured, the sentinel survives it (Word writes `w:delText`
   for deleted prose, not `w:t`) and the pieces still line up.
+
+
+**The 20th's rounds, and the one shape they share.** `revisions`,
+`pages`, `refstyle` and `edit` all came down on the same kind of
+survivor: a POSITION or a QUOTE, never a decision. Where the italic tag
+goes inside a run's properties; how many characters of an anchor a
+refusal prints; which band of the sheet a page number has to sit in;
+where the children of an unwrapped `w:ins` land. None of them changes
+what the code decides — each changes what a person is handed, or what
+Word is handed, and the tests that covered those functions all asked
+whether the decision was right.
+
+Three fixtures had to be sharpened rather than written, and each one is
+the same lesson at a different size:
+
+* `_unwrap` steps a cursor by one per child, and the wrapper shifts
+  right as each is inserted — so a step of TWO lands exactly where the
+  wrapper now stands and the second child still ends up right. Three
+  children is the smallest fixture that overshoots.
+* `<w:i/>` written past the end of a run's properties appends to the
+  same place the correct offset writes to. A property that sorts AFTER
+  it — `w:sz` — is what makes the difference visible.
+* the walk that finds a field-form label's end asks about `runs[i + 1]`,
+  and with a `fldChar end` after the label there is always a run to ask
+  about. The bound is only reachable from a STYLED run that ends the
+  paragraph, which is what Word leaves behind when an author deletes a
+  link's address.
+
+**And a round that should not have happened.** `body.py`'s survivor list
+named eleven mutants on the line that sizes a table's grid; a previous
+round had already killed them, and the four tests written from that list
+duplicated four already in the file. `stale_figures` had been saying
+"stale: tests/test_body.py" the whole time. `mutation_survivors` prints
+that banner itself now — the tool that proposes the work is where the
+warning belongs.
 
 
 `word.py` is the one worth reading twice. Its first figure was the
