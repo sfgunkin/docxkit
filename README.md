@@ -230,6 +230,24 @@ they do.
   an equation number, a comma — has Word demote it back on the next save,
   which is also measured, so `display` refuses one rather than writing
   markup Word will undo.
+- **A note is not always a footnote.** Word keeps two note stores, and
+  which one a manuscript uses is the journal's house style rather than
+  anything about the paper. Half this package read `word/footnotes.xml`
+  and nothing else — including the accept/reject gates, which SIMULATE
+  all three text parts and compared two of them, so a defect Word's
+  Compare left in an endnote passed a build silently. `tracked`,
+  `refstyle`, `export`, `wordcount`, `probe` and `compare` read both
+  now; the citation apparatus does not yet (BACKLOG, S2), and
+  `tests/test_note_parts.py` is what keeps that list from growing.
+- **A cell can contain a table.** `w:tc` is not a leaf, so a `re.sub`
+  over one finds the INNER cells' properties: `fit_columns` wrote an
+  outer column's width — 1178 dxa — into a nested table's 300 dxa cell
+  whenever the outer cell stated no width of its own, and put the
+  properties element inside the nested table when it had no `w:tcPr`
+  either. The same shape one level up cost the outer table its
+  `tblLayout` and cell margins. Anything that asks a table or a cell
+  about ITS OWN properties goes through `_own_grid` / `_own_tblpr` /
+  `_own_tcpr`, which stop at the first row or the first child.
 - **A rebuild must not overwrite a deliverable someone reviewed in Word.**
   `tracked.build` stamps what it produced and refuses if the file changed.
 - **A figure caption sits ABOVE its image**, one figure can be several
