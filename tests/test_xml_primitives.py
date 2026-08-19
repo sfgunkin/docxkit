@@ -739,6 +739,29 @@ def test_something_that_is_not_a_paragraph_is_left_alone():
     assert _keep("<w:r><w:t>x</w:t></w:r>") == "<w:r><w:t>x</w:t></w:r>"
 
 
+def test_removing_from_an_EMPTY_pPr_changes_nothing_at_all():
+    """The empty-properties branch is not only about expanding: asked to
+    REMOVE a property from `<w:pPr/>`, it hands the paragraph back
+    exactly as it was. The general path would write `<w:pPr></w:pPr>` —
+    the same document, and a line in the next comparison for a paragraph
+    nobody edited."""
+    para = "<w:p><w:pPr/><w:r/></w:p>"
+
+    assert set_para_property(para, "keepNext", "") == para
+
+
+def test_a_paragraph_carrying_the_property_TWICE_is_left_with_two():
+    """Two `w:keepNext` in one `w:pPr` is invalid and does happen — a
+    writer that could not see the first one wrote a second. The removal
+    walk takes the first and stops (`break`), so the answer here is the
+    document unchanged rather than a half-repair on offsets that moved
+    under it. Pinned as the CURRENT behaviour: repairing a duplicate is
+    `lint`'s finding, not this writer's."""
+    para = "<w:p><w:pPr><w:keepNext/><w:keepNext/></w:pPr></w:p>"
+
+    assert _keep(para) == para
+
+
 # --- the empty w:t Word writes (2026-08-19) ----------------------------
 #
 # S1: `set_run_text` matched only the paired `<w:t>…</w:t>`, and a run
