@@ -1192,3 +1192,79 @@ def test_the_two_note_parts_are_numbered_SEPARATELY():
 
     where = {i.where for i in report.issues if i.code == "year-comma"}
     assert where == {"fn ¶1", "en ¶1"}, where
+
+
+# --- the quotes an issue carries, and the guards around the scan --------
+
+
+def test_an_initials_issue_quotes_SEVENTY_characters_of_the_authors():
+    """`snippet=authors[:70]`. The snippet is how a person finds the
+    entry the issue is about, and an author list runs to a line and a
+    half in a paper with six co-authors; uncut, one issue fills the
+    report with the entry it is already pointing at."""
+    long_authors = ("Acemoglu, Daron, and Pascual Restrepo, and Jonathan "
+                    "Gruber, and Amy Finkelstein")
+    assert len(long_authors) > 71
+    body = (para(run("References"))
+            + para(run(f"{long_authors}. (2020). A paper. "), irun("JPE"),
+                   run(", 1(1): 1-10.")))
+
+    report = audit(make_parts(body))
+
+    snippets = [i.snippet for i in report.issues if i.code == "initials"]
+    assert snippets, [(i.code, i.snippet) for i in report.issues]
+    assert all(len(s) <= 70 for s in snippets), snippets
+
+
+def test_an_ISBN_keeps_its_hyphens():
+    """`low.count("-") >= 3` — a token with three hyphens or more is a
+    number, not a range. An ISBN has four and a DOI suffix can have
+    several, and "ranges take an en-dash" on one of those sends a person
+    to change a hyphen that belongs to an identifier.
+
+    `== 3` is the mutant that hides: the fixture everyone writes has
+    exactly three."""
+    body = (para(run("References"))
+            + para(run("Deaton, A. (2013). The Great Escape. "
+                       "ISBN 978-0-691-15354-4. Princeton.")))
+
+    report = audit(make_parts(body))
+
+    assert not [i for i in report.issues if i.code == "en-dash"], \
+        [(i.code, i.message) for i in report.issues]
+
+
+def test_a_bare_citation_paragraph_quotes_the_WHOLE_of_itself():
+    """`start=0, end=len(text)` on the synthetic Citation a bare
+    reference line produces — a paragraph that is nothing but "Author
+    Year", which is how a stripped citation arrives when the author
+    retyped it without brackets.
+
+    The pair is what the report quotes back (`text[c.start:c.end]`), so
+    an offset of one loses the first character of the name — the part a
+    reader scans for."""
+    body = (para(run("Maestas et al. 2023"))
+            + para(run("References"))
+            + para(run("Angrist, J., and J. Pischke. (2009). "),
+                   irun("Mostly Harmless"), run(". Princeton.")))
+
+    report = audit(make_parts(body))
+
+    missing = [i for i in report.issues if i.code == "missing-ref"]
+    assert missing, [(i.code, i.message) for i in report.issues]
+    assert missing[0].snippet == "Maestas et al. 2023"
+
+
+# --- what is left in refstyle.py, and why -------------------------------
+#
+# `narrative=False` on the synthetic Citation a bare reference line
+# produces. Nothing in `src/` reads `.narrative` — it is part of what
+# `find_citations` reports, and the one consumer is a test — so the flag
+# on a citation this module builds for itself cannot be observed.
+#
+# `max((r.index for r in entries), default=-1)` -> `0` and `-2`. The
+# default stands for "there are no entries", and it is used only in
+# `head_idx <= i <= last_entry`. With no entries there is nothing after
+# the heading to skip, and any default at or below the heading's own
+# index skips nothing — the three spellings differ only in how far below
+# zero they sit.
