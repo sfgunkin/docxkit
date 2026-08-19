@@ -431,6 +431,107 @@ def test_the_report_says_when_nothing_was_rendered():
     assert rep.placements[0].drift is None
 
 
+def test_a_caption_pattern_only_matches_at_the_START_of_a_paragraph():
+    """`^` in CAPTION. «…приведены в таблице 1. Далее…» is a sentence,
+    not a caption, and prose that says it mid-paragraph is everywhere in
+    a paper that discusses tables. Unanchored, that paragraph becomes a
+    block — the prose around it travels with the next table, and the
+    real caption below is never seen because the number is taken."""
+    out, rep = placement.place(parts(
+        P("Результаты приведены в Таблица 1. Далее следует разбор.")
+        + TBL("шапка")
+        + P("Таблица 1. Настоящая подпись") + TBL("данные")))
+
+    assert [p.caption for p in rep.placements] == [
+        "Таблица 1. Настоящая подпись"], rep.placements
+    assert order(out)[0].startswith("p:Результаты приведены")
+
+
+def test_a_caption_in_CAPITALS_is_still_a_caption():
+    """IGNORECASE, and the manuscripts need it: «ТАБЛИЦА 1.» is how a
+    Russian paper writes a caption in a small-caps style, and "TABLE 1."
+    is how an English one does. Case-sensitive, those papers get no
+    placement at all and a report that says nothing is wrong."""
+    out, rep = placement.place(parts(
+        P("Как показано в ТАБЛИЦЕ 1, всё сходится.")
+        + P("Разделитель.")
+        + P("ТАБЛИЦА 1. Заголовок") + TBL("шапка")))
+
+    assert rep.placements[0].moved
+    assert order(out)[1] == "p:ТАБЛИЦА 1. Заголовок"
+
+
+def test_a_property_lands_BEFORE_one_the_schema_puts_after_it():
+    """`sib.addprevious(node)` — inserted before the first sibling that
+    outranks it. `addnext` puts it after that sibling instead, which is
+    the same wrong order the `_in_order` docstring was written about:
+    CT_PPr is a sequence, and Word calls a pPr in the wrong order
+    unreadable content.
+
+    The paragraph has to CARRY a later-ranked property already —
+    `w:spacing` here — or keepNext is simply appended and both
+    spellings agree."""
+    spaced = '<w:pPr><w:spacing w:after="100"/></w:pPr>'
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.")
+        + P("Таблица 1. Заголовок", spaced) + TBL("шапка")))
+
+    kids = [x.tag.split("}")[-1] for x in ppr_of(out, "Таблица 1.")]
+    assert kids.index("keepNext") < kids.index("spacing"), kids
+
+
+def test_a_paragraph_that_had_no_properties_gets_them_FIRST():
+    """`el.insert(0, ppr)`. `w:pPr` is CT_P's first child; appended
+    after the runs it is unreadable content, and `find` cannot see the
+    difference — every assertion in this file would still pass."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.")
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Следующий абзац.")))
+
+    for para in body_of(out).iter(NS + "p"):
+        ppr = para.find(NS + "pPr")
+        if ppr is not None:
+            assert para[0] is ppr, "w:pPr is CT_P's first child"
+
+
+def test_the_document_is_written_back_with_the_declaration_word_wants():
+    """`xml_declaration=True, standalone=True`. Word writes
+    `standalone="yes"` on every part it produces and reads a part
+    without a declaration as damaged. Nothing else here looks at the
+    bytes — every other test parses them straight back, which cannot
+    see a missing prolog at all."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")))
+
+    head = out["word/document.xml"][:80].decode("utf-8")
+    assert head.startswith(
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"), head
+
+
+# Four spellings in this module are equivalent by construction, each
+# confirmed with `tools/kill_check.py` (expect_kill=False) rather than
+# assumed, and each looks like a gap:
+#
+# * CAPTION's leading `^`. `_blocks` applies the pattern with `match`,
+#   which anchors at the start already — the `^` says so twice. The
+#   test above still earns its place: what it pins is that a caption
+#   mid-sentence is not a block, which is the reason the anchoring
+#   matters however it is written.
+# * `_in_order`'s `> rank` as `>=`. `_PPR_RANK` gives every known tag a
+#   distinct index and the function returns early when the tag is
+#   already there, so equal ranks mean the same tag — and two UNKNOWN
+#   tags share the fallback rank, where the order between them is not
+#   something CT_PPr has an opinion about.
+# * the fallback rank itself, `len(PPR_ORDER)` as `0`. Every tag this
+#   module writes — keepNext, spacing, pageBreakBefore — is in the
+#   table, so nothing reaches it.
+# * `freeze`'s `xml_declaration=True`. lxml writes the declaration
+#   whenever `standalone` is set, which it is on the line above; the
+#   flag is the belt to that brace, and the test pins the prolog Word
+#   actually needs.
+
+
 def test_a_custom_caption_pattern_overrides_the_default():
     out, rep = placement.place(
         parts(P("See Exhibit 3.") + P("Filler.")
