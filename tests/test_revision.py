@@ -91,7 +91,13 @@ def test_init_copies_rather_than_moves(tmp_path):
     assert paper.prev.read_bytes() == src.read_bytes()
     for sub in ("build", "notes", "scripts/applied"):
         assert (paper.root / "revision" / sub).is_dir()
-    assert (paper.root / "revision" / "log.md").exists()
+    log = (paper.root / "revision" / "log.md").read_text(encoding="utf-8")
+    # the migration row carries the manuscript's digest, eight hex
+    # characters of it — enough to tell two builds apart by eye, short
+    # enough to sit in a table cell a person reads
+    import hashlib
+    full = hashlib.sha256(paper.working.read_bytes()).hexdigest().upper()
+    assert f"`{full[:8]}`" in log, log
 
 
 def test_init_refuses_to_overwrite_a_live_configuration(project):
@@ -884,6 +890,29 @@ def test_validate_reject_all_counts_the_LINKS(tmp_path):
     assert report.lost_links and "Table5" in report.lost_links[0]
 
 
+def test_a_link_the_baseline_never_had_is_also_a_mismatch(tmp_path):
+    """`was == now`, not `was <= now`. The multiset comparison has to
+    fail in BOTH directions. `link_crossrefs` writes its hyperlinks
+    UNTRACKED, so a batch run through it comes back from reject-all with
+    links the baseline never had — same words, same paragraphs, and a
+    document that is no longer the accepted truth. Under `<=` the gate
+    calls the extra links fine and the batch becomes the new baseline
+    with the untracked edit inside it."""
+    plain = write(tmp_path / "prev.docx", make_parts(
+        para(run("see"), run("Table 5"), run("for detail"))))
+    # the same words, now linked, and nothing marking the change
+    linked = write(tmp_path / "batch.docx", make_parts(
+        para(run("see"),
+             '<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5</w:t>'
+             "</w:r></w:hyperlink>",
+             run("for detail"))))
+    report = revision.validate(linked, plain, use_word=False)
+    assert report.reject_detail["paragraphs"] is True
+    assert report.reject_detail["glyphs"] is True
+    assert report.reject_detail["links"] is False
+    assert not report.ok
+
+
 def test_the_link_count_is_blind_to_which_FORM_a_link_takes(tmp_path):
     """Word rewrites a field into an element on every author save, so a
     gate that told the two apart would fail on a document nobody
@@ -964,6 +993,24 @@ def test_a_moved_footnote_anchor_is_named(tmp_path):
         write(tmp_path / "prev.docx", base), use_word=False)
     assert report.reject_detail["footnotes"] is False
     assert report.moved_footnotes == [2], report.moved_footnotes
+
+
+def test_a_moved_footnote_numbered_ONE_is_named_too():
+    """`nid < 1` — the separator notes Word writes carry ids 0 and -1,
+    and note 1 is a real footnote. Under `<= 1` a paper's FIRST note is
+    the one finding this check cannot make, and it is the note most
+    likely to move: the one on the title page or the first page of the
+    text."""
+    one = ('<?xml version="1.0"?><w:footnotes xmlns:w="http://schemas.'
+           'openxmlformats.org/wordprocessingml/2006/main" xmlns:w14='
+           '"http://schemas.microsoft.com/office/word/2010/wordml">'
+           '<w:footnote w:id="1">{body}</w:footnote></w:footnotes>')
+    batch = make_parts(para(run("body")),
+                       footnotes=one.format(body=para(ins("the note text"))))
+    base = make_parts(para(run("body")),
+                      footnotes=one.format(body=para(run("the note text"))))
+
+    assert revision.moved_footnotes(batch, base) == [1]
 
 
 def test_an_ordinary_footnote_edit_is_not_called_a_moved_anchor():
@@ -1742,6 +1789,27 @@ def test_the_number_of_comments_lost_is_the_DIFFERENCE(project):
 
     assert [(loss.kind, loss.what) for loss in lost] == [
         ("comment", "2 comment(s) gone")]
+
+
+def test_ONE_comment_lost_is_a_loss(project):
+    """`> 0`, not `> 1`. One is the ordinary number to lose — a comment
+    Word drops while its anchor is being edited — and a threshold of two
+    lets it through the gate that makes the baseline permanent."""
+    def _commented(n: int) -> dict[str, bytes]:
+        return make_parts(
+            para(run("body")),
+            comment_items=tuple(comment(i, f"note {i}",
+                                        para_id=f"AAAA{i:04d}")
+                                for i in range(1, n + 1)))
+
+    write(project.prev, _commented(2))
+    write(project.working, _commented(1))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+
+    assert [(loss.kind, loss.what) for loss in lost] == [
+        ("comment", "1 comment(s) gone")]
 
 
 def test_comments_ADDED_are_not_a_loss(project):
