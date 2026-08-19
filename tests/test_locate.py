@@ -347,6 +347,28 @@ def test_ordered_walks_forward_through_repeats():
     assert second.doc_page == 11
 
 
+def test_a_cursor_AT_the_end_of_the_document_costs_no_search():
+    """`start >= self.end`, and the cost is the only thing that shows
+    it. An ordered walk whose last anchor ends at the last character
+    leaves the cursor ON the end, and the next anchor's forward search
+    has nowhere to look. Word is still asked, under `>`: a Find over an
+    empty range, which answers no and costs a COM round trip — the
+    thing this class exists to avoid, on the anchor that comes after
+    every ordered run's last hit.
+
+    `==` in place of `>=` cannot be told apart, and not for want of a
+    test: `start` is either 0 or a hit's end offset, so it never
+    exceeds `self.end` and the two agree on every reachable input."""
+    doc = FakeDoc("." * 40 + "omega")
+
+    found = locate_in(doc, ["omega", "omega"], ordered=True, unique=False)
+
+    assert [loc.doc_page for loc in found] == [1, 1]
+    # one Find for the first hit; for the second, the forward search is
+    # refused outright and only the from-the-top retry reaches Word
+    assert doc.finds == 2, "an empty range was searched"
+
+
 def test_unordered_reports_the_first_hit_every_time():
     doc = make_doc((250, "same phrase"), (1040, "same phrase"))
     first, second = locate_in(doc, ["same phrase", "same phrase"])
@@ -446,6 +468,20 @@ def test_revisions_can_be_limited():
     doc.Revisions = [FakeRevision(doc, 1, at, t)
                      for at, t in ((250, "a"), (350, "b"), (450, "c"))]
     assert len(revision_locations(doc, limit=2)) == 2
+
+
+def test_a_limit_of_ONE_returns_one_revision():
+    """`limit < 1`, not `<= 1`. One is the limit a caller passes to ask
+    "where does the redline start" — the cheapest question this
+    function answers, and the one `<= 1` turns into an empty list that
+    reads as a document with no revisions at all."""
+    doc = make_doc((250, "a"), (350, "b"))
+    doc.Revisions = [FakeRevision(doc, 1, at, t)
+                     for at, t in ((250, "a"), (350, "b"))]
+
+    (only,) = revision_locations(doc, limit=1)
+
+    assert (only.number, only.text) == (1, "a")
 
 
 def test_a_limit_below_one_returns_nothing():
