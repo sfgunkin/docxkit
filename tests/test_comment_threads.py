@@ -13,10 +13,11 @@ from docxkit.comments import set_done, threads
 from docxkit.errors import PackageError
 
 
-def comment(cid: int, text: str, para_id: str, author: str = "Referee"
-            ) -> str:
+def comment(cid: int, text: str, para_id: str, author: str = "Referee",
+            date: str | None = None) -> str:
+    stamp = date or f"2026-07-30T0{cid}:00:00Z"
     return (f'<w:comment w:id="{cid}" w:author="{author}" '
-            f'w:initials="R" w:date="2026-07-30T0{cid}:00:00Z">'
+            f'w:initials="R" w:date="{stamp}">'
             f'<w:p w14:paraId="{para_id}"><w:r><w:t>{text}</w:t></w:r>'
             f"</w:p></w:comment>")
 
@@ -217,3 +218,54 @@ def test_set_done_counts_what_it_CHANGED_not_what_it_matched():
     assert set_done(parts, ["1"]) == 0, "already resolved"
     assert set_done(parts, ["2"]) == 1
     assert set_done(parts, ["1", "2"]) == 0, "both resolved now"
+
+
+def test_TWO_replies_come_back_in_reply_order():
+    """`key=(c.date, int(c.cid))`: two replies posted in the same minute
+    is the ordinary case in a review round — Word stamps to the minute —
+    and the id is what breaks the tie, in the order they were written.
+    A thread read out of order reads as an author answering a question
+    nobody asked yet."""
+    parts = make_parts()
+    parts["word/comments.xml"] = (
+        f"<w:comments {NS}>"
+        + comment(1, "Please clarify.", "AAAA0001")
+        + comment(2, "Fixed typo?", "AAAA0002")
+        # the SAME minute on both, which is what Word stamps when an
+        # author answers two questions in one pass — the id is then the
+        # only thing that orders them
+        # …and DEFINED in the other order, because the order of the
+        # part is Word's business and not the thread's
+        + comment(4, "Second reply.", "AAAA0004", author="Author",
+                  date="2026-07-30T09:00:00Z")
+        + comment(3, "First reply.", "AAAA0003", author="Author",
+                  date="2026-07-30T09:00:00Z")
+        + "</w:comments>").encode("utf-8")
+    parts["word/commentsExtended.xml"] = (
+        f"<w15:commentsEx {NS}>"
+        + ext("AAAA0001") + ext("AAAA0002", done=1)
+        + ext("AAAA0003", parent="AAAA0001")
+        + ext("AAAA0004", parent="AAAA0001")
+        + "</w15:commentsEx>").encode("utf-8")
+
+    by_cid = {t.comment.cid: t for t in threads(parts)}
+
+    assert [r.cid for r in by_cid["1"].replies] == ["3", "4"]
+    assert [r.text for r in by_cid["1"].replies] == ["First reply.",
+                                                     "Second reply."]
+
+
+def test_an_anchor_whose_RANGE_never_closes_reads_as_empty():
+    """`close != -1`. A `commentRangeStart` with no end is what a
+    half-deleted comment leaves, and `str.find` answers -1 for it. Under
+    `>= -1` the slice runs from the anchor to -1 — the whole rest of the
+    document, minus its last character — and the checklist prints the
+    paper from that comment down as the words it marks."""
+    parts = make_parts()
+    doc = parts["word/document.xml"].decode("utf-8")
+    parts["word/document.xml"] = doc.replace(
+        '<w:commentRangeEnd w:id="1"/>', "", 1).encode("utf-8")
+
+    by_cid = {t.comment.cid: t for t in threads(parts)}
+
+    assert by_cid["1"].comment.anchor == ""
