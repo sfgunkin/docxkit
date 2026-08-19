@@ -14,9 +14,11 @@ import pytest
 
 from docxkit.errors import AnchorError
 from docxkit.word import (
+    _REVISION_KINDS,
     WD_INFO_ADJUSTED_PAGE,
     WD_INFO_LINE,
     WD_INFO_PAGE,
+    Location,
     locate_in,
     revision_locations,
     search_text,
@@ -198,6 +200,28 @@ def test_printed_page_differs_from_the_file_page():
     assert "file page 3" in str(loc)
 
 
+@pytest.mark.parametrize("page,doc_page,shown", [
+    (7, 7, False),      # no front matter: the two agree
+    (2, 3, True),       # one unnumbered page in front — the ordinary case
+    (101, 3, True),     # a section that restarts at 101: printed > file
+])
+def test_the_file_page_is_shown_exactly_when_it_DIFFERS(page, doc_page,
+                                                        shown):
+    """`self.page == self.doc_page`, and the two can differ in EITHER
+    direction. Front matter puts the printed number below the file
+    number; a section that restarts numbering — an appendix at 101, a
+    reprint keeping the journal's own pages — puts it above. An
+    ordering test passes the common case and then either prints
+    "(file page 7)" for a document that has no front matter, or drops
+    the file page from the one place it is needed: telling an editor
+    which page of the FILE to scroll to."""
+    loc = Location(anchor="alpha", page=page, line=4,
+                        doc_page=doc_page, repeats=False)
+
+    assert str(loc).startswith(f"p. {page}, line 4")
+    assert (f"file page {doc_page}" in str(loc)) is shown, str(loc)
+
+
 def test_the_document_is_repaginated_before_anything_is_asked():
     # session(fast=True) turns background pagination off; without an
     # explicit Repaginate the answer comes from a stale layout.
@@ -288,6 +312,55 @@ def test_ordered_retries_over_the_whole_document():
 
 
 # --- revision_locations ----------------------------------------------------
+
+
+
+# WdRevisionType, in Word's own order. The numbers are Word's and the
+# labels are ours, so the pairing is the thing to check: `rev.Type`
+# arrives as a bare integer and an off-by-one prints a tracked deletion
+# as an insertion — a report that reads perfectly and says the opposite
+# of what the redline does.
+WD_REVISION_TYPES = [
+    (1, "wdRevisionInsert", "insert"),
+    (2, "wdRevisionDelete", "delete"),
+    (3, "wdRevisionProperty", "property"),
+    (4, "wdRevisionParagraphNumber", "paragraph-number"),
+    (5, "wdRevisionDisplayField", "display-field"),
+    (6, "wdRevisionReconcile", "reconcile"),
+    (7, "wdRevisionConflict", "conflict"),
+    (8, "wdRevisionStyle", "style"),
+    (9, "wdRevisionReplace", "replace"),
+    (10, "wdRevisionParagraphProperty", "paragraph-property"),
+    (11, "wdRevisionTableProperty", "table-property"),
+    (12, "wdRevisionSectionProperty", "section-property"),
+    (13, "wdRevisionStyleDefinition", "style-definition"),
+    (14, "wdRevisionMovedFrom", "move-from"),
+    (15, "wdRevisionMovedTo", "move-to"),
+    (16, "wdRevisionCellInsertion", "cell-insertion"),
+    (17, "wdRevisionCellDeletion", "cell-deletion"),
+    (18, "wdRevisionCellMerge", "cell-merge"),
+    (19, "wdRevisionCellSplit", "cell-split"),
+]
+
+
+def test_each_revision_type_carries_the_name_word_gives_it():
+    """The map is nineteen numbers nothing else checks. A wrong one is
+    not an error anywhere: `rev.Type` is an integer, the lookup finds
+    SOME label, and the report names a kind of change that did not
+    happen."""
+    assert {n: label
+            for n, _, label in WD_REVISION_TYPES} == _REVISION_KINDS
+
+
+def test_the_revision_types_are_a_run_with_no_holes():
+    """1 to 19 with nothing missing. Two entries given the same number
+    is the way this table breaks — the later one wins and the earlier
+    number falls out entirely — and a dict comparison alone would have
+    to be edited to match it. `wdNoRevision` is 0 and is deliberately
+    absent: a range with no revision must not be labelled as one."""
+    assert sorted(_REVISION_KINDS) == list(range(1, 20))
+    assert 0 not in _REVISION_KINDS
+
 
 def test_revisions_are_located_without_searching():
     doc = make_doc((250, "inserted"), (1040, "removed"))
