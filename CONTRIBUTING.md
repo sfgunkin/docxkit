@@ -1065,6 +1065,39 @@ build's body-vs-package note now run at 300. Argue the site, not the
 operator.
 
 
+**`equations.py`, four small rounds in one evening** (8.4 % measured
+fresh). What they were about, because the pattern repeats across the
+module: **the branch an author reaches through Word's equation editor
+rather than by typing LaTeX.** A hidden n-ary limit, a hidden radical
+degree, a bar that hangs under, a grouping character above the brace
+codepoints, an accent that is not a hat — each is one guard, each was
+written by nobody's test, and each turns a formula into a different
+formula rather than into an error.
+
+Three things the round is worth remembering for:
+
+* **`standalone` had no test at all.** It is half of the documented
+  `harvest` -> `clone` pair — a slice of `document.xml` carries no
+  namespace declarations of its own, and this is what gives it some —
+  so every mutant in it lived, including one that reads `root[1]` of a
+  one-element fragment. A public function with no test file section of
+  its own is worth grepping for before mining a survivor list.
+* **The fixture has to reach the branch AND separate it.** Every
+  grouping-character test used an arrow at U+2192, below both brace
+  characters, where `>=` and `==` agree; the six blackboard commands
+  are the only symbols whose LaTeX ends in `}`, so every other symbol
+  makes `sym[-1]`, `sym[1]` and `sym[-2]` agree; and a trailing space at
+  the END of the output is stripped, so the fixture has to put a
+  variable after the symbol to see one.
+* **An unreachable guard is worth measuring rather than arguing.**
+  `prose_math`'s `if k + 1 < len(pieces)` carries seven mutants and
+  cannot fire — one sentinel is written per equation, inside a `w:t`, so
+  `split` returns exactly one more piece than there are equations. The
+  case where that might come apart is a REDLINE whose equation sits in a
+  `w:del`; measured, the sentinel survives it (Word writes `w:delText`
+  for deleted prose, not `w:t`) and the pieces still line up.
+
+
 `word.py` is the one worth reading twice. Its first figure was the
 package's worst by a factor of two, and 41 of its 110 survivors were
 constants — numbers Word reads, which no test can kill by exercising
