@@ -942,6 +942,46 @@ def test_nested_volatile_fields_are_masked_exactly_once():
                       + out[len("<w:p>"):]).encode())
 
 
+def test_a_field_AFTER_a_nested_one_is_masked_too():
+    """The nested-field guard, with more than one region to compare
+    against — which is what a real page footer holds: a PAGE, then a
+    "page N of { NUMPAGES }" whose result carries a field of its own.
+
+    The direction of `result_at < regions[-1][1]` is what one region
+    cannot show. Reversed, the guard skips the field that comes AFTER
+    the nested one instead of the nested one itself, and a footer keeps
+    a cached page number that every save rewrites — the difference this
+    whole layer exists to erase.
+
+    What this does NOT pin, and why no fixture is contrived for it:
+    `regions[0]`, `==` and `is` all let the inner field register as its
+    own region, and the output is unchanged, because the outer mask
+    then empties everything the inner one touched and the offsets it
+    shifts by are smaller than the tags they fall inside. The same for
+    `start | sep.end()`: OR is never below `start` and never above the
+    sum, so it always lands inside the field's own header, which holds
+    fldChar and instrText and never a `w:t`.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    inner = field("PAGE", "7")
+    outer = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText> PAGEREF _Toc9 </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             # a cached result of its OWN, in front of the nested field:
+             # without it the outer's stale slice still opens on the
+             # inner's token and the two spellings agree by accident
+             + run("iii") + inner
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    xml = "<w:p>" + field("PAGE", "3") + outer + "</w:p>"
+
+    out = mask_volatile_fields(xml)
+
+    assert re.findall(r"«F:\w+»", out) == ["«F:PAGE»", "«F:PAGEREF»"], out
+    assert out.count("w:fldChar") == xml.count("w:fldChar")
+    assert ">3<" not in out and ">7<" not in out
+
+
 def test_masking_a_field_does_not_touch_the_prose_around_it():
     """What the nested test could not see. `result_at = start + sep.end()`
     had seven surviving mutants — `-`, `//`, `%`, `>>`, `|`, `&`, `^` —
@@ -2643,7 +2683,7 @@ def test_a_part_too_UNLIKE_anything_is_added_and_removed(tmp_path):
 # one that does not: every cell of a one-cell fixture is r1c1 whatever
 # the arithmetic. These ask for the whole map.
 #
-# Four of the eight are equivalent by construction, argued rather than
+# Seven of the eight are equivalent by construction, argued rather than
 # assumed (`tools/kill_check.py`, expect_kill=False) and worth writing
 # down because each looks like a gap:
 #
@@ -2651,9 +2691,11 @@ def test_a_part_too_UNLIKE_anything_is_added_and_removed(tmp_path):
 #   `w:tr` sets it to 0 before any `w:tc` is seen, so the value the stack
 #   was pushed with is never read — the ROW counter's initial value is a
 #   real check, and dies here;
-# * `tag >= "tr"` and `tag >= "tc"` for `==`. The only tags reaching
-#   those arms are `p`, `tc`, `tr`, and they sort in that order — `"p"`
-#   is below both and `"tr"` is consumed by the arm above `tc`;
+# * `tag >= "tr"` and `tag >= "tc"` for `==`, and `>=` or `<=` for the
+#   `"p"` arm. The only tags reaching them are `p`, `tc`, `tr`, and they
+#   sort in that order — `"p"` is below both and `"tr"` is consumed by
+#   the arm above `tc`, so every ORDERING of the three agrees with
+#   equality. `!=` does not, and dies;
 # * `tag is "p"` for `==`. CPython caches every one-character latin-1
 #   string, so a regex group of `"p"` IS the literal. `"tc"` is not, and
 #   an `is` there does die.
