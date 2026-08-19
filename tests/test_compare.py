@@ -532,6 +532,22 @@ def test_typography_switched_off_explicitly_is_not_a_change(tmp_path):
     assert compare(a, b)["formula_format"] == []
 
 
+def test_a_marker_AFTER_a_switched_off_one_is_still_read(tmp_path):
+    """`continue`, not `break`. A run that had italic turned off and
+    bold left on is what Word writes when an author un-italicises part
+    of a formula — the off marker comes FIRST, in Word's own property
+    order, and under `break` the walk stops on it and the bold is never
+    seen. The equation then compares equal to a plain one."""
+    off_then_bold = '<w:rPr><w:i w:val="0"/><w:b/></w:rPr>'
+    a, b = docs(tmp_path, omath(mrun("x"), mrun("+y")),
+                omath(mrun("x", off_then_bold), mrun("+y")))
+
+    report = compare(a, b)
+
+    assert len(report["formula_format"]) == 1, report
+    assert report["formula_format"][0]["to"] == "x:b", report
+
+
 # ------------------------------------------------- what mutation found
 # cosmic-ray over _compare_diff.py left survivors clustered on three
 # branches no test reached. Each of these kills one cluster: the
