@@ -258,3 +258,130 @@ def test_a_run_styled_PLAIN_is_upright_the_same_as_one_marked_nor():
 
     assert to_latex(m(plain)) == r"\text{max}"
     assert to_latex(m(italic)) == "max", "only 'p' is upright"
+
+
+# --- the second to_latex round, from the 2026-08-19 measurement ---------
+#
+# Every construct below is one an author reaches through Word's equation
+# editor rather than by typing LaTeX, and each was written by a branch
+# nothing exercised: the hidden degree, the hidden limit, the separator
+# inside a delimiter, an accent that is not a hat, a bar that hangs
+# under. A wrong answer here is not a crash — it is a formula that reads
+# as a different formula.
+
+
+def test_a_DELIMITER_with_two_operands_keeps_its_separator():
+    r"""`len(findall("e")) > 1`. One operand is a bracket, two are a
+    set-builder or a conditional probability — `P(A|B)` — and the
+    separator is what says which. With `>=` a plain bracket is joined
+    with a `\middle|` it never had; the fixture needs BOTH shapes,
+    because the one-operand case is what tells the two apart."""
+    two = ('<m:d><m:dPr><m:sepChr m:val="|"/></m:dPr>'
+           "<m:e>" + r("A") + "</m:e><m:e>" + r("B") + "</m:e></m:d>")
+    one = "<m:d><m:e>" + r("x+y") + "</m:e></m:d>"
+
+    assert to_latex(m(two)) == r"\left( A \middle| B \right)"
+    assert to_latex(m(one)) == r"\left( x+y \right)"
+
+
+def test_a_HIDDEN_limit_on_an_n_ary_is_not_written():
+    r"""`sub.strip() and subHide != "1"` — both, and `or` in place of
+    `and` writes a limit Word is deliberately not showing.
+
+    Word keeps the text of a limit it hides, so the element is there
+    with `subHide` beside it: an author who typed a sum, gave it limits
+    and then chose "no limits" gets `\sum_{i=1}^{n}` back from an `or`,
+    over a formula that shows none."""
+    body = ('<m:nary><m:naryPr><m:chr m:val="∑"/>'
+            '<m:subHide m:val="1"/><m:supHide m:val="1"/></m:naryPr>'
+            "<m:sub>" + r("i=1") + "</m:sub><m:sup>" + r("n") + "</m:sup>"
+            "<m:e>" + r("x") + "</m:e></m:nary>")
+
+    assert to_latex(m(body)) == r"\sum {x}"
+
+
+def test_a_HIDDEN_radical_degree_is_a_plain_square_root():
+    r"""Word keeps the degree it is not showing, so `degHide` is the
+    only thing that says a root is square: without this branch a
+    hidden 2 comes back as `\sqrt[2]{x}`, which is the same value and a
+    different formula on the page.
+
+    (The `is` spelling of the comparison is EQUIVALENT here and is
+    argued at the foot of the file — a one-character string is one
+    object in CPython, whoever made it.)"""
+    body = ('<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr>'
+            "<m:deg>" + r("2") + "</m:deg><m:e>" + r("x") + "</m:e></m:rad>")
+
+    assert to_latex(m(body)) == r"\sqrt{x}"
+
+
+def test_a_BAR_hangs_under_unless_its_position_says_top():
+    r"""`pos == "top"`, and `<=` reads "bot" as top — a mean over a
+    variable, where the bar is the notation. Word writes `bot` and also
+    omits the element, and both mean below."""
+    def barred(pos: str) -> str:
+        return ("<m:bar><m:barPr>" + pos + "</m:barPr><m:e>" + r("x")
+                + "</m:e></m:bar>")
+
+    assert to_latex(m(barred('<m:pos m:val="top"/>'))) == r"\overline{x}"
+    assert to_latex(m(barred('<m:pos m:val="bot"/>'))) == r"\underline{x}"
+    assert to_latex(m(barred(""))) == r"\underline{x}"
+
+
+def test_a_grouping_character_ABOVE_the_brace_codepoints_is_not_a_brace():
+    r"""`chr_ == "⏞"` against `>=`. The two brace characters are U+23DE
+    and U+23DF, and every fixture here used a character BELOW them (an
+    arrow at U+2192), where `>=` and `==` agree. An author's own glyph
+    can sit anywhere — this one is a wave dash at U+301C — and above the
+    braces the comparison silently promotes it to an overbrace."""
+    body = ('<m:groupChr><m:groupChrPr><m:chr m:val="〜"/>'
+            '<m:pos m:val="bot"/></m:groupChrPr>'
+            "<m:e>" + r("abc") + "</m:e></m:groupChr>")
+
+    assert to_latex(m(body)) == r"\underset{〜}{abc}"
+
+
+def test_an_ACCENT_is_the_one_the_equation_carries():
+    r"""`_ACCENTS.get(chr or "̂", ...)` — `or` supplies the DEFAULT hat
+    when Word omits the character, and `and` turns every explicit accent
+    into the default: a bar becomes a hat, and \bar{x} is a mean while
+    \hat{x} is an estimate."""
+    def accented(chr_: str) -> str:
+        return ("<m:acc><m:accPr>" + chr_ + "</m:accPr><m:e>" + r("x")
+                + "</m:e></m:acc>")
+
+    assert to_latex(m(accented('<m:chr m:val="̄"/>'))) == r"\bar{x}"
+    assert to_latex(m(accented('<m:chr m:val="⃗"/>'))) == r"\vec{x}"
+    assert to_latex(m(accented(""))) == r"\hat{x}"
+
+
+def test_an_unknown_element_whose_name_sorts_EARLY_is_still_reported():
+    """`name == "ctrlPr"`, mutated to `<`: an element this converter
+    does not know is meant to leave a visible marker and a gap. Under
+    `<` every unknown name that sorts before "ctrlPr" is silently
+    treated as a properties element instead — dropped from the formula
+    AND from the gap report, which is the one thing `strict=True` has to
+    be able to see."""
+    out = to_latex(m("<m:box2>" + r("x") + "</m:box2>"))
+
+    assert "[?m:box2]" in out and "x" in out
+    with pytest.raises(ConversionGap, match="m:box2"):
+        to_latex(m("<m:box2/>"), strict=True)
+
+
+# --- what is left in the to_latex walk, and why -------------------------
+#
+# Three survivors from this round, each argued rather than tested:
+#
+#   `if hide == "1"` -> `is`. The value is a one-character string off an
+#   XML attribute, and CPython hands out one object for every latin-1
+#   character — measured: `etree.fromstring('<a val="1"/>').get("val")
+#   is "1"` is True. The two spellings cannot disagree here. (They CAN
+#   for a longer attribute value, which is why this is argued per site
+#   rather than as a rule.)
+#
+#   `if len(el.findall("e")) > 1` -> `>= 1`, and -> `!= 1`. The branch
+#   chooses between joining the operands with a separator and reading
+#   the single one directly — and `" \middle| ".join([x])` IS `x`, so
+#   the two paths agree for one operand and for none. The mutants pick
+#   the other path to the same string.
