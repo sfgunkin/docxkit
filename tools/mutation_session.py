@@ -156,6 +156,16 @@ def _env() -> dict[str, str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(WORKTREE / "src")
     env["PYTHONIOENCODING"] = "utf-8"      # see the module docstring
+    # Every mutant pays pytest's start-up, and five installed plugins
+    # (cov, xdist, benchmark, hypothesis, anyio) are loaded for each one
+    # and used by none: 1.81s becomes 0.75s per mutant, measured on one
+    # test, which is eight minutes off a 460-mutant sweep and about
+    # fifty off a whole module. The plugin the command DOES need is
+    # named explicitly in `write_config`.
+    #
+    # Verified equal, not assumed: the harness that uses hypothesis
+    # reports the same 373 passed, 14 skipped either way.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     return env
 
 
@@ -227,7 +237,12 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
 
 
 def write_config(module: Path, tests: list[str], config: Path) -> None:
-    command = ("python -m pytest -q -x --timeout=30 " + " ".join(tests))
+    # `-p pytest_timeout` because autoload is off in `_env` and
+    # `--timeout` is that plugin's flag; `-p no:cacheprovider`
+    # so a mutant run writes nothing into the worktree.
+    command = ("python -m pytest -q -x -p no:cacheprovider "
+               "-p pytest_timeout --timeout=30 "
+               + " ".join(tests))
     config.write_text(
         "[cosmic-ray]\n"
         f'module-path = "{(WORKTREE / module).as_posix()}"\n'
