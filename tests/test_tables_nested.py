@@ -402,3 +402,25 @@ def test_an_existing_width_is_REPLACED_and_the_inner_one_left_alone():
     assert out.count("<w:tcW ") == 2
     assert _tcw(1400) in out and _tcw(300) in out
     assert _tcw(500) not in out
+
+
+def test_a_table_with_a_GRID_and_no_rows_still_owns_its_grid():
+    """`first_row != -1`, the sentinel `str.find` returns. The clause
+    exists to reject a grid that starts AFTER the first row — which can
+    only be a nested table's, since CT_Tbl puts the grid before the
+    rows — and with no rows there is nothing for it to reject.
+
+    Read as `!= 0` (which is what `~-1` gives) a table with no rows
+    takes the wrong branch: `grid.start() > -1` is true of every grid,
+    so the table is reported as having none, and `_set_tbl_pr` then
+    writes its properties in the fallback position. A grid without rows
+    is what `body.table()` builds before its rows are filled in."""
+    from docxkit._table_layout import _own_grid
+
+    body = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/>'
+            '<w:gridCol w:w="1000"/></w:tblGrid></w:tbl>')
+
+    grid = _own_grid(body)
+
+    assert grid is not None
+    assert grid.start() == body.index("<w:tblGrid>")

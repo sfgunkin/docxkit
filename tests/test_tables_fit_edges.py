@@ -1021,3 +1021,26 @@ def test_the_border_styles_the_house_uses_are_all_accepted():
         out, n = bottom_border(xml, read_all(xml)[0], val=val)
         assert n == 3
         assert f'w:val="{val}"' in out
+
+
+def test_spacer_columns_that_eat_the_table_are_REFUSED_by_the_numbers():
+    """`avail <= 0`, and the message's arithmetic. A spacer column keeps
+    its width unconditionally, so a grid whose spacers are wider than
+    the table leaves nothing to apportion — and `_round_to` would then
+    divide a NEGATIVE total, writing every filled column as a negative
+    `w:w`. That is not a narrow table: ST_TwipsMeasure is unsigned, and
+    Word repairs the document rather than laying it out.
+
+    The refusal has to say how much is held and of what, because the
+    fix is a number the caller chooses — a wider table, or a `total=`
+    that matches the section's text width."""
+    d = doc(tbl([2500, 1000],
+                "<w:tr>" + cell(frun(""), w=2500) + cell(frun("x"), w=1000)
+                + "</w:tr>"))
+
+    with pytest.raises(AnchorError) as exc:
+        fit_columns(d, read_all(d)[0], total=2000)
+
+    assert "the spacer columns hold 2500 dxa of a 2000 dxa table" in \
+        str(exc.value)
+    assert "the 1 column(s) with content" in str(exc.value)
