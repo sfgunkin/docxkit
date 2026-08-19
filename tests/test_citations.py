@@ -2852,3 +2852,37 @@ def test_remove_outer_field_keeps_the_REAL_inner_link_not_the_ghost():
 
     assert out.count("<w:hyperlink") == 1, out
     assert "Head. (2022)" in out
+
+
+def test_the_link_that_CLOSES_is_the_innermost_one_still_open():
+    """`range(len(stack) - 1, -1, -1)` — the walk that finds which open
+    link a `fldChar end` belongs to, and it runs BACKWARDS because the
+    innermost is the one that closes.
+
+    Two nested fields cannot see it: with a stack of two the correct
+    start (index 1) and a halved one (2 >> 1) are the same index. Three
+    can, and three is not exotic — API10 nested a field inside a field
+    inside a field where two `end` chars had gone missing.
+
+    Closing the middle link instead leaves it open and the inner one
+    closed, so everything after is reported against the wrong ancestor:
+    the report names a link the click does not go to."""
+    fld = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           r'<w:r><w:instrText>HYPERLINK \l "{a}"</w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>')
+    end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+    body = P(fld.format(a="OuterA") + R("a ")
+             + fld.format(a="MidB") + R("b ")
+             + fld.format(a="InnerC") + R("c ") + end
+             + '<w:hyperlink w:anchor="D">' + R("d") + "</w:hyperlink>"
+             + end + end)
+    parts = {"word/document.xml": ("<w:document><w:body>" + body
+                                   + "</w:body></w:document>").encode()}
+
+    issues, _ = audit_links(parts)
+
+    about_d = [i for i in issues if i.startswith("DOUBLED LINK: 'D'")]
+    named = {t for t in ("OuterA", "MidB", "InnerC")
+             if any(f"'{t}'" in i for i in about_d)}
+
+    assert named == {"OuterA", "MidB"}, about_d
