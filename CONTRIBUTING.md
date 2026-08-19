@@ -1017,7 +1017,7 @@ days are gone:
 | module | recorded | measured 2026-08-19 | what the round wrote |
 |---|---|---|---|
 | `ingest.py` | 35.1 % (raw) | **5.9 %** (11/188) -> 2 left | the messages, the id fallback, a block of 257 |
-| `equations.py` | 24.9 % -> 10.6 % | **8.4 %** (35/419) | the OMML branches Word's editor reaches |
+| `equations.py` | 24.9 % -> 10.6 % | 8.4 % -> **5.7 %** (24/420) | the OMML branches Word's editor reaches |
 | `_table_layout.py` | — | 14.0 % -> **9.7 %** (42/435) | the width tables, three rules off by one |
 | `cli.py` | 28.3 % (raw, 2026-08-16) | **6.9 %** (31/449) | what the commands PRINT |
 
@@ -1026,6 +1026,12 @@ tool was pointed at the source the RUN was planned against rather than
 the live file — the classification of annotation spans moves with the
 text, so a module being worked on reads several points high. See
 "the survivor list reads the source the run was planned against".
+
+`equations`' pair IS pairwise — same 1,311 mutants, same seeded 460, no
+source added between the two runs — so 35 real survivors became 24 on
+the same sample. Twelve of what is left are documented equivalents (the
+unreachable piece bound, `_local`'s subscript, `is` on a one-character
+attribute, the delimiter count) and three need Word's XSL.
 
 `ingest`'s 35.1 % is the clearest case of a stale number misleading: it
 is a RAW figure from before the annotation mutants came out of the
