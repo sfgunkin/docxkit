@@ -287,6 +287,56 @@ def test_an_unsearchable_anchor_still_fails_a_strict_run():
         locate_in(doc, ["", "alpha"])
 
 
+def test_the_strict_failure_names_five_misses_and_says_there_are_more():
+    """The message a run dies on, in full.
+
+    It is the only thing the caller gets — a bulk locate over a
+    manuscript's anchors ends here, and what it says is the whole
+    diagnosis. Three numbers have to be right: how many were missed,
+    how many were ASKED for (found plus missing, not either alone), and
+    the five it quotes, each cut to 60 characters so the list stays
+    readable when the anchors are sentences. Six missing is one past
+    the cut, which is what the trailing ellipsis is for."""
+    # no comma inside an anchor: the message joins with ", " and the
+    # test reads the join back
+    quoted = "Table 5 reports the coefficient on the interaction term "
+    long_misses = [f"{quoted}{i} which is absent from the document."
+                   for i in range(6)]
+    for anchor in long_misses:
+        assert len(anchor) > 60, "the cut has to have something to cut"
+    doc = make_doc((250, "alpha"), (1040, "omega"), (2050, "psi"))
+
+    with pytest.raises(AnchorError) as exc:
+        locate_in(doc, [*long_misses, "alpha", "omega", "psi"])
+
+    message = str(exc.value)
+    assert message.startswith(
+        "6 of 9 anchors not found in the laid-out document: ")
+    assert message.endswith(" ...")
+    quotes = message.split(": ", 1)[1].removesuffix(" ...").split(", ")
+    assert len(quotes) == 5, quotes
+    assert quotes[0] == repr(long_misses[0][:60])
+    assert long_misses[4][:60] in quotes[4]
+    assert long_misses[5][:60] not in message, "the sixth is the ellipsis"
+
+
+def test_exactly_five_misses_are_all_shown_and_nothing_is_elided():
+    """`> 5`, at the boundary: five is the whole list, and an ellipsis
+    after it says a miss was withheld that was not — the reader goes
+    looking for a sixth anchor that does not exist."""
+    misses = [f"missing anchor number {i}" for i in range(5)]
+    doc = make_doc((250, "alpha"))
+
+    with pytest.raises(AnchorError) as exc:
+        locate_in(doc, [*misses, "alpha"])
+
+    message = str(exc.value)
+    assert message.startswith("5 of 6 anchors not found")
+    assert not message.endswith("...")
+    for anchor in misses:
+        assert repr(anchor) in message, message
+
+
 def test_ordered_walks_forward_through_repeats():
     # Two revisions quoting the same phrase are two different places; a
     # from-the-top search would report the first one twice.
