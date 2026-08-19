@@ -264,3 +264,93 @@ def test_a_back_link_whose_target_never_appeared_is_UNDONE():
     assert any("back-link removed" in n for n in report.skipped), (
         f"the undo was not reported: {report.skipped}")
     assert "Kanbur2007" not in report.backlinked
+
+
+# --- what the run of 2026-08-20 found -------------------------------------
+#
+# 7.0 % real survival, and the survivors were in what the REPORT says
+# rather than in what the pass does: how much of a suspect entry is
+# quoted, whether the summary counts them, which paragraph a lost
+# back-link names. The pass had been pinned; the sentence a person acts
+# on had not.
+
+
+def test_a_SUSPECT_entry_is_quoted_only_as_far_as_it_reads():
+    """`r.surname[:60]`. The whole point of the line is that the "author"
+    is a sentence, so it is as long as a sentence — printed whole it
+    pushes the rest of the report off the screen, and the first sixty
+    characters are already enough to find the paragraph."""
+    prose = ("The data are drawn from the national statistical registers "
+             "of every oblast in the republic. (2023). Table 4.")
+
+    report = link_all(make_parts(
+        para(run("Poverty fell (Kanbur 2007).")) + REFERENCES
+        + para(run(prose))))
+
+    (line,) = report.suspect
+    quoted = line.split("filed under ")[1].split("', which")[0].lstrip("'")
+    assert len(quoted) == 60, quoted
+    assert quoted.startswith("The data are drawn")
+    assert quoted.endswith("registers o"), "cut mid-word"
+
+
+def test_the_summary_counts_SUSPECT_entries_only_when_there_ARE_any():
+    """`if self.suspect else ""`, which has to be right in both
+    directions: a clean round that ends "suspect 0" reads as a finding,
+    and a round with three that does not say so reads as clean."""
+    quiet = link_all(make_parts(
+        para(run("Poverty fell (Kanbur 2007).")) + REFERENCES))
+    loud = link_all(make_parts(
+        para(run("Poverty fell (Kanbur 2007).")) + REFERENCES
+        + para(run("The figures are taken from the registers of each "
+                   "oblast. (2023). Table 4."))))
+
+    assert "suspect" not in quiet.format(), quiet.format()
+    assert ", suspect 1" in loud.format(), loud.format()
+
+
+def test_the_back_link_undo_walks_PAST_the_ones_that_are_sound():
+    """A back-link whose in-text end was never wrapped is undone, and
+    the sound one before it in the list must not stop the walk. Entries
+    are rebuilt bottom-up, so "before it" is the entry FURTHEST down the
+    reference list — here Ravallion, whose single mention wrapped, while
+    Kanbur's mention occurs twice in one paragraph and is refused.
+
+    Stopping at the first sound back-link leaves the dangling one in
+    place: an anchor pointing at a bookmark that does not exist, which
+    only an audit finds."""
+    parts = make_parts(
+        para(run("Kanbur (2007) and Kanbur (2007) both say so."))
+        + para(run("Ravallion (2016) says so too."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty. Journal."))
+        + para(run("Ravallion, M. (2016). The Economics of Poverty. Press.")))
+
+    report = link_all(parts)
+
+    assert report.backlinked == ["Ravallion2016"], report.backlinked
+    assert any("back-link Kanbur2007" in s for s in report.skipped), \
+        report.skipped
+    assert "Kanbur2007txt" not in _names(parts, "word/document.xml")
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `set(plan) | set(by_entry)` written `^`. `scan` is given the entry
+#   block's index range as its `skip`, and `by_entry` holds exactly the
+#   indices in that range — so no paragraph is ever in both sets and the
+#   two operators cannot part company.
+# * `doc[(paras[i - 1].end() if i else 0):m.start()]` written `... else
+#   1`. That slice is the XML BEFORE the first paragraph, and it is read
+#   only by `_BOOKMARK_NAME_RE.findall`. A part begins with its XML
+#   declaration, so dropping the first character of the prefix cannot
+#   drop a `<w:bookmarkStart`.
+# * `where == "¶"` in `rebuild`, as `>=` and as `is`. The two callers
+#   pass the literals "¶" and "fn¶"; "fn¶" sorts before "¶" (f < the
+#   pilcrow), so the ordering comparison agrees, and both are the same
+#   objects the comparison names.
+# * `iter(range(bid, bid + 4096))` written `bid + 4095`. The pool is a
+#   thousand names deeper than the longest reference list this package
+#   has seen; one fewer changes nothing that is not already the
+#   `_dedup_name` fallback's business. (`bid | 4096` is NOT equivalent —
+#   see the high-id test in test_cite_names.py.)

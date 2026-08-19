@@ -205,3 +205,24 @@ def test_the_ambiguity_report_names_the_entry_as_the_LIST_spells_it():
 # year goes into the key verbatim, so every entry in the list has the
 # same one. The surname above is a different matter, because the key
 # strips punctuation and case out of it first.
+
+
+def test_a_citation_this_pass_cannot_choose_does_not_end_the_PARAGRAPH():
+    """Two entries under one key is a citation `scan` reports and skips,
+    and the mentions AFTER it in the same paragraph are other works with
+    nothing wrong with them. Ending the paragraph there loses every one
+    of them silently — the report says "unmatched: 1" and the sentence
+    keeps its other citation unlinked, which is the shape of every miss
+    this layer exists to prevent."""
+    parts = make_parts(
+        para(run("Both hold (Smith 2020), and so does Kanbur (2007)."))
+        + para(run("References"))
+        + para(run("Smith, J. (2020). One book. Press."))
+        + para(run("Smith, A. (2020). Another book. Press."))
+        + para(run("Kanbur, R. (2007). Poverty. Journal.")))
+
+    report = link_all(parts)
+
+    assert report.linked == ["Kanbur2007 @ ¶1"], report.linked
+    assert len(report.unmatched) == 1 and "matches 2 entries" \
+        in report.unmatched[0]

@@ -342,3 +342,31 @@ def test_a_citation_INSIDE_an_equation_is_reported_not_crashed():
 # case. Recorded here so the next reader does not write a contrived test
 # to kill an equivalent mutant -- which is how a suite gets slower
 # without getting stronger.
+
+
+def test_an_unmatched_mention_names_its_paragraph_and_does_not_END_it():
+    """Two things about the line this pass writes when a mention has no
+    entry, and the same fixture holds both.
+
+    The paragraph number is `i + 1` at index 0, where every arithmetic
+    mutant of it differs — `<<` gives 0, and 0 is not a paragraph. The
+    file's other reports sit at index 3 for that reason; this one has to
+    be at 0, because `|` and `^` agree with `+` at 3.
+
+    And the mention is SKIPPED, not the paragraph: the citation after it
+    in the same sentence is another work with nothing wrong with it, and
+    a `break` there loses it silently — the report says "unmatched: 1"
+    and a reader has no reason to look for a second miss.
+    """
+    parts = _wired(
+        para(run("Nobody (1999) began it, and Kanbur (2007) followed."))
+        + para(run("Later, Someone (1899) said so and Kanbur (2007) "
+                   "agreed.")))
+
+    report = link_rest(parts)
+
+    assert sorted(report.unmatched) == [
+        "'Later, Someone (1899)' (¶2)", "'Nobody (1999)' (¶1)"], \
+        report.unmatched
+    assert report.linked == ["Kanbur2007 @ ¶2"], report.linked
+    assert [a for a, _ in _linked(parts)].count("Kanbur2007") == 2

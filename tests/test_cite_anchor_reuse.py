@@ -264,3 +264,26 @@ def test_only_the_MATCHING_bookmarks_are_dropped_and_BOTH_their_ends():
 # * `xml.replace(bm.group(0), "", 1)` -> `..., 2)`. The text being
 #   replaced carries the bookmark's own `w:id`, so it occurs once and a
 #   larger count has nothing to find.
+
+
+def test_a_TRUNCATED_bookmark_is_still_the_entry_s_own():
+    """`km.group(1)`, the ALPHA part of a key-shaped name, against the
+    whole name. An institution's entry mints a truncated marker —
+    `_NAME_BUDGET` is 37 characters and "Agency on Statistics under the
+    President of the Republic" is not — so the name a later run finds on
+    such an entry is a PREFIX of its surname rather than the whole of
+    it, which is what the prefix-either-way test above it is for.
+
+    Compared whole, "kanb2007" neither starts with "kanbur" nor is
+    started by it: the entry reads as unmarked and the run mints a
+    second bookmark beside the first. Two markers on one entry, and
+    every link written in an earlier round points at whichever one Word
+    finds first."""
+    parts = make_parts(para(run("Poverty fell (Kanbur 2007)."))
+                       + para(run("References"))
+                       + _marked("Kanb2007", ENTRY))
+
+    report = link_all(parts)
+
+    assert set(_names(parts)) == {"Kanb2007", "Kanb2007txt"}, _names(parts)
+    assert report.linked == ["Kanb2007 @ ¶1"], report.linked

@@ -216,3 +216,36 @@ def test_the_truncation_budget_never_goes_negative(year):
     for n in range(1, 100):
         suffix = "" if n == 1 else f"_{n}"
         assert _NAME_BUDGET - len(year) - len(suffix) >= 29
+
+
+def test_a_document_whose_bookmark_IDS_are_already_high_still_links():
+    """`range(bid, bid + 4096)`, the pool of ids the pass hands out. It
+    starts above every id already in the document, and the width is
+    added to that start — `bid | 4096` is the same number for every
+    small `bid` and an EMPTY range the moment the document's own ids
+    reach 4096, which Word's do in a manuscript that has been edited for
+    a year (each save mints fresh ids for the fields it rewrites).
+
+    An empty pool is not a wrong name: it is `StopIteration` out of the
+    middle of a linking pass, with the document half rewritten."""
+    import re
+
+    high = ('<w:p><w:bookmarkStart w:id="5000" w:name="_Toc5000"/>'
+            + run("Introduction") + '<w:bookmarkEnd w:id="5000"/></w:p>')
+    parts = make_parts(
+        high + para(run("Poverty fell (Kanbur 2007)."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
+
+    report = link_all(parts)
+
+    assert report.linked == ["Kanbur2007 @ ¶2"], report.linked
+    ids = re.findall(r'<w:bookmarkStart w:id="(\d+)"',
+                     parts["word/document.xml"].decode("utf-8"))
+    assert "5000" in ids and len(set(ids)) == len(ids), ids
+
+
+# `for n in range(1, 100)` mutated to `range(1, 99)` is the same
+# residue as the `keep < 1` guard above: it would take 98 names of one
+# shape already in the document to reach the last turn, and the
+# `_dedup_name` fallback answers the case beyond it either way.

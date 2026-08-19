@@ -439,7 +439,7 @@ def link_all(parts: dict[str, bytes], *,
                 # later edit to either is exactly how they drifted apart
                 # the first time.
                 head = reference_head(texts[i])
-                if head is None:                            # unreachable
+                if head is None:      # pragma: no cover - unreachable
                     report.skipped.append(f"no head on entry ¶{i + 1}")
                 else:
                     try:
