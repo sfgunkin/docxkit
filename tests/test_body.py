@@ -408,3 +408,35 @@ def test_an_ALL_LINK_paragraph_still_answers_with_its_pPr():
          "</w:hyperlink></w:p>")
 
     assert prose_props(p) == ('<w:jc w:val="center"/>', "")
+
+
+# --- the run of 2026-08-20: 2.4 %, and the one that was real ------------
+
+
+def test_a_span_of_ONE_or_less_writes_no_gridSpan():
+    """`span > 1`, not `span != 1`. A `w:gridSpan` of 0 is markup Word
+    opens with a repair warning, and a caller computing a span — a
+    header built from a group whose members were all filtered out — can
+    hand this a zero without meaning anything by it.
+
+    The upper side is pinned above; this is the side where an ordering
+    comparison and an equality part company."""
+    assert "gridSpan" not in cell("x", span=1, tcpr="<w:tcPr></w:tcPr>")
+    assert "gridSpan" not in cell("x", span=0, tcpr="<w:tcPr></w:tcPr>")
+    assert 'w:gridSpan w:val="2"' in cell("x", span=2,
+                                          tcpr="<w:tcPr></w:tcPr>")
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `span: int = 1` in the signature, mutated to 0. The default reaches
+#   one line — `if span > 1` — and 0 and 1 are the same answer to it.
+# * `props.replace("<w:tcPr>", …, 1)` written 2. `props` is one cell's
+#   properties element, which holds one opening `<w:tcPr>`.
+# * `len(spans) != len(headers)` and `len(r) != columns` as `is not`.
+#   Both sides are column counts, and CPython hands out one object per
+#   integer below 257; a table with 257 columns is not a table.
+# * `zip(headers, spans, strict=True)` written `strict=False`. The
+#   length check four lines above has already raised for a table where
+#   they differ, so the strictness is a second lock on a door that
+#   cannot open.
