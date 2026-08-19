@@ -309,6 +309,36 @@ def test_a_renumbered_header_part_is_not_added_and_removed(tmp_path):
     assert report["structure"] == [] and report["text"] == [], report
 
 
+def test_a_renumbered_header_is_paired_however_LONG_its_running_head(
+        tmp_path):
+    """`autojunk=False` on the similarity that pairs a renumbered part.
+
+    difflib's autojunk heuristic discards any element appearing in more
+    than 1 % of a sequence longer than 200 — which for a string of text
+    is most of the alphabet. A running head is the one part of a paper
+    that repeats itself, and on this pair the ratio falls from 0.97 to
+    0.32 with the heuristic on: below the 0.6 threshold, so the header
+    is reported as one part LOST and another GAINED, the whole running
+    head printed twice, and the edit that actually happened — a volume
+    number and a month — buried under it.
+
+    The short fixtures above cannot see this: under 200 elements
+    difflib does not apply the heuristic at all."""
+    head = ("Journal of Economic Studies, Volume 41, Number 3, September "
+            "2026 — Employment and the life course in Central Asia ") * 3
+    a, b = docs(tmp_path, BASE, BASE,
+                extra=({"word/header1.xml": hdr(para(run(head)))},
+                       {"word/header2.xml": hdr(para(run(
+                           head.replace("Number 3", "Number 4")
+                               .replace("September", "December"))))}))
+
+    report = compare(a, b)
+
+    assert report["structure"] == [], "renumbered, not lost and gained"
+    assert len(report["text"]) == 1, report["text"]
+    assert report["text"][0]["part"] == "header1"
+
+
 def test_a_header_only_the_author_has_is_a_structural_change(tmp_path):
     head = hdr(para(run("DRAFT — do not cite")))
     a, b = docs(tmp_path, BASE, BASE,
