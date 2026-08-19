@@ -788,6 +788,35 @@ def test_every_mode_reaches_the_report(anchor, note, legacy):
     assert rep.linked == ["Table1"]
 
 
+def test_a_citation_link_BEFORE_the_mention_is_stepped_over():
+    """`continue`, not `break`. The walk over a paragraph's existing
+    hyperlinks skips the ones that do not hold the label, and the very
+    first hyperlink in an academic sentence is usually a citation —
+    `link_crossrefs` runs after `link_citations`, so by the time this
+    walk happens every "(Smith 2020)" in the paragraph is already a
+    hyperlink and sits in front of the mention it shares a sentence
+    with.
+
+    Under `break` the walk gives up at that first citation and falls
+    through to the plain-text path, which cannot find the label inside
+    a hyperlink's run: the mention comes back reported as unlinkable in
+    exactly the paragraphs a finished manuscript is made of."""
+    mention = para(run("As "),
+                   '<w:hyperlink w:anchor="ref_Smith2020">'
+                   + run("Smith (2020)") + "</w:hyperlink>",
+                   run(" notes in "),
+                   '<w:hyperlink w:anchor="Table1">'
+                   + run("Table 1") + "</w:hyperlink>",
+                   run(", the gap is wide."))
+    xml = doc(mention, para(run("Table 1. Employment by age")))
+
+    out, rep = crossrefs.link(xml)
+
+    assert rep.linked == ["Table1"], rep.format()
+    assert "wrapped an existing hyperlink" in rep.notes.get("Table1", "")
+    assert 'w:anchor="ref_Smith2020"' in out, "the citation link is intact"
+
+
 def test_a_split_label_is_reported_as_a_mention_it_could_not_link():
     """The "NOT-FOUND" mode itself: visible_text finds the label, the
     run walk cannot, and the object must be reported rather than
