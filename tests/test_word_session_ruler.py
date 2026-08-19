@@ -234,8 +234,15 @@ class FakeDoc:
             return i + 2
         return i + 1
 
+    #: characters of left margin. Not zero, because a real document's
+    #: text does not begin at x=0 — the module sets LeftMargin itself —
+    #: and a fake that puts it there makes `tail - head` and
+    #: `tail + head` the same number.
+    LEFT_MARGIN_CHARS = 3
+
     def column_of(self, pos: int) -> int:
-        return pos - self._starts()[self._index(pos)]
+        return (self.LEFT_MARGIN_CHARS
+                + pos - self._starts()[self._index(pos)])
 
     def Paragraphs(self, i: int) -> types.SimpleNamespace:
         start = self._starts()[i - 1]
@@ -290,6 +297,33 @@ def test_a_text_with_a_line_break_is_refused():
     with ruler_over(doc) as measure, pytest.raises(AnchorError,
                                                    match="line break"):
         measure("Arial", ["one\rtwo"])
+
+
+def test_the_refusal_names_the_FIRST_text_that_carries_a_break():
+    """`bad[0]`. A bulk ruler run measures a whole table's cells at
+    once, so more than one can carry a paragraph mark — and the name in
+    the message is where the caller goes to look. Naming the last one
+    sends them to the wrong cell; naming the first is the one they meet
+    reading down."""
+    doc = FakeDoc()
+    with ruler_over(doc) as measure, pytest.raises(AnchorError) as exc:
+        measure("Arial", ["fine", "first\rbroken", "second\rbroken"])
+
+    assert "'first\\rbroken'" in str(exc.value), str(exc.value)
+    assert "second" not in str(exc.value)
+
+
+def test_the_measuring_paragraphs_are_UNINDENTED():
+    """`LeftIndent = 0`. The measuring document inherits Word's default
+    template, and a template with an indented Normal style would put
+    every measured line somewhere other than the margin. The width is a
+    difference so it survives that — until a paragraph is indented far
+    enough to wrap, which is the case this setting exists to stop."""
+    doc = FakeDoc()
+    with ruler_over(doc) as measure:
+        measure("Arial", ["abc"])
+
+    assert doc.Content.ParagraphFormat.LeftIndent == 0
 
 
 def test_a_text_that_wraps_cannot_be_read_off_one_line():
