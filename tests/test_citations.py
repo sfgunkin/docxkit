@@ -3209,3 +3209,16 @@ def test_a_BODY_LEVEL_marker_is_placed_by_the_entry_below_it():
 #   and CPython hands out one object per integer below 257. A document
 #   with 257 reference entries would part them; none of these papers
 #   has 40.
+
+
+# `citations.py` itself measured 5.6 % (6/107) the same day, and all six
+# are argued:
+#
+# * the four `f.kind == "…"` comparisons in `repair_plan`, read as `<=`
+#   or `>=`. The kinds are the literals `_Finding` is built with, and at
+#   each branch the ones that can still reach it sort the same way
+#   round: nothing the audit emits sorts at or below "BROKEN LINK" but
+#   itself, and the pair inside the ORPHAN/REF-WITHOUT-CITE arm is "O"
+#   against "R".
+# * `print("=" * 60)` at 59 and 61 — the width of a rule, which is the
+#   cosmetic third of the three kinds CONTRIBUTING names.
