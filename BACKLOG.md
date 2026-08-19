@@ -17,7 +17,8 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-*Nothing open, as of 2026-08-19.* Four were raised from one manuscript round
+**One open, as of 2026-08-19** — below, and it is the other half of the first
+item in the list that follows. Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
 and is kept below because the mistake is instructive. The three that were real:
@@ -36,6 +37,59 @@ words that are being restored elsewhere without pairing information this side
 cannot verify. **A moved block containing a table, or a bookmarked paragraph,
 still cannot go through Compare and come back cleanly** — what changed is that
 nothing ships silently now.
+
+### S2 `build` gates reject-all's TEXT but only accept-all's STRUCTURE
+
+`build` checks both sides — but not the same way. Structure is symmetric:
+
+```python
+report.structure_diff = (
+    [f"rejected: {d}" for d in structure_diff(
+        structure_counts(base_parts),
+        structure_counts(_simulate(parts, _reject)))]
+    + [f"accepted: {d}" for d in structure_diff(
+        structure_counts(read_parts(revised)),
+        structure_counts(_simulate(parts, _accept)))])
+report.unrejectable = untracked(parts, base_parts)   # TEXT — reject side ONLY
+```
+
+`untracked()` is the only paragraph-TEXT comparison in the module, and it runs
+against the ORIGINAL. Nothing compares accept-all's prose against `revised` —
+the clean document `build` was asked to reproduce.
+
+**The reject side cannot cover for it, by construction.** Rejecting removes
+every insertion, so a defect INSIDE an insertion is deleted before the
+comparison happens and cannot appear there however wrong it is. Tag counts do
+not move either: a mangled run is still one paragraph in one cell. So the build
+reports success, `reject-all == baseline` passes BY NAME, and the corruption
+ships in the ACCEPTED document — which is the one the author reads.
+
+**Raised from precedent, not from a shipped failure — say so plainly.** No
+build has been caught doing this. What makes it worth a slot is that Word's
+Compare demonstrably alters and drops content while deriving a redline, and
+both known instances were found by hand, after the fact:
+`_hygiene.restore_math_glyphs` exists because Compare flattens U+2212 to an
+ASCII hyphen (measured on AFI — 2 in the baseline, 0 in the build, the 57 in
+prose untouched), and `compare_collateral` exists because it silently drops
+bookmarks, hyperlinks and whole parts (LI7). The math-glyph case is THIS SHAPE
+— Compare rewriting content the reject side cannot see — and it was fixed only
+for math.
+
+**What it would take.** `unaccepted(parts, revised, *, limit=8)` mirroring
+`untracked`: `_simulate(parts, _accept)` against `read_parts(revised)`, wired
+into `build` behind `accept_check: bool = True` and refusing the same way, with
+its own `Unaccepted` record so `str(u)` says «intended / accepted» rather than
+«baseline / batch». `_paras` needs no change and is already right for this
+side: it walks every `w:p` including table cells, and reads `w:t` only — an
+accepted math revision legitimately leaves a changed equation behind, while
+prose must reproduce the target exactly.
+
+**Found by:** DSI v3, 2026-08-19, reasoning about where a turn's time went
+rather than by a failure. Every batch there ends with a hand-rolled script that
+hashes the accepted paragraph text and table cells against the clean build —
+that script is the workaround. It exists in ONE of the eight papers that use
+`revision/working.docx`: `validate.py` and `build_tracked.py` are DSI-only, so
+the other seven make this comparison nowhere. Delete it when this lands.
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
