@@ -172,6 +172,11 @@ def test_over_long_anchor_is_trimmed_after_escaping():
 
 def test_plain_anchor_trimmed_to_the_find_limit():
     assert len(search_text("x" * 400)) == 255
+    # `break` there rather than `continue` is argued equivalent, not
+    # tested (`tools/kill_check.py`, expect_kill=False): the budget only
+    # ever goes down, so once one piece has overrun it no later piece
+    # can fit either, and skipping the rest one at a time builds the
+    # same string.
 
 
 def test_anchor_stops_at_the_first_paragraph_mark():
@@ -267,6 +272,12 @@ def test_printed_page_differs_from_the_file_page():
 
 @pytest.mark.parametrize("page,doc_page,shown", [
     (7, 7, False),      # no front matter: the two agree
+    # and again past 256, where `is` stops agreeing with `==`: small
+    # ints are cached objects and large ones are not. The two are
+    # written differently on purpose — one literal and one built at
+    # run time, which is what a caller has, since both numbers reach
+    # `Location` from separate `int()` calls on Word's answers
+    (300, int("300"), False),
     (2, 3, True),       # one unnumbered page in front — the ordinary case
     (101, 3, True),     # a section that restarts at 101: printed > file
 ])

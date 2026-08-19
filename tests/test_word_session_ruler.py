@@ -116,8 +116,11 @@ def test_a_session_is_private_and_invisible(com):
 
 
 def test_the_fast_options_are_switched_off_and_put_back(com):
+    # `fast` is not named: its DEFAULT is what every entry point in this
+    # module gets, and a default of False makes a book-length redline
+    # repaginate and spell-check between every edit
     word = com(FakeWord())
-    with W.session(fast=True):
+    with W.session():
         for name, value in W._FAST_OPTIONS.items():
             assert getattr(word.Options, name) == value
         assert word.ScreenUpdating is False
@@ -177,6 +180,13 @@ class FakeRange:
         self.doc, self.Start, self.End = doc, start, end
 
     def Information(self, key: int) -> float:
+        # Word answers for a range's ACTIVE END, so asking a SPANNING
+        # range reports where it ends rather than where the caller
+        # thinks it is pointing. The measuring code collapses both
+        # probes to a point; the fake refuses anything else, the way
+        # the locate fake does.
+        assert self.Start == self.End, \
+            "Information asked of a spanning range - collapse first"
         if key == W.WD_INFO_LINE:
             return self.doc.line_of(self.Start)
         if key == W.WD_HORIZ_POS_PAGE:
@@ -208,7 +218,7 @@ class FakeDoc:
     def __init__(self, *, wraps: set[str] | None = None) -> None:
         self.paras: list[str] = []
         self.wraps = wraps or set()
-        self.closed = False
+        self.closed: dict[str, int] | None = None
         self.Content = FakeContent(self)
         self.PageSetup = types.SimpleNamespace(
             PageWidth=None, LeftMargin=None, RightMargin=None)
@@ -252,8 +262,10 @@ class FakeDoc:
     def Range(self, a: int, b: int) -> FakeRange:
         return FakeRange(self, a, b)
 
-    def Close(self, SaveChanges: int = 0) -> None:
-        self.closed = True
+    def Close(self, **kw: int) -> None:
+        # the kwargs, not a flag: "closed" is not the promise —
+        # "closed without saving" is
+        self.closed = kw
 
 
 class FakeApp:
@@ -345,6 +357,31 @@ def test_the_measuring_document_is_closed_even_after_a_refusal():
     with pytest.raises(FontMissing), ruler_over(doc) as measure:
         measure("Nonesuch", ["abc"])
     assert doc.closed
+
+
+def test_the_measuring_document_is_set_to_TEN_POINT():
+    """`size_pt: float = 10.0`. Every width in the model is denominated
+    at one size, and the default is the one the tables were built with —
+    measure at eleven and every column comes back wider than the layout
+    it is checked against, with nothing in the report to say why."""
+    doc = FakeDoc()
+    with ruler_over(doc) as measure:
+        measure("Arial", ["abc"])
+
+    assert doc.Content.Font.Size == 10.0
+    assert doc.Content.Font.Name == "Arial"
+
+
+def test_the_measuring_document_is_closed_WITHOUT_saving():
+    """`SaveChanges=0`. The measuring document is scratch — a page of
+    the caller's own strings at 1584pt — and 1 is wdSaveChanges, which
+    asks Word to write it somewhere. On an unattended run that is a
+    Save As dialog nobody is there to answer."""
+    doc = FakeDoc()
+    with ruler_over(doc) as measure:
+        measure("Arial", ["abc"])
+
+    assert doc.closed == {"SaveChanges": 0}
 
 
 def test_the_page_is_made_wide_enough_not_to_wrap_by_itself():

@@ -122,6 +122,17 @@ def test_rejects_a_part_with_neither_payload(flat_file, tmp_path):
         flat_opc_to_docx(flat, tmp_path / "out.docx")
 
 
+def test_rejects_a_part_with_NO_xml_root(flat_file, tmp_path):
+    """The other side of `len(children) != 1`, and the side that raises
+    from somewhere else entirely: as `> 1` an EMPTY `pkg:xmlData` walks
+    past the check and into `children[0]`, so what the caller gets is an
+    IndexError from inside the reader rather than the sentence naming
+    the part Word wrote wrong."""
+    flat = flat_file(_xml_part("/word/document.xml", DOC_CT, ""))
+    with pytest.raises(PackageError, match="expected 1 xmlData child"):
+        flat_opc_to_docx(flat, tmp_path / "out.docx")
+
+
 def test_rejects_a_part_with_multiple_xml_roots(flat_file, tmp_path):
     """And the guard is what makes its neighbour equivalent: the line
     under it reads `children[0]`, which cannot be told from
