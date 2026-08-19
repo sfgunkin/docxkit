@@ -552,12 +552,20 @@ def test_locate_opens_the_file_and_passes_its_flags_through(faked_word,
     # `object`, because the spy stands in for a list[Location] and the
     # sentinel is what proves the wrapper returned what it delegated to
     got: object = W.locate("paper.docx", ["an anchor"], ordered=True,
-                           strict=False)
+                           strict=False, unique=False)
 
     assert got == ["located"]
     assert seen["anchors"] == ["an anchor"]
     assert seen["ordered"] is True
     assert seen["strict"] is False
+    assert seen["unique"] is False
+
+    # and the defaults, which a wrapper that hard-codes one of them
+    # would answer the same way for every caller
+    seen.clear()
+    W.locate("paper.docx", ["an anchor"])
+    assert (seen["ordered"], seen["strict"], seen["unique"]) == (
+        False, True, True)
 
 
 def test_locate_revisions_opens_the_file_and_passes_its_limit(faked_word,

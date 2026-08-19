@@ -412,6 +412,35 @@ def test_ordered_walks_forward_through_repeats():
     assert second.doc_page == 11
 
 
+def test_an_anchor_at_the_very_START_costs_one_search():
+    """`cursor = 0`. The walk begins at the top of the document, so the
+    first anchor is searched for from character zero. Starting it at 1
+    steps over an anchor that begins the document — the title, the
+    running head, the first words of the abstract — and the miss is
+    invisible, because the from-the-top retry finds it on a second COM
+    round trip and answers correctly at twice the cost."""
+    doc = make_doc((0, "alpha"), (1040, "omega"))
+
+    (loc,) = locate_in(doc, ["alpha"], ordered=True, unique=False)
+
+    assert loc.doc_page == 1
+    assert doc.finds == 1, "no retry was needed"
+
+
+def test_the_from_the_top_retry_reads_from_the_VERY_top():
+    """`layout.find(text, 0)` — the retry for an anchor that is not
+    ahead of the cursor. From 1 it cannot see an anchor at the start of
+    the document, and an ordered run that has already walked past it
+    reports the anchor as missing: a response letter loses the line for
+    the paper's own title."""
+    doc = make_doc((0, "alpha"), (1040, "omega"))
+
+    first, second = locate_in(doc, ["omega", "alpha"], ordered=True,
+                              unique=False)
+
+    assert (first.doc_page, second.doc_page) == (11, 1)
+
+
 def test_a_cursor_AT_the_end_of_the_document_costs_no_search():
     """`start >= self.end`, and the cost is the only thing that shows
     it. An ordered walk whose last anchor ends at the last character
