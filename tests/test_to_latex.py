@@ -385,3 +385,33 @@ def test_an_unknown_element_whose_name_sorts_EARLY_is_still_reported():
 #   the single one directly — and `" \middle| ".join([x])` IS `x`, so
 #   the two paths agree for one operand and for none. The mutants pick
 #   the other path to the same string.
+
+
+def test_a_command_ENDING_in_a_brace_takes_no_guard_space():
+    r"""`sym[-1].isalpha()` — the trailing space exists to stop `\le x`
+    fusing into `\lex`, and a command that ends in `}` needs none:
+    `\mathbb{R}` is complete, and the space after it is a space in the
+    rendered formula.
+
+    Every other symbol in the table ends in a letter, so `sym[1]` and
+    `sym[-2]` answer the same question as `sym[-1]` — the blackboard
+    letters are the six that tell them apart. The base sits at the END
+    of the output, where `.strip()` would hide a trailing space, so the
+    fixture puts a variable after it."""
+    assert to_latex(m(r("ℝx"))) == r"\mathbb{R}x"
+    assert to_latex(m(r("≤x"))) == r"\le x"
+
+
+def test_the_math_alphanumeric_block_starts_at_its_FIRST_character():
+    r"""`ord(ch) >= 0x1d400`. U+1D400 is MATHEMATICAL BOLD CAPITAL A —
+    the first character of the block, and the one a bound off by one
+    stops decomposing: it would come through as itself, and a paper's
+    bold matrix name would be a glyph LaTeX has no font for.
+
+    Below the block the guard must NOT fire, and `!=` in its place is
+    the mutant that matters: U+210E PLANCK CONSTANT carries a `<font>`
+    decomposition too, so the same branch would quietly rewrite it to a
+    plain `h` — a different symbol, and one the author chose."""
+    assert to_latex(m(r("\U0001d400"))) == "A"
+    assert to_latex(m(r("\U0001d465"))) == "x"
+    assert to_latex(m(r("ℎ"))) == "ℎ"
