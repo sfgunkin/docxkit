@@ -126,3 +126,68 @@ def test_the_library_configures_no_logging_of_its_own():
     log = logging.getLogger("docxkit.word")
     assert log.handlers == []
     assert log.level == logging.NOTSET
+
+
+# ------------------------------------------------ Word's own numbers ----
+# These are not this package's values to choose: each is a member of a
+# documented WdEnum, and Word reads the NUMBER. A wrong one does not
+# raise — Word does something else, quietly and plausibly. That is how
+# `wdExportAllDocument` (0) sat in the argument that decides whether
+# From/To are read at all and turned every page range into a full
+# render, and the two families below are one digit apart in exactly the
+# way that produces it: wdFormatXMLDocument is 12 and
+# wdFormatDocumentDefault is 16, wdWithInTable is 12 and wdPrintView
+# is 3.
+#
+# So they are pinned by NAME here. A mutation of any of them is a
+# silently different Word instruction, and no other test can see it
+# without Word running.
+WD_ENUM_MEMBERS = [
+    ("WD_NORMAL_VIEW", 1, "WdViewType.wdNormalView"),
+    ("WD_PRINT_VIEW", 3, "WdViewType.wdPrintView"),
+    ("WD_WITHIN_TABLE", 12, "WdInformation.wdWithInTable"),
+    ("WD_COMPARE_TO_NEW", 2, "WdCompareTarget.wdCompareTargetNew"),
+    ("WD_FORMAT_DOCX", 16, "WdSaveFormat.wdFormatDocumentDefault"),
+    ("WD_EXPORT_PDF", 17, "WdExportFormat.wdExportFormatPDF"),
+    ("WD_EXPORT_ALL_DOCUMENT", 0, "WdExportRange.wdExportAllDocument"),
+    ("WD_EXPORT_FROM_TO", 3, "WdExportRange.wdExportFromTo"),
+    ("WD_STATISTIC_PAGES", 2, "WdStatistic.wdStatisticPages"),
+    ("WD_COLLAPSE_START", 1, "WdCollapseDirection.wdCollapseStart"),
+    ("WD_FIND_STOP", 0, "WdFindWrap.wdFindStop"),
+    ("WD_INFO_ADJUSTED_PAGE", 1,
+     "WdInformation.wdActiveEndAdjustedPageNumber"),
+    ("WD_INFO_PAGE", 3, "WdInformation.wdActiveEndPageNumber"),
+    ("WD_INFO_LINE", 10, "WdInformation.wdFirstCharacterLineNumber"),
+    ("WD_HORIZ_POS_PAGE", 5,
+     "WdInformation.wdHorizontalPositionRelativeToPage"),
+]
+
+
+@pytest.mark.parametrize("name,value,member", WD_ENUM_MEMBERS)
+def test_a_word_constant_is_the_number_word_documents(name, value, member):
+    """Pinned against the enum member it stands for, not against
+    itself: the number belongs to Word, and the name is the only thing
+    that says which number is right."""
+    assert getattr(word, name) == value, f"{name} is {member}"
+
+
+def test_every_word_constant_is_pinned():
+    """The table is the point, so it has to stay complete: a constant
+    added without a line here is one nothing checks, and the reason
+    these are pinned at all is that nothing else can check them."""
+    declared = {n for n in vars(word) if n.startswith("WD_")}
+    assert declared == {n for n, _, _ in WD_ENUM_MEMBERS}
+
+
+def test_the_find_limit_is_words_own_ceiling():
+    """255 is what Word's Find box accepts; a longer pattern is not
+    truncated by it but refused, and the caller splits the search."""
+    assert word.FIND_LIMIT == 255
+
+
+@pytest.mark.parametrize("option", sorted(word._FAST_OPTIONS))
+def test_every_bulk_edit_option_is_switched_OFF(option):
+    """All four are speed, and all four are False. One left True is a
+    Word that repaginates or spell-checks between every edit — minutes
+    on a manuscript, and nothing to see in the output."""
+    assert word._FAST_OPTIONS[option] is False
