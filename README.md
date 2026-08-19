@@ -79,7 +79,11 @@ docxkit citations PAPER.docx
 docxkit link PAPER.docx [--write] [--only NAME,...] [--alias "WHO=WHO"]
 docxkit linkfix PAPER.docx                 # audit findings -> proposed repair plan
 docxkit refstyle PAPER.docx [--chicago] [--json R.json]
+docxkit crossrefs PAPER.docx [--write] [--audit]   # exhibits <-> their first mention
 docxkit inspect PAPER.docx [--comments] [--revisions]
+docxkit lint PAPER.docx                    # structural checks, no Word needed
+docxkit probe PAPER.docx [ANCHOR...]       # link form, exhibit blocks, run splits
+docxkit math PAPER.docx [--check]          # symbols typeset as prose, not OMML
 docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
 docxkit locate PAPER.docx --revisions [--limit N]
 docxkit text PAPER.docx [--tracked final|original] [--md]
@@ -91,7 +95,27 @@ docxkit authors PAPER.docx [--set NAME] [--only A,B] [--initials XX] [--write]
 docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx [--sheets] [--check]
+docxkit verify PAPER.docx                  # does Word read this back unchanged?
 ```
+
+The single-file protocol has a family of its own — one `working.docx`,
+two recorded states, and a gate ladder between them:
+
+```
+docxkit revision init MANUSCRIPT.docx      # scaffold the layout
+docxkit revision status                    # truth or proposal? (1 pending, 4 stale)
+docxkit revision doctor                    # who else in the repo selects a manuscript
+docxkit revision ingest [--check] [--json R.json]   # what the author changed
+docxkit revision build                     # clean edit -> redline, via Word Compare
+docxkit revision validate [BATCH] [--no-word] [--render ANCHOR...]
+docxkit revision promote                   # put a validated batch on working.docx
+docxkit revision baseline                  # the author accepted: record the truth
+docxkit revision rescues                   # the undo copies promote leaves behind
+```
+
+`validate` runs the ladder; `--render` adds the one gate no markup check
+can make, rasterising the ACCEPTED page each anchor falls on so a person
+can look at it.
 
 ## The expensive lessons, encoded
 

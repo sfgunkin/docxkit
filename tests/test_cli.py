@@ -1555,3 +1555,71 @@ def test_a_directory_holding_ONE_part_is_not_folded_into_a_count():
                        "word/fonts/f2.odttf"])
 
     assert line == "word/fonts/ (2 parts), word/settings.xml"
+
+
+# --- the README is a promise about this parser ---------------------------
+
+
+def _command_names(monkeypatch, capsys, *argv: str) -> list[str]:
+    """The subcommand names argparse itself reports, read off --help."""
+    import re
+    monkeypatch.setenv("COLUMNS", "400")     # or argparse wraps the list
+    run_cli(monkeypatch, *argv, "--help")
+    block = re.search(r"\{([a-z,\s]+)\}", capsys.readouterr().out)
+    assert block, "argparse stopped printing its choices"
+    names = "".join(block.group(1).split()).split(",")
+    return [n for n in names if n]
+
+
+def _readme() -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1]
+            / "README.md").read_text(encoding="utf-8")
+
+
+def test_every_command_is_written_down_in_the_README(monkeypatch, capsys):
+    """The README's CLI block is the only list of these commands there
+    is, and it drifted: `crossrefs`, `lint`, `probe`, `math`, `verify`
+    and the whole `revision` family — nine commands, the single-file
+    protocol among them — were shipped without ever appearing in it.
+    A command nobody can find is a command nobody runs."""
+    readme = _readme()
+
+    missing = [name for name in _command_names(monkeypatch, capsys)
+               if f"docxkit {name} " not in readme
+               and f"docxkit {name}\n" not in readme]
+
+    assert not missing, f"undocumented commands: {missing}"
+
+
+def test_every_revision_subcommand_is_written_down_too(monkeypatch, capsys):
+    """`revision` is a parser of its own, and its nine steps are the
+    protocol every paper project runs. `status` exiting 1 for pending
+    and 4 for a stale baseline is what the scripts branch on."""
+    readme = _readme()
+
+    missing = [name for name in _command_names(monkeypatch, capsys,
+                                               "revision")
+               if f"docxkit revision {name} " not in readme
+               and f"docxkit revision {name}\n" not in readme]
+
+    assert not missing, f"undocumented revision steps: {missing}"
+
+
+def test_the_README_names_no_command_this_parser_does_not_have(monkeypatch,
+                                                               capsys):
+    """The other direction, and the one a rename breaks: a documented
+    command that no longer exists sends a reader to an error message.
+    Both lists are read from the parser, so neither can be edited into
+    agreement without the other."""
+    import re
+
+    top = set(_command_names(monkeypatch, capsys))
+    steps = set(_command_names(monkeypatch, capsys, "revision"))
+    text = _readme()
+    documented = set(re.findall(r"^docxkit ([a-z]+)", text, re.MULTILINE))
+    rev_documented = set(re.findall(r"^docxkit revision ([a-z]+)", text,
+                                    re.MULTILINE))
+
+    assert documented <= top, f"gone from the CLI: {documented - top}"
+    assert rev_documented <= steps, f"gone: {rev_documented - steps}"
