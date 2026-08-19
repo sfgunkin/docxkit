@@ -103,3 +103,40 @@ def test_moves_are_never_touched_under_a_predicate():
 def test_no_predicate_is_the_old_full_pass():
     assert accept(MIXED) == accept(MIXED, where=None)
     assert counts(accept(MIXED)) == (0, 0)
+
+
+def test_a_revision_the_predicate_SKIPS_does_not_end_the_walk():
+    """`continue`, not `break`, on the element a predicate did not
+    select — and the skipped one has to come FIRST for a fixture to see
+    it. Every selective test above puts the selected author first, where
+    the two spellings agree.
+
+    Under `break` a round that accepts one author's edits applies only
+    those made before the first of anybody else's: the count reads
+    "applied", the document still carries them, and the difference is
+    invisible until the next build says the batch is not clean."""
+    body = doc(para(run("Base "),
+                    ins_by("Alice", "hers ", 1),
+                    ins_by("Bob", "his ", 2),
+                    ins_by("Bob", "and more ", 3)))
+
+    out = accept(body, where=by_author("Bob"))
+
+    assert "his " in out and "and more " in out, "both survive as text"
+    assert counts(out) == (1, 0), "only Alice's stays tracked"
+    assert 'w:author="Alice"' in out
+    assert 'w:author="Bob"' not in out, "an accepted revision keeps no mark"
+
+
+# --- what is left in the selective walk, and why ------------------------
+#
+# `if where is not None and tag in ("moveFrom", "moveTo"): continue` ->
+# `break`, twice. The condition does not depend on the ELEMENT — the tag
+# is fixed for the whole loop and `where` for the whole call — so either
+# every item of that tag is skipped or none is, and stopping the walk at
+# the first one skips exactly the same set. Argued rather than tested:
+# no fixture can separate them.
+#
+# `not any(om is seen for seen in touched)` -> `om == seen`. lxml
+# elements do not define equality, so `==` IS identity here. The `is
+# not` spelling of the same line is a real defect and is tested.

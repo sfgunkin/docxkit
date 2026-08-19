@@ -690,3 +690,26 @@ def test_the_lifted_anchors_keep_their_WHOLE_sequence():
     assert order == [("Start", "1"), ("End", "1"),
                      ("Start", "2"), ("End", "2")], order
 
+
+
+def test_TWO_equations_touched_by_one_pass_are_both_pruned():
+    """`not any(om is seen for seen in touched)` — the list of equations
+    a removal reached into, collected before the elements leave the
+    tree. Read as `is not`, the test becomes "every equation seen so far
+    IS this one", which is true only while the list is empty: the first
+    equation is collected and no other ever is.
+
+    A paper with two display equations in one round is ordinary, and the
+    second would keep the empty fraction box this prune exists to
+    remove."""
+    out = accept(document(
+        "<w:p><m:oMath>"
+        f"<m:f><m:num>{_del(1, _mr('a'))}</m:num>"
+        f"<m:den>{_del(2, _mr('b'))}</m:den></m:f>"
+        "</m:oMath></w:p>"
+        "<w:p><m:oMath>"
+        f"<m:f><m:num>{_del(3, _mr('c'))}</m:num>"
+        f"<m:den>{_del(4, _mr('d'))}</m:den></m:f>"
+        "</m:oMath></w:p>"))
+
+    assert "<m:f>" not in out and "<m:num" not in out, out
