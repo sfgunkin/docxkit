@@ -408,3 +408,67 @@ def test_a_revision_with_NO_id_sorts_LAST_among_the_duplicates():
     dup = next(p for p in lint_parts(_parts(body)) if "duplicate" in p)
 
     assert dup.endswith("['5', None]"), dup
+
+
+# --- the run of 2026-08-20: 3.6 %, and two things it could not see ------
+
+
+def test_a_document_carrying_an_XML_COMMENT_is_linted_not_crashed():
+    """`_local` splits a tag at its namespace brace and takes what
+    follows. lxml hands an XML comment a tag that is a FUNCTION, not a
+    string — there is no brace in it — so an index that assumes the
+    split produced two pieces raises instead of naming the element.
+
+    A comment inside a `w:pPr` is what a house-style script leaves
+    behind, and a linter that dies on one takes the whole build with
+    it: the check it was in the middle of never reports."""
+    commented = ("<w:p><w:pPr><!-- house style: keep this indent -->"
+                 '<w:ind w:left="720"/></w:pPr>'
+                 "<w:r><w:t>Prose.</w:t></w:r></w:p>")
+
+    assert lint_parts(_parts(commented)) == []
+
+
+def test_an_rPrChange_that_IS_last_is_not_reported():
+    """`kids[-1]`, the last child of a `w:rPr`, against a fixed index.
+    Word puts `w:rPrChange` last and the check exists to catch the
+    builds that do not — so the case that must stay silent is a run
+    with formatting BEFORE its change record, which is every tracked
+    formatting edit in a real document.
+
+    A second index also asks for `kids[1]` of an `rPr` whose only child
+    is the change record, which is an IndexError inside a linter."""
+    both = ('<w:p><w:r><w:rPr><w:i/><w:b/>'
+            '<w:rPrChange w:id="9" w:author="T" '
+            'w:date="2026-01-01T00:00:00Z">'
+            "<w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr>"
+            "<w:t>Prose.</w:t></w:r></w:p>")
+    alone = ('<w:p><w:r><w:rPr>'
+             '<w:rPrChange w:id="9" w:author="T" '
+             'w:date="2026-01-01T00:00:00Z">'
+             "<w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr>"
+             "<w:t>Prose.</w:t></w:r></w:p>")
+
+    assert lint_parts(_parts(both)) == []
+    assert lint_parts(_parts(alone)) == []
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `rsplit("}", 1)` written `rsplit("}", 2)`. A tag has one brace, so
+#   a second split has nothing to find.
+# * `{W + t ...} | {M + t ...}` written `^`. The two sets are built
+#   with different namespace prefixes and cannot intersect.
+# * `len(element) == 0` written `<= 0`, and `n > 1` written `!= 1` over
+#   a Counter's values: neither a child count nor a count that reached
+#   a Counter can be negative or zero.
+# * `tag == W + "del"` written `<=`. The walk that reaches it iterates
+#   `w:ins` and `w:del`, and "ins" sorts after "del".
+# * `text != text.strip(XML_WS)` written `is not`. `str.strip` hands
+#   back the string it was given when there is nothing to strip.
+# * the five mutants on `kids[kids.index("rPr") + 1:]`. Each of them
+#   starts the slice at the `rPr` itself instead of after it, and the
+#   only element they add to `after` is "rPr" — which is not in
+#   `_PPR_BEFORE_RPR`, so the intersection below is unchanged.
+# * `el is not om` written `!=`. lxml elements define no `__eq__`, so
+#   equality IS identity for them.
