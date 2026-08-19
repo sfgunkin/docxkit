@@ -713,3 +713,109 @@ def test_TWO_equations_touched_by_one_pass_are_both_pruned():
         "</m:oMath></w:p>"))
 
     assert "<m:f>" not in out and "<m:num" not in out, out
+
+
+def test_a_view_name_BUILT_at_runtime_is_still_the_view():
+    """`view == FINAL`, and `is` is the mutant that hides behind every
+    test in this file: they all pass the module's own constant.
+
+    No caller outside this module does. `docxkit text --tracked final`
+    hands over a string argparse built from argv, a paper.toml hands
+    over one tomllib built, a JSON report one json built — and none of
+    them is the constant's object, however equal. Under `is` the CLI's
+    own documented flag raises "view must be 'final' or 'original'".
+    """
+    from docxkit.revisions import view_transform
+
+    built = "".join(["fi", "nal"])          # what argparse would hand over
+    other = "".join(["origi", "nal"])
+    assert (built, other) == (FINAL, ORIGINAL)
+    assert built is not FINAL and other is not ORIGINAL
+
+    assert view_transform(built) is accept
+    assert view_transform(other) is reject
+    assert text(_redline(), built) == text(_redline(), FINAL)
+    assert text(_redline(), other) == text(_redline(), ORIGINAL)
+
+
+def test_a_whole_DOCUMENT_comes_back_as_a_whole_document():
+    """`_parse` says whether it had to wrap a fragment, and `_serialize`
+    reads that flag to decide between "print the root" and "print the
+    root's children". Told the wrong way round for a real document, the
+    result is its BODY with the `w:document` element and every namespace
+    declaration stripped off — which `write_docx` refuses and Word calls
+    corrupt, but only once it reaches a package.
+
+    Every other test here reads the text back out, where the wrapper is
+    invisible."""
+    out = accept(_redline())
+
+    assert out.lstrip().startswith("<w:document")
+    assert out.rstrip().endswith("</w:document>")
+    assert "xmlns:w=" in out
+
+
+def test_spans_finds_a_revision_that_opens_the_FRAGMENT():
+    """`pos = 0`. `spans` is given a paragraph as often as a document —
+    `comments.annotate` walks paragraph by paragraph — and a revision
+    that starts at offset 0 is the ordinary shape of one: `<w:ins>` is
+    the first thing in the string.
+
+    Starting the scan at 1 finds every later revision and silently
+    drops that one, which is an anchor nobody comments."""
+    fragment = ('<w:ins w:id="1" w:author="A" w:date="d">'
+                "<w:r><w:t>opening</w:t></w:r></w:ins>"
+                '<w:ins w:id="2" w:author="A" w:date="d">'
+                "<w:r><w:t>second</w:t></w:r></w:ins>")
+
+    found = spans(fragment)
+
+    assert len(found) == 2
+    assert found[0][0] == 0, found
+
+
+def test_the_text_view_is_CACHED_between_identical_calls():
+    """`@lru_cache(maxsize=8)`. The walk costs ~7ms per call over a
+    real manuscript and the audits ask for the same view of the same
+    document several times in a row; the simulation underneath it is
+    ~50ms. Removing the decorator changes no answer, which is why
+    nothing caught it — this asserts the cache is there and that the
+    public function hands out a COPY, so a caller mutating its result
+    cannot poison it."""
+    from docxkit.revisions import _text_cached
+
+    _text_cached.cache_clear()
+    xml = _redline()
+
+    first = text(xml, FINAL)
+    second = text(xml, FINAL)
+
+    assert _text_cached.cache_info().hits >= 1
+    assert first == second and first is not second
+    first.append("mutated by the caller")
+    assert text(xml, FINAL) == second
+
+
+# --- what is left in revisions.py, and why ------------------------------
+#
+# `if m.group(2) == "/"` in `spans` -> `>=`. The group is the
+# self-closing slash or the empty string, and "" is the only string that
+# sorts below "/", so the two spellings agree on both.
+#
+# `if mode == FINAL` in `_apply_property_changes` -> `<=`, and
+# `if side == "first"` -> `is` / `<=`. Both compare against a value from
+# a fixed set — final/original, first/last — and over those the
+# orderings and the identities cannot disagree with equality. `side`
+# comes from a module-level table of literals, so `is` holds too.
+#
+# `c.tag.rsplit("}", 1)[-1]` -> `[1]`, `[+1]`, and the maxsplit -> 2.
+# Every element here is namespaced, so the split gives exactly two parts
+# and the last is the second.
+#
+# `if mode == ORIGINAL` in `_simulate_where` -> `is`. This one is
+# reachable in principle — a runtime-built view name flows into
+# `_simulate` from `text()` — but the branch it guards converts
+# `w:delText` to `w:t`, and `visible_text` reads both, so the difference
+# cannot be seen through the only public caller that forwards the
+# string. `view_transform`'s two comparisons ARE tested, because their
+# answer is the transform itself.
