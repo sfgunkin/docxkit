@@ -323,6 +323,43 @@ def test_a_label_split_across_runs_is_reported_not_silently_skipped():
         crossrefs.link(xml)
 
 
+def test_unlink_reports_NOTHING_removed_from_a_document_with_no_exhibits():
+    """`return xml, 0`. The count is what a batch prints and what a
+    person checks a step by — "24 removed" is the number that hid a
+    wrong answer on Parental_style — so the no-exhibit answer has to be
+    zero, not one. A paper's front matter and its response letter both
+    go through this call with nothing to remove."""
+    xml = doc(para(run("Prose with no exhibit in it at all.")))
+
+    out, removed = crossrefs.unlink(xml)
+
+    assert removed == 0
+    assert out == xml, "and nothing touched"
+
+
+def test_the_split_label_refusal_quotes_SIXTY_characters_of_the_caption():
+    """`visible_text(para_xml)[:60]`. The message is how a person finds
+    the caption Word split, and a caption is a sentence: uncut, the
+    refusal prints the whole of it, and a run of them prints a page.
+    Every fixture here has a caption short enough that the cut does
+    nothing."""
+    long_caption = ("Table 1. Employment by age group and sex, urban and "
+                    "rural, 2019 to 2024, weighted")
+    assert len(long_caption) > 60
+    xml = doc(
+        para(run("As Table 1 shows.")),
+        para(run("Table"), run(long_caption[len("Table"):])),  # rsid split
+    )
+
+    with pytest.raises(AnchorError) as exc:
+        crossrefs.link(xml)
+
+    message = str(exc.value)
+    assert "split across runs" in message
+    quoted = message.split("(", 1)[1].rsplit(")", 1)[0]
+    assert quoted == repr(long_caption[:60]), quoted
+
+
 def test_only_restricts_the_work():
     xml = doc(
         para(run("Table 1 and Table 2 follow.")),
@@ -1459,6 +1496,49 @@ def test_a_MENTION_outside_any_run_is_reported_not_spliced():
     assert "As shown in Table 4 below." in out
 
 
+def test_a_caption_LABEL_outside_any_run_is_refused_not_spliced():
+    """The same guard on the back-link side. `r_open` is -1 when no run
+    opens before the `w:t` the label sits in, and `< 0` steps over it —
+    the caption is then refused by name, with the message that sends a
+    person to look at it.
+
+    `== 0` in its place (r_open is never 0: a paragraph opens with
+    `<w:p>`) measures the run from -1 instead, which slices from the
+    LAST character of the paragraph and hands the rewrite an empty
+    string. What comes back is not a refusal but whatever that
+    arithmetic raises."""
+    xml = doc(
+        para(run("As Table 7 shows.")),
+        para('<w:t xml:space="preserve">Table 7. Employment</w:t>'),
+    )
+
+    with pytest.raises(AnchorError, match="split across runs"):
+        crossrefs.link(xml)
+
+
+def test_ONE_malformed_text_node_does_not_cost_the_whole_paragraph():
+    """`continue`, not `break`, under the guard above. The walk steps
+    over the `w:t` it cannot measure from and keeps looking: a mention
+    later in the same paragraph, in a run that is written properly, is
+    still linkable.
+
+    `break` there throws the paragraph away for one bad node — the
+    caption is reported as having no mention at all, which is the
+    report a person acts on by going and looking for a mention that is
+    sitting right there."""
+    xml = doc(
+        para('<w:t xml:space="preserve">As Table 4 shows, </w:t>'
+             + run("and Table 4 again, it rises.")),
+        para(run("Table 4. Employment")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table4"], report.format()
+    assert 'w:anchor="Table4"' in out
+    assert "As Table 4 shows, " in out, "the malformed node is left alone"
+
+
 def test_a_TAB_between_the_properties_and_the_text_survives_the_split():
     """`t_span`'s first half. `pre` is what sits between the run's
     properties and the text node being cut — a rendered tab, a footnote
@@ -1496,3 +1576,45 @@ def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
     caption = paragraph_holding(out, "Table 6. Employment")
     assert caption.count("<w:tab/>") == 1
     assert _visible(caption) == "Table 6. Employment by age group"
+
+
+# --- what the sixth sweep left in crossrefs, and why --------------------
+#
+# 49 real survivors on 2026-08-19, and the tests above took 20. What is
+# left is written down here rather than chased, because each one is
+# equivalent by construction — every entry CONFIRMED with
+# `tools/kill_check.py` (expect_kill=False) rather than assumed, and a
+# survivor list that does not say which are permanent gets re-derived
+# from scratch every round.
+#
+# * `_caption_bookmarks`, five of nine. `gap_from` opens the scope just
+#   after the previous paragraph's `</w:p>`, and every surviving
+#   spelling — `-`, `|`, the `!= 0` and `else 1` variants, and the
+#   rfind's own start — moves that offset by at most a handful of
+#   characters. A `<w:bookmarkStart … w:name="…"/>` element is fifty,
+#   and the regex needs all of it, so a window that short can neither
+#   gain a bookmark nor lose one. (`*` is the one that dies: it
+#   multiplies the offset past the caption and empties the scope.)
+# * the `rfind("<w:r>", 0, …)` start in `_wrap_label` and
+#   `_link_mention`. A paragraph string opens with `<w:p`, so no run
+#   begins at index 0 and searching from 1 finds the same run.
+# * `_wrap_label`'s `continue` under that guard. The caption's prefix
+#   occurs once, so the node the guard steps over is also the last one
+#   that could have matched — `break` has nothing left to skip. Its
+#   twin in `_link_mention` is NOT equivalent, and has a test: a
+#   mention can appear twice in one paragraph.
+# * `_run_parts`' `close != -1`. The run it is handed is
+#   `para_xml[r_open:r_close]` with `r_close` measured past a `</w:r>`,
+#   so the rfind always finds one and every spelling of "found" agrees.
+# * the `count=1` in `_with_hyperlink_style` (twice) and in `unlink`.
+#   Each rewrites one element where a valid package holds exactly one:
+#   `w:rPr` admits a single `w:rStyle`, an rPr string has one opening
+#   tag, and bookmark ids are unique document-wide — which is what
+#   `_next_bookmark_id` is for. `count=0` and `count=2` find nothing
+#   else to change.
+# * the five on `@lru_cache`, maxsize and the decorator itself. The
+#   cached functions compile a pattern from their argument and hold no
+#   state; the size is a speed choice.
+# * `link`'s two `if current is None: continue` arms, both marked
+#   defensive: the caption was found a line earlier by the same
+#   `find_captions` call over the same string.
