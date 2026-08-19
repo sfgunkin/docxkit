@@ -11,9 +11,12 @@ what keeps the whole layer testable on any machine.
 """
 from __future__ import annotations
 
+from pathlib import Path
+from typing import IO, Any
+
 import pytest
 
-from docxkit.pages import Sheet, problems, read_pdf
+from docxkit.pages import Sheet, problems, read_pdf, sheets
 
 pymupdf = pytest.importorskip("pymupdf",
                               reason="the render layer needs docxkit[pdf]")
@@ -203,3 +206,89 @@ def test_a_sheet_with_no_number_in_either_band_reads_as_None(tmp_path):
 # * `read_pdf`: `width > height` -> `>=` differs only on an exactly
 #   square sheet, which no paper size is.
 
+# --- sheets: where the render goes, and what happens to it afterwards ---
+#
+# `sheets` had 15 survivors, every one of them because no test ever
+# called it. The function is four lines and each one is a decision: a
+# named PDF is written where the caller asked and KEPT, an unnamed one
+# goes to a staging directory that is removed, and the removal is told
+# to ignore errors because on Windows a reader that has not released the
+# file makes rmtree raise.
+
+def _fake_render(monkeypatch, seen: dict[str, Any]) -> None:
+    """Stand in for Word and for the PDF reader, and record both paths."""
+    from docxkit import pages as pages_mod
+    from docxkit import word as word_mod
+
+    def export_pdf(docx, out_pdf, **kw):
+        seen["asked"] = Path(out_pdf)
+        Path(out_pdf).write_bytes(b"%PDF-1.4 not really\n")
+        return Path(out_pdf)
+
+    def read_pdf(pdf, *, band=0.0):
+        seen["read"] = Path(pdf)
+        seen["existed"] = Path(pdf).exists()
+        seen["band"] = band
+        return []
+
+    monkeypatch.setattr(word_mod, "export_pdf", export_pdf)
+    monkeypatch.setattr(pages_mod, "read_pdf", read_pdf)
+
+
+def test_the_staging_sweep_survives_a_render_still_held_open(tmp_path,
+                                                             monkeypatch):
+    """`ignore_errors=True`. On Windows a file with a handle still on it
+    cannot be removed, and the reader is the thing most likely to hold
+    one — pymupdf keeps the PDF mapped until the document is closed.
+    Without the flag the sweep raises AFTER the answer is in hand, and
+    a table the caller already has is lost to the cleanup."""
+    seen: dict[str, Any] = {}
+    _fake_render(monkeypatch, seen)
+    from docxkit import pages as pages_mod
+    held: list[IO[bytes]] = []
+    inner = pages_mod.read_pdf
+
+    def read_and_hold(pdf, *, band=0.0):
+        rows = inner(pdf, band=band)
+        held.append(open(pdf, "rb"))     # noqa: SIM115 — held on purpose
+        return rows
+
+    monkeypatch.setattr(pages_mod, "read_pdf", read_and_hold)
+    try:
+        assert sheets(tmp_path / "paper.docx") == []
+    finally:
+        for handle in held:
+            handle.close()
+
+
+def test_a_named_pdf_is_written_where_it_was_asked_for_and_KEPT(tmp_path,
+                                                                monkeypatch):
+    """`keep_pdf is not None` — the branch that exists so a person can
+    look at the render the table was read from."""
+    seen: dict[str, Any] = {}
+    _fake_render(monkeypatch, seen)
+    wanted = tmp_path / "look-at-me.pdf"
+
+    assert sheets(tmp_path / "paper.docx", keep_pdf=wanted, band=0.2) == []
+
+    assert seen["asked"] == wanted
+    assert seen["read"] == wanted and seen["band"] == 0.2
+    assert wanted.exists(), "a kept PDF is the whole point of the argument"
+
+
+def test_an_unnamed_render_goes_to_a_staging_file_that_is_REMOVED(
+        tmp_path, monkeypatch):
+    """The other branch: a temporary directory, a file inside it called
+    render.pdf, and nothing left behind. `staging / "render.pdf"` is
+    eleven of the survivors on its own — every arithmetic spelling of
+    the path join raises, and none of them ever ran."""
+    seen: dict[str, Any] = {}
+    _fake_render(monkeypatch, seen)
+
+    assert sheets(tmp_path / "paper.docx") == []
+
+    staged = seen["read"]
+    assert staged.name == "render.pdf"
+    assert staged != tmp_path / "render.pdf", "not beside the document"
+    assert seen["existed"], "the render is read before it is swept up"
+    assert not staged.exists() and not staged.parent.exists()
