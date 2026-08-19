@@ -17,8 +17,8 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Two open, as of 2026-08-19** — below; the first is the other half of the first
-item in the list that follows. Four were raised from an earlier manuscript round
+**Three open, as of 2026-08-19** — below; the first is the other half of the
+first item in the list that follows. Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
 and is kept below because the mistake is instructive. The three that were real:
@@ -116,6 +116,46 @@ stubs do not say so.
 
 **Found by:** DSI re-point, 2026-08-19. Workaround is
 `revision/scripts/render_pages.py`; delete it when this lands.
+
+### S3 `losses` calls a RE-LABELLED link a lost one, and blocks `baseline` on it
+
+`_links()` keys a link by the **(anchor, label) pair** and `losses` reports
+`was - now`, so editing a citation's visible text — with the anchor untouched
+and still resolving — comes back as a loss:
+
+```
+== LOST (4) ==
+    link 'UnitedNations2026 (UN 2026)'
+    link 'UnitedNationsPopulationFund2021txt (United Nations Population Fund. (2'
+   `revision baseline` will refuse until these are restored or named
+   with --accept-loss.
+```
+
+Nothing was lost. DSI's R24.1 deliberately re-labelled four back-link fields
+(«United Nations Population Fund **[UNFPA]**. (2021)», «UN 2026» → «United
+Nations 2026»). All four bookmarks are present in `working.docx`, all four are
+still named by their fields' `instrText`, and `citations.audit_links` reports
+**152 links / 0 broken / 0 unlinked — identical to `prev.docx`**. The same
+`ingest` run printed the truth two sections earlier, as four `built-only` labels
+against four `user-only` ones.
+
+**Why S3 rather than S4.** The gate is right for the case it was built from —
+LI7's paragraph collapse took the anchor and the label together — but it cannot
+tell that from an ordinary correct edit, and it BLOCKS `baseline` when it fires.
+A gate that refuses a legitimate edit teaches the person to pass
+`--accept-loss` without reading it, and the next time it fires it will be waved
+through the same way. That is the failure mode this file already records twice.
+
+**The fix is a split, not a loosening.** A link is LOST when its anchor no
+longer resolves — the anchor is gone, or nothing references it any more. A link
+whose anchor is intact and whose label changed is RE-LABELLED: report it, do not
+block on it. `losses` already has both facts; only the key conflates them. Keep
+the blocking behaviour for a genuinely vanished anchor, and let `--accept-loss`
+mean what it says.
+
+**Found by:** DSI, 2026-08-19, closing the v3 cycle. Worked around with
+`--accept-loss` naming all four, after verifying each anchor by hand — which is
+exactly the habit the split would make unnecessary.
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
