@@ -236,13 +236,22 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
                  "mutate, because the live tree is what would be mutated")
 
 
-def write_config(module: Path, tests: list[str], config: Path) -> None:
+def write_config(module: Path, tests: list[str], config: Path,
+                 stem: str = "", fast: bool = False) -> None:
     # `-p pytest_timeout` because autoload is off in `_env` and
     # `--timeout` is that plugin's flag; `-p no:cacheprovider`
     # so a mutant run writes nothing into the worktree.
-    command = ("python -m pytest -q -x -p no:cacheprovider "
-               "-p pytest_timeout --timeout=30 "
-               + " ".join(tests))
+    pytest_args = ("-q -x -p no:cacheprovider -p pytest_timeout "
+                   "--timeout=30 " + " ".join(tests))
+    command = "python -m pytest " + pytest_args
+    if fast:
+        # The covering tests first, the whole harness behind them — see
+        # tools/mutant_tests.py. POSIX separators on purpose: cosmic-ray
+        # splits this string with `shlex`, which eats backslashes.
+        wrapper = (Path(__file__).resolve().parent
+                   / "mutant_tests.py").as_posix()
+        command = (f"python {wrapper} {stem} {module.as_posix()} -- "
+                   + pytest_args)
     config.write_text(
         "[cosmic-ray]\n"
         f'module-path = "{(WORKTREE / module).as_posix()}"\n'
@@ -258,9 +267,21 @@ def sample(session: Path, keep: int, seed: int) -> None:
     A seeded sample is a measurement that can be REPEATED: the same draw
     against a later suite is a paired comparison, which is a far stronger
     claim than two independent samples of the same module.
+
+    **Ordered by what the mutant IS, not by its job id.** The ids are
+    fresh UUIDs per `init`, and `select job_id from mutation_specs` is
+    answered from the primary key's covering index — so the list came
+    back in sorted-UUID order, which is a different order every session.
+    A seeded sample over it drew a different 120 mutants every time:
+    measured 2026-08-19 on `_table_layout`, two draws from the same
+    2,720 shared FIVE. Every "before and after" this tool has printed
+    for a sampled module was two independent draws, and the promise in
+    the paragraph above was not kept until this line was added.
     """
     con = sqlite3.connect(session)
-    jobs = [r[0] for r in con.execute("select job_id from mutation_specs")]
+    jobs = [r[0] for r in con.execute(
+        "select job_id from mutation_specs order by module_path, "
+        "start_pos_row, start_pos_col, operator_name, occurrence")]
     if keep >= len(jobs):
         return
     random.seed(seed)
@@ -358,6 +379,11 @@ def main() -> int:
                     help="per chunk; each one is restartable")
     ap.add_argument("--chunks", type=int, default=1,
                     help="how many to run now (0 = until finished)")
+    ap.add_argument("--fast", action="store_true",
+                    help="run the tests that COVER the mutated line "
+                         "first, and the whole harness only behind them "
+                         "(tools/mutant_tests.py); the verdict is the "
+                         "same, the wall clock is not")
     ap.add_argument("--fresh", action="store_true",
                     help="discard an existing session and start over")
     ap.add_argument("--report", action="store_true",
@@ -386,6 +412,7 @@ def main() -> int:
     if args.fresh:
         session.unlink(missing_ok=True)
         shutil.rmtree(snapshot, ignore_errors=True)
+        (ROOT / f".mutation-{stem}.coverage.json").unlink(missing_ok=True)
 
     _take_lock()
     # BEFORE the worktree is refreshed from the live tree: on a resume
@@ -400,7 +427,14 @@ def main() -> int:
     ensure_worktree(module, args.tests)
     if not snapshot.exists():
         take_snapshot(snapshot, module, args.tests)
-    write_config(module, args.tests, config)
+    covering = ROOT / f".mutation-{stem}.coverage.json"
+    if args.fast and not covering.exists():
+        print("  recording which tests cover which line...", flush=True)
+        _run([sys.executable,
+              str(Path(__file__).resolve().parent / "mutant_tests.py"),
+              "--build", stem, str(module), "--", "-q", *args.tests],
+             cwd=WORKTREE, env=_env())
+    write_config(module, args.tests, config, stem=stem, fast=args.fast)
     if not session.exists():
         out = _run([sys.executable, "-m", "cosmic_ray.cli", "init",
                     str(config), str(session)], cwd=WORKTREE, env=_env())

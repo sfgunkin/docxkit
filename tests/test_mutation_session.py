@@ -191,3 +191,90 @@ def test_a_tree_that_did_NOT_move_says_nothing(one_chunk, tree):
     _copied, said = one_chunk(snapshot=snapshot)
 
     assert "changed since" not in said
+
+
+# --- the seeded sample, which has to be the SAME draw twice -------------
+
+
+def _session(tmp_path, name, *, job_ids, order=None):
+    """A session db holding 40 specs, ids and row order to taste."""
+    import sqlite3
+
+    path = tmp_path / name
+    con = sqlite3.connect(path)
+    con.execute("create table mutation_specs (module_path varchar, "
+                "operator_name varchar, operator_args json, "
+                "occurrence integer, start_pos_row integer, "
+                "start_pos_col integer, job_id varchar not null primary key)")
+    con.execute("create table work_results (worker_outcome varchar(9), "
+                "output text, test_outcome varchar(11), diff text, "
+                "job_id varchar not null primary key)")
+    specs = [("m.py", "core/Op", "{}", i, 10 + i, 4) for i in range(40)]
+    rows = list(zip(specs, job_ids, strict=True))
+    if order is not None:
+        rows = [rows[i] for i in order]
+    con.executemany("insert into mutation_specs values (?,?,?,?,?,?,?)",
+                    [(*spec, jid) for spec, jid in rows])
+    con.commit()
+    con.close()
+    return path
+
+
+def _kept(path):
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    rows = con.execute(
+        "select ms.occurrence from mutation_specs ms "
+        "left join work_results wr on ms.job_id = wr.job_id "
+        "where wr.job_id is null order by 1").fetchall()
+    con.close()
+    return [r[0] for r in rows]
+
+
+def test_the_seeded_sample_draws_the_same_mutants_from_a_NEW_session(
+        tmp_path):
+    """The claim `sample` makes about itself: a seeded draw is a paired
+    comparison against a later suite. It was not one.
+
+    `job_id` is a fresh UUID per `cosmic-ray init`, and
+    `select job_id from mutation_specs` is answered from the primary
+    key's COVERING INDEX — so the list arrives in sorted-UUID order,
+    which is a different order every session. Seeded or not, the sample
+    then drew a different set every time: measured on `_table_layout`,
+    two draws from the same 2,720 mutants shared five of 120.
+
+    Ordering by what the mutant IS makes the draw a function of the
+    module and the seed, which is what the docstring promises."""
+    import uuid
+
+    first = _session(tmp_path, "a.sqlite",
+                     job_ids=[uuid.uuid4().hex for _ in range(40)])
+    # a second session over the SAME specs: new ids, and the rows
+    # written in a different order for good measure
+    second = _session(tmp_path, "b.sqlite",
+                      job_ids=[uuid.uuid4().hex for _ in range(40)],
+                      order=list(reversed(range(40))))
+
+    ms.sample(first, 12, 20260816)
+    ms.sample(second, 12, 20260816)
+
+    assert len(_kept(first)) == 12
+    assert _kept(first) == _kept(second)
+
+
+def test_a_DIFFERENT_seed_is_a_different_draw(tmp_path):
+    """The other half of "reproducible": the seed has to matter, or the
+    sample is just the first N mutants in file order — which would make
+    every figure a statement about the top of the module."""
+    import uuid
+
+    one = _session(tmp_path, "c.sqlite",
+                   job_ids=[uuid.uuid4().hex for _ in range(40)])
+    two = _session(tmp_path, "d.sqlite",
+                   job_ids=[uuid.uuid4().hex for _ in range(40)])
+
+    ms.sample(one, 12, 20260816)
+    ms.sample(two, 12, 1)
+
+    assert _kept(one) != _kept(two)

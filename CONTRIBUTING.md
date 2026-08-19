@@ -666,6 +666,31 @@ The practical rule for a session that measures while it works: pick the
 module you are NOT editing. Two worktrees make two sweeps safe, and
 neither makes an edit to the module under measurement safe.
 
+### The seeded sample was never the same draw twice
+
+The section above is right about the population and wrong about
+everything else, because the draw itself was not reproducible until
+2026-08-19. `sample()` reads its candidates with
+
+    select job_id from mutation_specs
+
+and sqlite answers that from the primary key's COVERING INDEX — so the
+list arrives in sorted-UUID order, and the ids are fresh per
+`cosmic-ray init`. A seeded `random.sample` then picks the same
+POSITIONS in a list that has been shuffled by the id generator.
+
+Measured: two draws of 120 from `_table_layout`'s 2,720, same seed,
+minutes apart, **shared five**. So the module reading 14.0, then 9.7,
+then 7.7, then 8.5 across one evening was partly a different 460 each
+time.
+
+Ordering the candidates by what the mutant IS — module, row, column,
+operator, occurrence — makes the draw a function of the module and the
+seed, and two fresh sessions now draw the same 120. Every figure
+recorded before that is an unbiased sample of its module and NOT half
+of a pair; read the survivor lists rather than the difference between
+two percentages.
+
 ### A sampled figure is pairwise only while the POPULATION holds
 
 `--sample 460` keeps its seed so that two runs of one module draw the
@@ -1028,11 +1053,15 @@ the live file — the classification of annotation spans moves with the
 text, so a module being worked on reads several points high. See
 "the survivor list reads the source the run was planned against".
 
-`equations`' pair IS pairwise — same 1,311 mutants, same seeded 460, no
-source added between the two runs — so 35 real survivors became 24 on
-the same sample. Twelve of what is left are documented equivalents (the
-unreachable piece bound, `_local`'s subscript, `is` on a one-character
-attribute, the delimiter count) and three need Word's XSL.
+`equations` went from 35 real survivors to 24 over the same population
+of 1,311 — **but not, it turned out, over the same 460**. See "the
+seeded sample was never the same draw twice" below: until the evening of
+2026-08-19 every `--sample` figure was an independent draw, so a pair
+like this one is two samples of the same module rather than a paired
+measurement. Twelve of what is left in `equations` are documented
+equivalents (the unreachable piece bound, `_local`'s subscript, `is` on
+a one-character attribute, the delimiter count) and three need Word's
+XSL.
 
 `ingest`'s 35.1 % is the clearest case of a stale number misleading: it
 is a RAW figure from before the annotation mutants came out of the
