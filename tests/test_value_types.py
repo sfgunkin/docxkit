@@ -57,6 +57,7 @@ VALUES = [
     "revisions.Revision",
     "styles.Resolved",
     "styles.Style",
+    "tracked.Unaccepted",
     "tracked.Untracked",
     "wordcount.Counts",
 ]

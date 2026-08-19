@@ -80,12 +80,14 @@ __all__ = [
     "BuildReport",
     "MathOutcome",
     "PackageError",
+    "Unaccepted",
     "Untracked",
     "build",
     "compare_collateral",
     "package_counts",
     "structure_counts",
     "structure_diff",
+    "unaccepted",
     "untracked",
     "verify",
 ]
@@ -219,6 +221,83 @@ class Untracked:
                 f"{' ' * len(where)}  batch    {self.batch[:70]!r}")
 
 
+@dataclass(frozen=True)
+class Unaccepted:
+    """A paragraph accept-all does NOT reproduce from the clean copy."""
+
+    part: str               # "body" or "footnotes"
+    index: int              # paragraph index in the accepted view, 0-based
+    intended: str           # what the revised document says there
+    accepted: str           # what accepting everything leaves
+
+    def __str__(self) -> str:
+        where = f"{self.part} ¶{self.index + 1}"
+        return (f"{where}: intended {self.intended[:70]!r}\n"
+                f"{' ' * len(where)}  accepted {self.accepted[:70]!r}")
+
+
+def _mismatched_paras(got: dict[str, bytes], want: dict[str, bytes],
+                      make: Any, limit: int,
+                      fold: Callable[[str], str] | None = None) -> list[Any]:
+    """Paragraph-by-paragraph differences between two simulated views.
+
+    One walk for both gates: the reject side compares against the
+    baseline and the accept side against the clean copy, and the only
+    thing that differs is which record says so — and, on the accept
+    side, whether runs of whitespace count (see :func:`unaccepted`).
+    """
+    keep = fold or (lambda t: t)
+    out: list[Any] = []
+    for label, name in (("body", DOCUMENT), ("footnotes", FOOTNOTES)):
+        mine = [keep(t) for t in _paras(_root(got, name))]
+        theirs = [keep(t) for t in _paras(_root(want, name))]
+        for tag, i1, i2, j1, j2 in SequenceMatcher(
+                None, theirs, mine, autojunk=False).get_opcodes():
+            if tag == "equal":
+                continue
+            for k in range(max(i2 - i1, j2 - j1)):
+                out.append(make(
+                    label, j1 + k,
+                    theirs[i1 + k] if i1 + k < i2 else "",
+                    mine[j1 + k] if j1 + k < j2 else ""))
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def unaccepted(parts: dict[str, bytes], revised: dict[str, bytes], *,
+               limit: int = 8,
+               fold_space: bool = False) -> list[Unaccepted]:
+    """Paragraphs where accept-all does NOT reproduce `revised`.
+
+    The mirror of :func:`untracked`, and it covers what that cannot by
+    construction. Rejecting removes every insertion, so a defect INSIDE
+    an insertion is deleted before the reject comparison happens and
+    cannot appear there however wrong it is; the tag counts do not move
+    either, since a mangled run is still one paragraph in one cell. The
+    build then reports success, `reject-all == baseline` passes BY NAME,
+    and the corruption ships in the ACCEPTED document — which is the one
+    the author reads.
+
+    That Word's Compare alters content while deriving a redline is not
+    hypothetical: `hygiene.restore_math_glyphs` exists because it
+    flattens U+2212 to an ASCII hyphen (AFI: 2 in the baseline, 0 in the
+    build), and `compare_collateral` exists because it drops bookmarks,
+    links and whole parts (LI7). Both were found by hand, after the
+    fact.
+
+    `fold_space` collapses runs of whitespace before comparing, which is
+    right — and necessary — for a build made with ``whitespace=False``:
+    Word then treats respacing as no revision at all, so accepting
+    leaves the ORIGINAL's spacing where the clean copy had changed it.
+    Every word-level difference is still seen. `build` passes it for
+    exactly that case and compares exactly otherwise.
+    """
+    return _mismatched_paras(
+        _simulate(parts, _accept), revised, Unaccepted, limit,
+        (lambda t: " ".join(t.split())) if fold_space else None)
+
+
 def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
               limit: int = 8) -> list[Untracked]:
     """Paragraphs where reject-all does NOT reproduce the baseline.
@@ -240,23 +319,8 @@ def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
     paper driving `build` directly is gated too — LI7 was, and the check
     it needed sat one layer up, in a protocol it does not use.
     """
-    out: list[Untracked] = []
-    rejected = _simulate(parts, _reject)
-    for label, name in (("body", DOCUMENT), ("footnotes", FOOTNOTES)):
-        got = _paras(_root(rejected, name))
-        want = _paras(_root(baseline, name))
-        for tag, i1, i2, j1, j2 in SequenceMatcher(
-                None, want, got, autojunk=False).get_opcodes():
-            if tag == "equal":
-                continue
-            for k in range(max(i2 - i1, j2 - j1)):
-                out.append(Untracked(
-                    label, j1 + k,
-                    want[i1 + k] if i1 + k < i2 else "",
-                    got[j1 + k] if j1 + k < j2 else ""))
-                if len(out) >= limit:
-                    return out
-    return out
+    return _mismatched_paras(_simulate(parts, _reject), baseline,
+                             Untracked, limit)
 
 
 Classifier = Callable[[RevisionContext], str | None]
@@ -401,6 +465,12 @@ class BuildReport:
         #: `reject_check` is on, which is the default — the build then
         #: refuses to publish while this is non-empty.
         self.unrejectable: list[Untracked] = []
+        #: Paragraphs an accept-all does not reproduce from the CLEAN
+        #: copy. Always computed, and not advisory while `accept_check`
+        #: is on: a defect Compare baked into an insertion is invisible
+        #: to `unrejectable`, because rejecting deletes the insertion
+        #: before that comparison happens. See :func:`unaccepted`.
+        self.unaccepted: list[Unaccepted] = []
         #: Counts of the glyph-less carriers — tables, rows, bookmarks,
         #: section breaks — that the built redline does not resolve back
         #: to the documents it came from. See :func:`structure_counts`.
@@ -648,6 +718,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           tables: str = _comments.COALESCE,
           whitespace: bool = True, formatting: bool = True,
           resolve_math: bool = True, reject_check: bool = True,
+          accept_check: bool = True,
           verify_in_word: bool = True, force: bool = False,
           carry: tuple[str, ...] = (_hygiene.CUSTOM_XML,),
           progress: Callable[[str], None] | None = None,
@@ -681,6 +752,17 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     the build refuses to publish when it does not (:func:`untracked`).
     Turn it off only to obtain the artifact for diagnosis — the paragraph
     listing in the error says what differs without it.
+
+    `accept_check` is the same gate on the other side: ACCEPTING every
+    revision must reproduce `revised`, the clean document the redline
+    was derived from. The reject side cannot cover for it — rejecting
+    removes every insertion, so a defect Compare baked INSIDE one is
+    deleted before that comparison happens and cannot appear there
+    however wrong it is — and the accepted document is the one the
+    author reads. A build made with ``whitespace=False`` compares with
+    runs of whitespace collapsed, because Word then treats respacing as
+    no revision and accepting legitimately leaves the original's
+    spacing. See :func:`unaccepted`.
 
     `verify_in_word` reopens the result and fails the build if Word had to
     repair it. `force` overrides the refusal to overwrite a deliverable
@@ -849,9 +931,16 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             + [f"accepted: {d}" for d in structure_diff(
                 structure_counts(read_parts(revised)),
                 structure_counts(_simulate(parts, _accept)))])
+        # And the same question of the OTHER view. `revised_parts` is
+        # the clean document this redline claims to reproduce; what an
+        # accept leaves has to be it, word for word.
+        report.unaccepted = unaccepted(parts, revised_parts,
+                                       fold_space=not whitespace)
         report.mark("checked reject-all against the original")
         for para in report.unrejectable:
             say(f"  UNREJECTABLE {para}")
+        for missed in report.unaccepted:
+            say(f"  UNACCEPTED {missed}")
         if report.structure_diff and reject_check:
             listed = "\n  ".join(report.structure_diff)
             raise PackageError(
@@ -873,6 +962,18 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"An over-eager math accept is the usual cause: try "
                 f"resolve_math=False. Pass reject_check=False to build the "
                 f"file anyway and inspect it.")
+        if report.unaccepted and accept_check:
+            listed = "\n  ".join(str(u) for u in report.unaccepted)
+            raise PackageError(
+                f"accepting every revision does NOT reproduce "
+                f"{revised.name} — {len(report.unaccepted)} paragraph(s) "
+                f"differ, so the deliverable the author reads is not the "
+                f"document this redline was built from:\n  {listed}\n"
+                f"Word rewriting content while it derives the redline is "
+                f"the usual cause, and the reject-all gate cannot see it: "
+                f"rejecting deletes the insertion the damage is inside. "
+                f"Pass accept_check=False to build the file anyway and "
+                f"inspect it.")
         # Word rewrites the OMML while deriving the redline and flattens
         # U+2212 to an ASCII hyphen doing it — measured on AFI: 2 minus
         # signs in the baseline, 0 in the built batch, and the 57 in the

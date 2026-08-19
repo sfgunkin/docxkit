@@ -188,6 +188,18 @@ def _baseline(path: Path, text: str) -> None:
         z.writestr("word/document.xml", document(para(run(text))))
 
 
+def _target(path: Path, text: str) -> None:
+    """Rewrite `path` to say `text` — what the redline must ACCEPT to.
+
+    The mirror of `_baseline`, and needed for the same reason: the
+    fake's compare output is not derived from the fixture inputs, so a
+    test whose redline accepts to something other than
+    `_clean_document()` has to say what its REVISED input was. `build`
+    refuses to publish a redline whose accept-all does not reproduce it.
+    """
+    _baseline(path, text)
+
+
 def _build(monkeypatch, body: str, sources, **kw):
     fake = _FakeWordModule(body)
     monkeypatch.setattr(tracked, "_word", fake)
@@ -506,11 +518,136 @@ def test_the_reject_gate_can_be_turned_off_and_still_SAYS_it(monkeypatch,
     original, revised, out = sources
 
     report = tracked.build(original, revised, out, verify_in_word=False,
-                           reject_check=False, progress=said.append)
+                           reject_check=False, accept_check=False,
+                           progress=said.append)
 
     assert out.is_file()
     assert len(report.unrejectable) == 1
     assert any("UNREJECTABLE" in line for line in said), said
+
+
+# --- the accept side of the same question (BACKLOG S2, 2026-08-19) -------
+#
+# `untracked` compares reject-all against the ORIGINAL and cannot cover
+# this by construction: rejecting removes every insertion, so a defect
+# Compare baked INSIDE one is deleted before that comparison happens.
+# The tag counts do not move either — a mangled run is still one
+# paragraph in one cell — so the build reports success, the reject gate
+# passes BY NAME, and the corruption ships in the document the author
+# reads.
+
+
+def _mangled_insertion() -> str:
+    """A redline that rejects PERFECTLY and accepts to the wrong words.
+
+    What Word's Compare is known to do while deriving a redline, in the
+    smallest shape that shows it: the insertion carries "sharply" as
+    the clean copy asks, with one word of it rewritten.
+    """
+    body = ('<w:p><w:r><w:t xml:space="preserve">Employment rises </w:t>'
+            "</w:r>"
+            '<w:ins w:id="101" w:author="Revision" '
+            'w:date="2026-01-01T00:00:00Z">'
+            "<w:r><w:t>SHARPLX</w:t></w:r></w:ins></w:p>")
+    return f"<w:document {NS}><w:body>{body}</w:body></w:document>"
+
+
+def test_the_reject_gate_cannot_see_a_defect_inside_an_INSERTION():
+    """The argument for the accept gate, made directly on the two
+    functions: the same package is clean to one and wrong to the
+    other."""
+    from docxkit.tracked import unaccepted, untracked
+
+    parts = {"word/document.xml": _mangled_insertion().encode("utf-8")}
+    baseline = {"word/document.xml":
+                document(para(run("Employment rises "))).encode("utf-8")}
+    intended = {"word/document.xml":
+                document(para(run("Employment rises sharply")))
+                .encode("utf-8")}
+    assert untracked(parts, baseline) == [], "rejecting reproduces it"
+
+    (missed,) = unaccepted(parts, intended)
+    assert missed.part == "body" and missed.index == 0
+    assert missed.intended == "Employment rises sharply"
+    assert missed.accepted == "Employment rises SHARPLX"
+    assert "intended" in str(missed) and "accepted" in str(missed)
+
+
+def test_build_REFUSES_a_redline_that_accepts_to_the_wrong_words(
+        monkeypatch, sources):
+    """And the gate in place. The message names the paragraph, because
+    a build that stops without saying which one sends a person back
+    through the whole document."""
+    fake = _FakeWordModule(_mangled_insertion())
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
+
+    with pytest.raises(PackageError) as exc:
+        tracked.build(sources[0], sources[1], sources[2],
+                      verify_in_word=False)
+
+    message = str(exc.value)
+    assert "accepting every revision does NOT reproduce" in message
+    assert "SHARPLX" in message and "sharply" in message
+    assert not sources[2].exists(), "and nothing was published"
+
+
+def test_the_accept_gate_can_be_turned_off_and_still_SAYS_it(monkeypatch,
+                                                             sources):
+    """The same bargain the reject gate offers: the flag is for getting
+    the artifact to look at, not for making the finding go away."""
+    said: list[str] = []
+    fake = _FakeWordModule(_mangled_insertion())
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           verify_in_word=False, accept_check=False,
+                           progress=said.append)
+
+    assert sources[2].is_file()
+    assert len(report.unaccepted) == 1
+    assert any("UNACCEPTED" in line for line in said), said
+
+
+def test_a_whitespace_blind_build_is_compared_the_same_way(monkeypatch,
+                                                           sources):
+    """`whitespace=False` tells Word not to treat respacing as a
+    revision, so accepting legitimately leaves the ORIGINAL's spacing
+    where the clean copy had changed it. Comparing exactly would refuse
+    every build the Life Expectancy recipe makes.
+
+    The words still have to match: only runs of whitespace are folded.
+    """
+    spaced = (f"<w:document {NS}><w:body>"
+              '<w:p><w:r><w:t xml:space="preserve">Employment  rises'
+              "</w:t></w:r></w:p></w:body></w:document>")
+    fake = _FakeWordModule(spaced)
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment  rises")
+    _target(sources[1], "Employment rises")
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           verify_in_word=False, whitespace=False)
+
+    assert report.unaccepted == []
+    assert sources[2].is_file()
+
+
+def test_the_words_still_have_to_match_when_whitespace_is_off(monkeypatch,
+                                                             sources):
+    """The other half of the fold: a build that ignores spacing does not
+    ignore a word."""
+    fake = _FakeWordModule(_mangled_insertion())
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
+
+    with pytest.raises(PackageError, match="accepting every revision"):
+        tracked.build(sources[0], sources[1], sources[2],
+                      verify_in_word=False, whitespace=False)
 
 
 def test_a_faithful_redline_passes_the_reject_gate(monkeypatch, sources):
@@ -563,6 +700,7 @@ def test_keeping_the_math_still_SEEDS_the_comment_scaffold(monkeypatch,
     fake = _FakeWordModule(_revised_document(), scaffold=True)
     monkeypatch.setattr(tracked, "_word", fake)
     _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
 
     report = tracked.build(sources[0], sources[1], sources[2],
                            classify=lambda ctx: "R1: sharpened",
@@ -918,6 +1056,7 @@ def test_a_build_that_annotates_comments_every_revision(monkeypatch,
     fake = _FakeWordModule(_revised_document(), scaffold=True)
     monkeypatch.setattr(tracked, "_word", fake)
     _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
     out = sources[2]
 
     report = tracked.build(sources[0], sources[1], out,
@@ -940,6 +1079,7 @@ def test_a_successful_verify_is_recorded_on_the_report(monkeypatch,
     fake.open_doc = saying.open_doc                          # type: ignore
     monkeypatch.setattr(tracked, "_word", fake)
     _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
 
     report = tracked.build(sources[0], sources[1], sources[2],
                            verify_in_word=True)
@@ -1614,7 +1754,8 @@ def test_the_structure_refusal_can_be_turned_off_like_the_other_one(
     doubled = _clean_document().replace(
         "</w:body>", _table_xml() + _table_xml() + "</w:body>")
 
-    report, _ = _build(monkeypatch, doubled, sources, reject_check=False)
+    report, _ = _build(monkeypatch, doubled, sources, reject_check=False,
+                       accept_check=False)
 
     assert report.structure_diff, "still reported, just not fatal"
     assert any("tbl:" in d for d in report.structure_diff)

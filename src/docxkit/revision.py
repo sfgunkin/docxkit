@@ -573,6 +573,12 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
         if progress:
             progress(line)
 
+    # `accept_check` is left ON, and the asymmetry is deliberate. The
+    # reject side has a legitimate cause the protocol can see and gate 5
+    # can judge (below); the accept side has none — a redline whose
+    # accepted text is not the clean copy is not a batch to hand back,
+    # and no later gate looks at that view.
+    #
     # `reject_check=False` — the refusal, not the check: `tracked.build`
     # computes it either way and its notes come through `_say`. The
     # protocol REPORTS an unrejectable paragraph and lets gate 5 decide,
