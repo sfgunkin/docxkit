@@ -9,18 +9,25 @@ for it, and its real-survival line is printed as soon as it is known —
 which for a big module is half an hour after the one before it, so this
 is meant to be started and left.
 
-SEQUENTIAL on purpose: the sessions share one worktree, and two of them
-mutating it at once makes each read the other's mutations. The session
-tool holds a lock and would refuse, but the reason it refuses is here.
+Sequential within one worktree, because the sessions mutate the module
+in place and two of them at once make each read the other's mutations.
+The session tool holds a per-worktree lock and would refuse; the reason
+it refuses is here.
 
-To run two sweeps at once, give the second one its own checkout:
-``DOCXKIT_MUT_WORKTREE=D:/docxkit-mut2``. The lock is per worktree, the
-session files are per module, so two sweeps over DIFFERENT modules are
-safe — over the same module they would fight for one session file.
+    python tools/measure_all.py --in D:/docxkit-mut2,D:/docxkit-mut3 --all
+
+`--in` deals the modules out to several checkouts and runs one stream in
+each. The lock is per worktree and the session files are per module, so
+streams over DIFFERENT modules never meet — and a whole-package sweep is
+otherwise a day's wall clock for twenty minutes of thought.
+
+Dealt round-robin rather than in blocks: the module list is sorted
+smallest-first, so blocks would put every big module in the last stream.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -79,6 +86,29 @@ def run(module: str, minutes: float, sample: int = 0) -> None:
         print(f"    {by.group(1)[:150]}", flush=True)
 
 
+def fan_out(worktrees: list[str], modules: list[str], minutes: float,
+            sample: int) -> int:
+    """One stream per checkout, modules dealt round-robin.
+
+    Each stream is this same script with `DOCXKIT_MUT_WORKTREE` set, so
+    a stream is a sweep like any other — restartable, locked, and
+    printing its own chunk lines. Their output is interleaved and every
+    line is already prefixed by the module it belongs to.
+    """
+    streams = []
+    for i, tree in enumerate(worktrees):
+        mine = modules[i::len(worktrees)]
+        if not mine:
+            continue
+        print(f"--- {tree}: {', '.join(mine)}", flush=True)
+        streams.append(subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), *mine,
+             "--minutes", str(minutes),
+             *(["--sample", str(sample)] if sample else [])],
+            cwd=ROOT, env={**os.environ, "DOCXKIT_MUT_WORKTREE": tree}))
+    return max((p.wait() for p in streams), default=0)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -87,6 +117,10 @@ def main() -> int:
                     help="every module in src/docxkit, smallest first")
     ap.add_argument("--minutes", type=float, default=7,
                     help="per chunk; each one is restartable")
+    ap.add_argument("--in", dest="worktrees", default="",
+                    help="comma-separated checkouts to fan out across; "
+                         "one stream per checkout, modules dealt "
+                         "round-robin")
     ap.add_argument("--sample", type=int, default=0,
                     help="run N mutants per module instead of all of them; "
                          "the seed is the session tool's default, so two "
@@ -101,6 +135,9 @@ def main() -> int:
         modules += [name for _size, name in found if name not in modules]
     if not modules:
         ap.error("name some modules, or pass --all")
+    if args.worktrees:
+        return fan_out([w for w in args.worktrees.split(",") if w],
+                       modules, args.minutes, args.sample)
     for module in modules:
         run(module, args.minutes, args.sample)
     return 0

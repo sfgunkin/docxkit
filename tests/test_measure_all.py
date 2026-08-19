@@ -131,3 +131,76 @@ def test_the_module_HEADING_names_the_harness_it_was_measured_against(sweep):
     files — the reason `stale_figures` exists. The count is what a
     reader compares against the map when the number looks wrong."""
     assert _said(sweep(CHUNKS)).startswith("### tracked.py  (1 test file(s))")
+
+
+# --- one stream per checkout --------------------------------------------
+
+
+def test_the_modules_are_DEALT_across_the_checkouts_not_blocked(monkeypatch):
+    """Round-robin, because the module list is sorted smallest-first:
+    dealt in blocks, every big module lands in the last stream and the
+    others finish in minutes while it runs for hours.
+
+    Each stream is this same script with `DOCXKIT_MUT_WORKTREE` set —
+    restartable and locked like any other sweep — so the fan-out is a
+    scheduling decision and nothing more."""
+    launched: list[tuple[list[str], str]] = []
+
+    class _Stream:
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, cwd=None, env=None):
+        mods = [a for a in cmd[2:] if a.endswith(".py")]
+        launched.append((mods, env["DOCXKIT_MUT_WORKTREE"]))
+        return _Stream()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    code = measure_all.fan_out(["D:/a", "D:/b"],
+                               ["one.py", "two.py", "three.py", "four.py"],
+                               minutes=1, sample=0)
+
+    assert code == 0
+    assert launched[0] == (["one.py", "three.py"], "D:/a")
+    assert launched[1] == (["two.py", "four.py"], "D:/b")
+
+
+def test_a_checkout_with_NOTHING_to_do_starts_no_stream(monkeypatch):
+    """Three checkouts and two modules: the third would run a sweep over
+    an empty list, which takes a lock and a worktree for nothing."""
+    launched: list[dict[str, str]] = []
+
+    class _Stream:
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(cmd, cwd=None, env=None):
+        launched.append(env)
+        return _Stream()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    measure_all.fan_out(["D:/a", "D:/b", "D:/c"], ["one.py", "two.py"],
+                        minutes=1, sample=0)
+
+    assert len(launched) == 2
+
+
+def test_the_worst_exit_code_of_the_streams_is_the_answer(monkeypatch):
+    """A sweep that failed in one checkout must not be reported as a
+    clean run because the other finished."""
+    codes = iter([0, 3])
+
+    class _Stream:
+        def __init__(self) -> None:
+            self._code = next(codes)
+
+        def wait(self) -> int:
+            return self._code
+
+    monkeypatch.setattr(subprocess, "Popen",
+                        lambda cmd, cwd=None, env=None: _Stream())
+
+    assert measure_all.fan_out(["D:/a", "D:/b"], ["one.py", "two.py"],
+                               minutes=1, sample=0) == 3
