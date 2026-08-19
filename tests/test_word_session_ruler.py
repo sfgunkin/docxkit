@@ -487,6 +487,14 @@ def test_a_page_range_becomes_words_seven_argument_export(faked_word,
     assert args[4] == W.WD_EXPORT_FROM_TO
     assert args[-2:] == (2, 5)
     assert out == tmp_path / "o.pdf"
+    # the two in the middle, which nothing named: third is
+    # OpenAfterExport — a build runs unattended and must not put a PDF
+    # viewer on the screen for every range — and fourth is OptimizeFor,
+    # 0 being wdExportOptimizeForPrint. The point of rendering through
+    # Word at all is to look at the equations, and the on-screen setting
+    # downsamples what you came to read.
+    assert args[2] is False
+    assert args[3] == 0
 
 
 def test_the_destination_reaches_word_as_an_absolute_path(faked_word,
@@ -509,6 +517,18 @@ def test_no_page_range_exports_the_whole_document(faked_word, tmp_path):
     (args,) = faked_word.exports
     assert len(args) == 2
     assert args[1] == W.WD_EXPORT_PDF
+
+
+def test_HALF_a_page_range_exports_the_whole_document_too(faked_word,
+                                                          tmp_path):
+    """`first and last`, not `or`. A range needs both ends: given one,
+    the seven-argument call hands Word a None it cannot read, and the
+    render fails at the COM boundary instead of doing the obvious thing.
+    Both fixtures beside this one give both ends or neither."""
+    W.export_pdf("in.docx", tmp_path / "o.pdf", first=2)
+
+    (args,) = faked_word.exports
+    assert len(args) == 2, args
 
 
 def test_the_page_count_is_read_after_repagination(faked_word):

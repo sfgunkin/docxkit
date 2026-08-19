@@ -123,6 +123,11 @@ def test_rejects_a_part_with_neither_payload(flat_file, tmp_path):
 
 
 def test_rejects_a_part_with_multiple_xml_roots(flat_file, tmp_path):
+    """And the guard is what makes its neighbour equivalent: the line
+    under it reads `children[0]`, which cannot be told from
+    `children[-1]` once exactly one child is the only shape that gets
+    past here. Argued rather than tested (`tools/kill_check.py`,
+    expect_kill=False)."""
     flat = flat_file(_xml_part("/word/document.xml", DOC_CT,
                                DOC_XML + EXTRA_XML))
     with pytest.raises(PackageError, match="expected 1 xmlData child"):
