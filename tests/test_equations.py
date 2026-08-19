@@ -54,6 +54,10 @@ def test_equations_are_found_in_order():
     assert len(eqs) == 2
     assert eqs[0].tokens == "sict"
     assert eqs[1].tokens == "LN"
+    # both fingerprints are PROPERTIES, and only one of them had ever
+    # been read off an Equation: the structure is what tells a fraction
+    # from the same symbols written with a solidus
+    assert (eqs[0].skeleton, eqs[1].skeleton) == ("sSub", "f")
 
 
 def test_tokens_and_skeleton_answer_different_questions():
@@ -633,3 +637,11 @@ def test_a_TRACKED_insertion_inside_an_equation_keeps_its_TEXT():
     assert to_latex(redlined(kept)) == "x=y"
     assert to_latex(redlined(empty)) == "y"
     assert to_latex(redlined(dropped)) == "y"
+
+
+# --- what is left in the walk's own helpers, and why --------------------
+#
+# `_local`: `tag.rsplit("}", 1)[-1] if "}" in tag else tag`. The
+# maxsplit is 1, so a tag WITH a brace splits into exactly two parts and
+# `[-1]`, `[1]` and `[+1]` are the same element; a tag without one never
+# reaches the subscript. Argued rather than tested.
