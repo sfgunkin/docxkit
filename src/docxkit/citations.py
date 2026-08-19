@@ -103,7 +103,14 @@ from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
 from ._cite_repair import wrap_link_in_bookmark as wrap_link_in_bookmark
-from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, internal_links, visible_text
+from ._xml import (
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    PARA_RE,
+    internal_links,
+    visible_text,
+)
 from ._xml import run_open_before as run_open_before
 from .package import read_parts
 
@@ -157,13 +164,27 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     doc = parts[DOCUMENT].decode("utf-8")
     findings, _stats = _audit_findings(parts)
     bookmarks = set(_BOOKMARK_NAME_RE.findall(doc))
-    foot = parts.get(FOOTNOTES, b"").decode("utf-8")
-    bookmarks |= set(_BOOKMARK_NAME_RE.findall(foot))
     anchors = {a for a, _ in internal_links(doc)}
-    anchors |= {a for a, _ in internal_links(foot)}
     paras = list(PARA_RE.finditer(doc))
     texts = [visible_text(m.group(0)) for m in paras]
-    cited_text = {c.key for t in texts for c in find_citations(t)}
+    # BOTH note stores, and their prose as well as their machinery. What
+    # this classifies from decides whether a bookmark is proposed for
+    # DELETION, so a store it does not open is a live anchor called
+    # debris: the endnote half of that was open in BACKLOG as S2 until
+    # 2026-08-20, and the same argument covers the mentions — a work
+    # cited only in a note is cited, and "not in cited_text" is one of
+    # the three tests that make a marker debris.
+    note_texts: list[str] = []          # NOT in `texts`: `references`
+    for part in (FOOTNOTES, ENDNOTES):  # reads that, and a note is not
+        note_xml = parts.get(part, b"").decode("utf-8")   # an entry
+        if not note_xml:
+            continue
+        bookmarks |= set(_BOOKMARK_NAME_RE.findall(note_xml))
+        anchors |= {a for a, _ in internal_links(note_xml)}
+        note_texts += [visible_text(m.group(0))
+                       for m in PARA_RE.finditer(note_xml)]
+    cited_text = {c.key for t in texts + note_texts
+                  for c in find_citations(t)}
 
     # Bookmarks a LIVE reference entry still owns. Nothing may be called
     # debris while its entry is in the list, and the citation key is the

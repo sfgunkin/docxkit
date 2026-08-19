@@ -18,7 +18,12 @@ from __future__ import annotations
 from conftest import make_parts, para, run
 
 from docxkit._xml import BOOKMARK_NAME_RE, internal_links
-from docxkit.citations import link_all, link_rest, unlink_by_anchor
+from docxkit.citations import (
+    link_all,
+    link_rest,
+    repair_plan,
+    unlink_by_anchor,
+)
 
 ENTRY = "Kanbur, R. (2007). Poverty and distribution. Journal."
 
@@ -287,3 +292,67 @@ def test_a_TRUNCATED_bookmark_is_still_the_entry_s_own():
 
     assert set(_names(parts)) == {"Kanb2007", "Kanb2007txt"}, _names(parts)
     assert report.linked == ["Kanb2007 @ ¶1"], report.linked
+
+
+# --- the repair plan reads both note stores too (2026-08-20) -------------
+
+
+def _with_endnote(body: str, note_body: str) -> dict[str, bytes]:
+    from conftest import notes
+
+    parts = make_parts(body)
+    parts["word/endnotes.xml"] = notes(
+        "endnotes", f'<w:endnote w:id="2">{note_body}</w:endnote>'
+    ).encode("utf-8")
+    return parts
+
+
+def test_a_work_cited_in_an_ENDNOTE_is_not_debris():
+    """`repair_plan` proposes DELETING a bookmark when three things
+    hold: the key is not in the document's citations, no `<name>txt`
+    partner exists, and the entry is not live. It read the body and
+    footnotes for the first two, so for a paper whose journal takes
+    endnotes the first was true by construction — every marker for a
+    work cited only there read as debris.
+
+    A proposal to delete an anchor the apparatus is using is the worst
+    line this report can print: it is mechanical, it looks specific,
+    and the repair is a one-liner a person will run."""
+    parts = _with_endnote(
+        para(run("The trend is clear."))
+        + para('<w:bookmarkStart w:id="5" w:name="Smith2020"/>'
+               + run("A paragraph the marker was hoisted into.")
+               + '<w:bookmarkEnd w:id="5"/>')
+        + para(run("References"))
+        + para(run("Jones, A. (2020). Another work. Journal.")),
+        para(run("As Smith (2020) says, the gradient is steeper.")))
+
+    plan = repair_plan(parts)
+
+    assert "delete_bookmark" not in plan, plan
+    assert "ORPHAN REF: bookmark 'Smith2020'" in plan
+
+
+def test_the_plan_says_WHICH_note_store_a_finding_is_in():
+    """"(en)" and "(fn)" are what a person does the repair from: an
+    anchor reported as "fn" that lives in endnotes.xml sends them into
+    a part that does not hold it. The label comes from the audit, which
+    reads both stores as of the same day this did.
+
+    `repair_plan` folds the notes' bookmarks and anchors into its own
+    sets as well. Those two lines cannot be witnessed through the
+    output — the audit's note reading gets there first, so a broken
+    link or an orphan that they would rescue is never reported as one —
+    and they are kept so this function's sets say the same thing the
+    audit's do. A survivor list will show them; they are equivalent
+    while the audit reads what it reads."""
+    parts = _with_endnote(
+        para(run("The trend is clear.")) + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty. Journal.")),
+        para('<w:bookmarkStart w:id="1" w:name="Smith2020txt"/>'
+             + run("Smith (2020) says so.")
+             + '<w:bookmarkEnd w:id="1"/>'))
+
+    plan = repair_plan(parts)
+
+    assert "'Smith2020txt' (en)" in plan, plan
