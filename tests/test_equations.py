@@ -109,6 +109,18 @@ def test_harvest_exact_refuses_a_formula_that_merely_mentions_the_symbol():
     assert tokens(harvest(xml, "Ck", exact=True)) == "Ck"
 
 
+def test_harvest_exact_is_an_EQUALITY_not_an_ordering():
+    """`stream.strip() == contains.strip()`, and `<=` is the mutant that
+    hides behind the obvious fixture: "Ck=1" sorts AFTER "Ck", so the
+    formula case answers the same either way. An equation whose symbols
+    sort BEFORE the query is what parts them — a bare "C" beside the
+    "Ck" being asked for — and under `<=` the walk takes the first
+    equation in document order, which is the wrong one."""
+    xml = document(para(omath(mr("C"))) + para(omath(ssub("C", "k"))))
+
+    assert tokens(harvest(xml, "Ck", exact=True)) == "Ck"
+
+
 def test_harvest_exact_says_which_match_it_tried():
     formula = omath(ssub("C", "k") + mr("=") + mr("1"))
     only_in_a_formula = document(para(formula))
@@ -226,9 +238,20 @@ def test_absorb_moves_the_number_inside_the_maths():
 
 def test_absorb_refuses_text_that_sits_before_the_equation():
     """Absorbing it would move it AFTER the maths, and no text diff
-    would show that it had been reordered."""
+    would show that it had been reordered.
+
+    Twice, and the second fixture is the one that pins the boundary:
+    with the prose run butted straight against the equation, `r.end()`
+    EQUALS `math.start()` and `<=` cannot be told from `>=`. A spacer
+    run between them puts the prose strictly before, where the two
+    disagree — and under `>=` the prose run drops out of the walk
+    entirely, the check has nothing to look at, and the sentence is
+    silently moved to the far side of the maths."""
     with pytest.raises(AnchorError, match="BEFORE"):
         display(para(run("where "), omath(mr("x"))), absorb=True)
+    with pytest.raises(AnchorError, match="BEFORE"):
+        display(para(run("where "), run("  "), omath(mr("x"))),
+                absorb=True)
 
 
 def test_display_drops_a_run_butted_straight_against_the_maths():
@@ -645,3 +668,35 @@ def test_a_TRACKED_insertion_inside_an_equation_keeps_its_TEXT():
 # maxsplit is 1, so a tag WITH a brace splits into exactly two parts and
 # `[-1]`, `[1]` and `[+1]` are the same element; a tag without one never
 # reaches the subscript. Argued rather than tested.
+
+
+# --- what is left in equations.py, and why ------------------------------
+#
+# Every survivor from the 2026-08-19 measurement is now killed or here.
+# The arguments, each kill_check'd as an equivalence rather than assumed:
+#
+#   `_MATH_GLYPHS = frozenset(_SYMBOLS) | frozenset(_NARY)` -> `^`. The
+#   two tables are disjoint — measured, 85 glyphs either way — so union
+#   and symmetric difference agree. They would NOT agree if a character
+#   were ever added to both, and the mutant is the shape of that bug:
+#   the shared glyph would silently leave the vocabulary.
+#
+#   `_mval(el, "rPr/sty") == "p"` -> `>=`. The legal values are p, b, i
+#   and bi; only "p" is >= "p", so the comparison cannot separate them
+#   differently over the domain the schema allows.
+#
+#   `if ns == _W_NS` -> `>=`, and `parent.tag == _M + "accPr"` -> `<=`.
+#   Both compare against a fixed URI or tag, and every namespace and
+#   element the walk actually meets sorts on the same side of it.
+#
+#   `if name == "t"` -> `is`. A one-character string is one object in
+#   CPython however it was made, including a slice of a tag.
+#
+#   `tag.rsplit("}", 1)[-1]` -> `[1]`, `[+1]`. maxsplit is 1, so the
+#   part after the brace is both the last element and the second.
+#
+#   `if k + 1 < len(pieces)` in `prose_math`, seven of them: the guard
+#   cannot fire, argued in test_prose_math.py with the measurement.
+#
+#   `latex_to_omml`'s three need Word's MML2OMML.XSL, which a plain
+#   install does not have; the test that would reach them skips.
