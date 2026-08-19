@@ -1750,3 +1750,16 @@ def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
 # * `link`'s two `if current is None: continue` arms, both marked
 #   defensive: the caption was found a line earlier by the same
 #   `find_captions` call over the same string.
+# * the two comparisons against a MODE — `mode == "NOT-FOUND"` and
+#   `mode != "linked"` — as `is` and `is not`. Both sides are the same
+#   literal: `_link_mention` returns it and `link` compares against it,
+#   and CPython gives an identifier-like constant one object. The
+#   ORDERING spellings go the same way for a different reason: every
+#   other mode this function returns begins with a lower-case letter,
+#   which sorts after "NOT-FOUND".
+# * `pos < at` as `<=` in the misplaced-anchor filter. The only mention
+#   at exactly `at` is the marker's own, and the clause beside it drops
+#   anything in the marker's own paragraph.
+# * the `r_open < 0` guards as `<= 0` (and as `< 1`): `r_open` is -1 or
+#   at least 1, so the two spellings differ only at a value the string
+#   cannot produce.
