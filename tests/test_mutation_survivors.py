@@ -397,3 +397,64 @@ def test_a_mutant_with_NO_stored_diff_still_says_something(tmp_path):
 
     assert done.returncode == 0, done.stderr
     assert "-> NumberReplacer" in done.stdout, done.stdout
+
+
+# --- lines coverage is told to skip --------------------------------------
+
+DEFENSIVE = '''\
+"""A module with a branch the package cannot reach."""
+
+
+def clamp(lo: int, hi: int) -> int:
+    if lo < 0 or hi < 0:                 # pragma: no cover - defensive
+        lo = 0
+        return lo
+    return hi
+'''
+
+
+def _defensive_report(tmp_path, *rows):
+    src = tmp_path / "defensive.py"
+    src.write_text(DEFENSIVE, encoding="utf-8")
+    db = _database(tmp_path / "run.sqlite", *rows)
+    return subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
+def test_a_line_coverage_SKIPS_is_not_counted_as_a_gap(tmp_path):
+    """`# pragma: no cover` is the author saying a branch is defensive,
+    and the coverage floor is enforced with those lines taken out. No
+    test executes them, so no test can kill a mutant on one — the same
+    kind of permanent survivor as an annotation, and just as loud:
+    `_cite_build` carried EIGHT on one `if` and the `continue` under it,
+    a fifth of the module's figure, on a line the project has already
+    declared unreachable."""
+    done = _defensive_report(tmp_path, (5, "SURVIVED"), (8, "KILLED"))
+
+    assert done.returncode == 0, done.stderr
+    assert "1 is on a line coverage is told to SKIP" in done.stdout
+    assert "REAL SURVIVAL 0.0% (0/1)" in done.stdout, done.stdout
+    assert "L5" not in done.stdout
+
+
+def test_the_pragma_covers_the_BLOCK_it_heads(tmp_path):
+    """coverage.py's reading of a pragma on a compound statement: the
+    whole block goes, not the header line. The `continue` under a
+    defensive `if` is exactly as unreachable as the `if` itself, and
+    counting it alone would leave half the cluster in the figure."""
+    done = _defensive_report(tmp_path, (6, "SURVIVED"), (7, "SURVIVED"))
+
+    assert "2 are on a line coverage is told to SKIP" in done.stdout
+    assert "L6" not in done.stdout and "L7" not in done.stdout
+
+
+def test_a_survivor_BELOW_the_defensive_block_is_still_a_gap(tmp_path):
+    """The exclusion is a span, not everything after it: the `return`
+    that follows the block is ordinary code and its survivor is
+    ordinary work."""
+    done = _defensive_report(tmp_path, (8, "SURVIVED"))
+
+    assert "REAL SURVIVAL 100.0% (1/1)" in done.stdout, done.stdout
+    assert "L8" in done.stdout

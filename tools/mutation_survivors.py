@@ -28,8 +28,10 @@ under the mutation it did not aim at.
 from __future__ import annotations
 
 import ast
+import re
 import sqlite3
 import sys
+import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -85,6 +87,57 @@ def main_guard_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
                 and node.end_col_offset is not None):
             spans.append((node.lineno, node.col_offset,
                           node.end_lineno, node.end_col_offset))
+    return spans
+
+
+#: coverage.py's own default, which the project's `exclude_also` adds to
+#: rather than replaces.
+_NO_COVER = r"#\s*(pragma|PRAGMA)[:\s]?\s*(no|NO)\s*(cover|COVER)"
+
+
+def excluded_patterns(root: Path) -> list[str]:
+    """The line patterns coverage has been told to ignore, from
+    pyproject — plus its built-in `# pragma: no cover`."""
+    out = [_NO_COVER]
+    try:
+        with (root / "pyproject.toml").open("rb") as fh:
+            conf = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return out
+    report = conf.get("tool", {}).get("coverage", {}).get("report", {})
+    out.extend(report.get("exclude_also", []))
+    out.extend(report.get("exclude_lines", []))
+    return out
+
+
+def excluded_spans(text: str, tree: ast.Module,
+                   patterns: list[str]) -> list[tuple[int, int, int, int]]:
+    """Every span coverage has been told not to look at.
+
+    `# pragma: no cover` is the author saying a line is defensive —
+    reachable only through a state this package does not produce — and
+    the coverage floor is enforced with those lines taken out. No test
+    executes them, so no test can kill a mutant on one: equivalent by
+    construction, exactly like an annotation.
+
+    Eight of `_cite_build`'s 35 "real" survivors sat on one such `if`
+    and the `continue` under it, which is a fifth of a module's figure
+    spent on a line the project has already declared unreachable.
+
+    A pragma on a compound statement covers the whole block, which is
+    the reading coverage.py has of it.
+    """
+    hits = [re.compile(p) for p in patterns]
+    marked = {i + 1 for i, line in enumerate(text.splitlines())
+              if any(h.search(line) for h in hits)}
+    spans = [(row, 0, row, 10 ** 6) for row in marked]
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (isinstance(node, ast.stmt) and isinstance(body, list)
+                and node.lineno in marked
+                and node.end_lineno is not None):
+            spans.append((node.lineno, node.col_offset,
+                          node.end_lineno, 10 ** 6))
     return spans
 
 
@@ -247,6 +300,8 @@ def main() -> int:
     spans = annotation_spans(tree)
     guards = main_guard_spans(tree)
     markers = set(marker_positions(text, tree))
+    nocov = excluded_spans(text, tree,
+                           excluded_patterns(Path(__file__).resolve().parents[1]))
 
     rows = sqlite3.connect(db_path).execute("""
         SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
@@ -269,13 +324,18 @@ def main() -> int:
     survived = [r for r in ran if r[3] == "SURVIVED"]
     unreached = [r for r in survived if within(spans, r[0], r[1])
                  or within(guards, r[0], r[1])
+                 or within(nocov, r[0], r[1])
                  or (r[0], r[1]) in markers]
     real = [r for r in survived if r not in unreached]
     annotated = sum(1 for r in unreached if within(spans, r[0], r[1]))
     in_guard = sum(1 for r in unreached
                    if within(guards, r[0], r[1])
                    and not within(spans, r[0], r[1]))
-    in_marker = len(unreached) - annotated - in_guard
+    in_nocov = sum(1 for r in unreached
+                   if within(nocov, r[0], r[1])
+                   and not within(spans, r[0], r[1])
+                   and not within(guards, r[0], r[1]))
+    in_marker = len(unreached) - annotated - in_guard - in_nocov
     killed = len(ran) - len(survived)
     sample = f" (sampled from {len(rows)})" if skipped else ""
     print(f"{len(ran)} mutants run{sample} · {killed} killed · "
@@ -288,6 +348,11 @@ def main() -> int:
         print(f'  {in_guard} {is_are} inside `if __name__ == "__main__":`'
               f" — equivalent under a\n  test run, which IMPORTS the "
               f"module and never runs it as a script")
+    if in_nocov:
+        is_are = "is" if in_nocov == 1 else "are"
+        print(f"  {in_nocov} {is_are} on a line coverage is told to SKIP "
+              f"(`# pragma: no cover`\n  and friends) — no test runs it, "
+              f"so no test can kill a mutant on it")
     if in_marker:
         is_are = "is" if in_marker == 1 else "are"
         print(f"  {in_marker} {is_are} the keyword-only `*` of a signature, "
@@ -296,7 +361,7 @@ def main() -> int:
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.
-    base = len(ran) - annotated - in_guard - in_marker
+    base = len(ran) - annotated - in_guard - in_marker - in_nocov
     share = len(real) / base * 100 if base else 0.0
     print(f"  {len(real)} to actually look at — REAL SURVIVAL "
           f"{share:.1f}% ({len(real)}/{base})\n")
