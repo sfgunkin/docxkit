@@ -2461,3 +2461,82 @@ def test_a_build_verifies_in_word_and_closes_the_compare_UNSAVED(
 #   lower, never higher. The identity spelling of the same comparison
 #   IS tested, above the small-int cache, because that one differs on
 #   any batch of 257 revisions or more.
+
+
+# --- the parts the gates SIMULATE, and the parts they used to READ -------
+#
+# `_simulate` accepts and rejects all three text-bearing parts — body,
+# footnotes AND endnotes — and the walk that reads the result read two
+# of them. So an accept-all defect was a finding in a footnote and
+# invisible in an endnote, which is where several journals put the whole
+# apparatus. Nothing else covers it: the tag counts do not move for a
+# retyped sentence, `compare` runs on the deliverable rather than inside
+# the build, and the reject gate's own text check stops at the same two
+# parts. `revision.TEXT_PARTS` carries the same warning beside its own
+# list — a count that reads only the body calls such a file truth.
+
+
+def _endnote_parts(text: str, *, tracked_as: str | None = None
+                   ) -> dict[str, bytes]:
+    """A one-paragraph body and one endnote holding `text`."""
+    inner = para(run(text)) if tracked_as is None else para(
+        dele(tracked_as) + ins(text))
+    return make_parts(
+        para(run("The body says the same in every version of this.")),
+        extra={"word/endnotes.xml": notes("endnotes",
+                                          f'<w:endnote w:id="2">{inner}'
+                                          "</w:endnote>")})
+
+
+def test_an_untracked_change_in_an_ENDNOTE_is_a_finding():
+    """The reject side: a sentence the batch retyped, in a part the
+    walk did not open."""
+    baseline = _endnote_parts("The elasticity is 0.35.")
+    batch = _endnote_parts("The elasticity is 0.37.")
+
+    (found,) = untracked(batch, baseline)
+
+    assert found.part == "endnotes"
+    assert found.baseline == "The elasticity is 0.35."
+    assert found.batch == "The elasticity is 0.37."
+    assert str(found).startswith("endnotes ¶1:")
+
+
+def test_a_TRACKED_change_in_an_endnote_is_still_not_a_finding():
+    """The other half, and the one that says the widened walk did not
+    just start crying wolf: rejecting the batch restores the baseline
+    endnote, so there is nothing to report."""
+    baseline = _endnote_parts("The elasticity is 0.35.")
+    batch = _endnote_parts("The elasticity is 0.37.",
+                           tracked_as="The elasticity is 0.35.")
+
+    assert untracked(batch, baseline) == []
+
+
+def test_an_endnote_accept_all_does_not_reproduce_is_a_finding():
+    """The accept side, which is the one that ships: the reader opens
+    the accepted document, and until now nothing compared its endnotes
+    against the clean copy at all."""
+    revised = _endnote_parts("The elasticity is 0.37.")
+    # accepting the batch leaves a mangled sentence behind — the shape
+    # `hygiene.restore_math_glyphs` and `compare_collateral` both exist
+    # for, in the one part neither gate was reading
+    batch = _endnote_parts("The elasticity is 0.7.",
+                           tracked_as="The elasticity is 0.35.")
+
+    (missed,) = unaccepted(batch, revised)
+
+    assert missed.part == "endnotes"
+    assert missed.intended == "The elasticity is 0.37."
+    assert missed.accepted == "The elasticity is 0.7."
+
+
+def test_every_part_the_gates_SIMULATE_has_a_name_to_report_it_under():
+    """`_PART_LABELS` is keyed by part name rather than zipped against
+    `TEXT_PARTS`, so a fourth text-bearing part cannot arrive and be
+    reported under its neighbour's label — it fails here instead."""
+    from docxkit._xml import TEXT_PARTS
+    from docxkit.tracked import _PART_LABELS
+
+    assert set(_PART_LABELS) == set(TEXT_PARTS)
+    assert len(set(_PART_LABELS.values())) == len(TEXT_PARTS)

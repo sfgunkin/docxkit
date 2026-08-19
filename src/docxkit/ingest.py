@@ -62,7 +62,13 @@ def _ratio(a: str, b: str) -> float:
 
 
 def load_paragraphs(path: str | Path) -> tuple[list[str], str]:
-    """(paragraph XML list, footnotes XML) for a .docx."""
+    """(BODY paragraph XML list, footnotes XML) for a .docx.
+
+    The paragraphs are the body's. The footnotes come back whole and
+    unparsed because one caller wants them for one thing — remapping
+    the ids Word renumbered on save. Endnotes are not read at all; see
+    :func:`build_overrides` for what that costs.
+    """
     with zipfile.ZipFile(path) as z:
         doc = z.read(DOCUMENT).decode("utf-8")
         try:
@@ -106,6 +112,19 @@ def build_overrides(baseline: str | Path,
     * author > baseline (an insert) — ratio-pair, then attach the extra
       paragraphs to the last paired override so they land in sequence;
     * remap footnote ids by definition text.
+
+    **Body paragraphs only.** An edit the author made INSIDE a footnote
+    or endnote definition produces no override: the alignment runs over
+    the body, and the notes are read only for the id remap. The next
+    clean build regenerates from a source that never received it, so
+    the wording is lost with nothing raised.
+
+    `revision.ingest` DESCRIBES such an edit — it runs
+    :mod:`docxkit.compare`, which reads every part a reader sees — which
+    makes this the worse half of the pair: named in the report, dropped
+    by the fold-back. Open in BACKLOG.md as S2; pinned by
+    ``test_an_edit_inside_a_NOTE_is_not_ingested`` so a fix has to come
+    past the documentation.
     """
     base_paras, base_foot = load_paragraphs(baseline)
     user_paras, user_foot = load_paragraphs(edited)

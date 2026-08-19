@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import make_parts, para, run, write
+from conftest import make_parts, note, notes, para, run, write
 
 from docxkit.errors import AnchorError
 from docxkit.ingest import (
@@ -420,3 +420,38 @@ def test_a_LONG_document_aligns_ACROSS_a_run_of_blank_paragraphs(tmp_path):
          "A completely different sentence about elasticity."),
         ("Paragraph 105 of the manuscript.",
          "Another wholly rewritten line about coverage.")]
+
+
+def test_an_edit_inside_a_NOTE_is_not_ingested(tmp_path):
+    """**A known gap, pinned rather than fixed** — BACKLOG S2,
+    2026-08-19.
+
+    The alignment runs over BODY paragraphs. Footnotes are read for one
+    purpose, remapping the ids Word renumbered, and endnotes are not
+    read at all — so a sentence the author retyped inside a note
+    definition yields no override, and the next clean build regenerates
+    from a source that never received it.
+
+    `revision.ingest` DESCRIBES the change (it runs `compare`, which
+    reads every part a reader sees), which is what makes this worth
+    pinning: named in the report and dropped by the fold-back reads as
+    handled.
+
+    This test is the documentation's witness. When the gap is closed it
+    fails, and the two docstrings and the BACKLOG entry have to be
+    rewritten before it can pass again.
+    """
+    def paper(path, foot, end):
+        return write(path, make_parts(
+            para(run("The body sentence, identical in both.")),
+            footnotes=notes("footnotes", note(foot, 2)),
+            extra={"word/endnotes.xml": notes("endnotes",
+                                              note(end, 2, "endnote"))}))
+
+    base = paper(tmp_path / "base.docx", "The baseline footnote.",
+                 "The baseline endnote.")
+    edited = paper(tmp_path / "edited.docx", "The footnote, retyped.",
+                   "The endnote, retyped.")
+
+    assert build_overrides(base, edited) == [], (
+        "notes are ingested now — update the docstrings and BACKLOG")

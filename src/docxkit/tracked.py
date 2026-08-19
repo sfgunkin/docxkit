@@ -56,6 +56,7 @@ from ._xml import (
     COMMENT_ID_RE,
     COMMENTS,
     DOCUMENT,
+    ENDNOTES,
     FOOTNOTES,
     TEXT_PARTS,
     internal_links,
@@ -210,7 +211,7 @@ def _simulate(parts: dict[str, bytes], how: Any) -> dict[str, bytes]:
 class Untracked:
     """A paragraph the batch changed with NO revision mark on it."""
 
-    part: str               # "body" or "footnotes"
+    part: str               # "body", "footnotes" or "endnotes"
     index: int              # paragraph index in the rejected view, 0-based
     baseline: str           # what the baseline says there
     batch: str              # what rejecting everything leaves
@@ -225,7 +226,7 @@ class Untracked:
 class Unaccepted:
     """A paragraph accept-all does NOT reproduce from the clean copy."""
 
-    part: str               # "body" or "footnotes"
+    part: str               # "body", "footnotes" or "endnotes"
     index: int              # paragraph index in the accepted view, 0-based
     intended: str           # what the revised document says there
     accepted: str           # what accepting everything leaves
@@ -234,6 +235,14 @@ class Unaccepted:
         where = f"{self.part} ¶{self.index + 1}"
         return (f"{where}: intended {self.intended[:70]!r}\n"
                 f"{' ' * len(where)}  accepted {self.accepted[:70]!r}")
+
+
+#: What each simulated part is CALLED in a finding — "body ¶12". Keyed
+#: rather than zipped: `_mismatched_paras` walks `TEXT_PARTS`, and a
+#: part added there without a name here fails loudly in the gate's own
+#: tests instead of being reported under its neighbour's label.
+_PART_LABELS = {DOCUMENT: "body", FOOTNOTES: "footnotes",
+               ENDNOTES: "endnotes"}
 
 
 def _mismatched_paras(got: dict[str, bytes], want: dict[str, bytes],
@@ -248,7 +257,13 @@ def _mismatched_paras(got: dict[str, bytes], want: dict[str, bytes],
     """
     keep = fold or (lambda t: t)
     out: list[Any] = []
-    for label, name in (("body", DOCUMENT), ("footnotes", FOOTNOTES)):
+    # Every part `_simulate` accepted or rejected, keyed by part name so
+    # a fourth one cannot arrive unlabelled — and for the reason
+    # `revision.TEXT_PARTS` gives beside its own list: a gate that reads
+    # the body and the footnotes calls a mangled ENDNOTE a clean build,
+    # and endnotes are where several journals put the whole apparatus.
+    for name in TEXT_PARTS:
+        label = _PART_LABELS[name]
         mine = [keep(t) for t in _paras(_root(got, name))]
         theirs = [keep(t) for t in _paras(_root(want, name))]
         for tag, i1, i2, j1, j2 in SequenceMatcher(

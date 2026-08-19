@@ -17,7 +17,37 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Nothing open, as of 2026-08-19.** Six were raised and closed that day; five
+### S2 `build_overrides` ingests BODY paragraphs only — a footnote the author retyped is dropped
+
+Found by review, 2026-08-19, while widening the tracked gates to endnotes.
+`load_paragraphs` returns `(body paragraphs, footnotes XML)` and the footnotes
+half is used for ONE thing: remapping ids Word renumbered. The alignment runs
+over body paragraphs, so an author edit inside a note DEFINITION produces no
+override at all — and endnotes are not read in any form.
+
+Reproduced on two packages differing only inside `word/footnotes.xml` and
+`word/endnotes.xml`: `build_overrides(base, edited)` returns `[]`. The next
+clean build regenerates from a source that never received the edit, and the
+author's wording is gone with nothing raised.
+
+Not reachable from the single-file `revision` protocol, which edits
+`working.docx` in place; this is the multi-file overrides workflow the older
+paper projects still run, and `build_overrides` is exported from the package
+root.
+
+The report layer is NOT blind to it — `revision.ingest` runs `compare`, which
+reads every part a reader sees, so the change is described. It is the fold-back
+that drops it, which is the worse half: a report that names the edit and a
+pipeline that discards it read as "handled".
+
+Fixing it properly means a second channel through `apply_overrides`, which
+takes `document.xml` alone — a design change, not a patch. **Until then the
+limitation is documented in both docstrings and pinned by a test**, so the day
+it is fixed the docs are told to change.
+
+---
+
+**Nothing else open, as of 2026-08-19.** Six were raised and closed that day; five
 came from one manuscript and the sixth from mutation testing `placement` the
 day after it landed — the accept-all half of gate 5's text check
 (`unaccepted`), the re-labelled link that blocked `baseline`
