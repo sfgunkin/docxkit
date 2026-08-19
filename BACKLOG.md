@@ -17,11 +17,13 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Two open, as of 2026-08-19** — below, and both are one afternoon's use of
-`placement`, which is a day old. Three more were closed the same day: the
-accept-all half of gate 5's text check (`unaccepted`), the re-labelled link
-that blocked `baseline` (`relabelled_links`), and the eye gate that had stayed
-in one paper's scripts (`render_accepted`). All three are in Fixed. Four were raised from an earlier manuscript round
+**Nothing open, as of 2026-08-19.** Five were raised and closed that day, all
+from one manuscript: the accept-all half of gate 5's text check
+(`unaccepted`), the re-labelled link that blocked `baseline`
+(`relabelled_links`), the eye gate that had stayed in one paper's scripts
+(`render_accepted`), and the two `placement` defects that cost DSI a blank
+landscape page — a block moved out of its own section, and a note the block
+never knew it had (`831ef24`). All five are in Fixed. Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
 and is kept below because the mistake is instructive. The three that were real:
@@ -40,60 +42,6 @@ words that are being restored elsewhere without pairing information this side
 cannot verify. **A moved block containing a table, or a bookmarked paragraph,
 still cannot go through Compare and come back cleanly** — what changed is that
 nothing ships silently now.
-
-### S1 `placement.place` moves a block OUT of its own section, silently
-
-DSI's таблица 4 is wide and owns a landscape section: «Информативность…» ends
-the portrait section, and the `*` note after the table ends a landscape one, so
-the section spanned bookmark + caption + table + «Примечание…» + `*` note.
-`place()` moved the caption, table and «Примечание…» five paragraphs up to sit
-nearer the first mention. The `sectPr` stayed behind on the note, so:
-
-* the landscape section came to contain ONE stranded paragraph — a blank
-  landscape page 26 in a 62-page paper;
-* the table landed in the PORTRAIT section and was typeset in an orientation
-  it was never laid out for.
-
-**Everything reported success.** `place()` returned `moved=True`;
-`citations.audit_links` gave 152 links / 0 broken; and the structure-count gate
-— which counts `sectPr` explicitly — saw **3 before and 3 after**, because the
-break was not deleted, only orphaned. Counting section breaks cannot see a
-section break that stopped containing anything. DSI's wrapper even passed a
-`render` hook, and that did not catch it either: the render check asks whether
-the TABLE straddles a page, not whether the move stranded a section.
-
-**Fix.** A block whose span contains, or is bounded by, a `pPr/sectPr` is not a
-candidate for `move` — refuse it and say so in `PlacementReport.problems`,
-because a table that owns a section has already been placed deliberately. If
-moving it is ever wanted, the section has to travel with it, which is a
-different and larger operation. The cheap correct version is the refusal.
-
-**Found by:** DSI, 2026-08-19, from the author reporting «page 26 — lost
-footnote * and incorrect page orientation». Repaired in the paper by
-`revision/scripts/fix_table4_section.py`, which restores the block into the
-section; the placement pass must not be re-run on that table until this lands.
-
-### S2 `placement.NOTE` knows four words, and a table's note is not always one
-
-`NOTE = ^\s*(?:Примечание|Источник|Note|Source)\b` decides where a table's block
-ENDS. DSI's таблица 4 carries a second note under the first — `* Высокая доля
-самостоятельной занятости…`, the explanation of the `*` on one of its rows — and
-it matches none of the four, so the block ended at «Примечание…» and the `*`
-note was left behind when the table moved. A footnote-style marker under a table
-is ordinary typesetting; `*`, `†`, `‡` and `a)` are all this same shape.
-
-Related to the S1 above but INDEPENDENT of it: in a document with no sections at
-all, this alone still separates a table from half of its notes, and nothing
-reports it — the note is still a paragraph, so no count moves.
-
-**Fix.** Extend the vocabulary to a leading footnote marker, and let the caller
-override it the way `caption` and `mention` already can. Note the ordering trap:
-the block must keep absorbing note paragraphs until one is neither a keyword
-note nor a marker note, so a `*` note AFTER a «Примечание…» is included.
-
-**Found by:** the same таблица 4, same day. Checked the rest of the paper before
-filing — DSI has exactly one `*` note, and the other eleven tables end their
-blocks at «Примечание…» correctly, so this cost one table, not twelve.
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
@@ -149,6 +97,72 @@ The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
 ## Fixed
+
+### S1 `placement.place` moves a block OUT of its own section, silently — `831ef24`
+
+DSI's таблица 4 is wide and owns a landscape section: «Информативность…» ends
+the portrait section, and the `*` note after the table ends a landscape one, so
+the section spanned bookmark + caption + table + «Примечание…» + `*` note.
+`place()` moved the caption, table and «Примечание…» five paragraphs up to sit
+nearer the first mention. The `sectPr` stayed behind on the note, so:
+
+* the landscape section came to contain ONE stranded paragraph — a blank
+  landscape page 26 in a 62-page paper;
+* the table landed in the PORTRAIT section and was typeset in an orientation
+  it was never laid out for.
+
+**Everything reported success.** `place()` returned `moved=True`;
+`citations.audit_links` gave 152 links / 0 broken; and the structure-count gate
+— which counts `sectPr` explicitly — saw **3 before and 3 after**, because the
+break was not deleted, only orphaned. Counting section breaks cannot see a
+section break that stopped containing anything. DSI's wrapper even passed a
+`render` hook, and that did not catch it either: the render check asks whether
+the TABLE straddles a page, not whether the move stranded a section.
+
+**Fix.** A block whose span contains, or is bounded by, a `pPr/sectPr` is not a
+candidate for `move` — refuse it and say so in `PlacementReport.problems`,
+because a table that owns a section has already been placed deliberately. If
+moving it is ever wanted, the section has to travel with it, which is a
+different and larger operation. The cheap correct version is the refusal.
+
+**Found by:** DSI, 2026-08-19, from the author reporting «page 26 — lost
+footnote * and incorrect page orientation». Repaired in the paper by
+`revision/scripts/fix_table4_section.py`, which restores the block into the
+section; the placement pass must not be re-run on that table until this lands.
+
+### S2 `placement.NOTE` knows four words, and a table's note is not always one — `831ef24`
+
+`NOTE = ^\s*(?:Примечание|Источник|Note|Source)\b` decides where a table's block
+ENDS. DSI's таблица 4 carries a second note under the first — `* Высокая доля
+самостоятельной занятости…`, the explanation of the `*` on one of its rows — and
+it matches none of the four, so the block ended at «Примечание…» and the `*`
+note was left behind when the table moved. A footnote-style marker under a table
+is ordinary typesetting; `*`, `†`, `‡` and `a)` are all this same shape.
+
+Related to the S1 above but INDEPENDENT of it: in a document with no sections at
+all, this alone still separates a table from half of its notes, and nothing
+reports it — the note is still a paragraph, so no count moves.
+
+**Fix.** Extend the vocabulary to a leading footnote marker, and let the caller
+override it the way `caption` and `mention` already can. Note the ordering trap:
+the block must keep absorbing note paragraphs until one is neither a keyword
+note nor a marker note, so a `*` note AFTER a «Примечание…» is included.
+
+**Found by:** the same таблица 4, same day. Checked the rest of the paper before
+filing — DSI has exactly one `*` note, and the other eleven tables end their
+blocks at «Примечание…» correctly, so this cost one table, not twelve.
+
+**Fixed 2026-08-19** (`831ef24`), with three more found while building it. Two
+were pre-existing: `keep_together` cleared `keepNext` on the block's last
+paragraph by walking back from the end, which for a table with NO note is the
+CAPTION — so the caption was unbound from its own table; and `_flag` inserted
+every property at index 0, right for `pStyle` and wrong for everything else, so
+`keepNext` landed ahead of a `pStyle` already present. The third was in the new
+code and is the same shape as the bug being fixed: the element after a block is
+usually the NEXT table's hoisted `bookmarkStart` rather than its caption, so
+the rule that zeroes the resuming paragraph's spacing silently did nothing.
+`_next_content` looks past bookmarks. Eleven tests, 3825 passing.
+
 
 ### S4 `revision validate` had no `--render`, so the eye gate stayed per-paper — `render_accepted`
 
