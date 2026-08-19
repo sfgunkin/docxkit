@@ -456,7 +456,13 @@ def _own_tcpr(cell: str) -> tuple[int, int, str] | None:
 
 
 def _set_tc_w(cell: str, tcw: str) -> str:
-    """`cell` with `tcw` as its own width, replacing or creating one."""
+    """`cell` with `tcw` as its own width, replacing or creating one.
+
+    No `live_properties` guard here, unlike :func:`_set_tbl_pr`: the one
+    caller is `fit_columns`, which refuses a table with tracked changes
+    in it, so a `w:tcPrChange` snapshot holding an old width cannot be
+    reached. Give this a second caller and it needs the guard.
+    """
     own = _own_tcpr(cell)
     if own is None:
         opening = re.match(r"<w:tc\b[^>]*>", cell)
