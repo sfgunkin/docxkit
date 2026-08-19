@@ -394,6 +394,36 @@ def test_the_width_ANCHORS_still_read_what_they_were_measured_at():
     assert {ch: _ARIAL[ch] for ch in ANCHORS_ARIAL} == ANCHORS_ARIAL
 
 
+#: The width GROUPS each table is built from, and what it adds up to.
+#: Named anchors cover the characters whose value has a story; these two
+#: cover the rest, which is 40-odd numbers no assertion could carry
+#: readably. Any digit edited moves the set; any character moved between
+#: groups moves the sum.
+#:
+#: They are a change-detector and nothing more — `pytest -m word` is the
+#: measurement, and these exist because a plain `pytest` deselects it.
+#: A `-m` mark on the only test that checks a table is an exemption, and
+#: an exemption wants a second line of defence.
+TIMES_GROUPS = [180, 200, 250, 278, 333, 389, 408, 444, 469, 480, 500,
+                541, 556, 564, 611, 667, 722, 778, 833, 889, 921, 944,
+                1000]
+ARIAL_GROUPS = [191, 222, 260, 278, 333, 334, 355, 389, 469, 500, 556,
+                584, 611, 667, 722, 778, 833, 889, 944, 1000, 1015]
+
+
+def test_the_width_GROUPS_are_the_ones_that_were_measured():
+    """Every distinct width in each table, and the total across all 103
+    characters. A single digit in a group key moves the set; a character
+    moved from one group to another leaves the set alone and moves the
+    sum."""
+    from docxkit._table_layout import _ARIAL, _TIMES
+
+    assert sorted(set(_TIMES.values())) == TIMES_GROUPS
+    assert sorted(set(_ARIAL.values())) == ARIAL_GROUPS
+    assert (len(_TIMES), sum(_TIMES.values())) == (103, 52326)
+    assert (len(_ARIAL), sum(_ARIAL.values())) == (103, 53586)
+
+
 def test_every_printable_ASCII_has_a_width_in_both_faces():
     """The omission failure, which the module's own comment calls the
     worse of the two: "!" and "P" were in no Arial group at all and
