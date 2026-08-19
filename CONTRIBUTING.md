@@ -869,6 +869,37 @@ ordinary review round — is what makes it a collision. `base - cid` and
 twenty-four zero bits, and every property the module needs (unique,
 eight hex digits, the two families disjoint) survives them.
 
+**A module measured the day after it landed** (`placement.py`, 2026-08-19):
+**20.2 % -> 9.0 %** (116/1283), lines 90 % -> 97 %, floored at 97. It arrived
+as the least-tested thing in the package by a factor of two, which is what a
+day-old module looks like next to one that has been through six sweeps.
+
+Two defects came out of the round, and both are the shape this file keeps
+recording — **a report that reads as success**:
+
+* the "still splits" line was `if pl.split and not pl.own_page`, and
+  `own_page` is applied to every table that splits. The branch could not fire
+  for the case it names, so a table nothing can fix was reported as fixed;
+* `format()` printed the problems only under a render, and half of them are
+  decided in the XML — a table nothing mentions, a block carrying a section
+  break, a move that would cross a boundary. Without a renderer the report
+  showed none of them.
+
+**The fixture that killed the most was one assertion about what is NOT
+written.** Every loop in the module asks `el.tag == W + "p"` before writing a
+paragraph property, and the mutants of that test — `>=` is true for `w:tbl`,
+`is not` is true for everything, since `W + "p"` builds a fresh string each
+time — put a `w:pPr` inside a table. That is well-formed XML and unreadable
+content, and nothing in the report counts elements, so no existing assertion
+could see it. One walk over the output covers every writer at once.
+
+**What is left is mostly that same comparison at sites where it does not
+matter.** A body child is only ever `w:p`, `w:tbl`, `w:bookmarkStart` or
+`w:bookmarkEnd`; the last three carry no text, and they sort either side of
+`w:p` in a known way — so at a site that merely SKIPS a non-paragraph, every
+ordering and identity spelling gives the same answer. The sites where it does
+matter are the ones that write, and those are pinned.
+
 
 `word.py` is the one worth reading twice. Its first figure was the
 package's worst by a factor of two, and 41 of its 110 survivors were
