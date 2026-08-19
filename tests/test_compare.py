@@ -2910,3 +2910,42 @@ def test_a_structure_change_the_OTHER_WAY_ROUND_is_still_structure(tmp_path):
 
     assert [f["change"] for f in report["formula"]] == ["structure"]
     assert report["glyph"] == [], "a skeleton change is not a glyph one"
+
+
+def test_an_equation_that_LOST_its_emphasis_names_the_symbol(tmp_path):
+    """`before[i] != after[i]`, not `<`: the markers are strings and
+    which sorts higher is an accident. Every fixture above adds
+    emphasis, where "" sorts below anything; a symbol that LOST its
+    italic is the same edit backwards, and under `<` the segment walk
+    finds nothing to report — so the finding arrives with both sides
+    empty.
+
+    Word's Compare strips math-italic from a rewritten equation, which
+    is where this comes from."""
+    plain = omath(mrun("x"), mrun("+y"))
+    italic = omath(mrun("x", "<w:rPr><w:i/></w:rPr>"), mrun("+y"))
+
+    report = compare(*docs(tmp_path, italic, plain))
+
+    (entry,) = report["formula_format"]
+    assert entry["from"] == "x:i"
+    assert entry["to"] == "x:plain"
+
+
+def test_a_FIELD_FORM_link_whose_label_changed_is_reported(tmp_path):
+    """The label walk reads both forms, and the field-form loop was
+    free: the test beside it asserts that Word's closing run does not
+    make a FALSE finding, and nothing asserted a real one. Field form is
+    what half these manuscripts carry — `probe` reports it first,
+    because `crossrefs.unlink` cannot see those links at all."""
+    from docxkit.citations import hyperlink_field
+
+    before = para(run("See ") + hyperlink_field("Table1", "Table 1"))
+    after = para(run("See ")
+                 + hyperlink_field("Table1", "Table 1: Descriptive stats"))
+
+    report = compare(*docs(tmp_path, before, after))
+
+    pairs = [(h.get("side"), h.get("label"), h.get("to"))
+             for h in report["hyperlinks"]]
+    assert pairs == [("grew", "Table 1", "Table 1: Descriptive stats")]
