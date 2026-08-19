@@ -665,3 +665,28 @@ def test_the_anchors_keep_their_ORDER_when_they_are_lifted():
 
     assert (out.index('w:name="first"') < out.index("<w:bookmarkEnd")
             < out.index('w:name="second"'))
+def test_the_lifted_anchors_keep_their_WHOLE_sequence():
+    """`parent.insert(at + offset, marker)`, and the fixture above
+    cannot see the `-` spelling: with four markers it produces
+    start1, end2, start2, end1, where the FIRST end still sits between
+    the two starts and every assertion about "a start precedes an end"
+    holds. Word reads that as two crossed bookmark ranges.
+
+    So this asserts the sequence, not a relation inside it."""
+    import re
+
+    xml = document(
+        para(f'<w:ins {_WHEN.format(i=8)}>'
+             '<w:bookmarkStart w:id="1" w:name="first"/>'
+             "<w:r><w:t>one</w:t></w:r>"
+             '<w:bookmarkEnd w:id="1"/>'
+             '<w:bookmarkStart w:id="2" w:name="second"/>'
+             "<w:r><w:t>two</w:t></w:r>"
+             '<w:bookmarkEnd w:id="2"/></w:ins>'))
+
+    out = reject(xml)
+
+    order = re.findall(r'<w:bookmark(Start|End) w:id="(\d)"', out)
+    assert order == [("Start", "1"), ("End", "1"),
+                     ("Start", "2"), ("End", "2")], order
+

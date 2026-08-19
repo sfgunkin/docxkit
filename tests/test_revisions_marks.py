@@ -111,3 +111,73 @@ def test_a_document_with_no_revisions_is_unchanged():
     xml = document(para(run("one")) + para(run("two")))
     assert text(xml, FINAL) == ["one", "two"]
     assert text(xml, ORIGINAL) == ["one", "two"]
+
+
+# --- what a MERGE carries with it ---------------------------------------
+#
+# `_merge_into_next` is what "losing a paragraph mark joins this
+# paragraph to the next" means in the markup, and six mutants lived in
+# it. Each one is a different way of arriving at a document that opens
+# cleanly and is missing something.
+
+
+def test_a_merge_carries_the_paragraph_TEXT_and_does_not_drop_it():
+    """`if nxt is None or nxt.tag != W + "p"` — the guard for "there is
+    nothing to merge INTO", where the paragraph is simply removed.
+
+    `is not` in place of `!=` is always true (the tag is a fresh string
+    every time it is built), so every merge takes the removal branch:
+    the paragraph count comes out right, the mark is gone, and the words
+    are gone with it. Counting paragraphs cannot see that; reading them
+    can."""
+    from docxkit.revisions import reject
+
+    out = reject(_split_paragraph())
+
+    assert out.count("<w:p ") + out.count("<w:p>") == 1
+    assert "Halliday" in out and "Working paper" in out
+
+
+def test_a_BOOKMARK_in_the_merged_paragraph_survives_the_merge():
+    """`if child.tag == W + "pPr"` skips the dying paragraph's own
+    properties, because the surviving one's win. Read as `<=` it skips
+    every child whose tag sorts BEFORE `pPr` — `bookmarkStart` does —
+    and a citation anchor is dropped by a rule written about formatting.
+
+    That is the shape of the loss BACKLOG records for a moved block: the
+    document opens, the text is all there, and a link points nowhere."""
+    from docxkit.revisions import reject
+
+    xml = document(
+        f'<w:p>{MARK_INS}<w:bookmarkStart w:id="7" w:name="Moran1950"/>'
+        f'{run("A cited sentence.")}<w:bookmarkEnd w:id="7"/></w:p>'
+        + para(run("The next paragraph.")))
+
+    out = reject(xml)
+
+    assert out.count("<w:bookmarkStart") == 1, out
+    assert out.count("<w:bookmarkEnd") == 1
+    assert "A cited sentence." in out
+
+
+def test_the_merged_children_land_AFTER_the_surviving_properties():
+    """`list(nxt).index(nxt_ppr) + 1`, and the mutants are `| 1` and
+    `^ 1` — which agree with `+ 1` whenever the properties are the
+    FIRST child, because 0 | 1 and 0 ^ 1 are both 1. Word allows range
+    markup to precede `w:pPr`, and a redline is full of it: with a
+    `bookmarkStart` ahead of the properties the index is 1, where the
+    three spellings give 2, 1 and 0 — properties in the middle of the
+    text, or before the bookmark that belongs to the paragraph above."""
+    from docxkit.revisions import reject
+
+    xml = document(
+        f'<w:p>{MARK_INS}{run("First half")}</w:p>'
+        f'<w:p><w:bookmarkStart w:id="3" w:name="Anchor"/>'
+        f'<w:pPr><w:pStyle w:val="Body"/></w:pPr>'
+        f'{run("Second half")}</w:p>')
+
+    out = reject(xml)
+
+    body = out[out.index("<w:bookmarkStart"):]
+    assert body.index("<w:pPr>") < body.index("First half"), body
+    assert body.index("First half") < body.index("Second half")
