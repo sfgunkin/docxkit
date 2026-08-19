@@ -565,6 +565,10 @@ def test_unlink_restores_a_plain_document():
     assert removed == 2
     assert "w:hyperlink" not in plain
     assert "bookmarkStart" not in plain
+    # and its END too: Word pairs the two by id, and one left behind is
+    # a document that opens with a repair prompt rather than a document
+    # with a stray tag in it
+    assert "bookmarkEnd" not in plain
     # the words are all still there
     assert "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", plain)) == \
         "As Table 1 shows, employment rises.Table 1. Employment"
