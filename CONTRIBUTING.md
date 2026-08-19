@@ -934,6 +934,64 @@ ordering and identity spelling gives the same answer. The sites where it does
 matter are the ones that write, and those are pinned.
 
 
+**The module the deliverable comes out of** (`tracked.py`, 2026-08-19):
+**10.4 % -> 4.9 %** (29/589), lines 96 % -> 100 %. Measured fresh: the 8.6 %
+in the sixth-sweep table above was two rounds and three features old, which
+is the ordinary state of a number in this file.
+
+What the round was mostly about was the COM boundary — what `build` says and
+does when Word refuses. A revision Word will not comment, an equation it will
+not measure, a comment it will not add, a scaffold that cannot be seeded:
+each is one `except Exception` away from a build that reports a clean pass,
+and each is now a fixture that refuses in exactly that place. The `_Refuses`
+helper is three lines and killed more than any assertion did.
+
+Two fixtures were lying, both about arithmetic:
+
+* the Timer's ticks were 100, 101, 103 — and `a % b` equals `a - b` whenever
+  `b <= a < 2b`, so subtraction and modulo agreed on every phase the report
+  printed. Ticks of 1.0, 3.0 and 8.0 separate them;
+* the untracked walk's fixture had ONE insertion, which makes `i1` and `j1`
+  the same index — the baseline index and the batch index only part company
+  after the first insertion, which is the whole reason the finding carries
+  the batch's. Two insertions with an unchanged paragraph between them is
+  the smallest fixture that can tell.
+
+**The paragraph number nothing had read.** `Unaccepted.__str__` carried
+thirteen live mutants on one `+ 1`, because every test asked whether the
+list was empty and none had ever read a finding out loud. Pinned at ¶4:
+`index | 1` and `index ^ 1` both equal `index + 1` at an even index, so the
+obvious fixture proves the least.
+
+**And the counts above 256.** `verify`'s `comments_match` and the build's
+body-vs-package note compare two ints computed in different places. CPython
+hands out one object per int up to 256, so `is` in place of `==` is invisible
+on every fixture this suite had ever built and wrong on every batch above the
+cache — LI7 shipped 315 revisions. Both now run at 300, which is the only
+size at which the two spellings can disagree.
+
+Four survivors stay, argued at the foot of `tests/test_tracked_build.py`:
+difflib's interned tags, a `>=` against a limit the walk meets exactly, and
+`!=` -> `<` on a body count that is a subset of the package's by
+construction.
+
+**And the question that came out of the round, worth more than the figure:
+does this walk READ every part it writes?** `_simulate` accepts and rejects
+all three text-bearing parts and the comparison opened two of them, so an
+accept-all defect was a finding in a footnote and invisible in an endnote.
+Asked of the rest of the package the same evening, the same answer came back
+from `refstyle` (a citation in an endnote neither checked nor counted),
+`export` (the note dropped from the markdown entirely), `_cite_audit` (the
+same bookmark audits as 1 in a footnote and 0 in an endnote) and
+`ingest.build_overrides` (a note the author retyped produces no override at
+all). `wordcount`, `probe` and `compare` were already right. The first three
+are fixed; the last two are open in BACKLOG, because an audit widened without
+its builder reports work nothing can do.
+
+A short parts list is not a bug that fails — it is a report that reads as
+success over the half of the document it happened to look at.
+
+
 `word.py` is the one worth reading twice. Its first figure was the
 package's worst by a factor of two, and 41 of its 110 survivors were
 constants — numbers Word reads, which no test can kill by exercising
