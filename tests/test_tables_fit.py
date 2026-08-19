@@ -374,6 +374,71 @@ def test_arial_narrow_is_a_uniform_scaling_of_arial():
     assert _ARIAL["!"] == 278
 
 
+#: One character per width group, both faces. `tests/test_width_model.py`
+#: is the oracle and is marked `word`, so a plain `pytest` deselects the
+#: whole of it — which left every width in `_table_layout`'s module scope
+#: unguarded in CI, one live mutant per group, each of them a column
+#: measured against the wrong font.
+ANCHORS_TIMES = {" ": 250, ",": 250, ".": 250, "0": 500, "9": 500,
+                 "M": 889, "W": 944, "%": 833, "@": 921, "—": 1000}
+ANCHORS_ARIAL = {"0": 556, "9": 556, "M": 833, "W": 944, "%": 889,
+                 "@": 1015, "—": 1000}
+
+
+def test_the_width_ANCHORS_still_read_what_they_were_measured_at():
+    """Anchors, not a measurement: `pytest -m word` is what may change
+    them. Their job is to make a silent edit to a group key loud."""
+    from docxkit._table_layout import _ARIAL, _TIMES
+
+    assert {ch: _TIMES[ch] for ch in ANCHORS_TIMES} == ANCHORS_TIMES
+    assert {ch: _ARIAL[ch] for ch in ANCHORS_ARIAL} == ANCHORS_ARIAL
+
+
+def test_every_printable_ASCII_has_a_width_in_both_faces():
+    """The omission failure, which the module's own comment calls the
+    worse of the two: "!" and "P" were in no Arial group at all and
+    predicted 600 against 278 and 667. Nothing about a table's shape
+    says which characters it forgot — it still has twenty groups and
+    reads as complete."""
+    import string
+
+    from docxkit._table_layout import (
+        _ARIAL,
+        _ARIAL_NARROW,
+        _TIMES,
+    )
+
+    printable = set(string.printable) - set("\t\n\r\x0b\x0c")
+    for name, table in (("Times", _TIMES), ("Arial", _ARIAL),
+                        ("Arial Narrow", _ARIAL_NARROW)):
+        assert not sorted(printable - set(table)), \
+            f"{name} has no width for {sorted(printable - set(table))}"
+
+
+def test_a_character_belongs_to_ONE_width_group():
+    """The groups are keyed by WIDTH, so a character written into two of
+    them takes the later one silently and the table still looks
+    complete. Only counting says otherwise."""
+    from docxkit import _table_layout as tl
+
+    for groups in (tl._TIMES, tl._ARIAL):
+        assert len(list(groups)) == len(set(groups))
+
+
+def test_an_ALIASED_face_borrows_a_table_and_one_number():
+    """The alias map is where a font nobody measured gets its answer,
+    and the scale is the whole of the correction: Verdana at 1.145 is
+    14.5 % wider than Arial, and at 1.0 every Verdana column in the
+    paper is measured a seventh short."""
+    from docxkit._table_layout import _ARIAL, _FONT_ALIASES, _TIMES
+
+    assert _FONT_ALIASES["times new roman"] == (_TIMES, 1.0)
+    assert _FONT_ALIASES["arial"] == (_ARIAL, 1.0)
+    assert _FONT_ALIASES["verdana"] == (_ARIAL, 1.145)
+    assert _FONT_ALIASES["calibri"] == (_ARIAL, 0.908)
+    assert all(scale > 0 for _table, scale in _FONT_ALIASES.values())
+
+
 def test_page_break_before_creates_ppr_when_missing():
     from lxml import etree
 

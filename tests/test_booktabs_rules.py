@@ -91,6 +91,20 @@ def test_a_two_row_header_closes_after_the_second():
     assert all(c["bottom"] == "single" for c in rows[1])
 
 
+def test_a_THREE_row_header_closes_after_the_third():
+    """`shape.header_rows - 1`, and the mutant is `>>`: one minus one
+    and one halved are both 0, two minus one and two halved are both 1,
+    so a header of one or two rows cannot tell subtraction from a
+    halving. Three can — and a three-row header is an ordinary stack:
+    the group name, the sub-heading, the column numbers."""
+    rows = ruled([["", "Discipline"], ["", "OLS"], ["", "(1)"],
+                  ["Age", "0.1"]])
+
+    assert all(c["bottom"] == "nil" for c in rows[0])
+    assert all(c["bottom"] == "nil" for c in rows[1])
+    assert all(c["bottom"] == "single" for c in rows[2])
+
+
 def test_the_bottom_rule_is_double_and_only_on_the_last_row():
     rows = ruled(BASIC)
     assert all(c["bottom"] == "double" for c in rows[-1])
@@ -266,3 +280,42 @@ def test_an_empty_span_BESIDE_a_group_head_gets_no_cmidrule():
                  width=5, spans={(0, 1): 2, (0, 2): 2})
     assert rows[0][1]["bottom"] == "single", "the group head lost its rule"
     assert rows[0][2]["bottom"] == "nil", "an empty span was ruled"
+
+
+def test_a_heading_and_its_FIRST_panel_are_not_ruled_apart():
+    """`label_of(i - 1)` — the row BEFORE, and the mutants read the row
+    after or the row itself.
+
+    Two label-only rows in a row are a heading and its first panel
+    ("Panel A", then "Kyrgyzstan"), and a rule between them rules off
+    nothing: the reader sees a line with a bare heading above it. The
+    guard suppresses the second one's rule.
+
+    Reading the row AFTER instead is invisible unless that row's own
+    label is empty, which is why the data row under the panel carries
+    none here."""
+    rows = ruled([["", "(1)"],
+                  ["Panel A", ""],
+                  ["Kyrgyzstan", ""],
+                  ["", "0.1"],
+                  ["Age", "0.2"]])
+
+    assert all(c["top"] == "single" for c in rows[1]), "the heading rules"
+    assert all(c["top"] == "nil" for c in rows[2]), (
+        "a rule between a heading and its own first panel rules off "
+        "nothing")
+
+
+def test_a_panel_under_a_BLANK_row_still_takes_its_rule():
+    """The same guard from the other side. A blank spacer row is not a
+    heading — it has no label — so the panel below it opens normally,
+    and `label_of(i - 1)` is what tells the two apart. Mutated to
+    `label_of(i)` the test is the panel's OWN label, which is always
+    there, and every panel under a blank row loses its rule."""
+    rows = ruled([["", "(1)"],
+                  ["Age", "0.1"],
+                  ["", ""],
+                  ["Kyrgyzstan", ""],
+                  ["Income", "0.2"]])
+
+    assert all(c["top"] == "single" for c in rows[3])

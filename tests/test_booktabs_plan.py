@@ -298,3 +298,47 @@ def test_the_group_head_still_sets_a_floor_for_its_own_columns():
     b = tables.fit_columns(wide, tables.read_all(wide)[0])[1]
     assert sum(c.new for c in b.columns[1:]) > \
         sum(c.new for c in a.columns[1:])
+
+
+def test_a_plain_column_needs_its_TEXT_times_pad_plus_the_margins():
+    """`math.ceil(width * pad) + side`, for a column no span touches.
+
+    The test beside this one reads columns a group head BUMPED, and the
+    bump overwrites what this expression computed — so five mutants
+    lived on these two lines, `* pad` as `+ pad` and `/ pad` among them.
+
+    `pad` is a multiplier because the slack a column needs scales with
+    its text: at 1.05 a 2000 dxa label gets 100 dxa and a one-character
+    cell gets 10. Added instead, every column gets the same 1 dxa, the
+    widest column loses ~100, and its longest word wraps — which is the
+    thing the whole measurement exists to prevent.
+
+    `hard` and `full` differ here on purpose: the hard need is the
+    longest unbreakable WORD, the full need is the whole line, and a
+    fixture of one word cannot tell the two lists apart.
+    """
+    import math
+
+    from docxkit._table_layout import _cell_extents, _column_needs
+
+    def cell(text: str, w: int) -> str:
+        return (f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr>'
+                f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
+
+    label = "Nonviolent discipline"          # two words: hard < full
+    grid = [3000, 1000]
+    body = ('<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr>'
+            "<w:tblGrid>"
+            + "".join(f'<w:gridCol w:w="{w}"/>' for w in grid)
+            + "</w:tblGrid><w:tr>" + cell(label, 3000) + cell("1", 1000)
+            + "</w:tr></w:tbl>")
+    side, pad = 216, 1.05
+
+    need_h, need_f, driver, filled = _column_needs(body, grid, side, pad)
+
+    hard, full, text = _cell_extents(cell(label, 3000),
+                                     ("Times New Roman", 24))
+    assert hard < full, "the fixture has to tell the two needs apart"
+    assert (driver[0], filled[0]) == (text, True)
+    assert need_h[0] == math.ceil(hard * pad) + side
+    assert need_f[0] == math.ceil(full * pad) + side
