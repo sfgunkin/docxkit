@@ -2195,3 +2195,111 @@ def test_the_build_says_which_math_GLYPH_it_put_back(monkeypatch, sources):
     assert report.restored_glyphs == ["equation 3: U+2212 restored"]
     assert any("restored math glyph — equation 3" in line
                for line in said), said
+
+def test_an_unreachable_equation_does_not_end_the_math_pass():
+    """`continue`, not `break`. `doc.OMaths(i).Range` is a COM call per
+    equation and Word refuses one on a document it is repairing; the
+    rest of the paper still has math in it. Under `break` the first
+    refusal ends the pass, and the revisions after it stay tracked —
+    which is the save hang this pass exists to avoid, reported as a
+    clean resolve."""
+    from docxkit import tracked as T
+    from docxkit.tracked import _accept_math_via_equations
+
+    class _Unreachable:
+        @property
+        def Range(self):
+            raise RuntimeError("Call was rejected by callee")
+
+    good = _Rev("of the equation", span=(120, 150))
+    # OMaths is walked BACKWARDS, so the unreachable one is second in
+    # the list and first in the walk
+    doc = type("D", (), {"OMaths": _Count([
+        _OMath(revisions=[good], span=(100, 200)), _Unreachable()])})()
+    notes: list[str] = []
+
+    out = _accept_math_via_equations(doc, notes)
+
+    assert good.accepted, "the equation before it is still resolved"
+    assert out == T.MathOutcome(1)
+    assert any("unreachable" in n for n in notes), notes
+
+
+def test_an_unclassified_math_revision_still_gets_the_GENERIC_comment():
+    """`comment or generic or _comments.GENERIC`, and the last term is
+    what makes the chain safe: the XML pass CLONES a Word-made comment,
+    so this one exists to be cloned. `and` in its place hands Word None
+    and the comment is never made — the build then fails much later
+    with ScaffoldMissing."""
+    from docxkit import tracked as T
+
+    added: list[str] = []
+    doc = type("D", (), {
+        "Comments": type("C", (), {
+            "Add": lambda _s, rng, text: added.append(text), "Count": 0})(),
+        "Paragraphs": _Count([])})()
+    rev = _Rev("some math")
+
+    T._comment_revision(doc, rev, lambda ctx: None, None, [])
+
+    assert added == [T._comments.GENERIC], added
+
+
+def test_a_comment_word_refuses_names_THIRTY_characters_of_the_revision():
+    """The note is how a person finds the revision Word would not
+    comment, and a revision's text is a sentence: thirty characters is
+    the quote, and uncut every refusal prints a paragraph."""
+    from docxkit import tracked as T
+
+    long_text = "The sentence this revision rewrites, at length."
+    assert len(long_text) > 31
+
+    class _Refusing:
+        Count = 0
+
+        def Add(self, rng, text):
+            raise RuntimeError("Word refused")
+
+    doc = type("D", (), {"Comments": _Refusing(),
+                         "Paragraphs": _Count([])})()
+    notes: list[str] = []
+
+    T._comment_revision(doc, _Rev(long_text), lambda ctx: "x", None, notes)
+
+    assert any(f'"{long_text[:30]}"' in n for n in notes), notes
+    assert not any(long_text[:31] in n for n in notes), notes
+
+
+def test_a_build_verifies_in_word_and_closes_the_compare_UNSAVED(
+        monkeypatch, sources):
+    """Two defaults nothing named. `verify_in_word=True` reopens the
+    result and fails the build if Word had to repair it — passed
+    explicitly by every test here, so the default was free — and the
+    compare result is closed with `SaveChanges=0`, because 1 is
+    wdSaveChanges and Word would write the scratch redline somewhere."""
+    closes: list[dict[str, int]] = []
+    checked: list[Path] = []
+
+    class _Recording(_FakeDoc):
+        def Close(self, SaveChanges: int = 0) -> None:
+            closes.append({"SaveChanges": SaveChanges})
+            self.closed = True
+
+    class _RecordingWord(_FakeWordModule):
+        def compare_documents(self, word, orig, rev, **kw):
+            return _Recording()
+
+    monkeypatch.setattr(tracked, "_word",
+                        _RecordingWord(_clean_document()))
+
+    def fake_verify(path):
+        checked.append(Path(path))
+        return {"word": {"comments": 0, "revisions": 0},
+                "comments_match": True}
+
+    monkeypatch.setattr(tracked, "verify", fake_verify)
+
+    tracked.build(sources[0], sources[1], sources[2])
+
+    assert checked, "the default reopens the result in Word"
+    assert closes == [{"SaveChanges": 0}], closes
