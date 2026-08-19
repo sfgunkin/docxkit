@@ -992,6 +992,61 @@ A short parts list is not a bug that fails — it is a report that reads as
 success over the half of the document it happened to look at.
 
 
+**Three modules measured FRESH the same evening**, because the table
+above is a photograph of the day each row was taken and most of those
+days are gone:
+
+| module | recorded | measured 2026-08-19 | what the round wrote |
+|---|---|---|---|
+| `ingest.py` | 35.1 % (raw) | **5.9 %** (11/188) -> 2 left | the messages, the id fallback, a block of 257 |
+| `equations.py` | 24.9 % -> 10.6 % | **8.4 %** (35/419) | the OMML branches Word's editor reaches |
+| `_table_layout.py` | — | **14.0 %** (62/442) | the width tables, three rules off by one |
+
+`ingest`'s 35.1 % is the clearest case of a stale number misleading: it
+is a RAW figure from before the annotation mutants came out of the
+denominator, and the module measures 5.9 % with no work done to it. Two
+survivors are left in it now, both argued.
+
+**A test whose fixture has one of something cannot see an index.**
+`ingest`'s equal-length branch pairs paragraphs POSITIONALLY, and a
+257-paragraph fixture is what makes `==` differ from `is` — but the
+mutant survived it anyway, because with every paragraph merely reworded
+the similarity fallback pairs them the same way. It dies only when the
+last rewritten paragraph resembles the FIRST original one, which is what
+tells positional pairing from similarity pairing. The fixture has to
+separate the branches, not just reach them.
+
+**The width tables were unguarded in CI, and nothing said so.**
+`_table_layout` carries the AFM glyph widths, and their oracle —
+`tests/test_width_model.py`, which drives a real Word — is marked
+`word`, so a plain `pytest` deselects the entire file. Seventeen live
+mutants sat in the module scope, one per width group, each of them a
+column measured against the wrong font. The offline half is now beside
+the existing K/P/"!" pins: one character per group, every printable
+ASCII present (the module's own comment calls an OMITTED character the
+worse failure), no character in two groups, and the alias scales by
+name. **A `-m` mark on the only test that checks a table is an
+exemption, and exemptions need a second line of defence.**
+
+**And the defect that came out of that round**: `fit_columns` wrote a
+column's width into a NESTED table's cell. The comment above the cell
+loop says this exact lesson about the table's own properties — a
+`re.sub` over the whole body writes into a nested table whenever the
+outer one lacks the property being set — and the loop below it repeated
+it one element in. A nested cell's `w:w="300"` came back as 1178, inside
+a 300 dxa grid, and nothing failed. `_own_tcpr`/`_set_tc_w` are the
+cell-level twins of `_own_tblpr`/`_set_tbl_pr`.
+
+**`is` is not one rule.** Three sites this evening, three different
+answers: on difflib's opcode tags it is EQUIVALENT (both sides are
+interned literals); on a one-character XML attribute value it is
+equivalent too (CPython hands out one object per latin-1 character —
+measured, not assumed); on two counts computed in different places it is
+a REAL defect above 256, which is why `verify`'s comment check and the
+build's body-vs-package note now run at 300. Argue the site, not the
+operator.
+
+
 `word.py` is the one worth reading twice. Its first figure was the
 package's worst by a factor of two, and 41 of its 110 survivors were
 constants — numbers Word reads, which no test can kill by exercising
