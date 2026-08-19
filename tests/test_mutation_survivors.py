@@ -266,3 +266,74 @@ def test_a_session_with_NO_snapshot_still_reports(tmp_path):
     assert done.returncode == 0, done.stderr
     assert "REAL SURVIVAL" in done.stdout
     assert "moved since" not in done.stdout
+
+
+# --- the banner that says the list is already void ----------------------
+
+
+def _tools_on_path():
+    """`tools/` is not a package and is not installed; the scripts reach
+    each other through this insert, and so does this file."""
+    import sys
+
+    if str(TOOL.parent) not in sys.path:
+        sys.path.insert(0, str(TOOL.parent))
+
+
+def _tool_module():
+    """The tool imported, not run: `staleness` is a pure function."""
+    _tools_on_path()
+    import mutation_survivors  # pyright: ignore[reportMissingImports]
+
+    return mutation_survivors
+
+
+def test_a_STALE_run_says_so_above_its_survivors(monkeypatch):
+    """The rule is old — a figure is void when the source or the harness
+    has moved — and the tool that PROPOSES the work is where it has to
+    be said. Mining a stale list cost a round on 2026-08-20: `body.py`'s
+    survivors named eleven mutants on one line a previous round had
+    already killed, and the tests written for them duplicated tests
+    already in the file."""
+    _tools_on_path()
+    import harness_map  # pyright: ignore[reportMissingImports]
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(harness_map, "harness_for",
+                        lambda mod: ["tests/test_thing.py"])
+    monkeypatch.setattr(stale_figures, "state",
+                        lambda mod, tests: ("stale", ["tests/test_thing.py"]))
+
+    lines = _tool_module().staleness("src/docxkit/thing.py")
+
+    assert lines and "STALE" in lines[0]
+    assert "tests/test_thing.py" in lines[0]
+    assert any("kill_check" in ln for ln in lines)
+
+
+def test_a_FRESH_run_says_nothing(monkeypatch):
+    """A banner printed over every list is one nobody reads."""
+    _tools_on_path()
+    import harness_map  # pyright: ignore[reportMissingImports]
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(harness_map, "harness_for", lambda mod: ["t.py"])
+    monkeypatch.setattr(stale_figures, "state",
+                        lambda mod, tests: ("fresh", []))
+
+    assert _tool_module().staleness("src/docxkit/thing.py") == []
+
+
+def test_a_module_with_NO_harness_is_not_an_error(monkeypatch):
+    """`harness_for` exits when the map has no entry and nothing in
+    `tests/` names the module. A survivor list for such a module still
+    has to print — the banner is a courtesy, not a gate."""
+    _tools_on_path()
+    import harness_map  # pyright: ignore[reportMissingImports]
+
+    def refuse(mod):
+        raise SystemExit(f"no harness for {mod}")
+
+    monkeypatch.setattr(harness_map, "harness_for", refuse)
+
+    assert _tool_module().staleness("src/docxkit/thing.py") == []

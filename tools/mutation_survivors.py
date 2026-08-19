@@ -174,6 +174,38 @@ def pristine_source(db_path: str, src_path: str) -> tuple[str, str]:
         f"the live file has moved since)")
 
 
+def staleness(src_path: str) -> list[str]:
+    """A banner when the run this list comes from is already void.
+
+    The rule is old — a figure is void when the source or the harness
+    has moved — and the tool that PROPOSES the work is the place to say
+    so. Mining a stale list costs a round: `body.py`'s survivors named
+    eleven mutants on one line that a previous round had already killed,
+    and the tests written for them were duplicates of tests already in
+    the file (2026-08-20).
+
+    Never a refusal. A stale list is still the best guess at where to
+    look, and `kill_check` disposes of what has since died — this only
+    stops a reader taking the numbers at face value.
+    """
+    try:
+        from harness_map import harness_for  # noqa: PLC0415
+        from stale_figures import state  # noqa: PLC0415
+    except ImportError:                      # pragma: no cover
+        return []
+    module = Path(src_path).name
+    try:
+        how, moved = state(module, harness_for(module))
+    except SystemExit:                       # no harness for this module
+        return []
+    if how != "stale":
+        return []
+    return [f"  STALE: {', '.join(moved)} changed after this run — the",
+            "  survivors below may already be dead. Re-measure, or let",
+            "  kill_check dispose of each one before writing a test.",
+            ""]
+
+
 def main() -> int:
     # This report QUOTES the module's source, and a module that lays out
     # glyph widths or parses Word's typography holds characters cp1252
@@ -185,6 +217,8 @@ def main() -> int:
         print(__doc__)
         return 2
     db_path, src_path = sys.argv[1], sys.argv[2]
+    for banner in staleness(src_path):
+        print(banner)
     src_path, note = pristine_source(db_path, src_path)
     text = Path(src_path).read_text(encoding="utf-8")
     lines = text.splitlines()
