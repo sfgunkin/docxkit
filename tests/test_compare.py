@@ -705,6 +705,76 @@ def test_the_typography_of_an_added_equation_is_padded_too(tmp_path):
     assert any("<none>" in str(f["from"]) for f in report["formula"]), report
 
 
+def test_formatting_is_not_reported_across_a_GLYPH_difference(tmp_path):
+    """`pa.wtext_f != pb.wtext_f`, not `>`.
+
+    Two paragraphs reach `matched` when they are equal AFTER glyph
+    normalization, so the prose they carry can still differ character
+    for character — a straight apostrophe against the curly one Word
+    substitutes on save. `fmt_diff` refuses that pair, because a
+    character-by-character comparison of two different strings reports
+    the OFFSET, not the emphasis: from the first differing character on,
+    every position is compared against its neighbour and the report
+    names emphasis that did not move.
+
+    The direction matters, which is why the fixture puts the straight
+    quote on the left: `>` is False for it, so the guard opens exactly
+    where it is needed."""
+    straight = ('<w:p><w:r><w:t xml:space="preserve">It is the author'
+                "'s own.</w:t></w:r></w:p>")
+    curly_italic = ('<w:p><w:r><w:rPr><w:i/></w:rPr><w:t '
+                    'xml:space="preserve">It is the author’s own.'
+                    "</w:t></w:r></w:p>")
+
+    report = compare(*docs(tmp_path, straight, curly_italic))
+
+    assert report["format"] == [], report["format"]
+    assert [(g["from"], g["to"]) for g in report["glyph"]] == [
+        ("It is the author's own.", "It is the author’s own.")]
+
+
+def test_typography_that_moves_BACKWARD_is_still_a_change(tmp_path):
+    """`before[i] != after[i]`, not `<`. The markers are names, and
+    under `<` only a change to an alphabetically LATER one is seen: an
+    equation set upright and then italicised back goes from `nor` to
+    `i`, which sorts the wrong way, and the segment finder reports the
+    formula as unchanged while the report still files it under
+    formula_format — a change entry with nothing in it."""
+    upright = omath(mrun("x", "<m:rPr><m:nor/></m:rPr>"), mrun("+y"))
+    italic = omath(mrun("x", "<w:rPr><w:i/></w:rPr>"), mrun("+y"))
+
+    report = compare(*docs(tmp_path, upright, italic))
+
+    assert len(report["formula_format"]) == 1, report
+    entry = report["formula_format"][0]
+    assert entry["from"] == "x:nor" and entry["to"] == "x:i", entry
+
+
+def test_a_paragraph_THREE_equations_short_is_still_padded(tmp_path):
+    """`i < len(pa.omml)`, not `i != len(...)`. The loop runs to the
+    LONGER side, so the shorter one is asked for an index past its end
+    and the guard pads it. Under `!=` the test is true again as soon as
+    the index passes the length, and the read raises from inside the
+    comparison — invisible at a distance of one, which is the distance
+    every existing padding test uses.
+
+    Four bounds share the shape — the equations and their typography,
+    on both sides — and one fixture, read in both directions, holds all
+    four to the same line."""
+    one = para(run("See "), math(mrun("x"), mrun("y"), mrun("z")))
+    three = para(run("See "), math(mrun("x")), math(mrun("y")),
+                 math(mrun("z")))
+
+    report = compare(*docs(tmp_path, one, three))
+    assert report["text"] == [], "the visible text is identical"
+    assert sum("<none>" in str(f["from"])
+               for f in report["formula"]) == 2, report["formula"]
+
+    mirror = compare(*docs(tmp_path, three, one))
+    assert sum("<none>" in str(f["to"])
+               for f in mirror["formula"]) == 2, mirror["formula"]
+
+
 def test_a_math_minus_against_a_hyphen_is_a_glyph_artifact(tmp_path):
     """Word rewrites the math minus U+2212 as a hyphen on save. That is
     an artifact, not an edit, so it belongs in formula_glyph — which
