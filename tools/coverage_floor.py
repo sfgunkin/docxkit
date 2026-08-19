@@ -65,6 +65,12 @@ FLOORS = {
     # Report renderers: every branch prints, and pinning the exact
     # wording of 11 sections would test the prose, not the logic.
     "_compare_render.py": 97,
+    # A day old and the least-tested thing in the package when it
+    # landed (20.2 % real survival, 90 % lines). The floor is here so
+    # the climb out of that cannot be given back quietly; the one
+    # statement short of 100 is `_caption_of`'s empty return, which no
+    # block can reach — a block always holds the caption that found it.
+    "placement.py": 97,
     "_cite_build.py": 85,
     "_compare_diff.py": 92,
 }
