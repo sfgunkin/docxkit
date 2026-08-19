@@ -17,7 +17,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**One open, as of 2026-08-19** — below, and it is the other half of the first
+**Two open, as of 2026-08-19** — below; the first is the other half of the first
 item in the list that follows. Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
@@ -90,6 +90,32 @@ hashes the accepted paragraph text and table cells against the clean build —
 that script is the workaround. It exists in ONE of the eight papers that use
 `revision/working.docx`: `validate.py` and `build_tracked.py` are DSI-only, so
 the other seven make this comparison nowhere. Delete it when this lands.
+
+### S4 `revision validate` has no `--render`, so the eye gate stays per-paper
+
+`docxkit revision validate` takes `[batch] [--baseline PATH] [--no-word]`. DSI's
+local ladder also took `--render "anchor" ...`: accept-all, export to PDF
+through Word, and rasterise the page containing each anchor. That is the only
+check that catches what no gate can — a glyph that went the wrong way, an
+equation that renders wrong, a table that split across a page.
+
+**Why it matters more than an ergonomics item usually does.** It is the one
+capability that kept a private copy of the ladder alive. DSI re-pointed onto
+the shared commands on 2026-08-19 and every other local script retired cleanly;
+this one had to be extracted to `revision/scripts/render_pages.py` instead,
+which is a 78-line file that will now drift on its own. The next paper to want
+an eye gate will either copy it or go without.
+
+**It is nearly free to move.** The whole step is ~20 lines over `word.export_pdf`
+(which already takes `first`/`last`) plus PyMuPDF, and `revision validate`
+already computes the accepted parts it needs to render. Two notes from the
+extraction: render the ACCEPTED view, never the redline — a redline's
+pagination is not the deliverable's — and iterate pages by index rather than
+`enumerate(doc)`, because PyMuPDF's `Document` is iterable at runtime but its
+stubs do not say so.
+
+**Found by:** DSI re-point, 2026-08-19. Workaround is
+`revision/scripts/render_pages.py`; delete it when this lands.
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
