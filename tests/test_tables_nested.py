@@ -253,3 +253,57 @@ def test_the_fit_of_a_plain_table_is_unchanged_by_all_of_this():
     assert report.columns[1].new > report.columns[2].new
     assert tables.read_all(out)[0].rows == [["Label here", "-0.250***",
                                              "0.047"]]
+
+
+def test_a_cell_gets_ONE_width_even_when_it_holds_a_nested_table():
+    """`replace("<w:tcPr>", ..., 1)`. A cell that states properties but
+    no width is given one — and a cell holding a nested table contains
+    the inner cells' `w:tcPr` too, so replacing every occurrence writes
+    the OUTER column's width into the inner table's cells. The inner
+    table then lays out at the outer table's measurements, which is the
+    defect this whole file is about, one element further in."""
+    outer = ('<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr>'
+             '<w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/>'
+             "</w:tblGrid>"
+             # neither outer cell states a width; the inner ones do
+             "<w:tr><w:tc><w:tcPr><w:vAlign w:val=\"top\"/></w:tcPr>"
+             f"<w:p>{run('Label')}</w:p></w:tc>"
+             "<w:tc><w:tcPr><w:vAlign w:val=\"top\"/></w:tcPr>"
+             '<w:tbl><w:tblGrid><w:gridCol w:w="300"/></w:tblGrid>'
+             '<w:tr><w:tc><w:tcPr><w:tcW w:w="300" w:type="dxa"/></w:tcPr>'
+             f"<w:p>{run('in')}</w:p></w:tc></w:tr></w:tbl>"
+             f"<w:p>{run('outer cell')}</w:p></w:tc></w:tr></w:tbl>")
+    xml = f"<w:document {NS}><w:body>{outer}</w:body></w:document>"
+
+    out, _report = fit_columns(xml, read_all(xml)[0], total=2000)
+
+    assert out.count('<w:tcW w:w="300" w:type="dxa"/>') == 1, (
+        "the inner cell kept its own width")
+    # the two outer cells, up to where the nested table opens: one
+    # width each, and neither of them written into the inner table
+    outer_cells = out[:out.index("<w:tbl><w:tblGrid>")]
+    assert outer_cells.count("<w:tcW ") == 2
+    assert out.count("<w:tcW ") == 3, "two outer cells and one inner"
+
+
+def test_a_row_WIDER_than_the_grid_stops_at_the_last_column():
+    """`if c >= n: break`, and the mutant is `is`: below 257 the two
+    agree everywhere except past the end, where `c is n` is False and
+    the walk carries on into columns that do not exist. `widths[c:c+k]`
+    is then empty and the cell is written `w:w="0"` — a cell Word draws
+    as a sliver, in a table that was merely malformed before.
+
+    Rows wider than the grid are not exotic: a hand-built row, or one
+    Word wrote for a table whose grid it later trimmed."""
+    body = ('<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr>'
+            '<w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/>'
+            "</w:tblGrid><w:tr>"
+            + cell(run("Label")) + cell(run("-0.250***"))
+            + cell(run("overflow"))               # a third cell, no column
+            + "</w:tr></w:tbl>")
+    xml = f"<w:document {NS}><w:body>{body}</w:body></w:document>"
+
+    out, _report = fit_columns(xml, read_all(xml)[0], total=2000)
+
+    assert 'w:w="0"' not in out, "the overflow cell was measured at nothing"
+    assert "overflow" in out

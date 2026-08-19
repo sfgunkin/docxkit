@@ -152,6 +152,29 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### S2 `fit_columns` wrote a column's width into a NESTED table's cell
+
+Found 2026-08-19, mining `_table_layout`'s survivors, and it is the defect
+`_own_grid`/`_own_tblpr` exist for — one element further in. The cell loop
+replaced the first `w:tcW` in the whole `w:tc`, and a cell can CONTAIN a
+table: with no width of its own to replace, the outer column's width landed
+on the INNER table's first cell.
+
+Measured on a two-column outer table whose second cell holds a one-column
+nested table: the inner cell's `w:w="300"` came back as `1178`, inside a 300
+dxa grid. With no `w:tcPr` of its own the outer cell was worse — the
+properties element was inserted inside the nested table's first cell, where
+it is not even in schema order.
+
+Neither shows up as a failure. The document opens, the outer table lays out
+correctly, and the nested one is measured against a table it is not part of.
+Questionnaire appendices nest tables freely and these papers are full of
+them.
+
+Fixed by `_own_tcpr` / `_set_tc_w`, the cell-level twins of `_own_tblpr` /
+`_set_tbl_pr`, with the width written in its schema slot (after `w:cnfStyle`,
+before everything else). Two tests in `test_tables_nested.py`.
+
 ### S1 a mutation session restored the module from the LIVE tree between chunks — `tools/mutation_session.py`
 
 **The instrument, not the package — and it produced a plausible wrong number.**

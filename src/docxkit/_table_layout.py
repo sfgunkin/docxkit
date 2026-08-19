@@ -440,6 +440,38 @@ def _cell_walk(body: str, n: int) -> Iterable[
             c += k
 
 
+def _own_tcpr(cell: str) -> tuple[int, int, str] | None:
+    """``(start, end, inner)`` of the cell's OWN ``w:tcPr``, or None.
+
+    CT_Tc puts a cell's properties first, so a ``w:tcPr`` that does
+    not open the cell belongs to a table nested inside it.
+    """
+    m = re.match(r"(<w:tc\b[^>]*>\s*)(<w:tcPr\b[^>]*?(/?)>)", cell)
+    if m is None:
+        return None
+    if m.group(3) == "/":
+        return m.start(2), m.end(2), ""
+    close = matching_close(cell, m.end(2), "tcPr")
+    return m.start(2), close, cell[m.end(2):close - len("</w:tcPr>")]
+
+
+def _set_tc_w(cell: str, tcw: str) -> str:
+    """`cell` with `tcw` as its own width, replacing or creating one."""
+    own = _own_tcpr(cell)
+    if own is None:
+        opening = re.match(r"<w:tc\b[^>]*>", cell)
+        at = opening.end() if opening else 0
+        return cell[:at] + f"<w:tcPr>{tcw}</w:tcPr>" + cell[at:]
+    start, end, inner = own
+    new_inner, hits = _TCW_RE.subn(_const(tcw), inner, count=1)
+    if not hits:
+        # w:tcW's schema slot: after w:cnfStyle, before the rest
+        cnf = re.match(r"<w:cnfStyle\b[^>]*/>", inner)
+        at = cnf.end() if cnf else 0
+        new_inner = inner[:at] + tcw + inner[at:]
+    return cell[:start] + f"<w:tcPr>{new_inner}</w:tcPr>" + cell[end:]
+
+
 def fit_columns(xml: str, table: Table, *, total: int | None = None,
                 pad: float = 1.05, margin: int | None = None
                 ) -> tuple[str, FitReport]:
@@ -643,13 +675,14 @@ def _apply_widths(body: str, widths: list[int], total: int,
     edits: list[tuple[int, int, str]] = []
     for tr, tc, c, k in _cell_walk(body, len(widths)):
         tcw = f'<w:tcW w:w="{sum(widths[c:c + k])}" w:type="dxa"/>'
-        new_tc, hits = _TCW_RE.subn(_const(tcw), tc.group(0), count=1)
-        if not hits:
-            if "<w:tcPr>" in new_tc:
-                new_tc = new_tc.replace("<w:tcPr>", f"<w:tcPr>{tcw}", 1)
-            else:
-                new_tc = new_tc.replace(
-                    "<w:tc>", f"<w:tc><w:tcPr>{tcw}</w:tcPr>", 1)
+        # Through the cell's OWN tcPr, for the reason the comment above
+        # gives about the table's: a cell can CONTAIN a table, and a
+        # search over the whole cell finds the inner cells' properties.
+        # With no width of its own to replace, this wrote the outer
+        # column's width over the INNER cell's - 1178 dxa inside a 300
+        # dxa grid - and with no properties of its own it put the
+        # element inside the nested table's first cell.
+        new_tc = _set_tc_w(tc.group(0), tcw)
         if new_tc != tc.group(0):
             edits.append((tr.start() + tc.start(),
                           tr.start() + tc.end(), new_tc))
