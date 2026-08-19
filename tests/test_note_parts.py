@@ -38,6 +38,12 @@ from docxkit._cite_audit import audit_links
 #: entry that says why not. This one needs its WRITER moved at the same
 #: time: an audit widened alone would report unlinked entries in
 #: endnotes that `link_all` cannot reach.
+#:
+#: Measured while this file was written, and the reason the entry is S2
+#: rather than S4: the audit is what `linkfix` classifies from, so a
+#: bookmark that is LIVE in an endnote reads as debris — a proposal to
+#: delete an anchor the apparatus is using. The same paper's body-level
+#: bookmarks audit as 1 and its endnote ones as 0.
 BLIND = {
     "citations": "S2 the citation apparatus does not read ENDNOTES",
 }
