@@ -39,16 +39,22 @@ def widen(x: int) -> int:
 '''
 
 
-def _database(path: Path, *rows: tuple[int, str]) -> Path:
-    """A cosmic-ray database holding just what the report reads."""
+def _database(path: Path, *rows: tuple[int, str] | tuple[int, str, int],
+              ) -> Path:
+    """A cosmic-ray database holding just what the report reads.
+
+    A row is (line, outcome) or, where the COLUMN is what the report
+    classifies on, (line, outcome, column).
+    """
     db = sqlite3.connect(path)
     db.execute("CREATE TABLE mutation_specs (job_id TEXT, "
                "start_pos_row INT, start_pos_col INT, operator_name TEXT)")
     db.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT)")
-    for i, (row, outcome) in enumerate(rows):
+    for i, spec in enumerate(rows):
+        row, outcome, col = (*spec, 0)[:3] if len(spec) == 2 else spec
         job = f"job{i}"
         db.execute("INSERT INTO mutation_specs VALUES (?, ?, ?, ?)",
-                   (job, row, 0, "core/NumberReplacer"))
+                   (job, row, col, "core/NumberReplacer"))
         db.execute("INSERT INTO work_results VALUES (?, ?)", (job, outcome))
     db.commit()
     db.close()
@@ -135,3 +141,59 @@ def test_a_survivor_OUTSIDE_the_guard_is_still_a_gap(tmp_path):
     assert "1 is inside" in done.stdout, "one, and it says so in English"
     assert "REAL SURVIVAL 100.0% (1/1)" in done.stdout, done.stdout
     assert "L5" in done.stdout
+
+SIGNATURES = '''\
+"""A module whose functions take keyword-only arguments."""
+
+
+def widen(x: int, *, by: int = 1) -> int:
+    return x + by
+
+
+def scale(x: int, factor: int = 2 * 3, *, twice: bool = False) -> int:
+    return x * factor
+'''
+
+
+def _signature_report(tmp_path: Path,
+                      *rows: tuple[int, str] | tuple[int, str, int]):
+    src = tmp_path / "kwonly.py"
+    src.write_text(SIGNATURES, encoding="utf-8")
+    db = _database(tmp_path / "run.sqlite", *rows)
+    return subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
+def test_the_keyword_only_marker_is_counted_apart(tmp_path):
+    """`*` mutated to `/` makes the parameters before it positional-only.
+    Nothing this package calls changes meaning — the arguments after the
+    marker were keyword-only already and the ones before are passed
+    positionally — so the mutant survives every suite, one per
+    keyword-only signature. Fifty-six of them stood in the sixth
+    sweep's lists, which is enough to move every module's figure.
+
+    Counted apart from the annotations rather than with them: a reader
+    may decide a public function's calling convention IS a contract."""
+    marker = SIGNATURES.splitlines()[3].index("*")     # `def widen(...)`
+    done = _signature_report(tmp_path, (4, "SURVIVED", marker),
+                             (5, "KILLED", 0))
+
+    assert done.returncode == 0, done.stderr
+    assert "1 is the keyword-only" in done.stdout, done.stdout
+    assert "REAL SURVIVAL 0.0% (0/1)" in done.stdout, done.stdout
+
+
+def test_a_multiplication_in_a_DEFAULT_is_not_the_marker(tmp_path):
+    """The marker is the `*` with a comma straight after it. A default
+    value doing arithmetic sits in the same signature, and mutating THAT
+    changes what the function does."""
+    line = SIGNATURES.splitlines()[7]                  # `def scale(...)`
+    times = line.index("2 * 3") + 2
+
+    done = _signature_report(tmp_path, (8, "SURVIVED", times))
+
+    assert "keyword-only" not in done.stdout, done.stdout
+    assert "REAL SURVIVAL 100.0% (1/1)" in done.stdout, done.stdout
+    assert "L8" in done.stdout

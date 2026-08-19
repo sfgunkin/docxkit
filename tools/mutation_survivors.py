@@ -88,6 +88,43 @@ def within(spans: list[tuple[int, int, int, int]], row: int, col: int) -> bool:
                for r1, c1, r2, c2 in spans)
 
 
+def marker_positions(text: str,
+                     tree: ast.Module) -> list[tuple[int, int]]:
+    """(row, col) of every keyword-only ``*`` in a def signature.
+
+    Mutating that ``*`` to ``/`` — cosmic-ray does, as a Mul-to-Div
+    replacement — turns the parameters BEFORE it into positional-only
+    ones. No call this package makes changes meaning: the arguments
+    after the marker were already keyword-only, and the ones before it
+    are passed positionally. It is an interface constraint, not a
+    behaviour, and the test that would kill it is a call written to
+    kill it rather than to use the function.
+
+    56 of them stood in the sixth sweep's survivor lists (2026-08-19),
+    one per keyword-only signature, which is enough to move every
+    module's figure — the same reason the annotations are taken out.
+    They are counted and named separately rather than folded into the
+    annotations, because a reader may reasonably decide that a public
+    function's calling convention IS a contract worth a test.
+    """
+    lines = text.splitlines()
+    out: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if not node.args.kwonlyargs or node.args.vararg is not None:
+            continue
+        end = node.body[0].lineno if node.body else node.lineno + 1
+        for row in range(node.lineno, end):
+            line = lines[row - 1]
+            for col, ch in enumerate(line):
+                # the marker, and not a multiplication in a default: a
+                # bare `*` is the one with the comma straight after it
+                if ch == "*" and line[col + 1:].lstrip().startswith(","):
+                    out.append((row, col))
+    return out
+
+
 def definitions(tree: ast.Module) -> list[tuple[int, int, str]]:
     """Every def/class as (first line, last line, name)."""
     kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -124,6 +161,7 @@ def main() -> int:
     tree = ast.parse(text)
     spans = annotation_spans(tree)
     guards = main_guard_spans(tree)
+    markers = set(marker_positions(text, tree))
 
     rows = sqlite3.connect(db_path).execute("""
         SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
@@ -143,10 +181,14 @@ def main() -> int:
     ran = [r for r in rows if r[3] != "SKIPPED"]
     survived = [r for r in ran if r[3] == "SURVIVED"]
     unreached = [r for r in survived if within(spans, r[0], r[1])
-                 or within(guards, r[0], r[1])]
+                 or within(guards, r[0], r[1])
+                 or (r[0], r[1]) in markers]
     real = [r for r in survived if r not in unreached]
-    in_guard = sum(1 for r in unreached if not within(spans, r[0], r[1]))
-    annotated = len(unreached) - in_guard
+    annotated = sum(1 for r in unreached if within(spans, r[0], r[1]))
+    in_guard = sum(1 for r in unreached
+                   if within(guards, r[0], r[1])
+                   and not within(spans, r[0], r[1]))
+    in_marker = len(unreached) - annotated - in_guard
     killed = len(ran) - len(survived)
     sample = f" (sampled from {len(rows)})" if skipped else ""
     print(f"{len(ran)} mutants run{sample} · {killed} killed · "
@@ -159,10 +201,15 @@ def main() -> int:
         print(f'  {in_guard} {is_are} inside `if __name__ == "__main__":`'
               f" — equivalent under a\n  test run, which IMPORTS the "
               f"module and never runs it as a script")
+    if in_marker:
+        is_are = "is" if in_marker == 1 else "are"
+        print(f"  {in_marker} {is_are} the keyword-only `*` of a signature, "
+              f"mutated to `/`:\n  an interface constraint, and no call in "
+              f"this package changes meaning")
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.
-    base = len(ran) - annotated - in_guard
+    base = len(ran) - annotated - in_guard - in_marker
     share = len(real) / base * 100 if base else 0.0
     print(f"  {len(real)} to actually look at — REAL SURVIVAL "
           f"{share:.1f}% ({len(real)}/{base})\n")
