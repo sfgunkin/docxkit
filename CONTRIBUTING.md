@@ -666,6 +666,24 @@ The practical rule for a session that measures while it works: pick the
 module you are NOT editing. Two worktrees make two sweeps safe, and
 neither makes an edit to the module under measurement safe.
 
+### A figure is about a module AND the tests the map names for it
+
+`errors.py` read **100 % survival** — ten mutants, ten survivors, every
+one of them an `exit_code`. Those numbers are the contract the paper
+projects' scripts branch on and `docxkit revision status` quotes in its
+own `--help`, and they were not untested at all: the test that pins them
+lives in `test_revision.py`, with the protocol they belong to, and
+`harness_map` named only `test_api_surface.py` and `test_cli_guards.py`
+for the module. Adding the two files that exercise the contract took it
+to **0 %** with no test written.
+
+**Line coverage cannot find this.** A class attribute is executed at
+import, so the harness covered those lines while being unable to kill a
+single mutant on them. Measured across the package that evening, every
+module's own harness reaches 94-100 % of its lines — the tell was the
+mutation figure itself, which is the one number that asks whether the
+tests can DISTINGUISH the code from a different program.
+
 ### The seeded sample was never the same draw twice
 
 The section above is right about the population and wrong about
@@ -1046,6 +1064,9 @@ days are gone:
 | `_table_layout.py` | — | 14.0 % -> **7.7 %** (33/430) | the width tables, three rules off by one |
 | `cli.py` | 28.3 % (raw, 2026-08-16) | **6.9 %** (31/449) | what the commands PRINT |
 | `footnotes.py` | 15.4 % (raw, first run) | **4.5 %** (18/402) | measured only — no round needed |
+| `revisions.py` | 8.5 % (2026-08-17) | 9.2 % -> **6.7 %** (28/417) | what a paragraph MERGE carries |
+| `pages.py` | 19.1 % -> 8.1 % | **6.7 %** (12/180) | the render's own resolution, the two bands |
+| `errors.py` | 100 % | **0.0 %** (0/10) | the harness, not the tests — see below |
 
 `_table_layout`'s second figure was read as 13.4 % until the survivor
 tool was pointed at the source the RUN was planned against rather than
