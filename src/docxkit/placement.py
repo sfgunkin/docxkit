@@ -141,15 +141,23 @@ class PlacementReport:
                 f"{sum(p.kept_together for p in n)} kept together, "
                 f"{sum(p.spaced for p in n)} spaced, "
                 f"{sum(p.own_page for p in n)} given their own page")
-        if not self.rendered:
-            return head + "\n  not rendered — fit is unverified"
         lines = [head]
-        for p in self.placements:
-            where = (f"sheet {p.caption_sheet}" if p.caption_sheet
-                     else "not found")
-            state = "split" if p.split else "whole"
-            drift = "" if p.drift is None else f", drift {p.drift:+d}"
-            lines.append(f"  table {p.number}: {where}, {state}{drift}")
+        if not self.rendered:
+            # ...and the PROBLEMS either way. They used to be printed
+            # only under a render, and half of them cannot come from
+            # one: a table nothing mentions, a block that carries a
+            # section break and a move that would cross a boundary are
+            # all decided in the XML. A caller that printed this report
+            # without a renderer was told the fit was unverified and
+            # nothing else.
+            lines.append("  not rendered — fit is unverified")
+        else:
+            for p in self.placements:
+                where = (f"sheet {p.caption_sheet}" if p.caption_sheet
+                         else "not found")
+                state = "split" if p.split else "whole"
+                drift = "" if p.drift is None else f", drift {p.drift:+d}"
+                lines.append(f"  table {p.number}: {where}, {state}{drift}")
         return "\n".join(lines + [f"  ! {x}" for x in self.problems])
 
 

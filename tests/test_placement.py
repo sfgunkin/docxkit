@@ -250,6 +250,46 @@ def test_drift_beyond_the_limit_is_reported_rather_than_hidden():
     assert any("sheets after its mention" in x for x in rep.problems)
 
 
+def test_drift_AT_the_limit_is_not_a_problem():
+    """`drift > max_drift`, and the boundary is the whole of what the
+    limit means: one sheet away is the ordinary result of anchoring a
+    table — the caption goes after the mention, and a page turns. Read
+    as `>=`, the default limit reports every table that landed exactly
+    where it was put."""
+    def render(_parts):
+        return ["См. таблицу 1.", "Таблица 1. Заголовок шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")),
+        render=render, max_drift=1)
+
+    assert rep.placements[0].drift == 1
+    assert rep.problems == [], rep.problems
+
+
+def test_a_long_caption_is_matched_on_its_FIRST_forty_characters():
+    """`_caption_of(block)[:40]`. The needle is cut because a renderer
+    lays the caption out its own way — a line break, a hyphenation, a
+    non-breaking space where the markup had a plain one — and the tail
+    is where that happens. Cut longer and a caption that Word broke
+    across two lines is reported "not found", which reads as a table
+    the render could not see at all."""
+    # the 41st character is a LETTER, deliberately: cut one longer and
+    # the needle runs into the word the renderer broke, which is the
+    # difference this cut exists to survive
+    long_caption = "Таблица 1. Занятость населения по возрасту и полу"
+    assert long_caption[40].strip(), "the cut must land mid-word"
+
+    def render(_parts):
+        return ["См. таблицу 1.", long_caption[:40] + " ...перенос шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P(long_caption) + TBL("шапка")),
+        render=render)
+
+    assert rep.placements[0].caption_sheet == 2, rep.format()
+
+
 def test_only_and_skip_select_without_touching_the_rest():
     body = (P("В таблице 1 и таблице 2 всё есть.")
             + P("Разделитель.")
@@ -346,6 +386,42 @@ def test_a_caption_with_no_table_under_it_is_not_a_block():
     assert order(out) == ["p:Таблица 1. Это просто предло",
                           "p:Больше прозы."]
     assert rep.placements == []
+
+
+def test_the_headline_counts_each_thing_it_names():
+    """Four counters in one sentence, and nothing distinguished them:
+    every fixture until now moved, kept and spaced the same tables, so
+    any counter would do for any of the four. Here one table moves and
+    one does not, and the problems are printed under the head — a
+    report that lists a table and swallows the reason is worse than
+    one that says nothing."""
+    out, rep = placement.place(parts(
+        P("См. таблицу 1.")
+        + P("Таблица 1. Первая") + TBL("a")
+        + P("Таблица 2. Никем не упомянута") + TBL("b")))
+
+    assert (rep.placements[0].moved, rep.placements[1].moved) == (
+        False, False), "1 is already in place; 2 has no mention"
+    head = rep.format().splitlines()[0]
+    assert head == ("2 table(s): 0 moved, 2 kept together, 2 spaced, "
+                    "0 given their own page"), head
+    assert any("table 2" in line for line in rep.format().splitlines()[1:]), (
+        rep.format())
+    assert order(out)[0] == "p:См. таблицу 1."
+
+
+def test_the_caption_a_placement_carries_is_trimmed_and_cut():
+    """`_text(el).strip()[:70]` — what the report prints for a table.
+    A caption is a sentence and Word indents it with whitespace inside
+    the run; uncut, one line of the report becomes three, and untrimmed
+    it starts in the middle of the column."""
+    long_caption = ("Таблица 1. Занятость населения по возрасту, полу, "
+                    "городу и селу, 2019 и 2024")
+    assert len(long_caption) > 71
+    _out, rep = placement.place(parts(
+        P("См. таблицу 1.") + P("   " + long_caption) + TBL("шапка")))
+
+    assert rep.placements[0].caption == long_caption[:70]
 
 
 def test_the_report_says_when_nothing_was_rendered():
