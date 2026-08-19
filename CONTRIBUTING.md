@@ -774,6 +774,44 @@ out of both numerator and denominator. `compare.py` fell from 11.5 % to
 takes at face value has to mean something.
 
 
+### The sixth sweep, measured and re-measured the same morning
+
+Every module in the package has now been measured at least once. The
+three that never had been were the two the sweep could not see a way
+into — `compare.py`, the facade the layers sit behind, and `word.py`,
+which drives Word — and `console.py`, which is sixty lines.
+
+| module | figure | against |
+|---|---|---|
+| `word.py` | **14.6 %** (52/356) | 30.6 %, its first measurement, four hours earlier |
+| `pages.py` | **8.1 %** (11/136) | 19.1 %, first measured the same morning |
+| `compare.py` | **3.4 %** (2/58) | 11.5 %, and both survivors are the argued `part.label == "body"` pair |
+| `_compare_read.py` | **7.6 %** (24/317) | 8.5 %, first measured the same morning; fourteen of the twenty-four are argued equivalents, kill_check'd one by one |
+| `probe.py` | **7.1 %** (12/168) | 12.5 %, and the fifteen killed were one fixture habit |
+| `console.py` | 0.0 % (0/28) | never measured; nothing to do |
+| `crossrefs.py` | 11.0 % (49/447) | 11.2 % — one target, one kill, and the rest of its list still to work |
+
+`word.py` is the one worth reading twice. Its first figure was the
+package's worst by a factor of two, and 41 of its 110 survivors were
+constants — numbers Word reads, which no test can kill by exercising
+behaviour. Pinning them by the name of the enum member took the module
+from 30.6 % to 14.6 % in two commits, and the tests that did it are the
+kind this file spent five sweeps arguing against: they assert a
+literal. The difference is where the literal comes from. `16` in a test
+that reads it off the line above is a copy; `16` named as
+`WdSaveFormat.wdFormatDocumentDefault`, with a completeness test holding
+the table to the module, is a check against the documentation the number
+came from — and the documentation is the only oracle there is.
+
+`sheets` is the other lesson, and it is about a note in a test file
+rather than about code. Fifteen survivors sat in a four-line function
+under a comment saying killing them needed a machine with Word. That
+was wrong for two days: `sheets` calls `export_pdf` and `read_pdf`, and
+substituting BOTH runs every line of it with Word never starting. A
+survivor list is a claim about the tests; a note explaining why a
+survivor is unreachable is a claim about the FUTURE, and it ages badly.
+Re-derive one before believing it.
+
 ---
 
 *The rest of this section is the fourth sweep's, kept in its own order.*
