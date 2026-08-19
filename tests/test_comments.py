@@ -6,6 +6,7 @@ import xml.dom.minidom as MD
 
 import pytest
 from conftest import (
+    NS,
     comment,
     dele,
     document,
@@ -25,6 +26,7 @@ from docxkit.comments import (
     add_at,
     annotate,
     reclassify,
+    threads,
 )
 from docxkit.errors import AnchorError, ScaffoldMissing
 from docxkit.revisions import spans as revision_spans
@@ -96,6 +98,12 @@ def test_annotate_generic_none_leaves_unmatched_revisions_bare():
     assert _n_comments(parts) == 2          # seed + the one matched
     doc = _doc(parts)
     assert doc.count("<w:commentRangeStart") == 1
+    # and it wraps the revision a rule MATCHED. Counting comments cannot
+    # tell that from the mirror image — one comment, on the revision no
+    # rule matched — which is what `p.comment is not None` decides
+    anchored = doc[doc.index("<w:commentRangeStart"):
+                   doc.index("<w:commentRangeEnd")]
+    assert "matched" in anchored and "skipme" not in anchored, anchored
     assert "skipme" in doc                  # the revision itself survives
     for name in ("word/comments.xml", "word/commentsExtended.xml",
                  "word/commentsIds.xml"):
@@ -247,6 +255,89 @@ def test_reclassify_is_a_noop_when_nothing_is_generic():
     parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
     annotate(parts, always("R1"))
     assert reclassify(parts, always("other")) == (0, [])
+
+
+# A seed Word did not write by itself: a comment somebody edited with
+# track-changes on, in two paragraphs. Both are ordinary in a manuscript
+# that has been round a review, and the clone is a COPY of whatever the
+# package carries — so what it must leave alone is everything except the
+# id, the paraId and the text.
+RICH_SEED = (
+    '<w:comment w:id="1" w:author="Tester" '
+    'w:date="2026-07-29T00:00:00Z" w:initials="T">'
+    '<w:p w14:paraId="AAAA0001" w14:textId="AAAA0001">'
+    '<w:pPr><w:pStyle w:val="CommentText"/></w:pPr>'
+    '<w:ins w:id="77" w:author="Second Reader" '
+    'w:date="2026-07-29T00:00:00Z">'
+    "<w:r><w:t>seed</w:t></w:r></w:ins></w:p>"
+    '<w:p w14:paraId="AAAA0002" w14:textId="AAAA0002">'
+    "<w:r><w:t>and a second paragraph</w:t></w:r></w:p></w:comment>")
+
+
+def test_the_clone_replaces_ONE_id_and_ONE_paraId():
+    """`count=1` on both substitutions. The template is whatever the
+    package carries, and a comment that has been edited with track
+    changes on holds a `w:ins` with an id of its own; a comment written
+    in two paragraphs holds two paraIds.
+
+    Replacing every match rewrites the revision's id to the comment's —
+    two elements claiming one id — and gives both paragraphs the same
+    paraId, which is the key Word threads replies on."""
+    parts = make_parts(para(run("keep "), ins("added")))
+    parts["word/comments.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f"<w:comments {NS}>{RICH_SEED}</w:comments>").encode()
+
+    added, _ = annotate(parts, always("R1: reason"))
+
+    assert added == 1
+    com = _com(parts)
+    assert com.count('w:id="77"') == 2, "the tracked edit keeps its own id"
+    new = com[com.index('<w:comment w:id="2"'):]
+    para_ids = re.findall(r'w14:paraId="([0-9A-F]+)"', new)
+    assert len(set(para_ids)) == len(para_ids) == 2, para_ids
+
+
+def test_a_comments_ATTRIBUTES_are_read_from_its_head():
+    """`attr(head=m.group(1))` — the element's attribute list, not the
+    whole element. Over `m.group(0)` the search runs into the BODY, and
+    the first `w:author` it meets there belongs to a tracked edit
+    somebody else made inside the comment.
+
+    A comment with no author of its own is what a merged or repaired
+    file carries, and the answer for it is nothing — not the name of
+    whoever last edited its text."""
+    anonymous = RICH_SEED.replace(' w:author="Tester"', "", 1)
+    parts = make_parts(para(run("keep ")))
+    parts["word/comments.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f"<w:comments {NS}>{anonymous}</w:comments>").encode()
+
+    (thread,) = threads(parts)
+
+    assert thread.comment.author == "", thread.comment.author
+    assert thread.comment.initials == "T"
+
+
+def test_the_thread_key_is_the_LAST_paragraphs_id():
+    """`para_ids[-1]`. `commentsExtended` names the paragraph a reply
+    hangs off, and for a comment written in several paragraphs that is
+    the LAST one — Word puts the thread state on the paragraph the
+    reader's cursor ends in. Keyed on the first, a multi-paragraph
+    comment's done flag and its replies belong to nobody."""
+    parts = make_parts(para(run("keep ")))
+    parts["word/comments.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f"<w:comments {NS}>{RICH_SEED}</w:comments>").encode()
+    parts["word/commentsExtended.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w15:commentsEx {NS}><w15:commentEx w15:paraId="AAAA0002" '
+        'w15:done="1"/></w15:commentsEx>').encode()
+
+    (thread,) = threads(parts)
+
+    assert thread.comment.para_id == "AAAA0002"
+    assert thread.comment.done is True, "the state hangs off that paragraph"
 
 
 # --- a modified table: one balloon per meaning, not per cell ------------

@@ -269,3 +269,37 @@ def test_an_anchor_whose_RANGE_never_closes_reads_as_empty():
     by_cid = {t.comment.cid: t for t in threads(parts)}
 
     assert by_cid["1"].comment.anchor == ""
+
+def test_a_comment_with_only_a_REFERENCE_sorts_where_it_sits():
+    """`position[cid] = ref.start()`. Threads come back in document
+    order, which is the order a person works through them, and a
+    comment whose RANGE Word dropped — an author editing across it does
+    that — still has its reference mark to say where it is.
+
+    Fall back to the end of the document for those and they all pile up
+    after everything else: the checklist reads in an order the document
+    does not have, and the first thing a reader meets is the comment
+    furthest from where they are."""
+    body = (para(run("early "),
+                 '<w:r><w:commentReference w:id="1"/></w:r>')
+            + para(run("later "), '<w:commentRangeStart w:id="2"/>',
+                   run("the queried sentence"),
+                   '<w:commentRangeEnd w:id="2"/>',
+                   '<w:r><w:commentReference w:id="2"/></w:r>'))
+    parts = {
+        "word/document.xml":
+            f"<w:document {NS}><w:body>{body}</w:body></w:document>"
+            .encode(),
+        "word/comments.xml": (
+            f"<w:comments {NS}>"
+            + comment(1, "the one whose range is gone", "AAAA0001")
+            + comment(2, "the one that still has it", "AAAA0002")
+            + "</w:comments>").encode("utf-8"),
+        "word/commentsExtended.xml": (
+            f"<w15:commentsEx {NS}>" + ext("AAAA0001") + ext("AAAA0002")
+            + "</w15:commentsEx>").encode("utf-8"),
+    }
+
+    got = [t.comment.cid for t in threads(parts)]
+
+    assert got == ["1", "2"], got
