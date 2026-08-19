@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from lxml import etree
+
 from docxkit import placement
 
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -25,11 +27,32 @@ def parts(body: str) -> dict[str, bytes]:
              ).encode()}
 
 
+NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def body_of(out: dict[str, bytes]) -> etree._Element:
+    """The `w:body` these parts carry, asserted present.
+
+    Written once because every test that reads the tree needs it, and
+    because `find` answers `None`: a test that walks that reads as a
+    failure of the thing under test rather than of its own setup.
+    """
+    body = etree.fromstring(out["word/document.xml"]).find(NS + "body")
+    assert body is not None, "no w:body in the parts under test"
+    return body
+
+
+def tbl_of(body: etree._Element) -> etree._Element:
+    """The `w:tbl` in this body, asserted present — same reason as
+    `body_of`: a test that walks a None reads as the module's failure."""
+    tbl = body.find(NS + "tbl")
+    assert tbl is not None, "no w:tbl in the body under test"
+    return tbl
+
+
 def order(out: dict[str, bytes]) -> list[str]:
     """Каждый body child as 'p:<text>' or 'tbl:<first cell>', in order."""
-    from lxml import etree
-    NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    body = etree.fromstring(out["word/document.xml"]).find(NS + "body")
+    body = body_of(out)
     seq = []
     for el in body:
         text = "".join(t.text or "" for t in el.iter(NS + "t"))
@@ -91,9 +114,7 @@ def test_keep_together_binds_the_block_but_frees_its_last_paragraph():
         + P("Таблица 1. Заголовок") + TBL("шапка", "строка")
         + P("Примечание. Что-то.")
         + P("Следующий абзац.")))
-    from lxml import etree
-    NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    body = etree.fromstring(out["word/document.xml"]).find(NS + "body")
+    body = body_of(out)
     keeps = {}
     for el in body:
         if el.tag == NS + "p":
@@ -102,7 +123,7 @@ def test_keep_together_binds_the_block_but_frees_its_last_paragraph():
             keeps[text[:12]] = kn is not None
     assert keeps["Таблица 1. З"] is True, "the caption must hold its table"
     assert keeps["Примечание. "] is False, "the note ends the block"
-    rows = body.find(NS + "tbl").findall(NS + "tr")
+    rows = tbl_of(body).findall(NS + "tr")
     assert all(r.find(NS + "trPr/" + NS + "cantSplit") is not None
                for r in rows)
     last = rows[-1].find(NS + "p/" + NS + "pPr/" + NS + "keepNext")
@@ -140,12 +161,10 @@ def test_a_split_table_is_given_its_own_page_and_a_repeating_header():
         "the report must come from a re-render, not a guess")
     pl = rep.placements[0]
     assert pl.own_page and not pl.split
-    from lxml import etree
-    NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    body = etree.fromstring(out["word/document.xml"]).find(NS + "body")
+    body = body_of(out)
     caption = [e for e in body if e.tag == NS + "p"][1]
     assert caption.find(NS + "pPr/" + NS + "pageBreakBefore") is not None
-    head = body.find(NS + "tbl").findall(NS + "tr")[0]
+    head = tbl_of(body).findall(NS + "tr")[0]
     assert head.find(NS + "trPr/" + NS + "tblHeader") is not None
 
 
@@ -204,15 +223,13 @@ def test_a_hoisted_bookmark_travels_with_its_table():
     bookmark — end before start — and `citations.audit_links` reports
     nothing, because it checks that bookmarks PAIR and that links resolve,
     not that one opens before it closes. All twelve of DSI's did this."""
-    from lxml import etree
-    NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     body = (P("Как показано в таблице 1.")
             + P("Разделитель.")
             + '<w:bookmarkStart w:id="7" w:name="Таблица1"/>'
             + P('Таблица 1. Заголовок<w:bookmarkEnd w:id="7"/>')
             + TBL("шапка"))
     out, _ = placement.place(parts(body))
-    root = etree.fromstring(out["word/document.xml"]).find(NS + "body")
+    root = body_of(out)
     seq = list(root.iter())
     start = next(i for i, e in enumerate(seq) if e.tag == NS + "bookmarkStart")
     end = next(i for i, e in enumerate(seq) if e.tag == NS + "bookmarkEnd")
@@ -222,6 +239,151 @@ def test_a_hoisted_bookmark_travels_with_its_table():
         "the hoisted bookmark moved with its caption, not left behind")
     caption = "".join(t.text or "" for t in kids[2].iter(NS + "t"))
     assert "Таблица 1." in caption
+
+
+# --- what the report SAYS, and the answers it gives on bad input --------
+
+
+def test_the_rendered_report_names_every_table_and_where_it_landed():
+    """The unrendered branch had a test and the rendered one had none —
+    which is the half a person actually reads: sheet, whole or split,
+    and how far the table drifted from the words that mention it."""
+    def render(_parts):
+        return ["См. таблицу 1.", "x", "Таблица 1. Заголовок шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")),
+        render=render, max_drift=5)
+
+    out = rep.format()
+    assert "1 table(s):" in out
+    assert "table 1: sheet 3, whole, drift +2" in out, out
+    assert "not rendered" not in out
+
+
+def test_a_table_the_render_could_not_FIND_says_so():
+    """A caption the renderer's text does not carry — Word laid it out
+    as an image, or the callback returned prose the block is not in. The
+    line says "not found" rather than printing sheet None, which reads
+    as sheet zero."""
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")),
+        render=lambda _p: ["nothing that matches"])
+
+    assert "table 1: not found" in rep.format(), rep.format()
+    assert rep.placements[0].caption_sheet is None
+    assert rep.placements[0].drift is None, "no sheet, no distance"
+
+
+def test_a_table_that_STILL_splits_after_its_own_page_is_reported():
+    """`own_page` is the last thing this module can do about a table
+    taller than the page. When it does not work the report has to say
+    so, or the paper reads "1 given their own page" and takes it as
+    fixed."""
+    def render(_parts):
+        return ["См. таблицу 1.", "Таблица 1. Заголовок шапка", "строка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок")
+              + TBL("шапка", "строка")),
+        render=render)
+
+    pl = rep.placements[0]
+    assert pl.own_page and pl.split
+    assert any("still splits across sheets 2-3" in x
+               for x in rep.problems), rep.problems
+
+
+def test_parts_with_no_document_are_refused_by_name():
+    """`place` is handed a package's parts, and a caller that passes the
+    wrong dict gets a sentence rather than a KeyError from three frames
+    down."""
+    import pytest
+
+    with pytest.raises(placement.PackageError, match=r"no word/document\.xml"):
+        placement.place({})
+
+    with pytest.raises(placement.PackageError, match="no w:body"):
+        placement.place({"word/document.xml":
+                         f"<w:document {W}></w:document>".encode()})
+
+
+def test_a_caption_in_the_LAST_paragraph_is_not_a_block():
+    """`j >= len(kids)`: a caption with nothing after it at all. The
+    other half of this guard — a caption followed by prose — has a test;
+    this one runs off the end of the body instead, which is what a
+    paper whose last line opens «Таблица 5. …» does."""
+    out, rep = placement.place(parts(
+        P("См. таблицу 5.") + P("Таблица 5. Это последний абзац.")))
+
+    assert rep.placements == []
+    assert [s[:16] for s in order(out)] == ["p:См. таблицу 5.",
+                                            "p:Таблица 5. Это"]
+
+
+def test_a_BLANK_paragraph_between_the_caption_and_the_table_is_stepped_over():
+    """Word writers put an empty paragraph under a caption as spacing,
+    and it is the block's, not the prose's: the caption must still find
+    its table, and the blank must travel with them or it is left behind
+    in the middle of the sentence the block used to sit in."""
+    out, rep = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + P("Таблица 1. Заголовок") + P("") + TBL("шапка")
+        + P("Примечание. Что-то.")))
+
+    assert rep.placements[0].moved
+    assert order(out) == [
+        "p:Как показано в таблице 1, вс",
+        "p:Таблица 1. Заголовок",
+        "p:",
+        "tbl:шапка",
+        "p:Примечание. Что-то.",
+        "p:Совершенно другой абзац.",
+    ]
+
+
+def test_space_block_on_a_block_with_no_PARAGRAPH_does_nothing():
+    """`space_block` is public and takes any block. Spacing is a
+    paragraph property, so a block of nothing but a table has nowhere
+    to put it — the answer is to do nothing, not to raise from an index
+    into an empty list."""
+    body = body_of(parts(TBL("шапка")))
+    tbl = tbl_of(body)
+    before = etree.tostring(tbl)
+
+    placement.space_block([tbl], None)
+
+    assert etree.tostring(tbl) == before
+
+
+def test_own_page_writes_the_row_properties_a_raw_block_has_none_of():
+    """`own_page` is public too, and `place` only ever calls it after
+    `keep_together` has already given every row a `w:trPr`. Called on
+    its own — which is what a paper does when it knows a table is
+    oversized — it has to create them."""
+    body = body_of(parts(P("Таблица 1. Заголовок") + TBL("шапка", "строка")
+              ))
+    block = list(body)
+
+    placement.own_page(block)
+
+    rows = tbl_of(body).findall(NS + "tr")
+    assert rows[0].find(NS + "trPr/" + NS + "tblHeader") is not None
+    assert body.find(NS + "p/" + NS + "pPr/" + NS + "pageBreakBefore") \
+        is not None
+
+
+def test_own_page_on_a_table_with_no_rows_is_not_an_error():
+    """An empty `w:tbl` is what a half-built table or a stripped one
+    leaves, and a header row cannot be marked on it. The page break in
+    front still goes on, because that part is about the caption."""
+    body = body_of(parts(P("Таблица 1. Заголовок") + "<w:tbl/>"))
+
+    placement.own_page(list(body))
+
+    assert body.find(NS + "p/" + NS + "pPr/" + NS + "pageBreakBefore") \
+        is not None
 
 
 # ------------------------------------------- notes, sections and the gaps --
@@ -240,24 +402,29 @@ def SECT(orient: str = "landscape") -> str:
             f'w:orient="{orient}"/></w:sectPr></w:pPr>')
 
 
-def ppr_of(out: dict[str, bytes], starts: str):
-    from lxml import etree
-    body = etree.fromstring(out["word/document.xml"]).find(W_NS + "body")
-    for el in body:
+def ppr_of(out: dict[str, bytes], starts: str) -> etree._Element:
+    """The `w:pPr` of the paragraph that opens with `starts`.
+
+    Asserted present rather than answered as None: every caller reads a
+    property out of it, and a paragraph this module has written to has
+    one by construction."""
+    for el in body_of(out):
         if el.tag != W_NS + "p":
             continue
         text = "".join(t.text or "" for t in el.iter(W_NS + "t"))
         if text.startswith(starts):
-            return el.find(W_NS + "pPr")
+            ppr = el.find(W_NS + "pPr")
+            assert ppr is not None, f"{starts!r} has no w:pPr"
+            return ppr
     raise AssertionError(f"no paragraph starts {starts!r}")
 
 
 def spacing_of(out: dict[str, bytes], starts: str) -> dict[str, str | None]:
-    ppr = ppr_of(out, starts)
-    sp = None if ppr is None else ppr.find(W_NS + "spacing")
+    sp = ppr_of(out, starts).find(W_NS + "spacing")
     if sp is None:
         return {}
-    return {k.split("}")[-1]: v for k, v in sp.attrib.items()}
+    return {str(k).split("}")[-1]: (None if v is None else str(v))
+            for k, v in sp.attrib.items()}
 
 
 def test_a_star_note_travels_with_its_table():

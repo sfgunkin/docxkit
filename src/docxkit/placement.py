@@ -167,8 +167,8 @@ def _text(el: etree._Element) -> str:
     return "".join(t.text or "" for t in el.iter(W + "t"))
 
 
-def _blocks(body: etree._Element, caption: re.Pattern,
-            note: re.Pattern = NOTE) -> dict[int, list]:
+def _blocks(body: etree._Element, caption: re.Pattern[str],
+            note: re.Pattern[str] = NOTE) -> dict[int, list[etree._Element]]:
     """Каждый table's block: its caption, the table, and any notes under it.
 
     A caption sits ABOVE its table, and a note BELOW — get that backwards
@@ -176,7 +176,7 @@ def _blocks(body: etree._Element, caption: re.Pattern,
     first paragraph that is neither a note nor empty.
     """
     kids = list(body)
-    out: dict[int, list] = {}
+    out: dict[int, list[etree._Element]] = {}
     for i, el in enumerate(kids):
         if el.tag != W + "p":
             continue
@@ -212,7 +212,7 @@ def _blocks(body: etree._Element, caption: re.Pattern,
     return out
 
 
-def _caption_of(block: list) -> str:
+def _caption_of(block: list[etree._Element]) -> str:
     """The block may open with hoisted bookmarks; the caption is the
     first paragraph in it."""
     for el in block:
@@ -221,8 +221,8 @@ def _caption_of(block: list) -> str:
     return ""
 
 
-def _anchor(body: etree._Element, number: int, block: list,
-            mention: re.Pattern) -> etree._Element | None:
+def _anchor(body: etree._Element, number: int, block: list[etree._Element],
+            mention: re.Pattern[str]) -> etree._Element | None:
     """The first paragraph that mentions this table and is not part of it."""
     owned = {id(e) for e in block}
     for el in body:
@@ -277,7 +277,7 @@ def _flag(parent: etree._Element, tag: str, on: bool = True) -> None:
         parent.remove(node)
 
 
-def keep_together(block: list, *, on: bool = True) -> None:
+def keep_together(block: list[etree._Element], *, on: bool = True) -> None:
     """Make Word carry the whole block to the next sheet rather than break it.
 
     `cantSplit` stops a ROW straddling a page; `keepNext` binds each row
@@ -350,7 +350,8 @@ def _next_content(el: etree._Element) -> etree._Element | None:
     return nxt
 
 
-def space_block(block: list, following: etree._Element | None, *,
+def space_block(block: list[etree._Element],
+                following: etree._Element | None, *,
                 gap_pt: float = GAP_PT,
                 caption_after_pt: float = CAPTION_AFTER_PT) -> None:
     """The two gaps a table block owns: under its caption, and under itself.
@@ -382,10 +383,10 @@ def space_block(block: list, following: etree._Element | None, *,
     spacing.set(W + "line", "240")
     spacing.set(W + "lineRule", "auto")
 
-    heading = (following is not None and following.tag == W + "p"
-               and (following.find(W + "pPr/" + W + "pStyle") is not None)
-               and str(following.find(W + "pPr/" + W + "pStyle").get(W + "val")
-                       ).lower().startswith("heading"))
+    style = (following.find(W + "pPr/" + W + "pStyle")
+             if following is not None and following.tag == W + "p" else None)
+    heading = (style is not None
+               and str(style.get(W + "val")).lower().startswith("heading"))
 
     last = paras[-1] if block and block[-1].tag == W + "p" else None
     if last is not None and last is not paras[0]:
@@ -396,7 +397,7 @@ def space_block(block: list, following: etree._Element | None, *,
         _in_order(_ppr(following), "spacing").set(W + "before", _twips(gap_pt))
 
 
-def own_page(block: list) -> None:
+def own_page(block: list[etree._Element]) -> None:
     """An oversized table: a fresh sheet, and a header that repeats.
 
     `keepNext`/`cantSplit` cannot make an oversized table fit — nothing can —
@@ -423,11 +424,11 @@ def own_page(block: list) -> None:
 
 
 def place(parts: dict[str, bytes], *,
-          caption: re.Pattern = CAPTION,
-          mention: re.Pattern = MENTION,
+          caption: re.Pattern[str] = CAPTION,
+          mention: re.Pattern[str] = MENTION,
           only: Iterable[int] | None = None,
           skip: Iterable[int] | None = None,
-          note: re.Pattern = NOTE,
+          note: re.Pattern[str] = NOTE,
           move: bool = True,
           fit: bool = True,
           space: bool = True,
@@ -530,8 +531,12 @@ def _sheet_of(sheets: list[str], needle: str, start: int = 0) -> int | None:
     return None
 
 
-def _measure_and_fix(report, blocks, max_drift, *,
-                     render, parts, freeze):
+def _measure_and_fix(report: PlacementReport,
+                     blocks: dict[int, list[etree._Element]],
+                     max_drift: int, *,
+                     render: Callable[[dict[str, bytes]], list[str]],
+                     parts: dict[str, bytes],
+                     freeze: Callable[[], None]) -> None:
     """Render, locate every table, fix what split, and render again.
 
     `freeze` writes the LIVE tree back into `parts`. Re-parsing `parts`
@@ -573,9 +578,16 @@ def _measure_and_fix(report, blocks, max_drift, *,
                                           pl.caption_sheet - 1)
 
     for pl in report.placements:
-        if pl.split and not pl.own_page:
+        # `and not pl.own_page` was here, and it made the line
+        # unreachable for the case it describes: `own_page` is applied to
+        # every table that split, so a table that STILL splits after it
+        # always has the flag set. The report then read "1 given their
+        # own page" with no problem under it — a table nothing can fix
+        # presented as one that was fixed.
+        if pl.split:
             report.problems.append(
-                f"table {pl.number}: still splits across sheets "
+                f"table {pl.number}: "
+                f"{'still ' if pl.own_page else ''}splits across sheets "
                 f"{pl.caption_sheet}-{pl.last_sheet}")
         if pl.drift is not None and pl.drift > max_drift:
             report.problems.append(
