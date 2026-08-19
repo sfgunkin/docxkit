@@ -24,6 +24,7 @@ import pytest
 from conftest import make_parts, para, run, write
 
 from docxkit.cli import main
+from docxkit.errors import AnchorError
 
 
 def run_cli(monkeypatch, *argv: str) -> tuple[int | str, str]:
@@ -1760,3 +1761,37 @@ def test_the_body_line_of_a_state_carries_NO_footnote_warning(monkeypatch,
     notes = next(ln for ln in lines if " in footnotes" in ln)
     assert "Review>Next" not in body
     assert "Review>Next" in notes
+
+
+def test_a_MISSING_anchor_is_quoted_to_sixty_characters(monkeypatch, paper,
+                                                        fake_word, capsys):
+    """`anchor[:60]` on the NOT FOUND line, and `strict=False` on the
+    lookup above it. The pair is what makes a miss a REPORT rather than
+    an exception: the run finishes, every anchor that was found is
+    printed with its page, and the ones that were not are listed at the
+    end for a person to fix.
+
+    Uncut, a paragraph-long anchor — and anchors come from a file, so
+    they are as long as whoever wrote them — buries the rest of the
+    report."""
+    long_anchor = ("a sentence the author has since rewritten, quoted here "
+                   "at more than sixty characters")
+    assert len(long_anchor) > 61
+
+    def locate_in(doc, anchors, *, ordered=False, strict=True, **kw):
+        # the REAL contract: strict raises on a miss, and the command
+        # asks for strict=False precisely so it can report one
+        missing = list(anchors)
+        if strict and missing:
+            raise AnchorError(f"{len(missing)} of {len(missing)} anchors "
+                              f"not found: {missing[0][:60]!r}")
+        return []
+
+    monkeypatch.setattr(fake_word, "locate_in", locate_in)
+
+    code, _ = run_cli(monkeypatch, "locate", str(paper), long_anchor)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert f"NOT FOUND  {long_anchor[:60]!r}" in out
+    assert long_anchor[:61] not in out
