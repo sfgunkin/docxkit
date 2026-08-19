@@ -219,6 +219,30 @@ def test_reclassify_repairs_generic_comments():
     assert "R8: repaired" in _com(parts)
 
 
+def test_reclassifying_rewrites_the_TEXT_and_nothing_else():
+    """`com[:m.start()] + m.group(1) + body + m.group(3) + com[m.end():]`
+    — the head and the tail of the comment element are put back
+    verbatim, and only the run between them is rebuilt.
+
+    The tests here read the new text out of comments.xml and stop there,
+    which the head and tail can be lost or duplicated underneath: the
+    author, the date and the initials Word shows in the margin all live
+    in the head, and the paragraph's own `w:pPr` — the CommentText
+    style — lives just inside it."""
+    parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
+    annotate(parts, lambda ctx: None)              # everything generic
+
+    done, still = reclassify(parts, always("R8: repaired"))
+
+    assert done >= 1 and still == []
+    com = _com(parts)
+    assert "R8: repaired" in com
+    assert com.count('w:author="Tester"') == 2, com     # the head
+    assert com.count('<w:pStyle w:val="CommentText"/>') == 2, com
+    assert com.count("<w:t>") == com.count("</w:t>") == 2, com
+    MD.parseString(com)
+
+
 def test_reclassify_is_a_noop_when_nothing_is_generic():
     parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
     annotate(parts, always("R1"))
@@ -484,6 +508,28 @@ def test_a_comment_reclassifies_through_its_REFERENCE_when_the_range_is_gone():
     parts = make_parts(body, comment_items=(comment(1, GENERIC),))
     done, still = reclassify(parts, always("R4: rewritten"))
     assert (done, still) == (1, [])
+    assert "R4: rewritten" in _com(parts)
+
+
+def test_a_comment_whose_anchor_is_GONE_does_not_stop_the_repair():
+    """`continue`, not `break`. A generic comment whose range and
+    reference have both been edited away cannot be reclassified — it is
+    reported back to the caller in `still` — and the pass has to carry
+    on to the ones that can be.
+
+    Under `break` the first unanchored comment ends the repair, and a
+    round comes back with one comment named and the rest still saying
+    "revision, unclassified"; the count says the run worked."""
+    body = (para(run("The estimate is 0.35."))
+            + para(run("tail "),
+                   '<w:r><w:commentReference w:id="2"/></w:r>'))
+    parts = make_parts(body, comment_items=(
+        comment(1, GENERIC, para_id="AAAA0001"),      # anchored nowhere
+        comment(2, GENERIC, para_id="AAAA0002")))
+
+    done, still = reclassify(parts, always("R4: rewritten"))
+
+    assert (done, still) == (1, ["1"])
     assert "R4: rewritten" in _com(parts)
 
 

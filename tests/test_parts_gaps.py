@@ -600,6 +600,47 @@ def test_removing_a_comment_whose_mark_is_NOT_in_a_run_keeps_the_prose():
     assert 'w:id="1"' not in doc and 'w:id="2"' not in doc
 
 
+def test_a_reference_in_an_UNCLOSED_run_does_not_stop_the_walk():
+    """The malformed branch's `continue`. A run that never closes is
+    what a truncated or hand-repaired document carries, and the walk
+    drops the reference MARK there rather than a run it cannot find the
+    end of — because a reference to a comment that no longer exists is
+    what Word calls unreadable content.
+
+    `break` in its place stops at the first one, and every reference
+    after it stays in the document: `remove` reports the comments gone
+    and Word refuses to open the file. Two marks are what it takes to
+    see, and both have to be in the same unclosed run."""
+    # the SAME id twice, because the walk runs once per comment: a
+    # document with one reference per comment gives that loop a single
+    # pass, and `break` cannot be told from `continue` in it. Two marks
+    # for one comment is what a hand-repaired or merged file carries,
+    # and this module's job is to survive those.
+    body = ('<w:p><w:r><w:t>the sentence someone queried</w:t>'
+            '<w:commentReference w:id="1"/>'
+            '<w:commentReference w:id="1"/></w:p>')
+    parts = make_parts(body, comment_items=(
+        comment(1, "note 1", para_id="AAAA0001"),))
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "commentReference" not in doc, doc
+    assert "the sentence someone queried" in doc, "and the prose stays"
+
+
+# The `inside` test beside those branches — whether the last run to
+# START before the mark is still OPEN at it — is now belt to
+# `_carries_more_than`'s braces, and its mutants are equivalent because
+# of that (`tools/kill_check.py`, expect_kill=False). Read as
+# `>= -1` it calls every neighbour run enclosing, and the run it then
+# measures reaches from that neighbour's start to the next `</w:r>`
+# AFTER the mark — which always carries the neighbour's own close tag,
+# so `_carries_more_than` is true and the mark alone is dropped. The
+# same output, by the other guard. Repairing the S1 above turned its
+# neighbour into an equivalent.
+
+
 def test_removing_ONE_of_two_comments_leaves_the_other_mark_alone():
     """The same walk, run to the end: dropping comment 1's bare mark
     must not disturb comment 2's run, which is what the offsets after

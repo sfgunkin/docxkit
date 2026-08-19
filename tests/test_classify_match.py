@@ -64,6 +64,32 @@ def test_unmatched_returns_none():
     assert match(RULES)(ctx("nothing relevant")) is None
 
 
+def test_an_EMPTY_scope_is_stepped_over_not_stopped_at():
+    """`continue`, not `break`. The scopes are tried narrowest first,
+    and the narrowest is often empty: a revision that changes only
+    formatting, or one Word records as a property change, has no delta
+    text of its own. Under `break` the walk ends on that empty string
+    and the paragraph and window are never read — so the revisions with
+    the least to say for themselves are exactly the ones that go
+    unlabelled."""
+    c = ctx(text="", para="the growth slowdown that", window="")
+
+    assert point(match(RULES), c).startswith("A9")
+
+
+def test_a_revision_in_a_table_with_NO_table_rules_is_simply_unmatched():
+    """`tables and ctx.table_index is not None`. A paper that writes no
+    table rules passes None, and every revision inside a table reaches
+    this line; under `or` the guard is true for them and the lookup runs
+    against None. What a classifier returns for an unlabelled revision
+    is None — not an AttributeError from inside the annotate pass, which
+    stops the whole round.
+
+    Every fixture here that puts a revision in a table also supplies the
+    rules for one."""
+    assert match(RULES)(ctx("-0.037", table=8)) is None
+
+
 def test_table_fallback_labels_bare_cells():
     """A regenerated table's cells are numbers no prose signature can match."""
     classify = match(RULES, {8: "A11: new Table A3."})
