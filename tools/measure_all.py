@@ -35,7 +35,10 @@ from collections import deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from harness_map import harness_for
+
+from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,12 +64,21 @@ def run(module: str, minutes: float, sample: int = 0, *,
     # working looks exactly like a sweep that has hung — and the first
     # question about a long run is "how far in", which the chunk lines
     # already answer.
+    # The child's ENCODING, not just this end of the pipe. Its stdout is
+    # a pipe, so Python gives it the locale's cp1252 unless told
+    # otherwise, and the em dash in "4/4 run — killed 4" then arrives as
+    # a byte this end cannot decode. `errors="replace"` turns it into
+    # U+FFFD, ` run — ` no longer matches, and a sweep that graded every
+    # mutant reports "no chunk ever graded" — then dies printing that
+    # U+FFFD to a cp1252 console. Both halves of a fan-out did on
+    # 2026-08-20, and neither said a word about what went wrong.
+    child = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     proc = subprocess.Popen(
         [sys.executable, "tools/mutation_session.py", f"src/docxkit/{module}",
          "--tests", *tests, "--minutes", str(minutes), "--chunks", "0",
          "--fresh", *(["--sample", str(sample)] if sample else [])],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1)
+        text=True, encoding="utf-8", errors="replace", bufsize=1, env=child)
     assert proc.stdout is not None
     last, others = "", deque[str](maxlen=6)
     for raw in proc.stdout:
@@ -88,7 +100,7 @@ def run(module: str, minutes: float, sample: int = 0, *,
     out = subprocess.run(
         [sys.executable, "tools/mutation_survivors.py", db.name,
          f"src/docxkit/{module}"],
-        cwd=ROOT, capture_output=True, text=True,
+        cwd=ROOT, capture_output=True, text=True, env=child,
         encoding="utf-8", errors="replace").stdout
     real = re.search(r"REAL SURVIVAL ([\d.]+)% \((\d+)/(\d+)\)", out)
     by = re.search(r"by definition: (.+)", out)
@@ -118,11 +130,19 @@ def fan_out(worktrees: list[str], modules: list[str], minutes: float,
             [sys.executable, str(Path(__file__).resolve()), *mine,
              "--minutes", str(minutes), "--tag",
              *(["--sample", str(sample)] if sample else [])],
-            cwd=ROOT, env={**os.environ, "DOCXKIT_MUT_WORKTREE": tree}))
+            cwd=ROOT, env={**os.environ, "DOCXKIT_MUT_WORKTREE": tree,
+                           "PYTHONIOENCODING": "utf-8"}))
     return max((p.wait() for p in streams), default=0)
 
 
 def main() -> int:
+    # Everything this prints came off another process's stdout, and a
+    # session that failed prints the reason — a path, a traceback, a
+    # pytest line — through `errors="replace"`, whose U+FFFD a cp1252
+    # console cannot encode. The sweep then dies IN its own diagnosis,
+    # which is where a fan-out of four modules went on 2026-08-20: two
+    # streams, two tracebacks, and not one word about what went wrong.
+    utf8_stdout(line_buffering=True)
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("modules", nargs="*", help="e.g. body.py find.py")

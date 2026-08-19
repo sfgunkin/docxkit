@@ -17,6 +17,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -37,8 +38,10 @@ CHUNKS = ["  verifying the unmutated harness (3 files)...",
 class _Child:
     """A session that emits its chunk lines one at a time."""
 
-    def __init__(self, lines: list[str], log: list[tuple[str, str]]) -> None:
+    def __init__(self, lines: list[str], log: list[tuple[str, str]],
+                 env: dict[str, str] | None = None) -> None:
         self._lines, self._log = list(lines), log
+        self.env = env or {}
         self.returncode = 0
 
     @property
@@ -66,7 +69,8 @@ def sweep(monkeypatch):
         monkeypatch.setattr(measure_all, "harness_for",
                             lambda module: ["tests/test_a.py"])
         monkeypatch.setattr(subprocess, "Popen",
-                            lambda *a, **kw: _Child(lines, log))
+                            lambda *a, **kw: _Child(lines, log,
+                                                    kw.get("env")))
         monkeypatch.setattr(measure_all.Path, "exists", lambda self: db)
         monkeypatch.setattr(
             measure_all, "print",
@@ -253,3 +257,59 @@ def test_the_streams_of_a_FAN_OUT_are_told_to_tag(monkeypatch):
     measure_all.fan_out(["D:/a"], ["one.py"], minutes=1, sample=0)
 
     assert "--tag" in launched[0], launched[0]
+
+
+def test_the_SESSION_is_told_to_write_utf8(monkeypatch):
+    """Its stdout is a pipe, so Python hands it the locale's cp1252
+    unless told otherwise, and the em dash in "4/4 run — killed 4"
+    arrives here as a byte this end cannot decode. The chunk line then
+    matches nothing, a sweep that graded every mutant reports "no chunk
+    ever graded", and the fallback dies printing the U+FFFD to the same
+    cp1252 console. Both streams of the 2026-08-20 fan-out did.
+
+    The launcher's own environment is not the fix: a sweep started from
+    a shell that happens to export PYTHONIOENCODING worked, and the same
+    command from a plain `nohup` did not."""
+    seen: dict[str, str] = {}
+
+    class _Quiet:
+        stdout: ClassVar[list[str]] = []
+        returncode = 0
+
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(cmd, **kw):
+        seen.update(kw.get("env") or {})
+        return _Quiet()
+
+    monkeypatch.setattr(measure_all, "harness_for",
+                        lambda module: ["tests/test_a.py"])
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(measure_all.Path, "exists", lambda self: False)
+    monkeypatch.setattr(measure_all, "print", lambda *a, **kw: None,
+                        raising=False)
+
+    measure_all.run("tracked.py", minutes=1)
+
+    assert seen.get("PYTHONIOENCODING") == "utf-8", "the child chooses cp1252"
+
+
+def test_a_fanned_out_STREAM_is_told_the_same(monkeypatch):
+    """It runs this script again, which spawns sessions of its own: the
+    variable has to reach the grandchildren."""
+    envs: list[dict[str, str]] = []
+
+    class _Stream:
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(cmd, cwd=None, env=None):
+        envs.append(dict(env or {}))
+        return _Stream()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    measure_all.fan_out(["D:/a"], ["one.py"], minutes=1, sample=0)
+
+    assert envs[0].get("PYTHONIOENCODING") == "utf-8"
