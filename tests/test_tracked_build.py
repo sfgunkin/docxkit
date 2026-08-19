@@ -1350,6 +1350,50 @@ def test_a_paragraph_the_batch_ADDED_reports_an_empty_baseline():
     assert found.index == 1
 
 
+def test_the_paragraph_number_counts_in_the_view_the_reader_OPENS():
+    """`label, j1 + k` — the index into the REJECTED view, not into the
+    baseline. The two part company as soon as the batch adds a
+    paragraph above the difference, and they are the same number in
+    every fixture that does not.
+
+    A person takes this number to `working.docx` and counts down. Read
+    off the baseline it is short by every insertion above it, which on
+    a real batch is most of them."""
+    # TWO insertions with an unchanged paragraph between them: the
+    # second is where the two indices part company, because by then the
+    # batch is one paragraph ahead of the baseline
+    baseline = _parts(para(run("Alpha.")), para(run("Gamma.")))
+    batch = _parts(para(run("Alpha.")), para(run("Inserted one.")),
+                   para(run("Gamma.")), para(run("Inserted two.")))
+
+    found = untracked(batch, baseline)
+
+    assert [(f.index, f.batch) for f in found] == [
+        (1, "Inserted one."), (3, "Inserted two.")], found
+    assert "¶2" in str(found[0]) and "¶4" in str(found[1])
+
+
+def test_an_unaccepted_paragraph_is_quoted_at_seventy_characters():
+    """The accept side's own record, and the same cut as the reject
+    side's: two paragraphs, side by side, on one line each. Uncut, one
+    finding fills the terminal and the eight the limit allows fill a
+    screen nobody reads."""
+    long_line = ("The revised sentence, at some length, because a "
+                 "paragraph in a paper usually is.")
+    assert len(long_line) > 71
+    intended = _parts(para(run(long_line)))
+    parts = _parts(para(run("Employment rises "),
+                        ins("sharply, and not what was asked for")))
+
+    from docxkit.tracked import unaccepted
+
+    (missed,) = unaccepted(parts, intended)
+
+    assert missed.intended == long_line
+    assert repr(long_line[:70]) in str(missed)
+    assert repr(long_line[:71]) not in str(missed)
+
+
 def test_a_paragraph_the_batch_LOST_reports_an_empty_batch():
     baseline = _parts(para(run("Alpha.")), para(run("Beta, now gone.")))
     batch = _parts(para(run("Alpha.")))
