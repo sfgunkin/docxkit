@@ -1,5 +1,6 @@
 """probe answers the questions a batch has to know before it starts."""
 
+import pytest
 from conftest import make_parts, notes, para, run, write
 
 from docxkit.probe import probe
@@ -182,6 +183,70 @@ def test_a_table_TWO_blocks_after_the_caption_is_still_its_table(tmp_path):
 
     assert near.exhibits == [("Table 1", "table, 3 rows", "")]
     assert far.exhibits == [("Table 1", "(no table follows)", "")]
+
+
+@pytest.mark.parametrize("before", [0, 1])
+def test_the_table_ABOVE_a_caption_is_not_the_caption_s_table(tmp_path,
+                                                              before):
+    """The window opens at `i + 1`, and every fixture until now put the
+    caption at block 0 — where `i - 1`, `i & 1` and `i ^ 1` all land on
+    or before it and still find the right table, because there is
+    nothing above it to find.
+
+    A real paper never looks like that. Table 1's own table sits above
+    Table 2's caption, so a window that opens one block early reports
+    the PREVIOUS exhibit's table — the same number of rows question,
+    answered about the wrong table, in the report a batch reads to
+    decide whether a table has to be re-fitted.
+
+    Two positions, because the wrong spellings disagree with each other:
+    at i = 1 it is `i - 1` and `i ^ 1` that reach back, and at i = 2 it
+    is `i & 1`, which collapses to 0 and opens the window at the top of
+    the document.
+
+    `i | 1` and `i * 1` stay equivalent, and are argued rather than
+    tested: both can only open the window AT the caption, and a caption
+    is not a table, so the first table they find is still the same
+    one."""
+    body = (_table(5) + _filler(before) + _caption_para()
+            + _filler(1) + _table(3))
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.exhibits == [("Table 1", "table, 3 rows", "")]
+
+
+def test_a_caption_whose_table_follows_IMMEDIATELY(tmp_path):
+    """The other edge of the same window: `i + 1` is the first block it
+    looks at, and a caption sitting directly on its table is the
+    ordinary layout. Under `i + 2` the window steps over it and the
+    exhibit is reported with no table at all."""
+    rep = probe(make_docx(tmp_path, _caption_para() + _table(4)))
+
+    assert rep.exhibits == [("Table 1", "table, 4 rows", "")]
+
+
+def test_the_FIRST_table_after_a_caption_is_the_one_reported(tmp_path):
+    """`break`, not `continue`: two tables inside the window is a
+    caption whose table is followed by the next exhibit's, and the
+    walk has to keep the first. Under `continue` the last one in the
+    window wins and the caption is reported with its neighbour's row
+    count."""
+    rep = probe(make_docx(tmp_path,
+                          _caption_para() + _table(2) + _table(7)))
+
+    assert rep.exhibits == [("Table 1", "table, 2 rows", "")]
+
+
+def test_a_paragraph_that_is_no_caption_does_not_stop_the_walk(tmp_path):
+    """`continue`, not `break`. Every document opens with prose, so the
+    first block a paper hands this walk is not a caption — under `break`
+    the walk ends there and a manuscript full of exhibits is reported as
+    having none."""
+    rep = probe(make_docx(tmp_path, _filler(2) + _caption_para()
+                          + _table(2)))
+
+    assert rep.exhibits == [("Table 1", "table, 2 rows", "")]
 
 
 def test_the_orientation_is_read_from_a_section_break_EIGHT_blocks_out(
