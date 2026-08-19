@@ -17,13 +17,15 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Nothing open, as of 2026-08-19.** Five were raised and closed that day, all
-from one manuscript: the accept-all half of gate 5's text check
+**Nothing open, as of 2026-08-19.** Six were raised and closed that day; five
+came from one manuscript and the sixth from mutation testing `placement` the
+day after it landed — the accept-all half of gate 5's text check
 (`unaccepted`), the re-labelled link that blocked `baseline`
 (`relabelled_links`), the eye gate that had stayed in one paper's scripts
 (`render_accepted`), and the two `placement` defects that cost DSI a blank
 landscape page — a block moved out of its own section, and a note the block
-never knew it had (`831ef24`). All five are in Fixed. Four were raised from an earlier manuscript round
+never knew it had (`831ef24`) — plus the report that called a table it could
+not fix fixed. All six are in Fixed. Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
 and is kept below because the mistake is instructive. The three that were real:
@@ -97,6 +99,44 @@ The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
 ## Fixed
+
+### S2 `placement` reported a table it could not fix as fixed, and hid the findings a render cannot make — `0269f70`, `37023a7`
+
+Two in the same report, both found by mutation testing the module the day
+after it landed, neither visible to any test it had.
+
+**A table that STILL splits was reported as one that was fixed.** The problem
+line read:
+
+```python
+if pl.split and not pl.own_page:
+    report.problems.append(f"table {N}: still splits ...")
+```
+
+`own_page` is applied to every table that split, so a table that still splits
+after it always has the flag — and the branch could not fire for the case it
+names. What a paper read was «1 table(s): … 1 given their own page» with no
+problem under it: the last thing this module can do about an oversized table,
+presented as having worked. The condition is `if pl.split` now, and the word
+"still" is what the flag decides.
+
+**And `format()` printed the problems only under a render.** Half of them
+cannot come from one — a table nothing mentions, a block that carries a section
+break, a move that would cross a boundary are all decided in the XML — so a
+caller without a renderer was told the fit was unverified and nothing else,
+while the report held findings it did not show.
+
+**Found by:** mutation testing, 2026-08-19. placement.py measured 20.2 % real
+survival — the worst in the package, which is what a module a day old looks
+like — against 6-11 % everywhere else. 90 % lines, and the first figure after
+the round was 97 %, floored there.
+
+**A third thing, not a defect but worth the line:** the module and its tests
+were committed without the gates. mypy read 34 errors and pyright three; the
+CI run for those two commits never happened, because they were not pushed. The
+type errors were mechanical (bare `list`/`re.Pattern`, `_Element | None` walks
+in the tests) and are fixed in `0269f70`. The lesson is the one this file keeps
+recording: a gate that is not run is not a gate.
 
 ### S1 `placement.place` moves a block OUT of its own section, silently — `831ef24`
 
