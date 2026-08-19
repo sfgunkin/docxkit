@@ -2,6 +2,8 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
 
     docxkit compare BUILT.docx EDITED.docx [--expect-clean] [--json R.json]
     docxkit citations PAPER.docx
+    docxkit link PAPER.docx [--write] [--only NAME,...] [--alias "A=B"]
+    docxkit linkfix PAPER.docx
     docxkit refstyle PAPER.docx [--chicago] [--json R.json]
     docxkit crossrefs PAPER.docx [--write] [--audit]
     docxkit authors PAPER.docx [--set NAME] [--only A,B] [--write]
@@ -14,6 +16,8 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit footnotes PAPER.docx [--check]
     docxkit smarten PAPER.docx [--write]
     docxkit lint PAPER.docx
+    docxkit probe PAPER.docx [ANCHOR...]
+    docxkit math PAPER.docx [--check]
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
     docxkit pages PAPER.docx [--sheets] [--check]
@@ -22,9 +26,10 @@ and the single-file revision protocol, which finds its own paths in
 ``revision/paper.toml`` and so takes almost no arguments::
 
     docxkit revision status
+    docxkit revision doctor
     docxkit revision ingest [--check] [--json R.json]
     docxkit revision build REVISED.docx [--out PATH] [--keep-math]
-    docxkit revision validate [BATCH.docx] [--no-word]
+    docxkit revision validate [BATCH.docx] [--no-word] [--render ANCHOR...]
     docxkit revision promote [BATCH.docx]
     docxkit revision baseline [--force] [--accept-loss A,...]
     docxkit revision rescues [--prune KEEP]

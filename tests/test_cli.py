@@ -1557,7 +1557,7 @@ def test_a_directory_holding_ONE_part_is_not_folded_into_a_count():
     assert line == "word/fonts/ (2 parts), word/settings.xml"
 
 
-# --- the README is a promise about this parser ---------------------------
+# --- the two written lists are a promise about this parser ---------------
 
 
 def _command_names(monkeypatch, capsys, *argv: str) -> list[str]:
@@ -1577,48 +1577,71 @@ def _readme() -> str:
             / "README.md").read_text(encoding="utf-8")
 
 
-def test_every_command_is_written_down_in_the_README(monkeypatch, capsys):
-    """The README's CLI block is the only list of these commands there
-    is, and it drifted: `crossrefs`, `lint`, `probe`, `math`, `verify`
-    and the whole `revision` family — nine commands, the single-file
-    protocol among them — were shipped without ever appearing in it.
-    A command nobody can find is a command nobody runs."""
-    readme = _readme()
+def _module_doc() -> str:
+    """cli.py's own docstring — the list a reader of the SOURCE gets."""
+    import docxkit.cli
+    return docxkit.cli.__doc__ or ""
+
+
+#: Both written lists, checked the same way. They drift independently:
+#: the README was missing nine commands and the docstring four others,
+#: and each looked complete on its own.
+WRITTEN = pytest.mark.parametrize(
+    "written", [_readme, _module_doc], ids=["README", "cli.__doc__"])
+
+
+def _mentions(text: str, command: str) -> bool:
+    """Is `command` written down — as a whole word, on its own line?"""
+    return any(line.strip().startswith(f"docxkit {command} ")
+               or line.strip() == f"docxkit {command}"
+               for line in text.splitlines())
+
+
+@WRITTEN
+def test_every_command_is_written_down(monkeypatch, capsys, written):
+    """The two lists are all there is: argparse's own `--help` names a
+    command in one line with no explanation, and neither list is
+    generated. The README was missing `crossrefs`, `lint`, `probe`,
+    `math`, `verify` and the whole `revision` family; the docstring was
+    missing `link`, `linkfix`, `probe` and `math`. A command nobody can
+    find is a command nobody runs."""
+    text = written()
 
     missing = [name for name in _command_names(monkeypatch, capsys)
-               if f"docxkit {name} " not in readme
-               and f"docxkit {name}\n" not in readme]
+               if not _mentions(text, name)]
 
     assert not missing, f"undocumented commands: {missing}"
 
 
-def test_every_revision_subcommand_is_written_down_too(monkeypatch, capsys):
+@WRITTEN
+def test_every_revision_subcommand_is_written_down_too(monkeypatch, capsys,
+                                                       written):
     """`revision` is a parser of its own, and its nine steps are the
     protocol every paper project runs. `status` exiting 1 for pending
     and 4 for a stale baseline is what the scripts branch on."""
-    readme = _readme()
+    text = written()
 
     missing = [name for name in _command_names(monkeypatch, capsys,
                                                "revision")
-               if f"docxkit revision {name} " not in readme
-               and f"docxkit revision {name}\n" not in readme]
+               if not _mentions(text, f"revision {name}")]
 
     assert not missing, f"undocumented revision steps: {missing}"
 
 
-def test_the_README_names_no_command_this_parser_does_not_have(monkeypatch,
-                                                               capsys):
+@WRITTEN
+def test_no_command_is_written_down_that_the_parser_does_not_HAVE(
+        monkeypatch, capsys, written):
     """The other direction, and the one a rename breaks: a documented
     command that no longer exists sends a reader to an error message.
-    Both lists are read from the parser, so neither can be edited into
-    agreement without the other."""
+    Both sides are read from the parser, so neither list can be edited
+    into agreement without the other."""
     import re
 
     top = set(_command_names(monkeypatch, capsys))
     steps = set(_command_names(monkeypatch, capsys, "revision"))
-    text = _readme()
-    documented = set(re.findall(r"^docxkit ([a-z]+)", text, re.MULTILINE))
-    rev_documented = set(re.findall(r"^docxkit revision ([a-z]+)", text,
+    text = written()
+    documented = set(re.findall(r"^\s*docxkit ([a-z]+)", text, re.MULTILINE))
+    rev_documented = set(re.findall(r"^\s*docxkit revision ([a-z]+)", text,
                                     re.MULTILINE))
 
     assert documented <= top, f"gone from the CLI: {documented - top}"
