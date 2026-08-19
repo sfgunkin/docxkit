@@ -96,7 +96,7 @@ max-complexity = 20
 # rule being left off. Every one is a single pass over one document with
 # many cases, not a function doing several jobs, so splitting one is a
 # batch of its own — with the number to beat recorded here:
-#   _cite_audit._audit_findings  38     lint.lint                 31
+#   _cite_audit._audit_findings  35     lint.lint                 31
 #   _cite_build.link_all         29     refstyle.audit            25
 #   edit.replace_in_para         26     revisions._simulate_where 24
 "src/docxkit/edit.py" = ["C901"]

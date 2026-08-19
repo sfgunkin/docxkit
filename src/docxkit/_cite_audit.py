@@ -23,6 +23,7 @@ from ._cite_grammar import (
 from ._xml import (
     BOOKMARK_NAME_RE,
     DOCUMENT,
+    ENDNOTES,
     FOOTNOTES,
     PARA_RE,
     dead_links,
@@ -40,6 +41,16 @@ _BOOKMARK_NAME_RE = BOOKMARK_NAME_RE
 # name) was invisible to the own-name scan, so every link_all run minted
 # another _N and re-wrapped the citation — the Parental Style Kazenin
 # spiral, nested four links deep before the audit caught it.
+#: Where a bookmark or link was found, when it was not in a body
+#: paragraph. Negative on purpose: everything from 0 up is a paragraph
+#: index, and these have to sort before the first of them.
+_NOTE_AT = {FOOTNOTES: -2, ENDNOTES: -3}
+#: The same, as a reader sees it. "body" is a body-LEVEL definition
+#: between paragraphs: the first audit round printed those as "fn" and
+#: the API repair went hunting in footnotes.xml for bookmarks that were
+#: never there.
+_WHERE = {-1: "body", -2: "fn", -3: "en"}
+
 _KEY_SHAPE_RE = re.compile(
     r"^([A-Za-z][A-Za-z.]*?)(\d{4}[a-z]?)(?:_\d+)?(?:txt)?$")
 _LINK_TOKEN_RE = re.compile(
@@ -159,6 +170,30 @@ def audit_links(parts: dict[str, bytes], *,
     return [f.message for f in findings], stats
 
 
+def _read_notes(parts: dict[str, bytes], bookmarks: dict[str, int],
+                links: dict[str, list[tuple[int, str]]],
+                empty: list[tuple[str, int]]) -> None:
+    """Fold both note stores into the body's own bookmarks and links.
+
+    Which store a mention sits in is part of the answer: an anchor
+    reported as "fn" that lives in endnotes.xml sends a repair looking
+    in a part that does not hold it. Until 2026-08-20 the audit read
+    footnotes.xml alone, so a paper whose journal takes endnotes had its
+    whole apparatus reported as absent — links 1 -> 0, bookmarks 1 -> 0
+    — which reads as a document with nothing to fix.
+    """
+    for part, at in _NOTE_AT.items():
+        blob = parts.get(part)
+        if not blob:
+            continue
+        text = blob.decode("utf-8")
+        for name in _BOOKMARK_NAME_RE.findall(text):
+            bookmarks.setdefault(name, at)
+        for anchor, label in internal_links(text):
+            links[anchor].append((at, label))
+        empty += [(a, at) for a in dead_links(text)]
+
+
 def _audit_findings(parts: dict[str, bytes], *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
@@ -178,14 +213,7 @@ def _audit_findings(parts: dict[str, bytes], *,
         empty += [(a, i) for a in dead_links(m.group(0))]
     for name in _BOOKMARK_NAME_RE.findall(doc):
         bookmarks.setdefault(name, -1)      # BODY-LEVEL, between paragraphs
-    foot = parts.get(FOOTNOTES)
-    if foot:
-        ftext = foot.decode("utf-8")
-        for name in _BOOKMARK_NAME_RE.findall(ftext):
-            bookmarks.setdefault(name, -2)  # defined in a footnote
-        for anchor, label in internal_links(ftext):
-            links[anchor].append((-2, label))
-        empty += [(a, -2) for a in dead_links(ftext)]
+    _read_notes(parts, bookmarks, links, empty)
 
     cite_marks = {n: i for n, i in bookmarks.items()
                   if not n.startswith("_") and n.endswith("txt")}
@@ -196,10 +224,7 @@ def _audit_findings(parts: dict[str, bytes], *,
                  and n not in eq_marks}
 
     def where(i: int) -> str:
-        # "body" = a body-level definition between paragraphs. The first
-        # audit round printed those as "fn" and the API repair went
-        # hunting in footnotes.xml for bookmarks that were never there.
-        return {-1: "body", -2: "fn"}.get(i) or f"¶{i + 1}"
+        return _WHERE.get(i) or f"¶{i + 1}"
 
     entry_years = {r.year[:4] for r in references(texts, heading=heading)}
 

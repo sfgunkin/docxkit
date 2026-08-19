@@ -354,3 +354,78 @@ def test_the_back_link_undo_walks_PAST_the_ones_that_are_sound():
 #   has seen; one fewer changes nothing that is not already the
 #   `_dedup_name` fallback's business. (`bid | 4096` is NOT equivalent —
 #   see the high-id test in test_cite_names.py.)
+
+
+# --- the second note store (2026-08-20) ---------------------------------
+#
+# Which store a manuscript uses is a journal's house style — JEOA takes
+# endnotes, the LI journal footnotes — and until this round the builder
+# read `word/footnotes.xml` alone. A work cited only in an endnote got
+# its entry bookmark and no link, and the report said nothing at all:
+# not "skipped", not "unmatched", the silence this repository keeps
+# writing down.
+
+
+def _endnote(text: str, nid: int = 2) -> str:
+    return notes("endnotes", note(text, nid, "endnote"))
+
+
+def test_a_work_cited_ONLY_in_an_endnote_is_linked_there():
+    """The footnote path's twin, and the reason the pair is written out
+    rather than parametrized: the two parts are different files with
+    different element names, and a test that shares a fixture between
+    them can only see the half the fixture builds."""
+    parts = make_parts(
+        para(run("Loneliness rises with age.")) + REFERENCES,
+        extra={"word/endnotes.xml":
+               _endnote("The gradient is steeper still (Kanbur 2007).")})
+
+    report = link_all(parts)
+
+    assert report.linked == ["Kanbur2007 @ en¶1"], report.linked
+    assert _anchors(parts, "word/endnotes.xml") == ["Kanbur2007"]
+    assert "Kanbur2007txt" in _names(parts, "word/endnotes.xml"), \
+        "the in-text end of the pair belongs where the mention is"
+    assert "Kanbur2007" in _names(parts, "word/document.xml"), \
+        "the entry keeps its own bookmark in the body"
+
+
+def test_the_body_mention_wins_over_an_endnote_one_too():
+    """First mention, and the body comes first — the same rule the
+    footnote pass follows, now that both note stores are read in the
+    order the parts tuple names."""
+    parts = make_parts(
+        para(run("Loneliness rises with age (Kanbur 2007).")) + REFERENCES,
+        extra={"word/endnotes.xml":
+               _endnote("See also Kanbur (2007) on distribution.")})
+
+    link_all(parts)
+
+    assert "Kanbur2007txt" in _names(parts, "word/document.xml")
+    assert not _anchors(parts, "word/endnotes.xml"), \
+        "the endnote's later mention was linked as well"
+
+
+def test_a_footnote_and_an_endnote_mention_are_both_seen():
+    """One paper, both stores, two works: the footnote's mention and the
+    endnote's are each the first for their own work, and the bookmark
+    ids they take have to be distinct across the whole package or Word
+    reports unreadable content."""
+    import re as _re
+
+    parts = make_parts(
+        para(run("Loneliness rises with age.")) + REFERENCES,
+        footnotes=notes("footnotes",
+                        note("The gradient is steeper (Kanbur 2007).", 2)),
+        extra={"word/endnotes.xml":
+               _endnote("The book says so as well (Ravallion 2016).", 3)})
+
+    report = link_all(parts)
+
+    assert sorted(report.linked) == ["Kanbur2007 @ fn¶1",
+                                    "Ravallion2016 @ en¶1"], report.linked
+    ids = [m for part in ("word/document.xml", "word/footnotes.xml",
+                          "word/endnotes.xml")
+           for m in _re.findall(r'<w:bookmarkStart w:id="(\d+)"',
+                                parts[part].decode("utf-8"))]
+    assert len(set(ids)) == len(ids), f"a bookmark id is used twice: {ids}"

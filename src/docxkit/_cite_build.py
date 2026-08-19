@@ -37,6 +37,7 @@ from ._cite_repair import (
 )
 from ._xml import (
     DOCUMENT,
+    ENDNOTES,
     FOOTNOTES,
     PARA_RE,
     RUN_RE,
@@ -56,6 +57,15 @@ WORD_BOOKMARK_LIMIT = 40
 #: The in-text partner of a reference bookmark carries a "txt" suffix, so
 #: the base name has to leave room for it under the same limit.
 _NAME_BUDGET = WORD_BOOKMARK_LIMIT - len("txt")
+
+#: The note stores a mention can sit in, with the label a report gives
+#: each. Which one a manuscript uses is a journal's house style — JEOA
+#: takes endnotes, the LI journal footnotes — and a builder that reads
+#: one of them is silent about the half it never opened rather than
+#: wrong about what it read (2026-08-20; the same blindness cost
+#: `refstyle` a work and `export` a whole note).
+_NOTE_PARTS: tuple[tuple[str, str], ...] = ((FOOTNOTES, "fn¶"),
+                                            (ENDNOTES, "en¶"))
 
 
 #: Cyrillic -> Latin, enough for the Russian and Kazakh names these papers
@@ -262,6 +272,48 @@ def _wanted(only: Collection[str] | None, entries: list[Reference],
                 names[r.index].casefold()} & asked}
 
 
+def _plan_notes(notes: dict[str, str],
+                scan: Callable[[list[str], dict[int, list[tuple[str, str]]],
+                                tuple[int, int] | None], None],
+                ) -> tuple[dict[str, list[re.Match[str]]],
+                           dict[str, dict[int, list[tuple[str, str]]]]]:
+    """Each note part's paragraphs, and the plan `scan` makes for them.
+
+    No `skip`: a note holds mentions and never the reference block, so
+    every paragraph in it is prose. (The body's scan skips the entries,
+    which is what stops an entry linking to itself.)
+    """
+    paras = {name: list(PARA_RE.finditer(xml)) if xml else []
+             for name, xml in notes.items()}
+    plans: dict[str, dict[int, list[tuple[str, str]]]] = {
+        name: {} for name, _ in _NOTE_PARTS}
+    for name, _ in _NOTE_PARTS:
+        scan([visible_text(m.group(0)) for m in paras[name]],
+             plans[name], None)
+    return paras, plans
+
+
+def _rebuild_notes(notes: dict[str, str],
+                   note_paras: dict[str, list[re.Match[str]]],
+                   note_plans: dict[str, dict[int, list[tuple[str, str]]]],
+                   rebuild: Callable[[int, str, str], str]) -> None:
+    """Rewrite each note part bottom-up, from the plan made for it.
+
+    In `link_all` rather than beside it until the second note store
+    arrived, and out here now for the reason the debt list in
+    `tests/test_complexity_debt.py` exists: a loop per part is three
+    more branches in a function that was already the third most complex
+    in the package.
+    """
+    for name, label in _NOTE_PARTS:
+        xml = notes[name]
+        for i in sorted(note_plans[name], reverse=True):
+            m = note_paras[name][i]
+            xml = (xml[:m.start()] + rebuild(i, m.group(0), label)
+                   + xml[m.end():])
+        notes[name] = xml
+
+
 def link_all(parts: dict[str, bytes], *,
              aliases: dict[str, str] | None = None,
              heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
@@ -304,7 +356,8 @@ def link_all(parts: dict[str, bytes], *,
     read whole, because that is what tells prose from entries.
     """
     doc = parts[DOCUMENT].decode("utf-8")
-    foot = parts.get(FOOTNOTES, b"").decode("utf-8")
+    notes = {name: parts.get(name, b"").decode("utf-8")
+             for name, _ in _NOTE_PARTS}
     report = LinkAllReport()
     filed_as = aliases or {}
     ignored = {s.casefold() for s in ignore}
@@ -317,10 +370,11 @@ def link_all(parts: dict[str, bytes], *,
         return report
 
     report.suspect += _prose_entries(entries)
-    bid = next_bookmark_id(doc, foot)
+    bid = next_bookmark_id(doc, *notes.values())
     taken = set(_BOOKMARK_NAME_RE.findall(doc))
     linked_anchors = {a for m in paras for a, _ in internal_links(m.group(0))}
-    linked_anchors |= {a for a, _ in internal_links(foot)} if foot else set()
+    linked_anchors |= {a for xml in notes.values() if xml
+                       for a, _ in internal_links(xml)}
 
     # The body-level XML just before each paragraph: where Word leaves a
     # marker it has hoisted out of the paragraph head on save.
@@ -363,7 +417,7 @@ def link_all(parts: dict[str, bytes], *,
     last_idx = max(r.index for r in entries)
     claimed: set[str] = set()
     plan: dict[int, list[tuple[str, str]]] = {}       # para -> [(cite, name)]
-    fn_plan: dict[int, list[tuple[str, str]]] = {}
+    by_label = {label: name for name, label in _NOTE_PARTS}
 
     def scan(texts_in: list[str], into: dict[int, list[tuple[str, str]]],
              skip: tuple[int, int] | None) -> None:
@@ -406,8 +460,7 @@ def link_all(parts: dict[str, bytes], *,
                 into.setdefault(i, []).append((text[c.start:c.end], name))
 
     scan(texts, plan, (head_idx, last_idx))
-    fparas = list(PARA_RE.finditer(foot)) if foot else []
-    scan([visible_text(m.group(0)) for m in fparas], fn_plan, None)
+    note_paras, note_plans = _plan_notes(notes, scan)
 
     # ONE bottom-up pass per part: earlier offsets stay valid however
     # much a later paragraph grows (table notes can sit BELOW the
@@ -447,7 +500,8 @@ def link_all(parts: dict[str, bytes], *,
                         report.backlinked.append(name)
                     except AnchorError as exc:
                         report.skipped.append(f"back-link ¶{i + 1}: {exc}")
-        for cite, name in (plan if where == "¶" else fn_plan).get(i, []):
+        here = plan if where == "¶" else note_plans[by_label[where]]
+        for cite, name in here.get(i, []):
             try:
                 para = link_in_para(para, cite, name)
                 para = wrap_link_in_bookmark(para, name, name + "txt",
@@ -461,10 +515,7 @@ def link_all(parts: dict[str, bytes], *,
     for i in todo:
         m = paras[i]
         doc = doc[:m.start()] + rebuild(i, m.group(0), "¶") + doc[m.end():]
-    for i in sorted(fn_plan, reverse=True):
-        m = fparas[i]
-        foot = (foot[:m.start()] + rebuild(i, m.group(0), "fn¶")
-                + foot[m.end():])
+    _rebuild_notes(notes, note_paras, note_plans, rebuild)
 
     # A back-link is decided from `claimed`, which is filled while
     # PLANNING; the in-text wrap that creates its <name>txt target runs
@@ -477,8 +528,8 @@ def link_all(parts: dict[str, bytes], *,
     # welded by hand). Undo any back-link whose target never appeared.
     if report.backlinked:
         marks = set(_BOOKMARK_NAME_RE.findall(doc))
-        if foot:
-            marks |= set(_BOOKMARK_NAME_RE.findall(foot))
+        for xml in notes.values():
+            marks |= set(_BOOKMARK_NAME_RE.findall(xml))
         for name in list(report.backlinked):
             if name + "txt" in marks:
                 continue
@@ -489,8 +540,9 @@ def link_all(parts: dict[str, bytes], *,
                 f"back-link {name}: its in-text mention was not wrapped, "
                 f"so {name}txt does not exist — back-link removed")
 
-    if fn_plan:
-        parts[FOOTNOTES] = foot.encode("utf-8")
+    for name, _ in _NOTE_PARTS:
+        if note_plans[name]:
+            parts[name] = notes[name].encode("utf-8")
     parts[DOCUMENT] = doc.encode("utf-8")
     return report
 
@@ -623,7 +675,8 @@ def link_rest(parts: dict[str, bytes], *,
     citation is masked out of the next scan.
     """
     doc = parts[DOCUMENT].decode("utf-8")
-    foot = parts.get(FOOTNOTES, b"").decode("utf-8")
+    notes = {name: parts.get(name, b"").decode("utf-8")
+             for name, _ in _NOTE_PARTS}
     report = LinkRestReport()
     filed_as = aliases or {}
     ignored = {s.casefold() for s in ignore}
@@ -692,10 +745,11 @@ def link_rest(parts: dict[str, bytes], *,
         return part
 
     doc = rewrite(doc, paras, (head_idx, last_idx), "¶")
-    if foot:
-        fparas = list(PARA_RE.finditer(foot))
-        foot = rewrite(foot, fparas, None, "fn¶")
-        parts[FOOTNOTES] = foot.encode("utf-8")
+    for name, label in _NOTE_PARTS:
+        xml = notes[name]
+        if xml:
+            parts[name] = rewrite(
+                xml, list(PARA_RE.finditer(xml)), None, label).encode("utf-8")
     parts[DOCUMENT] = doc.encode("utf-8")
     return report
 

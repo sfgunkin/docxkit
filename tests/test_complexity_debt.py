@@ -32,7 +32,7 @@ MAX_COMPLEXITY = 20
 #: function -> its complexity when it was pinned. Everything over
 #: :data:`MAX_COMPLEXITY`, package-wide, exemptions ignored.
 DEBT = {
-    "_cite_audit._audit_findings": 38,
+    "_cite_audit._audit_findings": 35,
     "lint.lint": 31,
     "_cite_build.link_all": 29,
     "refstyle.audit": 25,

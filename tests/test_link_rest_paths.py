@@ -370,3 +370,25 @@ def test_an_unmatched_mention_names_its_paragraph_and_does_not_END_it():
         report.unmatched
     assert report.linked == ["Kanbur2007 @ ¶2"], report.linked
     assert [a for a, _ in _linked(parts)].count("Kanbur2007") == 2
+
+
+def test_a_LATER_mention_in_an_endnote_is_linked_like_one_in_a_footnote():
+    """The second pass reads both note stores as of 2026-08-20. The
+    report says `en¶` for one and `fn¶` for the other, because a repair
+    told the wrong part goes looking in a file that does not hold the
+    mention."""
+    from conftest import note, notes
+
+    parts = make_parts(
+        para(run("First (Kanbur 2007).")) + ENTRIES,
+        extra={"word/endnotes.xml": notes(
+            "endnotes", note("Again (Kanbur 2007) here.", 2, "endnote"))})
+    link_all(parts)
+    assert not _linked(parts, "word/endnotes.xml"), \
+        "link_all wires the FIRST mention only, and the body has it"
+
+    report = link_rest(parts)
+
+    assert report.linked == ["Kanbur2007 @ en¶1"], report.linked
+    assert _linked(parts, "word/endnotes.xml") == [
+        ("Kanbur2007", "Kanbur 2007")]
