@@ -1097,6 +1097,27 @@ def test_a_mention_ALREADY_inside_a_link_is_invisible_to_the_scan():
     assert body.count("<w:hyperlink") == 2, body
 
 
+def test_an_EMPTY_paragraph_does_not_end_the_walk_either():
+    """`if not masked.strip("\\x00 \\t"): continue` — the skip for a
+    paragraph with nothing readable in it. Word writes empty paragraphs
+    between blocks the way a typist writes blank lines, and the walk
+    runs BACKWARDS, so `break` on the first one stops at the last blank
+    line in the document and leaves every mention above it plain.
+
+    The paragraph beside this one has text in it and no mention, which
+    is a different skip two branches further down."""
+    # an empty RUN, not a self-closing `<w:p/>`: the paragraph walk is a
+    # regex over the paired form, so the self-closing one never reaches
+    # this branch at all
+    xml = doc(para(run("See Table 1 for the gradient.")),
+              para(run("")),
+              para(run("Table 1. First")))
+
+    _out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table1": 1}, counts
+
+
 def test_a_paragraph_with_nothing_to_link_does_not_end_the_walk():
     """`continue`, not `break`, and the walk runs BACKWARDS — from the
     end of the document to the start — so `break` on the first paragraph
