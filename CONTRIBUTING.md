@@ -644,6 +644,40 @@ source has a space after the minus and the pattern was written without
 one. The tool refuses such a case now, the way it already refused one
 that does not compile.
 
+**And once more, over the code the night had CHANGED.** Three modules
+were edited on 2026-08-19 (`_xml`, `package`, `_cite_repair`), which
+voids their figures by the rule above, and two had never been measured
+at all:
+
+| module | figure | against |
+|---|---|---|
+| `compare.py` | **11.5 %** (7/61) | never measured — the facade the sweep had always skipped |
+| `_compare_diff.py` | **12.5 %** (51/408) | 16.2 % before the round |
+| `package.py` | **7.4 %** (25/338) | 25.6 %, and the old figure was stale as well |
+| `figures.py` | **5.8 %** (25/428) | 6.6 % |
+| `_xml.py` | 5.6 % (25/445) | 4.5 % — the module GREW |
+| `_cite_repair.py` | **2.5 %** (5/199) | 9.4 % |
+
+`_xml` reading higher is the ordinary consequence of adding code: the
+self-closing `w:t` fix is three lines and its own tests kill every
+mutant on them, but the module's denominator moved. A figure is a
+property of a tree, not a score.
+
+`compare.py`'s first measurement is the answer to a question nobody had
+asked: the facade had never been a target because the sweep reads the
+three layers behind it, and four of its seven survivors were the labels
+and cuts its report is made of. The other three are the `__main__`
+guard.
+
+**What the fixes did to their own survivors** is worth one line.
+`package.set_core_property` went from 27 survivors to 12, and every one
+of the twelve is now equivalent BY THE FIX: `CORE_ORDER.index(tag) + 1`
+decides which sibling the new element goes before, and once the reader
+sees the empty form too, the tag's own slot can no longer be occupied
+when that line runs. Repairing the defect turned its neighbours into
+equivalents.
+
+
 
 ---
 
