@@ -155,3 +155,21 @@ def test_a_bookmark_that_is_already_gone_does_not_stop_the_removal():
     assert removed == 5, "six names, one already gone"
     assert "w:bookmarkStart" not in out
     assert "w:anchor=" not in out, "and every hyperlink unwrapped"
+
+def test_the_refusal_does_not_trail_off_below_six_either():
+    """`len(fielded) > 6`, and the two fixtures either side of six
+    cannot tell it from `!=`. Three field links is the ordinary case —
+    a paper mid-conversion, where Word rewrote a handful of element
+    links into fields — and `!= 6` prints an ellipsis after a list that
+    is complete, which sends a person looking for links that are not
+    there."""
+    xml = doc(_exhibits(3, field=True))
+
+    with pytest.raises(ConversionGap) as exc:
+        crossrefs.unlink(xml)
+
+    message = str(exc.value)
+    assert "3 exhibit link(s) are Word FIELD form" in message
+    assert " ..." not in message, message
+    for i in (1, 2, 3):
+        assert f"Table{i}" in message

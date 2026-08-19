@@ -360,6 +360,48 @@ def test_the_split_label_refusal_quotes_SIXTY_characters_of_the_caption():
     assert quoted == repr(long_caption[:60]), quoted
 
 
+def test_an_EMPTY_run_before_the_caption_label_is_stepped_over():
+    """`continue`, not `break`, in the walk that finds the label. Word
+    leaves empty runs everywhere — an rsid split, a deleted character,
+    a language mark — and one in front of the caption puts a `w:t` with
+    nothing in it ahead of the label.
+
+    Under `break` the walk gives up on the first node that does not
+    start with the label, which is that empty one, and the caption is
+    refused as "split across runs" — the paper is stopped over a run
+    holding no text at all."""
+    xml = doc(
+        para(run("As Table 3 shows, employment rises.")),
+        para(run(""), run("Table 3. Employment by age")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table3"], report.format()
+    caption = paragraph_holding(out, "Table 3. Employment by age")
+    assert 'w:anchor="Table3txt"' in caption
+
+
+def test_a_caption_that_could_not_be_linked_does_not_stop_the_ones_after():
+    """`continue` again, in `link`'s own loop, on the NOT-FOUND arm: a
+    mention whose label Word split across runs is reported and the run
+    goes on. `break` there means the FIRST such caption ends the pass,
+    and every exhibit after it is left plain while the report names only
+    that one — the shape of a paper whose Table 1 was edited in Word."""
+    xml = doc(
+        para(run("As Tabl"), run("e 1 shows, employment rises.")),
+        para(run("Table 1. Employment")),
+        para(run("And Table 2 shows more.")),
+        para(run("Table 2. Employment by sex")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.no_mention == ["Table1"]
+    assert report.linked == ["Table2"], report.format()
+    assert 'w:anchor="Table2"' in out
+
+
 def test_only_restricts_the_work():
     xml = doc(
         para(run("Table 1 and Table 2 follow.")),
@@ -442,6 +484,35 @@ def test_the_misplaced_line_names_the_FIRST_mention_that_leads_it():
     assert line.startswith("Table5txt sits at ¶4")
     assert "2 earlier mention(s)" in line
     assert "the first at ¶1" in line, line
+
+
+def test_an_earlier_mention_is_found_from_paragraph_TEN_onwards():
+    """`_where(paras, pos) != home`, and `_where` answers a STRING.
+
+    Compared with `<` instead — the mutation this kills — the check
+    reads "¶9" as coming AFTER "¶10", because that is what string order
+    says, and a mention in a single-digit paragraph drops out of the
+    finding as soon as the marker reaches the tenth. A paper's exhibits
+    are not in its first nine paragraphs.
+
+    The fixtures above are three and four paragraphs long, where every
+    label is one digit and the two orders agree. The nine-then-ten pair
+    is the shortest one where they do not."""
+    filler = [para(run(f"Paragraph {i} of the introduction."))
+              for i in range(1, 9)]
+    xml = doc(
+        *filler,                                         # ¶1..¶8
+        _mention("Table5", "Table 5"),                   # ¶9, the first
+        _mention("Table5", "Table 5", mark="Table5txt"),  # ¶10, the marker
+        para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
+    )
+
+    (line,) = crossrefs.audit(xml)["misplaced_anchor"]
+
+    assert line.startswith("Table5txt sits at ¶10")
+    assert "1 earlier mention(s)" in line, line
+    assert "the first at ¶9" in line, line
 
 
 def test_the_marker_on_the_first_mention_is_reported_clean():
@@ -833,6 +904,26 @@ def test_russian_label_stems_accept_inflections_but_not_neighbours(
 # stay green. The narrow suite invents survivors on its own — three
 # candidates from the same run turned out to be covered by test_cli.py —
 # so a survivor is a question until the full suite has been asked.
+
+
+def test_a_report_is_complete_only_when_BOTH_halves_are_empty():
+    """`not self.no_mention and not self.no_caption` is what the CLI
+    exits on — `return 0 if report.complete else 1` — so each half has
+    to be able to fail it alone. The suite asserted the caption half
+    only, and a report with an unlinkable MENTION in it would have
+    exited 0: a batch step that says the paper is linked when it is
+    not."""
+    clean = crossrefs.LinkReport()
+    clean.linked.append("Table1")
+    assert clean.complete is True
+
+    no_mention = crossrefs.LinkReport()
+    no_mention.no_mention.append("Table2")
+    assert no_mention.complete is False
+
+    no_caption = crossrefs.LinkReport()
+    no_caption.no_caption.append("Figure9")
+    assert no_caption.complete is False
 
 
 def test_a_report_says_every_kind_of_thing_it_found():
