@@ -57,10 +57,29 @@ def test_set_alt_text_adds_the_attribute():
     assert found[2].missing               # only the addressed drawing
 
 
+def test_set_alt_text_changes_NOTHING_ELSE_in_the_document():
+    """The setter splices at `p.start() + dm.start()` — the drawing's
+    offset in the document, from its paragraph's — and every assertion
+    above reads the attribute back through `alt_texts`, which finds it
+    wherever the splice landed. A wrong offset overwrites the six
+    characters before the drawing and the alt text still reads correctly.
+
+    Written as "the document, plus one attribute": `+` against `^` and
+    `-` is only visible from the parts that did NOT change."""
+    out = set_alt_text(DOC, "Figure 2.", "Two lines crossing")
+
+    assert out.replace(' descr="Two lines crossing"', "", 1) == DOC
+
+
 def test_set_alt_text_replaces_an_existing_one():
     out = set_alt_text(DOC, "Figure 1.", 'Say "new" & <better>')
     (first, *_) = alt_texts(out)
     assert first.descr == "Say &quot;new&quot; &amp; &lt;better&gt;"
+    # and nothing else moved — Figure 1's drawing is the one whose
+    # paragraph offset and drawing END share no bits, so `p.start() |
+    # dm.end()` is only visible here
+    assert out.replace('descr="Say &quot;new&quot; &amp; &lt;better&gt;"',
+                       'descr="A described chart"', 1) == DOC
 
 
 def test_multi_image_figures_address_by_index():
