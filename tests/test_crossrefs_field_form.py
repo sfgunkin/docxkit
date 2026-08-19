@@ -70,6 +70,26 @@ def test_link_reports_a_field_linked_object_instead_of_doubling_it():
     assert "ALREADY LINKED BY A WORD FIELD" in report.format()
 
 
+def test_a_field_linked_exhibit_does_not_stop_the_ones_after_it():
+    """`continue`, not `break`. A field-linked object is reported and
+    stepped over; under `break` it ends the linking run instead, and
+    every exhibit after it in the document goes unlinked while the
+    report says only that ONE was field form.
+
+    That is the shape Parental_style is: 160 field-form links among 53
+    element-form ones, the field ones scattered through the paper. The
+    first of them would have ended the run at Table 1."""
+    xml = doc(CAPTION_AND_MENTION
+              + para(run("As reported in Table 2, rates differ."))
+              + para(run("Table 2: Descriptive statistics.")))
+
+    out, report = crossrefs.link(xml)
+
+    assert report.field_form == ["Table1"]
+    assert report.linked == ["Table2"], report.format()
+    assert 'w:anchor="Table2"' in out and 'w:anchor="Table1"' not in out
+
+
 # --- what the crossrefs sweeps of 2026-08-18 left in `unlink` -----------
 #
 # 13 survivors, and five of them on the ellipsis that says the refusal's

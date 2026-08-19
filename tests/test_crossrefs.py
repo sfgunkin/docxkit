@@ -183,6 +183,38 @@ def test_link_is_idempotent():
     assert second.linked == []
 
 
+def test_the_caption_is_re_found_by_NAME_not_by_where_it_sorts():
+    """`c.name == cap.name`, twice — every edit shifts the offsets, so
+    the caption is looked up again by name before it is touched.
+
+    Written as `>=` the lookup takes the first caption that sorts at or
+    after the one wanted, and a paper with a table before a figure hands
+    it "Table1" when it asked for "Figure1" — T sorts after F. The
+    figure's bookmarks are then built against the table's caption, and
+    the report still counts three linked objects with balanced ids,
+    which is all the fixture beside this one checks.
+
+    So this asserts WHICH names came out and where each one landed."""
+    xml = doc(
+        para(run("Table 1 and Table 2 and Figure 1 follow.")),
+        para(run("Table 1. One")),
+        para(run("Table 2. Two")),
+        para(run("Figure 1. Three")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert sorted(report.linked) == ["Figure1", "Table1", "Table2"]
+    assert sorted(re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"',
+                             out)) == [
+        "Figure1", "Figure1txt", "Table1", "Table1txt", "Table2", "Table2txt"]
+    # and each caption bookmark is on its OWN caption
+    for name, caption in (("Figure1", "Figure 1. Three"),
+                          ("Table1", "Table 1. One"),
+                          ("Table2", "Table 2. Two")):
+        assert f'w:name="{name}"' in paragraph_holding(out, caption), name
+
+
 def test_bookmark_ids_are_unique():
     xml = doc(
         para(run("Table 1 and Table 2 and Figure 1 follow.")),
@@ -351,6 +383,28 @@ def test_audit_reports_an_anchor_that_does_not_lead_its_mentions():
     line = got["misplaced_anchor"][0]
     assert line.startswith("Table5txt sits at ¶3")
     assert "the first at ¶1" in line
+
+
+def test_the_misplaced_line_names_the_FIRST_mention_that_leads_it():
+    """`ahead[0]`. The line exists to send a reader somewhere, and where
+    it sends them is the EARLIEST mention that links past the marker —
+    a later one is a place the reader has already scrolled through. One
+    earlier mention makes `ahead[0]`, `ahead[1]` and `ahead[-1]` the
+    same paragraph, which is what every fixture here had."""
+    xml = doc(
+        _mention("Table5", "Table 5"),                      # ¶1, the first
+        _mention("Table5", "Table 5"),                      # ¶2, also ahead
+        para(run("Intervening prose.")),
+        _mention("Table5", "Table 5", mark="Table5txt"),    # ¶4, the marker
+        para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
+    )
+
+    (line,) = crossrefs.audit(xml)["misplaced_anchor"]
+
+    assert line.startswith("Table5txt sits at ¶4")
+    assert "2 earlier mention(s)" in line
+    assert "the first at ¶1" in line, line
 
 
 def test_the_marker_on_the_first_mention_is_reported_clean():
@@ -928,6 +982,17 @@ def test_audit_separates_a_half_linked_pair_from_a_linked_one():
     ("Figure6", "Figure 5. Life expectancy", True),    # LI7's own case
     ("Table1", "Figure 1. Life expectancy", True),     # the LABEL half
     ("Figure5", "Figure 5. Life expectancy", False),
+    # Both halves again, from the OTHER side of the comparison. Every
+    # row above disagrees upward — "Table" after "Figure", 6 after 5 —
+    # so `>` in place of `!=` reads exactly like it on all three, and
+    # every disagreement a real paper makes downward goes unreported.
+    ("Figure1", "Table 1. Life expectancy", True),     # label, downward
+    ("Figure4", "Figure 5. Life expectancy", True),    # number, downward
+    # And a two-digit exhibit, correctly named. CPython caches every
+    # ONE-character string, so `!=` written as `is not` cannot be seen
+    # on a single-digit number: both sides are the same object. "10" is
+    # not cached, and a paper with ten tables has one.
+    ("Table10", "Table 10. Life expectancy", False),
 ])
 def test_audit_reads_both_halves_of_a_misnamed_bookmark(bookmark, caption,
                                                         misnamed):
