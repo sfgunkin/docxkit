@@ -331,3 +331,74 @@ def test_a_fragment_with_NEITHER_grid_nor_rows_takes_its_properties_first():
                    + "</w:tbl>")
     assert out.startswith('<w:tbl w14:paraId="0000ABCD" '
                           'w14:textId="11112222"><w:tblPr>')
+
+
+# --- _set_tc_w, the cell-level twin of _set_tbl_pr ----------------------
+
+
+def _tcw(w: int) -> str:
+    return f'<w:tcW w:w="{w}" w:type="dxa"/>'
+
+
+def test_a_cell_with_no_properties_at_all_gets_them_FIRST():
+    """CT_Tc is a sequence and `w:tcPr` opens it, so a cell that states
+    nothing takes the element straight after its own tag — not at
+    position 0, which would put it before `<w:tc>`, and not at the end.
+
+    The opening tag carries attributes here (`w14:paraId` is on every
+    cell Word writes) so the insertion point is not a constant."""
+    from docxkit._table_layout import _set_tc_w
+
+    cell = '<w:tc w14:paraId="0000ABCD"><w:p><w:r/></w:p></w:tc>'
+
+    out = _set_tc_w(cell, _tcw(1200))
+
+    assert out == ('<w:tc w14:paraId="0000ABCD">'
+                   f"<w:tcPr>{_tcw(1200)}</w:tcPr>"
+                   "<w:p><w:r/></w:p></w:tc>")
+
+
+def test_a_width_added_to_existing_properties_sorts_AFTER_cnfStyle():
+    """CT_TcPr's sequence: `w:cnfStyle`, then `w:tcW`, then the rest.
+    Word repairs a document whose properties are out of order, and
+    `w:cnfStyle` is the one element that precedes the width — a table
+    style's conditional formatting, which every banded table has."""
+    from docxkit._table_layout import _set_tc_w
+
+    cell = ('<w:tc><w:tcPr><w:cnfStyle w:val="100000000000"/>'
+            '<w:vAlign w:val="top"/></w:tcPr><w:p/></w:tc>')
+
+    out = _set_tc_w(cell, _tcw(900))
+
+    assert out == ('<w:tc><w:tcPr><w:cnfStyle w:val="100000000000"/>'
+                   f'{_tcw(900)}<w:vAlign w:val="top"/></w:tcPr>'
+                   "<w:p/></w:tc>")
+
+
+def test_a_SELF_CLOSING_properties_element_is_expanded_in_place():
+    """`<w:tcPr/>` is what a cell with no properties of its own often
+    carries, and a writer that appends a SECOND `w:tcPr` beside it makes
+    a document Word repairs on open."""
+    from docxkit._table_layout import _set_tc_w
+
+    out = _set_tc_w("<w:tc><w:tcPr/><w:p/></w:tc>", _tcw(700))
+
+    assert out == f"<w:tc><w:tcPr>{_tcw(700)}</w:tcPr><w:p/></w:tc>"
+    assert out.count("<w:tcPr") == 1
+
+
+def test_an_existing_width_is_REPLACED_and_the_inner_one_left_alone():
+    """One width per cell, and the cell's own — a `w:tc` that holds a
+    nested table contains the inner cells' `w:tcW` too, and the first
+    one in the string is not necessarily this cell's."""
+    from docxkit._table_layout import _set_tc_w
+
+    cell = ('<w:tc><w:tcPr>' + _tcw(500) + "</w:tcPr>"
+            '<w:tbl><w:tr><w:tc><w:tcPr>' + _tcw(300)
+            + "</w:tcPr><w:p/></w:tc></w:tr></w:tbl></w:tc>")
+
+    out = _set_tc_w(cell, _tcw(1400))
+
+    assert out.count("<w:tcW ") == 2
+    assert _tcw(1400) in out and _tcw(300) in out
+    assert _tcw(500) not in out
