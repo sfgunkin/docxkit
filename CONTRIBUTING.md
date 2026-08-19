@@ -1507,6 +1507,29 @@ assertion of `"italic" in out` that was satisfied by the section HEADING
 — "FORMAT (italic/bold/super/sub/strike…)" — and so had never been
 about the entry it claimed to check.
 
+### The seventh sweep: ten modules, measured and re-measured
+
+Every figure below was measured, worked, and measured again the same
+day, with the survivors that stayed argued at the foot of the matching
+test file and each argument checked by `kill_check`.
+
+| module | now | before | what the round was about |
+|---|---|---|---|
+| `_compare_render.py` | **1.4 %** (3/207) | first measurement | three argued equivalents and nothing else |
+| `figures.py` | **1.9 %** (8/422) | 3.8 % | the SECOND drawing: in the caption's own paragraph, beside it, sharing its relationship |
+| `_table_core.py` | **2.7 %** (11/415) | 8.7 % | a stub that ignored its argument, and the arithmetic of a block's top-left corner |
+| `lint.py` | **2.7 %** (12/449) | 3.6 % | an XML comment in a `w:pPr`, and a change record already in its place |
+| `authors.py` | **3.7 %** (4/107) | 7.5 % | the people registry is WRITTEN, not only counted |
+| `styles.py` | **3.5 %** (7/198) | 5.1 % | `Cascade.style_of`, asked directly — including with no properties at all |
+| `_cite_build.py` | **2.9 %** (11/380) | 8.9 % | the report a round acts on: what it quotes, and what it skips past |
+| `_compare_diff.py` | **6.0 %** (24/399) | 8.8 % | the layers a person reads — comment cuts, label moves, the move threshold |
+| `_compare_read.py` | **6.0 %** (19/317) | 7.3 % | a property switched OFF, a superscript named, two heads 60 % alike |
+| `_cite_audit.py` | 11.2 % (46/409) | first measurement | the audit's own sentences: 22 killed, re-measure pending |
+
+`_cite_build` went back up to 4.3 % afterwards, and deliberately: the
+endnote work landed new code in it (see below), and new code arrives
+with survivors like everything else.
+
 ### The seventh sweep: what the instruments were still getting wrong
 
 Four days of rounds against one instrument turned up four defects in the
