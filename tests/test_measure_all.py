@@ -151,6 +151,7 @@ def test_the_modules_are_DEALT_across_the_checkouts_not_blocked(monkeypatch):
             return 0
 
     def fake_popen(cmd, cwd=None, env=None):
+        assert env is not None
         mods = [a for a in cmd[2:] if a.endswith(".py")]
         launched.append((mods, env["DOCXKIT_MUT_WORKTREE"]))
         return _Stream()
@@ -176,7 +177,8 @@ def test_a_checkout_with_NOTHING_to_do_starts_no_stream(monkeypatch):
             return 0
 
     def fake_popen(cmd, cwd=None, env=None):
-        launched.append(env)
+        assert env is not None
+        launched.append(dict(env))
         return _Stream()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
