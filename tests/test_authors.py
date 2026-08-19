@@ -192,6 +192,25 @@ def test_a_missing_creator_is_created_not_skipped():
     assert report.properties == 2
 
 
+def test_a_creator_Word_left_EMPTY_is_filled_rather_than_doubled():
+    """The S2 of 2026-08-19 through the door a paper uses. Word writes an
+    unset property as `<dc:creator/>`, the reader saw only the paired
+    form, and `set_core_property` inserted the new name beside the empty
+    element — two `dc:creator`s in core.xml, which Word repairs on open
+    without saying what it changed. `File > Info` looked right either
+    way, which is why nothing caught it."""
+    p = parts()
+    p["docProps/core.xml"] = _core(
+        b"<dc:creator/><cp:lastModifiedBy>Someone</cp:lastModifiedBy>")
+
+    report = set_author(p, "Michael Lokshin")
+
+    core = text(p, "docProps/core.xml")
+    assert core.count("<dc:creator") == 1, core
+    assert "<dc:creator>Michael Lokshin</dc:creator>" in core
+    assert report.properties == 2
+
+
 def test_a_created_creator_precedes_lastModifiedBy():
     """CT_CoreProperties is a SEQUENCE: creator comes before
     lastModifiedBy. Word tolerates other orders; a validator does not."""
