@@ -204,6 +204,22 @@ def test_section_properties_returns_the_body_sectpr():
     assert section_properties(doc) == sect
 
 
+def test_section_properties_takes_the_LAST_of_several():
+    """`hits[-1]`. A paper that turns landscape for one exhibit carries
+    a `w:sectPr` inside a paragraph's properties for every break, and
+    the BODY's own — the template for a new section, and the page setup
+    the document ends on — is the last of them. Taking the first hands
+    back the landscape one, so a new section built from it comes out
+    sideways."""
+    landscape_break = ('<w:p><w:pPr><w:sectPr><w:pgSz w:w="16838" '
+                       'w:h="11906" w:orient="landscape"/></w:sectPr>'
+                       "</w:pPr></w:p>")
+    body_sect = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>'
+    doc = document(para(run("body")) + landscape_break + body_sect)
+
+    assert section_properties(doc) == body_sect
+
+
 def test_landscape_rejects_a_sectpr_without_page_size():
     with pytest.raises(AnchorError, match="no w:pgSz"):
         landscape("<w:sectPr><w:pgMar w:top='1440'/></w:sectPr>")
