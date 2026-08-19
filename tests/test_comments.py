@@ -541,3 +541,40 @@ def test_a_comment_range_FAR_from_the_revision_does_not_anchor_it():
     # the same range with the START pushed out of reach, and the END
     assert annotate(parts(before="x" * 200), always("R1"))[0] == 1
     assert annotate(parts(after="x" * 200), always("R1"))[0] == 1
+
+
+def test_every_comment_added_at_once_gets_ITS_OWN_ids():
+    """`scaffold.next_id + i`, and the paraId and durableId built from
+    it. Three comments in one call, over a scaffold whose next id is ODD
+    — `next_id | i` is `next_id` for i = 1 there, so two of the three
+    would share a comment id, a paraId and a durableId.
+
+    The paraId is the key `commentsExtended` and `commentsIds` are joined
+    on, so a duplicate is not cosmetic: the done flag and the durable id
+    of one comment then belong to another, and Word shows the reply
+    thread of whichever it reads first."""
+    parts = make_parts(para(run("keep "), ins("one"), ins("two"),
+                            ins("three")),
+                       comment_items=(comment(1, "seed"),))
+
+    added, _unclassified = annotate(parts, always("R1: reason"))
+
+    assert added == 3
+    doc = _doc(parts)
+    cids = re.findall(r'<w:commentRangeStart w:id="(\d+)"', doc)
+    # the next FREE ids, in order: the seed holds 1, so 2, 3, 4. Word
+    # numbers its own comments that way and a paper's script reads the
+    # id back to address the comment it just wrote
+    assert sorted(cids, key=int) == ["2", "3", "4"], cids
+
+    ext = parts["word/commentsExtended.xml"].decode("utf-8")
+    para_ids = re.findall(r'w15:paraId="([0-9A-F]+)"', ext)
+    assert len(set(para_ids)) == len(para_ids) == 4, para_ids   # seed + 3
+
+    idpart = parts["word/commentsIds.xml"].decode("utf-8")
+    durable = re.findall(r'w16cid:durableId="([0-9A-F]+)"', idpart)
+    assert len(set(durable)) == len(durable), durable
+    # and the two parts are joined ON the paraId: every id part entry
+    # names a paragraph the extended part knows
+    linked = re.findall(r'w16cid:paraId="([0-9A-F]+)"', idpart)
+    assert set(linked) <= set(para_ids), (linked, para_ids)
