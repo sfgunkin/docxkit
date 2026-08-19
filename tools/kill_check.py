@@ -60,6 +60,11 @@ def sync() -> None:
     for sub in ("src/docxkit", "tests"):
         for src in sorted((LIVE / sub).glob("*.py")):
             shutil.copy2(src, ROOT / sub / src.name)
+    # and the documents the SUITE reads — see REPO_FILES
+    sys.path.insert(0, str(LIVE / "tools"))
+    from harness_map import REPO_FILES  # noqa: PLC0415
+    for name in REPO_FILES:
+        shutil.copy2(LIVE / name, ROOT / name)
     probe = (f"import docxkit, sys; "
              f"sys.exit(0 if {ROOT.name!r} in docxkit.__file__ else 1)")
     if subprocess.run([sys.executable, "-c", probe], cwd=ROOT,

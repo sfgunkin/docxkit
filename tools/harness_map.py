@@ -254,6 +254,19 @@ def harness_for(module: str) -> list[str]:
     return found
 
 
+#: Files outside ``src/`` and ``tests/`` that the SUITE ITSELF reads.
+#: Both private checkouts — the mutation worktree and kill_check's — are
+#: created at HEAD and then refreshed from the live tree file by file, so
+#: anything else a test opens is whatever HEAD had.
+#:
+#: Measured 2026-08-19: the README's command gate (it holds the written
+#: lists to the argparse parser) failed inside the worktree against a
+#: README from an older commit, the unmutated baseline came back red, and
+#: `cli.py` could not be measured at all. A test that reads a repo
+#: document belongs on this list.
+REPO_FILES = ("README.md", "pyproject.toml")
+
+
 if __name__ == "__main__":                      # pragma: no cover
     import sys
     for name in sys.argv[1:]:

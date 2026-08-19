@@ -211,6 +211,13 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
         target = WORKTREE / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / rel, target)
+    # and the documents the SUITE reads: the worktree is at HEAD, and a
+    # test that holds the README to this parser then reads an older
+    # README and fails the baseline. See REPO_FILES.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from harness_map import REPO_FILES  # noqa: PLC0415
+    for name in REPO_FILES:
+        shutil.copy2(ROOT / name, WORKTREE / name)
 
     probe = ("import docxkit, sys; "
              "sys.exit(0 if r'docxkit-mut' in docxkit.__file__ else 1)")
