@@ -214,3 +214,47 @@ def test_an_exception_a_module_RAISES_is_importable_from_it(path):
         f"{path.name} raises {missing} and does not export them — a "
         f"caller writing `except` must import from docxkit.errors, a "
         f"module it never called. Add them to __all__.")
+
+
+# --- the module table in the README --------------------------------------
+
+
+def _documented_modules() -> set[str]:
+    """Every module named in the FIRST cell of a README table row."""
+    import re
+
+    readme = (pathlib.Path(__file__).resolve().parents[1]
+              / "README.md").read_text(encoding="utf-8")
+    names: set[str] = set()
+    for line in readme.splitlines():
+        if line.startswith("| `"):
+            first_cell = line.split("|")[1]
+            names.update(re.findall(r"`([\w.]+)`", first_cell))
+    return names
+
+
+def test_every_module_has_a_row_in_the_README_table():
+    """The table is the map of the package, and ten modules were not on
+    it — `placement`, `probe`, `revision`, `cli`, and the two private
+    families the citation and table facades are built from. A module
+    nobody can find gets rewritten by the next person who needs it.
+
+    Private ones count: the table already documented `_xml` and the
+    three `_compare_*` layers, and a reader following a traceback into
+    `_cite_grammar` needs the same one line about what it is for."""
+    on_disk = {p.stem for p in SRC.glob("*.py")
+               if p.stem not in {"__init__", "__main__"}}
+
+    missing = sorted(on_disk - _documented_modules())
+    assert not missing, f"no row in the README table: {missing}"
+
+
+def test_the_README_table_names_no_module_that_is_GONE():
+    """The direction a deletion breaks. A row for a module that no
+    longer exists is worse than no row: it sends a reader looking for
+    a file, and the search returns nothing to correct them with."""
+    on_disk = {p.stem for p in SRC.glob("*.py")}
+    documented = {n for n in _documented_modules() if "." not in n}
+
+    gone = sorted(documented - on_disk)
+    assert not gone, f"documented, but no such module: {gone}"

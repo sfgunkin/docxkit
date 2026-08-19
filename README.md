@@ -70,6 +70,12 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 | `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
+| `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word |
+| `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |
+| `revision` | the single-file protocol: one `working.docx`, two states read off the file itself, and the gate ladder between a proposal and the truth |
+| `cli` | the `docxkit` command line — the one-off jobs, without a throwaway script |
+| `_cite_grammar` / `_cite_audit` / `_cite_build` / `_cite_repair` | internal: the citation apparatus in four layers — what a citation LOOKS like, what is WRONG with a document's, how to BUILD the links, and the bookmark/hyperlink surgery each repair is made of. `citations` is the facade |
+| `_table_core` / `_table_layout` | internal: reading a manuscript table and rewriting its VALUES, and measuring one to set how it LOOKS. They share the `Table` type and nothing else; `tables` is the facade |
 
 ## CLI
 
