@@ -11,7 +11,12 @@ from __future__ import annotations
 import pytest
 from conftest import comment, dele, ins, make_parts, para, run
 
-from docxkit.authors import initials_for, read_authors, set_author
+from docxkit.authors import (
+    _collapse_people,
+    initials_for,
+    read_authors,
+    set_author,
+)
 
 CORE = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         b'<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/'
@@ -287,3 +292,70 @@ def test_people_entries_for_DIFFERENT_authors_are_both_kept():
 # CPython interns single-character strings, so the group really is that
 # object. Recorded here rather than chased — it is a property of the
 # interpreter, not a gap in these tests.
+
+
+# --- the run of 2026-08-20: 7.5 %, all of it in the people registry -----
+
+PEOPLE_HEAD = ('<w15:people xmlns:w15="http://schemas.microsoft.com/office/'
+               'word/2012/wordml">')
+
+
+def person(name: str = "", uid: str = "x") -> str:
+    """One `w15:person`. Without a name it carries no `w15:author` at
+    all, which is the entry Word writes for a reviewer who commented
+    from a copy with no account signed in."""
+    who = f' w15:author="{name}"' if name else ""
+    return (f"<w15:person{who}><w15:presenceInfo w15:providerId=\"None\" "
+            f'w15:userId="{uid}"/></w15:person>')
+
+
+def test_the_folded_registry_is_WRITTEN_and_not_only_counted():
+    """`if out != text` guards the write, and an ordering comparison
+    passes it only when the fold happens to make the file sort LOWER —
+    which it does whenever the duplicate is the last entry, and every
+    fixture had it last.
+
+    Drop a duplicate from the MIDDLE and the entry that follows moves
+    up into its place: "Zoe" where "Ada" was, and the folded file sorts
+    ABOVE the one it replaced. The count then says two people and the
+    document still lists three, which is the report reading as success
+    while nothing was written."""
+    xml = (PEOPLE_HEAD + person("Ada") + person("Ada", "ada2")
+           + person("Zoe") + "</w15:people>")
+    parts = {"word/people.xml": xml.encode("utf-8")}
+
+    assert _collapse_people(parts) == 2
+
+    out = parts["word/people.xml"].decode("utf-8")
+    assert out.count("<w15:person") == 2, out
+    assert out > xml, "the fixture stopped separating < from !="
+
+
+def test_an_entry_with_NO_author_is_kept_by_what_it_says():
+    """`m.group(0)`, the whole element, is the key for an entry with no
+    `w15:author` — the only thing there is to tell two of them apart.
+    Every group index is a mutation of it and there are no groups in
+    that pattern, so each is an exception on a path nothing ran.
+
+    Two anonymous reviewers are two people, and folding them into one
+    loses a comment thread's owner in the reviewing pane."""
+    xml = (PEOPLE_HEAD + person(uid="one") + person(uid="two")
+           + "</w15:people>")
+    parts = {"word/people.xml": xml.encode("utf-8")}
+
+    assert _collapse_people(parts) == 2
+    assert parts["word/people.xml"].decode("utf-8").count("<w15:person") == 2
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `m.group(1) == "w"`, which tells a revision's author attribute from
+#   people.xml's registry entry, written `<=` and `is`. The pattern
+#   captures "w" or "w15" and "w" is a prefix of "w15", so the ordering
+#   comparison agrees; "w" is one character, and CPython hands out one
+#   object for each of those.
+# * `if out != text` written `is not`, in both places. `re.sub` returns
+#   the string it was given when nothing matched, so the two agree
+#   there; where something DID match and the replacement is identical
+#   text, the mutant writes a part whose bytes are the ones already in
+#   it.
