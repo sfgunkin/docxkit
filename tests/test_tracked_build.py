@@ -1899,3 +1899,220 @@ def test_a_part_OUTSIDE_word_is_not_read_for_anchors():
     names, _targets = _anchors(parts)
 
     assert names == {"Real"}
+
+# --- what the build SAYS when Word refuses ------------------------------
+#
+# Every COM call in the math pass is wrapped, and each one appends to
+# `notes` — which `build` prints as "WARNING:" and puts on the report.
+# None of those arms had a test: a Word that refuses one equation would
+# have been silent, and the pass would have reported a clean resolve.
+
+
+class _Refuses:
+    """A COM object that raises on the one thing it is asked."""
+
+    def __init__(self, what: str) -> None:
+        self._what = what
+
+    @property
+    def Count(self):
+        raise RuntimeError(f"Call was rejected by callee ({self._what})")
+
+
+def test_a_document_whose_OMaths_cannot_be_read_says_so():
+    """`doc.OMaths.Count` is the first COM call of the math pass, and
+    Word refuses it on a document it is still repairing. The pass
+    answers "nothing resolved" — which is right — and the reason has to
+    reach the report, or the build says it resolved no math on a
+    document full of it."""
+    from docxkit import tracked as T
+    from docxkit.tracked import _accept_math_via_equations
+
+    notes: list[str] = []
+    doc = type("D", (), {"OMaths": _Refuses("OMaths")})()
+
+    assert _accept_math_via_equations(doc, notes) == T.MathOutcome(0)
+    assert any("could not read doc.OMaths" in n for n in notes), notes
+
+
+def test_a_revision_that_cannot_be_PLACED_is_named_and_stepped_over():
+    """The offsets decide whether a revision is inside the equation or
+    merely runs through it. When Word will not give them, the revision
+    cannot be judged — so it is left tracked, named in the notes, and
+    the walk carries on to the rest of the equation."""
+    from docxkit import tracked as T
+    from docxkit.tracked import _accept_math_via_equations
+
+    class _NoSpan:
+        accepted = False
+
+        @property
+        def Range(self):
+            raise RuntimeError("Call was rejected by callee (Range)")
+
+        def Accept(self):                            # pragma: no cover
+            raise AssertionError("a revision that could not be placed "
+                                 "must not be accepted")
+
+    good = _Rev("of the equation", span=(120, 150))
+    doc = type("D", (), {
+        "OMaths": _Count([_OMath(revisions=[_NoSpan(), good],
+                                 span=(100, 200))])})()
+    notes: list[str] = []
+
+    out = _accept_math_via_equations(doc, notes)
+
+    assert good.accepted, "the revision beside it is still resolved"
+    assert out == T.MathOutcome(1)
+    assert any("could not be placed" in n for n in notes), notes
+
+
+def test_a_revision_word_will_not_ACCEPT_is_named_not_counted():
+    """`Accept()` is where Word refuses a compare result it cannot
+    serialise. The count must not include it — a build that reports
+    "resolved 3" and resolved 2 sends the paper on with tracked math in
+    it, which is the save hang this whole pass exists to avoid."""
+    from docxkit import tracked as T
+    from docxkit.tracked import _accept_math_via_equations
+
+    class _Stubborn(_Rev):
+        def Accept(self):
+            raise RuntimeError("Word refused")
+
+    doc = type("D", (), {
+        "OMaths": _Count([_OMath(revisions=[_Stubborn(span=(120, 150))],
+                                 span=(100, 200))])})()
+    notes: list[str] = []
+
+    assert _accept_math_via_equations(doc, notes) == T.MathOutcome(0)
+    assert any("not accepted" in n for n in notes), notes
+
+
+def test_a_revision_that_cannot_be_INSPECTED_is_named_by_number():
+    """The other walk, the one that selects by what a revision
+    CONTAINS. `rev.Range.OMaths` is a COM call per revision, and the
+    number in the note is how a person finds the one Word choked on."""
+    from docxkit import tracked as T
+
+    class _Opaque:
+        @property
+        def Range(self):
+            raise RuntimeError("Call was rejected by callee")
+
+    doc = type("D", (), {
+        "Revisions": _Count([_Opaque()]),
+        "Comments": type("C", (), {"Count": 0, "Add": lambda *a: None})()})()
+    notes: list[str] = []
+
+    T._comment_and_accept_math_revisions(doc, lambda ctx: "x", None, notes)
+
+    assert any("revision 1: could not be inspected" in n
+               for n in notes), notes
+
+
+def test_a_scaffold_that_cannot_be_SEEDED_says_what_it_costs():
+    """The XML pass CLONES a Word-made comment, so a build that
+    annotates and could not seed one fails later with ScaffoldMissing, a
+    long way from here. The note is what connects the two."""
+    from docxkit import tracked as T
+
+    doc = type("D", (), {"Revisions": _Refuses("Revisions")})()
+    notes: list[str] = []
+
+    assert T._seed_scaffold(doc, lambda ctx: "x", None, notes) == 0
+    assert any("no comment scaffold could be seeded" in n
+               for n in notes), notes
+
+
+def test_the_report_names_the_revisions_that_merely_OVERLAP_an_equation():
+    """`math_kept` on the report, and the line `format()` prints for it.
+    Accepting one of those applies its whole span — the LI7 collateral —
+    so a build that keeps some has to say how many, or the number that
+    matters is the one nobody sees."""
+    report = tracked.BuildReport()
+    report.math_resolved, report.math_kept = 4, 2
+
+    out = report.format()
+
+    assert "2 revision(s) overlap an equation" in out, out
+
+def test_the_report_names_what_was_CARRIED_back_across_the_compare():
+    """Compare drops the customXml data store on every rebuild and
+    `build` puts it back. What went back is a change to the deliverable
+    that no gate reports, so `format()` is the only place a person can
+    read it."""
+    report = tracked.BuildReport()
+    report.carried = ["customXml/item1.xml"]
+    report.carried_properties = ["title"]
+
+    out = report.format()
+
+    assert "carried back across the Compare: customXml/item1.xml" in out
+    assert "properties carried back into core.xml" in out and "title" in out
+
+
+def test_a_math_revision_word_will_not_accept_says_the_build_may_not_SAVE():
+    """The other walk's `Accept()`, and the note that names the
+    consequence rather than the call: Word cannot serialise a compare
+    result containing tracked math, so a build that could not resolve
+    one may hang on save. A person reading "resolved 3" learns nothing
+    about the one that stayed."""
+    from docxkit import tracked as T
+
+    class _Stubborn:
+        def __init__(self):
+            self.Range = _MathRange("has math", omaths=1)
+
+        def Accept(self):
+            raise RuntimeError("Word refused")
+
+    doc = type("D", (), {
+        "Revisions": _Count([_Stubborn()]),
+        "Comments": type("C", (), {"Count": 0,
+                                   "Add": lambda *a: None})()})()
+    notes: list[str] = []
+
+    T._comment_and_accept_math_revisions(doc, lambda ctx: "x", None, notes)
+
+    assert any("may fail to save" in n for n in notes), notes
+
+
+def test_the_build_SAYS_what_it_resolved_and_what_it_kept(monkeypatch,
+                                                          sources):
+    """The two numbers the math pass produces, on the progress line a
+    person watches. `math_kept` is the LI7 number — revisions that
+    merely overlap an equation and stay tracked — and a build that
+    resolved some and kept some has to say both, or the ones that
+    stayed are invisible until the save hangs."""
+    said: list[str] = []
+    monkeypatch.setattr(tracked, "_resolve_math",
+                        lambda *a, **kw: tracked.MathOutcome(3, 2))
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           verify_in_word=False, progress=said.append)
+
+    assert (report.math_resolved, report.math_kept) == (3, 2)
+    assert any("resolved 3 math revisions" in line for line in said), said
+    assert any("2 revision(s) merely OVERLAP" in line for line in said), said
+
+
+def test_the_build_says_which_math_GLYPH_it_put_back(monkeypatch, sources):
+    """Word flattens U+2212 to an ASCII hyphen while deriving a redline
+    — measured on AFI: 2 in the baseline, 0 in the build, the 57 in the
+    prose untouched. `restore_math_glyphs` puts back only what a source
+    really spells that way, and what it did is on the progress line,
+    because nothing else in the build would ever mention it."""
+    said: list[str] = []
+    monkeypatch.setattr(tracked._hygiene, "restore_math_glyphs",
+                        lambda *a: ["equation 3: U+2212 restored"])
+    fake = _FakeWordModule(_clean_document())
+    monkeypatch.setattr(tracked, "_word", fake)
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           verify_in_word=False, progress=said.append)
+
+    assert report.restored_glyphs == ["equation 3: U+2212 restored"]
+    assert any("restored math glyph — equation 3" in line
+               for line in said), said
