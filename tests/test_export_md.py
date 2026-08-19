@@ -173,3 +173,63 @@ def test_TWO_inline_equations_keep_their_own_places():
     md = to_markdown(make_parts(body))
 
     assert "where $a=1$ and $b=2$ hold." in md
+
+
+def test_endnote_marker_and_definition():
+    """"Nothing is silently dropped" is this file's first line, and
+    endnotes were: the marker vanished from the sentence and the note
+    itself never reached the output. Several journals take the whole
+    apparatus as endnotes, and an export that loses it reads as a paper
+    with no notes at all rather than as an export that cannot do them.
+    """
+    body = ('<w:p><w:r><w:t>The claim.</w:t></w:r>'
+            '<w:r><w:endnoteReference w:id="2"/></w:r>'
+            "<w:r><w:t> And on.</w:t></w:r></w:p>")
+    ends = ('<w:endnote w:id="2"><w:p><w:r><w:t>The note behind it.'
+            "</w:t></w:r></w:p></w:endnote>")
+
+    md = to_markdown(make_parts(
+        body, extra={"word/endnotes.xml": notes("endnotes", ends)}))
+
+    assert "The claim.[^e2] And on." in md
+    assert "[^e2]: The note behind it." in md
+
+
+def test_a_paper_with_BOTH_keeps_the_two_apparatus_apart():
+    """Markdown has one footnote namespace and Word has two id spaces,
+    so footnote 2 and endnote 2 are different notes with the same
+    number. Merged, one definition wins and the other silently retargets
+    every marker that pointed at it — the endnote ids are prefixed for
+    exactly that reason."""
+    body = ('<w:p><w:r><w:t>Both.</w:t></w:r>'
+            '<w:r><w:footnoteReference w:id="2"/></w:r>'
+            '<w:r><w:endnoteReference w:id="2"/></w:r></w:p>')
+    foots = ('<w:footnote w:id="2"><w:p><w:r><w:t>The foot of the page.'
+             "</w:t></w:r></w:p></w:footnote>")
+    ends = ('<w:endnote w:id="2"><w:p><w:r><w:t>The end of the paper.'
+            "</w:t></w:r></w:p></w:endnote>")
+
+    md = to_markdown(make_parts(
+        body, footnotes=notes("footnotes", foots),
+        extra={"word/endnotes.xml": notes("endnotes", ends)}))
+
+    assert "Both.[^2][^e2]" in md
+    assert "[^2]: The foot of the page." in md
+    assert "[^e2]: The end of the paper." in md
+
+
+def test_words_word_puts_in_the_endnotes_part_are_not_notes():
+    """Word keeps its separator and continuation-separator notes in the
+    same part, at ids -1 and 0. `find_all` drops them by id and this
+    asks it to: rendered, a paper picks up two empty definitions above
+    its own first note."""
+    ends = ('<w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:t>—'
+            "</w:t></w:r></w:p></w:endnote>"
+            '<w:endnote w:id="2"><w:p><w:r><w:t>The real one.'
+            "</w:t></w:r></w:p></w:endnote>")
+
+    md = to_markdown(make_parts(
+        p("Body."), extra={"word/endnotes.xml": notes("endnotes", ends)}))
+
+    assert "[^e2]: The real one." in md
+    assert "[^e-1]" not in md

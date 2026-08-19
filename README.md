@@ -56,7 +56,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `crossrefs` | bidirectional figure/table links, the bookmark convention |
 | `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass; and footnote ids back into reference order |
 | `wordcount` | words per bucket (prose/tables/captions/footnotes/references/appendix) for journal caps |
-| `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes |
+| `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes and endnotes |
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
 | `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass |
 | `pages` | what the RENDER says: blank sheets, printed numbers, orientation |

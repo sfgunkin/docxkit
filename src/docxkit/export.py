@@ -2,8 +2,9 @@ r"""Rendering a manuscript as markdown, structure intact.
 
 ``docxkit text`` gives a flat text dump; this keeps what the flat dump
 throws away — heading levels, tables as tables, equations as LaTeX,
-footnotes as footnotes — so a manuscript can be read, diffed in git, or
-loaded whole into an LLM context without opening Word.
+footnotes and endnotes as footnotes — so a manuscript can be read,
+diffed in git, or loaded whole into an LLM context without opening
+Word.
 
 Reading-oriented, like :func:`docxkit.equations.to_latex` underneath it:
 an equation construct with no rendering shows an inline marker rather
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-from ._xml import DOCUMENT, FOOTNOTES, visible_text
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, visible_text
 from .crossrefs import DEFAULT_LABELS, caption_re
 from .equations import EQ_NUMBER_RE, OMATH_RE, is_display, to_latex
 from .find import body_elements, heading_level
@@ -25,6 +26,13 @@ from .tables import read_all as _read_tables
 
 __all__ = ["to_markdown"]
 
+#: Endnotes are the same element shape under another name, and several
+#: journals take the whole apparatus that way. Markdown has ONE footnote
+#: namespace, so the ids are prefixed rather than merged: footnote 2 is
+#: ``[^2]`` and endnote 2 is ``[^e2]``, which keeps both addressable in
+#: a manuscript that has both.
+_ENDNOTE_REF_RE = re.compile(
+    r'<w:endnoteReference\b[^>]*w:id="(-?\d+)"[^>]*/>')
 _FOOTNOTE_REF_RE = re.compile(
     r'<w:footnoteReference\b[^>]*w:id="(-?\d+)"[^>]*/>')
 # the shared caption definition, plus the abbreviated form
@@ -43,6 +51,8 @@ def _inline(para_xml: str) -> str:
     xml = OMATH_RE.sub(f"<w:r><w:t>{_MARKER}</w:t></w:r>", para_xml)
     xml = _FOOTNOTE_REF_RE.sub(
         lambda m: f"<w:r><w:t>[^{m.group(1)}]</w:t></w:r>", xml)
+    xml = _ENDNOTE_REF_RE.sub(
+        lambda m: f"<w:r><w:t>[^e{m.group(1)}]</w:t></w:r>", xml)
     text = visible_text(xml)
     for latex in maths:
         text = text.replace(_MARKER, f"${latex}$", 1)
@@ -106,10 +116,13 @@ def to_markdown(parts: dict[str, bytes], *, view: str = FINAL) -> str:
         else:
             blocks.append(_inline(frag))
 
-    if FOOTNOTES in parts:
-        notes_xml = transform(parts[FOOTNOTES].decode("utf-8"))
-        notes = [f"[^{f.id}]: {' '.join(f.text.split())}"
-                 for f in _footnotes(notes_xml) if f.text]
+    for part, kind, prefix in ((FOOTNOTES, "footnote", ""),
+                               (ENDNOTES, "endnote", "e")):
+        if part not in parts:
+            continue
+        notes_xml = transform(parts[part].decode("utf-8"))
+        notes = [f"[^{prefix}{f.id}]: {' '.join(f.text.split())}"
+                 for f in _footnotes(notes_xml, kind=kind) if f.text]
         if notes:
             blocks.append("\n".join(notes))
     return "\n\n".join(b for b in blocks if b) + "\n"

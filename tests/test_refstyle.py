@@ -1140,3 +1140,55 @@ def test_the_year_the_refusal_QUOTES_is_the_year_itself():
                 if i.code == "year-parens"]
 
     assert issue.message == 'the year takes parentheses: "(2020)."'
+
+
+def test_an_ENDNOTE_issue_is_found_and_numbered_in_its_own_sequence():
+    """`en ¶4`. The audit read the body and the footnotes, and several
+    journals take the whole apparatus as ENDNOTES — so a paper that
+    files its notes at the back had every citation in them unchecked
+    and uncounted, and the report said so in the confident voice it
+    uses for a paper it has read."""
+    ends = notes("endnotes", note("First note.", nid=2, kind="endnote"),
+                 note("Second.", nid=3, kind="endnote"),
+                 note("Third.", nid=4, kind="endnote"),
+                 note("As shown (Smith, 2020) here.", nid=5,
+                      kind="endnote"))
+    body = para(run("Prose (Acemoglu and Restrepo 2020)."))
+
+    report = audit(make_parts(
+        body, extra={"word/endnotes.xml": ends}))
+
+    assert ("year-comma", "en ¶4") in _rows(report)
+
+
+def test_a_work_cited_only_in_an_endnote_COUNTS_as_cited():
+    """The other half, and the one that changes a verdict rather than
+    adding a line: `cited` is what "N works cited but no reference
+    list" counts and what "cited but not listed" compares against. A
+    citation the walk never reached was a work the paper did not have.
+    """
+    body = para(run("The trend is clear (Maestas et al. 2023)."))
+    ends = notes("endnotes",
+                 note("See also Smith (2020) on this.", nid=2,
+                      kind="endnote"))
+
+    report = audit(make_parts(body, extra={"word/endnotes.xml": ends}))
+
+    (issue,) = [i for i in report.issues if i.code == "no-list"]
+    assert issue.message.startswith("2 works cited")
+
+
+def test_the_two_note_parts_are_numbered_SEPARATELY():
+    """`fn ¶1` and `en ¶1` are different paragraphs of different parts,
+    and a paper may hold both — Word keeps two id spaces for exactly
+    that. One shared sequence would send a person to the wrong note in
+    the wrong place."""
+    foot = notes("footnotes", note("As in (Smith, 2020).", nid=2))
+    ends = notes("endnotes", note("And in (Jones, 2021).", nid=2,
+                                  kind="endnote"))
+
+    report = audit(make_parts(para(run("Body prose.")), footnotes=foot,
+                              extra={"word/endnotes.xml": ends}))
+
+    where = {i.where for i in report.issues if i.code == "year-comma"}
+    assert where == {"fn ¶1", "en ¶1"}, where

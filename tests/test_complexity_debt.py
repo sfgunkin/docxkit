@@ -35,7 +35,7 @@ DEBT = {
     "_cite_audit._audit_findings": 38,
     "lint.lint": 31,
     "_cite_build.link_all": 29,
-    "refstyle.audit": 27,
+    "refstyle.audit": 25,
     "edit.replace_in_para": 26,
     "revisions._simulate_where": 24,
 }

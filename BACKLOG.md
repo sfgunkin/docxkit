@@ -17,6 +17,28 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 the citation apparatus does not read ENDNOTES
+
+Found the same way, 2026-08-19, and demonstrated: the identical bookmark and
+hyperlink, placed in a footnote and then in an endnote, audit as
+`bookmarks 1, links 1` and `bookmarks 0, links 0`. `_audit_findings` reads
+`word/document.xml` and `word/footnotes.xml` — the footnote case even has its
+own sentinel (`where = -2`, "defined in a footnote") — and never opens
+`word/endnotes.xml`.
+
+So for a manuscript that files its apparatus at the back, `audit_links` reports
+a clean 66/66 over the part of the paper it happened to look at. The retracted
+S2 above is the same lesson from the other side: **a back-link that is not
+where you looked is not a back-link that is missing** — and a bookmark nobody
+counted is not a bookmark that is absent.
+
+Not fixed here because the audit and the BUILDER have to move together:
+`link_all` writes the apparatus, and an audit that reports unlinked entries in
+endnotes while the builder cannot reach them replaces silence with noise.
+`refstyle` (read-only, no writer) and `export` were fixed in the same pass;
+`wordcount`, `probe` and `compare` were checked and already read all three
+parts.
+
 ### S2 `build_overrides` ingests BODY paragraphs only — a footnote the author retyped is dropped
 
 Found by review, 2026-08-19, while widening the tracked gates to endnotes.

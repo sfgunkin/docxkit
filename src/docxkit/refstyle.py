@@ -27,10 +27,16 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field, replace
 
-from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, visible_text
+from ._xml import (
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    PARA_RE,
+    visible_text,
+)
 from .citations import (
     _ACRONYM_RE,
     AUTHORS_PATTERN,
@@ -324,6 +330,26 @@ class RefStyleReport:
                  "snippet": i.snippet} for i in self.issues]
 
 
+def _note_paragraphs(parts: dict[str, bytes]) -> Iterator[tuple[str, str]]:
+    """(text, where) for every paragraph of BOTH note parts.
+
+    Several journals take the whole apparatus as endnotes, and a
+    citation there was neither checked nor counted as cited — the audit
+    reported one work where the paper had two, and "cited but not
+    listed" could not fire for any of them.
+
+    Numbered per part: `fn ¶1` and `en ¶1` are different paragraphs of
+    different files, and a manuscript may hold both.
+    """
+    for part, label in ((FOOTNOTES, "fn"), (ENDNOTES, "en")):
+        blob = parts.get(part)
+        if not blob:
+            continue
+        for j, m in enumerate(PARA_RE.finditer(blob.decode("utf-8"))):
+            if (t := visible_text(m.group(0))).strip():
+                yield t, f"{label} ¶{j + 1}"
+
+
 def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
           heading: str | tuple[str, ...] = REF_HEADINGS,
           stop: tuple[str, ...] = REF_STOPS,
@@ -384,11 +410,8 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
         if head_idx is not None and head_idx <= i <= last_entry:
             continue              # the reference section is not prose
         prose(text, f"¶{i + 1}")
-    foot = parts.get(FOOTNOTES)
-    if foot:
-        for j, m in enumerate(PARA_RE.finditer(foot.decode("utf-8"))):
-            if (t := visible_text(m.group(0))).strip():
-                prose(t, f"fn ¶{j + 1}")
+    for text, where in _note_paragraphs(parts):
+        prose(text, where)
 
     istyles = _italic_styles(parts.get("word/styles.xml"))
 
