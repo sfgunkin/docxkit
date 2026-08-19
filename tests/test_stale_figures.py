@@ -23,6 +23,8 @@ sys.path.insert(0, str(TOOLS))
 # `tools/` is not a package and is not installed: the path insert above
 # is how its scripts reach each other, and how they are reached here.
 from stale_figures import (  # noqa: E402  # pyright: ignore[reportMissingImports]
+    ROOT,
+    commit_times,
     last_touched,
     newer_than,
     session_file,
@@ -93,3 +95,30 @@ def test_the_STALE_flag_prints_a_subset(monkeypatch, capsys):
     main()
 
     assert "fresh" not in capsys.readouterr().out
+
+
+def test_the_commit_times_map_answers_for_a_TRACKED_file(tmp_path):
+    """One `git log --name-only` pass instead of one `git log` per path.
+    Process spawn is ~190 ms on Windows and this tool asks about ninety
+    paths: the walk took 17 seconds, in a suite that runs 3,900 tests in
+    under a minute, and it is meant to be run before every round.
+
+    The map has to agree with the question it replaced — the newest
+    commit that touched the file — so this asks it about a file the
+    repository certainly has."""
+    times = commit_times()
+
+    assert times, "the map is empty — did `git log` run?"
+    assert times["tools/stale_figures.py"] > 0
+    assert times["tools/stale_figures.py"] <= last_touched(
+        ROOT / "tools" / "stale_figures.py")
+
+
+def test_a_path_OUTSIDE_the_repository_is_answered_from_disk(tmp_path):
+    """`relative_to` raises for one, and git could not answer anyway.
+    The mtime is still the honest answer: a session file written to a
+    scratch directory is as much a change as a committed one."""
+    outside = tmp_path / "elsewhere.py"
+    outside.write_text("x = 1\n", encoding="utf-8")
+
+    assert last_touched(outside) == pytest.approx(outside.stat().st_mtime)

@@ -42,6 +42,31 @@ def session_file(module: str) -> Path:
 
 
 @cache
+def commit_times() -> dict[str, float]:
+    """Newest commit time for every path in the history, in ONE call.
+
+    A `git log` per path costs ~190 ms on Windows, nearly all of it
+    process spawn, and this tool asks about ninety of them — seventeen
+    seconds for a question that is meant to be asked before every round.
+    One `--name-only` pass answers all of them; the log is newest first,
+    so the FIRST time a path appears is its latest commit.
+    """
+    out = subprocess.run(
+        ["git", "log", "--format=%ct", "--name-only"],
+        cwd=ROOT, capture_output=True, text=True, check=False).stdout
+    times: dict[str, float] = {}
+    when = 0.0
+    for line in out.splitlines():
+        if not line:
+            continue
+        if line.isdigit():
+            when = float(line)
+        else:
+            times.setdefault(line.replace("\\", "/"), when)
+    return times
+
+
+@cache
 def last_touched(path: Path) -> float:
     """The later of: last commit, and the file on disk.
 
@@ -49,10 +74,11 @@ def last_touched(path: Path) -> float:
     if anything, since it is the one a run picked up by accident.
     """
     on_disk = path.stat().st_mtime if path.exists() else 0.0
-    out = subprocess.run(
-        ["git", "log", "-1", "--format=%ct", "--", str(path)],
-        cwd=ROOT, capture_output=True, text=True, check=False).stdout.strip()
-    return max(on_disk, float(out) if out else 0.0)
+    try:
+        rel = path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return on_disk          # outside the repo: git knows nothing
+    return max(on_disk, commit_times().get(rel, 0.0))
 
 
 def newer_than(when: float, paths: list[Path]) -> list[Path]:
