@@ -490,3 +490,89 @@ def test_a_switched_OFF_w_b_is_not_bold():
 
     assert face('<m:r><w:rPr><w:b w:val="0"/></w:rPr>'
                 "<m:t>X</m:t></m:r>") == "i"
+
+
+# --- standalone: the half of the harvest/clone pair nothing tested ------
+#
+# `harvest` gives you an element sliced out of `word/document.xml`, and
+# a slice inherits its namespace declarations from the part's root — so
+# it carries none, and `etree.fromstring` refuses it. `standalone` is
+# what makes the slice parse on its own, and the whole harvest -> clone
+# workflow this module documents goes through it. It had no test of its
+# own: every mutant in it survived the 2026-08-19 measurement, including
+# one that reads `root[1]` of a one-element fragment.
+
+
+def test_standalone_gives_a_harvested_fragment_its_own_declarations():
+    """The documented pair, end to end: what `harvest` returns is what
+    `clone` has to be able to read."""
+    from docxkit.equations import standalone
+
+    naked = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+
+    out = standalone(naked)
+
+    assert f'xmlns:m="{M_NS}"' in out
+    assert clone(out)                      # parses on its own now
+
+
+def test_standalone_refuses_TWO_elements_rather_than_keeping_the_first():
+    """`len(root) != 1`. Taking `root[0]` and dropping the rest is the
+    silent version: two equations go in, one comes back, and the
+    difference is a formula nobody notices is missing."""
+    from docxkit.equations import standalone
+
+    two = (omath(mr("x")) + omath(mr("y"))).replace(
+        f' xmlns:m="{M_NS}"', "", 1)
+
+    with pytest.raises(AnchorError, match="got 2"):
+        standalone(two)
+
+
+def test_standalone_refuses_a_SENTENCE_around_the_equation():
+    """Text before the element, and text after it — `root.text` and
+    `root[0].tail`. Serialising the element alone would drop either one,
+    and the caller is inserting the result into a document: the words
+    would simply be gone from the paragraph they were written in."""
+    from docxkit.equations import standalone
+
+    naked = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+
+    with pytest.raises(AnchorError, match="no text around it"):
+        standalone("where " + naked)
+    with pytest.raises(AnchorError, match="no text around it"):
+        standalone(naked + " for every i")
+    # whitespace is not a sentence: a fragment sliced with its
+    # surrounding newline still passes
+    assert standalone("\n  " + naked + "\n")
+
+
+def test_standalone_refuses_a_PREFIX_nothing_declares():
+    """The refusal that keeps a made-up URI out of a document: a prefix
+    the fragment uses and nothing binds cannot be guessed, and a
+    placeholder would SHIP inside the manuscript. The message names the
+    prefix and the way to resolve it."""
+    from docxkit.equations import standalone
+
+    fragment = ("<m:oMath><m:r><zz:ann>note</zz:ann><m:t>x</m:t>"
+                "</m:r></m:oMath>")
+
+    with pytest.raises(AnchorError, match=r"\['zz'\]"):
+        standalone(fragment)
+
+
+def test_standalone_takes_an_unknown_prefix_from_the_PART_it_came_from():
+    """`source=` — the part's root binds every prefix the document
+    really uses, and reading the URI off it is what makes a redline's
+    math (w14, wp14, whatever the paper's Word wrote) harvestable."""
+    from docxkit.equations import standalone
+
+    part = ('<w:document xmlns:w="http://schemas.openxmlformats.org/'
+            'wordprocessingml/2006/main" xmlns:zz="urn:example:zz"/>')
+    fragment = ("<m:oMath><m:r><zz:ann>note</zz:ann><m:t>x</m:t>"
+                "</m:r></m:oMath>")
+
+    out = standalone(fragment, source=part)
+
+    assert 'xmlns:zz="urn:example:zz"' in out
+    assert "urn:docxkit:undeclared" not in out
