@@ -705,6 +705,39 @@ def test_the_typography_of_an_added_equation_is_padded_too(tmp_path):
     assert any("<none>" in str(f["from"]) for f in report["formula"]), report
 
 
+def test_a_replace_block_walks_PAST_its_first_insert(tmp_path):
+    """Two bounds and a `continue`, in the loop that pairs a replace
+    block positionally.
+
+    A block whose sides are unequal — one rewritten paragraph against
+    three — pads the short side, and the padding is what the whole
+    function's docstring is about: never truncated, never summarised.
+    `break` in place of the `continue` stops at the FIRST unpaired
+    offset, so a block that gained two paragraphs reports one of them
+    and the report reads as complete. And `off < len(left)` written as
+    `off != len(left)` is true again as soon as the index passes the
+    length, which is one paragraph later — so the read that pads goes
+    off the end and raises from inside the comparison.
+
+    Read in both directions: the two bounds are separate lines, and
+    each side of the block pads the other."""
+    anchors = (para(run("Anchor one.")), para(run("Anchor two.")))
+    one = anchors[0] + para(run("Alpha paragraph.")) + anchors[1]
+    three = (anchors[0] + para(run("Bravo paragraph."))
+             + para(run("Charlie paragraph."))
+             + para(run("Delta paragraph.")) + anchors[1])
+
+    grew = compare(*docs(tmp_path, one, three))
+    assert [e["text"] for e in grew["structure"]
+            if e["type"] == "INSERT"] == ["Charlie paragraph.",
+                                          "Delta paragraph."], grew
+
+    shrank = compare(*docs(tmp_path, three, one))
+    assert [e["text"] for e in shrank["structure"]
+            if e["type"] == "DELETE"] == ["Charlie paragraph.",
+                                          "Delta paragraph."], shrank
+
+
 def test_formatting_is_not_reported_across_a_GLYPH_difference(tmp_path):
     """`pa.wtext_f != pb.wtext_f`, not `>`.
 
