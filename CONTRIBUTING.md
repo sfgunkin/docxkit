@@ -1507,6 +1507,104 @@ assertion of `"italic" in out` that was satisfied by the section HEADING
 — "FORMAT (italic/bold/super/sub/strike…)" — and so had never been
 about the entry it claimed to check.
 
+### The seventh sweep: what the instruments were still getting wrong
+
+Four days of rounds against one instrument turned up four defects in the
+instrument itself, and each one had been changing what the work looked
+like rather than what the numbers said.
+
+**A survivor list that names the OPERATOR does not name the mutant.**
+`ReplaceComparisonOperator_NotEq_Gt` on
+
+    if pa.wtext_f != pb.wtext_f or len(pa.fmt) != len(pb.fmt):
+
+is one of two mutants, and the round guessed the wrong one: the test
+written from it aimed at the first `!=`, which a July round had already
+pinned, and `kill_check` reported a KILL because the mutation broke that
+earlier test. A duplicate test, and the real survivor still alive.
+cosmic-ray stores the diff of every mutant it ran, so the list prints
+the line the mutation MADE now — `-> if ... or len(pa.fmt) >
+len(pb.fmt):` — and the guess is gone.
+
+**A mutant on a line coverage is told to skip is not a missing test.**
+`# pragma: no cover` is the author saying a branch is defensive, and the
+coverage floor is enforced with those lines taken out — so no test
+executes them and no test can kill a mutant on one. `_cite_build`
+carried eight on a single defensive `if` and the `continue` under it, a
+fifth of the module's figure. They are counted apart now, from
+coverage's own patterns plus the project's `exclude_also`, with a pragma
+on a compound statement taking the whole block.
+
+**A private checkout holds the files of the day it was made.**
+`mutation_session` copies the module and its harness into the worktree;
+it did not copy `tests/conftest.py`, which no harness names and every
+test file imports, so the fixtures in the checkout were the ones from
+the commit it was created at. `kill_check` copied `src/` and `tests/`
+and not `tools/`, so a case aimed at a sweep script — they have
+harnesses of their own now — anchored against a version committed weeks
+ago and was refused with "anchor occurs 0 times" for a line that is in
+the file. Neither produced a wrong number; both fail in a way that
+points at the wrong thing.
+
+**A measuring tool that answers differently depending on the shell that
+started it is not measuring.** A four-module fan-out from a plain
+`nohup` produced two tracebacks and nothing else, where the same command
+from a shell that exported PYTHONIOENCODING had run all night. The
+session's stdout is a pipe, so Python gives it the locale's cp1252
+unless told otherwise; its em dash arrives here as U+FFFD, ` run — `
+matches nothing, and a sweep that graded every one of its mutants
+reports "no chunk ever graded" — then dies printing that U+FFFD to the
+same cp1252 console. The sessions are told to write UTF-8 now, and the
+sweep switches its own stdout before it prints anything.
+
+And one that was only a report: under `--in` the streams interleave, so
+a heading from one lands between another's heading and its numbers. The
+first fan-out printed `_cite_build`'s 8.9 % under `_table_core`'s
+heading, and the only thing that said which was which was the function
+names in the tally beneath it. Every line under `--in` names its own
+module now.
+
+### A stub that ignores its argument hides every mutant at its call sites
+
+`_table_core._Span` lets a hand-walked element stand in for an
+`re.Match`, and its `group` took an index and returned the whole element
+whatever it was given. Seventeen of that module's 36 survivors were
+`tc.group(0)` written `group(1)` or `group(-1)` at every call site in
+the file — none of them killable, because a typo read as the answer the
+caller wanted. It raises `IndexError` now, like the thing it imitates,
+and the tests that already walk those calls kill all seventeen.
+
+This is the fake-that-is-too-forgiving lesson from the `word.py` round
+in a smaller and more common shape: **where a stand-in is more permissive
+than the thing it stands in for, every test that goes through it is
+measuring less than it looks.** The tell in a survivor list is a cluster
+of index or argument mutants spread across unrelated call sites — they
+share a callee, and the callee is the finding.
+
+### The layers a person READS are the ones nothing pins
+
+Six modules came down in the same week — the comparison's three layers,
+the citation builder, the figures, the tables — and the survivors were
+almost never in what the code decides. They were in what it hands back:
+
+* how much of a comment, a suspect entry, or a paragraph the report
+  quotes — `note[:110]`, `surname[:60]`, `text[:90]`, each of them the
+  difference between a summary and a screenful;
+* which paragraph a finding names — `¶{i + 1}` under seven arithmetic
+  mutants, several of which agree with `+` at the index the fixture
+  happened to use. Index 0 agrees with `|`, index 1 with `<<`, index 2
+  with `|` again; index 3 is the smallest that separates all seven, and
+  a report line at index 1 is a fixture that cannot see them;
+* whether a count is mentioned at all — `", suspect N" if self.suspect
+  else ""`, which has to be right in both directions or a clean round
+  reads as a finding;
+* which of two things the finding is ABOUT — `gone[0]`, `hits[0]`,
+  `regions[-1]`, all invisible in a fixture with one of them.
+
+None of those changes whether a round passes. Every one of them changes
+what the person doing the round is looking at, which is the whole
+product of a comparison.
+
 ## Do not "harden" the XML parser without measuring it first
 
 A review will eventually propose passing
