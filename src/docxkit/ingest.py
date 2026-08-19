@@ -31,7 +31,15 @@ import zipfile
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from ._xml import DOCUMENT, FOOTNOTES, PARA_RE, normalize_glyphs, visible_text
+from ._xml import (
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    NOTE_DEF_RE,
+    PARA_RE,
+    normalize_glyphs,
+    visible_text,
+)
 from .errors import AnchorError
 
 __all__ = [
@@ -42,7 +50,15 @@ __all__ = [
     "update_overrides",
 ]
 
-_FN_RE = re.compile(r'(w:footnoteReference\b[^>]*?w:id=")(\d+)(")')
+#: How a note is REFERENCED, and how it is DEFINED, per store. Word
+#: renumbers both stores' ids on save, so an author's paragraph carries
+#: ids that mean something else in the build — and until 2026-08-20 only
+#: the footnote half was remapped, which spliced an endnote reference
+#: raw and repointed it at whatever note the build had given that id.
+_NOTE_REF_RE = {
+    FOOTNOTES: re.compile(r'(w:footnoteReference\b[^>]*?w:id=")(\d+)(")'),
+    ENDNOTES: re.compile(r'(w:endnoteReference\b[^>]*?w:id=")(\d+)(")'),
+}
 
 _cat = visible_text
 
@@ -78,19 +94,33 @@ def load_paragraphs(path: str | Path) -> tuple[list[str], str]:
     return PARA_RE.findall(doc), foot
 
 
-def _footnote_remap(user_foot: str, build_foot: str) -> dict[str, str]:
-    """Author footnote id -> build id, matched on definition TEXT.
+def _note_stores(path: str | Path) -> dict[str, str]:
+    """Both note parts, whole and unparsed, for the id remap.
 
-    Word renumbers footnote ids on save, so an author's paragraph carries
+    Read here rather than through `load_paragraphs`, whose two-value
+    answer is public and whose callers outside this module unpack it.
+    """
+    out = {}
+    with zipfile.ZipFile(path) as z:
+        for part in (FOOTNOTES, ENDNOTES):
+            try:
+                out[part] = z.read(part).decode("utf-8")
+            except KeyError:
+                out[part] = ""
+    return out
+
+
+def _note_remap(user: str, build: str, part: str) -> dict[str, str]:
+    """Author note id -> build id, matched on definition TEXT.
+
+    Word renumbers note ids on save, so an author's paragraph carries
     ids that mean something else in the build. Splicing it raw silently
-    repoints footnotes.
+    repoints the note.
     """
     def defs(f: str) -> dict[str, str]:
-        return {i: _cat(m) for i, m in re.findall(
-            r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>',
-            f, re.DOTALL)}
+        return {i: _cat(m) for i, m in NOTE_DEF_RE[part].findall(f)}
 
-    ud, bd = defs(user_foot), defs(build_foot)
+    ud, bd = defs(user), defs(build)
     return {ui: bi for ui, ut in ud.items() for bi, bt in bd.items()
             if ut.strip() and ut.strip() == bt.strip()}
 
@@ -111,11 +141,11 @@ def build_overrides(baseline: str | Path,
       rest are deletions;
     * author > baseline (an insert) — ratio-pair, then attach the extra
       paragraphs to the last paired override so they land in sequence;
-    * remap footnote ids by definition text.
+    * remap footnote AND endnote ids by definition text.
 
     **Body paragraphs only.** An edit the author made INSIDE a footnote
     or endnote definition produces no override: the alignment runs over
-    the body, and the notes are read only for the id remap. The next
+    the body, and both note stores are read only for the id remap. The next
     clean build regenerates from a source that never received it, so
     the wording is lost with nothing raised.
 
@@ -126,14 +156,22 @@ def build_overrides(baseline: str | Path,
     ``test_an_edit_inside_a_NOTE_is_not_ingested`` so a fix has to come
     past the documentation.
     """
-    base_paras, base_foot = load_paragraphs(baseline)
-    user_paras, user_foot = load_paragraphs(edited)
-    remap = _footnote_remap(user_foot, base_foot)
+    base_paras, _ = load_paragraphs(baseline)
+    user_paras, _ = load_paragraphs(edited)
+    base_notes, user_notes = _note_stores(baseline), _note_stores(edited)
+    remaps = {part: _note_remap(user_notes[part], base_notes[part], part)
+              for part in _NOTE_REF_RE}
 
     def fix(s: str) -> str:
-        return _FN_RE.sub(
-            lambda m: m.group(1) + remap.get(m.group(2), m.group(2))
-            + m.group(3), s)
+        for part, pattern in _NOTE_REF_RE.items():
+            remap = remaps[part]
+
+            def one(m: re.Match[str], remap: dict[str, str] = remap) -> str:
+                return (m.group(1) + remap.get(m.group(2), m.group(2))
+                        + m.group(3))
+
+            s = pattern.sub(one, s)
+        return s
 
     sm = SequenceMatcher(None, [_norm(p) for p in base_paras],
                          [_norm(p) for p in user_paras], autojunk=False)

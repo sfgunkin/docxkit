@@ -75,6 +75,7 @@ from ._xml import (
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
+    NOTE_DEF_RE,
     internal_links,
     text_parts,
     visible_text,
@@ -1083,8 +1084,8 @@ def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
 
 
 #: A footnote Compare emitted as one insertion with nothing to delete.
-_MOVED_NOTE_RE = re.compile(
-    r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>', re.DOTALL)
+#: The shape of a note definition is `_xml`'s to state.
+_MOVED_NOTE_RE = NOTE_DEF_RE[FOOTNOTES]
 
 
 def moved_footnotes(parts: dict[str, bytes],

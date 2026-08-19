@@ -29,6 +29,7 @@ __all__ = [
     "INSTR_ANCHOR_RE",
     "INSTR_RE",
     "MATH_OBJECTS",
+    "NOTE_DEF_RE",
     "PARA_RE",
     "RPR_ORDER",
     "RUN_OPEN_RE",
@@ -81,6 +82,19 @@ COMMENTS = "word/comments.xml"
 #: describes the document — counting revisions, renumbering an exhibit,
 #: searching for a phrase — is wrong if it stops at the body.
 TEXT_PARTS = (DOCUMENT, FOOTNOTES, ENDNOTES)
+
+#: A note DEFINITION, per store: (id, body). Word renumbers note ids on
+#: save, so several passes match a definition by its TEXT and then work
+#: with the id beside it — the ingest remap, and the walk that finds a
+#: note Compare emitted as one insertion. Written twice until
+#: 2026-08-20, in the two modules that do those two things.
+NOTE_DEF_RE = {
+    FOOTNOTES: re.compile(
+        r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>',
+        re.DOTALL),
+    ENDNOTES: re.compile(
+        r'<w:endnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:endnote>', re.DOTALL),
+}
 
 
 def text_parts(parts: dict[str, bytes]) -> list[tuple[str, str]]:

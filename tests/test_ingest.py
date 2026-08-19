@@ -588,3 +588,43 @@ def test_a_block_of_MANY_reworded_paragraphs_still_pairs_one_to_one(
 #   branch above, so `>=` is reached only when the counts differ — where
 #   it means what `>` means. The IDENTITY spelling of the comparison
 #   above IS tested, at 257 paragraphs, because that one differs.
+
+
+def test_ENDNOTE_ids_are_remapped_by_definition_text_too(tmp_path):
+    """The footnote remap's twin, and the reason it had to exist: Word
+    renumbers BOTH note stores on save, so an author's paragraph carries
+    endnote ids that mean something else in the build. Spliced raw, the
+    override silently repoints the endnote at whichever note the build
+    happened to give that id — a wrong citation in the deliverable, with
+    the right one still in the author's copy.
+
+    Which store a manuscript uses is the journal's house style, so this
+    is not the rarer half: JEOA takes endnotes."""
+    en = ('<w:endnotes><w:endnote w:id="{a}"><w:p><w:r><w:t>First note.'
+          "</w:t></w:r></w:p></w:endnote>"
+          '<w:endnote w:id="{b}"><w:p><w:r><w:t>Second note.</w:t></w:r>'
+          "</w:p></w:endnote></w:endnotes>")
+    base = write(tmp_path / "base.docx", make_parts(
+        para(run("body ")), extra={"word/endnotes.xml": en.format(a="6",
+                                                                 b="7")}))
+    edited_body = (para(run("body edited "))
+                   + '<w:p><w:r><w:endnoteReference w:id="4"/></w:r></w:p>')
+    edited = write(tmp_path / "edited.docx", make_parts(
+        edited_body, extra={"word/endnotes.xml": en.format(a="4", b="5")}))
+
+    joined = "".join(n for _, n in build_overrides(base, edited))
+
+    assert 'w:endnoteReference w:id="6"' in joined, joined
+    assert 'w:endnoteReference w:id="4"' not in joined
+
+
+def test_a_document_with_NEITHER_note_store_still_builds_overrides(tmp_path):
+    """The stores are read for the remap alone, and most manuscripts
+    have only one of them — the reader has to answer for a part that is
+    not in the package at all."""
+    base = _docx(tmp_path, "base.docx", "original text")
+    edited = _docx(tmp_path, "edited.docx", "revised text")
+
+    ovs = build_overrides(base, edited)
+
+    assert [_cat(n) for _, n in ovs] == ["revised text"]
