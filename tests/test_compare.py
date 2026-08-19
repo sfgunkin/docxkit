@@ -1115,6 +1115,27 @@ def test_a_size_change_is_a_format_difference(tmp_path):
                for e in report["format"]), report["format"]
 
 
+def test_a_colour_is_read_even_when_the_SIZE_is_unstated(tmp_path):
+    """`continue`, not `break`, in the loop over the valued properties.
+    Size comes first and colour second, so the walk only reaches colour
+    by stepping over a size that resolved to nothing — and a styles part
+    with no default size is not exotic: it is what a template that sets
+    the size on every named style produces.
+
+    Under `break` the loop ends on the missing size and the colour layer
+    goes quiet for the whole document, which is the state that shipped
+    `--expect-clean` OK on a pair differing in 25 runs' colour."""
+    no_default = STYLES.replace('<w:rPr><w:sz w:val="24"/></w:rPr>',
+                                "<w:rPr/>", 1)
+    a, b = docs(tmp_path, _sized(colour="000000"), _sized(colour="1F3864"),
+                extra={"word/styles.xml": no_default})
+
+    report = compare(a, b)
+
+    assert any("colour 1F3864" in str(e) for e in report["format"]), report
+    assert not any("size" in str(e) for e in report["format"]), report
+
+
 def test_a_colour_change_is_a_format_difference(tmp_path):
     report = compare(*_styled(tmp_path, _sized(colour="000000"),
                               _sized(colour="1F3864")))
