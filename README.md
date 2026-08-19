@@ -236,9 +236,13 @@ they do.
   and nothing else — including the accept/reject gates, which SIMULATE
   all three text parts and compared two of them, so a defect Word's
   Compare left in an endnote passed a build silently. `tracked`,
-  `refstyle`, `export`, `wordcount`, `probe` and `compare` read both
-  now; the citation apparatus does not yet (BACKLOG, S2), and
-  `tests/test_note_parts.py` is what keeps that list from growing.
+  `refstyle`, `export`, `wordcount`, `probe`, `compare` and — since
+  2026-08-20, writer and audit together — the citation apparatus read
+  both now. `tests/test_note_parts.py` is what keeps that list from
+  growing back: its `BLIND` set is empty, and a reader may not join it
+  without a test failing. `ingest.build_overrides` is the one reader
+  left that is body-only, and its blindness is a different shape (an
+  edit inside ANY note definition, not one part against the other).
 - **A cell can contain a table.** `w:tc` is not a leaf, so a `re.sub`
   over one finds the INNER cells' properties: `fit_columns` wrote an
   outer column's width — 1178 dxa — into a nested table's 300 dxa cell
