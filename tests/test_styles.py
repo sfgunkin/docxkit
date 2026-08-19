@@ -409,3 +409,47 @@ def test_a_style_the_document_never_uses_is_not_MISSING():
                                    "MyNote": "JnlNote"})
 
     assert report.missing == ["MyTable"]
+
+
+# --- the run of 2026-08-20: 5.1 %, and the cascade's own reader --------
+
+
+def test_the_character_style_a_run_NAMES_is_read_out_of_it():
+    """`Cascade.style_of` is asked of every run in a comparison — it is
+    what makes a hyperlink's underline structural rather than emphasis —
+    and its answer is the styleId, not the element that carries it.
+
+    Three mutants lived on those two lines: the whole match instead of
+    the captured value, a second group that does not exist, and a guard
+    that reads `rpr` when it is EMPTY. The last one is a TypeError the
+    moment a run without properties reaches it, which is most runs —
+    but not through this module's own tests, where every call had an
+    rPr to hand."""
+    cascade = Cascade(None)
+
+    assert cascade.style_of(
+        '<w:rPr><w:rStyle w:val="Hyperlink"/><w:i/></w:rPr>') == "Hyperlink"
+    assert cascade.style_of("<w:rPr><w:i/></w:rPr>") is None
+    assert cascade.style_of(None) is None
+    assert cascade.style_of("") is None
+
+
+# `at == -1` in `_own_rpr`, the seven mutants on it, are equivalent. The
+# line cuts a style's body at `<w:tblStylePr` — a table style nests a
+# whole `w:rPr` per conditional band — and `str.find` answers -1 when
+# there is none:
+#
+# * `at < -1` and `at == 1` are never true (find's floor is -1, and an
+#   element cannot begin at index 1), so they slice `[:-1]` where the
+#   original returns the whole body;
+# * `at <= -1` and `at is -1` are `== -1` (CPython caches -1);
+# * `at == -2` (from `~1`) and `at == +1` are the first case again.
+#
+# So all seven reduce to returning the body minus its last character or
+# two. That body is `_STYLE_ID_RE`'s group 2 — everything between the
+# style's opening tag and `</w:style>` — so it ends with the `>` of a
+# closing or self-closing tag, and every property pattern here matches
+# INSIDE an element rather than at its boundary. There is no
+# well-formed styles.xml where the cut takes a character a lookup
+# needs: the closing quote of an attribute always has a `/>` or `>`
+# after it.
