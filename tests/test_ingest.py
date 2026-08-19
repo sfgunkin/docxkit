@@ -455,3 +455,136 @@ def test_an_edit_inside_a_NOTE_is_not_ingested(tmp_path):
 
     assert build_overrides(base, edited) == [], (
         "notes are ingested now — update the docstrings and BACKLOG")
+
+
+# --- what the messages SAY, and the id the splice writes ----------------
+
+
+def test_a_MISS_quotes_seventy_characters_of_the_paragraph(tmp_path):
+    """`_cat(old)[:70]`. A miss means the build moved under an override
+    and the author's edit is being dropped; the quote is how a person
+    finds which paragraph. Uncut it prints a paragraph per miss, and a
+    build that moved under twenty of them prints twenty."""
+    long_text = ("The paragraph the author edited, long enough that the "
+                 "cut is visible in the message.")
+    assert len(long_text) > 71
+
+    _out, _applied, missed = apply_overrides(
+        "<w:body/>", [{"old": para(run(long_text), pid="0000000A"),
+                       "new": ""}], strict=False)
+
+    assert missed == [long_text[:70]]
+
+
+def test_a_LEADING_insert_quotes_sixty_characters_of_the_new_text(tmp_path):
+    """`[:60]` in the refusal. Nothing in the build precedes the
+    author's new opening paragraph, so there is no anchor to hang it on
+    and the round stops — with enough of the text to find it in Word,
+    and not the whole paragraph."""
+    opening = ("A new opening paragraph, written by the author, longer "
+               "than the message will quote.")
+    assert len(opening) > 61
+    a = _docx(tmp_path, "a.docx", "intro", "conclusion")
+    b = _docx(tmp_path, "b.docx", opening, "intro", "conclusion")
+
+    with pytest.raises(AnchorError) as exc:
+        build_overrides(a, b)
+
+    assert repr(opening[:60]) in str(exc.value)
+    assert opening[:61] not in str(exc.value)
+
+
+def test_a_stored_entry_chains_only_on_an_EXACT_match_of_its_output(
+        tmp_path):
+    """`e["new"] == old`, and `<=` is the mutant that hides: every
+    paragraph in a build starts `<w:p w14:paraId="…`, so two entries
+    differ first at the id and compare as strings the way their ids
+    sort. Under `<=` this round's edit overwrites the stored entry with
+    the LOWER id — an unrelated paragraph — and reports it as chained,
+    which is the one word that says nothing was lost."""
+    a = _docx(tmp_path, "a.docx", "alpha", "beta", pids=["00000009",
+                                                         "0000000A"])
+    b = _docx(tmp_path, "b.docx", "alpha", "beta edited",
+              pids=["00000009", "0000000A"])
+    store = tmp_path / "overrides.json"
+    # sorts BEFORE this round's anchor (paraId 0000000A) and is not it
+    store.write_text(json.dumps(
+        [{"old": para(run("unrelated"), pid="00000001"),
+          "new": para(run("output"), pid="00000002")}]), encoding="utf-8")
+
+    _fresh, chained, appended, total = update_overrides(a, b, store)
+
+    assert (chained, appended, total) == (0, 1, 2)
+    assert json.loads(store.read_text(encoding="utf-8"))[0]["new"] == \
+        para(run("output"), pid="00000002")
+
+
+def test_a_footnote_the_build_does_NOT_have_keeps_its_own_id(tmp_path):
+    """`remap.get(id, id)` — the fallback, which is the case the remap
+    cannot answer: the author added a footnote, or reworded one past
+    recognition, so no build note matches its text. Leaving the id alone
+    is the only safe answer, and it is the branch the matched case never
+    reaches.
+
+    Mutated to fall back on another group of the match, the reference
+    becomes `w:id="w:footnoteReference w:id="` — markup Word reads as a
+    footnote that is not there."""
+    build_fn = ('<w:footnotes><w:footnote w:id="6"><w:p><w:r><w:t>'
+                "A note the build has.</w:t></w:r></w:p>"
+                "</w:footnote></w:footnotes>")
+    user_fn = ('<w:footnotes><w:footnote w:id="3"><w:p><w:r><w:t>'
+               "A note the author just wrote.</w:t></w:r></w:p>"
+               "</w:footnote></w:footnotes>")
+    base = write(tmp_path / "base.docx",
+                 make_parts(para(run("body"), pid="00000001"),
+                            footnotes=build_fn))
+    edited = write(tmp_path / "edited.docx", make_parts(
+        para(run("body edited") + '<w:footnoteReference w:id="3"/>',
+             pid="00000001"), footnotes=user_fn))
+
+    (_old, new), = build_overrides(base, edited)
+
+    assert '<w:footnoteReference w:id="3"/>' in new, new
+
+
+def test_a_block_of_MANY_reworded_paragraphs_still_pairs_one_to_one(
+        tmp_path):
+    """`len(bls) == len(us)`, and the mutant is `is`: CPython hands out
+    one object per int up to 256, so a block of 257 changed paragraphs
+    is the first one where the two spellings disagree — and a section
+    rewritten wholesale is exactly that block.
+
+    Under `is` the equal-length branch is skipped, `>` is False too, and
+    the block falls to the insert arm: every paragraph is appended after
+    a neighbour instead of replacing its own, so the author's rewrite
+    lands as a duplicate of the section rather than a revision of it."""
+    n = 257
+    before = [f"Paragraph {i} as the build has it." for i in range(n)]
+    after = [f"Paragraph {i} as the author rewrote it." for i in range(n)]
+    # the LAST rewritten paragraph is a near-copy of the FIRST original,
+    # so pairing by similarity and pairing by position disagree — with
+    # every paragraph merely reworded the two agree, and the fixture
+    # proves nothing
+    after[-1] = before[0] + " (moved to the end)"
+    a = _docx(tmp_path, "a.docx", *before)
+    b = _docx(tmp_path, "b.docx", *after)
+
+    overrides = build_overrides(a, b)
+
+    assert len(overrides) == n
+    assert _texts(overrides)[0] == (before[0], after[0])
+    assert _texts(overrides)[-1] == (before[-1], after[-1])
+
+
+# --- what is left in ingest.py, and why ---------------------------------
+#
+# Two survivors after this round, both argued:
+#
+#   `if tag == "equal"` -> `is`. difflib's opcodes carry its own string
+#   literals, and both sides are identifier-like constants, so CPython
+#   interns them and the two spellings cannot disagree.
+#
+#   `elif len(bls) > len(us)` -> `>=`. The equal case is taken by the
+#   branch above, so `>=` is reached only when the counts differ — where
+#   it means what `>` means. The IDENTITY spelling of the comparison
+#   above IS tested, at 257 paragraphs, because that one differs.
