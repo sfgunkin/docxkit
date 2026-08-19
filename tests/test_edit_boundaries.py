@@ -24,7 +24,13 @@ from conftest import para, run
 
 from docxkit import text_of
 from docxkit._xml import RUN_RE
-from docxkit.edit import _outside, insert_in_para, italicize, replace_in_para
+from docxkit.edit import (
+    _outside,
+    insert_in_para,
+    italicize,
+    replace_in_para,
+    superscript,
+)
 from docxkit.errors import AnchorError
 
 HL = '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
@@ -228,3 +234,87 @@ def test_outside_answers_NONE_from_inside_a_MIDDLE_run():
     inside_middle = runs[1].start() + 3
 
     assert _outside(runs, span, inside_middle) is None
+
+
+# --- what a refusal QUOTES ----------------------------------------------
+#
+# Every message here cuts the anchor it is refusing, and the cuts were
+# free: an anchor is a phrase a caller typed, so it is as long as
+# whoever typed it. Uncut, one refusal prints a paragraph and the
+# instruction after it scrolls away.
+
+
+def _long(prefix: str, n: int) -> str:
+    """A phrase of at least `n` characters, starting with `prefix`."""
+    return prefix + " " + "x" * n
+
+
+def test_a_MISSING_anchor_is_quoted_at_sixty_characters():
+    """`_locate`: `{old[:60]!r} not in {where}`. Reached through
+    `italicize` — `replace_in_para` has a refusal of its own, with its
+    own cut, and the two messages are easy to mistake for each other."""
+    anchor = _long("nowhere in this paragraph", 60)
+    p = para(run("Some other sentence entirely."))
+
+    with pytest.raises(AnchorError) as exc:
+        italicize(p, anchor)
+
+    assert repr(anchor[:60]) in str(exc.value)
+    assert anchor[:61] not in str(exc.value)
+
+
+def test_an_anchor_that_occurs_TWICE_is_quoted_at_sixty_too():
+    """The other refusal from the same walk, and the one a caller meets
+    when a phrase repeats — "the effect is significant" twice in one
+    paragraph."""
+    anchor = _long("the effect is significant", 60)
+    p = para(run(f"{anchor} and again {anchor} here."))
+
+    with pytest.raises(AnchorError) as exc:
+        italicize(p, anchor)
+
+    assert repr(anchor[:60]) in str(exc.value)
+    assert anchor[:61] not in str(exc.value)
+
+
+def test_a_NORMALIZED_anchor_that_misses_is_quoted_at_ninety():
+    """`rep`, the document-wide replace: its anchor is a whole sentence
+    more often than not, so it quotes ninety rather than sixty."""
+    from docxkit.edit import rep
+
+    anchor = _long("a sentence the author has since rewritten", 90)
+
+    with pytest.raises(AnchorError) as exc:
+        rep(para(run("Nothing like it.")), anchor, "x", normalize=True)
+
+    assert repr(anchor[:90]) in str(exc.value)
+    assert anchor[:91] not in str(exc.value)
+
+
+def test_the_WITHIN_scope_is_quoted_at_forty_in_the_refusal():
+    """`where = f"within={within[:40]!r}"` — the scope a caller narrowed
+    to, echoed so they can see it was the scope and not the anchor that
+    did not match."""
+    scope = _long("A second one", 40)
+    p = para(run(f"A first sentence. {scope}"))
+
+    with pytest.raises(AnchorError) as exc:
+        italicize(p, "nowhere", within=scope)
+
+    assert repr(scope[:40]) in str(exc.value), str(exc.value)
+    assert scope[:41] not in str(exc.value)
+
+
+def test_superscript_does_NOT_fold_typography_unless_asked():
+    """`normalize: bool = False`, as everywhere in this module: folding
+    glyphs silently is how an anchor matches a paragraph the caller did
+    not mean. The straight apostrophe against Word's curly one is the
+    pair that keeps happening — autocorrect ran on some paragraphs and
+    not on others."""
+    p = para(run("the authors’ note 3 follows"))
+
+    with pytest.raises(AnchorError):
+        superscript(p, "authors' note")
+
+    out = superscript(p, "authors' note", normalize=True)
+    assert "<w:vertAlign" in out
