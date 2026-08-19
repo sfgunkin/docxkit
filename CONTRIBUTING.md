@@ -666,6 +666,24 @@ The practical rule for a session that measures while it works: pick the
 module you are NOT editing. Two worktrees make two sweeps safe, and
 neither makes an edit to the module under measurement safe.
 
+### A sampled figure is pairwise only while the POPULATION holds
+
+`--sample 460` keeps its seed so that two runs of one module draw the
+same mutants and the before/after is a paired comparison. That holds
+while the mutant population is unchanged — and a round that adds CODE
+changes it. `_table_layout` went from 2,607 mutants to 2,630 to 2,637
+over one evening's work, so each sample was a different 460 and the
+figures moved for reasons that have nothing to do with the tests
+written in between.
+
+The number is printed and easy to check: `mutation_survivors` opens with
+"460 mutants run (sampled from 2,630)", and the session prints
+"sampling 460 of 2,630 mutants (seed …)". **Compare two sampled figures
+only when those totals match; otherwise measure the module WHOLE, or
+read the survivor list rather than the percentage.** The list is the
+part that does not lie either way: a cluster that was there and is gone
+is a cluster the round killed, whatever the denominator did.
+
 ### `kill_check` used to lie about a case that changed nothing
 
 A case built with `old.replace(...)` whose inner pattern does not match
