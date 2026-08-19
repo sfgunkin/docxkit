@@ -1284,11 +1284,27 @@ def test_validate_does_not_accept_in_a_file_word_has_open(tmp_path,
 
 def test_exit_codes_are_distinct():
     """A caller must be able to tell WHICH refusal it hit without
-    parsing English."""
-    assert BaselinePending.exit_code == 3
-    assert MathResolved.exit_code == 2
-    assert StaleBatch.exit_code == 4
+    parsing English.
+
+    These five numbers are a contract with things outside this package:
+    the paper projects' scripts branch on them, `docxkit revision
+    status` documents 1 for pending and 4 for a stale baseline in its
+    own `--help`, and `cli.main` exits with whatever the exception
+    carries. A renumbering is invisible here and wrong out there.
+    """
+    from docxkit.errors import HandbackLoss
+
     assert ProtocolError.exit_code == 1
+    assert MathResolved.exit_code == 2
+    assert BaselinePending.exit_code == 3
+    assert StaleBatch.exit_code == 4
+    assert HandbackLoss.exit_code == 5
+
+    codes = [cls.exit_code for cls in (ProtocolError, MathResolved,
+                                       BaselinePending, StaleBatch,
+                                       HandbackLoss)]
+    assert len(set(codes)) == len(codes), "two refusals cannot share one"
+    assert 0 not in codes, "0 is success; a refusal that exits 0 is silent"
 
 
 def test_document_helper_is_used():

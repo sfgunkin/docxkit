@@ -129,7 +129,15 @@ HARNESS: dict[str, list[str]] = {
                 "tests/test_edit_branches.py",
                 "tests/test_normalize_anchors.py",
                 "tests/test_locate_spans.py", "tests/test_replace_spans.py"],
-    "errors.py": ["tests/test_api_surface.py", "tests/test_cli_guards.py"],
+    # The exit CODES are this module's contract with the paper
+    # projects' scripts, and the tests that read them live with the
+    # protocol they belong to. Without them `errors.py` measured
+    # 100 % survival — ten mutants, all of them an `exit_code`, and
+    # not one reachable from the two files below.
+    "errors.py": ["tests/test_api_surface.py",
+                  "tests/test_cli_guards.py",
+                  "tests/test_revision.py",
+                  "tests/test_cli_revision.py"],
     "export.py": ["tests/test_export_md.py"],
     "figures.py": ["tests/test_figures.py", "tests/test_alt_text.py",
                    "tests/test_value_types.py"],
