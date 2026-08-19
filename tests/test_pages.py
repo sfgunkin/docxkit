@@ -11,6 +11,7 @@ what keeps the whole layer testable on any machine.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import IO, Any
 
@@ -292,6 +293,10 @@ def test_the_staging_sweep_survives_a_render_still_held_open(tmp_path,
     finally:
         for handle in held:
             handle.close()
+        # the sweep this test defeats on purpose leaves the staging
+        # directory behind, and a test that litters TEMP on every run is
+        # its own small defect: finish the job the flag declined to do
+        shutil.rmtree(Path(seen["read"]).parent, ignore_errors=True)
 
 
 def test_a_named_pdf_is_written_where_it_was_asked_for_and_KEPT(tmp_path,
