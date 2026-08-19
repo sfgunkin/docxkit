@@ -16,6 +16,7 @@ from docxkit.equations import (
     is_display,
     latex_to_omml,
     skeleton,
+    to_latex,
     tokens,
 )
 from docxkit.errors import AnchorError, PackageError
@@ -576,3 +577,59 @@ def test_standalone_takes_an_unknown_prefix_from_the_PART_it_came_from():
 
     assert 'xmlns:zz="urn:example:zz"' in out
     assert "urn:docxkit:undeclared" not in out
+
+
+def test_harvest_names_the_index_it_does_not_have_at_the_BOUNDARY():
+    """`index >= len(hits)`, and `>` is invisible at a distance: with
+    two equations, index 5 is refused either way and index 2 is the one
+    that parts them. Past the bound the list is indexed anyway, and the
+    author gets an IndexError instead of a sentence naming how many
+    equations actually match."""
+    xml = document(para(omath(mr("x"))) + para(omath(mr("x"))))
+
+    assert tokens(harvest(xml, "x", index=1)) == "x"
+    with pytest.raises(AnchorError, match="2 equations contain 'x', no "
+                                          "index 2"):
+        harvest(xml, "x", index=2)
+
+
+def test_the_gap_message_quotes_SIXTY_characters_of_the_equation():
+    """`tokens(omml)[:60]`. The quote is how a person finds the formula
+    the converter could not render; uncut, one refusal prints a whole
+    display equation, and `strict=True` is used by callers that
+    convert every equation in a document."""
+    from docxkit.errors import ConversionGap
+
+    long_math = omath(mr("x" * 80) + "<m:zzz/>")
+
+    with pytest.raises(ConversionGap) as exc:
+        to_latex(long_math, strict=True)
+
+    assert "x" * 60 in str(exc.value)
+    assert "x" * 61 not in str(exc.value)
+
+
+def test_a_TRACKED_insertion_inside_an_equation_keeps_its_TEXT():
+    """`_text(el.text or "")`, on the `w:t` branch — the one a REDLINE
+    reaches: Word wraps inserted math in `w:ins`, and the text then
+    hangs off a WordprocessingML run inside the equation. `and` in place
+    of `or` renders every such run as nothing, so a formula that was
+    edited under track-changes converts to the half that was not.
+
+    The empty form is here too, and it is the same recurring shape: an
+    element with no text is self-closing, and `el.text` is then None
+    rather than "" — which the mutant hands straight to the character
+    mapper."""
+    W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+    def redlined(inner: str) -> str:
+        return (f'<m:oMath xmlns:m="{M_NS}" xmlns:w="{W_NS}">{inner}'
+                + mr("y") + "</m:oMath>")
+
+    kept = "<w:ins><w:r><w:t>x=</w:t></w:r></w:ins>"
+    empty = "<w:ins><w:r><w:t/></w:r></w:ins>"
+    dropped = "<w:del><w:r><w:t>gone</w:t></w:r></w:del>"
+
+    assert to_latex(redlined(kept)) == "x=y"
+    assert to_latex(redlined(empty)) == "y"
+    assert to_latex(redlined(dropped)) == "y"
