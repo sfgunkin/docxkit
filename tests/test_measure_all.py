@@ -60,7 +60,8 @@ def sweep(monkeypatch):
     and ("printed", text) for each line the sweep wrote, in the order
     the two happened.
     """
-    def go(lines: list[str], *, db: bool = False) -> list[tuple[str, str]]:
+    def go(lines: list[str], *, db: bool = False,
+           tag: bool = False) -> list[tuple[str, str]]:
         log: list[tuple[str, str]] = []
         monkeypatch.setattr(measure_all, "harness_for",
                             lambda module: ["tests/test_a.py"])
@@ -71,7 +72,7 @@ def sweep(monkeypatch):
             measure_all, "print",
             lambda *a, **kw: log.append(("printed", " ".join(map(str, a)))),
             raising=False)
-        measure_all.run("tracked.py", minutes=1)
+        measure_all.run("tracked.py", minutes=1, tag=tag)
         return log
     return go
 
@@ -206,3 +207,49 @@ def test_the_worst_exit_code_of_the_streams_is_the_answer(monkeypatch):
 
     assert measure_all.fan_out(["D:/a", "D:/b"], ["one.py", "two.py"],
                                minutes=1, sample=0) == 3
+
+
+# --- whose line is this? -------------------------------------------------
+
+
+def test_a_TAGGED_line_names_its_own_module(sweep):
+    """Under `--in` the streams interleave, so a heading from one lands
+    between another's heading and its numbers. The first fan-out to
+    finish printed `_cite_build`'s 8.9 % under `_table_core`'s heading,
+    and the only thing that said which was which was the function names
+    in the tally beneath it — a figure attributed to the wrong module is
+    the one kind of wrong number this whole apparatus exists to avoid."""
+    said = _said(sweep(CHUNKS, tag=True))
+
+    assert said.startswith("### tracked.py"), "the heading is unchanged"
+    for line in said.splitlines()[1:]:
+        assert line.startswith("tracked.py "), line
+
+
+def test_an_UNTAGGED_line_is_left_alone(sweep):
+    """One sweep at a time is the ordinary case and there is nothing to
+    disambiguate: the module is in the heading above."""
+    said = _said(sweep(CHUNKS))
+
+    assert "tracked.py     " not in said
+    assert said.count("tracked.py") == 1
+
+
+def test_the_streams_of_a_FAN_OUT_are_told_to_tag(monkeypatch):
+    """The flag is not the caller's to remember. `--in` is the only way
+    to produce interleaved output, so it is what turns tagging on."""
+    launched: list[list[str]] = []
+
+    class _Stream:
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(cmd, cwd=None, env=None):
+        launched.append(cmd)
+        return _Stream()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    measure_all.fan_out(["D:/a"], ["one.py"], minutes=1, sample=0)
+
+    assert "--tag" in launched[0], launched[0]

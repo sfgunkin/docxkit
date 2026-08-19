@@ -40,8 +40,21 @@ from harness_map import harness_for
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(module: str, minutes: float, sample: int = 0) -> None:
+def run(module: str, minutes: float, sample: int = 0, *,
+        tag: bool = False) -> None:
+    """Measure ONE module, streaming the session's chunk lines through.
+
+    `tag` puts the module's name on every line. Under `--in` the streams
+    interleave, and a heading printed by one lands between another's
+    heading and its numbers: the first fan-out to finish (2026-08-20)
+    reported `_cite_build`'s 8.9 % under `_table_core`'s heading, and
+    only the function names in the tally said which was which.
+    """
     tests = harness_for(module)
+
+    def say(text: str) -> None:
+        print(f"{module + ' ' if tag else ''}{text}", flush=True)
+
     print(f"### {module}  ({len(tests)} test file(s))", flush=True)
     # STREAMED, not captured: a module is half an hour and the session
     # prints one line per chunk. Swallowed until the end, a sweep that is
@@ -60,17 +73,17 @@ def run(module: str, minutes: float, sample: int = 0) -> None:
         line = raw.strip()
         if " run — " in line:
             last = line
-            print(f"    {last}", flush=True)
+            say(f"    {last}")
         elif line:
             others.append(line)
     proc.wait()
     if not last:                 # no chunk ever graded: say why, not "0%"
-        print("   ", " | ".join(others)[-300:] or "no output", flush=True)
+        say("    " + (" | ".join(others)[-300:] or "no output"))
 
     stem = module[:-3].lstrip("_") or module[:-3]
     db = ROOT / f".mutation-{stem}.sqlite"
     if not db.exists():
-        print("    NO SESSION", flush=True)
+        say("    NO SESSION")
         return
     out = subprocess.run(
         [sys.executable, "tools/mutation_survivors.py", db.name,
@@ -80,10 +93,10 @@ def run(module: str, minutes: float, sample: int = 0) -> None:
     real = re.search(r"REAL SURVIVAL ([\d.]+)% \((\d+)/(\d+)\)", out)
     by = re.search(r"by definition: (.+)", out)
     if real:
-        print(f"    REAL SURVIVAL {real.group(1)}%  "
-              f"({real.group(2)}/{real.group(3)})", flush=True)
+        say(f"    REAL SURVIVAL {real.group(1)}%  "
+            f"({real.group(2)}/{real.group(3)})")
     if by:
-        print(f"    {by.group(1)[:150]}", flush=True)
+        say(f"    {by.group(1)[:150]}")
 
 
 def fan_out(worktrees: list[str], modules: list[str], minutes: float,
@@ -103,7 +116,7 @@ def fan_out(worktrees: list[str], modules: list[str], minutes: float,
         print(f"--- {tree}: {', '.join(mine)}", flush=True)
         streams.append(subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), *mine,
-             "--minutes", str(minutes),
+             "--minutes", str(minutes), "--tag",
              *(["--sample", str(sample)] if sample else [])],
             cwd=ROOT, env={**os.environ, "DOCXKIT_MUT_WORKTREE": tree}))
     return max((p.wait() for p in streams), default=0)
@@ -121,6 +134,9 @@ def main() -> int:
                     help="comma-separated checkouts to fan out across; "
                          "one stream per checkout, modules dealt "
                          "round-robin")
+    ap.add_argument("--tag", action="store_true",
+                    help="name the module on every line — set by --in, "
+                         "whose streams interleave")
     ap.add_argument("--sample", type=int, default=0,
                     help="run N mutants per module instead of all of them; "
                          "the seed is the session tool's default, so two "
@@ -139,7 +155,7 @@ def main() -> int:
         return fan_out([w for w in args.worktrees.split(",") if w],
                        modules, args.minutes, args.sample)
     for module in modules:
-        run(module, args.minutes, args.sample)
+        run(module, args.minutes, args.sample, tag=args.tag)
     return 0
 
 
