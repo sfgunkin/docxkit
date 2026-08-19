@@ -197,3 +197,72 @@ def test_a_multiplication_in_a_DEFAULT_is_not_the_marker(tmp_path):
     assert "keyword-only" not in done.stdout, done.stdout
     assert "REAL SURVIVAL 100.0% (1/1)" in done.stdout, done.stdout
     assert "L8" in done.stdout
+
+
+# --- the source the RUN was planned against -----------------------------
+
+
+def test_the_report_quotes_the_source_the_run_was_PLANNED_against(tmp_path):
+    """Every line number in a session indexes into the file the mutants
+    were generated from. Read the live file instead and a source that
+    has moved — a docstring added, a helper inserted — shifts every
+    quote below the edit, and the report names the wrong line with
+    complete confidence.
+
+    Worse than a wrong quote: the annotation and script-guard spans are
+    computed from that same text, so the classification moves too and
+    the REAL SURVIVAL figure changes. Measured on `_table_layout` while
+    it was being worked on: 13.4% against the live file, 9.7% against
+    the source the run actually used.
+    """
+    src = tmp_path / "runnable.py"
+    src.write_text(SCRIPT, encoding="utf-8")
+    kept = tmp_path / ".mutation-run.pristine" / src.name
+    kept.parent.mkdir()
+    kept.write_text(SCRIPT, encoding="utf-8")
+    db = _database(tmp_path / ".mutation-run.sqlite", (5, "SURVIVED"))
+    # the live file grows a line ABOVE the survivor
+    src.write_text("# a comment added while the sweep ran\n" + SCRIPT,
+                   encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 0, done.stderr
+    assert "the live file has moved since" in done.stdout
+    quoted = [ln.strip() for ln in done.stdout.splitlines()
+              if ln.startswith("          ")]
+    assert quoted and "widen" not in quoted[0], done.stdout
+
+
+def test_an_UNMOVED_source_is_reported_without_a_note(tmp_path):
+    """The note has to be rare enough to read: printed on every run it
+    is wallpaper, and the one run where the tree moved looks like all
+    the others."""
+    src = tmp_path / "runnable.py"
+    src.write_text(SCRIPT, encoding="utf-8")
+    kept = tmp_path / ".mutation-run.pristine" / src.name
+    kept.parent.mkdir()
+    kept.write_text(SCRIPT, encoding="utf-8")
+    db = _database(tmp_path / ".mutation-run.sqlite", (5, "SURVIVED"))
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 0, done.stderr
+    assert "moved since" not in done.stdout
+
+
+def test_a_session_with_NO_snapshot_still_reports(tmp_path):
+    """Sessions planned before the snapshot existed, and any run driven
+    by hand. The fallback is the live file — which is what this tool
+    always did — and it must not become an error."""
+    done = _script_report(tmp_path, (5, "SURVIVED"))
+
+    assert done.returncode == 0, done.stderr
+    assert "REAL SURVIVAL" in done.stdout
+    assert "moved since" not in done.stdout

@@ -145,6 +145,35 @@ def owner_of(defs: list[tuple[int, int, str]], line: int) -> str:
     return min(holding)[1] if holding else "<module>"
 
 
+def pristine_source(db_path: str, src_path: str) -> tuple[str, str]:
+    """The source the RUN was planned against, if the session kept one.
+
+    Every line number here indexes into the file the mutants were
+    generated from. Read the live file instead and a source that has
+    moved since — a docstring added, a helper inserted — shifts every
+    quote below the edit, so the report names the wrong line with
+    complete confidence. `mutation_session` snapshots the module when it
+    plans a run for exactly this reason; this reads it back.
+    """
+    stem = Path(db_path).stem.removeprefix(".mutation-")
+    kept = Path(db_path).resolve().parent / f".mutation-{stem}.pristine"
+    # the snapshot mirrors the repo's layout, so a relative path lands
+    # directly; an absolute one (or a path from another working
+    # directory) is matched on its file name instead
+    inside = kept / src_path
+    if not (inside.is_file() and inside.is_relative_to(kept)):
+        # an ABSOLUTE src_path swallows the base on the join above, so
+        # the snapshot is matched on the file name instead
+        inside = next(kept.rglob(Path(src_path).name), kept)
+    if not inside.is_file():
+        return src_path, ""
+    if inside.read_bytes() == Path(src_path).read_bytes():
+        return str(inside), ""
+    return str(inside), (
+        f"  (quoting {inside.name} as it was when the run was planned — "
+        f"the live file has moved since)")
+
+
 def main() -> int:
     # This report QUOTES the module's source, and a module that lays out
     # glyph widths or parses Word's typography holds characters cp1252
@@ -156,6 +185,7 @@ def main() -> int:
         print(__doc__)
         return 2
     db_path, src_path = sys.argv[1], sys.argv[2]
+    src_path, note = pristine_source(db_path, src_path)
     text = Path(src_path).read_text(encoding="utf-8")
     lines = text.splitlines()
     tree = ast.parse(text)
@@ -172,6 +202,8 @@ def main() -> int:
     if not rows:
         print("no results in that database — has `cosmic-ray exec` run?")
         return 2
+    if note:
+        print(note)
 
     # SKIPPED rows are the ones `mutation_session.py --sample` marked so
     # they would not run. Counting them as killed reads a 460-mutant
