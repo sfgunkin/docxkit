@@ -904,6 +904,51 @@ def test_link_more_links_two_mentions_in_one_paragraph():
     assert 'w:anchor="Table1"' in body and 'w:anchor="Table2"' in body
 
 
+def test_a_mention_ALREADY_inside_a_link_is_invisible_to_the_scan():
+    """What stops `link_more` linking a mention twice is the MASK.
+
+    `masked_visible_text` gives back the characters inside a hyperlink
+    as NUL, and neither pattern can match one — both spans are an
+    escaped label, `\\s+` and the caption's own digits, and no character
+    class in either admits NUL. So an already-linked mention is not
+    skipped by a guard, it is never found at all, and that is what this
+    pins: half-linked prose, where one mention of the same table is a
+    link and the other is not.
+
+    (The loop used to test each span for NUL as well. It could not fire
+    — checked structurally, by brute force over 400k NUL-bearing strings
+    and by asserting it under the whole suite — and it left five
+    permanent survivors on a line no input reaches.)"""
+    linked = ('<w:hyperlink w:anchor="Table1">' + run("Table 1")
+              + "</w:hyperlink>")
+    xml = doc(para(run("As "), linked, run(" shows, and Table 1 again.")),
+              para(run("Table 1. First")))
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table1": 1}, "only the plain one"
+    body = paragraph_holding(out, "As Table 1 shows, and Table 1 again.")
+    assert body.count("<w:hyperlink") == 2, body
+
+
+def test_a_paragraph_with_nothing_to_link_does_not_end_the_walk():
+    """`continue`, not `break`, and the walk runs BACKWARDS — from the
+    end of the document to the start — so `break` on the first paragraph
+    with no mention in it stops at whatever prose comes last and leaves
+    everything ABOVE it plain. A paper's exhibits are all above its last
+    plain paragraph.
+
+    The fixtures here are all mention, mention, caption; a document is
+    mostly prose."""
+    xml = doc(para(run("See Table 1 for the gradient.")),
+              para(run("An intervening paragraph with no exhibit in it.")),
+              para(run("Table 1. First")))
+
+    _out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table1": 1}, counts
+
+
 def test_link_more_is_a_no_op_on_a_second_run():
     """A linked mention is masked out of the next scan, so a second run
     plans nothing."""
@@ -948,6 +993,42 @@ def test_link_keeps_going_past_a_caption_it_skips():
     _twice, rep = crossrefs.link(once)
     assert rep.already_linked == ["Table1"]
     assert rep.linked == ["Table2"], rep.format()
+
+def test_a_duplicated_caption_claims_a_CONTINUATION_span_once_too():
+    """The other half of `span in claimed`. A duplicated caption puts
+    two identical patterns in the list, and the second pass re-finds
+    every span the first one already planned — including the bare
+    number of a range, which is the shortest span this pass wraps and
+    the one where a second wrap lands inside the first one's markup.
+
+    The fixture beside this one proves the main pattern's half; the
+    continuation's own `claimed` test had nothing asking about it."""
+    xml = doc(
+        para(run("Tables 2 and 1 report the same gradient.")),
+        para(run("Table 1. First")),
+        para(run("Table 1. A copy nobody renumbered")),
+        para(run("Table 2. Second")),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table1": 1, "Table2": 1}, counts
+    body = paragraph_holding(out, "Tables 2 and 1 report the same gradient.")
+    assert body.count("<w:hyperlink") == 2, body
+    assert "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", body)) == \
+        "Tables 2 and 1 report the same gradient."
+
+
+# Both `continue`s inside those two loops are EQUIVALENT to `break`, and
+# argued rather than contrived around (`tools/kill_check.py`,
+# expect_kill=False). A span is already in `claimed` only when an
+# IDENTICAL pattern ran before it — which means a duplicated caption,
+# and then every later span in the same loop is claimed as well, so the
+# loop has nothing left to do when it stops. The one exception needs two
+# captions of different labels whose continuation patterns reach the
+# same digits ("Figures 2 and Tables 3 and 1"), which is not a sentence
+# a paper writes, and where which caption should claim it is a coin flip
+# rather than a behaviour to pin.
 
 
 def test_a_caption_with_only_one_of_its_two_bookmarks_is_not_skipped():

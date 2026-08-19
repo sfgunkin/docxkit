@@ -831,16 +831,26 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
             continue
         todo: list[tuple[int, int, str]] = []
         claimed: set[tuple[int, int]] = set()
+        # What keeps an already-linked mention from being linked twice is
+        # the MASK, not a test here: its characters come back as NUL, and
+        # neither pattern can match one. Both spans are built from an
+        # escaped label, `\s+`, and the caption's own digits — there is no
+        # character class in either that admits NUL, and a match therefore
+        # cannot contain one. This loop used to test for it anyway; the
+        # test could not fire, and it left five permanent survivors on a
+        # line no input reaches (checked structurally, by brute force over
+        # 400k NUL-bearing strings, and by asserting it under the whole
+        # suite, 2026-08-19).
         for cap, main, cont in patterns:
             for m in main.finditer(masked):
                 span = (m.start(), m.end())
-                if "\x00" in masked[span[0]:span[1]] or span in claimed:
+                if span in claimed:
                     continue
                 claimed.add(span)
                 todo.append((span[0], span[1], cap.name))
             for m in cont.finditer(masked):
                 span = (m.start(1), m.end(1))
-                if "\x00" in masked[span[0]:span[1]] or span in claimed:
+                if span in claimed:
                     continue
                 claimed.add(span)
                 todo.append((span[0], span[1], cap.name))
