@@ -185,6 +185,32 @@ def test_the_FOOTER_wins_when_a_sheet_numbers_in_BOTH(tmp_path):
     assert read_pdf(pdf)[0].printed == 12
 
 
+def test_the_footer_band_is_a_FRACTION_of_the_page_not_a_power_of_it(
+        tmp_path):
+    """`height * (1 - band)`, and `**` in place of `*` is the survivor
+    that reads as arithmetic nobody would write. It is also the one a
+    page of numbers exposes: 842 ** 0.88 is about 400, so the "footer"
+    becomes the bottom HALF of the sheet, and a results table sitting
+    there is read as page numbers.
+
+    Two numbers in the band is ambiguity, which answers None — so the
+    defect this produces is not a wrong number but a paper whose sheets
+    all report no printed number at all, which reads as a document that
+    was never numbered."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4[0], height=A4[1])
+    page.insert_text((72, 200), "Table 3. Coefficients", fontsize=11)
+    # a table value halfway down: inside a band of half the page, well
+    # outside a band of a tenth
+    page.insert_text((72, 500), "42", fontsize=11)
+    page.insert_text((A4[0] / 2, A4[1] - 40), "12", fontsize=11)
+    pdf = tmp_path / "with-a-table.pdf"
+    doc.save(str(pdf))
+    doc.close()
+
+    assert read_pdf(pdf)[0].printed == 12
+
+
 def test_a_sheet_with_no_number_in_either_band_reads_as_None(tmp_path):
     """Not 0, and not the physical index — the whole defect class here
     is the printed number and the sheet's position disagreeing."""
@@ -197,14 +223,21 @@ def test_a_sheet_with_no_number_in_either_band_reads_as_None(tmp_path):
 # alive here that is not worth chasing, recorded so the next reader does
 # not re-derive it:
 #
-# * `sheets()` — 15 survivors, all in the half that drives Word. Killing
-#   them needs a machine with Word, which the everyday suite must not;
-#   `pytest -m word` is where such a test would go.
+# * `sheets()` — 15 survivors, and this note used to say killing them
+#   needed a machine with Word. That was wrong, and it stood for two
+#   days: `sheets` calls `export_pdf` and `read_pdf`, and a test that
+#   substitutes BOTH exercises every line of it without Word ever
+#   starting. The tests are at the bottom of this file. What needs Word
+#   is `export_pdf` itself, which is one function further down.
 # * `problems`: `now > was + 1` -> `now != was + 1` is EQUIVALENT. That
 #   branch is an `elif` under `now <= was`, so `now < was + 1` never
 #   reaches it and the two conditions differ nowhere.
 # * `read_pdf`: `width > height` -> `>=` differs only on an exactly
 #   square sheet, which no paper size is.
+# * `_printed_number`: the clip rect's LEFT edge, and `found[0]` written
+#   as `found[-1]`. The band is the full page width and the branch runs
+#   only when the band holds exactly one number, so neither can differ
+#   from what is written.
 
 # --- sheets: where the render goes, and what happens to it afterwards ---
 #
