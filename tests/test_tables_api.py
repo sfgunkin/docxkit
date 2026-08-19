@@ -499,3 +499,57 @@ def test_to_frame_pads_a_row_missing_MORE_than_one_cell():
 #   strip the separators — what reaches `float` is always a float.
 # * the `@overload` decorators and the `*` in an overload's signature:
 #   typing, which no test run evaluates.
+# * the fallback width's `default=0` written `-1`. It is reached only by
+#   a table with no rows, and both `[""] * 0` and `[""] * -1` are the
+#   empty row the walk then writes nothing into.
+# * `t.start > para.start()` in `tables_after` written `>=`: two
+#   elements cannot begin at the same offset in one string.
+
+
+def test_set_cell_refuses_the_row_and_the_column_JUST_PAST_the_last():
+    """The same boundary as `grid_columns`, in the writer. One past the
+    end is the index a loop reaches, and past it the guard hands back an
+    IndexError from inside a function whose contract is an AnchorError
+    naming the table and the count."""
+    xml = document(
+        '<w:tbl><w:tblGrid><w:gridCol w:w="800"/></w:tblGrid>'
+        "<w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr>"
+        "</w:tbl>")
+    t = read_all(xml)[0]
+
+    with pytest.raises(AnchorError, match="cannot set row 1"):
+        set_cell(xml, t, row=1, col=0, text="x")
+    with pytest.raises(AnchorError, match="cannot set column 1"):
+        set_cell(xml, t, row=0, col=1, text="x")
+
+
+def test_a_bare_TABLE_fragment_is_found():
+    """The scan starts at offset 0, and a caller holding one table
+    rather than a document is the ordinary way this module is used from
+    a paper's own script — `read_all(body)` where `body` IS the table.
+    Starting one character in loses it, and the answer is an empty list
+    rather than an error."""
+    tbl = ('<w:tbl><w:tblGrid><w:gridCol w:w="800"/></w:tblGrid>'
+           "<w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr>"
+           "</w:tbl>")
+
+    tables = read_all(tbl)
+
+    assert [t.rows for t in tables] == [[["a"]]]
+
+
+def test_a_table_whose_ROWS_disagree_with_the_xml_is_refused():
+    """`strict=True` on the zip of cells against stored cells. The two
+    come from one walk and cannot normally disagree — but a `Table` is
+    a public dataclass a caller can build, and a rectangle read from a
+    row it does not describe is silently short a column, which is the
+    misalignment `grid_rows` exists to prevent."""
+    xml = document(
+        "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>"
+        "<w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>")
+    real = read_all(xml)[0]
+    short = Table(index=real.index, start=real.start, end=real.end,
+                  rows=[["a"]], source=real.source)
+
+    with pytest.raises(ValueError, match="shorter"):
+        short.grid_rows(xml)

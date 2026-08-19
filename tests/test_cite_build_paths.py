@@ -349,7 +349,11 @@ def test_the_back_link_undo_walks_PAST_the_ones_that_are_sound():
 #   pass the literals "¶" and "fn¶"; "fn¶" sorts before "¶" (f < the
 #   pilcrow), so the ordering comparison agrees, and both are the same
 #   objects the comparison names.
-# * `iter(range(bid, bid + 4096))` written `bid + 4095`. The pool is a
+# * the same `if r.index else 0` in `_own_bookmarks`, for the same
+#   reason: it is the XML before the FIRST paragraph, read only for
+#   bookmark names, and a part opens with its XML declaration.
+# * `iter(range(bid, bid + 4096))` written `bid + 4095`, or `bid *
+#   4096`. The pool is a
 #   thousand names deeper than the longest reference list this package
 #   has seen; one fewer changes nothing that is not already the
 #   `_dedup_name` fallback's business. (`bid | 4096` is NOT equivalent —
