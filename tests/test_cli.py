@@ -1646,3 +1646,117 @@ def test_no_command_is_written_down_that_the_parser_does_not_HAVE(
 
     assert documented <= top, f"gone from the CLI: {documented - top}"
     assert rev_documented <= steps, f"gone: {rev_documented - steps}"
+
+
+# --- what the commands PRINT, which is all a person gets ----------------
+#
+# Every finding below is a line nothing asserted: the checkbox that says
+# whether a thread is done, the hint under a list of stranded equations,
+# the order the faces are listed in, the cut on a quoted anchor. A
+# command's exit code is tested here several times over; what it SAYS
+# was free.
+
+
+def test_a_DONE_thread_is_ticked_and_an_open_one_is_not(monkeypatch,
+                                                        tmp_path, capsys):
+    """`"x" if t.done else " "`. The box is the whole report for a
+    reviewer working down the list — inverted, every thread they have
+    dealt with reads as outstanding and every outstanding one as done.
+    `--all` is what shows both, and the done thread is only there to be
+    ticked."""
+    path = _commented(tmp_path)
+    run_cli(monkeypatch, "tasks", str(path), "--done", "1")
+    capsys.readouterr()
+
+    run_cli(monkeypatch, "tasks", str(path), "--all")
+    ticked = capsys.readouterr().out
+
+    assert "[x] #1" in ticked
+    assert "[ ] #1" not in ticked
+
+
+def test_the_stranded_equation_HINT_waits_for_a_stranded_equation(
+        monkeypatch, tmp_path, capsys):
+    """`if stranded:`. The line names the call that fixes them, and
+    printed under a clean document it sends a person to wrap equations
+    that are already wrapped."""
+    from docxkit.package import write_docx
+
+    M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    inline = (f'<m:oMath xmlns:m="{M}"><m:r><m:t>x</m:t></m:r></m:oMath>')
+    stranded = tmp_path / "stranded.docx"
+    write_docx(stranded, make_parts(f"<w:p>{inline}</w:p>"))
+    clean = tmp_path / "clean.docx"
+    write_docx(clean, make_parts(para(run("No maths at all."))))
+
+    run_cli(monkeypatch, "math", str(stranded))
+    with_math = capsys.readouterr().out
+    run_cli(monkeypatch, "math", str(clean))
+    without = capsys.readouterr().out
+
+    assert "equations.display(para)" in with_math
+    assert "equations.display(para)" not in without
+
+
+def test_the_faces_are_listed_COMMONEST_first(monkeypatch, tmp_path,
+                                              capsys):
+    """`key=lambda kv: -kv[1]`, and the mutant the test above cannot
+    see: `not kv[1]` gives every face the same key, so the sort is
+    stable and the DOCUMENT's order stands. Both fixtures there list
+    the faces in count order already, which is the order a stable sort
+    keeps — this one puts the single stray face first.
+
+    The list answers "what is this document set in", and the answer is
+    the first line."""
+    from docxkit.package import write_docx
+
+    def styled(face: str, text: str) -> str:
+        return (f'<w:r><w:rPr><w:rFonts w:ascii="{face}"/>'
+                f'<w:sz w:val="20"/></w:rPr><w:t>{text}</w:t></w:r>')
+
+    from conftest import notes as notes_part
+
+    def fn(nid: int, face: str, text: str) -> str:
+        return (f'<w:footnote w:id="{nid}"><w:p>{styled(face, text)}'
+                "</w:p></w:footnote>")
+
+    # the ODD face first, so document order and count order disagree:
+    # `not kv[1]` sorts every key the same and leaves the dict's own
+    # order standing, which a fixture in count order cannot see
+    items = [fn(2, "Arial", "the odd one out")]
+    items += [fn(i, "Times New Roman", f"note {i}") for i in range(3, 7)]
+    path = tmp_path / "notes.docx"
+    write_docx(path, make_parts(para(run("body")),
+                                footnotes=notes_part("footnotes", *items)))
+
+    run_cli(monkeypatch, "footnotes", str(path))
+    listed = [ln for ln in capsys.readouterr().out.splitlines()
+              if "Times New Roman" in ln or "Arial" in ln]
+
+    assert "Times New Roman" in listed[0], listed
+    assert "Arial" in listed[-1], listed
+
+
+def test_the_body_line_of_a_state_carries_NO_footnote_warning(monkeypatch,
+                                                              tmp_path,
+                                                              capsys):
+    """`"" if where == "document" else ...`. The note says Review>Next
+    skips these, which is true of footnotes and endnotes and false of
+    the body — printed there it tells a person their pending body
+    revisions are invisible in Word, which is the opposite of the case.
+    """
+    from pathlib import Path
+
+    from docxkit.cli import _show_state
+    from docxkit.revision import State
+
+    _show_state("working", State(path=Path("working.docx"),
+                                 by_part={"word/document.xml": 2,
+                                          "word/footnotes.xml": 1},
+                                 by_author={}))
+    lines = capsys.readouterr().out.splitlines()
+
+    body = next(ln for ln in lines if " in document" in ln)
+    notes = next(ln for ln in lines if " in footnotes" in ln)
+    assert "Review>Next" not in body
+    assert "Review>Next" in notes
