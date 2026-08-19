@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from typing import Any
 
 import pytest
 
@@ -91,8 +92,8 @@ class _Recorder:
     """
 
     def __init__(self) -> None:
-        self.opened: list[tuple[str, dict]] = []
-        self.closed: list[dict] = []
+        self.opened: list[tuple[str, dict[str, Any]]] = []
+        self.closed: list[dict[str, Any]] = []
         recorder = self
 
         class _Doc:
