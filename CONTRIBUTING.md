@@ -633,6 +633,39 @@ most likely to have picked up by accident. Run against the package at
 the end of this round, 36 of 38 entries are stale and two modules have
 never been measured at all.
 
+### And void when the tree moves DURING the run — the worst kind
+
+`tracked.py` stands at 4.9 % (29/589), verified, every remaining
+survivor argued. Re-measured the same evening it came back at **28.9 %
+(237/821)**, and the shape of the survivor list was the tell: 66x
+`_seed_scaffold`, 33x `<module>`, 33x `format`, 33x `_comment_revision`,
+22x, 22x, 11x. Every cluster a multiple of eleven, which no real harness
+produces.
+
+`chunk()` puts the module back before each chunk, because cosmic-ray
+leaves its mutation in the tree when a run is terminated — and it copied
+the file from the WORKING TREE. Work carried on in that file while the
+sweep ran, so the source was swapped half way through: the plan
+describes one file and the later chunks mutate another, while the
+harness in the worktree is still the copy taken at startup. The
+timestamps say it plainly — the worktree's `tracked.py` at 19:28, its
+`test_tracked_build.py` at 18:46.
+
+Nothing failed, and the number is not a regression, an artefact of
+sampling, or a hard module. It is not a measurement of anything.
+
+The session snapshots the module and its harness when it is planned now,
+each chunk restores from the snapshot, a resume refuses when the module
+has changed since (the plan's offsets stop describing it), and a tree
+that moves under a running sweep prints a note per chunk. The rule
+therefore reads: **a figure is void when the source or the harness has
+moved SINCE the run — or DURING it.** `stale_figures.py` answers the
+first; the session itself now answers the second.
+
+The practical rule for a session that measures while it works: pick the
+module you are NOT editing. Two worktrees make two sweeps safe, and
+neither makes an edit to the module under measurement safe.
+
 ### `kill_check` used to lie about a case that changed nothing
 
 A case built with `old.replace(...)` whose inner pattern does not match

@@ -24,6 +24,7 @@ import argparse
 import re
 import subprocess
 import sys
+from collections import deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,15 +36,29 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(module: str, minutes: float, sample: int = 0) -> None:
     tests = harness_for(module)
     print(f"### {module}  ({len(tests)} test file(s))", flush=True)
-    session = subprocess.run(
+    # STREAMED, not captured: a module is half an hour and the session
+    # prints one line per chunk. Swallowed until the end, a sweep that is
+    # working looks exactly like a sweep that has hung — and the first
+    # question about a long run is "how far in", which the chunk lines
+    # already answer.
+    proc = subprocess.Popen(
         [sys.executable, "tools/mutation_session.py", f"src/docxkit/{module}",
          "--tests", *tests, "--minutes", str(minutes), "--chunks", "0",
          "--fresh", *(["--sample", str(sample)] if sample else [])],
-        cwd=ROOT, capture_output=True, text=True,
-        encoding="utf-8", errors="replace")
-    tail = [ln for ln in session.stdout.splitlines() if " run — " in ln]
-    print("   ", tail[-1].strip() if tail else session.stderr[-300:],
-          flush=True)
+        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1)
+    assert proc.stdout is not None
+    last, others = "", deque[str](maxlen=6)
+    for raw in proc.stdout:
+        line = raw.strip()
+        if " run — " in line:
+            last = line
+            print(f"    {last}", flush=True)
+        elif line:
+            others.append(line)
+    proc.wait()
+    if not last:                 # no chunk ever graded: say why, not "0%"
+        print("   ", " | ".join(others)[-300:] or "no output", flush=True)
 
     stem = module[:-3].lstrip("_") or module[:-3]
     db = ROOT / f".mutation-{stem}.sqlite"

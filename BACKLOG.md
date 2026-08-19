@@ -152,6 +152,34 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### S1 a mutation session restored the module from the LIVE tree between chunks — `tools/mutation_session.py`
+
+**The instrument, not the package — and it produced a plausible wrong number.**
+`tracked.py` stands at 4.9 % (29/589), verified and kill_check'd. Re-measured
+the same evening it came back **28.9 % (237/821)**, with every survivor cluster
+a multiple of eleven: 66x `_seed_scaffold`, 33x `<module>`, 33x `format`, 33x
+`_comment_revision`, 22x, 22x, 11x.
+
+Nothing failed. `chunk()` restores the module before each chunk — cosmic-ray
+leaves its mutation behind when a run is terminated — and it copied the file
+from the WORKING TREE. Editing `tracked.py` while the sweep ran therefore
+swapped the source half way through: the plan in the session describes one
+file, the chunks after the edit mutate another, and the harness in the
+worktree is still the copy taken at startup. `D:/docxkit-mut2/src/docxkit/
+tracked.py` was stamped 19:28 and its `tests/test_tracked_build.py` 18:46,
+which is the whole story.
+
+Fixed: the session snapshots the module and its harness when it is planned
+(`.mutation-<stem>.pristine/`), every chunk restores from THAT, a resume
+refuses outright when the module has changed since — the plan's offsets no
+longer describe it — and a tree that moves under a running sweep is now a note
+printed per chunk rather than a silent regrade. Eight tests, and the old
+restore dies against them.
+
+**The figure it produced is void and is not recorded anywhere.** The rule in
+CONTRIBUTING — a figure is void when the source or the harness has moved — now
+covers *during* as well as *since*.
+
 ### S2 `placement` reported a table it could not fix as fixed, and hid the findings a render cannot make — `0269f70`, `37023a7`
 
 Two in the same report, both found by mutation testing the module the day

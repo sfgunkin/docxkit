@@ -44,6 +44,18 @@ the progress made `--chunks 0` spin forever on the last mutant of
 had nothing left to run, and the sequential sweep behind it never
 reached its next module.
 
+**Restore the module from the SNAPSHOT, not from the live tree.** The
+chunk loop puts the module back before each chunk, to undo a mutation a
+terminated run left behind — and it used to copy it from the working
+tree. So an edit made while a sweep ran was picked up half way through:
+the plan in the session describes one source, the next chunk mutates
+another, and the harness in the worktree is still the one copied at
+startup. Measured 2026-08-19 on `tracked.py`: a module standing at 4.9 %
+came back at 28.9 % (237/821), with every cluster a multiple of eleven —
+a plausible number, and pure artefact. The snapshot taken when the
+session was created is what the plan is about, so it is what each chunk
+restores; the live tree moving is now a warning, not a silent regrade.
+
 **Force UTF-8 out of the child.** When a mutant is KILLED, cosmic-ray
 decodes pytest's output as UTF-8 while pytest writes the console
 codepage; this package's messages are full of em-dashes, the decode
@@ -147,6 +159,35 @@ def _env() -> dict[str, str]:
     return env
 
 
+def snapshot_dir(stem: str) -> Path:
+    """Where the files this session's PLAN was built from are kept."""
+    return ROOT / f".mutation-{stem}.pristine"
+
+
+def take_snapshot(snapshot: Path, module: Path, tests: list[str]) -> None:
+    """Copy the module and its harness as they are, once per session."""
+    for rel in [str(module), *tests]:
+        target = snapshot / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / rel, target)
+
+
+def moved_since(snapshot: Path, module: Path, tests: list[str]) -> list[str]:
+    """Which of those files the working tree no longer agrees with.
+
+    Bytes, not mtimes: a file rewritten with identical content has not
+    moved for this purpose, and `shutil.copy2` preserves the mtime
+    anyway.
+    """
+    out = []
+    for rel in [str(module), *tests]:
+        kept = snapshot / rel
+        if (not kept.exists()
+                or kept.read_bytes() != (ROOT / rel).read_bytes()):
+            out.append(rel)
+    return out
+
+
 def ensure_worktree(module: Path, tests: list[str]) -> None:
     """A private checkout that imports ITSELF, with the live files in it."""
     if not WORKTREE.exists():
@@ -232,7 +273,7 @@ def progress(session: Path) -> tuple[int, int, int, int]:
 
 
 def chunk(module: Path, tests: list[str], config: Path, session: Path,
-          seconds: int) -> bool:
+          seconds: int, *, snapshot: Path | None = None) -> bool:
     """One bounded run. True while there is more to do."""
     con = sqlite3.connect(session)
     cleared = con.execute(
@@ -242,7 +283,15 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
         print(f"  cleared {cleared} row(s) a terminated chunk left "
               f"unfinished", flush=True)
 
-    shutil.copy2(ROOT / module, WORKTREE / module)      # undo any mutation
+    # From the SNAPSHOT: the plan in the session was built against those
+    # bytes, and copying the live file here is how a sweep silently
+    # starts measuring an edit made while it ran (see the docstring).
+    source = (snapshot / module) if snapshot else (ROOT / module)
+    shutil.copy2(source, WORKTREE / module)             # undo any mutation
+    if snapshot and (moved := moved_since(snapshot, module, tests)):
+        print(f"  NOTE: {', '.join(moved)} changed since this session was "
+              f"planned. The figure describes the tree as it was then — "
+              f"re-run with --fresh to measure it as it is now.", flush=True)
     print(f"  verifying the unmutated harness ({len(tests)} files)...",
           flush=True)
     baseline = _run([sys.executable, "-m", "pytest", "-q", *tests],
@@ -311,11 +360,24 @@ def main() -> int:
     if not args.tests:
         return print("--tests is required: the harness decides which "
                      "mutants CAN be killed") or 2
+    snapshot = snapshot_dir(stem)
     if args.fresh:
         session.unlink(missing_ok=True)
+        shutil.rmtree(snapshot, ignore_errors=True)
 
     _take_lock()
+    # BEFORE the worktree is refreshed from the live tree: on a resume
+    # the plan is already built, and a module that has changed since
+    # makes every offset in it describe a different file.
+    if (session.exists() and snapshot.exists()
+            and str(module) in moved_since(snapshot, module, args.tests)):
+        sys.exit(f"{module} has changed since this session was planned. "
+                 f"Its mutants are recorded against the old source, so "
+                 f"resuming would grade the wrong edits. Re-run with "
+                 f"--fresh.")
     ensure_worktree(module, args.tests)
+    if not snapshot.exists():
+        take_snapshot(snapshot, module, args.tests)
     write_config(module, args.tests, config)
     if not session.exists():
         out = _run([sys.executable, "-m", "cosmic_ray.cli", "init",
@@ -328,7 +390,7 @@ def main() -> int:
     more, n = True, 0
     while more and (args.chunks == 0 or n < args.chunks):
         more = chunk(module, args.tests, config, session,
-                     int(args.minutes * 60))
+                     int(args.minutes * 60), snapshot=snapshot)
         n += 1
     if more:
         print("\nmore to do — run again, or --chunks 0 to finish. "
