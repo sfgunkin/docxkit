@@ -217,7 +217,13 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
     # check with sixteen errors that had nothing to do with the mutation.
     for src in sorted(ROOT.glob("src/docxkit/*.py")):
         shutil.copy2(src, WORKTREE / "src" / "docxkit" / src.name)
-    for rel in [str(module), *tests]:
+    # `tests/conftest.py` is in no module's harness — nothing names it —
+    # and every test file copied here imports it. Without it the
+    # worktree runs TODAY's tests against whatever conftest was in the
+    # commit it was created at, and the first helper added to conftest
+    # aborts every sweep at the baseline check, on a module the session
+    # was not asked about.
+    for rel in [str(module), "tests/conftest.py", *tests]:
         target = WORKTREE / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / rel, target)

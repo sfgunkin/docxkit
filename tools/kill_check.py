@@ -57,7 +57,13 @@ def sync() -> None:
     if not ROOT.exists():
         subprocess.run(["git", "worktree", "add", "-q", str(ROOT),
                         "HEAD", "--detach"], cwd=LIVE, check=True)
-    for sub in ("src/docxkit", "tests"):
+    # `tools` as well as the package: the sweep scripts have harnesses
+    # of their own now, so a case can be aimed at one of them — and a
+    # checkout that copies only `src/` and `tests/` anchors such a case
+    # against the version committed the day the worktree was made,
+    # which reports "anchor occurs 0 times" for a line that is in the
+    # file.
+    for sub in ("src/docxkit", "tests", "tools"):
         for src in sorted((LIVE / sub).glob("*.py")):
             shutil.copy2(src, ROOT / sub / src.name)
     # and the documents the SUITE reads — see REPO_FILES

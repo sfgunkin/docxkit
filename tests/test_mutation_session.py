@@ -278,3 +278,39 @@ def test_a_DIFFERENT_seed_is_a_different_draw(tmp_path):
     ms.sample(two, 12, 1)
 
     assert _kept(one) != _kept(two)
+
+
+# --- what the worktree is given ------------------------------------------
+
+
+def test_the_worktree_gets_todays_CONFTEST_too(tmp_path, monkeypatch):
+    """The harness map names test FILES, and every one of them imports
+    `tests/conftest.py`, which no map names. A worktree is created once
+    and reused for weeks, so without this the fixtures are the ones from
+    the commit it was created at — and the day conftest gains a helper,
+    every sweep in that checkout fails its baseline check on a module
+    nobody touched."""
+    root, work = tmp_path / "root", tmp_path / "docxkit-mut9"
+    (root / "src" / "docxkit").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (work / "src" / "docxkit").mkdir(parents=True)
+    (root / "src" / "docxkit" / "thing.py").write_text("x = 1\n")
+    (root / "tests" / "test_thing.py").write_text("def test_f(): pass\n")
+    (root / "tests" / "conftest.py").write_text("HELPER = 'today'\n")
+    for name in ("README.md", "pyproject.toml"):
+        (root / name).write_text("#\n")
+
+    monkeypatch.setattr(ms, "ROOT", root)
+    monkeypatch.setattr(ms, "WORKTREE", work)
+    monkeypatch.setattr(ms, "_run", lambda *a, **kw: _Ok())
+
+    ms.ensure_worktree(Path("src/docxkit/thing.py"), ["tests/test_thing.py"])
+
+    assert (work / "tests" / "conftest.py").read_text() == "HELPER = 'today'\n"
+
+
+class _Ok:
+    """A finished subprocess that succeeded."""
+
+    returncode = 0
+    stderr = ""

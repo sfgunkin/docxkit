@@ -75,3 +75,37 @@ def test_a_case_that_does_not_COMPILE_is_refused(tmp_path):
 
     assert "does not compile" in out
     assert "killed" not in out
+
+
+_SYNC = '''
+import sys
+sys.path.insert(0, {tools!r})
+import kill_check
+kill_check.sync()
+live, root = kill_check.LIVE, kill_check.ROOT
+for name in sorted(p.name for p in (live / "tools").glob("*.py")):
+    a = (live / "tools" / name).read_bytes()
+    b = (root / "tools" / name).read_bytes() \
+        if (root / "tools" / name).exists() else b""
+    print(("SAME" if a == b else "STALE") + " " + name)
+'''
+
+
+def test_the_checkout_holds_TODAYS_tools_scripts(tmp_path):
+    """A case can be aimed at a `tools/` script — the sweep tools have
+    harnesses of their own — and the checkout is created once, detached,
+    and reused for weeks. Copying only `src/` and `tests/` into it left
+    every tools script at the commit the worktree was made from, so a
+    case anchored on a line added since was refused with "anchor occurs
+    0 times" for a line that is in the file. Refused, not answered
+    wrongly — but the reason is invisible from the message."""
+    script = tmp_path / "sync.py"
+    script.write_text(_SYNC.format(tools=str(TOOLS)), encoding="utf-8")
+
+    done = subprocess.run([sys.executable, str(script)],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=TOOLS.parent, check=False)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "STALE" not in done.stdout, done.stdout
+    assert "SAME kill_check.py" in done.stdout, done.stdout
