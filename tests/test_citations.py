@@ -2886,3 +2886,326 @@ def test_the_link_that_CLOSES_is_the_innermost_one_still_open():
              if any(f"'{t}'" in i for i in about_d)}
 
     assert named == {"OuterA", "MidB"}, about_d
+
+
+# --- the _cite_audit run of 2026-08-20: 11.2 %, the package's worst -----
+
+from conftest import make_parts, note, notes, para, run  # noqa: E402
+
+
+def _audit(body: str, **extra: bytes) -> list[str]:
+    parts = make_parts(body)
+    parts.update(extra)
+    return audit_links(parts)[0]
+
+
+def test_a_finding_says_WHICH_note_store_it_is_in():
+    """"(fn)" and "(en)" are what a person does the repair from: an
+    anchor reported as "fn" that lives in endnotes.xml sends them into
+    a part that does not hold it.
+
+    Ten mutants sat on the two constants behind those labels — the
+    sentinel index for each store and the map from it to the word — and
+    every one of them is invisible to a test that only counts findings.
+    The order is part of it too: the sentinels are negative so a note's
+    findings sort before ¶1, and endnotes' below footnotes'."""
+    body = (para(run("A claim (Card 1999).")) + para(run("References"))
+            + para(run("Card, D. (1999). Education. Amsterdam: Elsevier.")))
+    marked = ('<w:bookmarkStart w:id="7" w:name="{name}"/>'
+              + run("{label}") + '<w:bookmarkEnd w:id="7"/>')
+
+    # The endnote's name sorts AFTER the footnote's, so the order below
+    # is the one the sentinels give and not the alphabetical one the
+    # sort key mutates to.
+    issues = _audit(
+        body,
+        **{"word/footnotes.xml": notes("footnotes", note(
+            marked.format(name="Alpha2001txt", label="Alpha (2001)"),
+            2)).encode(),
+           "word/endnotes.xml": notes("endnotes", note(
+               marked.format(name="Zulu2002txt", label="Zulu (2002)"), 3,
+               "endnote")).encode()})
+
+    assert [i for i in issues if "NO BACK-LINK" in i] == [
+        "NO BACK-LINK: in-text bookmark 'Zulu2002txt' (en) has no reference "
+        "back-link",
+        "NO BACK-LINK: in-text bookmark 'Alpha2001txt' (fn) has no reference "
+        "back-link"], issues
+
+
+def test_the_findings_come_in_DOCUMENT_order_not_alphabetical():
+    """The report is read top to bottom against the document, so the
+    sort is by paragraph. Sorted by NAME it still contains everything
+    and still reads as a list — which is why nothing noticed: the
+    fixtures all had one finding, or names already in document order."""
+    body = (para(run("A claim (Zed 1999) and (Abe 1998)."))
+            + para(run("References"))
+            + para('<w:bookmarkStart w:id="1" w:name="Zed1999"/>'
+                   + run("Zed, Z. (1999). First entry. J.")
+                   + '<w:bookmarkEnd w:id="1"/>')
+            + para('<w:bookmarkStart w:id="2" w:name="Abe1998"/>'
+                   + run("Abe, A. (1998). Second entry. J.")
+                   + '<w:bookmarkEnd w:id="2"/>'))
+
+    issues = _audit(body)
+
+    assert [i.split("'")[1] for i in issues if i.startswith("ORPHAN REF")] \
+        == ["Zed1999", "Abe1998"], issues
+
+
+def test_a_STALE_bookmark_does_not_end_the_walk():
+    """`continue`: the stale finding replaces the orphan check for THAT
+    key, not for the rest of the document. A `break` there reports the
+    first stale marker and stops — and a document with one stale marker
+    is exactly the document that has others."""
+    body = (para(run("A claim (Card 1999)."))
+            + para(run("References"))
+            + para('<w:bookmarkStart w:id="1" w:name="Aaa2012"/>'
+                   + run("Some prose the marker was hoisted into.")
+                   + '<w:bookmarkEnd w:id="1"/>')
+            + para('<w:bookmarkStart w:id="2" w:name="Card1999"/>'
+                   + run("Card, D. (1999). Education. Amsterdam: Elsevier.")
+                   + '<w:bookmarkEnd w:id="2"/>'))
+
+    issues = _audit(body)
+
+    assert any(i.startswith("STALE BOOKMARK: 'Aaa2012'") for i in issues)
+    assert any(i.startswith("ORPHAN REF: bookmark 'Card1999'")
+               for i in issues), issues
+
+
+def test_a_marker_NO_ENTRY_owns_does_not_end_the_misplacement_walk():
+    """The same shape one loop down. A bookmark that does not parse as
+    surname+year belongs to no entry and is skipped — and a document
+    carrying one is not a document without misplaced markers. "notakey"
+    is first here because the walk takes them in definition order."""
+    body = (para(run("A claim (Card 1999) and (Buys 2012)."))
+            + para(run("References"))
+            + para('<w:bookmarkStart w:id="1" w:name="notakey"/>'
+                   '<w:bookmarkStart w:id="2" w:name="Buys2012"/>'
+                   + run("Card, D. (1999). Education. Amsterdam: Elsevier.")
+                   + '<w:bookmarkEnd w:id="1"/><w:bookmarkEnd w:id="2"/>')
+            + para('<w:bookmarkStart w:id="3" w:name="Card1999"/>'
+                   + run("Buys, L. (2012). Loneliness. J, 1: 1-10.")
+                   + '<w:bookmarkEnd w:id="3"/>'))
+
+    issues = _audit(body)
+
+    assert [i for i in issues if i.startswith("MISPLACED MARKER")] == [
+        'MISPLACED MARKER: \'Buys2012\' sits at ¶3 ("Card, D. (1999). '
+        'Education. Am") but its entry is ¶4',
+        'MISPLACED MARKER: \'Card1999\' sits at ¶4 ("Buys, L. (2012). '
+        'Loneliness. J") but its entry is ¶3'], issues
+
+
+def test_a_year_SUFFIX_is_not_part_of_the_year():
+    """`m.group(2)[:4]`. A 2020a/2020b pair is how a reference list tells
+    two works of one author apart, and the entry's own year carries the
+    letter too — so comparing five characters against four never
+    matches, and every suffixed marker in the document reads as a work
+    that has been deleted from the list."""
+    body = (para(run("A claim (Card 1999a)."))
+            + para(run("References"))
+            + para('<w:bookmarkStart w:id="2" w:name="Card1999a"/>'
+                   + run("Card, D. (1999a). Education. Amsterdam: Elsevier.")
+                   + '<w:bookmarkEnd w:id="2"/>'))
+
+    assert not [i for i in _audit(body) if i.startswith("STALE BOOKMARK")]
+
+
+def test_a_HYPERLINK_instruction_inside_an_element_link_is_not_its_field():
+    """`f[0] == "field"`, which an ordering comparison reads as true for
+    "element" as well. Word leaves an instruction inside an element link
+    behind when a field is converted, and taking the element for the
+    field it is not writes the instruction's target over the anchor a
+    reader clicks — then reports the pair as a doubled link."""
+    from docxkit._cite_audit import _doubled_links
+
+    para_xml = ('<w:p><w:hyperlink w:anchor="Outer2020">'
+                + run("Outer")
+                + r'<w:r><w:instrText>HYPERLINK \l "Inner2021"'
+                "</w:instrText></w:r>"
+                + run(" tail") + "</w:hyperlink></w:p>")
+
+    assert _doubled_links(para_xml) == []
+
+
+def test_the_element_link_that_closes_is_the_INNERMOST_one():
+    """The walk runs from the top of the stack down, and starting it
+    half way — `len(stack) >> 1` — closes an outer link instead. Two
+    open links cannot see it (half of two is one, which is still the
+    top), and the difference only shows in what is open AFTERWARDS: the
+    next link nests inside the one that should have closed.
+
+    Three deep is a real shape: a field around a back-link around a
+    cross-reference is what Word leaves after two rounds of repair."""
+    from docxkit._cite_audit import _doubled_links
+
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             r'<w:r><w:instrText>HYPERLINK \l "F1"</w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>')
+    para_xml = ("<w:p>" + field + run("f")
+                + '<w:hyperlink w:anchor="E1">' + run("e1")
+                + '<w:hyperlink w:anchor="E2">' + run("e2") + "</w:hyperlink>"
+                + '<w:hyperlink w:anchor="E3">' + run("e3") + "</w:hyperlink>"
+                + run(" more") + "</w:hyperlink>"
+                + '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+    assert _doubled_links(para_xml) == [
+        ("F1", "E1"), ("F1", "E2"), ("E1", "E2"), ("F1", "E3"), ("E1", "E3")]
+
+
+# Argued rather than pinned, from the same run:
+#
+# * both reverse walks written `range(len(stack) - 1, -2, -1)` (and `~1`,
+#   which is the same -2). The extra index is `stack[-1]`, the element
+#   the walk ALREADY checked first, and it is only reached when nothing
+#   matched — so the repeat cannot match either. The walk deletes and
+#   breaks on a match, so the list never moves under it.
+# * `stack[i][0] == "field"` and `== "element"` as `is`, and the first
+#   as `>=`. The kinds are two literals written in this module, and
+#   "element" sorts before "field".
+# * `owners[0]` written `owners[-1]`, under `if len(owners) == 1`.
+
+
+FILLER = "".join(para(run(f"Filler paragraph {i}.")) for i in range(6))
+TWO_ENTRIES = (para(run("References"))
+               + para('<w:bookmarkStart w:id="1" w:name="Card1999"/>'
+                      + run("Card, D. (1999). Education. Elsevier.")
+                      + '<w:bookmarkEnd w:id="1"/>')
+               + para(run("Buys, L. (2012). Loneliness. J, 1: 1-10.")))
+
+
+def _unlinked(body: str) -> list[str]:
+    return [i for i in _audit(body) if i.startswith("UNLINKED")]
+
+
+def test_the_scan_skips_the_first_FIVE_paragraphs_and_no_more():
+    """`i < 5` — a title page, an author block, an abstract heading: the
+    front matter is where a "Smith (2020)" is a name rather than a
+    citation. Written `!= 5` the scan skips everything EXCEPT paragraph
+    six, which is the same silence for every real document and reports
+    nothing at all where the fixtures put their prose."""
+    body = (FILLER + para(run("A claim (Card 1999) and (Buys 2012)."))
+            + TWO_ENTRIES)
+
+    found = _unlinked(body)
+
+    assert len(found) == 2, found
+    assert all("(¶7)" in i for i in found), found
+
+
+@pytest.mark.parametrize("prose,label", [
+    ("(Card 1999)", "Card (1999)"),      # parenthetical cite, narrative label
+    ("Card (1999)", "Card 1999"),        # narrative cite, parenthetical label
+])
+def test_a_link_LABEL_in_ANOTHER_spelling_counts_as_the_citation(prose,
+                                                                 label):
+    """The fallback for a document whose bookmarks are not key-shaped: a
+    citation counts as linked if some link's LABEL carries it, in the
+    prose's own spelling or in either of the two the pass builds —
+    "author year" and "author (year)". A paper writes both forms and
+    links one of them.
+
+    The label sits in the SAME paragraph as an unlinked work, so the
+    `continue` that skips the labelled citation has something after it
+    to lose. `cite_x` as the anchor on purpose: a key-shaped one is
+    answered by the marker walk above and never reaches this line."""
+    body = (FILLER
+            + para(run(f"As {prose} shows, and (Buys 2012) too. ")
+                   + '<w:hyperlink w:anchor="cite_x">'
+                   + run(label) + "</w:hyperlink>" + run(" appears again."))
+            + TWO_ENTRIES)
+
+    assert [i.split('"')[1] for i in _unlinked(body)] == ["Buys 2012"], \
+        _unlinked(body)
+
+
+@pytest.mark.parametrize("prose", [
+    "As (April 2020) and (Buys 2012) show",     # a lead the grammar ignores
+    "As Card (1999) shows, and (Buys 2012) too",             # linked already
+])
+def test_a_citation_the_scan_SKIPS_does_not_end_the_paragraph(prose):
+    """Three `continue`s in one loop — an ignored lead, a work already
+    linked, a label that carries the citation — and each of them, as a
+    `break`, drops every mention AFTER it in that paragraph. A sentence
+    citing two works is the ordinary case, and the second is the one
+    that goes unreported."""
+    body = (FILLER
+            + para(run("As ") + '<w:hyperlink w:anchor="Card1999">'
+                   + run("Card 1999") + "</w:hyperlink>" + run(" and more."))
+            + para(run(f"{prose}."))
+            + TWO_ENTRIES)
+
+    assert [i for i in _unlinked(body) if "Buys" in i], _unlinked(body)
+
+
+def test_a_cite_mark_with_NO_reference_bookmark_is_reported():
+    """`cited_keys - ref_marks.keys()`: an in-text bookmark whose
+    reference partner is gone. The loop over it was mutated to run over
+    nothing at all and no test noticed, which means the check had never
+    fired in this file."""
+    body = (para(run("As ")
+                 + '<w:bookmarkStart w:id="3" w:name="Nobody1899txt"/>'
+                 + run("Nobody (1899)") + '<w:bookmarkEnd w:id="3"/>'
+                 + run(" says."))
+            + TWO_ENTRIES)
+
+    assert [i for i in _audit(body)
+            if i.startswith("CITE WITHOUT REF")] == [
+        "CITE WITHOUT REF: 'Nobody1899' cited in text but no reference "
+        "bookmark"]
+
+
+def test_a_STALE_key_is_not_ALSO_reported_as_uncited():
+    """`continue`: a marker whose entry is gone is reported once, as
+    stale, and the uncited check skips it — but only it. The keys are
+    walked in sorted order, so a stale one that sorts first ends the
+    walk under `break` and every genuinely uncited marker after it goes
+    unreported."""
+    body = (para(run("A claim (Card 1999)."))
+            + para(run("References"))
+            + para('<w:bookmarkStart w:id="1" w:name="Aaa2012"/>'
+                   + run("Prose the marker was hoisted into.")
+                   + '<w:bookmarkEnd w:id="1"/>')
+            + para('<w:bookmarkStart w:id="2" w:name="Zzz1999"/>'
+                   + run("Card, D. (1999). Education. Elsevier.")
+                   + '<w:bookmarkEnd w:id="2"/>'))
+
+    issues = _audit(body)
+
+    assert [i.split("'")[1] for i in issues
+            if i.startswith("REF WITHOUT CITE")] == ["Zzz1999"], issues
+    assert any(i.startswith("STALE BOOKMARK: 'Aaa2012'") for i in issues)
+
+
+def test_a_BODY_LEVEL_marker_is_placed_by_the_entry_below_it():
+    """Word hoists a marker out of its paragraph on save, so it sits
+    between two of them and belongs to neither by offset. The fallback
+    takes the next entry at or after it — an ordering comparison, and
+    equality there finds nothing at all, which turns every misplaced
+    body-level marker (13 of them on API10) into silence."""
+    body = (para(run("A claim (Card 1999) and (Buys 2012)."))
+            + para(run("References"))
+            + para(run("Card, D. (1999). Education. Elsevier."))
+            + '<w:bookmarkStart w:id="1" w:name="Card1999"/>'
+              '<w:bookmarkEnd w:id="1"/>'
+            + para(run("Buys, L. (2012). Loneliness. J, 1: 1-10.")))
+
+    assert [i for i in _audit(body)
+            if i.startswith("MISPLACED MARKER")] == [
+        'MISPLACED MARKER: \'Card1999\' sits at ¶4 ("Buys, L. (2012). '
+        'Loneliness. J") but its entry is ¶3']
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `paras[i].start() <= pos < paras[i].end()`, as `<`, `<=` on the
+#   right, `!=` and `is not`. `pos` is where `w:name="…"` starts, and a
+#   paragraph begins with its own `<w:p>` tag — so `pos` is never the
+#   paragraph's first offset nor its last, and every one of those
+#   readings agrees on the paragraphs that exist.
+# * `at.index != owner.index` written `is not`: two paragraph indices,
+#   and CPython hands out one object per integer below 257. A document
+#   with 257 reference entries would part them; none of these papers
+#   has 40.
