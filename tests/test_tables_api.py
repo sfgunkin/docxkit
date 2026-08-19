@@ -391,3 +391,111 @@ def test_the_refusal_shows_the_first_THREE_columns_of_each_table():
 
     assert "['Country', 'AFI (initial)', 'Dif.']" in str(exc.value)
     assert "Rank" not in str(exc.value)
+
+
+# --- the _table_core run of 2026-08-20: 8.7 % --------------------------
+
+
+def test_the_row_JUST_PAST_the_last_is_refused_by_name():
+    """`row >= len(trs)`. One past the end is the index a loop reaches,
+    and the existing fixture asked for row 9 of a two-row table — which
+    every comparison refuses. At the boundary the mutant falls through
+    to `trs[row]` and the caller gets an IndexError out of a method
+    whose contract is an AnchorError naming the table."""
+    xml = _spanned_table()
+
+    with pytest.raises(AnchorError, match="cannot read row"):
+        read_all(xml)[0].grid_columns(xml, 2)
+
+
+def test_the_shape_of_a_table_with_NO_rows_is_zero_by_zero():
+    """`max(..., default=0)`. A table element with no `w:tr` is what a
+    template leaves behind, and a width of -1 or 1 for it is a number
+    that goes on to size a grid."""
+    assert Table(index=0, start=0, end=0, rows=[]).shape == (0, 0)
+
+
+def test_a_column_SKIPS_the_rows_that_are_too_short():
+    """`len(r) > index`, which is a guard against a ragged table — the
+    shape a merged cell leaves in `rows` — and every fixture for it was
+    rectangular. Off by one, the guard admits the row whose last index
+    is one below the column asked for, and the read raises IndexError
+    from inside a getter."""
+    ragged = Table(index=0, start=0, end=0,
+                   rows=[["Country", "AFI"], ["Poland"], ["Chile", "0.62"]])
+
+    assert ragged.column(1) == ["0.62"]
+
+
+def test_row_named_reads_the_DATA_rows_and_ALL_of_them():
+    """`self.rows[1:]`: the header is not a data row, and the first data
+    row is. A table whose header's leading cell repeats a label — a
+    "Total" column head above a "Total" line — answers with the header
+    under one mutant and misses the row entirely under the other, and a
+    fixture whose label sits anywhere else cannot see either."""
+    t = Table(index=0, start=0, end=0,
+              rows=[["Total", "2019"], ["Total", "5"], ["Other", "7"]])
+
+    assert t.row_named("Total") == ["Total", "5"]
+
+
+def test_a_vertical_merge_that_RESTARTS_empty_carries_nothing_down():
+    """`v.group(1) != "restart"`, and the restart branch is only visible
+    when the restarting cell is EMPTY: `cell or carried` gives the
+    cell's own text whenever it has any, so a restart with a label
+    reads the same under either operator.
+
+    A merge group that restarts with no label is a real row — the FLOPs
+    table has one where an unnamed block follows a named one — and
+    carrying the previous group's label into it invents a value the
+    document does not show."""
+    def tc(text, vmerge=None):
+        v = f"<w:vMerge{vmerge}/>" if vmerge is not None else ""
+        return (f"<w:tc><w:tcPr>{v}</w:tcPr>"
+                f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
+
+    xml = document(
+        "<w:tbl><w:tblGrid>" + '<w:gridCol w:w="800"/>' * 2 + "</w:tblGrid>"
+        + "<w:tr>" + tc("Training", ' w:val="restart"') + tc("Export")
+        + "</w:tr><w:tr>" + tc("", "") + tc("Domestic")
+        + "</w:tr><w:tr>" + tc("", ' w:val="restart"') + tc("Inference")
+        + "</w:tr><w:tr>" + tc("", "") + tc("Training") + "</w:tr></w:tbl>")
+
+    assert read_all(xml)[0].grid_rows(xml) == [
+        ["Training", "Export"], ["Training", "Domestic"],
+        ["", "Inference"], ["", "Training"]]
+
+
+def test_to_frame_pads_a_row_missing_MORE_than_one_cell():
+    """`width - len(row)`, which agrees with `width % len(row)` for a
+    row one cell short of a three-column header — the only fixture this
+    had. Two cells short of four is where they part, and a frame built
+    with the wrong pad is a column of data misaligned against its
+    heading rather than an error."""
+    pytest.importorskip("pandas")
+    t = Table(index=0, start=0, end=0,
+              rows=[["Country", "AFI", "Gap", "N"], ["Poland", "0.31"]])
+
+    assert to_frame(t).iloc[0].tolist() == ["Poland", "0.31", "", ""]
+
+
+# Argued rather than pinned, from the same run:
+#
+# * every `tc.group(1)` / `tr.group(-1)` mutant — seventeen of them —
+#   was equivalent because `_Span.group` ignored its argument and
+#   handed back the whole element for any index. It raises now, so they
+#   are killed by the tests that already walk those calls.
+# * `len(r) is not index` in `column`. Both sides are small ints, and
+#   CPython hands out one object for each below 257; a table with more
+#   than 256 columns is not a table.
+# * `xml.find("<w:tbl>", pos) != -1` written `> -1` and `is not -1`.
+#   `find` answers -1 or an offset, and -1 is one of the integers
+#   CPython caches.
+# * `t.start > para.start()` in `by_caption` written `>=`. Two elements
+#   cannot begin at the same offset in one string.
+# * `except ValueError` in `parse_number`, mutated to an exception the
+#   body cannot raise. `_NUM_RE` has already matched sign, digits,
+#   separators and at most one decimal point, and the substitutions
+#   strip the separators — what reaches `float` is always a float.
+# * the `@overload` decorators and the `*` in an overload's signature:
+#   typing, which no test run evaluates.

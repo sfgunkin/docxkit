@@ -253,3 +253,42 @@ def test_an_object_with_VALUES_but_no_tolist_is_iterated_as_rows():
 
     assert one_table(xml).rows[2][1] == "0.40**"
     assert [(c.row, c.col) for c in changes] == [(2, 1)]
+
+
+# --- the _table_core run of 2026-08-20, the update half ----------------
+
+
+def test_the_block_lands_at_the_COLUMN_it_was_given():
+    """`tcs[col0 + j]` and the `col0 + j` the change record carries.
+    Every other way of combining two small numbers agrees with `+` when
+    one of them is 0 — which `col0` is by default and `j` is on the
+    first value of a row — so a block written at column 1 is the
+    smallest fixture that can tell them apart.
+
+    Written with `|`, the second value overwrites the first cell and the
+    third column keeps its old text; recorded with `^`, the report names
+    a column the value did not land in."""
+    xml = doc(table_xml([["Country", "AFI", "Gap"],
+                         ["Poland", "0.31", "1.20"],
+                         ["Chile", "0.62", "3.40"]]))
+
+    out, changes = update(xml, one_table(xml), [["0.98", "7.60"]],
+                          row0=1, col0=1)
+
+    assert one_table(out).rows[1] == ["Poland", "0.98", "7.60"]
+    assert [(c.row, c.col) for c in changes] == [(1, 1), (1, 2)]
+
+
+def test_an_overrunning_row_is_named_by_ITS_OWN_number():
+    """`row {row0 + i}`. The refusal has to say which row is short or a
+    reader goes looking in the wrong one, and `row0 << i` gives the same
+    number as `row0 + i` whenever `row0` is 1 — the default, and the
+    only value the earlier fixtures used. A block starting at row 2
+    separates them."""
+    xml = doc(table_xml([["Country", "AFI"],
+                         ["Poland", "0.31"],
+                         ["Chile", "0.62"],
+                         ["Peru"]]))
+
+    with pytest.raises(AnchorError, match="row 3 of table 0 has 1 cells"):
+        update(xml, one_table(xml), [["0.5"], ["0.6"]], row0=2, col0=1)

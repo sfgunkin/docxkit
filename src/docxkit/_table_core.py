@@ -62,6 +62,16 @@ class _Span:
         return self.to
 
     def group(self, index: int = 0) -> str:
+        """The whole span — there are no captures to ask for.
+
+        It refuses a group it has not got rather than handing back the
+        element for any index at all. The stub ignored its argument
+        until 2026-08-20, and seventeen mutants of `tc.group(0)` across
+        this module could not be killed by any test because of it: a
+        typo in a caller read as the answer it wanted.
+        """
+        if index:
+            raise IndexError("no such group")
         return self.xml
 
 
