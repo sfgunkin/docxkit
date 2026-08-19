@@ -130,6 +130,77 @@ def test_keep_together_binds_the_block_but_frees_its_last_paragraph():
     assert last is None, "the last ROW must not keep with what follows either"
 
 
+def test_no_paragraph_property_is_ever_written_INTO_a_table():
+    """`el.tag == W + "p"` is what decides who gets paragraph
+    properties, and every loop here asks it: the block walk, the
+    keep-together pass, the spacing pass, the page break.
+
+    Read as an ordering or an identity — `>=` is true for `w:tbl`,
+    `is not` is true for everything, because `W + "p"` builds a fresh
+    string every time — a `w:tbl` takes the branch and gets a `w:pPr`
+    as its first child. That is well-formed XML and unreadable content:
+    CT_Tbl has no pPr, and Word repairs the document on open. Nothing
+    in the report changes, because nothing here counts elements."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.")
+        + P("Таблица 1. Заголовок") + TBL("шапка", "строка")
+        + P("Примечание. Что-то.")
+        + P("Следующий абзац.")))
+
+    body = body_of(out)
+    for tbl in body.iter(NS + "tbl"):
+        assert tbl.find(NS + "pPr") is None, "a table has no w:pPr"
+        assert tbl.find(NS + "keepNext") is None
+        assert tbl.find(NS + "spacing") is None
+        assert tbl.find(NS + "pageBreakBefore") is None
+    for row in body.iter(NS + "tr"):
+        assert row.find(NS + "pPr") is None, "nor has a row"
+
+
+def test_every_row_but_the_LAST_keeps_with_the_one_after_it():
+    """`last = n == len(rows) - 1`, where twenty mutants sat.
+
+    keepNext on a row binds it to the row below. On the last row it
+    binds the TABLE to whatever follows, which drags the next paragraph
+    onto the table's page — the thing this module exists to stop. Off
+    by one the other way and the second-to-last row is free, so Word
+    may break there.
+
+    Three rows, because two cannot tell `len(rows) - 1` from `len(rows)
+    // 2` or from `n == 1`."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.")
+        + P("Таблица 1. Заголовок") + TBL("шапка", "строка", "итого")))
+
+    rows = tbl_of(body_of(out)).findall(NS + "tr")
+    keeps = [any(para.find(NS + "pPr/" + NS + "keepNext") is not None
+                 for para in row.iter(NS + "p"))
+             for row in rows]
+    assert keeps == [True, True, False], keeps
+    assert all(r.find(NS + "trPr/" + NS + "cantSplit") is not None
+               for r in rows), "and no row may straddle a page"
+
+
+def test_keep_together_can_be_turned_OFF_row_by_row():
+    """`on and not last` — the flag reaches the rows too, which is what
+    a caller undoing a previous pass needs. `or` in its place leaves
+    every row but the last one bound however it was called."""
+    body = body_of(parts(P("Таблица 1. Заголовок")
+                         + TBL("шапка", "строка", "итого")))
+    block = list(body)
+    placement.keep_together(block)
+
+    placement.keep_together(block, on=False)
+
+    rows = tbl_of(body).findall(NS + "tr")
+    assert not any(
+        para.find(NS + "pPr/" + NS + "keepNext") is not None
+        for row in rows for para in row.iter(NS + "p")), "every row let go"
+    assert not any(r.find(NS + "trPr/" + NS + "cantSplit") is not None
+                   for r in rows)
+    assert body.find(NS + "p/" + NS + "pPr/" + NS + "keepNext") is None
+
+
 def test_an_english_manuscript_needs_no_new_code():
     """The vocabulary is a pattern the caller owns — that is the seam."""
     out, rep = placement.place(parts(
@@ -427,6 +498,22 @@ def spacing_of(out: dict[str, bytes], starts: str) -> dict[str, str | None]:
             for k, v in sp.attrib.items()}
 
 
+def test_a_hoisted_bookmark_at_the_TOP_of_the_body_stops_the_walk():
+    """`head > 0`. The walk back over hoisted bookmarks has to stop at
+    the start of the body; `>= 0` reads `kids[-1]` there, which is the
+    LAST child — and Word closes a bookmark at the end of a document
+    often enough that the walk then runs backwards from it."""
+    out, rep = placement.place(parts(
+        '<w:bookmarkStart w:id="7" w:name="Таблица1"/>'
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Как показано в таблице 1, всё сходится.")
+        + '<w:bookmarkEnd w:id="7"/>'))
+
+    assert rep.placements[0].moved
+    kinds = [el.tag.split("}")[-1] for el in body_of(out)]
+    assert kinds == ["p", "bookmarkStart", "p", "tbl", "bookmarkEnd"], kinds
+
+
 def test_a_star_note_travels_with_its_table():
     """DSI's таблица 4 carries «Примечание…» AND a `*` gloss under it. The
     keyword-only pattern ended the block at the first, and the second was
@@ -500,6 +587,26 @@ def test_the_gap_below_the_block_sits_on_the_last_NOTE():
     assert spacing_of(out, "Следующий")["before"] == "0", (
         "the resuming paragraph is zeroed, so the gap is 8pt and not 8pt "
         "plus whatever it already carried")
+
+
+def test_a_blank_paragraph_INSIDE_the_block_is_not_where_the_gap_goes():
+    """`block[-1].tag == W + "p"` asks whether the block ENDS with a
+    paragraph — whether the table has a note under it. Asked of
+    `block[0]` it answers about the caption instead, which is a
+    paragraph in nearly every block there is.
+
+    The two part company on a note-less table whose caption is followed
+    by the blank paragraph Word writers leave there: the gap then lands
+    on that blank, between the caption and its own table, and the
+    paragraph that resumes after the table gets none."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.")
+        + P("Таблица 1. Заголовок") + P("") + TBL("шапка")
+        + P("Следующий абзац.")))
+
+    assert spacing_of(out, "Следующий")["before"] == "160", (
+        "the gap sits under the table, on the paragraph that resumes")
+    assert spacing_of(out, "Таблица 1.")["after"] == "40", "the caption's 2pt"
 
 
 def test_a_table_with_NO_note_puts_the_gap_on_the_next_paragraph():
