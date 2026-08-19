@@ -51,6 +51,19 @@ def test_audit_catches_captions_out_of_document_order():
     assert any("not 1..6" in p for p in problems)
 
 
+def test_audit_catches_a_DUPLICATE_number():
+    """`sorted(nums) != list(range(1, n + 1))`, not `>`: a duplicate
+    sorts BELOW the run it should be — [1, 1, 2] against [1, 2, 3] — so
+    an order comparison reports the gaps and misses the repeats. Two
+    captions numbered 1 is what a copied section leaves, and every
+    reference to "Table 1" then resolves to whichever comes first."""
+    xml = doc("".join(caption(n) for n in (1, 1, 2)))
+
+    problems = audit(xml, "Table")
+
+    assert any("not 1..3" in p for p in problems), problems
+
+
 def test_a_two_digit_exhibit_is_not_a_suffixed_scheme():
     """`\\w` includes digits, so the suffix class used to match the second
     digit of its own number: `\\d+` gave one back and "Table 11" read as
