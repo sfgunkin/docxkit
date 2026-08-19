@@ -1018,7 +1018,7 @@ days are gone:
 |---|---|---|---|
 | `ingest.py` | 35.1 % (raw) | **5.9 %** (11/188) -> 2 left | the messages, the id fallback, a block of 257 |
 | `equations.py` | 24.9 % -> 10.6 % | 8.4 % -> **5.7 %** (24/420) | the OMML branches Word's editor reaches |
-| `_table_layout.py` | — | 14.0 % -> **9.7 %** (42/435) | the width tables, three rules off by one |
+| `_table_layout.py` | — | 14.0 % -> **7.7 %** (33/430) | the width tables, three rules off by one |
 | `cli.py` | 28.3 % (raw, 2026-08-16) | **6.9 %** (31/449) | what the commands PRINT |
 
 `_table_layout`'s second figure was read as 13.4 % until the survivor
