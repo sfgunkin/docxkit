@@ -81,6 +81,97 @@ def test_writing_opens_the_file_itself(tmp_path):
     assert opened == [str(target)]
 
 
+class _Recorder:
+    """A Word whose Documents.Open and Document.Close keep their kwargs.
+
+    The tests above record the PATH only, which is what the staging
+    question needs. What Open and Close are asked to DO is a separate
+    set of promises — do not touch the user's recent-files list, never
+    save on the way out — and neither had a witness.
+    """
+
+    def __init__(self) -> None:
+        self.opened: list[tuple[str, dict]] = []
+        self.closed: list[dict] = []
+        recorder = self
+
+        class _Doc:
+            def Close(self, **kw):
+                recorder.closed.append(kw)
+
+        class _Docs:
+            def Open(self, path, **kw):
+                recorder.opened.append((path, kw))
+                return _Doc()
+
+        self.Documents = _Docs()
+
+
+def test_a_read_may_ask_for_staging_EXPLICITLY(tmp_path):
+    """`local and not read_only` — the refusal is for the ONE
+    combination that discards a write, and `or` in its place refuses
+    two more. This is the first of them: a caller naming the default
+    out loud, which is what a script does when it wants the staging to
+    survive a change to the default."""
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"not really a docx")
+    app = _Recorder()
+
+    with word.open_doc(app, target, read_only=True, local=True):
+        pass
+
+    (path, _kw), = app.opened
+    assert path != str(target) and path.endswith("paper.docx")
+
+
+def test_a_write_may_ask_for_the_file_itself_EXPLICITLY(tmp_path):
+    """The other one `or` refuses, and the one that matters: writing
+    with `local=False` is what the docstring tells a caller to pass.
+    Under `or` the documented way to write raises the error written for
+    the combination that cannot work."""
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"not really a docx")
+    app = _Recorder()
+
+    with word.open_doc(app, target, read_only=False, local=False):
+        pass
+
+    (path, kw), = app.opened
+    assert path == str(target)
+    assert kw["ReadOnly"] is False
+
+
+def test_opening_does_not_touch_the_users_recent_files(tmp_path):
+    """`AddToRecentFiles=False`. A batch opens a document per step —
+    build, compare, locate, export — and a run over one paper would
+    otherwise push everything else out of the user's recent list."""
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"not really a docx")
+    app = _Recorder()
+
+    with word.open_doc(app, target):
+        pass
+
+    (_path, kw), = app.opened
+    assert kw["AddToRecentFiles"] is False
+
+
+def test_closing_never_saves(tmp_path):
+    """`SaveChanges=0` is wdDoNotSaveChanges; 1 is wdSaveChanges, and
+    every close in this module would then write the file back. On a
+    read of the author's own manuscript that is an edit nobody asked
+    for — and on the staged copy it is a write that goes nowhere, which
+    is worse, because it looks like it worked."""
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"not really a docx")
+    app = _Recorder()
+
+    with word.open_doc(app, target):
+        pass
+
+    assert app.closed == [{"SaveChanges": 0}]
+
+
 # ----------------------------------------------- suppressed COM failures ---
 
 def _com_call_fails() -> None:
