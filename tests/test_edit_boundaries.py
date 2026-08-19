@@ -318,3 +318,44 @@ def test_superscript_does_NOT_fold_typography_unless_asked():
 
     out = superscript(p, "authors' note", normalize=True)
     assert "<w:vertAlign" in out
+
+
+def test_italic_lands_AFTER_the_properties_that_must_precede_it():
+    """`at = m.end() - len("<w:rPr>")` — the offset that puts `<w:i/>`
+    in its schema slot. EG_RPrBase orders rStyle, rFonts, b, bCs, i:
+    written before `<w:b/>` the run properties are out of order, which
+    is a document Word repairs on open.
+
+    Three mutants lived on that subtraction because every italicize
+    fixture here uses a run with NO properties, where the whole
+    expression is skipped."""
+    p = ('<w:p><w:r><w:rPr><w:rStyle w:val="Emphasis"/><w:b/>'
+         '<w:sz w:val="20"/></w:rPr>'
+         "<w:t>Journal of Ageing</w:t></w:r></w:p>")
+
+    out = italicize(p, "Journal of Ageing")
+
+    # `w:sz` sorts AFTER `w:i`, and it is what makes the offset visible:
+    # with nothing behind the insertion point, an offset past the end of
+    # the properties appends to the same place the correct one writes to
+    assert ('<w:rPr><w:rStyle w:val="Emphasis"/><w:b/><w:i/>'
+            '<w:sz w:val="20"/></w:rPr>' in out), out
+
+
+def test_a_label_that_ENDS_the_paragraph_stops_the_walk():
+    """`0 <= i < len(runs)` in `styled`. The walk climbs run by run
+    while the NEXT one carries the Hyperlink style, and a styled run
+    that ends the paragraph asks about an index that does not exist.
+
+    Styled runs with no link around them are the ordinary case for this
+    walk — Word leaves the character style behind when the author
+    deletes a link's address — and a citation closing a sentence is
+    where citations sit. Without the upper bound that is an IndexError
+    out of a guard whose whole job is to say "no"."""
+    p = ("<w:p>" + '<w:r><w:t xml:space="preserve">as </w:t></w:r>'
+         + _styled("Kan") + _styled("bur (2007)") + "</w:p>")
+
+    out = replace_in_para(p, "Kanbur (2007)", "Kanbur (2007a)",
+                          allow_hyperlink=True)
+
+    assert text_of(out) == "as Kanbur (2007a)"
