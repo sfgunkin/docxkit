@@ -417,3 +417,113 @@ def test_an_empty_anchor_asks_for_nothing(tmp_path):
     pdf = _pdf(tmp_path, "Table 3 sits here")
 
     assert render_anchors(pdf, ["", " ".strip()], dpi=40) == {}
+
+
+def test_the_DEFAULT_render_is_150_dpi(tmp_path):
+    """`dpi: int = 150`, and every test here passes 40 to keep itself
+    quick — so the number a caller actually gets was free.
+
+    150 is the eye gate's working resolution: `revision validate
+    --render` exists to be LOOKED at, and a page rendered at 40 dpi
+    answers "is there a table here" but not "is this the right table".
+    The pixel width is the only place the choice is visible."""
+    pdf = _pdf(tmp_path, "Table 3 sits here")
+
+    (default,) = render_anchors(pdf, ["Table 3"]).values()
+
+    assert default is not None
+
+    def png_width(path) -> int:
+        # bytes 16-19 of a PNG are the width, big-endian; no image
+        # library needed, and none is a dependency of this package
+        return int.from_bytes(path.read_bytes()[16:20], "big")
+
+    with pymupdf.open(str(pdf)) as doc:
+        points = doc[0].rect.width          # PDF points, 72 to the inch
+    assert png_width(default) == round(points / 72 * 150)
+
+
+def test_the_output_directory_is_created_with_its_PARENTS(tmp_path):
+    """`mkdir(parents=True)`. `--render` is given a path a person typed,
+    and `revision/build/pages/` under a fresh project has neither
+    component: without the parents the run dies on the first anchor with
+    a FileNotFoundError instead of writing what it was asked for."""
+    pdf = _pdf(tmp_path, "Table 3 sits here")
+    deep = tmp_path / "revision" / "build" / "pages"
+
+    (png,) = render_anchors(pdf, ["Table 3"], dpi=40, out_dir=deep).values()
+
+    assert png is not None and png.parent == deep
+
+
+def test_a_SQUARE_sheet_is_not_landscape(tmp_path):
+    """`rect.width > rect.height`, and `>=` calls a square page
+    landscape. A square sheet is not exotic in this corpus — a poster
+    or a figure page set to 210x210mm — and "landscape" is what
+    `problems` uses to explain a blank sheet, so the wrong answer sends
+    a person looking for a section break that is not there."""
+    pdf = _render(tmp_path, [((500, 500), "A square figure page", "3")])
+
+    (row,) = read_pdf(pdf)
+
+    assert row.orientation == "portrait"
+
+
+def test_a_number_printed_ABOVE_the_footer_band_is_not_read(tmp_path):
+    """`height * (1 - band)` — the footer band is the bottom 12% of the
+    sheet, and a number is only the sheet's number if Word printed it
+    there (or in the matching band at the top).
+
+    A digit in the BODY — a table cell, a year, a coefficient — is not
+    a page number, and a band computed as `1 + band` or `band` alone
+    swallows the whole page: every table of figures then reads as a
+    numbering defect."""
+    pdf = _render(tmp_path, [(A4, "The coefficient is 7", None)])
+
+    (row,) = read_pdf(pdf)
+
+    assert row.printed is None, "a number in the body is not the folio"
+
+
+def test_a_number_in_the_HEADER_band_is_read(tmp_path):
+    """The other band, and the reason there are two: a paper that
+    numbers in the header is not a paper with no numbers. `(0, height *
+    band)` is that band, and a mutant that collapses it reads every
+    header-numbered paper as unnumbered."""
+    pdf = _render(tmp_path, [(A4, "Section 1", None, "41")])
+
+    (row,) = read_pdf(pdf)
+
+    assert row.printed == 41
+
+
+def test_a_JUMP_is_reported_on_page_numbers_ABOVE_the_int_cache(tmp_path):
+    """`now > was + 1` — and `is not` in its place is true of every pair
+    of ints CPython does not cache, so a document whose folios pass 256
+    reports a jump between every consecutive sheet.
+
+    A thesis reaches page 257. So does a long appendix, which is exactly
+    the part of a document nobody rereads."""
+    rows = [Sheet(number=n, orientation="portrait", printed=p,
+                  blank=False)
+            for n, p in ((1, 300), (2, 301), (3, 305))]
+
+    found = problems(rows)
+
+    assert len(found) == 1, found
+    assert "JUMP" in found[0] and "301 -> 305" in found[0]
+
+
+# --- what is left in pages.py, and why ----------------------------------
+#
+# `clip = page.rect.__class__(0, top, page.rect.width, bottom)` -> a
+# left edge of 1 instead of 0. The clip is a horizontal band across the
+# whole sheet and a page number sits in the middle of it; one point of
+# margin at the left cannot exclude anything Word prints there. Argued
+# rather than tested — a fixture would have to place a digit in the
+# first point of the page, which is not a folio.
+#
+# `elif now > was + 1` -> `!= was + 1`. The branch is only reached when
+# `now > was` (the `if` above catches the restart), so "not exactly one
+# more" and "more than one more" are the same question there. The
+# IDENTITY spelling of it is a real defect and is tested, at 300.
