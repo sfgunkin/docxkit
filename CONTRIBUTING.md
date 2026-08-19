@@ -789,7 +789,42 @@ which drives Word — and `console.py`, which is sixty lines.
 | `_compare_read.py` | **7.6 %** (24/317) | 8.5 %, first measured the same morning; fourteen of the twenty-four are argued equivalents, kill_check'd one by one |
 | `probe.py` | **7.1 %** (12/168) | 12.5 %, and the fifteen killed were one fixture habit |
 | `console.py` | 0.0 % (0/28) | never measured; nothing to do |
-| `crossrefs.py` | 11.0 % (49/447) | 11.2 % — one target, one kill, and the rest of its list still to work |
+| `crossrefs.py` | **6.9 %** (57/822) | 11.2 %, and the run is the WHOLE module rather than a 460 sample — see below |
+
+Two things about the figures from 2026-08-19 onward. The denominators
+changed that morning: `mutation_survivors.py` now takes the
+`if __name__ == "__main__":` block and the keyword-only `*` of a
+signature out of both halves of the rate, alongside the PEP-563
+annotations, so a figure from before that date is not comparable
+digit-for-digit with one after it. And `crossrefs.py` was measured
+WHOLE — 861 mutants rather than the usual `--sample 460` — because the
+sample had been read twice already and the second reading turned up ten
+survivors the first had never run.
+
+**Every crossrefs survivor left is a documented equivalent**, argued in
+a note at the foot of `tests/test_crossrefs.py` and confirmed one at a
+time with `kill_check`. Fifty-seven stood at the measurement; reading
+the list afterwards turned up one more that was not equivalent — the
+skip for a paragraph with nothing readable in it, where `break` would
+stop the backwards walk at the last blank line in the document — so
+fifty-six remain and each of them is written down. That is a first for
+this package, and it is the state worth aiming at rather than a lower
+percentage: a survivor list where the reader is told which entries are
+permanent does not have to be re-derived next round. The clusters are
+`_caption_bookmarks`' offset arithmetic (13, all of which move the
+scope by less than the element they would have to find), the
+`@lru_cache` sizes (9), `_run_parts`' `close != -1` (8), and the
+`rfind(..., 0, …)` starts and `r_open < 0` guards (11 between
+`_wrap_label` and `_link_mention`).
+
+One removal came out of the round rather than a test. `link_more`
+scanned the paragraph's MASKED text and then tested each match for a
+NUL of its own — a test that cannot fire, since both patterns are built
+from an escaped label, `\s+` and the caption's digits, and no character
+class in either admits NUL. Five permanent survivors sat on that line.
+It was checked three ways before deleting it: structurally, by brute
+force over 400k NUL-bearing strings, and by asserting it under the
+whole suite.
 
 `word.py` is the one worth reading twice. Its first figure was the
 package's worst by a factor of two, and 41 of its 110 survivors were
