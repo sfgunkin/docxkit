@@ -49,6 +49,32 @@ def test_a_drawing_outside_any_caption_window_is_still_listed():
     assert d.missing
 
 
+def test_a_drawing_in_the_CAPTION_PARAGRAPH_belongs_to_no_caption():
+    """`range(caption_index + 1, …)` — the window opens AFTER the
+    caption, and the arithmetic that says so is invisible while no
+    fixture puts a drawing in the caption's own paragraph. A caption
+    typed above an inline image, in one paragraph, is an ordinary Word
+    layout, and this is the limit it meets: the drawing is listed and
+    reported for its alt text, with no caption beside it.
+
+    Pinned as the current answer rather than argued for. What it must
+    not do is quietly attribute the image to the caption ABOVE it, which
+    is what a window opening one paragraph early would do to every
+    figure in the document."""
+    # the caption sits at an ODD index, where `i | 1` is `i` and not
+    # `i + 1` — at index 0 the two agree and the fixture proves nothing
+    doc = (para("Prose before the exhibits.")
+           + '<w:p><w:r><w:t>Figure 1. In one paragraph</w:t>'
+           + '<w:drawing><wp:inline><wp:docPr id="1" name="Chart"/>'
+           + '<a:blip r:embed="rId7"/></wp:inline></w:drawing></w:r></w:p>'
+           + para("Figure 2. The next exhibit"))
+
+    (d,) = alt_texts(doc)
+
+    assert d.caption is None, "not its own caption's, and not Figure 2's"
+    assert d.missing
+
+
 def test_set_alt_text_adds_the_attribute():
     out = set_alt_text(DOC, "Figure 2.", "Two lines crossing")
     found = alt_texts(out)
