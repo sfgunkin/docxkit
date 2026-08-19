@@ -197,6 +197,11 @@ def compare_docs(a: Doc, b: Doc) -> Report:
     names: set[str] = (set().union(*(bookmark_names(p.xml) for p in a.parts))
                        if a.parts else set())
     for part in a.parts:
+        # No test pins the operator here, and the reason is _compare_read
+        # PARTS_RE: every stem it admits — document, footnotes, endnotes,
+        # header/footer N — sorts AFTER "body", and the label is that
+        # same literal, so `is` and `<=` cannot part company with `==`
+        # on any package this reads.
         label = "BUILT" if part.label == "body" else f"BUILT/{part.label}"
         report["integrity"] += integrity(part.xml, label, names)
     return report

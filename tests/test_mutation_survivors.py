@@ -85,3 +85,53 @@ def test_a_utf8_console_still_gets_the_characters_themselves(tmp_path):
     done = _report(tmp_path, "utf-8")
 
     assert "\u2212" in done.stdout
+
+
+SCRIPT = '''\
+"""A module that can also be run as a script."""
+
+
+def widen(x: int) -> int:
+    return x + 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(widen(1))
+'''
+
+
+def _script_report(tmp_path: Path, *rows: tuple[int, str]):
+    src = tmp_path / "runnable.py"
+    src.write_text(SCRIPT, encoding="utf-8")
+    db = _database(tmp_path / "run.sqlite", *rows)
+    return subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
+def test_the_script_guard_is_not_counted_as_a_gap(tmp_path):
+    """`if __name__ == "__main__":` and its body cannot be reached by a
+    test run, which IMPORTS the module: `__name__` is the dotted name,
+    so the guard is False however the comparison is mutated and the body
+    never runs. Counted as real, every module with a `main()` carries
+    two or three permanent survivors, and a reader who cannot tell those
+    from a missing test stops reading the number — which is the reason
+    this tool exists."""
+    done = _script_report(tmp_path, (8, "SURVIVED"), (9, "SURVIVED"),
+                          (5, "KILLED"))
+
+    assert done.returncode == 0, done.stderr
+    assert "2 are inside" in done.stdout
+    assert "REAL SURVIVAL 0.0% (0/1)" in done.stdout, done.stdout
+    assert "L8" not in done.stdout and "L9" not in done.stdout
+
+
+def test_a_survivor_OUTSIDE_the_guard_is_still_a_gap(tmp_path):
+    """The classification is a span, not the whole file: the same module
+    reports its ordinary survivor, and reports it alone."""
+    done = _script_report(tmp_path, (5, "SURVIVED"), (9, "SURVIVED"))
+
+    assert "1 is inside" in done.stdout, "one, and it says so in English"
+    assert "REAL SURVIVAL 100.0% (1/1)" in done.stdout, done.stdout
+    assert "L5" in done.stdout

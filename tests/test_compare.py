@@ -1071,6 +1071,31 @@ def test_a_link_only_in_the_user_copy_is_reported_for_review(tmp_path):
         ("user-only", "Smith (2020)")]
 
 
+def test_a_link_label_is_cut_at_NINETY_characters(tmp_path):
+    """`lab[:90]`. A hyperlink's label is the visible text, and a link
+    laid over a whole sentence carries the sentence — the built-only /
+    user-only lines are a LIST, one per label, and an uncut label turns
+    each into a paragraph. Ninety is what fits a terminal line beside
+    the side and the count; the cut is the reason the section reads.
+
+    Checked on both sides: `gone` and `gained` truncate separately, and
+    a change to one of them is invisible while the other is tested."""
+    long_label = "Table 5 " + "of the appendix " * 12  # 200 characters
+    assert len(long_label) > 90
+    anchor = ('<w:hyperlink w:anchor="Table5"><w:r><w:t>'
+              + long_label + "</w:t></w:r></w:hyperlink>")
+    built, edited = docs(tmp_path, para(anchor), para(run(long_label)))
+
+    labels = [h["label"] for h in compare(built, edited)["hyperlinks"]]
+    assert labels == [long_label[:90]], labels
+    assert len(labels[0]) == 90
+
+    # the same label, now only in the user's copy
+    other = [h["label"] for h in compare(*docs(
+        tmp_path, para(run(long_label)), para(anchor)))["hyperlinks"]]
+    assert other == [long_label[:90]], other
+
+
 def test_both_command_lines_are_one_comparison(tmp_path, monkeypatch, capsys):
     """`docxkit compare` and `python -m docxkit.compare` are two front
     doors to one comparison, and they have drifted before.

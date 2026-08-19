@@ -51,6 +51,43 @@ def annotation_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
     return spans
 
 
+def main_guard_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
+    """Every span belonging to an ``if __name__ == "__main__":`` block.
+
+    Test == equivalent by construction, and for the same reason as an
+    annotation: under pytest the module is IMPORTED, so `__name__` is
+    its dotted name and the guard is False however the comparison is
+    mutated. The body never runs either, so the whole statement goes in
+    — a one-line `raise SystemExit(main())` otherwise contributes a
+    survivor to every module that can be run as a script.
+
+    Two of these under `compare.py` and three under `cli.py` read as a
+    module with a gap in it, and the gap is a line no test can reach
+    without launching a subprocess to reach it.
+    """
+    spans: list[tuple[int, int, int, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if (isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "__name__"
+                and node.end_lineno is not None
+                and node.end_col_offset is not None):
+            spans.append((node.lineno, node.col_offset,
+                          node.end_lineno, node.end_col_offset))
+    return spans
+
+
+def within(spans: list[tuple[int, int, int, int]], row: int, col: int) -> bool:
+    """Is (row, col) inside any of these spans?"""
+    return any(r1 <= row <= r2
+               and (row != r1 or col >= c1)
+               and (row != r2 or col <= c2)
+               for r1, c1, r2, c2 in spans)
+
+
 def definitions(tree: ast.Module) -> list[tuple[int, int, str]]:
     """Every def/class as (first line, last line, name)."""
     kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -86,12 +123,7 @@ def main() -> int:
     lines = text.splitlines()
     tree = ast.parse(text)
     spans = annotation_spans(tree)
-
-    def in_annotation(row: int, col: int) -> bool:
-        return any(r1 <= row <= r2
-                   and (row != r1 or col >= c1)
-                   and (row != r2 or col <= c2)
-                   for r1, c1, r2, c2 in spans)
+    guards = main_guard_spans(tree)
 
     rows = sqlite3.connect(db_path).execute("""
         SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
@@ -110,8 +142,11 @@ def main() -> int:
     skipped = [r for r in rows if r[3] == "SKIPPED"]
     ran = [r for r in rows if r[3] != "SKIPPED"]
     survived = [r for r in ran if r[3] == "SURVIVED"]
-    real = [r for r in survived if not in_annotation(r[0], r[1])]
-    annotated = len(survived) - len(real)
+    unreached = [r for r in survived if within(spans, r[0], r[1])
+                 or within(guards, r[0], r[1])]
+    real = [r for r in survived if r not in unreached]
+    in_guard = sum(1 for r in unreached if not within(spans, r[0], r[1]))
+    annotated = len(unreached) - in_guard
     killed = len(ran) - len(survived)
     sample = f" (sampled from {len(rows)})" if skipped else ""
     print(f"{len(ran)} mutants run{sample} · {killed} killed · "
@@ -119,10 +154,15 @@ def main() -> int:
     print(f"  {annotated} of the survivors are inside a TYPE "
           f"ANNOTATION — equivalent by\n  construction (PEP 563: never "
           f"evaluated), so they are not a question")
+    if in_guard:
+        is_are = "is" if in_guard == 1 else "are"
+        print(f'  {in_guard} {is_are} inside `if __name__ == "__main__":`'
+              f" — equivalent under a\n  test run, which IMPORTS the "
+              f"module and never runs it as a script")
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.
-    base = len(ran) - annotated
+    base = len(ran) - annotated - in_guard
     share = len(real) / base * 100 if base else 0.0
     print(f"  {len(real)} to actually look at — REAL SURVIVAL "
           f"{share:.1f}% ({len(real)}/{base})\n")
