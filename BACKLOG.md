@@ -17,7 +17,8 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Two open, as of 2026-08-19** — below. A third was the accept-all half of
+**Four open, as of 2026-08-19** — below; the last two are one afternoon's use of
+`placement`, which is a day old. A fifth was the accept-all half of
 gate 5's text check, closed the same day (`unaccepted`, in Fixed). Four were raised from an earlier manuscript round
 (DSI: the §6 restructure, the C/B exposition batches and F1). Three were real
 and closed the same day; the fourth was **retracted — it was never a defect**,
@@ -103,6 +104,60 @@ mean what it says.
 **Found by:** DSI, 2026-08-19, closing the v3 cycle. Worked around with
 `--accept-loss` naming all four, after verifying each anchor by hand — which is
 exactly the habit the split would make unnecessary.
+
+### S1 `placement.place` moves a block OUT of its own section, silently
+
+DSI's таблица 4 is wide and owns a landscape section: «Информативность…» ends
+the portrait section, and the `*` note after the table ends a landscape one, so
+the section spanned bookmark + caption + table + «Примечание…» + `*` note.
+`place()` moved the caption, table and «Примечание…» five paragraphs up to sit
+nearer the first mention. The `sectPr` stayed behind on the note, so:
+
+* the landscape section came to contain ONE stranded paragraph — a blank
+  landscape page 26 in a 62-page paper;
+* the table landed in the PORTRAIT section and was typeset in an orientation
+  it was never laid out for.
+
+**Everything reported success.** `place()` returned `moved=True`;
+`citations.audit_links` gave 152 links / 0 broken; and the structure-count gate
+— which counts `sectPr` explicitly — saw **3 before and 3 after**, because the
+break was not deleted, only orphaned. Counting section breaks cannot see a
+section break that stopped containing anything. DSI's wrapper even passed a
+`render` hook, and that did not catch it either: the render check asks whether
+the TABLE straddles a page, not whether the move stranded a section.
+
+**Fix.** A block whose span contains, or is bounded by, a `pPr/sectPr` is not a
+candidate for `move` — refuse it and say so in `PlacementReport.problems`,
+because a table that owns a section has already been placed deliberately. If
+moving it is ever wanted, the section has to travel with it, which is a
+different and larger operation. The cheap correct version is the refusal.
+
+**Found by:** DSI, 2026-08-19, from the author reporting «page 26 — lost
+footnote * and incorrect page orientation». Repaired in the paper by
+`revision/scripts/fix_table4_section.py`, which restores the block into the
+section; the placement pass must not be re-run on that table until this lands.
+
+### S2 `placement.NOTE` knows four words, and a table's note is not always one
+
+`NOTE = ^\s*(?:Примечание|Источник|Note|Source)\b` decides where a table's block
+ENDS. DSI's таблица 4 carries a second note under the first — `* Высокая доля
+самостоятельной занятости…`, the explanation of the `*` on one of its rows — and
+it matches none of the four, so the block ended at «Примечание…» and the `*`
+note was left behind when the table moved. A footnote-style marker under a table
+is ordinary typesetting; `*`, `†`, `‡` and `a)` are all this same shape.
+
+Related to the S1 above but INDEPENDENT of it: in a document with no sections at
+all, this alone still separates a table from half of its notes, and nothing
+reports it — the note is still a paragraph, so no count moves.
+
+**Fix.** Extend the vocabulary to a leading footnote marker, and let the caller
+override it the way `caption` and `mention` already can. Note the ordering trap:
+the block must keep absorbing note paragraphs until one is neither a keyword
+note nor a marker note, so a `*` note AFTER a «Примечание…» is included.
+
+**Found by:** the same таблица 4, same day. Checked the rest of the paper before
+filing — DSI has exactly one `*` note, and the other eleven tables end their
+blocks at «Примечание…» correctly, so this cost one table, not twelve.
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
