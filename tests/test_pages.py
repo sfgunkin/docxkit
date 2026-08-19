@@ -527,3 +527,65 @@ def test_a_JUMP_is_reported_on_page_numbers_ABOVE_the_int_cache(tmp_path):
 # `now > was` (the `if` above catches the restart), so "not exactly one
 # more" and "more than one more" are the same question there. The
 # IDENTITY spelling of it is a real defect and is tested, at 300.
+
+
+def test_a_MISSING_pymupdf_names_the_extra_that_installs_it(monkeypatch):
+    """The whole render layer is optional — `docxkit[pdf]` — and every
+    other module works without it. The one thing a person needs when it
+    is absent is the name of the extra, so the ImportError is caught and
+    re-raised with it.
+
+    `# pragma: no cover` keeps this branch out of the coverage figure,
+    which is right — it cannot run on a machine that HAS PyMuPDF — but
+    it does not keep a mutant out of it: the `except ImportError` was
+    free until something asked what it says."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kw):
+        if name == "pymupdf":
+            raise ImportError("No module named 'pymupdf'")
+        return real_import(name, *args, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    monkeypatch.delitem(__import__("sys").modules, "pymupdf", raising=False)
+
+    from docxkit.pages import _import_pymupdf
+
+    with pytest.raises(ImportError) as exc:
+        _import_pymupdf()
+
+    assert "docxkit[pdf]" in str(exc.value)
+    assert "works without it" in str(exc.value)
+
+
+def test_an_import_that_fails_for_ANOTHER_reason_keeps_its_message(
+        monkeypatch):
+    """`except ImportError`, not `except Exception`. PyMuPDF ships
+    compiled binaries, and on Windows a broken install raises from its
+    own module init — an OSError about a DLL, not an ImportError.
+
+    Caught here, that becomes "pip install docxkit[pdf]", which sends a
+    person to reinstall a package they already have. The real message is
+    the only thing that says which DLL."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def explode(name, *args, **kw):
+        if name == "pymupdf":
+            raise OSError("[WinError 126] The specified module could not "
+                          "be found: libmupdf.dll")
+        return real_import(name, *args, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", explode)
+    monkeypatch.delitem(__import__("sys").modules, "pymupdf", raising=False)
+
+    from docxkit.pages import _import_pymupdf
+
+    with pytest.raises(OSError) as exc:
+        _import_pymupdf()
+
+    assert "libmupdf.dll" in str(exc.value)
+    assert "docxkit[pdf]" not in str(exc.value)
