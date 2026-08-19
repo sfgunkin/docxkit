@@ -1018,7 +1018,14 @@ days are gone:
 |---|---|---|---|
 | `ingest.py` | 35.1 % (raw) | **5.9 %** (11/188) -> 2 left | the messages, the id fallback, a block of 257 |
 | `equations.py` | 24.9 % -> 10.6 % | **8.4 %** (35/419) | the OMML branches Word's editor reaches |
-| `_table_layout.py` | — | **14.0 %** (62/442) | the width tables, three rules off by one |
+| `_table_layout.py` | — | 14.0 % -> **9.7 %** (42/435) | the width tables, three rules off by one |
+| `cli.py` | 28.3 % (raw, 2026-08-16) | **6.9 %** (31/449) | what the commands PRINT |
+
+`_table_layout`'s second figure was read as 13.4 % until the survivor
+tool was pointed at the source the RUN was planned against rather than
+the live file — the classification of annotation spans moves with the
+text, so a module being worked on reads several points high. See
+"the survivor list reads the source the run was planned against".
 
 `ingest`'s 35.1 % is the clearest case of a stale number misleading: it
 is a RAW figure from before the annotation mutants came out of the
