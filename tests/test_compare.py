@@ -3507,3 +3507,154 @@ def test_a_symbol_that_KEPT_its_marker_is_not_reported_as_changed(tmp_path):
 #   insert, replace} — and over each of them the ordering operator
 #   agrees with equality on every value that can reach the line;
 #   difflib's tags are module literals, so identity agrees too.
+
+
+# --- the _compare_read run of 2026-08-20 ---------------------------------
+#
+# 7.3 %, and the survivors were in the READING rather than in the
+# comparison: which part of a match is kept, where a mask starts, how
+# alike two running heads have to be before they are the same head.
+
+
+def test_a_flag_switched_OFF_is_not_a_flag(tmp_path):
+    """`m.group(1)`, the VALUE of `w:val`, against the whole tag. Word
+    writes `<w:b w:val="0"/>` when an author unbolds a word inside a
+    bold style — the property is present and says off — and the whole
+    tag is never one of "0", "false", "none", so every switched-off
+    property reads as switched ON.
+
+    Both documents then differ in emphasis nothing carries, which is the
+    report that gets a comparison ignored."""
+    off = ('<w:p><w:r><w:rPr><w:b w:val="0"/></w:rPr>'
+           "<w:t>The index rose.</w:t></w:r></w:p>")
+    plain = "<w:p><w:r><w:t>The index rose.</w:t></w:r></w:p>"
+
+    report = compare(*docs(tmp_path, off, plain))
+
+    assert report["format"] == [], report["format"]
+
+
+def test_a_SUPERSCRIPT_is_reported_by_its_name(tmp_path):
+    """`va.group(1)` is the vertical alignment itself — "superscript" —
+    and the whole match is `<w:vertAlign w:val="superscript"/>`. The
+    difference is invisible in any test that asks whether the format
+    layer FIRED and visible in the only place it matters: the line a
+    reader is given, which then names an XML element at them."""
+    plain = "<w:p><w:r><w:t>The index rose.</w:t></w:r></w:p>"
+    sup = ('<w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+           "<w:t>The index rose.</w:t></w:r></w:p>")
+
+    report = compare(*docs(tmp_path, plain, sup))
+
+    assert [(e["from"], e["to"]) for e in report["format"]] == [
+        ([], ["superscript"])], report["format"]
+
+
+def test_the_mask_replaces_the_cached_RESULT_and_nothing_else():
+    """The existing tests count the mask TOKENS a walk produced; this
+    one is about everything it did NOT touch. A masked field still has
+    to be a field — Word reads the instruction, not the cached result,
+    so a mask that ate the `instrText` would turn a page number into
+    literal text on the next save — and the running head above it is
+    not the comparison's business at all.
+
+    Stated as one equality, because "the document with this one text
+    node replaced" is the whole contract."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = para(run("Page ")) + "<w:p>" + field("PAGE", "7") + "</w:p>"
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+    assert "> PAGE </w:instrText>" in out, "the instruction was cut"
+
+
+def test_two_running_heads_SIXTY_PER_CENT_alike_are_the_same_head():
+    """`score >= 0.6`, and the fixture sits exactly on it: twelve
+    characters, every one of them in the twenty-eight of the other, is
+    2 x 12 / 40.
+
+    Headers do not pair by name — a section edit renumbers header2 to
+    header3 — so this threshold is the whole of what decides whether an
+    edited running head is one part that changed or two parts, one
+    added and one removed. A hundredth either way is a different report,
+    and nothing said which side of it the boundary sits on."""
+    from docxkit._compare_read import Part, pair_parts
+
+    pa = Part("word/header1.xml", hdr(para(run("Running head"))))
+    pb = Part("word/header2.xml", hdr(para(run("Running head, second "
+                                               "version"))))
+
+    pairs = pair_parts([pa], [pb])
+
+    assert [(x.name if x else None, y.name if y else None)
+            for x, y in pairs] == [("word/header1.xml", "word/header2.xml")]
+
+
+def test_a_paragraph_carries_WORDS_id_not_the_attribute_it_sits_in():
+    """`Para.pid` is `w14:paraId`'s VALUE. It is the one identifier that
+    survives an edit in Word — comments.py matches on it — and it is
+    public through `docxkit.compare.Para`, so what it holds is a
+    contract even while this module only reads it out.
+
+    Nothing in the package consumes it yet, which is exactly why the
+    mutant that puts the whole attribute in it lived: a value carried
+    and never read is a value nobody can be wrong about until someone
+    uses it."""
+    from docxkit._compare_read import Para
+
+    assert Para(para(run("Text."), pid="AB12CD34"), "").pid == "AB12CD34"
+    assert Para("<w:p><w:r><w:t>No id.</w:t></w:r></w:p>", "").pid is None
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `run.group(1)` and `rpr_m.group(1)` in `_char_fmt`, widened to group
+#   0. Both add only the element's own tags — `<w:r ...>` around a run's
+#   body, `<w:rPr>` around its properties — and everything read out of
+#   them (`RPR_RE`, `WT_RE`, the flag patterns, `w:val="Hyperlink"`)
+#   lives inside, so the same answers come back.
+# * `_flags(rpr) | _valued(...)` written `^`. The two sets cannot
+#   intersect: one holds bare names ("italic", "superscript"), the other
+#   `f"{label} {value}"` pairs ("size 24"), and no name is ever a pair.
+# * `stack.append([tables, 0, 0])` with 1 or -1 in the CELL slot. That
+#   value is read only by a `<w:p>` reached before the table's first
+#   `<w:tc>`, and a paragraph inside a table is inside a cell inside a
+#   row — `<w:tr>` sets the cell counter to 0 on the way in.
+# * `tag == "tr"`, `"tc"` and `"p"` as `<=`, `>=` and `is`.
+#   `STRUCT_TAG_RE` admits four tags and the chain has already taken
+#   "tbl"; over what is left — tr, tc, p — the ordering comparisons
+#   agree with equality at every branch ("tc" < "tr", "p" < "tc"), and
+#   the tags are module literals.
+# * `stem == "document"` written `<=`. `TEXT_PART_RE` admits document,
+#   footnotes, endnotes, header N and footer N; every one of those but
+#   "document" itself sorts after it.
+# * `score = 0.0` written `-1.0` in `pair_parts`. A part scoring 0.0
+#   becomes `best` under the lower start where it did not before, and
+#   is then refused by `score >= 0.6` just the same.
+# * `result_at = start + sep.end()` written `|`. `a | b` is never
+#   below `a` and never above `a + b`, so the mutant's region begins
+#   somewhere between the field's own start and the end of its
+#   separator — a span holding `fldChar` and `instrText` elements and
+#   no `<w:t>` at all. `_mask_text` masks the FIRST `<w:t>` in the
+#   region it is given, which is the cached result either way.
+# * the four remaining mutants on `result_at < regions[-1][1]` — `<=`,
+#   `==`, `is`, and `regions[not 1]` — for the reason the nested-field
+#   test above already gives: regions are masked right to left, so a
+#   nested one the guard lets through is masked first and then covered
+#   entirely by the outer one. The guard buys the work, not the output.
+
+
+# _compare_render measured 1.4 % (3/207) on the same day, and all three
+# are argued:
+#
+# * `s["type"] == "MOVE"` written `is`. The types are literals written
+#   in `_compare_diff` and read here — "MOVE", "DELETE", "INSERT",
+#   "PART REMOVED" — and an all-caps identifier-shaped literal is one
+#   object across the modules of one interpreter.
+# * `h["n"] > 1` and `c["n"] > 1`, for the " xN" suffix, written
+#   `!= 1`. `n` is a Counter value that reached the report, and
+#   `_compare_diff` deletes the zero counts Counter arithmetic leaves
+#   behind before it builds one — so the two can only disagree on a
+#   count no producer emits.
