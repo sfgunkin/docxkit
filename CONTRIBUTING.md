@@ -1524,11 +1524,20 @@ test file and each argument checked by `kill_check`.
 | `_cite_build.py` | **2.9 %** (11/380) | 8.9 % | the report a round acts on: what it quotes, and what it skips past |
 | `_compare_diff.py` | **6.0 %** (24/399) | 8.8 % | the layers a person reads — comment cuts, label moves, the move threshold |
 | `_compare_read.py` | **6.0 %** (19/317) | 7.3 % | a property switched OFF, a superscript named, two heads 60 % alike |
-| `_cite_audit.py` | 11.2 % (46/409) | first measurement | the audit's own sentences: 22 killed, re-measure pending |
+| `_cite_audit.py` | **3.7 %** (15/409) | 11.2 %, its first measurement | the audit's own sentences: which store a finding is in, which order they come in, and five walks that ended early |
+| `body.py` | **2.4 %** (6/246) | — | one real survivor: a span of zero would have written `w:gridSpan w:val="0"` |
+| `citations.py` | 5.6 % (6/107) | — | six argued: the finding-kind comparisons and the width of a rule |
+| `edit.py` | **5.7 %** (24/423) | 8.5 % | measured to confirm the 19th's round; not worked further |
 
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
-with survivors like everything else.
+with survivors like everything else. Every one of the sixteen is argued.
+
+**Six of these modules are CLOSED** — every survivor left is written
+down at the foot of its test file with the argument for it, and
+`kill_check` has confirmed each claim one at a time: `_compare_render`,
+`figures`, `authors`, `styles`, `_cite_audit`, `citations`. That is the
+state worth aiming at rather than a lower percentage.
 
 ### The seventh sweep: what the instruments were still getting wrong
 
@@ -1586,6 +1595,35 @@ first fan-out printed `_cite_build`'s 8.9 % under `_table_core`'s
 heading, and the only thing that said which was which was the function
 names in the tally beneath it. Every line under `--in` names its own
 module now.
+
+### Two package defects came out of the same week's reading
+
+Neither was found by a mutant. Both were found by the question the sixth
+sweep produced — **does this walk READ every part it writes?** — asked
+of the one apparatus that had been left out:
+
+* **the citation apparatus read `word/footnotes.xml` and nothing else.**
+  A work cited only in an endnote got its entry bookmark and no link,
+  and the report said nothing at all — not "skipped", not "unmatched".
+  The audit reported that paper's bookmarks as 1 -> 0 and its links as
+  1 -> 0, which reads as a document with nothing in it to fix, and
+  `repair_plan` — which decides DEBRIS from "not among the document's
+  citations" — proposed deleting the markers of every work cited there.
+  A one-liner a person will run. Writer, audit and plan moved together,
+  because an audit widened alone reports work its builder cannot do.
+* **an endnote id was spliced into an override unremapped.** Word
+  renumbers note ids on save; `build_overrides` has rewritten FOOTNOTE
+  ids by definition text since the beginning — splicing one raw
+  "silently repoints footnotes", as its docstring says — and did
+  nothing of the kind for endnotes. The deliverable then cites the
+  wrong work while the author's copy cites the right one, and
+  `--expect-clean` cannot see it: it compares reference marks, not what
+  they resolve to.
+
+The second one also demonstrates the gate that catches a duplicated
+pattern: the note-definition regex existed in `revision.py` already,
+and `test_no_element_pattern_is_compiled_in_two_modules` failed the
+moment this one was compiled rather than inlined into a `findall`.
 
 ### A stub that ignores its argument hides every mutant at its call sites
 
