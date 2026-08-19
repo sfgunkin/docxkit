@@ -58,6 +58,19 @@ def test_a_table_whose_stub_is_filled_from_the_top_still_gets_one_header():
     assert plan.header_rows == 1
 
 
+def test_the_count_starts_at_the_FIRST_row():
+    """`header = 0`, then the walk. Starting the count at 1 skips the
+    check of row 0 — so a table whose first row IS labelled and whose
+    second is not (a stub label over a spanning group head, which is how
+    a panelled table opens) reads as having two header rows, and the mid
+    rule lands under the group instead of over it."""
+    plan = plan_of([["Country", "AFI", "Dif."],
+                    ["", "2020", "2024"],
+                    ["Albania", "0.31", "0.02"]])
+
+    assert plan.header_rows == 1
+
+
 def test_every_row_having_an_empty_stub_does_not_run_off_the_end():
     plan = plan_of([["", "a"], ["", "b"]])
     assert plan.header_rows == 2
