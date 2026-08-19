@@ -1,6 +1,7 @@
 """Figures — every test here is a trap one of the papers fell into."""
 from __future__ import annotations
 
+import re
 import struct
 import zlib
 
@@ -10,6 +11,7 @@ from conftest import document, make_parts, para, run
 from docxkit.errors import AnchorError, PackageError
 from docxkit.figures import (
     EMU_PER_INCH,
+    _png_size,
     find,
     find_all,
     landscape,
@@ -430,3 +432,136 @@ def test_the_first_media_part_in_a_package_with_none_is_image1():
     from docxkit.figures import _new_media_part
 
     assert _new_media_part({}, b"z") == "word/media/image1.png"
+
+
+# --- the run of 2026-08-20: 3.8 %, and what was left of it ---------------
+
+
+def inline(rid: str, cx: int = 100, cy: int = 50) -> str:
+    """One drawing, WITHOUT a paragraph around it — so a fixture can put
+    two of them in one paragraph, which is what several of these are
+    about."""
+    return (f'<w:drawing><wp:inline><wp:extent cx="{cx}" cy="{cy}"/>'
+            f'<a:graphic><a:graphicData><pic:pic>'
+            f'<wp:docPr id="1" name="Picture 1"/>'
+            f'<pic:blipFill><a:blip r:embed="{rid}"/></pic:blipFill>'
+            f'<a:spPr><a:xfrm><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+            f"</a:spPr></pic:pic></a:graphicData></a:graphic>"
+            f"</wp:inline></w:drawing>")
+
+
+def test_a_drawing_in_the_CAPTION_S_OWN_paragraph_is_not_the_figures():
+    """The window starts at `caption_index + 1`, and the caption's own
+    paragraph is outside it: a caption typed above an inline image sits
+    in the same paragraph as the image BELOW it often enough that the
+    two must not be confused.
+
+    The caption is at an ODD index here on purpose. `caption_index | 1`
+    is `caption_index + 1` for every even one, so a fixture with the
+    caption first cannot see the difference."""
+    body = (para(run("Some prose before the figure."))
+            + f'<w:p><w:r><w:t>Figure 1. Something</w:t></w:r>'
+            f"<w:r>{inline('rId7')}</w:r></w:p>"
+            + f"<w:p><w:r>{inline('rId8')}</w:r></w:p>")
+
+    figure = find(document(body), "Figure 1.")
+
+    assert figure.caption_index == 1, "the fixture must put it at an odd one"
+    assert figure.embeds == ["rId8"], figure.embeds
+
+
+def test_a_blob_that_is_not_a_PNG_is_refused_however_it_SORTS():
+    """The signature check is an equality, and every fixture that used a
+    blob sorting BELOW `\\x89PNG` — "GIF89a", a text file, zeros — is
+    answered the same way by `<`. A JPEG starts `\\xff\\xd8`, which sorts
+    above: the check passes, four bytes of the Adobe header are read as
+    a width, and a figure is resized to it.
+
+    JPEG is the format a figure arrives in from every plotting tool that
+    is not matplotlib."""
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF" + bytes(40)
+
+    with pytest.raises(PackageError, match="not a PNG"):
+        _png_size(jpeg)
+
+
+def test_isolating_a_figure_repoints_ONE_drawing_not_its_twin(tmp_path):
+    """`replace(..., 1)`. Two drawings in one paragraph on one
+    relationship is the shape `isolate` exists for — AFI's Figures 8,
+    11 and 12 shared an image — and the point of the pass is that the
+    OTHERS keep the shared id. Repointing both is the thing the caller
+    asked not to happen, and the report says the same either way."""
+    parts = make_parts(
+        para(run("Figure 1. Shared"))
+        + f"<w:p><w:r>{inline('rId7')}{inline('rId7', 200, 80)}</w:r></w:p>")
+    parts["word/_rels/document.xml.rels"] = (
+        b'<?xml version="1.0"?><Relationships xmlns="http://schemas.'
+        b'openxmlformats.org/package/2006/relationships"><Relationship '
+        b'Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/'
+        b'2006/relationships/image" Target="media/image1.png"/>'
+        b"</Relationships>")
+    parts["word/media/image1.png"] = png(4, 2)
+    new = tmp_path / "new.png"
+    new.write_bytes(png(8, 4))
+
+    replace_image(parts, "Figure 1.", str(new), isolate=True,
+                  keep_width=False)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert re.findall(r'r:embed="(\w+)"', doc) == ["rId8", "rId7"], doc
+
+
+def test_set_extent_resizes_the_FIRST_drawing_and_leaves_its_NEIGHBOUR():
+    """`count=1`, on both halves of the extent. The block handed to this
+    is a PARAGRAPH — `_rescale_drawing` passes `p.group(0)` — so a
+    paragraph holding two figures side by side has two `wp:extent` and
+    two `a:ext` in it, and replacing them all resizes the neighbour to
+    the aspect of an image it does not show.
+
+    That is the same class of error the docstring's document-wide regex
+    warns about, one nesting level down."""
+    block = ("<w:p><w:r>" + inline("rId7", 100, 50)
+             + inline("rId8", 200, 80) + "</w:r></w:p>")
+
+    out = set_extent(block, 999, 333)
+
+    assert re.findall(r'cx="(\d+)" cy="(\d+)"', out) == [
+        ("999", "333"), ("999", "333"), ("200", "80"), ("200", "80")], out
+
+
+def test_the_scaled_height_is_ROUNDED_not_floored(tmp_path):
+    """`round(cx * height / width)` against `cx * height // width`. A
+    figure whose aspect does not divide the width exactly is the normal
+    case, and the two differ by one EMU — 1/914400 of an inch, which
+    nothing sees — EXCEPT that `//` on the way in makes `round` a no-op,
+    so the error is a truncation and always in the same direction.
+
+    Seven by three at one inch is the smallest fixture where the two
+    disagree."""
+    image = tmp_path / "aspect.png"
+    image.write_bytes(png(7, 3))
+
+    out = scale_to_width(inline("rId7"), str(image), 1.0)
+
+    cx = round(EMU_PER_INCH)
+    assert re.findall(r'cx="(\d+)" cy="(\d+)"', out) == [
+        (str(cx), "391886"), (str(cx), "391886")], out
+    assert cx * 3 // 7 == 391885, "the fixture stopped separating them"
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `if len(hits) > 1:` written `!= 1`. The `if not hits: raise` above it
+#   means zero never reaches the line, and `hits[0]` written `hits[-1]`
+#   is the same argument one line further on: exactly one hit is left.
+# * `shared_relationships(doc).get(rid, 0)` with a default of 1 or -1,
+#   and `if uses > 1` written `!= 1`. The rid comes from a drawing in
+#   the same document the map was built from, so it is always a key and
+#   the default is never taken; the count is therefore at least 1 and
+#   the two comparisons can only disagree at 0.
+# * `_DESCR_RE.sub(..., count=1)` with 0 or 2, and `block.replace(el,
+#   new_el, 1)` with 2. `el` is one `wp:docPr` element and the pattern
+#   matches its `descr` attribute: one match in one element, so a
+#   larger count has nothing more to find. (`_DRAWING_RE` splits an
+#   `mc:AlternateContent` into two blocks rather than one with two
+#   docPr, which is what would make this a question.)
