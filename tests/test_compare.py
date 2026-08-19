@@ -2875,3 +2875,38 @@ def test_the_FIRST_of_two_equally_similar_parts_is_the_pair(tmp_path):
     assert [(s["type"], s["part"]) for s in report["structure"]] == [
         ("PART ADDED", "header3")]
     assert [t.get("part") for t in report["text"]] == ["header1"]
+
+
+def test_a_SECOND_equation_is_walked_after_an_unchanged_first(tmp_path):
+    """`continue`, not `break`: a paragraph holds as many equations as
+    the author put in it, and the first one being untouched says nothing
+    about the second. Under `break` a methods paragraph that repeats its
+    definition and then rewrites the estimator reports nothing at all."""
+    same = math(mrun("x"), mrun("+y"))
+    a = f"<w:p>{same}{math(mrun('a'), mrun('+b'))}</w:p>"
+    b = f"<w:p>{same}{math(mrun('a'), mrun('-b'))}</w:p>"
+
+    report = compare(*docs(tmp_path, a, b))
+
+    assert [t["formula"] for t in report["text"]] == [["tokens"]]
+
+
+def test_a_structure_change_the_OTHER_WAY_ROUND_is_still_structure(tmp_path):
+    """`ea[0] != eb[0]`, not `<`: the skeletons are strings and which
+    one sorts higher is an accident of the tags. Flattening a subscript
+    (`sSub` -> nothing) is the same edit as adding one, and under `<`
+    only one of the two directions is reported.
+
+    And `glyph_only` asks `ea[0] == eb[0]` — under `>=` a structural
+    change whose skeleton sorts above the other's reads as glyph-only,
+    which moves the finding out of the gated bucket and into the review
+    one."""
+    flat = omath(mrun("x"), mrun("1"))
+    sub = omath("<m:sSub><m:e>" + mrun("x") + "</m:e><m:sub>"
+                + mrun("1") + "</m:sub></m:sSub>")
+
+    # sub -> flat, the direction the existing fixture does not take
+    report = compare(*docs(tmp_path, sub, flat))
+
+    assert [f["change"] for f in report["formula"]] == ["structure"]
+    assert report["glyph"] == [], "a skeleton change is not a glyph one"
