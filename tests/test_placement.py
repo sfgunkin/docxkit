@@ -1367,3 +1367,65 @@ def test_TWO_captions_containing_the_string_are_refused():
         placement.exhibit_block(
             parts(P("Figure 5. Curves") + DRAW
                   + P("Figure 5. Curves again") + DRAW), "Figure 5.")
+
+
+def test_a_caption_written_INSIDE_A_TABLE_is_not_the_caption_paragraph():
+    """Some papers put the caption in a one-cell table above the
+    exhibit, so the string "Table 3." is inside a `w:tbl` as well. The
+    caption is a PARAGRAPH; reading the table as one makes the block
+    start at the wrong element and swallow the caption's own table."""
+    boxed = ("<w:tbl><w:tr><w:tc>" + P("Table 3. Distribution")
+             + "</w:tc></w:tr></w:tbl>")
+    block = placement.exhibit_block(
+        parts(P("Prose.") + boxed + P("Table 3. Distribution")
+              + TBL("a") + P("Prose after.")),
+        "Table 3.")
+
+    assert [e.tag.split("}")[1] for e in block.elements] == ["p", "tbl"]
+    assert block.elements[1].findall(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tr")
+
+
+def test_exhibit_block_steps_over_the_BLANKS_under_a_caption():
+    """Word leaves them behind constantly — a spacer someone typed, an
+    empty paragraph left by a deletion. The exhibit is still the
+    caption's, and the blanks travel with it."""
+    block = placement.exhibit_block(
+        parts(P("Prose.") + P("Table 3. Distribution") + P("") + P("")
+              + TBL("a") + P("Prose after.")),
+        "Table 3.")
+
+    assert [e.tag.split("}")[1] for e in block.elements] == [
+        "p", "p", "p", "tbl"]
+
+
+def test_a_blank_paragraph_before_a_FIGURE_is_stepped_over_too():
+    """The drawing clause and the table clause are one rule."""
+    block = placement.exhibit_block(
+        parts(P("Prose.") + P("Figure 5. Curves") + P("") + DRAW),
+        "Figure 5.")
+
+    assert len(block.elements) == 3, [e.tag for e in block.elements]
+
+
+# `exhibit_block`'s remaining survivors from the 2026-08-21 round,
+# argued rather than pinned:
+#
+# `el.tag == W + "p"` -> `<= W + "p"` in the caption walk. Body-level
+# elements are `w:p`, `w:tbl`, `w:bookmarkStart`/`End` and `w:sectPr`,
+# and of those only `p` sorts at or below "p" — a `w:tbl` sorts ABOVE
+# it, and a bookmark carries no text for the caption test to find. The
+# `is not` spelling of the same line is a different question and IS
+# pinned, by the boxed-caption test above.
+#
+# `heads[0]` -> `heads[-1]`: reached only when exactly one paragraph
+# opens with the caption, because two is refused three lines earlier.
+#
+# `if j >= len(kids)` -> `== len(kids)` and `while k < len(kids)` ->
+# `!= len(kids)`: both indices are stepped by one from inside the
+# bounds, so they meet the length exactly and never pass it.
+#
+# `_ends_section`'s `el.tag == W + "p"` -> `is not`: `W + "p"` builds a
+# new string on every call, so the identity test is always True and the
+# answer falls to the `pPr/sectPr` lookup — which no element other than
+# a paragraph has as a direct child.
