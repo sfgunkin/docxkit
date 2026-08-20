@@ -379,7 +379,7 @@ Three things that design buys, each of which was a trap in the entry below:
 
 **Still true, and worth keeping here:** a parenthesised year is unambiguous
 and a bare one is not. AFI's own citation linker found years with
-`(\d{4}[a-z]?)\.` and, once the year moved into parentheses, silently
+`\b(\d{4}[a-z]?)\.` and, once the year moved into parentheses, silently
 matched inside DOIs and page ranges instead — Feng 2025 from
 `econmod.2025.107399`, Lai 1912 from `1875–1912`. **Any downstream parser
 written against the old form has to be re-checked after a `--fix` run.**
