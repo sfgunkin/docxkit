@@ -493,3 +493,19 @@ def test_a_caption_DEEP_in_the_document_still_finds_its_table(tmp_path):
     got = probe(make_docx(tmp_path, body))
 
     assert got.exhibits == [("Table 1", "table, 3 rows", "")]
+
+
+# `probe.py` measured 5.4 % (9/168) on 2026-08-20, and all nine are
+# equivalent:
+#
+# * `w == "body"` in the report's count, written `<=` and `is`. The two
+#   values are "body" and "nested", written as literals in this module —
+#   "nested" sorts after "body", and one object each.
+# * `body.rfind("<w:p", 0, …)` and `rfind("</w:p>", 0, …)` written with
+#   a start of 1. `body` opens at `<w:body>`, so nothing this searches
+#   for can sit at offset 0 for the one-character window to hide.
+# * the five on `blocks[i + 1:i + 3]`, the two blocks after a caption.
+#   Every one of them starts the slice AT the caption instead, and the
+#   loop above has already skipped every block that is a table — so the
+#   extra entry is a block that cannot answer the question being asked
+#   of it.
