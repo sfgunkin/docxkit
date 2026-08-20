@@ -617,6 +617,38 @@ the element is never empty. For a READER an empty element read as absent
 is usually harmless; for a WRITER it is the defect, because the answer
 to "absent" is to insert one — beside the one that is already there.
 
+### And a property present TWICE, which is the writer's half of it
+
+The same night's other shape, and the same reading found it: five
+writers, each taking the FIRST copy of a property and stopping.
+
+* `_xml.set_para_property` removed one child and re-inserted;
+  `set_run_property` replaced the first and returned;
+* `_table_layout._set_tbl_pr` removed one match of its pattern;
+  `_set_tc_w` substituted with `count=1`;
+* `crossrefs._with_hyperlink_style` did the same to `w:rStyle`.
+
+Two of one property in one properties element is invalid and ORDINARY.
+A style turns `keepNext` off with a second `w:val="0"` element beside
+the one that turns it on; a run salvaged out of two carries `w:sz`
+twice; and this package itself shipped a release that wrote misplaced
+properties, so the documents needing the repair are exactly the ones a
+re-run has to fix. Taking one copy out leaves the stale element sorting
+FIRST — which is the reading Word takes — and asked to REMOVE the
+property, every one of them left it in place.
+
+So a writer's contract is not "replace the property" but **"leave
+exactly one, and it is mine"**. Back to front so the earlier offsets
+stay good, and over the LIVE properties only: `w:rPrChange`,
+`w:pPrChange` and `w:tcPrChange` hold a snapshot of what a tracked
+change replaced, and a copy in there is the record, not a duplicate.
+
+This was pinned the OTHER way once, on 2026-08-19, off a fixture of
+identical twins — the one shape where the harm does not show. A test
+that says "the document unchanged" is only as good as the fixture that
+made it: give it the `w:val="0"` copy and the same code answers with
+the stale element first.
+
 ### A figure is void when the HARNESS moves, too
 
 The rule above checks the source's commit time against the session file.
@@ -1537,9 +1569,13 @@ test file and each argument checked by `kill_check`.
 | `hygiene.py` | 4.9 % (22/449) | first measurement | what the house-style pass refuses to touch |
 | `probe.py` | **5.4 %** (9/168) | 7.1 % | nine survivors, all argued |
 | `revision.py` | **6.2 %** (21/340) | 8.8 %, its first measurement | the report a hand-back gets — **partial round**, eleven of thirty |
-| `body.py` | **2.4 %** (6/246) | — | one real survivor: a span of zero would have written `w:gridSpan w:val="0"` |
 | `citations.py` | 5.6 % (6/107) | — | six argued: the finding-kind comparisons and the width of a rule |
-| `edit.py` | **5.7 %** (24/423) | 8.5 % | measured to confirm the 19th's round; not worked further |
+| `pages.py` | **3.3 %** (6/180) | 6.1 % | six argued: an index under a length check, and four clip-rectangle origins |
+| `refstyle.py` | **3.8 %** (15/395) | 4.8 % | the reference audit's own two-sided rules |
+| `_xml.py` | 4.7 % (21/448) | 4.5 % | a property present TWICE — and sixteen of the twenty argued, which is why the FIGURE did not move |
+| `_table_layout.py` | **4.8 %** (21/438) | 7.8 % | a guard written for a document Word does emit, and a report |
+| `word.py` | **3.7 %** (13/349) | 7.4 % | a limit above 256, and a temp directory Word still holds |
+| `crossrefs.py` | 7.3 % (32/436) | 6.7 % | one wrong argument in the last round's own note — see below |
 
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
@@ -1654,6 +1690,45 @@ The second one also demonstrates the gate that catches a duplicated
 pattern: the note-definition regex existed in `revision.py` already,
 and `test_no_element_pattern_is_compiled_in_two_modules` failed the
 moment this one was compiled rather than inlined into a `findall`.
+
+### An argued equivalence can be WRONG, and the argument says how
+
+The seventh sweep's note on `crossrefs` said the `count=1` in
+`_with_hyperlink_style` was equivalent because "`w:rPr` admits a single
+`w:rStyle`, an rPr string has one opening tag". Both halves are true of
+a valid `w:rPr`. Neither is true of the STRING that function is handed:
+`w:rPrChange` holds the formatting a tracked change replaced, and it is
+a `w:rPr` nested inside the `w:rPr`. So a run whose only character
+style sat in that snapshot had the Hyperlink style written into the
+historical record, and the properties the page shows got none.
+
+The mutant was killed by the fix, three defects came out of six lines,
+and the lesson is about the shape of the argument rather than that one
+line: **an equivalence argued from what the SCHEMA allows is an
+argument about the element, not about the string**. Ask what the
+argument excludes before writing it down — a snapshot, an empty
+element, a second copy of something that "can only appear once" — and
+the same three shapes are the ones this package keeps meeting.
+
+Which is also the case for re-reading an argued list. The figure does
+not move when a survivor is argued rather than killed, so a module
+whose remaining survivors are all argued reads as unchanged forever;
+what changes is whether the arguments still hold. This one had not.
+
+### Re-measure the module you just CHANGED
+
+`_xml` was measured at 4.5 %, worked, and measured again the same
+afternoon. The second sample reached the lines the fix had just
+written, and found two holes in them: the slot walk's `break` (a run
+with two properties the new one sorts ahead of is the ordinary case)
+and a same-name scan whose identity reading holds for one-character
+property names and fails for every longer one. Both were pinned within
+the hour.
+
+New code is the least-measured code in the package, and a fix is new
+code. The figure will not go down — the survivors that were ARGUED are
+still survivors — but the sample lands somewhere new every time, and
+the newest lines are where it has never been.
 
 ### A test can ask about the MACHINE instead of the code
 
