@@ -981,7 +981,11 @@ def test_the_window_of_a_revision_NEAR_THE_TOP_reaches_the_start():
 #   from that string and carries the comment's own `w:id`, which is
 #   unique in the part.
 #
-# NOT worked: the `else 0` in the thread sort key
-# (`int(c.cid) if c.cid.isdigit() else 0`). It orders a non-numeric
-# comment id against the ids 0 and 1 at an identical timestamp, and
-# Word writes numeric ids.
+# Recorded rather than pinned: the `else 0` in the thread sort key
+# (`int(c.cid) if c.cid.isdigit() else 0`). Reaching it takes an id that
+# is not a number — the reader accepts one, because `w:id` is read as
+# `[^"]*` while ST_DecimalNumber forbids it — AND a competitor at the
+# SAME timestamp whose id is exactly 0 or 1. Where it fires, the two
+# readings put one malformed reply either side of one numbered reply,
+# and neither order is the documented one. Pinning it would invent a
+# contract; this says why it is left.
