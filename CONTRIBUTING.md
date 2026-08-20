@@ -1802,6 +1802,26 @@ over a failing suite, and a commit went through red. The five gates are
 run UNPIPED, chained with `&&`, and anything that needs trimming gets
 it after the chain, not inside it.
 
+### A patch script written in a HEREDOC arrives with its backslashes halved
+
+Three times on 2026-08-20/21, in the shell layer the agent patches
+through: `python - <<'PY'` hands Python a payload whose `\\` has already
+become `\`. In a non-raw string literal `\n` is then a real newline and
+the file gets a broken quote, which ruff reports at once.
+
+`\b` is the one to worry about. It becomes U+0008, a character `grep`,
+`diff` and the terminal all render as nothing, so
+`w:footnoteReference\b[^>]*` went into `_xml.py` as a regex that also
+matches `<w:footnoteReferenceX` and read as correct in every review.
+
+Compose the character rather than typing it — `B = chr(92)` — or write
+the payload with an editor tool and exec the file. And after a session
+that patched this way, sweep for it:
+
+    python -c "import pathlib; print([str(f) for f in pathlib.Path('.').rglob('*') if f.is_file() and f.suffix in {'.py','.md'} and chr(8) in f.read_text(encoding='utf-8', errors='ignore')])"
+
+The backlog entry (S3, Open) has the rest.
+
 ### A fixture that HASHES is a fixture with a fresh draw in it
 
 The test for `promote`'s stale-batch guard needed content whose hash

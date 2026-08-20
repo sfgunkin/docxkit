@@ -17,6 +17,40 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 the agent's Bash heredocs EAT BACKSLASHES, and a `\b` lands as a control character
+
+**Symptom as observed.** 2026-08-20/21, three times in one session. A patch
+script written as a `python - <<'PY'` heredoc reaches Python with every
+backslash already halved: a `\\n` typed in the payload arrives as `\n`, and
+in a non-raw string literal that becomes a REAL newline, so the file gets a
+broken string and ruff reports `missing closing quote`. That half is loud.
+
+The quiet half is `\b`. It becomes U+0008 BACKSPACE — invisible in `grep`,
+in a diff and in a terminal. A regex written as `w:footnoteReference\b[^>]*`
+landed in `_xml.py` as `w:footnoteReference<BS>[^>]*`, which also matches
+`<w:footnoteReferenceX`, and a `\b` in this file sat as a control character
+until a sweep found it.
+
+**Why S3 rather than S4.** The loud half is a syntax error and costs a
+minute. The quiet half is a REGEX THAT IS SILENTLY WRONG in the module every
+other module is built on, committed green because nothing tests the boundary
+that went missing — the same shape the mutation rounds exist to find,
+arriving through the toolchain instead of through the code.
+
+**Repro.** Any `python - <<'PY'` heredoc whose payload contains a doubled
+backslash. Quoting the heredoc delimiter makes no difference.
+
+**Workaround, in use.** Compose the backslash instead of typing it —
+`B = chr(92)`, then build the string — or write the payload to a file with
+the Write tool and exec it. Neither is a resolution: the next patch script
+written the obvious way is wrong again, and wrong INVISIBLY.
+
+**What would fix it.** Nothing in this repository; it is the agent
+harness's shell layer, not docxkit's. Recorded here because the damage lands
+in docxkit's files, and because the sweep is cheap to run after any session
+that patched through heredocs — every `.py` and `.md` in the tree, looking
+for `chr(8)`.
+
 ### S2 `build_overrides` ingests BODY paragraphs only — a footnote the author retyped is dropped
 
 Found by review, 2026-08-19, while widening the tracked gates to endnotes.
@@ -455,6 +489,54 @@ after two failed attempts at wiring three citations. A `docxkit api [TOPIC]`
 that lists the public surface by SUBJECT — and re-homing the bookmark helpers
 into a `bookmarks` module that `citations` imports — would recover more time
 than most new features.
+
+---
+
+### S1 `by_caption` anchors on the first paragraph CONTAINING the caption, so body prose shadows the real caption
+
+**Symptom as observed.** 2026-08-21, AFI `working.docx` (r4 round).
+`repkit doctor` G4 reports `no table under caption 'Table 3.'` — while the
+manuscript plainly carries `Table 3. Distribution of workers across
+age-friendly and less age-friendly occupations…` with a 21-row table
+directly beneath it. Tables 4 and 5, whose numbers are never written
+"Table 4." in prose, resolve fine. One of 23 exhibits, reported as a
+manuscript defect when the manuscript is correct.
+
+**Cause.** `_table_core.by_caption` picks the anchor with a substring test
+over the whole paragraph:
+
+    para = next((m for m in PARA_RE.finditer(xml)
+                 if caption in visible_text(m.group(0))), None)
+
+Body prose that ends a sentence with a cross-reference — "Four ECA
+economies … have positive OASI values, as do the EU and … Table 3." at
+offset 75,691, some 395,000 characters ahead of the caption at 470,376 —
+contains the string and wins on document order. `_beside` then does its
+own job correctly on the wrong anchor: the nearest table on each side is
+behind another caption, so it refuses both and returns None.
+
+**Why S1 rather than S3.** Here it produced a red gate, which is loud and
+costs an afternoon of looking for a paper defect that does not exist. The
+same anchor can just as easily return a table: let the shadowing prose sit
+beside a table with no caption in between and `by_caption` hands that table
+back with no error at all — precisely the "a wrong table is worse than no
+table" case its own docstring is written against, and one `required=True`
+cannot fire on. A caller reordering rows then edits a different exhibit.
+
+**Fix.** Prefer a paragraph whose visible text STARTS with the caption;
+fall back to the "contains" match only when no such paragraph exists (some
+papers do run the caption inline). `_beside` already reaches one layer down
+for `caption_re()` — the definition of "this paragraph is a caption" is
+sitting in the same function.
+
+**Test that fails without it.** Prose "… as reported in Table 3." placed
+before a genuine `Table 3.` caption + table: `by_caption(xml, "Table 3.")`
+must return the captioned table. Second case, for the silent half: put an
+UNCAPTIONED table immediately after that prose paragraph and assert it is
+not what comes back.
+
+**Affects.** repkit's G4 on any paper whose prose cross-references a table
+by number at the end of a sentence — which is house style, so most of them.
 
 ---
 
