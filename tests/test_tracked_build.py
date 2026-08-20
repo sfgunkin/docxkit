@@ -321,7 +321,8 @@ def test_a_body_only_count_is_not_reported_as_the_whole_batch(
                   progress=said.append)
     note = [line for line in said if "in the body" in line]
     assert note, "a batch whose revisions are all in footnotes said nothing"
-    assert "0 of them" in note[0]
+    assert "Word counts 0 in the body" in note[0], note
+    assert "25 revision elements" in note[0], note
 
     # And once more at THREE HUNDRED, agreeing. CPython hands out one
     # object per int up to 256, so `is not` in place of `!=` is
@@ -340,6 +341,66 @@ def test_a_body_only_count_is_not_reported_as_the_whole_batch(
     tracked.build(original, revised, out, verify_in_word=False, force=True,
                   progress=said.append)
     assert not any("in the body" in line for line in said), said
+
+
+def test_the_gap_between_the_two_counts_NAMES_both_of_its_causes():
+    """The message used to blame footnotes for the whole difference.
+
+    AFI r4 batch 13 read "33 revisions, 15 of them in the body; the rest
+    are in footnotes or endnotes" with `footnotes.xml` and
+    `endnotes.xml` holding ZERO between them: the other 18 were adjacent
+    body revisions Word had GROUPED. The wording had been right in the
+    batch before, which is what made it worth following.
+    """
+    parts = make_parts(
+        para(ins(run("one"))) + para(ins(run("two"))) + para(dele(run("go"))),
+        footnotes=notes("footnotes",
+                        f'<w:footnote w:id="2"><w:p>{ins(run("a"))}'
+                        f"</w:p></w:footnote>"))
+
+    assert tracked.revisions_by_part(parts) == {
+        "word/document.xml": 3, "word/footnotes.xml": 1}
+
+    # Word says two: one footnote revision it does not see, and two of
+    # the body's three grouped into one.
+    said = tracked._revision_gap(parts, body=2, total=4)
+
+    assert "Word counts 2 in the body" in said, said
+    assert "1 of them are in word/footnotes.xml" in said, said
+    assert "the remaining 1 are in word/document.xml too" in said, said
+    assert "GROUPS" in said, said
+    # and the body is not listed among the parts Word cannot reach: that
+    # sentence is true of a note store and false of the main story
+    assert "word/document.xml, where Word" not in said, said
+
+
+def test_the_gap_says_NOTHING_about_grouping_when_there_is_none():
+    """Each cause is named only when it is present — which is the whole
+    complaint. A batch that really is all footnotes still reads as one.
+    """
+    parts = make_parts(
+        para(run("plain")),
+        footnotes=notes("footnotes",
+                        f'<w:footnote w:id="2"><w:p>{ins(run("a"))}'
+                        f"</w:p></w:footnote>"))
+
+    said = tracked._revision_gap(parts, body=0, total=1)
+
+    assert "1 of them are in word/footnotes.xml" in said, said
+    assert "GROUPS" not in said, said
+
+
+def test_a_part_with_no_revisions_is_not_named_at_all():
+    """`footnotes.xml` exists in nearly every manuscript. Listing it at
+    zero is how the old message sent a reader to inspect it.
+    """
+    parts = make_parts(
+        para(ins(run("one"))) + para(ins(run("two"))),
+        footnotes=notes("footnotes",
+                        '<w:footnote w:id="2"><w:p/></w:footnote>'))
+
+    assert "word/footnotes.xml" not in tracked.revisions_by_part(parts)
+    assert "footnotes" not in tracked._revision_gap(parts, body=1, total=2)
 
 
 def test_build_passes_the_compare_options_through(monkeypatch, sources):

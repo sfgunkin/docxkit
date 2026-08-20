@@ -536,33 +536,6 @@ exactly the set `replace_in_para` will refuse to cut across.
 
 ---
 
-### S2 `revision build` blames footnotes for a gap that is Word's revision GROUPING
-
-**Symptom as observed.** AFI r4 batch 13, 33 revisions, every one of them in
-`word/document.xml`:
-
-    revisions: 33
-      (15 of them in the body; the rest are in footnotes or endnotes, where
-       Word's own count and Review > Next do not go)
-
-`footnotes.xml` and `endnotes.xml` held **zero** revision elements. The gap
-between 33 and 15 is Word GROUPING adjacent revisions in the main story, not
-part location — `report.revisions` counts elements across text parts,
-`report.body_revisions` is Word's group count.
-
-The message attributes the difference to footnotes unconditionally. In batch 12
-it happened to be right (11 revisions really were in footnotes), which is worse:
-the wording is trusted. It sent me to inspect a clean `footnotes.xml`.
-
-**Repro.** Build any batch whose body edits are adjacent enough for Word to
-group them and whose footnotes are untouched.
-
-**Fix sketch.** Count revision elements per part, which `tracked` already can,
-and say what is true: *"33 revision elements; Word groups them into 15 in the
-body"* — naming footnotes/endnotes only when those parts are actually non-empty.
-
----
-
 ### S4 `internal_links` is public in fact and private by import path
 
 **Symptom as observed.** `from docxkit.revision import internal_links` draws
@@ -941,6 +914,26 @@ up, so the two directions read alike. It belongs in `package` and not in the
 callers: 126 scripts across the four papers call `read_parts` themselves.
 
 ## Fixed
+
+### ~~S2 `revision build` blames footnotes for a gap that is Word's revision GROUPING~~
+
+Fixed 2026-08-20 in `tracked.py`. `revisions_by_part` counts revision
+elements per text-bearing part (public — a paper asking "where are they?"
+had no way to), and `_revision_gap` writes the two causes as separate
+lines, each printed only when it is actually there:
+
+    revisions: 33
+      (Word counts 15 in the body; the package holds 33 revision elements)
+      (the remaining 18 are in word/document.xml too: Word GROUPS adjacent
+       revisions, so one thing to accept can be several elements)
+
+A note store holding nothing is not named at all, which is the specific
+sentence that sent a reader to inspect a clean `footnotes.xml`.
+
+The test that pinned the old wording asserted `"0 of them"`; it now asserts
+both numbers appear, and three new ones cover the shapes it could not reach —
+both causes at once, footnotes alone, and a `footnotes.xml` present but
+unrevised. The last of those is what the old message got wrong.
 
 ### ~~S1 `citations.link_all` layers its OWN anchor scheme over a paper that already has one~~
 

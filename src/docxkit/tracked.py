@@ -90,6 +90,7 @@ __all__ = [
     "build",
     "compare_collateral",
     "package_counts",
+    "revisions_by_part",
     "structure_counts",
     "structure_diff",
     "unaccepted",
@@ -490,6 +491,43 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
         # know the same seven kinds `revision.state` does.
         "revisions": len(revision_elements(text_xml)),
     }
+
+
+def revisions_by_part(parts: dict[str, bytes]) -> dict[str, int]:
+    """Revision elements per text-bearing part; empty parts omitted.
+
+    :func:`package_counts` gives the total and Word gives the body's,
+    and the two disagree for TWO different reasons — revisions outside
+    the main story, and Word GROUPING adjacent ones inside it. Neither
+    number can tell them apart, so a build that guessed sent a reader to
+    inspect a footnotes part holding nothing (AFI r4 batch 13: 33 and
+    15, and `footnotes.xml` was empty).
+    """
+    return {name: n for name, xml in text_parts(parts)
+            if (n := len(revision_elements(xml)))}
+
+
+def _revision_gap(parts: dict[str, bytes], body: int, total: int) -> str:
+    """Why Word's body count and the package's total differ, in full.
+
+    Both causes are named, and only when they are actually present. A
+    message that attributes the whole gap to footnotes is right often
+    enough to be trusted, which is what makes being wrong about it
+    expensive.
+    """
+    per_part = revisions_by_part(parts)
+    lines = [(f"Word counts {body} in the body; the package holds {total} "
+              f"revision elements")]
+    lines += [(f"{n} of them are in {name}, where Word's own count and "
+               f"Review > Next do not go")
+              for name, n in per_part.items() if name != DOCUMENT]
+    grouped = per_part.get(DOCUMENT, 0) - body
+    if grouped > 0:
+        lines.append(
+            f"the remaining {grouped} are in {DOCUMENT} too: Word GROUPS "
+            f"adjacent revisions, so one thing to accept can be several "
+            f"elements")
+    return "\n".join(f"  ({line})" for line in lines)
 
 
 #: What a docx carries that a reader never reads AS CHARACTERS.
@@ -1000,9 +1038,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         report.revisions = package_counts(parts)["revisions"]
         say(f"revisions: {report.revisions}")
         if report.body_revisions != report.revisions:
-            say(f"  ({report.body_revisions} of them in the body; the rest "
-                f"are in footnotes or endnotes, where Word's own count and "
-                f"Review > Next do not go)")
+            say(_revision_gap(parts, report.body_revisions,
+                              report.revisions))
 
         # Before anything is added to it: what did Compare decline to
         # carry over? Checked against the REVISED input, which is the
