@@ -334,3 +334,28 @@ def test_the_warning_that_the_TREE_MOVED_is_not_swallowed(sweep):
     assert "changed since this session was planned" in said
     assert said.count("NOTE:") == 1, "once, not once per chunk"
     assert said.count("run —") == 2, "and the chunk lines still come"
+
+
+def test_a_harness_that_moves_DURING_the_run_is_reported_at_the_end(
+        sweep, monkeypatch, tmp_path):
+    """The session checks the tree at the START of each chunk, so a run
+    that fits in ONE chunk never re-checks — and an edit made while it
+    ran goes unmentioned. `placement` did exactly that on 2026-08-20:
+    one chunk, two tests added to its harness halfway through, and a
+    figure that described neither tree.
+
+    The fingerprint is taken again when the session exits."""
+    seen: list[int] = []
+
+    def fingerprint(module, tests):
+        seen.append(1)
+        return f"hash-{len(seen)}"      # a different tree every time
+
+    monkeypatch.setattr(measure_all, "fingerprint", fingerprint)
+
+    said = _said(sweep(CHUNKS))
+
+    assert len(seen) == 2, "taken before the run and again after it"
+
+    assert "changed while this ran" in said, said
+    assert "as it was PLANNED" in said

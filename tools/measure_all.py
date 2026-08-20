@@ -27,6 +27,7 @@ smallest-first, so blocks would put every big module in the last stream.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
@@ -43,6 +44,23 @@ from docxkit.console import utf8_stdout
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def fingerprint(module: str, tests: list[str]) -> str:
+    """The bytes a figure is ABOUT: the module and its harness.
+
+    Taken before the session starts and again when it ends. The session
+    checks the same thing, but only at the start of each chunk — so a
+    run that fits in ONE chunk never re-checks, and an edit made while
+    it ran goes unmentioned. `placement` did exactly that on
+    2026-08-20: one chunk, two tests added to its harness halfway
+    through, and a figure that quietly described neither tree.
+    """
+    h = hashlib.sha256()
+    for name in [f"src/docxkit/{module}", *tests]:
+        path = ROOT / name
+        h.update(path.read_bytes() if path.exists() else b"")
+    return h.hexdigest()
+
+
 def run(module: str, minutes: float, sample: int = 0, *,
         tag: bool = False) -> None:
     """Measure ONE module, streaming the session's chunk lines through.
@@ -54,6 +72,7 @@ def run(module: str, minutes: float, sample: int = 0, *,
     only the function names in the tally said which was which.
     """
     tests = harness_for(module)
+    before = fingerprint(module, tests)
 
     def say(text: str) -> None:
         print(f"{module + ' ' if tag else ''}{text}", flush=True)
@@ -104,6 +123,15 @@ def run(module: str, minutes: float, sample: int = 0, *,
     proc.wait()
     if not last:                 # no chunk ever graded: say why, not "0%"
         say("    " + (" | ".join(others)[-300:] or "no output"))
+
+    if not moved and fingerprint(module, tests) != before:
+        # The session checks this at the START of each chunk, so a run
+        # that fits in ONE chunk never re-checks. Said here even when
+        # there is no session file to read: a tree that moved is worth
+        # knowing about whatever else went wrong.
+        moved = ("NOTE: the module or its harness changed while this ran. "
+                 "The figure describes the tree as it was PLANNED.")
+        say(f"    {moved}")
 
     stem = module[:-3].lstrip("_") or module[:-3]
     db = ROOT / f".mutation-{stem}.sqlite"
