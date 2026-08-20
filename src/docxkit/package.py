@@ -157,18 +157,40 @@ def assert_unlocked(path: str | Path) -> None:
             f"{Path(path).name} is locked (open in Word). Close it and retry.")
 
 
-def read_parts(path: str | Path) -> dict[str, bytes]:
+def read_parts(path: str | Path, *, retries: int = 6,
+               delay: float = 0.2) -> dict[str, bytes]:
     """Every member of the package, in stored order.
 
     A missing path or a non-zip file raises :class:`PackageError` — the
     CLI turns that into a message, where a raw ``FileNotFoundError``
     walked straight through it as a traceback.
+
+    A sharing violation is RETRIED, on the same bounded schedule
+    :func:`_replace_atomically` uses for the write side. Two suites read
+    a manuscript on a OneDrive-backed tree and failed with `[Errno 13]`
+    with nothing holding the file; a retry read it on the first attempt
+    seconds later (2026-08-20). One direction hardened and the other not
+    is what makes a paper's suite randomly red, and a suite that is
+    randomly red is one an author learns to re-run instead of read.
+
+    The last failure says the file is LOCKED rather than unreadable,
+    because after five retries that is what it is — and it is the
+    wording the write side already uses for the same race.
     """
-    try:
-        with zipfile.ZipFile(path) as z:
-            return {n: z.read(n) for n in z.namelist()}
-    except (OSError, zipfile.BadZipFile) as exc:
-        raise PackageError(f"cannot read {path}: {exc}") from exc
+    last: PermissionError | None = None
+    for attempt in range(retries):
+        try:
+            with zipfile.ZipFile(path) as z:
+                return {n: z.read(n) for n in z.namelist()}
+        except PermissionError as exc:       # sharing violation, or a lock
+            last = exc
+            if attempt < retries - 1:
+                time.sleep(delay * (attempt + 1))
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise PackageError(f"cannot read {path}: {exc}") from exc
+    raise PackageError(
+        f"{Path(path).name} is locked (open in Word). Close it and retry. "
+        f"({last})") from last
 
 
 #: Attributes Word rewrites on every save. They carry no meaning for a

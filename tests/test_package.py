@@ -388,6 +388,73 @@ def test_a_locked_target_is_RETRIED_and_the_write_lands(monkeypatch,
     assert len(calls) == 3                    # two refusals, then through
 
 
+def _flaky_zip(fail: int, calls: list[int]):
+    """A `ZipFile` that raises PermissionError its first `fail` opens."""
+    real = zipfile.ZipFile
+
+    def opener(path, *a, **kw):
+        calls.append(1)
+        if len(calls) <= fail:
+            raise PermissionError(13, "Permission denied")
+        return real(path, *a, **kw)
+
+    return opener
+
+
+def test_a_TRANSIENT_read_denial_is_retried_and_the_read_lands(
+        monkeypatch, simple_docx):
+    """The write side rode this race out and the read side did not: two
+    suites reading a manuscript on a OneDrive-backed tree failed with
+    [Errno 13] while nothing held the file, and a retry read it at once.
+    360 passed -> 1 failed -> 360 passed is the worst shape a gate has.
+    """
+    from docxkit import package as pkg
+
+    calls: list[int] = []
+    monkeypatch.setattr(pkg.zipfile, "ZipFile", _flaky_zip(2, calls))
+    monkeypatch.setattr(pkg.time, "sleep", lambda _s: None)
+
+    parts = pkg.read_parts(simple_docx)
+
+    assert "word/document.xml" in parts
+    assert len(calls) == 3                    # two refusals, then through
+
+
+def test_a_read_denial_that_PERSISTS_says_the_file_is_locked(
+        monkeypatch, simple_docx):
+    """After five retries it is not a transient sync, it is Word — and
+    the message is the one the write side already gives for it, rather
+    than a bare errno the caller has no reason to retry."""
+    from docxkit import package as pkg
+
+    calls: list[int] = []
+    slept: list[float] = []
+    monkeypatch.setattr(pkg.zipfile, "ZipFile", _flaky_zip(99, calls))
+    monkeypatch.setattr(pkg.time, "sleep", slept.append)
+
+    with pytest.raises(PackageError, match=re.escape("locked (open in Word)")):
+        pkg.read_parts(simple_docx)
+
+    assert len(calls) == 6
+    # five waits, not six: sleeping after the LAST attempt delays the
+    # error by more than a second and changes nothing about it
+    assert len(slept) == 5
+
+
+def test_a_missing_file_is_NOT_retried(monkeypatch, tmp_path):
+    """A retry is for a race. A path that does not exist will not start
+    existing, and six sleeps before saying so is a CLI that hangs."""
+    from docxkit import package as pkg
+
+    slept: list[float] = []
+    monkeypatch.setattr(pkg.time, "sleep", slept.append)
+
+    with pytest.raises(PackageError, match="cannot read"):
+        pkg.read_parts(tmp_path / "not_here.docx")
+
+    assert slept == []
+
+
 def test_the_retries_RUN_OUT_and_the_error_is_raised(monkeypatch,
                                                      tmp_path):
     """Six attempts, then the caller hears about it: a silent failure

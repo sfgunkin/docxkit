@@ -870,35 +870,31 @@ than most new features.
 
 ---
 
-### S3 `write_docx` retries the sharing-violation race; `read_parts` does not
-
-**Symptom as observed.** 2026-08-20, mid-round on AFI: two tests that read
-`revision/working.docx` failed with `PermissionError: [Errno 13]` raised
-inside `read_parts`. Nothing was holding the file — no `~$` owner lock — and
-a bounded retry read it on the FIRST attempt seconds later. The suite went
-360 passed -> 1 failed -> 360 passed with no change to the manuscript in
-between, which is the worst possible shape for a gate.
-
-**The asymmetry.** `write_docx`'s `_replace` already retries `PermissionError`
-for exactly this race and even names it: *"is locked (open in Word). Close it
-and retry."* `read_parts` catches `OSError` — of which `PermissionError` is a
-subclass — and turns the FIRST one straight into `PackageError: cannot read
-<path>: [Errno 13] Permission denied`. Same race, one direction hardened, and
-a message that gives the caller no reason to think a retry would work.
-
-**Why it is S3 and not a flake.** Every paper on this machine sits on a
-OneDrive-backed tree and every suite reads the manuscript, so a transient
-sharing violation makes any paper's suite randomly red — which is exactly how
-an author learns to re-run a red suite instead of reading it. It also
-punishes the correct habit: `check` and `ship` read the manuscript several
-times per batch, so the more gating a paper does the likelier it is to trip.
-
-**Fix sketch.** Give `read_parts` the bounded retry `_replace` already has,
-and raise with the same "locked (open in Word)" wording when it finally gives
-up, so the two directions read alike. It belongs in `package` and not in the
-callers: 126 scripts across the four papers call `read_parts` themselves.
-
 ## Fixed
+
+### ~~S3 `write_docx` retries the sharing-violation race; `read_parts` does not~~
+
+Fixed 2026-08-20 in `package.py`. `read_parts` rides out a `PermissionError`
+on the same bounded schedule `_replace_atomically` uses for the write side —
+six attempts, five waits, `0.2s * n` — and raises with the wording the write
+side already gives when they run out:
+
+    working.docx is locked (open in Word). Close it and retry. ([Errno 13] ...)
+
+`PackageError`, not `DocumentLocked`: the two are siblings rather than
+parent and child, and 126 scripts across the four papers call `read_parts`
+inside an `except PackageError`. The wording is what the sketch asked to
+match; the type would have been a change to every one of them.
+
+A missing file is NOT retried, and that is tested — a path that does not
+exist will not start existing, and six sleeps before saying so is a CLI that
+appears to hang. `retries=`/`delay=` are keyword arguments so a suite can
+drive the loop without waiting on it.
+
+The write side's own retry loop had 45 of the module's 86 survivors and now
+has three tests; the read side landed with tests from the start, including
+the sleep COUNT — sleeping after the last attempt delays the error by more
+than a second and changes nothing about it.
 
 ### ~~S2 `tables.by_caption` assumes the caption sits ABOVE, and silently returns the wrong table~~
 
