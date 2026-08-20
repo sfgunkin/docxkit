@@ -1903,13 +1903,60 @@ def test_inspect_lists_the_comments_ONLY_when_asked(capsys, monkeypatch,
     assert "comments    1" in quiet, "the COUNT is in both"
 
 
-# Twenty-eight of the thirty-two are left, and they are ONE shape: how
+def test_an_anchor_line_quotes_SIXTY_characters_and_says_if_it_repeats(
+        monkeypatch, paper, fake_word, capsys):
+    """Two survivors in one line. The width is what keeps a locate
+    report to one line per anchor — a response letter is read down the
+    page — and `(repeats)` is what tells the author the page number is
+    one of several. Inverted, it hangs that warning on every anchor
+    that is unique, which is all of them in a good run."""
+    from docxkit.word import Location
+    long_anchor = ("Robots displace workers in the manufacturing sector "
+                   "of the region, and the trend continues")
+    assert len(long_anchor) > 61, "the fixture has to reach past the cut"
+    monkeypatch.setattr(
+        fake_word, "locate_in",
+        lambda doc, anchors, **kw: [Location(long_anchor, 4, 12, 4, False),
+                                    Location("the trend", 7, 3, 7, True)])
+
+    run_cli(monkeypatch, "locate", str(paper), long_anchor, "the trend")
+
+    lines = [ln for ln in capsys.readouterr().out.splitlines()
+             if ln.startswith("  p.")]
+    assert lines[0].endswith(long_anchor[:60]), lines[0]
+    assert "(repeats)" not in lines[0]
+    assert lines[1].endswith("the trend  (repeats)"), lines[1]
+
+
+def test_a_revision_line_quotes_SIXTY_characters_of_the_change(
+        monkeypatch, paper, fake_word, capsys):
+    """The same width one function up, on the text of a tracked change.
+    A redline's revisions are read as a list, and a line that wraps
+    turns a hundred of them into two hundred."""
+    from docxkit.word import RevisionLocation
+    long_text = ("the sentence the author rewrote, which runs on well "
+                 "past the width of a report line")
+    assert len(long_text) > 61
+    monkeypatch.setattr(
+        fake_word, "revision_locations",
+        lambda doc, **kw: [RevisionLocation(1, "insert", long_text,
+                                            4, 12, 4)])
+
+    run_cli(monkeypatch, "locate", str(paper), "--revisions")
+
+    (line,) = [ln for ln in capsys.readouterr().out.splitlines()
+               if "[insert]" in ln]
+    assert line.endswith(long_text[:60]), line
+
+
+# Twenty-five of the thirty-two are left, and they are ONE shape: how
 # much of something a report quotes, and how many of them it prints
-# before it stops. `[:200]` on a part list, `[:60]` on an anchor and on
-# a revision's text, `[:110]` on a comment, `> 12` on the ingest
-# preview. Each needs a fixture longer than the width to pin, and each
-# is a line a person reads — the same class this package has been
-# closing module by module.
+# before it stops. `[:200]` on a part list, `[:110]` on a comment,
+# `> 12` on the ingest preview, `[:56]` on a figure's location. Each
+# needs a fixture longer than the width to pin, and each is a line a
+# person reads — the same class this package has been closing module by
+# module. The two anchor widths and the revision one above are the
+# pattern to copy.
 #
 # Two are argued and checked: `cmd_citations`' `> 0` as `!= 0` (a count
 # is never negative) and `doctor`'s `d.kind == "literal"` as `is` (both
