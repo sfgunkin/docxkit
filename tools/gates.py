@@ -23,6 +23,7 @@ after a red one tells you nothing you can act on yet.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -53,6 +54,23 @@ def _failed(gate: Gate, out: str, code: int) -> bool:
     return code != 0
 
 
+#: What a gate's own summary looks like when it has one. The LAST line
+#: is usually it — and once was not: a pytest run under load ended with
+#: "<cannot get C stack on this system>", an interpreter note about the
+#: machine rather than about the suite, and the gate reported that
+#: instead of "4430 passed". A passing gate prints one line here, so
+#: the one line has to be the answer.
+_SUMMARY = re.compile(r"\b(passed|failed|error|no issues|All checks|"
+                      r"0 errors|at or above)\b")
+
+
+def _summary(out: str) -> str:
+    """The line a reader wants from a gate that PASSED."""
+    lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip()]
+    said = [ln for ln in lines if _SUMMARY.search(ln)]
+    return (said or lines or [""])[-1]
+
+
 def run(gates: Sequence[Gate] = tuple(GATES),
         say: Callable[[str], None] = print) -> int:
     """Run each gate until one fails; return the number that failed."""
@@ -65,8 +83,7 @@ def run(gates: Sequence[Gate] = tuple(GATES),
             say(f"FAILED  {name}")
             say(out.strip()[-3000:])
             return 1
-        tail = [ln for ln in out.strip().splitlines() if ln.strip()]
-        say(f"ok      {name}  {tail[-1][:90] if tail else ''}")
+        say(f"ok      {name}  {_summary(out)[:90]}")
     return 0
 
 
