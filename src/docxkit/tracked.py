@@ -83,6 +83,7 @@ __all__ = [
     "PackageError",
     "Unaccepted",
     "Untracked",
+    "accepted_losses",
     "build",
     "compare_collateral",
     "package_counts",
@@ -173,6 +174,36 @@ def compare_collateral(revised: dict[str, bytes],
               if (was := core_property(revised, tag))
               and not core_property(redline, tag)]
     return notes
+
+
+def accepted_losses(revised: dict[str, bytes],
+                    accepted: dict[str, bytes]) -> list[str]:
+    """Anchors the clean copy has that ACCEPTING the redline does not.
+
+    The gap between the two checks that already exist.
+    :func:`compare_collateral` compares the clean copy with the redline
+    AS BUILT, so a link that survives into the redline inside a deletion
+    is present there and gone the moment the author accepts;
+    :func:`unaccepted` compares the accepted view with the clean copy by
+    paragraph TEXT, and a bookmark or a hyperlink carries no text at
+    all. A batch that moved four captions passed both while all four of
+    their hyperlinks had been stripped (backlog S1, AFI 2026-08-19).
+
+    The accepted view is the deliverable — the document the author
+    reads — so this is not advisory: `build` refuses on it under
+    `accept_check`, like the text comparison beside it.
+
+    Link targets are counted by ANCHOR through :func:`internal_links`,
+    which reads the element form and the field form alike, so Compare
+    re-representing one as the other is not a loss and does not report
+    as one.
+    """
+    was_names, was_targets = _anchors(revised)
+    now_names, now_targets = _anchors(accepted)
+    return ([f"bookmark LOST on accept: {b}"
+             for b in sorted(was_names - now_names)]
+            + [f"link LOST on accept: -> {t}"
+               for t in sorted(was_targets - now_targets)])
 
 
 def _root(parts: dict[str, bytes], name: str = DOCUMENT) -> Any | None:
@@ -490,6 +521,11 @@ class BuildReport:
         #: section breaks — that the built redline does not resolve back
         #: to the documents it came from. See :func:`structure_counts`.
         self.structure_diff: list[str] = []
+        #: Bookmarks and internal links the CLEAN copy has and the
+        #: ACCEPTED view does not. Refused with `accept_check`, because
+        #: the accepted view is the deliverable. See
+        #: :func:`accepted_losses`.
+        self.accepted_losses: list[str] = []
         #: Part-trees Compare dropped and the build put BACK — the
         #: customXml data store, by default. See
         #: :func:`docxkit.hygiene.restore_parts`.
@@ -939,13 +975,21 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # handled — `revisions._row_flag` reads `w:trPr` — and this is
         # the shape it cannot: an unmarked copy is not a revision, so it
         # is refused rather than resolved.
+        accepted_view = _simulate(parts, _accept)
         report.structure_diff = (
             [f"rejected: {d}" for d in structure_diff(
                 structure_counts(base_parts),
                 structure_counts(_simulate(parts, _reject)))]
             + [f"accepted: {d}" for d in structure_diff(
-                structure_counts(read_parts(revised)),
-                structure_counts(_simulate(parts, _accept)))])
+                structure_counts(revised_parts),
+                structure_counts(accepted_view))])
+        # The carriers those counts do not hold: a hyperlink is not in
+        # STRUCTURE_TAGS, because Word legitimately re-represents a
+        # field-form link as an element and counting the tag would
+        # refuse that. Anchors are compared by NAME instead, which is
+        # blind to which form carries them.
+        report.accepted_losses = accepted_losses(revised_parts,
+                                                 accepted_view)
         # And the same question of the OTHER view. `revised_parts` is
         # the clean document this redline claims to reproduce; what an
         # accept leaves has to be it, word for word.
@@ -977,6 +1021,17 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"An over-eager math accept is the usual cause: try "
                 f"resolve_math=False. Pass reject_check=False to build the "
                 f"file anyway and inspect it.")
+        if report.accepted_losses and accept_check:
+            listed = "\n  ".join(report.accepted_losses)
+            raise PackageError(
+                f"accepting every revision LOSES anchors the clean copy "
+                f"has:\n  {listed}\n"
+                f"A bookmark and a hyperlink carry no text, so the "
+                f"paragraph comparison beside this one cannot see them "
+                f"go, and they are present in the redline as built — "
+                f"inside a deletion, until the author accepts it. Pass "
+                f"accept_check=False to build the file anyway and "
+                f"inspect it.")
         if report.unaccepted and accept_check:
             listed = "\n  ".join(str(u) for u in report.unaccepted)
             raise PackageError(

@@ -304,6 +304,33 @@ S1 because the failure reports success and the wrong number is in the paper.
    redline, and it is absent. It would also have caught this class of thing on
    any future path into the same trap.
 
+**The second is done, 2026-08-20** — in `build`, which is where the clean copy
+is in hand (`validate` is handed a batch and a baseline and never sees the
+revised copy; recording its path would be a second mechanism for the same
+question).
+
+The comparison that was missing is not text and not tag counts. `unaccepted`
+already compares the accepted view against the clean copy by paragraph TEXT,
+and `structure_diff` already counts carriers on both sides — what neither can
+see is a HYPERLINK, because it carries no text and its tag is deliberately not
+in `STRUCTURE_TAGS` (Word re-represents a field-form link as an element, and
+counting the tag would refuse that harmless rewrite).
+
+`tracked.accepted_losses(revised, accepted)` compares the ANCHORS instead —
+bookmark names and link targets, through `internal_links`, which reads both
+forms — and `build` refuses on it under `accept_check`, because the accepted
+view is the deliverable. The exact AFI shape is pinned: a link Compare rebuilt
+as prose is present in the redline (so `compare_collateral` is quiet) and gone
+the moment the author accepts (so the words match and `unaccepted` is quiet
+too).
+
+A bookmark cannot be lost that way and the test beside it says why: `revisions`
+LIFTS bookmarks out of an element it removes. Nothing lifts a `w:hyperlink`,
+and nothing can — the element carries the words.
+
+**Fix 1 is still open**, and it is the one that would stop the wrong number
+reaching the paper in the first place.
+
 **Per-paper workaround now in AFI** (delete when fixed): the maths is applied
 to `batch.docx` AFTER the Compare, so the two values are baked in with no
 redline at all — the trade v12 made for its 19 equation changes — and

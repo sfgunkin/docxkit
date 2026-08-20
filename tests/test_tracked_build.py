@@ -2540,3 +2540,115 @@ def test_every_part_the_gates_SIMULATE_has_a_name_to_report_it_under():
 
     assert set(_PART_LABELS) == set(TEXT_PARTS)
     assert len(set(_PART_LABELS.values())) == len(TEXT_PARTS)
+
+
+# --- what ACCEPTING loses that neither other check can see ---------------
+#
+# BACKLOG S1, AFI 2026-08-19: a batch that moved four captions passed the
+# text comparison and the collateral one while all four caption
+# hyperlinks had been stripped. Each of those two is blind here by
+# construction — `compare_collateral` looks at the redline AS BUILT,
+# where the link is still present inside a deletion, and `unaccepted`
+# compares paragraph TEXT, which a hyperlink does not carry.
+
+_WHEN = 'w:id="7" w:author="R" w:date="2026-01-01T00:00:00Z"'
+
+
+def _link_rebuilt_as_plain_text() -> tuple[dict[str, bytes],
+                                           dict[str, bytes]]:
+    """(clean copy, redline) for the shape Compare produces when it
+    rebuilds a hyperlink as prose: the link deleted, the same words
+    inserted beside it."""
+    link = ('<w:hyperlink w:anchor="Table1"><w:r><w:delText>Table 1'
+            "</w:delText></w:r></w:hyperlink>")
+    redline = make_parts(
+        f"<w:p><w:del {_WHEN}>{link}</w:del>"
+        f'<w:ins {_WHEN}><w:r><w:t>Table 1</w:t></w:r></w:ins>'
+        "<w:r><w:t> shows the gradient.</w:t></w:r></w:p>")
+    revised = make_parts(
+        '<w:p><w:hyperlink w:anchor="Table1"><w:r><w:t>Table 1</w:t></w:r>'
+        "</w:hyperlink><w:r><w:t> shows the gradient.</w:t></w:r></w:p>")
+    return revised, redline
+
+
+def test_a_link_the_ACCEPT_loses_is_a_finding():
+    """The accepted view is the deliverable — the document the author
+    reads — and this is the only check that looks at its anchors."""
+    from docxkit.tracked import _accept, _simulate, accepted_losses
+
+    revised, redline = _link_rebuilt_as_plain_text()
+
+    found = accepted_losses(revised, _simulate(redline, _accept))
+
+    assert found == ["link LOST on accept: -> Table1"]
+
+
+def test_the_other_two_checks_are_BLIND_to_it():
+    """Stated as a test because it is the whole reason the third one
+    exists: the words survive the accept, so the text comparison is
+    silent, and the link is present in the redline as built, so the
+    collateral comparison is too."""
+    from docxkit.tracked import compare_collateral, unaccepted
+
+    revised, redline = _link_rebuilt_as_plain_text()
+
+    assert unaccepted(redline, revised) == []
+    assert compare_collateral(revised, redline) == []
+
+
+def test_a_BOOKMARK_inside_a_deletion_survives_the_accept():
+    """The other carrier, and it needs no finding: `revisions` LIFTS a
+    bookmark out of an element it is about to remove, which is the fix
+    for "a moved paragraph carrying bookmarks loses them" two entries
+    up in the same backlog.
+
+    Worth a test beside the link one because it says why the link is
+    the case that needed a check: nothing lifts a `w:hyperlink`, and
+    nothing can — the element carries the words, so lifting it would
+    leave the deleted text on the page."""
+    from docxkit.tracked import _accept, _simulate, accepted_losses
+
+    mark = ('<w:bookmarkStart w:id="3" w:name="Table1"/>'
+            "<w:r><w:delText>Table 1</w:delText></w:r>"
+            '<w:bookmarkEnd w:id="3"/>')
+    redline = make_parts(f"<w:p><w:del {_WHEN}>{mark}</w:del>"
+                         f'<w:ins {_WHEN}><w:r><w:t>Table 1</w:t></w:r>'
+                         "</w:ins></w:p>")
+    revised = make_parts('<w:p><w:bookmarkStart w:id="3" w:name="Table1"/>'
+                         "<w:r><w:t>Table 1</w:t></w:r>"
+                         '<w:bookmarkEnd w:id="3"/></w:p>')
+
+    accepted = _simulate(redline, _accept)
+
+    assert accepted_losses(revised, accepted) == []
+    assert b'w:name="Table1"' in accepted["word/document.xml"]
+
+
+def test_a_link_RE_REPRESENTED_in_the_other_form_is_not_a_loss():
+    """Word's Compare rewrites a field-form hyperlink as an element,
+    and that is harmless — the backlog says so in its own words. The
+    anchors are compared by NAME through `internal_links`, which reads
+    both forms, so the count of `w:hyperlink` elements moving is not
+    what this asks."""
+    from docxkit.tracked import accepted_losses
+
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             "<w:r><w:instrText> HYPERLINK "
+             + chr(92) + 'l "Table1" </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             "<w:r><w:t>Table 1</w:t></w:r>"
+             '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    revised = make_parts(f"<w:p>{field}</w:p>")
+    accepted = make_parts('<w:p><w:hyperlink w:anchor="Table1">'
+                          "<w:r><w:t>Table 1</w:t></w:r></w:hyperlink></w:p>")
+
+    assert accepted_losses(revised, accepted) == []
+
+
+def test_a_batch_that_loses_nothing_reports_nothing():
+    from docxkit.tracked import accepted_losses
+
+    same = make_parts('<w:p><w:hyperlink w:anchor="Table1">'
+                      "<w:r><w:t>Table 1</w:t></w:r></w:hyperlink></w:p>")
+
+    assert accepted_losses(same, dict(same)) == []
