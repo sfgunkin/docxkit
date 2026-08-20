@@ -532,6 +532,136 @@ cost per batch: ~52 s of the ~95 s.
 that runs the ladder in one process. The paper-side `_batch.ship()` chains the
 commands but still pays two cold starts.
 
+### S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation
+
+**Symptom as observed.** AFI `working.docx`, after the r4 house-style
+conversion:
+
+    ¶33  missing-ref  cited but not in the reference list  "Surveys and ILOSTAT (2024)"
+
+The sentence is *"Employment is consolidated from standardized national Labor
+Force Surveys and ILOSTAT (2024) data on employment by occupation."* There is
+one citation in it, `ILOSTAT (2024)`, it is a **live hyperlink** whose label is
+exactly that, and its entry — `ILOSTAT. (2024). "Statistics on Employment."` —
+is in the list. Nothing is missing. The two-author pattern `X and Y (Year)`
+matched "Surveys and ILOSTAT" because the word before "and" is capitalised.
+
+**Repro.** Any sentence of the form `… Proper Noun and <CitedSource> (2024) …`.
+Common in data sections, where source names sit in ordinary prose.
+
+**Why S2.** `missing-ref` is the finding a user is most likely to act on, and
+acting on this one means hunting for a reference that is already there. It also
+makes the audit unusable as a gate — the paper cannot reach a clean report.
+
+**Workaround.** None; the finding is read and dismissed by eye each time, which
+is the problem.
+
+**Fix sketch.** Two cheap filters, either would do:
+- **skip spans already inside a hyperlink whose anchor resolves to a reference
+  entry.** The citation apparatus is right there, and a linked citation needs no
+  pattern-matching at all. This is the real fix — it would also stop the parser
+  guessing at any citation the document has already resolved.
+- require the token before `and` to look like a surname rather than any
+  capitalised word: reject a match whose first element is a known plural
+  ("Surveys", "Statistics") or, more simply, one that is not followed anywhere
+  by a matching reference-list surname.
+
+Related: this is the same class as the 19.08 retraction above — the apparatus
+knows the answer, and the pattern-matcher is being asked a question it does not
+need to guess at.
+
+### S4 `replace_in_para` refuses a relabel without naming the flag that allows it
+
+**Symptom as observed.** Rewriting a citation's visible label -- same anchor,
+same bookmark, same field, new text -- is refused:
+
+    replace_in_para: the match starts inside a hyperlink run -- the
+    replacement would bleed into the link. Anchor on plain text outside
+    the link.
+
+    replace_in_para: the match spans a hyperlink -- emptying 'Lokshin and
+    Valverde-Rodriguez' would leave the link with no label, which no text
+    diff shows and no link check catches.
+
+Both messages are right about the danger and both end by telling the caller to
+**move the anchor**. Neither mentions that `replace_in_para` already takes
+`allow_hyperlink=True` (and `grow_link_label=True`), which is the documented
+opt-in for exactly this case -- the source even comments "The opt-in above
+answers…" immediately after raising.
+
+**What it cost.** Read as "this cannot be done", so AFI r4 hand-rolled label
+surgery three times before the flag was found by reading the signature:
+
+* batch 16 (`build_r4r.py`) -- moved the Picchio field by string-replacing whole
+  `<w:t>` runs. The first attempt spliced XML into the middle of a `w:t`, which
+  nests elements inside a text node and made the paragraph unfindable by
+  `para_slice` on the next line.
+* batch 19 (`build_r4u.py`) -- a whole `phase_labels` built on exact `<w:t>`
+  matching, for six citation relabels.
+* batch 21 (`build_r4w.py`) -- the same again for 25 reference entries.
+
+Batch 22 finally used `allow_hyperlink=True` and it did the right thing,
+including on a label **split across runs**, which every string-matching version
+above would have missed. That one is the point: the hand-rolled workaround is
+not merely more code, it is *wrong on a case the supported path handles*.
+
+**Workaround.** The `<w:t>`-matching passes in those three builders. They can be
+deleted once callers are pointed at the flag.
+
+**Fix sketch.** One clause per message: *"…Anchor on plain text outside the
+link, or pass `allow_hyperlink=True` if the replacement lies wholly inside the
+label."* Free, and it turns three hand-rolls into a keyword argument. Consider
+also a named `relabel_link(para, anchor, new_label)` for the case that is
+common enough to have its own verb.
+
+---
+
+### S4 `refstyle` can diagnose a whole reference list and change none of it
+
+**Symptom as observed.** `docxkit refstyle` is the house style -- pinned by
+`tests/test_refstyle.py` so the spec and the code cannot drift -- and it reports
+per-entry, per-rule findings: `initials`, `ampersand`, `year-parens`, `italics`,
+`en-dash`, `and-comma`, plus `et-al` in the body. Its docstring is explicit: *"It
+reports and never edits."*
+
+So a paper that decides to adopt the house style has a precise, machine-readable
+list of what is wrong and no way to act on it. AFI r4 (author's decision,
+2026-08-20) needed ~250 lines across three per-paper scripts to convert 25
+entries and 14 in-text citations:
+
+* `revision/scripts/r4_refstyle.py` -- parse Chicago authors, reduce given names
+  to one initial, parenthesise the year, expand abbreviated page ranges
+  (174–79 → 174–179), re-punctuate `Vol (Issue):` → `, Vol(Issue):`, and mark
+  the outlet for italics;
+* `revision/scripts/build_r4w.py` -- rebuild each entry's runs, italic outlet
+  included, and gate that nothing but formatting moved;
+* `revision/scripts/build_r4x.py` -- "et al." from three authors, in the body.
+
+**Three traps a shared implementation should own**, all of which cost time here
+and none of which is paper-specific:
+
+1. **Name particles.** "Till Von Wachter" reduced by last-word-is-surname
+   becomes "Wachter, T." -- a renamed author, in a pass whose entire premise is
+   that no author changes. Needs a particle set (von, van, de, della, ten, …).
+2. **A trailing initial already ends in a period**, so appending one gives
+   "Allen, S.. (2019)."; likewise "eds." and "ed.".
+3. **A parenthesised year is unambiguous and a bare one is not.** AFI's own
+   citation linker found years with `\b(\d{4}[a-z]?)\.` and, once the year moved
+   into parentheses, silently matched inside DOIs and page ranges instead --
+   Feng 2025 from `econmod.2025.107399`, Lai 1912 from `1875–1912`, Riekhoff
+   0233 from a DOI. Every entry read as uncited. Any converter must expect
+   downstream parsers written against the old form.
+
+**Fix sketch.** `refstyle.convert(xml) -> xml` behind `docxkit refstyle --fix`,
+reusing the preset that already knows every rule. The invariant is the valuable
+part and is worth building in: strip everything but letters and digits from each
+entry's TAIL and require it identical before and after, allowing only declared
+page-range expansions -- that catches a dropped author, a lost DOI or a
+truncated title while ignoring the punctuation the conversion exists to move.
+AFI's version reports "tails identical letter-for-letter on 25/25".
+
+**Workaround to retire:** the three scripts above.
+
 ## Fixed
 
 ### ~~S2 `unlink` left half of a DUPLICATED bookmark and reported success~~
