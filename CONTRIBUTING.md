@@ -1525,17 +1525,18 @@ test file and each argument checked by `kill_check`.
 | `_compare_diff.py` | **6.0 %** (24/399) | 8.8 % | the layers a person reads — comment cuts, label moves, the move threshold |
 | `_compare_read.py` | **6.0 %** (19/317) | 7.3 % | a property switched OFF, a superscript named, two heads 60 % alike |
 | `_cite_audit.py` | **3.7 %** (15/409) | 11.2 %, its first measurement | the audit's own sentences: which store a finding is in, which order they come in, and five walks that ended early |
-| `edit.py` | **5.7 %** (24/423) | 8.5 % | what an edit REFUSES, and where it lands when it does not |
-| `renumber.py` | **5.3 %** (24/457) | 15.1 %, two waves ago | a shift counts what it CHANGED, and the 257th note |
+| `edit.py` | **2.8 %** (12/423) | 8.5 %, then 5.7 % | what an edit REFUSES, and where it lands when it does not |
+| `renumber.py` | **3.9 %** (18/457) | 15.1 % two waves ago, then 5.3 % | a shift counts what it CHANGED, and the 257th note |
 | `_cite_grammar.py` | **5.1 %** (22/428) | first measurement | four words is where a sentence starts being one |
 | `find.py` | **4.0 %** (8/201) | first measurement | two silent defaults, and a table at offset zero |
 | `body.py` | **2.4 %** (6/246) | first measurement | a span of zero would have written `w:gridSpan w:val="0"` |
 | `_cite_repair.py` | **2.0 %** (4/198) | first measurement | four survivors, all argued — the tightest in the package |
 | `export.py` | **2.0 %** (4/197) | 9.3 %, two rounds old | a short row padded, and the outer table |
 | `ingest.py` | **1.6 %** (3/191) | first measurement | three survivors, all argued |
-| `package.py` | 6.6 % (22/335) | first measurement | where a NEW core property lands — eight mutants on one slice |
+| `package.py` | **4.5 %** (15/335) | 6.6 %, its first measurement | where a NEW core property lands — eight mutants on one slice |
+| `hygiene.py` | 4.9 % (22/449) | first measurement | what the house-style pass refuses to touch |
 | `probe.py` | **5.4 %** (9/168) | 7.1 % | nine survivors, all argued |
-| `revision.py` | 8.8 % (30/340) | first measurement | the report a hand-back gets — **partial round**, eleven of thirty |
+| `revision.py` | **6.2 %** (21/340) | 8.8 %, its first measurement | the report a hand-back gets — **partial round**, eleven of thirty |
 | `body.py` | **2.4 %** (6/246) | — | one real survivor: a span of zero would have written `w:gridSpan w:val="0"` |
 | `citations.py` | 5.6 % (6/107) | — | six argued: the finding-kind comparisons and the width of a rule |
 | `edit.py` | **5.7 %** (24/423) | 8.5 % | measured to confirm the 19th's round; not worked further |
@@ -1547,7 +1548,7 @@ with survivors like everything else. Every one of the sixteen is argued.
 **Closed** — every survivor argued and kill_check'd — are
 `_compare_render`, `figures`, `authors`, `styles`, `_cite_audit`,
 `citations`, `_cite_repair`, `ingest`, `probe`, `_cite_build`,
-`_compare_diff`, `_compare_read`, `lint` and `_table_core`. The rest of
+`_compare_diff`, `_compare_read`, `lint`, `_table_core` and `edit`. The rest of
 the table's rows are rounds, not closures: `revision` is explicitly
 partial, and `package`, `renumber`, `edit`, `find`, `_cite_grammar`,
 `body` and `export` had their survivor lists worked but not exhausted.
