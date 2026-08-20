@@ -589,3 +589,17 @@ def test_an_import_that_fails_for_ANOTHER_reason_keeps_its_message(
 
     assert "libmupdf.dll" in str(exc.value)
     assert "docxkit[pdf]" not in str(exc.value)
+
+
+# `pages.py` measured 3.3 % (6/180) on 2026-08-20, and all six are
+# equivalent:
+#
+# * `int(found[0])` written `found[-1]`, under `if len(found) == 1`.
+# * `elif now > was + 1` written `!=`. The branch above it has already
+#   taken `now <= was`, so `now` is at least `was + 1` here and the two
+#   readings agree on every integer that reaches the line.
+# * the four on the clip rectangle's origin — `(0, height * band)` and
+#   `rect(0, top, …)` written with -1 or 1. A negative origin is
+#   clipped back to the page by PyMuPDF, and a positive one moves the
+#   window one POINT: a page number printed inside the first point of
+#   the sheet is not a page number, it is a sheet with no margin.
