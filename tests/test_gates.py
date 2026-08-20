@@ -102,27 +102,22 @@ def test_the_line_a_passing_gate_SHOWS_is_its_own_summary():
     not about the suite — and the runner reported that in place of
     "4430 passed". A gate that passed prints one line here, so the one
     line has to be the answer."""
-    from tools.gates import _summary
-
     out = "4430 passed, 17 skipped in 74s\n<cannot get C stack on this>"
 
-    assert _summary(out) == "4430 passed, 17 skipped in 74s"
+    assert gates._summary(out) == "4430 passed, 17 skipped in 74s"
 
 
 def test_a_gate_saying_something_NEW_still_shows_its_last_line():
     """The shapes are a preference, not a filter: a tool that starts
     saying something else must not be reported as silent."""
-    from tools.gates import _summary
-
-    assert _summary("something entirely new\n") == "something entirely new"
-    assert _summary("  \n\n") == ""
+    new = "something entirely new"
+    assert gates._summary(new + chr(10)) == new
+    assert gates._summary("  \n\n") == ""
 
 
 def test_the_LAST_summary_line_wins_when_a_gate_prints_several():
     """pytest prints a per-file line and then its total; the total is
     the one a reader wants."""
-    from tools.gates import _summary
-
     out = "tests/test_a.py 3 passed\n" + "12 passed, 1 skipped in 2s"
 
-    assert _summary(out) == "12 passed, 1 skipped in 2s"
+    assert gates._summary(out) == "12 passed, 1 skipped in 2s"
