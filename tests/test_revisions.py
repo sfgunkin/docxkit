@@ -704,6 +704,36 @@ def test_the_anchors_keep_their_ORDER_when_they_are_lifted():
 
     assert (out.index('w:name="first"') < out.index("<w:bookmarkEnd")
             < out.index('w:name="second"'))
+def test_lifted_anchors_keep_their_sequence_MID_PARAGRAPH_too():
+    """The fixtures above put the revision FIRST in its paragraph, so
+    `at` is 0 and `at ^ offset` is `at + offset` for every marker — the
+    reason the note below argued the `^` spelling away, and the reason
+    it was wrong to. A revision with prose in front of it has `at` 1,
+    and then the second marker lands at index 0: before the prose, and
+    before the start it belongs after.
+
+    Mid-paragraph is where a tracked edit usually is.
+    """
+    import re
+
+    xml = document(
+        para("<w:r><w:t>before </w:t></w:r>"
+             + f'<w:ins {_WHEN.format(i=8)}>'
+             + '<w:bookmarkStart w:id="1" w:name="first"/>'
+             + "<w:r><w:t>one</w:t></w:r>"
+             + '<w:bookmarkEnd w:id="1"/>'
+             + '<w:bookmarkStart w:id="2" w:name="second"/>'
+             + "<w:r><w:t>two</w:t></w:r>"
+             + '<w:bookmarkEnd w:id="2"/></w:ins>'))
+
+    out = reject(xml)
+
+    order = re.findall(r"<w:bookmark(Start|End)[^>]*w:id=\"(\d)\"", out)
+    assert order == [("Start", "1"), ("End", "1"),
+                     ("Start", "2"), ("End", "2")], order
+    assert out.index("before ") < out.index("<w:bookmarkStart")
+
+
 def test_the_lifted_anchors_keep_their_WHOLE_sequence():
     """`parent.insert(at + offset, marker)`, and the fixture above
     cannot see the `-` spelling: with four markers it produces
@@ -989,12 +1019,15 @@ def test_a_row_that_GOES_does_not_end_the_walk_over_the_others():
 #   true it is true for every element of that tag, and `break` skips
 #   nothing that `continue` would have processed. The other three
 #   `continue`s in that function ARE killable, and now are.
-# * `_lift_anchors`' `parent.insert(at + offset, marker)` as `^`. Every
-#   call site passes the anchors of one element in order, so `offset`
-#   counts from 0 and `at` is the element's own index — and `at ^ 0` is
-#   `at + 0`. A second marker on the same element would part them, and
-#   the shape that produces one (two bookmarks around a single deleted
-#   run) puts them in separate parents.
+# * `_lift_anchors`' `parent.insert(at + offset, marker)` as `^` — THIS
+#   ARGUMENT WAS WRONG, and the test above is what it should have been
+#   (2026-08-21). It said a second marker on one element puts the pair
+#   in separate parents; the fixture two functions up has four markers
+#   on one element and always did. What actually let the mutant live is
+#   that every fixture put the revision FIRST in its paragraph, so `at`
+#   was 0 and `at ^ offset` is `at + offset` for every offset. With
+#   prose in front — where a tracked edit usually is — the second marker
+#   lands at index 0, ahead of the prose and ahead of its own start.
 # * `spans`' `pos = 0` as `-1`: SRE clamps a negative search position.
 # * `autojunk=False` in `changed_paragraphs` is pinned above, and it
 #   took four fixtures to find one that could tell the two apart: a
