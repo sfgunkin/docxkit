@@ -1043,10 +1043,16 @@ def test_a_row_that_GOES_does_not_end_the_walk_over_the_others():
 #   el.getparent() is None` — as `break`. The walk is
 #   `reversed(list(om.iter()))`, and `iter()` yields the element itself
 #   FIRST, so `om` is the LAST thing the reversed walk reaches: a break
-#   there skips nothing. (Its neighbour, the `continue` over an
-#   equation whose parent is already gone, is NOT argued — killing it
-#   needs one equation nested inside another that the same pass
-#   dropped, and no fixture here has that.)
+#   there skips nothing. Its neighbour — the `continue` over an equation
+#   whose parent is already gone — was left unargued for want of a
+#   fixture; traced 2026-08-21, and there is no fixture to want. The
+#   only removals in this function are of `MATH_OBJECTS` (which does
+#   NOT include `oMath`) and of a glyph-less equation from its own
+#   parent, and `_simulate_where` de-duplicates `touched` by identity —
+#   so nothing here can detach an equation that `maths` still holds.
+#   The guard is defensive: it costs a line and it is the difference
+#   between a `continue` and an AttributeError on `None.remove` if a
+#   later caller builds that list differently.
 # * `_apply_property_changes`' `c.tag.rsplit("}", 1)[-1]` as `[1]`:
 #   every element in a WordprocessingML part is namespaced, so the
 #   split gives exactly two pieces.

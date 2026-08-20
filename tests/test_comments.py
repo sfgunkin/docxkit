@@ -989,3 +989,24 @@ def test_the_window_of_a_revision_NEAR_THE_TOP_reaches_the_start():
 # readings put one malformed reply either side of one numbered reply,
 # and neither order is the documented one. Pinning it would invent a
 # contract; this says why it is left.
+
+
+def test_an_anchor_NEAR_THE_START_of_the_part_is_still_seen():
+    """`max(0, start - _ANCHOR_SLACK)`, and the 0 is the whole of it: a
+    negative slice start counts from the END of the string, so the
+    window becomes empty and an existing range reads as absent. The
+    second annotate pass then wraps the same revision again — two
+    commentRangeStarts around one span, which Word repairs by dropping
+    one of the comments.
+
+    A revision 60 characters into the part is the first one in it.
+    """
+    from docxkit.comments import _already_anchored
+
+    doc = ('<w:p><w:commentRangeStart w:id="1"/><w:ins><w:r><w:t>x</w:t>'
+           '</w:r></w:ins><w:commentRangeEnd w:id="1"/></w:p>')
+    start = doc.index("<w:ins>")
+    end = doc.index("<w:commentRangeEnd")
+
+    assert start < 60, "the fixture must sit inside the slack window"
+    assert _already_anchored(doc, start, end)

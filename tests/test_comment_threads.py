@@ -316,3 +316,40 @@ def test_set_done_with_NO_ids_reports_nothing_changed():
 
     from docxkit.comments import remove
     assert remove(parts, []) == 0, "the same early return, next door"
+
+
+def test_a_reply_is_matched_to_its_root_by_VALUE_not_identity():
+    """Every fixture here numbers its comments 1, 2, 3 — and CPython
+    interns one-character strings, so `parent_cid is root.cid` passes on
+    all of them and fails on the eleventh comment in a real manuscript.
+    A referee round routinely has thirty.
+    """
+    body = para(run("Alpha "), anchored(11, run("an anchored bit")))
+    doc = f"<w:document {NS}><w:body>{body}</w:body></w:document>"
+    parts = {
+        "word/document.xml": doc.encode("utf-8"),
+        "word/comments.xml": (
+            f"<w:comments {NS}>"
+            + comment(11, "Please clarify.", "AAAA0011")
+            + comment(12, "Done in r2.", "AAAA0012", author="Author")
+            + "</w:comments>").encode("utf-8"),
+        "word/commentsExtended.xml": (
+            f"<w15:commentsEx {NS}>"
+            + ext("AAAA0011")
+            + ext("AAAA0012", parent="AAAA0011")
+            + "</w15:commentsEx>").encode("utf-8"),
+    }
+
+    found = threads(parts)
+
+    assert [t.comment.cid for t in found] == ["11"]
+    assert [r.cid for r in found[0].replies] == ["12"]
+
+
+# `threads`' `c.parent_cid == root.cid` is EQUIVALENT under `is` and
+# left alive — and NOT because one-character cids are interned, which
+# was the first guess and would have made it a fixture artefact. Both
+# sides come from `by_para`, one dict, so a reply's `parent_cid` IS the
+# object its root carries as `cid`. The test above stands anyway: no
+# fixture here had a two-digit comment id, and a referee round has
+# thirty.
