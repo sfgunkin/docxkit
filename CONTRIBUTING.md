@@ -1732,6 +1732,28 @@ code. The figure will not go down — the survivors that were ARGUED are
 still survivors — but the sample lands somewhere new every time, and
 the newest lines are where it has never been.
 
+### A PIPELINE's exit code is the last command's, twice now
+
+`pyright | tail -1` swallowed pyright's status and is written up above.
+On 2026-08-20 the same shape came back as `pytest -q | tail -2`, run
+that way all afternoon so the summary line would show: `tail` returns 0
+over a failing suite, and a commit went through red. The five gates are
+run UNPIPED, chained with `&&`, and anything that needs trimming gets
+it after the chain, not inside it.
+
+### A fixture that HASHES is a fixture with a fresh draw in it
+
+The test for `promote`'s stale-batch guard needed content whose hash
+sorts BELOW the baseline's, and searched for one. A docx carries the
+time it was zipped, so the baseline hash is a new number on every run —
+and when it lands near the bottom of the range no candidate sorts under
+it. Green a hundred times, red once, and passing alone: the signature
+of a fixture that draws.
+
+The fix is not more tries. Write BOTH candidates, sort them by hash,
+and `shutil.copy2` them into place — copying preserves the bytes, so
+the ordering the test asserts is the ordering it gets.
+
 ### A test can ask about the MACHINE instead of the code
 
 `stale_figures --figures` reads the session files, and the first test
