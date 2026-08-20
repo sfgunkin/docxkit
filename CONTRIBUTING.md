@@ -1643,6 +1643,27 @@ pattern: the note-definition regex existed in `revision.py` already,
 and `test_no_element_pattern_is_compiled_in_two_modules` failed the
 moment this one was compiled rather than inlined into a `findall`.
 
+### A test can ask about the MACHINE instead of the code
+
+`stale_figures --figures` reads the session files, and the first test
+written for it asserted that some module had a figure. It passed here
+and failed on all three Pythons in CI, twice: a checkout has no session
+files — they are local and none is committed — so every line reads
+"never measured" and the list of measured ones is empty.
+
+The tell is that the assertion was about a POPULATION the repository
+does not carry. What holds in any checkout is the shape: one line per
+module in the harness map, each ending in a verdict, and any line that
+does carry a figure carrying it in the documented form. Verified by
+running the test in `D:/docxkit-kc` — a checkout with no session files,
+which is what CI is, and which is sitting there anyway for `kill_check`.
+
+The same trap is behind two of the instrument defects above: the sweep
+that answered differently depending on the shell that started it, and
+the private checkouts that held the files of the day they were made.
+**When a tool reads the machine's state, its tests have to say which
+part of that state is the contract.**
+
 ### A stub that ignores its argument hides every mutant at its call sites
 
 `_table_core._Span` lets a hand-walked element stand in for an
