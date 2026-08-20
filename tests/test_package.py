@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import zipfile
 from pathlib import Path
 
@@ -15,7 +16,14 @@ from docxkit import (
     read_parts,
     write_docx,
 )
-from docxkit.package import next_backup_path
+from docxkit.errors import PackageError
+from docxkit.package import (
+    CORE_PART,
+    changed_parts,
+    next_backup_path,
+    same_part,
+    set_core_property,
+)
 
 
 def test_round_trip_preserves_every_part(simple_docx, tmp_path):
@@ -661,3 +669,120 @@ def test_a_DUPLICATED_sibling_takes_only_one_new_element():
 
     text = p["docProps/core.xml"].decode("utf-8")
     assert text.count("<dc:title>") == 1, text
+
+
+# --- the run of 2026-08-20: 6.6 %, and where its cluster was ------------
+#
+# Eight mutants on ONE line — the slice that decides where a new core
+# property lands — and the docstring's promise for it ("the new element
+# lands in CORE_ORDER position") had no test at all: every fixture set a
+# property the file already had, which takes the other branch.
+
+
+def _core(*elements: str) -> dict[str, bytes]:
+    return {CORE_PART: ('<?xml version="1.0"?><cp:coreProperties '
+                        'xmlns:cp="cp" xmlns:dc="dc" xmlns:dcterms="dcterms">'
+                        + "".join(elements)
+                        + "</cp:coreProperties>").encode("utf-8")}
+
+
+def _tags(parts: dict[str, bytes]) -> list[str]:
+    return re.findall(r"<(\w+:\w+)>", parts[CORE_PART].decode("utf-8"))
+
+
+def test_a_NEW_core_property_lands_in_CORE_ORDER_position():
+    """`CORE_ORDER.index(tag) + 1`, the elements the new one must come
+    BEFORE. Word reads core.xml in schema order and rewrites what it
+    finds out of place, so a property written after the wrong sibling is
+    a property Word moves — or drops — on the next save.
+
+    The mutants of that index halve it, double it, and flip its low bit.
+    Halved, the new element lands before a property that should precede
+    it; doubled, the list runs out and it is appended at the very end.
+    Both need a tag with siblings on BOTH sides in the file, which is
+    what this fixture is."""
+    parts = _core("<dc:title>T</dc:title>",
+                  "<cp:lastModifiedBy>L</cp:lastModifiedBy>",
+                  "<dcterms:modified>M</dcterms:modified>")
+
+    assert set_core_property(parts, "cp:revision", "7") is True
+
+    assert _tags(parts) == ["dc:title", "cp:lastModifiedBy", "cp:revision",
+                            "dcterms:modified"]
+
+
+def test_the_same_placement_from_an_ODD_position_in_the_order():
+    """`index ^ 1` is `index + 1` for an even index and `index - 1` for
+    an odd one, so the fixture above cannot see it: `cp:revision` is
+    sixth. `dcterms:created` is seventh, and one place BACK is
+    `cp:revision` — which this file has, so the mutant writes the new
+    element in front of it."""
+    parts = _core("<dc:title>T</dc:title>", "<cp:revision>7</cp:revision>",
+                  "<dcterms:modified>M</dcterms:modified>")
+
+    assert set_core_property(parts, "dcterms:created", "2026-08-20") is True
+
+    assert _tags(parts) == ["dc:title", "cp:revision", "dcterms:created",
+                            "dcterms:modified"]
+
+
+def test_a_package_compared_with_an_EQUAL_copy_reports_nothing():
+    """`before[name] == after[name]` written `is`. Two reads of one file
+    give equal bytes in different objects, so identity there sends every
+    part in the package down to `same_part` and out into `resaved` — a
+    round-trip report that lists all forty parts as re-saved when
+    nothing was written at all.
+
+    The bytes here are copied deliberately: `bytes(x)` hands back the
+    same object, and a fixture built that way cannot see the
+    difference."""
+    raw = b"<w:document><w:body/></w:document>"
+    copy = bytes(bytearray(raw))
+    assert copy is not raw and copy == raw
+
+    assert changed_parts({"word/document.xml": raw},
+                         {"word/document.xml": copy}) == {
+        "changed": [], "added": [], "removed": [], "resaved": []}
+
+
+def test_a_missing_package_is_a_PackageError():
+    """`except (OSError, …)`: the CLI turns a PackageError into a
+    message, and a raw FileNotFoundError walked straight through it as a
+    traceback. The handler had no test — mutated to an exception the
+    body cannot raise, nothing noticed."""
+    with pytest.raises(PackageError, match="cannot read"):
+        read_parts("D:/docxkit/no-such-file.docx")
+
+
+def test_a_LEAF_keeps_the_space_a_container_may_drop():
+    """`if not kids`. Text between child elements is indentation and
+    comparing it reports every re-serialisation; text in a LEAF is the
+    prose, spaces and all. Inverted, the leaf's text is stripped and two
+    parts whose only difference is a leading space in a `w:t` compare as
+    the same part — which is the whole failure `preserve_space` exists
+    to prevent, arriving through the check that would have caught it."""
+    ns = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+          '2006/main"')
+    spaced = (f"<w:document {ns}><w:body><w:p><w:r>"
+              '<w:t xml:space="preserve"> lead</w:t>'
+              "</w:r></w:p></w:body></w:document>")
+
+    assert same_part(spaced.encode("utf-8"),
+                     spaced.replace("> lead<", ">lead<").encode("utf-8")) \
+        is False
+
+
+# Argued rather than pinned, from the same run:
+#
+# * five of the eight on `CORE_ORDER.index(tag) + 1` — `* 1`, `** 1`,
+#   `+ 0`, `// 1` and `| 1`. Each of them starts the slice AT the tag
+#   rather than after it, and the branch they are in is the one where
+#   the file does not contain that tag, so the extra entry matches
+#   nothing.
+# * `replace("</cp:coreProperties>", …, 1)` written 2, and
+#   `_CORE_OPEN_RE.sub(…, count=1)` written 0 or 2: a core part has one
+#   closing tag and one opening one.
+# * `mm.group(1)` written `group(0)` in that sub: `_CORE_OPEN_RE` is one
+#   group around the whole match.
+# * `if attempt < retries - 1` written `!=` and `is not`: `attempt`
+#   comes from `range(retries)`, so it never passes `retries - 1`.
