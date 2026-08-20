@@ -1602,6 +1602,27 @@ def test_convert_does_NOT_touch_author_names():
     assert any(i.code == "initials" for i in check_entry(entry))
 
 
+def test_an_entry_that_KEEPS_its_ampersand_is_not_refused():
+    """A title's "&" is not an author separator and this does not touch
+    it — but the invariant normalised "&" to "and" on one side only, so
+    the entry read as changed and refused although nothing had been done
+    to it. Found by review an hour after the converter landed."""
+    entry = 'Smith, J. (2020). "Robots & Jobs." Journal, 1(1): 1-10.'
+
+    assert convert_text(entry) == (entry, [])
+
+
+def test_the_AUTHORS_ampersand_is_converted_and_the_TITLE_keeps_its_own():
+    """Both in one entry, which is what says the rule is about WHERE the
+    ampersand is rather than about the character."""
+    out, fixes = convert_text(
+        'Smith, J. & A. Lee. 2020. "Robots & Jobs." Journal, 1(1): 1-10.')
+
+    assert out.startswith("Smith, J. and A. Lee. (2020).")
+    assert '"Robots & Jobs."' in out
+    assert [f.code for f in fixes] == ["ampersand", "year-parens"]
+
+
 def test_convert_writes_the_BARE_year_when_the_style_says_so():
     out, fixes = convert_text('Smith, J. (2020). "A title." Journal.',
                               CHICAGO)
@@ -1632,9 +1653,14 @@ def test_a_conversion_that_would_change_what_the_entry_SAYS_is_REFUSED(
 # ------------------------------------------------- and into a document ---
 
 def _list_parts(*entries: str, italic: str = ""):
+    """The entries as a document — with the ampersand ESCAPED, because
+    a bare `&` in a `w:t` is not XML and not a file Word can produce.
+    The converter reads through `visible_text`, which unescapes, and
+    writes through `set_run_text`, which escapes again."""
     body = [para(run("Prose citing something.")), para(run("References"))]
     for text in entries:
-        body.append(para(run(text) + (irun(italic) if italic else "")))
+        body.append(para(run(text.replace("&", "&amp;"))
+                         + (irun(italic) if italic else "")))
     return make_parts("".join(body))
 
 
@@ -1699,3 +1725,241 @@ def test_the_convert_report_PRINTS_what_it_did():
 
     assert text.startswith("3 fix(es) written, 0 entr(ies) refused")
     assert "ampersand" in text
+
+
+# ---------------------------------------- what the mutation round found ---
+#
+# refstyle's 2026-08-21 measurement put 19 of its 24 real survivors in
+# the converter that had landed an hour earlier. These are the gaps.
+
+def test_the_CONVERTER_leaves_an_ISBN_alone():
+    """Three hyphens or more is not a range, and the token test is an
+    OR: a DOI, a URL, *or* an ISBN. Read as an `and` it protects only
+    the tokens that are both, and rewrites the rest."""
+    entry = ('Smith, J. (2020). Robots. Oxford: OUP. ISBN 978-0-19-874017-4.')
+
+    out, fixes = convert_text(entry)
+
+    assert "978-0-19-874017-4" in out, out
+    assert not fixes
+
+
+def test_a_URL_that_is_not_a_DOI_keeps_its_hyphens_too():
+    """The token test is three alternatives and each one earns its
+    place: a plain URL carries no "doi" and need not start with "10.",
+    and an en-dash written into one is a link that 404s."""
+    entry = ('World Bank. (2024). "Data." '
+             "https://data.worldbank.org/reports/2020-2024/summary")
+
+    out, fixes = convert_text(entry)
+
+    assert "2020-2024" in out, out
+    assert not fixes
+
+
+@pytest.mark.parametrize("doi", [
+    "doi:10.1111/j.1467-9787.2010.00713.x",   # the "doi" spelling
+    "10.1111/j.1467-9787.2010.00713.x",       # bare, the "10." spelling
+])
+def test_a_DOI_written_WITHOUT_a_URL_keeps_its_hyphens(doi):
+    """Wiley's suffix carries ONE hyphen between two four-digit groups —
+    "1467-9787" is exactly the shape of a page range, and the
+    three-hyphens-is-a-number test does not reach it. A DOI with an
+    en-dash in it resolves to nothing."""
+    out, fixes = convert_text(f'A. (2020). "T." Journal. {doi}')
+
+    assert doi in out, out
+    assert not fixes
+
+
+def test_et_al_takes_its_period():
+    out, fixes = convert_text(
+        'Smith, J. et al 2019. "A title." Journal, 1(1): 45-48.')
+
+    assert "Smith, J. et al. (2019)." in out
+    assert "et-al-period" in [f.code for f in fixes]
+
+
+def test_TWO_bare_et_als_are_reported_as_two_fixes():
+    """One fix per occurrence, each applied once. Applying the first
+    twice reaches the same text and reports one — and the count is what
+    a caller reads to know what was done to their manuscript."""
+    out, fixes = convert_text(
+        'Smith, J. et al 2019. "As Jones et al showed." Journal, 1(1): 45-48.')
+
+    assert out.count("et al.") == 2, out
+    assert [f.code for f in fixes].count("et-al-period") == 2
+
+
+def test_an_AMPERSAND_and_an_EXPANSION_in_one_entry_still_pass():
+    """The invariant's per-fix accounting is for the range expansion
+    ONLY. Letting an ampersand fix through it inserts "and" into a
+    string the ampersand has already been dropped from, and the entry
+    refuses although both changes are exactly what was asked for."""
+    out, fixes = convert_text(
+        'Smith, J. & A. Lee. 2020. "T." Journal, 1(1): 174-79.')
+
+    assert out.endswith("174–179.")
+    assert [f.code for f in fixes] == ["ampersand", "year-parens", "en-dash"]
+
+
+def test_a_conversion_that_ADDS_text_is_refused_too(monkeypatch):
+    """The invariant is an inequality in both directions: a fix that
+    inserts words is as much a change to what the entry SAYS as one that
+    drops them."""
+    monkeypatch.setattr(
+        refstyle, "convert_entry",
+        lambda text, style=HOUSE: [
+            refstyle.Fix("year-parens", "Restrepo", "Restrepo and Others")])
+
+    with pytest.raises(ConversionRefused, match="would change what it SAYS"):
+        convert_text(CHICAGO_ENTRY)
+
+
+def test_a_range_expands_from_the_FULL_leading_number():
+    """"1874-79" is 1874–1879, not 1874–79 and not 1874–1479: the digits
+    carried over are the leading ones the short form left off."""
+    out, _ = convert_text('A. (2020). "T." Journal, 1(1): 1874-79.')
+
+    assert out.endswith("1874–1879.")
+
+
+# ----------------------------------------------- and into the document ---
+
+def test_the_report_names_the_PARAGRAPH_each_fix_landed_in():
+    """A report is read to go and look. "¶3" that is really ¶4 sends a
+    reader to the entry above the one that changed."""
+    parts = _list_parts("Kanbur, R. (2007). Poverty. Journal, 1(1): 45–48.",
+                        CHICAGO_ENTRY)
+
+    report = convert(parts)
+
+    assert {line.split(":")[0] for line in report.changed} == {"¶4"}
+
+
+def test_convert_REPORTS_an_entry_it_refused_and_writes_nothing(monkeypatch):
+    """One bad entry does not stop the pass and does not go in: the
+    refusal is per entry, and the file keeps what it had."""
+    parts = _list_parts(CHICAGO_ENTRY)
+    before = parts["word/document.xml"]
+    monkeypatch.setattr(
+        refstyle, "convert_entry",
+        lambda text, style=HOUSE: [
+            refstyle.Fix("year-parens", "Restrepo", "")])
+
+    report = convert(parts)
+
+    assert report.refused and "¶3" in report.refused[0]
+    assert not report.changed
+    assert parts["word/document.xml"] == before
+
+
+def test_an_entry_whose_ONLY_fix_shortens_it_is_still_written():
+    """The write is guarded on "did this paragraph change", not on which
+    way it sorts: "pp.174" -> "pp. 174" puts a space where a digit was,
+    and an ordering test reads that as nothing to do."""
+    parts = _list_parts('Kanbur, R. (2007). "Poverty." Journal, 1(1): pp.45.')
+
+    convert(parts)
+
+    assert "pp. 45" in parts["word/document.xml"].decode()
+
+
+def test_a_linked_citation_ELSEWHERE_in_the_paragraph_is_not_borrowed():
+    """The label has to be inside the span it narrows. A paragraph
+    routinely carries two citations with one of them linked, and reading
+    the link's label as the OTHER one's answer rewrites a citation the
+    apparatus has said nothing about."""
+    text = ("As Kanbur 2007 and Labor Force Surveys and ILOSTAT (2024) "
+            "report, it rises.")
+
+    out = _trust_the_links(text, find_citations(text), ["Kanbur 2007"])
+
+    assert [text[c.start:c.end] for c in out] == [
+        text[c.start:c.end] for c in find_citations(text)]
+
+
+def test_a_label_whose_citation_starts_INSIDE_it_keeps_its_place():
+    """A hand-made link swallows a leading word often enough — "and
+    ILOSTAT (2024)" — and the citation then begins four characters into
+    the label. The offset a caller gets has to be the CITATION's: every
+    prose check reports `text[c.start:c.end]`, so the label's own start
+    points the finding at the wrong words."""
+    text = ("Employment is consolidated from national Labor Force Surveys "
+            "and ILOSTAT (2024) data on employment.")
+
+    out = _trust_the_links(text, find_citations(text),
+                           ["and ILOSTAT (2024)"])
+
+    assert [text[c.start:c.end] for c in out] == ["ILOSTAT (2024)"]
+
+
+def test_a_bookmark_in_PROSE_is_not_read_as_an_entry_anchor():
+    """The gap read for an entry is the one immediately above it. A
+    wider slice picks up markers that belong to no entry at all — and a
+    link to one of those is a cross-reference, which has resolved
+    nothing about the citation beside it."""
+    stray = ('<w:bookmarkStart w:id="9" w:name="ref_note_1"/>'
+             '<w:bookmarkEnd w:id="9"/>')
+    linked = ('<w:hyperlink w:anchor="ref_note_1"><w:r>'
+              "<w:t>ILOSTAT (2024)</w:t></w:r></w:hyperlink>")
+    parts = make_parts(
+        para(run("An opening paragraph."))
+        + para(run("From national Labor Force Surveys and "), linked,
+               run(" data."))
+        + stray                      # body level, and no entry's
+        + para(run("References"))
+        + _entry_para())
+
+    report = audit(parts)
+
+    assert "missing-ref" in _codes(report.issues), [
+        (i.code, i.snippet) for i in report.issues]
+
+
+def test_the_gap_read_for_an_entry_is_the_one_ABOVE_IT():
+    """Word hoists a marker out of the paragraph head, so the bookmark
+    belonging to entry N sits between N-1 and N. Reading any other gap
+    finds a marker belonging to a different work — or none, and then the
+    swallowed citation is not recognised at all."""
+    linked = ('<w:hyperlink w:anchor="ref_ilostat_2024"><w:r>'
+              "<w:t>ILOSTAT (2024)</w:t></w:r></w:hyperlink>")
+    hoisted = ('<w:bookmarkStart w:id="3" w:name="ref_ilostat_2024"/>'
+               '<w:bookmarkEnd w:id="3"/>')
+    parts = make_parts(
+        para(run("Employment is consolidated from national Labor Force "
+                 "Surveys and "), linked, run(" data."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty. Journal, 1(1): 45–48."))
+        + para(run("Maestas, N. (2023). Ageing. Journal, 2(1): 1–9."))
+        + hoisted
+        + para(run('ILOSTAT. (2024). "Statistics." ') + irun("ILO")))
+
+    report = audit(parts)
+
+    assert "missing-ref" not in _codes(report.issues), [
+        (i.code, i.snippet) for i in report.issues]
+
+
+# refstyle's remaining converter survivors, argued rather than pinned
+# (2026-08-21 round):
+#
+# `lead = text[max(0, at - 8):at]` in `convert_entry` — eight characters
+# of context in front of the year, mutated to nine, to `at ** 8` and to
+# `at << 8`. The lead makes the fragment UNIQUE; it is not what decides
+# which span is the year's, and every spelling still replaces the first
+# occurrence, which in a reference entry is the year. A test would pin
+# the number, not the behaviour.
+#
+# Same for the three characters after `p.` in the page-space fix
+# (`sp.end() + 3` -> `^ 3`): the digits are there to tell one "p." from
+# another, and both spellings reach the same one on every entry that
+# has a single page reference.
+#
+# `if fix.code is "en-dash"` — the codes are literals in this module,
+# so the identity comparison and the equality are the same test on the
+# same interned string.
+#
+# `max((r.index for r in entries), default=-1)` -> `-2` in `audit`: the
+# default is reached only when there are NO entries, and `head_idx` is
+# then None, so the range `head_idx <= i <= last_entry` is never asked.

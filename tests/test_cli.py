@@ -561,8 +561,8 @@ def _chicago_paper(tmp_path):
     return write(tmp_path / "chicago.docx", make_parts(
         para(run("Prose citing (Acemoglu and Restrepo 2020)."))
         + para(run("References"))
-        + para(run('Acemoglu, D. & P. Restrepo. 2020. "Robots and Jobs." '
-                   "JPE, 128(6): 2188-2244."))))
+        + para(run('Acemoglu, D. &amp; P. Restrepo. 2020. "Robots and '
+                   'Jobs." JPE, 128(6): 2188-2244.'))))
 
 
 def test_api_finds_the_bookmark_helpers_nobody_could_find(monkeypatch,

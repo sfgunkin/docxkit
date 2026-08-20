@@ -365,7 +365,15 @@ def convert_entry(text: str, style: Style = HOUSE) -> list[Fix]:
                          text[sp.start():sp.end()] + " "
                          + text[sp.end():sp.end() + 3]))
     for et in _ETAL_BARE_RE.finditer(text):
-        fixes.append(Fix("et-al-period", et.group(0), et.group(0) + "."))
+        # A character each side, and it is load-bearing: `new` CONTAINS
+        # `old` here — "et al" is a prefix of "et al." — so the bare
+        # fragment matches the text its OWN fix has already written, and
+        # an entry with two of them came out "et al.." with the second
+        # one untouched. Every other fix here writes something that does
+        # not contain what it replaced; this is the exception.
+        at, end = max(0, et.start() - 1), et.end() + 1
+        fixes.append(Fix("et-al-period", text[at:end],
+                         text[at:et.end()] + "." + text[et.end():end]))
     return fixes
 
 
@@ -389,8 +397,12 @@ def convert_text(text: str, style: Style = HOUSE) -> tuple[str, list[Fix]]:
             continue                 # an earlier fix already covered it
         out = out.replace(fix.old, fix.new, 1)
         applied.append(fix)
+    # BOTH sides: `_alnum` drops the ampersand as punctuation, so
+    # normalising one of them made an entry that KEEPS its "&" — a
+    # title's, which this deliberately does not convert — read as
+    # changed and refuse although nothing had been done to it.
     before = _alnum(text.replace("&", "and"))
-    after = _alnum(out)
+    after = _alnum(out.replace("&", "and"))
     if before != after:
         for fix in applied:
             if fix.code == "en-dash":
