@@ -848,3 +848,140 @@ def test_every_comment_added_at_once_gets_ITS_OWN_ids():
     # names a paragraph the extended part knows
     linked = re.findall(r'w16cid:paraId="([0-9A-F]+)"', idpart)
     assert set(linked) <= set(para_ids), (linked, para_ids)
+
+
+# --- the two DISTANCES, pinned at the character (2026-08-20) ------------
+#
+# The round above pinned "near anchors, far does not". Both constants
+# then survived being decremented, because a fixture at 200 characters
+# agrees with itself at 59 or 60. A bound is invisible at a distance of
+# one, so these two measure the flip.
+#
+# Both write the distance as a LITERAL rather than importing the
+# constant: a test that reads `_ANCHOR_SLACK` moves with it, which is
+# the opposite of pinning it.
+
+
+def _slack_body(pad: int) -> str:
+    return para('<w:commentRangeStart w:id="1"/>', run("x" * pad),
+                ins("added"), '<w:commentRangeEnd w:id="1"/>')
+
+
+def test_the_anchor_slack_is_SIXTY_characters_of_markup():
+    """A comment range whose name ends exactly sixty characters before
+    the revision still anchors it; one character further out does not.
+
+    Sixty is about one run, and the failure it guards is a revision
+    given a SECOND comment because the one already wrapping it was one
+    character too far to see."""
+    probe = _slack_body(0)
+    here = probe.index("commentRangeStart")
+    exact = 60 - (probe.index("<w:ins ") - here)
+
+    def added(pad: int) -> int:
+        return annotate(
+            make_parts(_slack_body(pad), comment_items=(comment(1, "seed"),)),
+            always("R1: reason"))[0]
+
+    assert added(exact) == 0, "at exactly sixty it is already anchored"
+    assert added(exact + 1) == 1, "and one character further out it is not"
+
+
+def _window_body(pad: int) -> str:
+    return para(run("Z" + "x" * pad)) + para(run("keep "), ins("added"))
+
+
+def test_the_window_reaches_back_exactly_THREE_THOUSAND_characters():
+    """Same again for the classifier's window. A letter three thousand
+    characters of markup behind the revision is the last one a rule can
+    match on; at 3,001 it is gone."""
+    probe = _window_body(0)
+    exact = 3000 - (probe.index("<w:ins ") - probe.index(">Z") - 1)
+
+    def window(pad: int) -> str:
+        seen: list[str] = []
+
+        def classify(ctx):
+            seen.append(ctx.window)
+            return "R1: reason"
+
+        annotate(make_parts(_window_body(pad),
+                            comment_items=(comment(1, "seed"),)), classify)
+        return seen[0]
+
+    assert "Z" in window(exact), "at exactly three thousand it is readable"
+    assert "Z" not in window(exact + 1), "and one character further, not"
+
+
+def test_reclassify_with_NO_marker_reports_nothing_changed():
+    """`generic=None` means the build left unmatched revisions
+    uncommented rather than giving them a placeholder, so there is
+    nothing to repair. The count is what a caller prints, and a repair
+    pass that reports one is a person looking for a change nobody
+    made."""
+    parts = make_parts(para(run("keep "), ins("added")),
+                       comment_items=(comment(1, "seed"),))
+
+    assert reclassify(parts, always("R1: reason"), generic=None) == (0, [])
+
+
+def test_the_window_of_a_revision_NEAR_THE_TOP_reaches_the_start():
+    """`max(0, start - 3000)`. A revision in the second paragraph has
+    nothing three thousand characters behind it, and the clamp is what
+    keeps the slice from being written backwards: `doc[-1:end]` is the
+    empty string, so every rule that reads the window stops firing for
+    exactly the revisions at the top of a document — where a paper's
+    first tracked edits are.
+
+    The two tests above both build a document longer than the window,
+    which is where the clamp does nothing at all."""
+    seen: list[str] = []
+
+    def classify(ctx):
+        seen.append(ctx.window)
+        return "R1: reason"
+
+    annotate(make_parts(para(run("The stub column is unchanged."))
+                        + para(run("keep "), ins("added")),
+                        comment_items=(comment(1, "seed"),)), classify)
+
+    (window,) = seen
+    assert window.startswith("The stub column is unchanged."), window
+
+
+# --- the rest of what the 2026-08-20 run left in `comments` ------------
+#
+# Twenty-eight real survivors; the tests above take six. The others are
+# equivalent, each checked with `kill_check`:
+#
+# * `_already_anchored`'s `max(0, start - _ANCHOR_SLACK)` written
+#   `max(-1, ...)`. Its twin in `_context` IS killable — a revision in
+#   the second paragraph has nothing 3,000 characters behind it — but
+#   60 characters is shorter than `<w:document ...>` with its namespace
+#   declarations, so `start - 60` is never negative and the clamp never
+#   fires.
+# * the four on `_PARA_ID_BASE + cid` and the two on
+#   `_DURABLE_ID_BASE + cid`. The bases end in six zero nibbles, so for
+#   any comment id under 2^24 the `+`, `|` and `^` spellings are the
+#   SAME NUMBER. `-` and `//` give a different one, and it is equally
+#   good: what Word requires is that the ids be distinct and inside the
+#   range, which the thirty-five-comment test above pins. The base says
+#   where the reserved range starts, not what any particular id is.
+# * `add_at`'s `hits[0]` as `hits[-1]`. The lines above raise unless
+#   there is exactly one hit.
+# * `threads`' `c.parent_cid == root.cid` as `is`. `by_para` is built
+#   from the same records as the comments, so a parent id and the
+#   parent's own cid are the SAME string object — which is why this one
+#   holds for a two-digit id, where interning would not.
+# * the five `find(...) != -1` / `== -1` comparisons in
+#   `_drop_reference_run` and `threads`, as `>`, `<=` and `is`. `find`
+#   answers -1 or a non-negative index, so all four spellings agree over
+#   what it can return.
+# * `remove`'s `com.replace(m.group(0), "", 1)` as `2`. The text came
+#   from that string and carries the comment's own `w:id`, which is
+#   unique in the part.
+#
+# NOT worked: the `else 0` in the thread sort key
+# (`int(c.cid) if c.cid.isdigit() else 0`). It orders a non-numeric
+# comment id against the ids 0 and 1 at an identical timestamp, and
+# Word writes numeric ids.

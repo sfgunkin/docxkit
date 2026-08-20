@@ -303,3 +303,16 @@ def test_a_comment_with_only_a_REFERENCE_sorts_where_it_sits():
     got = [t.comment.cid for t in threads(parts)]
 
     assert got == ["1", "2"], got
+
+
+def test_set_done_with_NO_ids_reports_nothing_changed():
+    """The count is what a caller prints. An empty selection changes
+    nothing, and a 1 there is a report of work that did not happen —
+    the same shape as `reclassify`'s early return."""
+    parts = make_parts()
+
+    assert set_done(parts, []) == 0
+    assert set_done(parts, [], done=False) == 0
+
+    from docxkit.comments import remove
+    assert remove(parts, []) == 0, "the same early return, next door"
