@@ -17,38 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 `refstyle.convert_text` REFUSES an entry whose title contains "&"
-
-Found by review, 2026-08-21, an hour after the converter landed and while
-`refstyle.py` was under measurement — recorded here rather than fixed on the
-spot, because the rule against editing a module mid-run is the rule.
-
-**Cause.** The invariant normalises `"&"` to `"and"` on ONE side:
-
-    before = _alnum(text.replace("&", "and"))
-    after  = _alnum(out)
-
-`_alnum` drops the ampersand as punctuation, so an entry that keeps its `&`
-— a TITLE's, which this deliberately does not convert — reads as
-`...robotsandjobs...` before and `...robotsjobs...` after, and
-
-    Smith, J. (2020). "Robots & Jobs." Journal, 1(1): 1-10.
-
-raises `ConversionRefused` although the converter changed nothing at all.
-
-**Severity.** S2, not S1: `convert` catches the refusal per entry, reports it
-under `refused` and writes nothing, so the failure is a false REFUSAL and
-never a corruption. It is still wrong, and on a manuscript with several such
-titles it is wrong loudly.
-
-**Fix.** Normalise both sides — `after = _alnum(out.replace("&", "and"))` —
-and pin an entry whose title carries an ampersand it keeps.
-
-**Also to fix while there:** three test fixtures written this session put a
-BARE `&` in a `w:t`, which is not well-formed XML and not a document Word can
-produce (`lint` says so). The behaviour is right on the escaped form —
-checked by hand — but the fixtures should be `&amp;`.
-
 ### S3 the agent's Bash heredocs EAT BACKSLASHES, and a `\b` lands as a control character
 
 **Symptom as observed.** 2026-08-20/21, three times in one session. A patch
@@ -452,6 +420,53 @@ and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
 scope on purpose — the in-text rules change what a sentence SAYS.
 
 ## Fixed
+
+### ~~S2 `refstyle.convert_text` REFUSES an entry whose title contains "&"~~
+
+Found by review, 2026-08-21, an hour after the converter landed and while
+`refstyle.py` was under measurement — recorded here rather than fixed on the
+spot, because the rule against editing a module mid-run is the rule.
+
+**Cause.** The invariant normalises `"&"` to `"and"` on ONE side:
+
+    before = _alnum(text.replace("&", "and"))
+    after  = _alnum(out)
+
+`_alnum` drops the ampersand as punctuation, so an entry that keeps its `&`
+— a TITLE's, which this deliberately does not convert — reads as
+`...robotsandjobs...` before and `...robotsjobs...` after, and
+
+    Smith, J. (2020). "Robots & Jobs." Journal, 1(1): 1-10.
+
+raises `ConversionRefused` although the converter changed nothing at all.
+
+**Severity.** S2, not S1: `convert` catches the refusal per entry, reports it
+under `refused` and writes nothing, so the failure is a false REFUSAL and
+never a corruption. It is still wrong, and on a manuscript with several such
+titles it is wrong loudly.
+
+**Fix.** Normalise both sides — `after = _alnum(out.replace("&", "and"))` —
+and pin an entry whose title carries an ampersand it keeps.
+
+**Also to fix while there:** three test fixtures written this session put a
+BARE `&` in a `w:t`, which is not well-formed XML and not a document Word can
+produce (`lint` says so). The behaviour is right on the escaped form —
+checked by hand — but the fixtures should be `&amp;`.
+
+**Fixed the same day**, once the measurement freed the module: both sides
+are normalised now — `after = _alnum(out.replace("&", "and"))` — and an
+entry that keeps its ampersand is pinned, as is one that converts the
+authors' and keeps the title's.
+
+The round that freed it found a second defect in the same function, filed
+and fixed together: the `et al` fix wrote a fragment its own output
+CONTAINS, so a second bare "et al" in one entry re-hit the first and made
+"et al..". Every other fix here writes something that does not contain what
+it replaced.
+
+And the three bare-`&` fixtures are `&amp;` now, except where the string is
+passed as TEXT rather than as XML — which is the distinction the fixtures
+had lost.
 
 ### ~~S4 the revision ladder opens Word two to three times per batch~~
 
