@@ -1742,6 +1742,22 @@ code. The figure will not go down — the survivors that were ARGUED are
 still survivors — but the sample lands somewhere new every time, and
 the newest lines are where it has never been.
 
+### Do not A/B a mutant by patching the LIVE file
+
+The quick way to see what a mutant does is to patch the module, run the
+thing, and restore it in a `finally`. It reads two answers out of one
+file, and on 2026-08-20 it produced a contradiction that took a quarter
+of an hour to chase: `_blocks` appeared to leave a hoisted bookmark
+behind, then appeared not to, with the same fixture. What it was
+actually reading was the live file in three different states — one of
+the probes overlapped a sweep measuring that same module.
+
+`kill_check` exists for this. It has its OWN checkout, refreshes it
+from the live tree, applies one mutation there, and never touches the
+file anyone else is reading. A probe that needs to compare two
+behaviours belongs in it, or in a copy of the module under a scratch
+name — never in `src/`.
+
 ### A PIPELINE's exit code is the last command's, twice now
 
 `pyright | tail -1` swallowed pyright's status and is written up above.

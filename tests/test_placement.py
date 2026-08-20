@@ -1090,6 +1090,31 @@ def test_a_table_OWN_PAGE_fixed_is_not_reported_as_still_splitting():
     assert rep.problems == [], rep.problems
 
 
+def test_a_hoisted_bookmark_travels_from_an_EVEN_index_too():
+    """`kids[head - 1]`, the walk back over the bookmarks Word hoists to
+    body level. Read as `kids[head ^ 1]` it walks FORWARD whenever the
+    caption sits at an even index — xor with 1 is minus one for an odd
+    number and PLUS one for an even one — and the bookmark is left
+    where it stood while the caption moves off, which is the inverted
+    bookmark this loop exists to prevent.
+
+    The test above has its caption at index 3, where the two readings
+    agree. This one puts it at index 2."""
+    body = (P("См. таблицу 1.")
+            + '<w:bookmarkStart w:id="9" w:name="Таблица1"/>'
+            + P("Таблица 1. Заголовок") + TBL("шапка")
+            + '<w:bookmarkEnd w:id="9"/>'
+            + P("Следующий абзац."))
+
+    out, _rep = placement.place(parts(body))
+
+    kids = list(body_of(out))
+    names = [etree.QName(el).localname for el in kids]
+    assert names.index("bookmarkStart") < names.index("tbl"), names
+    assert names.index("bookmarkStart") < names.index("bookmarkEnd")
+    assert names == ["p", "bookmarkStart", "p", "tbl", "bookmarkEnd", "p"]
+
+
 # --- the argued half of placement's 41 ---------------------------------
 #
 # Thirty-five are left after the six tests above, and most of them are
