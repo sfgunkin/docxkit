@@ -1302,3 +1302,34 @@ def test_site_matches_the_glyphs_as_written_unless_told_otherwise():
 # `while (at := xml.find("<w:tbl>", pos)) != -1` -> `> -1` in
 # `body_elements`: `str.find` answers -1 or an index, and there is no
 # value between them.
+
+
+def test_relabel_link_rewrites_the_FIELD_the_anchor_names_and_no_other():
+    """Two cross-references in one sentence is ordinary. An ordering
+    test in place of the equality relabels whichever anchor sorts
+    below the one asked for — and the words still read correctly, so
+    nothing downstream notices."""
+    other = FIELD_LINK.replace("Table5", "Table3").replace(
+        "Table 5", "Table 3")
+    para = ("<w:p>" + run("See ") + other + run(" and ") + FIELD_LINK
+            + run(".") + "</w:p>")
+
+    out = relabel_link(para, "Table5", "Table A5")
+
+    assert text_of(out) == "See Table 3 and Table A5."
+    assert internal_links(out) == [("Table3", "Table 3"),
+                                   ("Table5", "Table A5")]
+
+
+def test_a_field_label_is_written_AFTER_the_separate_marker():
+    """The region is the part of the field a reader SEES. Starting it
+    anywhere earlier puts the new label in the first `w:t` the fragment
+    holds — which, for a paragraph with prose in front, is the prose."""
+    para = ("<w:p>" + run("A long sentence of prose before the field ")
+            + FIELD_LINK + run(" and more after it.") + "</w:p>")
+
+    out = relabel_link(para, "Table5", "Table A5")
+
+    assert text_of(out) == (
+        "A long sentence of prose before the field Table A5 "
+        "and more after it.")

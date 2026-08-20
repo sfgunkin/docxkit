@@ -153,7 +153,8 @@ def test_a_corrupt_stamp_does_not_stop_a_repair_recording_itself(built):
 
 # --- guard's whole survivor list, 2026-08-20: 4.1 % (2/49) -------------
 #
-# Both are `json.dumps(..., indent=1)` in `stamp`, read as 0 and as 2.
+# Four now, and all four are `json.dumps(..., indent=1)` — two in
+# `stamp` and two in `restamp` — read as 0 and as 2.
 # The stamp is written for `check` to read back with `json.loads`, and
 # every indent round-trips to the same dict — so the number is a choice
 # about reading the file BY EYE, which no test should freeze. One space

@@ -704,3 +704,21 @@ def test_the_shared_instance_is_RELEASED_when_the_block_raises(com):
 
     assert not W._SHARED
     assert word.quits == 1
+
+
+def test_a_shared_session_still_asks_Word_to_go_FAST(com):
+    """The options are why `session` exists in the form it does — spell
+    check, background save and screen updating off — and a shared one
+    opens the instance every other caller then gets."""
+    word = com(FakeWord())
+
+    with W.shared_session():
+        assert word.Options.CheckSpellingAsYouType is False
+        assert word.ScreenUpdating is False
+
+
+def test_a_shared_session_can_be_asked_NOT_to(com):
+    word = com(FakeWord())
+
+    with W.shared_session(fast=False):
+        assert word.Options.CheckSpellingAsYouType != False    # noqa: E712

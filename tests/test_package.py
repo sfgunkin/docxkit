@@ -853,3 +853,28 @@ def test_a_LEAF_keeps_the_space_a_container_may_drop():
 #   group around the whole match.
 # * `if attempt < retries - 1` written `!=` and `is not`: `attempt`
 #   comes from `range(retries)`, so it never passes `retries - 1`.
+
+
+def test_the_read_retry_BACKS_OFF_instead_of_hammering(monkeypatch,
+                                                       simple_docx):
+    """A sharing violation is usually over in a moment and occasionally
+    is not, so the waits grow: 0.2, 0.4, 0.6 ... A constant schedule
+    spends the same six attempts inside the first second, which is the
+    part of the window a lock is least likely to have cleared."""
+    from docxkit import package as pkg
+
+    calls: list[int] = []
+    slept: list[float] = []
+    monkeypatch.setattr(pkg.zipfile, "ZipFile", _flaky_zip(99, calls))
+    monkeypatch.setattr(pkg.time, "sleep", slept.append)
+
+    with pytest.raises(PackageError):
+        pkg.read_parts(simple_docx, retries=4, delay=0.5)
+
+    assert slept == [0.5, 1.0, 1.5]
+
+
+# `read_parts`'s remaining survivor from the 2026-08-21 round, argued:
+# `if attempt < retries - 1` -> `!= retries - 1`. `attempt` runs over
+# `range(retries)`, so it reaches the last index exactly and never
+# passes it — the two spellings stop the loop on the same attempt.
