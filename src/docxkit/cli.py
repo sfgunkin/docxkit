@@ -985,6 +985,27 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _say_glyphs(report: object) -> None:
+    """The glyph half of gate 5, with the VIEW it is about named.
+
+    A boolean for a 68,000-character stream says only that SOMETHING
+    moved; on AFI the answer was two characters. And which view it is
+    about is the rest of the question: Word downgrades U+2212 to a
+    hyphen while re-serialising an equation, `build` puts it back in the
+    accepted document — the one that ships — and the rejected one keeps
+    what Compare wrote. Printing `glyphs: False` without saying so reads
+    as a defect in the edit, and it failed three consecutive rounds on a
+    manuscript whose author had touched nothing.
+    """
+    for run in getattr(report, "glyph_diff", []):
+        print(f"   GLYPH (reject-all vs baseline) {run}")
+    if getattr(report, "glyph_math_only", False):
+        print("   every GLYPH above is a math character Word downgrades "
+              "when it re-serialises an equation, not an edit: the "
+              "ACCEPTED view has them restored and the REJECTED one "
+              "does not.")
+
+
 def cmd_revision_validate(args: argparse.Namespace) -> int:
     """The gate ladder. Gate 5 is the one that proves reviewability."""
     from .revision import validate
@@ -1041,10 +1062,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                       f"so rejecting empties it")
             for u in report.reject_diff:
                 print(f"   {u}")
-            for run in report.glyph_diff:
-                # a boolean for a 68,000-character stream says only that
-                # SOMETHING moved; on AFI the answer was two characters
-                print(f"   GLYPH {run}")
+            _say_glyphs(report)
             for moved in report.structure_diff:
                 print(f"   STRUCTURE {moved}: the rejected batch does not "
                       f"carry what the baseline does, and it is not a "

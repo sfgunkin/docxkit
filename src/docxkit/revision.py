@@ -88,6 +88,7 @@ from .errors import (
     ProtocolError,
     StaleBatch,
 )
+from .hygiene import _downgraded
 
 # The reject-all comparison and its three helpers live in `tracked`, with
 # the code that MAKES a redline, so that a paper calling `tracked.build`
@@ -683,6 +684,10 @@ class ValidateReport:
     #: took a bespoke difflib script over private imports while three
     #: builds went by blaming the edits. See :func:`glyph_runs`.
     glyph_diff: list[str] = field(default_factory=list)
+    #: Every glyph difference is a MATH downgrade — the substitution
+    #: Word makes when it re-serialises OMML, not an edit. See the note
+    #: in `validate`.
+    glyph_math_only: bool = False
     #: Structure the rejected view does not carry in the same numbers
     #: as the baseline: a table DUPLICATED by a move, a moved
     #: paragraph's bookmarks, a destroyed section break. None of those
@@ -1293,6 +1298,16 @@ def validate(path: str | Path, baseline: str | Path | None = None,
                 glyph_runs(body_was, body_now)
                 + [f"(footnotes) {run}"
                    for run in glyph_runs(notes_was, notes_now)])
+            # Word downgrades U+2212 to a hyphen while re-serialising an
+            # equation, and `tracked.build` puts it back in the ACCEPTED
+            # view. The rejected one keeps whatever Compare wrote, so a
+            # batch whose edit is perfect fails this gate on a character
+            # no author typed — three rounds running, on AFI. Downgrade
+            # BOTH sides: if that makes them equal, every difference here
+            # is that substitution and nothing else.
+            report.glyph_math_only = bool(report.glyph_diff) and (
+                _downgraded(body_was) == _downgraded(body_now)
+                and _downgraded(notes_was) == _downgraded(notes_now))
             report.moved_footnotes = moved_footnotes(parts, base)
             report.lost_links = [f"-> {a} ({label[:40]!r})"
                                  for a, label in sorted((was - now).elements())]

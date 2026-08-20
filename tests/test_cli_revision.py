@@ -686,6 +686,53 @@ def test_validate_names_the_GLYPH_that_changed(monkeypatch, project,
     assert "after ...the gap is " in out, out
 
 
+def test_validate_says_WHICH_VIEW_a_glyph_difference_is_about(
+        monkeypatch, project, capsys):
+    """BACKLOG S3. Word downgrades U+2212 to a hyphen while
+    re-serialising an equation; `build` puts it back in the ACCEPTED
+    view — the document that ships — and the rejected one keeps what
+    Compare wrote. So a batch whose edit is perfect fails gate 5 on a
+    character no author typed, and `glyphs: False` with no view named
+    reads as a defect in the edit. Three consecutive rounds on AFI went
+    that way, each ending in a per-paper repair script.
+
+    The gate still fails, and should: the two views disagree. What
+    changes is that the report says which one it is judging, and that
+    every difference it found is that substitution and nothing else."""
+    write(project.prev, make_parts(
+        para(run("the gap is − 0.15 in every year"))))
+    write(project.batch, make_parts(
+        para(run("the gap is - 0.15 in every year"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "GLYPH (reject-all vs baseline)" in out, out
+    assert "math character Word downgrades" in out, out
+    assert "ACCEPTED view has them restored" in out
+
+
+def test_a_REAL_edit_is_not_called_a_math_downgrade(monkeypatch, project,
+                                                    capsys):
+    """The other side of the same flag: a batch that actually changed a
+    word must not be excused. `_downgraded` is applied to BOTH streams,
+    so they compare equal only when the substitution is the whole of the
+    difference."""
+    write(project.prev, make_parts(
+        para(run("the gap is − 0.15 in every year"))))
+    write(project.batch, make_parts(
+        para(run("the gap is - 0.19 in every year"))))
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert "GLYPH (reject-all vs baseline)" in out, out
+    assert "math character Word downgrades" not in out, out
+
+
 def test_validate_names_a_moved_footnote_anchor(monkeypatch, project,
                                                 capsys):
     """Compare emits a re-anchored footnote as one insertion with no

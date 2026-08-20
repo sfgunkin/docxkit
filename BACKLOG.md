@@ -174,6 +174,29 @@ name **which view** it is judging — "reject-all" vs "accept-all" — because a
 printed, `glyphs: False` on a batch whose accepted view is correct reads as a
 defect in the edit.
 
+**The third one is done (2026-08-20).** Every glyph line now reads
+`GLYPH (reject-all vs baseline) ...`, and when the two streams become equal
+once BOTH are downgraded — that is, when the substitution is the whole of the
+difference — the report says so:
+
+    every GLYPH above is a math character Word downgrades when it
+    re-serialises an equation, not an edit: the ACCEPTED view has them
+    restored and the REJECTED one does not.
+
+The gate still fails, and should: the two views disagree. What changed is that
+it no longer reads as a defect in the edit. Both sides are pinned —
+`test_validate_says_WHICH_VIEW_a_glyph_difference_is_about` and
+`test_a_REAL_edit_is_not_called_a_math_downgrade`.
+
+**Why not the first one**, looked at the same day: `restore_math_glyphs`
+repairs a run only when its EXACT text appears in a source, and Compare splits
+a run at the edit boundary — so the deleted side often holds a fragment no
+source spells, and there is nothing to key on. Repairing it would mean
+inferring from context, which that function's docstring refuses on purpose
+(a hyphen inside maths is a legitimate character). It needs a real redline
+from AFI to settle, and that is a decision about the conservative rule rather
+than a patch.
+
 S3 rather than S2 because the cost is a gate that is red as a matter of
 routine: the third time a clean batch fails for a reason the author did not
 cause is the time people stop reading it.
