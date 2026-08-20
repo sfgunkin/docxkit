@@ -14,6 +14,7 @@ from docxkit._xml import visible_text
 from docxkit.errors import AnchorError
 from docxkit.renumber import (
     audit,
+    footnotes,
     numbers_in_order,
     remap,
     remap_parts,
@@ -425,3 +426,137 @@ def test_remap_parts_options_are_KEYWORD_only():
 
     with pytest.raises(TypeError):
         remap_parts(parts, "Table", {1: 2}, "A")   # type: ignore[call-arg]
+
+
+# --- the run of 2026-08-20: 5.3 % ---------------------------------------
+
+_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+
+def _package(body: str, defs: str) -> dict[str, bytes]:
+    return {
+        "word/document.xml":
+            f"<w:document {_NS}><w:body>{body}</w:body></w:document>".encode(),
+        "word/footnotes.xml":
+            f"<w:footnotes {_NS}>{defs}</w:footnotes>".encode(),
+    }
+
+
+def test_a_shift_counts_only_what_it_CHANGED():
+    """Four counters, and every one of them was only ever asserted after
+    something had incremented it — so the report could have started at 1
+    and no test would have said otherwise.
+
+    The zero cases are the ones a reader acts on: an anchor and a REF
+    field pointing at an exhibit BELOW the shift are not rewritten, and a
+    report that counts them says the pass touched links it never
+    touched. Two of the three mutants that survived here made exactly
+    that claim, by comparing the new number against a group that is None
+    or against an object that is never the same one."""
+    xml = ("<w:body>"
+           '<w:p><w:bookmarkStart w:id="1" w:name="Table2"/>'
+           "<w:r><w:t>Table 2. The earlier one</w:t></w:r>"
+           '<w:bookmarkEnd w:id="1"/></w:p>'
+           '<w:p><w:bookmarkStart w:id="2" w:name="Table3"/>'
+           "<w:r><w:t>Table 3. The later one</w:t></w:r>"
+           '<w:bookmarkEnd w:id="2"/></w:p>'
+           '<w:p><w:r><w:t>as </w:t></w:r>'
+           '<w:hyperlink w:anchor="Table2"><w:r><w:t>Table 2</w:t></w:r>'
+           "</w:hyperlink><w:r><w:t> shows</w:t></w:r></w:p>"
+           '<w:p><w:r><w:instrText> REF Table2 \\h </w:instrText></w:r>'
+           "</w:p></w:body>")
+
+    out, report = shift(xml, "Table", frm=3)
+
+    assert (report.mentions, report.bookmarks) == (1, 1), report.format()
+    assert (report.anchors, report.fields) == (0, 0), report.format()
+    assert 'w:name="Table4"' in out and 'w:anchor="Table2"' in out
+    assert "REF Table2" in out
+
+
+def test_a_caption_OUTSIDE_the_prefix_is_skipped_not_final():
+    """`continue`, and a `break` there reads the appendix series as
+    empty whenever a main-sequence caption comes first — which is the
+    order every paper has them in."""
+    xml = ("<w:body>"
+           "<w:p><w:r><w:t>Table 1. Main sequence</w:t></w:r></w:p>"
+           "<w:p><w:r><w:t>Table A1. Appendix one</w:t></w:r></w:p>"
+           "<w:p><w:r><w:t>Table A2. Appendix two</w:t></w:r></w:p>"
+           "</w:body>")
+
+    assert numbers_in_order(xml, "Table", prefix="A") == [1, 2]
+    assert numbers_in_order(xml, "Table") == [1]
+
+
+def test_the_notes_are_rebuilt_from_the_FIRST_element_on():
+    """`notes[:elements[0].start()]` is everything before the first note
+    — the part element and its namespaces. Taken to the SECOND element
+    the head swallows the separator note, which is then written twice:
+    once in the head and once in the reordered body, and Word opens the
+    document with a repair warning."""
+    body = ('<w:p><w:r><w:footnoteReference w:id="2"/></w:r></w:p>'
+            '<w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>')
+    defs = ('<w:footnote w:id="-1"><w:p><w:r><w:t>sep</w:t></w:r></w:p>'
+            "</w:footnote>"
+            '<w:footnote w:id="1"><w:p><w:r><w:t>first note</w:t></w:r></w:p>'
+            "</w:footnote>"
+            '<w:footnote w:id="2"><w:p><w:r><w:t>second note</w:t></w:r>'
+            "</w:p></w:footnote>")
+    parts = _package(body, defs)
+
+    assert footnotes(parts) == {2: 1, 1: 2}
+
+    out = parts["word/footnotes.xml"].decode("utf-8")
+    assert out.count("<w:footnote ") == 3, out
+    assert out.count("sep") == 1, out
+    assert out.index("second note") < out.index("first note")
+
+
+def test_a_document_with_MORE_THAN_256_notes_in_order_moves_nothing():
+    """`old != new` over footnote ids, written `is not`. CPython hands
+    out one object per integer below 257 and a fresh one above, so the
+    two readings agree on every fixture in this file and part company on
+    the 257th note — which reports itself as MOVED while sitting exactly
+    where it was.
+
+    Three hundred notes is a long paper, not an impossible one, and the
+    report is what a round acts on: "44 notes moved" sends a reader
+    looking for a renumbering that did not happen."""
+    body = "".join(
+        f'<w:p><w:r><w:footnoteReference w:id="{i}"/></w:r></w:p>'
+        for i in range(1, 301))
+    defs = "".join(
+        f'<w:footnote w:id="{i}"><w:p><w:r><w:t>n{i}</w:t></w:r></w:p>'
+        "</w:footnote>" for i in range(1, 301))
+
+    assert footnotes(_package(body, defs)) == {}
+
+
+# Argued rather than pinned, from the same run:
+#
+# * the four counters' DEFAULTS in `ShiftReport`. `shift` assigns all
+#   four before anyone reads them — `report.bookmarks, report.anchors,
+#   report.fields = names, anchors, refs` — so the value in the
+#   dataclass is only ever seen by a caller who builds one by hand,
+#   which nothing in this package does. (The test above still pins the
+#   ZEROES, which is what the two counting mutants below needed.)
+# * `if remap_fn(n) == n` written `is`, and the two `is not`s in
+#   `_check_permutation`: exhibit numbers and their counts, all below
+#   the 257 CPython caches.
+# * `m.group(1).startswith("w:name")` written `m.group(0)`. Group 1 is
+#   the attribute name and the quote after it, and group 0 begins at the
+#   same character.
+# * `if nums != sorted(nums)` written `>`, in `audit` and in
+#   `footnote_audit`. A sorted list is the smallest arrangement of its
+#   own elements, so an unsorted one is strictly greater — the two
+#   comparisons agree on every list there is.
+# * `len(set(mapping.values())) != len(mapping)` written `<`: a set of a
+#   dict's values cannot be bigger than the dict.
+# * `set(stored_after) - set(after)` written `^`. A reference with no
+#   note has already raised above, so the references are a subset of the
+#   notes and the two operations agree.
+# * the five mutants on `if after != sorted(after) or stored_after !=
+#   after` — the backstop that says the renumbering did not settle.
+#   Every one of them differs only in a state this function has just
+#   finished ruling out, and `is`/`is not` on two lists built here can
+#   only be False.
