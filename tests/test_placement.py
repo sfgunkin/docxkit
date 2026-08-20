@@ -1188,6 +1188,35 @@ def test_a_TABLE_that_mentions_the_table_is_not_the_anchor():
                           "p:Таблица 1. Заголовок", "tbl:шапка"]
 
 
+def test_the_row_and_the_MENTION_are_matched_on_forty_characters_too():
+    """The caption's cut has a test; the other two keys handed to
+    `_sheet_of` did not. All three are cut for the same reason — a
+    renderer lays text out its own way, and the tail is where a line
+    break or a hyphenation lands — and cutting longer turns "found on
+    sheet 2" into "not found", which reads as a table that split
+    (`last_sheet`) or a mention nobody can locate (`drift is None`).
+
+    Both needles here agree with the render for forty characters and
+    diverge after it."""
+    mention = "См. таблицу 1, где занятость населения по возрасту и полу"
+    last_row = "Итого по всем регионам выборки за период наблюдения"
+    caption = "Таблица 1. Заголовок"
+    assert mention[40].strip() and last_row[40].strip(), "cut mid-word"
+
+    def render(_parts):
+        return [mention[:40] + " ...перенос",
+                caption + " шапка " + last_row[:40] + " ...перенос"]
+
+    _out, rep = placement.place(
+        parts(P(mention) + P(caption) + TBL("шапка", last_row)),
+        render=render)
+
+    pl = rep.placements[0]
+    assert (pl.mention_sheet, pl.caption_sheet, pl.last_sheet) == (1, 2, 2)
+    assert pl.drift == 1 and pl.split is False
+    assert rep.problems == [], rep.problems
+
+
 # --- the argued half of placement's 41 ---------------------------------
 #
 # Thirty-five are left after the six tests above, and most of them are
@@ -1215,11 +1244,12 @@ def test_a_TABLE_that_mentions_the_table_is_not_the_anchor():
 # Also argued and checked: `already = anchor.getnext() is block[0]` read
 # as `==`. lxml elements define no `__eq__`, so equality IS identity.
 #
-# NOT worked, and listed so the next round starts here: the four
-# `[:40]` widths on the text handed to `_sheet_of`. Each is a match KEY
-# against a rendered sheet, so pinning one means a render whose text
-# differs from the block's beyond that character — which is what the
-# caption test above does, and the other three want the same shape.
+# The not-worked list is empty. It held twelve entries this afternoon
+# and every one of them came off it: the three arithmetic readings of
+# the re-measure's start index, `Placement.spaced`, `here != there`,
+# `_anchor`'s tag guard, and the four `[:40]` match keys — pinned by a
+# render that agrees with the block for forty characters and diverges
+# after, which is the shape the caption test already had.
 #
 # (Three other entries were on this list and came off it the same
 # afternoon: `pl.caption_sheet - 1`, `Placement.spaced`'s default, and
