@@ -391,6 +391,28 @@ when this is fixed.**
   no way to create a footnote and its reference as a pair, which is what was
   hand-rolled here.
 
+**BOTH DONE, 2026-08-20.**
+
+`footnotes.out_of_order(document_xml, notes_xml, kind=...)` answers the ids
+that would move — every one of them, so a caller can quote them — and ignores
+the two questions it is not (a definition nothing references; a reference with
+no definition). It is called from `revision.state`, so `revision status` prints
+one line about a file that otherwise looks settled, and from `revision build`'s
+preflight over BOTH sides, where it is still cheap.
+
+`footnotes.add(parts, after=..., text=...)` creates the pair. It lives in
+`footnotes` rather than `revision` because it is a document operation, not a
+protocol one; the entry's name is recorded here so a search for it lands. The
+definition is written in REFERENCE order rather than appended, so the file it
+produces is one Word could have written and `out_of_order` answers `[]` by
+construction. Two things it will not do: invent the footnote scaffold for a
+package that has never held a note (it refuses and says so), and hand back a
+reserved id — Word's separators are -1 and 0, and "one past the highest" over a
+part holding only those answers 0, which renders as the separator line.
+
+**`AFI/revision/scripts/renumber_footnotes.py` can go** once someone confirms
+the paper's existing out-of-order notes are repaired; the detector will say.
+
 ---
 
 ### ~~S4 nothing can test a set of edits against a document before building it~~ — FIXED 20.08, `9b7a5b3`

@@ -913,3 +913,147 @@ def test_out_of_order_skips_words_own_separator_notes():
              + _notes_part(2, 3)[len("<w:footnotes>"):])
 
     assert out_of_order(_refs(2, 3), notes) == []
+
+
+# --- creating a note and its reference as a PAIR -----------------------
+#
+# What a paper hand-rolled, and the reason the entry above exists: an
+# appended definition renders correctly and costs the NEXT batch.
+
+
+def _package(*, on: dict[int, int] | None = None) -> dict[str, bytes]:
+    """Three sentences; `on` says which of them carries which note.
+
+    The MIDDLE one is left bare by default, because a note added to a
+    paragraph that already has one lands after it, and that says
+    nothing about where the definition went.
+    """
+    on = {1: 2, 3: 3} if on is None else on
+    part = ('<w:footnotes><w:footnote w:id="-1"><w:p/></w:footnote>'
+            + "".join(f'<w:footnote w:id="{i}"><w:p><w:r><w:t>note {i}'
+                      f"</w:t></w:r></w:p></w:footnote>"
+                      for i in sorted(on.values()))
+            + "</w:footnotes>")
+    body = "".join(
+        f"<w:p><w:r><w:t>Sentence {n}.</w:t></w:r>"
+        + (f'<w:r><w:footnoteReference w:id="{on[n]}"/></w:r>'
+           if n in on else "")
+        + "</w:p>" for n in (1, 2, 3))
+    return {"word/document.xml":
+            f"<w:document><w:body>{body}</w:body></w:document>".encode(),
+            "word/footnotes.xml": part.encode()}
+
+
+def _order(parts: dict[str, bytes]) -> tuple[list[str], list[str]]:
+    doc = parts["word/document.xml"].decode("utf-8")
+    notes = parts["word/footnotes.xml"].decode("utf-8")
+    return (re.findall(r'footnoteReference w:id="(\d+)"', doc),
+            [f.id for f in footnotes.find_all(notes)])
+
+
+def test_add_writes_the_definition_in_REFERENCE_order():
+    """The whole point. A note whose reference lands in the middle of
+    the body gets its definition in the middle of the part, so the file
+    is one Word could have written — and `out_of_order` says so."""
+    from docxkit.footnotes import add, out_of_order
+
+    parts = _package()
+
+    new = add(parts, after="Sentence 2.", text="A new note.")
+
+    assert new == "4", "one past the highest id the part held"
+    refs, defs = _order(parts)
+    assert refs == ["2", "4", "3"]
+    assert defs == ["2", "4", "3"]
+    assert out_of_order(parts["word/document.xml"].decode("utf-8"),
+                        parts["word/footnotes.xml"].decode("utf-8")) == []
+
+
+def test_add_puts_a_FIRST_note_before_every_other_definition():
+    """The branch with no note in front of it: the definition goes at
+    the head of the part, not at its end."""
+    from docxkit.footnotes import add, out_of_order
+
+    parts = _package(on={2: 2, 3: 3})
+
+    add(parts, after="Sentence 1.", text="Now the first.")
+
+    refs, defs = _order(parts)
+    assert refs == ["4", "2", "3"] and defs == ["4", "2", "3"]
+    assert out_of_order(parts["word/document.xml"].decode("utf-8"),
+                        parts["word/footnotes.xml"].decode("utf-8")) == []
+
+
+def test_the_new_note_carries_its_TEXT_and_the_reference_mark():
+    """A footnote's first run is the mark Word renders as the number —
+    `w:footnoteRef` — and the text follows it after a space, which is
+    what Word writes when a person types one."""
+    from docxkit.footnotes import add, find
+
+    parts = _package()
+    add(parts, after="Sentence 2.", text="Data are from Eurostat (2023).")
+
+    note = find(parts["word/footnotes.xml"].decode("utf-8"), "Eurostat")
+    assert "<w:footnoteRef/>" in note.xml
+    assert note.text == "Data are from Eurostat (2023)."
+    assert 'w:rStyle w:val="FootnoteReference"' in note.xml
+
+
+def test_the_reference_lands_where_the_anchor_ENDS():
+    """Immediately behind the anchor text, which is where a note
+    marker goes — a marker before the full stop reads as belonging to
+    the next sentence."""
+    from docxkit.footnotes import add
+
+    parts = _package(on={})
+    add(parts, after="Sentence 2.", text="A note.")
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    (para_xml,) = [p for p in re.findall(r"<w:p>.*?</w:p>", doc, re.DOTALL)
+                   if "Sentence 2." in p]
+    assert para_xml.index("Sentence 2.") < para_xml.index("footnoteReference")
+    from docxkit._xml import visible_text
+    assert visible_text(para_xml) == "Sentence 2."
+
+
+def test_the_text_is_ESCAPED_into_the_part():
+    from docxkit.footnotes import add, find
+
+    parts = _package()
+    add(parts, after="Sentence 2.", text="R&D spending < 3% of GDP")
+
+    part = parts["word/footnotes.xml"].decode("utf-8")
+    assert "R&amp;D" in part and "&lt; 3%" in part
+    assert find(part, "R&D").text == "R&D spending < 3% of GDP"
+
+
+def test_add_refuses_a_package_with_NO_footnote_part():
+    """The scaffold Word writes for its first note is not built here,
+    and inventing half of one is how a package comes back unreadable."""
+    from docxkit.errors import AnchorError
+    from docxkit.footnotes import add
+
+    parts = {"word/document.xml":
+             b"<w:document><w:body><w:p><w:r><w:t>Only.</w:t></w:r>"
+             b"</w:p></w:body></w:document>"}
+
+    with pytest.raises(AnchorError, match="never held a footnote"):
+        add(parts, after="Only.", text="x")
+
+
+def test_a_note_added_to_a_part_of_SEPARATORS_ONLY_gets_a_real_id():
+    """Word's separator notes are -1 and 0, so "one past the highest"
+    over a part that holds only those answers 0 — the id of the
+    separator line itself, which is what a reference to it renders as.
+    A paper with a footnote scaffold and no footnotes yet is the
+    ordinary shape of a first note."""
+    from docxkit.footnotes import add, find_all
+
+    parts = _package(on={})
+
+    new = add(parts, after="Sentence 2.", text="The first note.")
+
+    assert new == "1"
+    part = parts["word/footnotes.xml"].decode("utf-8")
+    assert [f.id for f in find_all(part)] == ["1"]
+    assert 'w:id="1"' in parts["word/document.xml"].decode("utf-8")

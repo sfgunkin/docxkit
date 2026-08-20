@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from ._xml import (
+    DOCUMENT,
+    FOOTNOTES,
     PARA_RE,
     RUN_RE,
     escape,
@@ -31,7 +33,9 @@ from ._xml import (
     span_holding,
     visible_text,
 )
+from .edit import insert_in_para
 from .errors import AnchorError
+from .find import para_slice
 from .styles import STYLE as _STYLE
 from .styles import Cascade
 
@@ -41,6 +45,7 @@ __all__ = [
     "Footnote",
     "SizeOutlier",
     "SizeReport",
+    "add",
     "append",
     "find",
     "find_all",
@@ -134,6 +139,82 @@ def out_of_order(document_xml: str, notes_xml: str, *,
     wanted = [i for i in seen if i in set(defined)]
     have = [i for i in defined if i in set(wanted)]
     return [i for i, j in zip(have, wanted, strict=True) if i != j]
+
+
+#: The reference run Word writes, and the definition's opening run.
+_REF_RUN = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+            '<w:footnoteReference w:id="{id}"/></w:r>')
+_DEF = ('<w:footnote w:id="{id}"><w:p><w:pPr>'
+        '<w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr>'
+        '<w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/>'
+        '</w:r><w:r><w:t xml:space="preserve"> {text}</w:t></w:r>'
+        "</w:p></w:footnote>")
+
+
+def add(parts: dict[str, bytes], *, after: str, text: str) -> str:
+    """Create a footnote and its reference AS A PAIR. Returns the id.
+
+    `after` is visible text in the body; the reference goes immediately
+    behind it, in the one paragraph that contains it.
+
+    The definition is written in REFERENCE order rather than appended,
+    which is the whole reason this exists. Appending is what a paper
+    hand-rolled, and it costs a batch: the file renders correctly and
+    passes every read-only gate, then Word's Compare rewrites the
+    definitions into document order and the next redline reads the
+    whole part as moved (see :func:`out_of_order`).
+
+    The id is one past the highest the part already holds — not the
+    count of notes, which repeats an id after a deletion, and not a
+    reused free one, because `commentsExtended`-style parts elsewhere
+    key on ids and a reused id inherits whatever they still say.
+
+    Mutates `parts`; needs `word/footnotes.xml` to exist, which it does
+    in any document Word has ever put a note in.
+    """
+    if FOOTNOTES not in parts:
+        raise AnchorError(
+            "no word/footnotes.xml: this package has never held a footnote, "
+            "and the scaffold Word writes for one is not built here. Add a "
+            "note in Word once, or copy the part from a document that has "
+            "them.")
+    doc = parts[DOCUMENT].decode("utf-8")
+    notes_xml = parts[FOOTNOTES].decode("utf-8")
+
+    start, end = para_slice(doc, after)
+    para = doc[start:end]
+    at = visible_text(para).index(after) + len(after)
+
+    # One past the highest, and never below 1: Word's separator notes
+    # are -1 and 0, so a part that holds only those would otherwise hand
+    # back an id the document reserves — and a reference to 0 renders as
+    # the separator line.
+    used = {int(f.id) for f in find_all(notes_xml, include_reserved=True)}
+    new_id = str(max({*used, 0}) + 1)
+
+    para = insert_in_para(para, at, _REF_RUN.format(id=new_id))
+    doc = doc[:start] + para + doc[end:]
+
+    # WHERE the definition goes: right after the definition of the note
+    # whose reference now precedes this one. That keeps the part in
+    # reference order by construction, which is what `out_of_order`
+    # measures and what Compare would otherwise impose.
+    order = [i for i in _REFERENCE_OF["footnote"].findall(doc)
+             if i not in _RESERVED_IDS]
+    before = order[order.index(new_id) - 1] if order.index(new_id) else None
+    body = _DEF.format(id=new_id, text=escape(text))
+    if before is None:
+        first = find_all(notes_xml)
+        at_def = first[0].start if first else len(notes_xml) - len(
+            "</w:footnotes>")
+    else:
+        prev = next(f for f in find_all(notes_xml, include_reserved=True)
+                    if f.id == before)
+        at_def = prev.end
+    parts[FOOTNOTES] = (notes_xml[:at_def] + body
+                        + notes_xml[at_def:]).encode("utf-8")
+    parts[DOCUMENT] = doc.encode("utf-8")
+    return new_id
 
 
 def find(footnotes_xml: str, contains: str) -> Footnote:
