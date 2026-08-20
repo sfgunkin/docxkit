@@ -458,3 +458,57 @@ def test_a_survivor_BELOW_the_defensive_block_is_still_a_gap(tmp_path):
 
     assert "REAL SURVIVAL 100.0% (1/1)" in done.stdout, done.stdout
     assert "L8" in done.stdout
+
+
+# --- a run that stopped early ------------------------------------------
+
+
+def test_a_run_that_stopped_EARLY_says_so_before_its_figure(tmp_path):
+    """A sampled run marks the mutants it will not run SKIPPED, so a
+    FINISHED one has a row per spec either way. Fewer rows means the
+    session was killed, timed out, or is still going — and the figure
+    from a run that stopped is not the module's, it is whatever the
+    first N mutants happened to say.
+
+    It flatters, which is why it needs saying out loud: `_table_core`
+    read 1.0 % (2/209) from 675 of its 903 mutants, ten minutes after a
+    stream was stopped, against a true 2.7 % (11/415)."""
+    src = tmp_path / "widths.py"
+    src.write_text(MODULE, encoding="utf-8")
+    db = _database(tmp_path / "partial.sqlite", (2, "SURVIVED"),
+                   (6, "KILLED"))
+    # two more mutants planned and never answered
+    conn = sqlite3.connect(db)
+    for i in (90, 91):
+        conn.execute("INSERT INTO mutation_specs VALUES (?, ?, ?, ?)",
+                     (f"job{i}", 6, 0, "core/NumberReplacer"))
+    conn.commit()
+    conn.close()
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 0, done.stderr
+    assert "INCOMPLETE: 2 of 4 mutants" in done.stdout, done.stdout
+    assert "not the module" in done.stdout
+
+
+def test_a_FINISHED_sample_is_not_called_incomplete(tmp_path):
+    """The distinction the banner turns on: a sample says SKIPPED for
+    what it chose not to run, and that is an answer. Calling it
+    incomplete would put the warning on every sampled run in the
+    package, which is all of the big ones."""
+    src = tmp_path / "widths.py"
+    src.write_text(MODULE, encoding="utf-8")
+    db = _database(tmp_path / "sampled.sqlite", (2, "SURVIVED"),
+                   (6, "KILLED"), (6, "SKIPPED"), (6, "SKIPPED"))
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert "INCOMPLETE" not in done.stdout, done.stdout
+    assert "(sampled from 4)" in done.stdout, done.stdout

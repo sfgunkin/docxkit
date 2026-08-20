@@ -3,6 +3,7 @@
 
     python tools/stale_figures.py           # every module, one line each
     python tools/stale_figures.py --stale   # only the ones to re-measure
+    python tools/stale_figures.py --figures # the FIGURE beside the verdict
 
 A survivor list is a photograph of ONE tree: this source, this harness.
 Change either side and the list keeps its old answers — mutants a new
@@ -21,17 +22,29 @@ much as a committed one.
 It answers "is this figure worth quoting", nothing else. What to do
 about a stale one is a judgement: re-measure before the round starts, or
 mine it anyway and let `kill_check` dispose of what has since died.
+
+`--figures` prints the figure itself alongside, read out of each session
+file through `mutation_survivors.classify` — the same arithmetic the
+survivor list uses, so the two cannot disagree. It exists because the
+numbers get QUOTED: CONTRIBUTING's tables are written by hand from
+whatever the last round printed into a terminal, and a table written
+that way is out of date the moment a round lands. This is the state of
+the package as of right now, in one screen.
 """
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import subprocess
 import sys
 from functools import cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from harness_map import HARNESS
+
+from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -97,12 +110,34 @@ def state(module: str, tests: list[str]) -> tuple[str, list[str]]:
             [str(p.relative_to(ROOT)).replace("\\", "/") for p in moved])
 
 
+def figure(module: str) -> str:
+    """`real survival` for one module, or why there is none to print."""
+    from mutation_survivors import classify  # noqa: PLC0415
+
+    db = session_file(module)
+    src = ROOT / "src" / "docxkit" / module
+    try:
+        counts = classify(str(db), str(src))
+    except (sqlite3.DatabaseError, SyntaxError, OSError) as exc:
+        return f"unreadable ({type(exc).__name__})"
+    if counts is None:
+        return "graded nothing"
+    # A run that stopped early reports whatever its first mutants said,
+    # and it flatters: `_table_core` read 1.0 % from 209 of 903 against
+    # a true 2.7 % from all of them.
+    mark = " PARTIAL" if counts.partial else ""
+    return f"{counts.share:5.1f}%  ({len(counts.real)}/{counts.base}){mark}"
+
+
 def main() -> int:
+    utf8_stdout()
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stale", action="store_true",
                     help="print only the modules whose figure is void")
+    ap.add_argument("--figures", action="store_true",
+                    help="print each module's real-survival figure too")
     args = ap.parse_args()
 
     worst = 0
@@ -112,6 +147,12 @@ def main() -> int:
             continue
         worst = max(worst, {"fresh": 0, "stale": 1, "never measured": 1}[
             verdict])
+        if args.figures:
+            # The figure of a STALE run is still the last thing measured;
+            # the verdict beside it is what says whether to quote it.
+            got = figure(module) if verdict != "never measured" else ""
+            print(f"{module:24s} {got:>18s}  {verdict}")
+            continue
         detail = f": {', '.join(moved)}" if moved else ""
         print(f"{module:24s} {verdict}{detail}")
     return worst

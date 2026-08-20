@@ -10,6 +10,9 @@ the run was not in the answers it gave.
 """
 from __future__ import annotations
 
+import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -122,3 +125,58 @@ def test_a_path_OUTSIDE_the_repository_is_answered_from_disk(tmp_path):
     outside.write_text("x = 1\n", encoding="utf-8")
 
     assert last_touched(outside) == pytest.approx(outside.stat().st_mtime)
+
+
+# --- the figure beside the verdict --------------------------------------
+
+
+def test_the_figures_mode_prints_a_figure_per_module():
+    """CONTRIBUTING's tables are written by hand from whatever the last
+    round printed into a terminal, so they are out of date the moment a
+    round lands. `--figures` reads every session file through
+    `mutation_survivors.classify` — the same arithmetic the survivor
+    list uses, so the two cannot disagree — and prints the package's
+    state in one screen."""
+    done = subprocess.run(
+        [sys.executable, str(TOOLS / "stale_figures.py"), "--figures"],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    lines = [ln for ln in done.stdout.splitlines() if ln.strip()]
+    assert lines, done.stderr
+    for line in lines:
+        assert line.endswith(("fresh", "stale", "never measured")), line
+    measured = [ln for ln in lines if "%" in ln]
+    assert measured, done.stdout
+    assert all(re.search(r"\d+\.\d%\s+\(\d+/\d+\)", ln) for ln in measured)
+
+
+def test_a_partial_run_is_MARKED_in_the_table(tmp_path, monkeypatch):
+    """The figure of a run that stopped early is whatever its first
+    mutants said, and it flatters — 1.0 % against a true 2.7 % on
+    `_table_core`. The table says so where a reader is most likely to
+    quote it."""
+    import sqlite3
+
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    db = tmp_path / ".mutation-thing.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE mutation_specs (job_id TEXT, "
+                 "start_pos_row INT, start_pos_col INT, operator_name TEXT)")
+    conn.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT, "
+                 "diff TEXT)")
+    for i in range(4):
+        conn.execute("INSERT INTO mutation_specs VALUES (?, 2, 0, 'op')",
+                     (f"job{i}",))
+    conn.execute("INSERT INTO work_results VALUES ('job0', 'SURVIVED', '')")
+    conn.commit()
+    conn.close()
+
+    src = tmp_path / "src" / "docxkit"
+    src.mkdir(parents=True)
+    (src / "thing.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(stale_figures, "session_file", lambda module: db)
+
+    assert "PARTIAL" in stale_figures.figure("thing.py")

@@ -34,10 +34,13 @@ import sys
 import tomllib
 from collections import Counter
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from docxkit.console import utf8_stdout
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def annotation_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
@@ -280,6 +283,102 @@ def became(diff: str | None) -> str:
     return ""
 
 
+class Counts(NamedTuple):
+    """What one session file says, sorted into the kinds that matter."""
+
+    ran: int
+    killed: int
+    survived: int
+    graded: int          # rows the run has an answer for
+    planned: int         # rows it was planned with
+    annotated: int
+    in_guard: int
+    in_marker: int
+    in_nocov: int
+    real: list[tuple[int, int, str, str, str | None]]
+    lines: list[str]
+    tree: ast.Module
+
+    @property
+    def partial(self) -> bool:
+        """Did the run stop before it had graded everything?
+
+        A sampled run marks the mutants it will not run SKIPPED, so a
+        FINISHED one has a row per spec either way. Fewer rows means the
+        session was killed, timed out, or is still going — and the
+        figure from a run that stopped early is not the module's: it is
+        whatever the first N mutants happened to say. `_table_core`
+        read 1.0 % that way (2/209) against a true 2.7 % (11/415) on
+        2026-08-20, ten minutes after a stream was stopped.
+        """
+        return self.graded < self.planned
+
+    @property
+    def base(self) -> int:
+        """The denominator: what a test COULD have killed."""
+        return (self.ran - self.annotated - self.in_guard - self.in_marker
+                - self.in_nocov)
+
+    @property
+    def share(self) -> float:
+        return len(self.real) / self.base * 100 if self.base else 0.0
+
+
+def classify(db_path: str, src_path: str) -> Counts | None:
+    """Read a session file and sort its survivors. None if it graded
+    nothing.
+
+    One spelling of "what does this run say", because there are two
+    readers of it now — the survivor list a round is mined from, and the
+    table `stale_figures --figures` prints. Two would drift, and the
+    drift would be in the number quoted at people.
+    """
+    text = Path(src_path).read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    spans = annotation_spans(tree)
+    guards = main_guard_spans(tree)
+    markers = set(marker_positions(text, tree))
+    nocov = excluded_spans(text, tree, excluded_patterns(ROOT))
+
+    rows = sqlite3.connect(db_path).execute("""
+        SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
+               r.test_outcome, r.diff
+        FROM mutation_specs s JOIN work_results r ON s.job_id = r.job_id
+        ORDER BY s.start_pos_row
+    """).fetchall()
+    if not rows:
+        return None
+    planned = sqlite3.connect(db_path).execute(
+        "SELECT count(*) FROM mutation_specs").fetchone()[0]
+
+    # SKIPPED rows are the ones `mutation_session.py --sample` marked so
+    # they would not run. Counting them as killed reads a 460-mutant
+    # sample as 1361 mutants with 901 free kills, and the share then
+    # answers a question nobody asked.
+    ran = [r for r in rows if r[3] != "SKIPPED"]
+    survived = [r for r in ran if r[3] == "SURVIVED"]
+    unreached = [r for r in survived if within(spans, r[0], r[1])
+                 or within(guards, r[0], r[1])
+                 or within(nocov, r[0], r[1])
+                 or (r[0], r[1]) in markers]
+    annotated = sum(1 for r in unreached if within(spans, r[0], r[1]))
+    in_guard = sum(1 for r in unreached
+                   if within(guards, r[0], r[1])
+                   and not within(spans, r[0], r[1]))
+    in_nocov = sum(1 for r in unreached
+                   if within(nocov, r[0], r[1])
+                   and not within(spans, r[0], r[1])
+                   and not within(guards, r[0], r[1]))
+    return Counts(
+        ran=len(ran), killed=len(ran) - len(survived), survived=len(survived),
+        graded=len(rows), planned=planned,
+        annotated=annotated, in_guard=in_guard,
+        in_marker=len(unreached) - annotated - in_guard - in_nocov,
+        in_nocov=in_nocov,
+        real=[r for r in survived if r not in unreached],
+        lines=text.splitlines(), tree=tree)
+
+
 def main() -> int:
     # This report QUOTES the module's source, and a module that lays out
     # glyph widths or parses Word's typography holds characters cp1252
@@ -294,52 +393,25 @@ def main() -> int:
     for banner in staleness(src_path):
         print(banner)
     src_path, note = pristine_source(db_path, src_path)
-    text = Path(src_path).read_text(encoding="utf-8")
-    lines = text.splitlines()
-    tree = ast.parse(text)
-    spans = annotation_spans(tree)
-    guards = main_guard_spans(tree)
-    markers = set(marker_positions(text, tree))
-    nocov = excluded_spans(text, tree,
-                           excluded_patterns(Path(__file__).resolve().parents[1]))
-
-    rows = sqlite3.connect(db_path).execute("""
-        SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
-               r.test_outcome, r.diff
-        FROM mutation_specs s JOIN work_results r ON s.job_id = r.job_id
-        ORDER BY s.start_pos_row
-    """).fetchall()
-    if not rows:
+    counts = classify(db_path, src_path)
+    if counts is None:
         print("no results in that database — has `cosmic-ray exec` run?")
         return 2
     if note:
         print(note)
-
-    # SKIPPED rows are the ones `mutation_session.py --sample` marked so
-    # they would not run. Counting them as killed reads a 460-mutant
-    # sample as 1361 mutants with 901 free kills, and the share then
-    # answers a question nobody asked.
-    skipped = [r for r in rows if r[3] == "SKIPPED"]
-    ran = [r for r in rows if r[3] != "SKIPPED"]
-    survived = [r for r in ran if r[3] == "SURVIVED"]
-    unreached = [r for r in survived if within(spans, r[0], r[1])
-                 or within(guards, r[0], r[1])
-                 or within(nocov, r[0], r[1])
-                 or (r[0], r[1]) in markers]
-    real = [r for r in survived if r not in unreached]
-    annotated = sum(1 for r in unreached if within(spans, r[0], r[1]))
-    in_guard = sum(1 for r in unreached
-                   if within(guards, r[0], r[1])
-                   and not within(spans, r[0], r[1]))
-    in_nocov = sum(1 for r in unreached
-                   if within(nocov, r[0], r[1])
-                   and not within(spans, r[0], r[1])
-                   and not within(guards, r[0], r[1]))
-    in_marker = len(unreached) - annotated - in_guard - in_nocov
-    killed = len(ran) - len(survived)
-    sample = f" (sampled from {len(rows)})" if skipped else ""
-    print(f"{len(ran)} mutants run{sample} · {killed} killed · "
-          f"{len(survived)} survived")
+    lines, tree = counts.lines, counts.tree
+    real = counts.real
+    annotated, in_guard = counts.annotated, counts.in_guard
+    in_marker, in_nocov = counts.in_marker, counts.in_nocov
+    if counts.partial:
+        print(f"  INCOMPLETE: {counts.graded} of {counts.planned} mutants "
+              f"have an answer — the run was stopped, timed out, or is\n"
+              f"  still going. The figure below is the first "
+              f"{counts.graded} mutants, not the module.\n")
+    sample = (f" (sampled from {counts.planned})"
+              if counts.planned > counts.ran and not counts.partial else "")
+    print(f"{counts.ran} mutants run{sample} · {counts.killed} killed · "
+          f"{counts.survived} survived")
     print(f"  {annotated} of the survivors are inside a TYPE "
           f"ANNOTATION — equivalent by\n  construction (PEP 563: never "
           f"evaluated), so they are not a question")
@@ -361,10 +433,8 @@ def main() -> int:
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.
-    base = len(ran) - annotated - in_guard - in_marker - in_nocov
-    share = len(real) / base * 100 if base else 0.0
     print(f"  {len(real)} to actually look at — REAL SURVIVAL "
-          f"{share:.1f}% ({len(real)}/{base})\n")
+          f"{counts.share:.1f}% ({len(real)}/{counts.base})\n")
 
     defs = definitions(tree)
     by_line: dict[int, list[str]] = {}
