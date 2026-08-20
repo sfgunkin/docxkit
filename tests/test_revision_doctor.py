@@ -223,3 +223,21 @@ def test_the_ATTIC_is_not_surveyed(tmp_path):
     # is the skip talking and not the survey missing the file
     (paper.root / "live_build.py").write_text(stale, encoding="utf-8")
     assert [d.text for d in doctor(paper)] == ["afi_v11.docx"]
+
+
+def test_a_file_in_a_SKIPPED_directory_does_not_end_the_walk(paper):
+    """`continue`, on the `.git`/`__pycache__` skip. The walk is over
+    `sorted(rglob("*"))`, so a hook or a cached module sorts near the
+    top of a repository — and `break` there returns an empty report for
+    a project with doubts in it, which reads exactly like a clean one.
+
+    The gate this belongs to exists because a stale reference does not
+    fail: it picks up an older generation of the same paper. A gate
+    that answers "nothing" is worse than no gate."""
+    line = 'P = "Report/afi_v11.docx"'
+    _write(paper, ".git/hooks/pre-commit.py", line)
+    _write(paper, "scripts/build.py", line)
+
+    found = doctor(paper)
+
+    assert [d.path.as_posix() for d in found] == ["scripts/build.py"]

@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 from conftest import (
+    NS,
     comment,
     document,
     make_parts,
@@ -1512,7 +1513,72 @@ def test_a_PREFIX_of_the_loss_identifies_it(project):
 # three builds after the gate first went red.
 
 def test_two_identical_streams_have_nothing_to_report():
-    assert glyph_runs("the same", "the same") == []
+    """Built at run time, not written twice: two equal literals in one
+    module are ONE object, and `before == after` read as `is` passes on
+    a fixture like that while sending every clean build of a real
+    manuscript through difflib over tens of thousands of characters to
+    be told nothing."""
+    before = " ".join(["the", "same"])
+    after = " ".join(["the", "same"])
+    assert before is not after and before == after
+
+    assert glyph_runs(before, after) == []
+
+
+def test_two_identical_streams_are_not_DIFFED_at_all(monkeypatch):
+    """`before == after` read as `is` gives the same ANSWER — difflib
+    over two identical strings reports nothing either way — so the count
+    is the assertion, as it is for `_Layout.find`'s empty range.
+
+    What it costs: the glyph gate compares two streams of 68,829
+    characters, and it runs on every clean build. The streams come out
+    of two documents, so they are never one object."""
+    calls: list[int] = []
+    real = revision.SequenceMatcher
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(revision, "SequenceMatcher", spy)
+    before = " ".join(["the", "same"])
+    after = " ".join(["the", "same"])
+
+    assert glyph_runs(before, after) == []
+    assert calls == [], "the equal streams were diffed anyway"
+
+    assert glyph_runs(before, after + "!") != []
+    assert calls == [1], "and a real difference still is"
+
+
+def test_a_config_at_the_project_ROOT_roots_where_it_stands(tmp_path):
+    """`config.parent.name == _DIR`, and this is its `else`. `init`
+    writes `revision/paper.toml`, so every fixture in this file takes
+    the first branch — but `find_config` looks for `paper.toml` at the
+    top of the project too, and a paper that keeps it there is rooted
+    where it stands rather than one level up.
+
+    Read as `is not`, the two branches swap: the ordinary layout
+    survives it by accident, because `Path.name` is a slice of the path
+    string and never the module's own literal, so identity answers the
+    same as equality there. This layout is where the accident runs
+    out — the root comes back as the directory ABOVE the project, and
+    every path in the config resolves outside it."""
+    src = write(tmp_path / "manuscript.docx",
+                make_parts(para(run("The paper."))))
+    paper = revision.init(tmp_path / "proj", src)
+    assert paper.config.parent.name == "revision", "the default layout"
+
+    at_root = paper.root / "paper.toml"
+    at_root.write_text(paper.config.read_text(encoding="utf-8"),
+                       encoding="utf-8")
+    paper.config.unlink()
+
+    moved = revision.load_paper(at_root)
+
+    assert moved.root == paper.root
+    assert moved.working == paper.working
+    assert moved.working.exists()
 
 
 def test_a_swapped_MINUS_is_named_with_its_code_points():
@@ -2323,3 +2389,121 @@ def test_a_declaration_naming_ANOTHER_file_is_not_the_manuscript(
     assert _selects_declared("zzz_appendix.docx", migrated) is False
     assert _selects_declared("aaa_appendix.docx", migrated) is False
     assert _selects_declared("working.docx", migrated) is True
+
+
+def test_state_counts_an_ENDNOTE_when_the_paper_has_no_footnotes():
+    """`if not blob: continue` over the three text parts. A journal that
+    takes endnotes produces a package with no `footnotes.xml` at all —
+    LI and DSI both — and `break` there stops the walk at the missing
+    part, so every pending change in the endnotes reads as settled.
+
+    "0 pending -> TRUTH" is the answer this function exists to be
+    trusted on."""
+    import tempfile
+    from pathlib import Path
+
+    D = 'w:id="1" w:author="Reviewer" w:date="2026-07-30T00:00:00Z"'
+    endnotes = (f"<w:endnotes {NS}><w:endnote w:id=\"2\"><w:p>"
+                f"<w:ins {D}><w:r><w:t>added in a note</w:t></w:r>"
+                f"</w:ins></w:p></w:endnote></w:endnotes>")
+    parts = make_parts(para(run("plain prose")),
+                       extra={"word/endnotes.xml": endnotes})
+    assert "word/footnotes.xml" not in parts
+
+    tmp = Path(tempfile.mkdtemp())
+    st = revision.state(write(tmp / "working.docx", parts))
+
+    assert st.by_part == {"word/endnotes.xml": 1}
+    assert st.pending == 1 and not st.is_truth
+
+
+def test_the_stale_message_quotes_SIXTEEN_characters_of_each_hash(project):
+    """`live_hash[:16]`. The prefix is what a person compares by eye
+    against `git hash-object` or a previous run's message, and sixteen
+    hex characters is the width that identifies a file. Any shorter and
+    two builds of the same paper can share it."""
+    write(project.batch, make_parts(para(run("the batch"))))
+    write(project.working, make_parts(para(run("the author's own edit"))))
+
+    with pytest.raises(StaleBatch) as exc:
+        revision.promote(project)
+
+    quoted = re.findall(r"[0-9a-f]{8,}", str(exc.value))
+    assert quoted, str(exc.value)
+    assert [len(h) for h in quoted] == [16, 16], quoted
+
+
+def test_the_stale_guard_fires_when_the_live_hash_sorts_BELOW(project):
+    """The other half of the parametrised test above, which reads `<`
+    and could not see `>`: five fixed contents all landed on one side of
+    the baseline. The content here is SEARCHED for, so the fixture
+    cannot drift back onto the comfortable side."""
+    base = revision._sha(project.prev)
+    for i in range(200):
+        write(project.working, make_parts(para(run(f"edit {i}"))))
+        if revision._sha(project.working) < base:
+            break
+    else:                                       # pragma: no cover
+        pytest.fail("no content hashed below the baseline in 200 tries")
+    assert revision._sha(project.working) < base
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    before = project.working.read_bytes()
+
+    with pytest.raises(StaleBatch):
+        revision.promote(project)
+    assert project.working.read_bytes() == before
+
+
+def test_baseline_creates_a_build_directory_SEVERAL_LEVELS_down(tmp_path):
+    """`mkdir(parents=True)`. The build directory is the parent of
+    whatever `prev` the paper declares, so a paper that files its
+    baseline deeper than the default gets a path with no intermediate
+    directory on disk — and `parents=False` is a FileNotFoundError on
+    the first baseline of a fresh project."""
+    src = write(tmp_path / "manuscript.docx",
+                make_parts(para(run("The paper."))))
+    paper = revision.init(tmp_path / "proj", src)
+    config = paper.config.read_text(encoding="utf-8")
+    deep = "revision/build/deep/nested/prev.docx"
+    paper.config.write_text(
+        config.replace('prev     = "revision/build/prev.docx"',
+                       f'prev = "{deep}"'),
+        encoding="utf-8")
+    deeper = revision.load_paper(paper.config)
+    assert not deeper.build_dir.exists()
+
+    revision.baseline(deeper, force=True)
+
+    assert deeper.prev.exists()
+
+
+# --- the run of 2026-08-20: 4.7 % (16/340) -----------------------------
+#
+# Down from 8.8 % and then 6.2 %, and the partial round is now closed.
+# Seven of the sixteen are the tests above; the rest are argued, and
+# each was put through kill_check:
+#
+# * `render_accepted`'s `dpi: int = 150` as 149 or 151. A rendering
+#   resolution is a choice, not a contract: any of the three renders
+#   the same page, and the callers that care pass their own.
+# * `_shown`'s `0 < len(cut) <= 4` as `0 is not len(cut) <= 4`. A
+#   length is never negative, so "not zero" and "greater than zero" are
+#   the same question, and CPython caches the 0 that identity compares
+#   against.
+# * `_glyph`'s `tag == W + "drawing"` as `<=`. Every tag that sorts
+#   below it — `w:body`, `w:br`, `w:bookmarkStart` — is then asked for
+#   a `wp:inline` CHILD, which only a `w:drawing` has, so the branch
+#   appends nothing and the walk continues either way.
+# * `doctor`'s sort key `d.kind != "pattern"` as `is not`. Both kinds
+#   are literals in this module and the comparison is against one of
+#   them.
+# * the four already argued in the note above, unchanged: the
+#   `word_opened is not False` flag, `_names`' token identity, and the
+#   two on the glob reader.
+#
+# NOT worked: `build`'s `for note in moved_footnotes(...)` mutated to
+# an empty loop — no fixture in the suite has a footnote whose
+# REFERENCE moved, so nothing sees the sentence it prints. That is a
+# test worth writing and it needs a package built the way Word's
+# Compare emits one, which is half a day.
