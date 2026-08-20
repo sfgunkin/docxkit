@@ -406,3 +406,50 @@ def test_a_run_ALREADY_in_the_house_face_does_not_stop_the_sweep():
 
     assert written == 1, "the plain run, and only it"
     assert out.count('w:ascii="Arial Narrow"') == 2
+
+
+def test_a_missing_anchor_is_quoted_to_SIXTY_characters():
+    """Both spellings of the refusal quote the anchor, and the width is
+    what makes the message a line rather than a paragraph — a caller
+    passes a sentence, and this is the message they read when it does
+    not match. Cut shorter and two anchors that share an opening clause
+    produce the same complaint."""
+    import re
+
+    from docxkit.edit import replace_in_para
+    from docxkit.errors import AnchorError
+
+    long_anchor = ("a phrase that is nowhere in this paragraph and runs on "
+                   "well past sixty characters")
+    assert len(long_anchor) > 61
+
+    with pytest.raises(AnchorError) as exc:
+        replace_in_para("<w:p><w:r><w:t>short prose</w:t></w:r></w:p>",
+                        long_anchor, "x")
+
+    quoted = re.search(r"'([^']*)'", str(exc.value))
+    assert quoted is not None, str(exc.value)
+    assert quoted.group(1) == long_anchor[:60]
+
+
+# --- the argued half of edit's list, 2026-08-20 ------------------------
+#
+# `_locate`'s `scope[0]` and `hits[0]` read as `[-1]`: the lines above
+# each raise unless there is exactly one, which is what "ambiguity is an
+# error, never a silent first-match" means in the docstring.
+#
+# `styled(i)`'s `0 <= i` as `-1 <= i` and as `0 is not i`. The leftward
+# walk that could have passed -1 was removed by an earlier round —
+# nothing read its answer — so the only caller is `styled(hi_i + 1)`
+# with `hi_i >= idx >= 0`.
+#
+# `not allow_notes and len(touched) > 1` as `> 2`. A marker strictly
+# inside the match is a zero-width run BETWEEN two text runs, so the
+# runs touched are at least three: the one holding the start, the
+# marker, and the one holding the end. Two touched runs and a marker
+# among them cannot happen — `overlaps` is strict, so a marker that
+# merely abuts the match is not touched at all, which the test for that
+# says from the other side.
+#
+# The three `zip(..., strict=True)` as `strict=False`: every pair is
+# built from one walk over the same runs.
