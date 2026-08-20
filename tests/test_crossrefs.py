@@ -1928,3 +1928,47 @@ def test_unlink_removes_one_END_per_START_and_no_more():
     assert removed == 1, "one bookmark, however many closes it has"
     assert "<w:bookmarkStart" not in out
     assert out.count("<w:bookmarkEnd") == 1, "one taken, one left alone"
+
+
+def test_a_caption_whose_runs_all_carry_ATTRIBUTES_is_still_wrapped():
+    """`rfind("<w:r>", 0, ...)` and `rfind("<w:r ", 0, ...)` are two
+    searches because Word writes both — a run with an rsid is
+    `<w:r w:rsidR="00A1">`, and on a real manuscript that is most of
+    them. A document with no bare `<w:r>` in it leans entirely on the
+    second search, and every fixture here had one.
+    """
+    attr = '<w:r w:rsidR="00A1"><w:t>%s</w:t></w:r>'
+    xml = doc("<w:p>" + attr % "As Table 1 shows." + "</w:p>",
+              "<w:p>" + attr % "Table 1. Employment" + "</w:p>")
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table1"], report.format()
+    # the caption's label became the BACK-link — which is the half that
+    # goes through `_wrap_label`, and the half a run with no bare
+    # `<w:r>` in front of it would otherwise skip
+    assert 'w:anchor="Table1txt"' in out, out
+    assert "<w:hyperlink" in out.split("Employment")[0], out
+
+
+# crossrefs' other survivors from the 2026-08-21 round, argued:
+#
+# `_wrap_label`'s `rfind("<w:r>", 0, ...)` read as `rfind("<w:r>", 1,
+# ...)`: index 0 of a paragraph is `<w:p`, so no run can open there.
+#
+# `_caption_bookmarks`' `prev_close != -1 else 0` read as `else 1`, as
+# `!= +1` and as `!= ~1`: `prev_close` is a `rfind` result, so it is -1
+# or the index of a `</w:p>` — which cannot be 1 or -2 — and the `else`
+# arm's 0 versus 1 is the first character of the part, which is `<`.
+#
+# `_run_parts`' `close != -1` read as `close >= -1`: this is called on
+# a run being SPLIT at a text match, so the run has a `</w:r>` by
+# construction and the -1 arm is unreachable from here.
+#
+# `_with_hyperlink_style`'s `rpr.index(">") + 1` read as `^ 1` and `| 1`:
+# the three agree whenever that index is even, which is a fact about
+# the fixture rather than about the code — pinning it would freeze a
+# byte offset, and the malformed output it produces on an odd one is
+# what `lint` refuses.
+#
+# `link`'s `mode == "NOT-FOUND"` as `is`: one literal, in this module.
