@@ -1597,6 +1597,7 @@ test file and each argument checked by `kill_check`.
 | `revisions.py` | **5.5 %** (23/417) | 6.7 % | the paragraph nobody deleted, and difflib's autojunk |
 | `revision.py` | **2.4 %** (8/340) | 8.8 %, 6.2 %, 4.7 % | the PARTIAL round closed: a limit, a walk, and a hash that sorts low |
 | `_cite_grammar.py` | **4.2 %** (18/428) | 5.1 % | a line that merely STARTS like a stop word |
+| `hygiene.py` | **3.6 %** (16/449) | 4.9 % | a relationship with no target, and a paragraph nothing smartens |
 | `equations.py` | **3.4 %** (14/416) | 5.8 %, then 4.3 % | its first worked round — a clause that could not fire |
 | `cli.py` | **4.6 %** (21/455) | 6.9 %, 7.0 %, 6.2 % | the loops whose bodies nothing checked, the widths a report is read at, and two flags that did the opposite |
 | `compare.py` | 3.4 % (2/58) | — | two argued, CLOSED |
