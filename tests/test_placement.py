@@ -1115,6 +1115,39 @@ def test_a_hoisted_bookmark_travels_from_an_EVEN_index_too():
     assert names == ["p", "bookmarkStart", "p", "tbl", "bookmarkEnd", "p"]
 
 
+def test_a_mention_in_an_EARLIER_section_is_refused_too():
+    """`here != there`, read as `>`. The guard is about crossing a
+    section boundary, and a boundary has two sides: `>` refuses the
+    table that sits AFTER its mention and moves the one that sits
+    before it — into another section, which is what the message beside
+    it says must not happen. A table in the body mentioned from an
+    appendix is the ordinary shape of that."""
+    section_end = ('<w:p><w:pPr><w:sectPr>'
+                   '<w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>'
+                   "<w:r><w:t>Конец первого раздела.</w:t></w:r></w:p>")
+    body = (P("Таблица 1. Заголовок") + TBL("шапка") + section_end
+            + P("См. таблицу 1 в основном тексте."))
+
+    out, rep = placement.place(parts(body))
+
+    assert rep.placements[0].moved is False
+    assert any("another section" in x for x in rep.problems), rep.problems
+    assert order(out)[:2] == ["p:Таблица 1. Заголовок", "tbl:шапка"]
+
+
+def test_a_report_says_NOTHING_was_spaced_when_nothing_was():
+    """`Placement.spaced` defaults to False because only the branch
+    that spaces a block sets it. Defaulted the other way the summary
+    line reads "1 spaced" for a run called with `space=False` — the
+    same shape as `house`'s width flag, one module over."""
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок")
+              + TBL("шапка")), space=False)
+
+    assert rep.placements[0].spaced is False
+    assert "0 spaced" in rep.format().splitlines()[0]
+
+
 # --- the argued half of placement's 41 ---------------------------------
 #
 # Thirty-five are left after the six tests above, and most of them are
@@ -1143,7 +1176,12 @@ def test_a_hoisted_bookmark_travels_from_an_EVEN_index_too():
 # as `==`. lxml elements define no `__eq__`, so equality IS identity.
 #
 # NOT worked, and listed so the next round starts here: the five
-# `[:40]`/`[:70]` widths on the text handed to `_sheet_of`,
-# `Placement.spaced`'s default, and `place`'s `here != there` read as
-# `>`. (The three on `pl.caption_sheet - 1` were on this list for
-# twenty minutes; the test above took them.)
+# `[:40]`/`[:70]` widths on the text handed to `_sheet_of`, and
+# `_anchor`'s `el.tag != W + "p"` read as an identity — which needs a
+# table whose own text reads as a mention ("см. таблицу 2" in a note
+# row), and no fixture here has one.
+#
+# (Three other entries were on this list and came off it the same
+# afternoon: `pl.caption_sheet - 1`, `Placement.spaced`'s default, and
+# `here != there`. A list of what is not done is worth keeping for that
+# reason — it is the next round's starting point, and it shrinks.)
