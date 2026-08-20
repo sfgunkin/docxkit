@@ -1949,23 +1949,74 @@ def test_a_revision_line_quotes_SIXTY_characters_of_the_change(
     assert line.endswith(long_text[:60]), line
 
 
-# Twenty-five of the thirty-two are left, and they are ONE shape: how
+def test_refstyle_applies_CHICAGO_only_when_asked(capsys, monkeypatch,
+                                                  tmp_path):
+    """`CHICAGO if args.chicago else HOUSE`. Inverted, the flag does the
+    opposite of what it says — every paper audited against the style it
+    did not ask for, and the findings look plausible either way because
+    both styles are real.
+
+    A Chicago-formatted entry is the fixture: the house style wants
+    initials and a parenthesised year, Chicago wants neither, so the two
+    disagree about the same entry."""
+    chicago_entry = 'Smith, John. 2020. "A paper." Journal 1 (1): 1-10.'
+    path = write(tmp_path / "paper.docx", make_parts(
+        para(run("As Smith (2020) shows."))
+        + para(run("References")) + para(run(chicago_entry))))
+
+    run_cli(monkeypatch, "refstyle", str(path))
+    house = capsys.readouterr().out
+
+    run_cli(monkeypatch, "refstyle", str(path), "--chicago")
+    chicago = capsys.readouterr().out
+
+    assert "initials" in house and "year-parens" in house
+    assert "initials" not in chicago and "year-parens" not in chicago
+
+
+def test_a_figure_line_names_the_drawing_or_its_EMBED(capsys, monkeypatch,
+                                                      tmp_path):
+    """`d.name or d.embed or "?"` — the name if it has one, the
+    relationship id if it does not, and a question mark if it has
+    neither. Read as `and`, a drawing WITH a name prints its embed id
+    instead: the one identifier a person cannot look up in the document
+    they are reading."""
+    drawing = ('<w:drawing><wp:inline><wp:docPr id="1" name="Figure 1"/>'
+               "<a:graphic><a:graphicData><pic:pic><pic:blipFill>"
+               '<a:blip r:embed="rId7"/></pic:blipFill></pic:pic>'
+               "</a:graphicData></a:graphic></wp:inline></w:drawing>")
+    path = write(tmp_path / "paper.docx", make_parts(
+        f"<w:p><w:r>{drawing}</w:r></w:p>"
+        + para(run("Figure 1. The trend"))))
+
+    run_cli(monkeypatch, "figures", str(path))
+
+    out = capsys.readouterr().out
+    assert "[Figure 1]" in out, out
+    assert "[rId7]" not in out
+
+
+# What is left after the round of 2026-08-20 is mostly ONE shape: how
 # much of something a report quotes, and how many of them it prints
-# before it stops. `[:200]` on a part list, `[:110]` on a comment,
-# `> 12` on the ingest preview, `[:56]` on a figure's location. Each
-# needs a fixture longer than the width to pin, and each is a line a
-# person reads — the same class this package has been closing module by
-# module. The two anchor widths and the revision one above are the
-# pattern to copy.
+# before it stops — `[:200]` on a part list, `[:56]` on a figure's
+# location. Each needs a fixture longer than the width to pin, and each
+# is a line a person reads. The two anchor widths, the revision one and
+# the ingest cap are the pattern to copy.
 #
-# Three are argued and checked: `cmd_citations`' `> 0` as `!= 0` (a
-# count is never negative), `doctor`'s `d.kind == "literal"` as `is`
-# (both sides are the same module-level literal), and the listed
-# comment's `m.group(1)` as `m.group(0)` — group 0 adds the
-# `<w:comment ...>` tags around the inner text, and `text_of` reads
-# `w:t` elements, which a tag is not.
+# Argued and checked: `cmd_citations`' `> 0` as `!= 0` and `cmd_tasks`'
+# `n == 0` as `<= 0` (a count is never negative); `doctor`'s
+# `d.kind == "literal"` as `is` (both sides are the same module-level
+# literal); the listed comment's `m.group(1)` as `m.group(0)` — group 0
+# adds the `<w:comment ...>` tags around the inner text, and `text_of`
+# reads `w:t` elements, which a tag is not; `_show_state`'s
+# `part.split("/")[-1]` as `[1]` and its `where == "document"` as `<=`
+# — the parts it names are two segments long and sort document,
+# endnotes, footnotes; `sorted(..., key=-count)` as `~count`, which
+# orders identically; and `cmd_inspect`'s `== "<w:ins"` as `>=`,
+# because `revisions.spans` returns `w:ins` and `w:del` spans only and
+# "<w:del" sorts below "<w:ins".
 #
-# (The width on that line, `[:110]`, is already pinned by
+# (The width on the comment line, `[:110]`, is already pinned by
 # `test_inspect_cuts_a_long_comment_and_a_long_revision`. A second test
 # for it was written this afternoon and removed when `kill_check` named
 # the first one — which is what that step is for.)
