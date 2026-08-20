@@ -17,35 +17,17 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 the citation apparatus does not read ENDNOTES
-
-Found the same way, 2026-08-19, and demonstrated: the identical bookmark and
-hyperlink, placed in a footnote and then in an endnote, audit as
-`bookmarks 1, links 1` and `bookmarks 0, links 0`. `_audit_findings` reads
-`word/document.xml` and `word/footnotes.xml` — the footnote case even has its
-own sentinel (`where = -2`, "defined in a footnote") — and never opens
-`word/endnotes.xml`.
-
-So for a manuscript that files its apparatus at the back, `audit_links` reports
-a clean 66/66 over the part of the paper it happened to look at. The retracted
-S2 above is the same lesson from the other side: **a back-link that is not
-where you looked is not a back-link that is missing** — and a bookmark nobody
-counted is not a bookmark that is absent.
-
-Not fixed here because the audit and the BUILDER have to move together:
-`link_all` writes the apparatus, and an audit that reports unlinked entries in
-endnotes while the builder cannot reach them replaces silence with noise.
-`refstyle` (read-only, no writer) and `export` were fixed in the same pass;
-`wordcount`, `probe` and `compare` were checked and already read all three
-parts.
-
 ### S2 `build_overrides` ingests BODY paragraphs only — a footnote the author retyped is dropped
 
 Found by review, 2026-08-19, while widening the tracked gates to endnotes.
-`load_paragraphs` returns `(body paragraphs, footnotes XML)` and the footnotes
-half is used for ONE thing: remapping ids Word renumbered. The alignment runs
-over body paragraphs, so an author edit inside a note DEFINITION produces no
-override at all — and endnotes are not read in any form.
+`load_paragraphs` returns `(body paragraphs, footnotes XML)` and the note
+stores are read for ONE thing: remapping the ids Word renumbered. The
+alignment runs over body paragraphs, so an author edit inside a note
+DEFINITION produces no override at all.
+
+(As first written this said "and endnotes are not read in any form", which was
+true of the remap as well until 2026-08-20 — that half is fixed, and the entry
+below now describes only the alignment.)
 
 Reproduced on two packages differing only inside `word/footnotes.xml` and
 `word/endnotes.xml`: `build_overrides(base, edited)` returns `[]`. The next
@@ -66,6 +48,18 @@ Fixing it properly means a second channel through `apply_overrides`, which
 takes `document.xml` alone — a design change, not a patch. **Until then the
 limitation is documented in both docstrings and pinned by a test**, so the day
 it is fixed the docs are told to change.
+
+**What the design change is** (2026-08-20, looked at and not taken): the
+fold-back is body-only because the FORMAT is. An override is `{"old":
+<paragraph xml>, "new": <paragraph xml>}`, so there is nowhere to say "this
+paragraph is in footnotes.xml". Either the entry grows a `part` key that older
+stores do not carry — `apply_overrides` then taking `parts` rather than one
+string, and defaulting to `document.xml` when the key is absent — or there is
+one store per part. Both change a file three paper pipelines already hold,
+which makes it a decision for the maintainer rather than a patch to slip in.
+
+The ID REMAP half of the same blindness WAS a patch, and is fixed: see
+"an ENDNOTE id was spliced into an override unremapped" under Fixed.
 
 ---
 
@@ -150,7 +144,220 @@ and target views** of the same redline, which is a check no gate was making.
 The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
+### S3 the build's math-glyph restore covers ONE view, so validate is red every round
+
+Found on AFI, 2026-08-19, across three consecutive rounds.
+
+`revision build` now restores the minus glyph Word downgrades when Compare
+re-serialises OMML — it prints `restored math glyph — 't-1990' -> 't−1990'`.
+But it restores it in the ACCEPTED view only. `validate`'s reject-all check
+then reports
+
+    glyphs: False   GLYPH at 62473: '−' U+2212 -> '-' U+002D
+
+and the batch fails, on a document whose author touched nothing. The paper's
+own `repair_math_minus.py` fixes the remaining side, after which validate
+passes — so every round on this manuscript is: build, validate FAILS, run the
+per-paper repair, validate PASSES.
+
+**And the repair then trips the deliverable guard.** Running it changes
+`batch.docx` after `build` stamped it, so the next `build` refuses with
+`DeliverableModified — someone edited it in Word` and backs the file up to
+`batch_user_edited1.docx`. Nobody edited anything in Word. The recovery
+("delete batch.docx if that batch is already promoted") is right but the
+diagnosis is wrong, and it manufactures a spurious `_user_edited` artifact
+each time.
+
+Two fixes, either sufficient: restore the glyph on both sides of the
+revision, or re-stamp after an in-tool repair. Failing both, `validate` should
+name **which view** it is judging — "reject-all" vs "accept-all" — because as
+printed, `glyphs: False` on a batch whose accepted view is correct reads as a
+defect in the edit.
+
+S3 rather than S2 because the cost is a gate that is red as a matter of
+routine: the third time a clean batch fails for a reason the author did not
+cause is the time people stop reading it.
+
+### S4 no safe way to set run properties without walking into a field
+
+Found on AFI, 2026-08-19. A formatting sweep over all 24 captions wrote run
+properties into every `<w:r>` of each caption paragraph. One caption —
+Figure 10's — is built as a field-code hyperlink:
+
+    fldChar begin | instrText HYPERLINK \l "fig10_firstref" | separate |
+    label | fldChar end
+
+with `fig10_caption` bookmarked *inside* the field. The `fldChar` and
+`instrText` runs carry no visible text, but they are runs, so they were
+formatted too. Word's Compare then marked them, and rejecting the batch
+brought the words back as plain text with the anchor gone —
+`validate` caught it as `LINK LOST -> fig10_firstref`, which is the system
+working.
+
+The cost was not only the link: skipping those runs took the batch from
+**136 revisions to 36**. A hundred of them were invisible field machinery the
+author would have had to click through.
+
+Related, and NOT the same thing: the "Not a defect" note above records
+Compare *re-representing* a caption's HYPERLINK FIELD as a `w:hyperlink`
+element, which is harmless. This is the other direction — writing into the
+field's runs makes Compare mark them, and the reject view then loses the
+anchor outright. Both say the same thing about this construct: it is the one
+caption shape in the paper that does not survive being touched casually.
+
+`validate` catching it is good. Not having to hit it would be better: a
+`set_run_props(para, props, *, skip_fields=True, skip_links=True)` helper, or
+simply a documented `is_field_run()`, would make the safe version the easy
+one. Worth checking whether this is also what r3 recorded on AFI as
+`fig5_firstref` being "re-stripped by Word on EVERY edit of that paragraph" —
+that reads like the same bug attributed to Word.
+
+### S1 Compare CORRUPTS a replacement inside an inline OMML field, and `resolve_math` bakes the corruption in as the accepted view
+
+Found on AFI, 2026-08-19, doing R3/T3.2: two inline `<m:oMath>` fields holding
+`-0.20` and `-0.38` had to become `-0.398` and `-0.487`.
+
+Word's Compare does not treat the field as a unit. It diffs INSIDE it at
+character level, matches the common prefix `-0.`, and emits the rest as an
+insert beside the old digits. The field comes out reading
+
+    -0.20398        and        -0.38487
+
+**Both routes give the same corruption.** With `--keep-math` it is tracked and
+unreadable. With the default `resolve_math` the build ACCEPTS those revisions,
+so `-0.20398` is baked in as the accepted view — as though the author had
+asked for it. The build's own warning covers reviewability ("NO reviewable
+redline as built") and says nothing about the text being wrong.
+
+**Nothing caught it on that path.** `validate`'s accept-all reports
+structure counts; `XML accept == Word accept` compares two ways of accepting
+the same batch against each other. It was caught by reading the built file.
+
+**CORRECTION, same day.** The claim first written here — that nothing compares
+the accepted view against the clean copy — is WRONG, and the error is worth
+keeping. `revision build` does exactly that comparison and refuses:
+
+    accepting every revision does NOT reproduce r4e_clean.docx — 1
+    paragraph(s) differ, so the deliverable the author reads is not the
+    document this redline was built from
+
+It fired later the same day on a figure move and stopped a bad build. What is
+true is narrower: **that check compares paragraph TEXT**, so it passes when
+the words survive and something else does not — on the same move it passed
+while all four caption hyperlinks had been stripped. The gap is the check's
+SCOPE, not its absence.
+
+S1 because the failure reports success and the wrong number is in the paper.
+
+**Two fixes, and the second matters more:**
+
+1. Treat an `m:oMath` as atomic when diffing — replace the whole field rather
+   than diffing its runs — or refuse the batch and say so.
+2. **`validate` should compare the ACCEPTED view against the revised copy the
+   build was given.** That check is cheap, it is the definition of a correct
+   redline, and it is absent. It would also have caught this class of thing on
+   any future path into the same trap.
+
+**Per-paper workaround now in AFI** (delete when fixed): the maths is applied
+to `batch.docx` AFTER the Compare, so the two values are baked in with no
+redline at all — the trade v12 made for its 19 equation changes — and
+`repair_math_minus.py` grew an `--expect OLD=NEW` flag so an intended math
+edit is not read as damage while every other difference still refuses.
+
+### S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like
+
+Found on AFI, 2026-08-19, moving four figures to the appendix.
+
+A figure in this manuscript is four paragraphs: caption, image, source, and
+one more that looks empty. That last one carries `<w:sectPr>` — **each figure
+block is its own SECTION**, and for the wide by-country panels that section is
+`landscape`. Read as a spacer and dropped, it took with it two landscape
+orientations and eight footer parts, four of them holding the PAGE field.
+
+`placement.place()` understands captions, notes and keeping a table whole, but
+there is no "this is one exhibit, move it" primitive, so every paper hand-rolls
+the span — and the span is easy to get wrong in a way no text gate sees. Every
+word survived; the caption inventory, the text diff and a 560-check verifier
+all passed.
+
+What would have prevented it: an `exhibit_block(xml, caption)` that returns the
+full span INCLUDING a trailing section break, or a `move_block` that carries
+it. Two further traps the same job hit, worth encoding in whatever ships:
+
+- a figure caption here has no `pageBreakBefore`; a figure gets its own page
+  only because the block BEFORE it ends with a section break. Move a run of
+  blocks somewhere with nothing in front and the first one shares a page.
+- moving the LAST block leaves the body-level `sectPr` governing no content,
+  and an empty final section renders as a blank page. The last block's
+  geometry has to be promoted into the body sectPr instead.
+
+**Credit where due:** `validate` DID report this — `structure` went False and
+it prints a `STRUCTURE sectPr` line naming the count. I truncated the output
+and did not read it. `ingest` then caught the lost footers as `PART REMOVED`
+and `baseline` refused, which is the only reason it did not ship. The gates
+worked; the ergonomics are what invited the mistake.
+
 ## Fixed
+
+### ~~S2 the citation apparatus does not read ENDNOTES~~ — FIXED 20.08, `0db8361`, `c116411`
+
+Found the same way, 2026-08-19, and demonstrated: the identical bookmark and
+hyperlink, placed in a footnote and then in an endnote, audit as
+`bookmarks 1, links 1` and `bookmarks 0, links 0`. `_audit_findings` reads
+`word/document.xml` and `word/footnotes.xml` — the footnote case even has its
+own sentinel (`where = -2`, "defined in a footnote") — and never opens
+`word/endnotes.xml`.
+
+So for a manuscript that files its apparatus at the back, `audit_links` reports
+a clean 66/66 over the part of the paper it happened to look at. The retracted
+S2 above is the same lesson from the other side: **a back-link that is not
+where you looked is not a back-link that is missing** — and a bookmark nobody
+counted is not a bookmark that is absent.
+
+Not fixed here because the audit and the BUILDER have to move together:
+`link_all` writes the apparatus, and an audit that reports unlinked entries in
+endnotes while the builder cannot reach them replaces silence with noise.
+`refstyle` (read-only, no writer) and `export` were fixed in the same pass;
+`wordcount`, `probe` and `compare` were checked and already read all three
+parts.
+
+**Fixed 2026-08-20, writer and audit in one pass**, because they had to move
+together for the reason above. `_cite_build._NOTE_PARTS` names both stores
+once, with the label a report gives each (`fn¶`, `en¶`); `link_all` and
+`link_rest` plan, wire and write both; `audit_links` reads both, with its own
+sentinel per store (`-2` footnotes, `-3` endnotes) so a finding says WHICH
+part it is in — an anchor reported as "fn" that lives in endnotes.xml sends a
+repair looking in a file that does not hold it.
+
+`repair_plan` came with them, and it was the dangerous half: it decides
+DEBRIS from three tests — the key is not among the document's citations, no
+`<name>txt` partner exists, the entry is not live — and built all three from
+the body and footnotes. For a paper whose journal takes endnotes the first was
+true by construction, so every marker for a work cited only there was proposed
+for deletion. A one-liner a person will run.
+
+`BLIND` in `tests/test_note_parts.py` is empty as a result, and the tests that
+kept it honest still stand: a reader may not join it without one of them
+failing.
+
+### S1 an ENDNOTE id was spliced into an override unremapped — `a6377af`
+
+Found 2026-08-20 while widening the citation apparatus, and it is the defect
+the FOOTNOTE remap was written to prevent, unfixed for the other store. Word
+renumbers note ids on save, so an author's paragraph carries ids that mean
+something else in the build; `build_overrides` matched footnote definitions by
+TEXT and rewrote their ids, and did nothing at all for endnotes.
+
+An override carrying `w:endnoteReference w:id="4"` therefore went into the
+build with the author's number, pointing at whichever note the build had given
+that id. The deliverable cites the wrong work, the author's copy cites the
+right one, and no gate compares the two: `--expect-clean` sees a reference
+mark, not what it resolves to.
+
+Fixed with both stores keyed in one map (`_NOTE_REF_RE`, `_NOTE_DEF_RE`), and
+the note DEFINITION pattern moved into `_xml` — `revision.moved_footnotes` had
+the same regex, which `test_no_element_pattern_is_compiled_in_two_modules`
+caught the moment this one was compiled rather than inlined.
 
 ### S2 `fit_columns` wrote a column's width into a NESTED table's cell
 
