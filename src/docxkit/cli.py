@@ -9,6 +9,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit authors PAPER.docx [--set NAME] [--only A,B] [--write]
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit locate PAPER.docx ANCHOR... | --revisions
+    docxkit api [TOPIC] [--signatures]   # the public surface by subject
     docxkit sites PAPER.docx "sig" [--part body|footnotes]
     docxkit text PAPER.docx [--tracked final|original] [--md]
     docxkit count PAPER.docx [--exclude references,tables] [--limit N]
@@ -416,6 +417,86 @@ def cmd_sites(args: argparse.Namespace) -> int:
                  normalize=args.normalize)
     print(found.format())
     return 0 if found.matches == 1 else 1
+
+
+def _public_surface() -> list[tuple[str, str, str, str]]:
+    """(module, name, signature, first docstring line) for the package.
+
+    Read off `__all__` and the objects themselves, so it cannot go
+    stale: a curated index of what exists is a second thing to keep
+    right, and the reason this command exists is that the first one was
+    not kept right either.
+    """
+    import importlib
+    import inspect
+    import pkgutil
+
+    import docxkit
+
+    rows: list[tuple[str, str, str, str]] = []
+    for info in pkgutil.iter_modules(docxkit.__path__):
+        if info.name.startswith("_") or info.name == "cli":
+            continue
+        try:
+            mod = importlib.import_module(f"docxkit.{info.name}")
+        except ImportError:                  # pragma: no cover - optional dep
+            continue
+        for name in sorted(getattr(mod, "__all__", ())):
+            obj = getattr(mod, name, None)
+            try:
+                sig = str(inspect.signature(obj)) if callable(obj) else ""
+            except (TypeError, ValueError):  # pragma: no cover - C callables
+                sig = ""
+            doc = (getattr(obj, "__doc__", None) or "").strip()
+            rows.append((info.name, name, sig,
+                         doc.splitlines()[0] if doc else ""))
+    return rows
+
+
+def cmd_api(args: argparse.Namespace) -> int:
+    """The public surface, by SUBJECT rather than by task.
+
+    64 scripts across the four papers hand-write `<w:bookmarkStart>`
+    while a bookmark API sits in `citations`, filed there because
+    citations were what first needed one. A module that cannot be FOUND
+    is a module that gets rewritten, and the rewrite is worse: the
+    hand-rolled version misses the case the supported path handles.
+    """
+    if not args.topic:
+        # The whole surface is ~200 lines and nobody reads it. What a
+        # reader wants with no topic is where to LOOK.
+        import importlib
+        import pkgutil
+
+        import docxkit
+        for info in sorted(pkgutil.iter_modules(docxkit.__path__),
+                           key=lambda i: i.name):
+            if info.name.startswith("_") or info.name == "cli":
+                continue
+            doc = (importlib.import_module(
+                f"docxkit.{info.name}").__doc__ or "").strip()
+            first = doc.splitlines()[0] if doc else ""
+            print(f"  {info.name:<12}  {first}")
+        print("\n  a topic narrows it: docxkit api bookmark")
+        return 0
+    rows = _public_surface()
+    topic = args.topic.casefold()
+    # The SIGNATURE counts as well as the name and the summary: "which
+    # of these takes a caption" is the question a caller actually has,
+    # and `exhibit_block`'s summary does not say the word.
+    hits = [r for r in rows
+            if any(topic in field.casefold() for field in r[1:])]
+    if not hits:
+        print(f"nothing in the public surface mentions {args.topic!r}. "
+              f"`docxkit api` with no topic lists every module.")
+        return 1
+    width = max(len(name) for _m, name, _s, _d in hits)
+    for module in sorted({m for m, _n, _s, _d in hits}):
+        print(module)
+        for _m, name, sig, doc in [r for r in hits if r[0] == module]:
+            print(f"  {name:<{width}}  {doc}" if not args.signatures
+                  else f"  {name}{sig}\n      {doc}")
+    return 0
 
 
 def _package(path: str) -> dict[str, bytes]:
@@ -1290,6 +1371,14 @@ def main() -> None:
                    help="fold Word's typographic substitutions before "
                         "matching, as para_slice(normalize=True) does")
     p.set_defaults(fn=cmd_sites)
+
+    p = sub.add_parser(
+        "api", help="the public surface by SUBJECT: docxkit api bookmark")
+    p.add_argument("topic", nargs="?", default="",
+                   help="a word to look for in the names and their summaries")
+    p.add_argument("--signatures", action="store_true",
+                   help="show each one's parameters")
+    p.set_defaults(fn=cmd_api)
 
     p = sub.add_parser("text", help="dump the visible text")
     p.add_argument("docx")

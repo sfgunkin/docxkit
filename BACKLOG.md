@@ -423,30 +423,41 @@ punctuation half and `build_r4w.py`'s gate are covered; the name reduction
 and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
 scope on purpose — the in-text rules change what a sentence SAYS.
 
-### S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them
-
-Cheaper to fix than anything above it, and untouched by `docxkit.batch`: a
-module that cannot be FOUND is a module that gets rewritten. Several
-primitives the papers hand-roll are already here, filed under the task that
-first needed them rather than the thing they operate on:
-
-    bookmarks   citations.bookmark / delete_bookmark / marker_bookmark /
-                wrap_link_in_bookmark / next_bookmark_id / anchor_names
-    tables      tables.by_caption, cells_of, drop_blank_rows
-    footnotes   footnotes.append, find, find_all, fonts
-
-**64 scripts hand-write `<w:bookmarkStart>` while a bookmark API sits in
-`citations`.** In this very session I wrote `sites.py` and index-addressed
-tables around `tables.by_caption`, and only found `citations.hyperlink_field`
-after two failed attempts at wiring three citations. A `docxkit api [TOPIC]`
-that lists the public surface by SUBJECT — and re-homing the bookmark helpers
-into a `bookmarks` module that `citations` imports — would recover more time
-than most new features.
-
----
-
-
 ## Fixed
+
+### ~~S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them~~
+
+Fixed 2026-08-21 — `docxkit api [TOPIC]`.
+
+    $ docxkit api bookmark
+    citations
+      bookmark               Wrap `inner` in a bookmark. With no inner, a zero-length marker.
+      delete_bookmark        Remove the Start/End pair `name` (id read off the Start).
+      hyperlink_field        A ``HYPERLINK \\l`` field pointing at an internal bookmark.
+      marker_bookmark        A zero-length bookmark at the head of the ONE paragraph matching
+      next_bookmark_id       One above the highest bookmark id across the given parts.
+      wrap_link_in_bookmark  Recreate `name` around the ONE link that points at `anchor`.
+
+Read off each module's `__all__` and the objects themselves, never off a
+curated index: a hand-kept list of what exists is a second thing to keep
+right, and the reason this command exists is that the first one was not kept
+right either. A name added to an `__all__` today is findable today.
+
+It matches the NAME, the summary line, and the SIGNATURE — "which of these
+takes a caption" is the question a caller actually has, and
+`placement.exhibit_block`'s summary does not use the word. `--signatures`
+prints the parameters, which is what would have saved the second of two
+failed attempts at wiring three citations through `hyperlink_field`.
+
+With no topic it lists the modules and their one-line summaries: the whole
+surface is some 200 lines and nobody reads it, so what a reader wants with
+no topic is where to LOOK.
+
+**Not done: the re-homing.** The bookmark helpers still live in `citations`.
+Moving them to a `bookmarks` module that `citations` re-exports is a real
+change to four papers' imports for a discoverability problem this command
+now answers — worth doing when something else needs that module, not on its
+own.
 
 ### ~~S1 `by_caption` anchors on the first paragraph CONTAINING the caption, so body prose shadows the real caption~~
 

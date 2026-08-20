@@ -565,6 +565,70 @@ def _chicago_paper(tmp_path):
                    "JPE, 128(6): 2188-2244."))))
 
 
+def test_api_finds_the_bookmark_helpers_nobody_could_find(monkeypatch,
+                                                          capsys):
+    """64 scripts across the four papers hand-write `<w:bookmarkStart>`
+    while a bookmark API sits in `citations`, filed there because
+    citations were what first needed one."""
+    code, _ = run_cli(monkeypatch, "api", "bookmark")
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "citations" in out
+    assert "next_bookmark_id" in out
+    assert "wrap_link_in_bookmark" in out
+
+
+def test_api_reads_the_surface_off_the_MODULES_not_off_a_list(monkeypatch,
+                                                              capsys):
+    """A curated index is a second thing to keep right, and the reason
+    this command exists is that the first one was not kept right. So a
+    name added to a module's `__all__` today is here today."""
+    run_cli(monkeypatch, "api", "relabel")
+
+    assert "relabel_link" in capsys.readouterr().out
+
+
+def test_api_matches_the_SUMMARY_as_well_as_the_name(monkeypatch, capsys):
+    """The name is not always the word a reader knows: `by_caption` is
+    what you want when you are looking for "the table under a caption"."""
+    run_cli(monkeypatch, "api", "caption")
+
+    out = capsys.readouterr().out
+    assert "by_caption" in out
+    assert "exhibit_block" in out, out
+
+
+def test_api_with_NO_topic_lists_the_modules(monkeypatch, capsys):
+    """The whole surface is some 200 lines and nobody reads it. What a
+    reader wants with no topic is where to LOOK."""
+    code, _ = run_cli(monkeypatch, "api")
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "citations" in out and "Citations and their" in out
+    assert "next_bookmark_id" not in out
+    assert "a topic narrows it" in out
+
+
+def test_api_says_so_when_nothing_matches(monkeypatch, capsys):
+    code, _ = run_cli(monkeypatch, "api", "quantum")
+
+    assert code == 1
+    assert "nothing in the public surface mentions" in capsys.readouterr().out
+
+
+def test_api_can_show_the_PARAMETERS(monkeypatch, capsys):
+    """"I only found `citations.hyperlink_field` after two failed
+    attempts at wiring three citations" — the signature is what would
+    have saved the second one."""
+    run_cli(monkeypatch, "api", "hyperlink_field", "--signatures")
+
+    out = capsys.readouterr().out
+    assert "hyperlink_field(anchor" in out
+    assert "label" in out
+
+
 def test_refstyle_fix_writes_the_mechanical_repairs(monkeypatch, tmp_path,
                                                     capsys):
     """The half `refstyle` could only report. A paper adopting the house

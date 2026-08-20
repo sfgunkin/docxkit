@@ -93,6 +93,7 @@ docxkit probe PAPER.docx [ANCHOR...]       # link form, exhibit blocks, run spli
 docxkit math PAPER.docx [--check]          # symbols typeset as prose, not OMML
 docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
 docxkit locate PAPER.docx --revisions [--limit N]
+docxkit api [TOPIC] [--signatures]   # the public surface by subject
 docxkit sites PAPER.docx "sig" [--part body|footnotes]  # what an edit meets
 docxkit text PAPER.docx [--tracked final|original] [--md]
 docxkit count PAPER.docx [--exclude references,tables,...] [--limit N]
