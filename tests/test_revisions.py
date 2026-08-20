@@ -1002,3 +1002,25 @@ def test_a_row_that_GOES_does_not_end_the_walk_over_the_others():
 #   common elements are popular ones all diff identically, because
 #   `find_longest_match` extends a match across popular elements once
 #   it has an anchor. A MOVED block has no anchor to extend from.
+
+
+# --- the rest of that list, argued 2026-08-20 --------------------------
+#
+# * `_prune_math`'s second `continue` — the one under `el is om or
+#   el.getparent() is None` — as `break`. The walk is
+#   `reversed(list(om.iter()))`, and `iter()` yields the element itself
+#   FIRST, so `om` is the LAST thing the reversed walk reaches: a break
+#   there skips nothing. (Its neighbour, the `continue` over an
+#   equation whose parent is already gone, is NOT argued — killing it
+#   needs one equation nested inside another that the same pass
+#   dropped, and no fixture here has that.)
+# * `_apply_property_changes`' `c.tag.rsplit("}", 1)[-1]` as `[1]`:
+#   every element in a WordprocessingML part is namespaced, so the
+#   split gives exactly two pieces.
+# * its `side == "first"` as `<=` and as `is`. The two values are
+#   "first" and "last", written as literals in this module — the same
+#   objects the comparison sees — and "first" sorts below "last", so
+#   the ordering reading agrees over the pair.
+# * the four `@lru_cache` mutants: the cached functions build a value
+#   from their argument and hold no state, so the size is a speed
+#   choice and the decorator itself is one too.
