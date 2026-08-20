@@ -402,8 +402,9 @@ evidence about the works, not about which words are surnames.
 
 **Mostly fixed.** `refstyle.convert(parts)` and `docxkit refstyle --fix` write
 the mechanical half: `&` becomes "and", the year takes its parentheses (or
-loses them under `--chicago`), page ranges get an en-dash and are written out
-in full ("174–79" → "174–179"), "p.45" gets its space and "et al" its period.
+loses them under `--chicago`), the final "and" gets the comma the house style
+puts before it, page ranges get an en-dash and are written out in full
+("174–79" → "174–179"), "p.45" gets its space and "et al" its period.
 `convert_entry` returns the FIXES — `(code, old, new)` fragments — and
 `convert_text` applies and CHECKS them; `convert` writes each one through
 `edit.replace_in_para`.

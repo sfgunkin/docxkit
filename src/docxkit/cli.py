@@ -482,11 +482,12 @@ def cmd_api(args: argparse.Namespace) -> int:
         return 0
     rows = _public_surface()
     topic = args.topic.casefold()
-    # The SIGNATURE counts as well as the name and the summary: "which
-    # of these takes a caption" is the question a caller actually has,
-    # and `exhibit_block`'s summary does not say the word.
+    # Every field, and each earns it: the SIGNATURE answers "which of
+    # these takes a caption" (`exhibit_block`'s summary does not say the
+    # word), and the MODULE name answers `docxkit api tables`, which is
+    # what a reader who already knows where to look will type.
     hits = [r for r in rows
-            if any(topic in field.casefold() for field in r[1:])]
+            if any(topic in field.casefold() for field in r)]
     if not hits:
         print(f"nothing in the public surface mentions {args.topic!r}. "
               f"`docxkit api` with no topic lists every module.")

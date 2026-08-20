@@ -1553,9 +1553,10 @@ CHICAGO_ENTRY = ('Acemoglu, D. & P. Restrepo. 2020. "Robots and Jobs." '
 def test_convert_moves_the_punctuation_and_the_glyphs():
     out, fixes = convert_text(CHICAGO_ENTRY)
 
-    assert [f.code for f in fixes] == ["ampersand", "year-parens", "en-dash"]
-    assert out == ('Acemoglu, D. and P. Restrepo. (2020). "Robots and Jobs." '
-                   "JPE, 128(6): 2188–2244.")
+    assert [f.code for f in fixes] == ["ampersand", "and-comma",
+                                       "year-parens", "en-dash"]
+    assert out == ('Acemoglu, D., and P. Restrepo. (2020). "Robots and '
+                   'Jobs." JPE, 128(6): 2188–2244.')
 
 
 def test_convert_writes_an_ABBREVIATED_page_range_out_in_full():
@@ -1618,9 +1619,10 @@ def test_the_AUTHORS_ampersand_is_converted_and_the_TITLE_keeps_its_own():
     out, fixes = convert_text(
         'Smith, J. & A. Lee. 2020. "Robots & Jobs." Journal, 1(1): 1-10.')
 
-    assert out.startswith("Smith, J. and A. Lee. (2020).")
+    assert out.startswith("Smith, J., and A. Lee. (2020).")
     assert '"Robots & Jobs."' in out
-    assert [f.code for f in fixes] == ["ampersand", "year-parens"]
+    assert [f.code for f in fixes] == ["ampersand", "and-comma",
+                                       "year-parens"]
 
 
 def test_convert_writes_the_BARE_year_when_the_style_says_so():
@@ -1670,7 +1672,7 @@ def test_convert_writes_the_fixes_into_the_reference_block():
     report = convert(parts)
 
     assert [line.split(": ")[1] for line in report.changed] == [
-        "ampersand", "year-parens", "en-dash"]
+        "ampersand", "and-comma", "year-parens", "en-dash"]
     assert "and P. Restrepo. (2020)." in parts["word/document.xml"].decode()
 
 
@@ -1723,7 +1725,7 @@ def test_the_convert_report_PRINTS_what_it_did():
 
     text = convert(parts).format()
 
-    assert text.startswith("3 fix(es) written, 0 entr(ies) refused")
+    assert text.startswith("4 fix(es) written, 0 entr(ies) refused")
     assert "ampersand" in text
 
 
@@ -1800,7 +1802,8 @@ def test_an_AMPERSAND_and_an_EXPANSION_in_one_entry_still_pass():
         'Smith, J. & A. Lee. 2020. "T." Journal, 1(1): 174-79.')
 
     assert out.endswith("174–179.")
-    assert [f.code for f in fixes] == ["ampersand", "year-parens", "en-dash"]
+    assert [f.code for f in fixes] == ["ampersand", "and-comma",
+                                       "year-parens", "en-dash"]
 
 
 def test_a_conversion_that_ADDS_text_is_refused_too(monkeypatch):

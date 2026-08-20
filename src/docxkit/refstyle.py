@@ -346,6 +346,14 @@ def convert_entry(text: str, style: Style = HOUSE) -> list[Fix]:
     head = text[:at]
     if "&" in head:
         fixes.append(Fix("ampersand", "&", "and"))
+    # AFTER the ampersand, and written as the entry will read by then:
+    # "D. & P." becomes "D. and P." above, and the house style wants the
+    # comma before that final "and". Converting one and not the other
+    # trades an `ampersand` finding for an `and-comma` one, which is not
+    # a conversion — it is moving the complaint.
+    if (conn := _AND_NO_COMMA_RE.search(head)) is not None:
+        span = conn.group(0).replace("&", "and")
+        fixes.append(Fix("and-comma", span, span.replace(".", ".,", 1)))
     want = f"({year})." if style.year_parens else f"{year}."
     if m.group(0).rstrip() != want:
         # The eight characters in front make the fragment unique: a bare

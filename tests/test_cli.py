@@ -639,11 +639,11 @@ def test_refstyle_fix_writes_the_mechanical_repairs(monkeypatch, tmp_path,
     run_cli(monkeypatch, "refstyle", path, "--fix")
 
     out = capsys.readouterr().out
-    assert "3 fix(es) written" in out
+    assert "4 fix(es) written" in out
     assert "written; previous version kept at" in out
     from docxkit.package import read_parts
     doc = read_parts(path)["word/document.xml"].decode()
-    assert 'and P. Restrepo. (2020). "Robots and Jobs."' in doc
+    assert 'D., and P. Restrepo. (2020). "Robots and Jobs."' in doc
     assert "2188–2244" in doc
 
 
@@ -2283,3 +2283,55 @@ def test_the_CLI_with_no_command_says_so_rather_than_crashing(monkeypatch,
 # (`_summarize`'s `if len(out) <= keep` was recorded here as undecided
 # and is now pinned above: at exactly `keep` the `<` reading appends
 # "and 0 more" to a complete list, which decides it.)
+
+
+def test_api_takes_a_MODULE_name_as_a_topic(monkeypatch, capsys):
+    """A reader who already knows where to look types the module. It
+    matches like any other field, so `docxkit api guard` is that
+    module's surface and nothing else's."""
+    run_cli(monkeypatch, "api", "guard")
+
+    out = capsys.readouterr().out
+    assert out.startswith("guard\n")
+    assert "restamp" in out and "stamp_path" in out
+    assert "by_caption" not in out
+
+
+def test_api_lists_the_modules_AFTER_cli_as_well(monkeypatch, capsys):
+    """The skip is `cli`, not "everything from cli onwards": an
+    ordering test in place of the equality drops two thirds of the
+    package out of the listing."""
+    run_cli(monkeypatch, "api")
+
+    out = capsys.readouterr().out
+    assert "citations" in out and "tables" in out and "word" in out
+
+
+def test_api_does_not_list_the_CLI_itself(monkeypatch, capsys):
+    """It is an entry point, not a library surface — its commands are
+    reached through argparse and none of them is importable."""
+    run_cli(monkeypatch, "api")
+
+    lines = capsys.readouterr().out.splitlines()
+    assert not [ln for ln in lines if ln.startswith("  cli ")], lines
+
+
+def test_refstyle_fix_exits_ZERO_when_it_leaves_a_clean_list(monkeypatch,
+                                                             tmp_path,
+                                                             capsys):
+    """The exit code is the audit's, and after a successful --fix on a
+    list whose only faults were mechanical there is nothing left to
+    report. A run that writes and then exits 1 reads as a failure."""
+    entry = ('Acemoglu, D. &amp; P. Restrepo. 2020. "Robots and Jobs." ')
+    path = write(tmp_path / "fixable.docx", make_parts(
+        para(run("As Acemoglu and Restrepo (2020) show, it rose."))
+        + para(run("References"))
+        + para(run(entry)
+               + '<w:r><w:rPr><w:i/></w:rPr><w:t>Journal of Political '
+                 "Economy</w:t></w:r>" + run(", 128(6): 2188-2244."))))
+
+    code, _ = run_cli(monkeypatch, "refstyle", str(path), "--fix")
+
+    out = capsys.readouterr().out
+    assert "fix(es) written" in out
+    assert code == 0, out
