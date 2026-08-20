@@ -1958,9 +1958,17 @@ def test_a_revision_line_quotes_SIXTY_characters_of_the_change(
 # module. The two anchor widths and the revision one above are the
 # pattern to copy.
 #
-# Two are argued and checked: `cmd_citations`' `> 0` as `!= 0` (a count
-# is never negative) and `doctor`'s `d.kind == "literal"` as `is` (both
-# sides are the same module-level literal).
+# Three are argued and checked: `cmd_citations`' `> 0` as `!= 0` (a
+# count is never negative), `doctor`'s `d.kind == "literal"` as `is`
+# (both sides are the same module-level literal), and the listed
+# comment's `m.group(1)` as `m.group(0)` — group 0 adds the
+# `<w:comment ...>` tags around the inner text, and `text_of` reads
+# `w:t` elements, which a tag is not.
+#
+# (The width on that line, `[:110]`, is already pinned by
+# `test_inspect_cuts_a_long_comment_and_a_long_revision`. A second test
+# for it was written this afternoon and removed when `kill_check` named
+# the first one — which is what that step is for.)
 #
 # One is recorded as NOT decided: `_summarize`'s `if len(out) <= keep`
 # read as `<`. Nothing in the suite has exactly `keep` parts, so the
