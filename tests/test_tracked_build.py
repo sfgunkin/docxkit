@@ -2804,3 +2804,65 @@ def test_an_equation_the_accept_LOSES_is_reported_as_a_count():
 
     assert found == ("the clean copy has 2 equation(s) and accepting the "
                      "redline gives 1")
+
+
+def test_the_gap_counts_the_grouped_revisions_by_SUBTRACTION():
+    """Word's number and the package's differ by however many elements
+    it folded into one. Anything that happens to agree on small numbers
+    — and several bitwise spellings do — is a different sentence on the
+    next batch."""
+    parts = make_parts(
+        para(ins(run("one"))) + para(ins(run("two")))
+        + para(ins(run("three"))) + para(dele(run("go"))))
+
+    said = tracked._revision_gap(parts, body=2, total=4)
+
+    assert "the remaining 2 are in word/document.xml too" in said, said
+
+
+def test_accepted_math_reports_an_equation_the_accept_ADDED():
+    """Compare duplicates as readily as it drops. A count test that only
+    looks one way calls the extra equation no difference at all."""
+    eq = "<w:p><m:oMath><m:r><m:t>%s</m:t></m:r></m:oMath></w:p>"
+    was = make_parts(eq % "x")
+    now = make_parts(eq % "x" + eq % "y")
+
+    said = tracked.accepted_math(was, now)
+
+    assert said and "1 equation(s)" in said[0] and "gives 2" in said[0]
+
+
+def test_accepted_losses_does_not_report_an_anchor_the_accept_GAINED():
+    """A link the accepted view has and the clean copy does not is not
+    a LOSS — Word re-representing a field as an element adds targets
+    this way, and reporting them refuses a build for nothing."""
+    linked = ('<w:hyperlink w:anchor="Extra"><w:r><w:t>x</w:t>'
+              "</w:r></w:hyperlink>")
+    was = make_parts(para(run("text")))
+    now = make_parts(para(run("text"), linked))
+
+    assert tracked.accepted_losses(was, now) == []
+
+
+def test_the_MATH_ONLY_refusal_speaks_only_about_the_maths():
+    """It runs after the glyph restore, when the other two have already
+    been asked and answered. Letting it re-raise the anchor loss reports
+    the same finding twice and blames the equation pass for it."""
+    report = tracked.BuildReport()
+    report.accepted_losses = ["link LOST on accept: -> Table1"]
+    report.accepted_math = ["equation 1: '-0.20' in the clean copy"]
+
+    with pytest.raises(PackageError, match="EQUATIONS"):
+        tracked._refuse_accept_side(report, "v12.docx", math_only=True)
+
+
+# tracked's other survivors from the 2026-08-21 round, argued:
+#
+# `if grouped > 0` -> `!= 0` in `_revision_gap`. Word's count walks the
+# main story and the package's counts every element in it, so the body
+# figure is a subset by construction — the same argument the note above
+# makes for the comparison that produced it, one line further on.
+#
+# `zip(was, now, strict=True)` -> `strict=False` in `accepted_math`: the
+# length check three lines above has already returned when they differ,
+# so there is no ragged pair left for either spelling to meet.
