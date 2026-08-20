@@ -32,6 +32,7 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision ingest [--check] [--json R.json]
     docxkit revision build REVISED.docx [--out PATH] [--keep-math]
     docxkit revision validate [BATCH.docx] [--no-word] [--render ANCHOR...]
+    docxkit revision ship REVISED.docx   # both, one Word session
     docxkit revision promote [BATCH.docx]
     docxkit revision baseline [--force] [--accept-loss A,...]
     docxkit revision rescues [--prune KEEP]
@@ -1101,6 +1102,29 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_revision_ship(args: argparse.Namespace) -> int:
+    """`build` then `validate`, in ONE process and ONE Word session.
+
+    The two steps run back to back on every batch, in that order, and
+    each was paying its own Word cold start: 13.5 s + 38.9 s on a
+    one-edit AFI batch, about 52 s of 95. Nothing about them changes
+    here — the same two commands, the same output, the same exit
+    codes — except that the second finds Word already open.
+
+    Stops on a failed build rather than validating whatever the previous
+    batch left in `build/batch.docx`, which is the file `validate`
+    defaults to and the reason this is one command and not a shell `&&`.
+    """
+    from .word import shared_session
+    with shared_session():
+        if (code := cmd_revision_build(args)) != 0:
+            return code
+        print()
+        args.batch = str(Path(args.out) if args.out else _paper(args).batch)
+        args.baseline = None
+        return cmd_revision_validate(args)
+
+
 def _say_glyphs(report: object) -> None:
     """The glyph half of gate 5, with the VIEW it is about named.
 
@@ -1573,6 +1597,19 @@ def main() -> None:
                    help="rasterise the ACCEPTED page each anchor falls on "
                         "(needs Word and PyMuPDF): the eye gate no markup "
                         "check can make")
+
+    r = _rev("ship", cmd_revision_ship,
+             "build then validate, in one process and one Word session")
+    r.add_argument("revised", help="the edited CLEAN copy of prev.docx")
+    r.add_argument("--out", metavar="PATH",
+                   help="default: revision/build/batch.docx")
+    r.add_argument("--allow-math-resolve", action="store_true")
+    r.add_argument("--keep-math", action="store_true")
+    r.add_argument("--allow-pending-baseline", action="store_true")
+    r.add_argument("--force", action="store_true")
+    r.add_argument("--no-word", action="store_true",
+                   help="offline gates only for the validate half")
+    r.add_argument("--render", metavar="ANCHOR", nargs="+", default=[])
 
     r = _rev("promote", cmd_revision_promote,
              "put a validated batch onto working.docx")

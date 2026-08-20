@@ -314,23 +314,6 @@ Figure 10 caption the sweep writes 2 runs where the naive loop writes 6.
 Still open: the `fig5_firstref` question in the last paragraph above, which
 nobody has checked.
 
-### S4 the revision ladder opens Word two to three times per batch
-
-**Symptom as observed.** Measured on AFI, 2026-08-20, on a ONE-edit batch:
-`revision build` 13.5 s, `revision validate` 38.9 s. Each starts its own Word
-COM session — `build` for Compare and its in-Word verify, `validate` for the
-Word-side accept it compares against the XML accept — and a batch runs both back
-to back, every time.
-
-Not wrong, and not urgent while the caller's round-trips dominate (see the
-preflight entry above). Recorded because it is now the largest remaining fixed
-cost per batch: ~52 s of the ~95 s.
-
-**Fix sketch.** A module-level Word session reused across `build` and
-`validate` within one process, closed on exit; or a `docxkit revision ship`
-that runs the ladder in one process. The paper-side `_batch.ship()` chains the
-commands but still pays two cold starts.
-
 ### S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation — UNLINKED manuscripts only, as of 2026-08-20
 
 **Symptom as observed.** AFI `working.docx`, after the r4 house-style
@@ -425,6 +408,29 @@ scope on purpose — the in-text rules change what a sentence SAYS.
 
 ## Fixed
 
+### ~~S4 the revision ladder opens Word two to three times per batch~~
+
+Fixed 2026-08-21 — `word.shared_session()` and `docxkit revision ship`.
+
+`shared_session()` pins ONE Word instance for every `session()` inside the
+block. Nesting is a no-op, so a caller may wrap a ladder without knowing
+which steps open Word, and if Word cannot be started at all it yields None
+and every `session()` inside behaves exactly as before: this saves a start,
+it does not turn "no Word here" into a different error in a different place.
+
+`revision ship REVISED.docx` runs `build` then `validate` in one process
+inside one such block. Same two commands, same output, same exit codes —
+the second just finds Word already open. It STOPS on a failed build rather
+than validating whatever the previous batch left in `build/batch.docx`,
+which is the file `validate` defaults to and the reason this is one command
+rather than a shell `&&`.
+
+The measured cost stands as recorded (13.5 s + 38.9 s of about 95 on a
+one-edit AFI batch); what this removes is the second cold start. Nothing
+here has been measured against real Word — the tests fake the COM boundary,
+as this repository's Word tests do — so the SAVING is the claim to check on
+the next batch, not a number this entry can assert.
+
 ### ~~S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them~~
 
 Fixed 2026-08-21 — `docxkit api [TOPIC]`.
@@ -433,7 +439,7 @@ Fixed 2026-08-21 — `docxkit api [TOPIC]`.
     citations
       bookmark               Wrap `inner` in a bookmark. With no inner, a zero-length marker.
       delete_bookmark        Remove the Start/End pair `name` (id read off the Start).
-      hyperlink_field        A ``HYPERLINK \\l`` field pointing at an internal bookmark.
+      hyperlink_field        A ``HYPERLINK \l`` field pointing at an internal bookmark.
       marker_bookmark        A zero-length bookmark at the head of the ONE paragraph matching
       next_bookmark_id       One above the highest bookmark id across the given parts.
       wrap_link_in_bookmark  Recreate `name` around the ONE link that points at `anchor`.

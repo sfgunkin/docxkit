@@ -617,3 +617,90 @@ def test_locate_revisions_opens_the_file_and_passes_its_limit(faked_word,
     got: object = W.locate_revisions("redline.docx", limit=12)
     assert got == ["rev"]
     assert seen["limit"] == 12
+
+
+# ------------------------------------------------------ shared_session ----
+#
+# Word's cold start is the largest fixed cost a revision batch pays:
+# `build` opens one for Compare and its in-Word verify, `validate`
+# opens another, and they run back to back on every batch. Measured on
+# a one-edit AFI batch, 2026-08-20: 13.5 s + 38.9 s of about 95.
+
+
+def test_a_shared_session_opens_ONE_Word_for_every_session_inside(com):
+    word = com(FakeWord())
+
+    with W.shared_session(), W.session() as a, W.session() as b:
+        assert a is b is word
+
+    assert com.made["dispatched"] == ["Word.Application"]
+    assert word.quits == 1
+
+
+def test_a_session_OUTSIDE_the_block_opens_its_own_again(com):
+    """The sharing is scoped, not a process-wide switch: what is inside
+    the block shares, and the next caller is back to a private Word."""
+    word = com(FakeWord())
+
+    with W.shared_session(), W.session():
+        pass
+    with W.session():
+        pass
+
+    assert com.made["dispatched"] == ["Word.Application"] * 2
+    assert word.quits == 2
+
+
+def test_NESTING_a_shared_session_is_a_no_op(com):
+    """A caller may wrap a ladder without knowing which steps open Word,
+    and the inner block must not quit the outer one's instance."""
+    word = com(FakeWord())
+    shared = W.shared_session
+
+    with shared() as outer:
+        with shared() as inner:
+            assert inner is outer
+        assert word.quits == 0, "the inner block quit the shared Word"
+        # and the sharing survives it: an inner block that RELEASED the
+        # instance on its way out leaves every later session() in the
+        # outer block opening a Word of its own
+        with W.session() as after:
+            assert after is outer
+
+    assert word.quits == 1
+    assert com.made["dispatched"] == ["Word.Application"]
+
+
+def test_a_shared_session_yields_NONE_when_Word_cannot_START(monkeypatch):
+    """No Word here must stay the same failure it always was, in the
+    same place: this saves a start, it does not invent an error."""
+
+    class Refuses:
+        """What a machine with no COM does: the CALL builds a context
+        manager like any other, and entering it is what fails."""
+
+        def __enter__(self) -> None:
+            raise RuntimeError("no COM on this machine")
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(W, "session", lambda **_kw: Refuses())
+
+    with W.shared_session() as word:
+        assert word is None
+    assert not W._SHARED
+
+
+def test_the_shared_instance_is_RELEASED_when_the_block_raises(com):
+    """A held instance would be handed to the next caller in this
+    process — an invisible Word nobody owns, and every session() after
+    it quietly reusing a dead COM object."""
+    word = com(FakeWord())
+
+    with pytest.raises(ValueError, match="the batch failed"), \
+            W.shared_session():
+        raise ValueError("the batch failed")
+
+    assert not W._SHARED
+    assert word.quits == 1

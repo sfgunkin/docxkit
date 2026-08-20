@@ -77,6 +77,7 @@ __all__ = [
     "ruler",
     "search_text",
     "session",
+    "shared_session",
 ]
 
 PKG = "{http://schemas.microsoft.com/office/2006/xmlPackage}"
@@ -148,13 +149,70 @@ _FAST_OPTIONS = {
 }
 
 
+#: The instance :func:`session` hands out inside a `shared_session`:
+#: empty, or holding exactly one. Module-level rather than a parameter
+#: threaded through six call sites, because what shares a Word is the
+#: PROCESS and a caller two layers down has no way to be told; a LIST
+#: rather than a rebindable name, because mutating a holder says the
+#: same thing as `global` without asking for an exemption.
+_SHARED: list[Any] = []
+
+
+@contextlib.contextmanager
+def shared_session(*, fast: bool = True) -> Iterator[Any]:
+    """One Word instance for every :func:`session` inside this block.
+
+    Word's cold start is the largest fixed cost a revision batch pays:
+    `build` opens one for Compare and its in-Word verify, `validate`
+    opens another for the accept it compares against the XML, and a
+    one-edit batch measured 13.5 s + 38.9 s on AFI (2026-08-20). They
+    run back to back, in that order, every time.
+
+    Nesting is a no-op — the inner block yields the same instance and
+    quits nothing — so a caller may wrap a ladder without knowing which
+    steps open Word.
+
+    If Word cannot be started at all this yields None and every
+    `session()` inside behaves exactly as it did before: the point is to
+    save a start, never to turn "no Word here" into a different error in
+    a different place.
+
+    `fast` is applied once, by whichever block opens the instance. A
+    nested `session(fast=False)` therefore does NOT restore the options
+    — it is sharing somebody else's Word, and turning spell-check back
+    on underneath them is not its call.
+    """
+    if _SHARED:
+        yield _SHARED[0]
+        return
+    try:
+        opened = session(fast=fast)
+        word = opened.__enter__()
+    except Exception:
+        yield None
+        return
+    _SHARED.append(word)
+    try:
+        yield word
+    finally:
+        _SHARED.clear()
+        opened.__exit__(None, None, None)
+
+
 @contextlib.contextmanager
 def session(*, fast: bool = True) -> Iterator[Any]:
     """A private, invisible Word instance, always quit on the way out.
 
     Uses DispatchEx so an interactive Word the user has open is neither
     reused nor closed.
+
+    Inside a :func:`shared_session` this yields THAT instance and quits
+    nothing: a batch runs `build` and `validate` back to back and each
+    was paying its own cold start — about 52 s of a 95 s batch on AFI.
     """
+    if _SHARED:
+        yield _SHARED[0]
+        return
     # The `word` extra, Windows-only, so it is absent wherever CI runs.
     # No pyright directive needed and none wanted: pyright BUNDLES stubs
     # for pywin32, so the import resolves against those and it reports

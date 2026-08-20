@@ -1230,3 +1230,82 @@ def test_status_says_when_note_definitions_are_OUT_OF_ORDER(monkeypatch,
     assert "footnote definitions are NOT in document order" in out, out
     assert "2, 3" in out
     assert "reads the part as moved" in out
+
+
+# ----------------------------------------------------------------- ship
+#
+# The two steps run back to back on every batch and each was paying its
+# own Word cold start: 13.5 s + 38.9 s on a one-edit AFI batch, about
+# 52 s of 95.
+
+
+def test_ship_runs_BOTH_halves_in_one_call(monkeypatch, project, capsys):
+    from docxkit import revision
+    monkeypatch.setattr(revision.tracked, "build", _fake_build())
+
+    code, _ = run_cli(monkeypatch, "revision", "ship",
+                      str(project.working), "--paper", str(project.root),
+                      "--no-word")
+
+    out = capsys.readouterr().out
+    assert "7 revisions" in out, "the build half did not run"
+    assert "== lint ==" in out, "the validate half did not run"
+    # the exit code is the VALIDATE half's — this batch is a fixture
+    # and fails its gates, which is the code a caller should see
+    assert code == 1, out
+
+
+def test_ship_opens_ONE_Word_session_for_the_pair(monkeypatch, project):
+    """The whole point. `build` opens one for Compare and its in-Word
+    verify, `validate` opens another for the accept it compares against
+    the XML — and they run in that order, every time."""
+    from docxkit import revision, word
+    opened: list[int] = []
+
+    @contextlib.contextmanager
+    def counting(*, fast: bool = True):
+        opened.append(1)
+        yield object()
+
+    monkeypatch.setattr(word, "session", counting)
+    monkeypatch.setattr(revision.tracked, "build", _fake_build())
+
+    run_cli(monkeypatch, "revision", "ship", str(project.working),
+            "--paper", str(project.root), "--no-word")
+
+    assert opened == [1], f"{len(opened)} Word session(s) for one batch"
+
+
+def test_ship_does_NOT_validate_after_a_failed_build(monkeypatch, project,
+                                                     capsys):
+    """`validate` defaults to `build/batch.docx`, which after a failed
+    build is whatever the PREVIOUS batch left there — so a shell `&&` is
+    not what this is, and the stop is the reason it is one command."""
+    from docxkit import revision
+
+    def refuses(*a, **kw):
+        raise revision.StaleBatch("batch.docx was edited in Word")
+
+    monkeypatch.setattr(revision.tracked, "build", refuses)
+
+    code, _ = run_cli(monkeypatch, "revision", "ship", str(project.working),
+                      "--paper", str(project.root), "--no-word")
+
+    assert code != 0
+    assert "== lint ==" not in capsys.readouterr().out
+
+
+def test_ship_stops_on_a_build_that_RETURNS_a_code_too(monkeypatch, project,
+                                                       capsys):
+    """`build` refuses by raising today. The code path is here because
+    a command that starts returning one instead must not quietly become
+    "validate whatever is in build/batch.docx"."""
+    from docxkit import cli
+
+    monkeypatch.setattr(cli, "cmd_revision_build", lambda args: 4)
+
+    code, _ = run_cli(monkeypatch, "revision", "ship", str(project.working),
+                      "--paper", str(project.root), "--no-word")
+
+    assert code == 4
+    assert "== lint ==" not in capsys.readouterr().out

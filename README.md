@@ -117,6 +117,7 @@ docxkit revision doctor                    # who else in the repo selects a manu
 docxkit revision ingest [--check] [--json R.json]   # what the author changed
 docxkit revision build                     # clean edit -> redline, via Word Compare
 docxkit revision validate [BATCH] [--no-word] [--render ANCHOR...]
+docxkit revision ship REVISED.docx          # both, in one Word session
 docxkit revision promote                   # put a validated batch on working.docx
 docxkit revision baseline                  # the author accepted: record the truth
 docxkit revision rescues                   # the undo copies promote leaves behind
