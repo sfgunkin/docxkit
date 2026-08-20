@@ -70,3 +70,27 @@ def test_the_real_list_is_the_five_CONTRIBUTING_names():
         "ruff", "mypy", "pyright", "pytest", "floors"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
+
+
+def test_the_runner_prints_a_failure_that_is_NOT_ascii(capsys):
+    """The first failure this runner ever reported was a Cyrillic
+    fixture, and printing it died: a cp1252 console cannot encode the
+    U+FFFD a decode left behind, so the traceback replaced the report.
+    The entry point asks for UTF-8 before it says anything — the same
+    `utf8_stdout` every other script here calls — and `say` must carry
+    whatever a gate wrote."""
+    import sys
+
+    # written as BYTES: a child told to print this to a cp1252 console
+    # dies before the runner ever sees it, which is a different bug —
+    # what is under test is the runner's own stdout.
+    loud = [sys.executable, "-c",
+            "import sys; sys.stdout.buffer.write("
+            "'Таблица �'.encode()); raise SystemExit(1)"]
+    said: list[str] = []
+
+    code = gates.run([("pytest", loud, False)], say=said.append)
+
+    assert code == 1
+    assert any("Таблица" in line
+               for line in said), said

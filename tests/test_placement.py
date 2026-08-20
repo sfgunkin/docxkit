@@ -1199,7 +1199,7 @@ def test_the_row_and_the_MENTION_are_matched_on_forty_characters_too():
     Both needles here agree with the render for forty characters and
     diverge after it."""
     mention = "См. таблицу 1, где занятость населения по возрасту и полу"
-    last_row = "Итого по всем регионам выборки за период наблюдения"
+    last_row = "Итого по всем регионам выборки за периоды наблюдения"
     caption = "Таблица 1. Заголовок"
     assert mention[40].strip() and last_row[40].strip(), "cut mid-word"
 

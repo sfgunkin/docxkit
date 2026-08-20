@@ -28,6 +28,9 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from docxkit.console import utf8_stdout
+
 ROOT = Path(__file__).resolve().parents[1]
 
 #: (name, argv, reads-stdout). The third says the gate is judged by its
@@ -68,4 +71,10 @@ def run(gates: Sequence[Gate] = tuple(GATES),
 
 
 if __name__ == "__main__":                  # pragma: no cover
+    # A gate's output is full of what this package works on — em dashes,
+    # Cyrillic captions, the U+FFFD a decode left behind — and a
+    # console that is cp1252 dies printing it. The first failure this
+    # runner ever reported crashed here instead of showing itself, and
+    # the pipe it was invoked through swallowed the crash as well.
+    utf8_stdout()
     raise SystemExit(run())
