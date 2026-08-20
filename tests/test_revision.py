@@ -44,7 +44,9 @@ from docxkit.errors import (
 )
 from docxkit.revision import (
     _link_changes,
+    _selects_declared,
     glyph_runs,
+    losses,
     moved_footnotes,
 )
 
@@ -2211,3 +2213,113 @@ def test_a_relabelling_takes_its_new_label_from_its_OWN_anchor():
     assert [str(r) for r in relabelled] == [
         "link Ref1: 'ZZZ old one' -> 'NNN new one'",
         "link Ref2: 'YYY old two' -> 'AAA new two'"]
+
+
+def test_a_bookmark_the_author_ADDED_is_not_a_loss():
+    """`_bookmarks(prev) - _bookmarks(working)`, written as a symmetric
+    difference. An author who adds a cross-reference target adds a
+    bookmark, and the hand-back gate would then refuse their own new
+    anchor as something Word destroyed — the shape of refusal that
+    teaches a person to pass `--accept-loss` without reading it."""
+    def bm(name: str, i: int) -> str:
+        return (f'<w:p><w:bookmarkStart w:id="{i}" w:name="{name}"/>'
+                f'<w:r><w:t>t</w:t></w:r><w:bookmarkEnd w:id="{i}"/></w:p>')
+
+    prev = _doc(bm("Kept", 1))
+    working = _doc(bm("Kept", 1), bm("BrandNew", 2))
+
+    assert losses(working, prev) == []
+
+
+def test_two_EQUAL_glyph_streams_report_nothing():
+    """Two streams read out of two documents are never the same object,
+    so `before == after` is a fast path rather than a decision — and
+    `is` there is equivalent, because difflib answers "no changed
+    opcodes" for equal strings anyway. Pinned as behaviour, not as a
+    mutant: the report for a clean build is empty."""
+    before = "".join(["a", "b", "c"])
+    after = "".join(["a", "b", "c"])
+    assert before is not after and before == after
+
+    assert glyph_runs(before, after) == []
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `before == after` in `glyph_runs`, written `is`: it saves a difflib
+#   pass over two long strings and cannot change the answer, because
+#   equal strings produce no changed opcodes.
+# * `token == candidate` in `_names`, written `is`: the two `startswith`
+#   tests beside it answer True for equal strings, so the equality is
+#   redundant however it is spelled.
+# * `self.word_opened is not False` written `!=`. The field is a bool or
+#   None, and the two readings part company only on values (0, 0.0) that
+#   nothing puts there.
+
+
+def test_the_lost_link_line_names_the_anchor_and_forty_of_its_LABEL(tmp_path):
+    """`(was - now)` and `label[:40]`, in the report `validate` prints
+    when reject-all does not reproduce the baseline. The union reading
+    lists every link the batch KEPT beside the one it lost, which is a
+    reader's whole afternoon; the label is how they find the sentence.
+
+    The surviving link is in the fixture for exactly that reason."""
+    def link(anchor: str, label: str) -> str:
+        return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+                "</w:r></w:hyperlink>")
+
+    long_label = "United Nations Children's Fund report of 2024, second ed"
+    baseline_path = write(tmp_path / "prev-links.docx", make_parts(
+        f"<w:p>{link('Kept', 'a surviving link label')}</w:p>"
+        f"<w:p>{link('Gone', long_label)}</w:p>"))
+    batch = write(tmp_path / "batch-links.docx", make_parts(
+        f"<w:p>{link('Kept', 'a surviving link label')}</w:p>"
+        "<w:p><w:r><w:t>quietly rewritten</w:t></w:r></w:p>"))
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.reject_matches_baseline is False
+    assert report.lost_links == [
+        '-> Gone ("United Nations Children\'s Fund report of")']
+
+
+@pytest.fixture
+def migrated(tmp_path):
+    """A migrated project, for the declaration reader below."""
+    source = tmp_path / "Report" / "afi_v14.docx"
+    source.parent.mkdir(parents=True)
+    write(source, make_parts(para(run("The paper."))))
+    return revision.init(tmp_path, source)
+
+
+@pytest.mark.parametrize("declared", [
+    "revision/*.docx",          # relative: `Path.match` reads from the right
+    "**/working.docx",
+    "/revision/*.docx",         # ROOTED: only the "**/" reading finds it
+    "/revision/working.docx",
+])
+def test_a_GLOB_selects_the_manuscript_by_either_reading(declared, migrated):
+    """`target.match(text) or target.match(f"**/{text}")` — two ways of
+    asking whether a pattern reaches the paper.
+
+    A relative pattern is matched from the right, so the first reading
+    answers it; a ROOTED one ("/revision/*.docx", which is how a config
+    written against the repository root spells it) is absolute to
+    `Path.match` and matches nothing, and only the stripped-and-prefixed
+    form finds the file. Read as `and`, every rooted declaration goes
+    unreported — which is the class `doctor` exists to find: a pattern
+    that stops matching after a migration does not fail, it picks up an
+    older generation sitting on disk."""
+    assert _selects_declared(declared, migrated) is True
+
+
+def test_a_declaration_naming_ANOTHER_file_is_not_the_manuscript(
+        migrated):
+    """`candidate.name != target.name`, and the skip it guards. Read as
+    `<`, every declared name that sorts ABOVE "working.docx" falls
+    through to the bare-name branch and is reported as selecting the
+    paper — `zzz_appendix.docx` and half the alphabet with it. A doctor
+    that names innocent files is one nobody reads twice."""
+    assert _selects_declared("zzz_appendix.docx", migrated) is False
+    assert _selects_declared("aaa_appendix.docx", migrated) is False
+    assert _selects_declared("working.docx", migrated) is True
