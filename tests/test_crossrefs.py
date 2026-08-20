@@ -1871,3 +1871,9 @@ def test_a_run_carrying_TWO_character_styles_comes_out_with_one():
 #   span in a hyperlink does not move one. Which is worth knowing: the
 #   reverse sort reads like the usual splice-from-the-back rule, and
 #   here it is not load-bearing.
+#
+# And one on the code that round WROTE, from re-measuring the module the
+# same afternoon: `open_end = rpr.index(">") + 1` as `^ 1`. `<w:rPr>` is
+# seven characters, so the `>` is at index 6 — and 6 ^ 1 IS 6 + 1. The
+# two part company only for an odd index, which needs an attribute on
+# `w:rPr`, and CT_RPr has none.
