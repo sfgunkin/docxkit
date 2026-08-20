@@ -42,7 +42,11 @@ from docxkit.errors import (
     ProtocolError,
     StaleBatch,
 )
-from docxkit.revision import glyph_runs
+from docxkit.revision import (
+    _link_changes,
+    glyph_runs,
+    moved_footnotes,
+)
 
 NS_M = 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
 
@@ -2073,3 +2077,137 @@ def test_render_accepted_asks_WORD_for_nothing_when_no_anchor_is_given(
 
     assert revision.render_accepted(batch, []) == {}
     assert revision.render_accepted(batch, ["", "  "]) == {}
+
+
+# --- the run of 2026-08-20: 8.8 %, and the report a hand-back gets ------
+
+_NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+       ' xmlns:r="r"')
+_LONG_WAS = "United Nations Children's Fund report of 2024, second edition"
+_LONG_NOW = "UNICEF, the Children's Fund of the United Nations, 2024 edition"
+
+
+def _doc(*paragraphs: str) -> dict[str, bytes]:
+    body = "".join(paragraphs)
+    return {"word/document.xml":
+            f"<w:document {_NS}><w:body>{body}</w:body></w:document>".encode()}
+
+
+def _link(anchor: str, label: str) -> str:
+    return (f'<w:p><w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+            "</w:r></w:hyperlink></w:p>")
+
+
+def test_a_RELABELLED_link_is_reported_with_both_labels_cut_to_forty():
+    """Two cuts in one line, and the line is the whole product of this
+    check: a person deciding whether an author's re-labelling was
+    deliberate reads the old text against the new. A citation label runs
+    past forty characters as a matter of course — "United Nations
+    Children's Fund report of 2024" is sixty.
+
+    The new label is the FIRST of the fresh ones for that anchor, and
+    the fixture gives the anchor a second, later mention so that "first"
+    is a choice: sorted, "UNICEF…" comes before "zzz…", and the last
+    would report the wrong half of the pair."""
+    prev = _doc(_link("Ref1", _LONG_WAS))
+    working = _doc(_link("Ref1", _LONG_NOW), _link("Ref1", "zzz later"))
+
+    lost, relabelled = _link_changes(working, prev)
+
+    assert lost == []
+    assert [str(r) for r in relabelled] == [
+        'link Ref1: "United Nations Children\'s Fund report of" -> '
+        '"UNICEF, the Children\'s Fund of the Unite"']
+
+
+def test_a_LOST_link_is_reported_with_its_label_cut_to_forty():
+    """`label[:40]` again, in the message that BLOCKS. A loss names the
+    anchor and the words the reader has to go and find; the whole label
+    of a swallowed citation is a line of prose in a refusal."""
+    prev = _doc(_link("Ref2", _LONG_WAS))
+    working = _doc("<w:p><w:r><w:t>plain text now</w:t></w:r></w:p>")
+
+    lost, relabelled = _link_changes(working, prev)
+
+    assert relabelled == []
+    assert str(lost[0]) == ('link "Ref2 (United Nations Children\'s Fund '
+                            'report of)"')
+
+
+def test_the_glyph_report_stops_at_SIX_runs_and_counts_the_rest():
+    """`limit: int = 6` — a default no caller passes, so nothing pinned
+    it. The docstring says why it exists: a batch that really did lose a
+    paragraph would otherwise print the paragraph. Both neighbours of
+    six are wrong in a way a reader cannot see — five prints less than
+    the gate promises, seven prints one run more and never says how many
+    it kept back."""
+    before = "".join(f"word{i} " for i in range(20))
+    after = before
+    for i in (3, 5, 7, 9, 11, 13, 15):
+        after = after.replace(f"word{i} ", f"WORD{i} ")
+
+    runs = glyph_runs(before, after)
+
+    assert len(runs) == 7, runs
+    assert runs[-1] == "... and 1 more run(s)", runs[-1]
+
+
+def test_a_SEPARATOR_note_is_not_a_moved_footnote():
+    """`nid < 1`: Word's separator and continuation-separator notes are
+    ids 0 and -1, and they carry the same `w:ins` a moved note does
+    after Compare has been through the part. Admitted, every build
+    reports a footnote nobody wrote as one Compare emitted unmatched —
+    and `build` refuses on it."""
+    notes = (f"<w:footnotes {_NS}>"
+             '<w:footnote w:id="0"><w:p><w:r><w:ins w:id="9" w:author="W">'
+             "<w:t>sep</w:t></w:ins></w:r></w:p></w:footnote>"
+             '<w:footnote w:id="2"><w:p><w:r><w:ins w:id="8" w:author="W">'
+             "<w:t>a moved note</w:t></w:ins></w:r></w:p></w:footnote>"
+             "</w:footnotes>")
+    baseline = (f"<w:footnotes {_NS}>"
+                '<w:footnote w:id="0"><w:p><w:r><w:t>sep</w:t></w:r></w:p>'
+                "</w:footnote>"
+                '<w:footnote w:id="2"><w:p><w:r><w:t>a moved note</w:t>'
+                "</w:r></w:p></w:footnote></w:footnotes>")
+
+    assert moved_footnotes({"word/footnotes.xml": notes.encode()},
+                           {"word/footnotes.xml": baseline.encode()}) == [2]
+
+
+def test_two_relabelled_mentions_of_one_anchor_pair_off_ONE_FOR_ONE():
+    """The docstring's promise: each gone label consumes one gained
+    label for the same anchor. The consumption is a separate line from
+    the report, and a fixture with ONE relabelled link cannot tell them
+    apart — the second pairing is where consuming the wrong entry shows,
+    as a link reported against a label already spoken for."""
+    prev = _doc(_link("Ref1", "AAA first mention"),
+                _link("Ref1", "BBB second mention"))
+    working = _doc(_link("Ref1", "CCC first now"),
+                   _link("Ref1", "DDD second now"))
+
+    lost, relabelled = _link_changes(working, prev)
+
+    assert lost == []
+    assert [str(r) for r in relabelled] == [
+        "link Ref1: 'AAA first mention' -> 'CCC first now'",
+        "link Ref1: 'BBB second mention' -> 'DDD second now'"]
+
+
+def test_a_relabelling_takes_its_new_label_from_its_OWN_anchor():
+    """`if a == anchor`. Two anchors relabelled in one hand-back is the
+    ordinary case — an author who rewrites one citation label usually
+    rewrites the neighbouring one — and identity there makes every
+    anchor's fresh labels the OTHER anchors' labels: Ref1 is reported as
+    renamed to the text that belongs to Ref2, and the pair reads as two
+    edits nobody made.
+
+    Ref2's new label sorts first on purpose: sorted() is what picks
+    between them."""
+    prev = _doc(_link("Ref1", "ZZZ old one"), _link("Ref2", "YYY old two"))
+    working = _doc(_link("Ref1", "NNN new one"), _link("Ref2", "AAA new two"))
+
+    _lost, relabelled = _link_changes(working, prev)
+
+    assert [str(r) for r in relabelled] == [
+        "link Ref1: 'ZZZ old one' -> 'NNN new one'",
+        "link Ref2: 'YYY old two' -> 'AAA new two'"]
