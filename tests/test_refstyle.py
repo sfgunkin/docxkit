@@ -4,11 +4,13 @@ from __future__ import annotations
 import pytest
 from conftest import NS, make_parts, note, notes, para, run
 
+from docxkit.citations import find_citations
 from docxkit.refstyle import (
     CHICAGO,
     HOUSE,
     Issue,
     RefStyleReport,
+    _trust_the_links,
     audit,
     check_entry,
     check_prose,
@@ -1388,3 +1390,143 @@ def test_a_single_entry_group_does_not_END_the_ambiguity_scan():
 #
 # So refstyle is CLOSED: every survivor argued and put through
 # kill_check.
+
+
+# ----------------------------------------- the apparatus knows better ---
+
+_ILOSTAT = ('ILOSTAT. (2024). "Statistics on Employment." ')
+_SWALLOWED = ("Employment is consolidated from standardized national "
+              "Labor Force Surveys and ")
+
+
+def _entry_para() -> str:
+    return para(run(_ILOSTAT) + irun("ILO Data") + run("."))
+
+
+def _linked(anchor: str, label: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+            f"</w:r></w:hyperlink>")
+
+
+def _mark(name: str) -> str:
+    return (f'<w:bookmarkStart w:id="3" w:name="{name}"/>'
+            f'<w:bookmarkEnd w:id="3"/>')
+
+
+def test_a_LINKED_citation_swallowed_by_the_two_author_pattern_is_re_read():
+    """`X and Y (Year)` only needs X capitalised, so "…national Labor
+    Force Surveys and ILOSTAT (2024) data…" read as a citation of
+    "Surveys and ILOSTAT" and reported `missing-ref` against a list that
+    holds ILOSTAT. The paper could not reach a clean report, which is
+    what stops the audit being usable as a gate (AFI r4).
+
+    The document had already answered: that span is a live hyperlink to
+    the entry's own bookmark.
+    """
+    parts = make_parts(
+        para(run(_SWALLOWED), _linked("ILOSTAT2024", "ILOSTAT (2024)"),
+             run(" data on employment."))
+        + para(run("References")) + _mark("ILOSTAT2024") + _entry_para())
+
+    report = audit(parts)
+
+    assert "missing-ref" not in _codes(report.issues), [
+        (i.code, i.snippet) for i in report.issues]
+    assert "uncited-ref" not in _codes(report.issues), [
+        (i.code, i.snippet) for i in report.issues]
+    assert report.cited == 1
+
+
+def test_a_link_to_something_that_is_NOT_an_entry_governs_nothing():
+    """The rule is "the document resolved this citation", and a
+    cross-reference to a table has resolved nothing about it. Trusting
+    any link would let a caption anchor rewrite a citation's extent.
+    """
+    parts = make_parts(
+        para(run(_SWALLOWED), _linked("Table3", "ILOSTAT (2024)"),
+             run(" data on employment."))
+        + _mark("Table3")
+        + para(run("References")) + _entry_para())
+
+    report = audit(parts)
+
+    assert "missing-ref" in _codes(report.issues), [
+        (i.code, i.snippet) for i in report.issues]
+
+
+def test_a_citation_the_pattern_reads_EXACTLY_is_left_alone():
+    """The label equals the span, so there is nothing to re-read — and
+    a rule that fired here would re-parse every linked citation in the
+    manuscript for no gain.
+    """
+    parts = make_parts(
+        para(run("As "), _linked("ILOSTAT2024", "ILOSTAT (2024)"),
+             run(" reports, it rises."))
+        + para(run("References")) + _mark("ILOSTAT2024") + _entry_para())
+
+    report = audit(parts)
+
+    assert not _codes(report.issues) & {"missing-ref", "uncited-ref"}, [
+        (i.code, i.snippet) for i in report.issues]
+    assert report.cited == 1
+
+
+def test_the_re_read_citation_KEEPS_ITS_PLACE_in_the_paragraph():
+    """Offsets, not just the answer. Every prose check reports
+    `text[c.start:c.end]` as its snippet, so a citation re-read at the
+    wrong offset is a finding pointing at the wrong words.
+    """
+    text = ("Employment is consolidated from standardized national Labor "
+            "Force Surveys and ILOSTAT (2024) data on employment.")
+
+    out = _trust_the_links(text, find_citations(text), ["ILOSTAT (2024)"])
+
+    assert [text[c.start:c.end] for c in out] == ["ILOSTAT (2024)"]
+
+
+def test_a_PARENTHETICAL_label_is_read_back_inside_its_parentheses():
+    """"(Kanbur 2007)" is a citation; `Kanbur 2007` is two words. The
+    label a link carries is the second, so reading it alone finds
+    nothing — and dropping the citation would take a cited work out of
+    the cross-check and report its entry as UNCITED.
+    """
+    text = "It rose sharply (Labor Force Surveys and ILOSTAT 2024) last year."
+
+    out = _trust_the_links(text, find_citations(text), ["ILOSTAT 2024"])
+
+    assert [text[c.start:c.end] for c in out] == ["ILOSTAT 2024"]
+
+
+def test_a_label_that_says_NOTHING_leaves_the_citation_as_it_was():
+    """This narrows a match; it never deletes one. A link wrapping the
+    NAME and not the year — which is how a paper links an organisation
+    it also cites — carries a label that is no citation at all, and
+    dropping the match would lose a cited work silently.
+    """
+    text = "As Labor Force Surveys and ILOSTAT (2024) report, it rises."
+
+    out = _trust_the_links(text, find_citations(text), ["ILOSTAT"])
+
+    assert [text[c.start:c.end] for c in out] == ["Surveys and ILOSTAT (2024)"]
+
+
+def test_an_UNLINKED_manuscript_is_still_read_by_the_pattern_alone():
+    """Recorded, not celebrated: with no apparatus there is no fact to
+    read, and the pattern is all there is. The backlog entry says so.
+    """
+    parts = make_parts(
+        para(run(_SWALLOWED + "ILOSTAT (2024) data on employment."))
+        + para(run("References")) + _entry_para())
+
+    report = audit(parts)
+
+    assert "missing-ref" in _codes(report.issues)
+
+#
+# `lab != span` in `_trust_the_links` is EQUIVALENT and left alive. A
+# label equal to the span re-reads to the same citation at the same
+# offsets — `_read_label` puts a parenthetical's parentheses back, so
+# even the form that does not parse alone comes out unchanged. The guard
+# is there to say what the function is FOR (a span that swallowed a
+# linked one), and to skip the re-parse on every already-exact citation
+# in a fully linked manuscript.

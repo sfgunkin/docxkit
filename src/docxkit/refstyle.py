@@ -31,10 +31,12 @@ from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field, replace
 
 from ._xml import (
+    BOOKMARK_NAME_RE,
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
     PARA_RE,
+    internal_links,
     visible_text,
 )
 from .citations import (
@@ -330,8 +332,9 @@ class RefStyleReport:
                  "snippet": i.snippet} for i in self.issues]
 
 
-def _note_paragraphs(parts: dict[str, bytes]) -> Iterator[tuple[str, str]]:
-    """(text, where) for every paragraph of BOTH note parts.
+def _note_paragraphs(
+        parts: dict[str, bytes]) -> Iterator[tuple[str, str, str]]:
+    """(xml, text, where) for every paragraph of BOTH note parts.
 
     Several journals take the whole apparatus as endnotes, and a
     citation there was neither checked nor counted as cited — the audit
@@ -347,7 +350,84 @@ def _note_paragraphs(parts: dict[str, bytes]) -> Iterator[tuple[str, str]]:
             continue
         for j, m in enumerate(PARA_RE.finditer(blob.decode("utf-8"))):
             if (t := visible_text(m.group(0))).strip():
-                yield t, f"{label} ¶{j + 1}"
+                yield m.group(0), t, f"{label} ¶{j + 1}"
+
+
+def _entry_anchors(doc: str, matches: list[re.Match[str]],
+                   entries: list[Reference]) -> set[str]:
+    """Every bookmark the reference ENTRIES carry.
+
+    The gap above each entry counts: Word hoists a marker out of a
+    paragraph head on save, and the entry still answers to it. A link
+    pointing at one of these is a citation the document has already
+    resolved — which is the fact :func:`_trust_the_links` reads instead
+    of guessing at a pattern.
+    """
+    found: set[str] = set()
+    for r in entries:
+        m = matches[r.index]
+        gap = doc[(matches[r.index - 1].end() if r.index else 0):m.start()]
+        found |= set(BOOKMARK_NAME_RE.findall(gap + m.group(0)))
+    return found
+
+
+def _trust_the_links(text: str, cites: list[Citation],
+                     labels: list[str]) -> list[Citation]:
+    """Re-read any citation that SWALLOWED a linked one.
+
+    "X and Y (2024)" is the two-author pattern, and the word before
+    "and" only has to be capitalised -- so *"consolidated from
+    standardized national Labor Force Surveys and ILOSTAT (2024) data"*
+    read as a citation of "Surveys and ILOSTAT", reported `missing-ref`
+    against a reference list that holds ILOSTAT, and could not be
+    cleared: the paper cannot reach an empty report, so the audit stops
+    working as a gate (AFI r4).
+
+    The apparatus already knew. `ILOSTAT (2024)` is a live hyperlink to
+    the entry's own bookmark, and a link to an ENTRY is the document
+    saying what it means -- which is a fact, not a guess at a pattern.
+    So where a matched span strictly CONTAINS such a label, the label is
+    re-read in its place, at its own offsets, and the swallowed prose in
+    front of it is prose again.
+
+    Only for a span that contains the label and differs from it. A
+    citation the pattern read exactly right is left exactly alone,
+    linked or not, and so is every citation in an unlinked manuscript --
+    for which the pattern is still all there is.
+    """
+    out: list[Citation] = []
+    for c in cites:
+        span = text[c.start:c.end]
+        inner = next((lab for lab in labels if lab and lab in span
+                      and lab != span), None)
+        if inner is None or not _read_label(inner):
+            out.append(c)
+            continue
+        at = text.index(inner, c.start)
+        out += [replace(found, start=at + found.start, end=at + found.end)
+                for found in _read_label(inner)]
+    return out
+
+
+def _read_label(label: str) -> list[Citation]:
+    """The citations in a link's LABEL, read as the label alone.
+
+    A parenthetical citation does not survive being lifted out of its
+    parentheses: "(Kanbur 2007)" is a citation and `Kanbur 2007` is two
+    words, so the grammar finds nothing in the label a link actually
+    carries. Dropping the citation there would take a cited work out of
+    the cross-check and report its entry as UNCITED — the finding one
+    row down from the one being fixed.
+
+    So the parentheses are put back for a second reading, and the
+    offsets shifted for the character that adds. If it still says
+    nothing, the caller keeps the citation it already had: this narrows
+    a match, it does not delete one.
+    """
+    if found := find_citations(label):
+        return found
+    return [replace(f, start=f.start - 1, end=f.end - 1)
+            for f in find_citations(f"({label})") if f.start >= 1]
 
 
 def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
@@ -392,8 +472,12 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     report = RefStyleReport()
     cited: dict[str, tuple[str, str]] = {}    # key -> (where, snippet)
 
-    def prose(text: str, where: str) -> None:
-        cites = find_citations(text)
+    entry_anchors = _entry_anchors(doc, matches, entries)
+
+    def prose(text: str, where: str, xml: str) -> None:
+        cites = _trust_the_links(
+            text, find_citations(text),
+            [lab for a, lab in internal_links(xml) if a in entry_anchors])
         for issue in _check_prose(text, style, cites, listed):
             report.issues.append(replace(issue, where=where))
         if not cites and (m := _BARE_CITE_RE.fullmatch(text.strip())):
@@ -409,9 +493,9 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     for i, text in enumerate(texts):
         if head_idx is not None and head_idx <= i <= last_entry:
             continue              # the reference section is not prose
-        prose(text, f"¶{i + 1}")
-    for text, where in _note_paragraphs(parts):
-        prose(text, where)
+        prose(text, f"¶{i + 1}", matches[i].group(0))
+    for xml, text, where in _note_paragraphs(parts):
+        prose(text, where, xml)
 
     istyles = _italic_styles(parts.get("word/styles.xml"))
 

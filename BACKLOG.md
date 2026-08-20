@@ -577,7 +577,7 @@ cost per batch: ~52 s of the ~95 s.
 that runs the ladder in one process. The paper-side `_batch.ship()` chains the
 commands but still pays two cold starts.
 
-### S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation
+### S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation — UNLINKED manuscripts only, as of 2026-08-20
 
 **Symptom as observed.** AFI `working.docx`, after the r4 house-style
 conversion:
@@ -586,34 +586,36 @@ conversion:
 
 The sentence is *"Employment is consolidated from standardized national Labor
 Force Surveys and ILOSTAT (2024) data on employment by occupation."* There is
-one citation in it, `ILOSTAT (2024)`, it is a **live hyperlink** whose label is
-exactly that, and its entry — `ILOSTAT. (2024). "Statistics on Employment."` —
-is in the list. Nothing is missing. The two-author pattern `X and Y (Year)`
-matched "Surveys and ILOSTAT" because the word before "and" is capitalised.
-
-**Repro.** Any sentence of the form `… Proper Noun and <CitedSource> (2024) …`.
-Common in data sections, where source names sit in ordinary prose.
+one citation in it, `ILOSTAT (2024)`, and its entry is in the list. The
+two-author pattern `X and Y (Year)` matched "Surveys and ILOSTAT" because the
+word before "and" is capitalised.
 
 **Why S2.** `missing-ref` is the finding a user is most likely to act on, and
 acting on this one means hunting for a reference that is already there. It also
 makes the audit unusable as a gate — the paper cannot reach a clean report.
 
-**Workaround.** None; the finding is read and dismissed by eye each time, which
-is the problem.
+**Fixed for a manuscript that has an apparatus** (2026-08-20). AFI's
+`ILOSTAT (2024)` is a live hyperlink to the entry's own bookmark, and a link to
+an ENTRY is the document stating what it means. `audit` now collects every
+bookmark the entries carry (`_entry_anchors`, the gap above each one included)
+and `_trust_the_links` re-reads any matched span that strictly CONTAINS such a
+link's label, at the label's own offsets. The swallowed prose in front is prose
+again. `_read_label` puts a parenthetical's parentheses back for the second
+reading — `Kanbur 2007` is two words, `(Kanbur 2007)` is a citation — and a
+label that says nothing leaves the match standing: this narrows a match, it
+never deletes one.
 
-**Fix sketch.** Two cheap filters, either would do:
-- **skip spans already inside a hyperlink whose anchor resolves to a reference
-  entry.** The citation apparatus is right there, and a linked citation needs no
-  pattern-matching at all. This is the real fix — it would also stop the parser
-  guessing at any citation the document has already resolved.
-- require the token before `and` to look like a surname rather than any
-  capitalised word: reject a match whose first element is a known plural
-  ("Surveys", "Statistics") or, more simply, one that is not followed anywhere
-  by a matching reference-list surname.
+**What is left.** An UNLINKED manuscript still reports the false
+`missing-ref`, because there is no fact to read and the pattern is all there
+is. Running `citations.link_all` first is the answer today, and the audit is
+reachable-clean for any paper that has.
 
-Related: this is the same class as the 19.08 retraction above — the apparatus
-knows the answer, and the pattern-matcher is being asked a question it does not
-need to guess at.
+**Not taken, deliberately** — the second filter this entry used to propose:
+"reject a match whose first element is not a listed surname while the second
+is". It fires on the false positive, and it also fires on a REAL two-author
+work missing from the list whose co-author happens to have a same-year entry —
+turning an S2 false finding into an S1 silent one. The reference list is
+evidence about the works, not about which words are surnames.
 
 ### S4 `replace_in_para` refuses a relabel without naming the flag that allows it
 
