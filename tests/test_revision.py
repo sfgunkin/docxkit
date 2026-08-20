@@ -2433,19 +2433,23 @@ def test_the_stale_message_quotes_SIXTEEN_characters_of_each_hash(project):
     assert [len(h) for h in quoted] == [16, 16], quoted
 
 
-def test_the_stale_guard_fires_when_the_live_hash_sorts_BELOW(project):
+def test_the_stale_guard_fires_when_the_live_hash_sorts_BELOW(project,
+                                                              tmp_path):
     """The other half of the parametrised test above, which reads `<`
     and could not see `>`: five fixed contents all landed on one side of
     the baseline. The content here is SEARCHED for, so the fixture
     cannot drift back onto the comfortable side."""
-    base = revision._sha(project.prev)
-    for i in range(200):
-        write(project.working, make_parts(para(run(f"edit {i}"))))
-        if revision._sha(project.working) < base:
-            break
-    else:                                       # pragma: no cover
-        pytest.fail("no content hashed below the baseline in 200 tries")
-    assert revision._sha(project.working) < base
+    import shutil
+    a = write(tmp_path / "a.docx", make_parts(para(run("one edit"))))
+    b = write(tmp_path / "b.docx", make_parts(para(run("another edit"))))
+    # COPIED, not rewritten: a docx carries the time it was zipped, so
+    # writing the same content twice gives two different hashes and a
+    # search for one that sorts below drifts with the clock. Two
+    # candidates, sorted, copied byte for byte.
+    low, high = sorted([a, b], key=revision._sha)
+    shutil.copy2(low, project.working)
+    shutil.copy2(high, project.prev)
+    assert revision._sha(project.working) < revision._sha(project.prev)
 
     write(project.batch, make_parts(para(run("the batch"))))
     before = project.working.read_bytes()
