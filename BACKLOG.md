@@ -386,8 +386,10 @@ when this is fixed.**
   in document order; Compare will rewrite them. Run …"* — instead of leaving the
   caller to read 81 glyph runs.
 - a public `revision.add_footnote(parts, after_ref=..., text=...)` that inserts
-  in the right place to begin with. There is currently no supported way to add a
-  footnote at all, which is why the append happened.
+  in the right place to begin with. **Corrected:** `footnotes.append` exists,
+  but it appends text to an EXISTING footnote's last paragraph -- there is still
+  no way to create a footnote and its reference as a pair, which is what was
+  hand-rolled here.
 
 ---
 
@@ -661,6 +663,204 @@ truncated title while ignoring the punctuation the conversion exists to move.
 AFI's version reports "tails identical letter-for-letter on 25/25".
 
 **Workaround to retire:** the three scripts above.
+
+### S1 `citations.link_all` layers its OWN anchor scheme over a paper that already has one
+
+**Symptom as observed.** AFI r4 batch 23 added three reference entries and three
+in-text citations to a manuscript whose apparatus is 25 pairs of
+`ref_<surname>_<year>` / `cite_<surname>_<year>`. `link_all` on that document
+reported `linked=[9], backlinked=[3], skipped=[19]` -- and created **27 new
+bookmarks** under a different scheme (`Acemoglu2022`, `Kakwani1977txt`,
+`WorldHealthOrganization2015`) beside, not instead of, the existing ones.
+
+`audit_links` on the result then reported **33 DOUBLED LINK** findings of the
+form:
+
+    DOUBLED LINK: 'Acemoglu2022' is nested inside a link to
+    'ref_acemoglu_2022' (:PARA:7) -- the click goes to the outer one
+
+plus 4 ORPHAN REF and 6 NO BACK-LINK for its own new bookmarks. Anchors went
+98 -> 125, none removed.
+
+**Why S1 rather than S4.** The report reads like success: nine linked, three
+back-linked, nothing unmatched but one known false positive. The damage is only
+visible by counting anchors or by running `audit_links` afterwards, and a caller
+who trusts the report ships a document where every citation carries two nested
+links and the wrong one wins the click.
+
+**Repro.** Any document that already has bidirectional citation links under a
+naming scheme other than `link_all`'s, then `link_all(parts)`.
+
+**Workaround.** AFI wired its three new works by hand
+(`revision/scripts/build_r4y.py`, `wire()`), using `hyperlink_field`, `bookmark`
+and `next_bookmark_id` so the markup is still the toolkit's -- only the naming
+is the paper's. Delete when this is fixed.
+
+**Fix sketch.** Two parts, and the first is the one that matters:
+- **Detect an existing scheme and refuse, or adopt it.** If a reference
+  paragraph already carries a bookmark whose name ends in the work's year, that
+  work is linked -- whatever the prefix. Counting it as unlinked is what starts
+  the doubling. `anchor_names`/`key_for` could take a `scheme=` callable, or
+  `link_all` could infer the prefix pair from what is already in the document.
+- **Refuse to nest.** `wrap_link_in_bookmark` already declines an ambiguous
+  match; it should equally decline to wrap a span that is already inside a
+  hyperlink, which is the specific shape `audit_links` calls DOUBLED LINK.
+  The audit knows the defect; the writer should not be able to create it.
+
+### S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time
+
+**Symptom as observed.** AFI r4 had two ordinary referee asks about tables and
+neither had a toolkit path:
+
+* **T28.3(b)** -- "apply one country order to Tables 1, 3, 4, 5, A3 and A4".
+  Three tables were in ISO3-code order and three alphabetical by printed name.
+* **T28.4** -- add a four-row benchmark block to Table 1.
+
+`docxkit.tables` has `fit_columns`, `house`, `placement`, `table_spans` -- shape
+and placement -- and nothing that moves, clones or fills a row. Both jobs became
+per-paper regex work over `<w:tr>`: ~40 lines to reorder with a row-multiset
+gate, ~25 more to clone a row as a template and write cell values into it.
+
+**Why it is not S2.** Nothing is wrong; the capability is absent. But it is the
+shape trigger 4 in `feedback_toolkit_backlog` describes -- the tell is that the
+same probe got written twice in one session.
+
+**Two traps a shared version should own**, both hit here:
+
+1. **Reordering must be gated on the row-tuple MULTISET, not on row count.**
+   Count is preserved by any bug that swaps two cells; the multiset of every
+   cell of every row is not. AFI's version compares
+   `sorted(tuple(cells(r)) for r in body)` before and after and refuses on any
+   difference, which is what makes "no value changed, only the order" a claim
+   rather than a hope.
+2. **Filling a cloned row must write the value into the FIRST text run and
+   empty the rest.** A cell whose text is split across runs otherwise keeps the
+   old tail hanging off the new value -- invisible in a row count, visible in
+   the rendered table.
+
+**CORRECTION, same day: `tables.by_caption` DOES exist**, and it finds AFI's
+Table 5 by `"Table 5."` exactly as wanted -- returning a parsed `Table` whose
+`.rows` are already cell text. This entry originally said it did not, and
+`build_r5a.py` addresses tables by INDEX for no reason. I hand-rolled around a
+function that was there. Kept as written because that is the finding: the
+capability existed and was not findable from where I was standing. See the
+`by_caption` defect filed below, which is what the check turned up.
+
+**Workaround** -- `AFI/revision/scripts/build_r5a.py` (reorder + multiset gate)
+and `build_r5b.py` (`fill_row`). Delete when this lands.
+
+**Fix sketch.** `tables.reorder_rows(tbl_xml, key=..., header=N, last=(...))`
+returning the table with rows permuted and raising if the multiset moves;
+`tables.clone_row(tbl_xml, index)` and `tables.set_row(row_xml, values)`; and
+`tables.by_caption(xml, prefix)` to find the table a caption names.
+
+### S2 `tables.by_caption` assumes the caption sits ABOVE, and silently returns the wrong table
+
+**Symptom as observed.** On AFI's `working.docx`, six captions, six lookups:
+
+    by_caption("Table 1.")   -> Table 1        correct
+    by_caption("Table 4.")   -> Table 4        correct
+    by_caption("Table 5.")   -> Table 5        correct
+    by_caption("Table A4.")  -> Table A4       correct
+    by_caption("Table 3.")   -> the FIGURE 5 panel table   WRONG
+    by_caption("Table A3.")  -> the FIGURE 5 panel table   WRONG
+
+Two of six come back with a completely unrelated table -- the 2x2 grid holding
+Figure 5's "a. Tajikistan / b. Albania / c. Poland" panels -- and nothing says
+so. The docstring states the assumption ("House convention in these papers is
+that a table caption sits ABOVE its table, so this takes the first table
+starting after the caption"), and in this manuscript Tables 3 and A3 have their
+captions BELOW, so "the first table after the caption" is whatever comes next.
+
+**Why S2.** It returns a `Table` object, not `None`, and `required=True` cannot
+fire because something was found. A caller that reorders rows, rewrites cells or
+applies house formatting to the result damages a different table and every
+count still balances.
+
+**Repro.** Any document where one caption sits below its table.
+
+**Fix sketch.** The caption's own position is not enough evidence, so use a
+second signal and refuse when they disagree:
+- prefer the NEAREST table either side of the caption rather than the first one
+  after it, and when the nearer one is above, say so in the returned object;
+- **cross-check the caption's number against the table.** "Table 5." whose first
+  header cell is `Country` and whose remaining headers are years is consistent;
+  the Figure 5 panel grid, whose only cells are "a. Tajikistan"/"b. Albania",
+  is not a table any "Table N." caption would name.
+- failing both, raise rather than return a neighbour. A wrong table is worse
+  than no table.
+
+**Workaround.** `AFI/revision/scripts/build_r5a.py` addresses tables by index,
+asserted against expected row counts.
+
+### S4 the missing thing is not a verb, it is the UNIT OF WORK — `docxkit.batch`
+
+**Measured across the four papers on this machine** (AFI, Parental_style, DSI,
+Life_Expectancy), 2026-08-20:
+
+    237  python files under revision/
+    126  of them do read_parts -> edit -> write_docx themselves
+     63  reach past the API into raw XML
+     58  use replace_in_para / edit_para, each wrapped in its own loop and gate
+
+docxkit has 40 modules and 24 CLI commands and is rich in VERBS. What no paper
+can get from it is the SENTENCE those verbs make, which is identical everywhere:
+
+    locate -> preflight the edits -> apply -> gate the invariants ->
+    write -> (redline ladder | direct) -> run the paper's gates -> baseline
+
+So every paper builds its own. AFI has `_batch.py`; DSI has `quickfix.py` and
+`tc_lib.py`; LE has `buildkit.py`; Parental_style has `cleanup_pass{,2,3}` and
+`sweep`. Each is a partial, divergent implementation of the same thing — the
+exact failure the protocol-script consolidation already fixed once for
+`revision`.
+
+**The size of it.** AFI's r4 batches average ~230 lines each. The single batch
+that used the harness (`build_r4v.py`) is **50** — a docstring, two edits, one
+call. Across ~100 batches on this machine that is roughly ten thousand lines of
+re-invented scaffolding, and every line of it is a place to get the gating
+subtly wrong.
+
+**What `batch` has to cover, from what the papers actually do:**
+
+* **both paths.** `revision build`'s Compare ladder AND direct application.
+  Compare cannot carry tracked math, a moved footnote reference, a citation
+  relabel, a figure swap or a table-row move — so in AFI's r4 *every* batch
+  after 20 was direct, and a harness offering only the Compare path was
+  abandoned rather than half-used.
+* **preflight all edits at once**, cumulatively and in order, by attempting the
+  real replace and catching what it raises — so it cannot drift from the guards
+  — reporting every failure in one pass. Filed separately above; it is the
+  single largest time sink in this toolchain.
+* **invariant gating with declared exceptions.** oMath, bookmarks, paragraphs,
+  footnote marks, links, table rows: unchanged unless the batch says which one
+  it means to move and by how much.
+* **one-command verification.** status + the paper's own `[verify]` commands +
+  the suite + audits + lint + baseline. Six round-trips otherwise. Lint only
+  what changed — papers' `ruff.toml` files have no `exclude` and the trees carry
+  pre-existing findings — and keep audits that exit non-zero on findings
+  ADVISORY, or one standing false positive makes the check permanently red.
+
+**Workaround** — `AFI/revision/scripts/_batch.py` (preflight, build_clean,
+apply_direct, ship, check) and `sites.py`. Both are written to be lifted: they
+already import only public docxkit surface.
+
+**And the second-order finding, which is cheaper to fix than any of the above.**
+Several primitives the papers hand-roll ALREADY EXIST, filed under the task that
+first needed them rather than the thing they operate on:
+
+    bookmarks   citations.bookmark / delete_bookmark / marker_bookmark /
+                wrap_link_in_bookmark / next_bookmark_id / anchor_names
+    tables      tables.by_caption, cells_of, drop_blank_rows
+    footnotes   footnotes.append, find, find_all, fonts
+
+**64 scripts hand-write `<w:bookmarkStart>` while a bookmark API sits in
+`citations`.** In this very session I wrote `sites.py` and index-addressed
+tables around `tables.by_caption`, and only found `citations.hyperlink_field`
+after two failed attempts at wiring three citations. A `docxkit api [TOPIC]`
+that lists the public surface by SUBJECT — and re-homing the bookmark helpers
+into a `bookmarks` module that `citations` imports — would recover more time
+than most new features.
 
 ## Fixed
 
