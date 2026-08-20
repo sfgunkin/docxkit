@@ -77,14 +77,29 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Four gates, all of which must pass:
+Five gates, all of which must pass:
+
+```
+python tools/gates.py   # all five, in order, first failure stops
+```
+
+or, one at a time:
 
 ```
 python -m pytest        # synthetic fixtures, no Word required
 python -m ruff check .
 python -m mypy
 python -m pyright       # what Pylance shows in the editor
+python tools/coverage_floor.py
 ```
+
+**Use the runner, or chain them with `&&`.** Never `;`, and never a
+pipe: the status of `pytest -q | tail -2` is TAIL's, so a red suite
+reads as a pass — that put a failing test into master on 2026-08-20,
+having already happened once as `pyright | tail -1`. And `mypy`'s exit
+code is not usable here, because it is non-zero for a run whose only
+output is notes; the gate is "no line matching `: error`", which is what
+the runner applies.
 
 Install what they need with `pip install -e .[dev]` — hypothesis is in
 there because the property suite imports it at module level, so a clone
