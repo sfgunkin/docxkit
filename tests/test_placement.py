@@ -1050,6 +1050,46 @@ def test_a_body_of_THREE_HUNDRED_children_walks_off_neither_end():
                               "tbl:шапка"]
 
 
+def test_a_table_OWN_PAGE_fixed_is_not_reported_as_still_splitting():
+    """The second measurement, after the fix — `_sheet_of(..., start=
+    pl.caption_sheet - 1)`. The start is the caption's own sheet, in
+    0-based terms, and all three arithmetic readings of that expression
+    put it somewhere else: `% 1` and `& 1` start at the top of the
+    document, where a row's value quoted in the prose matches first,
+    and `* 1` starts one sheet LATE, where the row on the caption's own
+    sheet is no longer visible and the answer is None.
+
+    Every one of them turns a table that own_page FIXED into a problem
+    line — "still splits across sheets 2-1", or 2-None. The paper then
+    says a table nothing can fix is unfixed, about the one table the
+    module just fixed.
+
+    The renderer answers differently on the two calls because the
+    document CHANGED between them; a fixture whose render is constant
+    cannot see this branch at all."""
+    calls: list[int] = []
+
+    def render(_parts):
+        calls.append(1)
+        if len(calls) == 1:
+            return ["См. таблицу 1. строка обсуждается ниже.",
+                    "Таблица 1. Заголовок шапка", "строка"]
+        return ["См. таблицу 1. строка обсуждается ниже.",
+                "Таблица 1. Заголовок шапка строка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1. строка обсуждается ниже.")
+              + P("Таблица 1. Заголовок") + TBL("шапка", "строка")),
+        render=render)
+
+    pl = rep.placements[0]
+    assert len(calls) == 2, "the fix has to be measured again"
+    assert pl.own_page is True
+    assert (pl.caption_sheet, pl.last_sheet) == (2, 2)
+    assert pl.split is False
+    assert rep.problems == [], rep.problems
+
+
 # --- the argued half of placement's 41 ---------------------------------
 #
 # Thirty-five are left after the six tests above, and most of them are
@@ -1078,7 +1118,7 @@ def test_a_body_of_THREE_HUNDRED_children_walks_off_neither_end():
 # as `==`. lxml elements define no `__eq__`, so equality IS identity.
 #
 # NOT worked, and listed so the next round starts here: the five
-# `[:40]`/`[:70]` widths on the text handed to `_sheet_of`, the three
-# on `pl.caption_sheet - 1` (its search START, where `% 1` and `& 1`
-# answer 0 and 1), `Placement.spaced`'s default, and `place`'s
-# `here != there` read as `>`.
+# `[:40]`/`[:70]` widths on the text handed to `_sheet_of`,
+# `Placement.spaced`'s default, and `place`'s `here != there` read as
+# `>`. (The three on `pl.caption_sheet - 1` were on this list for
+# twenty minutes; the test above took them.)
