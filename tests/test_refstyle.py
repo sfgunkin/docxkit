@@ -1268,3 +1268,108 @@ def test_a_bare_citation_paragraph_quotes_the_WHOLE_of_itself():
 # the heading to skip, and any default at or below the heading's own
 # index skips nothing — the three spellings differ only in how far below
 # zero they sit.
+
+
+# --- the run of 2026-08-20: 4.8 % ---------------------------------------
+
+
+def test_the_initials_issue_quotes_SEVENTY_characters_of_the_authors():
+    """`authors[:70]`. An author field with four names spelled out runs
+    past that, and the snippet is how a person finds the entry in a list
+    of ninety — the code and the message are the same for every one of
+    them."""
+    entry = ('Abramovich, Daniel, Bartholomew, Elena, Christodoulou, '
+             'Fyodor, and Gabriela Dimitropoulos. (2020). "A paper." '
+             "Journal, 1(1): 1–10.")
+
+    (issue,) = [i for i in check_entry(entry) if i.code == "initials"]
+
+    assert issue.snippet == ("Abramovich, Daniel, Bartholomew, Elena, "
+                            "Christodoulou, Fyodor, and Gab")
+    assert len(issue.snippet) == 70
+
+
+def test_a_token_with_TWO_hyphens_is_still_a_range():
+    """`low.count("-") >= 3` skips ISBN-shaped tokens. At two the skip
+    swallows an ordinary page range that has been typed with an extra
+    hyphen — "10-20-30" is a range a copy-editor should see, and the
+    whole point of the en-dash rule is that a hyphen there is invisible
+    to a reader and wrong to a typesetter."""
+    codes = [i.code for i in check_entry(
+        'Smith, J. (2020). "A title." Journal, 1(1): 10-20-30.')]
+
+    assert "en-dash" in codes
+
+
+def test_a_continuation_entry_in_ASCENDING_years_is_not_flagged():
+    """`r.year[:4] < prev.year[:4]`, read as `!=`. Same-author entries
+    run oldest first, so a continuation whose year is LATER than the one
+    above it is the correct order — and inequality flags every one of
+    them. A gate that fires on a well-ordered list is one the next
+    reader waves through."""
+    body = (para(run("Prose paragraph with no citations at all."))
+            + para(run("References"))
+            + para(run('World Health Organization. (2015). "First." WHO.'))
+            + para(run('———. (2019). "Second." WHO.')))
+
+    codes = [i.code for i in audit(make_parts(body)).issues]
+
+    assert "year-order" not in codes, codes
+
+
+def test_a_year_order_problem_IS_flagged_when_it_is_one():
+    """The other side of the same comparison, so neither reading of it
+    can pass by being silent."""
+    body = (para(run("Prose paragraph with no citations at all."))
+            + para(run("References"))
+            + para(run('World Health Organization. (2019). "First." WHO.'))
+            + para(run('———. (2015). "Second." WHO.')))
+
+    issues = [i for i in audit(make_parts(body)).issues
+              if i.code == "year-order"]
+
+    assert len(issues) == 1
+    assert "(2015) follows (2019)" in issues[0].message
+
+
+def test_a_single_entry_group_does_not_END_the_ambiguity_scan():
+    """`continue`. The groups are walked in the order the entries were
+    read, so a work cited once before a genuinely ambiguous pair is the
+    ordinary arrangement — and a `break` there reports nothing at all
+    for the document that has the problem."""
+    body = (para(run("As (Alpha 2001) and (Beta 2002) show."))
+            + para(run("References"))
+            + para(run('Alpha, A. (2001). "Only one." Journal, 1(1): 1–2.'))
+            + para(run('Beta, B. (2002). "First of two." Journal, 2(1): 3–4.'))
+            + para(run('Beta, B. (2002). "Second of two." Journal, 2(2): '
+                       "5–6.")))
+
+    ambiguous = [i for i in audit(make_parts(body)).issues
+                 if i.code == "ambiguous-cite"]
+
+    assert len(ambiguous) == 2
+    assert all("distinguish them as 2002a, 2002b" in i.message
+               for i in ambiguous)
+
+
+# Argued rather than pinned, from the same run:
+#
+# * the three on `_fold(prev.surname) == _fold(r.surname)` in the
+#   year-order check. The condition beside it requires `r.text` to open
+#   with a continuation dash, and `references` files a continuation
+#   under the PREVIOUS entry's surname — so the two folded names are
+#   equal wherever the check can fire, and `<=`, `>=` and `is not` all
+#   agree there.
+# * `r.year[:4]` written `[:5]` on the same line. The suffix a fifth
+#   character carries ("2015a") cannot flip a comparison against a
+#   four-digit prefix: it only ever makes the left side sort later
+#   within the same year.
+# * `group[0].year` written `[-1]` or `[1]` in the ambiguity message.
+#   The group is keyed on surname AND year, so every entry in it has
+#   the same year — which is what the key comment says the suffix
+#   distinction is for.
+# * `zip(entries, answers_to, strict=True)` written `strict=False`:
+#   `answers_to` is built one entry at a time from the same list.
+#
+# NOT yet worked: the four mutants on `max(…, default=-1)`, which is the
+# sentinel for a document whose reference list did not parse.
