@@ -1906,3 +1906,25 @@ def test_unlink_takes_EVERY_copy_of_a_duplicated_bookmark():
     assert removed == 2, "both, and the count says both"
     assert "<w:bookmarkStart" not in out
     assert "<w:bookmarkEnd" not in out
+
+
+def test_unlink_removes_one_END_per_START_and_no_more():
+    """The other side of the removal, and the reason it is a `count=1`
+    inside a loop rather than a `count=0` outside one: an id shared
+    with a bookmark this pass does not own is a defect of its own, and
+    cutting its close would turn one broken bookmark into two.
+
+    A document with one START and two ENDS of that id is already
+    broken. What unlink owes it is not to make it worse."""
+    xml = ("<w:document><w:body>"
+           "<w:p><w:r><w:t>See Table 1 above.</w:t></w:r></w:p>"
+           '<w:bookmarkStart w:id="7" w:name="Table1"/>'
+           "<w:p><w:r><w:t>Table 1. Sources</w:t></w:r></w:p>"
+           '<w:bookmarkEnd w:id="7"/><w:bookmarkEnd w:id="7"/>'
+           "</w:body></w:document>")
+
+    out, removed = crossrefs.unlink(xml)
+
+    assert removed == 1, "one bookmark, however many closes it has"
+    assert "<w:bookmarkStart" not in out
+    assert out.count("<w:bookmarkEnd") == 1, "one taken, one left alone"
