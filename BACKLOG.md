@@ -423,53 +423,6 @@ punctuation half and `build_r4w.py`'s gate are covered; the name reduction
 and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
 scope on purpose — the in-text rules change what a sentence SAYS.
 
-### S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time
-
-**Symptom as observed.** AFI r4 had two ordinary referee asks about tables and
-neither had a toolkit path:
-
-* **T28.3(b)** -- "apply one country order to Tables 1, 3, 4, 5, A3 and A4".
-  Three tables were in ISO3-code order and three alphabetical by printed name.
-* **T28.4** -- add a four-row benchmark block to Table 1.
-
-`docxkit.tables` has `fit_columns`, `house`, `placement`, `table_spans` -- shape
-and placement -- and nothing that moves, clones or fills a row. Both jobs became
-per-paper regex work over `<w:tr>`: ~40 lines to reorder with a row-multiset
-gate, ~25 more to clone a row as a template and write cell values into it.
-
-**Why it is not S2.** Nothing is wrong; the capability is absent. But it is the
-shape trigger 4 in `feedback_toolkit_backlog` describes -- the tell is that the
-same probe got written twice in one session.
-
-**Two traps a shared version should own**, both hit here:
-
-1. **Reordering must be gated on the row-tuple MULTISET, not on row count.**
-   Count is preserved by any bug that swaps two cells; the multiset of every
-   cell of every row is not. AFI's version compares
-   `sorted(tuple(cells(r)) for r in body)` before and after and refuses on any
-   difference, which is what makes "no value changed, only the order" a claim
-   rather than a hope.
-2. **Filling a cloned row must write the value into the FIRST text run and
-   empty the rest.** A cell whose text is split across runs otherwise keeps the
-   old tail hanging off the new value -- invisible in a row count, visible in
-   the rendered table.
-
-**CORRECTION, same day: `tables.by_caption` DOES exist**, and it finds AFI's
-Table 5 by `"Table 5."` exactly as wanted -- returning a parsed `Table` whose
-`.rows` are already cell text. This entry originally said it did not, and
-`build_r5a.py` addresses tables by INDEX for no reason. I hand-rolled around a
-function that was there. Kept as written because that is the finding: the
-capability existed and was not findable from where I was standing. See the
-`by_caption` defect filed below, which is what the check turned up.
-
-**Workaround** -- `AFI/revision/scripts/build_r5a.py` (reorder + multiset gate)
-and `build_r5b.py` (`fill_row`). Delete when this lands.
-
-**Fix sketch.** `tables.reorder_rows(tbl_xml, key=..., header=N, last=(...))`
-returning the table with rows permuted and raising if the multiset moves;
-`tables.clone_row(tbl_xml, index)` and `tables.set_row(row_xml, values)`; and
-`tables.by_caption(xml, prefix)` to find the table a caption names.
-
 ### S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them
 
 Cheaper to fix than anything above it, and untouched by `docxkit.batch`: a
@@ -541,6 +494,38 @@ by number at the end of a sentence — which is house style, so most of them.
 ---
 
 ## Fixed
+
+### ~~S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time~~
+
+Fixed 2026-08-21 — `tables.reorder_rows`, `tables.clone_row`,
+`tables.set_row`, all three exported from the facade.
+
+`reorder_rows(xml, table, key, *, header=1, last=())` sorts the data rows by
+their CELL TEXT (`key=lambda c: order.index(c[0])` is the usual form), keeps
+`header` rows in place and the values named in `last` at the bottom — which
+is where "All countries" belongs and where sorting it would not put it.
+
+Both traps the entry named are owned here:
+
+1. **The gate is on the row-tuple MULTISET.** Count is preserved by any bug
+   that swaps two cells; `rows_preserved` compares every cell of every row
+   before and after, so "no value changed, only the order" is a claim rather
+   than a hope. A splice that drops a row raises rather than returning.
+2. **`set_row` takes a WHOLE row.** A cloned row holds the values it was
+   copied from, so filling three of four cells leaves the fourth reading as
+   the row above — true, plausible and wrong. `None` leaves a cell on
+   purpose. Each cell keeps its own properties, and a value split across
+   runs has its tail blanked rather than left hanging off the new text.
+
+`clone_row` copies the row below itself with its `tcPr` — borders, shading,
+widths — because a row built from nothing has to invent all of it.
+
+All three go through one splice of the whole table rather than a per-row
+loop over spans that the previous write already moved, and all three carry
+the module's freshness guard: re-read the table between calls, or be told.
+
+**Workaround to retire:** `AFI/revision/scripts/build_r5a.py` (reorder +
+multiset gate) and `build_r5b.py` (`fill_row`). Left in the paper's tree.
 
 ### ~~S4 no way to ask what is AT an edit site, so every batch surveys it two or three times~~
 

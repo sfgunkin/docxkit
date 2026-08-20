@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple, overload
 
@@ -521,6 +521,125 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     new_tr = tr.group(0)[:tc.start()] + new_tc + tr.group(0)[tc.end():]
     new_body = body[:tr.start()] + new_tr + body[tr.end():]
     return xml[:table.start] + new_body + xml[table.end:]
+
+
+def _rows_replaced(xml: str, table: Table, rows: list[str]) -> str:
+    """The document with this table's `w:tr` elements replaced by `rows`.
+
+    One splice for the whole table rather than one per row: every write
+    shifts the offsets after it, and a per-row loop over stale spans is
+    the shape that has bitten this file before.
+    """
+    body = xml[table.start:table.end]
+    trs = list(rows_of(body))
+    if not trs:
+        raise AnchorError(f"table {table.index} has no rows to write")
+    new_body = (body[:trs[0].start()] + "".join(rows)
+                + body[trs[-1].end():])
+    return xml[:table.start] + new_body + xml[table.end:]
+
+
+def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
+                 header: int = 1, last: Collection[str] = ()) -> str:
+    """Permute a table's data rows by `key`, and PROVE nothing else moved.
+
+    "Apply one country order to Tables 1, 3, 4, 5, A3 and A4" is an
+    ordinary referee ask, and it was `w:tr` surgery every time: ~40 lines
+    of regex per paper, with the gate written again beside it.
+
+    `key` is called with the row's CELL TEXT — ``key=lambda c:
+    order.index(c[0])`` is the usual form. `header` is how many leading
+    rows stay put; `last` names the leading cell values that stay at the
+    BOTTOM, which is where a total or an "all countries" row lives.
+
+    The gate is the reason this is worth sharing. Row COUNT is preserved
+    by any bug that swaps two cells, so it proves nothing; the multiset
+    of every row's cells is not, and :func:`rows_preserved` compares it
+    before and after. "No value changed, only the order" is then a
+    claim rather than a hope.
+    """
+    _fresh(xml, table, "reorder_rows")
+    body = xml[table.start:table.end]
+    trs = [tr.group(0) for tr in rows_of(body)]
+    fixed, movable = trs[:header], trs[header:]
+    cells = [[_cell_text(tc.group(0)) for tc in cells_of(tr)]
+             for tr in movable]
+    tail = [i for i, c in enumerate(cells) if c and c[0] in last]
+    order = [i for i in range(len(movable)) if i not in tail]
+    order.sort(key=lambda i: key(cells[i]))
+    out = _rows_replaced(xml, table,
+                         fixed + [movable[i] for i in order + tail])
+    moved = read_all(out)[table.index]
+    if not (report := rows_preserved(table, moved, skip_header=False)):
+        raise AnchorError(
+            f"reordering table {table.index} changed its rows, not just "
+            f"their order:\n{report.format()}")
+    return out
+
+
+def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
+    """Copy row `index` `count` times, immediately after it.
+
+    The other half of "add a four-row benchmark block to Table 1": a new
+    row has to come from somewhere, and building one from nothing means
+    inventing the cell properties — borders, shading, widths, the
+    `w:tblHeader` mark — that make it look like the table it joins.
+    Copying the row above inherits all of them.
+
+    The copy carries the source row's TEXT too. Fill it with
+    :func:`set_row`, which is why that takes a whole row of values: a
+    cloned row half-filled is the old numbers under a new label.
+
+    Offsets move, so re-read the table before the next call — the
+    freshness guard says so if you forget.
+    """
+    _fresh(xml, table, "clone_row")
+    if count < 1:
+        raise AnchorError(f"clone_row: count must be at least 1, not {count}")
+    body = xml[table.start:table.end]
+    trs = [tr.group(0) for tr in rows_of(body)]
+    if index >= len(trs):
+        raise AnchorError(f"table {table.index} has {len(trs)} rows, "
+                          f"cannot clone row {index}")
+    rows = trs[:index + 1] + [trs[index]] * count + trs[index + 1:]
+    return _rows_replaced(xml, table, rows)
+
+
+def set_row(xml: str, table: Table, row: int,
+            values: Sequence[object]) -> str:
+    """Write a whole row's cells, keeping each cell's formatting.
+
+    One call per ROW, not per cell, and deliberately: a cloned row holds
+    the values it was copied from, so filling three of its four cells
+    leaves the fourth reading as the row above — true, plausible, and
+    wrong. Passing the row states what every cell now says.
+
+    `None` leaves a cell alone, for the row that legitimately repeats a
+    value. Each cell keeps its own run properties: the text goes into
+    the first ``w:t`` and any others are blanked, so a value split
+    across runs does not keep its old tail hanging off the new one.
+    """
+    _fresh(xml, table, "set_row")
+    body = xml[table.start:table.end]
+    trs = list(rows_of(body))
+    if row >= len(trs):
+        raise AnchorError(f"table {table.index} has {len(trs)} rows, "
+                          f"cannot set row {row}")
+    tr = trs[row].group(0)
+    tcs = list(cells_of(tr))
+    if len(values) > len(tcs):
+        raise AnchorError(
+            f"row {row} has {len(tcs)} cells and {len(values)} values were "
+            f"given — a merged cell makes a row SHORTER than the grid is "
+            f"wide, and Table.grid_columns converts deliberately")
+    for tc, value in reversed(list(zip(tcs, values, strict=False))):
+        if value is None:
+            continue
+        tr = (tr[:tc.start()] + set_run_text(tc.group(0), str(value))
+              + tr[tc.end():])
+    rows = [t.group(0) for t in trs]
+    rows[row] = tr
+    return _rows_replaced(xml, table, rows)
 
 
 def to_frame(table: Table, *, header_row: int = 0) -> Any:

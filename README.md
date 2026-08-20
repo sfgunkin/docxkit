@@ -44,7 +44,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `edit` | anchor-asserting replace, run-aware replace and INSERT, link relabel, span italics, `xml:space` repair |
 | `body` | build new content: paragraphs, grouped-header tables, guarded insertion; `prose_props` clones a paragraph's style without a link's |
 | `revisions` | read tracked changes; accept/reject, wholesale or by predicate (`by_author`, `whitespace_only`) |
-| `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved; `house` sets the paper's style in one call |
+| `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved; `reorder_rows` / `clone_row` / `set_row` move and fill ROWS, gated on the row multiset; `house` sets the paper's style in one call |
 | `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints, run `face` |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |

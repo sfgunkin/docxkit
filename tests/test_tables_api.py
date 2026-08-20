@@ -10,15 +10,19 @@ from __future__ import annotations
 import pytest
 from conftest import document, para, row, run, table
 
+from docxkit import _table_core
 from docxkit.errors import AnchorError
 from docxkit.tables import (
     Table,
     _render_value,
     by_caption,
+    clone_row,
     find,
     parse_number,
     read_all,
+    reorder_rows,
     set_cell,
+    set_row,
     superscript_stars,
     to_frame,
 )
@@ -626,3 +630,177 @@ def test_a_table_whose_ROWS_disagree_with_the_xml_is_refused():
 #   a paragraph cannot begin at the same offset in one string.
 #
 # The seventh is the test above.
+
+
+# ------------------------------------------------------------ the rows ---
+#
+# "Apply one country order to Tables 1, 3, 4, 5, A3 and A4" and "add a
+# four-row benchmark block to Table 1" are two ordinary referee asks,
+# and neither had a toolkit path: ~40 lines of `w:tr` regex to reorder
+# with a gate, ~25 more to clone a row as a template and fill it.
+
+def _countries() -> str:
+    return document(
+        para(run("Table 1. By country"))
+        + table(row("Country", "Score"),
+                row("UZB", "1.0"), row("ALB", "2.0"), row("POL", "3.0"),
+                row("All", "2.0")))
+
+
+def _by_name(order: list[str]):
+    return lambda cells: order.index(cells[0])
+
+
+def test_reorder_rows_permutes_the_DATA_rows_only():
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = reorder_rows(xml, t, key=_by_name(["ALB", "POL", "UZB", "All"]))
+
+    assert [r[0] for r in read_all(out)[0].rows] == [
+        "Country", "ALB", "POL", "UZB", "All"]
+
+
+def test_reorder_rows_keeps_a_TOTAL_row_at_the_bottom():
+    """"All countries" sorts under A and belongs under everything. A
+    key that has to encode that is a key every paper writes twice."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = reorder_rows(xml, t, key=_by_name(["ALB", "POL", "UZB"]),
+                       last=("All",))
+
+    assert [r[0] for r in read_all(out)[0].rows] == [
+        "Country", "ALB", "POL", "UZB", "All"]
+
+
+def test_reorder_rows_carries_each_row_WHOLE():
+    """The failure a row COUNT cannot see: values that slipped a column.
+    Every cell travels with its row or the gate below fires."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = reorder_rows(xml, t, key=_by_name(["ALB", "POL", "UZB", "All"]))
+
+    assert read_all(out)[0].rows[1] == ["ALB", "2.0"]
+
+
+def test_reorder_rows_REFUSES_when_the_rows_themselves_moved(monkeypatch):
+    """The gate is the reason this is worth sharing. Row count is
+    preserved by any bug that swaps two cells; the multiset of every
+    row's cells is not."""
+    xml = _countries()
+    t = read_all(xml)[0]
+    splice = _table_core._rows_replaced
+    monkeypatch.setattr(_table_core, "_rows_replaced",
+                        lambda x, table, rows: splice(x, table, rows[:-1]))
+
+    with pytest.raises(AnchorError, match="not just their order"):
+        reorder_rows(xml, t, key=_by_name(["ALB", "POL", "UZB", "All"]))
+
+
+def test_clone_row_copies_the_row_BELOW_itself_with_its_formatting():
+    """A new row built from nothing has to invent the cell properties —
+    borders, shading, widths — that make it look like the table it
+    joins. The row above already has them."""
+    xml = document(
+        para(run("Table 1. By country"))
+        + "<w:tbl><w:tr><w:tc><w:tcPr><w:shd w:fill=\"D9D9D9\"/></w:tcPr>"
+        + para(run("UZB")) + "</w:tc></w:tr></w:tbl>")
+    t = read_all(xml)[0]
+
+    out = clone_row(xml, t, 0)
+
+    assert out.count('w:fill="D9D9D9"') == 2
+    assert [r[0] for r in read_all(out)[0].rows] == ["UZB", "UZB"]
+
+
+def test_clone_row_makes_a_BLOCK_when_asked_for_several():
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = clone_row(xml, t, 1, count=3)
+
+    assert [r[0] for r in read_all(out)[0].rows] == [
+        "Country", "UZB", "UZB", "UZB", "UZB", "ALB", "POL", "All"]
+
+
+def test_clone_row_refuses_a_row_that_is_not_there():
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    with pytest.raises(AnchorError, match="cannot clone row 9"):
+        clone_row(xml, t, 9)
+    with pytest.raises(AnchorError, match="at least 1"):
+        clone_row(xml, t, 1, count=0)
+
+
+def test_set_row_writes_every_cell_it_is_given():
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = set_row(xml, t, 1, ["BENCH", "9.9"])
+
+    assert read_all(out)[0].rows[1] == ["BENCH", "9.9"]
+
+
+def test_set_row_takes_the_WHOLE_row_so_a_clone_is_never_half_filled():
+    """A cloned row holds the values it was copied from, so filling
+    three of its four cells leaves the fourth reading as the row above —
+    true, plausible and wrong. `None` is how a cell is left on purpose."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = set_row(xml, t, 1, ["BENCH", None])
+
+    assert read_all(out)[0].rows[1] == ["BENCH", "1.0"]
+
+
+def test_set_row_blanks_the_TAIL_of_a_cell_split_across_runs():
+    """Word splits a cell's text at an rsid boundary whenever it likes.
+    Writing into the first run and leaving the rest keeps the old tail
+    hanging off the new value — invisible in a row count, visible in the
+    rendered table."""
+    split = ("<w:tbl><w:tr><w:tc><w:p>" + run("UZ") + run("B")
+             + "</w:p></w:tc></w:tr></w:tbl>")
+    xml = document(para(run("Table 1. By country")) + split)
+    t = read_all(xml)[0]
+
+    out = set_row(xml, t, 0, ["ALB"])
+
+    assert read_all(out)[0].rows[0] == ["ALB"]
+
+
+def test_set_row_refuses_more_values_than_the_row_has_cells():
+    """A merged cell makes a row SHORTER than the grid is wide, and a
+    caller counting grid columns would silently write past the end."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    with pytest.raises(AnchorError, match="3 values were given"):
+        set_row(xml, t, 1, ["a", "b", "c"])
+
+
+def test_a_row_operation_refuses_a_table_read_from_OLDER_xml():
+    """Every one of these returns a new string and shifts every later
+    offset. The freshness guard is what turns "re-read between calls"
+    from advice into a rule."""
+    xml = _countries()
+    t = read_all(xml)[0]
+    out = clone_row(xml, t, 1)
+
+    for call in (lambda: clone_row(out, t, 1),
+                 lambda: set_row(out, t, 1, ["x", "y"]),
+                 lambda: reorder_rows(out, t, key=_by_name(
+                     ["UZB", "ALB", "POL", "All"]))):
+        with pytest.raises(AnchorError):
+            call()
+
+
+#
+# `trs[:index + 1] + [trs[index]] * count + trs[index + 1:]` in
+# `clone_row` is EQUIVALENT to the `index`/`index` spelling and left
+# alive: the copy is the row it came from, so a run of n+1 identical
+# rows sits in the same place whichever side the copies go on. The
+# spelling stays because "immediately after it" is what the docstring
+# promises and what a reader checks against.
