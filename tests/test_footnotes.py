@@ -1057,3 +1057,50 @@ def test_a_note_added_to_a_part_of_SEPARATORS_ONLY_gets_a_real_id():
     part = parts["word/footnotes.xml"].decode("utf-8")
     assert [f.id for f in find_all(part)] == ["1"]
     assert 'w:id="1"' in parts["word/document.xml"].decode("utf-8")
+
+
+def test_add_finds_the_predecessor_when_the_new_note_is_THIRD():
+    """`order[order.index(new_id) - 1]`. With the new note first or
+    second, the index arithmetic agrees with every bitwise spelling of
+    itself — `1 - 1`, `1 % 1`, `1 >> 1` and `1 ^ 1` are all 0 — so the
+    two fixtures above cannot tell them apart. Both later positions are
+    checked because they part from DIFFERENT spellings: at the third the
+    modulus and the xor go wrong, at the fourth the shift does. A
+    manuscript's notes are rarely two.
+    """
+    from docxkit.footnotes import add, out_of_order
+
+    for anchor, want in (("Sentence 2.", ["2", "3", "6", "5"]),
+                         ("Sentence 3.", ["2", "3", "5", "6"])):
+        parts = _package(on={1: 2, 2: 3, 3: 5})
+
+        add(parts, after=anchor, text="A note.")
+
+        refs, defs = _order(parts)
+        assert refs == want, (anchor, refs)
+        assert defs == refs, (anchor, defs)
+        assert out_of_order(parts["word/document.xml"].decode("utf-8"),
+                            parts["word/footnotes.xml"].decode(
+                                "utf-8")) == []
+
+
+def test_the_FIRST_real_note_in_a_part_of_separators_lands_INSIDE_it():
+    """The other arm of the same branch: no note to sit after and none
+    to sit in front of, so the definition goes at the end of the part —
+    which is the end MINUS the closing tag. Landing after it puts the
+    footnote outside `w:footnotes` altogether, and Word repairs the file
+    by dropping it.
+    """
+    from docxkit.footnotes import add, find
+
+    parts = _package(on={})
+    parts["word/footnotes.xml"] = (
+        b'<w:footnotes><w:footnote w:id="-1"><w:p/></w:footnote>'
+        b'<w:footnote w:id="0"><w:p/></w:footnote></w:footnotes>')
+
+    add(parts, after="Sentence 2.", text="The very first note.")
+
+    notes = parts["word/footnotes.xml"].decode("utf-8")
+    assert notes.endswith("</w:footnotes>"), notes[-60:]
+    assert notes.count("</w:footnotes>") == 1
+    assert find(notes, "very first").text == "The very first note."
