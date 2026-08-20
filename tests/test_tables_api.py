@@ -688,6 +688,33 @@ def test_tables_after_takes_the_CAPTION_as_its_anchor_too():
     assert [t.header[1] for t in found] == ["Share", "Block"]
 
 
+def test_the_FIRST_paragraph_opening_with_the_caption_wins():
+    """A continuation caption — "Table 3. (continued)" over the second
+    half of a long table — opens with the same words. The exhibit is the
+    first one; taking the last hands back the continuation's table and
+    every row before it stays unedited."""
+    xml = document(
+        para(run("Table 3. Distribution"))
+        + table(row("Country", "Share"))
+        + para(run("Table 3. (continued)"))
+        + table(row("Country", "Rest")))
+
+    found = by_caption(xml, "Table 3.")
+
+    assert found is not None and found.header == ["Country", "Share"]
+
+
+def test_clone_row_refuses_the_row_ONE_PAST_the_end():
+    """`>=`, not `>`: a table with five rows has no row 5, and the
+    difference between the two spellings is an AnchorError naming the
+    table and an IndexError from inside the walk."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    with pytest.raises(AnchorError, match="cannot clone row 5"):
+        clone_row(xml, t, len(t.rows))
+
+
 def test_a_caption_run_INLINE_is_still_found():
     """Some papers do run the caption into the paragraph, so "contains"
     stays as the fallback — it is only the PREFERENCE that changed."""
@@ -872,3 +899,19 @@ def test_a_row_operation_refuses_a_table_read_from_OLDER_xml():
 # rows sits in the same place whichever side the copies go on. The
 # spelling stays because "immediately after it" is what the docstring
 # promises and what a reader checks against.
+
+
+# `_table_core`'s other real survivors from the 2026-08-21 round,
+# argued:
+#
+# `_beside`'s `m.start() < below.start` -> `<=`. A caption paragraph and
+# a table cannot begin at the same offset, so the two spellings decide
+# every document alike.
+#
+# `_Span.group(index=0)` -> `index=1`, which makes a bare `.group()`
+# raise. Nothing in the package calls it bare — all 26 call sites pass
+# 0 — and the argument exists to REFUSE a group this stub has not got.
+#
+# `max(..., default=0)` in `grid_rows` -> `default=1`: reached only for
+# a `w:tbl` holding no `w:tr` at all, which is not a table Word writes
+# and not one this module can be handed by `read_all`.
