@@ -38,6 +38,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 
 | Module | What it is for |
 |---|---|
+| `batch` | a set of edits as ONE gated unit of work: preflight every anchor at once, apply, hold the carriers (bookmarks, links, footnote marks, math, rows, drawings) unless the batch declares what it moves |
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
 | `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk |
 | `edit` | anchor-asserting replace, run-aware replace and INSERT, span italics, `xml:space` repair |

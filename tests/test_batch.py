@@ -1,0 +1,189 @@
+"""A batch as one gated unit of work.
+
+The cases that matter are the ones a per-edit check cannot see: an edit that
+rewrites the sentence a LATER edit's signature names, and a carrier moving
+while every word on the page stays the same.
+"""
+from __future__ import annotations
+
+import pytest
+from conftest import document, para, run
+
+from docxkit import batch
+
+BODY = (
+    para(run("Figure 1 shows country averages. "),
+         run("The average worker is in a similar occupation. "),
+         run("Most countries fall in the middle."), pid="A1")
+    + para(run("Table 3 shows where older workers are. "),
+           run("The share is within 4 points in 10 of the 17 countries."),
+           pid="A2")
+)
+
+
+def parts_of(body: str = BODY) -> dict[str, bytes]:
+    return {batch.DOCUMENT: document(body).encode("utf-8")}
+
+
+def xml_of(parts: dict[str, bytes]) -> str:
+    return parts[batch.DOCUMENT].decode("utf-8")
+
+
+# --- preflight ------------------------------------------------------------
+
+def test_preflight_passes_a_batch_that_will_apply():
+    edits = [
+        batch.Edit("a", "Figure 1 shows", "country averages", "country AFIs"),
+        batch.Edit("b", "Table 3 shows", "10 of the 17", "9 of the 16"),
+    ]
+    assert all(v.ok for v in batch.preflight(edits, xml_of(parts_of())))
+
+
+def test_preflight_is_CUMULATIVE_so_it_sees_a_batch_eating_its_own_anchor():
+    """The failure a per-edit check cannot see.
+
+    Edit `a` rewrites the very sentence edit `b` is anchored on. Checked
+    independently, both look fine; run in order, `b` cannot find its paragraph.
+    This shape cost AFI's r4 three separate rerun cycles (batches 13, 17, 24).
+    """
+    edits = [
+        batch.Edit("a", "Figure 1 shows", "Figure 1 shows", "Exhibit 1 gives"),
+        batch.Edit("b", "Figure 1 shows", "Most countries", "Nearly all"),
+    ]
+    verdicts = batch.preflight(edits, xml_of(parts_of()))
+    assert verdicts[0].ok
+    assert not verdicts[1].ok
+    assert "NO paragraph" in verdicts[1].reason
+
+    # ... and judged on its own, the same edit is fine.
+    alone = batch.preflight([edits[1]], xml_of(parts_of()))
+    assert alone[0].ok
+
+
+def test_preflight_reports_every_failure_in_one_pass():
+    edits = [
+        batch.Edit("missing", "Figure 1 shows", "not here at all", "x"),
+        batch.Edit("ambiguous", "shows", "country averages", "y"),
+        batch.Edit("fine", "Table 3 shows", "within 4 points", "within 5"),
+    ]
+    verdicts = batch.preflight(edits, xml_of(parts_of()))
+    assert [v.ok for v in verdicts] == [False, False, True]
+    assert "`old` is not in that paragraph" in verdicts[0].reason
+    assert "2 paragraphs" in verdicts[1].reason
+
+
+def test_run_refuses_the_whole_batch_when_preflight_blocks():
+    parts = parts_of()
+    before = xml_of(parts)
+    report = batch.run("b", [
+        batch.Edit("fine", "Table 3 shows", "within 4 points", "within 5"),
+        batch.Edit("bad", "Figure 1 shows", "absent", "x"),
+    ], parts=parts)
+    assert not report.ok
+    assert not report.applied, "nothing may be applied when preflight blocks"
+    assert xml_of(parts) == before
+
+
+# --- invariants -----------------------------------------------------------
+
+def test_a_carrier_lost_with_no_text_change_is_caught():
+    """A bookmark can vanish while every word on the page survives."""
+    body = para('<w:bookmarkStart w:id="1" w:name="ref_x"/>',
+                run("Figure 1 shows country averages."),
+                '<w:bookmarkEnd w:id="1"/>', pid="B1")
+    parts = parts_of(body)
+
+    def drop_the_bookmark(xml: str, _p: dict[str, bytes]) -> str:
+        return xml.replace('<w:bookmarkStart w:id="1" w:name="ref_x"/>', "")
+
+    report = batch.run("b", [batch.Step("drop", drop_the_bookmark)],
+                       parts=parts)
+    assert not report.ok
+    assert any("bookmarks 1 -> 0" in f for f in report.failures)
+
+
+def test_a_declared_move_is_allowed_and_an_undeclared_one_is_not():
+    parts = parts_of()
+
+    def drop_a_paragraph(xml: str, _p: dict[str, bytes]) -> str:
+        i = xml.index("<w:p ")
+        j = xml.index("</w:p>", i) + len("</w:p>")
+        return xml[:i] + xml[j:]
+
+    ok = batch.run("declared", [batch.Step("drop", drop_a_paragraph)],
+                   parts=parts_of(), allow={"paragraphs": -1})
+    assert ok.ok, ok.text()
+
+    bad = batch.run("undeclared", [batch.Step("drop", drop_a_paragraph)],
+                    parts=parts)
+    assert not bad.ok
+    assert any("paragraphs 2 -> 1" in f for f in bad.failures)
+
+
+def test_allow_naming_an_unknown_invariant_is_an_error():
+    report = batch.run("b", [
+        batch.Edit("a", "Table 3 shows", "within 4 points", "within 5"),
+    ], parts=parts_of(), allow={"paragrahps": -1})
+    assert not report.ok
+    assert any("unknown invariant" in f for f in report.failures)
+
+
+# --- the settled-file guard ----------------------------------------------
+
+def test_a_batch_refuses_to_stack_on_pending_revisions():
+    """Compare treats a pending revision as ACCEPTED, so stacking decides the
+    author's open verdicts for them."""
+    ins = '<w:ins w:id="9" w:author="R">' + run("new") + "</w:ins>"
+    body = para(ins, pid="C1")
+    report = batch.run("b", [], parts=parts_of(body))
+    assert not report.ok
+    assert "pending" in report.failures[0]
+
+    allowed = batch.run("b", [], parts=parts_of(body), require_settled=False)
+    assert allowed.ok
+
+
+# --- steps and writing ----------------------------------------------------
+
+def test_a_step_may_mutate_parts_which_is_what_a_figure_swap_needs():
+    parts = parts_of()
+
+    def add_media(xml: str, p: dict[str, bytes]) -> str:
+        p["word/media/image1.png"] = b"\x89PNG..."
+        return xml.replace("country averages", "country AFIs")
+
+    report = batch.run("b", [batch.Step("media", add_media)], parts=parts)
+    assert report.ok, report.text()
+    assert parts["word/media/image1.png"] == b"\x89PNG..."
+
+
+def test_dry_leaves_the_parts_untouched(tmp_path):
+    parts = parts_of()
+    before = xml_of(parts)
+    report = batch.run("b", [
+        batch.Edit("a", "Table 3 shows", "within 4 points", "within 5"),
+    ], parts=parts, out=tmp_path / "x.docx", dry=True)
+    assert report.ok
+    assert xml_of(parts) == before
+    assert report.written is None
+    assert not (tmp_path / "x.docx").exists()
+
+
+def test_a_clean_run_writes_and_reports_where(tmp_path):
+    parts = parts_of()
+    out = tmp_path / "batch.docx"
+    report = batch.run("b", [
+        batch.Edit("a", "Table 3 shows", "10 of the 17", "9 of the 16"),
+    ], parts=parts, out=out)
+    assert report.ok, report.text()
+    assert report.written == out and out.exists()
+    assert "9 of the 16" in xml_of(parts)
+
+
+@pytest.mark.parametrize("sig, old, expect", [
+    ("Figure 1 shows", "no such text", "`old` is not in that paragraph"),
+    ("shows", "country averages", "2 paragraphs"),
+    ("nothing matches this", "x", "NO paragraph"),
+])
+def test_diagnose_says_which_cause_applies(sig, old, expect):
+    assert expect in batch.diagnose(xml_of(parts_of()), sig, old)

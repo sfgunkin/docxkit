@@ -33,6 +33,9 @@ import docxkit
 # claim that the type is an ANSWER: something a caller may keep, hash or
 # compare, and never edit.
 VALUES = [
+    "batch.Edit",
+    "batch.Step",
+    "batch.Verdict",
     "_cite_grammar.Citation",
     "_cite_grammar.Reference",
     "_table_core.RowsReport",       # a count of what changed, not a builder
@@ -68,6 +71,7 @@ VALUES = [
 # other deliberately — the same rule `test_harness_map` applies to a new
 # test file.
 ACCUMULATORS = {
+    "batch.Report",
     "_cite_build.LinkAllReport",
     "_cite_build.LinkRestReport",
     "_table_layout.HouseReport",
