@@ -834,3 +834,82 @@ def test_a_mark_finding_names_its_note_in_forty_eight_characters_too():
     (found,) = report.mark_outliers
     assert found.text == "The normalisation is by the sample mean rather t"
     assert len(found.text) == 48
+
+
+# --- definitions stored out of REFERENCE order -------------------------
+
+
+def _notes_part(*ids: int) -> str:
+    return ("<w:footnotes>" + "".join(
+        f'<w:footnote w:id="{i}"><w:p><w:r><w:t>note {i}</w:t></w:r></w:p>'
+        f"</w:footnote>" for i in ids) + "</w:footnotes>")
+
+
+def _refs(*ids: int) -> str:
+    return ("<w:document><w:body>" + "".join(
+        f'<w:p><w:r><w:t>Sentence.</w:t></w:r>'
+        f'<w:r><w:footnoteReference w:id="{i}"/></w:r></w:p>'
+        for i in ids) + "</w:body></w:document>")
+
+
+def test_out_of_order_answers_nothing_for_a_file_word_wrote():
+    from docxkit.footnotes import out_of_order
+
+    assert out_of_order(_refs(2, 3, 4), _notes_part(2, 3, 4)) == []
+
+
+def test_out_of_order_names_every_id_that_would_MOVE():
+    """A note appended to the END of the part with its reference in the
+    middle — the AFI shape. Word renders it correctly and Compare
+    rewrites the definitions into document order, so three of the four
+    move, and the answer names all three rather than the smallest set
+    that could be reordered: a caller reporting this quotes them."""
+    from docxkit.footnotes import out_of_order
+
+    moved = out_of_order(_refs(2, 5, 3, 4), _notes_part(2, 3, 4, 5))
+
+    assert moved == ["3", "4", "5"]
+
+
+def test_out_of_order_ignores_a_definition_NOTHING_references():
+    """A note whose marker was deleted is a different defect, and
+    counting it here would fire the order line on documents whose order
+    is right."""
+    from docxkit.footnotes import out_of_order
+
+    assert out_of_order(_refs(2, 3), _notes_part(2, 3, 9)) == []
+
+
+def test_out_of_order_ignores_a_reference_with_NO_definition():
+    """The other half of the same asymmetry: this function answers one
+    question."""
+    from docxkit.footnotes import out_of_order
+
+    assert out_of_order(_refs(2, 7, 3), _notes_part(2, 3)) == []
+
+
+def test_out_of_order_reads_ENDNOTES_the_same_way():
+    """An endnote is a footnote at the back of the paper, and Compare
+    reorders that part too."""
+    from docxkit.footnotes import out_of_order
+
+    notes = ("<w:endnotes>" + "".join(
+        f'<w:endnote w:id="{i}"><w:p><w:r><w:t>note {i}</w:t></w:r></w:p>'
+        f"</w:endnote>" for i in (2, 3)) + "</w:endnotes>")
+    doc = ("<w:document><w:body>" + "".join(
+        f'<w:p><w:r><w:endnoteReference w:id="{i}"/></w:r></w:p>'
+        for i in (3, 2)) + "</w:body></w:document>")
+
+    assert out_of_order(doc, notes, kind="endnote") == ["2", "3"]
+
+
+def test_out_of_order_skips_words_own_separator_notes():
+    """Ids 0 and -1 are the separator and continuation notes Word puts
+    in every document, referenced by nothing in the body."""
+    from docxkit.footnotes import out_of_order
+
+    notes = ('<w:footnotes><w:footnote w:id="-1"><w:p/></w:footnote>'
+             '<w:footnote w:id="0"><w:p/></w:footnote>'
+             + _notes_part(2, 3)[len("<w:footnotes>"):])
+
+    assert out_of_order(_refs(2, 3), notes) == []

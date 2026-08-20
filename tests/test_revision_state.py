@@ -267,3 +267,54 @@ def test_a_part_the_author_added_is_drift(tmp_path):
                               + para(run("a new note")) + "</w:footnote>")))
     prev = write(tmp_path / "prev.docx", make_parts(body))
     assert revision.drift(working, prev) == ["word/footnotes.xml"]
+
+
+# --- notes stored out of REFERENCE order (backlog S1, 2026-08-20) ------
+#
+# AFI r4 batch 17 appended a `<w:footnote>` to the end of footnotes.xml
+# and put its reference in the middle of the body. Word renders that
+# perfectly — notes are numbered by where their REFERENCES sit — so the
+# render was right, the paper's own verifier passed 560/560, and every
+# read-only gate here said truth.
+#
+# The NEXT batch's build then failed like a catastrophe: 81 glyph runs
+# and `STRUCTURE footnoteReference: 7 -> 6`, because Word's Compare
+# rewrites the definitions into document order and the part stopped
+# lining up with the baseline's. The innocent batch got the blame.
+
+
+def _noted(order: tuple[int, ...],
+           refs: tuple[int, ...]) -> dict[str, bytes]:
+    notes = ("<w:footnotes>" + "".join(
+        f'<w:footnote w:id="{i}"><w:p><w:r><w:t>note {i}</w:t></w:r>'
+        f"</w:p></w:footnote>" for i in order) + "</w:footnotes>")
+    body = "".join(
+        para(run(f"Sentence {i}."),
+             f'<w:r><w:footnoteReference w:id="{i}"/></w:r>') for i in refs)
+    return make_parts(body, extra={"word/footnotes.xml": notes})
+
+
+def test_a_footnote_DEFINITION_out_of_order_is_reported(tmp_path):
+    """The one gate that can see it before Word does."""
+    path = write(tmp_path / "working.docx", _noted((2, 3), (3, 2)))
+
+    st = revision.state(path)
+
+    assert st.notes_unordered == {"footnote": ["2", "3"]}
+    assert st.pending == 0, "and it is not a pending revision"
+
+
+def test_definitions_in_reference_order_report_NOTHING(tmp_path):
+    """The ordinary file, which is every file Word wrote itself."""
+    path = write(tmp_path / "working.docx", _noted((2, 3), (2, 3)))
+
+    assert revision.state(path).notes_unordered == {}
+
+
+def test_a_definition_nothing_REFERENCES_is_not_an_order_problem(tmp_path):
+    """It is a different defect — a note the body lost its marker for —
+    and reporting it here would make the order line fire on documents
+    whose order is right."""
+    path = write(tmp_path / "working.docx", _noted((2, 3, 9), (2, 3)))
+
+    assert revision.state(path).notes_unordered == {}

@@ -1206,3 +1206,27 @@ def test_validate_says_WHICH_structure_the_reject_lost(monkeypatch, project,
     assert "NOT fully reviewable" in out
     assert "STRUCTURE tbl: 0 -> 1" in out
     assert "duplicate a table" in out
+
+
+def test_status_says_when_note_definitions_are_OUT_OF_ORDER(monkeypatch,
+                                                            project, capsys):
+    """The line a person reads. Everything else about such a file is
+    right — it renders, it counts, its text diffs clean — and the next
+    `build` reports 81 glyph runs against whichever batch comes after
+    the one that appended the note. This is the only place it is cheap
+    to say (backlog S1, AFI r4)."""
+    notes = ('<w:footnotes><w:footnote w:id="2"><w:p><w:r><w:t>first</w:t>'
+             "</w:r></w:p></w:footnote>"
+             '<w:footnote w:id="3"><w:p><w:r><w:t>second</w:t>'
+             "</w:r></w:p></w:footnote></w:footnotes>")
+    body = (para(run("Alpha"), '<w:r><w:footnoteReference w:id="3"/></w:r>')
+            + para(run("Beta"), '<w:r><w:footnoteReference w:id="2"/></w:r>'))
+    write(project.working, make_parts(body,
+                                      extra={"word/footnotes.xml": notes}))
+
+    run_cli(monkeypatch, "revision", "status", "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert "footnote definitions are NOT in document order" in out, out
+    assert "2, 3" in out
+    assert "reads the part as moved" in out

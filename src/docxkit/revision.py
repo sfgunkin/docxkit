@@ -67,8 +67,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from . import footnotes, package, revisions, tracked
 from . import lint as _lint
-from . import package, revisions, tracked
 from . import word as _word
 from ._xml import (
     BOOKMARK_NAME_RE,
@@ -322,6 +322,10 @@ class State:
     path: Path
     by_part: dict[str, int]
     by_author: dict[str, int]
+    #: kind -> the note ids whose DEFINITION is out of reference order.
+    #: Empty for a file Word wrote; see :func:`footnotes.out_of_order`
+    #: for what a file it did not costs.
+    notes_unordered: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def pending(self) -> int:
@@ -378,7 +382,18 @@ def state(path: str | Path) -> State:
             who = _AUTHOR_RE.search(chunk)
             if who:
                 by_author[who.group(1)] = by_author.get(who.group(1), 0) + 1
-    return State(path=path, by_part=by_part, by_author=by_author)
+    unordered = {}
+    doc = parts.get(DOCUMENT, b"").decode("utf-8", "replace")
+    for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
+        blob = parts.get(part)
+        if not blob:
+            continue
+        moved = footnotes.out_of_order(
+            doc, blob.decode("utf-8", "replace"), kind=kind)
+        if moved:
+            unordered[kind] = moved
+    return State(path=path, by_part=by_part, by_author=by_author,
+                 notes_unordered=unordered)
 
 
 def _drifted(before: dict[str, bytes], after: dict[str, bytes]) -> list[str]:
@@ -584,6 +599,30 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
         notes.append(line)
         if progress:
             progress(line)
+
+    # Before Word sees it: a note whose DEFINITION sits out of reference
+    # order renders correctly and passes every read-only gate, and
+    # Compare then rewrites the definitions INTO document order — so the
+    # part no longer lines up with the baseline's and reads as moved. On
+    # AFI that was 81 glyph runs and a STRUCTURE count for a one-line
+    # prose batch, reported against the batch that came after the one
+    # that appended the note. Said here, where it is still cheap.
+    for side, path in (("baseline", paper.prev), ("clean edit", revised)):
+        side_parts = package.read_parts(path)
+        doc = side_parts.get(DOCUMENT, b"").decode("utf-8", "replace")
+        for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
+            blob = side_parts.get(part)
+            if not blob:
+                continue
+            moved = footnotes.out_of_order(
+                doc, blob.decode("utf-8", "replace"), kind=kind)
+            if moved:
+                _say(f"{side}: {kind} definitions are not in document order "
+                     f"({', '.join(moved[:6])}"
+                     f"{' ...' if len(moved) > 6 else ''}) — Word's Compare "
+                     f"will rewrite them, and the whole part then reads as "
+                     f"MOVED. Reorder the definitions to match the "
+                     f"references before building.")
 
     # `accept_check` is left ON, and the asymmetry is deliberate. The
     # reject side has a legitimate cause the protocol can see and gate 5

@@ -799,6 +799,16 @@ def _show_state(label: str, st: object) -> None:
     if st.by_author:
         who = ", ".join(f"{a} ({n})" for a, n in st.by_author.items())
         print(f"      by: {who}")
+    for kind, ids in st.notes_unordered.items():
+        # Nothing else says this. The file renders correctly, the counts
+        # are right and every text gate passes — and the next Compare
+        # rewrites the definitions into document order, which reads as
+        # the whole part having moved (81 glyph runs on AFI, blamed on
+        # the batch after the one that did it).
+        print(f"      {kind} definitions are NOT in document order: "
+              f"{', '.join(ids[:6])}{' ...' if len(ids) > 6 else ''}"
+              f" — Word's Compare will rewrite them, and the next build "
+              f"reads the part as moved")
 
 
 def _summarize(parts: list[str], *, keep: int = 4) -> str:

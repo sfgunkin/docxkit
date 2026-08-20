@@ -45,6 +45,7 @@ __all__ = [
     "find",
     "find_all",
     "fonts",
+    "out_of_order",
     "remap",
     "renumber_map",
     "set_font",
@@ -95,6 +96,44 @@ def find_all(footnotes_xml: str, *, include_reserved: bool = False,
             continue
         out.append(Footnote(m.group(1), m.group(0), m.start(), m.end()))
     return out
+
+
+#: Both kinds, keyed the way `find_all` keys them.
+_REFERENCE_OF = {
+    "footnote": re.compile(r'<w:footnoteReference\b[^>]*w:id="(-?\d+)"'),
+    "endnote": re.compile(r'<w:endnoteReference\b[^>]*w:id="(-?\d+)"'),
+}
+
+
+def out_of_order(document_xml: str, notes_xml: str, *,
+                 kind: str = "footnote") -> list[str]:
+    """Ids whose DEFINITION sits out of reference order, in that order.
+
+    Word numbers notes by where their REFERENCES are and stores the
+    definitions in whatever order the file happens to hold them — so a
+    note appended to the end of ``footnotes.xml`` with its reference in
+    the middle of the body renders perfectly, and every read-only gate
+    passes: the render, the counts, the text.
+
+    Word's Compare then rewrites the definitions INTO document order,
+    so the redline's part no longer lines up with the baseline's and
+    the whole thing reads as moved. On AFI that was 81 glyph runs and a
+    structure count for a one-line prose batch, reported against the
+    innocent batch that came after it (backlog, 2026-08-20).
+
+    Answers the ids that would MOVE — every one of them, not the
+    smallest set that could be reordered — so a caller can name them.
+    Definitions nothing references and references with no definition are
+    not this question and are left out of it.
+    """
+    seen: list[str] = []
+    for note in _REFERENCE_OF[kind].findall(document_xml):
+        if note not in _RESERVED_IDS and note not in seen:
+            seen.append(note)
+    defined = [f.id for f in find_all(notes_xml, kind=kind)]
+    wanted = [i for i in seen if i in set(defined)]
+    have = [i for i in defined if i in set(wanted)]
+    return [i for i, j in zip(have, wanted, strict=True) if i != j]
 
 
 def find(footnotes_xml: str, contains: str) -> Footnote:
