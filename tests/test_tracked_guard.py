@@ -14,6 +14,7 @@ from conftest import make_parts, para, run, write
 
 from docxkit.errors import DeliverableModified
 from docxkit.guard import check as guard_deliverable
+from docxkit.guard import restamp as _restamp
 from docxkit.guard import stamp as _write_stamp
 from docxkit.guard import stamp_path as _stamp_path
 from docxkit.package import read_parts
@@ -85,6 +86,69 @@ def test_stamp_records_what_it_was_built_from(built):
     assert data["original"] == "v11.docx"
     assert data["revised"] == "v12_clean.docx"
     assert len(data["sha256"]) == 64
+
+
+# ------------------------------------------- a repair is not a session ---
+
+def test_a_TOOL_repair_re_stamps_and_the_next_build_is_content(built):
+    """AFI's rounds end with a repair `build` cannot do — the minus
+    glyph Compare downgrades on the rejected side. Running it changed
+    `batch.docx` after the build stamped it, so the next build said
+    "someone edited it in Word" and wrote a `_user_edited` backup, three
+    rounds running, of an edit nobody made.
+    """
+    built.write_bytes(built.read_bytes() + b" ")     # the repair's write
+    _restamp(built, why="restored U+2212 on the rejected side")
+
+    assert guard_deliverable(built) is None
+    assert not list(built.parent.glob("*user_edited*"))
+
+
+def test_the_re_stamp_says_WHAT_changed_the_file_and_from_what(built):
+    """The one call that can retire a guard leaves the evidence for
+    doing so — and keeps the provenance the build recorded."""
+    before = json.loads(_stamp_path(built).read_text(encoding="utf-8"))
+    built.write_bytes(built.read_bytes() + b" ")
+
+    _restamp(built, why="restored U+2212 on the rejected side")
+
+    data = json.loads(_stamp_path(built).read_text(encoding="utf-8"))
+    assert data["original"] == "v11.docx"          # the build's, kept
+    assert data["sha256"] != before["sha256"]
+    assert data["repairs"] == [
+        {"why": "restored U+2212 on the rejected side",
+         "was": before["sha256"], "now": data["sha256"]}]
+
+
+def test_a_SECOND_repair_is_appended_not_overwritten(built):
+    for n in (1, 2):
+        built.write_bytes(built.read_bytes() + b" ")
+        _restamp(built, why=f"repair {n}")
+
+    data = json.loads(_stamp_path(built).read_text(encoding="utf-8"))
+    assert [r["why"] for r in data["repairs"]] == ["repair 1", "repair 2"]
+    assert data["repairs"][0]["now"] == data["repairs"][1]["was"]
+
+
+def test_a_repair_that_changed_NOTHING_records_nothing(built):
+    """A repair routine that found nothing to do has not touched the
+    deliverable, and a `repairs` entry saying it did would be a lie in
+    the one file kept to be read after the fact."""
+    _restamp(built, why="found nothing")
+
+    data = json.loads(_stamp_path(built).read_text(encoding="utf-8"))
+    assert "repairs" not in data
+
+
+def test_a_corrupt_stamp_does_not_stop_a_repair_recording_itself(built):
+    """`check` already treats an unreadable stamp as unverifiable. The
+    repair still has to be able to leave one, or the file is stuck
+    refusing every build."""
+    _stamp_path(built).write_text("{not json", encoding="utf-8")
+
+    _restamp(built, why="after a corrupt stamp")
+
+    assert guard_deliverable(built) is None
 
 
 # --- guard's whole survivor list, 2026-08-20: 4.1 % (2/49) -------------

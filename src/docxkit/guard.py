@@ -22,6 +22,7 @@ from .package import backup as _backup
 __all__ = [
     "DeliverableModified",
     "check",
+    "restamp",
     "stamp",
     "stamp_path",
 ]
@@ -66,7 +67,53 @@ def check(out: str | Path, *, force: bool = False,
         f"the edits into the build SOURCE and re-run with force=True (CLI: "
         f"--force), which is safe because {saved.name} already holds what "
         f"was here; build somewhere else with out=/--out; or delete "
-        f"{out.name} if that batch is already promoted.")
+        f"{out.name} if that batch is already promoted. If a docxkit "
+        f"routine wrote it — a math-glyph repair run after the build — "
+        f"that is not a Word session: call guard.restamp() there, and "
+        f"the next build reads it as the tool's own work.")
+
+
+def restamp(out: str | Path, *, why: str) -> Path:
+    """Re-record a deliverable a TOOL repaired after the build stamped it.
+
+    Not every change to a redline is a Word session. AFI's rounds end
+    with a repair the build cannot do — the minus glyph Compare
+    downgrades on the REJECTED side, which `restore_math_glyphs` will
+    not infer — and running it changes `batch.docx` after `build`
+    stamped it. The next build then refuses with "someone edited it in
+    Word", backs the file up as `batch_user_edited1.docx`, and the
+    author who edited nothing is told they did. Three rounds, three
+    spurious artifacts (backlog S3).
+
+    So a repair says so here. The stamp keeps the build's own
+    provenance and grows a `repairs` list — reason, the hash it replaced
+    and the hash now — because "the tool changed it" must be READABLE
+    afterwards, not just assumed: this is the one call that can retire a
+    guard, and it should leave the evidence for doing so.
+
+    It is an assertion, and only the caller can make it. If a human
+    edited the file in Word as well, that edit is inside the hash being
+    recorded and this will adopt it — so call it in the repair, next to
+    the write, and never to clear a refusal you did not cause.
+    """
+    out = Path(out)
+    path = stamp_path(out)
+    old: dict[str, object] = {}
+    if path.exists():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            old = {}
+    now = _sha256(out)
+    if old.get("sha256") == now:
+        return path              # nothing moved: the repair changed nothing
+    was = old.get("repairs")
+    repairs = list(was) if isinstance(was, list) else []
+    repairs.append({"why": why, "was": old.get("sha256", ""), "now": now})
+    path.write_text(
+        json.dumps({**old, "sha256": now, "repairs": repairs}, indent=1),
+        encoding="utf-8")
+    return path
 
 
 def stamp(out: str | Path, **provenance: str) -> Path:

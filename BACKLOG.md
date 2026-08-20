@@ -188,6 +188,28 @@ it no longer reads as a defect in the edit. Both sides are pinned —
 `test_validate_says_WHICH_VIEW_a_glyph_difference_is_about` and
 `test_a_REAL_edit_is_not_called_a_math_downgrade`.
 
+**The second one is done (2026-08-20) — `guard.restamp`.** A repair the
+build cannot do is not a Word session, and the repair now says so:
+
+    from docxkit.guard import restamp
+    write_docx(paper.batch, parts)
+    restamp(paper.batch, why="restored U+2212 on the rejected side")
+
+The stamp keeps the build's own provenance and grows a `repairs` list —
+reason, the hash it replaced, the hash now — so "the tool changed it" is
+readable afterwards rather than assumed; this is the one call that can retire
+a guard. A repair that changed nothing records nothing. `guard.check`'s
+refusal names it as the fourth way on, beside the three it already listed.
+
+What this does NOT do is decide for the caller: the assertion is theirs, and
+a Word edit sitting in the file when `restamp` runs is inside the hash it
+records. The docstring says to call it next to the write, in the repair.
+
+So the round is now: build, validate FAILS and says WHICH VIEW and why, run
+the repair, re-stamp, validate PASSES — with no `_user_edited` artifact and
+no diagnosis of an edit nobody made. The gate is still red on a downgraded
+glyph, which is the first fix's job and is still open.
+
 **Why not the first one**, looked at the same day: `restore_math_glyphs`
 repairs a run only when its EXACT text appears in a source, and Compare splits
 a run at the edit boundary — so the deleted side often holds a fragment no
