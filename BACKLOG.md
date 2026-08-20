@@ -212,6 +212,29 @@ one. Worth checking whether this is also what r3 recorded on AFI as
 `fig5_firstref` being "re-stripped by Word on EVERY edit of that paragraph" —
 that reads like the same bug attributed to Word.
 
+**Both, 2026-08-20 — `edit.set_run_properties` and `edit.is_field_run`.**
+
+    from docxkit.edit import set_run_properties
+    para, written = set_run_properties(para, {
+        "rFonts": '<w:rFonts w:ascii="Arial Narrow"/>',
+        "sz": '<w:sz w:val="20"/>'})
+
+`props` maps a CT_RPr child tag to the element to write there, each landing
+in its schema slot and in the run's LIVE properties (a `w:rPrChange` snapshot
+is left alone); `""` removes one. The count is of runs CHANGED, so a second
+pass answers 0.
+
+`skip_fields=True` is the default and skips a run that carries `fldChar` or
+`instrText` AND no visible text. **Not `skip_links`**, and not the whole
+field: the label a field DISPLAYS is text a reader sees, and a caption whose
+number lives inside one still wants the face the rest of the caption has. The
+damage recorded above was the machinery — runs the author cannot see, marked
+by Compare and clicked through one at a time. On the fixture built from AFI's
+Figure 10 caption the sweep writes 2 runs where the naive loop writes 6.
+
+Still open: the `fig5_firstref` question in the last paragraph above, which
+nobody has checked.
+
 ### S1 Compare CORRUPTS a replacement inside an inline OMML field, and `resolve_math` bakes the corruption in as the accepted view
 
 Found on AFI, 2026-08-19, doing R3/T3.2: two inline `<m:oMath>` fields holding

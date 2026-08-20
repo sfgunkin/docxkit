@@ -216,3 +216,111 @@ def test_the_edit_facade_exports_both_run_patterns():
         assert hasattr(E, name)
     assert E.RUN_RE.match("<w:r><w:t>x</w:t></w:r>")
     assert not E.RUN_RE.match("<w:rPr><w:b/></w:rPr>")
+
+
+# --- the safe run-properties sweep (BACKLOG S4, 2026-08-20) ------------
+
+
+def _field_caption() -> str:
+    """AFI's Figure 10 caption: the number is a field-code hyperlink."""
+    return ('<w:p><w:r><w:t xml:space="preserve">Figure 10. </w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            "<w:r><w:instrText> HYPERLINK "
+            + chr(92) + 'l "fig10_firstref" </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            "<w:r><w:t>Employment by age group</w:t></w:r>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+
+HOUSE = {"rFonts": '<w:rFonts w:ascii="Arial Narrow"/>',
+         "sz": '<w:sz w:val="20"/>'}
+
+
+def test_a_sweep_writes_the_face_and_leaves_the_field_MACHINERY_alone():
+    """The whole point of the helper. A sweep that walks `<w:r>` writes
+    into the `fldChar` and `instrText` runs too — they are runs — and
+    Word's Compare then marks every one of them. Rejecting that batch
+    brings the words back as plain text with the anchor gone.
+
+    The field's LABEL is not machinery: it is what the page shows, and a
+    caption whose number lives inside a field still wants the face the
+    rest of the caption has."""
+    from docxkit.edit import set_run_properties
+
+    out, written = set_run_properties(_field_caption(), HOUSE)
+
+    assert written == 2, "the caption's own run and the field's label"
+    assert out.count('w:ascii="Arial Narrow"') == 2
+    assert "<w:rPr>" not in out[out.index("<w:fldChar"):out.index(
+        "separate")], "nothing was written into the machinery"
+    assert "fig10_firstref" in out
+
+
+def test_the_sweep_COUNTS_the_runs_it_changed_not_the_ones_it_visited():
+    """A second pass over the same paragraph reports 0. The count is
+    what a caller prints, and one that answers "24 runs" every time it
+    runs says nothing about whether anything moved."""
+    from docxkit.edit import set_run_properties
+
+    once, first = set_run_properties(_field_caption(), HOUSE)
+    twice, again = set_run_properties(once, HOUSE)
+
+    assert (first, again) == (2, 0)
+    assert twice == once
+
+
+def test_the_sweep_can_be_told_to_write_into_the_field_runs():
+    """`skip_fields=False` is the behaviour this helper exists to
+    replace, kept reachable and named so a caller who wants it says
+    so."""
+    from docxkit.edit import set_run_properties
+
+    _out, written = set_run_properties(_field_caption(), HOUSE,
+                                       skip_fields=False)
+
+    assert written == 6, "every run in the paragraph"
+
+
+def test_a_field_run_is_one_with_MACHINERY_and_no_text():
+    """Both halves. A run holding an `instrText` is machinery; a run
+    holding the field's result is not, even though it sits inside the
+    same field."""
+    from docxkit.edit import is_field_run
+
+    assert is_field_run('<w:r><w:fldChar w:fldCharType="begin"/></w:r>')
+    assert is_field_run("<w:r><w:instrText> PAGE </w:instrText></w:r>")
+    assert not is_field_run("<w:r><w:t>Employment</w:t></w:r>")
+    # a fldChar and a stray label in ONE run: an edit across a field
+    # leaves exactly this, and it is text a reader sees
+    assert not is_field_run('<w:r><w:fldChar w:fldCharType="begin"/>'
+                            "<w:t>leftover</w:t></w:r>")
+
+
+def test_the_sweep_writes_into_the_LIVE_properties():
+    """Through `set_run_property`, so a tracked formatting change keeps
+    its snapshot and the page gets the face."""
+    from docxkit.edit import set_run_properties
+
+    date = 'w:id="7" w:author="A" w:date="2026-01-01T00:00:00Z"'
+    para_xml = (f'<w:p><w:r><w:rPr><w:sz w:val="24"/><w:rPrChange {date}>'
+                f'<w:rPr><w:sz w:val="28"/></w:rPr></w:rPrChange></w:rPr>'
+                f"<w:t>Text</w:t></w:r></w:p>")
+
+    out, written = set_run_properties(para_xml, {"sz": '<w:sz w:val="20"/>'})
+
+    live, _, past = out.partition("<w:rPrChange")
+    assert written == 1
+    assert '<w:sz w:val="20"/>' in live and '<w:sz w:val="24"/>' not in live
+    assert '<w:sz w:val="28"/>' in past, "the past stands"
+
+
+def test_a_property_can_be_REMOVED_by_the_sweep():
+    from docxkit.edit import set_run_properties
+
+    para_xml = ('<w:p><w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr>'
+                "<w:t>Text</w:t></w:r></w:p>")
+
+    out, written = set_run_properties(para_xml, {"b": ""})
+
+    assert written == 1
+    assert "<w:b/>" not in out and '<w:sz w:val="24"/>' in out

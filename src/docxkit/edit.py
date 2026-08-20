@@ -7,7 +7,7 @@ loudly instead of producing a subtly wrong manuscript.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from ._xml import (
     HYPERLINK_ANY_RE,
@@ -24,6 +24,7 @@ from ._xml import (
     overlaps,
     own_properties,
     run_spans,
+    set_run_property,
     set_run_text,
     span_holding,
     visible_text,
@@ -37,10 +38,12 @@ __all__ = [
     "editable_text",
     "find_normalized",
     "insert_in_para",
+    "is_field_run",
     "italicize",
     "preserve_space",
     "rep",
     "replace_in_para",
+    "set_run_properties",
     "set_run_text",
     "subscript",
     "superscript",
@@ -736,3 +739,65 @@ def _between_runs(runs: list[re.Match[str]], spans: list[tuple[int, int]],
                 f"insert_in_para: offset {at} falls inside {what}. Insert "
                 f"on one side of it, or pass the matching allow_ flag.")
     return pos
+
+
+#: A run belongs to a field's MACHINERY if it carries one of these.
+_FIELD_MACHINERY_RE = re.compile(r"<w:(?:fldChar|instrText)\b")
+
+
+def is_field_run(run_xml: str) -> bool:
+    """Is this run a field's machinery rather than anything a reader sees?
+
+    ``fldChar`` markers and ``instrText`` live in runs like any other
+    content, and they carry no visible text. A formatting sweep that
+    walks ``<w:r>`` therefore writes into them, Word's Compare marks
+    every one it wrote into, and REJECTING that batch brings the words
+    back as plain text with the field's anchor gone.
+
+    Measured on AFI (2026-08-19): one caption of twenty-four is built as
+    a field-code hyperlink, and formatting its machinery took a batch
+    from 36 revisions to 136 — a hundred of them invisible field parts
+    the author would have had to click through — and lost
+    ``fig10_firstref``, which `revision validate` caught as LINK LOST.
+    """
+    return (_FIELD_MACHINERY_RE.search(run_xml) is not None
+            and not visible_text(run_xml).strip())
+
+
+def set_run_properties(para_xml: str, props: Mapping[str, str], *,
+                       skip_fields: bool = True) -> tuple[str, int]:
+    """`para_xml` with `props` on every run, and the count of runs changed.
+
+    `props` maps a ``CT_RPr`` child tag to the element to write there —
+    ``{"rFonts": '<w:rFonts w:ascii="Arial"/>', "sz": '<w:sz w:val="20"/>'}``
+    — each landing in its schema slot, in the run's LIVE properties, and
+    replacing what was there rather than sitting beside it. Pass ``""``
+    for a tag to REMOVE it.
+
+    The count is of runs this CHANGED, so a second call over the same
+    paragraph answers 0: a sweep reports what it did, not what it
+    visited.
+
+    `skip_fields` is the reason this exists rather than a loop over
+    ``RUN_RE`` in every paper script — see :func:`is_field_run`. It is
+    the machinery that is skipped, not the field: the label a field
+    DISPLAYS is text a reader sees, and a caption whose number lives
+    inside a field still wants the face the rest of the caption has.
+    Runs inside a ``w:hyperlink`` element are not skipped for the same
+    reason; the damage recorded on AFI was the machinery.
+    """
+    out = para_xml
+    written = 0
+    # Back to front: each splice moves every offset after it.
+    for m in reversed(list(RUN_RE.finditer(para_xml))):
+        run = m.group(0)
+        if skip_fields and is_field_run(run):
+            continue
+        new = run
+        for tag, element in props.items():
+            new = set_run_property(new, tag, element)
+        if new == run:
+            continue
+        written += 1
+        out = out[:m.start()] + new + out[m.end():]
+    return out, written
