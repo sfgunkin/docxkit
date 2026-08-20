@@ -348,6 +348,13 @@ def test_italics_ON_takes_out_EVERY_stale_copy():
         out = italicize(para_xml(props), "Journal of Economics")
         assert out == para_xml("<w:i/>"), props
 
+    # and a property AFTER the pair, which is what tells the write from
+    # the removal: cut at the LAST copy's end and the size goes with it
+    out = italicize(para_xml('<w:i w:val="0"/><w:i w:val="0"/>'
+                             '<w:sz w:val="20"/>'),
+                    "Journal of Economics")
+    assert out == para_xml('<w:i/><w:sz w:val="20"/>')
+
 
 def test_a_run_already_italic_is_still_handed_back_untouched():
     """The other side of that branch, and the reason it cannot simply
@@ -379,3 +386,23 @@ def test_a_second_vertAlign_comes_out_with_the_first():
                    '<w:vertAlign w:val="subscript"/>'
                    '<w:lang w:val="en-US"/></w:rPr>'
                    "<w:t>t</w:t></w:r></w:p>")
+
+
+def test_a_run_ALREADY_in_the_house_face_does_not_stop_the_sweep():
+    """The `continue` under "nothing changed". A paragraph is rarely
+    uniform — a caption whose number was styled by hand, a run pasted
+    from another document — so a second pass meets runs that already
+    carry the face, and `break` there leaves everything BEFORE them
+    untouched. The walk is back to front, so "before" is most of the
+    paragraph."""
+    from docxkit.edit import set_run_properties
+
+    face = ('<w:rPr><w:rFonts w:ascii="Arial Narrow"/>'
+            '<w:sz w:val="20"/></w:rPr>')
+    para_xml = ("<w:p><w:r><w:t>plain</w:t></w:r>"
+                f"<w:r>{face}<w:t>already</w:t></w:r></w:p>")
+
+    out, written = set_run_properties(para_xml, HOUSE)
+
+    assert written == 1, "the plain run, and only it"
+    assert out.count('w:ascii="Arial Narrow"') == 2
