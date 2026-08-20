@@ -1058,6 +1058,45 @@ def test_ingest_counts_NOTHING_extra_under_the_cap(monkeypatch, project,
     assert "more" not in out
 
 
+@pytest.mark.parametrize(("n", "extra"), [(12, ""), (13, "... and 1 more")])
+def test_ingest_counts_the_rest_AT_the_cap_and_one_past_it(monkeypatch,
+                                                           project, capsys,
+                                                           n, extra):
+    """Twelve exactly, and thirteen. The pair above proved the cap with
+    25 and with 3, where `> 11` and `> 13` agree with `> 12` — a bound
+    is invisible at any distance but one. At twelve there is nothing
+    left over to count; at thirteen there is exactly one, which is the
+    smallest number the line can carry and the one a reader trusts
+    least."""
+    _reworded(project, n)
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert f"-- text ({n})" in out
+    assert sum("Original sentence" in ln for ln in out.splitlines()) == 12
+    assert ("more" in out) is bool(extra), out
+    if extra:
+        assert extra in out
+
+
+def test_an_ingest_line_quotes_TWO_HUNDRED_characters_of_the_change(
+        monkeypatch, project, capsys):
+    """The width of one line of the report an author reads to find out
+    what happened while the batch was away. A paragraph is longer than
+    that more often than not, so the cut is on almost every line."""
+    long_one = "Original " + "sentence that runs on and on, " * 12
+    assert len(long_one) > 201
+    write(project.prev, make_parts(para(run(long_one))))
+    write(project.working, make_parts(para(run("Reworded."))))
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    (line,) = [ln for ln in out.splitlines() if "word_diff" in ln]
+    assert len(line) == 4 + 200, line       # "   " + the space print adds
+
+
 def test_ingest_names_every_LOST_element_not_just_the_count(monkeypatch,
                                                             project, capsys):
     """The heading says how many; the lines say WHICH, and which is the
