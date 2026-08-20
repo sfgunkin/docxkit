@@ -299,6 +299,42 @@ worked; the ergonomics are what invited the mistake.
 
 ## Fixed
 
+### ~~S1 a property present TWICE was only half removed — `22a09e6`~~
+
+Found 2026-08-20 by the mutation pass over `_xml`, and it is the defect the
+docstrings around it already named as fixed. `set_para_property` took the
+first copy of the property out of `w:pPr` and stopped (`break`);
+`set_run_property` replaced the first child with the wanted element and
+returned.
+
+Two of the same property in one properties element is invalid and ordinary:
+a style turns `keepNext` OFF with a second `w:val="0"` element beside the one
+that turns it on, and a run salvaged out of two carries `w:sz` twice. So
+
+    set_para_property(para, "keepNext", "<w:keepNext/>")
+
+on `<w:pPr><w:keepNext/><w:keepNext w:val="0"/></w:pPr>` answered with the
+stale copy sorting FIRST, and
+
+    set_para_property(para, "keepNext", "")
+
+answered with the flag still there — a REMOVE that does not remove, on the
+property `_table_layout._keep_with_table` writes to keep a table head with its
+body and the size `footnotes` writes to repair a note.
+
+`_keep_with_table`'s own docstring lists "a `w:keepNext w:val="0"` given a
+second element beside it" as one of the four defects consolidating the writers
+was meant to end. It was ended for the case where the writer PUT the second
+one there, and not for the case where it found two.
+
+**Pinned the other way on 2026-08-19** — "the document unchanged; repairing a
+duplicate is `lint`'s finding, not this writer's" — off a fixture of identical
+twins, which is the one shape where the harm does not show. The test now says
+what changed the reading: taking every copy out is the same repair this writer
+already makes when it moves a misplaced property into its slot, and the
+offsets objection in the old note is answered by re-reading the properties
+after each cut.
+
 ### ~~S2 the citation apparatus does not read ENDNOTES~~ — FIXED 20.08, `0db8361`, `c116411`
 
 Found the same way, 2026-08-19, and demonstrated: the identical bookmark and

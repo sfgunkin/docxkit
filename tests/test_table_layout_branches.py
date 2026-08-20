@@ -19,7 +19,9 @@ from conftest import NS
 from docxkit import tables
 from docxkit._table_layout import (
     _AFTER_TBLLAYOUT,
+    _AFTER_TBLW,
     _TBLLAYOUT_RE,
+    _TBLW_RE,
     _alignment,
     _bump,
     _check_rule,
@@ -29,6 +31,7 @@ from docxkit._table_layout import (
     _set_jc,
     _set_properties,
     _set_tbl_pr,
+    _set_tc_w,
 )
 from docxkit.errors import AnchorError
 
@@ -378,3 +381,49 @@ def test_a_table_with_no_GRID_to_count_is_ruled_without_alignment():
 # * `drop_blank_rows`: `range(b + 1, len(trs))` read as `range(b * 1,
 #   ...)`. `b` came out of `blank`, and `gone` is the set of `blank`, so
 #   the extra candidate is dropped by the comprehension`s own guard.
+
+
+def test_a_table_property_present_TWICE_comes_out_in_full():
+    """The same defect as `_xml.set_para_property`'s, in the writer next
+    door and found by reading it after that one was fixed. Two `w:tblW`
+    in one `w:tblPr` is invalid and this package shipped a release that
+    wrote misplaced properties, so the documents needing the repair are
+    the ones a re-run has to fix — and taking one copy out leaves the
+    STALE element sorting ahead of the new width, which is the reading
+    Word takes."""
+    body = ('<w:tbl><w:tblPr><w:tblW w:w="900" w:type="dxa"/>'
+            '<w:tblW w:w="500" w:type="dxa"/></w:tblPr>'
+            '<w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>'
+            "<w:tr>" + cell("x") + "</w:tr></w:tbl>")
+
+    out = _set_tbl_pr(body, _TBLW_RE, '<w:tblW w:w="700" w:type="dxa"/>',
+                      _AFTER_TBLW)
+
+    assert out.count("<w:tblW") == 1
+    assert '<w:tblPr><w:tblW w:w="700" w:type="dxa"/></w:tblPr>' in out
+
+
+def test_a_cell_width_present_twice_comes_out_in_full_too():
+    """`subn(..., count=1)` replaced the first and left the rest — a
+    column measured to the width it used to have. The snapshot below is
+    the other half: the copy inside a `w:tcPrChange` is the record of
+    what a tracked change replaced, and a writer that takes every copy
+    has to stop at the live ones."""
+    twice = ('<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/>'
+             '<w:tcW w:w="500" w:type="dxa"/></w:tcPr><w:p/></w:tc>')
+
+    out = _set_tc_w(twice, '<w:tcW w:w="700" w:type="dxa"/>')
+
+    assert out == ('<w:tc><w:tcPr><w:tcW w:w="700" w:type="dxa"/></w:tcPr>'
+                   "<w:p/></w:tc>")
+
+    date = 'w:id="7" w:author="A" w:date="2026-01-01T00:00:00Z"'
+    snapshot = (f'<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/>'
+                f"<w:tcPrChange {date}><w:tcPr>"
+                f'<w:tcW w:w="300" w:type="dxa"/></w:tcPr></w:tcPrChange>'
+                f"</w:tcPr><w:p/></w:tc>")
+
+    kept = _set_tc_w(snapshot, '<w:tcW w:w="700" w:type="dxa"/>')
+
+    assert '<w:tcW w:w="300" w:type="dxa"/>' in kept, "the past stands"
+    assert kept.count("<w:tcW") == 2

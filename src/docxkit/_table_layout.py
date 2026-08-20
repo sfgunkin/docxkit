@@ -205,7 +205,12 @@ def _set_tbl_pr(body: str, pattern: re.Pattern[str], element: str,
     # ahead of `w:tblStyle` on every table it touched, so the documents
     # needing the repair are exactly the ones a re-run has to fix. For a
     # property already in its slot the removal and the insert cancel.
-    if (was := pattern.search(live)) is not None:
+    while (was := pattern.search(live)) is not None:
+        # EVERY copy: two `w:tblW` in one `w:tblPr` is what a writer that
+        # could not see the first one leaves behind, and this package
+        # shipped one of those. Taking a single copy out then rewrites
+        # the table's width with the STALE element still sorting ahead of
+        # the new one, which is the reading Word takes.
         inner = inner[:was.start()] + inner[was.end():]
         live = live_properties(inner)
     at = min((p for p in (live.find(t) for t in after) if p != -1),
@@ -458,10 +463,12 @@ def _own_tcpr(cell: str) -> tuple[int, int, str] | None:
 def _set_tc_w(cell: str, tcw: str) -> str:
     """`cell` with `tcw` as its own width, replacing or creating one.
 
-    No `live_properties` guard here, unlike :func:`_set_tbl_pr`: the one
-    caller is `fit_columns`, which refuses a table with tracked changes
-    in it, so a `w:tcPrChange` snapshot holding an old width cannot be
-    reached. Give this a second caller and it needs the guard.
+    Confined to the cell's LIVE properties, like :func:`_set_tbl_pr`.
+    The one caller is `fit_columns`, which refuses a table with tracked
+    changes in it, so a `w:tcPrChange` snapshot holding an old width
+    cannot be reached today — but the guard is a line, and the version
+    without it was one caller away from writing into the historical
+    record.
     """
     own = _own_tcpr(cell)
     if own is None:
@@ -469,8 +476,15 @@ def _set_tc_w(cell: str, tcw: str) -> str:
         at = opening.end() if opening else 0
         return cell[:at] + f"<w:tcPr>{tcw}</w:tcPr>" + cell[at:]
     start, end, inner = own
-    new_inner, hits = _TCW_RE.subn(_const(tcw), inner, count=1)
-    if not hits:
+    hits = list(_TCW_RE.finditer(live_properties(inner)))
+    if hits:
+        # Back to front, and all of them — see `_set_tbl_pr`. A second
+        # `w:tcW` left standing is a column measured to the width it
+        # used to have.
+        for m in reversed(hits[1:]):
+            inner = inner[:m.start()] + inner[m.end():]
+        new_inner = inner[:hits[0].start()] + tcw + inner[hits[0].end():]
+    else:
         # w:tcW's schema slot: after w:cnfStyle, before the rest
         cnf = re.match(r"<w:cnfStyle\b[^>]*/>", inner)
         at = cnf.end() if cnf else 0
