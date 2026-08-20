@@ -626,7 +626,9 @@ writers, each taking the FIRST copy of a property and stopping.
   `set_run_property` replaced the first and returned;
 * `_table_layout._set_tbl_pr` removed one match of its pattern;
   `_set_tc_w` substituted with `count=1`;
-* `crossrefs._with_hyperlink_style` did the same to `w:rStyle`.
+* `crossrefs._with_hyperlink_style` did the same to `w:rStyle`;
+* `edit._run_italic` and `edit._run_vert_align`, found by reading for
+  the shape after the other five — seven and eight.
 
 Two of one property in one properties element is invalid and ORDINARY.
 A style turns `keepNext` off with a second `w:val="0"` element beside
