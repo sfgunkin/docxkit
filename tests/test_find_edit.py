@@ -15,6 +15,8 @@ from docxkit import (
 from docxkit.edit import insert_in_para, replace_in_para
 from docxkit.errors import AnchorError
 from docxkit.find import (
+    body_elements,
+    edit_para,
     find_para,
     heading_level,
     page_break_before,
@@ -983,3 +985,68 @@ def test_an_EMPTY_pPr_does_not_get_a_SECOND_one_beside_it():
 
     assert out.count("<w:pPr") == 1
     assert "<w:pPr><w:pageBreakBefore/></w:pPr>" in out
+
+
+# --- the run of 2026-08-20: 4.0 % ---------------------------------------
+
+
+_CURLY = "<w:p><w:r><w:t>It is the author’s own.</w:t></w:r></w:p>"
+_PLAIN = "<w:p><w:r><w:t>Another line.</w:t></w:r></w:p>"
+_STRAIGHT = "It is the author's own."
+
+
+def test_para_slice_does_NOT_normalize_unless_it_is_asked_to():
+    """`normalize: bool = False` — a default every test passed
+    explicitly, so the value in the signature was free.
+
+    It is not a cosmetic default. Folding Word's substitutions makes an
+    anchor written with a straight apostrophe match a paragraph Word
+    autocorrected — which is what a caller wants when they ASK, and a
+    silent widening of every anchor in the package when they do not: two
+    paragraphs that differ only in their quotes stop being two
+    paragraphs, and `para_slice` edits whichever came first."""
+    xml = f"<w:body>{_CURLY}{_PLAIN}</w:body>"
+
+    with pytest.raises(AnchorError, match="0 hits"):
+        para_slice(xml, _STRAIGHT)
+
+    assert para_slice(xml, _STRAIGHT, normalize=True)[0] > 0
+
+
+def test_edit_para_does_NOT_normalize_unless_it_is_asked_to():
+    """The same default, one call up — and the one that WRITES. A caller
+    who did not ask for folding gets the refusal, not somebody else's
+    paragraph rewritten."""
+    xml = f"<w:body>{_CURLY}{_PLAIN}</w:body>"
+
+    with pytest.raises(AnchorError, match="0 hits"):
+        edit_para(xml, _STRAIGHT, lambda p: p)
+
+    assert edit_para(xml, _STRAIGHT, str.upper, normalize=True) != xml
+
+
+def test_a_table_at_offset_ZERO_is_found():
+    """`pos = 0`: the scan starts at the beginning of what it was given.
+    A caller holding a body fragment that OPENS with a table — a table
+    and its note, pulled out to be placed — loses it at `pos = 1`, and
+    the paragraphs inside it are then reported as body paragraphs
+    because nothing knows they are in a table."""
+    cell = "<w:p><w:r><w:t>inside</w:t></w:r></w:p>"
+    xml = f"<w:tbl><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>"
+
+    assert [kind for kind, _, _ in body_elements(xml)] == ["tbl"]
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `return hits[0]` written `hits[-1]`, under a guard that has already
+#   raised for anything but one hit.
+# * `len(out) != expect` written `is not`: both are table counts, and
+#   CPython hands out one object per integer below 257.
+# * `xml.find("<w:tbl>", pos) != -1` written `> -1` and `is not -1`:
+#   `find` answers -1 or an offset, and -1 is one of the cached ones.
+# * `out.sort(key=lambda el: el[1])` written `el[2]` — start against
+#   end. Every span in that list is disjoint from every other (a
+#   paragraph inside a table is not in it, and a nested table rides
+#   inside its outer one rather than appearing beside it), and disjoint
+#   spans sort the same way by either edge.
