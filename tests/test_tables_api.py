@@ -426,6 +426,16 @@ def test_a_column_SKIPS_the_rows_that_are_too_short():
 
     assert ragged.column(1) == ["0.62"]
 
+    # and a row with NO cells, which is what `>` and `!=` disagree
+    # about: the row above is one short of the column asked for, where
+    # both readings skip it. `<w:tr/>` with nothing in it is real —
+    # `booktabs` guards for it too — and inequality lets it through into
+    # an IndexError inside a getter.
+    empty = Table(index=0, start=0, end=0,
+                  rows=[["Country", "AFI"], [], ["Chile", "0.62"]])
+
+    assert empty.column(1) == ["0.62"]
+
 
 def test_row_named_reads_the_DATA_rows_and_ALL_of_them():
     """`self.rows[1:]`: the header is not a data row, and the first data
@@ -553,3 +563,25 @@ def test_a_table_whose_ROWS_disagree_with_the_xml_is_refused():
 
     with pytest.raises(ValueError, match="shorter"):
         short.grid_rows(xml)
+
+
+# --- _table_core's whole survivor list, 2026-08-20: 1.7 % (7/415) -----
+#
+# Measured WHOLE for the first time (the earlier figure of 1.0 % came
+# from a run that stopped at 675 of 903 mutants, and flattered). Six of
+# the seven are equivalent, each checked with `kill_check`:
+#
+# * the two `@overload` decorators, mutated away. Overloads are
+#   declarations for the type checker; the runtime binds the
+#   implementation under them either way, and `mypy` and `pyright` are
+#   two of the five gates.
+# * the `*` in those same two overload signatures, read as `/`. Same
+#   interface constraint the survivor tool already discounts elsewhere
+#   — it does not recognise them inside an `@overload` stub.
+# * `grid_rows`' `default=0` on the widest-row `max`, read as -1. The
+#   default is reached only for a table with NO rows, and the loop that
+#   would use the width does not run for one.
+# * `tables_after`'s `t.start > para.start()` read as `>=`. A table and
+#   a paragraph cannot begin at the same offset in one string.
+#
+# The seventh is the test above.
