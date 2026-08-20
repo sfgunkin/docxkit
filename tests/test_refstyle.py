@@ -1371,5 +1371,20 @@ def test_a_single_entry_group_does_not_END_the_ambiguity_scan():
 # * `zip(entries, answers_to, strict=True)` written `strict=False`:
 #   `answers_to` is built one entry at a time from the same list.
 #
-# NOT yet worked: the four mutants on `max(…, default=-1)`, which is the
-# sentinel for a document whose reference list did not parse.
+# The four on `max(..., default=-1)` — the sentinel for a document whose
+# reference list did not parse — are argued too, and the argument is
+# two lines rather than the fixture it looked like it needed:
+#
+# * the values BELOW zero (`-2`, `~1`) leave `head_idx <= i <=
+#   last_entry` empty, because a paragraph index is never negative;
+# * the value AT zero (`-0`, `not 1`) can only add the paragraph at
+#   index 0 to the skipped range, and only when the heading IS that
+#   paragraph — and a heading paragraph's text equals a heading word
+#   exactly, which is how `head_idx` found it. There is nothing in it
+#   for the prose scan to report either way.
+#
+# The `head_idx <= i` on the line that uses it goes the same way: read
+# as `<`, the paragraph it stops skipping is that same heading.
+#
+# So refstyle is CLOSED: every survivor argued and put through
+# kill_check.
