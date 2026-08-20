@@ -896,6 +896,39 @@ def test_an_insertion_of_SEVERAL_runs_unwraps_them_in_order():
     assert text(accept(xml)) == ["head one two three tail"]
 
 
+def test_a_MOVED_block_is_reported_off_the_unjunked_alignment():
+    """`autojunk=False`. difflib treats an element appearing in more
+    than 1% of a 200-element sequence as junk and refuses to seed a
+    match on it — and a manuscript is exactly that: two hundred
+    paragraphs in which "" and a repeated section line occur dozens of
+    times.
+
+    Three shapes were tried before this one and every one of them came
+    out the same either way, because `find_longest_match` extends a
+    match across popular elements once it has an anchor. A MOVED block
+    is where the flag bites: the alignment junking chooses reports the
+    deletion three paragraphs further down, and the paragraph number is
+    the whole content of the report — it is what a person opens the
+    document at."""
+    from docxkit.revisions import changed_paragraphs
+
+    def sec(i: int) -> list[str]:
+        return [f"Section {i}", "", "Text of the section.", ""]
+
+    def doc(texts: list[str]) -> str:
+        return document("".join(para(run(t)) if t else para("")
+                                for t in texts))
+
+    before = [x for i in range(60) for x in sec(i)]
+    after = before[8:16] + before[:8] + before[16:]
+    assert len(before) >= 200, "under 200 difflib does not junk at all"
+
+    got = changed_paragraphs(doc(before), doc(after))
+
+    assert [c.paragraph for c in got] == list(range(8)) + list(range(5, 13))
+    assert got[-1].before == "Section 3" and got[-1].after == ""
+
+
 def test_a_SECOND_deleted_paragraph_mark_merges_too():
     """The `continue` after `_merge_into_next`. Two paragraph marks
     deleted in a row is what a Compare produces when an author joins
@@ -963,11 +996,9 @@ def test_a_row_that_GOES_does_not_end_the_walk_over_the_others():
 #   the shape that produces one (two bookmarks around a single deleted
 #   run) puts them in separate parents.
 # * `spans`' `pos = 0` as `-1`: SRE clamps a negative search position.
-# * `autojunk=False` in `changed_paragraphs`. NOT equivalent and not
-#   pinned: difflib turns duplicate elements into "junk" only for
-#   sequences of 200 or more, and the fixtures here are five paragraphs.
-#   The flag is there because a manuscript IS that long and a repeated
-#   line — a table caption, a blank paragraph — is exactly what the
-#   heuristic would discard. Pinning it needs a 200-paragraph fixture
-#   with a repeat, which is a test worth writing and was not written
-#   today.
+# * `autojunk=False` in `changed_paragraphs` is pinned above, and it
+#   took four fixtures to find one that could tell the two apart: a
+#   blank-heavy manuscript, a repeated head, and a document whose only
+#   common elements are popular ones all diff identically, because
+#   `find_longest_match` extends a match across popular elements once
+#   it has an anchor. A MOVED block has no anchor to extend from.
