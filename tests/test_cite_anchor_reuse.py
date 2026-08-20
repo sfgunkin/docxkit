@@ -356,3 +356,15 @@ def test_the_plan_says_WHICH_note_store_a_finding_is_in():
     plan = repair_plan(parts)
 
     assert "'Smith2020txt' (en)" in plan, plan
+
+
+# `_cite_repair.py` measured 2.0 % (4/198) on 2026-08-20, and all four
+# are equivalent:
+#
+# * `len(spans) > 1` in `wrap_link_in_bookmark`, written `!= 1`. The
+#   `if not spans: raise` above it means one is the floor.
+# * `which == "only"` there, as `>=` and as `is`. The two values are
+#   "only" and "first" — "first" sorts before "only" — and the default
+#   in the signature is the same literal object the comparison names.
+# * `s, e, body = spans[0]` in `remove_outer_field`, written `spans[-1]`,
+#   under a guard that has already raised for anything but one span.
