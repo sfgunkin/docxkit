@@ -1148,6 +1148,22 @@ def test_a_report_says_NOTHING_was_spaced_when_nothing_was():
     assert "0 spaced" in rep.format().splitlines()[0]
 
 
+def test_the_report_quotes_SEVENTY_characters_of_the_mention():
+    """`anchor_text` is what a caller prints to say WHICH sentence the
+    table was anchored to — the paragraph a paper's own script names in
+    its log. Seventy characters is a line; a mention runs longer than
+    that whenever it is a real sentence."""
+    long_mention = ("Как показано в таблице 1, доля занятых в сельском "
+                    "хозяйстве снижается во всех регионах выборки.")
+    assert len(long_mention) > 71
+
+    _out, rep = placement.place(
+        parts(P(long_mention) + P("Таблица 1. Заголовок") + TBL("шапка")))
+
+    assert rep.placements[0].anchor_text == long_mention[:70]
+    assert len(rep.placements[0].anchor_text) == 70
+
+
 # --- the argued half of placement's 41 ---------------------------------
 #
 # Thirty-five are left after the six tests above, and most of them are
