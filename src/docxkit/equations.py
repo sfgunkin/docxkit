@@ -643,7 +643,7 @@ class _Walker:
         method = getattr(self, "e_" + name, None)
         if method is not None:
             return str(method(el))
-        if name.endswith("Pr") or name == "ctrlPr":
+        if name.endswith("Pr"):            # `ctrlPr` among them
             return ""                          # properties are not content
         self.gaps.append(name)
         return rf"\text{{[?m:{name}]}}" + self.children(el)

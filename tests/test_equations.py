@@ -700,3 +700,72 @@ def test_a_TRACKED_insertion_inside_an_equation_keeps_its_TEXT():
 #
 #   `latex_to_omml`'s three need Word's MML2OMML.XSL, which a plain
 #   install does not have; the test that would reach them skips.
+
+
+# --- the run of 2026-08-20: 4.3 % (18/416) ----------------------------
+
+
+def test_a_separator_with_NO_character_rejoins_nothing():
+    """`if sep_el is None or not sep`. An `m:sepChr` may carry no
+    `m:val` at all — the default separator — and there is no character
+    to rejoin the halves with. Read as `and`, the guard needs BOTH to
+    be true, so a valueless element falls through and the two halves
+    are merged with a text node of nothing: the empty `m:e` disappears
+    and the gap it drew becomes no gap and no sign.
+
+    The empty element is what the papers see (`(   −1)`), so the repair
+    matters; doing it with nothing to insert is a silent edit."""
+    out = _normalized(_d("<m:sepChr/>", "<m:e/>", f"<m:e>{mr('1')}</m:e>"))
+
+    assert "<m:e/>" in out, "nothing to rejoin with, so nothing rejoined"
+    assert out.count("<m:e>") == 1
+    assert tokens(out) == "1"
+
+
+def test_standalone_refuses_a_fragment_with_NO_element():
+    """`len(root) != 1` covers both sides of "exactly one". Read as
+    `> 1`, an empty fragment falls through the raise into `root[0]` —
+    an IndexError from inside the converter, where the message it
+    replaces says what was expected and what arrived."""
+    from docxkit.equations import standalone
+    from docxkit.errors import AnchorError
+
+    with pytest.raises(AnchorError, match="got 0"):
+        standalone("")
+    with pytest.raises(AnchorError, match="got 2"):
+        standalone(omath(mr("x")) + omath(mr("y")))
+
+
+# The other sixteen are equivalent by construction, each checked with
+# `kill_check`:
+#
+# * the four on `prose_math`'s `pieces[k + 1] if k + 1 < len(pieces)`
+#   and its neighbour. The pieces come from splitting on a sentinel
+#   this function itself substituted for every equation, so there are
+#   exactly `len(maths) + 1` of them and the guard cannot fire: `<=`,
+#   `!=`, `is not` and `k // 1` all answer the same thing over the
+#   range `k` actually takes.
+# * `display`'s `maths[0]` as `maths[-1]`, and `standalone`'s `root[0]`
+#   — both are guarded by a raise unless there is exactly one.
+# * `face`'s `if italic: return "i"`. OMML's default face IS italic, so
+#   the branch and the fallthrough return the same string; `not italic`
+#   swaps two answers that are equal.
+# * `walk`'s `name == "t"` as `>=`. The names that sort at or above it
+#   in the `w` namespace — `tab`, `tbl`, `tc`, `tr` — carry no element
+#   TEXT, so `_text(el.text or "")` and the `return ""` beneath agree.
+# * `walk`'s `ns == _W_NS` as `>=`. The math namespace sorts BELOW the
+#   wordprocessing one (`officeDocument` before `wordprocessingml`), and
+#   so does every other namespace an equation carries.
+# * `e_d`'s `len(...) > 1` as `!= 1`: with no `m:e` at all the join over
+#   an empty list and `bare` both answer "".
+# * `_local`'s `rsplit("}", 1)[-1]` as `rsplit("}", 2)[-1]` — the last
+#   piece is the last piece.
+# * `_MATH_GLYPHS`' `-` as `^`: `_INVISIBLE` is a subset of the union it
+#   is taken from, so the symmetric difference IS the difference.
+# * `_rejoin_at_separator`'s `len(els) < 2` as `< 1`. A single `m:e` has
+#   nothing to rejoin: every write in the function is inside
+#   `for other in els[1:]`, which is empty.
+# * `find_mml2omml_xsl`'s `if hits:` inverted. That branch is the glob
+#   over `C:\Program Files` reached only when Office is installed
+#   somewhere the candidate list does not name — which no test can
+#   arrange, and which the message beneath it is written for.
