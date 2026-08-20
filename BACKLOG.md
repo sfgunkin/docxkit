@@ -328,8 +328,22 @@ A bookmark cannot be lost that way and the test beside it says why: `revisions`
 LIFTS bookmarks out of an element it removes. Nothing lifts a `w:hyperlink`,
 and nothing can — the element carries the words.
 
-**Fix 1 is still open**, and it is the one that would stop the wrong number
-reaching the paper in the first place.
+**Fix 1, the half of it docxkit can do: also done, same day.** How Word
+diffs is not ours to change, so the entry's alternative — "or refuse the batch
+and say so" — is what shipped. `tracked.accepted_math(revised, accepted)`
+compares the equations of the accepted view against the clean copy's, position
+by position, and `build` refuses on it under `accept_check`.
+
+The AFI corruption is pinned with the four checks that pass it, which is why
+the number reached the paper: the REJECT view is correct (it restores `-0.20`),
+the counts do not move, the equation renders, and `unaccepted` compares `w:t`
+while an equation's characters are `m:t` — a reading `_paras` documents as
+deliberate. It runs after `restore_math_glyphs`, so the minus sign Compare
+flattens is not reported twice over.
+
+What is still not done is making the redline CORRECT rather than refused: a
+batch that changes an inline equation still has to apply the maths after the
+Compare, as AFI does. The refusal now says so in the message.
 
 **Per-paper workaround now in AFI** (delete when fixed): the maths is applied
 to `batch.docx` AFTER the Compare, so the two values are baked in with no

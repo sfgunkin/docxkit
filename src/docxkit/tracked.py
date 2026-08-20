@@ -61,8 +61,10 @@ from ._xml import (
     TEXT_PARTS,
     internal_links,
     text_parts,
+    visible_text,
 )
 from .comments import RevisionContext
+from .equations import OMATH_RE
 from .errors import PackageError
 from .hygiene import CARRIED_PROPERTIES
 from .lint import lint_parts
@@ -84,6 +86,7 @@ __all__ = [
     "Unaccepted",
     "Untracked",
     "accepted_losses",
+    "accepted_math",
     "build",
     "compare_collateral",
     "package_counts",
@@ -204,6 +207,92 @@ def accepted_losses(revised: dict[str, bytes],
              for b in sorted(was_names - now_names)]
             + [f"link LOST on accept: -> {t}"
                for t in sorted(was_targets - now_targets)])
+
+
+def _math_texts(parts: dict[str, bytes]) -> list[str]:
+    """Every equation's rendered characters, in document order."""
+    return [visible_text(m.group(0))
+            for _name, xml in text_parts(parts)
+            for m in OMATH_RE.finditer(xml)]
+
+
+def accepted_math(revised: dict[str, bytes],
+                  accepted: dict[str, bytes]) -> list[str]:
+    """Equations the ACCEPTED view does not reproduce from the clean copy.
+
+    Word's Compare does not treat an inline ``m:oMath`` as a unit. It
+    diffs INSIDE it at character level, and on AFI (2026-08-19) it
+    matched the common prefix ``-0.`` of ``-0.20`` and ``-0.398`` and
+    emitted the rest as an insertion BESIDE the old digits. Accepting
+    then reads ``-0.20398``: a number nobody wrote, in the deliverable,
+    as though the author had asked for it.
+
+    Every other check is blind to it by construction. :func:`unaccepted`
+    compares ``w:t`` and an equation's characters are ``m:t`` — that
+    reading is deliberate, and :func:`_paras` says why. The reject view
+    is CORRECT here (it restores ``-0.20``), so the reject gate passes.
+    The counts do not move. The equation still renders.
+
+    So the question this asks is the narrow one nothing else does: after
+    accepting, does every equation say what the clean copy says? Run
+    after :func:`docxkit.hygiene.restore_math_glyphs`, so the minus sign
+    Compare flattens is not reported as a corruption twice over.
+    """
+    was, now = _math_texts(revised), _math_texts(accepted)
+    if len(was) != len(now):
+        return [(f"the clean copy has {len(was)} equation(s) and "
+                 f"accepting the redline gives {len(now)}")]
+    return [f"equation {i}: {w!r} in the clean copy, {n!r} accepted"
+            for i, (w, n) in enumerate(zip(was, now, strict=True), 1)
+            if w != n]
+
+
+def _refuse_accept_side(report: BuildReport, revised: str, *,
+                        math_only: bool = False) -> None:
+    """Raise for whatever the ACCEPTED view does not reproduce.
+
+    Three questions about one view, kept together because the answer to
+    all three is the same: the accepted document is what the author
+    reads, so a difference there is not a note to print and continue
+    past. They are separate checks because each is blind to the others —
+    the text comparison cannot see an anchor, the anchor comparison
+    cannot see a number, and neither reads `m:t`.
+
+    `math_only` runs the last of them alone, because the equations can
+    only be judged after the glyph restore.
+    """
+    if not math_only and report.accepted_losses:
+        listed = "\n  ".join(report.accepted_losses)
+        raise PackageError(
+            f"accepting every revision LOSES anchors the clean copy "
+            f"has:\n  {listed}\n"
+            f"A bookmark and a hyperlink carry no text, so the paragraph "
+            f"comparison beside this one cannot see them go, and they "
+            f"are present in the redline as built — inside a deletion, "
+            f"until the author accepts it. Pass accept_check=False to "
+            f"build the file anyway and inspect it.")
+    if not math_only and report.unaccepted:
+        listed = "\n  ".join(str(u) for u in report.unaccepted)
+        raise PackageError(
+            f"accepting every revision does NOT reproduce {revised} — "
+            f"{len(report.unaccepted)} paragraph(s) differ, so the "
+            f"deliverable the author reads is not the document this "
+            f"redline was built from:\n  {listed}\n"
+            f"Word rewriting content while it derives the redline is the "
+            f"usual cause, and the reject-all gate cannot see it: "
+            f"rejecting deletes the insertion the damage is inside. Pass "
+            f"accept_check=False to build the file anyway and inspect "
+            f"it.")
+    if report.accepted_math:
+        listed = "\n  ".join(report.accepted_math)
+        raise PackageError(
+            f"accepting every revision does not reproduce the EQUATIONS "
+            f"of {revised}:\n  {listed}\n"
+            f"Word's Compare diffs inside an inline m:oMath at character "
+            f"level, so a changed number can come out as the old digits "
+            f"with the new ones inserted beside them. Apply the math "
+            f"edit to the built batch instead, or pass accept_check="
+            f"False to build the file anyway and inspect it.")
 
 
 def _root(parts: dict[str, bytes], name: str = DOCUMENT) -> Any | None:
@@ -521,6 +610,10 @@ class BuildReport:
         #: section breaks — that the built redline does not resolve back
         #: to the documents it came from. See :func:`structure_counts`.
         self.structure_diff: list[str] = []
+        #: Equations the ACCEPTED view does not reproduce from the
+        #: clean copy. Refused with `accept_check`. See
+        #: :func:`accepted_math`.
+        self.accepted_math: list[str] = []
         #: Bookmarks and internal links the CLEAN copy has and the
         #: ACCEPTED view does not. Refused with `accept_check`, because
         #: the accepted view is the deliverable. See
@@ -1021,29 +1114,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"An over-eager math accept is the usual cause: try "
                 f"resolve_math=False. Pass reject_check=False to build the "
                 f"file anyway and inspect it.")
-        if report.accepted_losses and accept_check:
-            listed = "\n  ".join(report.accepted_losses)
-            raise PackageError(
-                f"accepting every revision LOSES anchors the clean copy "
-                f"has:\n  {listed}\n"
-                f"A bookmark and a hyperlink carry no text, so the "
-                f"paragraph comparison beside this one cannot see them "
-                f"go, and they are present in the redline as built — "
-                f"inside a deletion, until the author accepts it. Pass "
-                f"accept_check=False to build the file anyway and "
-                f"inspect it.")
-        if report.unaccepted and accept_check:
-            listed = "\n  ".join(str(u) for u in report.unaccepted)
-            raise PackageError(
-                f"accepting every revision does NOT reproduce "
-                f"{revised.name} — {len(report.unaccepted)} paragraph(s) "
-                f"differ, so the deliverable the author reads is not the "
-                f"document this redline was built from:\n  {listed}\n"
-                f"Word rewriting content while it derives the redline is "
-                f"the usual cause, and the reject-all gate cannot see it: "
-                f"rejecting deletes the insertion the damage is inside. "
-                f"Pass accept_check=False to build the file anyway and "
-                f"inspect it.")
+        if accept_check:
+            _refuse_accept_side(report, revised.name)
         # Word rewrites the OMML while deriving the redline and flattens
         # U+2212 to an ASCII hyphen doing it — measured on AFI: 2 minus
         # signs in the baseline, 0 in the built batch, and the 57 in the
@@ -1056,6 +1128,16 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             parts, revised_parts, read_parts(original))
         for note in report.restored_glyphs:
             say(f"  restored math glyph — {note}")
+
+        # AFTER the glyph restore, and after the write below would be too
+        # late. Compare diffs INSIDE an inline equation, so accepting can
+        # leave a number nobody wrote — see `accepted_math`. Refused with
+        # the other accept-side gate, because a wrong number in the
+        # deliverable is not something to report and continue past.
+        report.accepted_math = accepted_math(
+            revised_parts, _simulate(parts, _accept))
+        if accept_check:
+            _refuse_accept_side(report, revised.name, math_only=True)
 
         write_docx(building, parts)
         report.comments_total = package_counts(parts)["comments"]

@@ -2652,3 +2652,94 @@ def test_a_batch_that_loses_nothing_reports_nothing():
                       "<w:r><w:t>Table 1</w:t></w:r></w:hyperlink></w:p>")
 
     assert accepted_losses(same, dict(same)) == []
+
+
+# --- the equation Compare diffed INSIDE ---------------------------------
+
+
+def _mangled_equation() -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """(clean copy, redline) for what Compare does to an inline field.
+
+    It matches the common prefix `-0.` of `-0.20` and `-0.398` and
+    emits the rest as an insertion BESIDE the old digits — so accepting
+    reads `-0.20398` and rejecting reads `-0.20`, which is right. AFI
+    R3/T3.2, 2026-08-19."""
+    redline = make_parts(
+        "<w:p><m:oMath><m:r><m:t>-0.</m:t></m:r><m:r><m:t>20</m:t></m:r>"
+        f'<w:ins {_WHEN}><m:r><m:t>398</m:t></m:r></w:ins></m:oMath>'
+        "<w:r><w:t> in every year.</w:t></w:r></w:p>")
+    revised = make_parts(
+        "<w:p><m:oMath><m:r><m:t>-0.398</m:t></m:r></m:oMath>"
+        "<w:r><w:t> in every year.</w:t></w:r></w:p>")
+    return revised, redline
+
+
+def test_an_equation_the_accept_MANGLES_is_a_finding():
+    """The number in the paper. Accepting gives `-0.20398` — the old
+    digits with the new ones inserted after them — and that is the
+    document the author reads."""
+    from docxkit.tracked import _accept, _simulate, accepted_math
+
+    revised, redline = _mangled_equation()
+
+    found = accepted_math(revised, _simulate(redline, _accept))
+
+    assert found == ["equation 1: '-0.398' in the clean copy, "
+                     "'-0.20398' accepted"]
+
+
+def test_every_OTHER_check_passes_that_document():
+    """Which is why the number reached the paper. The reject view is
+    CORRECT — it restores the original `-0.20` — so the reject gate is
+    right to pass; the counts do not move; the equation renders; and
+    `unaccepted` compares `w:t`, which an equation's characters are
+    not."""
+    from docxkit.tracked import (
+        _accept,
+        _reject,
+        _simulate,
+        accepted_losses,
+        structure_counts,
+        structure_diff,
+        unaccepted,
+    )
+
+    revised, redline = _mangled_equation()
+    accepted = _simulate(redline, _accept)
+
+    assert unaccepted(redline, revised) == []
+    assert accepted_losses(revised, accepted) == []
+    assert structure_diff(structure_counts(revised),
+                          structure_counts(accepted)) == []
+    from docxkit.tracked import _math_texts
+    assert _math_texts(_simulate(redline, _reject)) == ["-0.20"], (
+        "the ORIGINAL number, which is what makes the reject gate right "
+        "to pass")
+
+
+def test_an_equation_the_accept_reproduces_is_not_a_finding():
+    """A math edit applied to the built batch — the trade a paper makes
+    for a redline it can hand back — comes out equal on both sides."""
+    from docxkit.tracked import accepted_math
+
+    same = make_parts("<w:p><m:oMath><m:r><m:t>-0.398</m:t></m:r>"
+                      "</m:oMath></w:p>")
+
+    assert accepted_math(same, dict(same)) == []
+
+
+def test_an_equation_the_accept_LOSES_is_reported_as_a_count():
+    """Position-by-position comparison needs the two lists to be the
+    same length, and when they are not the count is the finding — an
+    equation gone is not an equation changed."""
+    from docxkit.tracked import accepted_math
+
+    revised = make_parts("<w:p><m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+                         "<m:oMath><m:r><m:t>y</m:t></m:r></m:oMath></w:p>")
+    accepted = make_parts("<w:p><m:oMath><m:r><m:t>x</m:t></m:r>"
+                          "</m:oMath></w:p>")
+
+    (found,) = accepted_math(revised, accepted)
+
+    assert found == ("the clean copy has 2 equation(s) and accepting the "
+                     "redline gives 1")
