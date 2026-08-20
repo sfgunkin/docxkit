@@ -397,9 +397,13 @@ def table_spacing(xml: str, *, before: int = 120,
                 # next save — which it did, on all eleven of DSI's notes,
                 # so the audit came back with the same eleven every run.
                 declared = _declared_before(para)
-                changed = False
+                # `_set_before`'s second answer is not read here: this
+                # branch ends in `continue`, and a note that was already
+                # at `note_before` is skipped by the guard above rather
+                # than by the flag. Assigned and never read, it carried a
+                # mutant nothing could kill (2026-08-20).
                 if declared is not None and declared != note_before:
-                    para, changed = _set_before(para, note_before)
+                    para, _ = _set_before(para, note_before)
                     out = out[:m.start()] + para + out[m.end():]
                     report.notes.append(text[:48])
                 pos = m.start() + len(para)

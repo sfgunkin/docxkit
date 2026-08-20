@@ -13,7 +13,12 @@ import re
 from conftest import NS, para, run
 
 from docxkit._xml import visible_text
-from docxkit.hygiene import table_spacing
+from docxkit.hygiene import (
+    _is_equation_carrier,
+    restore_math_glyphs,
+    restore_parts,
+    table_spacing,
+)
 
 
 def doc(body: str) -> str:
@@ -384,3 +389,137 @@ def test_a_note_that_declares_LESS_than_the_house_value_is_corrected_too():
 
     assert before_of(out, "Примечание") == "60"
     assert report.notes == ["Примечание. D — база."]
+
+
+# --- the run of 2026-08-20: 4.9 % ---------------------------------------
+
+
+def test_a_table_with_no_rows_is_not_an_equation_CARRIER():
+    """`len(rows) != 1`, and `> 1` lets a table with NO rows through to
+    `rows[0]`. A `w:tbl` holding only its properties is what a template
+    leaves behind, and an IndexError out of a house-style pass is a
+    build that stops on a document Word opens happily."""
+    assert _is_equation_carrier("<w:tbl><w:tblPr/></w:tbl>") is False
+
+
+def test_a_ONE_cell_row_is_not_an_equation_carrier_either():
+    """`len(cells) == 2`, and `<= 2` lets one cell — or none — reach
+    `cells[-1]`. The shape this recognises is an equation beside its
+    number; a single-cell row is an ordinary one-column table."""
+    def tc(text: str) -> str:
+        return f"<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+
+    assert _is_equation_carrier("<w:tbl><w:tr>" + tc("x = 1")
+                                + "</w:tr></w:tbl>") is False
+    # and the row with NO cells, which is where `<= 2` reaches for
+    # `cells[-1]` and finds nothing there
+    assert _is_equation_carrier("<w:tbl><w:tr></w:tr></w:tbl>") is False
+    assert _is_equation_carrier("<w:tbl><w:tr>" + tc("x = 1") + tc("(3)")
+                                + "</w:tr></w:tbl>") is True
+
+
+def test_restoring_a_part_needs_the_content_types_on_BOTH_sides():
+    """`and`, not `or`. The document being repaired may have no
+    `[Content_Types].xml` at all — a caller assembling parts by hand, or
+    a package Word wrote without one — and the `or` reading reaches for
+    it in `parts` anyway. A KeyError from a repair pass is worse than
+    the missing override it was going to add."""
+    parts = {"word/document.xml": b"<d/>"}
+    source = {"word/document.xml": b"<d/>",
+              "word/media/image1.png": b"PNG",
+              "[Content_Types].xml":
+                  b'<Types><Override PartName="/word/media/image1.png"/>'
+                  b"</Types>"}
+
+    assert restore_parts(parts, source, prefixes=("word/media/",)) == [
+        "word/media/image1.png"]
+    assert parts["word/media/image1.png"] == b"PNG"
+
+
+def test_a_document_with_no_glyph_to_restore_reports_NOTHING():
+    """The map's own guard: an entry whose "restored" form IS the
+    downgraded one would have every untouched formula reported as
+    restored — a line saying work was done where none was.
+
+    (`!=` written `is not` there is equivalent, and for a reason worth
+    keeping: `_downgraded` is a chain of `str.replace`, which hands back
+    the string it was given when it replaces nothing, so the two are one
+    object exactly when they are equal.)"""
+    ns = ('xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/'
+          'math"')
+
+    def doc(text: str) -> dict[str, bytes]:
+        return {"word/document.xml":
+                (f"<w:document {ns}><m:oMath><m:r><m:t>{text}</m:t></m:r>"
+                 "</m:oMath></w:document>").encode()}
+
+    assert restore_math_glyphs(doc("x - 1"), doc("x - 1")) == []
+    assert restore_math_glyphs(doc("x - 1"), doc("x − 1")) == [
+        "word/document.xml: 'x - 1' -> 'x − 1'"]
+
+
+def test_a_note_ALREADY_at_the_pinned_spacing_is_left_alone():
+    """`declared != note_before`, over two numbers a caller can set as
+    high as it likes. Below 257 CPython hands out one object per integer
+    and identity agrees with equality; at 300 — fifteen points, which is
+    a spacing a house style can ask for — they part, and a note already
+    correct is rewritten and reported every run.
+
+    An audit that never comes back clean is the failure the note branch
+    was written for in the first place."""
+    note = ('<w:p><w:pPr><w:spacing w:before="300"/></w:pPr>'
+            "<w:r><w:t>Note. Already at the house value.</w:t></w:r></w:p>")
+    xml = doc(table("Region") + note + para(run("Text resumes here.")))
+
+    out, report = table_spacing(xml, note_before=300)
+
+    assert report.notes == []
+    assert before_of(out, "Note.") == "300"
+
+
+def test_a_heading_that_keeps_its_own_spacing_is_named_to_FORTY():
+    """`text[:40]`, in the one line this pass writes about a paragraph
+    it did NOT change. A heading carries its own, larger spacing, and
+    the reader needs to recognise which heading — forty characters of a
+    section title is a title, thirty-nine of it is the same title minus
+    a letter, which reads as damage."""
+    heading = ('<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>'
+               "The Age-Friendly Index and its four domains, revised"
+               "</w:t></w:r></w:p>")
+    xml = doc(table("Region") + heading)
+
+    _out, report = table_spacing(xml)
+
+    assert report.skipped == [
+        "heading 'The Age-Friendly Index and its four doma': has its own"]
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `rows[0]` written `rows[-1]`, and `cells[-1]` written `cells[1]` or
+#   `cells[+1]`: each sits under a length check that has already fixed
+#   the count at one and two.
+# * `stream.count('"') % 2 == 0` written `<= 0`: a remainder of 2 is 0
+#   or 1.
+# * `if ch == "'"` and `elif ch == '"'` written `is`: one-character
+#   strings are one object in CPython.
+# * `sorted(..., key=lambda pair: -pair[0].start())` written `~`: both
+#   are strictly decreasing in the offset, so the order is the same.
+# * `zip(wts, out_texts, strict=True)` written `strict=False`:
+#   `out_texts` is built one per `wts` entry.
+# * `replace("<w:spacing", …, 1)` written 2: a `w:pPr` holds one.
+# * `out != para_xml` written `is not` in `_set_before`, and `out !=
+#   text` written `>` or `>=` in `restore_math_glyphs`. `str.replace`
+#   and `re.sub` hand back the string they were given when they change
+#   nothing, so identity agrees there; and the ordering pair holds
+#   because `MATH_DOWNGRADES` maps U+2212 to "-" — every restoration
+#   sorts ABOVE what it replaces. A downgrade added the other way round
+#   would make those two real, which is worth knowing before adding
+#   one.
+# * `len(texts) == 1` written `<= 1`: the sets in `intent` are built by
+#   `.add()` and are never empty.
+# * `changed = False` in the note branch of `table_spacing` is GONE
+#   rather than argued: the branch ends in `continue` and nothing read
+#   the flag, so the mutant that set it True could not be killed by any
+#   input. A value assigned and never read is the one survivor class
+#   that answers to a deletion.
