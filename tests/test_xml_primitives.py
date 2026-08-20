@@ -750,16 +750,75 @@ def test_removing_from_an_EMPTY_pPr_changes_nothing_at_all():
     assert set_para_property(para, "keepNext", "") == para
 
 
-def test_a_paragraph_carrying_the_property_TWICE_is_left_with_two():
+def test_a_property_present_TWICE_comes_out_in_FULL():
     """Two `w:keepNext` in one `w:pPr` is invalid and does happen — a
-    writer that could not see the first one wrote a second. The removal
-    walk takes the first and stops (`break`), so the answer here is the
-    document unchanged rather than a half-repair on offsets that moved
-    under it. Pinned as the CURRENT behaviour: repairing a duplicate is
-    `lint`'s finding, not this writer's."""
-    para = "<w:p><w:pPr><w:keepNext/><w:keepNext/></w:pPr></w:p>"
+    writer that could not see the first one wrote a second, and a style
+    that turns the flag OFF writes `w:val="0"` beside the one that turns
+    it on.
 
-    assert _keep(para) == para
+    This was pinned the other way on 2026-08-19 ("the document
+    unchanged; repairing a duplicate is `lint`'s finding"), off the
+    identical-twin fixture — which is the one shape where the harm does
+    not show. With the off-copy in it the old walk left
+    `<w:keepNext w:val="0"/><w:keepNext/>`: the STALE element first, in a
+    document where the writer was asked to make the flag true. And the
+    removal below did not remove.
+
+    Taking every copy out is the same repair this writer already makes
+    when it moves a misplaced property into its slot, and the offsets
+    objection in the old note is answered by re-reading the properties
+    after each cut."""
+    para = ('<w:p><w:pPr><w:keepNext/><w:keepNext w:val="0"/></w:pPr>'
+            "</w:p>")
+
+    assert _keep(para) == "<w:p><w:pPr><w:keepNext/></w:pPr></w:p>"
+    assert (set_para_property(para, "keepNext", "")
+            == "<w:p><w:pPr></w:pPr></w:p>")
+
+
+def test_a_RUN_property_present_twice_comes_out_in_full_too():
+    """The run writer replaced the first and returned, which left the
+    second — a `remove` that does not remove. A run salvaged out of two
+    carries `w:sz` twice as often as not."""
+    run_xml = '<w:r><w:rPr><w:i/><w:i w:val="0"/></w:rPr><w:t>x</w:t></w:r>'
+
+    assert (set_run_property(run_xml, "i", "<w:i/>")
+            == '<w:r><w:rPr><w:i/></w:rPr><w:t>x</w:t></w:r>')
+    assert (set_run_property(run_xml, "i", "")
+            == '<w:r><w:rPr></w:rPr><w:t>x</w:t></w:r>')
+
+
+def test_a_property_is_not_written_INSIDE_a_numbered_paragraphs_numPr():
+    """`_own_children` skips over what a child CONTAINS, and the sibling
+    test above cannot see it do that: `w:pBdr` outranks `w:keepNext`, so
+    the walk stops at the first child either way. Here the new property
+    sorts AFTER the complex one, so the walk has to step over
+    `w:numPr`'s two children — and a scan that reads them as siblings
+    ranks `w:ilvl` as unknown and writes the alignment INSIDE the
+    numbering definition, which is a list paragraph Word will not
+    open."""
+    para = ('<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/>'
+            "</w:numPr></w:pPr></w:p>")
+
+    out = set_para_property(para, "jc", '<w:jc w:val="center"/>')
+
+    assert out == ('<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/>'
+                   '<w:numId w:val="3"/></w:numPr><w:jc w:val="center"/>'
+                   "</w:pPr></w:p>")
+
+
+def test_a_PAIRED_property_element_is_replaced_WHOLE():
+    """`<w:pStyle w:val="Body"></w:pStyle>` is the same element as
+    `<w:pStyle w:val="Body"/>` and Word writes both. Cut at the end of
+    its OPEN tag rather than at its close, the replacement leaves a
+    stray `</w:pStyle>` in the properties — the shape named in this
+    writer's own docstring as one of the four defects it consolidated."""
+    para = ('<w:p><w:pPr><w:pStyle w:val="Body"></w:pStyle></w:pPr>'
+            "</w:p>")
+
+    out = set_para_property(para, "pStyle", '<w:pStyle w:val="Quote"/>')
+
+    assert out == ('<w:p><w:pPr><w:pStyle w:val="Quote"/></w:pPr></w:p>')
 
 
 # --- the empty w:t Word writes (2026-08-19) ----------------------------
@@ -817,3 +876,50 @@ def test_set_cell_fills_a_BLANK_cell():
     assert tables.read_all(out)[0].rows == [["Country", "Value"],
                                             ["Poland", "0.31"]]
     assert "<w:b/>" in out, "the cell's formatting is the paper's"
+
+
+# --- the run of 2026-08-20: 4.5 % (20/448) ----------------------------
+#
+# Four of the twenty are the tests above. The other sixteen are argued,
+# and all sixteen were put through kill_check to check the argument
+# rather than assume it:
+#
+# * ELEVEN readings of `(/?)`, the optional slash in an open tag, across
+#   `matching_close`, `element_spans`, `own_properties`, `_own_children`
+#   and `_para_with_properties`. The group can only be "" or "/", so
+#   `>= "/"` is `== "/"` on that domain, and `is "/"` is too — a
+#   one-character ASCII string comes back interned. `<= "/"` is the odd
+#   one out, because "" satisfies it, and that one IS a test above.
+# * `pos = 0` written `pos = -1` in the two scan loops. A negative `pos`
+#   handed to `re.Pattern.search` is clamped to 0 by SRE before the
+#   scan, so the first search reads the whole string either way and the
+#   variable is reassigned from the match after that.
+# * `body != body.strip()` written `is not` in `set_run_text`. `strip`
+#   returns the string ITSELF when there is nothing to take off, so the
+#   two agree at both ends of the question.
+# * the two `w:fldCharType` comparisons read as `<=`. ST_FldCharType has
+#   exactly three values — begin, separate, end — and "begin" is the
+#   first of the three alphabetically, so nothing legal sorts under it;
+#   "separate" sorts above "end", so the second comparison cannot widen
+#   either.
+# * `(span[0], -span[1])` written `~span[1]`: bit-inversion is
+#   -x - 1, which orders the second key exactly as negation does.
+# * the two `m.group(1)` written `m.group(0)` on the field grammar.
+#   Group 0 is the begin marker, group 1, and the end marker. For
+#   `dead_links` that adds two `w:fldChar` tags to a findall for
+#   `w:instrText`, which matches neither. For the label in
+#   `internal_links` the slice start is an offset into group 1, so
+#   reading group 0 moves the window back by the length of the begin
+#   tag — 34 characters for the bare form, against the 37 of the
+#   separate marker it lands inside. The window therefore opens in the
+#   middle of a `w:fldChar` tag, and `visible_text` needs a matched
+#   `w:t` pair to read anything at all.
+# * `not inner and ... endswith("/>")` read as `or` in
+#   `set_para_property`. The two differ only for `<w:pPr></w:pPr>` —
+#   empty but paired — and there the expand branch writes the same text
+#   the general path does, for both a set and a remove.
+# * `> rank` read as `>=` in `set_run_property`. Equal ranks mean equal
+#   names, which the branch above has already returned on, or two
+#   properties the table does not know — and RPR_ORDER is the COMPLETE
+#   EG_RPrBase, so a second unranked child is one that cannot be in a
+#   run's properties in the first place.

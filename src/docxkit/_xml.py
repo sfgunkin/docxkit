@@ -820,11 +820,15 @@ def set_para_property(para_xml: str, tag: str, element: str) -> str:
                 + para_xml[end:])
 
     live = live_properties(inner)
-    for name, c_start, c_end in _own_children(live):
-        if name == tag:
-            inner = inner[:c_start] + inner[c_end:]
-            live = live_properties(inner)
-            break
+    while (dup := next((c for c in _own_children(live) if c[0] == tag),
+                       None)) is not None:
+        # EVERY copy, not the first: the same property present TWICE is
+        # ordinary Word output — a style turns `keepNext` off with a
+        # second `w:val="0"` element beside the one that turns it on —
+        # and taking one out leaves the pair this function exists to
+        # repair, with the stale copy sorting FIRST.
+        inner = inner[:dup[1]] + inner[dup[2]:]
+        live = live_properties(inner)
     if not element:
         return para_xml[:start] + f"<w:pPr>{inner}</w:pPr>" + para_xml[end:]
 
@@ -882,13 +886,20 @@ def set_run_property(run_xml: str, tag: str, element: str) -> str:
     live = live_properties(inner)
     rank = _RPR_RANK.get(tag, len(RPR_ORDER))
 
+    mine = [m for m in _RPR_CHILD_RE.finditer(live) if m.group(1) == tag]
+    if mine:                                # replace in place
+        # Back to front, so the earlier offsets stay good. All of them:
+        # a run salvaged out of two carries `w:sz` twice as often as not,
+        # and leaving the second is a REMOVE that does not remove and a
+        # SET that Word may read either way round.
+        for m in reversed(mine[1:]):
+            inner = inner[:m.start()] + inner[m.end():]
+        inner = inner[:mine[0].start()] + element + inner[mine[0].end():]
+        return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
+
     at = len(live)                          # default: after every live child
     for m in _RPR_CHILD_RE.finditer(live):
-        name = m.group(1)
-        if name == tag:                     # replace in place
-            inner = inner[:m.start()] + element + inner[m.end():]
-            return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
-        if _RPR_RANK.get(name, len(RPR_ORDER)) > rank:
+        if _RPR_RANK.get(m.group(1), len(RPR_ORDER)) > rank:
             at = m.start()
             break
 
