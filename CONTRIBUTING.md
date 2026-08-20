@@ -1591,7 +1591,7 @@ test file and each argument checked by `kill_check`.
 | `refstyle.py` | **3.8 %** (15/395) | 4.8 % | the reference audit's own two-sided rules |
 | `_xml.py` | **4.2 %** (19/448) | 4.5 %, then 4.7 % | a property present TWICE — and sixteen of the twenty argued, which is why the figure moved so little |
 | `_table_layout.py` | **4.1 %** (18/439) | 7.8 %, then 4.8 % | a guard written for a document Word does emit, and a report |
-| `word.py` | **3.7 %** (13/349) | 7.4 % | a limit above 256, and a temp directory Word still holds |
+| `word.py` | **2.9 %** (10/349) | 7.4 %, then 3.7 % | a limit above 256, and a temp directory Word still holds — CLOSED, the ten left are argued |
 | `crossrefs.py` | 7.3 % (32/436) | 6.7 % | one wrong argument in the last round's own note — see below |
 | `comments.py` | **5.6 %** (21/378) | 7.4 % | two distances, pinned at the character |
 | `revisions.py` | **5.5 %** (23/417) | 6.7 % | the paragraph nobody deleted, and difflib's autojunk |
@@ -1602,7 +1602,7 @@ test file and each argument checked by `kill_check`.
 | `guard.py` | 4.1 % (2/49) | — | two argued (a JSON indent), CLOSED |
 | `_table_core.py` | **1.7 %** (7/415) | 2.7 %, and a PARTIAL 1.0 % | measured WHOLE at last; six argued, CLOSED |
 | `edit.py` | 4.9 % (21/425) | 2.8 % | it went UP, and the rise IS the new code this day added |
-| `placement.py` | **6.8 %** (29/426) | 9.6 %, its first measurement here | the worst left: a body of three hundred children, and the measurement after the fix |
+| `placement.py` | **6.1 %** (26/426) | 9.6 %, then 6.8 % | the worst left: a body of three hundred children, and the measurement after the fix |
 
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
