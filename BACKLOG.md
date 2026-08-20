@@ -280,99 +280,6 @@ Figure 10 caption the sweep writes 2 runs where the naive loop writes 6.
 Still open: the `fig5_firstref` question in the last paragraph above, which
 nobody has checked.
 
-### S1 Compare CORRUPTS a replacement inside an inline OMML field, and `resolve_math` bakes the corruption in as the accepted view
-
-Found on AFI, 2026-08-19, doing R3/T3.2: two inline `<m:oMath>` fields holding
-`-0.20` and `-0.38` had to become `-0.398` and `-0.487`.
-
-Word's Compare does not treat the field as a unit. It diffs INSIDE it at
-character level, matches the common prefix `-0.`, and emits the rest as an
-insert beside the old digits. The field comes out reading
-
-    -0.20398        and        -0.38487
-
-**Both routes give the same corruption.** With `--keep-math` it is tracked and
-unreadable. With the default `resolve_math` the build ACCEPTS those revisions,
-so `-0.20398` is baked in as the accepted view — as though the author had
-asked for it. The build's own warning covers reviewability ("NO reviewable
-redline as built") and says nothing about the text being wrong.
-
-**Nothing caught it on that path.** `validate`'s accept-all reports
-structure counts; `XML accept == Word accept` compares two ways of accepting
-the same batch against each other. It was caught by reading the built file.
-
-**CORRECTION, same day.** The claim first written here — that nothing compares
-the accepted view against the clean copy — is WRONG, and the error is worth
-keeping. `revision build` does exactly that comparison and refuses:
-
-    accepting every revision does NOT reproduce r4e_clean.docx — 1
-    paragraph(s) differ, so the deliverable the author reads is not the
-    document this redline was built from
-
-It fired later the same day on a figure move and stopped a bad build. What is
-true is narrower: **that check compares paragraph TEXT**, so it passes when
-the words survive and something else does not — on the same move it passed
-while all four caption hyperlinks had been stripped. The gap is the check's
-SCOPE, not its absence.
-
-S1 because the failure reports success and the wrong number is in the paper.
-
-**Two fixes, and the second matters more:**
-
-1. Treat an `m:oMath` as atomic when diffing — replace the whole field rather
-   than diffing its runs — or refuse the batch and say so.
-2. **`validate` should compare the ACCEPTED view against the revised copy the
-   build was given.** That check is cheap, it is the definition of a correct
-   redline, and it is absent. It would also have caught this class of thing on
-   any future path into the same trap.
-
-**The second is done, 2026-08-20** — in `build`, which is where the clean copy
-is in hand (`validate` is handed a batch and a baseline and never sees the
-revised copy; recording its path would be a second mechanism for the same
-question).
-
-The comparison that was missing is not text and not tag counts. `unaccepted`
-already compares the accepted view against the clean copy by paragraph TEXT,
-and `structure_diff` already counts carriers on both sides — what neither can
-see is a HYPERLINK, because it carries no text and its tag is deliberately not
-in `STRUCTURE_TAGS` (Word re-represents a field-form link as an element, and
-counting the tag would refuse that harmless rewrite).
-
-`tracked.accepted_losses(revised, accepted)` compares the ANCHORS instead —
-bookmark names and link targets, through `internal_links`, which reads both
-forms — and `build` refuses on it under `accept_check`, because the accepted
-view is the deliverable. The exact AFI shape is pinned: a link Compare rebuilt
-as prose is present in the redline (so `compare_collateral` is quiet) and gone
-the moment the author accepts (so the words match and `unaccepted` is quiet
-too).
-
-A bookmark cannot be lost that way and the test beside it says why: `revisions`
-LIFTS bookmarks out of an element it removes. Nothing lifts a `w:hyperlink`,
-and nothing can — the element carries the words.
-
-**Fix 1, the half of it docxkit can do: also done, same day.** How Word
-diffs is not ours to change, so the entry's alternative — "or refuse the batch
-and say so" — is what shipped. `tracked.accepted_math(revised, accepted)`
-compares the equations of the accepted view against the clean copy's, position
-by position, and `build` refuses on it under `accept_check`.
-
-The AFI corruption is pinned with the four checks that pass it, which is why
-the number reached the paper: the REJECT view is correct (it restores `-0.20`),
-the counts do not move, the equation renders, and `unaccepted` compares `w:t`
-while an equation's characters are `m:t` — a reading `_paras` documents as
-deliberate. It runs after `restore_math_glyphs`, so the minus sign Compare
-flattens is not reported twice over.
-
-What is still not done is making the redline CORRECT rather than refused: a
-batch that changes an inline equation still has to apply the maths after the
-Compare, as AFI does. The refusal now says so in the message.
-
-**Per-paper workaround now in AFI** (delete when fixed): the maths is applied
-to `batch.docx` AFTER the Compare, so the two values are baked in with no
-redline at all — the trade v12 made for its 19 equation changes — and
-`repair_math_minus.py` grew an `--expect OLD=NEW` flag so an intended math
-edit is not read as damage while every other difference still refuses.
-
 ### S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like
 
 Found on AFI, 2026-08-19, moving four figures to the appendix.
@@ -405,133 +312,6 @@ it prints a `STRUCTURE sectPr` line naming the count. I truncated the output
 and did not read it. `ingest` then caught the lost footers as `PART REMOVED`
 and `baseline` refused, which is the only reason it did not ship. The gates
 worked; the ergonomics are what invited the mistake.
-
-### S1 a footnote whose DEFINITION is out of document order passes every read-only gate, then blows up the next Compare
-
-**Symptom as observed.** AFI r4 batch 17 added a footnote by appending its
-`<w:footnote>` to the end of `word/footnotes.xml` and inserting the reference
-in the body. Word renders that perfectly — notes are numbered by where their
-REFERENCES sit, not by where the definitions are stored — so the PDF render was
-right, `verify_v14_package.py` passed 560/560 and the paper's suite stayed green.
-
-The next batch's `revision build` then failed like a catastrophe:
-
-    VERDICT: FAIL
-    UNACCEPTED footnotes ¶7:  intended ''  accepted ' Table 4 reports a…'
-    UNACCEPTED footnotes ¶11: intended ' Table 4 reports a…'  accepted ''
-    GLYPH (reject-all vs baseline) at 1749 … and 81 more run(s)
-    STRUCTURE footnoteReference: 7 -> 6
-
-Nothing was wrong with the batch. **Word's Compare rewrites footnote
-definitions into document order**, so the redline's `footnotes.xml` no longer
-lined up with the baseline's and the whole part read as moved. Eighty-one glyph
-runs and a structure count for a one-line prose batch.
-
-**Repro.** Take any docx with footnotes 1..N. Append a new `<w:footnote
-w:id="N+1">` at the end of `footnotes.xml` and put its `footnoteReference`
-somewhere in the middle of the body. `revision status`, a render and any text
-gate all pass. Then `revision build` a trivially edited clean copy against it.
-
-**Why S1.** Every read-only gate reports success on a file Word would never
-have written, and the failure surfaces one batch later, attributed to the
-innocent batch. I spent a build+validate cycle (52 s) and a diagnosis on a
-defect introduced two batches earlier.
-
-**Workaround** — `AFI/revision/scripts/renumber_footnotes.py`: remaps ids to
-reference order and reorders the definition blocks to match, idempotent, refuses
-if a reference has no definition or a definition nothing references. **Delete it
-when this is fixed.**
-
-**Fix sketch.** Two halves, and the first is the important one:
-- `revision.footnotes_out_of_order(parts)` → the ids whose definition order
-  differs from reference order. Call it from `revision status` and from
-  `build`'s pre-flight, and say so in one line — *"footnote definitions are not
-  in document order; Compare will rewrite them. Run …"* — instead of leaving the
-  caller to read 81 glyph runs.
-- a public `revision.add_footnote(parts, after_ref=..., text=...)` that inserts
-  in the right place to begin with. **Corrected:** `footnotes.append` exists,
-  but it appends text to an EXISTING footnote's last paragraph -- there is still
-  no way to create a footnote and its reference as a pair, which is what was
-  hand-rolled here.
-
-**BOTH DONE, 2026-08-20.**
-
-`footnotes.out_of_order(document_xml, notes_xml, kind=...)` answers the ids
-that would move — every one of them, so a caller can quote them — and ignores
-the two questions it is not (a definition nothing references; a reference with
-no definition). It is called from `revision.state`, so `revision status` prints
-one line about a file that otherwise looks settled, and from `revision build`'s
-preflight over BOTH sides, where it is still cheap.
-
-`footnotes.add(parts, after=..., text=...)` creates the pair. It lives in
-`footnotes` rather than `revision` because it is a document operation, not a
-protocol one; the entry's name is recorded here so a search for it lands. The
-definition is written in REFERENCE order rather than appended, so the file it
-produces is one Word could have written and `out_of_order` answers `[]` by
-construction. Two things it will not do: invent the footnote scaffold for a
-package that has never held a note (it refuses and says so), and hand back a
-reserved id — Word's separators are -1 and 0, and "one past the highest" over a
-part holding only those answers 0, which renders as the separator line.
-
-**`AFI/revision/scripts/renumber_footnotes.py` can go** once someone confirms
-the paper's existing out-of-order notes are repaired; the detector will say.
-
----
-
-### ~~S4 nothing can test a set of edits against a document before building it~~ — FIXED 20.08, `9b7a5b3`
-
-Shipped as `batch.preflight`, not `edit.preflight` as sketched below: it
-belongs with the unit of work, not with the verb it wraps. Cumulative by
-default, and deliberately WITHOUT the `independent=True` the sketch wanted —
-a batch is what the caller actually has, and judging edits independently is
-precisely the check that misses the failure. AFI's `build_r4v.py` runs
-unchanged through it (AFI `1c527cf`).
-
-**Symptom as observed.** `replace_in_para` refuses a match that spans or starts
-inside a hyperlink; `para_slice` refuses a signature matching 0 or 2+
-paragraphs. Both refusals are *correct* and their messages are good. But they
-arrive **one at a time**, at build time, and a batch is a list of edits — so a
-batch with three anchor problems costs three edit-and-rerun cycles.
-
-Measured on AFI r4, batches 12-19: at least one refusal per batch from 15 on,
-about ten cycles in all, roughly twenty commands. The shapes:
-
-- the match meets a hyperlink label — and in that paper a citation label
-  INCLUDES its year, so "replace from the citation onward" starts *inside* the
-  link (batch 15, twice in a row: first spanning, then starting-inside);
-- an edit earlier IN THE SAME BATCH removes the sentence a later signature uses
-  (batch 17);
-- an edit in phase 1 adds "(A.6)" to prose, so phase 2's label-based anchor
-  stops being unique (batch 13);
-- the match spans an `m:oMath` (batch 18).
-
-**Why it is not S2.** Nothing is wrong; the tool is simply absent, and the cost
-is entirely the caller's round-trips. But it is the single largest time sink
-this toolchain has, so it should outrank the usual S4.
-
-**Workaround** — `AFI/revision/scripts/_batch.py`:
-
-- `preflight(edits)` applies every edit **cumulatively, in order, in memory**
-  and reports all verdicts at once. It works by attempting the real
-  `edit_para`/`replace_in_para` and catching what they raise, so it uses the
-  same guards the build will and cannot drift from them.
-- `_diagnose` then says why in the terms that fix it: it names the hyperlink
-  label the match met, or says the signature now matches 0 or 2 paragraphs
-  because an earlier edit moved it.
-- `build_clean(name, edits, allow=…)` gates the five invariants (oMath,
-  bookmarks, paragraphs, footnote marks, links) in one pass, `allow` declaring
-  the ones the batch is meant to move.
-
-Result: AFI batch 20 shipped in **2 commands against 18-22**.
-**Delete `_batch.py` when this lands.**
-
-**Fix sketch.** `docxkit.edit.preflight(xml, edits) -> list[Verdict]`, where an
-edit is `(signature, old, new)` and a Verdict carries ok / the exception class /
-a human reason. Cumulative by default (that is what a batch does); `independent=True`
-for callers who want each judged against the original. A `docxkit preflight`
-CLI reading the same tuple list would cover the common case without any script.
-
----
 
 ### S4 no way to ask what is AT an edit site, so every batch surveys it two or three times
 
@@ -778,6 +558,250 @@ returning the table with rows permuted and raising if the multiset moves;
 `tables.clone_row(tbl_xml, index)` and `tables.set_row(row_xml, values)`; and
 `tables.by_caption(xml, prefix)` to find the table a caption names.
 
+### S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them
+
+Cheaper to fix than anything above it, and untouched by `docxkit.batch`: a
+module that cannot be FOUND is a module that gets rewritten. Several
+primitives the papers hand-roll are already here, filed under the task that
+first needed them rather than the thing they operate on:
+
+    bookmarks   citations.bookmark / delete_bookmark / marker_bookmark /
+                wrap_link_in_bookmark / next_bookmark_id / anchor_names
+    tables      tables.by_caption, cells_of, drop_blank_rows
+    footnotes   footnotes.append, find, find_all, fonts
+
+**64 scripts hand-write `<w:bookmarkStart>` while a bookmark API sits in
+`citations`.** In this very session I wrote `sites.py` and index-addressed
+tables around `tables.by_caption`, and only found `citations.hyperlink_field`
+after two failed attempts at wiring three citations. A `docxkit api [TOPIC]`
+that lists the public surface by SUBJECT — and re-homing the bookmark helpers
+into a `bookmarks` module that `citations` imports — would recover more time
+than most new features.
+
+---
+
+## Fixed
+
+### ~~S1 Compare CORRUPTS a replacement inside an inline OMML field, and `resolve_math` bakes the corruption in as the accepted view~~
+
+Found on AFI, 2026-08-19, doing R3/T3.2: two inline `<m:oMath>` fields holding
+`-0.20` and `-0.38` had to become `-0.398` and `-0.487`.
+
+Word's Compare does not treat the field as a unit. It diffs INSIDE it at
+character level, matches the common prefix `-0.`, and emits the rest as an
+insert beside the old digits. The field comes out reading
+
+    -0.20398        and        -0.38487
+
+**Both routes give the same corruption.** With `--keep-math` it is tracked and
+unreadable. With the default `resolve_math` the build ACCEPTS those revisions,
+so `-0.20398` is baked in as the accepted view — as though the author had
+asked for it. The build's own warning covers reviewability ("NO reviewable
+redline as built") and says nothing about the text being wrong.
+
+**Nothing caught it on that path.** `validate`'s accept-all reports
+structure counts; `XML accept == Word accept` compares two ways of accepting
+the same batch against each other. It was caught by reading the built file.
+
+**CORRECTION, same day.** The claim first written here — that nothing compares
+the accepted view against the clean copy — is WRONG, and the error is worth
+keeping. `revision build` does exactly that comparison and refuses:
+
+    accepting every revision does NOT reproduce r4e_clean.docx — 1
+    paragraph(s) differ, so the deliverable the author reads is not the
+    document this redline was built from
+
+It fired later the same day on a figure move and stopped a bad build. What is
+true is narrower: **that check compares paragraph TEXT**, so it passes when
+the words survive and something else does not — on the same move it passed
+while all four caption hyperlinks had been stripped. The gap is the check's
+SCOPE, not its absence.
+
+S1 because the failure reports success and the wrong number is in the paper.
+
+**Two fixes, and the second matters more:**
+
+1. Treat an `m:oMath` as atomic when diffing — replace the whole field rather
+   than diffing its runs — or refuse the batch and say so.
+2. **`validate` should compare the ACCEPTED view against the revised copy the
+   build was given.** That check is cheap, it is the definition of a correct
+   redline, and it is absent. It would also have caught this class of thing on
+   any future path into the same trap.
+
+**The second is done, 2026-08-20** — in `build`, which is where the clean copy
+is in hand (`validate` is handed a batch and a baseline and never sees the
+revised copy; recording its path would be a second mechanism for the same
+question).
+
+The comparison that was missing is not text and not tag counts. `unaccepted`
+already compares the accepted view against the clean copy by paragraph TEXT,
+and `structure_diff` already counts carriers on both sides — what neither can
+see is a HYPERLINK, because it carries no text and its tag is deliberately not
+in `STRUCTURE_TAGS` (Word re-represents a field-form link as an element, and
+counting the tag would refuse that harmless rewrite).
+
+`tracked.accepted_losses(revised, accepted)` compares the ANCHORS instead —
+bookmark names and link targets, through `internal_links`, which reads both
+forms — and `build` refuses on it under `accept_check`, because the accepted
+view is the deliverable. The exact AFI shape is pinned: a link Compare rebuilt
+as prose is present in the redline (so `compare_collateral` is quiet) and gone
+the moment the author accepts (so the words match and `unaccepted` is quiet
+too).
+
+A bookmark cannot be lost that way and the test beside it says why: `revisions`
+LIFTS bookmarks out of an element it removes. Nothing lifts a `w:hyperlink`,
+and nothing can — the element carries the words.
+
+**Fix 1, the half of it docxkit can do: also done, same day.** How Word
+diffs is not ours to change, so the entry's alternative — "or refuse the batch
+and say so" — is what shipped. `tracked.accepted_math(revised, accepted)`
+compares the equations of the accepted view against the clean copy's, position
+by position, and `build` refuses on it under `accept_check`.
+
+The AFI corruption is pinned with the four checks that pass it, which is why
+the number reached the paper: the REJECT view is correct (it restores `-0.20`),
+the counts do not move, the equation renders, and `unaccepted` compares `w:t`
+while an equation's characters are `m:t` — a reading `_paras` documents as
+deliberate. It runs after `restore_math_glyphs`, so the minus sign Compare
+flattens is not reported twice over.
+
+What is still not done is making the redline CORRECT rather than refused: a
+batch that changes an inline equation still has to apply the maths after the
+Compare, as AFI does. The refusal now says so in the message.
+
+**Per-paper workaround now in AFI** (delete when fixed): the maths is applied
+to `batch.docx` AFTER the Compare, so the two values are baked in with no
+redline at all — the trade v12 made for its 19 equation changes — and
+`repair_math_minus.py` grew an `--expect OLD=NEW` flag so an intended math
+edit is not read as damage while every other difference still refuses.
+
+### ~~S1 a footnote whose DEFINITION is out of document order passes every read-only gate, then blows up the next Compare~~
+
+**Symptom as observed.** AFI r4 batch 17 added a footnote by appending its
+`<w:footnote>` to the end of `word/footnotes.xml` and inserting the reference
+in the body. Word renders that perfectly — notes are numbered by where their
+REFERENCES sit, not by where the definitions are stored — so the PDF render was
+right, `verify_v14_package.py` passed 560/560 and the paper's suite stayed green.
+
+The next batch's `revision build` then failed like a catastrophe:
+
+    VERDICT: FAIL
+    UNACCEPTED footnotes ¶7:  intended ''  accepted ' Table 4 reports a…'
+    UNACCEPTED footnotes ¶11: intended ' Table 4 reports a…'  accepted ''
+    GLYPH (reject-all vs baseline) at 1749 … and 81 more run(s)
+    STRUCTURE footnoteReference: 7 -> 6
+
+Nothing was wrong with the batch. **Word's Compare rewrites footnote
+definitions into document order**, so the redline's `footnotes.xml` no longer
+lined up with the baseline's and the whole part read as moved. Eighty-one glyph
+runs and a structure count for a one-line prose batch.
+
+**Repro.** Take any docx with footnotes 1..N. Append a new `<w:footnote
+w:id="N+1">` at the end of `footnotes.xml` and put its `footnoteReference`
+somewhere in the middle of the body. `revision status`, a render and any text
+gate all pass. Then `revision build` a trivially edited clean copy against it.
+
+**Why S1.** Every read-only gate reports success on a file Word would never
+have written, and the failure surfaces one batch later, attributed to the
+innocent batch. I spent a build+validate cycle (52 s) and a diagnosis on a
+defect introduced two batches earlier.
+
+**Workaround** — `AFI/revision/scripts/renumber_footnotes.py`: remaps ids to
+reference order and reorders the definition blocks to match, idempotent, refuses
+if a reference has no definition or a definition nothing references. **Delete it
+when this is fixed.**
+
+**Fix sketch.** Two halves, and the first is the important one:
+- `revision.footnotes_out_of_order(parts)` → the ids whose definition order
+  differs from reference order. Call it from `revision status` and from
+  `build`'s pre-flight, and say so in one line — *"footnote definitions are not
+  in document order; Compare will rewrite them. Run …"* — instead of leaving the
+  caller to read 81 glyph runs.
+- a public `revision.add_footnote(parts, after_ref=..., text=...)` that inserts
+  in the right place to begin with. **Corrected:** `footnotes.append` exists,
+  but it appends text to an EXISTING footnote's last paragraph -- there is still
+  no way to create a footnote and its reference as a pair, which is what was
+  hand-rolled here.
+
+**BOTH DONE, 2026-08-20.**
+
+`footnotes.out_of_order(document_xml, notes_xml, kind=...)` answers the ids
+that would move — every one of them, so a caller can quote them — and ignores
+the two questions it is not (a definition nothing references; a reference with
+no definition). It is called from `revision.state`, so `revision status` prints
+one line about a file that otherwise looks settled, and from `revision build`'s
+preflight over BOTH sides, where it is still cheap.
+
+`footnotes.add(parts, after=..., text=...)` creates the pair. It lives in
+`footnotes` rather than `revision` because it is a document operation, not a
+protocol one; the entry's name is recorded here so a search for it lands. The
+definition is written in REFERENCE order rather than appended, so the file it
+produces is one Word could have written and `out_of_order` answers `[]` by
+construction. Two things it will not do: invent the footnote scaffold for a
+package that has never held a note (it refuses and says so), and hand back a
+reserved id — Word's separators are -1 and 0, and "one past the highest" over a
+part holding only those answers 0, which renders as the separator line.
+
+**`AFI/revision/scripts/renumber_footnotes.py` can go** once someone confirms
+the paper's existing out-of-order notes are repaired; the detector will say.
+
+---
+
+### ~~S4 nothing can test a set of edits against a document before building it~~ — FIXED 20.08, `9b7a5b3`
+
+Shipped as `batch.preflight`, not `edit.preflight` as sketched below: it
+belongs with the unit of work, not with the verb it wraps. Cumulative by
+default, and deliberately WITHOUT the `independent=True` the sketch wanted —
+a batch is what the caller actually has, and judging edits independently is
+precisely the check that misses the failure. AFI's `build_r4v.py` runs
+unchanged through it (AFI `1c527cf`).
+
+**Symptom as observed.** `replace_in_para` refuses a match that spans or starts
+inside a hyperlink; `para_slice` refuses a signature matching 0 or 2+
+paragraphs. Both refusals are *correct* and their messages are good. But they
+arrive **one at a time**, at build time, and a batch is a list of edits — so a
+batch with three anchor problems costs three edit-and-rerun cycles.
+
+Measured on AFI r4, batches 12-19: at least one refusal per batch from 15 on,
+about ten cycles in all, roughly twenty commands. The shapes:
+
+- the match meets a hyperlink label — and in that paper a citation label
+  INCLUDES its year, so "replace from the citation onward" starts *inside* the
+  link (batch 15, twice in a row: first spanning, then starting-inside);
+- an edit earlier IN THE SAME BATCH removes the sentence a later signature uses
+  (batch 17);
+- an edit in phase 1 adds "(A.6)" to prose, so phase 2's label-based anchor
+  stops being unique (batch 13);
+- the match spans an `m:oMath` (batch 18).
+
+**Why it is not S2.** Nothing is wrong; the tool is simply absent, and the cost
+is entirely the caller's round-trips. But it is the single largest time sink
+this toolchain has, so it should outrank the usual S4.
+
+**Workaround** — `AFI/revision/scripts/_batch.py`:
+
+- `preflight(edits)` applies every edit **cumulatively, in order, in memory**
+  and reports all verdicts at once. It works by attempting the real
+  `edit_para`/`replace_in_para` and catching what they raise, so it uses the
+  same guards the build will and cannot drift from them.
+- `_diagnose` then says why in the terms that fix it: it names the hyperlink
+  label the match met, or says the signature now matches 0 or 2 paragraphs
+  because an earlier edit moved it.
+- `build_clean(name, edits, allow=…)` gates the five invariants (oMath,
+  bookmarks, paragraphs, footnote marks, links) in one pass, `allow` declaring
+  the ones the batch is meant to move.
+
+Result: AFI batch 20 shipped in **2 commands against 18-22**.
+**Delete `_batch.py` when this lands.**
+
+**Fix sketch.** `docxkit.edit.preflight(xml, edits) -> list[Verdict]`, where an
+edit is `(signature, old, new)` and a Verdict carries ok / the exception class /
+a human reason. Cumulative by default (that is what a batch does); `independent=True`
+for callers who want each judged against the original. A `docxkit preflight`
+CLI reading the same tuple list would cover the common case without any script.
+
+---
+
 ### ~~S4 the missing thing is not a verb, it is the UNIT OF WORK~~ — SHIPPED 20.08, `9b7a5b3`
 
 `docxkit.batch`: `Edit`, `Step`, `Verdict`, `Report`, `preflight`, `diagnose`,
@@ -847,30 +871,6 @@ apply_direct, ship, check) and `sites.py`. Both are written to be lifted: they
 already import only public docxkit surface.
 
 ---
-
-### S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them
-
-Cheaper to fix than anything above it, and untouched by `docxkit.batch`: a
-module that cannot be FOUND is a module that gets rewritten. Several
-primitives the papers hand-roll are already here, filed under the task that
-first needed them rather than the thing they operate on:
-
-    bookmarks   citations.bookmark / delete_bookmark / marker_bookmark /
-                wrap_link_in_bookmark / next_bookmark_id / anchor_names
-    tables      tables.by_caption, cells_of, drop_blank_rows
-    footnotes   footnotes.append, find, find_all, fonts
-
-**64 scripts hand-write `<w:bookmarkStart>` while a bookmark API sits in
-`citations`.** In this very session I wrote `sites.py` and index-addressed
-tables around `tables.by_caption`, and only found `citations.hyperlink_field`
-after two failed attempts at wiring three citations. A `docxkit api [TOPIC]`
-that lists the public surface by SUBJECT — and re-homing the bookmark helpers
-into a `bookmarks` module that `citations` imports — would recover more time
-than most new features.
-
----
-
-## Fixed
 
 ### ~~S3 `write_docx` retries the sharing-violation race; `read_parts` does not~~
 
