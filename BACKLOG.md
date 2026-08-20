@@ -299,6 +299,35 @@ worked; the ergonomics are what invited the mistake.
 
 ## Fixed
 
+### ~~S1 the Hyperlink style was written into the tracked-change SNAPSHOT~~
+
+Found 2026-08-20 by the mutation pass over `crossrefs`, while checking what
+an argued equivalence had excluded. `_with_hyperlink_style` searched the whole
+`w:rPr` string for a `w:rStyle` and replaced the first one it found. A
+`w:rPrChange` — the formatting a tracked change replaced — is a `w:rPr` INSIDE
+the `w:rPr`, so for a run whose only character style sits in that snapshot:
+
+* the Hyperlink style landed in the historical record, which now says the
+  author once styled that text as a hyperlink;
+* the live properties got nothing, so the link Word draws is plain text with
+  no visible difference from the prose around it;
+* and `link` reported it linked, because it was — the anchor is real.
+
+Two more in the same six lines, both found the same way:
+
+* `<w:rPr/>` came back UNCHANGED. The prepend branch was a
+  `str.replace("<w:rPr>", ...)`, which does not match the self-closing form —
+  the fourth instance of that shape in this package after `set_run_text`,
+  `package.set_core_property`, and `lint`'s check 7c for `<w:tcPr/>`.
+* a run arriving with TWO `w:rStyle` children kept the second. The docstring
+  said "never leaves TWO rStyle children"; it meant "never adds one".
+
+The old survivor note argued the `count=1` there was equivalent because
+"`w:rPr` admits a single `w:rStyle`, an rPr string has one opening tag". Both
+halves are true of a valid `w:rPr` and false of a valid RUN. **An equivalence
+argued from what the schema allows is an argument about the element, not
+about the string the function is handed** — and the note now says so.
+
 ### ~~S1 a property present TWICE was only half removed — `22a09e6`~~
 
 Found 2026-08-20 by the mutation pass over `_xml`, and it is the defect the

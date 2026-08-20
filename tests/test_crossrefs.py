@@ -1759,12 +1759,21 @@ def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
 # * `_run_parts`' `close != -1`. The run it is handed is
 #   `para_xml[r_open:r_close]` with `r_close` measured past a `</w:r>`,
 #   so the rfind always finds one and every spelling of "found" agrees.
-# * the `count=1` in `_with_hyperlink_style` (twice) and in `unlink`.
-#   Each rewrites one element where a valid package holds exactly one:
-#   `w:rPr` admits a single `w:rStyle`, an rPr string has one opening
-#   tag, and bookmark ids are unique document-wide — which is what
-#   `_next_bookmark_id` is for. `count=0` and `count=2` find nothing
-#   else to change.
+# * the `count=1` in `unlink`: bookmark ids are unique document-wide,
+#   which is what `_next_bookmark_id` is for, so `count=0` and `count=2`
+#   find nothing else to change.
+#
+#   The same argument was made here for the two in
+#   `_with_hyperlink_style` — "`w:rPr` admits a single `w:rStyle`, an
+#   rPr string has one opening tag" — and it was WRONG, which the round
+#   of 2026-08-20 found by looking at what it excluded. Both halves are
+#   true of a valid rPr and false of a valid RUN: `w:rPrChange` holds a
+#   snapshot of the formatting a tracked change replaced, and the
+#   snapshot is a `w:rPr` INSIDE the `w:rPr`. So the string has two
+#   opening tags and may hold a second `w:rStyle` — and the function
+#   wrote the Hyperlink style into the historical record while the
+#   properties the page shows got none. See the tests above; the code no
+#   longer has those lines.
 # * the five on `@lru_cache`, maxsize and the decorator itself. The
 #   cached functions compile a pattern from their argument and hold no
 #   state; the size is a speed choice.
@@ -1784,3 +1793,81 @@ def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
 # * the `r_open < 0` guards as `<= 0` (and as `< 1`): `r_open` is -1 or
 #   at least 1, so the two spellings differ only at a value the string
 #   cannot produce.
+
+
+def test_the_hyperlink_style_goes_to_the_LIVE_properties():
+    """`w:rPrChange` holds the formatting a tracked change replaced, and
+    it is a `w:rPr` nested inside the `w:rPr`. A run whose only
+    `w:rStyle` sits in that snapshot had the Hyperlink style written
+    into the historical record — the page kept the style it had, the
+    link showed as plain text, and the tracked-change record said the
+    author had once styled it as a hyperlink.
+
+    The defect `_run_italic` and `_run_vert_align` each learned
+    separately, and the reason the old survivor note's "an rPr string
+    has one opening tag" was wrong."""
+    from docxkit.crossrefs import _with_hyperlink_style
+
+    date = 'w:id="7" w:author="A" w:date="2026-01-01T00:00:00Z"'
+    rpr = (f'<w:rPr><w:b/><w:rPrChange {date}>'
+           f'<w:rPr><w:rStyle w:val="Emphasis"/></w:rPr>'
+           f"</w:rPrChange></w:rPr>")
+
+    out = _with_hyperlink_style(rpr)
+
+    live, _, past = out.partition("<w:rPrChange")
+    assert '<w:rStyle w:val="Hyperlink"/>' in live
+    assert '<w:rStyle w:val="Emphasis"/>' in past, "the past stands"
+    assert out.count("<w:rStyle") == 2
+
+
+def test_an_EMPTY_run_properties_element_is_expanded_not_passed_over():
+    """`<w:rPr/>` is real Word output, and the replace was written for
+    the paired form — so the run came back untouched and became a link
+    wearing no Hyperlink style, which reads on the page as plain text.
+
+    The fourth instance of that shape in this package: `set_run_text`,
+    `package.set_core_property` and `lint`'s check 7c for `<w:tcPr/>`."""
+    from docxkit.crossrefs import _with_hyperlink_style
+
+    assert (_with_hyperlink_style("<w:rPr/>")
+            == '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>')
+    assert (_with_hyperlink_style("<w:rPr></w:rPr>")
+            == '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>')
+
+
+def test_a_run_carrying_TWO_character_styles_comes_out_with_one():
+    """The schema allows one `w:rStyle`, and the docstring says this
+    never leaves two. It meant "never ADDS a second" — handed a run that
+    already had two, it replaced the first and left the other."""
+    from docxkit.crossrefs import _with_hyperlink_style
+
+    out = _with_hyperlink_style(
+        '<w:rPr><w:rStyle w:val="A"/><w:rStyle w:val="B"/><w:b/></w:rPr>')
+
+    assert out == '<w:rPr><w:rStyle w:val="Hyperlink"/><w:b/></w:rPr>'
+
+
+# --- what the run of 2026-08-20 added to that list ---------------------
+#
+# `link_more`'s four, none of them worked and each checked:
+#
+# * both `if span in claimed: continue` arms, as `break`. A span is
+#   claimed only by an EARLIER pattern that matched the same text at the
+#   same offsets — and two patterns doing that are two captions of one
+#   label and number, whose patterns are identical and whose match sets
+#   therefore coincide. (Different labels cannot cross-match: every form
+#   is followed by `\s+`, so `Figs?` does not reach into "Figure".) The
+#   loop that meets a claimed span has nothing unclaimed left to append,
+#   so `break` skips nothing.
+# * the continuation span's `m.end(1)` as `m.end(0)`. What follows group
+#   1 in `_continuation_re` is `NUMBER_END`, which is three lookaheads
+#   and consumes nothing, so the group ends where the match does.
+# * `sorted(todo, reverse=True)` as `reverse=False`. NOT equivalent, and
+#   recorded rather than pinned: the two orders differ only in which
+#   fragments come out carrying a redundant `xml:space="preserve"`. The
+#   links land on the same words and the visible text is identical
+#   either way, because these are VISIBLE-text offsets and wrapping a
+#   span in a hyperlink does not move one. Which is worth knowing: the
+#   reverse sort reads like the usual splice-from-the-back rule, and
+#   here it is not load-bearing.

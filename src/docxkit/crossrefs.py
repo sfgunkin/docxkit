@@ -55,6 +55,7 @@ from ._xml import (
     PARA_RE,
     T_RE,
     WT_RE,
+    live_properties,
     own_properties,
     visible_text,
 )
@@ -291,6 +292,7 @@ def _find_captions(xml: str,
 
 
 _RSTYLE_RE = re.compile(r"<w:rStyle [^>]*/>")
+_HYPERLINK_STYLE = '<w:rStyle w:val="Hyperlink"/>'
 
 
 def _with_hyperlink_style(rpr: str) -> str:
@@ -307,13 +309,34 @@ def _with_hyperlink_style(rpr: str) -> str:
     nothing but a lint run would have said so.
     """
     if not rpr:
-        return '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
-    if _RSTYLE_RE.search(rpr):
+        return f"<w:rPr>{_HYPERLINK_STYLE}</w:rPr>"
+    if rpr.endswith("/>"):
+        # `<w:rPr/>` is real Word output, and a pattern written for the
+        # paired form calls it absent — the fourth instance of that shape
+        # in this package (`set_run_text`, `package.set_core_property`,
+        # `lint`'s check 7c). Handed back unchanged, the run becomes a
+        # link wearing no Hyperlink style, which reads as plain text.
+        return f"{rpr[:-2]}>{_HYPERLINK_STYLE}</w:rPr>"
+    open_end = rpr.index(">") + 1
+    close_at = rpr.rindex("</w:rPr>")
+    inner = rpr[open_end:close_at]
+    # The LIVE properties only. `w:rPrChange` holds a snapshot of the
+    # formatting a tracked change replaced, and it is a `w:rPr` inside a
+    # `w:rPr`: a run whose only `w:rStyle` sits in there had the
+    # Hyperlink style written into the historical record while the
+    # properties the page shows got none — the defect `_run_italic` and
+    # `_run_vert_align` each learned separately.
+    hits = list(_RSTYLE_RE.finditer(live_properties(inner)))
+    if hits:
         # a run becoming a hyperlink carries the Hyperlink style; any
         # other character style already on it is replaced, never doubled
-        return _RSTYLE_RE.sub('<w:rStyle w:val="Hyperlink"/>', rpr, count=1)
-    return rpr.replace("<w:rPr>",
-                       '<w:rPr><w:rStyle w:val="Hyperlink"/>', 1)
+        for m in reversed(hits[1:]):
+            inner = inner[:m.start()] + inner[m.end():]
+        inner = (inner[:hits[0].start()] + _HYPERLINK_STYLE
+                 + inner[hits[0].end():])
+    else:
+        inner = _HYPERLINK_STYLE + inner       # w:rStyle opens EG_RPrBase
+    return rpr[:open_end] + inner + rpr[close_at:]
 
 
 class _RunParts(NamedTuple):
