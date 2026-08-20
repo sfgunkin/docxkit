@@ -16,7 +16,7 @@ from __future__ import annotations
 from conftest import make_parts, note, notes, para, run
 
 from docxkit._xml import BOOKMARK_NAME_RE, internal_links
-from docxkit.citations import link_all, link_rest
+from docxkit.citations import IGNORED_LEADS, link_all, link_rest
 
 ENTRIES = (
     para(run("References"))
@@ -238,6 +238,57 @@ def test_a_citation_INSIDE_another_link_is_refused_not_nested():
                for note in report.skipped), report.format()
 
 
+def test_a_citation_AFTER_an_IGNORED_one_is_still_linked():
+    """`ignore` is a list the papers GROW — a name that reads as a
+    citation and is not one. Stepping over it is the point; stopping
+    there leaves every citation later in the paragraph unlinked, and the
+    report says nothing because nothing was refused."""
+    parts = make_parts(
+        para(run("As Kanbur (2007) notes, poverty fell (Ravallion 2016)."))
+        + ENTRIES)
+
+    report = link_all(parts, ignore=IGNORED_LEADS | {"Kanbur"})
+
+    assert [a for a, _ in _links(parts)] == [
+        "Ravallion2016", "Ravallion2016txt"], report.format()
+
+
+def test_an_entry_whose_TXT_anchor_comes_first_is_still_recognised():
+    """The back-link anchor is skipped, not stopped at. A paper that
+    keeps `<key>txt` above the entry's own marker would otherwise have
+    its scheme read as absent, and `link_all` would mint a second one
+    beside it — the defect this whole path exists to prevent."""
+    own = ('<w:bookmarkStart w:id="7" w:name="Kanbur2007txt"/>'
+           '<w:bookmarkEnd w:id="7"/>'
+           '<w:bookmarkStart w:id="8" w:name="ref_kanbur_2007"/>'
+           '<w:bookmarkEnd w:id="8"/>')
+    linked = ('<w:hyperlink w:anchor="ref_kanbur_2007">'
+              "<w:r><w:t>Kanbur 2007</w:t></w:r></w:hyperlink>")
+    parts = make_parts(
+        para(run("A point ("), linked, run(")."))
+        + para(run("References")) + own
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
+
+    report = link_all(parts)
+
+    assert report.already == ["ref_kanbur_2007"], report.format()
+    assert not report.linked, report.format()
+
+
+def test_the_nesting_refusal_names_the_PARAGRAPH():
+    """A refusal is read to go and look. The paragraph number is the
+    only part of it that says where."""
+    outer = ('<w:hyperlink w:anchor="somewhere_else">'
+             "<w:r><w:t>(Kanbur 2007)</w:t></w:r></w:hyperlink>")
+    parts = make_parts(
+        para(run("First paragraph."))
+        + para(run("As shown "), outer, run(", it rises.")) + ENTRIES)
+
+    report = link_all(parts)
+
+    assert any("(¶2)" in note for note in report.skipped), report.format()
+
+
 # ----------------------------------------------------------- the report --
 
 def test_the_link_all_report_PRINTS_what_it_counted():
@@ -281,3 +332,9 @@ def test_the_link_rest_report_PRINTS_what_it_counted():
 # guard fires on nothing a foreign paper contains — but it is what
 # stops this module's own txt anchor being adopted on a package where
 # the key-shaped path found no partner for it, and that is worth a line.
+
+
+# `scan`'s `name = self.names[hits[0].index]` is EQUIVALENT under
+# `hits[-1]` and left alive: two entries under one key is refused three
+# lines above, so the list has exactly one element by the time this
+# reads it.
