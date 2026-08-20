@@ -12,6 +12,7 @@ from docxkit.refstyle import (
     HOUSE,
     Issue,
     RefStyleReport,
+    _read_label,
     _trust_the_links,
     audit,
     check_entry,
@@ -1501,6 +1502,21 @@ def test_a_PARENTHETICAL_label_is_read_back_inside_its_parentheses():
     assert [text[c.start:c.end] for c in out] == ["ILOSTAT 2024"]
 
 
+def test_a_parenthetical_label_with_a_LEADING_WORD_reads_at_its_own_offset():
+    """`_read_label` puts the parentheses back and shifts the offsets by
+    the one character that adds. Every fixture for it had the citation
+    at the very start of the label, where the shift is 1 - 1 = 0 and
+    three spellings of the arithmetic agree. A link that swallowed a
+    leading word — "as Kanbur 2007" — has it four characters in, and
+    the shift is the difference between naming the citation and naming
+    four characters of prose in front of it.
+    """
+    found = _read_label("as Kanbur 2007")
+
+    assert [(f.start, f.end) for f in found] == [(3, 14)]
+    assert "as Kanbur 2007"[3:14] == "Kanbur 2007"
+
+
 def test_a_label_that_says_NOTHING_leaves_the_citation_as_it_was():
     """This narrows a match; it never deletes one. A link wrapping the
     NAME and not the year — which is how a paper links an organisation
@@ -1966,3 +1982,23 @@ def test_the_gap_read_for_an_entry_is_the_one_ABOVE_IT():
 # `max((r.index for r in entries), default=-1)` -> `-2` in `audit`: the
 # default is reached only when there are NO entries, and `head_idx` is
 # then None, so the range `head_idx <= i <= last_entry` is never asked.
+
+
+# refstyle's survivors after the second round of 2026-08-21, argued:
+#
+# `at, end = max(0, et.start() - 1), et.end() + 1` read as `et.start()
+# + 1`. The fragment then opens inside the words — "t al " for "et al "
+# — and its replacement is "t al. ", so the text that lands is the same
+# text. What the leading character buys is an anchor: the fragment is
+# unique in the entry, which is what stops the second of two fixes
+# meeting the first one's output. That property is pinned by the
+# two-et-als test; the offset itself is not a behaviour.
+#
+# `lead = text[max(0, at - 8):at]` read as `+ 8`, `- 9` and `^ 8`, and
+# the three characters after `p.` read as `^ 3` and `| 3`: both are
+# uniqueness aids in front of a fragment whose FIRST occurrence is the
+# one meant. Freezing the number would pin the fixture, not the rule.
+#
+# `find_citations(f"({label})") if f.start >= 1` read as `>= 0`: the
+# parenthetical grammar's span excludes the parentheses it needs, so
+# nothing it finds inside "(label)" can start at the "(" itself.
