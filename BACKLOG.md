@@ -343,6 +343,195 @@ and did not read it. `ingest` then caught the lost footers as `PART REMOVED`
 and `baseline` refused, which is the only reason it did not ship. The gates
 worked; the ergonomics are what invited the mistake.
 
+### S1 a footnote whose DEFINITION is out of document order passes every read-only gate, then blows up the next Compare
+
+**Symptom as observed.** AFI r4 batch 17 added a footnote by appending its
+`<w:footnote>` to the end of `word/footnotes.xml` and inserting the reference
+in the body. Word renders that perfectly — notes are numbered by where their
+REFERENCES sit, not by where the definitions are stored — so the PDF render was
+right, `verify_v14_package.py` passed 560/560 and the paper's suite stayed green.
+
+The next batch's `revision build` then failed like a catastrophe:
+
+    VERDICT: FAIL
+    UNACCEPTED footnotes ¶7:  intended ''  accepted ' Table 4 reports a…'
+    UNACCEPTED footnotes ¶11: intended ' Table 4 reports a…'  accepted ''
+    GLYPH (reject-all vs baseline) at 1749 … and 81 more run(s)
+    STRUCTURE footnoteReference: 7 -> 6
+
+Nothing was wrong with the batch. **Word's Compare rewrites footnote
+definitions into document order**, so the redline's `footnotes.xml` no longer
+lined up with the baseline's and the whole part read as moved. Eighty-one glyph
+runs and a structure count for a one-line prose batch.
+
+**Repro.** Take any docx with footnotes 1..N. Append a new `<w:footnote
+w:id="N+1">` at the end of `footnotes.xml` and put its `footnoteReference`
+somewhere in the middle of the body. `revision status`, a render and any text
+gate all pass. Then `revision build` a trivially edited clean copy against it.
+
+**Why S1.** Every read-only gate reports success on a file Word would never
+have written, and the failure surfaces one batch later, attributed to the
+innocent batch. I spent a build+validate cycle (52 s) and a diagnosis on a
+defect introduced two batches earlier.
+
+**Workaround** — `AFI/revision/scripts/renumber_footnotes.py`: remaps ids to
+reference order and reorders the definition blocks to match, idempotent, refuses
+if a reference has no definition or a definition nothing references. **Delete it
+when this is fixed.**
+
+**Fix sketch.** Two halves, and the first is the important one:
+- `revision.footnotes_out_of_order(parts)` → the ids whose definition order
+  differs from reference order. Call it from `revision status` and from
+  `build`'s pre-flight, and say so in one line — *"footnote definitions are not
+  in document order; Compare will rewrite them. Run …"* — instead of leaving the
+  caller to read 81 glyph runs.
+- a public `revision.add_footnote(parts, after_ref=..., text=...)` that inserts
+  in the right place to begin with. There is currently no supported way to add a
+  footnote at all, which is why the append happened.
+
+---
+
+### S4 nothing can test a set of edits against a document before building it
+
+**Symptom as observed.** `replace_in_para` refuses a match that spans or starts
+inside a hyperlink; `para_slice` refuses a signature matching 0 or 2+
+paragraphs. Both refusals are *correct* and their messages are good. But they
+arrive **one at a time**, at build time, and a batch is a list of edits — so a
+batch with three anchor problems costs three edit-and-rerun cycles.
+
+Measured on AFI r4, batches 12-19: at least one refusal per batch from 15 on,
+about ten cycles in all, roughly twenty commands. The shapes:
+
+- the match meets a hyperlink label — and in that paper a citation label
+  INCLUDES its year, so "replace from the citation onward" starts *inside* the
+  link (batch 15, twice in a row: first spanning, then starting-inside);
+- an edit earlier IN THE SAME BATCH removes the sentence a later signature uses
+  (batch 17);
+- an edit in phase 1 adds "(A.6)" to prose, so phase 2's label-based anchor
+  stops being unique (batch 13);
+- the match spans an `m:oMath` (batch 18).
+
+**Why it is not S2.** Nothing is wrong; the tool is simply absent, and the cost
+is entirely the caller's round-trips. But it is the single largest time sink
+this toolchain has, so it should outrank the usual S4.
+
+**Workaround** — `AFI/revision/scripts/_batch.py`:
+
+- `preflight(edits)` applies every edit **cumulatively, in order, in memory**
+  and reports all verdicts at once. It works by attempting the real
+  `edit_para`/`replace_in_para` and catching what they raise, so it uses the
+  same guards the build will and cannot drift from them.
+- `_diagnose` then says why in the terms that fix it: it names the hyperlink
+  label the match met, or says the signature now matches 0 or 2 paragraphs
+  because an earlier edit moved it.
+- `build_clean(name, edits, allow=…)` gates the five invariants (oMath,
+  bookmarks, paragraphs, footnote marks, links) in one pass, `allow` declaring
+  the ones the batch is meant to move.
+
+Result: AFI batch 20 shipped in **2 commands against 18-22**.
+**Delete `_batch.py` when this lands.**
+
+**Fix sketch.** `docxkit.edit.preflight(xml, edits) -> list[Verdict]`, where an
+edit is `(signature, old, new)` and a Verdict carries ok / the exception class /
+a human reason. Cumulative by default (that is what a batch does); `independent=True`
+for callers who want each judged against the original. A `docxkit preflight`
+CLI reading the same tuple list would cover the common case without any script.
+
+---
+
+### S4 no way to ask what is AT an edit site, so every batch surveys it two or three times
+
+**Symptom as observed.** Preparing an edit needs three facts: the exact string
+(so `inspect`/a text dump), whether the paragraph holds a hyperlink whose label
+the match must not cross (so a second probe), and whether the signature is
+unique (a third). Every AFI r4 batch ran two or three separate commands to
+assemble them, and I wrote the same ad-hoc probe repeatedly — the tell named in
+`feedback_toolkit_backlog` trigger 4.
+
+**Workaround** — `AFI/revision/scripts/sites.py`: one call gives paragraph
+index, how many paragraphs match the signature, every hyperlink LABEL in the
+paragraph, equations, footnote marks, double and trailing spaces, and the text.
+`--refs` walks the reference list, `--grep` takes a regex. It answered the
+design question for a 25-entry reference conversion in one call: **every entry's
+author-and-year prefix is itself the back-link label**, so the conversion has to
+be label surgery plus a tail replace, not a paragraph rewrite.
+**Delete it when this lands.**
+
+**Fix sketch.** `docxkit sites PAPER.docx "sig" …` / `docxkit.find.site(xml, sig)`
+returning a dataclass with `index, matches, labels, has_math, footnote_ids,
+double_spaces, trailing_space, text`. `labels` is the load-bearing field: it is
+exactly the set `replace_in_para` will refuse to cut across.
+
+---
+
+### S2 `revision build` blames footnotes for a gap that is Word's revision GROUPING
+
+**Symptom as observed.** AFI r4 batch 13, 33 revisions, every one of them in
+`word/document.xml`:
+
+    revisions: 33
+      (15 of them in the body; the rest are in footnotes or endnotes, where
+       Word's own count and Review > Next do not go)
+
+`footnotes.xml` and `endnotes.xml` held **zero** revision elements. The gap
+between 33 and 15 is Word GROUPING adjacent revisions in the main story, not
+part location — `report.revisions` counts elements across text parts,
+`report.body_revisions` is Word's group count.
+
+The message attributes the difference to footnotes unconditionally. In batch 12
+it happened to be right (11 revisions really were in footnotes), which is worse:
+the wording is trusted. It sent me to inspect a clean `footnotes.xml`.
+
+**Repro.** Build any batch whose body edits are adjacent enough for Word to
+group them and whose footnotes are untouched.
+
+**Fix sketch.** Count revision elements per part, which `tracked` already can,
+and say what is true: *"33 revision elements; Word groups them into 15 in the
+body"* — naming footnotes/endnotes only when those parts are actually non-empty.
+
+---
+
+### S4 `internal_links` is public in fact and private by import path
+
+**Symptom as observed.** `from docxkit.revision import internal_links` draws
+Pyright `reportPrivateImportUsage`: *"internal_links is not exported from module
+docxkit.revision — Import from docxkit._xml instead"*. The suggested home is a
+**private** module, so both spellings are wrong and the honest one is worse.
+This is `feedback_toolkit_backlog` trigger 6 exactly, and it recurred: the same
+class was filed on 2026-08-17 for `revision.ProtocolError`.
+
+Second, smaller edge: `internal_links` takes the document XML **string**, but
+almost every sibling in that namespace takes the `parts` dict. Passing `parts`
+gives `TypeError: expected string or bytes-like object, got 'dict'` from inside
+`_xml.py:537`, which does not name the caller's mistake.
+
+**Workaround.** None needed — the import works at runtime; the diagnostic is
+suppressed by ignoring it, which is how it stays invisible.
+
+**Fix sketch.** Add `internal_links` to `docxkit.revision.__all__` (and audit
+the rest of that namespace for the same gap — `visible_text` was the 2026-08-15
+instance). Accept either `str` or the parts mapping, or rename the parameter so
+the error says `xml`.
+
+---
+
+### S4 the revision ladder opens Word two to three times per batch
+
+**Symptom as observed.** Measured on AFI, 2026-08-20, on a ONE-edit batch:
+`revision build` 13.5 s, `revision validate` 38.9 s. Each starts its own Word
+COM session — `build` for Compare and its in-Word verify, `validate` for the
+Word-side accept it compares against the XML accept — and a batch runs both back
+to back, every time.
+
+Not wrong, and not urgent while the caller's round-trips dominate (see the
+preflight entry above). Recorded because it is now the largest remaining fixed
+cost per batch: ~52 s of the ~95 s.
+
+**Fix sketch.** A module-level Word session reused across `build` and
+`validate` within one process, closed on exit; or a `docxkit revision ship`
+that runs the ladder in one process. The paper-side `_batch.ship()` chains the
+commands but still pays two cold starts.
+
 ## Fixed
 
 ### ~~S2 `unlink` left half of a DUPLICATED bookmark and reported success~~
