@@ -1533,6 +1533,9 @@ test file and each argument checked by `kill_check`.
 | `_cite_repair.py` | **2.0 %** (4/198) | first measurement | four survivors, all argued — the tightest in the package |
 | `export.py` | **2.0 %** (4/197) | 9.3 %, two rounds old | a short row padded, and the outer table |
 | `ingest.py` | **1.6 %** (3/191) | first measurement | three survivors, all argued |
+| `package.py` | 6.6 % (22/335) | first measurement | where a NEW core property lands — eight mutants on one slice |
+| `probe.py` | **5.4 %** (9/168) | 7.1 % | nine survivors, all argued |
+| `revision.py` | 8.8 % (30/340) | first measurement | the report a hand-back gets — **partial round**, eleven of thirty |
 | `body.py` | **2.4 %** (6/246) | — | one real survivor: a span of zero would have written `w:gridSpan w:val="0"` |
 | `citations.py` | 5.6 % (6/107) | — | six argued: the finding-kind comparisons and the width of a rule |
 | `edit.py` | **5.7 %** (24/423) | 8.5 % | measured to confirm the 19th's round; not worked further |
@@ -1540,6 +1543,14 @@ test file and each argument checked by `kill_check`.
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
 with survivors like everything else. Every one of the sixteen is argued.
+
+**Closed** — every survivor argued and kill_check'd — are
+`_compare_render`, `figures`, `authors`, `styles`, `_cite_audit`,
+`citations`, `_cite_repair`, `ingest`, `probe`, `_cite_build`,
+`_compare_diff`, `_compare_read`, `lint` and `_table_core`. The rest of
+the table's rows are rounds, not closures: `revision` is explicitly
+partial, and `package`, `renumber`, `edit`, `find`, `_cite_grammar`,
+`body` and `export` had their survivor lists worked but not exhausted.
 
 **Do not read this table for the current state — ask the tool.**
 
