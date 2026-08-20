@@ -1574,20 +1574,20 @@ test file and each argument checked by `kill_check`.
 | `citations.py` | 5.6 % (6/107) | — | six argued: the finding-kind comparisons and the width of a rule |
 | `pages.py` | **3.3 %** (6/180) | 6.1 % | six argued: an index under a length check, and four clip-rectangle origins |
 | `refstyle.py` | **3.8 %** (15/395) | 4.8 % | the reference audit's own two-sided rules |
-| `_xml.py` | 4.7 % (21/448) | 4.5 % | a property present TWICE — and sixteen of the twenty argued, which is why the FIGURE did not move |
+| `_xml.py` | **4.2 %** (19/448) | 4.5 %, then 4.7 % | a property present TWICE — and sixteen of the twenty argued, which is why the figure moved so little |
 | `_table_layout.py` | **4.1 %** (18/439) | 7.8 %, then 4.8 % | a guard written for a document Word does emit, and a report |
 | `word.py` | **3.7 %** (13/349) | 7.4 % | a limit above 256, and a temp directory Word still holds |
 | `crossrefs.py` | 7.3 % (32/436) | 6.7 % | one wrong argument in the last round's own note — see below |
 | `comments.py` | **5.6 %** (21/378) | 7.4 % | two distances, pinned at the character |
 | `revisions.py` | **5.5 %** (23/417) | 6.7 % | the paragraph nobody deleted, and difflib's autojunk |
 | `revision.py` | **4.7 %** (16/340) | 8.8 %, then 6.2 % | the PARTIAL round closed: a limit, a walk, and a hash that sorts low |
-| `equations.py` | **4.3 %** (18/416) | 5.8 % | its first worked round — a clause that could not fire |
-| `cli.py` | **7.0 %** (32/455) | 6.9 % | the loops whose bodies nothing checked; twenty-five widths named |
+| `equations.py` | **3.4 %** (14/416) | 5.8 %, then 4.3 % | its first worked round — a clause that could not fire |
+| `cli.py` | **6.2 %** (28/455) | 6.9 %, then 7.0 % | the loops whose bodies nothing checked; the widths a report is read at |
 | `compare.py` | 3.4 % (2/58) | — | two argued, CLOSED |
 | `guard.py` | 4.1 % (2/49) | — | two argued (a JSON indent), CLOSED |
 | `_table_core.py` | **1.7 %** (7/415) | 2.7 %, and a PARTIAL 1.0 % | measured WHOLE at last; six argued, CLOSED |
 | `edit.py` | 4.9 % (21/425) | 2.8 % | it went UP, and the rise IS the new code this day added |
-| `placement.py` | **9.6 %** (41/426) | first measurement here | the worst left: a body of three hundred children, and the measurement after the fix |
+| `placement.py` | **6.8 %** (29/426) | 9.6 %, its first measurement here | the worst left: a body of three hundred children, and the measurement after the fix |
 
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
