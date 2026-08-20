@@ -257,3 +257,64 @@ def test_an_impossible_span_QUOTES_the_paragraph_it_could_not_wrap():
 # * `if first is last:` written `==`. `re.Match` defines no `__eq__`,
 #   so equality IS identity for it.
 # * `run_xml.replace("<w:rPr>", …, 1)` written 2: a run has one `w:rPr`.
+
+
+def test_a_line_that_merely_STARTS_LIKE_a_stop_word_does_not_end_the_list():
+    """The bound is a PREFIX match, so "Data availability statement"
+    ends the list — and the guard beside it is what keeps the prefix
+    from swallowing a longer word: the character after the stop word
+    has to be a non-alphanumeric one.
+
+    "Notes" is a stop word and Notestein is a demographer, so a
+    reference list that files his archive — a line with no year, which
+    `parse_reference` therefore reads as no entry at all — is exactly
+    the shape that tells the two readings apart. Without the guard the
+    list ends there and every work below it reports as having no entry,
+    which is the S1 this file exists for, running the other way."""
+    from docxkit.citations import references
+
+    entries = references(["Body prose.", "References",
+                          "Aksoy, C. (2026). A first paper. JEP.",
+                          "Notestein Papers, Princeton University Library.",
+                          "Brown, A. (2020). A second paper. AER."])
+
+    assert [r.surname for r in entries] == ["Aksoy", "Brown"]
+
+
+def test_a_stop_word_with_a_SPACE_after_it_still_ends_the_list():
+    """The other side of the same character: a heading is the stop word
+    and then something else, and that is the case the prefix match is
+    FOR."""
+    from docxkit.citations import references
+
+    entries = references(["Body prose.", "References",
+                          "Aksoy, C. (2026). A first paper. JEP.",
+                          "Notes on the sources",
+                          "Brown, A. (2020). A second paper. AER."])
+
+    assert [r.surname for r in entries] == ["Aksoy"]
+
+
+# --- what the run of 2026-08-20 left in `_cite_grammar` ----------------
+#
+# 4.2 % (18/428). Three of the six spellings of the stop-word guard are
+# the tests above; the other three are equivalent, and for a reason
+# worth writing down: `flat in stops` returns True a few lines EARLIER,
+# so by the time that comparison runs, `len(flat) == len(stop)` is
+# already known to be False — a prefix of equal length IS the stop word.
+# `<`, `<=` and `is` all answer False there, which is what `==` answers;
+# `!=`, `>=` and `is not` answer True, which short-circuits the `or` and
+# ends the list on any line that merely begins like a stop word.
+#
+# The rest, each checked with kill_check:
+#
+# * `range(start + 1, ...)` in `references`, as `+ 0` and `| 1`. The
+#   paragraph they would add back is the HEADING, and a heading is
+#   neither an entry (`parse_reference("References")` is None) nor a
+#   stop word for its own list — so including it changes nothing.
+# * `len(_CHAIN_SPLIT_RE.split(...)) > 1` as `!= 1`: a split answers
+#   with at least one piece.
+# * `first is last` in `wrap_visible_span` as `==`: `re.Match` defines
+#   no `__eq__`, so equality IS identity.
+# * `at > fs` and `end < le` as `!=`: the span is inside the run it was
+#   found in, so the offsets can only fall one way.
