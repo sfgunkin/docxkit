@@ -1525,6 +1525,14 @@ test file and each argument checked by `kill_check`.
 | `_compare_diff.py` | **6.0 %** (24/399) | 8.8 % | the layers a person reads — comment cuts, label moves, the move threshold |
 | `_compare_read.py` | **6.0 %** (19/317) | 7.3 % | a property switched OFF, a superscript named, two heads 60 % alike |
 | `_cite_audit.py` | **3.7 %** (15/409) | 11.2 %, its first measurement | the audit's own sentences: which store a finding is in, which order they come in, and five walks that ended early |
+| `edit.py` | **5.7 %** (24/423) | 8.5 % | what an edit REFUSES, and where it lands when it does not |
+| `renumber.py` | **5.3 %** (24/457) | 15.1 %, two waves ago | a shift counts what it CHANGED, and the 257th note |
+| `_cite_grammar.py` | **5.1 %** (22/428) | first measurement | four words is where a sentence starts being one |
+| `find.py` | **4.0 %** (8/201) | first measurement | two silent defaults, and a table at offset zero |
+| `body.py` | **2.4 %** (6/246) | first measurement | a span of zero would have written `w:gridSpan w:val="0"` |
+| `_cite_repair.py` | **2.0 %** (4/198) | first measurement | four survivors, all argued — the tightest in the package |
+| `export.py` | **2.0 %** (4/197) | 9.3 %, two rounds old | a short row padded, and the outer table |
+| `ingest.py` | **1.6 %** (3/191) | first measurement | three survivors, all argued |
 | `body.py` | **2.4 %** (6/246) | — | one real survivor: a span of zero would have written `w:gridSpan w:val="0"` |
 | `citations.py` | 5.6 % (6/107) | — | six argued: the finding-kind comparisons and the width of a rule |
 | `edit.py` | **5.7 %** (24/423) | 8.5 % | measured to confirm the 19th's round; not worked further |
@@ -1532,6 +1540,16 @@ test file and each argument checked by `kill_check`.
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
 with survivors like everything else. Every one of the sixteen is argued.
+
+**Do not read this table for the current state — ask the tool.**
+
+    python tools/stale_figures.py --figures
+
+prints every module's figure beside its fresh/stale verdict, read out of
+the session files through the same arithmetic the survivor lists use. A
+table in a document is a photograph; that command is the thing itself,
+and it marks a run that stopped early (whose figure flatters) and a
+facade with nothing to mutate.
 
 **Six of these modules are CLOSED** — every survivor left is written
 down at the foot of its test file with the argument for it, and
