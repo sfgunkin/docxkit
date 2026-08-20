@@ -24,6 +24,7 @@ from docxkit.tables import (
     set_cell,
     set_row,
     superscript_stars,
+    tables_after,
     to_frame,
 )
 
@@ -630,6 +631,73 @@ def test_a_table_whose_ROWS_disagree_with_the_xml_is_refused():
 #   a paragraph cannot begin at the same offset in one string.
 #
 # The seventh is the test above.
+
+
+# ------------------------------------------- prose that shadows a caption ---
+#
+# Body prose cross-references a table by number at the end of a sentence
+# — house style, so most papers have it. On AFI's `working.docx` that
+# sentence sits 395,000 characters ahead of the caption, and taking the
+# first paragraph CONTAINING "Table 3." took the prose: repkit's G4
+# reported "no table under caption 'Table 3.'" on a manuscript that
+# plainly has one (2026-08-21).
+
+def test_by_caption_prefers_the_paragraph_the_caption_OPENS():
+    xml = document(
+        para(run("Four ECA economies have positive values, as do "
+                 "the EU and Table 3."))
+        + para(run("Some other prose."))
+        + para(run("Table 3. Distribution of workers"))
+        + table(row("Country", "Share"), row("Poland", "0.31")))
+
+    found = by_caption(xml, "Table 3.")
+
+    assert found is not None and found.header == ["Country", "Share"]
+
+
+def test_prose_that_shadows_a_caption_does_not_hand_back_ITS_neighbour():
+    """The silent half, and the worse one: with an uncaptioned table
+    beside the shadowing prose, the old anchor returned that table with
+    no error at all — which `required=True` cannot fire on, and a caller
+    reordering rows would then edit the wrong exhibit."""
+    xml = document(
+        para(run("Four ECA economies have positive values, as do "
+                 "the EU and Table 3."))
+        + table(row("Wrong", "Table"), row("a", "b"))
+        + para(run("Table 3. Distribution of workers"))
+        + table(row("Country", "Share"), row("Poland", "0.31")))
+
+    found = by_caption(xml, "Table 3.")
+
+    assert found is not None and found.header == ["Country", "Share"]
+
+
+def test_tables_after_takes_the_CAPTION_as_its_anchor_too():
+    """Same anchor, same reason: counting from the prose counts the
+    wrong tables, and this one asserts a COUNT — so it would refuse a
+    correct exhibit or accept the exhibit next door."""
+    xml = document(
+        para(run("As reported in Table 3."))
+        + table(row("Wrong", "Table"))
+        + para(run("Table 3. Distribution"))
+        + table(row("Country", "Share"))
+        + table(row("Country", "Block")))
+
+    found = tables_after(xml, "Table 3.", count=2)
+
+    assert [t.header[1] for t in found] == ["Share", "Block"]
+
+
+def test_a_caption_run_INLINE_is_still_found():
+    """Some papers do run the caption into the paragraph, so "contains"
+    stays as the fallback — it is only the PREFERENCE that changed."""
+    xml = document(
+        para(run("Notes and then Table 7. Something inline"))
+        + table(row("Country", "Share")))
+
+    found = by_caption(xml, "Table 7.")
+
+    assert found is not None and found.header == ["Country", "Share"]
 
 
 # ------------------------------------------------------------ the rows ---

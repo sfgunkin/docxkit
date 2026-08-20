@@ -291,6 +291,34 @@ def find(tables: list[Table], header: list[str],
     return None
 
 
+def _caption_para(xml: str, caption: str) -> re.Match[str] | None:
+    """The paragraph this caption NAMES, not the first to mention it.
+
+    A caption OPENS its paragraph, and prose cross-references one at the
+    end of a sentence — "…as do the EU and … Table 3." — which is house
+    style, so most papers have both. Taking the first paragraph that
+    CONTAINS the string takes the prose, and it is 395,000 characters
+    ahead of the caption in AFI's `working.docx`: repkit's G4 reported
+    "no table under caption 'Table 3.'" on a manuscript that plainly has
+    one (2026-08-21).
+
+    The loud half of that is a red gate on a correct paper. The silent
+    half is worse and is the same anchor: let the shadowing prose sit
+    beside an uncaptioned table and this hands that table back with no
+    error at all, which `required=True` cannot fire on and a caller
+    reordering rows would then edit.
+
+    The "contains" match is kept as a FALLBACK, because some papers do
+    run a caption inline — but only when no paragraph opens with it.
+    """
+    heads = [m for m in PARA_RE.finditer(xml)
+             if visible_text(m.group(0)).strip().startswith(caption)]
+    if heads:
+        return heads[0]
+    return next((m for m in PARA_RE.finditer(xml)
+                 if caption in visible_text(m.group(0))), None)
+
+
 @overload
 def by_caption(xml: str, caption: str, *, view: str = ...,
                required: Literal[True] = ...) -> Table: ...
@@ -323,8 +351,7 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
     offset-based caption-to-object mapping goes wrong if you assume
     otherwise.)
     """
-    para = next((m for m in PARA_RE.finditer(xml)
-                 if caption in visible_text(m.group(0))), None)
+    para = _caption_para(xml, caption)
     if para is None:
         if required:
             raise AnchorError(f"no paragraph containing caption {caption!r}")
@@ -385,8 +412,10 @@ def tables_after(xml: str, caption: str, *, view: str = FINAL,
     if count < 1:
         raise AnchorError(f"tables_after: count must be at least 1, not "
                           f"{count}")
-    para = next((m for m in PARA_RE.finditer(xml)
-                 if caption in visible_text(m.group(0))), None)
+    # The same anchor `by_caption` uses, and for the same reason: prose
+    # that ends a sentence with "… Table 3." contains the string and
+    # comes first, and this would then count the tables after the PROSE.
+    para = _caption_para(xml, caption)
     if para is None:
         raise AnchorError(f"no paragraph containing caption {caption!r}")
     found = [t for t in read_all(xml, view=view) if t.start > para.start()]

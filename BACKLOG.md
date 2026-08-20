@@ -445,7 +445,10 @@ than most new features.
 
 ---
 
-### S1 `by_caption` anchors on the first paragraph CONTAINING the caption, so body prose shadows the real caption
+
+## Fixed
+
+### ~~S1 `by_caption` anchors on the first paragraph CONTAINING the caption, so body prose shadows the real caption~~
 
 **Symptom as observed.** 2026-08-21, AFI `working.docx` (r4 round).
 `repkit doctor` G4 reports `no table under caption 'Table 3.'` — while the
@@ -491,9 +494,17 @@ not what comes back.
 **Affects.** repkit's G4 on any paper whose prose cross-references a table
 by number at the end of a sentence — which is house style, so most of them.
 
----
+**FIXED 2026-08-21.** `_caption_para` prefers a paragraph whose visible text
+STARTS with the caption and falls back to "contains" only when none does —
+some papers do run a caption inline, and that is a preference change, not a
+narrowing. `tables_after` was reading the same anchor and now shares the
+helper: it asserts a COUNT, so anchoring on the prose would refuse a correct
+exhibit or accept the one next door.
 
-## Fixed
+Three tests, and the second is the silent half the entry asked for: with an
+uncaptioned table beside the shadowing prose, the old anchor handed that
+table back with no error at all. All three were checked by mutation, the
+fallback included.
 
 ### ~~S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time~~
 
