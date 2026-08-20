@@ -2014,6 +2014,49 @@ def test_a_part_list_of_exactly_KEEP_names_is_printed_whole():
     assert _summarize([*four, "e.xml"]).endswith(", and 1 more")
 
 
+def test_an_alias_repeated_with_the_SAME_value_is_accepted():
+    """`out.get(cited, filed) != filed`, read as `is not`. The two
+    strings come from different `--alias` arguments, so they are never
+    one object — every repeat would be refused, including the one the
+    comment beside it calls harmless: two commands sharing a script.
+
+    And the other spelling, `<`, accepts a DISAGREEING repeat whenever
+    the second value sorts below the first, which is half of them: the
+    winner is then silent, and the paper is audited against an alias
+    nobody chose."""
+    import argparse
+
+    from docxkit.cli import _aliases
+    from docxkit.errors import DocxKitError
+
+    same = argparse.Namespace(alias=["WHO=World Health Organization",
+                                     "WHO=World Health Organization"])
+    assert _aliases(same) == {"WHO": "World Health Organization"}
+
+    lower = argparse.Namespace(alias=["WHO=World Health Organization",
+                                      "WHO=Abc"])
+    with pytest.raises(DocxKitError, match="given twice"):
+        _aliases(lower)
+
+
+def test_the_CLI_with_no_command_says_so_rather_than_crashing(monkeypatch,
+                                                              capsys):
+    """`add_subparsers(..., required=True)`, for both levels. Without
+    it argparse accepts the empty command line and `main` reaches for
+    `args.fn`, which is not there — a traceback where a usage line
+    belongs, on the one command line every new user types first."""
+    monkeypatch.setattr("sys.argv", ["docxkit"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+    monkeypatch.setattr("sys.argv", ["docxkit", "revision"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+
+
 # What is left after the round of 2026-08-20 is mostly ONE shape: how
 # much of something a report quotes, and how many of them it prints
 # before it stops — `[:200]` on a part list, `[:56]` on a figure's
@@ -2023,8 +2066,10 @@ def test_a_part_list_of_exactly_KEEP_names_is_printed_whole():
 #
 # Argued and checked: `cmd_citations`' `> 0` as `!= 0` and `cmd_tasks`'
 # `n == 0` as `<= 0` (a count is never negative); `doctor`'s
-# `d.kind == "literal"` as `is` (both sides are the same module-level
-# literal); the listed comment's `m.group(1)` as `m.group(0)` — group 0
+# `d.kind == "literal"` as `is` and its `== "pattern"` as `>=` — both
+# sides are the same module-level literal, and "literal" sorts below
+# "pattern", which is the whole vocabulary; the listed comment's
+# `m.group(1)` as `m.group(0)` — group 0
 # adds the `<w:comment ...>` tags around the inner text, and `text_of`
 # reads `w:t` elements, which a tag is not; `_show_state`'s
 # `part.split("/")[-1]` as `[1]` and its `where == "document"` as `<=`
