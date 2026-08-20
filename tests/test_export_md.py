@@ -233,3 +233,54 @@ def test_words_word_puts_in_the_endnotes_part_are_not_notes():
 
     assert "[^e2]: The real one." in md
     assert "[^e-1]" not in md
+
+
+# --- the run of 2026-08-20: 2.0 % ---------------------------------------
+
+
+def _cell(text: str) -> str:
+    return f"<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+
+
+def test_a_NESTED_table_does_not_become_the_exported_one():
+    """A cell can hold a table, and the export has to give the document
+    the OUTER one — its own header row, with the inner table's text
+    read as cell content.
+
+    `found[0]` mutated to `found[-1]` survives this and is equivalent:
+    `read_all` counts depth, so a fragment holding one outer table
+    yields one table however many are nested inside it. The contract is
+    worth stating anyway — it is what the depth counting is FOR."""
+    inner = "<w:tbl><w:tr>" + _cell("in1") + _cell("in2") + "</w:tr></w:tbl>"
+    outer = ("<w:tbl><w:tr>" + _cell("Country") + _cell("AFI") + "</w:tr>"
+             + "<w:tr><w:tc><w:p><w:r><w:t>Poland</w:t></w:r></w:p>"
+             + inner + "</w:tc>" + _cell("0.31") + "</w:tr></w:tbl>")
+
+    out = to_markdown(make_parts(outer))
+
+    assert out.splitlines()[0] == "| Country | AFI |", out
+
+
+def test_a_SHORT_row_is_padded_to_the_table_width():
+    """`width - len(row)`, which agrees with `width ^ len(row)` for a row
+    one cell short of two and disagrees at every useful size — four and
+    two give 2 against 6. A markdown row with more cells than its header
+    renders as a broken table, and the pass that produced it reports
+    nothing."""
+    ragged = ("<w:tbl><w:tr>" + _cell("a") + _cell("b") + _cell("c")
+              + _cell("d") + "</w:tr><w:tr>" + _cell("x") + _cell("y")
+              + "</w:tr></w:tbl>")
+
+    out = to_markdown(make_parts(ragged))
+
+    assert out.splitlines()[-1] == "| x | y |  |  |", out
+
+
+# `found[0]` written `found[-1]` in `_pipe_table`: `read_all` is
+# depth-counted, so the fragment's own table is the only one in the
+# list — see the nested-table test above.
+#
+# `if kind == "tbl"` written `>=` and `is` is equivalent twice over:
+# `body_elements` yields "tbl" and "p" only, "p" sorts before "tbl", and
+# both spellings of the literal are the one object CPython interns for
+# an identifier-shaped constant.
