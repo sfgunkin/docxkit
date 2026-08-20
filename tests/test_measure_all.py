@@ -313,3 +313,24 @@ def test_a_fanned_out_STREAM_is_told_the_same(monkeypatch):
     measure_all.fan_out(["D:/a"], ["one.py"], minutes=1, sample=0)
 
     assert envs[0].get("PYTHONIOENCODING") == "utf-8"
+
+
+def test_the_warning_that_the_TREE_MOVED_is_not_swallowed(sweep):
+    """The session already refuses to measure an edit made while it
+    ran: it works from a snapshot taken when the session was PLANNED,
+    and says NOTE when the working tree no longer agrees with it.
+
+    That line used to land in the same deque as the failure diagnosis,
+    which is printed only when NO chunk graded — so a sweep whose module
+    was edited mid-run printed a clean figure and swallowed the one
+    sentence saying what the figure was of. 2026-08-20, by the person
+    who wrote the rule against editing a module under measurement."""
+    note = ("  NOTE: src/docxkit/_table_layout.py changed since this "
+            "session was planned. The figure describes the tree as it "
+            "was then — re-run with --fresh to measure it as it is now.")
+
+    said = _said(sweep([CHUNKS[0], note, CHUNKS[1], note, CHUNKS[2]]))
+
+    assert "changed since this session was planned" in said
+    assert said.count("NOTE:") == 1, "once, not once per chunk"
+    assert said.count("run —") == 2, "and the chunk lines still come"

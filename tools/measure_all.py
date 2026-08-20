@@ -80,12 +80,25 @@ def run(module: str, minutes: float, sample: int = 0, *,
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1, env=child)
     assert proc.stdout is not None
-    last, others = "", deque[str](maxlen=6)
+    last, moved, others = "", "", deque[str](maxlen=6)
     for raw in proc.stdout:
         line = raw.strip()
         if " run — " in line:
             last = line
             say(f"    {last}")
+        elif line.startswith("NOTE:"):
+            # The session ALREADY refuses to measure an edit made while
+            # it ran: it works from a snapshot taken when the session was
+            # planned, and says so when the tree no longer agrees. That
+            # warning used to land in `others`, which is printed only
+            # when NO chunk graded — so a sweep whose module was edited
+            # mid-run printed a clean figure and swallowed the one line
+            # saying what the figure was of. (2026-08-20: `_table_layout`
+            # was edited during its own re-measurement, by the person who
+            # wrote the rule against it.)
+            if not moved:                       # once, not per chunk
+                say(f"    {line}")
+            moved = line
         elif line:
             others.append(line)
     proc.wait()
@@ -106,7 +119,9 @@ def run(module: str, minutes: float, sample: int = 0, *,
     by = re.search(r"by definition: (.+)", out)
     if real:
         say(f"    REAL SURVIVAL {real.group(1)}%  "
-            f"({real.group(2)}/{real.group(3)})")
+            f"({real.group(2)}/{real.group(3)})"
+            + ("   [OF THE TREE AS PLANNED — see the NOTE above]"
+               if moved else ""))
     if by:
         say(f"    {by.group(1)[:150]}")
 
