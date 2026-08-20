@@ -29,6 +29,7 @@ from ._xml import (
     visible_text,
 )
 from .errors import AnchorError
+from .find import caption_re
 from .revisions import FINAL, _has_revisions, view_transform
 
 _TR_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>", re.DOTALL)
@@ -345,18 +346,23 @@ def _beside(xml: str, para: re.Match[str],
     lines are readable: a caption BETWEEN the candidate and the caption
     paragraph means the candidate is spoken for.
     """
-    from .crossrefs import find_captions  # layering: see module doc
+    # `caption_re` is THE caption definition and it lives in `find`, one
+    # layer down — `crossrefs` is this module's facade's SIBLING, and the
+    # walk below is three lines. Copying the REGEX would be the drift;
+    # walking the paragraphs again is not.
+    pattern = caption_re()
+    others = [m for m in PARA_RE.finditer(xml)
+              if pattern.match(visible_text(m.group(0)).strip())]
     # No need to exclude THIS caption from the list: both spans below
     # are open at the caption paragraph's own offsets, so it cannot rule
     # out either candidate. (Pinned as an equivalence, not asserted.)
-    others = find_captions(xml)
     below = next((t for t in tables if t.start >= para.end()), None)
     above = next((t for t in reversed(tables) if t.end <= para.start()), None)
-    if below is not None and any(para.end() <= c.start < below.start
-                                 for c in others):
+    if below is not None and any(para.end() <= m.start() < below.start
+                                 for m in others):
         below = None
-    if above is not None and any(above.end <= c.start < para.start()
-                                 for c in others):
+    if above is not None and any(above.end <= m.start() < para.start()
+                                 for m in others):
         above = None
     return below if below is not None else above
 

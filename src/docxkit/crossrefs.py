@@ -62,6 +62,14 @@ from ._xml import (
 from .citations import next_bookmark_id
 from .errors import AnchorError, ConversionGap
 
+# The caption DEFINITION lives in `find`, one layer down, because
+# `_table_core` and `placement` classify by it too and both are this
+# module's siblings — a sibling import is the edge the layering gate
+# refuses, and a second spelling of the regex is the drift this file's
+# own docstring records having had three times. Re-exported here: every
+# caller spells it `crossrefs.caption_re`.
+from .find import DEFAULT_LABELS, caption_re
+
 __all__ = [
     "DEFAULT_LABELS",
     "LABEL_FORMS",
@@ -79,10 +87,6 @@ __all__ = [
     "link_more",
     "unlink",
 ]
-
-#: Caption words recognised by default. Add the paper's own if it writes
-#: them differently — DSI's Russian manuscripts use Рисунок/Таблица.
-DEFAULT_LABELS = ("Figure", "Table", "Рисунок", "Таблица")
 
 #: How each label may appear in PROSE, which is not how it appears in the
 #: caption. English merely pluralises; Russian inflects, so the DSI
@@ -191,23 +195,6 @@ class LinkReport:
         for name, note in sorted(self.notes.items()):
             lines.append(f"  {name}: {note}")
         return "\n".join(lines)
-
-
-@lru_cache(maxsize=8)
-def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
-    """Label + number + separator. The separator is what makes it a caption.
-
-    THE caption definition — wordcount and export classify by it too.
-    It briefly existed in three copies that already disagreed about
-    whether "Table" counts, which is the same drift that once split the
-    glyph table between compare and ingest.
-    """
-    # [\w.-]: exhibit numbers are "1", "A2", "3.2" and "1-A". The hyphen
-    # form was invisible here, so a "Table 1-A." caption was not a
-    # caption at all and nothing linked to it. anchor_names sanitises
-    # the bookmark (Table1_A) — Word allows only word characters there.
-    alt = "|".join(re.escape(w) for w in labels)
-    return re.compile(rf"^\s*({alt})\s+([\w.-]+?)\s*[.:]\s")
 
 
 #: What may not follow an exhibit number. THE boundary — :mod:`renumber`

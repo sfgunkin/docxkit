@@ -44,15 +44,23 @@ from lxml import etree
 from ._xml import DOCUMENT, PPR_ORDER
 from .errors import PackageError
 
+# THE caption definition, from one layer down: `crossrefs` classifies by
+# the same regex and is this module's SIBLING, which the layering gate
+# refuses — and rightly, since a second spelling here is the drift that
+# file records having had three times.
+from .find import caption_re
+
 __all__ = [
     "CAPTION",
     "CAPTION_AFTER_PT",
     "GAP_PT",
     "MENTION",
     "NOTE",
+    "Block",
     "PackageError",
     "Placement",
     "PlacementReport",
+    "exhibit_block",
     "keep_together",
     "own_page",
     "place",
@@ -218,6 +226,139 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
             k += 1
         out[int(m.group(1))] = block
     return out
+
+
+@dataclass(frozen=True)
+class Block:
+    """One exhibit's elements, and what moving them would cost.
+
+    The elements are what :func:`keep_together`, :func:`own_page` and
+    :func:`space_block` already take, so a caller that has one of these
+    can hand `block.elements` straight to them.
+
+    The three flags are the traps a hand-rolled span walked into on AFI
+    (2026-08-19, four figures to the appendix). None of them is
+    reachable by reading the words: every word survived that move, the
+    caption inventory balanced, the text diff was clean and a 560-check
+    verifier passed, while two landscape orientations and eight footer
+    parts were gone.
+    """
+
+    caption: str
+    elements: list[etree._Element]
+    #: The block ENDS a section — its last paragraph carries `w:sectPr`.
+    #: For AFI's wide by-country panels that section is the landscape
+    #: one, and the paragraph holding it looks empty.
+    ends_a_section: bool
+    #: This block gets its own page only because the block BEFORE it
+    #: ends a section. Move it somewhere with nothing in front and it
+    #: shares a page with whatever it lands under.
+    shares_a_page: bool
+    #: It is the last content in the body. Moving it leaves the
+    #: body-level `sectPr` governing nothing, which renders as a blank
+    #: page — the last block's geometry has to be promoted into it.
+    last_in_body: bool
+
+
+def _caption_re() -> re.Pattern[str]:
+    """THE caption definition, borrowed rather than copied.
+
+    `CAPTION` above knows Table and Таблица because `place` moves
+    tables; an exhibit is also a figure, and the numbers run "A2" and
+    "1-A". `crossrefs.caption_re` is the definition every other module
+    classifies by, and a second spelling here is the drift that file's
+    docstring records having had three times.
+    """
+    return caption_re()
+
+
+def _is_exhibit_body(el: etree._Element) -> bool:
+    """A table, or a paragraph carrying a drawing rather than words."""
+    if el.tag == W + "tbl":
+        return True
+    # `.find`, not `any(el.iter(...))`: `iter` hands back a GENERATOR,
+    # which is truthy whether or not it will yield anything, so the
+    # `any` form answers True for every paragraph in the document — and
+    # then every caption is its own exhibit body and the table under it
+    # is left behind. Caught by hand before this had a test, which is
+    # the argument for having one.
+    return (el.tag == W + "p"
+            and any(el.find(f".//{W}{t}") is not None
+                    for t in ("drawing", "pict", "object")))
+
+
+def _ends_section(el: etree._Element) -> bool:
+    return el.tag == W + "p" and el.find(f"{W}pPr/{W}sectPr") is not None
+
+
+def exhibit_block(parts: dict[str, bytes], caption: str, *,
+                  note: re.Pattern[str] = NOTE) -> Block:
+    """The full span of one exhibit, INCLUDING a trailing section break.
+
+    `placement.place` has understood a TABLE's block since it was
+    written — caption above, notes below, hoisted bookmarks in front —
+    and every paper moving a FIGURE hand-rolled the span again. The span
+    is easy to get wrong in a way no text gate sees, and was: a figure
+    here is caption, image, source, and one more paragraph that looks
+    empty and carries the section break.
+
+    So the rule is the table rule, generalised by one clause: the
+    exhibit's body is a `w:tbl` OR a paragraph holding a drawing, and
+    everything after it that is a note or carries no text belongs to the
+    block — which is what makes the section-break paragraph part of it
+    rather than a spacer to leave behind.
+
+    Read-only. It answers what the span IS and what moving it would
+    cost; the caller moves it, because where an exhibit belongs is not
+    a question this can be asked.
+    """
+    body = _body(parts)
+    kids = list(body)
+    heads = [i for i, el in enumerate(kids)
+             if el.tag == W + "p" and caption in _text(el)
+             and _caption_re().match(_text(el).strip())]
+    if not heads:
+        raise PackageError(
+            f"no caption paragraph containing {caption!r} — a caption "
+            f"OPENS its paragraph, so a mention of it in prose is not one")
+    if len(heads) > 1:
+        raise PackageError(
+            f"{len(heads)} caption paragraphs contain {caption!r}; say "
+            f"which by passing more of it")
+    i = heads[0]
+
+    j = i if _is_exhibit_body(kids[i]) else i + 1
+    while (j < len(kids) and kids[j].tag == W + "p"
+           and not _text(kids[j]).strip() and not _is_exhibit_body(kids[j])):
+        j += 1
+    if j >= len(kids) or not _is_exhibit_body(kids[j]):
+        raise PackageError(
+            f"caption {caption!r} has no table or image under it — this "
+            f"returns an exhibit's span, and there is no exhibit here")
+
+    # the hoisted bookmarks in front: Word puts a table's bookmarkStart
+    # at BODY level, before the caption. See `_blocks`.
+    head = i
+    while head > 0 and kids[head - 1].tag in (W + "bookmarkStart",
+                                              W + "bookmarkEnd"):
+        head -= 1
+    k = j + 1
+    while k < len(kids) and kids[k].tag == W + "p":
+        txt = _text(kids[k]).strip()
+        if txt and not note.match(txt):
+            break
+        k += 1
+    block = kids[head:k]
+
+    content = [el for el in kids if el.tag in (W + "p", W + "tbl")]
+    before = kids[head - 1] if head else None
+    return Block(
+        caption=_caption_of(block),
+        elements=block,
+        ends_a_section=any(_ends_section(el) for el in block),
+        shares_a_page=(before is not None and _ends_section(before)
+                       and kids[i].find(f"{W}pPr/{W}pageBreakBefore") is None),
+        last_in_body=bool(content) and content[-1] is block[-1])
 
 
 def _caption_of(block: list[etree._Element]) -> str:

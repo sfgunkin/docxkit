@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from lxml import etree
 
 from docxkit import placement
@@ -1255,3 +1256,114 @@ def test_the_row_and_the_MENTION_are_matched_on_forty_characters_too():
 # afternoon: `pl.caption_sheet - 1`, `Placement.spaced`'s default, and
 # `here != there`. A list of what is not done is worth keeping for that
 # reason — it is the next round's starting point, and it shrinks.)
+
+
+# --------------------------------------------------- the exhibit block ---
+#
+# AFI moved four figures to the appendix on 2026-08-19 by hand-rolling
+# the span, and the span was wrong: two landscape orientations and eight
+# footer parts went with it. Every word survived, so the caption
+# inventory balanced, the text diff was clean and a 560-check verifier
+# passed. `validate` caught it on a count nobody read.
+
+DRAW = "<w:p><w:r><w:drawing/></w:r></w:p>"
+LANDSCAPE = ('<w:p><w:pPr><w:sectPr><w:pgSz w:orient="landscape"/>'
+             "</w:sectPr></w:pPr></w:p>")
+
+
+def test_a_FIGURE_block_carries_the_paragraph_that_looks_empty():
+    """That paragraph is the section break, and for the wide panels the
+    section it ends is the landscape one. Read as a spacer and left
+    behind, the figure lands in a portrait section."""
+    block = placement.exhibit_block(
+        parts(P("Prose before.") + P("Figure 5. Lorenz curves") + DRAW
+              + P("Source: World Bank.") + LANDSCAPE + P("Prose after.")),
+        "Figure 5.")
+
+    assert len(block.elements) == 4, [e.tag for e in block.elements]
+    assert block.ends_a_section
+    assert block.caption == "Figure 5. Lorenz curves"
+
+
+def test_a_TABLE_block_is_the_same_walk_it_always_was():
+    """The rule generalises by one clause — the exhibit's body is a
+    `w:tbl` OR a paragraph holding a drawing — and must not change what
+    a table's block has always been."""
+    block = placement.exhibit_block(
+        parts(P("Prose.") + P("Table 3. Counts") + TBL("a")
+              + P("Source: mine.") + P("Prose resumes here.")),
+        "Table 3.")
+
+    assert [e.tag.split("}")[1] for e in block.elements] == ["p", "tbl", "p"]
+    assert not block.ends_a_section
+
+
+def test_the_block_takes_the_bookmarks_WORD_HOISTED_in_front_of_it():
+    """Word puts a table's bookmarkStart at body level, before the
+    caption. Leaving it behind inverts the bookmark, and `audit_links`
+    reports nothing — it checks pairing, not order."""
+    block = placement.exhibit_block(
+        parts(P("Prose.") + '<w:bookmarkStart w:id="1" w:name="Table3"/>'
+              + '<w:bookmarkEnd w:id="1"/>'
+              + P("Table 3. Counts") + TBL("a")),
+        "Table 3.")
+
+    assert [e.tag.split("}")[1] for e in block.elements] == [
+        "bookmarkStart", "bookmarkEnd", "p", "tbl"]
+
+
+def test_a_block_whose_OWN_PAGE_comes_from_the_one_before_says_so():
+    """No `pageBreakBefore` anywhere: the figure gets its own page only
+    because the block in front ends a section. Moved somewhere with
+    nothing in front, it shares a page with whatever it lands under."""
+    block = placement.exhibit_block(
+        parts(P("Prose.") + LANDSCAPE + P("Figure 5. Curves") + DRAW),
+        "Figure 5.")
+
+    assert block.shares_a_page
+
+
+def test_a_block_with_its_OWN_page_break_does_not():
+    brk = "<w:pPr><w:pageBreakBefore/></w:pPr>"
+    block = placement.exhibit_block(
+        parts(P("Prose.") + LANDSCAPE + P("Figure 5. Curves", brk) + DRAW),
+        "Figure 5.")
+
+    assert not block.shares_a_page
+
+
+def test_the_LAST_block_in_the_body_says_so():
+    """Moving it leaves the body-level sectPr governing no content, and
+    an empty final section renders as a blank page. The last block's
+    geometry has to be promoted into the body sectPr instead."""
+    last = placement.exhibit_block(
+        parts(P("Prose.") + P("Figure 5. Curves") + DRAW), "Figure 5.")
+    middle = placement.exhibit_block(
+        parts(P("Prose.") + P("Figure 5. Curves") + DRAW + P("After.")),
+        "Figure 5.")
+
+    assert last.last_in_body
+    assert not middle.last_in_body
+
+
+def test_a_MENTION_of_the_caption_in_prose_is_not_a_caption():
+    """A caption OPENS its paragraph. Taking a mention would return a
+    span of prose and a caller would move it."""
+    with pytest.raises(placement.PackageError, match="OPENS its paragraph"):
+        placement.exhibit_block(
+            parts(P("As Figure 5. shows, it rises.")), "Figure 5.")
+
+
+def test_a_caption_with_NOTHING_under_it_is_refused():
+    """This returns an exhibit's span. A caption over prose is a
+    numbering defect for `crossrefs` to report, not a block to move."""
+    with pytest.raises(placement.PackageError, match="no table or image"):
+        placement.exhibit_block(
+            parts(P("Figure 5. Curves") + P("Just prose here.")), "Figure 5.")
+
+
+def test_TWO_captions_containing_the_string_are_refused():
+    with pytest.raises(placement.PackageError, match="2 caption paragraphs"):
+        placement.exhibit_block(
+            parts(P("Figure 5. Curves") + DRAW
+                  + P("Figure 5. Curves again") + DRAW), "Figure 5.")

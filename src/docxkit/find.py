@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from functools import lru_cache
 
 from ._xml import (
     PARA_RE,
@@ -22,9 +23,11 @@ from ._xml import (
 from .errors import AnchorError
 
 __all__ = [
+    "DEFAULT_LABELS",
     "P_RE",
     "AnchorError",
     "body_elements",
+    "caption_re",
     "edit_para",
     "find_para",
     "heading_level",
@@ -37,6 +40,27 @@ __all__ = [
     "table_spans",
     "text_of",
 ]
+
+#: Caption words recognised by default. Add the paper's own if it writes
+#: them differently — DSI's Russian manuscripts use Рисунок/Таблица.
+DEFAULT_LABELS = ("Figure", "Table", "Рисунок", "Таблица")
+
+@lru_cache(maxsize=8)
+def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
+    """Label + number + separator. The separator is what makes it a caption.
+
+    THE caption definition — wordcount and export classify by it too.
+    It briefly existed in three copies that already disagreed about
+    whether "Table" counts, which is the same drift that once split the
+    glyph table between compare and ingest.
+    """
+    # [\w.-]: exhibit numbers are "1", "A2", "3.2" and "1-A". The hyphen
+    # form was invisible here, so a "Table 1-A." caption was not a
+    # caption at all and nothing linked to it. anchor_names sanitises
+    # the bookmark (Table1_A) — Word allows only word characters there.
+    alt = "|".join(re.escape(w) for w in labels)
+    return re.compile(rf"^\s*({alt})\s+([\w.-]+?)\s*[.:]\s")
+
 
 # kept as aliases: several paper scripts import these from here. There
 # was a third, `delta_text_of`, and nothing in four trees ever called it

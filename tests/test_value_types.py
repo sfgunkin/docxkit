@@ -51,6 +51,7 @@ VALUES = [
     "figures.AltText",
     "figures.Figure",
     "footnotes.SizeOutlier",
+    "placement.Block",          # an exhibit's span, and what moving it costs
     "refstyle.Issue",
     "refstyle.Style",
     "revision.IngestReport",

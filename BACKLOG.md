@@ -280,39 +280,6 @@ Figure 10 caption the sweep writes 2 runs where the naive loop writes 6.
 Still open: the `fig5_firstref` question in the last paragraph above, which
 nobody has checked.
 
-### S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like
-
-Found on AFI, 2026-08-19, moving four figures to the appendix.
-
-A figure in this manuscript is four paragraphs: caption, image, source, and
-one more that looks empty. That last one carries `<w:sectPr>` — **each figure
-block is its own SECTION**, and for the wide by-country panels that section is
-`landscape`. Read as a spacer and dropped, it took with it two landscape
-orientations and eight footer parts, four of them holding the PAGE field.
-
-`placement.place()` understands captions, notes and keeping a table whole, but
-there is no "this is one exhibit, move it" primitive, so every paper hand-rolls
-the span — and the span is easy to get wrong in a way no text gate sees. Every
-word survived; the caption inventory, the text diff and a 560-check verifier
-all passed.
-
-What would have prevented it: an `exhibit_block(xml, caption)` that returns the
-full span INCLUDING a trailing section break, or a `move_block` that carries
-it. Two further traps the same job hit, worth encoding in whatever ships:
-
-- a figure caption here has no `pageBreakBefore`; a figure gets its own page
-  only because the block BEFORE it ends with a section break. Move a run of
-  blocks somewhere with nothing in front and the first one shares a page.
-- moving the LAST block leaves the body-level `sectPr` governing no content,
-  and an empty final section renders as a blank page. The last block's
-  geometry has to be promoted into the body sectPr instead.
-
-**Credit where due:** `validate` DID report this — `structure` went False and
-it prints a `STRUCTURE sectPr` line naming the count. I truncated the output
-and did not read it. `ingest` then caught the lost footers as `PART REMOVED`
-and `baseline` refused, which is the only reason it did not ship. The gates
-worked; the ergonomics are what invited the mistake.
-
 ### S4 no way to ask what is AT an edit site, so every batch surveys it two or three times
 
 **Symptom as observed.** Preparing an edit needs three facts: the exact string
@@ -511,6 +478,47 @@ than most new features.
 ---
 
 ## Fixed
+
+### ~~S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like~~
+
+Fixed 2026-08-20 — `placement.exhibit_block(parts, caption)` returns a
+frozen `Block`: the elements, and the three traps this job walked into.
+
+The span rule is the TABLE rule `place` has always used, generalised by one
+clause — the exhibit's body is a `w:tbl` **or** a paragraph holding a
+drawing — after which "everything below it that is a note or carries no
+text" is what makes the section-break paragraph part of the block rather
+than a spacer to leave behind. Hoisted bookmarks in front come too, for the
+reason `_blocks` already records.
+
+Both further traps are answered rather than assumed:
+
+* `shares_a_page` — the block has no `pageBreakBefore` and the block BEFORE
+  it ends a section, so its own page is borrowed and moving it loses one;
+* `last_in_body` — moving it leaves the body-level `sectPr` governing no
+  content, which renders as a blank page.
+
+`ends_a_section` is the one that cost the landscape orientations.
+
+Read-only, deliberately: it answers what the span IS and what moving it
+would cost. Where an exhibit belongs is not a question a document can be
+asked, and `keep_together`/`own_page`/`space_block` already take exactly
+the element list this hands back.
+
+**A layering fix came with it.** `placement` and `crossrefs` are siblings,
+and `_table_core`'s new caption check reached the same way — so
+`DEFAULT_LABELS` and `caption_re`, THE caption definition, moved down into
+`docxkit.find`, which is below both and is the module whose whole subject is
+locating things by visible text. `crossrefs` re-exports them, so every
+caller still spells it `crossrefs.caption_re`. The layering gate caught the
+sibling edge; the `_table_core` one it could not see, because a private
+half is checked through its facade.
+
+`any(el.iter(W + t) for t in ...)` was in the first draft of the exhibit-body
+test and is worth recording: `iter` returns a GENERATOR, which is truthy
+before it yields anything, so every paragraph read as an exhibit and every
+caption became its own block with the table left behind. Found by hand
+before the tests existed, which is the argument for the tests.
 
 ### ~~S4 `replace_in_para` refuses a relabel without naming the flag that allows it~~
 
