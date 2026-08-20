@@ -324,3 +324,58 @@ def test_a_property_can_be_REMOVED_by_the_sweep():
 
     assert written == 1
     assert "<w:b/>" not in out and '<w:sz w:val="24"/>' in out
+
+
+def test_italics_ON_takes_out_EVERY_stale_copy():
+    """The seventh writer of the shape this package spent 2026-08-20
+    on: `w:i` twice in one `w:rPr` is invalid and does happen — a style
+    states it OFF and a writer that could not see that put a second one
+    beside it. Replacing the first leaves the stale element sorting
+    ahead of the new one, which is the reading Word takes, so a
+    reference entry `refstyle` reported as re-italicised came back
+    roman.
+
+    The pairs below are the two orders a document produces them in."""
+    from docxkit.edit import italicize
+
+    def para_xml(props: str) -> str:
+        return (f"<w:p><w:r><w:rPr>{props}</w:rPr>"
+                "<w:t>Journal of Economics</w:t></w:r></w:p>")
+
+    for props in ('<w:i w:val="0"/><w:i w:val="0"/>',
+                  '<w:i w:val="0"/><w:i/>',
+                  '<w:i/><w:i w:val="0"/>'):
+        out = italicize(para_xml(props), "Journal of Economics")
+        assert out == para_xml("<w:i/>"), props
+
+
+def test_a_run_already_italic_is_still_handed_back_untouched():
+    """The other side of that branch, and the reason it cannot simply
+    normalise every run it meets: an italic run is not a change, and a
+    writer that rewrites it puts a revision in the document."""
+    from docxkit.edit import italicize
+
+    for props in ("<w:i/>", "<w:i></w:i>"):
+        para_xml = (f"<w:p><w:r><w:rPr>{props}</w:rPr>"
+                    "<w:t>Journal</w:t></w:r></w:p>")
+        assert italicize(para_xml, "Journal") == para_xml, props
+
+
+def test_a_second_vertAlign_comes_out_with_the_first():
+    """`w:vertAlign` twice, the same shape one function down. The stale
+    `baseline` left beside a new `subscript` is a subscript Word may
+    render flat."""
+    from docxkit.edit import subscript
+
+    para_xml = ('<w:p><w:r><w:rPr><w:sz w:val="20"/>'
+                '<w:vertAlign w:val="superscript"/>'
+                '<w:vertAlign w:val="baseline"/>'
+                '<w:lang w:val="en-US"/></w:rPr>'
+                "<w:t>t</w:t></w:r></w:p>")
+
+    out = subscript(para_xml, "t")
+
+    assert out == ('<w:p><w:r><w:rPr><w:sz w:val="20"/>'
+                   '<w:vertAlign w:val="subscript"/>'
+                   '<w:lang w:val="en-US"/></w:rPr>'
+                   "<w:t>t</w:t></w:r></w:p>")

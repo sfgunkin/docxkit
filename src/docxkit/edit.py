@@ -218,6 +218,8 @@ _RPR_HEAD_RE = re.compile(
     r"<w:rPr>(?:<w:rStyle [^>]*/>)?(?:<w:rFonts [^>]*/>)?"
     r"(?:<w:b/>)?(?:<w:bCs/>)?")
 _ITALIC_OFF_RE = re.compile(r'<w:i w:val="(?:0|false|none)"/>')
+#: Any `w:i`, on or off, in either spelling Word writes.
+_ITALIC_ANY_RE = re.compile(r"<w:i(?: [^>]*)?(?:/>|></w:i>)")
 _RUN_OPEN_RE = RUN_OPEN_RE             # the shared definition
 
 
@@ -235,10 +237,16 @@ def _run_italic(run_xml: str) -> str:
         return run_xml[:m.end()] + "<w:rPr><w:i/></w:rPr>" + run_xml[m.end():]
     start, end, inner = own
     live = live_properties(inner)
-    if (off := _ITALIC_OFF_RE.search(live)) is not None:
-        inner = inner[:off.start()] + "<w:i/>" + inner[off.end():]
-    elif re.search(r"<w:i[/ >]", live):
-        return run_xml                       # already italic
+    if (hits := list(_ITALIC_ANY_RE.finditer(live))):
+        if len(hits) == 1 and not _ITALIC_OFF_RE.fullmatch(hits[0].group(0)):
+            return run_xml                   # already italic
+        # EVERY copy: `w:i` twice in one `w:rPr` is invalid and does
+        # happen — a style states it off and a writer that could not see
+        # that put a second beside it — and taking one out leaves the
+        # stale element sorting FIRST, which is the reading Word takes.
+        for m in reversed(hits[1:]):
+            inner = inner[:m.start()] + inner[m.end():]
+        inner = inner[:hits[0].start()] + "<w:i/>" + inner[hits[0].end():]
     else:
         m = _RPR_HEAD_RE.search(f"<w:rPr>{live}")
         assert m is not None
@@ -266,8 +274,10 @@ def _run_vert_align(run_xml: str, val: str) -> str:
         return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
     start, end, inner = own
     live = live_properties(inner)
-    if (was := _VERT_ALIGN_RE.search(live)) is not None:
-        inner = inner[:was.start()] + tag + inner[was.end():]
+    if (hits := list(_VERT_ALIGN_RE.finditer(live))):
+        for m in reversed(hits[1:]):         # every copy — see _run_italic
+            inner = inner[:m.start()] + inner[m.end():]
+        inner = inner[:hits[0].start()] + tag + inner[hits[0].end():]
     else:
         m = _RPR_TAIL_RE.search(live)
         at = m.start() if m is not None else len(live)
