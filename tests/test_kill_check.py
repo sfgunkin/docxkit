@@ -36,8 +36,11 @@ print("BAD", check({module!r}, {tests!r}, {cases!r}))
 '''
 
 
+Case = tuple[str, str, str, bool] | tuple[str, str, str, bool, int]
+
+
 def _run(tmp_path: Path, module: str, tests: list[str],
-         cases: list[tuple[str, str, str, bool]]) -> str:
+         cases: list[Case]) -> str:
     """Drive `check` in a subprocess, the way a scratch script does."""
     script = tmp_path / "drive.py"
     script.write_text(_DRIVER.format(tools=str(TOOLS), module=module,
@@ -109,3 +112,34 @@ def test_the_checkout_holds_TODAYS_tools_scripts(tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "STALE" not in done.stdout, done.stdout
     assert "SAME kill_check.py" in done.stdout, done.stdout
+
+
+def test_an_anchor_that_occurs_TWICE_says_how_to_pick_one(tmp_path):
+    """The refusal is right — a case that mutates two places at once
+    proves nothing about either — but "SKIPPED" alone leaves the reader
+    to widen the anchor by hand, which costs a run each time. The two
+    `if not wanted: return 0` blocks of `comments.set_done` and
+    `comments.remove` are the same four lines; so are the two
+    `pl.caption_sheet - 1` calls in `placement`, one per measurement."""
+    out = _run(tmp_path, "src/docxkit/console.py", ["tests/test_console.py"],
+               [("a doubled anchor", "import", "IMPORT", True)])
+
+    assert "anchor occurs" in out
+    assert "5th element" in out, out
+
+
+def test_the_FIFTH_element_picks_which_occurrence_to_mutate(tmp_path):
+    """And having picked one, the case runs like any other."""
+    out = _run(tmp_path, "src/docxkit/console.py", ["tests/test_console.py"],
+               [("the second import", "import", "IMPORT", True, 2)])
+
+    assert "anchor occurs" not in out
+    assert "does not compile" in out or "SURVIVED" in out or "killed" in out
+
+
+def test_an_occurrence_that_is_not_THERE_is_refused(tmp_path):
+    out = _run(tmp_path, "src/docxkit/console.py", ["tests/test_console.py"],
+               [("the ninth import", "import", "IMPORT", True, 9)])
+
+    assert "occurrence 9 of" in out
+    assert "BAD 1" in out

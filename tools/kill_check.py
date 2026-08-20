@@ -17,9 +17,10 @@ survivor list into a list of REAL gaps rather than harness artifacts.
 
 Each case is `(label, old, new, expect_kill)`. The anchor must occur
 EXACTLY once, or the case is skipped rather than mutating something
-else. `expect_kill=False` records an equivalence you have argued for:
-the run then reports it as expected when it survives, so the claim is
-checked rather than assumed.
+else — add a fifth element, `(label, old, new, expect_kill, 2)`, to say
+WHICH occurrence you meant. `expect_kill=False` records an equivalence
+you have argued for: the run then reports it as expected when it
+survives, so the claim is checked rather than assumed.
 
 Three things this does that a hand-rolled loop does not, each of which
 produced a wrong answer first:
@@ -44,6 +45,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 LIVE = Path(__file__).resolve().parents[1]
@@ -84,18 +86,45 @@ def _env() -> dict[str, str]:
             "PYTHONIOENCODING": "utf-8"}
 
 
+def _nth_replace(text: str, old: str, new: str, nth: int) -> str:
+    """`text` with only the `nth` (1-based) occurrence of `old` replaced."""
+    at = -1
+    for _ in range(nth):
+        at = text.index(old, at + 1)
+    return text[:at] + new + text[at + len(old):]
+
+
 def check(module: str, tests: list[str],
-          cases: list[tuple[str, str, str, bool]]) -> int:
-    """Run every case; return how many did NOT match their expectation."""
+          cases: Sequence[tuple[str, str, str, bool]
+                          | tuple[str, str, str, bool, int]]) -> int:
+    """Run every case; return how many did NOT match their expectation.
+
+    A case is `(label, old, new, expect_kill)` and the anchor must occur
+    EXACTLY once. A fifth element says WHICH occurrence to mutate when
+    it does not: the two `if not wanted: return 0` blocks of
+    `comments.set_done` and `comments.remove` are the same four lines,
+    and so are the two `pl.caption_sheet - 1` calls in `placement`, one
+    per measurement pass. Widening the anchor by hand until it is unique
+    works and costs an iteration every time; naming the occurrence says
+    what was meant.
+    """
     sync()
     path = ROOT / module
     original = path.read_text(encoding="utf-8")
     bad = 0
     try:
-        for label, old, new, expect_kill in cases:
+        for case in cases:
+            label, old, new, expect_kill = case[:4]
+            nth = case[4] if len(case) > 4 else 0
             n = original.count(old)
-            if n != 1:
-                print(f"  ?? {label}: anchor occurs {n} times — SKIPPED")
+            if not nth and n != 1:
+                print(f"  ?? {label}: anchor occurs {n} times — SKIPPED "
+                      f"(pass a 5th element, 1..{n}, to pick one)")
+                bad += 1
+                continue
+            if nth and not 1 <= nth <= n:
+                print(f"  ?? {label}: asked for occurrence {nth} of {n} — "
+                      f"SKIPPED")
                 bad += 1
                 continue
             if new == old:
@@ -110,7 +139,8 @@ def check(module: str, tests: list[str],
                       f"SKIPPED, since an unmutated file always survives")
                 bad += 1
                 continue
-            mutated = original.replace(old, new)
+            mutated = (_nth_replace(original, old, new, nth) if nth
+                       else original.replace(old, new))
             try:
                 compile(mutated, str(path), "exec")
             except SyntaxError as exc:
