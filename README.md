@@ -40,7 +40,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 |---|---|
 | `batch` | a set of edits as ONE gated unit of work: preflight every anchor at once, apply, hold the carriers (bookmarks, links, footnote marks, math, rows, drawings) unless the batch declares what it moves |
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
-| `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk |
+| `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk; `site` surveys an edit anchor before you write the edit |
 | `edit` | anchor-asserting replace, run-aware replace and INSERT, link relabel, span italics, `xml:space` repair |
 | `body` | build new content: paragraphs, grouped-header tables, guarded insertion; `prose_props` clones a paragraph's style without a link's |
 | `revisions` | read tracked changes; accept/reject, wholesale or by predicate (`by_author`, `whitespace_only`) |
@@ -53,25 +53,25 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
 | `citations` | the grammar, the link audit, and `link_all` — build the whole citation<->entry apparatus document-wide |
-| `refstyle` | reference/citation FORMAT audit against the house author-date style (initials, "(2020).", en-dashes, order, cited↔listed); `HOUSE` and `CHICAGO` presets |
+| `refstyle` | reference/citation FORMAT audit against the house author-date style (initials, "(2020).", en-dashes, order, cited↔listed); `HOUSE` and `CHICAGO` presets; `convert` writes the mechanical half back, proving the entry unchanged |
 | `crossrefs` | bidirectional figure/table links, the bookmark convention |
 | `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass; and footnote ids back into reference order |
 | `wordcount` | words per bucket (prose/tables/captions/footnotes/references/appendix) for journal caps |
 | `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes and endnotes |
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
-| `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass |
+| `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass; `shared_session` spends one cold start on a whole ladder |
 | `pages` | what the RENDER says: blank sheets, printed numbers, orientation |
 | `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
 | `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
 | `tracked` | build a tracked-changes deliverable end to end |
-| `guard` | stop a rebuild discarding a review someone made in Word |
+| `guard` | stop a rebuild discarding a review someone made in Word; `restamp` records a repair the TOOL made, which is not a review |
 | `ingest` | fold the author's Word edits back into the build source |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |
 | `console` | UTF-8 stdout, guarded — a bare reconfigure crashes off-console |
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 | `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
-| `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word |
+| `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included |
 | `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |
 | `revision` | the single-file protocol: one `working.docx`, two states read off the file itself, and the gate ladder between a proposal and the truth |
 | `cli` | the `docxkit` command line — the one-off jobs, without a throwaway script |
