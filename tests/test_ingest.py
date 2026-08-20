@@ -628,3 +628,15 @@ def test_a_document_with_NEITHER_note_store_still_builds_overrides(tmp_path):
     ovs = build_overrides(base, edited)
 
     assert [_cat(n) for _, n in ovs] == ["revised text"]
+
+
+# `ingest.py` measured 1.6 % (3/191) on 2026-08-20 — after the endnote
+# remap landed in it — and all three are equivalent:
+#
+# * `if tag == "equal"` written `is`: difflib's opcode tags are literals
+#   in its own module, and one object each.
+# * `zip(bls, us, strict=True)` written `strict=False`, inside the
+#   branch `if len(bls) == len(us):` has already chosen.
+# * `elif len(bls) > len(us):` written `>=`. The `if` above it took the
+#   equal case, so the two readings answer the same on everything that
+#   reaches this line.
