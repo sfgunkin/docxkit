@@ -878,11 +878,36 @@ def test_set_cell_fills_a_BLANK_cell():
     assert "<w:b/>" in out, "the cell's formatting is the paper's"
 
 
+def test_a_run_property_is_placed_before_the_FIRST_child_it_outranks():
+    """`break`, on the walk that finds the slot. A run with two
+    properties the new one sorts ahead of is the ordinary case — `w:i`
+    and `w:sz` are what a table cell out of a paper states — and
+    without the break the insert lands before the LAST of them instead
+    of the first, which is a `w:b` after the italic and a run Word
+    refuses.
+
+    `w:sz` also has to be the tag that is REPLACED here: the same-name
+    scan compares a regex group against the caller's string, and a
+    one-character property name (`i`, `b`) is interned, so an identity
+    reading of it holds for those and fails for every longer one."""
+    run_xml = '<w:r><w:rPr><w:i/><w:sz w:val="24"/></w:rPr><w:t>x</w:t></w:r>'
+
+    assert set_run_property(run_xml, "b", "<w:b/>") == (
+        '<w:r><w:rPr><w:b/><w:i/><w:sz w:val="24"/></w:rPr>'
+        "<w:t>x</w:t></w:r>")
+    assert set_run_property(run_xml, "sz", '<w:sz w:val="20"/>') == (
+        '<w:r><w:rPr><w:i/><w:sz w:val="20"/></w:rPr><w:t>x</w:t></w:r>')
+
+
 # --- the run of 2026-08-20: 4.5 % (20/448) ----------------------------
 #
 # Four of the twenty are the tests above. The other sixteen are argued,
 # and all sixteen were put through kill_check to check the argument
-# rather than assume it:
+# rather than assume it. (A re-measurement the same afternoon sampled
+# the lines this round CHANGED and found two more holes in them: the
+# slot walk's `break` and the same-name scan read as an identity, both
+# pinned by the test above. Two more equivalences came with them, at
+# the foot of this note.):
 #
 # * ELEVEN readings of `(/?)`, the optional slash in an open tag, across
 #   `matching_close`, `element_spans`, `own_properties`, `_own_children`
@@ -923,3 +948,14 @@ def test_set_cell_fills_a_BLANK_cell():
 #   properties the table does not know — and RPR_ORDER is the COMPLETE
 #   EG_RPrBase, so a second unranked child is one that cannot be in a
 #   run's properties in the first place.
+#
+# From the re-measurement:
+#
+# * `idx = len(runs) - 1 - i` read as `- 1 ^ i` in `set_run_text`. The
+#   index is only ever compared against 0, and a xor is zero exactly
+#   when its operands are equal — which is exactly when the subtraction
+#   is.
+# * `> rank` read as `>=` in `set_para_property`, the paragraph's answer
+#   to the rPr slot walk. Same argument as that one, on the same
+#   grounds: PPR_ORDER is the complete CT_PPr, and the same-name copies
+#   are taken out above.
