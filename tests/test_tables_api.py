@@ -49,11 +49,50 @@ def test_by_caption_returns_none_for_an_unknown_caption():
     assert by_caption(_doc(), "Table 9.", required=False) is None
 
 
-def test_by_caption_returns_none_when_the_caption_trails_every_table():
+def test_by_caption_takes_the_table_ABOVE_when_the_caption_trails_it():
+    """The convention is that a caption sits above its table, and two
+    of AFI's six do not. Nothing else stands between this caption and
+    the table before it, so that table is what it names."""
     xml = document(
         table(row("Country", "Score"), row("Poland", "1.0"))
-        + para(run("Table 7. A caption with no table after it")))
-    assert by_caption(xml, "Table 7.", required=False) is None
+        + para(run("Table 7. A caption underneath its table")))
+
+    found = by_caption(xml, "Table 7.")
+
+    assert found is not None and found.header == ["Country", "Score"]
+
+
+def test_by_caption_REFUSES_a_table_that_belongs_to_another_caption():
+    """The AFI defect, in the shape it was found: "Table 3." sits under
+    its own table, and the next table down is the 2x2 grid holding
+    Figure 5's panels. The old rule handed that grid back — a `Table`,
+    not a `None`, so `required=True` could not fire and a caller
+    reordering rows would have rewritten a different exhibit.
+    """
+    xml = document(
+        table(row("Country", "Score"), row("Poland", "1.0"))
+        + para(run("Table 3. A caption underneath its table"))
+        + para(run("Figure 5. Panels"))
+        + table(row("a. Tajikistan", "b. Albania")))
+
+    found = by_caption(xml, "Table 3.")
+
+    assert found is not None and found.header == ["Country", "Score"]
+
+
+def test_by_caption_still_prefers_the_table_BELOW_when_both_are_free():
+    """The convention, applied where it can still be true. A caption
+    between two tables that nothing else claims is a caption above its
+    table — which is what every well-formed manuscript here looks like.
+    """
+    xml = document(
+        table(row("Country", "Score"))
+        + para(run("Table 2. A caption above its table"))
+        + table(row("Region", "Share")))
+
+    found = by_caption(xml, "Table 2.")
+
+    assert found is not None and found.header == ["Region", "Share"]
 
 
 def test_by_caption_says_which_half_failed():
@@ -62,11 +101,13 @@ def test_by_caption_says_which_half_failed():
     ten tables by caption and a wrong one is a silent mis-edit."""
     xml = document(
         table(row("Country", "Score"))
-        + para(run("Table 7. A caption with no table after it")))
+        + para(run("Figure 1. The panels above"))
+        + para(run("Table 7. A caption whose own table is gone")))
     with pytest.raises(AnchorError, match="no paragraph containing"):
         by_caption(xml, "Table 9.")
-    with pytest.raises(AnchorError, match="has no table after it"):
+    with pytest.raises(AnchorError, match="has no table of its own"):
         by_caption(xml, "Table 7.")
+    assert by_caption(xml, "Table 7.", required=False) is None
 
 
 # --------------------------------------------------------- cell values ----

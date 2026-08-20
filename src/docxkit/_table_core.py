@@ -303,8 +303,22 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
     """The table belonging to a caption such as ``"Table 4."``.
 
     House convention in these papers is that a table caption sits ABOVE
-    its table, so this takes the first table starting after the caption
-    paragraph. (Figure captions sit above their images too, which is why
+    its table, so the table BELOW the caption is preferred. It is not
+    evidence on its own: on AFI's `working.docx` Tables 3 and A3 have
+    their captions underneath, and "the first table after the caption"
+    handed both lookups the 2x2 grid holding Figure 5's panels — a
+    `Table`, not a `None`, so `required=True` could not fire and a
+    caller reordering rows would have damaged a different exhibit.
+
+    So a candidate is refused when ANOTHER caption stands between it and
+    this one: that table is the other caption's, whatever the
+    convention. What is left is at most one table on each side, and the
+    one below wins — which is the convention, applied where it can still
+    be true rather than assumed. If both sides are ruled out, this
+    raises rather than returning a neighbour; a wrong table is worse
+    than no table.
+
+    (Figure captions sit above their images too, which is why
     offset-based caption-to-object mapping goes wrong if you assume
     otherwise.)
     """
@@ -314,12 +328,37 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
         if required:
             raise AnchorError(f"no paragraph containing caption {caption!r}")
         return None
-    for t in read_all(xml, view=view):
-        if t.start > para.start():
-            return t
-    if required:
-        raise AnchorError(f"caption {caption!r} has no table after it")
-    return None
+    found = _beside(xml, para, read_all(xml, view=view))
+    if found is None and required:
+        raise AnchorError(
+            f"caption {caption!r} has no table of its own: the nearest "
+            f"table on each side is behind another caption, so it belongs "
+            f"to that one")
+    return found
+
+
+def _beside(xml: str, para: re.Match[str],
+            tables: list[Table]) -> Table | None:
+    """The table this caption paragraph owns, or None.
+
+    The refusal is what this is for, so it is separate and its own two
+    lines are readable: a caption BETWEEN the candidate and the caption
+    paragraph means the candidate is spoken for.
+    """
+    from .crossrefs import find_captions  # layering: see module doc
+    # No need to exclude THIS caption from the list: both spans below
+    # are open at the caption paragraph's own offsets, so it cannot rule
+    # out either candidate. (Pinned as an equivalence, not asserted.)
+    others = find_captions(xml)
+    below = next((t for t in tables if t.start >= para.end()), None)
+    above = next((t for t in reversed(tables) if t.end <= para.start()), None)
+    if below is not None and any(para.end() <= c.start < below.start
+                                 for c in others):
+        below = None
+    if above is not None and any(above.end <= c.start < para.start()
+                                 for c in others):
+        above = None
+    return below if below is not None else above
 
 
 def tables_after(xml: str, caption: str, *, view: str = FINAL,

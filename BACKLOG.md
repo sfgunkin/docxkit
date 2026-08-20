@@ -756,45 +756,6 @@ returning the table with rows permuted and raising if the multiset moves;
 `tables.clone_row(tbl_xml, index)` and `tables.set_row(row_xml, values)`; and
 `tables.by_caption(xml, prefix)` to find the table a caption names.
 
-### S2 `tables.by_caption` assumes the caption sits ABOVE, and silently returns the wrong table
-
-**Symptom as observed.** On AFI's `working.docx`, six captions, six lookups:
-
-    by_caption("Table 1.")   -> Table 1        correct
-    by_caption("Table 4.")   -> Table 4        correct
-    by_caption("Table 5.")   -> Table 5        correct
-    by_caption("Table A4.")  -> Table A4       correct
-    by_caption("Table 3.")   -> the FIGURE 5 panel table   WRONG
-    by_caption("Table A3.")  -> the FIGURE 5 panel table   WRONG
-
-Two of six come back with a completely unrelated table -- the 2x2 grid holding
-Figure 5's "a. Tajikistan / b. Albania / c. Poland" panels -- and nothing says
-so. The docstring states the assumption ("House convention in these papers is
-that a table caption sits ABOVE its table, so this takes the first table
-starting after the caption"), and in this manuscript Tables 3 and A3 have their
-captions BELOW, so "the first table after the caption" is whatever comes next.
-
-**Why S2.** It returns a `Table` object, not `None`, and `required=True` cannot
-fire because something was found. A caller that reorders rows, rewrites cells or
-applies house formatting to the result damages a different table and every
-count still balances.
-
-**Repro.** Any document where one caption sits below its table.
-
-**Fix sketch.** The caption's own position is not enough evidence, so use a
-second signal and refuse when they disagree:
-- prefer the NEAREST table either side of the caption rather than the first one
-  after it, and when the nearer one is above, say so in the returned object;
-- **cross-check the caption's number against the table.** "Table 5." whose first
-  header cell is `Country` and whose remaining headers are years is consistent;
-  the Figure 5 panel grid, whose only cells are "a. Tajikistan"/"b. Albania",
-  is not a table any "Table N." caption would name.
-- failing both, raise rather than return a neighbour. A wrong table is worse
-  than no table.
-
-**Workaround.** `AFI/revision/scripts/build_r5a.py` addresses tables by index,
-asserted against expected row counts.
-
 ### ~~S4 the missing thing is not a verb, it is the UNIT OF WORK~~ — SHIPPED 20.08, `9b7a5b3`
 
 `docxkit.batch`: `Edit`, `Step`, `Verdict`, `Report`, `preflight`, `diagnose`,
@@ -916,6 +877,39 @@ up, so the two directions read alike. It belongs in `package` and not in the
 callers: 126 scripts across the four papers call `read_parts` themselves.
 
 ## Fixed
+
+### ~~S2 `tables.by_caption` assumes the caption sits ABOVE, and silently returns the wrong table~~
+
+Fixed 2026-08-20 in `_table_core.py`. On AFI's `working.docx` two of six
+lookups came back with the 2x2 grid holding Figure 5's panels — a `Table`,
+not a `None`, so `required=True` could not fire — because Tables 3 and A3
+have their captions underneath and "the first table after the caption" is
+whatever comes next.
+
+The caption's position is still the preference; what makes it evidence is the
+document's OTHER captions. `_beside` takes the nearest table on each side and
+refuses either one that has another caption standing between it and this
+one — that table is the other caption's, whatever the convention. What is
+left is at most one candidate per side, and the one below wins, which is the
+house convention applied where it can still be true. Both ruled out raises:
+
+    caption 'Table 7.' has no table of its own: the nearest table on each
+    side is behind another caption, so it belongs to that one
+
+Two existing tests asserted the old rule (a caption trailing every table
+returned `None`); they assert the new one now, and three more cover the AFI
+shape, the convention where both sides are free, and the refusal. The two
+range bounds that make the caption's own paragraph not count against it are
+pinned by mutation rather than argued.
+
+The NUMBER cross-check the sketch also proposed ("Table 5." should not name a
+grid of "a. Tajikistan" panels) was not taken: the structural evidence is a
+fact about the document and the content test is a guess about what a table
+holds.
+
+**Workaround to retire:** `AFI/revision/scripts/build_r5a.py` addresses
+tables by index against expected row counts. Left in place — it is in the
+paper's own tree, and deleting it is the paper owner's call.
 
 ### ~~S2 `revision build` blames footnotes for a gap that is Word's revision GROUPING~~
 

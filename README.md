@@ -255,6 +255,12 @@ they do.
   `_own_tcpr`, which stop at the first row or the first child.
 - **A rebuild must not overwrite a deliverable someone reviewed in Word.**
   `tracked.build` stamps what it produced and refuses if the file changed.
+- **A caption sits ABOVE what it names — usually.** Two of AFI's six
+  table captions sit underneath, so `tables.by_caption` treats the
+  convention as a preference and the document's other captions as the
+  evidence: a table with ANOTHER caption between it and this one belongs
+  to that one, and if both sides are ruled out it raises rather than
+  handing back a neighbour.
 - **A figure caption sits ABOVE its image**, one figure can be several
   images (AFI's Figure 5 is three Lorenz curves), and replacing image
   bytes changes *every* drawing sharing that relationship — AFI's Figures
