@@ -1021,3 +1021,64 @@ def test_properties_are_inserted_FIRST_not_before_the_last_child():
     para = tr.find(NS + "tc/" + NS + "p")
     assert para is not None
     assert [etree.QName(c).localname for c in para] == ["pPr", "r", "r"]
+
+
+def test_a_body_of_THREE_HUNDRED_children_walks_off_neither_end():
+    """Two identity comparisons against `len(kids)`, one per loop in
+    `_blocks`. CPython caches the integers up to 256, so `j is
+    len(kids)` answers the same as `j == len(kids)` for every fixture in
+    this file — and differently for every real manuscript, where the
+    body has hundreds of children. Past 256 the guard stops firing and
+    the walk indexes off the end of the list.
+
+    Both loops reach the end of the body under an ordinary shape: a
+    caption at the very bottom with its table lost, and a table that IS
+    the last thing in the document. The first is a deleted table's
+    caption left behind; the second is an appendix."""
+    prose = "".join(P(f"Прозаический абзац {i}.") for i in range(296))
+
+    ends_with_caption = parts(P("См. таблицу 1.") + prose
+                              + P("Таблица 1. Заголовок"))
+    _out, rep = placement.place(ends_with_caption)
+    assert rep.placements == []
+
+    ends_with_table = parts(P("См. таблицу 1.") + prose
+                            + P("Таблица 1. Заголовок") + TBL("шапка"))
+    out, rep = placement.place(ends_with_table)
+    assert [pl.number for pl in rep.placements] == [1]
+    assert order(out)[:3] == ["p:См. таблицу 1.", "p:Таблица 1. Заголовок",
+                              "tbl:шапка"]
+
+
+# --- the argued half of placement's 41 ---------------------------------
+#
+# Thirty-five are left after the six tests above, and most of them are
+# ONE argument: a tag test standing in front of a structural lookup
+# that answers empty for the wrong element anyway.
+#
+# `_section_ends` reads `el.tag == W + "p" and el.find("pPr/sectPr")`.
+# Read as `>=` it also admits `w:tbl` and `w:sectPr`; read as `<=`,
+# `w:bookmarkStart` — and none of them HAS a `pPr/sectPr` child, so the
+# second half of the condition answers the same. `own_page`'s
+# `e.tag == W + "tbl"` generator read as `is not` admits every element
+# in the block, and `findall(W + "tr")` answers `[]` for all of them
+# except the table it was already going to find. `space_block`'s three
+# `following.tag == W + "p"` tests guard a `find("pPr/pStyle")` that is
+# None for a table.
+#
+# The tag test is a fast path, not a decision. Where it IS a decision —
+# `_blocks`' `el.tag != W + "p"` in front of the caption match, and
+# `_anchor`'s in front of the mention match — a mutant reads a TABLE's
+# text as a caption or a mention, which needs a table whose own text
+# matches the pattern. Those are named here rather than argued: a note
+# row reading "см. таблицу 2" is a real thing to write, and no fixture
+# in this file has one.
+#
+# Also argued and checked: `already = anchor.getnext() is block[0]` read
+# as `==`. lxml elements define no `__eq__`, so equality IS identity.
+#
+# NOT worked, and listed so the next round starts here: the five
+# `[:40]`/`[:70]` widths on the text handed to `_sheet_of`, the three
+# on `pl.caption_sheet - 1` (its search START, where `% 1` and `& 1`
+# answer 0 and 1), `Placement.spaced`'s default, and `place`'s
+# `here != there` read as `>`.
