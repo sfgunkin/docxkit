@@ -1217,3 +1217,88 @@ def test_the_site_report_PRINTS_only_what_is_the_case():
     assert "link labels" not in text
     assert "equation" not in text
     assert text.endswith("  A second mention of poverty here.")
+
+
+# `site`'s own mutation round, 2026-08-21: 21 of find.py's 28 real
+# survivors were in this report and the survey behind it, because the
+# first tests read the FIELDS and the report is what a caller sees.
+
+def test_the_report_counts_the_OTHER_paragraphs_that_match():
+    """"and 2 more match" is the number that decides whether the anchor
+    can be used at all. Twelve mutations of that arithmetic survived the
+    first round: every one of them prints a plausible sentence."""
+    doc = document(para(run("a poverty line")) + para(run("poverty again"))
+                   + para(run("poverty once more")))
+
+    text = site(doc, "poverty").format()
+
+    assert text.splitlines()[0] == "paragraph 0 (and 2 more match)"
+
+
+def test_the_report_says_nothing_about_a_UNIQUE_signature():
+    """One match is the case a caller wants, and a line about it is
+    noise on every well-anchored edit."""
+    doc = document(para(run("a poverty line")) + para(run("something else")))
+
+    assert site(doc, "poverty").format().splitlines()[0] == "paragraph 0"
+
+
+def test_the_report_names_the_footnote_marks_and_the_trailing_space():
+    """Both are printed only when they ARE the case, and inverting
+    either reads as an ordinary survey of an ordinary paragraph."""
+    doc = document(para(run("A claim"),
+                        '<w:r><w:footnoteReference w:id="11"/></w:r>',
+                        run(" and its evidence. ")))
+
+    text = site(doc, "A claim").format()
+
+    assert "footnote marks: ['11']" in text
+    assert "trailing space" in text
+
+
+def test_a_paragraph_with_NEITHER_is_reported_with_neither():
+    doc = document(para(run("A claim and its evidence.")))
+
+    text = site(doc, "A claim").format()
+
+    assert "footnote" not in text
+    assert "trailing space" not in text
+
+
+def test_a_site_that_matched_NOTHING_carries_no_facts():
+    """Every field is the empty answer, not a plausible one: a survey
+    that reports an equation or a double space in a paragraph it never
+    found is worse than one that reports nothing."""
+    found = site(document(para(run("prose"))), "not in this document")
+
+    assert (found.index, found.matches, found.text) == (-1, 0, "")
+    assert found.labels == [] and found.footnote_ids == []
+    assert found.has_math is False
+    assert found.double_spaces == 0
+    assert found.trailing_space is False
+
+
+def test_site_matches_the_glyphs_as_written_unless_told_otherwise():
+    """`normalize` is off by default and folds when asked — the same
+    bargain `para_slice` makes, and the reason an anchor written with a
+    straight apostrophe still finds the paragraph Word autocorrected."""
+    doc = document(para(run("the author’s own words")))
+
+    assert site(doc, "author's own").matches == 0
+    assert site(doc, "author's own", normalize=True).matches == 1
+    assert site(doc, "author’s own").matches == 1
+
+
+# `site`'s remaining survivors from the same round, argued:
+#
+# `if self.matches > 1` -> `!= 1`. The two differ only at 0, and 0 is
+# the empty Site, whose `format` returns "no paragraph matches that
+# signature" three lines earlier and never reaches this.
+#
+# `@lru_cache(maxsize=8)` on `caption_re`, mutated to 7, to 9 and
+# removed outright: the cache is a speed decision over a handful of
+# label tuples, and every spelling returns the same expression.
+#
+# `while (at := xml.find("<w:tbl>", pos)) != -1` -> `> -1` in
+# `body_elements`: `str.find` answers -1 or an index, and there is no
+# value between them.
