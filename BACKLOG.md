@@ -393,7 +393,14 @@ when this is fixed.**
 
 ---
 
-### S4 nothing can test a set of edits against a document before building it
+### ~~S4 nothing can test a set of edits against a document before building it~~ — FIXED 20.08, `9b7a5b3`
+
+Shipped as `batch.preflight`, not `edit.preflight` as sketched below: it
+belongs with the unit of work, not with the verb it wraps. Cumulative by
+default, and deliberately WITHOUT the `independent=True` the sketch wanted —
+a batch is what the caller actually has, and judging edits independently is
+precisely the check that misses the failure. AFI's `build_r4v.py` runs
+unchanged through it (AFI `1c527cf`).
 
 **Symptom as observed.** `replace_in_para` refuses a match that spans or starts
 inside a hyperlink; `para_slice` refuses a signature matching 0 or 2+
@@ -793,7 +800,23 @@ second signal and refuse when they disagree:
 **Workaround.** `AFI/revision/scripts/build_r5a.py` addresses tables by index,
 asserted against expected row counts.
 
-### S4 the missing thing is not a verb, it is the UNIT OF WORK — `docxkit.batch`
+### ~~S4 the missing thing is not a verb, it is the UNIT OF WORK~~ — SHIPPED 20.08, `9b7a5b3`
+
+`docxkit.batch`: `Edit`, `Step`, `Verdict`, `Report`, `preflight`, `diagnose`,
+`invariants`, `apply_steps`, `run`. It covers both paths, and it gates EIGHT
+carriers rather than the five sketched below — bookmark ends, table rows and
+drawings were missing, and this round needed all three (batch 24 swapped
+figures, batch 25 moved rows). It also refuses a file with revisions still
+pending, because Compare treats a pending revision as accepted.
+
+`_batch.py` was NOT deleted, contrary to the note below, and should not be:
+the Compare ladder and the `paper.toml` gates are genuinely this paper's.
+Only its generic half moved — 430 -> 310 lines, AFI `1c527cf`. The local
+paragraph regex it lost was unguarded against a nested `<w:p>`, which the
+shared one is.
+
+Still open: `sites.py` (its own entry above), and the second-order
+discoverability finding, promoted to its own entry below.
 
 **Measured across the four papers on this machine** (AFI, Parental_style, DSI,
 Life_Expectancy), 2026-08-20:
@@ -845,8 +868,13 @@ subtly wrong.
 apply_direct, ship, check) and `sites.py`. Both are written to be lifted: they
 already import only public docxkit surface.
 
-**And the second-order finding, which is cheaper to fix than any of the above.**
-Several primitives the papers hand-roll ALREADY EXIST, filed under the task that
+---
+
+### S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them
+
+Cheaper to fix than anything above it, and untouched by `docxkit.batch`: a
+module that cannot be FOUND is a module that gets rewritten. Several
+primitives the papers hand-roll are already here, filed under the task that
 first needed them rather than the thing they operate on:
 
     bookmarks   citations.bookmark / delete_bookmark / marker_bookmark /
@@ -861,6 +889,36 @@ after two failed attempts at wiring three citations. A `docxkit api [TOPIC]`
 that lists the public surface by SUBJECT — and re-homing the bookmark helpers
 into a `bookmarks` module that `citations` imports — would recover more time
 than most new features.
+
+---
+
+### S3 `write_docx` retries the sharing-violation race; `read_parts` does not
+
+**Symptom as observed.** 2026-08-20, mid-round on AFI: two tests that read
+`revision/working.docx` failed with `PermissionError: [Errno 13]` raised
+inside `read_parts`. Nothing was holding the file — no `~$` owner lock — and
+a bounded retry read it on the FIRST attempt seconds later. The suite went
+360 passed -> 1 failed -> 360 passed with no change to the manuscript in
+between, which is the worst possible shape for a gate.
+
+**The asymmetry.** `write_docx`'s `_replace` already retries `PermissionError`
+for exactly this race and even names it: *"is locked (open in Word). Close it
+and retry."* `read_parts` catches `OSError` — of which `PermissionError` is a
+subclass — and turns the FIRST one straight into `PackageError: cannot read
+<path>: [Errno 13] Permission denied`. Same race, one direction hardened, and
+a message that gives the caller no reason to think a retry would work.
+
+**Why it is S3 and not a flake.** Every paper on this machine sits on a
+OneDrive-backed tree and every suite reads the manuscript, so a transient
+sharing violation makes any paper's suite randomly red — which is exactly how
+an author learns to re-run a red suite instead of reading it. It also
+punishes the correct habit: `check` and `ship` read the manuscript several
+times per batch, so the more gating a paper does the likelier it is to trip.
+
+**Fix sketch.** Give `read_parts` the bounded retry `_replace` already has,
+and raise with the same "locked (open in Word)" wording when it finally gives
+up, so the two directions read alike. It belongs in `package` and not in the
+callers: 126 scripts across the four papers call `read_parts` themselves.
 
 ## Fixed
 
