@@ -136,6 +136,12 @@ __all__ = [
     "glyph_runs",
     "ingest",
     "init",
+    # re-exported like TEXT_PARTS and ProtocolError beside it: the
+    # reports here talk about links, so the callers of this module ask
+    # about them, and `from docxkit._xml import ...` is a private
+    # spelling Pyright is right to refuse. `docxkit.find` is the home
+    # for a new caller; this is where the existing ones already look.
+    "internal_links",
     "load_paper",
     "losses",
     "moved_footnotes",

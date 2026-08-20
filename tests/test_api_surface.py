@@ -233,6 +233,26 @@ def _documented_modules() -> set[str]:
     return names
 
 
+def test_a_PRIMITIVE_a_public_module_hands_out_is_declared_THERE():
+    """The gap the walk above cannot see: a name a public module does
+    not DEFINE but does hand to its callers.
+
+    `internal_links` is `_xml`'s. `revision`'s reports talk about links,
+    so papers import it from there — and Pyright answered "not exported
+    from docxkit.revision — import from docxkit._xml instead", which
+    suggests a PRIVATE module. Both spellings were wrong and the honest
+    one was worse. Declared in both homes now: `find` for a new caller
+    (locating things in a part is what that module is), `revision` for
+    the ones already spelling it that way, exactly as `TEXT_PARTS` and
+    `ProtocolError` are re-exported beside it.
+    """
+    from docxkit import find, revision
+
+    assert "internal_links" in find.__all__
+    assert "internal_links" in revision.__all__
+    assert find.internal_links is revision.internal_links
+
+
 def test_every_module_has_a_row_in_the_README_table():
     """The table is the map of the package, and ten modules were not on
     it — `placement`, `probe`, `revision`, `cli`, and the two private

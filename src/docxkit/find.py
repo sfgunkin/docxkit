@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 from ._xml import (
     PARA_RE,
+    internal_links,
     matching_close,
     normalize_glyphs,
     set_para_property,
@@ -27,6 +28,7 @@ __all__ = [
     "edit_para",
     "find_para",
     "heading_level",
+    "internal_links",
     "page_break_before",
     "para_slice",
     "para_text_at",

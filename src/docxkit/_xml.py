@@ -532,7 +532,20 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
     Field spans are matched begin-to-end non-greedily, which mispairs
     NESTED fields; a citation or cross-reference link never nests, so
     that stays out of scope here.
+
+    ONE part's XML, not the parts mapping almost every sibling in this
+    namespace takes — and the mapping is refused by name rather than by
+    a `TypeError` from inside a regex, because "expected string or
+    bytes-like object, got 'dict'" names this function's line and not
+    the caller's mistake. Not accepted either: which parts it would read
+    is a real question (the body alone, or the notes too?) and the two
+    answers differ, so the caller states it.
     """
+    if not isinstance(xml, str):
+        raise TypeError(
+            f"internal_links takes ONE part's XML as a str, not "
+            f"{type(xml).__name__} — pass parts[DOCUMENT].decode('utf-8'), "
+            f"and loop over text_parts(parts) if you want the notes too")
     out: list[tuple[str, str]] = []
     for m in _HYPERLINK_EL_RE.finditer(xml):
         out.append((html.unescape(m.group(1)), visible_text(m.group(2))))

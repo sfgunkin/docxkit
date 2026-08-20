@@ -236,6 +236,20 @@ def test_a_self_closing_ghost_hyperlink_swallows_nothing_after_it():
     assert ("Real", "label") in internal_links(xml)
 
 
+def test_the_PARTS_MAPPING_is_refused_by_name():
+    """Almost every sibling in this namespace takes `parts`, and this
+    takes one part's XML. Passing the mapping used to raise "expected
+    string or bytes-like object, got 'dict'" from inside a regex — a
+    message naming this function's line and not the caller's mistake.
+
+    Refused rather than accepted: which parts it would read is a real
+    question, the body alone and the body-plus-notes are different
+    answers, and the caller is the one who knows which they mean.
+    """
+    with pytest.raises(TypeError, match="ONE part's XML"):
+        internal_links({"word/document.xml": b"<w:p/>"})   # type: ignore[arg-type]
+
+
 # -------------------------------------------------------- dead_links -----
 #
 # A link that puts nothing on the page. The anchor still resolves, so no

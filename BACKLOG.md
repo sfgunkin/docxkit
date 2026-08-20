@@ -338,30 +338,6 @@ exactly the set `replace_in_para` will refuse to cut across.
 
 ---
 
-### S4 `internal_links` is public in fact and private by import path
-
-**Symptom as observed.** `from docxkit.revision import internal_links` draws
-Pyright `reportPrivateImportUsage`: *"internal_links is not exported from module
-docxkit.revision — Import from docxkit._xml instead"*. The suggested home is a
-**private** module, so both spellings are wrong and the honest one is worse.
-This is `feedback_toolkit_backlog` trigger 6 exactly, and it recurred: the same
-class was filed on 2026-08-17 for `revision.ProtocolError`.
-
-Second, smaller edge: `internal_links` takes the document XML **string**, but
-almost every sibling in that namespace takes the `parts` dict. Passing `parts`
-gives `TypeError: expected string or bytes-like object, got 'dict'` from inside
-`_xml.py:537`, which does not name the caller's mistake.
-
-**Workaround.** None needed — the import works at runtime; the diagnostic is
-suppressed by ignoring it, which is how it stays invisible.
-
-**Fix sketch.** Add `internal_links` to `docxkit.revision.__all__` (and audit
-the rest of that namespace for the same gap — `visible_text` was the 2026-08-15
-instance). Accept either `str` or the parts mapping, or rename the parameter so
-the error says `xml`.
-
----
-
 ### S4 the revision ladder opens Word two to three times per batch
 
 **Symptom as observed.** Measured on AFI, 2026-08-20, on a ONE-edit batch:
@@ -581,6 +557,33 @@ than most new features.
 ---
 
 ## Fixed
+
+### ~~S4 `internal_links` is public in fact and private by import path~~
+
+Fixed 2026-08-20. Declared in TWO public homes, deliberately: `docxkit.find`,
+because locating things inside one part's XML is what that module is and a
+new caller should land there; and `docxkit.revision`, because its reports
+talk about links so that is where the existing callers already spell it —
+the same re-export `TEXT_PARTS` and `ProtocolError` get beside it. Both names
+are the one object, asserted.
+
+The second edge is refused rather than accepted. `internal_links(parts)` now
+raises
+
+    internal_links takes ONE part's XML as a str, not dict — pass
+    parts[DOCUMENT].decode('utf-8'), and loop over text_parts(parts) if you
+    want the notes too
+
+instead of a `TypeError` from inside a regex naming `_xml.py`'s line. Not
+made to accept the mapping: which parts it would read is a real question, the
+body alone and the body-plus-notes are different answers, and the caller is
+the one who knows which they mean.
+
+The audit the entry also asked for is not a walk anyone can write: what
+`test_every_public_name_is_DECLARED` cannot see is a name a module does not
+DEFINE but does hand out, and nothing static says which of those a caller
+needs. So the decision is pinned by name instead, in
+`test_a_PRIMITIVE_a_public_module_hands_out_is_declared_THERE`.
 
 ### ~~S1 Compare CORRUPTS a replacement inside an inline OMML field, and `resolve_math` bakes the corruption in as the accepted view~~
 
