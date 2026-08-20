@@ -85,3 +85,16 @@ def test_stamp_records_what_it_was_built_from(built):
     assert data["original"] == "v11.docx"
     assert data["revised"] == "v12_clean.docx"
     assert len(data["sha256"]) == 64
+
+
+# --- guard's whole survivor list, 2026-08-20: 4.1 % (2/49) -------------
+#
+# Both are `json.dumps(..., indent=1)` in `stamp`, read as 0 and as 2.
+# The stamp is written for `check` to read back with `json.loads`, and
+# every indent round-trips to the same dict — so the number is a choice
+# about reading the file BY EYE, which no test should freeze. One space
+# is what a `.buildinfo.json` beside a deliverable wants: enough to see
+# the keys down the left, not enough to make the file look like data
+# anyone should edit.
+#
+# Nothing else in the module survives, which makes this one CLOSED.
