@@ -121,7 +121,12 @@ def figure(module: str) -> str:
     except (sqlite3.DatabaseError, SyntaxError, OSError) as exc:
         return f"unreadable ({type(exc).__name__})"
     if counts is None:
-        return "graded nothing"
+        # A facade has nothing to mutate — `tables.py` re-exports two
+        # modules and states no logic of its own — and that is a
+        # different answer from a run that graded nothing.
+        planned = sqlite3.connect(db).execute(
+            "SELECT count(*) FROM mutation_specs").fetchone()[0]
+        return "no mutants" if not planned else "graded nothing"
     # A run that stopped early reports whatever its first mutants said,
     # and it flatters: `_table_core` read 1.0 % from 209 of 903 against
     # a true 2.7 % from all of them.

@@ -180,3 +180,31 @@ def test_a_partial_run_is_MARKED_in_the_table(tmp_path, monkeypatch):
     monkeypatch.setattr(stale_figures, "session_file", lambda module: db)
 
     assert "PARTIAL" in stale_figures.figure("thing.py")
+
+
+def test_a_facade_with_NOTHING_to_mutate_says_so(tmp_path, monkeypatch):
+    """`tables.py` re-exports two modules and states no logic of its
+    own, so cosmic-ray plans zero mutants for it. "graded nothing" reads
+    as a run that failed; the module simply has nothing to grade, and a
+    table that cannot tell them apart sends someone to re-measure a
+    facade."""
+    import sqlite3
+
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    db = tmp_path / ".mutation-facade.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE mutation_specs (job_id TEXT, "
+                 "start_pos_row INT, start_pos_col INT, operator_name TEXT)")
+    conn.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT, "
+                 "diff TEXT)")
+    conn.commit()
+    conn.close()
+
+    src = tmp_path / "src" / "docxkit"
+    src.mkdir(parents=True)
+    (src / "facade.py").write_text("from x import y as y\n", encoding="utf-8")
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(stale_figures, "session_file", lambda module: db)
+
+    assert stale_figures.figure("facade.py") == "no mutants"
