@@ -734,49 +734,6 @@ AFI's version reports "tails identical letter-for-letter on 25/25".
 
 **Workaround to retire:** the three scripts above.
 
-### S1 `citations.link_all` layers its OWN anchor scheme over a paper that already has one
-
-**Symptom as observed.** AFI r4 batch 23 added three reference entries and three
-in-text citations to a manuscript whose apparatus is 25 pairs of
-`ref_<surname>_<year>` / `cite_<surname>_<year>`. `link_all` on that document
-reported `linked=[9], backlinked=[3], skipped=[19]` -- and created **27 new
-bookmarks** under a different scheme (`Acemoglu2022`, `Kakwani1977txt`,
-`WorldHealthOrganization2015`) beside, not instead of, the existing ones.
-
-`audit_links` on the result then reported **33 DOUBLED LINK** findings of the
-form:
-
-    DOUBLED LINK: 'Acemoglu2022' is nested inside a link to
-    'ref_acemoglu_2022' (:PARA:7) -- the click goes to the outer one
-
-plus 4 ORPHAN REF and 6 NO BACK-LINK for its own new bookmarks. Anchors went
-98 -> 125, none removed.
-
-**Why S1 rather than S4.** The report reads like success: nine linked, three
-back-linked, nothing unmatched but one known false positive. The damage is only
-visible by counting anchors or by running `audit_links` afterwards, and a caller
-who trusts the report ships a document where every citation carries two nested
-links and the wrong one wins the click.
-
-**Repro.** Any document that already has bidirectional citation links under a
-naming scheme other than `link_all`'s, then `link_all(parts)`.
-
-**Workaround.** AFI wired its three new works by hand
-(`revision/scripts/build_r4y.py`, `wire()`), using `hyperlink_field`, `bookmark`
-and `next_bookmark_id` so the markup is still the toolkit's -- only the naming
-is the paper's. Delete when this is fixed.
-
-**Fix sketch.** Two parts, and the first is the one that matters:
-- **Detect an existing scheme and refuse, or adopt it.** If a reference
-  paragraph already carries a bookmark whose name ends in the work's year, that
-  work is linked -- whatever the prefix. Counting it as unlinked is what starts
-  the doubling. `anchor_names`/`key_for` could take a `scheme=` callable, or
-  `link_all` could infer the prefix pair from what is already in the document.
-- **Refuse to nest.** `wrap_link_in_bookmark` already declines an ambiguous
-  match; it should equally decline to wrap a span that is already inside a
-  hyperlink, which is the specific shape `audit_links` calls DOUBLED LINK.
-  The audit knows the defect; the writer should not be able to create it.
-
 ### S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time
 
 **Symptom as observed.** AFI r4 had two ordinary referee asks about tables and
@@ -984,6 +941,39 @@ up, so the two directions read alike. It belongs in `package` and not in the
 callers: 126 scripts across the four papers call `read_parts` themselves.
 
 ## Fixed
+
+### ~~S1 `citations.link_all` layers its OWN anchor scheme over a paper that already has one~~
+
+Fixed 2026-08-20 in `_cite_build.py`, both halves of the sketch below.
+
+**Adopt the scheme.** `_own_bookmark` now falls through to
+`_foreign_bookmark`, which reads a name through its PUNCTUATION: fold it to
+letters and digits, accept it when the fold ENDS with this work's year and
+contains the surname. Both halves are load-bearing and both are pinned by a
+test — a marker naming a different work must not be adopted, and
+`ref_kanbur_2007_notes` is an anchor ABOUT the work, not the work's.
+`link_all` on a `ref_/cite_`-schemed paper now reports `linked: []
+backlinked: [] skipped: []` and mints nothing.
+
+**Refuse to nest.** The mention scan reads the LABELS of the links a
+paragraph already has, and a citation sitting inside one is reported instead
+of wrapped:
+
+    'Acemoglu 2022' (¶7) is already inside a link — wrapping it would nest
+    one link in another, and the click goes to the outer one
+
+Placed AFTER the already-linked bookkeeping, not before it: a mention linked
+to its OWN anchor is `already`, and putting the refusal first turned the
+second run of an idempotent build into a skip.
+
+Not in `wrap_link_in_bookmark` as the sketch guessed. By the time the writer
+is called the decision is made and the paragraph has been rewritten; the scan
+is where a citation is chosen, and refusing there is what keeps the report
+truthful about it.
+
+`link_all` came out of this UNDER the complexity threshold it had been pinned
+at (29): the scan is a method on a frozen `_Mentions` carrier now, so the
+debt entry and the file's `C901` exemption are both gone.
 
 ### ~~S2 `unlink` left half of a DUPLICATED bookmark and reported success~~
 

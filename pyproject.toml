@@ -91,14 +91,17 @@ ignore = [
 max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
-# ---- C901: six functions are over the threshold TODAY, and each file
+# ---- C901: five functions are over the threshold TODAY, and each file
 # is pinned here so the rest of the package is gated rather than the
 # rule being left off. Every one is a single pass over one document with
 # many cases, not a function doing several jobs, so splitting one is a
 # batch of its own — with the number to beat recorded here:
 #   _cite_audit._audit_findings  35     lint.lint                 31
-#   _cite_build.link_all         29     refstyle.audit            25
-#   edit.replace_in_para         26     revisions._simulate_where 24
+#   edit.replace_in_para         26     refstyle.audit            25
+#   revisions._simulate_where    24
+# `_cite_build.link_all` was the sixth, at 29. Its mention scan is a
+# method on `_Mentions` now and the function is under the threshold, so
+# the file's exemption is gone — which is the shape a paid debt takes.
 "src/docxkit/edit.py" = ["C901"]
 # compare.py IS a facade now (see citations.py): `from x import y as y`
 # is the PEP 484 signal for a deliberate re-export, and every line of
@@ -143,7 +146,7 @@ max-complexity = 20
 "src/docxkit/_cite_grammar.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/_cite_repair.py" = ["RUF001", "PLC0415"]
 "src/docxkit/_cite_audit.py" = ["C901", "RUF001", "PLC0415"]
-"src/docxkit/_cite_build.py" = ["C901", "RUF001", "PLC0415"]
+"src/docxkit/_cite_build.py" = ["RUF001", "PLC0415"]
 "src/docxkit/crossrefs.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 # equations maps the Unicode math glyphs themselves to LaTeX commands,

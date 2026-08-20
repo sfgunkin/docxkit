@@ -36,6 +36,7 @@ VALUES = [
     "batch.Edit",
     "batch.Step",
     "batch.Verdict",
+    "_cite_build._Mentions",        # bound once; its report is what moves
     "_cite_grammar.Citation",
     "_cite_grammar.Reference",
     "_table_core.RowsReport",       # a count of what changed, not a builder

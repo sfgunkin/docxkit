@@ -1,6 +1,6 @@
-"""The six functions over the complexity threshold, named — and only six.
+"""The functions over the complexity threshold, named — and only those.
 
-`C901` is selected at 20, and six functions already exceed it. They are
+`C901` is selected at 20, and five functions already exceed it. They are
 exempted per FILE in `pyproject.toml`, because that is the only scope
 ruff offers — and a per-file exemption cannot say "this function only".
 
@@ -34,7 +34,6 @@ MAX_COMPLEXITY = 20
 DEBT = {
     "_cite_audit._audit_findings": 35,
     "lint.lint": 31,
-    "_cite_build.link_all": 29,
     "refstyle.audit": 25,
     "edit.replace_in_para": 26,
     "revisions._simulate_where": 24,

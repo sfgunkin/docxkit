@@ -142,6 +142,37 @@ def _own_bookmark(para_xml: str, r: Reference, before: str = "") -> str | None:
         got = km.group(1).casefold()
         if any(a and (a.startswith(got) or got.startswith(a)) for a in stems):
             return n
+    return _foreign_bookmark(names, r, stems)
+
+
+def _foreign_bookmark(names: list[str], r: Reference,
+                      stems: set[str]) -> str | None:
+    """An entry's own bookmark under SOMEBODY ELSE'S naming scheme.
+
+    A manuscript whose apparatus is 25 pairs of ``ref_<surname>_<year>``
+    and ``cite_<surname>_<year>`` has every one of its works linked, and
+    none of those names is key-shaped. Reading only the shape this
+    module mints, `link_all` counted all 25 as unlinked, wrote 27 new
+    bookmarks BESIDE them, and reported success — after which
+    `audit_links` found 33 DOUBLED LINK, every citation carrying two
+    nested links with the wrong one winning the click (AFI r4 batch 23).
+
+    So the name is read through its punctuation instead: fold it to
+    letters and digits, and accept it when it ENDS with this work's year
+    and holds the surname. Both halves, for the reason the caller above
+    gives — a stray marker naming another work must not be adopted — and
+    the year at the END, because `2022_notes` is a name about something
+    else that happens to contain the digits.
+    """
+    for n in names:
+        if n.endswith("txt"):
+            continue
+        flat = re.sub(r"[^0-9A-Za-z]", "", n).casefold()
+        if not flat.endswith(r.year):
+            continue
+        stem = flat[:-len(r.year)]
+        if any(a and a in stem for a in stems):
+            return n
     return None
 
 
@@ -273,7 +304,8 @@ def _wanted(only: Collection[str] | None, entries: list[Reference],
 
 
 def _plan_notes(notes: dict[str, str],
-                scan: Callable[[list[str], dict[int, list[tuple[str, str]]],
+                scan: Callable[[list[re.Match[str]],
+                                dict[int, list[tuple[str, str]]],
                                 tuple[int, int] | None], None],
                 ) -> tuple[dict[str, list[re.Match[str]]],
                            dict[str, dict[int, list[tuple[str, str]]]]]:
@@ -288,8 +320,7 @@ def _plan_notes(notes: dict[str, str],
     plans: dict[str, dict[int, list[tuple[str, str]]]] = {
         name: {} for name, _ in _NOTE_PARTS}
     for name, _ in _NOTE_PARTS:
-        scan([visible_text(m.group(0)) for m in paras[name]],
-             plans[name], None)
+        scan(paras[name], plans[name], None)
     return paras, plans
 
 
@@ -312,6 +343,95 @@ def _rebuild_notes(notes: dict[str, str],
             xml = (xml[:m.start()] + rebuild(i, m.group(0), label)
                    + xml[m.end():])
         notes[name] = xml
+
+
+@dataclass(frozen=True)
+class _Mentions:
+    """The state a mention scan reads, lifted out of :func:`link_all`.
+
+    Nine values, all decided before the scan and none of them the
+    scan's own — which is why this is a carrier and not a class with
+    behaviour: `link_all` still owns the pass, and `_plan_notes` calls
+    :meth:`scan` for the note parts through the same bound method.
+
+    Lifted because the closure pushed `link_all` over the complexity
+    threshold the debt list pinned it at, and that list may only shrink.
+
+    Frozen like the package's other value types: the fields are bound
+    once by `link_all` and never rebound. What moves is what is INSIDE
+    two of them — the report being appended to and the set of keys
+    already claimed — and both are the scan's whole output.
+    """
+
+    report: LinkAllReport
+    answers: dict[str, str]
+    by_key: dict[str, list[Reference]]
+    names: dict[int, str]
+    claimed: set[str]
+    linked_anchors: set[str]
+    filed_as: dict[str, str]
+    ignored: set[str]
+    wanted: set[str] | None
+
+    def scan(self, matches: list[re.Match[str]],
+             into: dict[int, list[tuple[str, str]]],
+             skip: tuple[int, int] | None) -> None:
+        for i, m in enumerate(matches):
+            if skip and skip[0] <= i <= skip[1]:
+                continue
+            text = visible_text(m.group(0))
+            # What is already a link here, by the words it shows. A
+            # citation inside one must not be wrapped again: nesting is
+            # exactly the shape `audit_links` calls DOUBLED LINK, and
+            # the click goes to the OUTER link, so the new one is both
+            # invisible and wrong. The audit knows the defect; the
+            # writer should not be able to create it (AFI r4 batch 23,
+            # 33 of them in one pass).
+            labelled = [label for _a, label in internal_links(m.group(0))]
+            for found in find_citations(text):
+                c = resolve_lead(found, known=self.answers)
+                if c.surname.casefold() in self.ignored:
+                    continue
+                key = self.answers.get(
+                    key_for(self.filed_as.get(c.surname, c.surname), c.year))
+                if key is None:
+                    self.report.unmatched.append(
+                        f"{text[c.start:c.end]!r} (¶{i + 1})")
+                    continue
+                if key in self.claimed:
+                    continue
+                if self.wanted is not None and key not in self.wanted:
+                    continue
+                # Two entries under one key: the citation names both and
+                # this pass cannot choose. Linking it to either sends the
+                # reader to a work the sentence may not mean, silently --
+                # so it is REPORTED, which is what an author can act on.
+                hits = self.by_key[key]
+                if len(hits) > 1:
+                    self.report.unmatched.append(
+                        f"{text[c.start:c.end]!r} (¶{i + 1}) matches "
+                        f"{len(hits)} entries "
+                        f"({hits[0].surname} {hits[0].year}) "
+                        f"-- give them 'a'/'b' year suffixes to tell them "
+                        f"apart")
+                    continue
+                self.claimed.add(key)
+                name = self.names[hits[0].index]
+                if name in self.linked_anchors:
+                    self.report.already.append(name)
+                    continue
+                # AFTER that: a mention already linked to its OWN anchor
+                # is `already`, not a refusal. What is left here is a
+                # citation sitting inside SOMEBODY ELSE'S link.
+                cited = text[c.start:c.end]
+                if any(cited in label for label in labelled):
+                    self.report.skipped.append(
+                        f"{cited!r} (\u00b6{i + 1}) is already inside a "
+                        f"link — wrapping it would nest one link in "
+                        f"another, and the click goes to the outer one")
+                    continue
+                c = extend_to_name(text, c, hits[0].surname)
+                into.setdefault(i, []).append((text[c.start:c.end], name))
 
 
 def link_all(parts: dict[str, bytes], *,
@@ -419,47 +539,11 @@ def link_all(parts: dict[str, bytes], *,
     plan: dict[int, list[tuple[str, str]]] = {}       # para -> [(cite, name)]
     by_label = {label: name for name, label in _NOTE_PARTS}
 
-    def scan(texts_in: list[str], into: dict[int, list[tuple[str, str]]],
-             skip: tuple[int, int] | None) -> None:
-        for i, text in enumerate(texts_in):
-            if skip and skip[0] <= i <= skip[1]:
-                continue
-            for found in find_citations(text):
-                c = resolve_lead(found, known=answers)
-                if c.surname.casefold() in ignored:
-                    continue
-                key = answers.get(
-                    key_for(filed_as.get(c.surname, c.surname), c.year))
-                if key is None:
-                    report.unmatched.append(
-                        f"{text[c.start:c.end]!r} (¶{i + 1})")
-                    continue
-                if key in claimed:
-                    continue
-                if wanted is not None and key not in wanted:
-                    continue
-                # Two entries under one key: the citation names both and
-                # this pass cannot choose. Linking it to either sends the
-                # reader to a work the sentence may not mean, silently --
-                # so it is REPORTED, which is what an author can act on.
-                if len(by_key[key]) > 1:
-                    report.unmatched.append(
-                        f"{text[c.start:c.end]!r} (\u00b6{i + 1}) matches "
-                        f"{len(by_key[key])} entries "
-                        f"({by_key[key][0].surname} {by_key[key][0].year}) "
-                        f"-- give them 'a'/'b' year suffixes to tell them "
-                        f"apart")
-                    continue
-                claimed.add(key)
-                name = names[by_key[key][0].index]
-                if name in linked_anchors:
-                    report.already.append(name)
-                    continue
-                c = extend_to_name(text, c,
-                                   by_key[key][0].surname)
-                into.setdefault(i, []).append((text[c.start:c.end], name))
+    scan = _Mentions(
+        report, answers, by_key, names, claimed, linked_anchors,
+        filed_as, ignored, wanted).scan
 
-    scan(texts, plan, (head_idx, last_idx))
+    scan(paras, plan, (head_idx, last_idx))
     note_paras, note_plans = _plan_notes(notes, scan)
 
     # ONE bottom-up pass per part: earlier offsets stay valid however

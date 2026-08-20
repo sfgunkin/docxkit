@@ -159,6 +159,85 @@ def test_the_gap_read_for_an_entry_is_ITS_OWN():
     assert names.count("Kanbur2007_2") == 1, names
 
 
+# ------------------------------------------- somebody else's apparatus --
+
+def test_an_entry_wired_under_ANOTHER_scheme_is_read_as_already_linked():
+    """A paper that arrives with `ref_kanbur_2007` / `cite_kanbur_2007`
+    is fully linked. Reading only the names THIS module mints, the pass
+    called every one of its works unlinked and wrote a second apparatus
+    beside the first — 27 new bookmarks and 33 doubled links on AFI.
+    """
+    own = ('<w:bookmarkStart w:id="7" w:name="ref_kanbur_2007"/>'
+           '<w:bookmarkEnd w:id="7"/>')
+    linked = ('<w:hyperlink w:anchor="ref_kanbur_2007">'
+              '<w:r><w:t>Kanbur 2007</w:t></w:r></w:hyperlink>')
+    parts = make_parts(
+        para(run("A point ("), linked, run(").")) + para(run("References"))
+        + own
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
+
+    report = link_all(parts)
+
+    assert report.already == ["ref_kanbur_2007"], report.format()
+    assert not report.linked, report.format()
+    names = BOOKMARK_NAME_RE.findall(
+        parts["word/document.xml"].decode("utf-8"))
+    assert names == ["ref_kanbur_2007"], names
+
+
+def test_a_name_ending_in_the_year_but_about_something_ELSE_is_not_adopted():
+    """The fold is deliberately loose, so the two halves it keeps have
+    to hold: the surname must be IN the name, and the year must END it.
+    A marker for a different work must not be adopted as this entry's.
+    """
+    stray = ('<w:bookmarkStart w:id="7" w:name="ref_ravallion_2007"/>'
+             '<w:bookmarkEnd w:id="7"/>')
+    parts = make_parts(
+        para(run("A point (Kanbur 2007).")) + para(run("References"))
+        + stray
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
+
+    link_all(parts)
+
+    assert "Kanbur2007" in [a for a, _ in _links(parts)], _links(parts)
+
+
+def test_a_name_that_only_CONTAINS_the_year_is_not_adopted():
+    """The year has to END the folded name. A paper marks more than its
+    entries — `ref_kanbur_2007_notes` is an anchor ABOUT the work, and
+    adopting it sends every citation of Kanbur to the wrong place.
+    """
+    about = ('<w:bookmarkStart w:id="7" w:name="ref_kanbur_2007_notes"/>'
+             '<w:bookmarkEnd w:id="7"/>')
+    parts = make_parts(
+        para(run("A point (Kanbur 2007).")) + para(run("References"))
+        + about
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
+
+    link_all(parts)
+
+    assert "Kanbur2007" in [a for a, _ in _links(parts)], _links(parts)
+
+
+def test_a_citation_INSIDE_another_link_is_refused_not_nested():
+    """Wrapping it makes exactly the shape `audit_links` calls DOUBLED
+    LINK, and the click goes to the OUTER link — so the new one is both
+    invisible and wrong. The report says why instead.
+    """
+    outer = ('<w:hyperlink w:anchor="somewhere_else">'
+             '<w:r><w:t>(Kanbur 2007)</w:t></w:r></w:hyperlink>')
+    parts = make_parts(
+        para(run("As shown "), outer, run(", it rises.")) + ENTRIES)
+
+    report = link_all(parts)
+
+    assert not report.linked, report.format()
+    got = [a for a, _ in _links(parts)]
+    assert got == ["somewhere_else"], got
+    assert any("already inside a link" in note
+               for note in report.skipped), report.format()
+
+
 # ----------------------------------------------------------- the report --
 
 def test_the_link_all_report_PRINTS_what_it_counted():
@@ -192,3 +271,13 @@ def test_the_link_rest_report_PRINTS_what_it_counted():
 # `plan` holds body paragraphs outside the reference block and
 # `by_entry` holds entry paragraphs inside it, so the two sets are
 # disjoint by construction and the symmetric difference is the union.
+
+#
+# `_foreign_bookmark`'s `n.endswith("txt")` skip is EQUIVALENT under
+# every mutation and left alive. It mirrors the key-shaped path above
+# it, where `<key>txt` is the BACK-LINK anchor this module mints and
+# adopting one as the entry's would point every citation at itself. A
+# foreign scheme's back-link is named by ITS own convention, so the
+# guard fires on nothing a foreign paper contains — but it is what
+# stops this module's own txt anchor being adopted on a package where
+# the key-shaped path found no partner for it, and that is worth a line.
