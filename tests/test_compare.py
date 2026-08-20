@@ -3639,6 +3639,16 @@ def test_a_paragraph_carries_WORDS_id_not_the_attribute_it_sits_in():
 #   separator — a span holding `fldChar` and `instrText` elements and
 #   no `<w:t>` at all. `_mask_text` masks the FIRST `<w:t>` in the
 #   region it is given, which is the cached result either way.
+#
+#   READ THIS ONE AGAIN before relying on it (noted 2026-08-20, when
+#   two arguments of exactly this shape turned out to be wrong): the
+#   second half is a claim about the DOCUMENT, not about the code, and
+#   what it excludes is a field whose instruction section carries a
+#   `<w:t>`. `crossrefs.dead_links` says that shape occurs — "an edit
+#   across a link leaves the replacement text in the run holding the
+#   start of the match". If it is wrong the cost is a spurious diff
+#   line rather than damage, which is why it is annotated rather than
+#   chased.
 # * the four remaining mutants on `result_at < regions[-1][1]` — `<=`,
 #   `==`, `is`, and `regions[not 1]` — for the reason the nested-field
 #   test above already gives: regions are masked right to left, so a
