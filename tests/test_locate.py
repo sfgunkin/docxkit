@@ -593,3 +593,58 @@ def test_a_limit_below_one_returns_nothing():
     doc = make_doc((250, "a"))
     doc.Revisions = [FakeRevision(doc, 1, 250, "a")]
     assert revision_locations(doc, limit=0) == []
+
+
+def test_an_anchor_that_occurs_ONCE_does_not_report_a_repeat():
+    """The repeat search starts at the END of the hit — from its start
+    it finds the same occurrence again and every anchor in the document
+    comes back flagged. `repeats` is what tells a person their anchor is
+    ambiguous, and one that is always true tells them nothing.
+
+    The repeated case is pinned above; this is the other side, and the
+    `unique=False` test cannot stand in for it because the `and` never
+    reaches the search."""
+    doc = make_doc((250, "alpha"))
+
+    (loc,) = locate_in(doc, ["alpha"])
+
+    assert loc.repeats is False
+
+
+def test_a_limit_ABOVE_256_still_stops_the_walk():
+    """`number == limit`, read as `is`. Small ints are cached and equal
+    ones are the same object up to 256, so every fixture under that
+    passes either way — and this module's own docstring measures a
+    701-revision redline at ~62 seconds, which is the reason a caller
+    passes a limit at all."""
+    doc = FakeDoc("." * 4000)
+    doc.Revisions = [FakeRevision(doc, 1, i * 4, "x") for i in range(400)]
+
+    assert len(revision_locations(doc, limit=300)) == 300
+
+
+# --- what the run of 2026-08-20 left in `word`, and why -----------------
+#
+# Thirteen real survivors, three of them the tests above. The other ten
+# are equivalent by construction, each checked with `kill_check`:
+#
+# * `flat_opc_to_docx`'s `children[0]` as `children[-1]`. The line above
+#   raises unless there is exactly one child.
+# * the ruler's `head.Information(LINE) != tail.Information(LINE)` as
+#   `<`. `head` sits at the paragraph's start and `tail` one character
+#   before its end, so the second line number is the first or a later
+#   one — the two spellings can only differ for a tail ABOVE its own
+#   head.
+# * `search_text`'s `ch == "^"` as `is`: a one-character string is
+#   interned.
+# * `search_text`'s `break` when the budget runs out, as `continue`.
+#   The budget only ever decreases, so once it is negative every later
+#   character is skipped too — the loop ends up appending exactly what
+#   the break left it with.
+# * the six on `doc.Range(0, 0)` in `_Layout.__init__`, for both the
+#   search range and the probe. Neither extent is ever READ: `find`
+#   calls `SetRange(start, self.end)` before every Execute and `at`
+#   calls `SetRange(pos, pos)` before every Information. (Real Word
+#   would reject a negative offset outright. The fake here does not,
+#   which is why these survive rather than dying on the spot — and the
+#   fake is the point: what is being pinned is our logic, not Word's.)

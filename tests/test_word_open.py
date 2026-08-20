@@ -283,3 +283,39 @@ def test_every_bulk_edit_option_is_switched_OFF(option):
     Word that repaginates or spell-checks between every edit — minutes
     on a manuscript, and nothing to see in the output."""
     assert word._FAST_OPTIONS[option] is False
+
+
+def test_a_staged_copy_WORD_still_holds_does_not_fail_the_call(tmp_path):
+    """`ignore_errors=True` on the staging directory. Word is the one
+    holding the file — `Close` returns before it has let go of the
+    handle often enough — and on Windows a directory holding an open
+    file cannot be removed. Without the flag, that PermissionError
+    comes out of the `finally`, which means it also REPLACES whatever
+    the body was raising: the caller is told about a temp directory
+    instead of about their document.
+
+    The stand-in keeps the handle open for the same reason Word does."""
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"not really a docx")
+    handles: list[Any] = []
+
+    class _Docs:
+        def Open(self, path, **kw):
+            handles.append(open(path, "rb"))    # noqa: SIM115 - Word's grip
+            return _Doc()
+
+    class _Doc:
+        def Close(self, **kw):
+            pass
+
+    class _App:
+        Documents = _Docs()
+
+    try:
+        with word.open_doc(_App(), target):
+            pass
+    finally:
+        for fh in handles:
+            fh.close()
+
+    assert handles, "the fixture has to have opened the staged copy"
