@@ -1044,3 +1044,27 @@ def test_spacer_columns_that_eat_the_table_are_REFUSED_by_the_numbers():
     assert "the spacer columns hold 2500 dxa of a 2000 dxa table" in \
         str(exc.value)
     assert "the 1 column(s) with content" in str(exc.value)
+
+
+def test_a_starred_number_typeset_as_MATH_does_not_stop_the_row():
+    """A cell can read as a starred number and hold no `w:t` run at all:
+    an equation writes its glyphs in `m:t`, which `visible_text` reads
+    and the run walk does not. There is nothing to raise there, and
+    `continue` is what keeps the pass going — `break` leaves the REST OF
+    THE ROW unconverted, which in a regression table is every
+    coefficient beside the one that was typeset.
+
+    Both cells here read as starred, so the skip is the first thing the
+    row does."""
+    math_cell = ('<w:tc><w:p><m:oMath><m:r><m:t>0.31***</m:t></m:r>'
+                 "</m:oMath></w:p></w:tc>")
+    d = doc(tbl([900, 900],
+                "<w:tr>" + math_cell + cell(frun("0.44**"), w=900)
+                + "</w:tr>"))
+    assert read_all(d)[0].rows[0] == ["0.31***", "0.44**"]
+
+    out, n = superscript_stars(d, read_all(d)[0])
+
+    assert n == 1
+    assert out.count('<w:vertAlign w:val="superscript"/>') == 1
+    etree.fromstring(out.encode("utf-8"))

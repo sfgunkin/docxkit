@@ -497,3 +497,19 @@ def test_stars_ALREADY_raised_do_not_stop_the_ones_after_them():
 #
 # `if i == 0` in `booktabs` -> `<=`. `i` enumerates rows, so it is never
 # negative and the two spellings ask the same question.
+
+
+def test_a_report_says_full_width_only_when_it_WROTE_one():
+    """`width` and `caption` are set on the branches that do the work,
+    so their defaults are what the caller reads when the work was not
+    asked for — and a default of True is a report that reads as success
+    for a table nobody widened."""
+    xml = _doc()
+
+    out, report = house(xml, read_all(xml)[0], width=False)
+
+    assert report.width is False
+    assert report.caption is False
+    assert "full width" not in report.format()
+    assert "caption" not in report.format()
+    assert "<w:tblW" not in out[out.index("<w:tbl"):]

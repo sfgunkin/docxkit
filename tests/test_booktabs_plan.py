@@ -342,3 +342,20 @@ def test_a_plain_column_needs_its_TEXT_times_pad_plus_the_margins():
     assert (driver[0], filled[0]) == (text, True)
     assert need_h[0] == math.ceil(hard * pad) + side
     assert need_f[0] == math.ceil(full * pad) + side
+
+
+def test_a_LAST_row_that_is_only_a_label_opens_no_panel():
+    """A panel rule under the last row rules off nothing — the row it
+    would separate from what follows has nothing following it.
+
+    An EVEN row count is what this needs: `i != len(rows) - 1` read as
+    `len(rows) ^ 1` is the same number for an odd count, so a
+    three-row or five-row fixture cannot tell the two apart. The
+    contrast below is the same table with one more row under it, where
+    the label row IS a panel."""
+    rows = [["", "A", "B"], ["x", "1", "2"], ["y", "3", "4"],
+            ["Trailing label", "", ""]]
+    assert len(rows) % 2 == 0, "an odd count hides the reading this pins"
+
+    assert plan_of(rows).panel_rows == []
+    assert plan_of([*rows, ["z", "5", "6"]]).panel_rows == [3]
