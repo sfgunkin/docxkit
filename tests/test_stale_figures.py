@@ -137,6 +137,8 @@ def test_the_figures_mode_prints_a_figure_per_module():
     `mutation_survivors.classify` — the same arithmetic the survivor
     list uses, so the two cannot disagree — and prints the package's
     state in one screen."""
+    import harness_map  # pyright: ignore[reportMissingImports]
+
     done = subprocess.run(
         [sys.executable, str(TOOLS / "stale_figures.py"), "--figures"],
         capture_output=True, text=True, encoding="utf-8", check=False,
@@ -146,9 +148,13 @@ def test_the_figures_mode_prints_a_figure_per_module():
     assert lines, done.stderr
     for line in lines:
         assert line.endswith(("fresh", "stale", "never measured")), line
-    measured = [ln for ln in lines if "%" in ln]
-    assert measured, done.stdout
-    assert all(re.search(r"\d+\.\d%\s+\(\d+/\d+\)", ln) for ln in measured)
+    # A CHECKOUT has no session files — they are local and none is
+    # committed — so "every module has a figure" is a claim about the
+    # machine, not about the tool. CI failed on exactly that. What holds
+    # everywhere is the SHAPE of a line that does carry one.
+    for line in [ln for ln in lines if "%" in ln]:
+        assert re.search(r"\d+\.\d%\s+\(\d+/\d+\)", line), line
+    assert len(lines) == len(harness_map.HARNESS), done.stdout
 
 
 def test_a_partial_run_is_MARKED_in_the_table(tmp_path, monkeypatch):
