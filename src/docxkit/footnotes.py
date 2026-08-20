@@ -23,6 +23,7 @@ from typing import NamedTuple
 from ._xml import (
     DOCUMENT,
     FOOTNOTES,
+    NOTE_REF_RE,
     PARA_RE,
     RUN_RE,
     escape,
@@ -103,11 +104,10 @@ def find_all(footnotes_xml: str, *, include_reserved: bool = False,
     return out
 
 
-#: Both kinds, keyed the way `find_all` keys them.
-_REFERENCE_OF = {
-    "footnote": re.compile(r'<w:footnoteReference\b[^>]*w:id="(-?\d+)"'),
-    "endnote": re.compile(r'<w:endnoteReference\b[^>]*w:id="(-?\d+)"'),
-}
+#: Both kinds, keyed the way `find_all` keys them. The expressions
+#: themselves live in `_xml`: this module and `export` had a copy
+#: each, and a third was about to be written in `find`.
+_REFERENCE_OF = NOTE_REF_RE
 
 
 def out_of_order(document_xml: str, notes_xml: str, *,

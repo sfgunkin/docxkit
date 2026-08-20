@@ -50,6 +50,7 @@ VALUES = [
     "equations.ProseMath",
     "figures.AltText",
     "figures.Figure",
+    "find.Site",                # a survey a caller keeps and compares
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "refstyle.Issue",

@@ -22,6 +22,7 @@ from docxkit.find import (
     internal_links,
     page_break_before,
     para_text_at,
+    site,
     table_index_at,
 )
 
@@ -1128,3 +1129,91 @@ def test_a_table_at_offset_ZERO_is_found():
 # because it says what the region IS: the part of the field a reader
 # sees. Pinning the difference would need a malformed field, which is a
 # shape to refuse rather than a shape to freeze.
+
+
+# ------------------------------------------------------------- site ------
+#
+# Three facts decide whether an edit can be written, and they lived in
+# three separate commands: the exact string, whether the signature is
+# unique, and what the match would have to cross. Every AFI r4 batch ran
+# two or three probes to assemble them.
+
+_SITE_LINK = ('<w:hyperlink w:anchor="Kanbur2007"><w:r>'
+              "<w:t>Kanbur 2007</w:t></w:r></w:hyperlink>")
+
+
+def _site_doc() -> str:
+    return document(
+        para(run("As "), _SITE_LINK, run(" argues, poverty  fell "))
+        + para(run("A second mention of poverty here."))
+        + para(run("An equation "),
+                "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>",
+                run(" sits in this one.")))
+
+
+def test_site_names_the_LINK_LABEL_an_edit_would_have_to_cross():
+    """The load-bearing field: it is exactly the set `replace_in_para`
+    refuses to cut across, and on a paper whose citation labels include
+    the year it is what says "replace from the citation onward" starts
+    inside a link — before the build says so."""
+    found = site(_site_doc(), "poverty")
+
+    assert found.labels == ["Kanbur 2007"]
+
+
+def test_site_counts_EVERY_paragraph_the_signature_matches():
+    """0 and 2 are answers, not errors. `para_slice` refuses both, and
+    knowing which before writing the edit is the whole point."""
+    doc = _site_doc()
+
+    assert site(doc, "poverty").matches == 2
+    assert site(doc, "poverty  fell").matches == 1
+    assert site(doc, "not in this document").matches == 0
+
+
+def test_site_describes_the_FIRST_match_when_there_are_several():
+    """Every anchor-taking routine in the package acts on that one."""
+    found = site(_site_doc(), "poverty")
+
+    assert found.index == 0
+    assert found.text.startswith("As Kanbur 2007 argues")
+
+
+def test_site_reports_nothing_and_raises_nothing_when_it_matches_nothing():
+    found = site(_site_doc(), "not in this document")
+
+    assert (found.index, found.matches, found.text) == (-1, 0, "")
+    assert found.format() == "no paragraph matches that signature"
+
+
+def test_site_sees_an_equation_a_replacement_could_not_span():
+    assert site(_site_doc(), "An equation").has_math
+    assert not site(_site_doc(), "poverty  fell").has_math
+
+
+def test_site_sees_the_spaces_Word_does_not_show():
+    found = site(_site_doc(), "poverty  fell")
+
+    assert found.double_spaces == 1
+    assert found.trailing_space
+
+
+def test_site_lists_the_FOOTNOTE_MARKS_in_the_paragraph():
+    """A match that crosses one is refused too, and the mark carries no
+    visible text at all — so the anchor reads as contiguous prose."""
+    doc = document(para(run("A claim"),
+                        '<w:r><w:footnoteReference w:id="11"/></w:r>',
+                        run(" and its evidence.")))
+
+    assert site(doc, "A claim").footnote_ids == ["11"]
+
+
+def test_the_site_report_PRINTS_only_what_is_the_case():
+    """A survey that prints eight fields of False is noise, and noise is
+    what sent these three facts into three commands."""
+    text = site(_site_doc(), "A second mention").format()
+
+    assert text.splitlines()[0] == "paragraph 1"
+    assert "link labels" not in text
+    assert "equation" not in text
+    assert text.endswith("  A second mention of poverty here.")

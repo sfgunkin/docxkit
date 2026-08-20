@@ -560,6 +560,33 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
     return out
 
 
+#: A note REFERENCE and its id, by kind — the mark in the text, not the
+#: definition. THE definition: `footnotes` and `export` had a spelling
+#: each and `find` was about to write a third, which is the drift this
+#: module exists to stop (see the caption regex, moved down to `find`
+#: for the same reason on 2026-08-20).
+#:
+#: Not anchored to `/>`: a reference is empty in every file Word writes,
+#: and `export`'s copy required the self-closing form while
+#: `footnotes`' did not — a difference neither of them meant.
+NOTE_REF_RE = {
+    "footnote": re.compile(r'<w:footnoteReference\b[^>]*w:id="(-?\d+)"'),
+    "endnote": re.compile(r'<w:endnoteReference\b[^>]*w:id="(-?\d+)"'),
+}
+
+#: The same thing asked the other way: the WHOLE element, for a
+#: caller that replaces it rather than reading its id. `export`
+#: substitutes a markdown marker in, and the id-only form above
+#: would leave the `/>` behind. Two expressions, one place — which
+#: is the difference from the three files that each had one.
+NOTE_REF_EL_RE = {
+    "footnote": re.compile(
+        r'<w:footnoteReference\b[^>]*w:id="(-?\d+)"[^>]*/>'),
+    "endnote": re.compile(
+        r'<w:endnoteReference\b[^>]*w:id="(-?\d+)"[^>]*/>'),
+}
+
+
 # Everything a link can legitimately wrap while showing no text of its
 # own. `w:delText` is the important one: a link inside a tracked DELETION
 # is not in the final document at all, and four of them sit in LE le12.

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import lru_cache
 
 from ._xml import (
+    NOTE_REF_RE,
     PARA_RE,
     internal_links,
     matching_close,
@@ -26,6 +28,7 @@ __all__ = [
     "DEFAULT_LABELS",
     "P_RE",
     "AnchorError",
+    "Site",
     "body_elements",
     "caption_re",
     "edit_para",
@@ -36,6 +39,7 @@ __all__ = [
     "para_slice",
     "para_text_at",
     "paragraphs",
+    "site",
     "table_index_at",
     "table_spans",
     "text_of",
@@ -207,3 +211,89 @@ def body_elements(xml: str) -> list[tuple[str, int, int]]:
             if table_index_at(tables, m.start()) is None]
     out.sort(key=lambda el: el[1])
     return out
+
+
+@dataclass(frozen=True)
+class Site:
+    """What is AT an edit site: everything an edit has to know first.
+
+    Three facts decide whether an edit can be written: the exact string,
+    whether the signature is UNIQUE, and what the match would have to
+    cross. They lived in three separate commands, so every AFI r4 batch
+    ran two or three and I wrote the same ad-hoc probe each time.
+
+    `labels` is the load-bearing one. It is exactly the set
+    :func:`docxkit.edit.replace_in_para` refuses to cut across, and on a
+    manuscript whose citation labels include the year — "Kanbur 2007" —
+    it is what says a "replace from the citation onward" edit starts
+    INSIDE a link before the build says so.
+    """
+
+    #: 0-based paragraph index in this part; -1 when nothing matched.
+    index: int
+    #: How many paragraphs the signature matches. 0 and 2 are both
+    #: answers, not errors: `para_slice` refuses either, and knowing
+    #: which BEFORE writing the edit is the point.
+    matches: int
+    text: str
+    #: The visible label of every internal link in the paragraph.
+    labels: list[str]
+    has_math: bool
+    footnote_ids: list[str]
+    #: Two spaces in a row, which Word does not show and a diff does.
+    double_spaces: int
+    trailing_space: bool
+
+    def format(self) -> str:
+        """One line per fact that IS the case, and the text last."""
+        if not self.matches:
+            return "no paragraph matches that signature"
+        out = [f"paragraph {self.index}"
+               + (f" (and {self.matches - 1} more match)" if self.matches > 1
+                  else "")]
+        if self.labels:
+            out.append(f"  link labels: {self.labels} — an edit may not "
+                       f"cross one without allow_hyperlink=True")
+        if self.has_math:
+            out.append("  holds an equation: text spanning it is not "
+                       "findable by replace_in_para")
+        if self.footnote_ids:
+            out.append(f"  footnote marks: {self.footnote_ids}")
+        if self.double_spaces:
+            out.append(f"  {self.double_spaces} double space(s)")
+        if self.trailing_space:
+            out.append("  trailing space")
+        return "\n".join([*out, f"  {self.text}"])
+
+
+def site(xml: str, sig: str, *, normalize: bool = False) -> Site:
+    """Survey the paragraph an edit is about to be written against.
+
+    Read-only and refuses nothing — a signature matching none or two
+    paragraphs is an ANSWER here, and the answer a caller wants before
+    `para_slice` raises on it at build time.
+
+    The FIRST match is described when there are several, because that is
+    the one every anchor-taking routine in this package would act on.
+    """
+    fold = normalize_glyphs if normalize else (lambda s: s)
+    needle = fold(sig)
+    hits = [(i, m) for i, m in enumerate(PARA_RE.finditer(xml))
+            if needle in fold(visible_text(m.group(0)))]
+    if not hits:
+        return Site(index=-1, matches=0, text="", labels=[], has_math=False,
+                    footnote_ids=[], double_spaces=0, trailing_space=False)
+    i, m = hits[0]
+    para = m.group(0)
+    text = visible_text(para)
+    return Site(
+        index=i,
+        matches=len(hits),
+        text=text,
+        labels=[label for _anchor, label in internal_links(para)],
+        # the substring, not a second spelling of `equations.OMATH_RE`:
+        # this asks whether one is THERE, which is a presence check
+        has_math="<m:oMath" in para,
+        footnote_ids=NOTE_REF_RE["footnote"].findall(para),
+        double_spaces=text.count("  "),
+        trailing_space=text != text.rstrip())

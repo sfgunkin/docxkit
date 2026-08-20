@@ -555,6 +555,68 @@ def test_inspect_lists_comments_and_revisions_when_asked(monkeypatch,
     assert "[ins]" in out and "[del]" in out      # --revisions
 
 
+def test_sites_says_what_an_edit_would_meet(monkeypatch, paper, capsys):
+    """The survey the papers ran two or three commands to assemble."""
+    code, _ = run_cli(monkeypatch, "sites", str(paper), "Robots displace")
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.startswith("paragraph 1")
+    assert "Robots displace workers" in out
+
+
+def test_sites_exits_NON_ZERO_when_the_signature_is_not_unique(
+        monkeypatch, paper, capsys):
+    """A signature matching none or two paragraphs is what `para_slice`
+    refuses at build time, so the survey has to be usable as a gate: a
+    script can ask before it writes the edit."""
+    none, _ = run_cli(monkeypatch, "sites", str(paper), "not in the paper")
+    assert none == 1
+    assert "no paragraph matches" in capsys.readouterr().out
+
+    two, _ = run_cli(monkeypatch, "sites", str(paper), "Figure 1")
+    assert two == 1
+    assert "more match" in capsys.readouterr().out
+
+
+def test_sites_reads_the_NOTE_parts_too(monkeypatch, tmp_path, capsys):
+    """Half a manuscript's citations live in its footnotes."""
+    from conftest import note, notes
+    path = write(tmp_path / "noted.docx", make_parts(
+        para(run("Body prose.")),
+        footnotes=notes("footnotes", note("A note about Kanbur 2007.", 2))))
+
+    code, _ = run_cli(monkeypatch, "sites", str(path), "Kanbur",
+                      "--part", "footnotes")
+
+    assert code == 0
+    assert "Kanbur 2007" in capsys.readouterr().out
+
+
+def test_sites_says_so_when_the_part_is_not_in_the_package(
+        monkeypatch, paper, capsys):
+    code, _ = run_cli(monkeypatch, "sites", str(paper), "anything",
+                      "--part", "endnotes")
+
+    assert code == 1
+    assert "no word/endnotes.xml" in capsys.readouterr().out
+
+
+def test_sites_can_fold_the_glyphs_Word_substituted(monkeypatch, tmp_path,
+                                                    capsys):
+    """The same `normalize` `para_slice` takes: an anchor written with a
+    straight apostrophe still finds the paragraph Word autocorrected."""
+    path = write(tmp_path / "curly.docx",
+                 make_parts(para(run("the author’s own words"))))
+
+    plain, _ = run_cli(monkeypatch, "sites", str(path), "author's own")
+    assert plain == 1
+
+    folded, _ = run_cli(monkeypatch, "sites", str(path), "author's own",
+                        "--normalize")
+    assert folded == 0
+
+
 def test_text_renders_both_tracked_views_and_markdown(monkeypatch, tmp_path,
                                                       capsys):
     path = _tracked(tmp_path)

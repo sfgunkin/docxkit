@@ -280,31 +280,6 @@ Figure 10 caption the sweep writes 2 runs where the naive loop writes 6.
 Still open: the `fig5_firstref` question in the last paragraph above, which
 nobody has checked.
 
-### S4 no way to ask what is AT an edit site, so every batch surveys it two or three times
-
-**Symptom as observed.** Preparing an edit needs three facts: the exact string
-(so `inspect`/a text dump), whether the paragraph holds a hyperlink whose label
-the match must not cross (so a second probe), and whether the signature is
-unique (a third). Every AFI r4 batch ran two or three separate commands to
-assemble them, and I wrote the same ad-hoc probe repeatedly — the tell named in
-`feedback_toolkit_backlog` trigger 4.
-
-**Workaround** — `AFI/revision/scripts/sites.py`: one call gives paragraph
-index, how many paragraphs match the signature, every hyperlink LABEL in the
-paragraph, equations, footnote marks, double and trailing spaces, and the text.
-`--refs` walks the reference list, `--grep` takes a regex. It answered the
-design question for a 25-entry reference conversion in one call: **every entry's
-author-and-year prefix is itself the back-link label**, so the conversion has to
-be label surgery plus a tail replace, not a paragraph rewrite.
-**Delete it when this lands.**
-
-**Fix sketch.** `docxkit sites PAPER.docx "sig" …` / `docxkit.find.site(xml, sig)`
-returning a dataclass with `index, matches, labels, has_math, footnote_ids,
-double_spaces, trailing_space, text`. `labels` is the load-bearing field: it is
-exactly the set `replace_in_para` will refuse to cut across.
-
----
-
 ### S4 the revision ladder opens Word two to three times per batch
 
 **Symptom as observed.** Measured on AFI, 2026-08-20, on a ONE-edit batch:
@@ -478,6 +453,40 @@ than most new features.
 ---
 
 ## Fixed
+
+### ~~S4 no way to ask what is AT an edit site, so every batch surveys it two or three times~~
+
+Fixed 2026-08-20 — `docxkit.find.site(xml, sig)` and `docxkit sites`, with
+the fields the sketch named: `index, matches, text, labels, has_math,
+footnote_ids, double_spaces, trailing_space`.
+
+It refuses nothing and raises nothing. A signature matching NONE or TWO
+paragraphs is the answer a caller wants — `para_slice` refuses both at build
+time, and the point is to know before writing the edit — so `matches` is a
+number and `index` is -1 when there is nothing. The CLI exits 1 unless
+exactly one paragraph matches, which makes the same survey usable as a gate
+from a script.
+
+`labels` is the load-bearing field the entry said it was: exactly the set
+`replace_in_para` refuses to cut across. `format()` prints only the facts
+that ARE the case — a survey that prints eight fields of False is the noise
+that sent these three questions into three commands in the first place.
+
+`--part footnotes|endnotes` because half a manuscript's citations live
+there, and `--normalize` because it is the same fold `para_slice` takes.
+
+**A shared definition came out of it.** `find` needed the footnote-mark ids
+and would have been the FOURTH spelling of that regex (`footnotes` and
+`export` had one each, and `footnotes` had a third for rewriting). They live
+in `_xml` now as `NOTE_REF_RE` (the id) and `NOTE_REF_EL_RE` (the whole
+element, for `export`, which substitutes a marker in and would otherwise
+leave the `/>` behind). The two spellings had differed on the self-closing
+form, which neither of them meant.
+
+**Workaround to retire:** `AFI/revision/scripts/sites.py`. `--refs` (walk
+the reference list) and `--grep` (regex signatures) are NOT covered; if the
+paper still wants those, they are a flag on this command rather than a
+script. Left for its owner.
 
 ### ~~S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like~~
 

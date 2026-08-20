@@ -9,6 +9,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit authors PAPER.docx [--set NAME] [--only A,B] [--write]
     docxkit inspect PAPER.docx [--comments] [--revisions]
     docxkit locate PAPER.docx ANCHOR... | --revisions
+    docxkit sites PAPER.docx "sig" [--part body|footnotes]
     docxkit text PAPER.docx [--tracked final|original] [--md]
     docxkit count PAPER.docx [--exclude references,tables] [--limit N]
     docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
@@ -391,6 +392,22 @@ def cmd_text(args: argparse.Namespace) -> int:
     for line in text(doc, args.tracked):
         print(line)
     return 0
+
+
+def cmd_sites(args: argparse.Namespace) -> int:
+    """Survey the paragraph an edit is about to be written against."""
+    from .find import site
+    parts = _package(args.docx)
+    from ._xml import ENDNOTES, FOOTNOTES
+    wanted = {"body": DOCUMENT, "footnotes": FOOTNOTES,
+              "endnotes": ENDNOTES}[args.part]
+    if wanted not in parts:
+        print(f"no {wanted} in this package")
+        return 1
+    found = site(parts[wanted].decode("utf-8"), args.signature,
+                 normalize=args.normalize)
+    print(found.format())
+    return 0 if found.matches == 1 else 1
 
 
 def _package(path: str) -> dict[str, bytes]:
@@ -1250,6 +1267,17 @@ def main() -> None:
                         "occurrence of a repeated phrase")
     p.add_argument("--json", metavar="PATH")
     p.set_defaults(fn=cmd_locate)
+
+    p = sub.add_parser(
+        "sites", help="what is AT an edit site: matches, link labels, maths")
+    p.add_argument("docx")
+    p.add_argument("signature", help="the visible text an edit anchors on")
+    p.add_argument("--part", choices=("body", "footnotes", "endnotes"),
+                   default="body")
+    p.add_argument("--normalize", action="store_true",
+                   help="fold Word's typographic substitutions before "
+                        "matching, as para_slice(normalize=True) does")
+    p.set_defaults(fn=cmd_sites)
 
     p = sub.add_parser("text", help="dump the visible text")
     p.add_argument("docx")
