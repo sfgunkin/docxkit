@@ -345,6 +345,34 @@ worked; the ergonomics are what invited the mistake.
 
 ## Fixed
 
+### ~~S2 `unlink` left half of a DUPLICATED bookmark and reported success~~
+
+Found 2026-08-20 by auditing the arguments in a survivor note rather than by
+a mutant — the second wrong one in that list, and wrong the same way.
+
+`unlink` removed the first `w:bookmarkStart` of each name and one
+`w:bookmarkEnd` of its id. The note beside the surviving mutants argued that
+was safe because "bookmark ids are unique document-wide, which is what
+`_next_bookmark_id` is for". Uniqueness is what a WELL-FORMED document has.
+Word's Compare **duplicates a table when a block containing it is moved** —
+S1 above, in this same file — and the copy carries the same `w:name` and the
+same `w:id`. A paper that has been through one round of move-tracking holds
+the pair.
+
+So on such a paper `unlink` left a bookmarkStart and its End standing and
+answered `1 removed`, which is precisely what its own docstring refuses two
+paragraphs earlier: *"not a partial success, it is a wrong answer that
+reports a healthy count"*.
+
+Every copy of the name is taken now, and one END per START removed — never
+more, because an id shared with a bookmark this pass does not own is a defect
+of its own, and cutting its close would make it two.
+
+**The general lesson**, and it is the second time today: an argument of the
+form "X is unique / valid / allowed only once" is about the document the
+schema describes, not about the string the function is handed. Ask what it
+excludes — a tracked-change snapshot, an empty element, a copy Word made.
+
 ### ~~S1 the Hyperlink style was written into the tracked-change SNAPSHOT~~
 
 Found 2026-08-20 by the mutation pass over `crossrefs`, while checking what

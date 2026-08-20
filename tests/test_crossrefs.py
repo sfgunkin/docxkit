@@ -1759,9 +1759,13 @@ def test_a_TAB_before_a_caption_label_survives_the_back_link_split():
 # * `_run_parts`' `close != -1`. The run it is handed is
 #   `para_xml[r_open:r_close]` with `r_close` measured past a `</w:r>`,
 #   so the rfind always finds one and every spelling of "found" agrees.
-# * the `count=1` in `unlink`: bookmark ids are unique document-wide,
-#   which is what `_next_bookmark_id` is for, so `count=0` and `count=2`
-#   find nothing else to change.
+# * the `count=1` in `unlink` was argued the same way — "bookmark ids
+#   are unique document-wide, which is what `_next_bookmark_id` is
+#   for" — and it was wrong for the same reason: uniqueness is what a
+#   WELL-FORMED document has, and Word's Compare duplicates a table
+#   when a block containing it is moved (S1 in the backlog), copy and
+#   `w:id` and all. See the test above; the removal takes every copy
+#   now.
 #
 #   The same argument was made here for the two in
 #   `_with_hyperlink_style` — "`w:rPr` admits a single `w:rStyle`, an
@@ -1877,3 +1881,28 @@ def test_a_run_carrying_TWO_character_styles_comes_out_with_one():
 # seven characters, so the `>` is at index 6 — and 6 ^ 1 IS 6 + 1. The
 # two part company only for an odd index, which needs an attribute on
 # `w:rPr`, and CT_RPr has none.
+
+
+def test_unlink_takes_EVERY_copy_of_a_duplicated_bookmark():
+    """Word's Compare DUPLICATES a table when a block containing it is
+    moved — S1 in the backlog — and the copy carries the same `w:name`
+    and the same `w:id`. A paper that has been through one round of
+    move-tracking holds the pair.
+
+    Taking one of each left a bookmarkStart and its End standing and
+    reported "1 removed", which is the shape this module's own
+    docstring refuses elsewhere: "not a partial success, a wrong answer
+    that reports a healthy count"."""
+    def block(bid: int) -> str:
+        return (f'<w:bookmarkStart w:id="{bid}" w:name="Table1"/>'
+                "<w:p><w:r><w:t>Table 1. Sources</w:t></w:r></w:p>"
+                f'<w:bookmarkEnd w:id="{bid}"/>')
+
+    xml = doc(para(run("See Table 1 above."))) .replace(
+        "</w:body>", block(7) + block(7) + "</w:body>")
+
+    out, removed = crossrefs.unlink(xml)
+
+    assert removed == 2, "both, and the count says both"
+    assert "<w:bookmarkStart" not in out
+    assert "<w:bookmarkEnd" not in out

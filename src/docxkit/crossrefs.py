@@ -931,16 +931,27 @@ def unlink(xml: str, *,
 
     removed = 0
     for name in sorted(ours):
-        m = re.search(rf'<w:bookmarkStart[^>]*w:name="{re.escape(name)}"\s*/>',
-                      xml)
-        if m is None:
-            continue
-        bid = re.search(r'w:id="(\d+)"', m.group(0))
-        xml = xml[:m.start()] + xml[m.end():]
-        if bid is not None:
-            xml = re.sub(rf'<w:bookmarkEnd w:id="{bid.group(1)}"\s*/>', "",
+        # EVERY bookmark of that name, not the first. Word's Compare
+        # DUPLICATES a table when a block containing it is moved (S1 in
+        # the backlog), and the copy carries the same `w:name` and the
+        # same `w:id` — so a paper that has been through one round of
+        # move-tracking holds the pair. Taking one of each left a
+        # bookmarkStart and its End standing, and reported "1 removed".
+        pattern = re.compile(
+            rf'<w:bookmarkStart[^>]*w:name="{re.escape(name)}"\s*/>')
+        ids: list[str] = []
+        while (m := pattern.search(xml)) is not None:
+            bid = re.search(r'w:id="(\d+)"', m.group(0))
+            if bid is not None:
+                ids.append(bid.group(1))
+            xml = xml[:m.start()] + xml[m.end():]
+            removed += 1
+        # One END per START removed, never more: an id shared with a
+        # bookmark this pass does not own is a document defect of its
+        # own, and cutting its close would turn it into two.
+        for bid_val in ids:
+            xml = re.sub(rf'<w:bookmarkEnd w:id="{bid_val}"\s*/>', "",
                          xml, count=1)
-        removed += 1
 
     def _unwrap(m: re.Match[str]) -> str:
         anchor = re.search(r'w:anchor="([^"]+)"', m.group(0))
