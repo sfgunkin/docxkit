@@ -20,6 +20,8 @@ seam for tracked.py.
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from conftest import make_parts, para, run, write
 
@@ -553,6 +555,74 @@ def test_inspect_lists_comments_and_revisions_when_asked(monkeypatch,
     assert code == 0
     assert "please check" in out                  # --comments
     assert "[ins]" in out and "[del]" in out      # --revisions
+
+
+def _chicago_paper(tmp_path):
+    return write(tmp_path / "chicago.docx", make_parts(
+        para(run("Prose citing (Acemoglu and Restrepo 2020)."))
+        + para(run("References"))
+        + para(run('Acemoglu, D. & P. Restrepo. 2020. "Robots and Jobs." '
+                   "JPE, 128(6): 2188-2244."))))
+
+
+def test_refstyle_fix_writes_the_mechanical_repairs(monkeypatch, tmp_path,
+                                                    capsys):
+    """The half `refstyle` could only report. A paper adopting the house
+    style had a machine-readable list of what was wrong and no way to
+    act on it."""
+    path = _chicago_paper(tmp_path)
+
+    run_cli(monkeypatch, "refstyle", path, "--fix")
+
+    out = capsys.readouterr().out
+    assert "3 fix(es) written" in out
+    assert "written; previous version kept at" in out
+    from docxkit.package import read_parts
+    doc = read_parts(path)["word/document.xml"].decode()
+    assert 'and P. Restrepo. (2020). "Robots and Jobs."' in doc
+    assert "2188–2244" in doc
+
+
+def test_refstyle_without_fix_writes_NOTHING(monkeypatch, tmp_path, capsys):
+    path = pathlib.Path(_chicago_paper(tmp_path))
+    before = path.read_bytes()
+
+    run_cli(monkeypatch, "refstyle", str(path))
+
+    assert path.read_bytes() == before
+    assert "fix(es) written" not in capsys.readouterr().out
+
+
+def test_refstyle_fix_on_a_CLEAN_list_saves_nothing(monkeypatch, paper,
+                                                    capsys):
+    """Nothing to write is not a write. A backup per no-op run is how a
+    directory fills with copies of the same file."""
+    path = pathlib.Path(paper)
+    before = path.read_bytes()
+
+    run_cli(monkeypatch, "refstyle", str(path), "--fix")
+
+    assert path.read_bytes() == before
+    assert "0 fix(es) written" in capsys.readouterr().out
+    assert not list(path.parent.glob("*pre_refstyle*"))
+
+
+def test_refstyle_fix_writes_NOTHING_when_the_lint_refuses(
+        monkeypatch, tmp_path, capsys):
+    """The one save path, and this command is on it: markup Word cannot
+    open has an offline gate here like everywhere else, and the
+    conversion is discarded rather than half-written."""
+    path = pathlib.Path(_chicago_paper(tmp_path))
+    before = path.read_bytes()
+    monkeypatch.setattr("docxkit.lint.lint_parts",
+                        lambda parts: ["a made-up structural problem"])
+
+    code, _ = run_cli(monkeypatch, "refstyle", str(path), "--fix")
+
+    assert code == 1
+    assert path.read_bytes() == before
+    assert not list(path.parent.glob("*pre_refstyle*"))
+    assert "REFUSED" in capsys.readouterr().out
 
 
 def test_sites_says_what_an_edit_would_meet(monkeypatch, paper, capsys):

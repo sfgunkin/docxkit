@@ -4,7 +4,9 @@ from __future__ import annotations
 import pytest
 from conftest import NS, make_parts, note, notes, para, run
 
+from docxkit import refstyle
 from docxkit.citations import find_citations
+from docxkit.errors import ConversionRefused
 from docxkit.refstyle import (
     CHICAGO,
     HOUSE,
@@ -14,6 +16,8 @@ from docxkit.refstyle import (
     audit,
     check_entry,
     check_prose,
+    convert,
+    convert_text,
 )
 
 
@@ -1530,3 +1534,168 @@ def test_an_UNLINKED_manuscript_is_still_read_by_the_pattern_alone():
 # is there to say what the function is FOR (a span that swallowed a
 # linked one), and to skip the re-parse on every already-exact citation
 # in a fully linked manuscript.
+
+
+# ------------------------------------------------ converting, not just ---
+#                                                       reporting
+#
+# `refstyle` reported per-entry, per-rule findings and could change none
+# of them, so AFI r4 wrote ~250 lines across three scripts to convert 25
+# entries and 14 citations. What it converts here is the mechanical
+# half: punctuation and glyphs. Names are NOT touched — reducing "Till
+# Von Wachter" by last-word-is-surname gives "Wachter, T.", a renamed
+# author in a pass whose premise is that no author changes.
+
+CHICAGO_ENTRY = ('Acemoglu, D. & P. Restrepo. 2020. "Robots and Jobs." '
+                 "JPE, 128(6): 2188-2244.")
+
+
+def test_convert_moves_the_punctuation_and_the_glyphs():
+    out, fixes = convert_text(CHICAGO_ENTRY)
+
+    assert [f.code for f in fixes] == ["ampersand", "year-parens", "en-dash"]
+    assert out == ('Acemoglu, D. and P. Restrepo. (2020). "Robots and Jobs." '
+                   "JPE, 128(6): 2188–2244.")
+
+
+def test_convert_writes_an_ABBREVIATED_page_range_out_in_full():
+    """"174–79" is the one change that legitimately alters DIGITS, which
+    is why the invariant has to know about it rather than forbid it."""
+    out, fixes = convert_text('N. (2023). "Ageing." AEJ, 15(2): pp.174-79.')
+
+    assert "pp. 174–179" in out
+    assert {f.code for f in fixes} == {"en-dash", "page-space"}
+
+
+def test_convert_leaves_a_DOI_and_a_YEAR_RANGE_alone():
+    """A DOI keeps its hyphens, and "1875–1912" is already a full range —
+    AFI's own linker read Lai 1912 out of one and Riekhoff 0233 out of a
+    DOI once the year moved into parentheses."""
+    entry = ('Lai, K. (1990). "A history, 1875-1912." Journal. '
+             "https://doi.org/10.1007/s11205-023-03089-7")
+    out, fixes = convert_text(entry)
+
+    assert "10.1007/s11205-023-03089-7" in out, out
+    assert "1875–1912" in out, out
+    assert [f.code for f in fixes] == ["en-dash"]
+
+
+def test_a_range_whose_SECOND_number_is_longer_only_gets_its_dash_fixed():
+    """Expansion carries the first number's leading digits onto the
+    second, which is nonsense when the second is already longer — an
+    ordinary "998-1024" would come out "998–991024", a page nobody
+    wrote, inside a pass whose whole claim is that it changes
+    punctuation only."""
+    out, _ = convert_text('A. (2020). "T." Journal, 1(1): 998-1024.')
+
+    assert "998–1024" in out, out
+
+
+def test_convert_does_NOT_touch_author_names():
+    """The trap that would rename an author. `check_entry` still reports
+    the spelled-out given name; this refuses to be the thing that acts
+    on it."""
+    entry = 'Von Wachter, Till. (2020). "Lost generations." JEP, 34(4): 1-10.'
+    out, _ = convert_text(entry)
+
+    assert "Von Wachter, Till." in out
+    assert any(i.code == "initials" for i in check_entry(entry))
+
+
+def test_convert_writes_the_BARE_year_when_the_style_says_so():
+    out, fixes = convert_text('Smith, J. (2020). "A title." Journal.',
+                              CHICAGO)
+
+    assert out.startswith("Smith, J. 2020.")
+    assert [f.code for f in fixes] == ["year-parens"]
+
+
+def test_an_entry_ALREADY_in_the_style_is_not_touched():
+    assert convert_text(CLEAN_ARTICLE) == (CLEAN_ARTICLE, [])
+
+
+def test_a_conversion_that_would_change_what_the_entry_SAYS_is_REFUSED(
+        monkeypatch):
+    """The invariant is the valuable part: letters and digits identical
+    before and after, once "&"-to-"and" and a written-out page range are
+    accounted for. A dropped author, a lost DOI or a truncated title
+    fails here rather than in the file."""
+    monkeypatch.setattr(
+        refstyle, "convert_entry",
+        lambda text, style=HOUSE: [
+            refstyle.Fix("year-parens", "Restrepo", "")])
+
+    with pytest.raises(ConversionRefused, match="would change what it SAYS"):
+        convert_text(CHICAGO_ENTRY)
+
+
+# ------------------------------------------------- and into a document ---
+
+def _list_parts(*entries: str, italic: str = ""):
+    body = [para(run("Prose citing something.")), para(run("References"))]
+    for text in entries:
+        body.append(para(run(text) + (irun(italic) if italic else "")))
+    return make_parts("".join(body))
+
+
+def test_convert_writes_the_fixes_into_the_reference_block():
+    parts = _list_parts(CHICAGO_ENTRY)
+
+    report = convert(parts)
+
+    assert [line.split(": ")[1] for line in report.changed] == [
+        "ampersand", "year-parens", "en-dash"]
+    assert "and P. Restrepo. (2020)." in parts["word/document.xml"].decode()
+
+
+def test_the_ITALIC_outlet_survives_the_conversion():
+    """The reason a fix is a FRAGMENT and not a rewritten entry: putting
+    the new text into the paragraph wholesale flattens every run, and
+    the italic journal name it also audits for would be gone — the
+    conversion would create the finding beside it."""
+    parts = _list_parts(CHICAGO_ENTRY, italic="Journal of Political Economy")
+
+    convert(parts)
+
+    doc = parts["word/document.xml"].decode()
+    assert "<w:i/>" in doc
+    assert "Journal of Political Economy" in doc
+
+
+def test_PROSE_is_not_converted_only_the_entries():
+    """The in-text rules change what a sentence SAYS and belong to the
+    author. Only the reference block is written."""
+    parts = make_parts(
+        para(run("As Smith & Jones 2020. argue, it rose."))
+        + para(run("References"))
+        + para(run(CHICAGO_ENTRY)))
+
+    convert(parts)
+
+    assert "Smith & Jones 2020." in parts["word/document.xml"].decode()
+
+
+def test_a_fix_that_would_cross_a_LINK_is_skipped_and_named():
+    """`replace_in_para` refuses a span that meets a hyperlink label,
+    for reasons this module does not get to overrule — an entry whose
+    DOI is linked keeps its link, and the report says which."""
+    linked = ('<w:hyperlink w:anchor="doi1"><w:r><w:t>2188-2244</w:t>'
+              "</w:r></w:hyperlink>")
+    parts = make_parts(
+        para(run("Prose.")) + para(run("References"))
+        + para(run('Acemoglu, D. (2020). "Robots." JPE, 128(6): ') + linked
+               + run(".")))
+
+    report = convert(parts)
+
+    assert report.skipped and "en-dash" in report.skipped[0]
+    assert "2188-2244" in parts["word/document.xml"].decode()
+
+
+def test_the_convert_report_PRINTS_what_it_did():
+    parts = _list_parts(CHICAGO_ENTRY)
+
+    text = convert(parts).format()
+
+    assert text.startswith("3 fix(es) written, 0 entr(ies) refused")
+    assert "ampersand" in text

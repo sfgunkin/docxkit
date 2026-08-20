@@ -51,6 +51,7 @@ VALUES = [
     "figures.AltText",
     "figures.Figure",
     "find.Site",                # a survey a caller keeps and compares
+    "refstyle.Fix",             # one span and what it should say
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "refstyle.Issue",
@@ -86,6 +87,7 @@ ACCUMULATORS = {
     "placement.Placement",
     "placement.PlacementReport",
     "probe.Probe",
+    "refstyle.ConvertReport",
     "refstyle.RefStyleReport",
     "renumber.ShiftReport",
     "revision.Doubt",

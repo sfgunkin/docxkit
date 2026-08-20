@@ -221,11 +221,19 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
     "and" not "&", "(2020).", en-dashes, alphabetical order, and the
     cited/listed cross-check.
     """
-    from .refstyle import CHICAGO, HOUSE, audit
-    report = audit(_package(args.docx),
-                   CHICAGO if args.chicago else HOUSE,
-                   aliases=_aliases(args))
+    from .refstyle import CHICAGO, HOUSE, audit, convert
+    style = CHICAGO if args.chicago else HOUSE
+    parts = _package(args.docx)
     print(Path(args.docx).name)
+    if args.fix:
+        # BEFORE the audit, so what is printed is what is LEFT
+        # rather than what was there: a report of findings this
+        # command has just repaired reads as a failed run.
+        written = convert(parts, style)
+        print("  " + written.format().replace("\n", "\n  "))
+        if written and not _save(args.docx, parts, "pre_refstyle"):
+            return 1
+    report = audit(parts, style, aliases=_aliases(args))
     print("  " + report.format().replace("\n", "\n  "))
     if args.json:
         _write_json(args.json, report.as_rows())
@@ -1226,6 +1234,10 @@ def main() -> None:
     p.add_argument("--chicago", action="store_true",
                    help="AFI's variant: full names, bare year, "
                         "et al. from 4 authors")
+    p.add_argument("--fix", action="store_true",
+                   help="write the mechanical fixes into the reference "
+                        "entries: punctuation and glyphs, never a name "
+                        "(a backup is taken first)")
     p.add_argument("--json", metavar="PATH")
     p.add_argument("--alias", action="append", metavar="CITED=FILED",
                    help='e.g. --alias "WHO=World Health Organization" — '

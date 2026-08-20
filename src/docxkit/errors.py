@@ -16,6 +16,7 @@ __all__ = [
     "AnchorError",
     "BaselinePending",
     "ConversionGap",
+    "ConversionRefused",
     "DeliverableModified",
     "DocumentLocked",
     "DocxKitError",
@@ -75,6 +76,21 @@ class ConversionGap(DocxKitError):
 
     Raised only under ``strict``; the default is to mark the gap inline
     so one exotic element does not hide the rest of the equation.
+    """
+
+
+class ConversionRefused(DocxKitError):
+    """A conversion would have changed what the document SAYS.
+
+    `refstyle.convert_text` moves punctuation and glyphs and nothing
+    else, and proves it: the entry's letters and digits must be
+    identical afterwards, once "&" becoming "and" and a page range
+    written out in full are accounted for. A dropped author, a lost DOI
+    or a truncated title lands here instead of in the file.
+
+    Its own class because the honest response differs from every other
+    refusal in this package: nothing is wrong with the DOCUMENT, and
+    re-running will not help — the converter is what has to change.
     """
 
 

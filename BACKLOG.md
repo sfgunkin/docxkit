@@ -337,51 +337,57 @@ work missing from the list whose co-author happens to have a same-year entry —
 turning an S2 false finding into an S1 silent one. The reference list is
 evidence about the works, not about which words are surnames.
 
-### S4 `refstyle` can diagnose a whole reference list and change none of it
+### S4 `refstyle` converts the punctuation but not the NAMES — the two traps left, 2026-08-20
 
-**Symptom as observed.** `docxkit refstyle` is the house style -- pinned by
-`tests/test_refstyle.py` so the spec and the code cannot drift -- and it reports
-per-entry, per-rule findings: `initials`, `ampersand`, `year-parens`, `italics`,
-`en-dash`, `and-comma`, plus `et-al` in the body. Its docstring is explicit: *"It
-reports and never edits."*
+**Mostly fixed.** `refstyle.convert(parts)` and `docxkit refstyle --fix` write
+the mechanical half: `&` becomes "and", the year takes its parentheses (or
+loses them under `--chicago`), page ranges get an en-dash and are written out
+in full ("174–79" → "174–179"), "p.45" gets its space and "et al" its period.
+`convert_entry` returns the FIXES — `(code, old, new)` fragments — and
+`convert_text` applies and CHECKS them; `convert` writes each one through
+`edit.replace_in_para`.
 
-So a paper that decides to adopt the house style has a precise, machine-readable
-list of what is wrong and no way to act on it. AFI r4 (author's decision,
-2026-08-20) needed ~250 lines across three per-paper scripts to convert 25
-entries and 14 in-text citations:
+Three things that design buys, each of which was a trap in the entry below:
 
-* `revision/scripts/r4_refstyle.py` -- parse Chicago authors, reduce given names
-  to one initial, parenthesise the year, expand abbreviated page ranges
-  (174–79 → 174–179), re-punctuate `Vol (Issue):` → `, Vol(Issue):`, and mark
-  the outlet for italics;
-* `revision/scripts/build_r4w.py` -- rebuild each entry's runs, italic outlet
-  included, and gate that nothing but formatting moved;
-* `revision/scripts/build_r4x.py` -- "et al." from three authors, in the body.
+* **the italic outlet survives.** A fix is a fragment, not a rewritten entry,
+  so only the runs its own span crosses are touched. Writing the new text in
+  wholesale flattens the paragraph to one run and destroys the italics
+  `audit` is also checking for — the conversion would create the finding
+  beside it;
+* **the invariant.** Letters and digits identical before and after, once
+  "&"→"and" and a written-out range are accounted for. A dropped author, a
+  lost DOI or a truncated title raises `ConversionRefused` and nothing is
+  written. It caught the range arithmetic in testing: without its guard an
+  ordinary "998-1024" expands to "998–991024";
+* **a linked DOI keeps its link.** `replace_in_para` refuses a span that
+  meets a hyperlink label, and the report says which entry and which rule
+  rather than forcing it.
 
-**Three traps a shared implementation should own**, all of which cost time here
-and none of which is paper-specific:
+**What is left, and why.**
 
-1. **Name particles.** "Till Von Wachter" reduced by last-word-is-surname
-   becomes "Wachter, T." -- a renamed author, in a pass whose entire premise is
-   that no author changes. Needs a particle set (von, van, de, della, ten, …).
-2. **A trailing initial already ends in a period**, so appending one gives
-   "Allen, S.. (2019)."; likewise "eds." and "ed.".
-3. **A parenthesised year is unambiguous and a bare one is not.** AFI's own
-   citation linker found years with `\b(\d{4}[a-z]?)\.` and, once the year moved
-   into parentheses, silently matched inside DOIs and page ranges instead --
-   Feng 2025 from `econmod.2025.107399`, Lai 1912 from `1875–1912`, Riekhoff
-   0233 from a DOI. Every entry read as uncited. Any converter must expect
-   downstream parsers written against the old form.
+1. **Names.** Reducing "Till Von Wachter" by last-word-is-surname gives
+   "Wachter, T." — a renamed author, in a pass whose entire premise is that
+   no author changes. The particle set (von, van, de, della, ten, …) that
+   would prevent it is a claim about NAMES, not a fact about the document,
+   and the failure it fails at is silent. `check_entry` still reports the
+   spelled-out given name; nothing acts on it.
+2. **Italics.** Not text — the outlet has to be marked by run surgery, and
+   which span is the outlet is a judgment the audit deliberately does not
+   make (it asks only whether the entry has any).
+3. A **trailing initial already ends in a period**, so appending one gives
+   "Allen, S.. (2019)." — a name-side trap, which arrives with (1).
 
-**Fix sketch.** `refstyle.convert(xml) -> xml` behind `docxkit refstyle --fix`,
-reusing the preset that already knows every rule. The invariant is the valuable
-part and is worth building in: strip everything but letters and digits from each
-entry's TAIL and require it identical before and after, allowing only declared
-page-range expansions -- that catches a dropped author, a lost DOI or a
-truncated title while ignoring the punctuation the conversion exists to move.
-AFI's version reports "tails identical letter-for-letter on 25/25".
+**Still true, and worth keeping here:** a parenthesised year is unambiguous
+and a bare one is not. AFI's own citation linker found years with
+`(\d{4}[a-z]?)\.` and, once the year moved into parentheses, silently
+matched inside DOIs and page ranges instead — Feng 2025 from
+`econmod.2025.107399`, Lai 1912 from `1875–1912`. **Any downstream parser
+written against the old form has to be re-checked after a `--fix` run.**
 
-**Workaround to retire:** the three scripts above.
+**Workaround partly retired:** of AFI's three scripts, `r4_refstyle.py`'s
+punctuation half and `build_r4w.py`'s gate are covered; the name reduction
+and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
+scope on purpose — the in-text rules change what a sentence SAYS.
 
 ### S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time
 

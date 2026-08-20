@@ -57,18 +57,29 @@ from .citations import (
 from .citations import (
     resolve_lead as _resolve_lead,
 )
+from .edit import replace_in_para
+from .errors import (
+    AnchorError,
+    ConversionRefused,
+)
 
 __all__ = [
     "CHICAGO",
     "DISCOURSE_LEADS",
     "HOUSE",
     "IGNORED_LEADS",
+    "ConversionRefused",
+    "ConvertReport",
+    "Fix",
     "Issue",
     "RefStyleReport",
     "Style",
     "audit",
     "check_entry",
     "check_prose",
+    "convert",
+    "convert_entry",
+    "convert_text",
 ]
 
 
@@ -269,6 +280,203 @@ def check_entry(text: str, style: Style = HOUSE) -> list[Issue]:
                 f'ranges take an en-dash (–): "{token.strip(".,;")}"'))
             break
     return issues
+
+
+@dataclass(frozen=True)
+class Fix:
+    """One span of an entry's visible text, and what it should say.
+
+    A FRAGMENT rather than a rewritten entry, and that is the whole
+    design. Replacing a reference's text wholesale puts every word in
+    one run, which destroys the italic outlet the entry is also being
+    checked for — the conversion would create the finding beside it.
+    Applied through :func:`docxkit.edit.replace_in_para`, each fix
+    touches only the runs its own span crosses.
+    """
+
+    code: str            # the `Issue.code` this answers
+    old: str
+    new: str
+
+
+#: Ranges are written closed here — "174–179", not "174–79". Both are
+#: house styles somewhere; this one is the papers', and it is the
+#: direction that ADDS digits, which is why the invariant below has to
+#: know about it rather than forbidding it.
+_RANGE_RE = re.compile(r"\b(\d{2,5})\s*[-—–]\s*(\d{1,5})\b")
+
+
+def _expanded(lo: str, hi: str) -> str:
+    """"174-79" -> "174–179"; "45-48" and "1875–1912" unchanged."""
+    if len(hi) >= len(lo):
+        return f"{lo}–{hi}"
+    return f"{lo}–{lo[:len(lo) - len(hi)]}{hi}"
+
+
+def _alnum(text: str) -> str:
+    return "".join(c for c in text if c.isalnum()).casefold()
+
+
+def _skip_token(token: str) -> bool:
+    """A DOI, a URL or an ISBN keeps its hyphens."""
+    low = token.lower()
+    return ("http" in low or "doi" in low or token.startswith("10.")
+            or low.count("-") >= 3)
+
+
+def convert_entry(text: str, style: Style = HOUSE) -> list[Fix]:
+    """The fixes that would bring one entry to `style`, or none.
+
+    The mechanical half of what :func:`check_entry` reports: the
+    punctuation and the glyphs. It does NOT touch author names, and that
+    is deliberate — reducing "Till Von Wachter" by last-word-is-surname
+    gives "Wachter, T.", a renamed author in a pass whose whole premise
+    is that no author changes, and the particle set that would prevent
+    it is a claim about names rather than a fact about the document.
+    Italics are the other one it leaves: they are not text, and this
+    returns text. Both stay reported by `check_entry`.
+
+    Every fix is checked by :func:`convert_text` before it is applied.
+    """
+    fixes: list[Fix] = []
+    m = _ENTRY_YEAR_RE.search(text)
+    if m is None:
+        return fixes                 # not an entry; references() filters these
+    year, at = m.group(2), m.start()
+    head = text[:at]
+    if "&" in head:
+        fixes.append(Fix("ampersand", "&", "and"))
+    want = f"({year})." if style.year_parens else f"{year}."
+    if m.group(0).rstrip() != want:
+        # The eight characters in front make the fragment unique: a bare
+        # year is four digits, and four digits also sit in a DOI and in
+        # a page range further down the entry.
+        lead = text[max(0, at - 8):at]
+        fixes.append(Fix("year-parens", lead + m.group(0), lead + want))
+    for token in text[at:].split():
+        if _skip_token(token):
+            continue
+        if (r := _RANGE_RE.search(token)) is not None:
+            fixed = _expanded(r.group(1), r.group(2))
+            if fixed != r.group(0):
+                fixes.append(Fix("en-dash", r.group(0), fixed))
+    for sp in _PAGE_SPACE_RE.finditer(text):
+        fixes.append(Fix("page-space", text[sp.start():sp.end() + 3],
+                         text[sp.start():sp.end()] + " "
+                         + text[sp.end():sp.end() + 3]))
+    for et in _ETAL_BARE_RE.finditer(text):
+        fixes.append(Fix("et-al-period", et.group(0), et.group(0) + "."))
+    return fixes
+
+
+def convert_text(text: str, style: Style = HOUSE) -> tuple[str, list[Fix]]:
+    """`convert_entry`, applied — and CHECKED, which is the point.
+
+    The invariant is the valuable part: strip everything but letters and
+    digits from the entry and require it identical before and after,
+    once the two changes that legitimately alter those characters are
+    accounted for — "&" becoming "and", and a page range being written
+    out in full. Anything else — a dropped author, a lost DOI, a
+    truncated title — fails here rather than in the file.
+
+    Raises :class:`docxkit.errors.ConversionRefused` if it does, with
+    both forms in the message. A conversion that cannot prove it
+    preserved the entry has no business writing it.
+    """
+    out, applied = text, []
+    for fix in convert_entry(text, style):
+        if fix.old not in out:
+            continue                 # an earlier fix already covered it
+        out = out.replace(fix.old, fix.new, 1)
+        applied.append(fix)
+    before = _alnum(text.replace("&", "and"))
+    after = _alnum(out)
+    if before != after:
+        for fix in applied:
+            if fix.code == "en-dash":
+                before = _alnum(
+                    before.replace(_alnum(fix.old), _alnum(fix.new), 1))
+    if before != after:
+        raise ConversionRefused(
+            f"converting this entry would change what it SAYS, not just "
+            f"how it is punctuated:\n  was: {text}\n  now: {out}\n"
+            f"Nothing was written. The fixes applied were "
+            f"{[f.code for f in applied]}.")
+    return out, applied
+
+
+@dataclass
+class ConvertReport:
+    """What :func:`convert` changed, and what it would not touch."""
+
+    changed: list[str] = field(default_factory=list)     # "¶12: year-parens"
+    refused: list[str] = field(default_factory=list)
+    #: Entries a fix could not be written into — a span meeting a
+    #: hyperlink, almost always a linked DOI. Reported, never forced:
+    #: `replace_in_para` refuses those for reasons this module does not
+    #: get to overrule.
+    skipped: list[str] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.changed)
+
+    def format(self) -> str:
+        head = (f"{len(self.changed)} fix(es) written, "
+                f"{len(self.refused)} entr(ies) refused, "
+                f"{len(self.skipped)} skipped")
+        return "\n".join([head]
+                         + [f"  {line}" for line in self.changed]
+                         + [f"  REFUSED {line}" for line in self.refused]
+                         + [f"  SKIPPED {line}" for line in self.skipped])
+
+
+def convert(parts: dict[str, bytes], style: Style = HOUSE, *,
+            heading: str | tuple[str, ...] = REF_HEADINGS,
+            stop: tuple[str, ...] = REF_STOPS) -> ConvertReport:
+    """Bring a manuscript's reference ENTRIES to `style`, in place.
+
+    The other half of `audit`: a paper that decides to adopt the house
+    style had a precise, machine-readable list of what was wrong and no
+    way to act on it, and AFI r4 wrote ~250 lines across three scripts
+    to convert 25 entries.
+
+    Only the reference block, and only the entries in it — prose is not
+    converted, because the in-text rules ("et al." from three authors)
+    change what a sentence SAYS and belong to the author.
+
+    Each fix goes in through :func:`docxkit.edit.replace_in_para`, so a
+    span that meets a hyperlink is refused rather than flattened: an
+    entry whose DOI is linked keeps its link, and the report says which.
+    An entry that cannot be proved unchanged is refused whole — see
+    :func:`convert_text`.
+    """
+    doc = parts[DOCUMENT].decode("utf-8")
+    matches = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in matches]
+    report = ConvertReport()
+    edits: list[tuple[re.Match[str], str]] = []
+    for r in references(texts, heading=heading, stop=stop):
+        where = f"¶{r.index + 1}"
+        try:
+            _, fixes = convert_text(texts[r.index], style)
+        except ConversionRefused as exc:
+            report.refused.append(f"{where}: {exc}")
+            continue
+        para = matches[r.index].group(0)
+        for fix in fixes:
+            try:
+                para = replace_in_para(para, fix.old, fix.new)
+            except AnchorError as exc:
+                report.skipped.append(f"{where} {fix.code}: {exc}")
+                continue
+            report.changed.append(f"{where}: {fix.code}")
+        if para != matches[r.index].group(0):
+            edits.append((matches[r.index], para))
+
+    for m, para in reversed(edits):
+        doc = doc[:m.start()] + para + doc[m.end():]
+    parts[DOCUMENT] = doc.encode("utf-8")
+    return report
 
 
 def _fold(surname: str) -> str:
