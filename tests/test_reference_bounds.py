@@ -186,3 +186,74 @@ def test_a_reference_parsed_on_its_own_carries_NO_paragraph():
 
     assert ref is not None
     assert ref.index == -1
+
+
+# --- the run of 2026-08-20: 5.1 % --------------------------------------
+
+
+def test_prose_needs_FOUR_words_before_it_is_prose():
+    """`len(words) < 4`, the threshold under which an author field is
+    too short to judge. Both sides of it are load-bearing and only one
+    was pinned: three words is "World Bank Group", and four is where a
+    sentence starts being one.
+
+    Read as `== 4` the guard swallows exactly the four-word sentences it
+    exists to catch; read as `< 3` it calls "Data are drawn" an author
+    field that reads as prose, and every three-word institution with a
+    lowercase word in it — "Bureau des Statistiques" — goes with it."""
+    from docxkit._cite_grammar import _reads_as_prose
+
+    assert _reads_as_prose("The data are drawn") is True
+    assert _reads_as_prose("Data are drawn") is False
+    assert _reads_as_prose("World Bank Group") is False
+
+
+def test_an_impossible_span_QUOTES_the_paragraph_it_could_not_wrap():
+    """`visible_text(para_xml)[:40]`. The refusal names offsets, and
+    offsets belong to a paragraph the caller computed them from — which
+    is the one thing they cannot check by reading the message unless it
+    quotes the text as well."""
+    from docxkit._cite_grammar import wrap_visible_span
+    from docxkit.errors import AnchorError
+
+    para_xml = ("<w:p><w:r><w:t>The Age-Friendly Index for the Republic "
+                "of Kazakhstan, second draft</w:t></w:r></w:p>")
+
+    with pytest.raises(AnchorError) as caught:
+        wrap_visible_span(para_xml, 5, 500, "Name")
+
+    assert "'The Age-Friendly Index for the Republic '" in str(caught.value)
+
+
+# Argued rather than pinned, from the same run:
+#
+# * `authors == c.authors` in `resolve_lead`, written `is`. `authors` is
+#   what `strip_lead` (and then `_drop_unlisted_head`) returned, and a
+#   str method that strips nothing hands back the string it was given —
+#   so when there is nothing to trim the two ARE one object.
+# * `len(_CHAIN_SPLIT_RE.split(...)) > 1` written `!= 1`: a split
+#   returns at least one piece.
+# * `len(words) < 2` in `extend_to_name` written `< 1`. Below two the
+#   walk can only extend over a REPETITION of the entry's single word —
+#   "Kanbur Kanbur (2007)" — which no reference list contains, and the
+#   settle loop then hands back the span it started with.
+# * `at = m.start(1)` written `m.start(0)`. `_PREV_WORD_RE` is
+#   `(\\S+)[ \\u00a0]+$`: the group opens where the match does.
+# * the six mutants on `len(flat) == len(stop)` in `_ends_the_list`.
+#   That equality is only true when `flat` IS the stop word, and
+#   `if flat in stops: return True` two lines above has already
+#   answered that paragraph — so the comparison is reached only where
+#   it is false, and every reading of it agrees there.
+# * `range(start + 1, …)` in `references`, written `+ 0`, `// 1` and
+#   `| 1` — all of which include the HEADING paragraph. It is not a
+#   stop word and it does not parse as an entry, so the loop's
+#   `continue` takes it and the list comes out the same.
+# * `zip(spans, runs, strict=True)` in `wrap_visible_span`:
+#   `run_spans` returns one span per run by construction.
+# * `at > fs` and `end < le` there, written `!=`. `fs` is the start of
+#   the first run the span covers and `le` the end of the last, so
+#   `at < fs` and `end > le` are both outside the coverage test that
+#   selected them.
+# * `if first is last:` written `==`. `re.Match` defines no `__eq__`,
+#   so equality IS identity for it.
+# * `run_xml.replace("<w:rPr>", …, 1)` written 2: a run has one `w:rPr`.
