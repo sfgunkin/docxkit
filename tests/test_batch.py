@@ -187,3 +187,128 @@ def test_a_clean_run_writes_and_reports_where(tmp_path):
 ])
 def test_diagnose_says_which_cause_applies(sig, old, expect):
     assert expect in batch.diagnose(xml_of(parts_of()), sig, old)
+
+
+# --- what the report SAYS, and the two causes diagnose was still guessing --
+#
+# The floor caught these: 79.6 % against 85, and every uncovered line was
+# either a sentence a person reads or a failure path. A batch runner whose
+# report nobody asserts is a runner that can go quiet.
+
+
+def test_the_report_says_what_it_did_and_what_it_blocked(tmp_path):
+    """`Report.text()` is the whole of what a caller sees — a paper's
+    script prints it and nothing else. Every branch of it here: a
+    blocked verdict with its reason, an applied step, a failure, the
+    invariants that MOVED (and the ones that did not), and where the
+    file went."""
+    rep = batch.Report(name="r4 captions")
+    rep.verdicts = [batch.Verdict("keeps", True),
+                    batch.Verdict("blocked", False, "`old` is not there")]
+    rep.applied = ["renumber the panels"]
+    rep.failures = ["swap the figure  ValueError: no drawing"]
+    rep.before = {"paragraphs": 12, "links": 4}
+    rep.after = {"paragraphs": 11, "links": 4}
+    rep.spaces_fixed = 2
+    rep.written = tmp_path / "paper.docx"
+
+    lines = rep.text().splitlines()
+
+    assert lines[0] == "r4 captions:"
+    assert "  ok   keeps" in lines
+    assert "  BLOCKED blocked" in lines
+    assert "          -> `old` is not there" in lines
+    assert "  OK   renumber the panels" in lines
+    assert "  FAIL swap the figure  ValueError: no drawing" in lines
+    assert "invariants {'paragraphs': (12, 11)}" in lines[-2]
+    assert "preserve_space fixed 2" in lines[-2]
+    assert lines[-1] == f"  wrote {tmp_path / 'paper.docx'}"
+
+
+def test_a_report_that_moved_NOTHING_says_unchanged():
+    """The other side of that line: a batch whose carriers all held is
+    the ordinary result, and "unchanged" is what says so. An empty dict
+    printed there reads as a report that could not measure."""
+    rep = batch.Report(name="r4")
+    rep.before = {"paragraphs": 12}
+    rep.after = {"paragraphs": 12}
+
+    assert "invariants unchanged" in rep.text()
+
+
+LINK_LABEL = ('<w:hyperlink w:anchor="Table3"><w:r><w:rPr>'
+              '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>Table 3</w:t>'
+              "</w:r></w:hyperlink>")
+
+
+def test_diagnose_names_the_HYPERLINK_LABEL_the_match_meets():
+    """`replace_in_para` refuses a match that touches a link label, and
+    it is right to — but the refusal does not say WHICH label, and a
+    caller staring at "spans a hyperlink" has to go and look. This is
+    the round trip preflight exists to remove."""
+    xml = document(para(f"{LINK_LABEL}<w:r><w:t> shows where older "
+                        "workers are.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "shows where", "Table 3")
+
+    assert "hyperlink label 'Table 3'" in said
+    assert "allow_hyperlink=True" in said
+
+
+def test_diagnose_names_the_EQUATION_a_match_spans():
+    """The other cause that reads as an anchor typo: the words are on
+    the page, and half of them are inside `m:oMath`, which this module
+    never rewrites."""
+    math = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+    xml = document(para(run("The value "), math, run(" is small."),
+                        pid="A2"))
+
+    said = batch.diagnose(xml, "is small", "x is")
+
+    assert "spans an equation" in said
+    assert "never rewrites OMML" in said
+
+
+def test_diagnose_says_so_when_it_cannot_model_the_refusal():
+    """The honest fallback. `preflight` catches whatever the real
+    replace raises, so a cause this function does not know about still
+    reaches the caller as a message — with the exception beside it —
+    rather than as a confident wrong diagnosis."""
+    xml = document(para(f"{LINK_LABEL}<w:r><w:t> shows where older "
+                        "workers are.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "shows where", "shows where")
+
+    assert "a reason preflight does not model" in said
+
+
+def test_preflight_reports_an_edit_that_changes_NOTHING():
+    """An edit whose `new` is its `old` applies without raising and
+    leaves the document as it was. Nothing downstream can tell that
+    from a batch that worked, which is why it is a verdict rather than
+    a silence."""
+    xml = document(para(run("Alpha beta gamma."), pid="A1"))
+
+    (verdict,) = batch.preflight(
+        [batch.Edit("noop", "Alpha", "beta", "beta")], xml)
+
+    assert verdict.ok is False
+    assert verdict.reason == "matched but changed nothing"
+
+
+def test_a_step_that_RAISES_is_reported_and_the_xml_is_rolled_back():
+    """`apply_steps` keeps going so one failure does not hide the rest,
+    and a step that raised leaves the document as it found it — a half
+    applied step is the thing a batch must never write."""
+    def boom(xml: str, parts: dict[str, bytes]) -> str:
+        raise ValueError("the swap could not find its drawing")
+
+    xml = document(para(run("Alpha beta gamma."), pid="A1"))
+
+    out, applied, failures = batch.apply_steps(
+        xml, {}, [batch.Step("swap the figure", boom)])
+
+    assert out == xml, "rolled back"
+    assert applied == []
+    assert failures == ["swap the figure  ValueError: "
+                        "the swap could not find its drawing"]
