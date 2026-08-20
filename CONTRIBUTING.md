@@ -1793,7 +1793,7 @@ file anyone else is reading. A probe that needs to compare two
 behaviours belongs in it, or in a copy of the module under a scratch
 name — never in `src/`.
 
-### A PIPELINE's exit code is the last command's, twice now
+### A PIPELINE's exit code is the last command's, three times now
 
 `pyright | tail -1` swallowed pyright's status and is written up above.
 On 2026-08-20 the same shape came back as `pytest -q | tail -2`, run
@@ -1801,6 +1801,18 @@ that way all afternoon so the summary line would show: `tail` returns 0
 over a failing suite, and a commit went through red. The five gates are
 run UNPIPED, chained with `&&`, and anything that needs trimming gets
 it after the chain, not inside it.
+
+**A THIRD time, 2026-08-21.** `python tools/gates.py 2>&1 | tail -6` in a
+`&&` chain with `git commit`: mypy refused a new test file, the gate exited
+1, `tail` exited 0, and the commit went in red. The runner exists because of
+this exact shape and was invoked through it.
+
+There is no wording that fixes a habit. What does: never put a gate run and
+a commit in one chain. Redirect and read the status —
+
+    python tools/gates.py > /tmp/g.txt 2>&1; echo "exit=$?"; tail -6 /tmp/g.txt
+
+— and commit as its own command, after reading that number.
 
 ### A patch script written in a HEREDOC arrives with its backslashes halved
 
