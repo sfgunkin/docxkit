@@ -1819,3 +1819,103 @@ def test_a_MISSING_anchor_is_quoted_to_sixty_characters(monkeypatch, paper,
 #
 #   `return 1 if check_citations(...) > 0 else 0` -> `!= 0`. The count
 #   is a length and cannot be negative.
+
+
+# --- the run of 2026-08-20: 7.0 % (32/455) ----------------------------
+#
+# The CLI is the layer a person READS, and its survivors are all of one
+# kind: a loop whose body nothing checks, and a flag read backwards.
+
+
+def test_lint_PRINTS_the_problems_it_found(capsys, monkeypatch, tmp_path):
+    """`for problem in problems`, mutated to an empty loop: the command
+    still exits 1, so every test of its exit code passes while it names
+    nothing. The exit code tells a script; the lines tell the person who
+    has to fix the file."""
+    path = write(tmp_path / "paper.docx",
+                 make_parts(para(run(" leading space"))))
+
+    code, _ = run_cli(monkeypatch, "lint", str(path))
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "edge whitespace" in out, out
+    assert out.count("  - ") >= 1
+
+
+def test_a_refused_WRITE_prints_what_it_refused_over(capsys, tmp_path):
+    """The same loop in `_save`, where the stakes are higher: the
+    command declines to write the author's file and the reason is the
+    only thing that says why."""
+    from docxkit import package
+    from docxkit.cli import _save
+
+    parts = package.read_parts(write(tmp_path / "paper.docx",
+                                     make_parts(para(run("prose")))))
+    parts["word/document.xml"] = (
+        parts["word/document.xml"].decode("utf-8")
+        .replace("<w:body>", "<w:body><w:p><w:pPr/><w:pPr/></w:p>")
+        .encode("utf-8"))
+    target = tmp_path / "paper.docx"
+    before = target.read_bytes()
+
+    assert _save(target, parts, "test") is False
+
+    out = capsys.readouterr().out
+    assert "REFUSED" in out
+    assert out.count("  - ") >= 1, out
+    assert target.read_bytes() == before, "and nothing was written"
+
+
+def test_authors_says_so_when_there_are_NONE(capsys, monkeypatch,
+                                            tmp_path):
+    """`if not read_authors(parts)`, mutated to `not not`. The line it
+    guards is the whole answer for a clean manuscript — without it the
+    command prints a filename and stops, which reads as a command that
+    failed."""
+    path = write(tmp_path / "clean.docx",
+                 make_parts(para(run("prose with nothing tracked"))))
+
+    run_cli(monkeypatch, "authors", str(path))
+
+    assert "(no tracked changes or comments)" in capsys.readouterr().out
+
+
+def test_inspect_lists_the_comments_ONLY_when_asked(capsys, monkeypatch,
+                                                   tmp_path):
+    """`args.comments and com`, read as `or`. The flag is what keeps a
+    hundred referee comments out of a structural summary, and `or`
+    prints them whenever the document HAS any — which is the document
+    the summary is usually asked about."""
+    from conftest import comment
+    path = write(tmp_path / "reviewed.docx",
+                 make_parts(para(run("prose")),
+                            comment_items=(comment(1, "a referee said"),)))
+
+    run_cli(monkeypatch, "inspect", str(path))
+    quiet = capsys.readouterr().out
+
+    run_cli(monkeypatch, "inspect", str(path), "--comments")
+    asked = capsys.readouterr().out
+
+    assert "a referee said" not in quiet
+    assert "a referee said" in asked
+    assert "comments    1" in quiet, "the COUNT is in both"
+
+
+# Twenty-eight of the thirty-two are left, and they are ONE shape: how
+# much of something a report quotes, and how many of them it prints
+# before it stops. `[:200]` on a part list, `[:60]` on an anchor and on
+# a revision's text, `[:110]` on a comment, `> 12` on the ingest
+# preview. Each needs a fixture longer than the width to pin, and each
+# is a line a person reads — the same class this package has been
+# closing module by module.
+#
+# Two are argued and checked: `cmd_citations`' `> 0` as `!= 0` (a count
+# is never negative) and `doctor`'s `d.kind == "literal"` as `is` (both
+# sides are the same module-level literal).
+#
+# One is recorded as NOT decided: `_summarize`'s `if len(out) <= keep`
+# read as `<`. Nothing in the suite has exactly `keep` parts, so the
+# suite cannot tell them apart, and neither reading is obviously the
+# intended one from the code alone.
