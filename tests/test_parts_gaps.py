@@ -1117,3 +1117,12 @@ def test_a_paragraph_nothing_SMARTENS_keeps_its_entities():
 #   it — so a changed string always sorts higher. That last one is an
 #   argument about the TABLE, and it is worth re-reading if a downgrade
 #   is ever added whose glyph sorts BELOW its plain form.
+#
+# Recorded rather than argued: `table_spacing`'s `pos = m.start() +
+# len(para)` read as `|`. OR never answers below `m.start()`, so the
+# walk still moves forward, but it can land INSIDE the paragraph it
+# just handled — and then the next search finds the same one, computes
+# the same offset, and does not stop. Every fixture here agrees with
+# `+` because the two numbers share no bits; what a test for the other
+# case would assert is that the loop terminates, which is a test that
+# hangs when it fails.

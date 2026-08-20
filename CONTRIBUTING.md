@@ -1597,14 +1597,14 @@ test file and each argument checked by `kill_check`.
 | `revisions.py` | **5.5 %** (23/417) | 6.7 % | the paragraph nobody deleted, and difflib's autojunk |
 | `revision.py` | **2.4 %** (8/340) | 8.8 %, 6.2 %, 4.7 % | the PARTIAL round closed: a limit, a walk, and a hash that sorts low |
 | `_cite_grammar.py` | **4.2 %** (18/428) | 5.1 % | a line that merely STARTS like a stop word |
-| `hygiene.py` | **3.6 %** (16/449) | 4.9 % | a relationship with no target, and a paragraph nothing smartens |
+| `hygiene.py` | **3.1 %** (14/449) | 4.9 %, then 3.6 % | a relationship with no target, and a paragraph nothing smartens — CLOSED |
 | `equations.py` | **3.4 %** (14/416) | 5.8 %, then 4.3 % | its first worked round — a clause that could not fire |
-| `cli.py` | **4.6 %** (21/455) | 6.9 %, 7.0 %, 6.2 % | the loops whose bodies nothing checked, the widths a report is read at, and two flags that did the opposite |
+| `cli.py` | **4.2 %** (19/455) | 6.9 %, 7.0 %, 6.2 %, 4.6 % | the loops whose bodies nothing checked, the widths a report is read at, and two flags that did the opposite |
 | `compare.py` | 3.4 % (2/58) | — | two argued, CLOSED |
 | `guard.py` | 4.1 % (2/49) | — | two argued (a JSON indent), CLOSED |
 | `_table_core.py` | **1.7 %** (7/415) | 2.7 %, and a PARTIAL 1.0 % | measured WHOLE at last; six argued, CLOSED |
 | `edit.py` | 4.9 % (21/425) | 2.8 % | it went UP, and the rise IS the new code this day added |
-| `placement.py` | **5.4 %** (23/426) | 9.6 %, 6.8 %, 6.1 % | the worst left: a body of three hundred children, and the measurement after the fix |
+| `placement.py` | **5.4 %** (23/426) | 9.6 %, 6.8 %, 6.1 % (four measurements in one day) | the worst left: a body of three hundred children, and the measurement after the fix |
 
 `_cite_build` went back up to 4.3 % afterwards, and deliberately: the
 endnote work landed new code in it (see below), and new code arrives
