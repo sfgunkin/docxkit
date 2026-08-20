@@ -1742,6 +1742,24 @@ not move when a survivor is argued rather than killed, so a module
 whose remaining survivors are all argued reads as unchanged forever;
 what changes is whether the arguments still hold. This one had not.
 
+**The tell, after auditing a list of them:** an argument about the CODE
+is sound — "the raise above leaves exactly one hit", "the loop starts
+at `header`", "both sides are the same module literal", "a Counter
+value the report deletes zeroes from". An argument about the DOCUMENT
+is a claim about every file the tool will ever be handed, and two of
+those failed the same day:
+
+* "`w:rPr` admits a single `w:rStyle`" — true of the element, false of
+  the string, because `w:rPrChange` nests one inside another;
+* "bookmark ids are unique document-wide" — true of a well-formed
+  document, false of one Word's Compare has duplicated a moved block
+  in, which is a defect recorded three entries up in the same BACKLOG.
+
+Five more of that kind were re-read the same afternoon and hold, each
+because the invariant is enforced by the code rather than hoped for in
+the input. Write down WHICH it is, and the next reader can tell in a
+sentence whether it is still true.
+
 ### Re-measure the module you just CHANGED
 
 `_xml` was measured at 4.5 %, worked, and measured again the same
