@@ -1996,6 +1996,24 @@ def test_a_figure_line_names_the_drawing_or_its_EMBED(capsys, monkeypatch,
     assert "[rId7]" not in out
 
 
+def test_a_part_list_of_exactly_KEEP_names_is_printed_whole():
+    """`if len(out) <= keep`. This was recorded as undecided — nothing
+    in the suite had exactly four parts, so `<` and `<=` could not be
+    told apart — and at exactly four the `<` reading falls through to
+    the elision and appends "and 0 more" to a list that is complete.
+
+    Four is the default because the first staleness report listed
+    sixteen, twelve of them `word/fonts/font*.odttf` from one tick of
+    Word's embed-fonts box."""
+    from docxkit.cli import _summarize
+
+    four = ["a.xml", "b.xml", "c.xml", "d.xml"]
+
+    assert _summarize(four) == "a.xml, b.xml, c.xml, d.xml"
+    assert "more" not in _summarize(four)
+    assert _summarize([*four, "e.xml"]).endswith(", and 1 more")
+
+
 # What is left after the round of 2026-08-20 is mostly ONE shape: how
 # much of something a report quotes, and how many of them it prints
 # before it stops — `[:200]` on a part list, `[:56]` on a figure's
@@ -2021,7 +2039,6 @@ def test_a_figure_line_names_the_drawing_or_its_EMBED(capsys, monkeypatch,
 # for it was written this afternoon and removed when `kill_check` named
 # the first one — which is what that step is for.)
 #
-# One is recorded as NOT decided: `_summarize`'s `if len(out) <= keep`
-# read as `<`. Nothing in the suite has exactly `keep` parts, so the
-# suite cannot tell them apart, and neither reading is obviously the
-# intended one from the code alone.
+# (`_summarize`'s `if len(out) <= keep` was recorded here as undecided
+# and is now pinned above: at exactly `keep` the `<` reading appends
+# "and 0 more" to a complete list, which decides it.)
