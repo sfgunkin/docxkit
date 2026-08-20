@@ -140,3 +140,22 @@ def test_a_revision_the_predicate_SKIPS_does_not_end_the_walk():
 # `not any(om is seen for seen in touched)` -> `om == seen`. lxml
 # elements do not define equality, so `==` IS identity here. The `is
 # not` spelling of the same line is a real defect and is tested.
+
+
+def test_an_insertion_carrying_NO_TEXT_is_not_respacing_noise():
+    """`r.text != ""`. A paragraph MARK is excluded a clause earlier —
+    its kind is "paragraph-mark" — so this guard is about the other
+    thing an insertion can be: a footnote reference, a drawing, a page
+    break. None of them has text, all of them are substance, and a
+    predicate written to sweep up respacing noise in bulk must not
+    accept them on the author's behalf.
+
+    A Compare of two drafts marks every new footnote this way."""
+    note = ('<w:ins w:id="7" w:author="R1" w:date="2026-07-30T00:00:00Z">'
+            '<w:r><w:footnoteReference w:id="3"/></w:r></w:ins>')
+    body = doc(para(run("Base"), note))
+
+    out = accept(body, where=whitespace_only)
+
+    assert counts(out) == (1, 0), "the new footnote is still pending"
+    assert "<w:ins " in out

@@ -278,6 +278,45 @@ def test_changed_paragraphs_reports_an_insertion_at_its_own_offset():
         (1, "", "Two."), (2, "", "Three.")]
 
 
+def test_changed_paragraphs_reports_a_paragraph_that_was_DELETED():
+    """`if tag == "equal": continue`, read as `<=`. The opcodes are
+    "delete", "equal", "insert" and "replace", and "delete" is the one
+    that sorts BELOW "equal" — so the inequality skips exactly the
+    paragraphs the author removed, and a comparison that reports every
+    other kind of change reads as a working one."""
+    from docxkit.revisions import changed_paragraphs
+    before = document(para(run("Keep.")) + para(run("Gone."))
+                      + para(run("End.")))
+    after = document(para(run("Keep.")) + para(run("End.")))
+
+    got = changed_paragraphs(before, after)
+
+    assert [(c.paragraph, c.before, c.after) for c in got] == [
+        (1, "Gone.", "")]
+
+
+def test_changed_paragraphs_reports_a_paragraph_SPLIT_IN_TWO():
+    """`old[i1 + k] if i1 + k < i2 else ""`, where the mutation reads
+    `i1 | k < i2` — `|` binds looser than `<`, so it becomes
+    `i1 | (k < i2)`, which is truthy for every k as soon as i1 is
+    non-zero. The old side is then read past the end of the block it
+    belongs to.
+
+    Splitting one paragraph into two, anywhere but the top of the
+    document, is what makes that visible: the pair above starts at
+    index 0, where `0 | anything` is still the answer to the
+    question."""
+    from docxkit.revisions import changed_paragraphs
+    before = document(para(run("Keep.")) + para(run("One long line.")))
+    after = document(para(run("Keep.")) + para(run("First half."))
+                     + para(run("Second half.")))
+
+    got = changed_paragraphs(before, after)
+
+    assert [(c.paragraph, c.before, c.after) for c in got] == [
+        (1, "One long line.", "First half."), (2, "", "Second half.")]
+
+
 def test_changed_paragraphs_is_empty_when_nothing_changed():
     from docxkit.revisions import changed_paragraphs
     doc = document(para(run("Only.")))
@@ -855,3 +894,80 @@ def test_an_insertion_of_SEVERAL_runs_unwraps_them_in_order():
                         run("tail")))
 
     assert text(accept(xml)) == ["head one two three tail"]
+
+
+def test_a_SECOND_deleted_paragraph_mark_merges_too():
+    """The `continue` after `_merge_into_next`. Two paragraph marks
+    deleted in a row is what a Compare produces when an author joins
+    three paragraphs into one, and `break` there merges the first pair
+    and leaves the rest — an accepted document with a `w:del` still in
+    it, which is the shape the comment beside that branch describes:
+
+        an accepted document kept one `w:ins` per inserted paragraph
+        mark and still reported those as revisions.
+    """
+    from docxkit.revisions import accept, counts
+
+    def mark_del(text: str, rid: int) -> str:
+        return (f'<w:p><w:pPr><w:rPr><w:del w:id="{rid}" w:author="A" '
+                f'w:date="2026-08-07T00:00:00Z"/></w:rPr></w:pPr>'
+                f"<w:r><w:t>{text}</w:t></w:r></w:p>")
+
+    out = accept(document(mark_del("First", 1) + mark_del("Second", 2)
+                          + para(run("Third"))))
+
+    assert out.count("<w:p>") + out.count("<w:p ") == 1, "all three joined"
+    assert counts(out) == (0, 0)
+
+
+def test_a_row_that_GOES_does_not_end_the_walk_over_the_others():
+    """The `continue` after `_drop_row`. A table can hold both kinds of
+    flagged row at once — a redline that replaces one row with another
+    is two flags in one table — and `break` there leaves every row after
+    the dropped one carrying its own mark. The document then opens as
+    accepted and still reports revisions, which is the shape the
+    paragraph-mark half of this function already learned:
+
+        an accepted document kept one `w:ins` per inserted paragraph
+        mark and still reported those as revisions.
+    """
+    from docxkit.revisions import accept, counts
+    tbl = ("<w:tbl><w:tblPr/><w:tblGrid/>"
+           + _row(_cell("the old row"), "del")
+           + _row(_cell("the new row"), "ins")
+           + "</w:tbl>")
+
+    out = accept(document(tbl))
+
+    assert out.count("<w:tr>") == 1
+    assert "the old row" not in out and "the new row" in out
+    assert counts(out) == (0, 0), "the surviving row keeps no flag"
+
+
+# --- what the run of 2026-08-20 left in `revisions` --------------------
+#
+# 28 real survivors, five of them the tests above. The rest are argued,
+# each checked with `kill_check`, and several were already argued in the
+# note further up — repeated here only where the spelling was new:
+#
+# * the two `continue`s in `_simulate_where`'s move arms. The condition
+#   is `where is not None and tag in ("moveFrom", "moveTo")` — it tests
+#   the LOOP VARIABLE of the loop above, not the element — so once it is
+#   true it is true for every element of that tag, and `break` skips
+#   nothing that `continue` would have processed. The other three
+#   `continue`s in that function ARE killable, and now are.
+# * `_lift_anchors`' `parent.insert(at + offset, marker)` as `^`. Every
+#   call site passes the anchors of one element in order, so `offset`
+#   counts from 0 and `at` is the element's own index — and `at ^ 0` is
+#   `at + 0`. A second marker on the same element would part them, and
+#   the shape that produces one (two bookmarks around a single deleted
+#   run) puts them in separate parents.
+# * `spans`' `pos = 0` as `-1`: SRE clamps a negative search position.
+# * `autojunk=False` in `changed_paragraphs`. NOT equivalent and not
+#   pinned: difflib turns duplicate elements into "junk" only for
+#   sequences of 200 or more, and the fixtures here are five paragraphs.
+#   The flag is there because a manuscript IS that long and a repeated
+#   line — a table caption, a blank paragraph — is exactly what the
+#   heuristic would discard. Pinning it needs a 200-paragraph fixture
+#   with a repeat, which is a test worth writing and was not written
+#   today.
