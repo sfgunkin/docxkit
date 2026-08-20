@@ -77,6 +77,18 @@ backslash. Quoting the heredoc delimiter makes no difference.
 the Write tool and exec it. Neither is a resolution: the next patch script
 written the obvious way is wrong again, and wrong INVISIBLY.
 
+**Measured, 2026-08-21: ruff IS a backstop, in three of four places.**
+`PLE2510` fires on a stray control character in a raw string, a plain
+string, an f-string and a docstring alike — so a mangled regex in a `.py`
+file fails the first gate rather than shipping. It does NOT fire on a
+comment, and nothing lints `.md` at all, which is where the two that got
+through this session landed (a comment-adjacent regex quote in the
+backlog, and `_xml.py`'s — which ruff would have caught had it been run
+before the grep that found it by hand).
+
+So the sweep is worth running after a heredoc session for markdown and
+comments; for code, the gate already refuses.
+
 **What would fix it.** Nothing in this repository; it is the agent
 harness's shell layer, not docxkit's. Recorded here because the damage lands
 in docxkit's files, and because the sweep is cheap to run after any session

@@ -1832,6 +1832,11 @@ that patched this way, sweep for it:
 
     python -c "import pathlib; print([str(f) for f in pathlib.Path('.').rglob('*') if f.is_file() and f.suffix in {'.py','.md'} and chr(8) in f.read_text(encoding='utf-8', errors='ignore')])"
 
+Ruff's `PLE2510` catches the character in a string of any kind —
+raw, plain, f-string, docstring — so a mangled regex fails the first
+gate. It does NOT catch one in a comment, and nothing lints `.md`.
+Those two are what the sweep is for.
+
 The backlog entry (S3, Open) has the rest.
 
 ### A fixture that HASHES is a fixture with a fresh draw in it
