@@ -359,3 +359,146 @@ def test_a_label_that_ENDS_the_paragraph_stops_the_walk():
                           allow_hyperlink=True)
 
     assert text_of(out) == "as Kanbur (2007a)"
+
+
+# --- the run of 2026-08-20: the insert guards ---------------------------
+
+
+def test_an_insert_BEFORE_a_hyperlink_is_not_INSIDE_it():
+    """`lo < pos < hi` in `_enclosing`, and the mutant that reads it as
+    `lo != pos`. Everything before a protected region satisfies that —
+    every offset in the paragraph up to the link — so an insert at the
+    very start of a paragraph whose second half carries a link is
+    refused as "inside a hyperlink".
+
+    A refusal a caller cannot act on is worse than a wrong edit: there
+    is nowhere else to put it."""
+    para_xml = ("<w:p><w:r><w:t>Lead in </w:t></w:r>"
+                '<w:hyperlink w:anchor="a"><w:r><w:t>label</w:t></w:r>'
+                "</w:hyperlink><w:r><w:t> tail</w:t></w:r></w:p>")
+
+    out = insert_in_para(para_xml, 0, "NEW ")
+
+    assert text_of(out) == "NEW Lead in label tail"
+
+
+def test_the_ALLOW_flag_is_what_opens_a_protected_region():
+    """`elif not allowed:`. Inverted, the refusals fire for the caller
+    who passed the flag and stay silent for the one who did not — which
+    is the same code path answering both callers with the other's
+    answer, and the silent half writes into the link."""
+    # the label in TWO runs, so offset 11 falls between them: a position
+    # at the link's EDGE is moved outside instead of refused, which is
+    # `_outside`'s job and not this branch's
+    para_xml = ("<w:p><w:r><w:t>Lead in </w:t></w:r>"
+                '<w:hyperlink w:anchor="a"><w:r><w:t>lab</w:t></w:r>'
+                "<w:r><w:t>el</w:t></w:r></w:hyperlink>"
+                "<w:r><w:t> tail</w:t></w:r></w:p>")
+
+    with pytest.raises(AnchorError, match="falls inside a hyperlink"):
+        insert_in_para(para_xml, 11, "X")
+
+    out = insert_in_para(para_xml, 11, "X", allow_hyperlink=True)
+    assert text_of(out) == "Lead in labXel tail"
+
+
+def test_italics_land_where_the_RUN_starts_and_not_at_zero():
+    """`at - start`, the offset of the span inside THIS run. Every
+    arithmetic mutant of it agrees when `start` is 0 — the first run —
+    and the first run is where a one-run fixture puts everything.
+
+    Wrong, the italics open in the middle of a word and the split runs
+    carry the wrong halves; the paragraph still reads the same, which is
+    why nothing downstream shows it."""
+    para_xml = ("<w:p><w:r><w:t>Lead in </w:t></w:r>"
+                "<w:r><w:t>the target word</w:t></w:r>"
+                "<w:r><w:t> tail</w:t></w:r></w:p>")
+
+    out = italicize(para_xml, "target")
+
+    assert text_of(out) == "Lead in the target word tail"
+    assert '<w:r><w:rPr><w:i/></w:rPr><w:t>target</w:t></w:r>' in out, out
+
+
+def test_a_FIELD_FORM_label_ends_where_its_styled_runs_do():
+    """`styled(hi_i + 1)` walks off the end of a field-form link's
+    label, one run at a time. `hi_i | 1` is the same number for an even
+    index and the CURRENT one for an odd index — so from an odd start
+    the walk takes an extra step without checking what it stepped onto,
+    and the label swallows the plain run after it.
+
+    Three styled runs and a plain one is the smallest fixture that
+    starts odd and still has somewhere wrong to end. The consequence is
+    the refusal below going missing: a replacement that ends outside the
+    label is then written INTO it, and the link grows to cover text
+    nobody linked."""
+    hl = '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+    para_xml = ("<w:p><w:r><w:t>See </w:t></w:r>"
+                f"<w:r>{hl}<w:t>the </w:t></w:r>"
+                f"<w:r>{hl}<w:t>label </w:t></w:r>"
+                f"<w:r>{hl}<w:t>here</w:t></w:r>"
+                "<w:r><w:t> and beyond.</w:t></w:r></w:p>")
+
+    with pytest.raises(AnchorError, match="ends outside it"):
+        replace_in_para(para_xml, "here and beyond", "X",
+                        allow_hyperlink=True)
+
+
+def test_an_insert_inside_a_LATER_run_splits_THAT_run():
+    """`runs[inside[0]]` and `at - inside[1]`: the run's INDEX and the
+    run's START, which are the same number only for the first run at
+    offset 0. Indexed by the start, the split lands in another run
+    entirely — or raises IndexError — and the offset arithmetic puts the
+    content at the wrong character of it."""
+    # six characters, then an insert three into the second run: 9 - 6 is
+    # 3 and 9 ^ 6 is 15, which the run does not have. A first run whose
+    # length is a power of two hides that — 12 - 8 and 12 ^ 8 agree.
+    para_xml = ("<w:p><w:r><w:t>Lead: </w:t></w:r>"
+                "<w:r><w:t>second run here</w:t></w:r></w:p>")
+
+    out = insert_in_para(para_xml, 9, "|X|")
+
+    assert text_of(out) == "Lead: sec|X|ond run here"
+
+
+def test_LEADING_whitespace_keeps_its_xml_space_preserve():
+    """`content != content.strip()`, which decides whether the new run
+    declares `xml:space="preserve"`. An ordering comparison answers the
+    same for TRAILING whitespace — "trail " sorts above "trail" — and
+    the opposite for leading, where " lead" sorts below "lead".
+
+    Without the declaration Word drops the space on the next save, and
+    the two words run together in a document nobody edited."""
+    para_xml = "<w:p><w:r><w:t>AB</w:t></w:r></w:p>"
+
+    for content in (" lead", "trail "):
+        out = insert_in_para(para_xml, 1, content)
+        assert f'<w:t xml:space="preserve">{content}</w:t>' in out, out
+
+
+# Argued rather than pinned, from the 2026-08-20 run:
+#
+# * `base = scope[0][0]` written `scope[-1][0]`, and `hits[0][1]` written
+#   `hits[-1][1]`: both sit under a guard that has already raised for
+#   anything but one hit, so the first IS the last.
+# * `if lo == 0 and hi == len(body):` written `is`. Above 256 the
+#   identity fails and the walk takes the slow path — which rebuilds the
+#   same run: the empty pieces are dropped by `if part`, and
+#   `set_run_text(run_xml, visible_text(run_xml))` round-trips a run
+#   byte for byte (measured on a 300-character body).
+# * `visible.find(old, at + 1) >= 0` written `>= 1`. The search starts at
+#   `at + 1`, so a second occurrence cannot be found at offset 0.
+# * `len(touched) > 1` written `> 0`. A marker is a run of zero visible
+#   width and a match has width, so a `touched` list holding a marker
+#   holds the run carrying the text as well — one touched run is never a
+#   marker, and the loop under the guard finds nothing to refuse.
+# * `tail = body[end - start:] if stop > end else ""` written `!=` and
+#   `is not`. The two disagree only when `stop < end`, and there
+#   `end - start` is past the end of `body`, so the slice is "" either
+#   way.
+# * `0 <= i < len(runs)` in `styled`, written `1 <= i` / `0 != i` /
+#   `0 is not i`. Its one caller asks about `hi_i + 1` with `hi_i >= 0`,
+#   so the lower bound is never the answer.
+# * `zip(spans, runs, strict=True)` in the edit loop written
+#   `strict=False`: `run_spans` returns one span per run by
+#   construction.

@@ -164,3 +164,85 @@ def test_an_ambiguous_anchor_is_QUOTED_but_not_dumped():
 # * `hits[0]` -> `hits[-1]` on the normalized path. The line above it
 #   raises when `len(hits) > 1`, so the list has exactly one element and
 #   the two index expressions cannot disagree.
+
+
+# --- the run of 2026-08-20: what the refusals QUOTE ---------------------
+#
+# Four cuts, four mutants, and the same argument for each: a refusal is
+# read by a person deciding where to anchor next, and the quotation is
+# how they find the place. Whole, it is a paragraph of XML-ish prose in
+# a traceback; too short, two anchors read alike.
+
+_LONG = ("the quick brown fox jumps over the lazy dog and keeps running "
+         "past it")
+
+
+def _refused(para_xml: str, old: str, new: str, **kw) -> str:
+    with pytest.raises(AnchorError) as caught:
+        replace_in_para(para_xml, old, new, **kw)
+    return str(caught.value)
+
+
+def test_a_missing_anchor_is_quoted_to_SIXTY_characters():
+    """`old[:60]`, in the refusal every caller meets first."""
+    said = _refused(f"<w:p>{run('Nothing here.')}</w:p>", _LONG, "x")
+
+    assert "'the quick brown fox jumps over the lazy dog and keeps runnin'" \
+        in said, said
+
+
+def test_the_note_crossing_refusal_quotes_THIRTY_of_the_replacement():
+    """`new[:30]`. The message's point is that the marker moves to the
+    END of what is written, so what is written has to be visible in
+    it."""
+    para_xml = (f"<w:p>{run('The claim')}"
+                '<w:r><w:footnoteReference w:id="11"/></w:r>'
+                f"{run(' stands firm.')}</w:p>")
+
+    said = _refused(para_xml, "claim stands", _LONG)
+
+    assert "MOVES to the end of 'the quick brown fox jumps over'" in said, said
+
+
+def test_the_label_swallow_refusal_quotes_FORTY_of_the_replacement():
+    """`new[:40]`, and it is the longest of the four on purpose: this
+    message is about what the LINK would come to say, so the reader is
+    being shown a title."""
+    para_xml = (f"<w:p>{run('See ')}"
+                '<w:hyperlink w:anchor="a"><w:r><w:t>the label here</w:t>'
+                f"</w:r></w:hyperlink>{run(' and beyond it.')}</w:p>")
+
+    said = _refused(para_xml, "label here and beyond", _LONG,
+                    allow_hyperlink=True)
+
+    assert "writing 'the quick brown fox jumps over the lazy '" in said, said
+
+
+def test_the_emptying_refusal_quotes_THIRTY_of_the_LABEL():
+    """`visible_text(run_xml)[:30]` — the label about to be emptied,
+    which is the one thing a reader needs to recognise the link."""
+    label = "a link label that is quite long indeed"
+    para_xml = (f"<w:p>{run('Start ')}"
+                f'<w:hyperlink w:anchor="a"><w:r><w:t>{label}</w:t>'
+                f"</w:r></w:hyperlink>{run(' end.')}</w:p>")
+
+    said = _refused(para_xml, f"Start {label} end.", "x")
+
+    assert "emptying 'a link label that is quite lon'" in said, said
+
+
+def test_a_note_reference_with_NO_id_is_named_by_its_kind():
+    """`m.group(1)` is the KIND — "footnote", "endnote" — and the
+    fallback for a reference carrying no `w:id` is that word alone. The
+    whole match is markup, and a refusal that says "the match crosses
+    <w:footnoteReference/>" is a message about the file rather than
+    about the sentence a person is editing.
+
+    Word always writes the id; this is the branch that decides what a
+    document Word did not write reads like."""
+    from docxkit.edit import _note_in
+
+    assert _note_in('<w:r><w:footnoteReference w:id="11"/></w:r>') \
+        == "footnote 11"
+    assert _note_in("<w:r><w:footnoteReference/></w:r>") == "footnote"
+    assert _note_in("<w:r><w:t>plain</w:t></w:r>") is None
