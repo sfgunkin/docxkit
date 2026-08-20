@@ -1164,6 +1164,30 @@ def test_the_report_quotes_SEVENTY_characters_of_the_mention():
     assert len(rep.placements[0].anchor_text) == 70
 
 
+def test_a_TABLE_that_mentions_the_table_is_not_the_anchor():
+    """`if el.tag != W + "p" or id(el) in owned: continue`. Read as an
+    identity — `el.tag is W + "p"`, which is False for every element,
+    since the right-hand side is a fresh concatenation — the guard
+    collapses to the `owned` half and a `w:tbl` becomes eligible.
+
+    A layout table with no caption is not owned by any block, and a
+    note row that says "См. таблицу 1" is an ordinary thing to write
+    inside one. The table would then be anchored to a TABLE rather than
+    to the sentence that introduces it — moved above the prose that
+    mentions it, which is the opposite of the whole pass."""
+    body = (P("Прочая проза.")
+            + TBL("См. таблицу 1.")            # a layout table, uncaptioned
+            + P("См. таблицу 1 в тексте.")     # the mention
+            + P("Таблица 1. Заголовок") + TBL("шапка"))
+
+    out, rep = placement.place(parts(body))
+
+    assert rep.placements[0].anchor_text.startswith("См. таблицу 1 в тексте")
+    assert order(out) == ["p:Прочая проза.", "tbl:См. таблицу 1.",
+                          "p:См. таблицу 1 в тексте.",
+                          "p:Таблица 1. Заголовок", "tbl:шапка"]
+
+
 # --- the argued half of placement's 41 ---------------------------------
 #
 # Thirty-five are left after the six tests above, and most of them are
@@ -1191,11 +1215,11 @@ def test_the_report_quotes_SEVENTY_characters_of_the_mention():
 # Also argued and checked: `already = anchor.getnext() is block[0]` read
 # as `==`. lxml elements define no `__eq__`, so equality IS identity.
 #
-# NOT worked, and listed so the next round starts here: the five
-# `[:40]`/`[:70]` widths on the text handed to `_sheet_of`, and
-# `_anchor`'s `el.tag != W + "p"` read as an identity — which needs a
-# table whose own text reads as a mention ("см. таблицу 2" in a note
-# row), and no fixture here has one.
+# NOT worked, and listed so the next round starts here: the four
+# `[:40]` widths on the text handed to `_sheet_of`. Each is a match KEY
+# against a rendered sheet, so pinning one means a render whose text
+# differs from the block's beyond that character — which is what the
+# caption test above does, and the other three want the same shape.
 #
 # (Three other entries were on this list and came off it the same
 # afternoon: `pl.caption_sheet - 1`, `Placement.spaced`'s default, and
