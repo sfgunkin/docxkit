@@ -960,3 +960,64 @@ def test_the_gap_looks_PAST_a_hoisted_bookmark_to_the_next_paragraph():
     assert spacing_of(out, "Примечание. Первое")["after"] == "160"
     assert spacing_of(out, "Таблица 2.")["before"] == "0", (
         "the next block's caption was found past the hoisted bookmark")
+
+
+# --- the run of 2026-08-20: 9.6 % (41/426), the package's worst -------
+
+
+def test_a_caption_with_NO_TABLE_does_not_end_the_walk():
+    """`continue`, on the caption whose table is missing. A paper gets
+    one by deleting a table and leaving its caption behind, or by
+    numbering a figure caption "Таблица" — and `break` there abandons
+    every table further down the document, silently: the report lists
+    the ones it found, and the ones it never reached are not mentioned
+    at all."""
+    out, rep = placement.place(parts(
+        P("См. таблицу 2.")
+        + P("Таблица 1. Заголовок без таблицы")
+        + P("Проза.")
+        + P("Таблица 2. Заголовок") + TBL("шапка")))
+
+    assert [pl.number for pl in rep.placements] == [2]
+    assert order(out)[:3] == ["p:См. таблицу 2.", "p:Таблица 2. Заголовок",
+                              "tbl:шапка"]
+
+
+def test_a_table_on_its_MENTIONS_OWN_SHEET_is_not_a_problem():
+    """`drift > max_drift` read as `is not`. Zero drift is the outcome
+    the whole pass is FOR — the table landed on the sheet that mentions
+    it — and inequality reports it as a problem needing a hand. The
+    boundary case (drift == limit) is pinned above and agrees with
+    either reading; this is the one that does not."""
+    def render(_parts):
+        return ["См. таблицу 1. Таблица 1. Заголовок шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")),
+        render=render, max_drift=1)
+
+    assert rep.placements[0].drift == 0
+    assert rep.problems == [], rep.problems
+
+
+def test_properties_are_inserted_FIRST_not_before_the_last_child():
+    """`insert(0, ...)` for both `w:trPr` and `w:pPr`. CT_Row and CT_P
+    put their properties first, and Word rejects a row or a paragraph
+    that states them anywhere else — but a fixture whose row has one
+    cell and whose paragraph has one run cannot see the difference:
+    `insert(-1)` and `insert(0)` are the same position there.
+
+    Two cells and two runs are what a table out of a paper has."""
+    row = ("<w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r>"
+           "<w:r><w:t>b</w:t></w:r></w:p></w:tc>"
+           "<w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>")
+    body = body_of(parts(P("Таблица 1. Заголовок") + f"<w:tbl>{row}</w:tbl>"))
+
+    placement.keep_together(list(body))
+
+    tr = tbl_of(body).find(NS + "tr")
+    assert tr is not None
+    assert [etree.QName(c).localname for c in tr] == ["trPr", "tc", "tc"]
+    para = tr.find(NS + "tc/" + NS + "p")
+    assert para is not None
+    assert [etree.QName(c).localname for c in para] == ["pPr", "r", "r"]
