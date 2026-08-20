@@ -1042,3 +1042,78 @@ def test_a_SHARED_run_does_not_end_the_walk_either():
         "<w:p><w:r><w:t>Prose the author wrote.</w:t></w:r>"
         "<w:r><w:t>Between.</w:t></w:r>"
         "<w:r><w:t>And more prose.</w:t></w:r></w:p>")
+
+
+def test_a_relationship_with_NO_TARGET_does_not_end_the_restore():
+    """The third `continue` in that walk, and the last one without a
+    test — its two neighbours have had one since the round that wrote
+    them. A `<Relationship>` with no `Target` is malformed and a
+    rebuild can leave one; under `break` it ends the walk, and every
+    tree below it is restored as a part with nothing pointing at it,
+    which is the dangling half of the defect this function exists to
+    avoid."""
+    source = _with_custom_xml()
+    source["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId7"/>'
+        b'<Relationship Id="rId1" '
+        b'Target="../customXml/item1.xml"/></Relationships>')
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+
+    restore_parts(rebuilt, source)
+
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert 'Target="../customXml/item1.xml"' in rels
+
+
+def test_a_paragraph_nothing_SMARTENS_keeps_its_entities():
+    """`changed = False`. The rewrite below it re-escapes every `w:t` it
+    touches, so a paragraph that needed no smartening but ran the loop
+    anyway comes back with its character entities resolved —
+    `&#8212;` as a literal em dash. Nothing is wrong with the document
+    that produces, and everything is wrong with the DIFF: a compare
+    against the previous round then reports a paragraph the author
+    never touched.
+
+    The fixture has a quote in it (or the guard above returns early)
+    and nothing to do with it: an apostrophe that opens a word is not
+    the possessive this pass converts."""
+    from docxkit.hygiene import smarten
+
+    xml = ("<w:document><w:body><w:p><w:r>"
+           "<w:t>&#8212;'tis a quote nobody pairs</w:t>"
+           "</w:r></w:p></w:body></w:document>")
+
+    out, report = smarten(xml)
+
+    assert out == xml, out
+    assert (report.apostrophes, report.quotes) == (0, 0)
+
+
+# --- what the run of 2026-08-20 left in `hygiene`: 3.6 % (16/449) -----
+#
+# Two of the sixteen are the tests above. The rest are equivalent, each
+# through kill_check:
+#
+# * `_is_equation_carrier`'s `rows[0]` as `rows[-1]` and `cells[-1]` as
+#   `cells[1]`: the lines above raise the count to exactly one row and
+#   exactly two cells.
+# * `_set_before`'s `.replace("<w:spacing", ..., 1)` as `2`. The string
+#   being replaced IS one matched `<w:spacing .../>` tag, so it holds
+#   the needle once and a larger count finds nothing more.
+# * `_set_before`'s `out != para_xml` as `is not`: `set_para_property`
+#   hands back the string it was given when it changes nothing.
+# * `_smarten_para`'s `stream.count('"') % 2 == 0` as `<= 0` (a
+#   remainder of 2 is 0 or 1), its `ch == "'"` as `is` (a
+#   one-character string is interned), its `strict=True` as `False`
+#   (the two lists are built together, one entry per `w:t`), and its
+#   sort key `-start()` as `~start()`, which orders identically.
+# * `restore_math_glyphs`' `len(texts) == 1` as `<= 1`: `texts` is a
+#   set that had something added to it, so it is never empty.
+# * its `if out != text` as `>`, `>=` and `is not`. `re.sub` hands back
+#   the same object when nothing matched, and every substitution this
+#   makes replaces a downgraded character with the glyph it stands for
+#   — MATH_DOWNGRADES maps U+2212 to a hyphen, and U+2212 sorts above
+#   it — so a changed string always sorts higher. That last one is an
+#   argument about the TABLE, and it is worth re-reading if a downgrade
+#   is ever added whose glyph sorts BELOW its plain form.
