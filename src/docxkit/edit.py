@@ -8,17 +8,24 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from html import unescape
 
 from ._xml import (
+    _FIELD_RE,
+    _HYPERLINK_EL_RE,
     HYPERLINK_ANY_RE,
+    INSTR_ANCHOR_RE,
+    INSTR_RE,
     RUN_OPEN_RE,
     RUN_RE,
+    SEPARATE_RE,
     T_RUN_RE,
     XML_WS,
     editable_text,
     escape,
     field_spans,
     in_span,
+    internal_links,
     live_properties,
     normalize_glyphs,
     overlaps,
@@ -41,6 +48,7 @@ __all__ = [
     "is_field_run",
     "italicize",
     "preserve_space",
+    "relabel_link",
     "rep",
     "replace_in_para",
     "set_run_properties",
@@ -542,7 +550,9 @@ def replace_in_para(para_xml: str, old: str, new: str,
                 raise AnchorError(
                     "replace_in_para: the match starts inside a hyperlink "
                     "run -- the replacement would bleed into the link. "
-                    "Anchor on plain text outside the link.")
+                    "Anchor on plain text outside the link, or pass "
+                    "allow_hyperlink=True if the replacement lies wholly "
+                    "inside the label and retitling it is the point.")
             # The opt-in above answers "may this match touch a link?".
             # It must not also answer "may the label ABSORB text?" — the
             # whole replacement lands in this run, so a match that runs
@@ -569,13 +579,80 @@ def replace_in_para(para_xml: str, old: str, new: str,
                     f"emptying {visible_text(run_xml)[:30]!r} would leave "
                     "the link with no label, which no text diff shows and "
                     "no link check catches. Replace on each side of the "
-                    "link separately.")
+                    "link separately, or pass allow_hyperlink=True to "
+                    "rewrite the label itself -- same anchor, same "
+                    "bookmark, new words.")
             edits.append((run, set_run_text(run_xml, tail)))
 
     out = para_xml
     for run, replacement in reversed(edits):
         out = out[:run.start()] + replacement + out[run.end():]
     return out
+
+
+def _label_spans(para_xml: str, anchor: str) -> list[tuple[int, int]]:
+    """Where each link to `anchor` keeps the words it SHOWS.
+
+    Both forms, because which one a paragraph holds depends on who saved
+    the file last: the element's content, and everything a field puts
+    after its `separate` marker.
+    """
+    spans = [(m.start(2), m.end(2))
+             for m in _HYPERLINK_EL_RE.finditer(para_xml)
+             if unescape(m.group(1)) == anchor]
+    for m in _FIELD_RE.finditer(para_xml):
+        instr = unescape("".join(INSTR_RE.findall(m.group(1))))
+        am = INSTR_ANCHOR_RE.search(instr)
+        sep = SEPARATE_RE.search(m.group(1))
+        if am is not None and am.group(1) == anchor and sep is not None:
+            spans.append((m.start(1) + sep.end(), m.end(1)))
+    return sorted(spans)
+
+
+def relabel_link(para_xml: str, anchor: str, new_label: str) -> str:
+    """Rewrite what a link SHOWS, leaving what it points AT alone.
+
+    The operation :func:`replace_in_para` allows and does not name: same
+    anchor, same bookmark, same field, new words. Three AFI batches
+    hand-rolled it against exact ``<w:t>`` matches before the
+    `allow_hyperlink=True` flag was found (six citation relabels, then
+    25 reference entries), and the hand-rolled version is not merely
+    more code — it MISSES a label split across runs, which Word produces
+    routinely and this handles in one call.
+
+    Addressed by ANCHOR rather than by the words on the page, which is
+    the difference from `replace_in_para(..., allow_hyperlink=True)`: a
+    paragraph that says "Table 3" in prose and again as a link has one
+    span this can mean, and matching the text would take the first.
+
+    Refuses two things, both of them silent otherwise: an anchor this
+    paragraph does not link to (a relabel that quietly does nothing is
+    how a batch reports success and ships the old words), and an anchor
+    it links to TWICE, where nothing in the arguments says which. An
+    empty label is refused too — that is the shape `replace_in_para`
+    guards the whole paragraph against, and it is no better done on
+    purpose.
+    """
+    if not new_label:
+        raise AnchorError(
+            "relabel_link: a link with no label is invisible to a reader "
+            "and to every text diff, while the anchor still resolves. "
+            "Remove the link with crossrefs.unlink if that is the intent.")
+    spans = _label_spans(para_xml, anchor)
+    if not spans:
+        have = sorted({a for a, _ in internal_links(para_xml)})
+        raise AnchorError(
+            f"relabel_link: this paragraph has no link to {anchor!r}"
+            + (f" — it links to {have}" if have else " — it has no links"))
+    if len(spans) > 1:
+        raise AnchorError(
+            f"relabel_link: this paragraph links to {anchor!r} "
+            f"{len(spans)} times and nothing here says which to retitle. "
+            f"Split the paragraph's edits, or use replace_in_para with "
+            f"allow_hyperlink=True on the words you mean.")
+    at, end = spans[0]
+    return (para_xml[:at] + set_run_text(para_xml[at:end], new_label)
+            + para_xml[end:])
 
 
 def _enclosing(spans: list[tuple[int, int]], pos: int

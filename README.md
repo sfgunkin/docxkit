@@ -41,7 +41,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `batch` | a set of edits as ONE gated unit of work: preflight every anchor at once, apply, hold the carriers (bookmarks, links, footnote marks, math, rows, drawings) unless the batch declares what it moves |
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
 | `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk |
-| `edit` | anchor-asserting replace, run-aware replace and INSERT, span italics, `xml:space` repair |
+| `edit` | anchor-asserting replace, run-aware replace and INSERT, link relabel, span italics, `xml:space` repair |
 | `body` | build new content: paragraphs, grouped-header tables, guarded insertion; `prose_props` clones a paragraph's style without a link's |
 | `revisions` | read tracked changes; accept/reject, wholesale or by predicate (`by_author`, `whitespace_only`) |
 | `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved; `house` sets the paper's style in one call |
@@ -196,7 +196,11 @@ they do.
   every open+save, so the space reappears as a phantom author edit each
   round. `preserve_space()` fixes it at build time.
 - **A run-aware replace whose match starts in a hyperlink run bleeds into
-  the link** and no text diff will show it. `replace_in_para` refuses.
+  the link** and no text diff will show it. `replace_in_para` refuses, and
+  the refusal names `allow_hyperlink=True` — retitling a link is a real
+  operation, and `edit.relabel_link(para, anchor, new_label)` is its verb:
+  same anchor, new words, addressed by ANCHOR so a paragraph that also says
+  those words in prose is not the one rewritten.
 - **Word renumbers footnote ids on save**, so an author's paragraph XML
   cannot be spliced raw — `ingest` remaps ids by definition text.
 - **A self-closing `<w:ins/>` is a property-level mark** (paragraph mark,

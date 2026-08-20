@@ -12,13 +12,14 @@ from docxkit import (
     table_spans,
     text_of,
 )
-from docxkit.edit import insert_in_para, replace_in_para
+from docxkit.edit import insert_in_para, relabel_link, replace_in_para
 from docxkit.errors import AnchorError
 from docxkit.find import (
     body_elements,
     edit_para,
     find_para,
     heading_level,
+    internal_links,
     page_break_before,
     para_text_at,
     table_index_at,
@@ -221,6 +222,72 @@ def test_replace_in_para_refuses_to_cross_a_hyperlink(link):
         replace_in_para(p, "the practices of Table 5 as well",
                         "the harsher practices of Table 5 persist")
     assert text_of(p) == "the practices of Table 5 as well"
+
+
+# ----------------------------------------------------- relabel_link -------
+
+SPLIT_LABEL = ('<w:p><w:r><w:t xml:space="preserve">See also </w:t></w:r>'
+               '<w:hyperlink w:anchor="Kanbur2007">'
+               '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+               "<w:t>Kanbur</w:t></w:r>"
+               '<w:r><w:t xml:space="preserve"> 2007</w:t></w:r>'
+               "</w:hyperlink><w:r><w:t>.</w:t></w:r></w:p>")
+
+
+def test_relabel_link_rewrites_a_label_SPLIT_ACROSS_RUNS():
+    """The case three AFI batches got wrong by matching `<w:t>` exactly.
+    Word splits a label at an rsid boundary whenever it feels like it,
+    and the hand-rolled version then relabels nothing and says nothing.
+    """
+    out = relabel_link(SPLIT_LABEL, "Kanbur2007", "Kanbur and Ravallion 2007")
+
+    assert text_of(out) == "See also Kanbur and Ravallion 2007."
+    assert internal_links(out) == [("Kanbur2007", "Kanbur and Ravallion 2007")]
+
+
+def test_relabel_link_rewrites_a_FIELD_form_label_too():
+    """Which form a paragraph holds depends on who saved the file last."""
+    out = relabel_link(_crossing(FIELD_LINK), "Table5", "Table A5")
+
+    assert text_of(out) == "the practices of Table A5 as well"
+    assert internal_links(out) == [("Table5", "Table A5")]
+
+
+def test_relabel_link_REFUSES_an_anchor_the_paragraph_does_not_link_to():
+    """A relabel that quietly does nothing is how a batch reports
+    success and ships the old words."""
+    with pytest.raises(AnchorError, match="no link to 'Nope'"):
+        relabel_link(SPLIT_LABEL, "Nope", "x")
+
+
+def test_relabel_link_REFUSES_when_the_paragraph_links_TWICE_to_it():
+    """Nothing in the arguments says which, and picking one is the
+    coin flip this module refuses everywhere else."""
+    twice = SPLIT_LABEL.replace(
+        "</w:p>", '<w:hyperlink w:anchor="Kanbur2007"><w:r>'
+                  "<w:t>Kanbur 2007</w:t></w:r></w:hyperlink></w:p>")
+
+    with pytest.raises(AnchorError, match="2 times"):
+        relabel_link(twice, "Kanbur2007", "x")
+
+
+def test_relabel_link_REFUSES_to_empty_a_label():
+    """The exact shape `replace_in_para` guards the paragraph against —
+    an anchor that still resolves with nothing to click."""
+    with pytest.raises(AnchorError, match="no label"):
+        relabel_link(SPLIT_LABEL, "Kanbur2007", "")
+
+
+def test_the_hyperlink_refusals_NAME_the_flag_that_allows_it():
+    """Both messages told the caller to move the anchor and neither
+    mentioned `allow_hyperlink=True`, which is the documented opt-in for
+    exactly this — read as "cannot be done" three times on AFI."""
+    with pytest.raises(AnchorError, match="allow_hyperlink=True"):
+        replace_in_para(_crossing(ELEMENT_LINK),
+                        "the practices of Table 5 as well",
+                        "the harsher practices of Table 5 persist")
+    with pytest.raises(AnchorError, match="allow_hyperlink=True"):
+        replace_in_para(_crossing(ELEMENT_LINK), "Table 5 as", "Table 6 as")
 
 
 # ------------------------------------------------- note references -------
@@ -1050,3 +1117,14 @@ def test_a_table_at_offset_ZERO_is_found():
 #   paragraph inside a table is not in it, and a nested table rides
 #   inside its outer one rather than appearing beside it), and disjoint
 #   spans sort the same way by either edge.
+
+#
+# `m.start(1) + sep.end()` in `_label_spans` reads as EQUIVALENT to
+# `m.start(1)` under mutation and is left alive. `set_run_text` writes
+# into the first `w:t` RUN of the fragment it is given, and everything
+# between a field's `begin` and its `separate` is `fldChar` and
+# `instrText` — neither is a `w:t` — so both spellings reach the same
+# run on every field a Word file holds. The offset stays where it is
+# because it says what the region IS: the part of the field a reader
+# sees. Pinning the difference would need a malformed field, which is a
+# shape to refuse rather than a shape to freeze.

@@ -395,52 +395,6 @@ work missing from the list whose co-author happens to have a same-year entry —
 turning an S2 false finding into an S1 silent one. The reference list is
 evidence about the works, not about which words are surnames.
 
-### S4 `replace_in_para` refuses a relabel without naming the flag that allows it
-
-**Symptom as observed.** Rewriting a citation's visible label -- same anchor,
-same bookmark, same field, new text -- is refused:
-
-    replace_in_para: the match starts inside a hyperlink run -- the
-    replacement would bleed into the link. Anchor on plain text outside
-    the link.
-
-    replace_in_para: the match spans a hyperlink -- emptying 'Lokshin and
-    Valverde-Rodriguez' would leave the link with no label, which no text
-    diff shows and no link check catches.
-
-Both messages are right about the danger and both end by telling the caller to
-**move the anchor**. Neither mentions that `replace_in_para` already takes
-`allow_hyperlink=True` (and `grow_link_label=True`), which is the documented
-opt-in for exactly this case -- the source even comments "The opt-in above
-answers…" immediately after raising.
-
-**What it cost.** Read as "this cannot be done", so AFI r4 hand-rolled label
-surgery three times before the flag was found by reading the signature:
-
-* batch 16 (`build_r4r.py`) -- moved the Picchio field by string-replacing whole
-  `<w:t>` runs. The first attempt spliced XML into the middle of a `w:t`, which
-  nests elements inside a text node and made the paragraph unfindable by
-  `para_slice` on the next line.
-* batch 19 (`build_r4u.py`) -- a whole `phase_labels` built on exact `<w:t>`
-  matching, for six citation relabels.
-* batch 21 (`build_r4w.py`) -- the same again for 25 reference entries.
-
-Batch 22 finally used `allow_hyperlink=True` and it did the right thing,
-including on a label **split across runs**, which every string-matching version
-above would have missed. That one is the point: the hand-rolled workaround is
-not merely more code, it is *wrong on a case the supported path handles*.
-
-**Workaround.** The `<w:t>`-matching passes in those three builders. They can be
-deleted once callers are pointed at the flag.
-
-**Fix sketch.** One clause per message: *"…Anchor on plain text outside the
-link, or pass `allow_hyperlink=True` if the replacement lies wholly inside the
-label."* Free, and it turns three hand-rolls into a keyword argument. Consider
-also a named `relabel_link(para, anchor, new_label)` for the case that is
-common enough to have its own verb.
-
----
-
 ### S4 `refstyle` can diagnose a whole reference list and change none of it
 
 **Symptom as observed.** `docxkit refstyle` is the house style -- pinned by
@@ -557,6 +511,33 @@ than most new features.
 ---
 
 ## Fixed
+
+### ~~S4 `replace_in_para` refuses a relabel without naming the flag that allows it~~
+
+Fixed 2026-08-20, both halves — the free one and the verb.
+
+Both refusals now end with the opt-in instead of only with "move the anchor":
+
+    ... Anchor on plain text outside the link, or pass allow_hyperlink=True
+    if the replacement lies wholly inside the label and retitling it is the
+    point.
+
+    ... Replace on each side of the link separately, or pass
+    allow_hyperlink=True to rewrite the label itself -- same anchor, same
+    bookmark, new words.
+
+And the verb the entry said to consider: `edit.relabel_link(para_xml,
+anchor, new_label)`. It addresses the link by ANCHOR, which is the
+difference from `replace_in_para(..., allow_hyperlink=True)` — a paragraph
+that says "Table 3" in prose and again as a link has one span this can mean,
+and matching the words would take the first. Both link forms, and a label
+SPLIT ACROSS RUNS in one call, which is the case every `<w:t>`-matching
+hand-roll missed. Three refusals, all silent otherwise: an anchor the
+paragraph does not link to, an anchor it links to twice, and an empty label.
+
+**Workaround to retire:** the `<w:t>`-matching passes in AFI's
+`build_r4r.py`, `build_r4u.py` and `build_r4w.py`. Left in the paper's own
+tree for its owner to delete.
 
 ### ~~S4 `internal_links` is public in fact and private by import path~~
 
