@@ -77,16 +77,35 @@ FLOORS = {
 
 
 def measure() -> dict[str, float]:
-    """Run the suite under coverage and return module -> percent."""
+    """Run the suite under coverage and return module -> percent.
+
+    A RED suite produces no measurement. `check=False` is deliberate —
+    the report has to be read even when pytest exits non-zero — but the
+    exit code was then thrown away, so a run that failed part-way was
+    compared against the floors as though it had finished. Seen once on
+    2026-08-21: a single failing test in the tables suite, and this tool
+    reported `_table_core.py: 55.8% is below its floor of 85%`, which
+    sent a reader looking for tests that were there all along. A number
+    from a partial run is not a low number, it is not a number.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "cov.json"
-        subprocess.run(
+        done = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "--cov=docxkit",
              f"--cov-report=json:{out}"],
-            cwd=ROOT, check=False, capture_output=True)
+            cwd=ROOT, check=False, capture_output=True, text=True,
+            encoding="utf-8", errors="replace")
         if not out.exists():
             sys.exit("coverage produced no report; is pytest-cov installed? "
                      "(pip install -e .[dev])")
+        if done.returncode:
+            tail = "\n".join(
+                ln for ln in (done.stdout or "").splitlines()
+                if ln.startswith("FAILED") or " passed" in ln
+                or " failed" in ln)
+            sys.exit(f"the suite is RED (pytest exit {done.returncode}), so "
+                     f"coverage from this run measures nothing. Fix the "
+                     f"tests, then read the floors.\n{tail}")
         data = json.loads(out.read_text(encoding="utf-8"))
     return {Path(name).name: info["summary"]["percent_covered"]
             for name, info in data["files"].items()}

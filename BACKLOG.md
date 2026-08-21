@@ -169,6 +169,48 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S3 the coverage floors read a RED suite as a measurement~~ — FIXED 22.08
+
+`coverage_floor.measure()` runs the suite itself and reads the JSON
+report. `check=False` is right — the report has to be readable when
+pytest exits non-zero — but the exit code was thrown away with it, so a
+run that stopped part-way was compared against the floors as though it
+had finished.
+
+**Seen once, 2026-08-21**, and it is what sent this round looking: one
+failing test in the tables suite, and the tool reported
+
+    _table_core.py: 55.8% is below its floor of 85%
+
+for a module whose tests are all present and were mostly never reached.
+A number from a partial run is not a low number; it is not a number. It
+refuses now, names the failure it stopped on, and quotes no percentage.
+
+The environment question still comes first: a pytest that rejects
+`--cov` also exits non-zero, and "the suite is RED" would send that
+reader somewhere there is nothing wrong. `tests/test_coverage_floor.py`
+pins all three paths.
+
+### Not a defect — the Windows fatal exception in a GREEN run
+
+`pytest -q tests/test_cli_revision.py` prints, in most runs:
+
+    Windows fatal exception: code 0x800706be
+    Thread 0x0000b924 [pytest_timeout tests/test_cli_revision.py::…]
+
+`0x800706BE` is `RPC_S_CALL_FAILED` — Word's COM teardown, raised as a
+FIRST-CHANCE exception that faulthandler prints and the process
+survives. The run passes; the exit code is 0. CONTRIBUTING already says
+to expect these from `pytest -m word`, and this is the same thing
+reaching the everyday suite through a COM proxy released late.
+
+Chased on 2026-08-22 because it looked like a hang. It is not: the
+slowest test in the suite is 6s against a 300s ceiling, the label names
+whichever test owns the timer thread rather than a culprit, and six
+consecutive full runs were green. Recorded so the next reader does not
+spend the same hour — what it costs is a fatal-looking line in a green
+run, which is a real cost, but not a defect to fix here.
+
 ### ~~S1 a FIGURE caption takes the table ABOVE it, and every table caption in the paper shifts~~ — FIXED 21.08
 
 **A paper's gate went red without the paper changing.** HCW's
