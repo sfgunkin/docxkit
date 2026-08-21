@@ -190,85 +190,6 @@ and target views** of the same redline, which is a check no gate was making.
 The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
-### S3 the build's math-glyph restore covers ONE view, so validate is red every round
-
-Found on AFI, 2026-08-19, across three consecutive rounds.
-
-`revision build` now restores the minus glyph Word downgrades when Compare
-re-serialises OMML — it prints `restored math glyph — 't-1990' -> 't−1990'`.
-But it restores it in the ACCEPTED view only. `validate`'s reject-all check
-then reports
-
-    glyphs: False   GLYPH at 62473: '−' U+2212 -> '-' U+002D
-
-and the batch fails, on a document whose author touched nothing. The paper's
-own `repair_math_minus.py` fixes the remaining side, after which validate
-passes — so every round on this manuscript is: build, validate FAILS, run the
-per-paper repair, validate PASSES.
-
-**And the repair then trips the deliverable guard.** Running it changes
-`batch.docx` after `build` stamped it, so the next `build` refuses with
-`DeliverableModified — someone edited it in Word` and backs the file up to
-`batch_user_edited1.docx`. Nobody edited anything in Word. The recovery
-("delete batch.docx if that batch is already promoted") is right but the
-diagnosis is wrong, and it manufactures a spurious `_user_edited` artifact
-each time.
-
-Two fixes, either sufficient: restore the glyph on both sides of the
-revision, or re-stamp after an in-tool repair. Failing both, `validate` should
-name **which view** it is judging — "reject-all" vs "accept-all" — because as
-printed, `glyphs: False` on a batch whose accepted view is correct reads as a
-defect in the edit.
-
-**The third one is done (2026-08-20).** Every glyph line now reads
-`GLYPH (reject-all vs baseline) ...`, and when the two streams become equal
-once BOTH are downgraded — that is, when the substitution is the whole of the
-difference — the report says so:
-
-    every GLYPH above is a math character Word downgrades when it
-    re-serialises an equation, not an edit: the ACCEPTED view has them
-    restored and the REJECTED one does not.
-
-The gate still fails, and should: the two views disagree. What changed is that
-it no longer reads as a defect in the edit. Both sides are pinned —
-`test_validate_says_WHICH_VIEW_a_glyph_difference_is_about` and
-`test_a_REAL_edit_is_not_called_a_math_downgrade`.
-
-**The second one is done (2026-08-20) — `guard.restamp`.** A repair the
-build cannot do is not a Word session, and the repair now says so:
-
-    from docxkit.guard import restamp
-    write_docx(paper.batch, parts)
-    restamp(paper.batch, why="restored U+2212 on the rejected side")
-
-The stamp keeps the build's own provenance and grows a `repairs` list —
-reason, the hash it replaced, the hash now — so "the tool changed it" is
-readable afterwards rather than assumed; this is the one call that can retire
-a guard. A repair that changed nothing records nothing. `guard.check`'s
-refusal names it as the fourth way on, beside the three it already listed.
-
-What this does NOT do is decide for the caller: the assertion is theirs, and
-a Word edit sitting in the file when `restamp` runs is inside the hash it
-records. The docstring says to call it next to the write, in the repair.
-
-So the round is now: build, validate FAILS and says WHICH VIEW and why, run
-the repair, re-stamp, validate PASSES — with no `_user_edited` artifact and
-no diagnosis of an edit nobody made. The gate is still red on a downgraded
-glyph, which is the first fix's job and is still open.
-
-**Why not the first one**, looked at the same day: `restore_math_glyphs`
-repairs a run only when its EXACT text appears in a source, and Compare splits
-a run at the edit boundary — so the deleted side often holds a fragment no
-source spells, and there is nothing to key on. Repairing it would mean
-inferring from context, which that function's docstring refuses on purpose
-(a hyphen inside maths is a legitimate character). It needs a real redline
-from AFI to settle, and that is a decision about the conservative rule rather
-than a patch.
-
-S3 rather than S2 because the cost is a gate that is red as a matter of
-routine: the third time a clean batch fails for a reason the author did not
-cause is the time people stop reading it.
-
 ### S4 no safe way to set run properties without walking into a field
 
 Found on AFI, 2026-08-19. A formatting sweep over all 24 captions wrote run
@@ -420,6 +341,126 @@ and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
 scope on purpose — the in-text rules change what a sentence SAYS.
 
 ## Fixed
+
+### ~~S3 the build's math-glyph restore covers ONE view, so validate is red every round~~
+
+Found on AFI, 2026-08-19, across three consecutive rounds.
+
+`revision build` now restores the minus glyph Word downgrades when Compare
+re-serialises OMML — it prints `restored math glyph — 't-1990' -> 't−1990'`.
+But it restores it in the ACCEPTED view only. `validate`'s reject-all check
+then reports
+
+    glyphs: False   GLYPH at 62473: '−' U+2212 -> '-' U+002D
+
+and the batch fails, on a document whose author touched nothing. The paper's
+own `repair_math_minus.py` fixes the remaining side, after which validate
+passes — so every round on this manuscript is: build, validate FAILS, run the
+per-paper repair, validate PASSES.
+
+**And the repair then trips the deliverable guard.** Running it changes
+`batch.docx` after `build` stamped it, so the next `build` refuses with
+`DeliverableModified — someone edited it in Word` and backs the file up to
+`batch_user_edited1.docx`. Nobody edited anything in Word. The recovery
+("delete batch.docx if that batch is already promoted") is right but the
+diagnosis is wrong, and it manufactures a spurious `_user_edited` artifact
+each time.
+
+Two fixes, either sufficient: restore the glyph on both sides of the
+revision, or re-stamp after an in-tool repair. Failing both, `validate` should
+name **which view** it is judging — "reject-all" vs "accept-all" — because as
+printed, `glyphs: False` on a batch whose accepted view is correct reads as a
+defect in the edit.
+
+**The third one is done (2026-08-20).** Every glyph line now reads
+`GLYPH (reject-all vs baseline) ...`, and when the two streams become equal
+once BOTH are downgraded — that is, when the substitution is the whole of the
+difference — the report says so:
+
+    every GLYPH above is a math character Word downgrades when it
+    re-serialises an equation, not an edit: the ACCEPTED view has them
+    restored and the REJECTED one does not.
+
+The gate still fails, and should: the two views disagree. What changed is that
+it no longer reads as a defect in the edit. Both sides are pinned —
+`test_validate_says_WHICH_VIEW_a_glyph_difference_is_about` and
+`test_a_REAL_edit_is_not_called_a_math_downgrade`.
+
+**The second one is done (2026-08-20) — `guard.restamp`.** A repair the
+build cannot do is not a Word session, and the repair now says so:
+
+    from docxkit.guard import restamp
+    write_docx(paper.batch, parts)
+    restamp(paper.batch, why="restored U+2212 on the rejected side")
+
+The stamp keeps the build's own provenance and grows a `repairs` list —
+reason, the hash it replaced, the hash now — so "the tool changed it" is
+readable afterwards rather than assumed; this is the one call that can retire
+a guard. A repair that changed nothing records nothing. `guard.check`'s
+refusal names it as the fourth way on, beside the three it already listed.
+
+What this does NOT do is decide for the caller: the assertion is theirs, and
+a Word edit sitting in the file when `restamp` runs is inside the hash it
+records. The docstring says to call it next to the write, in the repair.
+
+So the round is now: build, validate FAILS and says WHICH VIEW and why, run
+the repair, re-stamp, validate PASSES — with no `_user_edited` artifact and
+no diagnosis of an edit nobody made. The gate is still red on a downgraded
+glyph, which is the first fix's job and is still open.
+
+**Why not the first one**, looked at the same day: `restore_math_glyphs`
+repairs a run only when its EXACT text appears in a source, and Compare splits
+a run at the edit boundary — so the deleted side often holds a fragment no
+source spells, and there is nothing to key on. Repairing it would mean
+inferring from context, which that function's docstring refuses on purpose
+(a hyphen inside maths is a legitimate character). It needs a real redline
+from AFI to settle, and that is a decision about the conservative rule rather
+than a patch.
+
+S3 rather than S2 because the cost is a gate that is red as a matter of
+routine: the third time a clean batch fails for a reason the author did not
+cause is the time people stop reading it.
+
+**SETTLED 2026-08-21, with the AFI evidence the entry asked for** — and the
+answer was not the fix this entry proposed.
+
+Read against the real files: `build/batch.docx` has its four minus signs and
+its math stream is identical to `prev.docx`'s. **`working.docx` — the
+finished manuscript — has none of them**: 0 U+2212 where the baseline has 4,
+16 hyphens where it has 12. The paper's own log says so and says the
+workaround is "not optional on this manuscript".
+
+So the redline was never the problem. The damage arrives on the AUTHOR'S
+accept-and-save, and the step that makes it permanent is `baseline`, which
+copied `working.docx` over `prev.docx` — after which the hyphens ARE the
+truth and every later reject-all is measured against them. It happened
+twice, wave 1 and wave 2.
+
+`losses()` reports a `glyph` loss now, matched the way the restore matches:
+a run the baseline has is gone, and a run has appeared that is exactly it
+with the glyphs flattened. An author who rewrote an equation is not
+reported, and neither is one who put a minus back. `baseline` refuses on it
+like any other hand-back loss, so this cannot become the truth in silence:
+
+    glyph '=−0.953 -> =-0.953'
+      --accept-loss 'glyph:=−0.953 -> =-0.953'
+
+`baseline(repair_math=True)` / `--repair-math` is the answer to the
+refusal, and it is the one loss this tool may put back itself: `build`
+already restores the same glyph on the redline it produces, so doing it on
+the other side of the hand-back is that repair, not a new liberty. The gate
+runs AFTER the repair, so anything it could not reach still refuses.
+
+**What the entry proposed and I did NOT do:** an alignment-based restore,
+keyed on position rather than on text. Written, tried against the real
+files, and reverted — the exact-key `restore_math_glyphs` puts back all
+four AFI runs on its own, so the second mechanism solved a problem no
+specimen here shows. The paper's script argues for it (a bare `-` is
+ambiguous as a key); if a manuscript ever produces that case, this is the
+note to come back to.
+
+**Workaround to retire:** `revision/scripts/repair_math_minus.py`, and the
+`--expect OLD=NEW` flag with it.
 
 ### ~~S2 `refstyle.convert_text` REFUSES an entry whose title contains "&"~~
 

@@ -1275,7 +1275,8 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
     paper = _paper(args)
     accepted = tuple(t.strip() for t in args.accept_loss.split(",")
                      if t.strip())
-    written = baseline(paper, force=args.force, accept_loss=accepted)
+    written = baseline(paper, force=args.force, accept_loss=accepted,
+                       repair_math=args.repair_math)
     for token in accepted:
         print(f"  accepted loss: {token}")
     print(f"baseline updated: {written}")
@@ -1627,6 +1628,9 @@ def main() -> None:
                    help="the hand-back lost these DELIBERATELY (anchor, "
                         "note text, or kind:what); naming one that is "
                         "still present is itself refused")
+    r.add_argument("--repair-math", action="store_true",
+                   help="put back the equation glyphs Word downgraded on "
+                        "the author's save, before the loss gate runs")
 
     r = _rev("rescues", cmd_revision_rescues,
              "the undo copies promote leaves in build/rescue/")

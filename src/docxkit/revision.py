@@ -88,7 +88,7 @@ from .errors import (
     ProtocolError,
     StaleBatch,
 )
-from .hygiene import _downgraded
+from .hygiene import _MATH_T_RE, _downgraded, restore_math_glyphs
 
 # The reject-all comparison and its three helpers live in `tracked`, with
 # the code that MAKES a redline, so that a paper calling `tracked.build`
@@ -906,7 +906,8 @@ def _bookmarks(parts: dict[str, bytes]) -> set[str]:
 class Loss:
     """Structure the hand-back no longer carries, named so it can be OK'd."""
 
-    kind: str        # link | footnote | endnote | bookmark | comment
+    kind: str        # link | footnote | endnote | bookmark |
+                     # comment | glyph
     what: str        # the anchor, the note's text, the bookmark's name
 
     @property
@@ -1020,6 +1021,7 @@ def losses(working: dict[str, bytes],
     out: list[Loss] = []
     out += _link_changes(working, prev)[0]
     out += _lost_notes(working, prev)
+    out += _downgraded_math(working, prev)
     out += [Loss("bookmark", name)
             for name in sorted(_bookmarks(prev) - _bookmarks(working))]
     lost_comments = (tracked.package_counts(prev)["comments"]
@@ -1027,6 +1029,43 @@ def losses(working: dict[str, bytes],
     if lost_comments > 0:
         out.append(Loss("comment", f"{lost_comments} comment(s) gone"))
     return out
+
+
+def _downgraded_math(working: dict[str, bytes],
+                     prev: dict[str, bytes]) -> list[Loss]:
+    """Equation runs the author's Word session flattened to ASCII.
+
+    Word rewrites OMML on accept-and-save as readily as on Compare, and
+    downgrades U+2212 MINUS SIGN to a hyphen while it is there. It is
+    not a content change and no text gate sees it: `losses` counted
+    links, notes, bookmarks and comments, and the paper still rendered.
+
+    AFI lost all four of its minus signs this way, twice — wave 1 and
+    wave 2 — and `baseline` copied the result over `prev.docx` both
+    times, after which the hyphens ARE the truth and the next reject-all
+    measures against them. The paper's own log records the workaround as
+    "not optional on this manuscript".
+
+    Reported as a LOSS rather than repaired here, and matched the way
+    `restore_math_glyphs` matches: a run the baseline has is gone, and a
+    run has appeared that is exactly it with the glyphs flattened. An
+    author who genuinely rewrote an equation is not reported, because
+    the two texts would not correspond that way.
+    """
+    def runs(parts: dict[str, bytes]) -> Counter[str]:
+        found: Counter[str] = Counter()
+        for name, blob in parts.items():
+            if name.endswith(".xml"):
+                found.update(m.group(2) for m in
+                             _MATH_T_RE.finditer(blob.decode("utf-8",
+                                                             "replace")))
+        return found
+
+    was, now = runs(prev), runs(working)
+    gained = now - was
+    return [Loss("glyph", f"{text} -> {_downgraded(text)}")
+            for text, _n in sorted((was - now).items())
+            if _downgraded(text) != text and gained.get(_downgraded(text))]
 
 
 def _notes(parts: dict[str, bytes], part: str, kind: str) -> list[Any]:
@@ -1495,7 +1534,8 @@ def _sha(path: str | Path) -> str:
 # ------------------------------------------------------------- baseline
 
 def baseline(paper: Paper, *, force: bool = False,
-             accept_loss: tuple[str, ...] = ()) -> Path:
+             accept_loss: tuple[str, ...] = (),
+             repair_math: bool = False) -> Path:
     """Record the current ``working.docx`` as the new accepted truth.
 
     Run this after the author has accepted (or rejected) everything: it
@@ -1530,6 +1570,15 @@ def baseline(paper: Paper, *, force: bool = False,
     `force` does not override this either. The unacknowledged loss is
     exactly the case `force` would be reached for by reflex, and the
     acknowledgement costs one anchor.
+
+    `repair_math` is the one loss this tool may put back itself, and
+    the reason it may is that it is not an author's decision: Word
+    downgrades an equation's U+2212 on accept-and-save, `build` already
+    restores the same glyph on the redline it produces, and doing it
+    here is that repair on the other side of the hand-back. It rewrites
+    `working.docx` — every run whose text the baseline spells with the
+    glyph put back — and then the gate above runs as usual, so anything
+    it could NOT reach still refuses.
     """
     if package.is_locked(paper.working):
         raise DocumentLocked(
@@ -1537,6 +1586,11 @@ def baseline(paper: Paper, *, force: bool = False,
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
     if paper.prev.exists():
+        if repair_math:
+            work, base = (package.read_parts(paper.working),
+                          package.read_parts(paper.prev))
+            if restore_math_glyphs(work, base):
+                package.write_docx(paper.working, work)
         gone = losses(package.read_parts(paper.working),
                       package.read_parts(paper.prev))
         if stale := _unmet(accept_loss, gone):

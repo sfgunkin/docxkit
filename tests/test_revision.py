@@ -2511,3 +2511,97 @@ def test_baseline_creates_a_build_directory_SEVERAL_LEVELS_down(tmp_path):
 # REFERENCE moved, so nothing sees the sentence it prints. That is a
 # test worth writing and it needs a package built the way Word's
 # Compare emits one, which is half a day.
+
+
+# --------------------------------------------- the glyph Word eats on save --
+#
+# Word rewrites OMML on accept-and-save as readily as on Compare, and
+# downgrades U+2212 to a hyphen while it is there. AFI lost all four of
+# its minus signs that way, twice, and `baseline` copied the result over
+# `prev.docx` both times -- after which the hyphens ARE the truth.
+
+_EQ = "<w:p><m:oMath><m:r><m:t>{}</m:t></m:r></m:oMath></w:p>"
+
+
+def _paper_at(tmp_path, prev, work):
+    """A migrated paper whose baseline and hand-back are these parts."""
+    src = write(tmp_path / "m.docx", prev)
+    paper = revision.init(tmp_path / "proj", src, attic=tmp_path / "attic")
+    write(paper.working, work)
+    return paper
+
+
+def _math_pair(was: str, now: str):
+    """A baseline and a hand-back differing only in that one run."""
+    return (make_parts(_EQ.format(was) + para(run("prose"))),
+            make_parts(_EQ.format(now) + para(run("prose"))))
+
+
+def test_a_downgraded_equation_glyph_is_a_LOSS():
+    """No text gate sees it: the paper still renders, the links are all
+    there, and the equation now says what the author did not type."""
+    prev, work = _math_pair("\u22120.398", "-0.398")
+
+    found = revision.losses(work, prev)
+
+    assert [str(x) for x in found] == ["glyph '\u22120.398 -> -0.398'"]
+    assert found[0].kind == "glyph"
+
+
+def test_an_equation_the_AUTHOR_changed_is_not_a_glyph_loss():
+    """The two texts have to correspond as the same run with its glyphs
+    flattened. A rewritten equation does not, and reporting one would
+    make the gate a thing to switch off."""
+    prev, work = _math_pair("\u22120.398", "\u22120.487")
+
+    assert revision.losses(work, prev) == []
+
+
+def test_an_equation_the_author_UNDOWNGRADED_is_not_a_loss():
+    """The other direction: a hyphen that became a minus sign is the
+    author fixing the house style, not Word breaking it."""
+    prev, work = _math_pair("-0.398", "\u22120.398")
+
+    assert revision.losses(work, prev) == []
+
+
+def test_baseline_REFUSES_a_hand_back_whose_equations_were_flattened(
+        tmp_path):
+    """It is the step that makes the loss permanent."""
+    paper = _paper_at(tmp_path, *_math_pair("\u22120.398", "-0.398"))
+
+    with pytest.raises(revision.HandbackLoss, match="glyph"):
+        revision.baseline(paper)
+
+
+def test_baseline_REPAIRS_the_glyph_when_told_to(tmp_path):
+    """The one loss this tool may put back itself, because it is not an
+    author's decision: `build` already restores the same glyph on the
+    redline it produces, and this is that repair on the other side of
+    the hand-back."""
+    prev, work = _math_pair("\u22120.398", "-0.398")
+    paper = _paper_at(tmp_path, prev, work)
+
+    written = revision.baseline(paper, repair_math=True)
+
+    assert written.exists()
+    after = package.read_parts(
+        paper.working)["word/document.xml"].decode("utf-8")
+    assert "\u22120.398" in after and ">-0.398<" not in after
+    assert revision.losses(package.read_parts(paper.working),
+                           package.read_parts(paper.prev)) == []
+
+
+def test_repair_math_does_not_forgive_the_losses_it_cannot_reach(tmp_path):
+    """The gate runs afterwards, not instead. A repair that reached one
+    thing must not wave through the others."""
+    mark = ('<w:bookmarkStart w:id=\"1\" w:name=\"Table1\"/>'
+            '<w:bookmarkEnd w:id=\"1\"/>')
+    prev = make_parts(_EQ.format("\u22120.398") + mark
+                      + para(run("prose")))
+    work = make_parts(_EQ.format("-0.398") + para(run("prose")))
+
+    paper = _paper_at(tmp_path, prev, work)
+
+    with pytest.raises(revision.HandbackLoss):
+        revision.baseline(paper, repair_math=True)
