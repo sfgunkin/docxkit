@@ -1814,33 +1814,39 @@ a commit in one chain. Redirect and read the status —
 
 — and commit as its own command, after reading that number.
 
-### A patch script written in a HEREDOC arrives with its backslashes halved
+### A backslash does not survive the BASH tool. It survives PowerShell.
 
-Three times on 2026-08-20/21, in the shell layer the agent patches
-through: `python - <<'PY'` hands Python a payload whose `\\` has already
-become `\`. In a non-raw string literal `\n` is then a real newline and
-the file gets a broken quote, which ruff reports at once.
-
-`\b` is the one to worry about. It becomes U+0008, a character `grep`,
-`diff` and the terminal all render as nothing, so
+**Never put a backslash in a `python - <<'PY'` heredoc.** Five times on
+2026-08-20/21 a patch script written that way arrived with its
+backslashes halved — `\\` as `\` — and what that costs depends on where
+it lands: a broken quote (ruff catches it), a line continuation that
+silently joins two lines, or `\b` as U+0008 BACKSPACE, which `grep`, a
+diff and the terminal all render as nothing.
 `w:footnoteReference\b[^>]*` went into `_xml.py` as a regex that also
 matches `<w:footnoteReferenceX` and read as correct in every review.
 
-Compose the character rather than typing it — `B = chr(92)` — or write
-the payload with an editor tool and exec the file. **The sweep for it is
-a gate now** — `tests/test_control_characters.py` reads every `.py`,
-`.md`, `.toml`, `.cfg` and `.yml` in the tree in 0.1 s and names the
-file, the line and the surrounding text — so `pytest` refuses what the
-session below had to be remembered to look for:
+**Measured 2026-08-21, and it is the TOOL, not the shell.** The same
+payload, writing the same regex to a file:
 
-    python -c "import pathlib; print([str(f) for f in pathlib.Path('.').rglob('*') if f.is_file() and f.suffix in {'.py','.md'} and chr(8) in f.read_text(encoding='utf-8', errors='ignore')])"
+    Bash tool         'PAT = re.compile("w:footnoteReference\x08[^>]*")'
+    PowerShell tool   'PAT = re.compile("w:footnoteReference\b[^>]*")'
 
-Ruff's `PLE2510` catches the character in a string of any kind —
-raw, plain, f-string, docstring — so a mangled regex fails the first
-gate. It does NOT catch one in a comment, and nothing lints `.md`.
-Those two are what the sweep is for.
+So the rule is a tool choice, not a habit to remember:
 
-The backlog entry (S3, Open) has the rest.
+* a payload containing a backslash goes through the **Write/Edit tools**
+  (every file this session edited that way is intact) or the
+  **PowerShell tool**;
+* `chr(92)` still composes one where a literal backslash must reach the
+  output and neither is available;
+* the Bash tool is for everything else, which is most things.
+
+**And the sweep for the damage is a gate** —
+`tests/test_control_characters.py` reads every `.py`, `.md`, `.toml`,
+`.cfg` and `.yml` in the tree in 0.1 s and names the file, the line and
+the surrounding text, so `pytest` refuses what a session used to have to
+remember to look for. Ruff's `PLE2510` catches the character in a string
+of any kind — raw, plain, f-string, docstring — but not in a comment,
+and nothing lints `.md`. Those two are what the sweep is for.
 
 ### A fixture that HASHES is a fixture with a fresh draw in it
 

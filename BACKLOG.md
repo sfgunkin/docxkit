@@ -17,70 +17,25 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 the agent's Bash heredocs EAT BACKSLASHES, and a `\b` lands as a control character
+**NOTHING IS OPEN, as of 2026-08-21** — the first time since this file
+was started that the section holds no live defect, and the last one out
+was the entry that had twice said it could not be fixed here. Two records
+stay below because both are instructive: a retraction, and a Word
+behaviour worth not chasing twice.
 
-**Symptom as observed.** 2026-08-20/21, three times in one session. A patch
-script written as a `python - <<'PY'` heredoc reaches Python with every
-backslash already halved: a `\\n` typed in the payload arrives as `\n`, and
-in a non-raw string literal that becomes a REAL newline, so the file gets a
-broken string and ruff reports `missing closing quote`. That half is loud.
+**Twenty-one closed on 2026-08-21**, in batches as the manuscripts
+turned them up — and the last four were raised by RETIRING the
+paper-side workarounds the earlier ones replaced, which is the round
+worth repeating: a workaround deleted is a claim that has to be checked,
+and checking it found the lettered year, the mention Word left behind,
+and the two findings that were one.
 
-The quiet half is `\b`. It becomes U+0008 BACKSPACE — invisible in `grep`,
-in a diff and in a terminal. A regex written as `w:footnoteReference\b[^>]*`
-landed in `_xml.py` as `w:footnoteReference<BS>[^>]*`, which also matches
-`<w:footnoteReferenceX`, and a `\b` in this file sat as a control character
-until a sweep found it.
-
-**Why S3 rather than S4.** The loud half is a syntax error and costs a
-minute. The quiet half is a REGEX THAT IS SILENTLY WRONG in the module every
-other module is built on, committed green because nothing tests the boundary
-that went missing — the same shape the mutation rounds exist to find,
-arriving through the toolchain instead of through the code.
-
-**Repro.** Any `python - <<'PY'` heredoc whose payload contains a doubled
-backslash. Quoting the heredoc delimiter makes no difference.
-
-**Workaround, in use.** Compose the backslash instead of typing it —
-`B = chr(92)`, then build the string — or write the payload to a file with
-the Write tool and exec it. Neither is a resolution: the next patch script
-written the obvious way is wrong again, and wrong INVISIBLY.
-
-**Measured, 2026-08-21: ruff IS a backstop, in three of four places.**
-`PLE2510` fires on a stray control character in a raw string, a plain
-string, an f-string and a docstring alike — so a mangled regex in a `.py`
-file fails the first gate rather than shipping. It does NOT fire on a
-comment, and nothing lints `.md` at all, which is where the two that got
-through this session landed (a comment-adjacent regex quote in the
-backlog, and `_xml.py`'s — which ruff would have caught had it been run
-before the grep that found it by hand).
-
-So the sweep is worth running after a heredoc session for markdown and
-comments; for code, the gate already refuses.
-
-**The sweep IS a gate now, 2026-08-21** — `tests/test_control_characters.py`
-reads every `.py`, `.md`, `.toml`, `.cfg` and `.yml` in the tree (421 files,
-0.1 s) and fails on any control character that is not tab, newline or
-carriage return, naming the file, the line and the surrounding text. That
-closes the two places ruff cannot see, and "remember to run the sweep after
-a heredoc session" is not something anyone should have to remember. The
-pattern itself is pinned separately, because a clean tree gives the gate
-nothing to find and it would otherwise be a check that cannot fail.
-
-**Still open, and staying open.** Nothing in this repository fixes the
-CAUSE; it is the agent harness's shell layer, not docxkit's. The workaround
-above is still the workaround — compose the backslash, or write the payload
-with the Write tool — and the entry stays here so the next session knows
-why. What changed is that the damage can no longer ship.
-
----
-
-**Twenty closed on 2026-08-21**, in batches as the manuscripts turned
-them up — and the last three were raised by RETIRING the paper-side
-workarounds the earlier ones replaced, which is the round worth
-repeating: a workaround deleted is a claim that has to be checked, and
-checking it found the lettered year, the mention Word left behind, and
-the two findings that were one. **The Open section is down to the
-heredoc**, which this repository cannot fix and now gates instead.
+**The last one out is the one to remember.** The heredoc entry said
+twice, in its own text, that nothing here could fix it — and nobody had
+run the one command that tests it. The same payload through the
+PowerShell tool comes out intact. An entry that explains why a thing
+cannot be fixed is an entry nobody re-reads; it needs the measurement
+that would refute it, not the argument that supports it.
 
 Nine came from Aging_Well's first five rounds, seven from AFI, one from
 a review of the tracked gates, one was answered by simply re-reading a
@@ -141,6 +96,7 @@ words that are being restored elsewhere without pairing information this side
 cannot verify. **A moved block containing a table, or a bookmarked paragraph,
 still cannot go through Compare and come back cleanly** — what changed is that
 nothing ships silently now.
+
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 
@@ -212,6 +168,87 @@ looked for was in a part of the package it never opened.
 
 
 ## Fixed
+
+### ~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08
+
+**Symptom as observed.** 2026-08-20/21, three times in one session. A patch
+script written as a `python - <<'PY'` heredoc reaches Python with every
+backslash already halved: a `\\n` typed in the payload arrives as `\n`, and
+in a non-raw string literal that becomes a REAL newline, so the file gets a
+broken string and ruff reports `missing closing quote`. That half is loud.
+
+The quiet half is `\b`. It becomes U+0008 BACKSPACE — invisible in `grep`,
+in a diff and in a terminal. A regex written as `w:footnoteReference\b[^>]*`
+landed in `_xml.py` as `w:footnoteReference<BS>[^>]*`, which also matches
+`<w:footnoteReferenceX`, and a `\b` in this file sat as a control character
+until a sweep found it.
+
+**Why S3 rather than S4.** The loud half is a syntax error and costs a
+minute. The quiet half is a REGEX THAT IS SILENTLY WRONG in the module every
+other module is built on, committed green because nothing tests the boundary
+that went missing — the same shape the mutation rounds exist to find,
+arriving through the toolchain instead of through the code.
+
+**Repro.** Any `python - <<'PY'` heredoc whose payload contains a doubled
+backslash. Quoting the heredoc delimiter makes no difference.
+
+**Workaround, in use.** Compose the backslash instead of typing it —
+`B = chr(92)`, then build the string — or write the payload to a file with
+the Write tool and exec it. Neither is a resolution: the next patch script
+written the obvious way is wrong again, and wrong INVISIBLY.
+
+**Measured, 2026-08-21: ruff IS a backstop, in three of four places.**
+`PLE2510` fires on a stray control character in a raw string, a plain
+string, an f-string and a docstring alike — so a mangled regex in a `.py`
+file fails the first gate rather than shipping. It does NOT fire on a
+comment, and nothing lints `.md` at all, which is where the two that got
+through this session landed (a comment-adjacent regex quote in the
+backlog, and `_xml.py`'s — which ruff would have caught had it been run
+before the grep that found it by hand).
+
+So the sweep is worth running after a heredoc session for markdown and
+comments; for code, the gate already refuses.
+
+**The sweep IS a gate now, 2026-08-21** — `tests/test_control_characters.py`
+reads every `.py`, `.md`, `.toml`, `.cfg` and `.yml` in the tree (421 files,
+0.1 s) and fails on any control character that is not tab, newline or
+carriage return, naming the file, the line and the surrounding text. That
+closes the two places ruff cannot see, and "remember to run the sweep after
+a heredoc session" is not something anyone should have to remember. The
+pattern itself is pinned separately, because a clean tree gives the gate
+nothing to find and it would otherwise be a check that cannot fail.
+
+**CLOSED 2026-08-21 — it is the TOOL, and there is another one.** "Nothing
+in this repository fixes the cause" was written twice in this entry and
+never tested. The test takes one command per shell: write the same regex
+to a file, read the bytes back.
+
+    Bash tool         'PAT = re.compile("w:footnoteReference\x08[^>]*")'
+    PowerShell tool   'PAT = re.compile("w:footnoteReference\b[^>]*")'
+
+Same payload, same Python, same machine. The Bash tool's path loses the
+backslash and the PowerShell tool's does not — and neither do the
+Write/Edit tools, which is why every file edited that way this session
+is intact while three heredocs in a row were not.
+
+Measured on the arriving bytes, with single-quoted arguments so the
+shell itself does nothing:
+
+    typed  A\nB      arrived  A\nB     (one backslash)
+    typed  A\\nB     arrived  A\nB     (one — HALVED)
+    typed  A\\\\nB   arrived  A\\nB    (two — halved again)
+
+So the rule is a tool choice rather than a habit: **a payload containing
+a backslash goes through Write/Edit or the PowerShell tool.** `chr(92)`
+composes one where neither is available. The Bash tool keeps everything
+else, which is most things.
+
+**The gate stays** — it is what turned this from a story into a
+measurement, and it is still the only thing standing between a mangled
+comment or a mangled `.md` and a commit.
+
+Recorded in CONTRIBUTING under "A backslash does not survive the BASH
+tool", where a session working here will meet it.
 
 ### ~~S2 `link_all` MARKS an entry nothing cites, and the audit reports the marker twice~~ — FIXED 21.08
 
