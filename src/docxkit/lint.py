@@ -216,7 +216,49 @@ def lint(*roots: Any) -> list[str]:
                   key=lambda x: (x is None, x))
     if dups:
         problems.append(f"duplicate revision w:id across parts: {dups}")
+
+    # 8b. …and so must a bookmark NAME. Its own walk, so this check
+    #     costs `lint` one line and no branch — see `_repeated_bookmarks`.
+    problems += _repeated_bookmarks(roots)
     return problems
+
+
+def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
+    """Bookmark names defined more than once across the package.
+
+    A name may be defined once. Word keeps whichever definition it meets
+    first, so every link to a duplicated name lands on a coin flip — and
+    Word's Compare discards the extras outright.
+
+    Measured on 400 real manuscripts: 24 carry a duplicate and all 24
+    are ONE paper, whose v34 defines 12 names twice or more — 20 extra
+    definitions, `AykutEtAl2026txt` six times — in the file submitted to
+    the journal as well. It runs back to v19 and nothing ever said so:
+    `lint` was clean and `citations` reported ALL CHECKS PASSED, because
+    an audit that keys bookmarks BY NAME cannot see a name twice. What
+    did see it was a one-word Compare round, which came back 20
+    bookmarks lighter and failed the structure gate blaming a move
+    (2026-08-21).
+
+    Counted across the whole package, because the namespace is: a
+    citation's ``<key>txt`` marker legitimately sits in footnotes.xml
+    while the entry links to it from the body.
+    """
+    seen: dict[str, int] = {}
+    for root in roots:
+        if root is None:
+            continue
+        for mark in root.iter(W + "bookmarkStart"):
+            name = mark.get(W + "name")
+            if name is not None:
+                seen[name] = seen.get(name, 0) + 1
+    repeated = sorted((n, c) for n, c in seen.items() if c > 1)
+    if not repeated:
+        return []
+    named = ", ".join(f"{n} x{c}" for n, c in repeated[:8])
+    return [(f"{len(repeated)} bookmark name(s) defined more than once: "
+             f"{named}{' ...' if len(repeated) > 8 else ''} — Word keeps the "
+             f"first and every link to the name is a coin flip")]
 
 
 def lint_parts(parts: dict[str, bytes]) -> list[str]:

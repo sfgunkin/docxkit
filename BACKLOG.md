@@ -169,6 +169,50 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S2 a DUPLICATE bookmark name is invisible to every gate~~ — FIXED 21.08
+
+**Found by testing the Word path on a second paper.** A one-word round
+through `tracked.build` on FLOPS v34 came back **20 bookmarks lighter**
+(173 -> 153, on the accepted AND the rejected view) and failed the
+structure gate — whose message blames a move, and there was no move.
+
+The twenty were all citation markers, several of them repeated:
+`AykutEtAl2026txt` x6, `WorldBank2024txt` x4, `IMF2025txt` x3. They are
+DUPLICATE DEFINITIONS of one name. A bookmark name may be defined once;
+Word keeps whichever copy it meets first, so every link to that name
+lands on a coin flip, and Compare discards the extras outright — which
+is exactly what it did.
+
+**Nothing said so.** On the same file:
+
+    docxkit lint       clean - no structural problems found
+    docxkit citations  Bookmarks: 153 ... ALL CHECKS PASSED
+
+`citations` reports 153 because it keys bookmarks BY NAME — an audit
+built on a dict cannot see a name twice — and `lint` had no check for
+it at all. The paper's own `_bookmark_names` docstring describes this
+failure ("two bookmarks of the same name in one document, which Word
+resolves by keeping whichever it finds first, and every link to it then
+lands on a coin flip") and the builder guards against CREATING one;
+nothing looked for one that was already there.
+
+**Measured before writing the check**, on 400 real manuscripts: 24 carry
+a duplicate, and all 24 are that one paper — v19 through v34, including
+`JITED_manuscript_anonymous.docx` and
+`JITED_manuscript_with_author_details.docx`, the files that went to the
+journal. Every other manuscript in the corpus is clean, so the check is
+silent everywhere it should be.
+
+**Fix.** `lint` check 8b, the twin of check 8 (revision ids must be
+unique across the package — same argument, one element over). Its own
+walk, so `lint.lint` gains a line and no branch and the complexity pin
+does not move. The namespace is the PACKAGE's, not the part's: a
+citation's `<key>txt` marker legitimately sits in footnotes.xml while
+the entry links to it from the body.
+
+**Left for the paper:** FLOPS has 12 duplicated names to resolve, and
+its submitted files carry them.
+
 ### ~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08
 
 **Symptom as observed.** 2026-08-20/21, three times in one session. A patch

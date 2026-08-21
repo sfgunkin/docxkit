@@ -472,3 +472,54 @@ def test_an_rPrChange_that_IS_last_is_not_reported():
 #   `_PPR_BEFORE_RPR`, so the intersection below is unchanged.
 # * `el is not om` written `!=`. lxml elements define no `__eq__`, so
 #   equality IS identity for them.
+
+
+# --- 8b: a bookmark NAME is defined once (2026-08-21) -------------------
+
+
+def _mark(name: str, bid: int) -> str:
+    return (f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
+            f'<w:bookmarkEnd w:id="{bid}"/>')
+
+
+def test_a_bookmark_name_defined_TWICE_is_a_finding():
+    """Word keeps whichever definition it meets first, so every link to
+    the name lands on a coin flip — and Compare discards the extras.
+
+    Measured on 400 real manuscripts: 24 carry a duplicate and all 24
+    are ONE paper, whose submitted file defines 12 names twice or more.
+    Nothing said so — lint was clean and `citations` reported ALL CHECKS
+    PASSED, because an audit that keys bookmarks BY NAME cannot see a
+    name twice. A one-word Compare round came back 20 bookmarks lighter.
+    """
+    body = (para(_mark("WorldBank2024txt", 1) + run("first mention"))
+            + para(_mark("WorldBank2024txt", 2) + run("second mention")))
+
+    (problem,) = lint_parts(_parts(body))
+
+    assert problem.startswith("1 bookmark name(s) defined more than once")
+    assert "WorldBank2024txt x2" in problem
+    assert "coin flip" in problem
+
+
+def test_the_bookmark_namespace_is_the_PACKAGE_not_the_part():
+    """A citation's `<key>txt` marker legitimately sits in footnotes.xml
+    while the entry links to it from the body — so the same name in two
+    PARTS is the same collision, not two innocent ones."""
+    foot = (f'<w:footnotes {NS}><w:footnote w:id="2"><w:p>'
+            + _mark("Sastry2024txt", 7) + run("a note")
+            + "</w:p></w:footnote></w:footnotes>")
+    parts = make_parts(para(_mark("Sastry2024txt", 1) + run("body")),
+                       footnotes=foot)
+
+    (problem,) = lint_parts(parts)
+
+    assert "Sastry2024txt x2" in problem
+
+
+def test_distinct_names_and_a_lone_marker_are_clean():
+    body = (para(_mark("Table1", 1) + run("a caption"))
+            + para(_mark("Table1txt", 2) + run("a mention"))
+            + para('<w:bookmarkStart w:id="3"/>' + run("no name at all")))
+
+    assert lint_parts(_parts(body)) == []
