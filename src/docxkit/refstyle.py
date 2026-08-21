@@ -140,7 +140,21 @@ _ITALIC_RE = re.compile(r'<w:i\b(?![^>]*w:val="(?:0|false|none)")[^>]*>')
 # still flagged: the style italicises it like a book.
 _NO_ITALICS_MARKERS = ("http", "www.", "retrieved", "published online",
                        "accessed", "available at", "working paper",
-                       "discussion paper", "mimeo", "unpublished")
+                       "discussion paper", "mimeo", "unpublished",
+                       "memorandum", "technical report")
+# The same exemption by SHAPE rather than by name, because a numbered
+# institutional series goes by more names than a list can hold: on
+# Aging_Well the two italics findings were "Social Development Papers
+# No. 1, Asian Development Bank" and "Research Memorandum, European
+# Centre Vienna" — both the working-paper format the exemption already
+# existed for, written under names it did not carry, and both of the
+# paper's italics findings (2026-08-21).
+#
+# The capital on "No." is what keeps a real journal citation flagged: a
+# Chicago issue number is written lowercase after the volume ("34, no.
+# 4"), and exempting that would suppress the finding this check exists
+# for. So the series word before it must be capitalised too.
+_SERIES_NO_RE = re.compile(r"\b[A-ZÀ-ÿĀ-ſ][\w-]*\s+Nos?\.?\s*\d")
 
 
 def _snippet(text: str, start: int, end: int, margin: int = 20) -> str:
@@ -166,6 +180,13 @@ def _check_prose(text: str, style: Style, cites: list[Citation],
     for found in cites:
         c = _resolve_lead(found, known=known)
         cite = text[c.start:c.end]
+        # A later work in a year group — "Sen (1985, 1992)" is two
+        # citations and the second's span is "1992)" — shows no author
+        # name. The checks below are about the name the sentence WRITES,
+        # and it is written once, so reporting them per work would say
+        # "3 authors named in text" twice about one phrase.
+        if c.authors not in cite:
+            continue
         if "&" in c.authors:
             issues.append(Issue(
                 "ampersand", 'use "and", not "&", between authors',
@@ -753,7 +774,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
             cites = [Citation(authors=m.group(1), year=m.group(2),
                               start=0, end=len(text), narrative=False)]
         for found in cites:
-            c = _resolve_lead(found, known=listed)
+            c = _resolve_lead(found, known=listed, ignore=ignored)
             if c.surname.casefold() in ignored:
                 continue
             key = key_for(filed_as.get(c.surname, c.surname), c.year)
@@ -779,7 +800,8 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
             report.issues.append(replace(issue, where=where))
         low = r.text.casefold()
         if (not has_italics(matches[r.index].group(0))
-                and not any(mark in low for mark in _NO_ITALICS_MARKERS)):
+                and not any(mark in low for mark in _NO_ITALICS_MARKERS)
+                and _SERIES_NO_RE.search(r.text) is None):
             report.issues.append(Issue(
                 "italics", "no italicised title or journal in this entry",
                 where=where, snippet=r.text[:60]))

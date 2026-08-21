@@ -789,6 +789,42 @@ def test_validate_says_which_PART_the_batch_lost(monkeypatch, project,
     assert "VERDICT: FAIL" in out
 
 
+def test_status_and_ingest_SAY_when_they_read_a_snapshot(
+        monkeypatch, project, capsys):
+    """A snapshot mid-edit is a true statement about a moment — and the
+    reader has to be told which one they are looking at."""
+    from docxkit import package
+
+    monkeypatch.setattr(package, "is_locked",
+                        lambda p: Path(p) == project.working)
+
+    for command in ("status", "ingest"):
+        run_cli(monkeypatch, "revision", command, "--paper",
+                str(project.root))
+        out = capsys.readouterr().out
+        assert "read from a SNAPSHOT" in out, command
+
+
+def test_validate_aborts_on_a_batch_built_on_ANOTHER_baseline(
+        monkeypatch, project, capsys):
+    """The report it used to print instead was detailed, plausible and
+    about a different batch — the R1 redline, two baselines old, with
+    twenty LINK LOST lines nobody could act on (Aging_Well R5)."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("an older truth"))))
+    guard.stamp(project.batch, base_sha256="0" * 64)
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "was NOT built on" in out
+    assert "VERDICT: FAIL" in out
+    assert "== lint ==" not in out, "the ladder ran on the wrong pair"
+
+
 def test_validate_aborts_on_lint_with_exit_2(monkeypatch, project,
                                              capsys):
     from docxkit import revision

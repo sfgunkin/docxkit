@@ -10,8 +10,9 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE, _name_runs
 from ._cite_grammar import (
@@ -183,6 +184,63 @@ def _foreign_bookmark(names: list[str], r: Reference,
     return None
 
 
+def _stems(r: Reference) -> set[str]:
+    """The two spellings a bookmark may file this work's surname under."""
+    return {_ascii_stem(r.surname).casefold(),
+            re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()}
+
+
+def _names_work(name: str, r: Reference, stems: set[str]) -> bool:
+    """Does this bookmark NAME name this work — in either end's form?
+
+    :func:`_foreign_bookmark`'s rule, with the ``txt`` suffix allowed:
+    that function is looking for the ENTRY's marker and a name ending in
+    ``txt`` is the other end, while this is asked of both ends.
+    """
+    flat = re.sub(r"[^0-9A-Za-z]", "", name).casefold().removesuffix("txt")
+    return flat.endswith(r.year) and any(a and a in _name_runs(name)
+                                         for a in stems)
+
+
+def _pair_rule(entry: str, twin: str) -> tuple[str, str] | None:
+    """How this document turns an entry's name into its in-text twin.
+
+    Two shapes occur. This module's own appends ``txt``
+    (``Halliday2020`` / ``Halliday2020txt``); a paper's own swaps a
+    prefix (``ref_noone_2018`` / ``cite_noone_2018``). Both reduce to a
+    pair of prefixes over a shared tail, with ``("", "")`` standing for
+    the suffix rule — there is no third shape in any manuscript here,
+    and inventing one would be a guess where the rest of this is
+    evidence.
+    """
+    if twin == entry + "txt":
+        return ("", "")
+    i = 0
+    while (i < min(len(entry), len(twin))
+           and entry[len(entry) - 1 - i] == twin[len(twin) - 1 - i]):
+        i += 1
+    tail = entry[len(entry) - i:]
+    if i < 4 or not re.search(r"[A-Za-z]", tail):
+        return None            # too little shared to be a convention
+    return (entry[:len(entry) - i], twin[:len(twin) - i])
+
+
+def _twin_of(entry: str, rule: tuple[str, str] | None) -> str:
+    """The in-text bookmark this document would pair with `entry`."""
+    if rule is None or rule == ("", ""):
+        return entry + "txt"
+    was, now = rule
+    return now + entry[len(was):] if entry.startswith(was) else entry + "txt"
+
+
+def _entry_of(twin: str, rule: tuple[str, str] | None) -> str | None:
+    """…and back: the entry name whose twin is `twin`, if the rule says."""
+    if rule is None or rule == ("", ""):
+        return twin[:-3] if twin.endswith("txt") else None
+    was, now = rule
+    return was + twin[len(now):] if twin.startswith(now) else None
+
+
 def _entry_keys(r: Reference) -> set[str]:
     """Every citation key this entry can answer to.
 
@@ -299,6 +357,126 @@ def _named(r: Reference, convention: Callable[[str, str], str] | None,
     return _mint_name(r, taken)
 
 
+def _own_name_map(entries: list[Reference],
+                  where: Callable[[Reference], tuple[str, str]],
+                  ) -> dict[int, str]:
+    """Each entry's own bookmark, by paragraph index; absent if none.
+
+    Two passes, because of the YEAR LETTER. A paper citing two works by
+    one author in one year writes 2023a and 2023b, and its bookmarks
+    were usually minted BEFORE the split — AFI carries
+    `ref_maestas_mp_2023` and `ref_maestas_2023` for exactly that pair.
+    :func:`_foreign_bookmark` requires the folded name to END with the
+    work's year, and "refmaestas2023" does not end with "2023b", so
+    neither entry matched its own marker: `link_rest` skipped five
+    mentions with "entry has no bookmark", which is false and sends the
+    reader looking for a bookmark that is there (batch 28, 2026-08-21).
+
+    So the second pass retries with the BARE year — and refuses when two
+    entries reach for the same name, or when the name is already some
+    other entry's. Two works by one author in one year is precisely when
+    a wrong guess is undetectable, and the letter is the discriminator
+    the fold throws away.
+    """
+    out: dict[int, str] = {}
+    lettered: list[Reference] = []
+    for r in entries:
+        para, before = where(r)
+        if own := _own_bookmark(para, r, before):
+            out[r.index] = own
+        elif r.year[:4] != r.year:
+            lettered.append(r)
+    claimed = set(out.values())
+    relaxed: dict[int, str] = {}
+    for r in lettered:
+        para, before = where(r)
+        got = _own_bookmark(para, replace(r, year=r.year[:4]), before)
+        if got is not None and got not in claimed:
+            relaxed[r.index] = got
+    reached = Counter(relaxed.values())
+    out.update({i: n for i, n in relaxed.items() if reached[n] == 1})
+    return out
+
+
+def _bookmark_names(entries: list[Reference],
+                    paras: list[re.Match[str]],
+                    gaps: dict[int, str], *,
+                    taken: set[str],
+                    naming: Callable[[str, str], str] | None,
+                    report: LinkAllReport,
+                    ) -> tuple[dict[int, str], dict[str, str]]:
+    """Each entry's bookmark name, and the in-text twin it pairs with.
+
+    In order: the entry's OWN marker; the name a dangling link in the
+    document DEMANDS; the paper's convention; a minted name. Every step
+    but the last is a fact read off the file.
+
+    Keyed by the entry's PARAGRAPH, not by its surname+year key. Two
+    entries can share a key and routinely do — "Smith, J. (2020)" and
+    "Smith, A. (2020)" are two people, and a reference list that has
+    dropped its 2020a/2020b suffixes has two entries reading the same.
+    Keying the names by `r.key` overwrote the first with the second, so
+    BOTH paragraphs were marked with one name: two bookmarks of the same
+    name in one document, which Word resolves by keeping whichever it
+    finds first, and every link to it then lands on a coin flip. The
+    report said "linked 1, back-links added 2, skipped 0" (found by a
+    test written for the mutation-survivor entry, 2026-08-16).
+
+    **What does the DOCUMENT call a work's two bookmarks?** An entry's
+    own back-link names its in-text twin whether or not that twin still
+    exists, and a Word round-trip with track changes off deletes
+    in-text bookmarks while leaving those back-links pointing at them
+    (AFI's r4 hand-back: 12 links and 7 bookmarks gone, every word on
+    the page intact). Minting a fresh name there reported `linked 7` —
+    success — for a run that left all six back-links broken and added
+    seven orphans beside them under a scheme the paper does not use.
+
+    A dangling link naming this work is not a guess about a scheme; it
+    is the only name that can be right. And where the ENTRY's marker is
+    the one Word ate, the twin the back-link demands names it through
+    the same rule backwards — learned by MAJORITY from the pairs that
+    are still whole, so one damaged pair cannot teach the wrong shape.
+    """
+    own_names = _own_name_map(
+        entries, lambda r: (paras[r.index].group(0), gaps[r.index]))
+    twins: dict[int, str] = {}
+    for r in entries:
+        stems = _stems(r)
+        asked = next((a for a, _ in internal_links(paras[r.index].group(0))
+                      if _names_work(a, r, stems)), None)
+        if asked is not None:
+            twins[r.index] = asked
+    votes = Counter(
+        rule for i, twin in twins.items()
+        if (own := own_names.get(i)) and twin in taken
+        and (rule := _pair_rule(own, twin)) is not None)
+    rule = votes.most_common(1)[0][0] if votes else None
+
+    names: dict[int, str] = {}
+    twin_name: dict[str, str] = {}
+    for r in entries:
+        asked = twins.get(r.index)
+        if asked is None and r.index not in own_names:
+            # No back-link either — but the in-text BOOKMARK may still be
+            # there. `Kahlon2021txt` in the prose with no `Kahlon2021` at
+            # the entry is what `_dedup_name` turned into `Kahlon2021_2`,
+            # minting a second scheme beside the live one (li7: two of
+            # them). A name the document already carries and that names
+            # this work is evidence, exactly as the back-link is.
+            asked = next((n for n in sorted(taken)
+                          if _names_work(n, r, _stems(r))
+                          and (e := _entry_of(n, rule)) and e not in taken),
+                         None)
+        demanded = _entry_of(asked, rule) if asked is not None else None
+        if demanded in taken:
+            demanded = None              # already somebody else's bookmark
+        names[r.index] = (own_names.get(r.index) or demanded
+                          or _named(r, naming, taken, report))
+        twin_name[names[r.index]] = asked or _twin_of(names[r.index], rule)
+        taken.add(names[r.index])
+    return names, twin_name
+
+
 def _wanted(only: Collection[str] | None, entries: list[Reference],
             names: dict[int, str]) -> set[str] | None:
     """The keys `only` selects — by key, surname or bookmark name."""
@@ -396,7 +574,8 @@ class _Mentions:
             # 33 of them in one pass).
             labelled = [label for _a, label in internal_links(m.group(0))]
             for found in find_citations(text):
-                c = resolve_lead(found, known=self.answers)
+                c = resolve_lead(found, known=self.answers,
+                                 ignore=self.ignored)
                 if c.surname.casefold() in self.ignored:
                     continue
                 key = self.answers.get(
@@ -508,27 +687,12 @@ def link_all(parts: dict[str, bytes], *,
     gaps = {i: doc[(paras[i - 1].end() if i else 0):m.start()]
             for i, m in enumerate(paras)}
 
-    # Names: reuse an entry's own key-shaped bookmark; then the paper's
-    # convention if it states one; mint otherwise.
-    #
-    # Keyed by the entry's PARAGRAPH, not by its surname+year key. Two
-    # entries can share a key and routinely do -- "Smith, J. (2020)" and
-    # "Smith, A. (2020)" are two people, and a reference list that has
-    # dropped its 2020a/2020b suffixes has two entries reading the same.
-    # Keying the names by `r.key` overwrote the first with the second,
-    # so BOTH paragraphs were marked with one name: two bookmarks of the
-    # same name in one document, which Word resolves by keeping whichever
-    # it finds first, and every link to it then lands on a coin flip.
-    # The report said "linked 1, back-links added 2, skipped 0" (found by
-    # a test written for the mutation-survivor entry, 2026-08-16).
-    names: dict[int, str] = {}
+    names, twin_name = _bookmark_names(entries, paras, gaps, taken=taken,
+                                       naming=naming, report=report)
     answers: dict[str, str] = {}
     by_key: dict[str, list[Reference]] = {}
     for r in entries:
         by_key.setdefault(r.key, []).append(r)
-        own = _own_bookmark(paras[r.index].group(0), r, gaps[r.index])
-        names[r.index] = own or _named(r, naming, taken, report)
-        taken.add(names[r.index])
         for k in _entry_keys(r):
             answers.setdefault(k, r.key)
 
@@ -572,7 +736,8 @@ def link_all(parts: dict[str, bytes], *,
             # built: back-linking an UNCITED entry writes a dangling
             # <name>txt target — 19 of them on the Missing Market dry
             # run before this guard.
-            if (r.key in claimed or name + "txt" in taken) \
+            twin = twin_name[name]
+            if (r.key in claimed or twin in taken) \
                     and not internal_links(para):
                 # Kept although an entry that PARSED always has a head —
                 # `reference_head` reads the year with the expression
@@ -587,7 +752,7 @@ def link_all(parts: dict[str, bytes], *,
                     report.skipped.append(f"no head on entry ¶{i + 1}")
                 else:
                     try:
-                        para = link_in_para(para, head, name + "txt")
+                        para = link_in_para(para, head, twin)
                         report.backlinked.append(name)
                     except AnchorError as exc:
                         report.skipped.append(f"back-link ¶{i + 1}: {exc}")
@@ -595,7 +760,7 @@ def link_all(parts: dict[str, bytes], *,
         for cite, name in here.get(i, []):
             try:
                 para = link_in_para(para, cite, name)
-                para = wrap_link_in_bookmark(para, name, name + "txt",
+                para = wrap_link_in_bookmark(para, name, twin_name[name],
                                              next(bids))
                 report.linked.append(f"{name} @ {where}{i + 1}")
             except AnchorError as exc:
@@ -622,14 +787,14 @@ def link_all(parts: dict[str, bytes], *,
         for xml in notes.values():
             marks |= set(_BOOKMARK_NAME_RE.findall(xml))
         for name in list(report.backlinked):
-            if name + "txt" in marks:
+            twin = twin_name[name]
+            if twin in marks:
                 continue
-            doc, _, _ = unlink_by_anchor(
-                doc, rf"^{re.escape(name)}txt$")
+            doc, _, _ = unlink_by_anchor(doc, rf"^{re.escape(twin)}$")
             report.backlinked.remove(name)
             report.skipped.append(
                 f"back-link {name}: its in-text mention was not wrapped, "
-                f"so {name}txt does not exist — back-link removed")
+                f"so {twin} does not exist — back-link removed")
 
     for name, _ in _NOTE_PARTS:
         if note_plans[name]:
@@ -741,13 +906,13 @@ def _own_bookmarks(doc: str, entries: list[Reference],
     gap Word hoists a marker into, whose arithmetic is pinned by
     `tests/test_cite_anchor_reuse.py`.
     """
-    out: list[tuple[Reference, str]] = []
-    for r in entries:
+    def where(r: Reference) -> tuple[str, str]:
         m = paras[r.index]
-        before = doc[(paras[r.index - 1].end() if r.index else 0):m.start()]
-        if own := _own_bookmark(m.group(0), r, before):
-            out.append((r, own))
-    return out
+        return m.group(0), doc[(paras[r.index - 1].end()
+                                if r.index else 0):m.start()]
+
+    own = _own_name_map(entries, where)
+    return [(r, own[r.index]) for r in entries if r.index in own]
 
 
 def link_rest(parts: dict[str, bytes], *,
@@ -801,7 +966,7 @@ def link_rest(parts: dict[str, bytes], *,
             text = visible_text(para)
             todo: list[tuple[int, int, str]] = []
             for found in find_citations(text):
-                c = resolve_lead(found, known=answers)
+                c = resolve_lead(found, known=answers, ignore=ignored)
                 if c.surname.casefold() in ignored:
                     continue
                 if "\x00" in masked[c.start:c.end]:

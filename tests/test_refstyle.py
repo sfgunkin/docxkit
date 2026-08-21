@@ -446,6 +446,39 @@ def test_a_working_paper_entry_needs_no_italics():
     assert not any(i.code == "italics" for i in report.issues)
 
 
+@pytest.mark.parametrize("entry", [
+    # Aging_Well's two italics findings, both of them false, and both of
+    # them the working-paper format under a name the marker list did not
+    # carry (2026-08-21).
+    'Sen, A. (2000). “Social Exclusion: Concept, Application, and '
+    'Scrutiny.” Social Development Papers No. 1, Asian Development Bank.',
+    'Zaidi, A., and E. Zolyomi. (2013). “Active Ageing Index 2012.” '
+    "Research Memorandum, European Centre Vienna.",
+    'Ito, K. (2019). “Long-term care.” Technical Report No. 8, OECD.',
+])
+def test_a_NUMBERED_SERIES_entry_needs_no_italics(entry):
+    body = (para(run("(Sen 2000) and others."))
+            + para(run("References")) + para(run(entry)))
+    report = audit(make_parts(body))
+    assert not any(i.code == "italics" for i in report.issues)
+
+
+@pytest.mark.parametrize("entry", [
+    # A Chicago issue number is lowercase and follows the volume, so the
+    # capital on "No." is what tells a SERIES from an issue. Exempting
+    # this would suppress the finding the check exists for.
+    'Brown, T. (2019). “Wages and hours.” Labour Economics 34, no. 4: '
+    "3–30.",
+    # …and a REPORT title is a title: the style italicises it like a book.
+    'World Bank. (2020). World Development Report 2020. Washington, DC.',
+])
+def test_an_entry_that_only_LOOKS_like_a_series_is_still_flagged(entry):
+    body = (para(run("(Brown 2019) and (World Bank 2020)."))
+            + para(run("References")) + para(run(entry)))
+    report = audit(make_parts(body))
+    assert any(i.code == "italics" for i in report.issues)
+
+
 def test_an_entry_that_names_its_acronym_licenses_it():
     """'Health Promotion Board (HPB). (2023).' is what '(HPB 2023)'
     cites — the alias is in the entry itself, no map needed (LE le15)."""

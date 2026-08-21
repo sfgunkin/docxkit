@@ -6,11 +6,15 @@ import json
 import pytest
 from conftest import make_parts, note, notes, para, run, write
 
-from docxkit.errors import AnchorError
+from docxkit import read_parts
+from docxkit._xml import DOCUMENT, PARA_RE
+from docxkit.errors import AnchorError, NoteEdit
 from docxkit.ingest import (
     _cat,
     apply_overrides,
+    apply_part_overrides,
     build_overrides,
+    build_part_overrides,
     load_paragraphs,
     update_overrides,
 )
@@ -387,7 +391,11 @@ def test_a_footnote_is_matched_on_the_SAME_text_not_a_LATER_one(tmp_path):
         + '<w:p><w:r><w:footnoteReference w:id="3"/></w:r></w:p>',
         footnotes=user_fn))
 
-    joined = "".join(n for _, n in build_overrides(base, edited))
+    # allow_note_loss: the fixture's note STORES differ on purpose (the
+    # author's copy carries one of the build's two), and this test is
+    # about the id remap, not about folding a note edit back.
+    joined = "".join(n for _, n in build_overrides(base, edited,
+                                                   allow_note_loss=True))
 
     assert 'w:footnoteReference w:id="6"' in joined      # Zebra counts.
     assert 'w:footnoteReference w:id="7"' not in joined
@@ -422,39 +430,96 @@ def test_a_LONG_document_aligns_ACROSS_a_run_of_blank_paragraphs(tmp_path):
          "Another wholly rewritten line about coverage.")]
 
 
-def test_an_edit_inside_a_NOTE_is_not_ingested(tmp_path):
-    """**A known gap, pinned rather than fixed** — BACKLOG S2,
-    2026-08-19.
+def _note_paper(path, foot, end):
+    return write(path, make_parts(
+        para(run("The body sentence, identical in both.")),
+        footnotes=notes("footnotes", note(foot, 2)),
+        extra={"word/endnotes.xml": notes("endnotes",
+                                          note(end, 2, "endnote"))}))
 
-    The alignment runs over BODY paragraphs. Footnotes are read for one
-    purpose, remapping the ids Word renumbered, and endnotes are not
-    read at all — so a sentence the author retyped inside a note
-    definition yields no override, and the next clean build regenerates
-    from a source that never received it.
 
-    `revision.ingest` DESCRIBES the change (it runs `compare`, which
-    reads every part a reader sees), which is what makes this worth
-    pinning: named in the report and dropped by the fold-back reads as
-    handled.
+@pytest.fixture
+def retyped_notes(tmp_path):
+    """A baseline and an author copy differing only INSIDE the notes."""
+    return (_note_paper(tmp_path / "base.docx", "The baseline footnote.",
+                        "The baseline endnote."),
+            _note_paper(tmp_path / "edited.docx", "The footnote, retyped.",
+                        "The endnote, retyped."))
 
-    This test is the documentation's witness. When the gap is closed it
-    fails, and the two docstrings and the BACKLOG entry have to be
-    rewritten before it can pass again.
+
+def test_an_edit_inside_a_NOTE_is_ingested_per_PART(retyped_notes):
+    """BACKLOG S2, 2026-08-19: it used to yield NO override at all.
+
+    The alignment ran over BODY paragraphs; footnotes were read for one
+    purpose, remapping the ids Word renumbered, and endnotes not at all
+    — so a sentence the author retyped inside a note definition was
+    dropped by the fold-back while `compare` described it in the report
+    beside it, which is the pair that reads as handled.
     """
-    def paper(path, foot, end):
-        return write(path, make_parts(
-            para(run("The body sentence, identical in both.")),
-            footnotes=notes("footnotes", note(foot, 2)),
-            extra={"word/endnotes.xml": notes("endnotes",
-                                              note(end, 2, "endnote"))}))
+    base, edited = retyped_notes
 
-    base = paper(tmp_path / "base.docx", "The baseline footnote.",
-                 "The baseline endnote.")
-    edited = paper(tmp_path / "edited.docx", "The footnote, retyped.",
-                   "The endnote, retyped.")
+    by_part = build_part_overrides(base, edited)
 
-    assert build_overrides(base, edited) == [], (
-        "notes are ingested now — update the docstrings and BACKLOG")
+    assert set(by_part) == {"word/footnotes.xml", "word/endnotes.xml"}
+    assert all(len(pairs) == 1 for pairs in by_part.values())
+    assert "The footnote, retyped." in by_part["word/footnotes.xml"][0][1]
+    assert "The endnote, retyped." in by_part["word/endnotes.xml"][0][1]
+
+
+def test_the_body_only_path_now_REFUSES_a_note_edit(retyped_notes):
+    """The old answer was `[]`, which is indistinguishable from "the
+    author changed nothing" — and that is what a caller then wrote into
+    the source."""
+    base, edited = retyped_notes
+
+    with pytest.raises(NoteEdit, match=r"footnotes\.xml"):
+        build_overrides(base, edited)
+
+    assert build_overrides(base, edited, allow_note_loss=True) == []
+
+
+def test_a_note_override_is_APPLIED_to_its_own_part(retyped_notes):
+    base, edited = retyped_notes
+    parts = read_parts(base)
+    store = [{"old": old, "new": new, "part": part}
+             for part, pairs in build_part_overrides(base, edited).items()
+             for old, new in pairs]
+
+    applied, missed = apply_part_overrides(parts, store)
+
+    assert (applied, missed) == (2, [])
+    assert b"The footnote, retyped." in parts["word/footnotes.xml"]
+    assert b"The endnote, retyped." in parts["word/endnotes.xml"]
+    assert b"The baseline footnote." not in parts["word/footnotes.xml"]
+
+
+def test_a_stored_override_with_no_PART_key_still_means_the_body(tmp_path):
+    """Three paper pipelines hold such a store. Reading one has to be
+    the behaviour it has always had, in both appliers."""
+    base = write(tmp_path / "base.docx",
+                 make_parts(para(run("The settled sentence."))))
+    parts = read_parts(base)
+    doc = parts[DOCUMENT].decode("utf-8")
+    old = PARA_RE.findall(doc)[0]
+    store = [{"old": old, "new": old.replace("settled", "revised")}]
+
+    xml, applied, missed = apply_overrides(doc, store)
+    part_applied, part_missed = apply_part_overrides(parts, store)
+
+    assert (applied, missed) == (1, [])
+    assert (part_applied, part_missed) == (1, [])
+    assert "The revised sentence." in xml
+    assert b"The revised sentence." in parts[DOCUMENT]
+
+
+def test_apply_overrides_REFUSES_a_store_that_names_another_part(tmp_path):
+    """It writes one string, so a footnote entry handed to it can only
+    be dropped — and "the build moved under them" is the wrong reason
+    for a caller to read."""
+    store = [{"old": "<w:p/>", "new": "<w:p/>", "part": "word/footnotes.xml"}]
+
+    with pytest.raises(NoteEdit, match="apply_part_overrides"):
+        apply_overrides("<w:body/>", store)
 
 
 # --- what the messages SAY, and the id the splice writes ----------------
@@ -542,7 +607,10 @@ def test_a_footnote_the_build_does_NOT_have_keeps_its_own_id(tmp_path):
         para(run("body edited") + '<w:footnoteReference w:id="3"/>',
              pid="00000001"), footnotes=user_fn))
 
-    (_old, new), = build_overrides(base, edited)
+    # allow_note_loss: the author's note is one the build has never had,
+    # so the stores differ by construction here; the assertion is about
+    # the id the BODY paragraph's reference keeps.
+    (_old, new), = build_overrides(base, edited, allow_note_loss=True)
 
     assert '<w:footnoteReference w:id="3"/>' in new, new
 

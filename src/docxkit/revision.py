@@ -68,6 +68,7 @@ from pathlib import Path
 from typing import Any
 
 from . import footnotes, package, revisions, tracked
+from . import guard as _guard
 from . import lint as _lint
 from . import word as _word
 from ._xml import (
@@ -332,6 +333,11 @@ class State:
     #: Empty for a file Word wrote; see :func:`footnotes.out_of_order`
     #: for what a file it did not costs.
     notes_unordered: dict[str, list[str]] = field(default_factory=dict)
+    #: Was this read from a COPY, because Word holds the file? A
+    #: snapshot mid-edit is a true statement about a moment and the
+    #: alternative was no answer at all — but the reader has to be told
+    #: which one they are looking at.
+    from_snapshot: bool = False
 
     @property
     def pending(self) -> int:
@@ -371,7 +377,11 @@ def state(path: str | Path) -> State:
     protocol's own truth test was the place still using it.
     """
     path = Path(path)
-    parts = package.read_parts(path)
+    # READ-ONLY, and the moment it is most worth running is while the
+    # author has the file open in Word — so a lock takes a snapshot and
+    # says so rather than refusing (see `package.readable`).
+    with package.readable(path) as (readable, snapshot):
+        parts = package.read_parts(readable)
     by_part: dict[str, int] = {}
     by_author: dict[str, int] = {}
     for name in TEXT_PARTS:
@@ -399,7 +409,7 @@ def state(path: str | Path) -> State:
         if moved:
             unordered[kind] = moved
     return State(path=path, by_part=by_part, by_author=by_author,
-                 notes_unordered=unordered)
+                 notes_unordered=unordered, from_snapshot=snapshot)
 
 
 def _drifted(before: dict[str, bytes], after: dict[str, bytes]) -> list[str]:
@@ -468,6 +478,9 @@ class IngestReport:
     #: changed. A finding too, and deliberately NOT a loss: it does not
     #: block `baseline`. See :func:`relabelled_links`.
     relabelled: list[Relabelled] = field(default_factory=list)
+    #: Was `working` read from a COPY, because the author has it open in
+    #: Word? See :func:`docxkit.package.readable`.
+    from_snapshot: bool = False
 
     @property
     def style_edit(self) -> bool:
@@ -508,21 +521,32 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
     from . import compare as _compare  # deferred: heavy import chain
 
     working, prev = Path(working), Path(prev)
-    prev_parts = package.read_parts(prev)
-    working_parts = package.read_parts(working)
+    # A SNAPSHOT while Word holds the file, rather than the refusal this
+    # used to give at the one moment the command is most useful: the
+    # protocol's resume ritual is "status, then ingest, both read-only",
+    # and the author is usually still in the manuscript. Every read below
+    # goes through the same copy, `compare` included — reading half the
+    # answer from a file being edited and half from a snapshot of it
+    # would be worse than either.
+    with package.readable(working) as (live, snapshot):
+        prev_parts = package.read_parts(prev)
+        working_parts = package.read_parts(live)
+        content = dict(_compare.compare(str(prev), str(live)))
+        working_state = state(live)
     parts = package.changed_parts(prev_parts, working_parts)
     return IngestReport(
         lost=losses(working_parts, prev_parts),
         relabelled=relabelled_links(working_parts, prev_parts),
         working=working,
         prev=prev,
-        content=dict(_compare.compare(str(prev), str(working))),
+        from_snapshot=snapshot,
+        content=content,
         changed_parts=[p for p in parts["changed"] if p not in SAVE_NOISE],
         noise_parts=[p for p in parts["changed"] if p in SAVE_NOISE],
         resaved=len(parts["resaved"]),
         added=parts["added"],
         removed=parts["removed"],
-        working_state=state(working),
+        working_state=working_state,
         prev_state=state(prev),
     )
 
@@ -743,6 +767,15 @@ class ValidateReport:
     #: :func:`docxkit.package.missing_parts`.
     lost_parts: list[str] = field(default_factory=list)
     accept_paths_agree: bool | None = None
+    #: Was this batch built on the baseline it is being validated
+    #: against? None when the batch carries no stamp to say — a batch
+    #: built before `base_sha256` existed, or one nothing built. The
+    #: whole ladder below describes the wrong pair when this is False,
+    #: which is why it aborts. See :func:`docxkit.guard.base_of`.
+    built_on_this_baseline: bool | None = None
+    #: The baseline hash the batch says it was built on, when that is
+    #: not the one it was handed.
+    built_on: str = ""
 
     @property
     def empty_shells(self) -> int:
@@ -752,6 +785,7 @@ class ValidateReport:
     def ok(self) -> bool:
         """Every gate that ran said yes."""
         return (not self.lint
+                and self.built_on_this_baseline is not False
                 and self.word_opened is not False
                 and not self.empty_shells
                 and not self.lost_parts
@@ -1327,6 +1361,23 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     report = ValidateReport(path=path,
                             baseline=Path(baseline) if baseline else None)
 
+    # Gate 0: is this batch even ABOUT this baseline? Everything below
+    # compares the two, so a mismatched pair produces a full, detailed,
+    # entirely plausible verdict describing a batch nobody is working on
+    # — twenty LINK LOST findings against a redline two baselines old,
+    # several minutes read as if they were about the current round
+    # (Aging_Well R5, 2026-08-21). It aborts for the same reason lint
+    # does: the answer beneath it is not wrong, it is about the wrong
+    # document.
+    if report.baseline is not None:
+        built_on = _guard.base_of(path)
+        if built_on is not None:
+            report.built_on_this_baseline = built_on == _guard.sha256(
+                report.baseline)
+            if not report.built_on_this_baseline:
+                report.built_on = built_on
+                return report
+
     report.lint = _lint.lint_parts(parts)
     if report.lint:
         return report                      # abort before Word
@@ -1508,6 +1559,25 @@ def promote(paper: Paper, batch: str | Path | None = None,
             f"{base_hash[:16]}). The author has edited it. Re-baseline "
             f"from the live file, rebuild the batch on top of it, "
             f"re-validate, then promote.")
+
+    # …and the other direction, which is the one that loses work
+    # silently. The check above asks whether the AUTHOR moved; this asks
+    # whether the BATCH did. A refused build leaves the previous redline
+    # in `build/batch.docx`, live and base stay in sync, and promoting
+    # copies a generation from before an entire author round over the
+    # manuscript with the rescue copy as the only way back and no gate
+    # having said a word (Aging_Well R5, 2026-08-21).
+    built_on = _guard.base_of(batch)
+    if built_on is not None and built_on != base_hash:
+        raise StaleBatch(
+            f"{batch.name} was not built on {base.name}: it says it was "
+            f"built on {built_on[:16]} and this baseline is "
+            f"{base_hash[:16]}. It is a redline of an older truth — "
+            f"promoting it would replace {live.name} with a generation "
+            f"from before whatever has been baselined since. Rebuild the "
+            f"batch on the current baseline and re-validate. (If the "
+            f"build was REFUSED, this file is the previous batch: delete "
+            f"it and build again.)")
 
     paper.rescue_dir.mkdir(parents=True, exist_ok=True)
     rescue = rescue_path(paper)

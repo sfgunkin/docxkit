@@ -128,6 +128,41 @@ def test_refstyle_exits_1_only_when_it_found_issues(
     assert code == 0, "a document with no reference list has no issues"
 
 
+def test_IGNORE_clears_a_lead_word_the_grammar_read_as_an_author(
+        monkeypatch, tmp_path, capsys):
+    """"<Capitalised noun> and <Source> (Year)" is the two-author
+    pattern, and an UNLINKED manuscript has no apparatus to settle it
+    with: *"…national Labor Force Surveys and ILOSTAT (2024) data…"* is
+    reported as a citation of a work called "Surveys and ILOSTAT" that
+    the list does not have, so the paper cannot reach a clean report
+    (Aging_Well, 2026-08-21). Which words a paper's prose puts before
+    "and" is the paper's vocabulary, so the paper says it."""
+    from conftest import make_parts, para, run, write
+
+    body = (para(run("Employment is consolidated from standardized "
+                     "national Labor Force Surveys and ILOSTAT (2024) "
+                     "data on employment by occupation."))
+            + para(run("References"))
+            + para(run("ILOSTAT. (2024). Employment by occupation. ")
+                   + '<w:r><w:rPr><w:i/></w:rPr><w:t>ILO Statistics</w:t>'
+                     "</w:r>" + run(".")))
+    docx = write(tmp_path / "unlinked.docx", make_parts(body))
+
+    code, _ = run_cli(monkeypatch, "refstyle", docx)
+    out = capsys.readouterr().out
+    assert "Surveys and ILOSTAT" in out and code == 1
+
+    code, _ = run_cli(monkeypatch, "refstyle", docx, "--ignore", "Surveys")
+    out = capsys.readouterr().out
+    assert "Surveys and ILOSTAT" not in out
+    assert code == 0, out
+
+    # …and the same word, through the link audit, which shares the grammar
+    code, _ = run_cli(monkeypatch, "citations", docx, "--ignore", "Surveys")
+    out = capsys.readouterr().out
+    assert "Surveys" not in out
+
+
 def test_crossrefs_audit_exits_1_only_on_a_dangling_anchor(
         monkeypatch, paper, dangling_ref, capsys):
     code, _ = run_cli(monkeypatch, "crossrefs", str(paper), "--audit")
@@ -136,6 +171,27 @@ def test_crossrefs_audit_exits_1_only_on_a_dangling_anchor(
     code, _ = run_cli(monkeypatch, "crossrefs", str(dangling_ref), "--audit")
     capsys.readouterr()
     assert code == 1
+
+
+def test_crossrefs_audit_COUNTS_the_exhibits_nothing_links(
+        monkeypatch, tmp_path, capsys):
+    """`linked 0 · caption_only 0 · …` is what a paper with no exhibits
+    prints, and it was also what a paper with five UNLINKED ones printed
+    (Aging_Well, 2026-08-21). `--labels` is the other half: the fifth
+    exhibit is a Box, and the command had no way to be told."""
+    doc = write(tmp_path / "boxes.docx", make_parts(
+        para(run("Box 1 sets out the framework, and Table 1 the data."))
+        + para(run("Box 1. Bounded rationality"))
+        + para(run("Table 1. Descriptive statistics"))))
+
+    run_cli(monkeypatch, "crossrefs", str(doc), "--audit")
+    out = capsys.readouterr().out
+    assert "unlinked           1  Table1" in out, out
+
+    run_cli(monkeypatch, "crossrefs", str(doc), "--audit",
+            "--labels", "Figure,Table,Box")
+    out = capsys.readouterr().out
+    assert "unlinked           2  Box1, Table1" in out, out
 
 
 def test_crossrefs_audit_says_the_anchor_does_not_lead_its_mentions(
@@ -1158,6 +1214,35 @@ def test_locate_reports_a_miss_and_exits_nonzero(monkeypatch, paper,
     assert "NOT FOUND" in out
 
 
+def test_locate_says_when_the_MISS_is_a_bookmark_NAME(monkeypatch, paper,
+                                                      fake_word, capsys):
+    """Asked for the bookmarks a hand-back had lost, `docxkit locate
+    prev.docx cite_kakwani_1977` answered NOT FOUND — confidently, for
+    two bookmarks that are both in the file. The command searches the
+    laid-out text; everywhere else in this toolkit an anchor is a
+    bookmark name (2026-08-21). A wrong answer that reads like a finding
+    costs more than the sentence that prevents it."""
+    monkeypatch.setattr(fake_word, "locate_in", lambda doc, anchors, **kw: [])
+    from docxkit import read_parts, write_docx
+    parts = read_parts(paper)
+    doc = parts["word/document.xml"].decode("utf-8")
+    parts["word/document.xml"] = doc.replace(
+        "<w:body>",
+        '<w:body><w:bookmarkStart w:id="90" w:name="cite_kakwani_1977"/>'
+        '<w:bookmarkEnd w:id="90"/>', 1).encode("utf-8")
+    write_docx(paper, parts)
+
+    code, _ = run_cli(monkeypatch, "locate", str(paper),
+                      "cite_kakwani_1977", "no such phrase")
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "that is a BOOKMARK name" in out
+    # …and an ordinary miss is still an ordinary miss
+    plain = [ln for ln in out.splitlines() if "no such phrase" in ln]
+    assert plain and "BOOKMARK" not in plain[0]
+
+
 def test_locate_reads_anchors_from_a_file(monkeypatch, paper, fake_word,
                                           tmp_path, capsys):
     from docxkit.word import Location
@@ -1181,7 +1266,7 @@ def test_locate_with_nothing_to_look_for_is_a_usage_error(monkeypatch, paper,
                                                           capsys):
     code, _ = run_cli(monkeypatch, "locate", str(paper))
     assert code == 2
-    assert "give an anchor" in capsys.readouterr().out
+    assert "give a phrase" in capsys.readouterr().out
 
 
 def test_locate_revisions_lists_them_in_the_redlines_pagination(

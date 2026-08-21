@@ -276,6 +276,42 @@ def test_the_build_carries_the_customXml_store_across_the_compare(
     assert not [n for n in report.dropped if "customXml" in n], report.dropped
 
 
+def test_the_build_carries_docProps_custom_across_the_compare(
+        monkeypatch, sources):
+    """It is on the default carry list beside the data store, because it
+    is NOT Word's own bookkeeping: those are user-defined properties, and
+    on the Bank manuscript that raised this they were the sensitivity
+    label and the "Official Use Only" content marking (Aging_Well R1)."""
+    original, revised, out = sources
+    with zipfile.ZipFile(revised, "w") as z:
+        z.writestr("word/document.xml", _clean_document())
+        z.writestr(
+            "docProps/custom.xml",
+            '<Properties xmlns:vt="http://schemas.openxmlformats.org'
+            '/officeDocument/2006/docPropsVTypes">'
+            '<property name="Classification">'
+            "<vt:lpwstr>Official Use Only</vt:lpwstr>"
+            "</property></Properties>")
+        z.writestr("[Content_Types].xml",
+                   '<Types><Override PartName="/docProps/custom.xml" '
+                   'ContentType="application/vnd.openxmlformats-officedocument'
+                   '.custom-properties+xml"/></Types>')
+        z.writestr("_rels/.rels",
+                   '<Relationships><Relationship Id="rId3" '
+                   'Target="docProps/custom.xml"/></Relationships>')
+
+    monkeypatch.setattr(tracked, "_word", _FakeWordModule(_clean_document()))
+    report = tracked.build(original, revised, out, verify_in_word=False)
+
+    built = zipfile.ZipFile(out)
+    assert report.carried == ["docProps/custom.xml"]
+    assert b"Official Use Only" in built.read("docProps/custom.xml")
+    assert 'PartName="/docProps/custom.xml"' in built.read(
+        "[Content_Types].xml").decode("utf-8")
+    assert 'Target="docProps/custom.xml"' in built.read(
+        "_rels/.rels").decode("utf-8")
+
+
 def test_carry_can_be_turned_off(monkeypatch, sources):
     """`carry=()` is the raw Compare output and a warning — which is
     what every build did before, and is still the right answer for a
@@ -1397,6 +1433,20 @@ def test_a_part_word_REGENERATES_is_not_reported_as_a_loss():
     assert notes[0].startswith("part LOST: customXml/item1.xml")
     assert notes[1].startswith("part dropped: docProps/app.xml")
     assert "regenerates" in notes[1]
+
+
+def test_docProps_custom_is_a_LOSS_not_word_bookkeeping():
+    """It sat under the same "Word regenerates it on save" line as
+    app.xml, and the parts gate skipped it by design. It is not Word's:
+    those are user-defined properties, and on this Bank manuscript they
+    were the sensitivity label and the "Official Use Only" footer
+    marking (Aging_Well R1, 2026-08-21)."""
+    revised = _pkg(para(run("x")),
+                   **{"docProps/custom.xml": "<Properties/>",
+                      "docProps/app.xml": "<Properties/>"})
+    notes = tracked.compare_collateral(revised, _pkg(para(run("x"))))
+    assert notes[0].startswith("part LOST: docProps/custom.xml")
+    assert notes[1].startswith("part dropped: docProps/app.xml")
 
 
 def test_a_dropped_bookmark_is_reported():

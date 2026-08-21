@@ -68,7 +68,13 @@ from .equations import OMATH_RE
 from .errors import PackageError
 from .hygiene import CARRIED_PROPERTIES
 from .lint import lint_parts
-from .package import REGENERATED_BY_WORD, core_property, read_parts, write_docx
+from .package import (
+    USER_PROPERTIES,
+    core_property,
+    read_parts,
+    regenerated_by_word,
+    write_docx,
+)
 from .revisions import accept as _accept
 from .revisions import reject as _reject
 from .revisions import revision_elements
@@ -162,9 +168,9 @@ def compare_collateral(revised: dict[str, bytes],
     lost = sorted(set(revised) - set(redline))
     notes = [f"part LOST: {p} — nothing regenerates this; it is gone from "
              f"the redline unless you put it back"
-             for p in lost if not p.startswith(REGENERATED_BY_WORD)]
+             for p in lost if not regenerated_by_word(p)]
     notes += [f"part dropped: {p} (Word regenerates it on save)"
-              for p in lost if p.startswith(REGENERATED_BY_WORD)]
+              for p in lost if regenerated_by_word(p)]
     was_names, was_targets = _anchors(revised)
     now_names, now_targets = _anchors(redline)
     notes += [f"bookmark dropped: {b}"
@@ -902,7 +908,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           resolve_math: bool = True, reject_check: bool = True,
           accept_check: bool = True,
           verify_in_word: bool = True, force: bool = False,
-          carry: tuple[str, ...] = (_hygiene.CUSTOM_XML,),
+          carry: tuple[str, ...] = (_hygiene.CUSTOM_XML, USER_PROPERTIES),
           progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
@@ -951,19 +957,21 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     that has been edited since it was built.
 
     `carry` names part-trees to copy back from `revised` when Compare
-    drops them — the ``customXml/`` data store by default, which it
-    drops on every single rebuild. Pass ``carry=()`` to get the raw
-    Compare output and only a warning. See
+    drops them: the ``customXml/`` data store, which it drops on every
+    single rebuild, and ``docProps/custom.xml``, whose user-defined
+    properties carry a Bank manuscript's sensitivity label. Pass
+    ``carry=()`` to get the raw Compare output and only a warning. See
     :func:`docxkit.hygiene.restore_parts` for why the default is not
     "warn and leave it to the reader".
 
-    **Do not widen it to a part the BODY references.** The data store is
-    reachable only through a relationship, which is why putting it back
-    is mechanical. A header is reached from a ``w:headerReference`` in
-    the section properties, and Compare rewrote those when it rebuilt
-    the document — so copying the part back would satisfy the part-list
-    gate with a header that renders nowhere, which is worse than the
-    loss it was hiding. That case wants a person.
+    **Widening it to a header or a footer is a decision, not a default.**
+    Those are reached from a ``w:headerReference`` in the section
+    properties as well as through a relationship, and Compare rewrites
+    the sectPr when it rebuilds the document. `restore_parts` puts that
+    reference back — reading the type off the source's own sectPr — or
+    refuses; what it cannot do is tell you whether the section the
+    reference lands in is still the section the author meant. That case
+    wants a person to look at the rendered page.
     """
     original, revised, out = Path(original), Path(revised), Path(out)
     report = BuildReport()
@@ -1193,7 +1201,14 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"{report.verified_revisions} revisions in the body")
 
         building.replace(out)          # every gate passed: publish
-        _guard.stamp(out, original=original.name, revised=revised.name)
+        # `base_sha256` is the batch's link to the BASELINE it was built
+        # on. The names alone cannot answer "is this batch about the
+        # current truth" — `prev.docx` is a path whose content changes
+        # on every `baseline` — and without it a refused build left the
+        # PREVIOUS redline in place for `validate` and `promote` to take
+        # as this one (Aging_Well R5). See `guard.base_of`.
+        _guard.stamp(out, original=original.name, revised=revised.name,
+                     base_sha256=_guard.sha256(original))
         return report
     finally:
         shutil.rmtree(staging, ignore_errors=True)

@@ -1,11 +1,14 @@
 """Citation detection, reference parsing and the link XML."""
 from __future__ import annotations
 
+import itertools
 import re
 
 import pytest
 
+from docxkit._xml import PARA_RE, visible_text
 from docxkit.citations import (
+    _BOOKMARK_NAME_RE,
     Reference,
     anchor_names,
     audit_links,
@@ -617,6 +620,187 @@ def test_a_citation_whose_LABEL_is_linked_elsewhere_is_not_UNLINKED():
     unlinked = [i for i in audit_links(parts)[0] if i.startswith("UNLINKED")]
 
     assert unlinked == []
+
+
+def _own_scheme(entry: str, cite: str, label: str, text: str, *,
+                in_text: bool = True,
+                marked: bool = True) -> tuple[str, str]:
+    """A work under a paper's OWN naming — `ref_x_2018` / `cite_x_2018`.
+
+    `in_text=False` is the mention after a Word round-trip with track
+    changes off: the bookmark and its link are gone and the words are
+    still there. `marked=False` takes the ENTRY's marker too, leaving
+    only its back-link — which still names the mention Word deleted.
+    """
+    prose = (P(bookmark(cite, 11, hfield(entry, label))) if in_text
+             else P(R(f"As {label} shows, the pattern holds.")))
+    body = hfield(cite, text)
+    return prose, P(bookmark(entry, 21, body) if marked else body)
+
+
+def test_link_all_creates_the_name_a_BROKEN_BACK_LINK_demands():
+    """A Word round-trip with track changes off drops in-text links and
+    the bookmarks they carried while every word on the page survives.
+    `link_all` then minted `ref_noone_2018txt` beside the entry, reported
+    `linked 7`, and left all six back-links broken — the manuscript came
+    out worse than it went in (AFI r4 hand-back, 2026-08-21).
+
+    The evidence was in the file the whole time: the entry's back-link
+    points at `cite_noone_2018`, a broken link naming the exact anchor
+    that has to be created.
+    """
+    whole = _own_scheme("ref_alba_2015", "cite_alba_2015",
+                        "(Alba 2015)", "Alba, R. (2015). Whole.")
+    lost_cite = _own_scheme("ref_barr_2018", "cite_barr_2018",
+                            "(Barr 2018)", "Barr, S. (2018). Half.",
+                            in_text=False)
+    lost_both = _own_scheme("ref_cox_2022", "cite_cox_2022",
+                            "(Cox 2022)", "Cox, T. (2022). Both.",
+                            in_text=False, marked=False)
+    parts = make_doc(whole[0], lost_cite[0], lost_both[0],
+                     P(R("References")), whole[1], lost_cite[1],
+                     lost_both[1])
+
+    from docxkit.citations import link_all
+    link_all(parts)
+
+    marks = set(_BOOKMARK_NAME_RE.findall(
+        parts["word/document.xml"].decode("utf-8")))
+    # the twin each entry's own back-link asked for, and no orphan beside it
+    assert {"cite_barr_2018", "cite_cox_2022"} <= marks
+    assert not [n for n in marks if n.endswith("txt")], sorted(marks)
+    # …and the entry Word un-marked comes back under the document's rule,
+    # not as a minted `Cox2022`
+    assert "ref_cox_2022" in marks
+    assert not [n for n in marks if n.startswith(("Cox", "Barr"))]
+    # every link resolves: that is the finding class this was leaving open
+    issues, _ = audit_links(parts)
+    assert not [i for i in issues if i.startswith("BROKEN LINK")], issues
+
+
+def test_an_entry_whose_YEAR_carries_a_letter_finds_its_own_bookmark():
+    """A paper citing two works by one author in one year writes 2023a
+    and 2023b, and its bookmarks were minted BEFORE the split —
+    `ref_maestas_mp_2023` and `ref_maestas_2023`. The fold has to END
+    with the work's year, and "refmaestas2023" does not end with
+    "2023b", so NEITHER entry matched its own marker and `link_rest`
+    skipped five mentions with "entry has no bookmark" — which is false,
+    and sends the reader looking for a bookmark that is there (AFI batch
+    28, 2026-08-21).
+    """
+    from docxkit.citations import _entry_names_from_document, link_rest
+
+    first = P(bookmark("ref_maestas_mp_2023", 21, hfield(
+        "cite_maestas_mp_2023",
+        "Maestas, N. (2023a). Market power. A Journal.")))
+    second = P(bookmark("ref_maestas_2023", 22, hfield(
+        "cite_maestas_2023", "Maestas, N. (2023b). Something else. B.")))
+    parts = make_doc(
+        P(_linked_cite("cite_maestas_2023", "Maestas (2023b)")),
+        P(R("And again, Maestas (2023b) reports, plainly this time.")),
+        P(R("References")), first, second)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    paras = list(PARA_RE.finditer(doc))
+    entries = references([visible_text(m.group(0)) for m in paras])
+    names = _entry_names_from_document(doc, entries, paras)
+
+    assert names == {"maestas_2023a": "ref_maestas_mp_2023",
+                     "maestas_2023b": "ref_maestas_2023"}
+
+    report = link_rest(parts)
+
+    assert not [s for s in report.skipped if "no bookmark" in s], \
+        report.skipped
+    assert report.linked, "the later mention is linked now"
+
+
+def _named_entries(parts):
+    from docxkit.citations import _entry_names_from_document
+    doc = parts["word/document.xml"].decode("utf-8")
+    paras = list(PARA_RE.finditer(doc))
+    return _entry_names_from_document(
+        doc, references([visible_text(m.group(0)) for m in paras]), paras)
+
+
+def test_a_LETTERED_year_never_takes_a_name_another_entry_MATCHED():
+    """Two works by one author in one year is precisely when a wrong
+    guess is undetectable, so the relaxed pass yields to a strict match.
+
+    Reachable because a damaged manuscript really does carry the same
+    bookmark name twice — that is the coin-flip `_bookmark_names`
+    describes — and the bare year cannot tell the two copies apart."""
+    parts = make_doc(
+        P(R("Both (Maestas 2023) and (Maestas 2023b) are cited.")),
+        P(R("References")),
+        P(bookmark("Maestas2023", 21, R(
+            "Maestas, N. (2023). The first one. A Journal."))),
+        P(bookmark("Maestas2023", 22, R(
+            "Maestas, N. (2023b). Something else. B."))))
+
+    # the unlettered entry matches strictly and keeps the name; the
+    # lettered one is left unnamed rather than pointed at a coin flip
+    assert _named_entries(parts) == {"maestas_2023": "Maestas2023"}
+
+
+def test_TWO_lettered_entries_reaching_for_one_name_both_yield():
+    """Neither can match strictly, so nothing distinguishes them —
+    "whichever came first" is not an answer here."""
+    parts = make_doc(
+        P(R("Both (Maestas 2023a) and (Maestas 2023b) are cited.")),
+        P(R("References")),
+        P(bookmark("Maestas2023", 21, R(
+            "Maestas, N. (2023a). Market power. A Journal."))),
+        P(bookmark("Maestas2023", 22, R(
+            "Maestas, N. (2023b). Something else. B."))))
+
+    assert _named_entries(parts) == {}
+
+
+def test_the_pair_RULE_is_learned_by_majority_from_whole_pairs():
+    """One damaged pair must not teach the wrong shape, and a document
+    with no whole pair at all keeps this module's own `txt` suffix —
+    which is the only convention it can claim to know."""
+    from docxkit._cite_build import _entry_of, _pair_rule, _twin_of
+
+    assert _pair_rule("ref_alba_2015", "cite_alba_2015") == ("ref", "cite")
+    assert _pair_rule("Alba2015", "Alba2015txt") == ("", "")
+    assert _pair_rule("Alba2015", "Zzz9") is None      # nothing shared
+    assert _twin_of("ref_cox_2022", ("ref", "cite")) == "cite_cox_2022"
+    assert _twin_of("Cox2022", None) == "Cox2022txt"
+    assert _entry_of("cite_cox_2022", ("ref", "cite")) == "ref_cox_2022"
+    assert _entry_of("Cox2022txt", ("", "")) == "Cox2022"
+    assert _entry_of("elsewhere", ("ref", "cite")) is None
+
+
+def test_a_LATER_mention_is_COUNTED_always_and_reported_when_asked():
+    """The audit could not tell a half-linked paper from a finished one.
+
+    "Unlinked" was evaluated per WORK, so after `link_all` — which wires
+    each work's FIRST mention only — Aging_Well printed "ALL CHECKS
+    PASSED" while 20 of its 73 in-text mentions were plain text, and the
+    author found one by clicking it (2026-08-21). The count says which
+    state the document is in; the FINDING is opt-in, because whether
+    later mentions link at all is the paper's house style, and a gate
+    nobody can satisfy stops being read.
+    """
+    parts = make_doc(
+        P(_linked_cite("Muhlbach2022", "(Mühlbach 2022)")),
+        P(R("Repeated later (Mühlbach 2022) without a link.")),
+        P(R("References")),
+        P(_entry("Muhlbach2022", "Mühlbach, I. (2022). Ranges.")))
+
+    issues, stats = audit_links(parts)
+
+    assert (stats["mentions"], stats["mentions_linked"],
+            stats["later_unlinked"]) == (2, 1, 1)
+    assert not [i for i in issues if i.startswith("LATER-MENTION")]
+
+    asked, _ = audit_links(parts, later_mentions=True)
+
+    assert [i for i in asked if i.startswith("LATER-MENTION")] == [
+        'LATER-MENTION UNLINKED: "Mühlbach 2022" (¶7) — the work is '
+        "linked elsewhere but this mention is plain text"]
 
 
 def test_a_footnote_link_keeps_the_entry_cited():
@@ -1974,19 +2158,94 @@ def test_the_reference_year_is_the_first_one_a_period_follows():
 
 @pytest.mark.parametrize("text,seen", [
     ("(Smith 2020 and Jones 2021)", ["Jones"]),      # 'and' ends the scan
-    ("(Smith 2015, 2020)", ["Smith"]),               # bare later year
-    ("(Smith 2020a, 2020b)", ["Smith"]),
 ])
 def test_multi_work_groups_the_grammar_does_not_split(text, seen):
     """Also pinned rather than fixed.
 
-    A segment must end at its year, so a second work joined by "and" or
-    a bare trailing year is not seen. Extending the grammar is exactly
-    what this module's comments record as the source of its false
-    positives, and none of these forms occurs in any of the four live
-    papers. Pinned so a future change is deliberate.
+    A segment must end at its year, so a second work joined by "and" is
+    not seen. Extending the grammar is exactly what this module's
+    comments record as the source of its false positives, and this form
+    occurs in none of the four live papers. Pinned so a future change is
+    deliberate.
+
+    The COMMA-separated year list used to be pinned here too, and was
+    fixed instead when a fifth paper wrote it three times: see
+    `test_a_year_LIST_is_one_citation_per_year`.
     """
     assert [c.surname for c in find_citations(text)] == seen
+
+
+@pytest.mark.parametrize("text,seen", [
+    # The three forms Aging_Well wrote, and the shapes around them.
+    ("Sen (1985, 1992) distinguishes", [("Sen", "1985"), ("Sen", "1992")]),
+    ("Rowe and Kahn (1987, 1997) nor",
+     [("Rowe", "1987"), ("Rowe", "1997")]),
+    ("(Sen 1985, 1992) and", [("Sen", "1985"), ("Sen", "1992")]),
+    ("(Smith 2020a, 2020b)", [("Smith", "2020a"), ("Smith", "2020b")]),
+    ("Sen (1985, 1999, 2009) sets out",
+     [("Sen", "1985"), ("Sen", "1999"), ("Sen", "2009")]),
+    # …and the neighbours a year list must not swallow.
+    ("(Cameron et al. 2008, Roodman et al. 2019)",
+     [("Cameron", "2008"), ("Roodman", "2019")]),
+    ("(Sen 1999, 45) on capability", [("Sen", "1999")]),
+    ("Maestas et al. (2023, p. 45) report", [("Maestas", "2023")]),
+])
+def test_a_year_LIST_is_one_citation_per_year(text, seen):
+    """"Sen (1985, 1992)" is two works, and used to be NO citation.
+
+    The group did not degrade to its first year — the whole match failed,
+    so the name went missing with it. On Aging_Well that was 3 mentions
+    covering 5 works: `refstyle` reported every one of them as an uncited
+    entry, and `link_all` skipped them while reporting a clean sweep
+    (2026-08-21).
+    """
+    assert [(c.surname, c.year) for c in find_citations(text)] == seen
+
+
+def test_an_IGNORED_lead_is_STRIPPED_from_a_chain_not_dropped_with_it():
+    """A caller that filtered on the surname dropped the whole citation,
+    which takes the REAL half with it: "Surveys and ILOSTAT (2024)" then
+    cites nothing, and ILOSTAT's entry is reported UNCITED — one false
+    finding traded for another (Aging_Well, 2026-08-21)."""
+    from docxkit.citations import resolve_lead
+
+    text = "…national Labor Force Surveys and ILOSTAT (2024) data on…"
+    (found,) = find_citations(text)
+    assert found.authors == "Surveys and ILOSTAT"
+
+    c = resolve_lead(found, ignore={"Surveys"})
+
+    assert (c.authors, c.year) == ("ILOSTAT", "2024")
+    assert text[c.start:c.end] == "ILOSTAT (2024)"
+    # …and a lone ignored lead has no rest to keep: the caller's own
+    # surname filter is what drops "Table (2020)".
+    (only,) = find_citations("shown in Table (2020) format")
+    assert resolve_lead(only, ignore={"Table"}).authors == "Table"
+
+    # The contract is the ignore list's own — this word is NEVER an
+    # author — so a paper that cites James March takes "March" off its
+    # list. That is already true: filtering on the surname drops the
+    # same citation whole. Pinned because the two answers differ.
+    (chain,) = find_citations("March, Simon and Cyert (1958) argue")
+    assert chain.surname == "March"
+    assert resolve_lead(chain, ignore={"March"}).authors == "Simon and Cyert"
+
+
+def test_a_year_LIST_gives_each_work_its_own_span():
+    """The spans TILE the group; they never overlap.
+
+    The reader clicks "1997" for the 1997 work, so each later year takes
+    its own span rather than repeating the first's. Overlapping spans
+    would be worse than the defect they fix: `link_all` wraps each one,
+    and two hyperlinks over the same words is what `audit_links` reports
+    as a DOUBLED LINK.
+    """
+    text = "Rowe and Kahn (1987, 1997) nor Sen (1985, 1992) alone"
+    spans = [(c.start, c.end) for c in find_citations(text)]
+    assert [text[a:b] for a, b in spans] == [
+        "Rowe and Kahn (1987", "1997)", "Sen (1985", "1992)"]
+    assert all(end <= nxt
+               for (_, end), (nxt, _) in itertools.pairwise(spans))
 
 
 @pytest.mark.parametrize("hoisted", [False, True])

@@ -428,6 +428,46 @@ def test_audit_reports_each_state():
     assert "Table9" not in state["linked"]
 
 
+def test_a_document_where_NOTHING_is_linked_is_not_a_clean_report():
+    """A caption carrying NEITHER bookmark fell through all three
+    buckets and was counted nowhere — which is the state of every
+    caption in a manuscript nobody has run this over, and the one case
+    the audit exists to report. Aging_Well's five exhibits printed the
+    same all-zero line as a paper with no exhibits at all, and the
+    paper's notes recorded it as "finds no captions" (2026-08-21)."""
+    xml = doc(
+        para(run("As Table 1 and Figure 2 show, the pattern holds.")),
+        para(run("Table 1. Descriptive statistics")),
+        para(run("Figure 2. The gap over time")),
+    )
+
+    state = crossrefs.audit(xml)
+
+    assert state["unlinked"] == ["Figure2", "Table1"]
+    assert state["linked"] == state["caption_only"] == []
+    # …and once linked, they move out of it
+    linked, _ = crossrefs.link(xml)
+    assert crossrefs.audit(linked)["unlinked"] == []
+
+
+def test_the_LABELS_are_the_papers_own_word_for_its_exhibits():
+    """Aging_Well's fifth exhibit is a BOX. `link` has always taken the
+    label set — the caption grammar fits — but a paper could not say so
+    without a script."""
+    xml = doc(
+        para(run("Box 1 sets out how bounded rationality interacts.")),
+        para(run("Box 1. Bounded rationality and the capability framework")),
+    )
+
+    assert crossrefs.audit(xml)["unlinked"] == []      # not an exhibit yet
+
+    labels = ("Figure", "Table", "Box")
+    assert crossrefs.audit(xml, labels=labels)["unlinked"] == ["Box1"]
+    linked, report = crossrefs.link(xml, labels=labels)
+    assert report.complete
+    assert crossrefs.audit(linked, labels=labels)["linked"] == ["Box1"]
+
+
 def test_audit_finds_a_dangling_anchor():
     xml = doc(para('<w:hyperlink w:anchor="Figure7">', run("Figure 7"),
                    "</w:hyperlink>"))

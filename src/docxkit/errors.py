@@ -23,6 +23,7 @@ __all__ = [
     "FontMissing",
     "HandbackLoss",
     "MathResolved",
+    "NoteEdit",
     "PackageError",
     "ProtocolError",
     "ScaffoldMissing",
@@ -103,6 +104,24 @@ class ScaffoldMissing(PackageError):
 
     Comment parts, styles and relationships have to come from Word itself;
     hand-rolling them is how a file ends up "repaired" on open.
+    """
+
+
+class NoteEdit(DocxKitError):
+    """The author edited a NOTE definition, and this path is body-only.
+
+    :func:`docxkit.ingest.build_overrides` aligns body paragraphs, and
+    an override is anchored on a paragraph's XML with nowhere to say
+    which part it belongs to — so an edit inside a footnote or endnote
+    definition used to produce no override at all, and the next clean
+    build regenerated from a source that never received it.
+
+    Raised rather than dropped, because the report layer beside it is
+    NOT blind: `revision.ingest` runs `compare`, which reads every part
+    a reader sees, so the edit is described and then discarded, and the
+    pair reads as "handled". Use
+    :func:`docxkit.ingest.build_part_overrides` with
+    :func:`docxkit.ingest.apply_part_overrides`, which carry the part.
     """
 
 

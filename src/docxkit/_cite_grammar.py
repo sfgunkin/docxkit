@@ -69,6 +69,19 @@ _AUTHORS = (rf"{_SURNAME}"
             rf"(?:(?:,\s+|,?\s+(?:and|&)\s+){_SURNAME})*"
             r"(?:['’]s)?")
 _YEAR = r"\d{4}[a-z]?"
+_YEAR_RE = re.compile(_YEAR)
+# One author, SEVERAL works: "Sen (1985, 1992)", "Rowe and Kahn (1987,
+# 1997)", "Sen's capability approach (1985, 1999, 2009)". A pattern that
+# took a parenthesis holding exactly one year matched none of them, and
+# the group did not degrade to its first work — it produced NO citation
+# at all, so the author went missing with the extra years: `refstyle`
+# called five cited works uncited and `link_all` skipped three mentions
+# while reporting a clean sweep (Aging_Well, 2026-08-21).
+#
+# The list stops at anything that is not a year, which is what keeps the
+# forms around it: "(Cameron et al. 2008, Roodman et al. 2019)" is still
+# two works, and "(Sen 1999, 45)" still one work with a locator.
+_YEARS = rf"{_YEAR}(?:\s*,\s*{_YEAR})*"
 # In-text citations hide inside parenthesis GROUPS, which real papers
 # fill with more than one work: "(Bernheim and Rangel 2009; Chetty
 # 2015)", "(Cameron et al. 2008, Roodman et al. 2019)", "(e.g., Cahill
@@ -78,10 +91,10 @@ _YEAR = r"\d{4}[a-z]?"
 # CLOSES it (the group's end, a semicolon, or a comma) — "in Almaty
 # 2005 the" does not cite.
 _PAREN_RE = re.compile(r"\(([^()]*)\)")
-_SEGMENT_RE = re.compile(rf"({_AUTHORS})\s+({_YEAR})(?=\s*(?:[;,]|$))")
+_SEGMENT_RE = re.compile(rf"({_AUTHORS})\s+({_YEARS})(?=\s*(?:[;,]|$))")
 # The narrative parens may carry a locator: "Maestas et al. (2023, p. 45)".
 _NARRATIVE_RE = re.compile(
-    rf"({_AUTHORS})\s+\(({_YEAR})(?:,\s+pp?\.[^)]*)?\)")
+    rf"({_AUTHORS})\s+\(({_YEARS})(?:,\s+pp?\.[^)]*)?\)")
 # The year that dates a reference entry. Both house styles occur across
 # these papers and a parser that knows only one finds almost nothing:
 #     Maestas, Nicole, ... 2023. "Title."      (AFI)
@@ -231,7 +244,8 @@ def key_for(surname: str, year: str) -> str:
 
 
 def resolve_lead(c: Citation, *,
-                 known: Collection[str] = ()) -> Citation:
+                 known: Collection[str] = (),
+                 ignore: Collection[str] = ()) -> Citation:
     """The citation without the lead word the grammar mistook for an author.
 
     "Word, First and Second" is exactly the shape of a three-author
@@ -260,6 +274,16 @@ def resolve_lead(c: Citation, *,
     bibliography while a co-author has an entry of the same year. A
     document in that state has a worse problem than this link.
 
+    ``ignore`` is the third kind, and the one an UNLINKED manuscript
+    needs: a word the PAPER has declared is not an author. "…national
+    Labor Force Surveys and ILOSTAT (2024) data…" is the two-author
+    pattern with a capitalised common noun in front, and with no
+    apparatus to read there is no fact to correct it with (Aging_Well,
+    2026-08-21). Dropping the whole citation instead — which is what a
+    caller filtering on the surname does — takes the REAL half with it,
+    and ILOSTAT's entry is then reported as uncited: one false finding
+    traded for another. So the head is stripped and the rest kept.
+
     The SPAN moves with the text. Trimming only ``authors`` left the
     hyperlink wrapping "Similarly, Liebman and Luttmer (2015)" — the
     right target under the wrong words, in every paper linked so far.
@@ -267,6 +291,8 @@ def resolve_lead(c: Citation, *,
     authors = strip_lead(c.authors)
     if known:
         authors = _drop_unlisted_head(authors, c.year, known)
+    if ignore:
+        authors = _drop_ignored_head(authors, ignore)
     if authors == c.authors:
         return c
     return replace(c, authors=authors,
@@ -328,6 +354,35 @@ def extend_to_name(text: str, c: Citation, name: str) -> Citation:
     return c
 
 
+#: where one author ends and the NEXT begins — the same separators
+#: :data:`_AUTHORS` joins a chain with, read left to right
+_FIRST_SEP_RE = re.compile(r",\s+|,?\s+(?:and|&)\s+")
+
+
+def _drop_ignored_head(authors: str, ignore: Collection[str]) -> str:
+    """Strip a lead the paper has declared is not an author.
+
+    Only from a CHAIN, and only the head: a lone ignored word ("Table
+    (2020)") has no rest to keep, and its caller filters it out
+    afterwards. Repeated, so "Surveys and Table and ILOSTAT" reduces
+    the whole way down.
+
+    The contract is the ignore list's own: this word is NEVER an author.
+    A paper that cites James March has to take "March" off its list —
+    which is already true today, because a caller filtering on the
+    surname drops that citation whole. What changes is the failure:
+    narrowed and visible rather than silently absent from both the audit
+    and the linker.
+    """
+    ignored = {s.casefold() for s in ignore}
+    while (m := _FIRST_SEP_RE.search(authors)) is not None:
+        head, rest = authors[:m.start()], authors[m.end():]
+        if _POSSESSIVE_RE.sub("", head).casefold() not in ignored or not rest:
+            break
+        authors = rest
+    return authors
+
+
 def _drop_unlisted_head(authors: str, year: str,
                         known: Collection[str]) -> str:
     head, sep, rest = authors.partition(",")
@@ -360,12 +415,37 @@ def anchor_names(key: str) -> tuple[str, str]:
 _YEAR_HINT_RE = re.compile(r"[12]\d{3}")
 
 
+def _per_year(authors: str, years: str, *, at: int, years_at: int,
+              end: int, narrative: bool) -> list[Citation]:
+    """One :class:`Citation` per year in a group, spans TILING the match.
+
+    "Rowe and Kahn (1987, 1997)" cites two works and a reader clicks two
+    labels: "Rowe and Kahn (1987" and "1997)". So the matched span is
+    cut at the commas rather than repeated — the first piece carries the
+    authors and its own year, each later piece carries just its year,
+    and the last takes whatever closed the match. Overlapping spans
+    would be worse than the defect: the linker wraps each one, and two
+    hyperlinks over the same words is the shape `audit_links` calls a
+    DOUBLED LINK.
+
+    A single year is the whole match, exactly as before.
+    """
+    found = list(_YEAR_RE.finditer(years))
+    return [Citation(
+        authors=authors, year=m.group(0),
+        start=at if i == 0 else years_at + m.start(),
+        end=end if i == len(found) - 1 else years_at + m.end(),
+        narrative=narrative) for i, m in enumerate(found)]
+
+
 def find_citations(text: str) -> list[Citation]:
     """Every in-text citation in a paragraph's visible text.
 
     Both forms, in document order. A parenthesis group holding several
     works — "(Bernheim and Rangel 2009; Chetty 2015)" — yields one
-    :class:`Citation` per work, each with its own span. A narrative
+    :class:`Citation` per work, each with its own span, and so does a
+    group holding several YEARS under one author: "Sen (1985, 1992)" is
+    two citations of Sen whose spans tile the group. A narrative
     citation inside a parenthetical aside — "(see Maestas et al.
     (2023))" — is reported once, as the narrative form; the two loops
     cannot double-report, because a segment's text can hold no
@@ -377,12 +457,12 @@ def find_citations(text: str) -> list[Citation]:
     for pm in _PAREN_RE.finditer(text):
         base = pm.start(1)
         for m in _SEGMENT_RE.finditer(pm.group(1)):
-            found.append(Citation(authors=m.group(1), year=m.group(2),
-                                  start=base + m.start(),
-                                  end=base + m.end(), narrative=False))
+            found += _per_year(m.group(1), m.group(2),
+                               at=base + m.start(), years_at=base + m.start(2),
+                               end=base + m.end(), narrative=False)
     for m in _NARRATIVE_RE.finditer(text):
-        found.append(Citation(authors=m.group(1), year=m.group(2),
-                              start=m.start(), end=m.end(), narrative=True))
+        found += _per_year(m.group(1), m.group(2), at=m.start(),
+                           years_at=m.start(2), end=m.end(), narrative=True)
     return sorted(found, key=lambda c: c.start)
 
 

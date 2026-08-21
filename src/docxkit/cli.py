@@ -151,7 +151,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
     _package(args.docx)          # a zip with no document.xml died on KeyError
-    return 1 if check_citations(args.docx) > 0 else 0
+    found = check_citations(args.docx, later_mentions=args.later_mentions,
+                            ignore=_ignore(args))
+    return 1 if found > 0 else 0
 
 
 def _aliases(args: argparse.Namespace) -> dict[str, str]:
@@ -235,11 +237,37 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
         print("  " + written.format().replace("\n", "\n  "))
         if written and not _save(args.docx, parts, "pre_refstyle"):
             return 1
-    report = audit(parts, style, aliases=_aliases(args))
+    report = audit(parts, style, aliases=_aliases(args),
+                   ignore=_ignore(args))
     print("  " + report.format().replace("\n", "\n  "))
     if args.json:
         _write_json(args.json, report.as_rows())
     return 1 if report.issues else 0
+
+
+def _ignore(args: argparse.Namespace) -> frozenset[str]:
+    """`IGNORED_LEADS` plus the words THIS paper's prose puts before "and".
+
+    The grammar reads "<Capitalised noun> and <Source> (Year)" as a
+    two-author citation, and in an UNLINKED manuscript there is no fact
+    to settle it with: *"consolidated from standardized national Labor
+    Force Surveys and ILOSTAT (2024) data"* is reported as a citation of
+    "Surveys and ILOSTAT", against a list that holds ILOSTAT — a
+    `missing-ref` a reader acts on by hunting for a reference that is
+    already there, and one the paper cannot clear (Aging_Well,
+    2026-08-21).
+
+    A LINKED manuscript settles it from its own apparatus: a link to an
+    entry is the document saying what it means, and `_trust_the_links`
+    re-reads the span at the label's offsets. An unlinked one has to be
+    told, and that is the right side of the seam — which words a paper's
+    prose puts before "and" is the paper's vocabulary, not the engine's.
+    The other answer is to run `docxkit link --write` first.
+    """
+    from .citations import IGNORED_LEADS
+    extra = {w.strip() for w in (getattr(args, "ignore", "") or "").split(",")
+             if w.strip()}
+    return frozenset(IGNORED_LEADS | extra)
 
 
 def cmd_crossrefs(args: argparse.Namespace) -> int:
@@ -257,11 +285,18 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     # pass them only to audit().
     others = [v.decode("utf-8") for k, v in parts.items()
               if k in (FOOTNOTES, ENDNOTES)]
+    # The labels a paper's own exhibits carry. `crossrefs.link` has taken
+    # them since it was written — Aging_Well's fifth exhibit is a BOX,
+    # and the caption grammar fits it — but the command baked
+    # DEFAULT_LABELS in, so the paper needed a script to pass a tuple.
+    labels = tuple(w.strip() for w in (args.labels or "").split(",")
+                   if w.strip()) or crossrefs.DEFAULT_LABELS
 
     if args.audit:
-        state = crossrefs.audit(doc, also=others)
+        state = crossrefs.audit(doc, also=others, labels=labels)
         print(name)
-        for key in ("linked", "caption_only", "mention_only", "dangling"):
+        for key in ("linked", "unlinked", "caption_only", "mention_only",
+                    "dangling"):
             found = state[key]
             print(f"  {key:<16} {len(found):>3}"
                   f"{'  ' + ', '.join(found) if found else ''}")
@@ -274,7 +309,7 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
                 print(f"    {line}")
         return 1 if state["dangling"] or state["misplaced_anchor"] else 0
 
-    linked, report = crossrefs.link(doc, other_parts=others)
+    linked, report = crossrefs.link(doc, other_parts=others, labels=labels)
     print(name)
     print("  " + report.format().replace("\n", "\n  "))
 
@@ -359,17 +394,26 @@ def _anchor_rows(doc: object, anchors: list[str], ordered: bool
     return rows, lines, [a for a in anchors if a not in hit]
 
 
+def _bookmarks_in(path: str) -> frozenset[str]:
+    """Every bookmark name in the package, for telling a reader that the
+    "phrase" they asked for is one."""
+    from ._xml import BOOKMARK_NAME_RE
+    from .package import text_parts
+    return frozenset(name for _part, xml in text_parts(_package(path))
+                     for name in BOOKMARK_NAME_RE.findall(xml))
+
+
 def cmd_locate(args: argparse.Namespace) -> int:
     """Which page (and line) does this text land on, once Word lays it out?"""
     from .word import WD_STATISTIC_PAGES, open_doc, session
 
-    anchors = list(args.anchor)
-    if args.anchors_from:
-        anchors += [ln.strip() for ln
-                    in Path(args.anchors_from).read_text(
+    phrases = list(args.phrase)
+    if args.phrases_from:
+        phrases += [ln.strip() for ln
+                    in Path(args.phrases_from).read_text(
                         encoding="utf-8").splitlines() if ln.strip()]
-    if not anchors and not args.revisions:
-        print("docxkit locate: give an anchor, --anchors-from or --revisions")
+    if not phrases and not args.revisions:
+        print("docxkit locate: give a phrase, --phrases-from or --revisions")
         return 2
 
     # One session for both the lookups and the page total, so the file is
@@ -377,14 +421,22 @@ def cmd_locate(args: argparse.Namespace) -> int:
     with session() as word, open_doc(word, args.docx) as doc:
         rows, lines, missing = (
             _revision_rows(doc, args.limit) if args.revisions
-            else _anchor_rows(doc, anchors, args.ordered))
+            else _anchor_rows(doc, phrases, args.ordered))
         pages = int(doc.ComputeStatistics(WD_STATISTIC_PAGES))
 
     print(f"{Path(args.docx).name}  ({pages} pages)")
     for line in lines:
         print(line)
-    for anchor in missing:
-        print(f"  NOT FOUND  {anchor[:60]!r}")
+    # A phrase that is really a BOOKMARK name is the miss worth
+    # explaining: this command searches the laid-out words, and
+    # `docxkit locate prev.docx cite_kakwani_1977` answered NOT FOUND,
+    # confidently, for a bookmark that is in the file (2026-08-21).
+    marks = _bookmarks_in(args.docx) if missing else frozenset()
+    for phrase in missing:
+        print(f"  NOT FOUND  {phrase[:60]!r}"
+              + (" — that is a BOOKMARK name, not words on the page; this "
+                 "searches the laid-out text (try `docxkit citations` or "
+                 "`docxkit probe`)" if phrase in marks else ""))
     if args.json:
         _write_json(args.json, rows)
     return 1 if missing else 0
@@ -807,7 +859,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     """What shape is this manuscript? Run it BEFORE choosing an approach."""
     from .probe import probe
     _package(args.docx)          # a zip with no document.xml died on KeyError
-    print(probe(args.docx, tuple(args.anchor)).report())
+    print(probe(args.docx, tuple(args.phrase)).report())
     return 0
 
 
@@ -941,6 +993,13 @@ def _summarize(parts: list[str], *, keep: int = 4) -> str:
     return f"{', '.join(out[:keep])}, and {len(out) - keep} more"
 
 
+#: what the two read-only commands print when Word held the file
+_SNAPSHOT_NOTE = (
+    "  read from a SNAPSHOT: the author has the file open in Word, so this\n"
+    "  describes the moment the copy was taken, not whatever they have "
+    "typed since.")
+
+
 def cmd_revision_status(args: argparse.Namespace) -> int:
     """Truth or proposal? The one question the layout answers by itself.
 
@@ -954,6 +1013,8 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     paper = _paper(args)
     print(f"{paper.name}\n  {paper.working}")
     st = state(paper.working)
+    if st.from_snapshot:
+        print(_SNAPSHOT_NOTE)
     _show_state("working", st)
     if not paper.prev.exists():
         print("  prev      MISSING - no baseline to compare or reject "
@@ -1027,6 +1088,8 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
     paper = _paper(args)
     report = ingest(paper.working, paper.prev)
     print(f"{paper.name}: {paper.prev.name} -> {paper.working.name}")
+    if report.from_snapshot:
+        print(_SNAPSHOT_NOTE)
 
     print("\n== content ==")
     for bucket, items in report.content.items():
@@ -1149,6 +1212,7 @@ def _say_glyphs(report: object) -> None:
 
 def cmd_revision_validate(args: argparse.Namespace) -> int:
     """The gate ladder. Gate 5 is the one that proves reviewability."""
+    from . import guard as _g
     from .revision import validate
     paper = _paper(args)
     target = Path(args.batch) if args.batch else paper.batch
@@ -1157,6 +1221,16 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                       use_word=not args.no_word)
 
     print(f"{target.name}")
+    if report.built_on_this_baseline is False:
+        print(f"== baseline ==  {target.name} was NOT built on {base.name}")
+        print(f"   it says it was built on {report.built_on[:16]}, and "
+              f"{base.name} is {_g.sha256(base)[:16]}")
+        print("   every gate below compares the two, so the whole ladder "
+              "would describe a batch nobody is working on. Rebuild on "
+              "this baseline — or, if the last build was REFUSED, delete "
+              "the stale batch first.")
+        print("\nVERDICT: FAIL")
+        return 2
     print("== lint ==", "clean" if not report.lint
           else f"{len(report.lint)} problem(s)")
     for problem in report.lint:
@@ -1313,6 +1387,16 @@ def main() -> None:
 
     p = sub.add_parser("citations", help="citation / reference link audit")
     p.add_argument("docx")
+    p.add_argument("--ignore", metavar="WORD,...", default="",
+                   help="capitalised words this paper's prose puts before "
+                        '"and" — "<Word> and <Source> (Year)" reads as a '
+                        "two-author citation, and an UNLINKED manuscript "
+                        "has no apparatus to settle it with")
+    p.add_argument("--later-mentions", action="store_true",
+                   help="also report every LATER mention of a linked work "
+                        "that is plain text (house style differs by paper, "
+                        "so it is off by default; the mention count prints "
+                        "either way)")
     p.set_defaults(fn=cmd_citations)
 
     p = sub.add_parser(
@@ -1350,6 +1434,11 @@ def main() -> None:
                    help='e.g. --alias "WHO=World Health Organization" — '
                         "without it the acronym in the prose and the full "
                         "name in the list read as two different works")
+    p.add_argument("--ignore", metavar="WORD,...", default="",
+                   help="capitalised words this paper's prose puts before "
+                        '"and" — "<Word> and <Source> (Year)" reads as a '
+                        "two-author citation, and an UNLINKED manuscript "
+                        "has no apparatus to settle it with")
     p.set_defaults(fn=cmd_refstyle)
 
     p = sub.add_parser(
@@ -1360,6 +1449,10 @@ def main() -> None:
                    help="save the result; without it this is a dry run")
     p.add_argument("--audit", action="store_true",
                    help="report the current state and change nothing")
+    p.add_argument("--labels", metavar="WORD,...", default="",
+                   help="what THIS paper calls its exhibits — "
+                        "\"Figure,Table,Box\". Default: "
+                        "Figure,Table and the Russian pair")
     p.set_defaults(fn=cmd_crossrefs)
 
     p = sub.add_parser("inspect", help="structural summary")
@@ -1371,17 +1464,19 @@ def main() -> None:
     p = sub.add_parser(
         "locate", help="page/line of a phrase, laid out (needs Word)")
     p.add_argument("docx")
-    p.add_argument("anchor", nargs="*",
-                   help="visible text to find; repeatable")
-    p.add_argument("--anchors-from", metavar="FILE",
-                   help="read anchors from a file, one per line")
+    p.add_argument("phrase", nargs="*",
+                   help="visible text to find; repeatable. NOT a bookmark "
+                        "name — this searches the laid-out words")
+    p.add_argument("--phrases-from", "--anchors-from", dest="phrases_from",
+                   metavar="FILE",
+                   help="read phrases from a file, one per line")
     p.add_argument("--revisions", action="store_true",
                    help="locate every tracked revision instead "
                         "(the redline's own pages)")
     p.add_argument("--limit", type=int, metavar="N",
                    help="stop after N revisions")
     p.add_argument("--ordered", action="store_true",
-                   help="anchors are in document order: search forward from "
+                   help="phrases are in document order: search forward from "
                         "the last hit, which is faster and picks the right "
                         "occurrence of a repeated phrase")
     p.add_argument("--json", metavar="PATH")
@@ -1447,7 +1542,7 @@ def main() -> None:
     p = sub.add_parser(
         "probe", help="link form, exhibit blocks, sections, run splits")
     p.add_argument("docx")
-    p.add_argument("anchor", nargs="*",
+    p.add_argument("phrase", nargs="*",
                    help="phrases to show the run split for")
     p.set_defaults(fn=cmd_probe)
 

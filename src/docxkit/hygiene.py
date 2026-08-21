@@ -20,10 +20,12 @@ class of diffs stops existing.
 from __future__ import annotations
 
 import html
+import posixpath
 import re
 from dataclasses import dataclass, field
 
 from ._xml import (
+    DOCUMENT,
     PARA_RE,
     T_PARTS_RE,
     element_spans,
@@ -33,6 +35,7 @@ from ._xml import (
     set_para_property,
     visible_text,
 )
+from .errors import PackageError
 from .package import CORE_PART, core_property, set_core_property
 
 __all__ = [
@@ -40,6 +43,7 @@ __all__ = [
     "CUSTOM_XML",
     "MATH_DOWNGRADES",
     "NOTE_LEADS",
+    "PackageError",
     "SmartenReport",
     "SpacingReport",
     "carry_properties",
@@ -56,6 +60,10 @@ _DOC_RELS = "word/_rels/document.xml.rels"
 _PKG_RELS = "_rels/.rels"
 _ID_RE = re.compile(r'\bId="rId(\d+)"')
 _TARGET_RE = re.compile(r'\bTarget="([^"]+)"')
+#: The two part kinds a section references BY NAME as well as by
+#: relationship, so restoring the part is only half of putting one back.
+_HDR_FTR_RE = re.compile(r"^word/(?:header|footer)\d+\.xml$")
+_SECT_REF_RE = re.compile(r"<w:(?:header|footer)Reference\b[^>]*/>")
 
 #: What ``docProps/core.xml`` says about the DOCUMENT, as against what it
 #: says about the last save. ``cp:lastModifiedBy``, ``cp:revision``,
@@ -143,12 +151,23 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
     (Parental Style 2026-08-12, where the author's Word had just created
     an empty ``b:Sources`` bibliography store).
 
-    Mutates `parts` and returns the names restored. Three coordinated
+    Mutates `parts` and returns the names restored. Four coordinated
     edits are what makes it a function rather than a note in a paper's
-    log: the parts, the content-type Override, and a Relationship on an
-    id that is FREE in the target — `rId7` in the source is somebody
-    else's relationship here, and Word opens a duplicated id with a
-    repair warning.
+    log: the parts, the content-type Override, a Relationship on an id
+    that is FREE in the target — `rId7` in the source is somebody else's
+    relationship here, and Word opens a duplicated id with a repair
+    warning — and, for a header or a footer, the reference in the
+    SECTION properties that actually puts it on the page.
+
+    It works on any part, not the data store alone. A footer's Target is
+    ``footer3.xml`` — relative to the folder of the part its rels file
+    describes — while the part is ``word/footer3.xml``, so reading the
+    Target as a part name matched ``customXml/`` (written ``../``) and
+    nothing under ``word/``: the file came back referenced by nothing,
+    which Word ignores, and the parts gate went green because the file
+    was present (Aging_Well R1, 2026-08-21). Raises
+    :class:`docxkit.errors.PackageError` rather than reporting a part
+    restored when it could not be wired back up.
 
     A part already present is left exactly as it is: the target's copy
     is the newer one, and this is a rescue, not a sync.
@@ -178,25 +197,198 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
             parts[_CONTENT_TYPES] = (types[:at] + "".join(add)
                                      + types[at:]).encode("utf-8")
 
-    if _DOC_RELS in parts and _DOC_RELS in source:
-        rels = parts[_DOC_RELS].decode("utf-8")
+    # EVERY rels part, not the document's alone: a footer's relationship
+    # is in `word/_rels/document.xml.rels`, but `docProps/custom.xml`'s
+    # is in the PACKAGE rels and `customXml/itemProps1.xml`'s is in the
+    # data store's own. A rels part that came across in `missing` is
+    # already the source's, byte for byte, and must not be added to.
+    rid_for: dict[str, str] = {}
+    for rels_name in sorted(n for n in source if _is_rels(n)):
+        if rels_name in missing or rels_name not in parts:
+            continue
+        rels = parts[rels_name].decode("utf-8")
         for m in re.finditer(r"<Relationship\b[^>]*/>",
-                             source[_DOC_RELS].decode("utf-8")):
+                             source[rels_name].decode("utf-8")):
             target = _TARGET_RE.search(m.group(0))
-            if target is None:
+            if target is None or _external(m.group(0)):
                 continue
-            name = target.group(1).removeprefix("../")
-            if not any(name.startswith(p) for p in prefixes):
+            name = _resolve(rels_name, target.group(1))
+            if name not in missing:
                 continue
-            if f'Target="{target.group(1)}"' in rels:
-                continue                       # already pointing at it
+            if (held := _rid_for(rels, rels_name, name)) is not None:
+                rid_for[name] = held           # already pointing at it
+                continue
             was = _ID_RE.search(m.group(0))
             rid = _free_rid(rels, f"rId{was.group(1)}" if was else "")
             entry = re.sub(r'\bId="[^"]*"', f'Id="{rid}"', m.group(0))
             at = rels.rindex("</Relationships>")
             rels = rels[:at] + entry + rels[at:]
-        parts[_DOC_RELS] = rels.encode("utf-8")
+            rid_for[name] = rid
+        parts[rels_name] = rels.encode("utf-8")
+
+    _restore_section_references(parts, source, missing, rid_for)
+
+    # A restored part nothing REFERENCES is a part Word ignores — the
+    # same outcome as the loss, now invisible to every parts gate
+    # because the file is present. So it is refused rather than counted
+    # as restored: this used to return the footer it had left
+    # unreferenced, and `validate` went green on a manuscript whose
+    # first-page footer was gone from the page (Aging_Well R1).
+    #
+    # Measured against the SOURCE, not against nothing: a part the
+    # source does not reference either is being put back exactly as it
+    # was, which is this function's whole contract. Requiring a
+    # reference outright refuses a package that carries an unreferenced
+    # part of its own — and every fixture that models a data store
+    # without its `customXml/_rels/item1.xml.rels`. Nor is a target that
+    # HAS no such rels part a dropped reference: a fragment assembled in
+    # memory carries no relationship machinery at all, and this rescue
+    # has to stay safe to attempt on one.
+    held_by, now = _references(source), _references(parts)
+    orphans = {n for n in missing
+               if not _is_rels(n) and held_by.get(n) in parts
+               and n not in now}
+    orphans |= {n for n in missing if _HDR_FTR_RE.match(n)
+                and _section_bound(source, n) and not _section_bound(parts, n)}
+    if orphans:
+        raise PackageError(
+            "restored but referenced by nothing: " + ", ".join(sorted(orphans))
+            + " — the part is in the package and Word will ignore it, which "
+              "is the loss again with the parts gate now green. A header or "
+              "footer also needs its reference in the section properties, "
+              "and its section has to still be there to take it.")
     return missing
+
+
+def _is_rels(name: str) -> bool:
+    return name.startswith("_rels/") or "/_rels/" in name
+
+
+def _external(entry: str) -> bool:
+    """A relationship to a URL, which names no part of this package."""
+    return 'TargetMode="External"' in entry
+
+
+def _resolve(rels_name: str, target: str) -> str:
+    """A relationship Target read as a PART NAME.
+
+    A Target is relative to the folder of the part its rels file
+    describes, which is the parent of the ``_rels`` folder it sits in:
+    ``word/_rels/document.xml.rels`` resolves ``footer3.xml`` to
+    ``word/footer3.xml`` and ``../customXml/item1.xml`` to
+    ``customXml/item1.xml``.
+
+    Reading the Target as a part name with ``../`` stripped answered the
+    second form and only the second form, so every part under ``word/``
+    — footers, headers, a lost ``footnotes.xml`` — sat in a hole where
+    :func:`restore_parts` copied the file back and matched no
+    relationship at all (Aging_Well R1, 2026-08-21).
+    """
+    base = posixpath.dirname(posixpath.dirname(rels_name))
+    return posixpath.normpath(posixpath.join(base, target)).lstrip("/")
+
+
+def _rid_for(rels_xml: str, rels_name: str, part: str) -> str | None:
+    """The id of the relationship pointing at `part`, if there is one."""
+    for m in re.finditer(r"<Relationship\b[^>]*/>", rels_xml):
+        target = _TARGET_RE.search(m.group(0))
+        rid = re.search(r'\bId="([^"]*)"', m.group(0))
+        if (target is not None and rid is not None
+                and not _external(m.group(0))
+                and _resolve(rels_name, target.group(1)) == part):
+            return rid.group(1)
+    return None
+
+
+def _references(parts: dict[str, bytes]) -> dict[str, str]:
+    """Each part some relationship points at -> the rels part holding it."""
+    hit: dict[str, str] = {}
+    for name, blob in parts.items():
+        if not _is_rels(name):
+            continue
+        for m in re.finditer(r"<Relationship\b[^>]*/>",
+                             blob.decode("utf-8", "replace")):
+            target = _TARGET_RE.search(m.group(0))
+            if target is not None and not _external(m.group(0)):
+                hit.setdefault(_resolve(name, target.group(1)), name)
+    return hit
+
+
+def _section_bound(pkg: dict[str, bytes], part: str) -> bool:
+    """Does the document's ``sectPr`` reach this header or footer?
+
+    The relationship is not the whole reference. A footer with a
+    relationship and no ``<w:footerReference>`` in the section
+    properties is a part on disk that no page shows.
+    """
+    rid = _rid_for(pkg.get(_DOC_RELS, b"").decode("utf-8", "replace"),
+                   _DOC_RELS, part)
+    if rid is None:
+        return False
+    doc = pkg.get(DOCUMENT, b"").decode("utf-8", "replace")
+    return re.search(rf'<w:(?:header|footer)Reference\b[^>]*'
+                     rf'r:id="{re.escape(rid)}"', doc) is not None
+
+
+def _restore_section_references(parts: dict[str, bytes],
+                                source: dict[str, bytes],
+                                missing: list[str],
+                                rid_for: dict[str, str]) -> None:
+    """Put a restored header's or footer's ``sectPr`` reference back.
+
+    Restoring the part and its relationship is not enough for these two:
+    a footer reaches the page through a ``<w:footerReference>`` in the
+    SECTION properties, and Compare drops that alongside the part.
+    Nothing else can put it back — a rescue that leaves the file in the
+    package and the reference out of the sectPr looks exactly like a
+    success and prints exactly like one.
+
+    The type (default / even / first) is recoverable, because the source
+    document's own sectPr still says it. Sections are paired by
+    POSITION, which is the only pairing available: a sectPr carries no
+    name. A target with fewer sections than the source is left alone and
+    the part is reported orphaned by the caller.
+    """
+    doc = DOCUMENT
+    if doc not in parts or doc not in source:
+        return
+    want = [n for n in missing if _HDR_FTR_RE.match(n) and n in rid_for]
+    if not want:
+        return
+    src, out = source[doc].decode("utf-8"), parts[doc].decode("utf-8")
+    src_rels = source.get(_DOC_RELS, b"").decode("utf-8")
+    src_sects = element_spans(src, "sectPr")
+    # Newest first, so an earlier section's insertion cannot move a later
+    # section's offsets out from under the next edit.
+    inserts: list[tuple[int, str]] = []
+    for name in want:
+        rid = _rid_for(src_rels, _DOC_RELS, name)
+        if rid is None:
+            continue
+        for m in re.finditer(
+                rf'<w:(header|footer)Reference\b[^>]*r:id="{rid}"[^>]*/>',
+                src):
+            kind = m.group(1)
+            at = next((i for i, (lo, hi) in enumerate(src_sects)
+                       if lo <= m.start() < hi), None)
+            sects = element_spans(out, "sectPr")
+            if at is None or at >= len(sects):
+                continue
+            type_m = re.search(r'w:type="([^"]*)"', m.group(0))
+            kind_type = f' w:type="{type_m.group(1)}"' if type_m else ""
+            lo, hi = sects[at]
+            block = out[lo:hi]
+            last = None
+            for r in _SECT_REF_RE.finditer(block):
+                last = r
+            opens = re.match(r"<w:sectPr\b[^>]*>", block)
+            assert opens is not None
+            inserts.append((
+                lo + (last.end() if last else opens.end()),
+                f'<w:{kind}Reference{kind_type} r:id="{rid_for[name]}"/>'))
+    for at, entry in sorted(inserts, reverse=True):
+        out = out[:at] + entry + out[at:]
+    parts[doc] = out.encode("utf-8")
 
 
 def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],

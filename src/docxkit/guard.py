@@ -21,8 +21,10 @@ from .package import backup as _backup
 
 __all__ = [
     "DeliverableModified",
+    "base_of",
     "check",
     "restamp",
+    "sha256",
     "stamp",
     "stamp_path",
 ]
@@ -32,8 +34,9 @@ def stamp_path(out: str | Path) -> Path:
     return Path(out).with_name(Path(out).name + ".buildinfo.json")
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def sha256(path: str | Path) -> str:
+    """The file's hash, as every stamp in this module records it."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def check(out: str | Path, *, force: bool = False,
@@ -55,7 +58,7 @@ def check(out: str | Path, *, force: bool = False,
                 stamp_file.read_text(encoding="utf-8"))["sha256"]
         except (ValueError, KeyError):
             recorded = None
-        if recorded == _sha256(out):
+        if recorded == sha256(out):
             return None                      # untouched since we built it
     saved = _backup(out, backup_tag)
     if force:
@@ -104,7 +107,7 @@ def restamp(out: str | Path, *, why: str) -> Path:
             old = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             old = {}
-    now = _sha256(out)
+    now = sha256(out)
     if old.get("sha256") == now:
         return path              # nothing moved: the repair changed nothing
     was = old.get("repairs")
@@ -121,6 +124,36 @@ def stamp(out: str | Path, **provenance: str) -> Path:
     out = Path(out)
     path = stamp_path(out)
     path.write_text(
-        json.dumps({"sha256": _sha256(out), **provenance}, indent=1),
+        json.dumps({"sha256": sha256(out), **provenance}, indent=1),
         encoding="utf-8")
     return path
+
+
+def base_of(out: str | Path) -> str | None:
+    """The hash of the ORIGINAL this deliverable was built from, if stamped.
+
+    The stamp has always named the original as a FILE — ``"original":
+    "prev.docx"`` — and that path legitimately holds different content
+    after every `baseline`, so it cannot answer "is this batch about the
+    current truth". Nothing else recorded the link either, which is how
+    a refused build left the previous redline in place and `validate`
+    then validated it in full detail against a baseline two rounds
+    newer: twenty findings, all describing a batch nobody was working
+    on. `promote` was the dangerous half — its own staleness check asks
+    whether the AUTHOR moved, and both files were in sync, so it would
+    have copied a redline built before an entire author round over the
+    manuscript (Aging_Well R5, 2026-08-21).
+
+    None when there is no stamp, or when it predates this field: a
+    caller cannot then tell stale from fresh, and should say so rather
+    than assume either.
+    """
+    path = stamp_path(out)
+    if not path.exists():
+        return None
+    try:
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    got = recorded.get("base_sha256")
+    return got if isinstance(got, str) and got else None

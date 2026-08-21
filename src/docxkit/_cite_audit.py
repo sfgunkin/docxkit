@@ -17,6 +17,7 @@ from ._cite_grammar import (
     IGNORED_LEADS,
     Reference,
     find_citations,
+    masked_visible_text,
     references,
     resolve_lead,
 )
@@ -218,6 +219,7 @@ class _Finding(NamedTuple):
 def audit_links(parts: dict[str, bytes], *,
                 heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                 ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+                later_mentions: bool = False,
                 ) -> tuple[list[str], dict[str, int]]:
     """Audit the bidirectional citation-link convention; (issues, stats).
     The rendered-string face of :func:`_audit_findings`.
@@ -236,8 +238,18 @@ def audit_links(parts: dict[str, bytes], *,
     excluded underscore names from its index and then reported links to
     them as broken; LE le15 shipped an audit round with nine of those
     false positives before the cause was found.
+
+    ``stats`` counts MENTIONS as well as works — ``mentions``,
+    ``mentions_linked``, ``later_unlinked`` — because "is any reference
+    orphaned" and "is the apparatus finished" are different questions
+    and one number cannot answer both: after ``link_all`` this audit
+    reported nothing while 20 of a paper's 73 mentions were plain text
+    (Aging_Well). ``later_mentions=True`` turns the plain ones into
+    LATER-MENTION UNLINKED findings; it is off by default because
+    whether later mentions link at all is the paper's house style.
     """
-    findings, stats = _audit_findings(parts, heading=heading, ignore=ignore)
+    findings, stats = _audit_findings(parts, heading=heading, ignore=ignore,
+                                      later_mentions=later_mentions)
     return [f.message for f in findings], stats
 
 
@@ -311,26 +323,10 @@ def _misplaced_markers(doc: str, paras: list[re.Match[str]],
     return found
 
 
-def _labels_by_para(links: dict[str, list[tuple[int, str]]]
-                    ) -> dict[int, set[str]]:
-    """Every link label, by the paragraph it was found in.
-
-    The audit mostly asks its questions of the whole document — "is this
-    WORK linked anywhere" — and one of them is about a single mention
-    instead, so it needs the labels beside that mention rather than all
-    of them. The note stores index negatively (:data:`_NOTE_AT`), which
-    no body paragraph does, so they cannot collide here.
-    """
-    by_para: dict[int, set[str]] = defaultdict(set)
-    for sites in links.values():
-        for at, label in sites:
-            by_para[at].add(label.strip())
-    return by_para
-
-
 def _audit_findings(parts: dict[str, bytes], *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
+                    later_mentions: bool = False,
                     ) -> tuple[list[_Finding], dict[str, int]]:
     doc = parts[DOCUMENT].decode("utf-8")
     paras = list(PARA_RE.finditer(doc))
@@ -452,9 +448,8 @@ def _audit_findings(parts: dict[str, bytes], *,
     # canonical keys are what this decision needs.
     entry_keys = {r.key for r in entries}
     labels = {lb.strip() for sites in links.values() for _, lb in sites}
-    labels_at = _labels_by_para(links)
     # The convention links a work's FIRST mention only, so the question
-    # this check asks is "is this WORK linked anywhere", and it must be
+    # UNLINKED asks is "is this WORK linked anywhere", and it must be
     # asked of the work — not of the wording. Pairing on the label text
     # alone read "Doepke and Zilibotti's (2017)" as unlinked while the
     # entry was linked from two other paragraphs, because no label
@@ -480,40 +475,49 @@ def _audit_findings(parts: dict[str, bytes], *,
                     if any(lb.strip() for _, lb in links.get(name, ()))
                     for owner in (_marker_owner(name, entries),)
                     if owner is not None}
-    unlinked = 0
+    unlinked = later = mentions = 0
     for i, text in enumerate(texts[:head_idx]):
         if i < 5:
             continue
+        masked = masked_visible_text(paras[i].group(0))
         for found in find_citations(text):
-            c = resolve_lead(found, known=entry_keys)
+            c = resolve_lead(found, known=entry_keys, ignore=ignored)
             if c.surname.casefold() in ignored:
                 continue
-            if c.key in linked_works:
+            mentions += 1
+            # Is THIS MENTION linked — the question the work-level tests
+            # below cannot ask. A character inside a hyperlink comes back
+            # masked, which is the test `link_rest` uses to decide what
+            # is left to wire, and it settles two shapes the label tests
+            # were written for: a link whose label stops a character
+            # short of the citation ("Davletov et al. (2016", the
+            # closing parenthesis outside the hyperlink), and a LABEL
+            # sitting inside the span of a match the two-author pattern
+            # over-read ("…national Labor Force Surveys and ILOSTAT
+            # (2024) data…", where the link is "ILOSTAT (2024)").
+            if "\x00" in masked[c.start:c.end]:
                 continue
             cite = text[c.start:c.end].strip()
             cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
-            if any(cite in lb or cores[0] in lb or cores[1] in lb
-                   for lb in labels):
-                continue
-            # The mirror of the test above, and the one the two-author
-            # pattern needs: "…national Labor Force Surveys and ILOSTAT
-            # (2024) data…" matches as a citation of "Surveys and
-            # ILOSTAT", and the LABEL sits inside that span rather than
-            # the other way round. The year has to be in the label too,
-            # so a cross-reference that happens to fall inside the span
-            # does not clear it.
-            #
-            # THIS paragraph's labels, not the document's. The test above
-            # asks "is the work linked anywhere" and reads the whole set
-            # for that reason; this one asks whether the link is inside
-            # the very span being reported, which is a question about one
-            # mention. Asked of every label in the manuscript it cleared
-            # far more than it should: a single link labelled "(2024)" or
-            # "Jones (2024)" anywhere is contained in most citation spans
-            # carrying that year, so it switched the gate off for every
-            # unlinked mention of every 2024 work.
-            if any(lb in cite and c.year in lb
-                   for lb in labels_at.get(i, ())):
+            if c.key in linked_works or any(
+                    cite in lb or cores[0] in lb or cores[1] in lb
+                    for lb in labels):
+                # The WORK is linked somewhere and this mention is not.
+                # `link_all` wires each work's first mention only, so a
+                # paper whose style links the later ones too sat at "ALL
+                # CHECKS PASSED" with 20 of its 73 mentions plain text
+                # (Aging_Well, 2026-08-21) — the count could not tell the
+                # middle state from the finished one. The count now does,
+                # always; the FINDING is opt-in, because whether later
+                # mentions link at all is the paper's house style and a
+                # gate nobody can satisfy stops being read.
+                later += 1
+                if later_mentions:
+                    issues.append(_Finding(
+                        "LATER-MENTION UNLINKED", cite,
+                        f'LATER-MENTION UNLINKED: "{cite}" (¶{i + 1}) '
+                        "— the work is linked elsewhere but this "
+                        "mention is plain text"))
                 continue
             issues.append(_Finding(
                 "UNLINKED", cite,
@@ -541,7 +545,9 @@ def _audit_findings(parts: dict[str, bytes], *,
              "cite_bookmarks": len(cite_marks),
              "ref_bookmarks": len(ref_marks), "eq_bookmarks": len(eq_marks),
              "links": sum(len(v) for v in links.values()),
-             "broken": broken, "empty": len(empty), "unlinked": unlinked}
+             "broken": broken, "empty": len(empty), "unlinked": unlinked,
+             "mentions": mentions, "later_unlinked": later,
+             "mentions_linked": mentions - unlinked - later}
     return issues, stats
 
 

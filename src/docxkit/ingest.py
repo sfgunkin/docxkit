@@ -13,7 +13,9 @@ changed, stop — that is the habit that loses edits.
 
 Overrides are ``{"old": <paragraph xml>, "new": <paragraph xml>}`` pairs
 anchored on the BUILD OUTPUT, so they compose with whatever footnotes,
-links and fixes the pipeline already applied. ``new: ""`` deletes.
+links and fixes the pipeline already applied. ``new: ""`` deletes. An
+entry may carry ``"part"``; without one it means ``word/document.xml``,
+which is what every store written before that key existed says.
 
 The anchor is therefore a paragraph's XML, which assumes two paragraphs
 are never byte-identical. Word's own files satisfy that — every
@@ -28,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 import zipfile
+from collections.abc import Callable
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -40,12 +43,15 @@ from ._xml import (
     normalize_glyphs,
     visible_text,
 )
-from .errors import AnchorError
+from .errors import AnchorError, NoteEdit
 
 __all__ = [
     "AnchorError",
+    "NoteEdit",
     "apply_overrides",
+    "apply_part_overrides",
     "build_overrides",
+    "build_part_overrides",
     "load_paragraphs",
     "update_overrides",
 ]
@@ -81,9 +87,12 @@ def load_paragraphs(path: str | Path) -> tuple[list[str], str]:
     """(BODY paragraph XML list, footnotes XML) for a .docx.
 
     The paragraphs are the body's. The footnotes come back whole and
-    unparsed because one caller wants them for one thing — remapping
-    the ids Word renumbered on save. Endnotes are not read at all; see
-    :func:`build_overrides` for what that costs.
+    unparsed because the caller that wants them wants them for one
+    thing — remapping the ids Word renumbered on save.
+
+    Kept at this shape because it is public and unpacked by callers
+    outside this package; :func:`build_part_overrides` reads every part
+    a reader edits through `_part_paragraphs` instead.
     """
     with zipfile.ZipFile(path) as z:
         doc = z.read(DOCUMENT).decode("utf-8")
@@ -125,39 +134,26 @@ def _note_remap(user: str, build: str, part: str) -> dict[str, str]:
             if ut.strip() and ut.strip() == bt.strip()}
 
 
-def build_overrides(baseline: str | Path,
-                    edited: str | Path) -> list[tuple[str, str]]:
-    """Align a baseline build against the author's file.
+def _part_paragraphs(path: str | Path) -> dict[str, list[str]]:
+    """Every part a reader edits, as its own paragraph list.
 
-    Returns (old_xml, new_xml) pairs; ``new == ""`` is a deletion. The
-    alignment rules are the ones that took several rounds to get right:
-
-    * align on glyph-normalized text, so a Word quote-normalization is not
-      mistaken for an edit;
-    * an EQUAL-sized change block pairs POSITIONALLY — a heavily reworded
-      paragraph has a low similarity ratio but is still the same
-      paragraph, and thresholding it splits it into a bogus delete+insert;
-    * baseline > author (a merge or move) — ratio-pair the survivors, the
-      rest are deletions;
-    * author > baseline (an insert) — ratio-pair, then attach the extra
-      paragraphs to the last paired override so they land in sequence;
-    * remap footnote AND endnote ids by definition text.
-
-    **Body paragraphs only.** An edit the author made INSIDE a footnote
-    or endnote definition produces no override: the alignment runs over
-    the body, and both note stores are read only for the id remap. The next
-    clean build regenerates from a source that never received it, so
-    the wording is lost with nothing raised.
-
-    `revision.ingest` DESCRIBES such an edit — it runs
-    :mod:`docxkit.compare`, which reads every part a reader sees — which
-    makes this the worse half of the pair: named in the report, dropped
-    by the fold-back. Open in BACKLOG.md as S2; pinned by
-    ``test_an_edit_inside_a_NOTE_is_not_ingested`` so a fix has to come
-    past the documentation.
+    The body and both note stores. `load_paragraphs` above answers for
+    the body alone and is public, so this is the widened reader rather
+    than a changed signature.
     """
-    base_paras, _ = load_paragraphs(baseline)
-    user_paras, _ = load_paragraphs(edited)
+    out: dict[str, list[str]] = {}
+    with zipfile.ZipFile(path) as z:
+        for part in (DOCUMENT, FOOTNOTES, ENDNOTES):
+            try:
+                out[part] = PARA_RE.findall(z.read(part).decode("utf-8"))
+            except KeyError:
+                continue
+    return out
+
+
+def _remapper(baseline: str | Path,
+              edited: str | Path) -> Callable[[str], str]:
+    """Rewrite an author paragraph's note ids into the build's numbering."""
     base_notes, user_notes = _note_stores(baseline), _note_stores(edited)
     remaps = {part: _note_remap(user_notes[part], base_notes[part], part)
               for part in _NOTE_REF_RE}
@@ -173,6 +169,86 @@ def build_overrides(baseline: str | Path,
             s = pattern.sub(one, s)
         return s
 
+    return fix
+
+
+def build_part_overrides(baseline: str | Path, edited: str | Path,
+                         ) -> dict[str, list[tuple[str, str]]]:
+    """Align a baseline build against the author's file, PART by part.
+
+    ``{part name: [(old_xml, new_xml), …]}``, and only for parts that
+    moved. The body is aligned exactly as :func:`build_overrides`
+    aligns it — same rules, same code — and each note store is aligned
+    the same way, which is what makes an edit inside a footnote
+    DEFINITION land somewhere instead of nowhere.
+
+    A part on one side only is skipped rather than read as a wholesale
+    delete or insert: a missing part is a package loss, which
+    `revision.ingest` and `package.missing_parts` already gate, and a
+    note store that appears for the first time has no baseline
+    paragraph to anchor an insert on.
+    """
+    base, user = _part_paragraphs(baseline), _part_paragraphs(edited)
+    fix = _remapper(baseline, edited)
+    out: dict[str, list[tuple[str, str]]] = {}
+    for part, base_paras in base.items():
+        if part not in user:
+            continue
+        pairs = _align(base_paras, user[part], fix)
+        if pairs:
+            out[part] = pairs
+    return out
+
+
+def build_overrides(baseline: str | Path, edited: str | Path, *,
+                    allow_note_loss: bool = False) -> list[tuple[str, str]]:
+    """Align a baseline build against the author's file — the BODY.
+
+    Returns (old_xml, new_xml) pairs; ``new == ""`` is a deletion. The
+    alignment rules are the ones that took several rounds to get right:
+
+    * align on glyph-normalized text, so a Word quote-normalization is not
+      mistaken for an edit;
+    * an EQUAL-sized change block pairs POSITIONALLY — a heavily reworded
+      paragraph has a low similarity ratio but is still the same
+      paragraph, and thresholding it splits it into a bogus delete+insert;
+    * baseline > author (a merge or move) — ratio-pair the survivors, the
+      rest are deletions;
+    * author > baseline (an insert) — ratio-pair, then attach the extra
+      paragraphs to the last paired override so they land in sequence;
+    * remap footnote AND endnote ids by definition text.
+
+    **Body paragraphs only, and it now SAYS so.** An override is anchored
+    on a paragraph's XML with no room to name a part, and
+    :func:`apply_overrides` takes ``document.xml`` alone — so an edit
+    the author made inside a note DEFINITION produced no override, and
+    the next clean build regenerated from a source that never received
+    it. `revision.ingest` DESCRIBES such an edit, because `compare`
+    reads every part a reader sees, which made this the worse half of
+    the pair: named in the report and dropped by the fold-back, a
+    combination that reads as "handled".
+
+    So it raises :class:`docxkit.errors.NoteEdit` instead. Use
+    :func:`build_part_overrides` with :func:`apply_part_overrides`, which
+    carry the part; ``allow_note_loss=True`` is the old behaviour for a
+    caller that has decided the note edit does not matter.
+    """
+    by_part = build_part_overrides(baseline, edited)
+    notes = {p: len(v) for p, v in by_part.items() if p != DOCUMENT}
+    if notes and not allow_note_loss:
+        raise NoteEdit(
+            "the author edited a note DEFINITION — "
+            + ", ".join(f"{n} paragraph(s) in {p}" for p, n in notes.items())
+            + " — and this fold-back writes document.xml only, so those "
+              "edits would be dropped while `compare` reported them. Use "
+              "build_part_overrides() + apply_part_overrides(), or pass "
+              "allow_note_loss=True to keep the body-only behaviour "
+              "deliberately.")
+    return by_part.get(DOCUMENT, [])
+
+
+def _align(base_paras: list[str], user_paras: list[str],
+           fix: Callable[[str], str]) -> list[tuple[str, str]]:
     sm = SequenceMatcher(None, [_norm(p) for p in base_paras],
                          [_norm(p) for p in user_paras], autojunk=False)
     overrides: list[tuple[str, str]] = []
@@ -239,22 +315,40 @@ def update_overrides(baseline: str | Path, edited: str | Path,
     ``old``), that entry is updated in place. Appending instead would
     leave a dead entry whose anchor no longer exists.
 
+    Every part is read, and an entry outside the body carries a ``part``
+    key naming its store — a footnote the author retyped used to produce
+    no entry at all. Body entries keep the two-key shape they have
+    always had, so an existing store stays byte-comparable and
+    :func:`apply_overrides` can still read one that has no note edits in
+    it. `fresh` is every part's pairs, in part order.
+
     Returns (this round's overrides, chained, appended, total stored).
     """
     overrides_path = Path(overrides_path)
-    fresh = build_overrides(baseline, edited)
+    by_part = build_part_overrides(baseline, edited)
     data = (json.loads(overrides_path.read_text(encoding="utf-8"))
             if overrides_path.exists() else [])
     chained = appended = 0
-    for old, new in fresh:
-        existing = next((e for e in data if e["new"] and e["new"] == old),
-                        None)
-        if existing:
-            existing["new"] = new
-            chained += 1
-        else:
-            data.append({"old": old, "new": new})
-            appended += 1
+    fresh: list[tuple[str, str]] = []
+    for part, pairs in by_part.items():
+        for old, new in pairs:
+            fresh.append((old, new))
+            # Chain within the PART. Two stores' paragraphs can be
+            # byte-identical — a note and a body line both reading
+            # "Source: authors' calculations." — and chaining across
+            # them would rewrite the wrong entry.
+            existing = next(
+                (e for e in data if e["new"] and e["new"] == old
+                 and e.get("part", DOCUMENT) == part), None)
+            if existing:
+                existing["new"] = new
+                chained += 1
+            else:
+                entry = {"old": old, "new": new}
+                if part != DOCUMENT:
+                    entry["part"] = part
+                data.append(entry)
+                appended += 1
     overrides_path.write_text(json.dumps(data, ensure_ascii=False),
                               encoding="utf-8")
     return fresh, chained, appended, len(data)
@@ -268,7 +362,21 @@ def apply_overrides(doc_xml: str, overrides: list[dict[str, str]],
     every override whose anchor was not found — a miss means the build
     changed under the override and the author's edit is being dropped, so
     `strict` raises rather than let that pass silently.
+
+    An entry naming another PART is refused rather than counted as a
+    miss: this function has one string to write into, so a footnote
+    override handed to it can only be dropped, and "the build moved
+    under them" would be the wrong reason. Read such a store with
+    :func:`apply_part_overrides`.
     """
+    stray = {e["part"] for e in overrides
+             if e.get("part", DOCUMENT) != DOCUMENT}
+    if stray:
+        raise NoteEdit(
+            f"this store carries overrides for {', '.join(sorted(stray))} "
+            f"and apply_overrides writes {DOCUMENT} only — use "
+            f"apply_part_overrides(parts, overrides), which takes the "
+            f"whole package.")
     applied, missed = 0, []
     for entry in overrides:
         old, new = entry["old"], entry["new"]
@@ -282,3 +390,34 @@ def apply_overrides(doc_xml: str, overrides: list[dict[str, str]],
             f"{len(missed)} override anchor(s) not found - the build moved "
             f"under them: {missed[:3]}")
     return doc_xml, applied, missed
+
+
+def apply_part_overrides(parts: dict[str, bytes],
+                         overrides: list[dict[str, str]],
+                         *, strict: bool = True) -> tuple[int, list[str]]:
+    """Apply stored overrides to the whole package; (applied, missed).
+
+    Mutates `parts`. Each entry's ``part`` says where it belongs and
+    defaults to ``word/document.xml``, so a store written before that
+    key existed applies exactly as :func:`apply_overrides` applied it.
+
+    An entry for a part the package does not carry is a MISS, not a
+    KeyError: it is the same failure as an anchor that moved — the
+    author's edit is not being written — and it is reported the same
+    way.
+    """
+    applied, missed = 0, []
+    for entry in overrides:
+        part = entry.get("part", DOCUMENT)
+        blob = parts.get(part)
+        old, new = entry["old"], entry["new"]
+        if blob is None or old not in (xml := blob.decode("utf-8")):
+            missed.append(f"({part}) {_cat(old)[:70]}")
+            continue
+        parts[part] = xml.replace(old, new, 1).encode("utf-8")
+        applied += 1
+    if strict and missed:
+        raise AnchorError(
+            f"{len(missed)} override anchor(s) not found - the build moved "
+            f"under them: {missed[:3]}")
+    return applied, missed

@@ -583,6 +583,91 @@ def test_the_stale_guard_does_not_depend_on_how_two_HASHES_SORT(project,
     assert project.working.read_bytes() == before
 
 
+def test_the_READ_ONLY_commands_snapshot_a_file_Word_holds(project,
+                                                           monkeypatch):
+    """`status` and `ingest` are documented read-only, and the
+    protocol's own resume ritual is to run them both — which is exactly
+    what one wants while the author still has the manuscript open. Both
+    refused with "close it and retry" (2026-08-21), while a byte copy of
+    the same locked file read perfectly.
+    """
+    from docxkit import package
+    from docxkit import revision as rev
+
+    monkeypatch.setattr(package, "is_locked",
+                        lambda p: Path(p) == project.working)
+
+    st = rev.state(project.working)
+    report = rev.ingest(project.working, project.prev)
+
+    assert st.from_snapshot is True
+    assert report.from_snapshot is True
+    assert st.path == project.working, "the report names the REAL file"
+    assert rev.state(project.prev).from_snapshot is False
+
+
+def test_a_snapshot_that_cannot_be_COPIED_refuses_as_before(project,
+                                                            monkeypatch):
+    """The fallback has to be the old answer, not a half-read one."""
+    import shutil
+
+    from docxkit import package
+
+    monkeypatch.setattr(package, "is_locked", lambda _p: True)
+    monkeypatch.setattr(shutil, "copy2", _raise_permission)
+
+    with package.readable(project.working) as (path, copied):
+        assert (path, copied) == (project.working, False)
+
+
+def _raise_permission(*_a, **_kw):
+    raise PermissionError("the sharing violation this fallback is for")
+
+
+def test_promote_refuses_a_batch_built_on_ANOTHER_baseline(project):
+    """The other stale direction, and the one that loses work silently.
+
+    The guard above asks whether the AUTHOR moved. This asks whether the
+    BATCH did: a refused build leaves the PREVIOUS redline in
+    build/batch.docx, live and base stay in sync so nothing else
+    objects, and promoting replaces the manuscript with a generation
+    from before an entire author round (Aging_Well R5, 2026-08-21).
+    """
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("a redline of an older truth"))))
+    guard.stamp(project.batch, base_sha256="0" * 64)
+    before = project.working.read_bytes()
+
+    with pytest.raises(StaleBatch, match="not built on"):
+        revision.promote(project)
+
+    assert project.working.read_bytes() == before
+
+
+def test_promote_takes_a_batch_stamped_with_THIS_baseline(project):
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+
+    report = revision.promote(project)
+
+    assert project.working.read_bytes() == project.batch.read_bytes()
+    assert report.rescue.exists()
+
+
+def test_promote_still_takes_an_UNSTAMPED_batch(project):
+    """A batch nothing built — a hand-authored edit vehicle, or one from
+    before the stamp carried a baseline — cannot answer the question,
+    and refusing on "cannot tell" would break the DSI path outright."""
+    write(project.batch, make_parts(para(run("hand-authored"))))
+
+    revision.promote(project)
+
+    assert project.working.read_bytes() == project.batch.read_bytes()
+
+
 def test_promote_refuses_when_the_RESCUE_copy_did_not_land(project,
                                                            monkeypatch):
     """A post-condition that never fires in a happy path, and so was
@@ -822,6 +907,58 @@ def test_validate_reports_a_file_word_refuses(tmp_path, monkeypatch):
     assert report.word_opened is False
     assert report.word_error
     assert not report.ok
+
+
+def test_validate_ABORTS_on_a_batch_built_on_another_baseline(tmp_path):
+    """Gate 0. Everything below compares the batch with the baseline, so
+    a mismatched pair produces a full and entirely plausible verdict
+    about a document nobody is working on: twenty LINK LOST findings
+    against a redline two baselines old, read for several minutes as if
+    they were this round's (Aging_Well R5, 2026-08-21)."""
+    from docxkit import guard
+
+    base = write(tmp_path / "prev.docx", make_parts(para(run("settled"))))
+    stale = write(tmp_path / "batch.docx", make_parts(
+        para(run("settled"), ins("added"))))
+    guard.stamp(stale, base_sha256="0" * 64)
+
+    report = revision.validate(stale, base, use_word=False)
+
+    assert report.built_on_this_baseline is False
+    assert report.built_on == "0" * 64
+    assert not report.ok
+    assert report.counts == {}, "the ladder ran on the wrong pair anyway"
+    assert report.reject_matches_baseline is None
+
+
+def test_validate_runs_the_ladder_when_the_batch_names_THIS_baseline(
+        tmp_path):
+    from docxkit import guard
+
+    base = write(tmp_path / "prev.docx", make_parts(para(run("settled"))))
+    batch = write(tmp_path / "batch.docx", make_parts(
+        para(run("settled"), ins("added"))))
+    guard.stamp(batch, base_sha256=guard.sha256(base))
+
+    report = revision.validate(batch, base, use_word=False)
+
+    assert report.built_on_this_baseline is True
+    assert report.ok
+
+
+def test_validate_says_UNKNOWN_rather_than_stale_for_an_unstamped_batch(
+        tmp_path):
+    """A hand-authored batch and one built before the stamp carried a
+    baseline both answer "cannot tell", which is not the same as
+    "wrong": refusing on it would break the DSI vehicle outright."""
+    base = write(tmp_path / "prev.docx", make_parts(para(run("settled"))))
+    batch = write(tmp_path / "batch.docx", make_parts(
+        para(run("settled"), ins("added"))))
+
+    report = revision.validate(batch, base, use_word=False)
+
+    assert report.built_on_this_baseline is None
+    assert report.ok
 
 
 def test_validate_reject_all_must_restore_the_baseline(tmp_path):

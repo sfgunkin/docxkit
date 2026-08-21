@@ -65,7 +65,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
 | `tracked` | build a tracked-changes deliverable end to end |
 | `guard` | stop a rebuild discarding a review someone made in Word; `restamp` records a repair the TOOL made, which is not a review |
-| `ingest` | fold the author's Word edits back into the build source |
+| `ingest` | fold the author's Word edits back into the build source, part by part — a footnote the author retyped is an override too |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |
 | `console` | UTF-8 stdout, guarded — a bare reconfigure crashes off-console |
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |

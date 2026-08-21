@@ -65,9 +65,14 @@ class Probe:
     exhibits: list[tuple[str, str, str]] = field(default_factory=list)
     bookmarks: list[tuple[str, str]] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
-    anchors: dict[str, list[tuple[int, list[str]]]] = field(
+    #: each PHRASE asked about -> the paragraphs holding it and how its
+    #: runs are split. Not "anchors": everywhere else in this toolkit an
+    #: anchor is a bookmark NAME, and this report prints both senses —
+    #: `docxkit locate prev.docx cite_kakwani_1977` answered NOT FOUND,
+    #: confidently, for a bookmark that is in the file (2026-08-21).
+    phrases: dict[str, list[tuple[int, list[str]]]] = field(
         default_factory=dict)
-    #: anchors the two definitions of "what this paragraph says" disagree
+    #: phrases the two definitions of "what this paragraph says" disagree
     #: about, as (what `find` sees, what `edit` sees). They are both in
     #: this package and they differ over OMML: `visible_text` reads
     #: `w:t` AND `m:t`, while `edit.replace_in_para` walks `w:r` runs,
@@ -91,7 +96,7 @@ class Probe:
     def report(self) -> str:
         out = [f"{self.path.name}", f"  link form   {self.link_form}"]
         if self.field_links:
-            out.append("  field-form anchors: "
+            out.append("  field-form anchors (bookmark names): "
                        + ", ".join(sorted(self.field_links)[:12]))
         out.append(f"  sections    {' -> '.join(self.sections) or 'one'}")
         body_level = sum(1 for _, w in self.bookmarks if w == "body")
@@ -102,8 +107,8 @@ class Probe:
             for label, follows, orient in self.exhibits:
                 tail = f"  [{orient}]" if orient else ""
                 out.append(f"    {label:12s} {follows}{tail}")
-        for text, hits in self.anchors.items():
-            out.append(f"  anchor {text!r}")
+        for text, hits in self.phrases.items():
+            out.append(f"  phrase {text!r}")
             if not hits:
                 out.append("    NOT FOUND")
             for idx, runs in hits:
@@ -117,8 +122,12 @@ class Probe:
         return "\n".join(out)
 
 
-def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
-    """Characterise `path`; `anchors` are phrases to show run splits for."""
+def probe(path: str | Path, phrases: tuple[str, ...] = ()) -> Probe:
+    """Characterise `path`; `phrases` are the ones to show run splits for.
+
+    Called PHRASES, not anchors: this module reports bookmark names too,
+    and the two senses met in one report (see :attr:`Probe.phrases`).
+    """
     path = Path(path)
     parts = read_parts(path)
     rep = Probe(path=path)
@@ -180,11 +189,11 @@ def probe(path: str | Path, anchors: tuple[str, ...] = ()) -> Probe:
         rep.exhibits.append((cap.group(1), follows, orient))
 
     paras = [m.group(0) for m in PARA_RE.finditer(doc)]
-    for text in anchors:
+    for text in phrases:
         hits = [(i, T_RE.findall(para)[:10])
                 for i, para in enumerate(paras)
                 if text in visible_text(para)]
-        rep.anchors[text] = hits
+        rep.phrases[text] = hits
         # …and the same question asked the way `edit` asks it. Measured
         # over 399 real manuscripts, the two answers differ on 256 of
         # them, and every difference is an equation: DSI's methodology

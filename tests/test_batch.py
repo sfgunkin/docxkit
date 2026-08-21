@@ -312,3 +312,17 @@ def test_a_step_that_RAISES_is_reported_and_the_xml_is_rolled_back():
     assert applied == []
     assert failures == ["swap the figure  ValueError: "
                         "the swap could not find its drawing"]
+
+
+def test_the_note_PART_NAMES_are_re_exported_beside_DOCUMENT():
+    """Bookmark ids must be unique across the whole document, notes
+    included, so a batch that mints one wants every part that can hold
+    one. `from docxkit.batch import DOCUMENT, FOOTNOTES` used to raise
+    ImportError, and the caller then reached into private `_xml` or
+    hard-coded "word/footnotes.xml" — the string the constant exists to
+    stop anyone writing."""
+    from docxkit.batch import DOCUMENT, ENDNOTES, FOOTNOTES
+
+    assert (DOCUMENT, FOOTNOTES, ENDNOTES) == (
+        "word/document.xml", "word/footnotes.xml", "word/endnotes.xml")
+    assert {"DOCUMENT", "FOOTNOTES", "ENDNOTES"} <= set(batch.__all__)

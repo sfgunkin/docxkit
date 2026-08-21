@@ -70,7 +70,7 @@ def test_FIELD_form_says_the_tools_CANNOT_see_it(tmp_path):
 
     assert got.link_form.startswith("FIELD (1)")
     assert "CANNOT see these" in got.link_form
-    assert "field-form anchors: T1" in got.report()
+    assert "field-form anchors (bookmark names): T1" in got.report()
 
 
 def test_MIXED_names_both_counts_in_order(tmp_path):
@@ -138,10 +138,10 @@ def test_an_ANCHOR_that_is_absent_says_NOT_FOUND(tmp_path):
     """The probe is asked before an edit is written. "No hits" printed
     as nothing at all reads as success."""
     got = probe(_doc(tmp_path, para(run("Some prose."))),
-                anchors=("absent phrase",))
+                phrases=("absent phrase",))
 
     report = got.report()
-    assert "anchor 'absent phrase'" in report
+    assert "phrase 'absent phrase'" in report
     assert "NOT FOUND" in report
 
 
@@ -150,9 +150,9 @@ def test_an_ANCHOR_is_reported_with_its_paragraph_and_its_RUNS(tmp_path):
     in decides whether a replace can address it at all."""
     body = para(run("The share "), run("rose to "), run("0.15."))
 
-    got = probe(_doc(tmp_path, body), anchors=("rose to",))
+    got = probe(_doc(tmp_path, body), phrases=("rose to",))
 
-    hits = got.anchors["rose to"]
+    hits = got.phrases["rose to"]
     assert len(hits) == 1
     _idx, runs = hits[0]
     # the WHOLE paragraph's split, not just the matching run: the
@@ -171,7 +171,7 @@ def test_the_two_VIEWS_disagreeing_is_reported_as_a_split(tmp_path):
              'officeDocument/2006/math"><m:r><m:t>τ</m:t></m:r></m:oMath>')
     body = "<w:p>" + run("where ") + maths + run(" is time") + "</w:p>"
 
-    got = probe(_doc(tmp_path, body), anchors=("where τ is",))
+    got = probe(_doc(tmp_path, body), phrases=("where τ is",))
 
     assert "where τ is" in got.view_split, got.view_split
     assert "the two views disagree" in got.report()
@@ -284,7 +284,7 @@ def test_the_view_split_says_NOTHING_where_a_view_sees_nothing(tmp_path):
              'officeDocument/2006/math"><m:r><m:t>τ</m:t></m:r></m:oMath>')
     body = "<w:p>" + run("where ") + maths + run(" is time") + "</w:p>"
 
-    got = probe(_doc(tmp_path, body), anchors=("where τ is",))
+    got = probe(_doc(tmp_path, body), phrases=("where τ is",))
 
     split = next(ln for ln in got.report().splitlines()
                  if "the two views disagree" in ln)
@@ -303,8 +303,8 @@ def test_an_anchor_that_WAS_found_prints_a_line_per_paragraph(tmp_path):
             + para(run("The index is defined below.")))
 
     lines = probe(_doc(tmp_path, body),
-                  anchors=("index is defined",)).report().splitlines()
+                  phrases=("index is defined",)).report().splitlines()
 
-    at = lines.index("  anchor 'index is defined'")
+    at = lines.index("  phrase 'index is defined'")
     assert lines[at + 1] == "    para 0: ['The index', ' is defined below.']"
     assert lines[at + 2] == "    para 2: ['The index is defined below.']"

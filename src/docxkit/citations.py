@@ -279,14 +279,23 @@ def repair_plan(parts: dict[str, bytes]) -> str:
     return "\n".join(lines).rstrip()
 
 
-def check_citations(docx_path: str | Path) -> int:
+def check_citations(docx_path: str | Path, *,
+                    later_mentions: bool = False,
+                    ignore: frozenset[str] | set[str] = IGNORED_LEADS) -> int:
     """Print the link audit for a manuscript; the count of issues found.
 
     The CLI entry (``docxkit citations``) and the drop-in replacement for
     the ported ``check_citation_links.py``: same contract (report to
     stdout, 0 issues means clean), same issue prefixes.
+
+    ``later_mentions=True`` also reports each mention of an
+    already-linked work that is itself plain text. The MENTION line
+    below prints either way — a half-linked paper used to reach "ALL
+    CHECKS PASSED" (Aging_Well, 20 of 73 plain), because every count
+    here was about works.
     """
-    issues, stats = audit_links(read_parts(docx_path))
+    issues, stats = audit_links(read_parts(docx_path), ignore=ignore,
+                                later_mentions=later_mentions)
     print(f"Document: {docx_path}")
     print(f"Paragraphs: {stats['paragraphs']}")
     print(f"Bookmarks: {stats['bookmarks']} ({stats['cite_bookmarks']} "
@@ -295,6 +304,9 @@ def check_citations(docx_path: str | Path) -> int:
     print(f"Hyperlinks: {stats['links']} total "
           f"({stats['broken']} broken, {stats['empty']} with no label, "
           f"{stats['unlinked']} unlinked citation-like mentions)")
+    print(f"Mentions: {stats['mentions_linked']} of {stats['mentions']} "
+          f"linked ({stats['later_unlinked']} later mentions of a linked "
+          f"work are plain text)")
     print("=" * 60)
     if not issues:
         print("ALL CHECKS PASSED — no issues found.")

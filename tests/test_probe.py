@@ -50,13 +50,13 @@ def test_probe_reports_body_level_bookmarks(tmp_path):
 
 def test_probe_shows_how_a_phrase_splits_across_runs(tmp_path):
     rep = probe(make_docx(tmp_path, BODY), ("Table 1: Descriptive",))
-    (_, runs), = rep.anchors["Table 1: Descriptive"]
+    (_, runs), = rep.phrases["Table 1: Descriptive"]
     assert runs == ["Table 1", ": Descriptive statistics."]
 
 
 def test_probe_reports_a_missing_anchor_rather_than_raising(tmp_path):
     rep = probe(make_docx(tmp_path, BODY), ("nowhere in the paper",))
-    assert rep.anchors["nowhere in the paper"] == []
+    assert rep.phrases["nowhere in the paper"] == []
     assert "NOT FOUND" in rep.report()
 
 
@@ -81,8 +81,8 @@ def test_probe_reports_where_the_two_views_disagree(tmp_path):
     to `edit`; probe must not answer as though there were one reading."""
     path = make_docx(tmp_path, MATHY)
     rep = probe(path, ("where x denotes", "where  denotes"))
-    assert [i for i, _ in rep.anchors["where x denotes"]] == [0]
-    assert rep.anchors["where  denotes"] == []
+    assert [i for i, _ in rep.phrases["where x denotes"]] == [0]
+    assert rep.phrases["where  denotes"] == []
     assert rep.view_split["where x denotes"] == ([0], [])
     assert rep.view_split["where  denotes"] == ([], [0])
     assert "the two views disagree" in rep.report()
@@ -119,7 +119,7 @@ def test_an_ordinary_anchor_has_no_split_to_report(tmp_path):
     """The quiet case: no equation, one answer, nothing said."""
     path = make_docx(tmp_path, BODY)
     rep = probe(path, ("We report it in",))
-    assert [i for i, _ in rep.anchors["We report it in"]] == [0]
+    assert [i for i, _ in rep.phrases["We report it in"]] == [0]
     assert rep.view_split == {}
     assert "disagree" not in rep.report()
 
@@ -448,9 +448,9 @@ def test_at_most_TEN_runs_of_a_split_anchor_are_shown(tmp_path):
     body = "<w:p>" + "".join(f"<w:r><w:t>w{i} </w:t></w:r>"
                             for i in range(12)) + "</w:p>"
 
-    rep = probe(make_docx(tmp_path, body), anchors=("w0 w1",))
+    rep = probe(make_docx(tmp_path, body), phrases=("w0 w1",))
 
-    (_, runs), = rep.anchors["w0 w1"]
+    (_, runs), = rep.phrases["w0 w1"]
     assert len(runs) == 10
     assert runs[0] == "w0 " and runs[-1] == "w9 "
 
@@ -462,9 +462,9 @@ def test_an_anchor_found_TWICE_reports_both_paragraphs(tmp_path):
     body = (para(run("The index is defined below.")) + para(run("filler"))
             + para(run("The index is defined below.")))
 
-    rep = probe(make_docx(tmp_path, body), anchors=("index is defined",))
+    rep = probe(make_docx(tmp_path, body), phrases=("index is defined",))
 
-    assert [i for i, _ in rep.anchors["index is defined"]] == [0, 2]
+    assert [i for i, _ in rep.phrases["index is defined"]] == [0, 2]
 
 
 def test_a_caption_BELOW_its_table_has_no_table_after_it(tmp_path):

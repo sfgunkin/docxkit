@@ -57,13 +57,21 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
-from ._xml import DOCUMENT, PARA_RE, internal_links
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, internal_links
 from .edit import preserve_space, replace_in_para, visible_text
 from .find import edit_para
 from .package import write_docx
 
 __all__ = [
+    # Re-exported so a batch script has ONE import line. Bookmark ids
+    # must be unique across the whole document, notes included, so
+    # `next_bookmark_id` wants every part that can hold one — and
+    # `DOCUMENT` alone sent the caller either into private `_xml` or
+    # back to spelling the note part's name by hand, which is the thing
+    # these constants exist to stop.
     "DOCUMENT",
+    "ENDNOTES",
+    "FOOTNOTES",
     "Edit",
     "Report",
     "Step",

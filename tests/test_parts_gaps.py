@@ -11,7 +11,7 @@ import pytest
 from conftest import NS, comment, make_parts, para, run
 
 from docxkit.comments import read_all, remove
-from docxkit.errors import AnchorError
+from docxkit.errors import AnchorError, PackageError
 from docxkit.footnotes import append, find, find_all, remap, renumber_map
 from docxkit.hygiene import (
     carry_properties,
@@ -407,6 +407,26 @@ def test_missing_parts_ignores_what_word_regenerates():
     assert missing_parts(batch, baseline) == []
     del batch["customXml/item1.xml"]
     assert missing_parts(batch, baseline) == ["customXml/item1.xml"]
+
+
+def test_docProps_custom_is_NOT_what_word_regenerates():
+    """Those are USER-DEFINED properties — Word does not synthesise them
+    and neither does Compare. On a World Bank manuscript the part holds
+    the sensitivity label and the "Official Use Only" content marking,
+    and the prefix rule exempted it as bookkeeping: `promote` would have
+    copied a redline without it over the manuscript with every gate
+    green (Aging_Well R1, 2026-08-21). The thumbnail beside it stays
+    exempt — 39 of 475 real manuscripts carry one."""
+    from docxkit.package import missing_parts, regenerated_by_word
+
+    assert regenerated_by_word("docProps/app.xml")
+    assert regenerated_by_word("docProps/thumbnail.jpeg")
+    assert not regenerated_by_word("docProps/custom.xml")
+
+    baseline = make_parts(para(run("body")))
+    baseline["docProps/custom.xml"] = b"<Properties/>"
+    assert missing_parts(make_parts(para(run("body"))), baseline) == [
+        "docProps/custom.xml"]
 
 
 def test_remove_keeps_the_text_the_comment_was_anchored_on():
@@ -882,6 +902,98 @@ def test_a_package_with_no_relationships_part_is_left_alone():
 
     assert back == ["customXml/item1.xml", "customXml/itemProps1.xml"]
     assert "word/_rels/document.xml.rels" not in rebuilt
+
+
+# A footer is the part `restore_parts` could not restore: its Target is
+# document-relative ("footer3.xml") while the part is "word/footer3.xml",
+# so the prefix test matched nothing and the file came back referenced by
+# nothing — which Word ignores, with the parts gate green because the
+# file is present (Aging_Well R1, 2026-08-21).
+
+_FOOTER_TYPES = ("default", "even", "first")
+
+
+def _with_footers(drop: str = "") -> dict[str, bytes]:
+    """Three footers: part, Override, relationship and sectPr reference."""
+    kept = [(i, t) for i, t in enumerate(_FOOTER_TYPES)
+            if f"word/footer{i + 1}.xml" != drop]
+    refs = "".join(f'<w:footerReference w:type="{t}" r:id="rId{i + 4}"/>'
+                   for i, t in kept)
+    parts = make_parts(para(run("body")) + f"<w:sectPr>{refs}</w:sectPr>")
+    for i, _t in kept:
+        parts[f"word/footer{i + 1}.xml"] = (
+            f"<w:ftr>{para(run(f'page {i + 1}'))}</w:ftr>").encode()
+    parts["[Content_Types].xml"] = (
+        "<Types>" + "".join(
+            f'<Override PartName="/word/footer{i + 1}.xml" '
+            f'ContentType="footer"/>' for i, _t in kept)
+        + "</Types>").encode("utf-8")
+    parts["word/_rels/document.xml.rels"] = (
+        "<Relationships>"
+        '<Relationship Id="rId1" Target="styles.xml"/>' + "".join(
+            f'<Relationship Id="rId{i + 4}" Target="footer{i + 1}.xml"/>'
+            for i, _t in kept)
+        + "</Relationships>").encode("utf-8")
+    return parts
+
+
+def test_a_dropped_FOOTER_is_restored_with_its_rel_AND_its_sectPr_reference():
+    source = _with_footers()
+    rebuilt = _with_footers(drop="word/footer3.xml")   # what Compare left
+
+    back = restore_parts(rebuilt, source, prefixes=("word/footer3.xml",))
+
+    assert back == ["word/footer3.xml"]
+    assert rebuilt["word/footer3.xml"] == source["word/footer3.xml"]
+    ct = rebuilt["[Content_Types].xml"].decode("utf-8")
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    assert 'PartName="/word/footer3.xml"' in ct
+    assert '<Relationship Id="rId6" Target="footer3.xml"/>' in rels
+    assert '<w:footerReference w:type="first" r:id="rId6"/>' in doc
+    # …and the group stays contiguous at the head of the sectPr, which is
+    # where the schema puts every header and footer reference.
+    assert re.search(r"<w:sectPr>(<w:footerReference[^>]*/>){3}</w:sectPr>",
+                     doc)
+
+
+def test_a_footer_that_cannot_be_WIRED_is_refused_not_reported_restored():
+    """The half that made the loss invisible. A part in the package that
+    nothing references is the loss again, with every parts gate green
+    because the file is there — so it is refused BY NAME rather than
+    returned in the restored list."""
+    source = _with_footers()
+    rebuilt = _with_footers(drop="word/footer3.xml")
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    rebuilt["word/document.xml"] = re.sub(
+        r"<w:sectPr>.*</w:sectPr>", "", doc).encode("utf-8")
+
+    with pytest.raises(PackageError, match=r"word/footer3\.xml"):
+        restore_parts(rebuilt, source, prefixes=("word/footer3.xml",))
+
+
+def test_a_dropped_docProps_custom_is_restored_through_the_PACKAGE_rels():
+    """Its relationship is in `_rels/.rels`, not the document's — the
+    only rels part `restore_parts` used to read. On a World Bank
+    manuscript that part carries the sensitivity label."""
+    source = make_parts(para(run("body")))
+    source["docProps/custom.xml"] = (
+        b'<Properties><property name="ClassificationContentMarking'
+        b'FooterText"><vt:lpwstr>Official Use Only</vt:lpwstr>'
+        b"</property></Properties>")
+    source["_rels/.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="word/document.xml"/><Relationship Id="rId3" '
+        b'Target="docProps/custom.xml"/></Relationships>')
+    rebuilt = make_parts(para(run("body")))
+    rebuilt["_rels/.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="word/document.xml"/></Relationships>')
+
+    back = restore_parts(rebuilt, source, prefixes=("docProps/custom.xml",))
+
+    assert back == ["docProps/custom.xml"]
+    assert (b'Target="docProps/custom.xml"' in rebuilt["_rels/.rels"])
 
 
 def test_a_restored_relationship_KEEPS_its_own_id_when_that_id_is_free():

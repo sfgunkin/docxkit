@@ -16,7 +16,8 @@ import stat
 import tempfile
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ __all__ = [
     "CORE_ORDER",
     "CORE_PART",
     "REGENERATED_BY_WORD",
+    "USER_PROPERTIES",
     "DocumentLocked",
     "PackageError",
     "assert_unlocked",
@@ -48,6 +50,8 @@ __all__ = [
     "next_backup_path",
     "part_fingerprint",
     "read_parts",
+    "readable",
+    "regenerated_by_word",
     "same_part",
     "set_core_property",
     "text_parts",
@@ -62,6 +66,30 @@ CORE_PART = "docProps/core.xml"
 #: disappeared from a manuscript inside a warning nobody could read
 #: (see :func:`docxkit.tracked.compare_collateral`).
 REGENERATED_BY_WORD = ("docProps/",)
+#: …and the one part under that prefix that is NOT Word's bookkeeping.
+USER_PROPERTIES = "docProps/custom.xml"
+
+
+def regenerated_by_word(name: str) -> bool:
+    """Is this a part Word rewrites for itself, so its absence says nothing?
+
+    True of ``docProps/app.xml`` — Pages, Words, Lines, which Word
+    recomputes on every save — and of the thumbnail beside it, which 39
+    of 475 real manuscripts carry.
+
+    False for ``docProps/custom.xml``, and that is the whole point of
+    this being a function. Those are USER-DEFINED properties: Word does
+    not synthesise them and neither does Compare. On a World Bank
+    manuscript the part carries the sensitivity label and the "Official
+    Use Only" content marking, so a document that loses it quietly stops
+    being labelled. Under one prefix rule it read as "metadata,
+    regenerated", the parts gate skipped it by design, and `promote`
+    would have copied a redline without it over the manuscript with
+    every gate green (Aging_Well R1, 2026-08-21).
+    """
+    return name.startswith(REGENERATED_BY_WORD) and name != USER_PROPERTIES
+
+
 #: The order Word itself writes ``docProps/core.xml`` in, read off real
 #: manuscripts rather than from the schema's element declarations — the
 #: two disagree, and Word's file is what every other reader has to cope
@@ -193,6 +221,44 @@ def read_parts(path: str | Path, *, retries: int = 6,
         f"({last})") from last
 
 
+@contextmanager
+def readable(path: str | Path) -> Iterator[tuple[Path, bool]]:
+    """A path a READ-ONLY routine can open; ``(path, copied)``.
+
+    Word holds ``working.docx`` while the author edits it, and the two
+    commands most worth running at exactly that moment — `revision
+    status` and `revision ingest`, both documented read-only — refused
+    with "close it and retry" (2026-08-21). The protocol's own resume
+    ritual is to run them both.
+
+    Measured the same minute: a byte COPY of the locked file succeeded
+    and the full ingest ran on it — 43 changed paragraphs, 22 lost
+    anchors — while a direct read of the original raised
+    `PermissionError` seconds later. Word's share mode is not reliably
+    read-permitting; the copy is what works.
+
+    A snapshot taken mid-edit is a true statement about a moment, and
+    the alternative is no answer at all — so the flag comes back with
+    the path and the caller SAYS which it read. If the copy fails too,
+    the original path is yielded and the caller gets the usual refusal.
+    """
+    path = Path(path)
+    if not is_locked(path):
+        yield path, False
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="docxkit_snapshot_"))
+    try:
+        copy = tmp / path.name
+        try:
+            shutil.copy2(path, copy)
+        except OSError:
+            yield path, False        # nothing better to offer; refuse as usual
+        else:
+            yield copy, True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 #: Attributes Word rewrites on every save. They carry no meaning for a
 #: reader: revision-save ids and the paragraph/text ids Word re-mints.
 _VOLATILE_ATTR = re.compile(r"rsid|paraId|textId", re.IGNORECASE)
@@ -295,11 +361,12 @@ def missing_parts(parts: dict[str, bytes],
     ``working.docx``, so the loss reaches the live manuscript in one
     step (Parental Style 2026-08-12).
 
-    :data:`REGENERATED_BY_WORD` is excluded: ``docProps/*`` is Word's
-    own bookkeeping and its absence means nothing.
+    :func:`regenerated_by_word` is excluded: most of ``docProps/*`` is
+    Word's own bookkeeping and its absence means nothing.
+    ``docProps/custom.xml`` is not, and is gated like any other part.
     """
     return sorted(n for n in baseline
-                  if n not in parts and not n.startswith(REGENERATED_BY_WORD))
+                  if n not in parts and not regenerated_by_word(n))
 
 
 def write_docx(path: str | Path, parts: dict[str, bytes],

@@ -675,7 +675,12 @@ def audit(xml: str, *,
           also: str | Iterable[str] = ()) -> dict[str, list[str]]:
     """Report the cross-reference state without changing anything.
 
-    Keys: ``linked`` (both bookmarks present), ``caption_only``,
+    Keys: ``linked`` (both bookmarks present), ``unlinked`` (NEITHER —
+    the state of a manuscript nobody has run this over, and the one the
+    three original buckets counted nowhere: five exhibits, none of them
+    linked, printed the same all-zero line as a paper with no exhibits
+    at all, so the gate passed on the case it exists to report
+    (Aging_Well, 2026-08-21)), ``caption_only``,
     ``mention_only``, ``dangling`` — hyperlinks pointing at a bookmark
     no longer in the document, which is what a deleted figure leaves
     behind — ``misnamed``: a caption carrying an exhibit bookmark whose
@@ -722,7 +727,7 @@ def audit(xml: str, *,
     mentions = _mention_offsets(xml)
     paras = [m.start() for m in PARA_RE.finditer(xml)]
     linked, caption_only, mention_only, misnamed = [], [], [], []
-    misplaced = []
+    misplaced, unlinked = [], []
     for cap in find_captions(xml, labels=labels):
         has_cap = cap.name in names
         has_txt = cap.mention_name in names
@@ -732,6 +737,8 @@ def audit(xml: str, *,
             caption_only.append(cap.name)
         elif has_txt:
             mention_only.append(cap.name)
+        else:
+            unlinked.append(cap.name)
         for nm in re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"',
                              xml[cap.start:cap.end]):
             em = exhibit_re.match(nm)
@@ -755,6 +762,7 @@ def audit(xml: str, *,
                     f"the first at {_where(paras, ahead[0])}")
     return {
         "linked": sorted(linked),
+        "unlinked": sorted(unlinked),
         "caption_only": sorted(caption_only),
         "mention_only": sorted(mention_only),
         "dangling": sorted(a for a in anchors if a not in names),
