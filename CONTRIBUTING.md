@@ -1827,8 +1827,11 @@ the file gets a broken quote, which ruff reports at once.
 matches `<w:footnoteReferenceX` and read as correct in every review.
 
 Compose the character rather than typing it — `B = chr(92)` — or write
-the payload with an editor tool and exec the file. And after a session
-that patched this way, sweep for it:
+the payload with an editor tool and exec the file. **The sweep for it is
+a gate now** — `tests/test_control_characters.py` reads every `.py`,
+`.md`, `.toml`, `.cfg` and `.yml` in the tree in 0.1 s and names the
+file, the line and the surrounding text — so `pytest` refuses what the
+session below had to be remembered to look for:
 
     python -c "import pathlib; print([str(f) for f in pathlib.Path('.').rglob('*') if f.is_file() and f.suffix in {'.py','.md'} and chr(8) in f.read_text(encoding='utf-8', errors='ignore')])"
 

@@ -17,56 +17,39 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 nothing ties a batch to the BASELINE it was built on — a refused build leaves the old redline in place, and validate + promote both take it
+### S2 `link_all` MARKS an entry nothing cites, and the audit then reports the marker it just wrote — twice
 
-**Symptom as observed.** 2026-08-21, Aging_Well R5. `revision build`
-refused, correctly:
+**Measured 2026-08-21**, while checking the fix to the entry below. Run
+`link_all` in memory over four manuscripts and audit before and after:
 
-    batch.docx has changed since docxkit built it — someone edited it in Word
+    Parental Style working.docx     0 -> 0     (a finished apparatus)
+    DSI_08192026.docx               0 -> 0
+    le14.docx                      45 -> 45    (was 45 -> 62 before the fix)
+    li7.docx                       38 -> 52
+    AFI build/prev.docx             6 -> 20
 
-(the paper's own repair script rewrites `batch.docx` after `build` stamps
-it; the fix is `guard.restamp`, and the message says so). The refusal was
-masked downstream — `build … | tail` gives the shell `tail`'s exit code —
-so `validate` ran next, and **it validated the PREVIOUS batch**: the R1
-redline, built two baselines and one author round earlier. It printed a
-detailed, entirely plausible `VERDICT: FAIL` — twenty-odd `LINK LOST ->
-WHO2019txt / Zaidi2013 / WorldBank1994` lines, all describing a redline
-nobody was working on. Several minutes went into reading those findings as
-if they were about R5.
+The 30 findings li7 gains are `ORPHAN REF` and `REF WITHOUT CITE`, one
+pair per reference the text does not cite —
+`AdministrationforCommunityLiving2024`, `Guralnik2000`, twenty-eight
+more — and every one of them describes a bookmark this run has just
+created. `rebuild` marks EVERY entry, cited or not.
 
-**The dangerous half is `promote`.** Its `StaleBatch` guard compares
-`working.docx` against `prev.docx` — "has the author edited the live file
-since the baseline". Both were in sync here, so it would have passed, and
-promote copies `batch` over `working.docx`. The batch was the R1 redline:
-promoting it would have replaced the manuscript with a generation from
-before the author's 16-paragraph copy-edit round AND before the whole
-citation apparatus, with a rescue copy as the only way back and no gate
-having said a word. `revision.promote` checks existence, the Word lock, and
-`live == base`; there is no check that `batch` was built FROM `base`.
+**Why it is not simply "stop marking uncited entries".** Tried, and
+reverted: `REF WITHOUT CITE` — a reference nobody cites, which is a
+finding a journal cares about — is computed FROM the marker, so
+suppressing the marker suppresses the true finding with the redundant
+one. It also un-observes what four tests pin about two entries sharing
+one key getting two distinct names.
 
-**Diagnosis.** The batch↔baseline link is never recorded.
-`batch.docx.buildinfo.json` already holds the batch's own sha and the
-repair chain, and names `"original": "prev.docx"` — the FILE, not its
-CONTENT:
+**Sketch.** The redundancy is the audit's: an ORPHAN REF whose work is
+also reported REF WITHOUT CITE is the same fact said twice, and the
+second line is the one a reader can act on. Report one. That halves the
+noise on a paper with uncited references and hides nothing — but it
+edits a live gate, so it wants its own round and its own measurement
+across the corpus.
 
-    {"sha256": "0b5038df…", "original": "prev.docx", "revised": "r5_clean.docx", "repairs": [...]}
-
-`prev.docx` is a path that legitimately changes content on every
-`baseline`, so the one field that would answer "is this batch about the
-current truth?" is the one not stored.
-
-**Suggested fix.** Record `base_sha256` in `buildinfo.json` at build time.
-`validate` refuses (or at minimum WARNS loudly, before the ladder) when it
-does not match the baseline it was handed; `promote` raises `StaleBatch` —
-it already has the exception and the exit code. That also turns the
-existing message inside out in a useful way: today it can only say "the
-author edited the live file", when the other stale direction is the one
-that silently loses work.
-
-**Workaround in use.** Never pipe a protocol command into `tail`; delete
-`batch.docx` after every promote so a refused build cannot leave a live-
-looking one behind. Neither is a gate.
-
+**Workaround in use.** None; the findings are read and ignored, which is
+the habit an audit cannot afford.
 
 ### S3 the agent's Bash heredocs EAT BACKSLASHES, and a `\b` lands as a control character
 
@@ -108,57 +91,56 @@ before the grep that found it by hand).
 So the sweep is worth running after a heredoc session for markdown and
 comments; for code, the gate already refuses.
 
-**What would fix it.** Nothing in this repository; it is the agent
-harness's shell layer, not docxkit's. Recorded here because the damage lands
-in docxkit's files, and because the sweep is cheap to run after any session
-that patched through heredocs — every `.py` and `.md` in the tree, looking
-for `chr(8)`.
+**The sweep IS a gate now, 2026-08-21** — `tests/test_control_characters.py`
+reads every `.py`, `.md`, `.toml`, `.cfg` and `.yml` in the tree (421 files,
+0.1 s) and fails on any control character that is not tab, newline or
+carriage return, naming the file, the line and the surrounding text. That
+closes the two places ruff cannot see, and "remember to run the sweep after
+a heredoc session" is not something anyone should have to remember. The
+pattern itself is pinned separately, because a clean tree gives the gate
+nothing to find and it would otherwise be a check that cannot fail.
 
-### S2 `build_overrides` ingests BODY paragraphs only — a footnote the author retyped is dropped
-
-Found by review, 2026-08-19, while widening the tracked gates to endnotes.
-`load_paragraphs` returns `(body paragraphs, footnotes XML)` and the note
-stores are read for ONE thing: remapping the ids Word renumbered. The
-alignment runs over body paragraphs, so an author edit inside a note
-DEFINITION produces no override at all.
-
-(As first written this said "and endnotes are not read in any form", which was
-true of the remap as well until 2026-08-20 — that half is fixed, and the entry
-below now describes only the alignment.)
-
-Reproduced on two packages differing only inside `word/footnotes.xml` and
-`word/endnotes.xml`: `build_overrides(base, edited)` returns `[]`. The next
-clean build regenerates from a source that never received the edit, and the
-author's wording is gone with nothing raised.
-
-Not reachable from the single-file `revision` protocol, which edits
-`working.docx` in place; this is the multi-file overrides workflow the older
-paper projects still run, and `build_overrides` is exported from the package
-root.
-
-The report layer is NOT blind to it — `revision.ingest` runs `compare`, which
-reads every part a reader sees, so the change is described. It is the fold-back
-that drops it, which is the worse half: a report that names the edit and a
-pipeline that discards it read as "handled".
-
-Fixing it properly means a second channel through `apply_overrides`, which
-takes `document.xml` alone — a design change, not a patch. **Until then the
-limitation is documented in both docstrings and pinned by a test**, so the day
-it is fixed the docs are told to change.
-
-**What the design change is** (2026-08-20, looked at and not taken): the
-fold-back is body-only because the FORMAT is. An override is `{"old":
-<paragraph xml>, "new": <paragraph xml>}`, so there is nowhere to say "this
-paragraph is in footnotes.xml". Either the entry grows a `part` key that older
-stores do not carry — `apply_overrides` then taking `parts` rather than one
-string, and defaulting to `document.xml` when the key is absent — or there is
-one store per part. Both change a file three paper pipelines already hold,
-which makes it a decision for the maintainer rather than a patch to slip in.
-
-The ID REMAP half of the same blindness WAS a patch, and is fixed: see
-"an ENDNOTE id was spliced into an override unremapped" under Fixed.
+**Still open, and staying open.** Nothing in this repository fixes the
+CAUSE; it is the agent harness's shell layer, not docxkit's. The workaround
+above is still the workaround — compose the backslash, or write the payload
+with the Write tool — and the entry stays here so the next session knows
+why. What changed is that the damage can no longer ship.
 
 ---
+
+**Seventeen closed on 2026-08-21**, in three batches as the manuscripts
+turned them up. What is left open is the heredoc, which this repository
+cannot fix and now gates instead, and the ORPHAN REF redundancy above,
+which wants its own measured round. Nine came from Aging_Well's first
+five rounds, five from AFI, one from a review of the tracked gates, one
+was answered by simply re-reading a manuscript (`probe` had been able to
+say it all along), and one was closed as a DECISION rather than a fix so
+it is not proposed again. Three shapes ran through them.
+
+**A number that cannot tell two states apart.** "Unlinked" counted works
+and could not see a half-linked apparatus; "part dropped" counted
+`docProps/*` as Word's own and could not see a sensitivity label leaving
+the document; the batch stamp named `prev.docx` as a FILE and could not
+say which baseline it meant; and `crossrefs --audit` printed all zeroes
+for five unlinked exhibits, which is what a paper with no exhibits at
+all prints. Each read as a clean report of a document in the wrong state.
+
+**A rule written from ONE example.** The rels walk answered the
+`../customXml/` spelling and no other; the year matcher took the one-year
+parenthesis and dropped the group whole; the year FOLD ended at the
+digits and could not see a 2023b; the italics exemption knew "working
+paper" and not the four other names a numbered series goes by. The fix
+in each case was to read what the format actually says — resolve the
+target, expand the list, spend the letter, match the shape — rather than
+to add the second example.
+
+**The document already knew.** The one that cost the most was `link`
+minting a name while a broken back-link in the same paragraph named the
+anchor to create; `probe` could already say AFI's captions were
+field-form; a locked file could already be copied and read. Three
+separate hours went into repairs, hand-wiring and refusals for facts
+that were in the file, or in this toolkit, the whole time. Before adding
+a rule, look for the answer the document is already giving.
 
 **Nothing else open, as of 2026-08-19.** Six were raised and closed that day; five
 came from one manuscript and the sixth from mutation testing `placement` the
@@ -222,6 +204,21 @@ the field, and both audits stay clean. Unwrapping it makes things WORSE —
 `audit_links` then reports NO BACK-LINK, because that element has become the
 link's only remaining form.
 
+**The same churn runs the OTHER way on an ordinary author save.** AFI,
+2026-08-21: a repair wrote twelve `w:hyperlink` elements; the author opened
+the manuscript in Word, made two word edits, saved, and eight of them came
+back as `HYPERLINK` fields, with every bookmark id renumbered low and rsids
+on the runs. Nothing was lost — 104 bookmarks, every anchor resolving — but
+the file no longer looks like what the repair wrote, and it cost twenty
+minutes of believing the repair had never applied. `ingest` calls it
+save-noise, correctly.
+
+So: **the form of a link is not evidence about who wrote it.** Verify a
+repair by counting anchors and resolving them, never by "mine writes
+elements and this file has fields". Both forms are live in any manuscript a
+human has opened, and `wrap_link_in_bookmark` counts them together for
+exactly this reason.
+
 ---
 
 *Kept for the shape of the file.* This section was empty on 2026-08-18, the
@@ -241,379 +238,403 @@ and target views** of the same redline, which is a check no gate was making.
 The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
-### S4 no safe way to set run properties without walking into a field
-
-Found on AFI, 2026-08-19. A formatting sweep over all 24 captions wrote run
-properties into every `<w:r>` of each caption paragraph. One caption —
-Figure 10's — is built as a field-code hyperlink:
-
-    fldChar begin | instrText HYPERLINK \l "fig10_firstref" | separate |
-    label | fldChar end
-
-with `fig10_caption` bookmarked *inside* the field. The `fldChar` and
-`instrText` runs carry no visible text, but they are runs, so they were
-formatted too. Word's Compare then marked them, and rejecting the batch
-brought the words back as plain text with the anchor gone —
-`validate` caught it as `LINK LOST -> fig10_firstref`, which is the system
-working.
-
-The cost was not only the link: skipping those runs took the batch from
-**136 revisions to 36**. A hundred of them were invisible field machinery the
-author would have had to click through.
-
-Related, and NOT the same thing: the "Not a defect" note above records
-Compare *re-representing* a caption's HYPERLINK FIELD as a `w:hyperlink`
-element, which is harmless. This is the other direction — writing into the
-field's runs makes Compare mark them, and the reject view then loses the
-anchor outright. Both say the same thing about this construct: it is the one
-caption shape in the paper that does not survive being touched casually.
-
-`validate` catching it is good. Not having to hit it would be better: a
-`set_run_props(para, props, *, skip_fields=True, skip_links=True)` helper, or
-simply a documented `is_field_run()`, would make the safe version the easy
-one. Worth checking whether this is also what r3 recorded on AFI as
-`fig5_firstref` being "re-stripped by Word on EVERY edit of that paragraph" —
-that reads like the same bug attributed to Word.
-
-**Both, 2026-08-20 — `edit.set_run_properties` and `edit.is_field_run`.**
-
-    from docxkit.edit import set_run_properties
-    para, written = set_run_properties(para, {
-        "rFonts": '<w:rFonts w:ascii="Arial Narrow"/>',
-        "sz": '<w:sz w:val="20"/>'})
-
-`props` maps a CT_RPr child tag to the element to write there, each landing
-in its schema slot and in the run's LIVE properties (a `w:rPrChange` snapshot
-is left alone); `""` removes one. The count is of runs CHANGED, so a second
-pass answers 0.
-
-`skip_fields=True` is the default and skips a run that carries `fldChar` or
-`instrText` AND no visible text. **Not `skip_links`**, and not the whole
-field: the label a field DISPLAYS is text a reader sees, and a caption whose
-number lives inside one still wants the face the rest of the caption has. The
-damage recorded above was the machinery — runs the author cannot see, marked
-by Compare and clicked through one at a time. On the fixture built from AFI's
-Figure 10 caption the sweep writes 2 runs where the naive loop writes 6.
-
-Still open: the `fig5_firstref` question in the last paragraph above, which
-nobody has checked.
-
-### S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation — UNLINKED manuscripts only, as of 2026-08-20
-
-**Symptom as observed.** AFI `working.docx`, after the r4 house-style
-conversion:
-
-    ¶33  missing-ref  cited but not in the reference list  "Surveys and ILOSTAT (2024)"
-
-The sentence is *"Employment is consolidated from standardized national Labor
-Force Surveys and ILOSTAT (2024) data on employment by occupation."* There is
-one citation in it, `ILOSTAT (2024)`, and its entry is in the list. The
-two-author pattern `X and Y (Year)` matched "Surveys and ILOSTAT" because the
-word before "and" is capitalised.
-
-**Why S2.** `missing-ref` is the finding a user is most likely to act on, and
-acting on this one means hunting for a reference that is already there. It also
-makes the audit unusable as a gate — the paper cannot reach a clean report.
-
-**Fixed for a manuscript that has an apparatus** (2026-08-20). AFI's
-`ILOSTAT (2024)` is a live hyperlink to the entry's own bookmark, and a link to
-an ENTRY is the document stating what it means. `audit` now collects every
-bookmark the entries carry (`_entry_anchors`, the gap above each one included)
-and `_trust_the_links` re-reads any matched span that strictly CONTAINS such a
-link's label, at the label's own offsets. The swallowed prose in front is prose
-again. `_read_label` puts a parenthetical's parentheses back for the second
-reading — `Kanbur 2007` is two words, `(Kanbur 2007)` is a citation — and a
-label that says nothing leaves the match standing: this narrows a match, it
-never deletes one.
-
-**What is left.** An UNLINKED manuscript still reports the false
-`missing-ref`, because there is no fact to read and the pattern is all there
-is. Running `citations.link_all` first is the answer today, and the audit is
-reachable-clean for any paper that has.
-
-**Not taken, deliberately** — the second filter this entry used to propose:
-"reject a match whose first element is not a listed surname while the second
-is". It fires on the false positive, and it also fires on a REAL two-author
-work missing from the list whose co-author happens to have a same-year entry —
-turning an S2 false finding into an S1 silent one. The reference list is
-evidence about the works, not about which words are surnames.
-
-### S4 `refstyle` converts the punctuation but not the NAMES — the two traps left, 2026-08-20
-
-**Mostly fixed.** `refstyle.convert(parts)` and `docxkit refstyle --fix` write
-the mechanical half: `&` becomes "and", the year takes its parentheses (or
-loses them under `--chicago`), the final "and" gets the comma the house style
-puts before it, page ranges get an en-dash and are written out in full
-("174–79" → "174–179"), "p.45" gets its space and "et al" its period.
-`convert_entry` returns the FIXES — `(code, old, new)` fragments — and
-`convert_text` applies and CHECKS them; `convert` writes each one through
-`edit.replace_in_para`.
-
-Three things that design buys, each of which was a trap in the entry below:
-
-* **the italic outlet survives.** A fix is a fragment, not a rewritten entry,
-  so only the runs its own span crosses are touched. Writing the new text in
-  wholesale flattens the paragraph to one run and destroys the italics
-  `audit` is also checking for — the conversion would create the finding
-  beside it;
-* **the invariant.** Letters and digits identical before and after, once
-  "&"→"and" and a written-out range are accounted for. A dropped author, a
-  lost DOI or a truncated title raises `ConversionRefused` and nothing is
-  written. It caught the range arithmetic in testing: without its guard an
-  ordinary "998-1024" expands to "998–991024";
-* **a linked DOI keeps its link.** `replace_in_para` refuses a span that
-  meets a hyperlink label, and the report says which entry and which rule
-  rather than forcing it.
-
-**What is left, and why.**
-
-1. **Names.** Reducing "Till Von Wachter" by last-word-is-surname gives
-   "Wachter, T." — a renamed author, in a pass whose entire premise is that
-   no author changes. The particle set (von, van, de, della, ten, …) that
-   would prevent it is a claim about NAMES, not a fact about the document,
-   and the failure it fails at is silent. `check_entry` still reports the
-   spelled-out given name; nothing acts on it.
-2. **Italics.** Not text — the outlet has to be marked by run surgery, and
-   which span is the outlet is a judgment the audit deliberately does not
-   make (it asks only whether the entry has any).
-3. A **trailing initial already ends in a period**, so appending one gives
-   "Allen, S.. (2019)." — a name-side trap, which arrives with (1).
-
-**Still true, and worth keeping here:** a parenthesised year is unambiguous
-and a bare one is not. AFI's own citation linker found years with
-`\b(\d{4}[a-z]?)\.` and, once the year moved into parentheses, silently
-matched inside DOIs and page ranges instead — Feng 2025 from
-`econmod.2025.107399`, Lai 1912 from `1875–1912`. **Any downstream parser
-written against the old form has to be re-checked after a `--fix` run.**
-
-**Workaround partly retired:** of AFI's three scripts, `r4_refstyle.py`'s
-punctuation half and `build_r4w.py`'s gate are covered; the name reduction
-and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
-scope on purpose — the in-text rules change what a sentence SAYS.
-
-### S2 a MULTI-YEAR citation parses as nothing at all — "Sen (1985, 1992)" yields zero citations
-
-**Symptom as observed.** 2026-08-21, ingesting the Aging_Well framework
-paper (`Documents/faw1.docx`, an unlinked manuscript the author typed in
-Word). `docxkit refstyle` reported **5 uncited-ref findings that are all
-cited**: Rowe and Kahn 1987 and 1997, Sen 1985, 1992 and 2009. Every one
-of them is cited in a parenthetical that carries several years after one
-name — "Rowe and Kahn (1987, 1997)", "Sen's capability approach (1985,
-1999, 2009)", "Sen (1985, 1992)". Sen 1999 escaped only because it is
-*also* cited on its own as "(Sen 1999; Stephens et al. 2015)".
-
-**Repro** (no document needed):
-
-    from docxkit.citations import find_citations
-    find_citations("Sen (1999) says things.")        # [('Sen', '1999')]
-    find_citations("Sen (1985, 1992) distinguishes") # []
-    find_citations("Rowe and Kahn (1987, 1997) nor") # []
-
-The group does not degrade to its first year — it produces **no keys at
-all**, so the name goes missing too.
-
-**Diagnosis.** The year matcher takes a parenthesis holding exactly one
-year (optional letter suffix). A comma-separated year list is a normal
-author-date form for citing several works by one author and nothing in
-the grammar expands it.
-
-**Why S2 rather than S4.** Two outputs are wrong and no gate sees either.
-(1) `refstyle`'s cited-listed cross-check calls a cited work uncited —
-noise that trains the reader to skim the section where a genuinely
-orphaned entry would appear. (2) The worse half: the mention is invisible
-to `find_citations`, so `citations` raises no UNLINKED finding for it and
-`link_all` silently skips it. On this paper that is 3 mentions covering 5
-works that a `docxkit link --write` run would leave unlinked while
-reporting a clean sweep — the audit and the linker agree, and both are
-blind in the same place.
-
-**Suggested fix.** Expand a year list inside one parenthetical into one
-citation per year against the same surname(s), and keep the span so the
-linker can wrap each year separately (the labels a reader clicks are
-"1987" and "1997", not the whole group). Watch the boundary with a page
-locator ("Sen 1999, 45") and with a genuine list of different authors
-("(Sen 1999; Coast et al. 2008)"), which already parse.
-
-**Workaround in use.** Aging_Well's ingest note records the 5 findings as
-known false positives; nothing is suppressed in code.
-
-
-### S4 `_NO_ITALICS_MARKERS` knows "working paper" and not the other names a series goes by
-
-**Symptom as observed.** 2026-08-21, Aging_Well's ingest audit. `refstyle`
-flagged 2 of 58 entries with "no italicised title or journal in this entry":
-
-    Sen, A. (2000). "Social Exclusion: Concept, Application, and Scrutiny."
-        Social Development Papers No. 1, Asian Development Bank.
-    Zaidi, A., ... and E. Zolyomi. (2013). "Active Ageing Index 2012: Concept,
-        Methodology and Final Results." Research Memorandum, European Centre Vienna.
-
-Both are the working-paper form the exemption already exists for — a
-numbered institutional series, which HOUSE sets without italics — written
-under names the marker list does not carry. `_NO_ITALICS_MARKERS` has
-"working paper", "discussion paper", "mimeo" and "unpublished"; a series
-called **"Papers No. N"**, a **"Research Memorandum"**, a **"Policy Research
-Working Paper"** (that one matches) or a **"Technical Report No. N"** does
-not reduce to any of them.
-
-**Why S4.** The audit is advisory and the reader can see the entry is a
-series paper. But the harm is the one the exemption was written against, in
-the comment beside it: on AFI v13, flagging these "drowned the two entries
-that had really lost their journal italics". Two false positives out of two
-italics findings is the whole finding class on this paper.
-
-**Suggested fix.** Match the SHAPE, not the vocabulary: an entry whose
-non-title tail is `<Series words> No. <n>, <Institution>` carries no
-italicised outlet by construction. Failing that, add "memorandum", "papers
-no.", "report no." and "technical report" — and keep the REPORT title
-("World Development Report 2020") flagged, which shape-matching preserves
-and a bare "report" marker would not.
-
-**Workaround in use.** Recorded as known false positives in
-`Aging_Well/revision/log.md`; nothing suppressed in code.
-
-
-### S2 `docProps/custom.xml` is exempted as "Word regenerates it on save" — it holds the SENSITIVITY LABEL
-
-**Symptom as observed.** 2026-08-21, Aging_Well R1. `revision build`
-printed
-
-    WARNING: Compare part dropped: docProps/app.xml (Word regenerates it on save)
-    WARNING: Compare part dropped: docProps/custom.xml (Word regenerates it on save)
-
-and `validate`'s parts gate then reported **one** missing part, the
-footer, and said nothing about `custom.xml`. It is on the exempt list, so
-a promote would have copied the batch over `working.docx` and the part
-would be gone from the manuscript with every gate green.
-
-That part is not statistics. On this World Bank paper it carries
-
-    MSIP_Label_f1bf45b6-…_Enabled / _ContentBits / _ActionId  (the sensitivity label)
-    ClassificationContentMarkingFooterText = "Official Use Only"
-    ClassificationContentMarkingFooterShapeIds = 6dd13695,86566fa,653661d6
-
-**Diagnosis.** The exemption is right for `app.xml` — Pages, Words, Lines
-are Word's own and it rewrites them on every save. It is wrong for
-`custom.xml`: those are USER-DEFINED properties. Word does not synthesise
-them, and neither does Compare. Grouping the two under one rule reads as
-"metadata, regenerated" and buries a compliance artifact in it.
-
-**Why S2 rather than S1.** Nothing is reported wrong — the warning does
-print. But it prints as a benign line among carried-across notes, the gate
-that exists to catch a lost part deliberately skips this one, and the
-consequence is a document that quietly stops being labelled. On a Bank
-manuscript the label is what governs how the file may be handled.
-
-**Suggested fix.** Split the two. `app.xml` stays exempt; `docProps/
-custom.xml` joins the parts gate, and `build` carries it across the way it
-already carries the three `customXml/` parts and `dc:creator` — its
-relationship lives in the PACKAGE rels (`_rels/.rels`), not
-`word/_rels/document.xml.rels`, which is why `restore_parts` cannot do it
-either (see the entry below). A paper that really wants it gone can strip
-it deliberately, which is the argument `restore_parts`' own docstring
-makes about the data store.
-
-**Workaround in use.** `Aging_Well/revision/scripts/restore_compare_losses.py`
-restores it (part + content-type Override + package relationship) between
-every `revision build` and `validate`.
-
-
-### S2 `restore_parts` cannot restore a FOOTER — its relationship target is document-relative, and the sectPr reference is not its job
-
-**Symptom as observed.** 2026-08-21, Aging_Well R1. Compare dropped
-`word/footer3.xml`, the first-page footer. `validate` named it and pointed
-at the fix:
-
-    LOST word/footer3.xml
-    Restore it with docxkit.hygiene.restore_parts and rebuild.
-
-`restore_parts(parts, source, prefixes=("word/footer3.xml",))` puts the
-part and its content-type Override back and **silently leaves it
-unreferenced**, which is a part Word ignores — the same outcome as the
-loss, now invisible to the parts gate because the file is present.
-
-**Diagnosis, two separate causes.**
-
-1. The relationship walk keys on the rels Target:
-
-       name = target.group(1).removeprefix("../")
-       if not any(name.startswith(p) for p in prefixes): continue
-
-   A footer's Target is **`footer3.xml`**, document-relative, while the
-   part name is `word/footer3.xml`. The prefix never matches. It works for
-   `customXml/` only because those Targets are written `../customXml/…`,
-   which `removeprefix("../")` normalises into the part name. Every part
-   under `word/` — footers, headers, a lost `footnotes.xml` — is in this
-   hole.
-
-2. Even with the relationship restored, Compare had also dropped the
-   `<w:footerReference w:type="first" r:id="…"/>` from the section
-   properties. Restoring a part cannot know that, and nothing else does it.
-
-**Measurement.** Baseline: three footers, three rels, three sectPr
-references (even / default / first). Redline: two of each — the first-page
-footer gone at all three levels. After `restore_parts`: part present, rels
-still two, sectPr still two.
-
-**Suggested fix.** Resolve the rels Target against the part's own folder
-before testing it (`posixpath.normpath(join(dirname(part), target))`),
-which fixes both forms with one rule and no special case. For the sectPr
-reference, either restore it alongside — the type is recoverable from the
-source document's own sectPr — or refuse and SAY the part is orphaned,
-rather than returning it in the restored list as though the job were done.
-A restored part nothing references should never count as restored.
-
-**Workaround in use.**
-`Aging_Well/revision/scripts/restore_compare_losses.py` does all four
-edits by hand: part, Override, a relationship on a free rId, and the
-`w:type="first"` footerReference appended after the last existing one so
-the group stays contiguous in the sectPr's fixed element order.
-
-
-### S2 `citations` counts a WORK, not a MENTION — a half-linked paper audits clean
-
-**Symptom as observed.** 2026-08-21, Aging_Well. After `link_all`, the audit
-said
-
-    Hyperlinks: 118 total (0 broken, 0 with no label, 0 unlinked citation-like mentions)
-    ALL CHECKS PASSED — no issues found.
-
-while **20 of the paper's 73 in-text mentions were plain text**. The author
-found one by clicking it — the second "Bussolo et al. 2015", in §7. Every
-one of the 20 was a repeat mention of a work whose first mention was linked.
-
-**Repro.** Any manuscript citing one work twice: `link_all`, then
-`docxkit citations`. Before linking, the same audit counts all of them
-("66 unlinked citation-like mentions" on this paper); after `link_all` it
-counts zero, and after `link_rest` it still counts zero. **The number cannot
-distinguish the middle state from the finished one**, which is the only
-distinction worth auditing once a paper has been linked at all.
-
-**Diagnosis.** "Unlinked" is evaluated per WORK — has this entry got a link
-pointing at it from anywhere — not per MENTION. That is the right question
-for "is any reference orphaned"; it is the wrong one for "is the apparatus
-complete", and one number answers both.
-
-**Why it matters beyond a count.** House style here is: first mention links
-and is bookmarked, the entry back-links to it, **and every later mention
-links forward too**. `link_all` implements only the first half and its
-docstring calls the other half "house style for later mentions differs by
-paper" — fair — but nothing then reports which half a document is in. The
-audit is where a paper checks its own apparatus, and it is blind to exactly
-the state `link_all` leaves behind.
-
-**Suggested fix.** Report mentions, not just works: `linked M of N mentions`,
-with the plain ones listed as a distinct finding class (`LATER-MENTION
-UNLINKED`) that a paper can choose to ignore. The machinery already exists —
-`masked_visible_text` plus `find_citations`' `c.start:c.end` span is the
-whole test, and `link_rest` uses precisely that to decide what to link.
-
-**Workaround in use.** `Aging_Well/revision/scripts/r2_link_apparatus.py`
-runs `link_rest` after `link_all` and the paper's log records the mention
-count; the check itself is a hand-rolled span scan, in the scratchpad.
-
 
 ## Fixed
+
+### ~~S2 `link_rest` cannot resolve an entry whose YEAR carries a letter~~ — FIXED 21.08
+
+**Was:** `'Maestas et al. (2023b)' (¶89): entry has no bookmark`, for an
+entry that carries one. The fold must END with the work's year, and
+"refmaestas2023" does not end with "2023b" — so neither of the paper's
+two Maestas entries matched its own marker and `link_rest` skipped five
+mentions with a reason that is false (AFI batch 28).
+
+**Fix.** `_own_name_map` runs the search twice: the exact year, then the
+BARE year for an entry whose year carries a letter. The relaxed pass
+yields to a strict match and refuses a name two entries both reach for
+— two works by one author in one year is precisely when a wrong guess
+is undetectable, so the letter is not discarded, it is spent.
+
+It sits under `link_all`'s naming as well as `link_rest`'s lookup,
+because the same miss made `link_all` MINT a second name for an entry
+that already had one — the doubling `_own_bookmark`'s docstring records.
+
+**Workaround retired:** the five hand-wired mentions in AFI's
+`build_r5d.py`.
+
+### ~~S3 `crossrefs.audit` cannot fail on a document where NOTHING is cross-linked~~ — FIXED 21.08
+
+**Was:** a caption carrying NEITHER bookmark fell through all three
+buckets and was counted nowhere, so five unlinked exhibits printed the
+same all-zero line as a paper with no exhibits at all — and the reader
+had to notice the absence of a number rather than a number being wrong.
+
+**Fix.** A fourth bucket, `unlinked`, and the CLI prints it in the same
+column as the rest: `unlinked  2  Box1, Table1`. The test builds the
+case the audit exists for — a caption and a mention and no bookmarks
+anywhere — and fails without it.
+
+### ~~S4 the `crossrefs` CLI cannot be given a label the document actually uses~~ — FIXED 21.08
+
+`docxkit crossrefs PAPER.docx --labels Figure,Table,Box`, on both
+`--audit` and `--write`; `crossrefs.link` and `audit` have taken the
+label set since they were written, and only the command baked
+`DEFAULT_LABELS` in. Aging_Well's Box 1 audits and links now without a
+script.
+
+### ~~S1 `link` cannot repair a LOST citation link~~ — FIXED 21.08
+
+**Was:** a Word round-trip with track changes off drops in-text links
+and the bookmarks they carried while every word on the page survives.
+`link_all` then MINTED a fresh name — `ref_noone_2018txt`,
+`Hudomiet2022txt` — reported `linked 7`, and left all six back-links
+broken with seven orphans added beside them: the manuscript came out
+worse than it went in (AFI r4 hand-back).
+
+**Fix, and it is all evidence.** `_bookmark_names` reads what the
+document says its two names are, in order:
+
+1. the entry's OWN marker (`_own_bookmark`, unchanged);
+2. **the name a dangling link DEMANDS.** The entry's back-link points at
+   `cite_noone_2018` whether or not that bookmark still exists — a
+   broken link naming the exact anchor to create. That is the twin;
+3. **the name a surviving BOOKMARK demands.** `Kahlon2021txt` in the
+   prose with no `Kahlon2021` at the entry is what `_dedup_name` turned
+   into `Kahlon2021_2`, minting a second scheme beside the live one;
+4. the paper's convention, then a minted name.
+
+The entry↔twin RULE — `("ref", "cite")`, or `("", "")` for this
+module's own `txt` suffix — is learned by majority from the pairs that
+are still whole, so one damaged pair cannot teach the wrong shape, and
+`_entry_of` runs it backwards when the ENTRY's marker is the one Word
+ate. `_named` stays the last resort.
+
+**Measured on five manuscripts**, auditing before and after an
+in-memory `link_all`:
+
+    Parental Style working.docx     0 -> 0    unchanged (a finished apparatus)
+    DSI_08192026.docx               0 -> 0    unchanged
+    le14.docx                      45 -> 62   BEFORE the fix
+    le14.docx                      45 -> 45   after
+    li7.docx                       38 -> 52   both (see the OPEN entry above)
+
+le14 is the second manuscript with this damage and nobody had noticed:
+`Halliday2020txt` alive in the prose, no `Halliday2020` at the entry,
+and the old run minted `Halliday2020_2` — a parallel scheme, silently.
+`test_link_all_creates_the_name_a_BROKEN_BACK_LINK_demands` fails
+without the fix with exactly the reported symptom.
+
+**Workaround retired:** AFI's `repair_r4_handback.py`, and the
+hand-wiring r4 batch 23 did for the same reason.
+
+### ~~S4 read-only `revision status` and `ingest` refuse on a Word lock~~ — FIXED 21.08
+
+`package.readable(path)` yields `(path, copied)`: the path itself, or a
+byte COPY when Word holds the file — which is what the measurement in
+the entry showed works when a direct read does not. `state` and
+`ingest` read through it, every read in one ingest goes through the SAME
+copy (`compare` included — half an answer from a snapshot and half from
+a file being edited would be worse than either), and both report
+`from_snapshot` so the CLI can say
+
+    read from a SNAPSHOT: the author has the file open in Word, so this
+    describes the moment the copy was taken, not whatever they have typed since.
+
+A snapshot mid-edit is a true statement about a moment; the alternative
+was no answer at all, at the one moment the command is most useful. If
+the copy fails too, the old refusal is what comes back.
+
+### ~~S4 `locate` and `probe` call their positional an ANCHOR and mean a PHRASE~~ — FIXED 21.08
+
+Both positionals are `phrase` now, `--anchors-from` is `--phrases-from`
+(the old spelling still accepted), `probe(path, phrases=…)` fills
+`Probe.phrases` and its report says `phrase '…'` — and the field-form
+line says `field-form anchors (bookmark names)`, which is the other
+sense, named.
+
+The miss now explains itself when it can:
+
+    NOT FOUND  'cite_kakwani_1977' — that is a BOOKMARK name, not words
+    on the page; this searches the laid-out text (try `docxkit citations`
+    or `docxkit probe`)
+
+A wrong answer that reads like a finding costs more than the sentence
+that prevents it.
+
+### ~~S4 `docxkit.batch` re-exports `DOCUMENT` but not `FOOTNOTES`~~ — FIXED 21.08
+
+`FOOTNOTES` and `ENDNOTES` too. Bookmark ids must be unique across the
+whole document, notes included. One line, plus the test that says why.
+
+### ~~S1 nothing ties a batch to the BASELINE it was built on~~ — FIXED 21.08
+
+**Was:** a refused `revision build` left the PREVIOUS redline in
+`build/batch.docx`, and nothing downstream could tell. `validate` then
+validated the R1 redline — two baselines and one author round old —
+and printed a detailed, entirely plausible `VERDICT: FAIL` with twenty
+`LINK LOST` lines describing a batch nobody was working on. `promote`
+was the dangerous half: its `StaleBatch` guard asks whether the AUTHOR
+moved (`live == base`), both were in sync, so it would have copied a
+generation from before the whole citation apparatus over
+`working.docx` with the rescue copy as the only way back.
+
+**Fix.** `tracked.build` stamps `base_sha256` — the ORIGINAL's content,
+not `"original": "prev.docx"`, which is a path whose content changes on
+every `baseline` — and `guard.base_of(batch)` reads it back.
+
+* `revision.validate` makes it **gate 0**: `built_on_this_baseline`
+  False aborts before lint, because every gate below compares the two
+  and would describe the wrong pair. `docxkit revision validate` prints
+  which hash the batch names and exits 2;
+* `revision.promote` raises `StaleBatch` on the same evidence — the
+  direction that loses work silently;
+* an UNSTAMPED batch answers None, not False. A hand-authored vehicle
+  (the DSI path) and a batch built before the field existed cannot say,
+  and refusing on "cannot tell" would break both.
+
+`guard.sha256` is public now; `guard.base_of` is the reader. Tests:
+`test_validate_ABORTS_on_a_batch_built_on_another_baseline`,
+`test_promote_refuses_a_batch_built_on_ANOTHER_baseline`, and the two
+beside each one that pin the fresh and the unstamped cases.
+
+**Workaround retired:** "delete `batch.docx` after every promote". The
+one that stays is real and belongs in CONTRIBUTING, not here: never
+pipe a protocol command into `tail` — the shell gives you `tail`'s exit
+code.
+
+### ~~S2 `build_overrides` ingests BODY paragraphs only~~ — FIXED 21.08
+
+**Was:** the alignment ran over body paragraphs and both note stores
+were read for one thing, remapping the ids Word renumbered. An edit the
+author made INSIDE a footnote or endnote definition produced no
+override at all, so the next clean build regenerated from a source that
+never received it — while `revision.ingest` DESCRIBED the edit, because
+`compare` reads every part a reader sees. Named in the report and
+dropped by the fold-back: the pair reads as "handled".
+
+**The design change, taken.** An override entry grows an optional
+`part` key:
+
+* `ingest.build_part_overrides(baseline, edited)` → `{part: [(old,
+  new), …]}`, every part a reader edits, aligned by the same `_align`
+  the body always used;
+* `ingest.apply_part_overrides(parts, overrides)` takes the PACKAGE and
+  reads each entry's `part`, defaulting to `word/document.xml` — so a
+  store written before this key applies exactly as it always did, which
+  is what the three paper pipelines holding one need;
+* `update_overrides` writes `part` only when it is not the body (an
+  existing store stays byte-comparable) and chains WITHIN a part: two
+  stores' paragraphs can be byte-identical — "Source: authors'
+  calculations." under a table and in a note — and chaining across them
+  would rewrite the wrong entry;
+* `build_overrides` still returns the body's list, and now RAISES
+  `errors.NoteEdit` when a note edit exists rather than returning `[]`,
+  which was indistinguishable from "the author changed nothing".
+  `allow_note_loss=True` is the old behaviour, deliberately;
+* `apply_overrides` refuses a store naming another part instead of
+  counting it as a miss: it has one string to write into, so "the build
+  moved under them" would be the wrong reason.
+
+The pinning test that said "notes are ingested now — update the
+docstrings and BACKLOG" did its job: it is now
+`test_an_edit_inside_a_NOTE_is_ingested_per_PART`, with four more
+around it.
+
+**Known limit, documented:** a part present on ONE side only is
+skipped. A missing part is a package loss (`missing_parts`,
+`revision.ingest` gate it), and a note store appearing for the first
+time has no baseline paragraph to anchor an insert on.
+
+### ~~S2 a MULTI-YEAR citation parses as nothing at all~~ — FIXED 21.08
+
+**Was:** `find_citations("Sen (1985, 1992)")` returned `[]`. Not the
+first year — NOTHING, so the author went missing with the extra years.
+On Aging_Well that was 3 mentions covering 5 works: `refstyle` reported
+every one as an uncited entry, and `link_all` skipped them while
+reporting a clean sweep. The audit and the linker were blind in the
+same place, which is why they agreed.
+
+**Fix.** `_YEARS` — a comma-separated year list — replaces the single
+`_YEAR` in both `_SEGMENT_RE` and `_NARRATIVE_RE`, and `_per_year`
+expands the group into one `Citation` per work. The spans TILE the
+match rather than repeating it: "Rowe and Kahn (1987" and "1997)",
+because the linker wraps each span and two hyperlinks over the same
+words is what `audit_links` calls a DOUBLED LINK. A single year is the
+whole match, exactly as before.
+
+The list stops at anything that is not a year, which is what keeps the
+neighbours: "(Cameron et al. 2008, Roodman et al. 2019)" is still two
+works and "(Sen 1999, 45)" still one work with a locator. Eight forms
+are pinned in `test_a_year_LIST_is_one_citation_per_year`.
+
+`refstyle._check_prose` skips the author-level checks for a span that
+shows no author name, or "3 authors named in text" would be reported
+twice about one written phrase.
+
+**Not fixed, and out of reach of this change:** "Sen's capability
+approach (1985, 1999, 2009)". The name is not adjacent to the
+parenthesis, and admitting intervening words is how the grammar's
+recorded false positives were made.
+
+### ~~S2 `citations` counts a WORK, not a MENTION~~ — FIXED 21.08
+
+**Was:** after `link_all`, Aging_Well's audit said `0 unlinked
+citation-like mentions` and `ALL CHECKS PASSED` while 20 of its 73
+in-text mentions were plain text — the author found one by clicking it.
+"Unlinked" was evaluated per WORK, which is the right question for "is
+any reference orphaned" and the wrong one for "is the apparatus
+finished", and one number answered both.
+
+**Fix.** The mention itself is the first test now:
+`masked_visible_text` over the paragraph, the same evidence `link_rest`
+uses to decide what is left to wire.
+
+* `stats` gains `mentions`, `mentions_linked` and `later_unlinked`, and
+  `docxkit citations` prints `Mentions: 53 of 73 linked` — the number
+  that tells the middle state from the finished one;
+* a plain mention of a work that IS linked elsewhere is a
+  `LATER-MENTION UNLINKED` finding under `--later-mentions`
+  (`audit_links(later_mentions=True)`). Opt-in, because whether later
+  mentions link at all is the paper's house style and a gate nobody can
+  satisfy stops being read;
+* the mask subsumes two label tests that were written for it — a link
+  whose label stops a character short ("Davletov et al. (2016") and a
+  label sitting INSIDE an over-read span ("Surveys and ILOSTAT (2024)")
+  — so `_labels_by_para` is gone rather than left as dead code.
+
+**Workaround retired:** Aging_Well's hand-rolled span scan in the
+scratchpad.
+
+### ~~S2 `docProps/custom.xml` is exempted as "Word regenerates it on save"~~ — FIXED 21.08
+
+**Was:** `REGENERATED_BY_WORD = ("docProps/",)`, so the parts gate
+skipped a part Word does not synthesise. On the Aging_Well Bank
+manuscript that part carries the MSIP sensitivity label and
+`ClassificationContentMarkingFooterText = "Official Use Only"`: a
+promote would have copied the batch over `working.docx` and the
+document would have quietly stopped being labelled, every gate green.
+
+**Fix.** `package.regenerated_by_word(name)` replaces the prefix test at
+all three sites. `app.xml` and the thumbnail stay exempt — measured, 39
+of 475 real manuscripts carry a thumbnail, so calling one a loss would
+be a false alarm — and `docProps/custom.xml` joins the parts gate.
+`tracked.build`'s default `carry` now includes it, so it is restored the
+way the `customXml/` store already was.
+
+**Workaround retired:**
+`Aging_Well/revision/scripts/restore_compare_losses.py`'s custom.xml half.
+
+### ~~S2 `restore_parts` cannot restore a FOOTER~~ — FIXED 21.08
+
+**Was:** the relationship walk keyed on the rels Target with `../`
+stripped, which is the customXml spelling and nothing else. A footer's
+Target is `footer3.xml` while the part is `word/footer3.xml`, so every
+part under `word/` was in a hole: the file came back, referenced by
+nothing, which Word ignores — the loss again, now invisible to the
+parts gate because the file is present. And even with the relationship
+back, Compare had also dropped the `<w:footerReference>` from the
+section properties, which restoring a part cannot know.
+
+**Fix, all four edits.**
+
+* `_resolve` resolves a Target against the folder of the part its rels
+  file describes (`posixpath.normpath`), which answers both spellings
+  with one rule and no special case;
+* EVERY rels part is read, not the document's alone — that is what
+  reaches `docProps/custom.xml`, whose relationship lives in the
+  PACKAGE rels;
+* `_restore_section_references` puts the `w:headerReference` /
+  `w:footerReference` back, reading the type off the source document's
+  own sectPr and pairing sections BY POSITION, which is the only
+  pairing available since a sectPr carries no name;
+* what could not be wired is REFUSED — `PackageError` naming the part —
+  rather than returned in the restored list. Measured against the
+  SOURCE: a part the source does not reference either is being put back
+  exactly as it was, and a target with no rels part at all is a
+  fragment assembled in memory, not a dropped reference.
+
+`tracked.build`'s docstring no longer says a header "wants a person" to
+carry across; what still wants a person is whether the section the
+reference lands in is the one the author meant.
+
+**Workaround retired:** the same paper script's other three edits.
+
+### ~~S4 no safe way to set run properties without walking into a field~~ — CLOSED 21.08
+
+`edit.set_run_properties` and `edit.is_field_run` landed 2026-08-20.
+What was left open was one question: whether AFI's r3 note about
+`fig5_firstref` being "re-stripped by Word on EVERY edit of that
+paragraph" was this bug attributed to Word.
+
+**Checked, on the manuscript. It was.** `probe(prev.docx)` reports
+`MIXED (61 element, 94 field)`, and the field-form anchors include
+`fig1_firstref` … `fig10_firstref`, every table caption, and 26
+citations. Figure 5's caption is `fldChar begin` / `instrText HYPERLINK
+\l "fig5_firstref" \h` / `separate` / label / `end`, byte for byte the
+construct r4 found on Figure 10 — so r4's "Figure 10's caption is the
+only one built as a field-code hyperlink" was wrong, and `skip_fields`
+matters on forty-odd captions rather than one.
+
+(The OTHER r3 finding is a different site and a real document defect:
+the in-text "Figure 5.c" mention carried an EMPTY `<w:hyperlink>`
+element with its label lost, repaired by the paper's
+`repair_fig5c_link.py`.)
+
+Nothing to change here — `probe` already answers the question, and it
+was never asked.
+
+### ~~S4 `_NO_ITALICS_MARKERS` knows "working paper" and not the other names a series goes by~~ — FIXED 21.08
+
+**Was:** both of Aging_Well's italics findings were false — "Social
+Development Papers No. 1, Asian Development Bank" and "Research
+Memorandum, European Centre Vienna", the working-paper format under
+names the marker list did not carry.
+
+**Fix.** The SHAPE, as the entry proposed: `_SERIES_NO_RE` matches a
+capitalised series word followed by a capitalised "No. <n>", plus
+"memorandum" and "technical report" on the marker list. The capital is
+load-bearing — a Chicago issue number is written lowercase after the
+volume ("34, no. 4"), and exempting that would suppress the finding the
+check exists for. "World Development Report 2020" is still flagged;
+both cases are pinned.
+
+### ~~S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation~~ — CLOSED 21.08
+
+The LINKED half was fixed 2026-08-20 (`_trust_the_links`). The UNLINKED
+half now has the only answer that is not a guess: the paper says the
+word.
+
+`resolve_lead(c, ignore=…)` STRIPS an ignored lead from a chain instead
+of the caller dropping the citation on its surname — which took the
+real half with it, so ILOSTAT's entry was then reported UNCITED: one
+false finding traded for another. `docxkit refstyle --ignore Surveys`
+and `docxkit citations --ignore Surveys` reach it from the command
+line, and both audits and the linker pass it through, so a mention
+narrowed this way is still LINKED rather than skipped.
+
+Which words a paper's prose puts before "and" is the paper's
+vocabulary, not the engine's — that is the seam this belongs on. The
+other answer remains `docxkit link --write` first.
+
+**Still not taken, and still deliberately:** inferring the same thing
+from the reference list. It fires on the false positive AND on a real
+two-author work missing from the list whose co-author has a same-year
+entry, which turns an S2 false finding into an S1 silent one.
+
+### ~~S4 `refstyle` converts the punctuation but not the NAMES~~ — DECIDED 21.08
+
+The mechanical half ships (`convert`, `--fix`). The name half is not a
+gap waiting to be filled, it is a decision: reducing "Till Von Wachter"
+by last-word-is-surname gives "Wachter, T.", a RENAMED AUTHOR in a pass
+whose premise is that no author changes, and the particle set that
+would prevent it is a claim about names rather than a fact about the
+document. `check_entry` reports the spelled-out given name and a human
+acts on it. The trailing-initial period ("Allen, S..") is a trap
+belonging to a reduction that does not exist.
+
+Recorded here so it is not chased twice. The italics half is the same
+answer: which span is the outlet is a judgment the audit deliberately
+does not make.
 
 ### ~~S1 splitting a run DUPLICATES its `<w:noBreakHyphen/>` into every fragment — and no layer of `compare` can see it~~
 
