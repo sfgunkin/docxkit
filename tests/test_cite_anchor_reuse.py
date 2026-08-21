@@ -330,7 +330,9 @@ def test_a_work_cited_in_an_ENDNOTE_is_not_debris():
     plan = repair_plan(parts)
 
     assert "delete_bookmark" not in plan, plan
-    assert "ORPHAN REF: bookmark 'Smith2020'" in plan
+    # ORPHAN REF and REF WITHOUT CITE became one finding (2026-08-21);
+    # what this test is about is that the marker is not called debris.
+    assert "REF WITHOUT CITE: 'Smith2020'" in plan
 
 
 def test_the_plan_says_WHICH_note_store_a_finding_is_in():

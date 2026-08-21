@@ -378,6 +378,12 @@ def _audit_findings(parts: dict[str, bytes], *,
             return False              # not key-shaped: not ours to judge
         return m.group(2)[:4] not in entry_years
 
+    # Which works the text reaches, by either end. Computed HERE rather
+    # than beside its own check below, because ORPHAN REF needs it too:
+    # see the comment on that finding.
+    cited_keys = {n[:-3] for n in cite_marks}
+    cited_keys |= {a for a in links if a in ref_marks}
+
     issues: list[_Finding] = []
     for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
         if names_a_missing_entry(key):
@@ -387,11 +393,28 @@ def _audit_findings(parts: dict[str, bytes], *,
                 "no longer in the reference list — the entry was deleted and "
                 "the marker stayed; remove the bookmark"))
             continue
-        if not links.get(key):
+        # ORPHAN REF and REF WITHOUT CITE were ONE FACT said twice, and
+        # the redundancy is a theorem rather than a coincidence: a work
+        # nothing links to is not in `cited_keys`, so every REF WITHOUT
+        # CITE came with an ORPHAN REF beside it. Measured over five
+        # manuscripts, `uncited-only` is 0 every time, and after a
+        # `link_all` run li7 carried 20 such pairs, le14 16 and AFI's
+        # baseline 5 — 41 lines saying nothing the line under them did
+        # not (2026-08-21).
+        #
+        # So the pair collapses into the finding a reader can act on,
+        # below, and what is left here is the case that is NOT the same
+        # fact: the work IS cited — its `<key>txt` marker is in the
+        # prose — and the hyperlink to the entry is gone, so the reader
+        # clicking that citation arrives nowhere.
+        if not links.get(key) and key in cited_keys:
+            at = cite_marks.get(f"{key}txt")
             issues.append(_Finding(
                 "ORPHAN REF", key,
-                f"ORPHAN REF: bookmark '{key}' ({where(idx)}) "
-                "has no in-text hyperlink pointing to it"))
+                f"ORPHAN REF: bookmark '{key}' ({where(idx)}) has no in-text "
+                f"hyperlink pointing to it, and the work IS cited"
+                + (f" — '{key}txt' is at {where(at)}" if at is not None
+                   else "") + ": the mention reaches nothing"))
     for name, idx in sorted(cite_marks.items(), key=lambda kv: kv[1]):
         if not links.get(name):
             issues.append(_Finding(
@@ -525,21 +548,31 @@ def _audit_findings(parts: dict[str, bytes], *,
                 "citation but is not hyperlinked"))
             unlinked += 1
 
-    cited_keys = {n[:-3] for n in cite_marks}
-    cited_keys |= {a for a in links if a in ref_marks}
     for key in sorted(cited_keys - ref_marks.keys()):
         issues.append(_Finding(
             "CITE WITHOUT REF", key,
             f"CITE WITHOUT REF: '{key}' cited in text but no "
             "reference bookmark"))
-    for key in sorted(ref_marks.keys() - cited_keys):
+    # Document order, like the loop this absorbed: the report is read top
+    # to bottom against the manuscript. Sorted by NAME it still contains
+    # everything and still reads as a list, which is why nothing noticed
+    # the first time (2026-08-19) — and this is now the only line those
+    # entries get, so the property has to come with it.
+    for key in sorted(ref_marks.keys() - cited_keys,
+                      key=lambda k: ref_marks[k]):
         if names_a_missing_entry(key):
             continue          # already reported, and more usefully, as stale
+        # This line carries what the ORPHAN REF beside it used to say as
+        # well — no link points here AND no in-text marker names it —
+        # because they were one fact, and this is the half a reader can
+        # act on: a reference nobody cites is a decision about the
+        # bibliography, while "the marker I just wrote has nobody
+        # pointing at it" is a description of the marker.
         issues.append(_Finding(
             "REF WITHOUT CITE", key,
             f"REF WITHOUT CITE: '{key}' "
-            f"({where(ref_marks[key])}) in references but never "
-            "cited in text"))
+            f"({where(ref_marks[key])}) in references and nothing points "
+            f"at it — no in-text hyperlink and no '{key}txt' marker"))
 
     stats = {"paragraphs": len(paras), "bookmarks": len(bookmarks),
              "cite_bookmarks": len(cite_marks),

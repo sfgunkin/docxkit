@@ -558,15 +558,45 @@ def test_a_link_to_a_missing_bookmark_is_broken():
     assert stats["broken"] == 1
 
 
-def test_an_entry_nobody_links_to_is_an_orphan():
+def test_an_entry_nobody_links_to_and_nobody_marks_is_ONE_finding():
+    """ORPHAN REF and REF WITHOUT CITE were one fact said twice, and the
+    redundancy is a theorem: a work nothing links to is not in
+    `cited_keys`, so every REF WITHOUT CITE arrived with an ORPHAN REF
+    beside it. Measured over five manuscripts, `uncited-only` is 0 every
+    time; after a `link_all` run li7 carried 20 such pairs, le14 16 and
+    AFI's baseline 5 (2026-08-21).
+
+    The line that survives is the one a reader can act on — a reference
+    nobody cites is a decision about the bibliography — and it carries
+    what the other one said."""
     parts = make_doc(
         P(R("Prose without the citation.")),
         P(R("References")),
         P(bookmark("Ghost2019", 30) + R("Ghost, A. (2019). Unseen.")))
+
     issues, _ = audit_links(parts)
-    assert any(i.startswith("ORPHAN REF") and "Ghost2019" in i
-               for i in issues)
-    assert any(i.startswith("REF WITHOUT CITE") for i in issues)
+
+    (ghost,) = [i for i in issues if "Ghost2019" in i]
+    assert ghost.startswith("REF WITHOUT CITE")
+    assert "no in-text hyperlink" in ghost and "Ghost2019txt" in ghost
+
+
+def test_an_ORPHAN_REF_still_speaks_when_the_work_IS_cited():
+    """What is left of it is the case that is NOT the same fact: the
+    `<key>txt` marker is in the prose, so the work is cited, and the
+    hyperlink to the entry is gone — the reader clicking that citation
+    arrives nowhere."""
+    parts = make_doc(
+        P(bookmark("Ghost2019txt", 40) + R("As Ghost (2019) showed.")),
+        P(R("References")),
+        P(bookmark("Ghost2019", 30) + R("Ghost, A. (2019). Unseen.")))
+
+    issues, _ = audit_links(parts)
+
+    orphan = next(i for i in issues if i.startswith("ORPHAN REF"))
+    assert "the work IS cited" in orphan
+    assert "'Ghost2019txt' is at ¶6" in orphan
+    assert not [i for i in issues if i.startswith("REF WITHOUT CITE")]
 
 
 def test_a_cite_mark_without_entry_or_backlink_reports_both():
@@ -985,8 +1015,8 @@ def test_audit_distinguishes_body_level_from_footnote_bookmarks():
              ("<w:document><w:body>" + body + "</w:body></w:document>"
               ).encode("utf-8")}
     issues, _ = audit_links(parts)
-    orphan = next(i for i in issues if i.startswith("ORPHAN REF"))
-    assert "(body)" in orphan and "(fn)" not in orphan
+    (found,) = [i for i in issues if "Ghost2019" in i]
+    assert "(body)" in found and "(fn)" not in found
 
 
 def test_a_bookmark_defined_in_a_FOOTNOTE_is_located_as_fn():
@@ -1004,8 +1034,8 @@ def test_a_bookmark_defined_in_a_FOOTNOTE_is_located_as_fn():
 
     issues, _report = audit_links(make_parts(body, footnotes=foot))
 
-    orphan = next(i for i in issues if i.startswith("ORPHAN REF"))
-    assert "(fn)" in orphan and "(body)" not in orphan
+    (found,) = [i for i in issues if "Ghost2019" in i]
+    assert "(fn)" in found and "(body)" not in found
 
 
 def test_a_marker_is_owned_only_when_ONE_entry_fits_it():
@@ -2607,16 +2637,17 @@ def _messages(*paras: str) -> list[str]:
     return issues
 
 
-def test_an_ORPHAN_REF_names_the_bookmark_and_its_paragraph():
-    """Five filler paragraphs come first, so the entry is ¶7 — one-based,
+def test_the_finding_names_the_bookmark_and_its_paragraph():
+    """Five filler paragraphs come first, so the entry is ¶8 — one-based,
     as Word's own navigation counts."""
     msgs = _messages(P(R("Prose without the citation.")),
                      P(R("References")),
                      P(bookmark("Ghost2019", 30)
                        + R("Ghost, A. (2019). Unseen.")))
 
-    assert ("ORPHAN REF: bookmark 'Ghost2019' (¶8) has no in-text "
-            "hyperlink pointing to it") in msgs
+    assert ("REF WITHOUT CITE: 'Ghost2019' (¶8) in references and nothing "
+            "points at it — no in-text hyperlink and no 'Ghost2019txt' "
+            "marker") in msgs
 
 
 def test_a_MISSING_REF_names_the_entry_bookmark_it_looked_for():
@@ -2682,8 +2713,9 @@ def test_a_body_level_bookmark_is_located_as_BODY_not_a_paragraph():
 
     issues, _report = audit_links(xml_parts(body))
 
-    assert ("ORPHAN REF: bookmark 'Ghost2019' (body) has no in-text "
-            "hyperlink pointing to it") in issues
+    assert ("REF WITHOUT CITE: 'Ghost2019' (body) in references and "
+            "nothing points at it — no in-text hyperlink and no "
+            "'Ghost2019txt' marker") in issues
 
 
 # --- one test per bucket of the repair plan (2026-08-19) ----------------
@@ -2813,7 +2845,11 @@ def test_an_entry_nothing_links_to_but_the_paper_CITES_is_relinked():
         P(bookmark("Zhang2021", 21) + R("Zhang, Q. (2021). Another paper.")))
 
     assert not _bucket(plan, "debris")
-    assert ('link_in_para(para, CITE_TEXT, "Zhang2021")   # first mention'
+    # Through the ENTRY reading now: ORPHAN REF and REF WITHOUT CITE
+    # collapsed into one finding, and `repair_plan` files it from the
+    # same evidence — same bucket, and the comment says why it is not
+    # debris.
+    assert ('link_in_para(para, CITE_TEXT, "Zhang2021")'
             in "\n".join(_bucket(plan, "recreate the lost link")))
 
 
@@ -2860,7 +2896,7 @@ def test_EVERY_finding_reaches_a_bucket():
         P(bookmark("Anhang", 33) + R("Appendix material.")))
 
     promised, printed = _counted(plan)
-    assert promised == 3
+    assert promised == 2
     assert printed == promised
     assert any("REF WITHOUT CITE" in ln for ln in _bucket(plan, "investigate"))
 
@@ -3038,10 +3074,9 @@ def test_a_finding_in_a_FOOTNOTE_says_fn_rather_than_a_paragraph():
     parts = _with_note(P(R("Nothing links to it.")),
                        bookmark("Ghost1899", 9, R("A note.")))
 
-    (orphan,) = [i for i in audit_links(parts)[0]
-                 if i.startswith("ORPHAN REF")]
+    (found,) = [i for i in audit_links(parts)[0] if "Ghost1899" in i]
 
-    assert "(fn)" in orphan, orphan
+    assert "(fn)" in found, found
 
 
 def test_a_BROKEN_link_in_a_footnote_says_fn_where_it_is():
@@ -3317,8 +3352,9 @@ def test_the_findings_come_in_DOCUMENT_order_not_alphabetical():
 
     issues = _audit(body)
 
-    assert [i.split("'")[1] for i in issues if i.startswith("ORPHAN REF")] \
-        == ["Zed1999", "Abe1998"], issues
+    named = [i.split("'")[1] for i in issues
+             if i.startswith("REF WITHOUT CITE")]
+    assert named == ["Zed1999", "Abe1998"], issues
 
 
 def test_a_STALE_bookmark_does_not_end_the_walk():
@@ -3338,7 +3374,7 @@ def test_a_STALE_bookmark_does_not_end_the_walk():
     issues = _audit(body)
 
     assert any(i.startswith("STALE BOOKMARK: 'Aaa2012'") for i in issues)
-    assert any(i.startswith("ORPHAN REF: bookmark 'Card1999'")
+    assert any(i.startswith("REF WITHOUT CITE: 'Card1999'")
                for i in issues), issues
 
 

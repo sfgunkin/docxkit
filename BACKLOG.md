@@ -17,40 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 `link_all` MARKS an entry nothing cites, and the audit then reports the marker it just wrote — twice
-
-**Measured 2026-08-21**, while checking the fix to the entry below. Run
-`link_all` in memory over four manuscripts and audit before and after:
-
-    Parental Style working.docx     0 -> 0     (a finished apparatus)
-    DSI_08192026.docx               0 -> 0
-    le14.docx                      45 -> 45    (was 45 -> 62 before the fix)
-    li7.docx                       38 -> 52
-    AFI build/prev.docx             6 -> 20
-
-The 30 findings li7 gains are `ORPHAN REF` and `REF WITHOUT CITE`, one
-pair per reference the text does not cite —
-`AdministrationforCommunityLiving2024`, `Guralnik2000`, twenty-eight
-more — and every one of them describes a bookmark this run has just
-created. `rebuild` marks EVERY entry, cited or not.
-
-**Why it is not simply "stop marking uncited entries".** Tried, and
-reverted: `REF WITHOUT CITE` — a reference nobody cites, which is a
-finding a journal cares about — is computed FROM the marker, so
-suppressing the marker suppresses the true finding with the redundant
-one. It also un-observes what four tests pin about two entries sharing
-one key getting two distinct names.
-
-**Sketch.** The redundancy is the audit's: an ORPHAN REF whose work is
-also reported REF WITHOUT CITE is the same fact said twice, and the
-second line is the one a reader can act on. Report one. That halves the
-noise on a paper with uncited references and hides nothing — but it
-edits a live gate, so it wants its own round and its own measurement
-across the corpus.
-
-**Workaround in use.** None; the findings are read and ignored, which is
-the habit an audit cannot afford.
-
 ### S3 the agent's Bash heredocs EAT BACKSLASHES, and a `\b` lands as a control character
 
 **Symptom as observed.** 2026-08-20/21, three times in one session. A patch
@@ -108,14 +74,20 @@ why. What changed is that the damage can no longer ship.
 
 ---
 
-**Seventeen closed on 2026-08-21**, in three batches as the manuscripts
-turned them up. What is left open is the heredoc, which this repository
-cannot fix and now gates instead, and the ORPHAN REF redundancy above,
-which wants its own measured round. Nine came from Aging_Well's first
-five rounds, five from AFI, one from a review of the tracked gates, one
-was answered by simply re-reading a manuscript (`probe` had been able to
-say it all along), and one was closed as a DECISION rather than a fix so
-it is not proposed again. Three shapes ran through them.
+**Twenty closed on 2026-08-21**, in batches as the manuscripts turned
+them up — and the last three were raised by RETIRING the paper-side
+workarounds the earlier ones replaced, which is the round worth
+repeating: a workaround deleted is a claim that has to be checked, and
+checking it found the lettered year, the mention Word left behind, and
+the two findings that were one. **The Open section is down to the
+heredoc**, which this repository cannot fix and now gates instead.
+
+Nine came from Aging_Well's first five rounds, seven from AFI, one from
+a review of the tracked gates, one was answered by simply re-reading a
+manuscript (`probe` had been able to say it all along), one was measured
+into existence with no manuscript involved, and one was closed as a
+DECISION rather than a fix so it is not proposed again. Three shapes ran
+through them.
 
 **A number that cannot tell two states apart.** "Unlinked" counted works
 and could not see a half-linked apparatus; "part dropped" counted
@@ -240,6 +212,52 @@ looked for was in a part of the package it never opened.
 
 
 ## Fixed
+
+### ~~S2 `link_all` MARKS an entry nothing cites, and the audit reports the marker twice~~ — FIXED 21.08
+
+**The redundancy was a theorem, not a coincidence.** `REF WITHOUT CITE`
+fires for a key in `ref_marks - cited_keys`, and `cited_keys` holds
+every ref bookmark some link points at — so a work reported uncited is
+a work nothing links to, which is exactly what `ORPHAN REF` reports.
+Measured over five manuscripts before touching anything: `uncited-only`
+is **0 every time**.
+
+    li7          as it is  ORPHAN 11  UNCITED  9  both  9
+                 after link_all      22          20       20
+    le14         as it is           9           6        6
+                 after link_all     18          16       16
+    AFI prev     after link_all      5           5        5
+
+**Fix.** The pair collapses into the line a reader can act on — a
+reference nobody cites is a decision about the bibliography, while "the
+marker I just wrote has nobody pointing at it" is a description of the
+marker — and that line carries what the other one said:
+
+    REF WITHOUT CITE: 'Ghost2019' (¶8) in references and nothing points
+    at it — no in-text hyperlink and no 'Ghost2019txt' marker
+
+What is left of `ORPHAN REF` is the case that is NOT the same fact: the
+`<key>txt` marker is in the prose, so the work IS cited, and the
+hyperlink to the entry is gone — the reader clicking that citation
+arrives nowhere. It names where the marker is.
+
+**Two things the merge had to carry, and nearly did not.**
+
+* **Document order.** The surviving loop sorted by NAME, and the
+  absorbed one sorted by paragraph — the property fixed on 2026-08-19
+  and pinned by `test_the_findings_come_in_DOCUMENT_order_not_alphabetical`,
+  which would have gone green while the report went back to alphabetical
+  for exactly the entries that now get only this line.
+* **`repair_plan`'s reading.** It files both kinds from the same
+  evidence, so a work cited in PROSE with no marker still lands in
+  "recreate the lost link" — through the entry branch rather than the
+  orphan one. Checked, because suppressing the finding a repair reads
+  would have been the same class of defect as the one being fixed.
+
+**Measured after:** li7 38 -> 29 as it stands and 52 -> 32 after a
+`link_all` run; le14 45 -> 39 and 45 -> 29; AFI's baseline 16 -> 11.
+Parental Style and DSI stay at 0 either way. 41 lines gone, none of them
+carrying a fact the line under it did not.
 
 ### ~~S2 the LOST-link repair does not fire when Word left a LATER mention linked~~ — FIXED 21.08
 
