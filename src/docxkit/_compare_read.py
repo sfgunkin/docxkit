@@ -28,6 +28,7 @@ from ._xml import (
     T_PARTS_RE,
     WT_RE,
     field_spans,
+    printed_text,
 )
 from .comments import read_all as _read_comments
 from .styles import Cascade
@@ -291,7 +292,12 @@ class Para:
                  cascade: Cascade | None = None) -> None:
         self.xml = xml
         self.at = at
-        self.wtext = html.unescape("".join(WT_RE.findall(xml)))
+        # `printed_text`, not a `w:t` walk: a no-break hyphen, a tab
+        # and a line break are characters on the PAGE, and this is
+        # the stream the TEXT layer compares. Walking `w:t` alone
+        # made six hyphens deleted from Aging_Well's citations read
+        # as no change at all (backlog S1).
+        self.wtext = printed_text(xml)
         self.mtext = html.unescape("".join(MT_RE.findall(xml)))
         self.text = (self.wtext + self.mtext).strip()
         self.wtext_f, self.fmt = _char_fmt(xml, cascade)

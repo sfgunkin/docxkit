@@ -17,67 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S1 splitting a run DUPLICATES its `<w:noBreakHyphen/>` into every fragment — and no layer of `compare` can see it
-
-**Symptom as observed.** 2026-08-21, Aging_Well. The author read the printed
-page and found hyphens inside his citations:
-
-    Rowe and Kahn (‑1987‑, ‑1997‑) nor the WHO “active aging” framework (‑WHO 2002‑)
-
-Six of them, all in §1's third paragraph. Nothing else in the manuscript was
-wrong, and every gate had passed.
-
-**Diagnosis.** The paragraph's third run held ONE real no-break hyphen — the
-author's "trade‑offs". `citations.link_all` (and the hand-wired links beside
-it) wrap each citation with `_cite_grammar.wrap_visible_span`, which splits
-that run into `before` / `inner` / `after` through `set_run_text` and
-`_styled_run`. Those rebuild a run from the source run's children with new
-`<w:t>` text — and carry `<w:noBreakHyphen/>` along, so **each fragment gets
-its own copy**, landing at the fragment's start. Four wraps in one paragraph
-turned one hyphen into seven. Every other element a run can hold that is not
-`<w:t>` — `<w:tab/>`, `<w:br/>`, `<w:sym/>`, `<w:softHyphen/>` — is in the
-same hole.
-
-**Why S1, and it is the worst kind.** `_xml.visible_text` walks `<w:t>` only,
-so a no-break hyphen contributes no character to it. `compare`'s TEXT layer
-is built on `visible_text`. Measured directly: comparing the manuscript
-before the repair with the manuscript after it, six visible hyphen glyphs
-deleted, gives
-
-    REAL change locations (excl. glyph): 0   |   glyph-only: 0
-
-**Zero.** The tool reports the two documents as identical while the printed
-page differs. That is also why the defect shipped through R2, R4, R7 and R8:
-the passes that added the copies all reported `TEXT: (none)` and were
-believed. GLYPH does not catch it either — it normalises characters that
-exist, and these produce none.
-
-**Suggested fix, two halves and both are needed.**
-1. `set_run_text` / `_styled_run` must not carry a run's TEXT-BEARING
-   children into a fragment that does not contain them. The split is by
-   visible offset, so the fix is to render those elements INTO the offset
-   model — one character each — and then place them in whichever fragment
-   their offset falls in. That also fixes the offsets themselves, which are
-   currently short by one per hyphen in any paragraph containing one.
-2. `visible_text` should render them, so the TEXT layer can see the
-   difference at all: `‑` for `noBreakHyphen`, `\t` for `tab`, `\n` for
-   `br`, `­` for `softHyphen`. A gate blind to a printed character is
-   worse than no gate. If that is too invasive for callers that expect pure
-   `<w:t>` text, `compare` needs its own rendering pass — but it cannot go on
-   comparing text that omits characters the reader sees.
-
-**Also check the other papers.** Every manuscript that has run `link_all`
-over a paragraph containing a hyphenated word is exposed, and none of their
-gates would have said so.
-
-**Workaround in use.**
-`Aging_Well/revision/scripts/r2_link_apparatus.py::strip_stray_hyphens`
-deletes any `<w:noBreakHyphen/>` not sitting between two word characters,
-and runs at the end of every apparatus pass so a re-run cannot leave one
-behind. It carries its own renderer, because `visible_text` cannot show it
-the thing it is repairing.
-
-
 ### S1 nothing ties a batch to the BASELINE it was built on — a refused build leaves the old redline in place, and validate + promote both take it
 
 **Symptom as observed.** 2026-08-21, Aging_Well R5. `revision build`
@@ -675,6 +614,110 @@ count; the check itself is a hand-rolled span scan, in the scratchpad.
 
 
 ## Fixed
+
+### ~~S1 splitting a run DUPLICATES its `<w:noBreakHyphen/>` into every fragment — and no layer of `compare` can see it~~
+
+**Symptom as observed.** 2026-08-21, Aging_Well. The author read the printed
+page and found hyphens inside his citations:
+
+    Rowe and Kahn (‑1987‑, ‑1997‑) nor the WHO “active aging” framework (‑WHO 2002‑)
+
+Six of them, all in §1's third paragraph. Nothing else in the manuscript was
+wrong, and every gate had passed.
+
+**Diagnosis.** The paragraph's third run held ONE real no-break hyphen — the
+author's "trade‑offs". `citations.link_all` (and the hand-wired links beside
+it) wrap each citation with `_cite_grammar.wrap_visible_span`, which splits
+that run into `before` / `inner` / `after` through `set_run_text` and
+`_styled_run`. Those rebuild a run from the source run's children with new
+`<w:t>` text — and carry `<w:noBreakHyphen/>` along, so **each fragment gets
+its own copy**, landing at the fragment's start. Four wraps in one paragraph
+turned one hyphen into seven. Every other element a run can hold that is not
+`<w:t>` — `<w:tab/>`, `<w:br/>`, `<w:sym/>`, `<w:softHyphen/>` — is in the
+same hole.
+
+**Why S1, and it is the worst kind.** `_xml.visible_text` walks `<w:t>` only,
+so a no-break hyphen contributes no character to it. `compare`'s TEXT layer
+is built on `visible_text`. Measured directly: comparing the manuscript
+before the repair with the manuscript after it, six visible hyphen glyphs
+deleted, gives
+
+    REAL change locations (excl. glyph): 0   |   glyph-only: 0
+
+**Zero.** The tool reports the two documents as identical while the printed
+page differs. That is also why the defect shipped through R2, R4, R7 and R8:
+the passes that added the copies all reported `TEXT: (none)` and were
+believed. GLYPH does not catch it either — it normalises characters that
+exist, and these produce none.
+
+**Suggested fix, two halves and both are needed.**
+1. `set_run_text` / `_styled_run` must not carry a run's TEXT-BEARING
+   children into a fragment that does not contain them. The split is by
+   visible offset, so the fix is to render those elements INTO the offset
+   model — one character each — and then place them in whichever fragment
+   their offset falls in. That also fixes the offsets themselves, which are
+   currently short by one per hyphen in any paragraph containing one.
+2. `visible_text` should render them, so the TEXT layer can see the
+   difference at all: `‑` for `noBreakHyphen`, `\t` for `tab`, `\n` for
+   `br`, `­` for `softHyphen`. A gate blind to a printed character is
+   worse than no gate. If that is too invasive for callers that expect pure
+   `<w:t>` text, `compare` needs its own rendering pass — but it cannot go on
+   comparing text that omits characters the reader sees.
+
+**Also check the other papers.** Every manuscript that has run `link_all`
+over a paragraph containing a hyphenated word is exposed, and none of their
+gates would have said so.
+
+**Workaround in use.**
+`Aging_Well/revision/scripts/r2_link_apparatus.py::strip_stray_hyphens`
+deletes any `<w:noBreakHyphen/>` not sitting between two word characters,
+and runs at the end of every apparatus pass so a re-run cannot leave one
+behind. It carries its own renderer, because `visible_text` cannot show it
+the thing it is repairing.
+
+**BOTH HALVES DONE, 2026-08-21.**
+
+**1. The split.** `_xml.split_run(run_xml, at)` cuts one run at a VISIBLE
+offset into two whole runs. Both keep the run's `w:rPr` — formatting
+belongs to every fragment of what it formatted — and everything else is
+CONTENT, placed on exactly one side by document order. `wrap_visible_span`
+cuts instead of rebuilding: `set_run_text` keeps a run's structure, which is
+right for a run being rewritten and wrong for one of three fragments,
+because a `w:noBreakHyphen` is structure by that reading and a printed
+character by every other. One hyphen in, one hyphen out, at every offset —
+pinned by mutation, including the boundary case where the cut falls exactly
+on the child.
+
+**2. The gate.** `_xml.printed_text(xml)` renders `w:t` PLUS the children
+that print without being text — `‑` for `noBreakHyphen`, `­` for
+`softHyphen`, a tab for `w:tab`, a newline for `w:br`/`w:cr` — in document
+order. `compare`'s TEXT layer reads that now (`Para.wtext`, its only
+caller), so the two paragraphs the tool called identical read as
+
+    'Neither trade‑offs (Rowe 1987) nor more'
+    'Neither trade‑offs (‑Rowe 1987) nor more'
+
+`visible_text` is UNCHANGED and deliberately so: every anchor in four paper
+trees is written against that reading, and a tab appearing in it would move
+every offset after it. `w:sym` is left unrendered — its character lives in
+an attribute against a font, so rendering one is a lookup, and a wrong guess
+would report a difference that is not there.
+
+**The other papers, checked rather than assumed.** Every manuscript under
+the single-file protocol was scanned for a `w:noBreakHyphen` that is not
+between two word characters:
+
+    Health_Capacity_to_Work, DSI, Life_Expectancy, Loneliness Index,
+    Parental_style        hyphens 0   stray 0
+
+AFI's baseline likewise holds none (its `working.docx` was open in Word and
+refused the read — correctly, and with the message the read retry gained
+yesterday). Only Aging_Well was ever exposed.
+
+**Workaround to retire:** `strip_stray_hyphens` in
+`Aging_Well/revision/scripts/r2_link_apparatus.py`. It is still what
+REPAIRED that manuscript; what it no longer has to do is guard every
+apparatus pass, because the pass can no longer put one there.
 
 ### ~~S2 `audit_links` cannot read a paper's OWN anchor scheme, and reports its live citations UNLINKED~~
 

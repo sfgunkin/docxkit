@@ -3499,3 +3499,62 @@ def test_a_marker_TWO_entries_answer_to_belongs_to_neither():
     issues, _stats = audit_links(make_parts(body))
 
     assert not [m for m in issues if m.startswith("MISPLACED")], issues
+
+
+# ---------------------------------------------- the hyphen a wrap copied --
+
+_HYPHEN_PARA = ('<w:p><w:r><w:t xml:space="preserve">Neither trade</w:t>'
+                "<w:noBreakHyphen/>"
+                '<w:t xml:space="preserve">offs (Rowe 1987) nor the WHO '
+                '(WHO 2002) framework</w:t></w:r></w:p>')
+
+
+def _seen(xml: str) -> str:
+    from docxkit._xml import visible_text
+    return visible_text(xml)
+
+
+def _wrap(para: str, needle: str, anchor: str) -> str:
+    from docxkit._cite_grammar import wrap_visible_span
+    from docxkit._xml import visible_text
+
+    at = visible_text(para).index(needle)
+    return wrap_visible_span(para, at, at + len(needle), anchor)
+
+
+def test_wrapping_a_citation_does_not_COPY_the_paragraph_s_hyphen():
+    """One hyphen in, one hyphen out. It used to come out three: the
+    before, the inner and the after fragments were each rebuilt from the
+    whole run, and `set_run_text` carries a run's children."""
+    out = _wrap(_HYPHEN_PARA, "Rowe 1987", "ref_rowe_1987")
+
+    assert out.count("<w:noBreakHyphen/>") == 1
+    assert _seen(out) == _seen(_HYPHEN_PARA)
+
+
+def test_FOUR_wraps_in_one_paragraph_leave_one_hyphen():
+    """The shape as it shipped: four citations wrapped in §1's third
+    paragraph, one hyphen in "trade-offs", seven hyphens out — printed
+    inside the citations, on the page, through four rounds."""
+    out = _HYPHEN_PARA
+    for needle, anchor in (("Rowe 1987", "ref_rowe_1987"),
+                           ("WHO 2002", "ref_who_2002")):
+        out = _wrap(out, needle, anchor)
+
+    assert out.count("<w:noBreakHyphen/>") == 1
+    assert _seen(out) == _seen(_HYPHEN_PARA)
+    assert out.count("<w:hyperlink") == 2
+
+
+def test_a_hyphen_INSIDE_the_wrapped_span_stays_inside_it():
+    """The span is what the link shows, and a hyphen in the middle of it
+    is one of the characters it shows."""
+    para = ('<w:p><w:r><w:t xml:space="preserve">See Rowe</w:t>'
+            "<w:noBreakHyphen/>"
+            '<w:t xml:space="preserve">Kahn 1987 for this.</w:t>'
+            "</w:r></w:p>")
+
+    out = _wrap(para, "Rowe", "ref_rowe_1987")
+
+    assert out.count("<w:noBreakHyphen/>") == 1
+    assert _seen(out) == _seen(para)

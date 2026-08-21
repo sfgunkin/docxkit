@@ -31,6 +31,7 @@ __all__ = [
     "MATH_OBJECTS",
     "NOTE_DEF_RE",
     "PARA_RE",
+    "PRINTED_CHILDREN",
     "RPR_ORDER",
     "RUN_OPEN_RE",
     "RUN_RE",
@@ -52,12 +53,14 @@ __all__ = [
     "normalize_glyphs",
     "overlaps",
     "own_properties",
+    "printed_text",
     "run_open_before",
     "run_spans",
     "set_para_property",
     "set_run_property",
     "set_run_text",
     "span_holding",
+    "split_run",
     "text_parts",
     "used_prefixes",
     "visible_text",
@@ -464,6 +467,151 @@ INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
 #: starts here, and kept its own copy of this until it was promoted.
 SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 _SEPARATE_RE = SEPARATE_RE
+
+
+#: The `w:t` elements a split walks past, and the pieces between
+#: them. Its own pair rather than `T_RUN_RE`, which matches only a
+#: `w:t` with text and would swallow an empty one whole.
+_SPLIT_T_RE = re.compile(r"(<w:t\b[^>]*>)([^<]*)</w:t>")
+_SPLIT_PIECE_RE = re.compile(r"(<w:t\b[^>]*>[^<]*</w:t>)")
+
+
+#: Run children that PRINT something and are not `w:t`, and the
+#: character each one puts on the page. None of them contributes
+#: anything to :func:`visible_text`, which walks `w:t` — and that is the
+#: whole difficulty: a text gate built on it cannot see one arrive or
+#: leave. See :func:`printed_text`.
+#:
+#: `w:sym` is deliberately absent: the character it prints lives in a
+#: `w:char` attribute against a font, so rendering one is a lookup and
+#: not a constant, and a wrong guess here would report a difference that
+#: is not there.
+PRINTED_CHILDREN = {
+    "noBreakHyphen": "\u2011",
+    "softHyphen": "\u00ad",
+    "tab": "\t",
+    "br": "\n",
+    "cr": "\n",
+}
+
+_PRINTED_RE = re.compile(
+    r"<w:t[^>]*>([^<]*)</w:t>"
+    r"|<w:(noBreakHyphen|softHyphen|tab|br|cr)\b[^>]*/?>")
+
+
+def printed_text(xml: str) -> str:
+    """Everything a reader SEES in `xml`, in document order.
+
+    :func:`visible_text` walks `w:t`, which is the right reading for an
+    anchor — a caller writes the words, not the typography. It is the
+    wrong reading for a COMPARISON, because a no-break hyphen, a tab and
+    a line break are all characters on the page that it renders as
+    nothing at all.
+
+    What that costs, measured: comparing Aging_Well before and after a
+    repair that deleted six printed hyphens from inside its citations
+    gave `REAL change locations: 0 | glyph-only: 0`. The tool called two
+    documents identical while the printed page differed, and that is why
+    the defect that put them there shipped through four rounds — every
+    pass reported `TEXT: (none)` and was believed (backlog S1).
+
+    Used by `compare`'s TEXT layer and nothing else so far. It is
+    deliberately NOT what `visible_text` returns: every anchor in four
+    paper trees is written against that reading, and a tab appearing in
+    it would move every offset after it.
+    """
+    out = []
+    for m in _PRINTED_RE.finditer(xml):
+        if m.group(2) is not None:
+            out.append(PRINTED_CHILDREN[m.group(2)])
+        else:
+            out.append(html.unescape(m.group(1)))
+    return "".join(out)
+
+
+
+def split_run(run_xml: str, at: int) -> tuple[str, str]:
+    """One run cut at VISIBLE offset `at`, into two whole runs.
+
+    Both halves keep the run's own `w:rPr` — that is formatting, and it
+    belongs to every fragment of what it formatted. Everything else is
+    CONTENT and goes to exactly one side, decided by document order:
+    what stands before the cut rides left, what stands after rides
+    right.
+
+    That last sentence is the fix. Rebuilding each fragment with
+    :func:`set_run_text` keeps the run's structure — which is right for
+    a fragment that IS the whole run and wrong for one of three, because
+    a `w:noBreakHyphen` is structure by that reading and a printed
+    character by every other. `wrap_visible_span` split one run into
+    before/inner/after and gave all three a copy: Aging_Well's §1 turned
+    one hyphen into seven over four citation wraps, printed them inside
+    the citations, and `compare` reported the before and after documents
+    as IDENTICAL through four rounds (backlog S1).
+
+    An offset past the run's visible text yields the whole run and an
+    empty right half; a negative one is refused, because a caller
+    computing a negative split has miscounted somewhere the halves
+    cannot show.
+    """
+    if at < 0:
+        # ValueError, not AnchorError: this module is the bottom
+        # layer and imports nothing, which is why every walk in it
+        # is importable from anywhere else.
+        raise ValueError(f"split_run: offset {at} is before the run")
+    m = RUN_OPEN_RE.search(run_xml)
+    if m is None:                     # not a run: nothing to split
+        return run_xml, ""
+    open_tag, close = m.group(0), "</w:r>"
+    body_from = m.end()
+    body_to = run_xml.rfind(close)
+    if body_to == -1:
+        body_to = len(run_xml)
+    body = run_xml[body_from:body_to]
+
+    rpr = ""
+    if (own := own_properties(run_xml, "rPr")) is not None:
+        rpr = run_xml[own[0]:own[1]]
+        body = body.replace(rpr, "", 1)
+
+    # Walk the content in document order, cutting the `w:t` that spans
+    # the offset. `seen` counts VISIBLE characters, so the printing
+    # children above land wherever their position puts them rather than
+    # wherever a length happens to fall.
+    left: list[str] = []
+    right: list[str] = []
+    seen, cut = 0, False
+    for piece in _SPLIT_PIECE_RE.split(body):
+        if not piece:
+            continue
+        if not piece.startswith("<w:t"):
+            (right if cut else left).append(piece)
+            continue
+        tm = _SPLIT_T_RE.fullmatch(piece)
+        text = html.unescape(tm.group(2)) if tm else ""
+        if cut or seen + len(text) <= at:
+            (right if cut else left).append(piece)
+            seen += len(text)
+            continue
+        head, tail = text[:at - seen], text[at - seen:]
+        open_t = tm.group(1) if tm else "<w:t>"
+        if head:
+            left.append(_t(open_t, head))
+        if tail:
+            right.append(_t(open_t, tail))
+        seen += len(text)
+        cut = True
+    if not cut and at > seen:
+        pass                          # past the end: everything rides left
+    return (open_tag + rpr + "".join(left) + close,
+            open_tag + rpr + "".join(right) + close if right else "")
+
+
+def _t(open_tag: str, text: str) -> str:
+    """A `w:t` holding `text`, with the space guard `set_run_text` uses."""
+    if text != text.strip() and "xml:space" not in open_tag:
+        open_tag = '<w:t xml:space="preserve">'
+    return f"{open_tag}{escape(text)}</w:t>"
 
 
 def run_open_before(xml: str, pos: int) -> int:

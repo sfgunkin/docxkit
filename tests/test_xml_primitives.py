@@ -35,9 +35,11 @@ from docxkit._xml import (
     live_properties,
     matching_close,
     own_properties,
+    printed_text,
     set_para_property,
     set_run_property,
     set_run_text,
+    split_run,
     used_prefixes,
     visible_text,
 )
@@ -973,3 +975,124 @@ def test_a_run_property_is_placed_before_the_FIRST_child_it_outranks():
 #   to the rPr slot walk. Same argument as that one, on the same
 #   grounds: PPR_ORDER is the complete CT_PPr, and the same-name copies
 #   are taken out above.
+
+
+# ------------------------------------------------------------ split_run --
+#
+# A run's children that PRINT and are not `w:t` — a no-break hyphen, a
+# tab, a line break. `visible_text` walks `w:t` only, so none of them
+# contributes a character to it and no text gate can see one arrive.
+# Rebuilding a fragment with `set_run_text` kept the run's structure and
+# therefore COPIED them: Aging_Well's §1 turned one hyphen into seven
+# over four citation wraps, printed them inside the citations, and
+# `compare` called the two documents identical (backlog S1, 2026-08-21).
+
+HYPHEN_RUN = ('<w:r><w:rPr><w:b/></w:rPr>'
+              '<w:t xml:space="preserve">Neither trade</w:t>'
+              "<w:noBreakHyphen/>"
+              '<w:t xml:space="preserve">offs and more</w:t></w:r>')
+
+
+@pytest.mark.parametrize("at", [0, 5, 13, 17, 26, 99])
+def test_a_printing_child_survives_a_split_exactly_ONCE(at):
+    left, right = split_run(HYPHEN_RUN, at)
+
+    assert (left + right).count("<w:noBreakHyphen/>") == 1, (left, right)
+
+
+def test_the_printing_child_rides_with_the_text_it_FOLLOWS():
+    """Document order decides: what stands before the cut goes left. The
+    hyphen sits after "Neither trade", so a cut at 5 leaves it right and
+    a cut at 17 leaves it left."""
+    assert "<w:noBreakHyphen/>" in split_run(HYPHEN_RUN, 5)[1]
+    assert "<w:noBreakHyphen/>" in split_run(HYPHEN_RUN, 17)[0]
+
+
+@pytest.mark.parametrize("at", [0, 5, 13, 17, 26])
+def test_a_split_keeps_every_character_of_the_visible_text(at):
+    left, right = split_run(HYPHEN_RUN, at)
+
+    assert visible_text(left) + visible_text(right) == visible_text(HYPHEN_RUN)
+    assert visible_text(left) == visible_text(HYPHEN_RUN)[:at]
+
+
+def test_both_halves_keep_the_run_PROPERTIES():
+    """`w:rPr` is formatting, not content: it belongs to every fragment
+    of what it formatted, which is why it is the one child copied."""
+    left, right = split_run(HYPHEN_RUN, 5)
+
+    assert "<w:b/>" in left and "<w:b/>" in right
+
+
+def test_a_split_past_the_end_yields_the_whole_run_and_nothing():
+    left, right = split_run(HYPHEN_RUN, 99)
+
+    assert visible_text(left) == visible_text(HYPHEN_RUN)
+    assert right == ""
+
+
+def test_a_NEGATIVE_offset_is_refused():
+    """A caller that computed one has miscounted somewhere the halves
+    cannot show."""
+    with pytest.raises(ValueError, match="before the run"):
+        split_run(HYPHEN_RUN, -1)
+
+
+def test_something_that_is_not_a_run_comes_back_whole():
+    assert split_run("<w:bookmarkStart w:id=\"1\" w:name=\"x\"/>", 3) == (
+        "<w:bookmarkStart w:id=\"1\" w:name=\"x\"/>", "")
+
+
+# ---------------------------------------------------------- printed_text --
+
+def test_printed_text_renders_what_visible_text_leaves_out():
+    """Four characters a reader sees and a `w:t` walk does not."""
+    xml = ("<w:r><w:t>trade</w:t><w:noBreakHyphen/><w:t>offs</w:t>"
+           "<w:tab/><w:t>then</w:t><w:br/><w:t>next</w:t></w:r>")
+
+    assert visible_text(xml) == "tradeoffsthennext"
+    assert printed_text(xml) == "trade\u2011offs\tthen\nnext"
+
+
+def test_printed_text_keeps_the_children_in_DOCUMENT_order():
+    """The stream is compared position by position, so a hyphen that
+    moved from one side of a word to the other has to read as a
+    difference."""
+    a = "<w:r><w:t>a</w:t><w:noBreakHyphen/><w:t>b</w:t></w:r>"
+    b = "<w:r><w:noBreakHyphen/><w:t>a</w:t><w:t>b</w:t></w:r>"
+
+    assert printed_text(a) != printed_text(b)
+    assert visible_text(a) == visible_text(b), "the reading that was blind"
+
+
+def test_printed_text_unescapes_like_visible_text_does():
+    xml = "<w:r><w:t>Rowe &amp; Kahn</w:t></w:r>"
+
+    assert printed_text(xml) == "Rowe & Kahn"
+
+
+def test_a_w_sym_is_NOT_rendered():
+    """Its character lives in an attribute against a font, so rendering
+    one is a lookup and not a constant — and a wrong guess would report
+    a difference that is not there."""
+    xml = '<w:r><w:t>a</w:t><w:sym w:font="Symbol" w:char="F0B7"/></w:r>'
+
+    assert printed_text(xml) == "a"
+
+
+def test_the_TEXT_layer_compares_the_printed_reading():
+    """The gate's own blindness, end to end: six hyphens deleted from
+    inside Aging_Well's citations gave `REAL change locations: 0`, and
+    the tool called the two documents identical while the page
+    differed."""
+    from docxkit._compare_read import Para
+
+    clean = Para("<w:p><w:r><w:t>Neither trade</w:t><w:noBreakHyphen/>"
+                 "<w:t>offs (Rowe 1987) nor more</w:t></w:r></w:p>")
+    strayed = Para("<w:p><w:r><w:t>Neither trade</w:t><w:noBreakHyphen/>"
+                   "<w:t>offs (</w:t></w:r><w:r><w:noBreakHyphen/>"
+                   "<w:t>Rowe 1987</w:t></w:r>"
+                   "<w:r><w:t>) nor more</w:t></w:r></w:p>")
+
+    assert clean.text != strayed.text
+    assert "(\u2011Rowe" in strayed.text

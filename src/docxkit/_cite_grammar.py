@@ -22,6 +22,7 @@ from ._xml import (
     run_spans,
     set_run_text,
     span_holding,
+    split_run,
     visible_text,
 )
 from .edit import _locate
@@ -614,19 +615,29 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
     (fs, _fe), first = covered[0]
     (ls, le), last = covered[-1]
 
-    fbody = visible_text(first.group(0))
-    lbody = visible_text(last.group(0))
-    before = set_run_text(first.group(0), fbody[:at - fs]) if at > fs else ""
-    after = set_run_text(last.group(0), lbody[end - ls:]) if end < le else ""
-
+    # CUT the runs rather than rebuilding each fragment from the whole
+    # one. `set_run_text` keeps a run's structure, which is right for a
+    # run being rewritten and wrong for one being SPLIT: a
+    # `w:noBreakHyphen` is structure by that reading and a printed
+    # character by every other, so before/inner/after each got a copy.
+    # Aging_Well's §1 turned one hyphen into seven over four wraps and
+    # printed them inside the citations, and no layer of `compare` could
+    # see it — `visible_text` walks `w:t` only (backlog S1, 2026-08-21).
     if first is last:
-        inner = _styled_run(first.group(0), fbody[at - fs:end - fs], style)
+        before, rest = split_run(first.group(0), at - fs)
+        mid, after = split_run(rest, end - at)
+        inner = _add_style(mid, style)
     else:
-        head = _styled_run(first.group(0), fbody[at - fs:], style)
-        tail = _styled_run(last.group(0), lbody[:end - ls], style)
+        before, head = split_run(first.group(0), at - fs)
+        tail, after = split_run(last.group(0), end - ls)
         middle = RUN_RE.sub(lambda m: _add_style(m.group(0), style),
                             para_xml[first.end():last.start()])
-        inner = head + middle + tail
+        inner = (_add_style(head, style) + middle
+                 + _add_style(tail, style))
+    if at <= fs:
+        before = ""
+    if end >= le:
+        after = ""
 
     linked = f'<w:hyperlink w:anchor="{escape(anchor)}">{inner}</w:hyperlink>'
     return (para_xml[:first.start()] + before + linked + after
