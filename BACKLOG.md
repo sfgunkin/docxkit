@@ -422,6 +422,103 @@ and a bare "report" marker would not.
 `Aging_Well/revision/log.md`; nothing suppressed in code.
 
 
+### S2 `docProps/custom.xml` is exempted as "Word regenerates it on save" — it holds the SENSITIVITY LABEL
+
+**Symptom as observed.** 2026-08-21, Aging_Well R1. `revision build`
+printed
+
+    WARNING: Compare part dropped: docProps/app.xml (Word regenerates it on save)
+    WARNING: Compare part dropped: docProps/custom.xml (Word regenerates it on save)
+
+and `validate`'s parts gate then reported **one** missing part, the
+footer, and said nothing about `custom.xml`. It is on the exempt list, so
+a promote would have copied the batch over `working.docx` and the part
+would be gone from the manuscript with every gate green.
+
+That part is not statistics. On this World Bank paper it carries
+
+    MSIP_Label_f1bf45b6-…_Enabled / _ContentBits / _ActionId  (the sensitivity label)
+    ClassificationContentMarkingFooterText = "Official Use Only"
+    ClassificationContentMarkingFooterShapeIds = 6dd13695,86566fa,653661d6
+
+**Diagnosis.** The exemption is right for `app.xml` — Pages, Words, Lines
+are Word's own and it rewrites them on every save. It is wrong for
+`custom.xml`: those are USER-DEFINED properties. Word does not synthesise
+them, and neither does Compare. Grouping the two under one rule reads as
+"metadata, regenerated" and buries a compliance artifact in it.
+
+**Why S2 rather than S1.** Nothing is reported wrong — the warning does
+print. But it prints as a benign line among carried-across notes, the gate
+that exists to catch a lost part deliberately skips this one, and the
+consequence is a document that quietly stops being labelled. On a Bank
+manuscript the label is what governs how the file may be handled.
+
+**Suggested fix.** Split the two. `app.xml` stays exempt; `docProps/
+custom.xml` joins the parts gate, and `build` carries it across the way it
+already carries the three `customXml/` parts and `dc:creator` — its
+relationship lives in the PACKAGE rels (`_rels/.rels`), not
+`word/_rels/document.xml.rels`, which is why `restore_parts` cannot do it
+either (see the entry below). A paper that really wants it gone can strip
+it deliberately, which is the argument `restore_parts`' own docstring
+makes about the data store.
+
+**Workaround in use.** `Aging_Well/revision/scripts/restore_compare_losses.py`
+restores it (part + content-type Override + package relationship) between
+every `revision build` and `validate`.
+
+
+### S2 `restore_parts` cannot restore a FOOTER — its relationship target is document-relative, and the sectPr reference is not its job
+
+**Symptom as observed.** 2026-08-21, Aging_Well R1. Compare dropped
+`word/footer3.xml`, the first-page footer. `validate` named it and pointed
+at the fix:
+
+    LOST word/footer3.xml
+    Restore it with docxkit.hygiene.restore_parts and rebuild.
+
+`restore_parts(parts, source, prefixes=("word/footer3.xml",))` puts the
+part and its content-type Override back and **silently leaves it
+unreferenced**, which is a part Word ignores — the same outcome as the
+loss, now invisible to the parts gate because the file is present.
+
+**Diagnosis, two separate causes.**
+
+1. The relationship walk keys on the rels Target:
+
+       name = target.group(1).removeprefix("../")
+       if not any(name.startswith(p) for p in prefixes): continue
+
+   A footer's Target is **`footer3.xml`**, document-relative, while the
+   part name is `word/footer3.xml`. The prefix never matches. It works for
+   `customXml/` only because those Targets are written `../customXml/…`,
+   which `removeprefix("../")` normalises into the part name. Every part
+   under `word/` — footers, headers, a lost `footnotes.xml` — is in this
+   hole.
+
+2. Even with the relationship restored, Compare had also dropped the
+   `<w:footerReference w:type="first" r:id="…"/>` from the section
+   properties. Restoring a part cannot know that, and nothing else does it.
+
+**Measurement.** Baseline: three footers, three rels, three sectPr
+references (even / default / first). Redline: two of each — the first-page
+footer gone at all three levels. After `restore_parts`: part present, rels
+still two, sectPr still two.
+
+**Suggested fix.** Resolve the rels Target against the part's own folder
+before testing it (`posixpath.normpath(join(dirname(part), target))`),
+which fixes both forms with one rule and no special case. For the sectPr
+reference, either restore it alongside — the type is recoverable from the
+source document's own sectPr — or refuse and SAY the part is orphaned,
+rather than returning it in the restored list as though the job were done.
+A restored part nothing references should never count as restored.
+
+**Workaround in use.**
+`Aging_Well/revision/scripts/restore_compare_losses.py` does all four
+edits by hand: part, Override, a relationship on a free rId, and the
+`w:type="first"` footerReference appended after the last existing one so
+the group stays contiguous in the sectPr's fixed element order.
+
+
 ## Fixed
 
 ### ~~S2 `audit_links` cannot read a paper's OWN anchor scheme, and reports its live citations UNLINKED~~
@@ -818,6 +915,10 @@ the reference list) and `--grep` (regex signatures) are NOT covered; if the
 paper still wants those, they are a flag on this command rather than a
 script. Left for its owner.
 
+**Checked 2026-08-21** against the finished manuscript: `site(doc, "…")`
+returns the same three facts the script printed for the same paragraph —
+index, the link labels an edit may not cross, and the footnote marks in it.
+
 ### ~~S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like~~
 
 Fixed 2026-08-20 — `placement.exhibit_block(parts, caption)` returns a
@@ -1075,6 +1176,10 @@ part holding only those answers 0, which renders as the separator line.
 
 **`AFI/revision/scripts/renumber_footnotes.py` can go** once someone confirms
 the paper's existing out-of-order notes are repaired; the detector will say.
+
+**Confirmed 2026-08-21** on the finished manuscript:
+`footnotes.out_of_order(doc, notes)` answers `[]`. The script has nothing
+left to do on this paper.
 
 ---
 
