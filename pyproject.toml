@@ -96,7 +96,7 @@ max-complexity = 20
 # rule being left off. Every one is a single pass over one document with
 # many cases, not a function doing several jobs, so splitting one is a
 # batch of its own — with the number to beat recorded here:
-#   _cite_audit._audit_findings  35     lint.lint                 31
+#   _cite_audit._audit_findings  31     lint.lint                 31
 #   edit.replace_in_para         26     refstyle.audit            25
 #   revisions._simulate_where    24
 # `_cite_build.link_all` was the sixth, at 29. Its mention scan is a

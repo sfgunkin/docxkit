@@ -340,7 +340,135 @@ punctuation half and `build_r4w.py`'s gate are covered; the name reduction
 and the italic marking are not. `build_r4x.py` (in-text "et al.") is out of
 scope on purpose — the in-text rules change what a sentence SAYS.
 
+### S2 a MULTI-YEAR citation parses as nothing at all — "Sen (1985, 1992)" yields zero citations
+
+**Symptom as observed.** 2026-08-21, ingesting the Aging_Well framework
+paper (`Documents/faw1.docx`, an unlinked manuscript the author typed in
+Word). `docxkit refstyle` reported **5 uncited-ref findings that are all
+cited**: Rowe and Kahn 1987 and 1997, Sen 1985, 1992 and 2009. Every one
+of them is cited in a parenthetical that carries several years after one
+name — "Rowe and Kahn (1987, 1997)", "Sen's capability approach (1985,
+1999, 2009)", "Sen (1985, 1992)". Sen 1999 escaped only because it is
+*also* cited on its own as "(Sen 1999; Stephens et al. 2015)".
+
+**Repro** (no document needed):
+
+    from docxkit.citations import find_citations
+    find_citations("Sen (1999) says things.")        # [('Sen', '1999')]
+    find_citations("Sen (1985, 1992) distinguishes") # []
+    find_citations("Rowe and Kahn (1987, 1997) nor") # []
+
+The group does not degrade to its first year — it produces **no keys at
+all**, so the name goes missing too.
+
+**Diagnosis.** The year matcher takes a parenthesis holding exactly one
+year (optional letter suffix). A comma-separated year list is a normal
+author-date form for citing several works by one author and nothing in
+the grammar expands it.
+
+**Why S2 rather than S4.** Two outputs are wrong and no gate sees either.
+(1) `refstyle`'s cited-listed cross-check calls a cited work uncited —
+noise that trains the reader to skim the section where a genuinely
+orphaned entry would appear. (2) The worse half: the mention is invisible
+to `find_citations`, so `citations` raises no UNLINKED finding for it and
+`link_all` silently skips it. On this paper that is 3 mentions covering 5
+works that a `docxkit link --write` run would leave unlinked while
+reporting a clean sweep — the audit and the linker agree, and both are
+blind in the same place.
+
+**Suggested fix.** Expand a year list inside one parenthetical into one
+citation per year against the same surname(s), and keep the span so the
+linker can wrap each year separately (the labels a reader clicks are
+"1987" and "1997", not the whole group). Watch the boundary with a page
+locator ("Sen 1999, 45") and with a genuine list of different authors
+("(Sen 1999; Coast et al. 2008)"), which already parse.
+
+**Workaround in use.** Aging_Well's ingest note records the 5 findings as
+known false positives; nothing is suppressed in code.
+
+
+### S4 `_NO_ITALICS_MARKERS` knows "working paper" and not the other names a series goes by
+
+**Symptom as observed.** 2026-08-21, Aging_Well's ingest audit. `refstyle`
+flagged 2 of 58 entries with "no italicised title or journal in this entry":
+
+    Sen, A. (2000). "Social Exclusion: Concept, Application, and Scrutiny."
+        Social Development Papers No. 1, Asian Development Bank.
+    Zaidi, A., ... and E. Zolyomi. (2013). "Active Ageing Index 2012: Concept,
+        Methodology and Final Results." Research Memorandum, European Centre Vienna.
+
+Both are the working-paper form the exemption already exists for — a
+numbered institutional series, which HOUSE sets without italics — written
+under names the marker list does not carry. `_NO_ITALICS_MARKERS` has
+"working paper", "discussion paper", "mimeo" and "unpublished"; a series
+called **"Papers No. N"**, a **"Research Memorandum"**, a **"Policy Research
+Working Paper"** (that one matches) or a **"Technical Report No. N"** does
+not reduce to any of them.
+
+**Why S4.** The audit is advisory and the reader can see the entry is a
+series paper. But the harm is the one the exemption was written against, in
+the comment beside it: on AFI v13, flagging these "drowned the two entries
+that had really lost their journal italics". Two false positives out of two
+italics findings is the whole finding class on this paper.
+
+**Suggested fix.** Match the SHAPE, not the vocabulary: an entry whose
+non-title tail is `<Series words> No. <n>, <Institution>` carries no
+italicised outlet by construction. Failing that, add "memorandum", "papers
+no.", "report no." and "technical report" — and keep the REPORT title
+("World Development Report 2020") flagged, which shape-matching preserves
+and a bare "report" marker would not.
+
+**Workaround in use.** Recorded as known false positives in
+`Aging_Well/revision/log.md`; nothing suppressed in code.
+
+
 ## Fixed
+
+### ~~S2 `audit_links` cannot read a paper's OWN anchor scheme, and reports its live citations UNLINKED~~
+
+Found 2026-08-21 by auditing AFI's finished manuscript — the same blindness
+`link_all` was fixed for the day before, one module over.
+
+**Symptom.** 104 entry bookmarks, every one `ref_<surname>_<year>`, and
+`_marker_owner` resolved none of them: `_KEY_SHAPE_RE` reads
+`Kanbur2007` and nothing else. So `linked_works` was empty, every mention
+fell through to the label test, and the audit reported
+
+    UNLINKED: "Surveys and ILOSTAT (2024)" (¶33)
+    UNLINKED: "Gmyrek et al.'s (2025)" (¶77)
+
+on a paper that links both. `ILOSTAT (2024)` and `Gmyrek et al. (2025)` are
+live hyperlinks in those very paragraphs.
+
+**Three fixes, and the second was found by making the first.**
+
+`_foreign_owner` reads a marker the way `_cite_build._foreign_bookmark`
+reads one — fold to letters and digits, require the year at the END and the
+surname inside — and still refuses when two entries answer.
+
+That alone traded two false findings for eleven: with foreign names now
+resolving, the MISPLACED MARKER check judged the mention-side markers too,
+and reported six correctly-placed `cite_<surname>_<year>` as misplaced. A
+marker sitting in PROSE is the back-link half of the pair and belongs where
+it is, so the check now looks only inside the reference block — whose start
+is the END of the paragraph before the first entry, because the gap above
+that entry is where Word puts a marker it hoists.
+
+The remaining `UNLINKED` needed the mirror of the guard that was already
+there: it tested whether the CITE was inside a label, and the two-author
+swallow puts the LABEL inside the cite. The year must be in the label too,
+so a cross-reference falling inside the span does not clear a citation.
+
+**What it found on the finished paper**, once it could see: one EMPTY LINK
+(`fig7_caption`, ¶57 — the field's result runs are gone and the words sit
+beside it as plain text) and **five entry markers stranded one entry early**
+— `ref_eurofound_2025` above Erreygers, `ref_hudomiet_2022` above Hardy, and
+three more. That is exactly the reorder defect the check was written for
+(13 of them on API10), and it had been invisible on this manuscript because
+the check could not read its names.
+
+`_audit_findings` came down from 35 to 31 doing it: the misplaced-marker
+walk is `_misplaced_markers` now.
 
 ### ~~S3 the build's math-glyph restore covers ONE view, so validate is red every round~~
 

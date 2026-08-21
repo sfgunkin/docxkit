@@ -124,12 +124,39 @@ def _marker_owner(name: str, entries: list[Reference]) -> Reference | None:
     is how the two would drift apart.
     """
     km = _KEY_SHAPE_RE.match(name)
-    if km is None:
-        return None
-    alpha, year = km.group(1).casefold(), km.group(2)
-    owners = [r for r in entries
-              if re.sub(r"[^\w]", "", r.surname).casefold().startswith(alpha)
-              and r.year == year]
+    if km is not None:
+        alpha, year = km.group(1).casefold(), km.group(2)
+        owners = [r for r in entries
+                  if re.sub(r"[^\w]", "", r.surname).casefold()
+                  .startswith(alpha) and r.year == year]
+        return owners[0] if len(owners) == 1 else None
+    return _foreign_owner(name, entries)
+
+
+def _foreign_owner(name: str, entries: list[Reference]) -> Reference | None:
+    """The entry a bookmark of SOMEBODY ELSE'S scheme names.
+
+    A manuscript wired as ``ref_<surname>_<year>`` has no key-shaped
+    marker anywhere, so every work read as unlinked and this audit
+    reported an UNLINKED citation for each one it could not clear
+    another way — on AFI, "Surveys and ILOSTAT (2024)" and "Gmyrek et
+    al.'s (2025)", both of them linked, and both reported on the
+    finished manuscript (2026-08-21).
+
+    Read the way `_cite_build._foreign_bookmark` reads it, because it is
+    the same question from the other end: fold the name to letters and
+    digits, and accept it when the fold ENDS with an entry's year and
+    holds that entry's surname. Two entries answering is still nobody's
+    marker — silence beats a guess, as above.
+    """
+    flat = re.sub(r"[^0-9A-Za-z]", "", name).casefold()
+    owners = []
+    for r in entries:
+        if not flat.endswith(r.year):
+            continue
+        stem = re.sub(r"[^\w]", "", r.surname).casefold()
+        if stem and stem in flat[:-len(r.year)]:
+            owners.append(r)
     return owners[0] if len(owners) == 1 else None
 
 
@@ -192,6 +219,52 @@ def _read_notes(parts: dict[str, bytes], bookmarks: dict[str, int],
         for anchor, label in internal_links(text):
             links[anchor].append((at, label))
         empty += [(a, at) for a in dead_links(text)]
+
+
+def _misplaced_markers(doc: str, paras: list[re.Match[str]],
+                       entries: list[Reference],
+                       ref_marks: dict[str, int]) -> list[_Finding]:
+    """Entry markers that no longer sit at their own entry."""
+    # A marker that no longer sits at its own entry: paragraph moves take
+    # the <w:p> and nothing beside it, so a reorder strands body-level
+    # markers one entry off (13 of them on API10). Only CONFIDENT
+    # mismatches report: the key must parse as name+year and match
+    # exactly one entry by surname prefix and year.
+    if not entries:
+        return []
+    found: list[_Finding] = []
+    starts = {r.index: r for r in entries}
+    # Where the reference block begins. A marker sitting in PROSE is
+    # the mention-side half of the pair — `<key>txt` in this
+    # package's own scheme, `cite_<surname>_<year>` in a paper's —
+    # and it belongs where it is. Reading it as an entry's marker
+    # reported six of AFI's as misplaced, every one of them
+    # correctly placed at the mention it back-links (2026-08-21).
+    # The gap ABOVE the first entry is the first entry's — that is
+    # where Word puts a marker it hoists out of the paragraph head —
+    # so the block starts at the end of whatever precedes it.
+    first = min(starts)
+    block_from = paras[first - 1].end() if first else 0
+    for name in ref_marks:
+        owner = _marker_owner(name, entries)
+        if owner is None:
+            continue
+        pos = doc.find(f'w:name="{name}"')
+        if pos < block_from:
+            continue
+        at = next((r for i, r in starts.items()
+                   if paras[i].start() <= pos < paras[i].end()), None)
+        if at is None:                    # body-level: next entry down
+            at = next((starts[i] for i in sorted(starts)
+                       if paras[i].start() >= pos), None)
+        if at is not None and at.index != owner.index:
+            found.append(_Finding(
+                "MISPLACED MARKER", name,
+                f"MISPLACED MARKER: '{name}' sits at "
+                f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
+                f"is ¶{owner.index + 1}"))
+
+    return found
 
 
 def _audit_findings(parts: dict[str, bytes], *,
@@ -301,30 +374,8 @@ def _audit_findings(parts: dict[str, bytes], *,
                 f"link to '{outer}' (¶{i + 1}) — the click goes "
                 "to the outer one"))
 
-    # A marker that no longer sits at its own entry: paragraph moves take
-    # the <w:p> and nothing beside it, so a reorder strands body-level
-    # markers one entry off (13 of them on API10). Only CONFIDENT
-    # mismatches report: the key must parse as name+year and match
-    # exactly one entry by surname prefix and year.
     entries = references(texts, heading=heading)
-    if entries:
-        starts = {r.index: r for r in entries}
-        for name in ref_marks:
-            owner = _marker_owner(name, entries)
-            if owner is None:
-                continue
-            pos = doc.find(f'w:name="{name}"')
-            at = next((r for i, r in starts.items()
-                       if paras[i].start() <= pos < paras[i].end()), None)
-            if at is None:                    # body-level: next entry down
-                at = next((starts[i] for i in sorted(starts)
-                           if paras[i].start() >= pos), None)
-            if at is not None and at.index != owner.index:
-                issues.append(_Finding(
-                    "MISPLACED MARKER", name,
-                    f"MISPLACED MARKER: '{name}' sits at "
-                    f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
-                    f"is ¶{owner.index + 1}"))
+    issues += _misplaced_markers(doc, paras, entries, ref_marks)
 
     # Unlinked citation-like text, on the shared grammar. Only body
     # prose before the reference list; the first five paragraphs are the
@@ -381,6 +432,15 @@ def _audit_findings(parts: dict[str, bytes], *,
             cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
             if any(cite in lb or cores[0] in lb or cores[1] in lb
                    for lb in labels):
+                continue
+            # The mirror of the test above, and the one the two-author
+            # pattern needs: "…national Labor Force Surveys and ILOSTAT
+            # (2024) data…" matches as a citation of "Surveys and
+            # ILOSTAT", and the LABEL sits inside that span rather than
+            # the other way round. The year has to be in the label too,
+            # so a cross-reference that happens to fall inside the span
+            # does not clear it.
+            if any(lb in cite and c.year in lb for lb in labels):
                 continue
             issues.append(_Finding(
                 "UNLINKED", cite,

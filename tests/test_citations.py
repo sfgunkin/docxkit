@@ -3222,3 +3222,163 @@ def test_a_BODY_LEVEL_marker_is_placed_by_the_entry_below_it():
 #   against "R".
 # * `print("=" * 60)` at 59 and 61 — the width of a rule, which is the
 #   cosmetic third of the three kinds CONTRIBUTING names.
+
+
+# --------------------------------- a paper wired under ANOTHER scheme ---
+#
+# Read on AFI's finished manuscript, 2026-08-21: 104 entry bookmarks,
+# every one of them `ref_<surname>_<year>`, and the audit could resolve
+# none of them — so no work counted as linked and two live citations
+# were reported UNLINKED on a paper that links both.
+
+
+def _foreign(body: str):
+    from conftest import make_parts
+    return make_parts(body)
+
+
+_FOREIGN_ENTRIES = (
+    '<w:bookmarkStart w:id="7" w:name="ref_kanbur_2007"/>'
+    '<w:bookmarkEnd w:id="7"/>')
+
+
+def test_a_citation_linked_under_a_FOREIGN_scheme_is_not_UNLINKED():
+    from conftest import make_parts, para, run
+
+    linked = ('<w:hyperlink w:anchor="ref_kanbur_2007"><w:r>'
+              "<w:t>Kanbur (2007)</w:t></w:r></w:hyperlink>")
+    body = (para(run("A point.")) + para(run("Prose.")) + para(run("More."))
+            + para(run("Still more.")) + para(run("And more."))
+            + para(run("As "), linked, run(" shows, it rises."))
+            + para(run("References")) + _FOREIGN_ENTRIES
+            + para(run("Kanbur, R. (2007). Poverty. Journal, 1(1): 45-48.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    assert not [m for m in issues if m.startswith("UNLINKED")], issues
+
+
+def test_a_MENTION_side_marker_in_prose_is_not_misplaced():
+    """`cite_<surname>_<year>` is the back-link target and belongs at the
+    MENTION. Reading it as the entry's marker reported six of AFI's as
+    misplaced, every one correctly placed."""
+    from conftest import make_parts, para, run
+
+    # TWO entries, and the mention is of the SECOND: the check's fallback
+    # for a body-level marker is "the next entry down", which for a
+    # marker in prose is the FIRST entry — so a one-entry fixture cannot
+    # tell a skipped marker from a marker whose owner it guessed right.
+    body = (para(run("A point.")) + para(run("Prose.")) + para(run("More."))
+            + para(run("Still more.")) + para(run("And more."))
+            + '<w:bookmarkStart w:id="3" w:name="cite_ravallion_2016"/>'
+              '<w:bookmarkEnd w:id="3"/>'
+            + para(run("As Ravallion (2016) shows, it rises."))
+            + para(run("References")) + _FOREIGN_ENTRIES
+            + para(run("Kanbur, R. (2007). Poverty. Journal, 1(1): 45-48."))
+            + para(run("Ravallion, M. (2016). Economics. OUP.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    assert not [m for m in issues if m.startswith("MISPLACED")], issues
+
+
+def test_a_FOREIGN_entry_marker_one_entry_early_is_still_reported():
+    """The check exists for exactly this: a reorder takes the `w:p` and
+    leaves the body-level marker behind, so it strands one entry up. Five
+    of AFI's 104 are in that state on the finished paper."""
+    from conftest import make_parts, para, run
+
+    body = (para(run("A point (Kanbur 2007).")) + para(run("References"))
+            + '<w:bookmarkStart w:id="7" w:name="ref_ravallion_2016"/>'
+              '<w:bookmarkEnd w:id="7"/>'
+            + para(run("Kanbur, R. (2007). Poverty. Journal, 1(1): 45-48."))
+            + para(run("Ravallion, M. (2016). Economics. OUP.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    misplaced = [m for m in issues if m.startswith("MISPLACED")]
+    assert len(misplaced) == 1 and "ref_ravallion_2016" in misplaced[0]
+
+
+def test_a_citation_the_two_author_pattern_SWALLOWED_is_not_UNLINKED():
+    """"…national Labor Force Surveys and ILOSTAT (2024) data…" matches
+    as a citation of "Surveys and ILOSTAT", and the LABEL sits inside
+    that span rather than the other way round — which the guard tested
+    one way and not the other."""
+    from conftest import make_parts, para, run
+
+    linked = ('<w:hyperlink w:anchor="ref_ilostat_2024"><w:r>'
+              "<w:t>ILOSTAT (2024)</w:t></w:r></w:hyperlink>")
+    body = (para(run("A point.")) + para(run("Prose.")) + para(run("More."))
+            + para(run("Still more.")) + para(run("And more."))
+            + para(run("Consolidated from national Labor Force Surveys "
+                       "and "), linked, run(" data on employment."))
+            + para(run("References"))
+            + '<w:bookmarkStart w:id="7" w:name="ref_ilostat_2024"/>'
+              '<w:bookmarkEnd w:id="7"/>'
+            + para(run('ILOSTAT. (2024). "Statistics." ILO.')))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    assert not [m for m in issues if m.startswith("UNLINKED")], issues
+
+
+def test_a_cross_reference_inside_a_citation_span_does_NOT_clear_it():
+    """The mirror guard needs the year in the label too. A "Table 1"
+    link falling inside the span says nothing about the citation, and
+    clearing on it would switch the check off wherever they overlap."""
+    from conftest import make_parts, para, run
+
+    linked = ('<w:hyperlink w:anchor="tbl1_caption"><w:r>'
+              "<w:t>Table 1</w:t></w:r></w:hyperlink>")
+    body = (para(run("A point.")) + para(run("Prose.")) + para(run("More."))
+            + para(run("Still more.")) + para(run("And more."))
+            + para(run("Reported in "), linked,
+                   run(" and ILOSTAT (2024) besides."))
+            + para(run("References"))
+            + '<w:bookmarkStart w:id="3" w:name="tbl1_caption"/>'
+              '<w:bookmarkEnd w:id="3"/>'
+            + para(run('ILOSTAT. (2024). "Statistics." ILO.')))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    assert [m for m in issues if m.startswith("UNLINKED")], issues
+
+
+def test_a_marker_that_only_CONTAINS_a_year_owns_no_entry():
+    """The fold is loose on purpose, so both halves have to hold: the
+    year must END the name. `ref_kanbur_2007_notes` is a marker ABOUT
+    the work, and adopting it would report it misplaced wherever it
+    sits."""
+    from conftest import make_parts, para, run
+
+    body = (para(run("A point (Kanbur 2007).")) + para(run("References"))
+            + '<w:bookmarkStart w:id="7" w:name="ref_kanbur_2007_notes"/>'
+              '<w:bookmarkEnd w:id="7"/>'
+            # Kanbur is the SECOND entry, so a marker read as his would
+            # not sit where the fallback puts it — which is what makes
+            # the mis-reading visible at all
+            + para(run("Ravallion, M. (2016). Economics. OUP."))
+            + para(run("Kanbur, R. (2007). Poverty. Journal, 1(1): 45-48.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    assert not [m for m in issues if m.startswith("MISPLACED")], issues
+
+
+def test_a_marker_TWO_entries_answer_to_belongs_to_neither():
+    """Silence beats a guess, the same rule the key-shaped half states.
+    "ref_kanbur_2007" holds the surname of both Kanbur and Bur."""
+    from conftest import make_parts, para, run
+
+    # The marker sits BETWEEN the two, so taking either as its owner is
+    # a finding: the fallback answers Kanbur and the first match is Bur.
+    body = (para(run("A point (Kanbur 2007).")) + para(run("References"))
+            + para(run("Bur, A. (2007). A note. Journal, 1(1): 1-2."))
+            + '<w:bookmarkStart w:id="7" w:name="ref_kanbur_2007"/>'
+              '<w:bookmarkEnd w:id="7"/>'
+            + para(run("Kanbur, R. (2007). Poverty. Journal, 1(1): 45-48.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    assert not [m for m in issues if m.startswith("MISPLACED")], issues
