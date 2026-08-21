@@ -276,7 +276,14 @@ def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
             name = mark.get(W + "name")
             if name is not None:
                 seen[name] = seen.get(name, 0) + 1
-    repeated = sorted((n, c) for n, c in seen.items() if c > 1)
+    # Worst first, not alphabetical: only eight are named, so sorting
+    # by name means the offender that matters survives on luck. On the
+    # paper this was found in it did - `AykutEtAl2026txt x6` sorts
+    # first by accident - and had that name been `Zhang2024txt` the
+    # message would have listed eight x2 entries and hidden the six
+    # behind the ellipsis.
+    repeated = sorted(((n, c) for n, c in seen.items() if c > 1),
+                      key=lambda item: (-item[1], item[0]))
     if not repeated:
         return []
     named = ", ".join(f"{n} x{c}" for n, c in repeated[:8])

@@ -542,3 +542,31 @@ def test_a_DUPLICATE_never_refuses_a_write():
 
     assert lint_parts(_parts(body)) == []
     assert audit_parts(_parts(body)) != []
+
+
+def test_the_worst_offender_is_never_the_one_elided():
+    """Only eight names are listed, so the ORDER decides what a reader
+    sees — and sorting by name means the one that matters survives on
+    alphabetical luck. On the paper this check was found in it did:
+    `AykutEtAl2026txt x6` happens to sort first. Name it `Zhang` and
+    the message would have led with eight x2 entries and hidden the
+    six behind the ellipsis, reading as a much smaller problem than
+    it is.
+    """
+    marks, mark_id = "", 0
+    #        z-first, so alphabetical order would bury the worst
+    for name, count in (("zWorst", 6), ("aMild", 2), ("bMild", 2),
+                        ("cMild", 2), ("dMild", 2), ("eMild", 2),
+                        ("fMild", 2), ("gMild", 2), ("hMild", 2),
+                        ("yBad", 4)):
+        for _ in range(count):
+            mark_id += 1
+            marks += para(_mark(name, mark_id) + run("x"))
+
+    (problem,) = audit_parts(_parts(marks))
+
+    assert problem.startswith("10 bookmark name(s) defined more than once")
+    listed = problem.split(": ", 1)[1]
+    assert listed.startswith("zWorst x6, yBad x4")
+    assert "..." in listed          # eight of ten, so it is truncated
+    assert "hMild" not in listed    # and the truncation drops the mild
