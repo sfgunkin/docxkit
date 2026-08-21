@@ -85,6 +85,7 @@ from .revisions import revision_elements
 from .word import _suppress_com
 
 __all__ = [
+    "CARRIED_PARTS",
     "STRUCTURE_TAGS",
     "BuildReport",
     "MathOutcome",
@@ -105,6 +106,13 @@ __all__ = [
 ]
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+#: What :func:`build` copies back from the revised input when Word's
+#: Compare declines to carry it: the ``customXml/`` data store, dropped
+#: on every single rebuild, and the user-defined properties, which on a
+#: Bank manuscript are the sensitivity label. A paper whose Compare eats
+#: something else says so once — see ``[batch] carry`` in paper.toml.
+CARRIED_PARTS = (_hygiene.CUSTOM_XML, USER_PROPERTIES)
 
 
 
@@ -908,7 +916,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           resolve_math: bool = True, reject_check: bool = True,
           accept_check: bool = True,
           verify_in_word: bool = True, force: bool = False,
-          carry: tuple[str, ...] = (_hygiene.CUSTOM_XML, USER_PROPERTIES),
+          carry: tuple[str, ...] = CARRIED_PARTS,
           progress: Callable[[str], None] | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.

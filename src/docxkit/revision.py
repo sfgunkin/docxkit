@@ -242,6 +242,18 @@ class Paper:
     reading; declaring the archive is how the three stay visible.
     """
     """How many rescue copies to keep. See :func:`prune_rescues`."""
+    carry: tuple[str, ...] = ()
+    """Parts THIS paper's Compare eats, from ``[batch] carry``.
+
+    Added to :data:`docxkit.tracked.CARRIED_PARTS`, which every paper
+    gets. A header or footer belongs here and not in the default,
+    because it is reached from the section properties as well as through
+    a relationship: `restore_parts` puts that reference back or refuses,
+    but whether the section it lands in is the section the author meant
+    is a question about the rendered page. Aging_Well's Compare drops
+    ``word/footer3.xml`` — the first-page footer — on every rebuild, and
+    the paper carried a 130-line script to put it back.
+    """
 
     @property
     def batch(self) -> Path:
@@ -317,6 +329,7 @@ def load_paper(start: str | Path | None = None) -> Paper:
         attic=Path(attic) if attic else None,
         rescue_keep=int(batch_cfg.get("rescue_keep", RESCUE_KEEP)),
         doctor_skip=tuple(data.get("doctor", {}).get("skip", _DOCTOR_SPENT)),
+        carry=tuple(batch_cfg.get("carry", ())),
     )
 
 
@@ -672,7 +685,8 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     report = tracked.build(paper.prev, revised, out, None,
                            author=paper.author, verify_in_word=True,
                            resolve_math=resolve_math, reject_check=False,
-                           force=force, progress=_say)
+                           force=force, progress=_say,
+                           carry=tracked.CARRIED_PARTS + paper.carry)
 
     for name in restored_bookmarks(package.read_parts(paper.prev),
                                    package.read_parts(revised),

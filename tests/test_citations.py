@@ -678,6 +678,58 @@ def test_link_all_creates_the_name_a_BROKEN_BACK_LINK_demands():
     assert not [i for i in issues if i.startswith("BROKEN LINK")], issues
 
 
+def test_a_work_whose_FIRST_mention_lost_its_link_is_still_a_candidate():
+    """"Already linked" is a fact about a MENTION, not about a work.
+
+    Word drops links UNEVENLY: on the AFI hand-back it took the FIRST
+    Maestas mention and left one twelve pages on, so the work read as
+    `already linked`, the first-mention pass skipped it, and the
+    bookmark its entry's back-link demands was never written. Measured
+    AFTER the lost-link repair landed — five of six came back and this
+    one did not (2026-08-21).
+    """
+    from docxkit.citations import link_all
+
+    parts = make_doc(
+        P(R("Maestas et al. (2023) estimate willingness to pay.")),  # plain
+        P(R("Twelve pages on, ")
+          + hfield("ref_maestas_2023", "Maestas et al. (2023)")
+          + R(" again.")),                       # this one Word left alone
+        P(R("References")),
+        P(bookmark("ref_maestas_2023", 21, hfield(
+            "cite_maestas_2023", "Maestas, N. (2023). Wages. A Journal."))))
+
+    report = link_all(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    marks = set(_BOOKMARK_NAME_RE.findall(doc))
+    assert "cite_maestas_2023" in marks, report.format()
+    assert report.already == [], report.format()
+    # the FIRST mention is the one wired, and the later link is untouched
+    first = PARA_RE.findall(doc)[5]
+    assert "cite_maestas_2023" in first and "willingness to pay" in first
+
+
+def test_a_paper_with_NO_in_text_bookmarks_is_a_convention_not_a_loss():
+    """The guard on the fix above. A document wired `ref_x` / link with
+    no in-text bookmark anywhere is fully linked under its own
+    convention — nothing DEMANDS a twin — and re-wiring its mentions
+    would nest a link inside a link."""
+    from docxkit.citations import link_all
+
+    parts = make_doc(
+        P(R("A point (") + hfield("ref_kanbur_2007", "Kanbur 2007")
+          + R(").")),
+        P(R("References")),
+        P(bookmark("ref_kanbur_2007", 21, R(
+            "Kanbur, R. (2007). Poverty and distribution. Journal."))))
+
+    report = link_all(parts)
+
+    assert report.already == ["ref_kanbur_2007"], report.format()
+    assert report.linked == []
+
+
 def test_an_entry_whose_YEAR_carries_a_letter_finds_its_own_bookmark():
     """A paper citing two works by one author in one year writes 2023a
     and 2023b, and its bookmarks were minted BEFORE the split —

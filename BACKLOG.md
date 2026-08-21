@@ -241,6 +241,31 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S2 the LOST-link repair does not fire when Word left a LATER mention linked~~ — FIXED 21.08
+
+**Was:** `already linked` is a fact about a MENTION and the scan read it
+as one about the work — any surviving link to the entry made the whole
+work `already`, so the first-mention pass skipped it and the bookmark
+its entry's back-link demands was never written. Word drops links
+UNEVENLY; on the AFI hand-back it took the FIRST Maestas mention and
+left one twelve pages on.
+
+**Fix.** `_Mentions.unmarked`: a work whose in-text twin is DEMANDED by
+a link and does not exist is a candidate however many of its other
+mentions are linked. **Demanded, not merely absent** — that distinction
+is the whole guard, and the first attempt without it turned a paper
+wired `ref_kanbur_2007` with no in-text bookmark at all (a convention,
+not a loss) into a run that tried to re-wire its linked mentions and
+reported two skips where it used to report one `already`. Both cases
+are pinned.
+
+**Measured.** AFI's baseline, auditing before and after an in-memory
+`link_all`: 6 -> 20 findings before the lost-link repair, 6 -> 16 with
+this. le14 stays 45 -> 45; Parental Style and DSI stay 0 -> 0.
+
+**Workaround retired:** the five hand-wired Maestas mentions in AFI's
+`build_r5d.py` — see the note left in that script.
+
 ### ~~S2 `link_rest` cannot resolve an entry whose YEAR carries a letter~~ — FIXED 21.08
 
 **Was:** `'Maestas et al. (2023b)' (¶89): entry has no bookmark`, for an

@@ -419,9 +419,11 @@ class _FakeBuild:
                  extra: str = "") -> None:
         self.math, self.out_text, self.extra = math, out_text, extra
         self.called_with: tuple[Any, ...] = ()
+        self.kwargs: dict[str, Any] = {}
 
     def __call__(self, original, revised, out, classify=None, **kw):
         self.called_with = (Path(original), Path(revised), Path(out))
+        self.kwargs = kw
         write(Path(out), make_parts(para(self.extra + run(self.out_text))))
         say = kw.get("progress") or (lambda _: None)
         say(f"resolved {self.math} math revisions")
@@ -525,6 +527,35 @@ def test_build_no_longer_advises_a_path_that_does_not_exist(project,
     with pytest.raises(MathResolved) as exc:
         revision.build(project, project.working)
     assert "no reviewable redline" in str(exc.value).lower()
+
+
+def test_a_paper_can_declare_the_PART_its_Compare_eats(project, monkeypatch):
+    """Word's Compare drops Aging_Well's first-page footer on every
+    rebuild — part, relationship AND the sectPr reference — and the
+    paper carried a 130-line script to put all three back. It is not a
+    default because a header or footer is reached from the section
+    properties as well: `restore_parts` puts that reference back or
+    refuses, but whether the section is the one the author meant is a
+    question about the rendered page. So the paper says it once."""
+    from docxkit import revision as rev
+
+    project.config.write_text(
+        project.config.read_text(encoding="utf-8").replace(
+            "[batch]", '[batch]\ncarry = ["word/footer3.xml"]', 1),
+        encoding="utf-8")
+    paper = rev.load_paper(project.root)
+    assert paper.carry == ("word/footer3.xml",)
+
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+    revision.build(paper, paper.working)
+
+    assert fake.kwargs["carry"] == (*rev.tracked.CARRIED_PARTS,
+                                    "word/footer3.xml")
+    # …and a paper that declares nothing still gets the two every paper
+    # gets: the data store and the user-defined properties
+    assert revision.build(project, project.working) is not None
+    assert fake.kwargs["carry"] == rev.tracked.CARRIED_PARTS
 
 
 def test_build_progress_reaches_the_caller(project, monkeypatch):

@@ -404,7 +404,7 @@ def _bookmark_names(entries: list[Reference],
                     taken: set[str],
                     naming: Callable[[str, str], str] | None,
                     report: LinkAllReport,
-                    ) -> tuple[dict[int, str], dict[str, str]]:
+                    ) -> tuple[dict[int, str], dict[str, str], set[str]]:
     """Each entry's bookmark name, and the in-text twin it pairs with.
 
     In order: the entry's OWN marker; the name a dangling link in the
@@ -454,6 +454,7 @@ def _bookmark_names(entries: list[Reference],
 
     names: dict[int, str] = {}
     twin_name: dict[str, str] = {}
+    demanded_twin: set[str] = set()
     for r in entries:
         asked = twins.get(r.index)
         if asked is None and r.index not in own_names:
@@ -473,8 +474,10 @@ def _bookmark_names(entries: list[Reference],
         names[r.index] = (own_names.get(r.index) or demanded
                           or _named(r, naming, taken, report))
         twin_name[names[r.index]] = asked or _twin_of(names[r.index], rule)
+        if asked is not None:
+            demanded_twin.add(names[r.index])
         taken.add(names[r.index])
-    return names, twin_name
+    return names, twin_name, demanded_twin
 
 
 def _wanted(only: Collection[str] | None, entries: list[Reference],
@@ -557,6 +560,19 @@ class _Mentions:
     filed_as: dict[str, str]
     ignored: set[str]
     wanted: set[str] | None
+    unmarked: set[str]
+    """Entry names whose in-text TWIN bookmark does not exist.
+
+    "Already linked" is a fact about a MENTION, and this pass reads it as
+    one about the work: any surviving link to the entry made the whole
+    work `already`. Word drops links UNEVENLY — it took the FIRST
+    Maestas mention and left one twelve pages on — so the work read as
+    finished while the bookmark that belongs on its first mention was
+    never written and the entry's back-link stayed broken (AFI r4
+    hand-back, measured after the repair below landed). A work whose
+    twin is missing is a candidate however many of its other mentions
+    are linked.
+    """
 
     def scan(self, matches: list[re.Match[str]],
              into: dict[int, list[tuple[str, str]]],
@@ -603,7 +619,7 @@ class _Mentions:
                     continue
                 self.claimed.add(key)
                 name = self.names[hits[0].index]
-                if name in self.linked_anchors:
+                if name in self.linked_anchors and name not in self.unmarked:
                     self.report.already.append(name)
                     continue
                 # AFTER that: a mention already linked to its OWN anchor
@@ -687,8 +703,8 @@ def link_all(parts: dict[str, bytes], *,
     gaps = {i: doc[(paras[i - 1].end() if i else 0):m.start()]
             for i, m in enumerate(paras)}
 
-    names, twin_name = _bookmark_names(entries, paras, gaps, taken=taken,
-                                       naming=naming, report=report)
+    names, twin_name, demanded = _bookmark_names(
+        entries, paras, gaps, taken=taken, naming=naming, report=report)
     answers: dict[str, str] = {}
     by_key: dict[str, list[Reference]] = {}
     for r in entries:
@@ -710,9 +726,15 @@ def link_all(parts: dict[str, bytes], *,
     plan: dict[int, list[tuple[str, str]]] = {}       # para -> [(cite, name)]
     by_label = {label: name for name, label in _NOTE_PARTS}
 
+    # A work whose in-text twin is DEMANDED by a link and does not
+    # exist needs its first mention wired even if a later one survived:
+    # see `_Mentions.unmarked`. Demanded, not merely absent — a document
+    # that carries no in-text bookmarks at all is a convention, not a
+    # loss, and re-wiring its linked mentions would nest link in link.
+    unmarked = {name for name in demanded if twin_name[name] not in taken}
     scan = _Mentions(
         report, answers, by_key, names, claimed, linked_anchors,
-        filed_as, ignored, wanted).scan
+        filed_as, ignored, wanted, unmarked).scan
 
     scan(paras, plan, (head_idx, last_idx))
     note_paras, note_plans = _plan_notes(notes, scan)
