@@ -53,6 +53,12 @@ _WHERE = {-1: "body", -2: "fn", -3: "en"}
 
 _KEY_SHAPE_RE = re.compile(
     r"^([A-Za-z][A-Za-z.]*?)(\d{4}[a-z]?)(?:_\d+)?(?:txt)?$")
+# One word of a bookmark name, for :func:`_name_runs`. A name separates
+# its words with punctuation ("ref_world_bank_2024"), with case
+# ("refWorldBank2024"), or with the digits of the year — all three, and
+# an acronym run ("WHOReport") splits before the capitalised word that
+# follows it rather than inside it.
+_NAME_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+|[0-9]+")
 _LINK_TOKEN_RE = re.compile(
     r'<w:fldChar\b[^>]*w:fldCharType="(begin|separate|end)"'
     r"|<w:instrText[^>]*>([^<]*)</w:instrText>"
@@ -133,6 +139,40 @@ def _marker_owner(name: str, entries: list[Reference]) -> Reference | None:
     return _foreign_owner(name, entries)
 
 
+def _name_runs(name: str) -> set[str]:
+    """Every WORD-ALIGNED run of letters in a bookmark name, folded.
+
+    "ref_world_bank_2024" yields {ref, refworld, refworldbank, world,
+    worldbank, bank} — the joins are what lets a multi-word institution
+    ("World Bank") answer to a name that separates its words, and the
+    alignment is what stops a surname matching in the middle of another.
+
+    That middle is not hypothetical. Both readers of a foreign scheme
+    used to ask whether the surname sat ANYWHERE in the folded name, so
+    "Ho, B. (2019)" adopted a stray `ref_thompson_2019` ("ho" is inside
+    "refthompson") and "Li, X. (2020)" adopted `ref_polinelli_2020`.
+    The builder then wired every mention of the short-surnamed work to
+    another work's bookmark and reported success; the audit cleared it
+    as linked. Every surname of two or three letters — Li, Ho, An, Xu,
+    Ng, Wu — is one long name away from this.
+
+    A run must be alphabetic and unbroken by digits, so the year cannot
+    be joined across. A name with no boundary at all ("refthompson2019",
+    all one word) matches nothing here but the whole run: that is the
+    conservative half of the same rule — "refthompson" is a surname a
+    document could genuinely be filing under, and silence beats a guess.
+    """
+    runs: set[str] = set()
+    words: list[str] = []
+    for w in _NAME_WORD_RE.findall(name):
+        if w.isdigit():
+            words = []               # the year breaks the run, not joins it
+            continue
+        words.append(w.casefold())
+        runs.update("".join(words[i:]) for i in range(len(words)))
+    return runs
+
+
 def _foreign_owner(name: str, entries: list[Reference]) -> Reference | None:
     """The entry a bookmark of SOMEBODY ELSE'S scheme names.
 
@@ -146,16 +186,20 @@ def _foreign_owner(name: str, entries: list[Reference]) -> Reference | None:
     Read the way `_cite_build._foreign_bookmark` reads it, because it is
     the same question from the other end: fold the name to letters and
     digits, and accept it when the fold ENDS with an entry's year and
-    holds that entry's surname. Two entries answering is still nobody's
-    marker — silence beats a guess, as above.
+    one of its WORDS is that entry's surname. The word test is
+    :func:`_name_runs` and both ends call it: "holds the surname" was
+    written out twice, and the same defect was in both copies. Two
+    entries answering is still nobody's marker — silence beats a guess,
+    as above.
     """
     flat = re.sub(r"[^0-9A-Za-z]", "", name).casefold()
+    runs = _name_runs(name)
     owners = []
     for r in entries:
         if not flat.endswith(r.year):
             continue
         stem = re.sub(r"[^\w]", "", r.surname).casefold()
-        if stem and stem in flat[:-len(r.year)]:
+        if stem and stem in runs:
             owners.append(r)
     return owners[0] if len(owners) == 1 else None
 
@@ -265,6 +309,23 @@ def _misplaced_markers(doc: str, paras: list[re.Match[str]],
                 f"is ¶{owner.index + 1}"))
 
     return found
+
+
+def _labels_by_para(links: dict[str, list[tuple[int, str]]]
+                    ) -> dict[int, set[str]]:
+    """Every link label, by the paragraph it was found in.
+
+    The audit mostly asks its questions of the whole document — "is this
+    WORK linked anywhere" — and one of them is about a single mention
+    instead, so it needs the labels beside that mention rather than all
+    of them. The note stores index negatively (:data:`_NOTE_AT`), which
+    no body paragraph does, so they cannot collide here.
+    """
+    by_para: dict[int, set[str]] = defaultdict(set)
+    for sites in links.values():
+        for at, label in sites:
+            by_para[at].add(label.strip())
+    return by_para
 
 
 def _audit_findings(parts: dict[str, bytes], *,
@@ -391,6 +452,7 @@ def _audit_findings(parts: dict[str, bytes], *,
     # canonical keys are what this decision needs.
     entry_keys = {r.key for r in entries}
     labels = {lb.strip() for sites in links.values() for _, lb in sites}
+    labels_at = _labels_by_para(links)
     # The convention links a work's FIRST mention only, so the question
     # this check asks is "is this WORK linked anywhere", and it must be
     # asked of the work — not of the wording. Pairing on the label text
@@ -440,7 +502,18 @@ def _audit_findings(parts: dict[str, bytes], *,
             # the other way round. The year has to be in the label too,
             # so a cross-reference that happens to fall inside the span
             # does not clear it.
-            if any(lb in cite and c.year in lb for lb in labels):
+            #
+            # THIS paragraph's labels, not the document's. The test above
+            # asks "is the work linked anywhere" and reads the whole set
+            # for that reason; this one asks whether the link is inside
+            # the very span being reported, which is a question about one
+            # mention. Asked of every label in the manuscript it cleared
+            # far more than it should: a single link labelled "(2024)" or
+            # "Jones (2024)" anywhere is contained in most citation spans
+            # carrying that year, so it switched the gate off for every
+            # unlinked mention of every 2024 work.
+            if any(lb in cite and c.year in lb
+                   for lb in labels_at.get(i, ())):
                 continue
             issues.append(_Finding(
                 "UNLINKED", cite,

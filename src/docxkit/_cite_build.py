@@ -13,7 +13,7 @@ import unicodedata
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
-from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE
+from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE, _name_runs
 from ._cite_grammar import (
     _DEFAULT_HEADINGS,
     _REF_YEAR_RE,
@@ -159,10 +159,17 @@ def _foreign_bookmark(names: list[str], r: Reference,
 
     So the name is read through its punctuation instead: fold it to
     letters and digits, and accept it when it ENDS with this work's year
-    and holds the surname. Both halves, for the reason the caller above
-    gives — a stray marker naming another work must not be adopted — and
-    the year at the END, because `2022_notes` is a name about something
-    else that happens to contain the digits.
+    and one of its WORDS is the surname. Both halves, for the reason the
+    caller above gives — a stray marker naming another work must not be
+    adopted — and the year at the END, because `2022_notes` is a name
+    about something else that happens to contain the digits.
+
+    A WORD does here what the prefix rule does in the caller above.
+    Asking only whether the surname sat somewhere INSIDE the name let
+    "Ho, B. (2019)" adopt a stray `ref_thompson_2019` and re-point every
+    ``(Ho 2019)`` in the manuscript at Thompson's entry, reporting
+    success. :func:`_cite_audit._name_runs` is that rule, shared with
+    the audit that reads these names from the other end.
     """
     for n in names:
         if n.endswith("txt"):
@@ -170,8 +177,8 @@ def _foreign_bookmark(names: list[str], r: Reference,
         flat = re.sub(r"[^0-9A-Za-z]", "", n).casefold()
         if not flat.endswith(r.year):
             continue
-        stem = flat[:-len(r.year)]
-        if any(a and a in stem for a in stems):
+        runs = _name_runs(n)
+        if any(a and a in runs for a in stems):
             return n
     return None
 

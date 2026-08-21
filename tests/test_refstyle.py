@@ -18,6 +18,7 @@ from docxkit.refstyle import (
     check_entry,
     check_prose,
     convert,
+    convert_entry,
     convert_text,
 )
 
@@ -1820,6 +1821,36 @@ def test_an_AMPERSAND_and_an_EXPANSION_in_one_entry_still_pass():
     assert out.endswith("174–179.")
     assert [f.code for f in fixes] == ["ampersand", "and-comma",
                                        "year-parens", "en-dash"]
+
+
+def test_a_fix_whose_WINDOW_an_earlier_fix_rewrote_is_still_applied():
+    """`year-parens` quotes the eight characters in front of the year to
+    make its fragment unique, and those eight are copied from the text
+    as `convert_entry` was given it. Here they hold the ampersand — so
+    the ampersand fix ran first and the window vanished, the single pass
+    skipped the fix as "already covered", `--fix` reported two written
+    with no REFUSED or SKIPPED line, and the next `audit` reported the
+    same entry's year again. Nothing said the fix had been dropped.
+    """
+    out, fixes = convert_text("Smith, J. & Lee 2020. Title here.")
+
+    assert out == "Smith, J., and Lee (2020). Title here."
+    assert [f.code for f in fixes] == ["ampersand", "and-comma",
+                                       "year-parens"]
+    assert not convert_entry(out), "the entry still reads as unconverted"
+
+
+def test_the_fixes_of_a_converted_entry_are_applied_ONCE():
+    """The re-read must not become a second application: `convert_entry`
+    is asked again for exactly as long as it finds something new, and a
+    fix it keeps returning unchanged is one that has already run."""
+    entry = 'Smith, J. & A. Lee. 2020. "Robots & Jobs." Journal, 1(1): 1-10.'
+
+    out, fixes = convert_text(entry)
+
+    assert out.count("and A. Lee") == 1
+    assert '"Robots & Jobs."' in out, "a title's ampersand is not an author's"
+    assert len(fixes) == len(set(fixes)) == 3
 
 
 def test_a_conversion_that_ADDS_text_is_refused_too(monkeypatch):

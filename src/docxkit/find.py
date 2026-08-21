@@ -62,8 +62,19 @@ def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
     # form was invisible here, so a "Table 1-A." caption was not a
     # caption at all and nothing linked to it. anchor_names sanitises
     # the bookmark (Table1_A) — Word allows only word characters there.
+    #
+    # Something after the separator, OR the end of the text: the title
+    # often sits in the NEXT paragraph, which leaves a caption whose
+    # whole text is "Figure 1." — and every caller matches this against
+    # stripped text, so the trailing space it used to require was one
+    # the strip had just removed. `placement.exhibit_block` then refused
+    # a real caption ("no caption paragraph containing 'Figure 1.'") and
+    # `_table_core._beside` could not see it standing between a table
+    # and another caption. The alternation still has to CONSUME the
+    # space when there is one: it is what makes "3.2." parse as the
+    # number 3.2 rather than as 3 followed by a stray "2".
     alt = "|".join(re.escape(w) for w in labels)
-    return re.compile(rf"^\s*({alt})\s+([\w.-]+?)\s*[.:]\s")
+    return re.compile(rf"^\s*({alt})\s+([\w.-]+?)\s*[.:](?:\s|$)")
 
 
 # kept as aliases: several paper scripts import these from here. There

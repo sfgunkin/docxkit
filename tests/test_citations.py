@@ -1690,6 +1690,63 @@ def test_an_entry_bookmark_must_match_the_surname_not_just_the_year():
     assert 'w:name="Smith2020"' in out       # its own bookmark was minted
 
 
+def test_a_SHORT_surname_does_not_adopt_a_name_it_merely_SITS_INSIDE():
+    """A foreign scheme's name is read by folding it to letters and
+    digits, and the surname was then looked for ANYWHERE in that fold —
+    so "Ho, B. (2019)" adopted a stray `ref_thompson_2019` ("ho" is
+    inside "refthompson") and every "(Ho 2019)" in the manuscript
+    pointed at another work's entry, reported as linked. Li and
+    `ref_polinelli_2020` is the same shape, and so is every surname of
+    two or three letters: An, Xu, Ng, Wu.
+    """
+    from docxkit.citations import link_all
+    parts = _parts("Ho (2019) argues the point.",
+                   "References",
+                   "Ho, B. (2019). A title. Journal.")
+    doc = parts["word/document.xml"].decode("utf-8")
+    doc = doc.replace(
+        "<w:p><w:r><w:t>Ho, B. (2019)",
+        '<w:p><w:bookmarkStart w:id="90" w:name="ref_thompson_2019"/>'
+        '<w:bookmarkEnd w:id="90"/><w:r><w:t>Ho, B. (2019)')
+    parts["word/document.xml"] = doc.encode("utf-8")
+
+    link_all(parts)
+    out = parts["word/document.xml"].decode("utf-8")
+    assert 'w:anchor="ref_thompson_2019"' not in out, "linked to another work"
+    assert 'w:name="Ho2019"' in out           # its own bookmark was minted
+
+
+def test_a_FOREIGN_name_whose_OWN_WORD_is_the_surname_is_still_reused():
+    """The tightening must not cost the reuse it was written for. AFI's
+    104 entry bookmarks are all `ref_<surname>_<year>`, and adopting
+    them is what stops link_all writing a second bookmark beside each —
+    the DOUBLED LINK that made this reader necessary. A separated
+    institution ("World Bank") has to answer too, so the surname is
+    matched against the name's words JOINED as well as one at a time.
+    """
+    from docxkit.citations import link_all
+    for name, cite, entry in (
+            ("ref_kanbur_2007", "Kanbur (2007) argues the point.",
+             "Kanbur, R. (2007). Poverty. Journal."),
+            ("ref_world_bank_2024", "World Bank (2024) reports as much.",
+             "World Bank. (2024). A report. Washington DC.")):
+        parts = _parts(cite, "References", entry)
+        doc = parts["word/document.xml"].decode("utf-8")
+        # the ENTRY's paragraph, which its opening names uniquely — the
+        # citation above it opens with the surname too.
+        head = f"<w:p><w:r><w:t>{entry}"
+        assert doc.count(head) == 1, "the fixture's own anchor is ambiguous"
+        doc = doc.replace(
+            head, f'<w:p><w:bookmarkStart w:id="90" w:name="{name}"/>'
+                  f'<w:bookmarkEnd w:id="90"/><w:r><w:t>{entry}')
+        parts["word/document.xml"] = doc.encode("utf-8")
+
+        link_all(parts)
+        out = parts["word/document.xml"].decode("utf-8")
+        assert out.count(f'w:name="{name}"') == 1, f"{name}: not reused"
+        assert f'w:anchor="{name}"' in out, f"{name}: not linked"
+
+
 def test_an_entrys_own_bookmark_is_still_reused():
     """The guard must not stop link_all reusing the RIGHT bookmark —
     the document is the authority on anchor names."""
@@ -3343,6 +3400,66 @@ def test_a_cross_reference_inside_a_citation_span_does_NOT_clear_it():
     issues, _stats = audit_links(make_parts(body))
 
     assert [m for m in issues if m.startswith("UNLINKED")], issues
+
+
+def test_a_SHORT_surnamed_entry_does_not_make_a_FOREIGN_marker_AMBIGUOUS():
+    """The audit read a foreign name as loosely as the builder wrote
+    one: `ref_thompson_2019` named Thompson's entry AND "Ho, B. (2019)",
+    because "ho" sits inside "refthompson". Two entries answering is
+    nobody's marker here — deliberately, silence beats a guess — so the
+    marker cleared NEITHER — so Thompson's LATER mention, the possessive
+    that no label carries, went back to being reported UNLINKED on a
+    work this document links. Alone in the list, Ho would have been
+    cleared by the same marker instead.
+    """
+    from conftest import make_parts, para, run
+
+    linked = ('<w:hyperlink w:anchor="ref_thompson_2019"><w:r>'
+              "<w:t>Thompson (2019)</w:t></w:r></w:hyperlink>")
+    body = (para(run("A point.")) + para(run("Prose.")) + para(run("More."))
+            + para(run("Still more.")) + para(run("And more."))
+            + para(run("As "), linked, run(" shows, it rises."))
+            + para(run("Thompson's (2019) estimate holds up well."))
+            + para(run("But Ho (2019) disagrees on the point."))
+            + para(run("References"))
+            + '<w:bookmarkStart w:id="7" w:name="ref_thompson_2019"/>'
+              '<w:bookmarkEnd w:id="7"/>'
+            + para(run("Thompson, R. (2019). A title. Journal, 1(1): 45-48."))
+            + para(run("Ho, B. (2019). Another. Journal, 2(2): 1-9.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    unlinked = [m for m in issues if m.startswith("UNLINKED")]
+    assert len(unlinked) == 1 and "Ho (2019)" in unlinked[0], issues
+
+
+def test_a_LABEL_from_ANOTHER_PARAGRAPH_does_not_clear_a_mention():
+    """The span test above asks whether the link sits inside THIS
+    mention, which is a question about one mention — and it was asked of
+    every label in the document. A single "ILOSTAT (2024)" anywhere then
+    cleared any citation span that happened to contain those characters
+    and that year, here a genuinely unlinked work two paragraphs down.
+    (The work-level test above it is the one that reads the whole set,
+    and it still does: a work linked ONCE is linked.)
+    """
+    from conftest import make_parts, para, run
+
+    linked = ('<w:hyperlink w:anchor="ref_ilostat_2024"><w:r>'
+              "<w:t>ILOSTAT (2024)</w:t></w:r></w:hyperlink>")
+    body = (para(run("A point.")) + para(run("Prose.")) + para(run("More."))
+            + para(run("Still more.")) + para(run("And more."))
+            + para(run("Reported by "), linked, run(" for the year."))
+            + para(run("Estimates from Gmyrek and ILOSTAT (2024) differ."))
+            + para(run("References"))
+            + '<w:bookmarkStart w:id="7" w:name="ref_ilostat_2024"/>'
+              '<w:bookmarkEnd w:id="7"/>'
+            + para(run("ILOSTAT. (2024). Statistics. ILO."))
+            + para(run("Gmyrek, P. (2024). A working paper. ILO.")))
+
+    issues, _stats = audit_links(make_parts(body))
+
+    unlinked = [m for m in issues if m.startswith("UNLINKED")]
+    assert len(unlinked) == 1 and "Gmyrek" in unlinked[0], issues
 
 
 def test_a_marker_that_only_CONTAINS_a_year_owns_no_entry():

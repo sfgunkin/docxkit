@@ -17,6 +17,118 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S1 splitting a run DUPLICATES its `<w:noBreakHyphen/>` into every fragment — and no layer of `compare` can see it
+
+**Symptom as observed.** 2026-08-21, Aging_Well. The author read the printed
+page and found hyphens inside his citations:
+
+    Rowe and Kahn (‑1987‑, ‑1997‑) nor the WHO “active aging” framework (‑WHO 2002‑)
+
+Six of them, all in §1's third paragraph. Nothing else in the manuscript was
+wrong, and every gate had passed.
+
+**Diagnosis.** The paragraph's third run held ONE real no-break hyphen — the
+author's "trade‑offs". `citations.link_all` (and the hand-wired links beside
+it) wrap each citation with `_cite_grammar.wrap_visible_span`, which splits
+that run into `before` / `inner` / `after` through `set_run_text` and
+`_styled_run`. Those rebuild a run from the source run's children with new
+`<w:t>` text — and carry `<w:noBreakHyphen/>` along, so **each fragment gets
+its own copy**, landing at the fragment's start. Four wraps in one paragraph
+turned one hyphen into seven. Every other element a run can hold that is not
+`<w:t>` — `<w:tab/>`, `<w:br/>`, `<w:sym/>`, `<w:softHyphen/>` — is in the
+same hole.
+
+**Why S1, and it is the worst kind.** `_xml.visible_text` walks `<w:t>` only,
+so a no-break hyphen contributes no character to it. `compare`'s TEXT layer
+is built on `visible_text`. Measured directly: comparing the manuscript
+before the repair with the manuscript after it, six visible hyphen glyphs
+deleted, gives
+
+    REAL change locations (excl. glyph): 0   |   glyph-only: 0
+
+**Zero.** The tool reports the two documents as identical while the printed
+page differs. That is also why the defect shipped through R2, R4, R7 and R8:
+the passes that added the copies all reported `TEXT: (none)` and were
+believed. GLYPH does not catch it either — it normalises characters that
+exist, and these produce none.
+
+**Suggested fix, two halves and both are needed.**
+1. `set_run_text` / `_styled_run` must not carry a run's TEXT-BEARING
+   children into a fragment that does not contain them. The split is by
+   visible offset, so the fix is to render those elements INTO the offset
+   model — one character each — and then place them in whichever fragment
+   their offset falls in. That also fixes the offsets themselves, which are
+   currently short by one per hyphen in any paragraph containing one.
+2. `visible_text` should render them, so the TEXT layer can see the
+   difference at all: `‑` for `noBreakHyphen`, `\t` for `tab`, `\n` for
+   `br`, `­` for `softHyphen`. A gate blind to a printed character is
+   worse than no gate. If that is too invasive for callers that expect pure
+   `<w:t>` text, `compare` needs its own rendering pass — but it cannot go on
+   comparing text that omits characters the reader sees.
+
+**Also check the other papers.** Every manuscript that has run `link_all`
+over a paragraph containing a hyphenated word is exposed, and none of their
+gates would have said so.
+
+**Workaround in use.**
+`Aging_Well/revision/scripts/r2_link_apparatus.py::strip_stray_hyphens`
+deletes any `<w:noBreakHyphen/>` not sitting between two word characters,
+and runs at the end of every apparatus pass so a re-run cannot leave one
+behind. It carries its own renderer, because `visible_text` cannot show it
+the thing it is repairing.
+
+
+### S1 nothing ties a batch to the BASELINE it was built on — a refused build leaves the old redline in place, and validate + promote both take it
+
+**Symptom as observed.** 2026-08-21, Aging_Well R5. `revision build`
+refused, correctly:
+
+    batch.docx has changed since docxkit built it — someone edited it in Word
+
+(the paper's own repair script rewrites `batch.docx` after `build` stamps
+it; the fix is `guard.restamp`, and the message says so). The refusal was
+masked downstream — `build … | tail` gives the shell `tail`'s exit code —
+so `validate` ran next, and **it validated the PREVIOUS batch**: the R1
+redline, built two baselines and one author round earlier. It printed a
+detailed, entirely plausible `VERDICT: FAIL` — twenty-odd `LINK LOST ->
+WHO2019txt / Zaidi2013 / WorldBank1994` lines, all describing a redline
+nobody was working on. Several minutes went into reading those findings as
+if they were about R5.
+
+**The dangerous half is `promote`.** Its `StaleBatch` guard compares
+`working.docx` against `prev.docx` — "has the author edited the live file
+since the baseline". Both were in sync here, so it would have passed, and
+promote copies `batch` over `working.docx`. The batch was the R1 redline:
+promoting it would have replaced the manuscript with a generation from
+before the author's 16-paragraph copy-edit round AND before the whole
+citation apparatus, with a rescue copy as the only way back and no gate
+having said a word. `revision.promote` checks existence, the Word lock, and
+`live == base`; there is no check that `batch` was built FROM `base`.
+
+**Diagnosis.** The batch↔baseline link is never recorded.
+`batch.docx.buildinfo.json` already holds the batch's own sha and the
+repair chain, and names `"original": "prev.docx"` — the FILE, not its
+CONTENT:
+
+    {"sha256": "0b5038df…", "original": "prev.docx", "revised": "r5_clean.docx", "repairs": [...]}
+
+`prev.docx` is a path that legitimately changes content on every
+`baseline`, so the one field that would answer "is this batch about the
+current truth?" is the one not stored.
+
+**Suggested fix.** Record `base_sha256` in `buildinfo.json` at build time.
+`validate` refuses (or at minimum WARNS loudly, before the ladder) when it
+does not match the baseline it was handed; `promote` raises `StaleBatch` —
+it already has the exception and the exit code. That also turns the
+existing message inside out in a useful way: today it can only say "the
+author edited the live file", when the other stale direction is the one
+that silently loses work.
+
+**Workaround in use.** Never pipe a protocol command into `tail`; delete
+`batch.docx` after every promote so a refused build cannot leave a live-
+looking one behind. Neither is a gate.
+
+
 ### S3 the agent's Bash heredocs EAT BACKSLASHES, and a `\b` lands as a control character
 
 **Symptom as observed.** 2026-08-20/21, three times in one session. A patch
@@ -517,6 +629,49 @@ A restored part nothing references should never count as restored.
 edits by hand: part, Override, a relationship on a free rId, and the
 `w:type="first"` footerReference appended after the last existing one so
 the group stays contiguous in the sectPr's fixed element order.
+
+
+### S2 `citations` counts a WORK, not a MENTION — a half-linked paper audits clean
+
+**Symptom as observed.** 2026-08-21, Aging_Well. After `link_all`, the audit
+said
+
+    Hyperlinks: 118 total (0 broken, 0 with no label, 0 unlinked citation-like mentions)
+    ALL CHECKS PASSED — no issues found.
+
+while **20 of the paper's 73 in-text mentions were plain text**. The author
+found one by clicking it — the second "Bussolo et al. 2015", in §7. Every
+one of the 20 was a repeat mention of a work whose first mention was linked.
+
+**Repro.** Any manuscript citing one work twice: `link_all`, then
+`docxkit citations`. Before linking, the same audit counts all of them
+("66 unlinked citation-like mentions" on this paper); after `link_all` it
+counts zero, and after `link_rest` it still counts zero. **The number cannot
+distinguish the middle state from the finished one**, which is the only
+distinction worth auditing once a paper has been linked at all.
+
+**Diagnosis.** "Unlinked" is evaluated per WORK — has this entry got a link
+pointing at it from anywhere — not per MENTION. That is the right question
+for "is any reference orphaned"; it is the wrong one for "is the apparatus
+complete", and one number answers both.
+
+**Why it matters beyond a count.** House style here is: first mention links
+and is bookmarked, the entry back-links to it, **and every later mention
+links forward too**. `link_all` implements only the first half and its
+docstring calls the other half "house style for later mentions differs by
+paper" — fair — but nothing then reports which half a document is in. The
+audit is where a paper checks its own apparatus, and it is blind to exactly
+the state `link_all` leaves behind.
+
+**Suggested fix.** Report mentions, not just works: `linked M of N mentions`,
+with the plain ones listed as a distinct finding class (`LATER-MENTION
+UNLINKED`) that a paper can choose to ignore. The machinery already exists —
+`masked_visible_text` plus `find_citations`' `c.start:c.end` span is the
+whole test, and `link_rest` uses precisely that to decide what to link.
+
+**Workaround in use.** `Aging_Well/revision/scripts/r2_link_apparatus.py`
+runs `link_rest` after `link_all` and the paper's log records the mention
+count; the check itself is a hand-rolled span scan, in the scratchpad.
 
 
 ## Fixed

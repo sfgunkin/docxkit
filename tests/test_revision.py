@@ -2602,6 +2602,43 @@ def test_repair_math_does_not_forgive_the_losses_it_cannot_reach(tmp_path):
     work = make_parts(_EQ.format("-0.398") + para(run("prose")))
 
     paper = _paper_at(tmp_path, prev, work)
+    before = paper.working.read_bytes()
 
     with pytest.raises(revision.HandbackLoss):
         revision.baseline(paper, repair_math=True)
+
+    assert paper.working.read_bytes() == before, "the repair was written"
+
+
+def test_repair_math_writes_NOTHING_while_a_revision_is_pending(tmp_path):
+    """The repair used to be written before either gate ran, so
+    `baseline --repair-math` on a manuscript with a revision still
+    pending refused — correctly — having already changed the author's
+    live file, and with no backup of it. The gates read the repair in
+    memory; the file waits until they have all passed."""
+    prev = make_parts(_EQ.format("−0.398") + para(run("prose")))
+    work = make_parts(_EQ.format("-0.398") + para(run("prose"))
+                      + para(run("x "), ins("pending")))
+    paper = _paper_at(tmp_path, prev, work)
+    before = paper.working.read_bytes()
+
+    with pytest.raises(revision.BaselinePending):
+        revision.baseline(paper, repair_math=True)
+
+    assert paper.working.read_bytes() == before, "the repair was written"
+    assert not list(paper.working.parent.glob("*pre_math_repair*"))
+
+
+def test_repair_math_BACKS_UP_the_file_it_rewrites(tmp_path):
+    """It is a write to `working.docx`, which is the file the author
+    edits — and every other write to it in this package takes a numbered
+    backup first."""
+    prev, work = _math_pair("−0.398", "-0.398")
+    paper = _paper_at(tmp_path, prev, work)
+    before = paper.working.read_bytes()
+
+    revision.baseline(paper, repair_math=True)
+
+    kept = list(paper.working.parent.glob("*pre_math_repair*.docx"))
+    assert len(kept) == 1, kept
+    assert kept[0].read_bytes() == before

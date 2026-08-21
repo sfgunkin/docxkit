@@ -341,11 +341,14 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
 
     So a candidate is refused when ANOTHER caption stands between it and
     this one: that table is the other caption's, whatever the
-    convention. What is left is at most one table on each side, and the
-    one below wins — which is the convention, applied where it can still
-    be true rather than assumed. If both sides are ruled out, this
-    raises rather than returning a neighbour; a wrong table is worse
-    than no table.
+    convention. What is left is at most one table on each side, and a
+    caption left with only ONE candidate owns it — which takes that
+    table out of the reach of every other caption, and is what reads a
+    whole run of captions-underneath correctly (:func:`_beside`). Only
+    what is still ambiguous after that falls to the convention, and
+    there the table below wins. If both sides are ruled out, this raises
+    rather than returning a neighbour; a wrong table is worse than no
+    table.
 
     (Figure captions sit above their images too, which is why
     offset-based caption-to-object mapping goes wrong if you assume
@@ -365,33 +368,93 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
     return found
 
 
+def _sides(para: re.Match[str], tables: list[Table],
+           captions: list[re.Match[str]]) -> list[Table]:
+    """The tables one caption paragraph could own, the convention's first.
+
+    At most one on each side: a caption standing BETWEEN a candidate and
+    this paragraph means that table is the other caption's, whatever the
+    convention says.
+
+    No need to exclude THIS caption from `captions`: both spans below
+    are open at the caption paragraph's own offsets, so it cannot rule
+    out either candidate. (Pinned as an equivalence, not asserted.)
+    """
+    below = next((t for t in tables if t.start >= para.end()), None)
+    above = next((t for t in reversed(tables) if t.end <= para.start()), None)
+    if below is not None and any(para.end() <= m.start() < below.start
+                                 for m in captions):
+        below = None
+    if above is not None and any(above.end <= m.start() < para.start()
+                                 for m in captions):
+        above = None
+    return [t for t in (below, above) if t is not None]
+
+
 def _beside(xml: str, para: re.Match[str],
             tables: list[Table]) -> Table | None:
     """The table this caption paragraph owns, or None.
 
-    The refusal is what this is for, so it is separate and its own two
-    lines are readable: a caption BETWEEN the candidate and the caption
-    paragraph means the candidate is spoken for.
+    The refusal is what this is for. A caption BETWEEN the candidate and
+    the caption paragraph means the candidate is spoken for — that is
+    :func:`_sides`, and it settles the case where something else is
+    captioned in between.
+
+    It does not settle a run of exhibits whose captions sit UNDERNEATH
+    them, because then nothing stands between a caption and the next
+    table down. AFI's `working.docx` reads
+    ``[Table 3][cap 3][Table A3][cap A3]``: table A3 stayed a live
+    candidate for "Table 3." and the below-the-caption convention then
+    preferred it, so `by_caption("Table 3.")` handed back A3 — a
+    `Table`, not a `None`, which `required=True` cannot fire on and a
+    caller reordering rows would have rewritten.
+
+    So the captions are read TOGETHER. Each one gets the same pair of
+    candidates, and a caption with only ONE takes it, which takes that
+    table out of every other caption's reach: "Table A3." has no table
+    after it, so A3 is its only candidate, so A3 was never "Table 3."'s
+    to take — leaving 3, correctly, and the same propagation walks a
+    whole run of them from either end.
+
+    What survives that is ambiguous for real — a caption between two
+    tables that nothing else claims — and only there does the convention
+    decide: the table BELOW wins, which is what every well-formed
+    manuscript here looks like.
     """
     # `caption_re` is THE caption definition and it lives in `find`, one
     # layer down — `crossrefs` is this module's facade's SIBLING, and the
     # walk below is three lines. Copying the REGEX would be the drift;
     # walking the paragraphs again is not.
     pattern = caption_re()
-    others = [m for m in PARA_RE.finditer(xml)
-              if pattern.match(visible_text(m.group(0)).strip())]
-    # No need to exclude THIS caption from the list: both spans below
-    # are open at the caption paragraph's own offsets, so it cannot rule
-    # out either candidate. (Pinned as an equivalence, not asserted.)
-    below = next((t for t in tables if t.start >= para.end()), None)
-    above = next((t for t in reversed(tables) if t.end <= para.start()), None)
-    if below is not None and any(para.end() <= m.start() < below.start
-                                 for m in others):
-        below = None
-    if above is not None and any(above.end <= m.start() < para.start()
-                                 for m in others):
-        above = None
-    return below if below is not None else above
+    captions = [m for m in PARA_RE.finditer(xml)
+                if pattern.match(visible_text(m.group(0)).strip())]
+    options = {m.span(): _sides(m, tables, captions) for m in captions}
+    # `_caption_para` falls back to a caption running INLINE in its
+    # paragraph, which the pattern above does not match. Such a caption
+    # still needs its own candidates here — it just does not get to rule
+    # anybody else's out.
+    options.setdefault(para.span(), _sides(para, tables, captions))
+
+    # Constraint propagation, and it is the whole fix: assign the
+    # captions that have no choice, then look again, because each
+    # assignment can leave another caption with no choice either.
+    assigned: dict[tuple[int, int], Table] = {}
+    taken: set[int] = set()
+    while True:
+        for span, cands in options.items():
+            if span in assigned:
+                continue
+            free = [t for t in cands if t.start not in taken]
+            if len(free) == 1:
+                assigned[span] = free[0]
+                taken.add(free[0].start)
+                break
+        else:
+            break
+    if (mine := assigned.get(para.span())) is not None:
+        return mine
+    free = [t for t in options[para.span()] if t.start not in taken]
+    return free[0] if free else None
 
 
 def tables_after(xml: str, caption: str, *, view: str = FINAL,
@@ -523,6 +586,28 @@ def tolerance_for(decimals: int) -> float:
     return float(0.5 * 10 ** -decimals)
 
 
+def _row_at(table: Table, count: int, index: int, verb: str) -> int:
+    """`index` as a row number from the top, negatives from the end.
+
+    `set_row(t, -1, ...)` already meant the last row, because `trs[row]`
+    says so; `clone_row(t, -1)` did not, because its splice reads
+    ``trs[:index + 1]`` and `-1` makes that `trs[:0]` — the copy landed
+    at the TOP of the table, above the header. `clone_row(t, -1,
+    count=4)` is the natural spelling of that function's own motivating
+    example ("a four-row block at the end") and it silently rewrote the
+    head of the table instead.
+
+    So the negative is resolved once, here, and out of range raises an
+    `AnchorError` rather than reaching a list index — which the `>=`
+    guards this replaces let a negative walk straight past.
+    """
+    at = index + count if index < 0 else index
+    if not 0 <= at < count:
+        raise AnchorError(f"table {table.index} has {count} rows, "
+                          f"cannot {verb} row {index}")
+    return at
+
+
 def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     """Rewrite one cell's text, preserving its formatting.
 
@@ -537,9 +622,7 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     _fresh(xml, table, "set_cell")
     body = xml[table.start:table.end]
     trs = list(rows_of(body))
-    if row >= len(trs):
-        raise AnchorError(f"table {table.index} has {len(trs)} rows, "
-                          f"cannot set row {row}")
+    row = _row_at(table, len(trs), row, "set")
     tr = trs[row]
     tcs = list(cells_of(tr.group(0)))
     if col >= len(tcs):
@@ -619,6 +702,9 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
     :func:`set_row`, which is why that takes a whole row of values: a
     cloned row half-filled is the old numbers under a new label.
 
+    Negative `index` counts from the bottom, so ``clone_row(t, -1,
+    count=4)`` is the block above spelled without counting the rows.
+
     Offsets move, so re-read the table before the next call — the
     freshness guard says so if you forget.
     """
@@ -627,9 +713,7 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
         raise AnchorError(f"clone_row: count must be at least 1, not {count}")
     body = xml[table.start:table.end]
     trs = [tr.group(0) for tr in rows_of(body)]
-    if index >= len(trs):
-        raise AnchorError(f"table {table.index} has {len(trs)} rows, "
-                          f"cannot clone row {index}")
+    index = _row_at(table, len(trs), index, "clone")
     rows = trs[:index + 1] + [trs[index]] * count + trs[index + 1:]
     return _rows_replaced(xml, table, rows)
 
@@ -644,16 +728,18 @@ def set_row(xml: str, table: Table, row: int,
     wrong. Passing the row states what every cell now says.
 
     `None` leaves a cell alone, for the row that legitimately repeats a
-    value. Each cell keeps its own run properties: the text goes into
+    value — and it is the ONLY way to leave one alone, because a short
+    sequence is refused rather than zipped off the end. Negative `row`
+    counts from the bottom.
+
+    Each cell keeps its own run properties: the text goes into
     the first ``w:t`` and any others are blanked, so a value split
     across runs does not keep its old tail hanging off the new one.
     """
     _fresh(xml, table, "set_row")
     body = xml[table.start:table.end]
     trs = list(rows_of(body))
-    if row >= len(trs):
-        raise AnchorError(f"table {table.index} has {len(trs)} rows, "
-                          f"cannot set row {row}")
+    row = _row_at(table, len(trs), row, "set")
     tr = trs[row].group(0)
     tcs = list(cells_of(tr))
     if len(values) > len(tcs):
@@ -661,7 +747,16 @@ def set_row(xml: str, table: Table, row: int,
             f"row {row} has {len(tcs)} cells and {len(values)} values were "
             f"given — a merged cell makes a row SHORTER than the grid is "
             f"wide, and Table.grid_columns converts deliberately")
-    for tc, value in reversed(list(zip(tcs, values, strict=False))):
+    # And SHORT is the same refusal from the other side: the trailing
+    # cells would keep whatever the row was cloned from, which is the
+    # half-filled row this function exists to prevent. `None` is the way
+    # to leave one alone, and it says so at the call site.
+    if len(values) < len(tcs):
+        raise AnchorError(
+            f"row {row} has {len(tcs)} cells and only {len(values)} "
+            f"value(s) were given — the rest would keep the values they "
+            f"were cloned from. Pass None for the cells that stay.")
+    for tc, value in reversed(list(zip(tcs, values, strict=True))):
         if value is None:
             continue
         tr = (tr[:tc.start()] + set_run_text(tc.group(0), str(value))

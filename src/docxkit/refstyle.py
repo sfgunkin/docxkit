@@ -385,6 +385,12 @@ def convert_entry(text: str, style: Style = HOUSE) -> list[Fix]:
     return fixes
 
 
+#: How many times :func:`convert_text` re-reads an entry before giving
+#: up on it. Two is what a real entry takes — one pass to apply, one to
+#: come back empty.
+_SETTLE_ROUNDS = 6
+
+
 def convert_text(text: str, style: Style = HOUSE) -> tuple[str, list[Fix]]:
     """`convert_entry`, applied — and CHECKED, which is the point.
 
@@ -398,13 +404,48 @@ def convert_text(text: str, style: Style = HOUSE) -> tuple[str, list[Fix]]:
     Raises :class:`docxkit.errors.ConversionRefused` if it does, with
     both forms in the message. A conversion that cannot prove it
     preserved the entry has no business writing it.
+
+    The fixes are RE-READ from the converted text until it settles, and
+    that is not tidiness. `convert_entry` measures every fix against the
+    text it was given, and two of them quote their surroundings to be
+    unambiguous — `year-parens` carries the eight characters in front of
+    the year, `page-space` and `et-al-period` a character or three each
+    side. An earlier fix that rewrites inside one of those windows makes
+    the later fix's `old` vanish, and a single pass then skipped it as
+    already covered. "Smith, J. & Lee 2020. Title." lost its
+    `year-parens` that way: the ampersand fix rewrote the window it
+    quoted, `--fix` reported two fixes written with no REFUSED or
+    SKIPPED line, and the next `audit` reported the same entry again.
     """
-    out, applied = text, []
-    for fix in convert_entry(text, style):
-        if fix.old not in out:
-            continue                 # an earlier fix already covered it
-        out = out.replace(fix.old, fix.new, 1)
-        applied.append(fix)
+    out, rounds = text, 0
+    applied: list[Fix] = []
+    seen: set[Fix] = set()
+    while True:
+        rounds += 1
+        done = len(applied)
+        for fix in convert_entry(out, style):
+            if fix in seen or fix.old not in out:
+                continue      # applied already, or an earlier fix covered it
+            out = out.replace(fix.old, fix.new, 1)
+            applied.append(fix)
+        if len(applied) == done:
+            break
+        # Only at the END of the pass: two occurrences of one fix reach
+        # this list as the same `Fix` twice — an entry with two bare "et
+        # al" is the case — and both belong to the pass that found them.
+        # What the set stops is the NEXT pass re-applying either.
+        seen.update(applied[done:])
+        if rounds >= _SETTLE_ROUNDS:
+            # Not reachable by the fixes here — each writes something its
+            # own pattern no longer matches, so a pass or two settles it.
+            # A backstop with a message rather than a hang, because
+            # "never settles" is the shape a new fix would fail in.
+            raise ConversionRefused(
+                f"the fixes for this entry did not settle in "
+                f"{_SETTLE_ROUNDS} passes — one of them keeps re-reading "
+                f"as unapplied:\n  was: {text}\n  now: {out}\n"
+                f"Nothing was written. The fixes applied were "
+                f"{[f.code for f in applied]}.")
     # BOTH sides: `_alnum` drops the ampersand as punctuation, so
     # normalising one of them made an entry that KEEPS its "&" — a
     # title's, which this deliberately does not convert — read as

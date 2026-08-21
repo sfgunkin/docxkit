@@ -100,6 +100,40 @@ def test_by_caption_still_prefers_the_table_BELOW_when_both_are_free():
     assert found is not None and found.header == ["Region", "Share"]
 
 
+def test_by_caption_reads_a_RUN_of_captions_UNDER_their_tables():
+    """The refusal above needs another caption to stand BETWEEN, and in
+    this layout none does: AFI's `working.docx` runs
+    `[Table 3][cap 3][Table A3][cap A3]`, so table A3 stayed a live
+    candidate for "Table 3." and the below-the-caption convention then
+    preferred it. Both lookups came back wrong, as `Table`s that
+    `required=True` cannot fire on.
+
+    "Table A3." has no table after it, so A3 is its only candidate —
+    which is what says A3 was never "Table 3."'s to take.
+    """
+    xml = document(
+        table(row("Country", "Score"), row("Poland", "1.0"))
+        + para(run("Table 3. A caption underneath its table"))
+        + table(row("Region", "Share"), row("EU", "2.0"))
+        + para(run("Table A3. A caption underneath its table")))
+
+    assert by_caption(xml, "Table 3.").header == ["Country", "Score"]
+    assert by_caption(xml, "Table A3.").header == ["Region", "Share"]
+
+
+def test_by_caption_propagates_along_a_WHOLE_run_of_them():
+    """One assignment is not enough: each caption freed by the one below
+    it settles the next, and only the last has no table after it. Three
+    pairs is the shortest fixture where a single pass gets it wrong."""
+    xml = document(
+        table(row("A", "1")) + para(run("Table 1. Under it"))
+        + table(row("B", "2")) + para(run("Table 2. Under it"))
+        + table(row("C", "3")) + para(run("Table 3. Under it")))
+
+    assert [by_caption(xml, f"Table {n}.").header for n in (1, 2, 3)] == [
+        ["A", "1"], ["B", "2"], ["C", "3"]]
+
+
 def test_by_caption_says_which_half_failed():
     """A missing caption and a caption with no table are different
     problems, and the message has to say which — the builders locate
@@ -828,6 +862,36 @@ def test_clone_row_refuses_a_row_that_is_not_there():
         clone_row(xml, t, 9)
     with pytest.raises(AnchorError, match="at least 1"):
         clone_row(xml, t, 1, count=0)
+
+
+def test_clone_row_counts_a_NEGATIVE_index_from_the_bottom():
+    """`clone_row(t, -1, count=4)` is the natural spelling of this
+    function's own motivating example — "a four-row block at the end" —
+    and the splice reads `trs[:index + 1]`, so -1 made that `trs[:0]`
+    and put the copies at the TOP, above the header. The guard only
+    tested `index >= len(trs)`, so a negative walked straight past it.
+    """
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out = clone_row(xml, t, -1, count=2)
+
+    assert [r[0] for r in read_all(out)[0].rows] == [
+        "Country", "UZB", "ALB", "POL", "All", "All", "All"]
+    with pytest.raises(AnchorError, match="cannot clone row -9"):
+        clone_row(xml, t, -9)
+
+
+def test_set_row_refuses_FEWER_values_than_the_row_has_cells():
+    """The same half-filled row from the other side: the trailing cells
+    would keep what they were cloned from — the old numbers under a new
+    label — and `zip` said nothing about it. `None` is how a cell is
+    left on purpose, so a short sequence has a spelling already."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    with pytest.raises(AnchorError, match="only 1 value"):
+        set_row(xml, t, 1, ["BENCH"])
 
 
 def test_set_row_writes_every_cell_it_is_given():

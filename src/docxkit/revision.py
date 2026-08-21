@@ -1577,22 +1577,29 @@ def baseline(paper: Paper, *, force: bool = False,
     restores the same glyph on the redline it produces, and doing it
     here is that repair on the other side of the hand-back. It rewrites
     `working.docx` — every run whose text the baseline spells with the
-    glyph put back — and then the gate above runs as usual, so anything
-    it could NOT reach still refuses.
+    glyph put back — and the gates above run against the repair, so
+    anything it could NOT reach still refuses.
+
+    They run against it IN MEMORY, and the write waits for all of them.
+    Writing first meant that `--repair-math` on a manuscript with a
+    revision still pending, or with a loss nobody had acknowledged,
+    refused — correctly — having ALREADY changed the author's live
+    file, and with no backup of it: the one command in this package that
+    both edits `working.docx` and then declines to say so. It is backed
+    up before the write now, as `build --force` and `refstyle --fix` do.
     """
     if package.is_locked(paper.working):
         raise DocumentLocked(
             f"{paper.working.name} is open in Word. Close it first — a "
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
+    repaired: dict[str, bytes] | None = None
     if paper.prev.exists():
-        if repair_math:
-            work, base = (package.read_parts(paper.working),
-                          package.read_parts(paper.prev))
-            if restore_math_glyphs(work, base):
-                package.write_docx(paper.working, work)
-        gone = losses(package.read_parts(paper.working),
+        work, base = (package.read_parts(paper.working),
                       package.read_parts(paper.prev))
+        if repair_math and restore_math_glyphs(work, base):
+            repaired = work        # written below, once every gate has passed
+        gone = losses(work, base)
         if stale := _unmet(accept_loss, gone):
             raise HandbackLoss(
                 f"--accept-loss named {', '.join(stale)}, which "
@@ -1626,6 +1633,13 @@ def baseline(paper: Paper, *, force: bool = False,
             f"{paper.working.name} is a proposal, not the truth: "
             f"{current.pending} revision(s) pending ({where}). The "
             f"author accepts or rejects them; this tool never does.")
+    if repaired is not None:
+        # `state` above read the file on disk, which is the unrepaired
+        # one — and reads the same either way: restoring a glyph rewrites
+        # run TEXT and touches no `w:ins` or `w:del`, so it cannot move
+        # the count this gate is about.
+        package.backup(paper.working, tag="pre_math_repair")
+        package.write_docx(paper.working, repaired)
     paper.build_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(paper.working, paper.prev)
     return paper.prev

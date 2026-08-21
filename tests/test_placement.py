@@ -1346,6 +1346,22 @@ def test_the_LAST_block_in_the_body_says_so():
     assert not middle.last_in_body
 
 
+def test_a_caption_that_is_ONLY_its_label_is_still_a_caption():
+    """The title often sits in the next paragraph, which leaves a
+    caption whose whole text is "Figure 1." — and the pattern was
+    matched against STRIPPED text while ending in `\\s`, so the strip
+    took the one character it needed. `exhibit_block` refused a real
+    caption ("a mention of it in prose is not one") and `_beside` could
+    not see such a caption standing between a table and another.
+    """
+    block = placement.exhibit_block(
+        parts(P("Prose.") + P("Figure 1.") + DRAW + P("Source: mine.")),
+        "Figure 1.")
+
+    assert block.caption == "Figure 1."
+    assert len(block.elements) == 3, [e.tag for e in block.elements]
+
+
 def test_a_MENTION_of_the_caption_in_prose_is_not_a_caption():
     """A caption OPENS its paragraph. Taking a mention would return a
     span of prose and a caller would move it."""
