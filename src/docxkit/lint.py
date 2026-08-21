@@ -18,6 +18,8 @@ from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES, MATH_OBJECTS, XML_WS
 
 __all__ = [
     "XML_SPACE",
+    "audit",
+    "audit_parts",
     "lint",
     "lint_parts",
 ]
@@ -217,10 +219,32 @@ def lint(*roots: Any) -> list[str]:
     if dups:
         problems.append(f"duplicate revision w:id across parts: {dups}")
 
-    # 8b. …and so must a bookmark NAME. Its own walk, so this check
-    #     costs `lint` one line and no branch — see `_repeated_bookmarks`.
-    problems += _repeated_bookmarks(roots)
     return problems
+
+
+def audit(*roots: Any) -> list[str]:
+    """Findings Word opens FINE. Reported, never refused.
+
+    :func:`lint` answers one question — will Word refuse to open this —
+    and three callers refuse a write on its answer. So a check that is
+    about CORRECTNESS rather than openability cannot live there, however
+    much it belongs beside it: the bookmark-name check below shipped
+    inside `lint` for one commit and bricked every mutating command on a
+    manuscript that already had a duplicate, under a message that was
+    not true of it ("the package would not open cleanly in Word").
+    Word opens it. The links are just wrong.
+
+    That is the shape this file's own backlog ranks S3, above a wrong
+    output: a gate nobody can satisfy, on a condition the toolkit
+    offered no way to clear.
+    """
+    return _repeated_bookmarks(roots)
+
+
+def audit_parts(parts: dict[str, bytes]) -> list[str]:
+    """:func:`audit` over the text-bearing parts of a package."""
+    roots, _malformed = _roots(parts)
+    return audit(*roots)
 
 
 def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
@@ -262,14 +286,30 @@ def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
 
 
 def lint_parts(parts: dict[str, bytes]) -> list[str]:
-    """Lint the text-bearing parts of a package."""
+    """Lint the text-bearing parts of a package.
+
+    OPENABILITY only — the callers that refuse a write on this answer
+    are entitled to assume every finding means Word will reject the
+    file. What Word opens but reads wrongly is :func:`audit_parts`.
+    """
+    roots, malformed = _roots(parts)
+    return malformed or lint(*roots)
+
+
+def _roots(parts: dict[str, bytes]) -> tuple[list[Any], list[str]]:
+    """(parsed text-bearing parts, the message if one will not parse).
+
+    A part that does not parse short-circuits: nothing below can read a
+    document Word cannot, and one clear message beats a hundred
+    consequential ones.
+    """
     from lxml import etree
 
-    roots = []
+    roots: list[Any] = []
     for name in _PARTS:
         if name in parts:
             try:
                 roots.append(etree.fromstring(parts[name]))
             except etree.XMLSyntaxError as exc:
-                return [f"{name} is not well-formed XML: {exc}"]
-    return lint(*roots)
+                return [], [f"{name} is not well-formed XML: {exc}"]
+    return roots, []

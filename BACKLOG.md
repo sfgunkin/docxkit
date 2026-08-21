@@ -169,6 +169,63 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S1 a FIGURE caption takes the table ABOVE it, and every table caption in the paper shifts~~ — FIXED 21.08
+
+**A paper's gate went red without the paper changing.** HCW's
+`test_paper_values.py` was 19 green on 08-08 and 12 RED on 08-21 with
+`working.docx` byte-identical to `build/prev.docx` and its repo clean.
+The manuscript had not moved; this toolkit had. The failures read like
+data errors — `Table 4. Old-Age Dependency Ratio for Albania: paper says
+2023.0, pipeline says 22.6611` — because the value came out of the
+wrong table.
+
+**Cause: the constraint propagation `_beside` gained on 08-20** (the
+entry below this one) assumes every caption wants a table. HCW's
+exhibits end `[Table 8][cap Figure 1][image][cap Figure 2][image]`, so
+"Figure 1." had no table under it, the table above was its ONLY
+candidate, and the propagation — which exists to honour a caption that
+has no choice — handed Table 8's table over. Each table caption then
+shifted one exhibit up, all the way to "Table 1." answering with the 1x2
+grid that holds equation (2). The UNCAPTIONED equation tables are what
+let it run the whole length: they give "Table 1." a second candidate, so
+nothing is forced from the top and the figure end decides everything.
+
+Eight lookups, eight wrong tables, and not one of them a `None` that
+`required=True` could fire on — the same silent shape as the defect the
+propagation was added to fix.
+
+**Measured on five manuscripts, before and after:**
+
+| paper | captions resolving to the wrong table |
+|---|---|
+| Parental_style | 10 of 10 (Tables 1-5, A1-A5), plus Figure 1 |
+| HCW | 8 of 8 (Tables 1-8), plus Figure 1 |
+| AFI | 2 (Tables A4, A5), plus Figure A1 |
+| HPPA | Figure 1 took an uncaptioned 18x3 list |
+| Aging_Well | none |
+
+**Fix.** `_owns_an_image` in `_table_core.py`: a caption whose own
+exhibit is a PICTURE owns no table at all. Only the side the convention
+names is asked — a picture ABOVE a caption is as often the previous
+exhibit's as this one's, and a figure captioned underneath its image
+needs no help, because the table above it is either behind another
+caption or claimed by the caption sitting on top of it. Two clauses
+carry the rule and both are pinned by mutation: the picture must be
+NEARER than the table below (HCW's Figure 8 is a real 2x2 table of panel
+images, and a picture inside a table always sits after that table's
+start), and it must not stand behind another caption (a table captioned
+underneath, with the next figure's caption below it, keeps its table).
+
+The regression test is HCW's shape with the uncaptioned grid included;
+without the fix it reports "Table 1." as the equation grid, which is
+what the paper's gate was reading.
+
+**Worth keeping:** the report that opened this was not "wrong table", it
+was twelve numeric assertions failing on a manuscript nobody had
+touched. A paper's suite going red the day after a shared toolkit ships
+is a question about the toolkit first.
+
+
 ### ~~S2 a DUPLICATE bookmark name is invisible to every gate~~ — FIXED 21.08
 
 **Found by testing the Word path on a second paper.** A one-word round
@@ -203,15 +260,42 @@ a duplicate, and all 24 are that one paper — v19 through v34, including
 journal. Every other manuscript in the corpus is clean, so the check is
 silent everywhere it should be.
 
-**Fix.** `lint` check 8b, the twin of check 8 (revision ids must be
-unique across the package — same argument, one element over). Its own
-walk, so `lint.lint` gains a line and no branch and the complexity pin
-does not move. The namespace is the PACKAGE's, not the part's: a
-citation's `<key>txt` marker legitimately sits in footnotes.xml while
-the entry links to it from the body.
+**Fix.** `lint.audit` / `lint.audit_parts` — the twin of check 8
+(revision ids must be unique across the package — same argument, one
+element over), reported beside `lint` and never gating it. The
+namespace is the PACKAGE's, not the part's: a citation's `<key>txt`
+marker legitimately sits in footnotes.xml while the entry links to it
+from the body.
 
-**Left for the paper:** FLOPS has 12 duplicated names to resolve, and
-its submitted files carry them.
+**It shipped inside `lint` first, and that was an S3.** `beea6e6` put
+the check in `lint`, and three callers refuse a write on `lint`'s
+answer — `cli._save`, `tracked.build`, `revision.validate`. So every
+mutating command on a manuscript that ALREADY had a duplicate died with
+
+    REFUSED: the package would not open cleanly in Word; nothing was written
+
+which is not true of this finding. Word opens the file; the links are
+just wrong. Reproduced on the FLOPS submission file:
+`docxkit authors --set … --write` exited 1 and wrote nothing, over a
+condition the toolkit offered no way to clear. A gate nobody can
+satisfy is the shape this file ranks ABOVE a wrong output, and it was
+introduced by the commit that fixed one.
+
+The split is the lesson, not the patch: **`lint` answers one question —
+will Word refuse to open this — and its callers are entitled to that
+meaning.** A correctness finding cannot live there however much it
+belongs beside it. `docxkit lint` prints both, under a heading that says
+which is which; `_save`, `tracked.build` and `validate` see only the
+refusals. Pinned by `test_a_DUPLICATE_never_refuses_a_write` and
+`test_a_DUPLICATE_bookmark_does_not_refuse_the_WRITE`.
+
+**Left for the paper:** FLOPS had 12 duplicated names. Fixed at source
+on 2026-08-21 — `link_citations_pass` in `add_calibration_v34.py` minted
+`{key}txt` at every mention and now marks the first only — so the
+rebuilt v34 carries 153 definitions under 153 names and survives a
+Compare round 153 -> 153, where it used to lose 20. The two files in
+`Documents/JITED_submission/` still carry the duplicates until the
+paper re-syncs them.
 
 ### ~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08
 

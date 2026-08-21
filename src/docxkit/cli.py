@@ -864,15 +864,25 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
 
 def cmd_lint(args: argparse.Namespace) -> int:
-    """Structural checks for the markup Word refuses to open."""
-    from .lint import lint_parts
-    problems = lint_parts(_package(args.docx))
+    """Structural checks for the markup Word refuses to open, and the
+    findings it opens fine and reads wrongly."""
+    from .lint import audit_parts, lint_parts
+    parts = _package(args.docx)
+    problems = lint_parts(parts)
+    advisory = audit_parts(parts)
     print(f"{Path(args.docx).name}")
-    if not problems:
+    if not problems and not advisory:
         print("  clean - no structural problems found")
         return 0
     for problem in problems:
         print(f"  - {problem}")
+    # Named apart from the refusals, because they ARE apart: nothing
+    # declines to write a document over these, and saying so is what
+    # keeps the word "REFUSED" meaning one thing.
+    if advisory:
+        print("  advisory - Word opens the file; these are wrong, not broken:")
+        for problem in advisory:
+            print(f"  - {problem}")
     return 1
 
 

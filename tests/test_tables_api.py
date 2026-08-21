@@ -134,6 +134,75 @@ def test_by_caption_propagates_along_a_WHOLE_run_of_them():
         ["A", "1"], ["B", "2"], ["C", "3"]]
 
 
+def _image() -> str:
+    """A paragraph holding a picture — the exhibit that is not a table."""
+    return ('<w:p><w:r><w:drawing><wp:inline><wp:docPr id="1" name="Chart"/>'
+            '<a:blip r:embed="rId7"/></wp:inline></w:drawing></w:r></w:p>')
+
+
+def test_a_FIGURE_caption_does_not_take_the_LAST_table_above_it():
+    """HCW's `working.docx`, and it cost that paper every table it has.
+
+    The exhibits end `[Table 8][cap Figure 1][image]`, so "Figure 1."
+    had no table under it and the table above was its only candidate —
+    which is exactly the shape the propagation exists to honour. It
+    handed Table 8's table over, and each table caption above it then
+    shifted one exhibit up.
+
+    The UNCAPTIONED grid at the top is what lets that run all the way:
+    HCW sets equations (1) and (2) in 1x2 tables, so "Table 1." has two
+    candidates of its own and the chain is forced only from the figure
+    end. Twelve of the paper's nineteen gate tests went red on numbers
+    read out of the wrong table, and eight lookups came back wrong
+    without one of them being a `None` that `required=True` could fire
+    on.
+    """
+    xml = document(
+        table(row("AYWC = ...", "(2)"))
+        + para(run("Table 1. Health-Capacity to Work Estimates"))
+        + table(row("Country", "MW"), row("Poland", "3.1"))
+        + para(run("Table 2. Trends in mortality"))
+        + table(row("Country", "MEA"), row("Albania", "63.0"))
+        + para(run("Figure 1. Mortality-equivalent age"))
+        + _image())
+
+    assert by_caption(xml, "Table 1.").header == ["Country", "MW"]
+    assert by_caption(xml, "Table 2.").header == ["Country", "MEA"]
+    assert by_caption(xml, "Figure 1.", required=False) is None
+
+
+def test_a_figure_whose_PANELS_ARE_a_table_still_gets_it():
+    """The other half of the same paper: HCW's Figure 8 is a 2x2 grid of
+    panel images, a real table under a Figure caption. A picture inside a
+    table sits after that table's start, so the nearer exhibit is the
+    table — which is what keeps the rule above from taking this one away.
+    """
+    xml = document(
+        para(run("Figure 8. Additional Years of Work Capacity"))
+        + table(row("a. 1990 as base year", "b. 2000 as base year"),
+                row(_image(), _image())))
+
+    found = by_caption(xml, "Figure 8.")
+
+    assert found is not None
+    assert found.header == ["a. 1990 as base year", "b. 2000 as base year"]
+
+
+def test_a_picture_behind_ANOTHER_caption_is_not_THIS_captions_exhibit():
+    """The picture has to be unclaimed, on the same evidence a table
+    does. Here "Table 7." sits underneath its table and Figure 2's
+    caption stands between it and the next image: read that image as
+    this caption's exhibit and the table above is orphaned instead.
+    """
+    xml = document(
+        table(row("Country", "Score"), row("Poland", "1.0"))
+        + para(run("Table 7. A caption underneath its table"))
+        + para(run("Figure 2. Labor-Force Participation"))
+        + _image())
+
+    assert by_caption(xml, "Table 7.").header == ["Country", "Score"]
+
+
 def test_by_caption_says_which_half_failed():
     """A missing caption and a caption with no table are different
     problems, and the message has to say which — the builders locate

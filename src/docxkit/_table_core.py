@@ -43,6 +43,9 @@ _VMERGE_RE = re.compile(r'<w:vMerge(?:\s+w:val="(\w+)")?\s*/>')
 _GRIDCOL_RE = re.compile(r"<w:gridCol\b")
 # a leading signed number, tolerating the typographic minus and separators
 _NUM_RE = re.compile(r"[-−+]?\d[\d,  ]*(?:\.\d+)?")
+# a picture: the OTHER thing a caption can name. `w:pict` is the VML
+# spelling Word still writes for a pasted image.
+_IMAGE_RE = re.compile(r"<w:drawing[ >]|<w:pict[ >]")
 
 
 @dataclass(frozen=True)
@@ -369,7 +372,7 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
 
 
 def _sides(para: re.Match[str], tables: list[Table],
-           captions: list[re.Match[str]]) -> list[Table]:
+           captions: list[re.Match[str]], images: list[int]) -> list[Table]:
     """The tables one caption paragraph could own, the convention's first.
 
     At most one on each side: a caption standing BETWEEN a candidate and
@@ -379,6 +382,18 @@ def _sides(para: re.Match[str], tables: list[Table],
     No need to exclude THIS caption from `captions`: both spans below
     are open at the caption paragraph's own offsets, so it cannot rule
     out either candidate. (Pinned as an equivalence, not asserted.)
+
+    A caption whose own exhibit is a PICTURE owns no table at all, which
+    is what `images` decides (:func:`_owns_an_image`). Leaving it out
+    was a silent wrong answer on every table in a paper, not just on the
+    figure: HCW's `working.docx` ends
+    `[Table 8][cap Figure 1][image][cap Figure 2][image]...`, and with no
+    table under "Figure 1." the table ABOVE it was that caption's only
+    candidate — so :func:`_beside`'s propagation, which exists to honour
+    a caption that has no choice, handed Table 8's table over. Every
+    table caption then shifted one exhibit up: "Table 2." answered with
+    Table 1's table and "Table 1." with the 1x2 grid holding equation
+    (2). Eight lookups, eight wrong tables, not one of them a `None`.
     """
     below = next((t for t in tables if t.start >= para.end()), None)
     above = next((t for t in reversed(tables) if t.end <= para.start()), None)
@@ -388,7 +403,30 @@ def _sides(para: re.Match[str], tables: list[Table],
     if above is not None and any(above.end <= m.start() < para.start()
                                  for m in captions):
         above = None
+    if _owns_an_image(para, below, captions, images):
+        return []
     return [t for t in (below, above) if t is not None]
+
+
+def _owns_an_image(para: re.Match[str], below: Table | None,
+                   captions: list[re.Match[str]], images: list[int]) -> bool:
+    """Is the exhibit under this caption a picture rather than a table?
+
+    Only the side the CONVENTION names is asked. A picture above a
+    caption is as often the previous exhibit's as it is this one's, and
+    a figure captioned underneath its image needs no help from here:
+    the table above it is either behind another caption already or
+    claimed by the caption that sits on top of it, which the
+    propagation settles.
+
+    A picture inside a table cannot fool this. It sits after that
+    table's start, so the nearer-table test below rules it out — and
+    when there is no table below, there is no table for it to be inside.
+    """
+    picture = next((i for i in images if i >= para.end()), None)
+    if picture is None or (below is not None and below.start < picture):
+        return False
+    return not any(para.end() <= m.start() < picture for m in captions)
 
 
 def _beside(xml: str, para: re.Match[str],
@@ -428,12 +466,15 @@ def _beside(xml: str, para: re.Match[str],
     pattern = caption_re()
     captions = [m for m in PARA_RE.finditer(xml)
                 if pattern.match(visible_text(m.group(0)).strip())]
-    options = {m.span(): _sides(m, tables, captions) for m in captions}
+    images = [m.start() for m in _IMAGE_RE.finditer(xml)]
+    options = {m.span(): _sides(m, tables, captions, images)
+               for m in captions}
     # `_caption_para` falls back to a caption running INLINE in its
     # paragraph, which the pattern above does not match. Such a caption
     # still needs its own candidates here — it just does not get to rule
     # anybody else's out.
-    options.setdefault(para.span(), _sides(para, tables, captions))
+    options.setdefault(para.span(),
+                       _sides(para, tables, captions, images))
 
     # Constraint propagation, and it is the whole fix: assign the
     # captions that have no choice, then look again, because each

@@ -6,7 +6,7 @@ from conftest import NS, dele, ins, make_parts, para, run
 
 from docxkit.body import para as bpara
 from docxkit.body import run as brun
-from docxkit.lint import lint_parts
+from docxkit.lint import audit_parts, lint_parts
 
 lxml_etree = pytest.importorskip("lxml.etree")
 
@@ -73,7 +73,7 @@ def test_paragraph_mark_revision_is_a_legitimate_marker():
     and must not be flagged."""
     body = ('<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="A" w:date="d"/>'
             "</w:rPr></w:pPr>" + run("tail") + "</w:p>")
-    assert lint_parts(_parts(body)) == []
+    assert audit_parts(_parts(body)) == []
 
 
 def test_deleted_text_must_be_delText():
@@ -495,7 +495,7 @@ def test_a_bookmark_name_defined_TWICE_is_a_finding():
     body = (para(_mark("WorldBank2024txt", 1) + run("first mention"))
             + para(_mark("WorldBank2024txt", 2) + run("second mention")))
 
-    (problem,) = lint_parts(_parts(body))
+    (problem,) = audit_parts(_parts(body))
 
     assert problem.startswith("1 bookmark name(s) defined more than once")
     assert "WorldBank2024txt x2" in problem
@@ -512,7 +512,7 @@ def test_the_bookmark_namespace_is_the_PACKAGE_not_the_part():
     parts = make_parts(para(_mark("Sastry2024txt", 1) + run("body")),
                        footnotes=foot)
 
-    (problem,) = lint_parts(parts)
+    (problem,) = audit_parts(parts)
 
     assert "Sastry2024txt x2" in problem
 
@@ -523,3 +523,22 @@ def test_distinct_names_and_a_lone_marker_are_clean():
             + para('<w:bookmarkStart w:id="3"/>' + run("no name at all")))
 
     assert lint_parts(_parts(body)) == []
+
+
+def test_a_DUPLICATE_never_refuses_a_write():
+    """The regression this split exists for. `lint_parts` answers ONE
+    question — will Word refuse to open this — and three callers refuse
+    a write on its answer. Shipping the bookmark check inside it bricked
+    every mutating command on a manuscript that already had a duplicate,
+    under a message that was not true of it ("the package would not open
+    cleanly in Word"). Word opens it; the links are just wrong.
+
+    That is the S3 shape this repo's backlog ranks above a wrong output:
+    a gate nobody can satisfy, on a condition the toolkit offered no way
+    to clear.
+    """
+    body = (para(_mark("WorldBank2024txt", 1) + run("first mention"))
+            + para(_mark("WorldBank2024txt", 2) + run("second mention")))
+
+    assert lint_parts(_parts(body)) == []
+    assert audit_parts(_parts(body)) != []

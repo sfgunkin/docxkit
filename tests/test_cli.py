@@ -1007,6 +1007,27 @@ def test_lint_names_the_structural_problem_it_found(monkeypatch, tmp_path,
     assert "clean" not in out
 
 
+def test_lint_names_an_ADVISORY_finding_apart_from_the_refusals(
+        monkeypatch, tmp_path, capsys):
+    """`lint` reports two different things and only one of them stops a
+    write. Printing them in one list is how the bookmark check came to
+    brick every mutating command under the words "would not open
+    cleanly in Word" — so the heading says which is which."""
+    mark = ('<w:bookmarkStart w:id="{i}" w:name="Dup2024txt"/>'
+            '<w:bookmarkEnd w:id="{i}"/>')
+    path = write(tmp_path / "dup.docx", make_parts(
+        para(mark.format(i=1) + run("first"))
+        + para(mark.format(i=2) + run("second"))))
+
+    code, _ = run_cli(monkeypatch, "lint", str(path))
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "advisory - Word opens the file" in out
+    assert "Dup2024txt x2" in out
+    assert "clean" not in out
+
+
 def test_refstyle_json_is_written_beside_the_report(monkeypatch, paper,
                                                     tmp_path, capsys):
     import json
@@ -2122,6 +2143,34 @@ def test_lint_PRINTS_the_problems_it_found(capsys, monkeypatch, tmp_path):
     assert code == 1
     assert "edge whitespace" in out, out
     assert out.count("  - ") >= 1
+
+
+def test_a_DUPLICATE_bookmark_does_not_refuse_the_WRITE(capsys, tmp_path):
+    """A finding that is not about OPENABILITY must not reach `_save`.
+
+    The bookmark-name check shipped inside `lint` for one commit and
+    bricked every mutating command on a manuscript that already had a
+    duplicate — `authors --set --write` on the FLOPS submission file
+    exited 1 with "the package would not open cleanly in Word", which is
+    not true of it. Word opens it; the links land on a coin flip.
+    """
+    from docxkit import package
+    from docxkit.cli import _save
+
+    mark = ('<w:bookmarkStart w:id="{i}" w:name="Dup2024txt"/>'
+            '<w:bookmarkEnd w:id="{i}"/>')
+    body = (para(mark.format(i=1) + run("first mention"))
+            + para(mark.format(i=2) + run("second mention")))
+    write(tmp_path / "paper.docx", make_parts(body))
+    target = tmp_path / "paper.docx"
+    parts = package.read_parts(target)
+
+    assert _save(target, parts, "test") is True
+
+    out = capsys.readouterr().out
+    assert "REFUSED" not in out, out
+    assert "written; previous version kept at" in out
+    assert list(tmp_path.glob("paper_test*.docx")), "the backup was taken"
 
 
 def test_a_refused_WRITE_prints_what_it_refused_over(capsys, tmp_path):
