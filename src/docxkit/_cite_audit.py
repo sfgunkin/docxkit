@@ -120,6 +120,51 @@ def _doubled_links(para_xml: str) -> list[tuple[str, str]]:
     return out
 
 
+def _reached(doc: str, paras: list[re.Match[str]],
+             links: dict[str, list[tuple[int, str]]]) -> set[str]:
+    """Bookmarks at a PLACE some link arrives at — its own or a neighbour's.
+
+    "Nothing points at this bookmark" and "the reader arrives nowhere"
+    are different statements, and the audit was making the second from
+    the first. Word's own cross-reference — Insert ▸ Cross-reference —
+    mints its OWN anchor at the caption (`_Ref211944524`) and points a
+    `REF` field at that, so the house bookmark beside it is targeted by
+    nothing while the mention lands exactly where it should.
+
+    Measured on HCW (2026-08-22): four captions, each carrying its
+    `_Ref…` anchor and its `TableN` immediately beside it, the `_Ref…`
+    one linked in every case. `citations` called all four "the mention
+    reaches nothing" while `crossrefs` called all twenty exhibits
+    linked — one tool said broken, the other said fine, and the repair
+    the finding implied would have traded Word's automatic renumbering
+    for a static label.
+
+    A PLACE is the paragraph a bookmark sits in, or — for a marker Word
+    has hoisted out of one — the gap it was hoisted into.
+
+    **Only WORD'S OWN anchor confers reach**, and that restriction is the
+    whole check. Word reserves the leading underscore for the bookmarks
+    it mints itself — `_Ref`, `_Toc`, `_Hlk` — so one of those beside a
+    house bookmark is the same destination under two names. Two ordinary
+    markers sharing a gap are NOT: li7 hoists `Kotze2022` and
+    `Luhmann2016` into one, and a click on a Kotze citation says nothing
+    about whether anything reaches Luhmann's entry. Clearing that would
+    have been the same class of wrong answer, in the other direction.
+    """
+    place: dict[int, list[str]] = defaultdict(list)
+    for m in re.finditer(r'<w:bookmarkStart[^>]*w:name="([^"]+)"', doc):
+        at = m.start()
+        i = next((n for n, p in enumerate(paras) if p.start() <= at < p.end()),
+                 None)
+        if i is None:                      # hoisted: it belongs to the NEXT
+            i = next((n for n, p in enumerate(paras) if p.start() > at), -1)
+            i = -1 - i if i >= 0 else -1   # a gap key, distinct from a para
+        place[i].append(m.group(1))
+    return {name for names in place.values()
+            if any(n.startswith("_") and links.get(n) for n in names)
+            for name in names}
+
+
 def _marker_owner(name: str, entries: list[Reference]) -> Reference | None:
     """The entry a key-shaped bookmark names, when exactly one answers.
 
@@ -383,6 +428,10 @@ def _audit_findings(parts: dict[str, bytes], *,
     # see the comment on that finding.
     cited_keys = {n[:-3] for n in cite_marks}
     cited_keys |= {a for a in links if a in ref_marks}
+    # …and which PLACES a link arrives at, which is not the same
+    # question. See :func:`_reached`.
+    reached = _reached(doc, paras, links)
+    unreached = cited_keys - reached
 
     issues: list[_Finding] = []
     for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
@@ -407,7 +456,7 @@ def _audit_findings(parts: dict[str, bytes], *,
         # fact: the work IS cited — its `<key>txt` marker is in the
         # prose — and the hyperlink to the entry is gone, so the reader
         # clicking that citation arrives nowhere.
-        if not links.get(key) and key in cited_keys:
+        if not links.get(key) and key in unreached:
             at = cite_marks.get(f"{key}txt")
             issues.append(_Finding(
                 "ORPHAN REF", key,
@@ -558,8 +607,14 @@ def _audit_findings(parts: dict[str, bytes], *,
     # everything and still reads as a list, which is why nothing noticed
     # the first time (2026-08-19) — and this is now the only line those
     # entries get, so the property has to come with it.
-    for key in sorted(ref_marks.keys() - cited_keys,
-                      key=lambda k: ref_marks[k]):
+    # The NAME breaks the tie, and it has to: several reference markers
+    # hoisted body-level into one gap share a position, a set supplies
+    # the order among them, and PYTHONHASHSEED varies it per process.
+    # li7 reported the same 29 findings in a different order run to run
+    # (measured 2026-08-22), which is phantom churn in a report a reader
+    # diffs between rounds.
+    for key in sorted(ref_marks.keys() - cited_keys - reached,
+                      key=lambda k: (ref_marks[k], k)):
         if names_a_missing_entry(key):
             continue          # already reported, and more usefully, as stale
         # This line carries what the ORPHAN REF beside it used to say as

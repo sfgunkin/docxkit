@@ -17,11 +17,11 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**NOTHING IS OPEN, as of 2026-08-21** — the first time since this file
-was started that the section holds no live defect, and the last one out
-was the entry that had twice said it could not be fixed here. Two records
-stay below because both are instructive: a retraction, and a Word
-behaviour worth not chasing twice.
+**Nothing is open, as of 2026-08-22.** The cross-reference entry
+raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
+2026-08-21** either, the first time since this file was started that the
+section held no live defect. Two records stay below because both are
+instructive: a retraction, and a Word behaviour worth not chasing twice.
 
 **Twenty-one closed on 2026-08-21**, in batches as the manuscripts
 turned them up — and the last four were raised by RETIRING the
@@ -168,6 +168,63 @@ looked for was in a part of the package it never opened.
 
 
 ## Fixed
+
+### ~~S2 neither audit reads a Word CROSS-REFERENCE, so a working link reports as "the mention reaches nothing"~~ — FIXED 22.08
+
+`internal_links` reads the third form now — `REF <bookmark> \h`, which
+is what Insert ▸ Cross-reference writes — alongside the `w:hyperlink`
+element and the `HYPERLINK \l` field. `\bREF\s+([^\s\\]+)` keeps
+`PAGEREF` and `NOTEREF` out, and the name is unquoted, which is the one
+shape difference from a HYPERLINK instruction.
+
+Reading the field was only half of it. The finding fires on the HOUSE
+bookmark, and Word's cross-reference never points at that one: it mints
+its OWN anchor at the target (`_Ref211944524`) and points the field
+there, so `Table6` is targeted by nothing while the mention lands
+exactly where it should. `_cite_audit._reached` answers the question the
+report was actually making — does a link arrive at this PLACE — where a
+place is the paragraph a bookmark sits in, or the gap Word hoisted it
+into.
+
+**Only Word's own anchor confers reach, and that restriction is the
+whole check.** The first cut cleared any bookmark with a linked
+neighbour, and on li7 that silently dropped `Luhmann2016`, whose marker
+shares a gap with `Kotze2022`'s: a click on the Kotze citation says
+nothing about whether anything reaches Luhmann's entry. Suppressing a
+real finding is the same class of wrong answer as inventing one, so the
+rule names the reserved leading underscore — `_Ref`, `_Toc`, `_Hlk` are
+Word's, and one of those beside a house bookmark is one destination
+under two names.
+
+Measured across the corpus: HCW **9 → 5** findings, all four false
+ORPHAN REFs gone and its two NO BACK-LINKs and three UNLINKEDs kept.
+LE, DSI, Parental Style, FLOPS v34, Aging_Well and AFI's `prev` report
+byte-identically to before; li7 keeps all 29 of its findings, and the
+one difference in its report — their order — is the separate defect
+below, which the A/B is what turned up. `crossrefs` and `citations` now
+agree on HCW's twenty exhibits. Three tests pin it, and each was
+mutation-checked against the rule it guards.
+
+**Measured and NOT changed:** `dead_links` still reads only the
+HYPERLINK form, so a cross-reference rendering to nothing would go
+unreported. The corpus holds 7 REF fields, none empty and none
+unrendered — an unexercised path, and a check nothing has ever fired is
+worse than the gap while it stays that way. Worth doing the day a paper
+produces one.
+
+### ~~S4 the citation report's order was decided by PYTHONHASHSEED~~ — FIXED 22.08
+
+Found while A/B-ing the entry above: two runs of `docxkit citations` on
+li7, same file and same code, reported the same 29 findings in a
+different ORDER. REF WITHOUT CITE sorts a SET by paragraph position, and
+position is not a total order — several reference markers hoisted
+body-level into one gap tie, and the set supplied what came next, which
+Python varies per process.
+
+Cost is small and specific: the report is read against the manuscript
+top to bottom, and it is DIFFED between rounds, where reordering reads
+as churn that isn't there. The name breaks the tie now. Confirmed
+identical across four hash seeds.
 
 ### ~~S3 the coverage floors read a RED suite as a measurement~~ — FIXED 22.08
 

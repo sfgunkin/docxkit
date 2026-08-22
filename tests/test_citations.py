@@ -3905,3 +3905,104 @@ def test_a_hyphen_INSIDE_the_wrapped_span_stays_inside_it():
 
     assert out.count("<w:noBreakHyphen/>") == 1
     assert _seen(out) == _seen(para)
+
+
+def _ref_field(anchor: str, label: str) -> str:
+    """Word's own cross-reference: what Insert > Cross-reference writes.
+
+    The instruction is ``REF <name> \\h``, and the name is UNQUOTED —
+    the one shape difference from a HYPERLINK field that matters to a
+    reader of the instruction text.
+    """
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            rf'<w:r><w:instrText xml:space="preserve"> REF {anchor} \h '
+            '</w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f'<w:r><w:t>{label}</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_internal_links_reads_a_word_cross_reference():
+    """The THIRD form. Reading only the first two made `citations` call
+    four working HCW mentions 'the mention reaches nothing' while
+    `crossrefs`, which does read it, called the same exhibits linked."""
+    from docxkit._xml import internal_links
+    xml = P(_ref_field("_Ref211944524", "Table 6"))
+    assert internal_links(xml) == [("_Ref211944524", "Table 6")]
+
+
+@pytest.mark.parametrize("instr", [r"PAGEREF _Ref1 \h",
+                                   r"NOTEREF _Ref2 \h",
+                                   "REFERENCE _Ref3"])
+def test_a_field_that_merely_starts_like_REF_is_not_a_link(instr):
+    """`PAGEREF` prints a PAGE NUMBER, not a jump to the bookmark, and a
+    substring match would have counted all three as links — which is how
+    a too-eager fix to the same defect would silently clear findings."""
+    from docxkit._xml import internal_links
+    xml = ('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           f'<w:r><w:instrText> {instr} </w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           '<w:r><w:t>12</w:t></w:r>'
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+    assert internal_links(xml) == []
+
+
+def test_a_word_cross_reference_beside_the_house_bookmark_is_not_orphaned():
+    """HCW, measured 2026-08-22. Insert > Cross-reference mints its OWN
+    anchor at the target and points a REF field at THAT, so the house
+    bookmark beside it is targeted by nothing while the mention lands
+    exactly where it should. The finding read 'has no in-text hyperlink
+    pointing to it', which was true and not the reader's problem."""
+    parts = make_doc(
+        P(R("Robots displace workers (")
+          + bookmark("Smith2020txt", 10, _ref_field("_Ref211944524",
+                                                    "Smith 2020"))
+          + R(").")),
+        P(R("References")),
+        P(bookmark("_Ref211944524", 21)
+          + _entry("Smith2020", "Smith, J. (2020). Robots. JPE.")))
+    issues, _stats = audit_links(parts)
+    assert "ORPHAN REF" not in _codes_of(issues)
+
+
+def test_a_linked_ORDINARY_neighbour_clears_nothing():
+    """The other direction, and the reason the rule names Word's own
+    prefix rather than 'a linked bookmark nearby'. li7 hoists two
+    entries' markers into one place; a click on the Kotze citation says
+    nothing about whether anything reaches Luhmann's entry, and clearing
+    it would be the same wrong answer with the sign flipped."""
+    parts = make_doc(
+        P(R("Two works (")
+          + bookmark("Kotze2022txt", 10, hfield("Kotze2022", "Kotze 2022"))
+          + R("; ")
+          + bookmark("Luhmann2016txt", 11, R("Luhmann 2016"))
+          + R(").")),
+        P(R("References")),
+        # HOISTED out of their paragraphs, into one gap, which is what
+        # Word does to li7's entry markers and what puts two works at
+        # what this audit can see as a single place.
+        bookmark("Kotze2022", 20) + bookmark("Luhmann2016", 21),
+        P(R("Kotze, A. (2022). X. JPE.")),
+        P(R("Luhmann, M. (2016). Y. JPE.")))
+    issues, _stats = audit_links(parts)
+    assert any(i.startswith("ORPHAN REF") and "Luhmann2016" in i
+               for i in issues), issues
+
+
+def test_markers_sharing_a_place_report_in_a_stable_order():
+    """Position alone is not a total order: several entry markers in one
+    paragraph tie, a SET supplied the order among them, and
+    PYTHONHASHSEED varies it per process. li7 reported the same 29
+    findings in a different order run to run (2026-08-22) — phantom
+    churn in a report a reader diffs between rounds."""
+    parts = make_doc(
+        P(R("Prose that cites nothing.")),
+        P(R("References")),
+        # One gap, so one position: the names are written Z then A, and
+        # only a tie-break can decide the report's order.
+        bookmark("Zeta2020", 20) + bookmark("Alpha2019", 21),
+        P(R("Alpha, B. (2019). A. JPE.")),
+        P(R("Zeta, A. (2020). Z. JPE.")))
+    issues, _stats = audit_links(parts)
+    named = [i.split("'")[1] for i in issues if i.startswith("REF WITHOUT")]
+    assert named == ["Alpha2019", "Zeta2020"], issues

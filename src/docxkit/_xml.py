@@ -463,6 +463,16 @@ _FIELD_RE = re.compile(
 # second copy of this until it was promoted here.
 INSTR_RE = re.compile(r"<w:instrText[^>]*>([^<]*)</w:instrText>")
 INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
+#: The OTHER field a reader clicks to reach a bookmark: Word's own
+#: cross-reference, which Insert ▸ Cross-reference writes as
+#: ``REF _Ref211944524 \h \* MERGEFORMAT``. It renumbers itself, which is
+#: why an author uses it and why turning one into a hyperlink is a
+#: downgrade.
+#:
+#: `\b` before REF is what keeps `PAGEREF` and `NOTEREF` out — both end
+#: in those three letters with no word boundary before them. The name is
+#: unquoted in this form, unlike HYPERLINK's.
+INSTR_REF_RE = re.compile(r"\bREF\s+([^\s\\]+)")
 #: Public: `_compare_read` masks a volatile field's cached RESULT, which
 #: starts here, and kept its own copy of this until it was promoted.
 SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
@@ -699,9 +709,17 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
         out.append((html.unescape(m.group(1)), visible_text(m.group(2))))
     for m in _FIELD_RE.finditer(xml):
         instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
-        am = INSTR_ANCHOR_RE.search(instr)
+        # Three forms reach a bookmark, not two. The third is Word's own
+        # CROSS-REFERENCE — `REF _Ref211944524 \h` — and reading only the
+        # first two made `citations` report four working mentions on HCW
+        # as "the mention reaches nothing", while `crossrefs` called all
+        # twenty exhibits linked: one tool said broken, the other said
+        # fine, and neither was reading what a reader clicks
+        # (2026-08-22). The repair the finding implied would have traded
+        # Word's automatic renumbering for a static label.
+        am = INSTR_ANCHOR_RE.search(instr) or INSTR_REF_RE.search(instr)
         if am is None:
-            continue                       # PAGEREF, REF, external link...
+            continue                       # PAGEREF, external link, TOC…
         sep = _SEPARATE_RE.search(m.group(1))
         label = visible_text(m.group(1)[sep.end():]) if sep else ""
         out.append((am.group(1), label))
