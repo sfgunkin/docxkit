@@ -415,6 +415,39 @@ def anchor_names(key: str) -> tuple[str, str]:
 _YEAR_HINT_RE = re.compile(r"[12]\d{3}")
 
 
+#: No work in these papers is published after this. A four-digit PAGE
+#: number is indistinguishable from a year by shape, so the ordering
+#: rule below does most of the work and this is the backstop for a
+#: locator that happens to sort after the year it follows.
+_LATEST_PLAUSIBLE_YEAR = 2100
+
+
+def _works(found: list[re.Match[str]]) -> int:
+    """How many of a group's four-digit numbers are WORKS, not a locator.
+
+    "Sen (1985, 1992)" is two works; "Acemoglu and Robinson (2012,
+    1215)" is one work and a page. Both read as a comma-separated list
+    of years, and a locator of four digits is routine — AER, JPE and QJE
+    volumes all run past page 1000 — so counting it as a second work
+    invented a citation of the year 1215, reported the phantom as
+    `UNLINKED: "1215)"`, and inflated the `Mentions: X of Y linked`
+    completeness line by one per occurrence.
+
+    A list of one author's works runs FORWARD, so a number earlier than
+    the first year is a page and closes the list. The upper bound
+    catches the other direction, where a page sorts after the year it
+    follows.
+    """
+    first = int(found[0].group(0)[:4])
+    n = 1
+    for m in found[1:]:
+        year = int(m.group(0)[:4])
+        if year < first or year > _LATEST_PLAUSIBLE_YEAR:
+            break
+        n += 1
+    return n
+
+
 def _per_year(authors: str, years: str, *, at: int, years_at: int,
               end: int, narrative: bool) -> list[Citation]:
     """One :class:`Citation` per year in a group, spans TILING the match.
@@ -428,9 +461,12 @@ def _per_year(authors: str, years: str, *, at: int, years_at: int,
     hyperlinks over the same words is the shape `audit_links` calls a
     DOUBLED LINK.
 
-    A single year is the whole match, exactly as before.
+    A single year is the whole match, exactly as before — and so is a
+    year followed by a four-digit PAGE (:func:`_works`), whose span
+    keeps the locator because that is what the sentence says.
     """
     found = list(_YEAR_RE.finditer(years))
+    found = found[:_works(found)]
     return [Citation(
         authors=authors, year=m.group(0),
         start=at if i == 0 else years_at + m.start(),

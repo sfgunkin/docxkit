@@ -169,6 +169,28 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S1 a four-digit page number was read as a second work~~ — FIXED 22.08
+
+`(Acemoglu and Robinson 2012, 1215)` produced TWO citations: the work,
+and a phantom by the same authors dated 1215. `audit_links` then
+reported `UNLINKED: "1215)" — looks like a citation but is not
+hyperlinked`, and the `Mentions: X of Y linked` line — a completeness
+claim about the paper's links, added the same week — counted 2 where
+the paper has 1.
+
+Four-digit locators are routine: AER, JPE and QJE volumes all run past
+page 1000. The comma-separated year list that made `Sen (1985, 1992)`
+work reads one exactly like the other, and `(Sen 1999, 45)` was safe
+only because 45 is not four digits.
+
+`_works` decides how many of a group's numbers are works: **a list of
+one author's works runs FORWARD**, so a number earlier than the first
+year closes the list and is a page. A backstop at 2100 catches the
+other direction, where a locator sorts after the year it follows. The
+citation's SPAN still covers the locator, because that is what the
+sentence says and what the linker must wrap.
+
+
 ### ~~S1 a horizontal rule after a caption took its table away~~ — FIXED 22.08
 
 `_owns_an_image` asked "is there a picture after this caption" and

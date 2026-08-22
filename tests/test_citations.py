@@ -2284,6 +2284,34 @@ def test_a_year_LIST_is_one_citation_per_year(text, seen):
     assert [(c.surname, c.year) for c in find_citations(text)] == seen
 
 
+@pytest.mark.parametrize("text,seen", [
+    # A FOUR-DIGIT page is routine — AER, JPE and QJE volumes all run
+    # past 1000 — and it reads exactly like a second year.
+    ("Acemoglu and Robinson (2012, 1215) argue",
+     [("Acemoglu", "2012")]),
+    ("(Acemoglu and Robinson 2012, 1215)", [("Acemoglu", "2012")]),
+    # …and the ordering rule is what tells them apart, so a real list
+    # running forward is untouched even when the gap is a century.
+    ("Sen (1899, 1992) and", [("Sen", "1899"), ("Sen", "1992")]),
+    # the other direction: a locator that sorts AFTER the year
+    ("Acemoglu (2012, 2500) argue", [("Acemoglu", "2012")]),
+])
+def test_a_four_digit_page_is_a_locator_and_not_another_work(text, seen):
+    """It invented a citation of the year 1215: reported as
+    `UNLINKED: "1215)"`, and counted in the `Mentions: X of Y linked`
+    line, which is a completeness claim about the paper's links."""
+    assert [(c.surname, c.year) for c in find_citations(text)] == seen
+
+
+def test_the_locator_stays_inside_the_citations_span():
+    """One citation, and its span is what the sentence says — the
+    linker wraps that, and a span stopping at the year would leave
+    ", 1215)" outside the link."""
+    text = "Acemoglu and Robinson (2012, 1215) argue"
+    (cite,) = find_citations(text)
+    assert text[cite.start:cite.end] == "Acemoglu and Robinson (2012, 1215)"
+
+
 def test_an_IGNORED_lead_is_STRIPPED_from_a_chain_not_dropped_with_it():
     """A caller that filtered on the surname dropped the whole citation,
     which takes the REAL half with it: "Surveys and ILOSTAT (2024)" then
