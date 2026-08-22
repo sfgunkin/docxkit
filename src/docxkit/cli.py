@@ -883,7 +883,16 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print("  advisory - Word opens the file; these are wrong, not broken:")
         for problem in advisory:
             print(f"  - {problem}")
-    return 1
+        if not args.strict:
+            print("  (advisory only; --strict to fail on these too)")
+    # Advisory findings do not fail the command. `lint.audit` was split
+    # out of `lint` precisely because the bookmark check bricked every
+    # mutating command on a manuscript that already had a duplicate —
+    # and returning 1 here put that gate straight back for any CI or
+    # paper script keyed on `docxkit lint`, on a condition the toolkit
+    # still offers no command to clear. --strict is for a caller who
+    # HAS cleared them and wants them kept clear.
+    return 1 if problems or (advisory and args.strict) else 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -1559,6 +1568,9 @@ def main() -> None:
     p = sub.add_parser("lint",
                        help="structural checks (no Word needed)")
     p.add_argument("docx")
+    p.add_argument("--strict", action="store_true",
+                   help="fail on advisory findings too (Word opens the "
+                        "file; these are wrong, not broken)")
     p.set_defaults(fn=cmd_lint)
 
     p = sub.add_parser(

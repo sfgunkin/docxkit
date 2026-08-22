@@ -1012,7 +1012,13 @@ def test_lint_names_an_ADVISORY_finding_apart_from_the_refusals(
     """`lint` reports two different things and only one of them stops a
     write. Printing them in one list is how the bookmark check came to
     brick every mutating command under the words "would not open
-    cleanly in Word" — so the heading says which is which."""
+    cleanly in Word" — so the heading says which is which.
+
+    And the EXIT CODE says it too. Returning 1 here put the same
+    unsatisfiable gate back for every CI job and paper script keyed on
+    `docxkit lint`: a manuscript Word opens perfectly failed the
+    command, on a condition the toolkit still offers no way to clear.
+    """
     mark = ('<w:bookmarkStart w:id="{i}" w:name="Dup2024txt"/>'
             '<w:bookmarkEnd w:id="{i}"/>')
     path = write(tmp_path / "dup.docx", make_parts(
@@ -1022,10 +1028,34 @@ def test_lint_names_an_ADVISORY_finding_apart_from_the_refusals(
     code, _ = run_cli(monkeypatch, "lint", str(path))
 
     out = capsys.readouterr().out
-    assert code == 1
+    assert code == 0
     assert "advisory - Word opens the file" in out
     assert "Dup2024txt x2" in out
     assert "clean" not in out
+    assert "--strict to fail on these too" in out
+
+
+def test_lint_strict_fails_on_an_advisory_finding(monkeypatch, tmp_path,
+                                                  capsys):
+    """For a caller who has cleared them and wants them kept clear."""
+    mark = ('<w:bookmarkStart w:id="{i}" w:name="Dup2024txt"/>'
+            '<w:bookmarkEnd w:id="{i}"/>')
+    path = write(tmp_path / "dup.docx", make_parts(
+        para(mark.format(i=1) + run("first"))
+        + para(mark.format(i=2) + run("second"))))
+
+    code, _ = run_cli(monkeypatch, "lint", str(path), "--strict")
+
+    assert code == 1
+    assert "--strict to fail" not in capsys.readouterr().out
+
+
+def test_lint_strict_still_passes_a_clean_file(monkeypatch, tmp_path,
+                                               capsys):
+    path = write(tmp_path / "ok.docx", make_parts(para(run("body"))))
+    code, _ = run_cli(monkeypatch, "lint", str(path), "--strict")
+    assert code == 0
+    assert "clean" in capsys.readouterr().out
 
 
 def test_refstyle_json_is_written_beside_the_report(monkeypatch, paper,

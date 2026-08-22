@@ -169,6 +169,24 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S3 `docxkit lint` exited 1 on advisory findings, which is the gate the library split apart to avoid~~ — FIXED 22.08
+
+`lint.audit` exists because the duplicate-bookmark check "shipped
+inside `lint` for one commit and bricked every mutating command on a
+manuscript that already had a duplicate, under a message that was not
+true of it". The library split is right. `cmd_lint` then returned 1
+whenever EITHER list was non-empty, so a manuscript Word opens
+perfectly — one duplicate bookmark name and nothing else — failed the
+command, for every CI job and paper script keyed on `docxkit lint`.
+Same gate, one layer up, on a condition the toolkit still offers no
+command to clear.
+
+Advisory findings are printed and do not fail. `--strict` is there for
+a caller who has cleared them and wants them kept clear, and the
+default run says so in one line rather than leaving the reader to
+wonder why a printed finding did not fail.
+
+
 ### ~~S3 Word's own anchors reached the loss gates, and one of them REFUSES the build~~ — FIXED 22.08
 
 Teaching `internal_links` the `REF` form fed Word's auto-minted
