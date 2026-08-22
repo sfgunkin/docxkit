@@ -1238,3 +1238,48 @@ def test_a_paragraph_nothing_SMARTENS_keeps_its_entities():
 # `+` because the two numbers share no bits; what a test for the other
 # case would assert is that the loop terminates, which is a test that
 # hangs when it fails.
+
+
+def _ref_link(anchor: str, shown: str) -> str:
+    r"""A Word cross-reference field: `REF <anchor> \h`."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> REF {anchor} '
+            r"\h </w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f"<w:r><w:t>{shown}</w:t></w:r>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def _doc_with_crossref(anchor: str) -> dict[str, bytes]:
+    body = (f'<w:p>{_ref_link(anchor, "Table 6")}</w:p>'
+            f'<w:p><w:bookmarkStart w:id="1" w:name="{anchor}"/>'
+            '<w:bookmarkEnd w:id="1"/>'
+            "<w:r><w:t>Table 6: Results</w:t></w:r></w:p>")
+    return make_parts(body)
+
+
+def test_word_re_minting_its_own_anchor_is_not_a_loss():
+    from docxkit.tracked import accepted_losses, compare_collateral
+
+    """Compare re-mints `_Ref211944524` on every build. Comparing that
+    name reports a bookmark dropped and a link dropped every time, and
+    `accepted_losses` is a gate `build` REFUSES on — so every paper
+    using Insert > Cross-reference would fail its build for doing
+    nothing."""
+    before = _doc_with_crossref("_Ref211944524")
+    after = _doc_with_crossref("_Ref300000001")
+
+    assert compare_collateral(before, after) == []
+    assert accepted_losses(before, after) == []
+
+
+def test_an_AUTHORED_bookmark_that_goes_is_still_a_loss():
+    from docxkit.tracked import compare_collateral
+
+    """The filter names Word's reserved prefix, not 'a bookmark'."""
+    before = _doc_with_crossref("Table6")
+    after = make_parts("<w:p><w:r><w:t>Table 6: Results</w:t></w:r></w:p>")
+
+    notes = compare_collateral(before, after)
+    assert any("bookmark dropped: Table6" in n for n in notes), notes
+    assert any("link dropped: -> Table6" in n for n in notes), notes

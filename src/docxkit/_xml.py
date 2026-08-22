@@ -40,6 +40,7 @@ __all__ = [
     "T_PARTS_RE",
     "T_RE",
     "T_RUN_RE",
+    "WORD_ANCHOR",
     "XML_WS",
     "delta_text",
     "editable_text",
@@ -67,6 +68,7 @@ __all__ = [
     "text_parts",
     "used_prefixes",
     "visible_text",
+    "word_minted",
 ]
 
 # THE PART NAMES, ONCE. Every module used to spell them itself — 38
@@ -691,6 +693,29 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
             out.append((r_start, r_end, xml[r_start:r_end]))
     out.sort(key=lambda span: (span[0], -span[1]))
     return out
+
+
+#: The stand-in for a bookmark Word minted itself, where two versions of
+#: one document are COMPARED. Word re-mints these on every Compare and
+#: on every field update, so the name is not a fact about the document:
+#: comparing it reports a loss and a gain on every build.
+WORD_ANCHOR = "<Word's own anchor>"
+
+
+def word_minted(name: str) -> bool:
+    """Is this a bookmark Word mints and re-mints for itself?
+
+    Word reserves the leading underscore — `_Ref211944524` for a
+    cross-reference target, `_Toc…` for a heading in a table of
+    contents, `_Hlk…` for a place it tracked. The name is regenerated,
+    so it means nothing across two versions of a document: a gate that
+    compares it by name reports a bookmark lost and another gained
+    every time Compare runs, and `build` refuses on that.
+
+    The same rule reads the other way in `_cite_audit._reached`, where
+    the reserved prefix is what says two names are ONE destination.
+    """
+    return name.startswith("_")
 
 
 def ref_anchor(instr: str, *, clickable: bool = True) -> str | None:

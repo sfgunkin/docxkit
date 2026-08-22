@@ -62,6 +62,7 @@ from ._xml import (
     internal_links,
     text_parts,
     visible_text,
+    word_minted,
 )
 from .comments import RevisionContext
 from .equations import OMATH_RE
@@ -117,15 +118,23 @@ CARRIED_PARTS = (_hygiene.CUSTOM_XML, USER_PROPERTIES)
 
 
 def _anchors(parts: dict[str, bytes]) -> tuple[set[str], set[str]]:
-    """Every bookmark NAME and every internal link TARGET in a package."""
+    """Every AUTHORED bookmark name and internal link target in a package.
+
+    Word's own — `_Ref…`, `_Toc…`, `_Hlk…` — are left out on both sides,
+    because Compare re-mints them: comparing those by name reports a
+    bookmark dropped and another gained on every single build, and
+    `accepted_losses` is a gate `build` REFUSES on. It would fail every
+    paper that uses Insert ▸ Cross-reference, for doing nothing.
+    """
     names: set[str] = set()
     targets: set[str] = set()
     for name, blob in parts.items():
         if not (name.startswith("word/") and name.endswith(".xml")):
             continue
         xml = blob.decode("utf-8", "replace")
-        names |= set(BOOKMARK_NAME_RE.findall(xml))
-        targets |= {a for a, _ in internal_links(xml)}
+        names |= {n for n in BOOKMARK_NAME_RE.findall(xml)
+                  if not word_minted(n)}
+        targets |= {a for a, _ in internal_links(xml) if not word_minted(a)}
     return names, targets
 
 

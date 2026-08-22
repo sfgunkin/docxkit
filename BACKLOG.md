@@ -169,6 +169,38 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S3 Word's own anchors reached the loss gates, and one of them REFUSES the build~~ — FIXED 22.08
+
+Teaching `internal_links` the `REF` form fed Word's auto-minted
+`_Ref211944524` names into three comparisons that ask "what went
+missing between these two versions":
+
+* `compare_collateral` — a spurious `link dropped: -> _Ref211944524` on
+  every build of a paper that uses Insert ▸ Cross-reference;
+* `accepted_losses` — the same, and `build` turns that list into a
+  `PackageError`;
+* `revision._link_changes` → `losses`, which blocks `baseline`.
+
+**Compare re-mints those names**, so the comparison is of two spellings
+of one thing: a bookmark dropped and another gained, every time, for
+doing nothing. The bookmark half was exposed before this round too;
+only the link half was new.
+
+`_xml.word_minted` names the rule once — Word reserves the leading
+underscore, `_Ref`, `_Toc`, `_Hlk` — where `revision._bookmarks` had
+been carrying it as an inline `startswith("_")`. The loss gates leave
+those out on both sides.
+
+`revision._links` does not drop them, it RE-KEYS them: the anchor
+becomes one stand-in and the visible LABEL stays, so a cross-reference
+that really went is still a loss while a rebuild of the same one is
+not. The label is what a reader would miss anyway.
+
+The same reserved prefix reads the other way in `_cite_audit._reached`,
+where it is what says two names are one destination — worth knowing
+before someone "simplifies" one of the two.
+
+
 ### ~~S1 two gaps shared one key, so a link at the top cleared a bookmark at the bottom~~ — FIXED 22.08
 
 `_reached` files each bookmark under the PLACE it sits in: a paragraph

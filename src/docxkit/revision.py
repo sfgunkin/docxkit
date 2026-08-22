@@ -77,9 +77,11 @@ from ._xml import (
     ENDNOTES,
     FOOTNOTES,
     NOTE_DEF_RE,
+    WORD_ANCHOR,
     internal_links,
     text_parts,
     visible_text,
+    word_minted,
 )
 from .errors import (
     BaselinePending,
@@ -939,7 +941,13 @@ def _links(parts: dict[str, bytes]) -> Counter[tuple[str, str]]:
     """
     out: Counter[tuple[str, str]] = Counter()
     for _name, xml in text_parts(parts):
-        out.update(internal_links(xml))
+        # Word's own anchor is re-minted on every Compare, so the NAME
+        # is not a fact about the document; the visible label is, and it
+        # is what a reader would miss. Keyed under one stand-in, a
+        # cross-reference that really went still reports as lost, and a
+        # rebuild of the same one does not.
+        out.update((WORD_ANCHOR if word_minted(a) else a, label)
+                   for a, label in internal_links(xml))
     return out
 
 
@@ -947,7 +955,7 @@ def _bookmarks(parts: dict[str, bytes]) -> set[str]:
     return {n for name, blob in parts.items()
             if name in TEXT_PARTS
             for n in BOOKMARK_NAME_RE.findall(blob.decode("utf-8", "replace"))
-            if not n.startswith("_")}       # Word's own _Toc/_Heading names
+            if not word_minted(n)}          # Word's own _Toc/_Ref names
 
 
 @dataclass(frozen=True)
