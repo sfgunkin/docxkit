@@ -169,6 +169,25 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S1 two gaps shared one key, so a link at the top cleared a bookmark at the bottom~~ — FIXED 22.08
+
+`_reached` files each bookmark under the PLACE it sits in: a paragraph
+index, or a negative key for the gap Word hoisted it into. Both ends of
+the document produced **-1**. A marker above the first paragraph took
+`-1 - 0`; one past the LAST paragraph fell to the `else -1` default,
+because the inner `next` had no paragraph to name.
+
+So a linked `_Ref` hoisted above the opening line cleared a house
+bookmark sitting after the final paragraph — one place, two ends of the
+document — and the REF WITHOUT CITE line that says nothing reaches it
+went quiet. Suppressing a real finding is the wrong answer this
+function's own docstring says it exists to avoid; it arrived through
+the arithmetic instead of through the rule.
+
+`len(paras)` is the honest index for "after everything", and the gap
+key is then `-1 - i` in every case, with no special one to fold.
+
+
 ### ~~S1 a four-digit page number was read as a second work~~ — FIXED 22.08
 
 `(Acemoglu and Robinson 2012, 1215)` produced TWO citations: the work,

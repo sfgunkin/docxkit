@@ -4029,6 +4029,36 @@ def test_a_word_cross_reference_beside_the_house_bookmark_is_not_orphaned():
     assert "ORPHAN REF" not in _codes_of(issues)
 
 
+def test_a_link_at_the_TOP_does_not_clear_a_bookmark_at_the_BOTTOM():
+    """Two gaps, one key.
+
+    A marker Word hoists ABOVE the first paragraph belongs to the gap
+    before paragraph 0; one hoisted past the LAST paragraph belongs to
+    no paragraph at all. Both were filed under -1, so a linked `_Ref` at
+    the top of the document cleared a bookmark at the far end of it —
+    and the REF WITHOUT CITE line that says nothing reaches it went
+    quiet. Suppressing a real finding is the wrong answer this function
+    exists to avoid, said in its own docstring.
+    """
+    from docxkit._cite_audit import _reached
+    from docxkit._xml import PARA_RE
+
+    doc = ("<w:body>"
+           # Word's own anchor, hoisted above the opening paragraph
+           '<w:bookmarkStart w:id="1" w:name="_Ref211944524"/>'
+           '<w:bookmarkEnd w:id="1"/>'
+           "<w:p><w:r><w:t>Opening line.</w:t></w:r></w:p>"
+           "<w:p><w:r><w:t>Zeta, A. 2020. A work. JPE.</w:t></w:r></w:p>"
+           # …and the house bookmark at the other end of the document
+           '<w:bookmarkStart w:id="2" w:name="Zeta2020"/>'
+           '<w:bookmarkEnd w:id="2"/>'
+           "</w:body>")
+    links = {"_Ref211944524": [(0, "Table 6")]}
+
+    assert _reached(doc, list(PARA_RE.finditer(doc)), links) == \
+        {"_Ref211944524"}
+
+
 def test_a_linked_ORDINARY_neighbour_clears_nothing():
     """The other direction, and the reason the rule names Word's own
     prefix rather than 'a linked bookmark nearby'. li7 hoists two

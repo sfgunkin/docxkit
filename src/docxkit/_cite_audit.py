@@ -157,8 +157,16 @@ def _reached(doc: str, paras: list[re.Match[str]],
         i = next((n for n, p in enumerate(paras) if p.start() <= at < p.end()),
                  None)
         if i is None:                      # hoisted: it belongs to the NEXT
-            i = next((n for n, p in enumerate(paras) if p.start() > at), -1)
-            i = -1 - i if i >= 0 else -1   # a gap key, distinct from a para
+            # `len(paras)` for a marker past the LAST paragraph: it is
+            # the gap after the end, and it needs a key of its own.
+            # Folding it onto -1 put it in the same place as the gap
+            # BEFORE the first paragraph, so a linked `_Ref` hoisted
+            # above the opening line cleared a bookmark at the far end
+            # of the document — suppressing both findings that say so,
+            # which is the wrong answer this function exists to avoid.
+            i = next((n for n, p in enumerate(paras) if p.start() > at),
+                     len(paras))
+            i = -1 - i                     # a gap key, distinct from a para
         place[i].append(m.group(1))
     return {name for names in place.values()
             if any(n.startswith("_") and links.get(n) for n in names)
