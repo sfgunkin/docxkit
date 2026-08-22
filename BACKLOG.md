@@ -169,6 +169,39 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S1 `crossrefs` could not see a Word cross-reference, so `unlink` removed the bookmarks and left the fields dangling~~ — FIXED 22.08
+
+Teaching `internal_links` the `REF` form on 22.08 left `crossrefs`
+reading the two it already knew. On a document whose exhibit mentions
+are Word cross-references, `field_targets` returned an empty set,
+`unlink` reported "removed 2", deleted both exhibit bookmarks and left
+every REF field live and dangling — **the precise answer its
+ConversionGap guard exists to refuse**, arriving through the one door
+the guard was not watching. `audit` was blind the same way.
+
+One reader now, `_xml.field_anchors`, over both field forms and used by
+`field_targets`, `_mention_offsets` and `internal_links`. The private
+`_FIELD_ANCHOR_RE` is gone: an acknowledged duplicate is still a
+duplicate, and this is the second time that sentence has been written
+in this module.
+
+**`\h` is what makes the field a link, and it was not being required.**
+Word renders a switchless `REF` as static text a reader cannot click,
+so counting one as a link cleared the house bookmark beside it and
+suppressed both the ORPHAN REF and the REF WITHOUT CITE line that say
+so. But a switchless field still DEPENDS on its bookmark — removing the
+target breaks it into "Error! Reference source not found" — so the two
+callers ask different questions: `ref_anchor(clickable=True)` for "can
+a reader follow this", `clickable=False` for "would removing the
+bookmark break something". `field_targets` asks the second.
+
+**The name may arrive quoted.** `([^\s\]+)` took the quote with it on
+a nested field (`IF 1 = 1 "REF Table1" ""`) and produced the anchor
+`Table1"` — a name no bookmark has, reported as a BROKEN LINK and
+carried into `tracked`'s loss gates as a target that vanishes on the
+next rebuild.
+
+
 ### ~~S2 neither audit reads a Word CROSS-REFERENCE, so a working link reports as "the mention reaches nothing"~~ — FIXED 22.08
 
 `internal_links` reads the third form now — `REF <bookmark> \h`, which

@@ -3931,6 +3931,42 @@ def test_internal_links_reads_a_word_cross_reference():
     assert internal_links(xml) == [("_Ref211944524", "Table 6")]
 
 
+def test_a_cross_reference_without_the_h_switch_is_not_a_link():
+    r"""`\h` is what makes the field a hyperlink. Without it Word renders
+    the reference as static text a reader cannot click — and counting it
+    as a link cleared the house bookmark beside it, suppressing both the
+    ORPHAN REF and the REF WITHOUT CITE line that say so."""
+    from docxkit._xml import internal_links
+    static = _ref_field("_Ref211944524", "Table 6").replace(
+        r"\h ", r"\* MERGEFORMAT ")
+    assert internal_links(P(static)) == []
+    assert internal_links(P(_ref_field("_Ref211944524", "Table 6"))) == [
+        ("_Ref211944524", "Table 6")]
+
+
+def test_a_quoted_reference_name_arrives_without_its_quotes():
+    """A nested field puts quotes round the instruction — `IF 1 = 1
+    "REF Table1" ""`. Taking them with the name produced the anchor
+    `Table1"`, which no bookmark has: a BROKEN LINK finding for a link
+    that is fine, and a phantom target in the loss gates."""
+    from docxkit._xml import INSTR_REF_RE, ref_anchor
+    assert ref_anchor(r'REF "My Bookmark" \h') == "My Bookmark"
+    nested = INSTR_REF_RE.search('IF 1 = 1 "REF Table1" ""')
+    assert nested is not None and nested.group(2) == "Table1"
+
+
+def test_a_switchless_reference_still_depends_on_the_bookmark():
+    """Two questions, one field. It is not a link a reader follows, but
+    removing its target still breaks it into 'Error! Reference source
+    not found', which is what `crossrefs` asks before removing one."""
+    from docxkit._xml import field_anchors
+    static = P(_ref_field("Table1", "Table 6").replace(
+        r"\h ", r"\* MERGEFORMAT "))
+    assert field_anchors(static) == []
+    assert [n for n, _ in field_anchors(static, clickable=False)] == \
+        ["Table1"]
+
+
 @pytest.mark.parametrize("instr", [r"PAGEREF _Ref1 \h",
                                    r"NOTEREF _Ref2 \h",
                                    "REFERENCE _Ref3"])

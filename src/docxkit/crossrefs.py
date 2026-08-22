@@ -55,6 +55,7 @@ from ._xml import (
     PARA_RE,
     T_RE,
     WT_RE,
+    field_anchors,
     live_properties,
     own_properties,
     visible_text,
@@ -117,11 +118,6 @@ _P_OPEN_RE = re.compile(r"<w:p\b[^>]*(?<!/)>")
 _RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)
 # a bookmark name Word will accept: letters, digits, underscore
 _UNSAFE_RE = re.compile(r"[^0-9A-Za-z_]")
-#: ``HYPERLINK \l "Anchor" \h`` inside a field instruction. Word splits
-#: instrText across runs, so the quoted anchor is matched on its own
-#: rather than the whole instruction.
-_FIELD_ANCHOR_RE = re.compile(
-    r'<w:instrText[^>]*>[^<]*?HYPERLINK\s+\\l\s+"([^"]+)"', re.DOTALL)
 
 
 def anchor_names(label: str, number: str) -> tuple[str, str]:
@@ -796,8 +792,8 @@ def _mention_offsets(xml: str) -> dict[str, list[int]]:
     out: dict[str, list[int]] = defaultdict(list)
     for m in re.finditer(r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"', xml):
         out[m.group(1)].append(m.start())
-    for m in _FIELD_ANCHOR_RE.finditer(xml):
-        out[m.group(1)].append(m.start())
+    for name, at in field_anchors(xml, clickable=False):
+        out[name].append(at)
     return {k: sorted(v) for k, v in out.items()}
 
 
@@ -882,16 +878,26 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
 
 
 def field_targets(xml: str) -> set[str]:
-    """Anchors reached by a Word HYPERLINK FIELD rather than an element.
+    r"""Anchors reached by a Word FIELD rather than an element.
 
     ``link`` and ``unlink`` only understand element-form
     ``<w:hyperlink w:anchor="...">``. The same link can equally be a
-    field — ``<w:instrText>HYPERLINK \\l "X" \\h</w:instrText>`` between
-    fldChars — and a manuscript can hold both forms at once. Parental_style
-    holds 53 element and 160 field, and there is nothing in the rendered
-    page to tell them apart.
+    field — ``HYPERLINK \l "X"`` between fldChars, or Word's own
+    cross-reference ``REF X \h`` — and a manuscript can hold every form
+    at once. Parental_style holds 53 element and 160 field, and there is
+    nothing in the rendered page to tell them apart.
+
+    Both field forms, from the one reader in `_xml`. Knowing only
+    HYPERLINK is how the guard below acquired a hole: on a document
+    whose mentions are Word cross-references, `unlink` reported a
+    healthy count, removed the bookmarks and left every REF field live
+    and dangling.
+
+    ``clickable=False``: a ``REF`` with no ``\h`` switch is not a link a
+    reader can follow, but it still DEPENDS on the bookmark, and this
+    set exists to answer what would break if the bookmark went.
     """
-    return {m.group(1) for m in _FIELD_ANCHOR_RE.finditer(xml)}
+    return {name for name, _ in field_anchors(xml, clickable=False)}
 
 
 def unlink(xml: str, *,

@@ -173,3 +173,49 @@ def test_the_refusal_does_not_trail_off_below_six_either():
     assert " ..." not in message, message
     for i in (1, 2, 3):
         assert f"Table{i}" in message
+
+
+def ref_field(anchor: str, shown: str) -> str:
+    r"""Word's OWN cross-reference: what Insert > Cross-reference writes.
+
+    The third form that reaches a bookmark. `field_targets` knew two,
+    so `unlink` on a document using this one reported a healthy count,
+    removed the exhibit bookmarks and left every REF field live and
+    dangling — the exact answer the ConversionGap guard exists to
+    refuse, arriving through the door the guard does not watch.
+    """
+    return (
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        f'<w:r><w:instrText xml:space="preserve">'
+        rf' REF {anchor} \h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        f"<w:r><w:t>{shown}</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+REF_CAPTION_AND_MENTION = (
+    para(run("As reported in ")).replace("</w:p>", "") + ref_field(
+        "Table1", "Table 1") + "<w:r><w:t>, rates differ.</w:t></w:r></w:p>"
+    + para(run("Table 1: Descriptive statistics.")))
+
+
+def test_field_targets_reads_words_own_cross_reference_too():
+    xml = doc(REF_CAPTION_AND_MENTION)
+    assert crossrefs.field_targets(xml) == {"Table1"}
+
+
+def test_unlink_refuses_a_ref_field_as_it_refuses_a_hyperlink_one():
+    xml = doc(REF_CAPTION_AND_MENTION)
+    with pytest.raises(ConversionGap) as exc:
+        crossrefs.unlink(xml)
+    assert "FIELD form" in str(exc.value)
+    assert "Table1" in str(exc.value)
+
+
+def test_a_switchless_ref_is_still_a_dependency_unlink_must_see():
+    # not clickable, so not a link — but removing the bookmark still
+    # breaks it into "Error! Reference source not found"
+    xml = doc(REF_CAPTION_AND_MENTION.replace(r"\h ", r"\* MERGEFORMAT "))
+    assert crossrefs.field_targets(xml) == {"Table1"}
+    with pytest.raises(ConversionGap):
+        crossrefs.unlink(xml)

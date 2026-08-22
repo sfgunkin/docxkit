@@ -28,6 +28,7 @@ __all__ = [
     "GLYPH_MAP",
     "INSTR_ANCHOR_RE",
     "INSTR_RE",
+    "INSTR_REF_RE",
     "MATH_OBJECTS",
     "NOTE_DEF_RE",
     "PARA_RE",
@@ -45,6 +46,7 @@ __all__ = [
     "element_spans",
     "escape",
     "escape_attr",
+    "field_anchors",
     "field_spans",
     "in_span",
     "internal_links",
@@ -54,6 +56,7 @@ __all__ = [
     "overlaps",
     "own_properties",
     "printed_text",
+    "ref_anchor",
     "run_open_before",
     "run_spans",
     "set_para_property",
@@ -470,9 +473,21 @@ INSTR_ANCHOR_RE = re.compile(r'HYPERLINK\s+\\l\s+"([^"]+)"')
 #: downgrade.
 #:
 #: `\b` before REF is what keeps `PAGEREF` and `NOTEREF` out — both end
-#: in those three letters with no word boundary before them. The name is
-#: unquoted in this form, unlike HYPERLINK's.
-INSTR_REF_RE = re.compile(r"\bREF\s+([^\s\\]+)")
+#: in those three letters with no word boundary before them.
+#:
+#: The name is normally unquoted, unlike HYPERLINK's, but a quoted one
+#: reaches here from a nested field (`IF 1 = 1 "REF Table1" ""`), and a
+#: bare `([^\s\]+)` took the quote with it and produced the anchor
+#: `Table1"` — a name no bookmark has, reported as a broken link and
+#: carried into the loss gates as a target that vanishes on rebuild.
+INSTR_REF_RE = re.compile(r'\bREF\s+(?:"([^"]+)"|([^\s\\"]+))')
+#: `\h` is the switch that makes the field a hyperlink. Without it Word
+#: renders the reference as static text a reader cannot click, so it is
+#: not a link and must not clear a bookmark that nothing reaches — but
+#: it IS still a field that depends on the bookmark, which is a
+#: different question and the one `crossrefs` asks before removing one.
+REF_HYPERLINK_SWITCH_RE = re.compile(r"\\h(?![A-Za-z])")
+
 #: Public: `_compare_read` masks a volatile field's cached RESULT, which
 #: starts here, and kept its own copy of this until it was promoted.
 SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
@@ -678,6 +693,74 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
     return out
 
 
+def ref_anchor(instr: str, *, clickable: bool = True) -> str | None:
+    r"""The bookmark a Word cross-reference field targets, or None.
+
+    Two questions, one field, and they do not have the same answer.
+    ``clickable`` (the default) asks what a READER can reach: a ``REF``
+    without the ``\h`` switch renders as static text, so counting it as
+    a link cleared bookmarks that nothing reaches and suppressed the
+    findings that say so. ``clickable=False`` asks what DEPENDS on the
+    bookmark, which is what `crossrefs` needs before removing one —
+    a switchless field still breaks into "Error! Reference source not
+    found" when its target goes.
+    """
+    m = INSTR_REF_RE.search(instr)
+    if m is None:
+        return None
+    if clickable and not REF_HYPERLINK_SWITCH_RE.search(instr):
+        return None
+    return m.group(1) or m.group(2)
+
+
+def field_anchors(xml: str, *,
+                  clickable: bool = True) -> list[tuple[str, int]]:
+    r"""``(anchor, offset of the instruction)`` for every FIELD-form link.
+
+    Both field forms: ``HYPERLINK \l "X"`` and Word's own ``REF X \h``.
+    ONE reader of both, because `crossrefs` kept a second regex that
+    knew only the first — so `unlink` reported "removed 2", deleted the
+    exhibit bookmarks and left the REF fields live and dangling, which
+    is the exact answer its ConversionGap guard exists to refuse.
+
+    The offset is the INSTRUCTION's, not the field's ``begin``: a few
+    runs late, and always still inside the field, so a bookmark that
+    legitimately wraps the whole field cannot be read as sitting after
+    it. Instructions are joined across runs before matching, because
+    Word splits them at rsid boundaries — and an instruction outside any
+    matched begin/end pair is read on its own, so a field truncated by
+    an edit still reports the bookmark it depends on.
+    """
+    out: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+
+    def add(name: str | None, at: int) -> None:
+        if name is not None and (name, at) not in seen:
+            seen.add((name, at))
+            out.append((name, at))
+
+    covered: list[tuple[int, int]] = []
+    for m in _FIELD_RE.finditer(xml):
+        body = m.group(1)
+        covered.append((m.start(1), m.end(1)))
+        im = INSTR_RE.search(body)
+        if im is None:
+            continue
+        at = m.start(1) + im.start()
+        instr = html.unescape("".join(INSTR_RE.findall(body)))
+        hm = INSTR_ANCHOR_RE.search(instr)
+        add(hm.group(1) if hm else ref_anchor(instr, clickable=clickable), at)
+
+    for im in INSTR_RE.finditer(xml):
+        if any(lo <= im.start() < hi for lo, hi in covered):
+            continue
+        instr = html.unescape(im.group(1))
+        hm = INSTR_ANCHOR_RE.search(instr)
+        add(hm.group(1) if hm else ref_anchor(instr, clickable=clickable),
+            im.start())
+    return out
+
+
 def internal_links(xml: str) -> list[tuple[str, str]]:
     """``(anchor, visible label)`` for every internal link, in BOTH forms.
 
@@ -717,12 +800,13 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
         # fine, and neither was reading what a reader clicks
         # (2026-08-22). The repair the finding implied would have traded
         # Word's automatic renumbering for a static label.
-        am = INSTR_ANCHOR_RE.search(instr) or INSTR_REF_RE.search(instr)
-        if am is None:
-            continue                       # PAGEREF, external link, TOC…
+        hm = INSTR_ANCHOR_RE.search(instr)
+        anchor = hm.group(1) if hm else ref_anchor(instr)
+        if anchor is None:
+            continue        # PAGEREF, external link, TOC, no \h…
         sep = _SEPARATE_RE.search(m.group(1))
         label = visible_text(m.group(1)[sep.end():]) if sep else ""
-        out.append((am.group(1), label))
+        out.append((anchor, label))
     return out
 
 
