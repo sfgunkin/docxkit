@@ -29,7 +29,7 @@ from ._xml import (
     visible_text,
 )
 from .errors import AnchorError
-from .find import caption_re
+from .find import TABLE_LABELS, caption_re
 from .revisions import FINAL, _has_revisions, view_transform
 
 _TR_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>", re.DOTALL)
@@ -372,7 +372,8 @@ def by_caption(xml: str, caption: str, *, view: str = FINAL,
 
 
 def _sides(para: re.Match[str], tables: list[Table],
-           captions: list[re.Match[str]], images: list[int]) -> list[Table]:
+           captions: list[re.Match[str]], images: list[int],
+           *, figure: bool = False) -> list[Table]:
     """The tables one caption paragraph could own, the convention's first.
 
     At most one on each side: a caption standing BETWEEN a candidate and
@@ -403,14 +404,26 @@ def _sides(para: re.Match[str], tables: list[Table],
     if above is not None and any(above.end <= m.start() < para.start()
                                  for m in captions):
         above = None
-    if _owns_an_image(para, below, captions, images):
+    if _owns_an_image(para, below, captions, images, figure=figure):
         return []
     return [t for t in (below, above) if t is not None]
 
 
 def _owns_an_image(para: re.Match[str], below: Table | None,
-                   captions: list[re.Match[str]], images: list[int]) -> bool:
+                   captions: list[re.Match[str]], images: list[int],
+                   *, figure: bool) -> bool:
     """Is the exhibit under this caption a picture rather than a table?
+
+    ``figure`` is the caption's own LABEL, and it is the first question
+    asked. A caption reading "Table 1." names a table whatever follows
+    it, and without that test ANY later picture could take its table
+    away: with the caption UNDERNEATH its table there is no table below
+    to rule the picture out, and `<w:pict>` is also what Word writes for
+    a horizontal rule, `<w:drawing>` for an inline logo. So an ordinary
+    horizontal rule anywhere after the caption returned "this caption
+    owns a picture", `by_caption` handed back no table, and with
+    ``required=True`` it raised — for a lookup whose table was sitting
+    directly above the caption.
 
     Only the side the CONVENTION names is asked. A picture above a
     caption is as often the previous exhibit's as it is this one's, and
@@ -423,6 +436,8 @@ def _owns_an_image(para: re.Match[str], below: Table | None,
     table's start, so the nearer-table test below rules it out — and
     when there is no table below, there is no table for it to be inside.
     """
+    if not figure:
+        return False
     picture = next((i for i in images if i >= para.end()), None)
     if picture is None or (below is not None and below.start < picture):
         return False
@@ -464,17 +479,30 @@ def _beside(xml: str, para: re.Match[str],
     # walk below is three lines. Copying the REGEX would be the drift;
     # walking the paragraphs again is not.
     pattern = caption_re()
-    captions = [m for m in PARA_RE.finditer(xml)
-                if pattern.match(visible_text(m.group(0)).strip())]
+    # The caption's LABEL decides whether a picture can be its exhibit,
+    # so each one is read once, here, where the text is already in hand.
+    # A caption the pattern does not match — the inline fallback below —
+    # is read as a table caption: it is the conservative answer, and the
+    # figure captions this exists for all match.
+    captions: list[re.Match[str]] = []
+    figures: dict[tuple[int, int], bool] = {}
+    for m in PARA_RE.finditer(xml):
+        hit = pattern.match(visible_text(m.group(0)).strip())
+        if hit is None:
+            continue
+        captions.append(m)
+        figures[m.span()] = hit.group(1) not in TABLE_LABELS
     images = [m.start() for m in _IMAGE_RE.finditer(xml)]
-    options = {m.span(): _sides(m, tables, captions, images)
+    options = {m.span(): _sides(m, tables, captions, images,
+                                figure=figures[m.span()])
                for m in captions}
     # `_caption_para` falls back to a caption running INLINE in its
     # paragraph, which the pattern above does not match. Such a caption
     # still needs its own candidates here — it just does not get to rule
     # anybody else's out.
     options.setdefault(para.span(),
-                       _sides(para, tables, captions, images))
+                       _sides(para, tables, captions, images,
+                              figure=figures.get(para.span(), False)))
 
     # Constraint propagation, and it is the whole fix: assign the
     # captions that have no choice, then look again, because each

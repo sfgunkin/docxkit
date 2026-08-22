@@ -169,6 +169,32 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S1 a horizontal rule after a caption took its table away~~ — FIXED 22.08
+
+`_owns_an_image` asked "is there a picture after this caption" and
+nothing else. When the caption sits UNDERNEATH its table — AFI's Tables
+3 and A3, HCW's Table 7 — there is no table below to rule the picture
+out, so any later `<w:pict>` answered yes: `by_caption` returned no
+table, and with `required=True`, the default, it raised. For a table
+sitting directly above the caption that names it.
+
+`<w:pict>` is also Word's spelling for a HORIZONTAL RULE, and
+`<w:drawing>` for any inline logo or chart, so the trigger is ordinary
+document furniture rather than a figure.
+
+The rule that was missing is in the caption's own label: **"Table 1."
+names a table whatever follows it.** `find.TABLE_LABELS` says which of
+the four labels those are, `_beside` reads each caption's label once
+where it already has the text, and the picture question is asked only
+of the rest. A caption the pattern does not match is read as a table
+caption — the conservative answer, and the figure captions this exists
+for all match.
+
+The HCW behaviour it was built for is unchanged: `[Table 8][cap Figure
+1][image]` still gives Figure 1 no table, and Figure 8's 2x2 grid of
+panel images is still a table.
+
+
 ### ~~S1 `crossrefs` could not see a Word cross-reference, so `unlink` removed the bookmarks and left the fields dangling~~ — FIXED 22.08
 
 Teaching `internal_links` the `REF` form on 22.08 left `crossrefs`

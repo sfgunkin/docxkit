@@ -203,6 +203,41 @@ def test_a_picture_behind_ANOTHER_caption_is_not_THIS_captions_exhibit():
     assert by_caption(xml, "Table 7.").header == ["Country", "Score"]
 
 
+def _horizontal_rule() -> str:
+    """Word's horizontal rule. `<w:pict>` is the VML spelling, which is
+    also how a pasted image arrives — so the picture scan sees one."""
+    return ('<w:p><w:r><w:pict><v:rect id="_x0000_s1026" o:hr="t" '
+            'style="width:0;height:1.5pt"/></w:pict></w:r></w:p>')
+
+
+def test_a_rule_after_a_table_caption_does_not_take_its_table_away():
+    """A caption reading "Table 1." names a table whatever follows it.
+
+    With the caption UNDERNEATH its table there is no table below to
+    rule a later picture out, so ANY `<w:pict>` after it — a horizontal
+    rule, a pasted logo, the next figure two pages down — answered "this
+    caption owns a picture" and the lookup came back with nothing. Under
+    `required=True`, which is the default, it raised: for a table
+    sitting directly above the caption that named it.
+    """
+    body = (table(row("Country", "Score"), row("Poland", "1.0"))
+            + para(run("Table 1. A caption underneath its table")))
+    xml = document(body)
+    assert by_caption(xml, "Table 1.").header == ["Country", "Score"]
+
+    with_rule = document(body + _horizontal_rule())
+    assert by_caption(with_rule, "Table 1.").header == ["Country", "Score"]
+
+
+def test_nor_does_a_logo_further_down_the_document():
+    xml = document(
+        table(row("Country", "Score"), row("Poland", "1.0"))
+        + para(run("Table 1. A caption underneath its table"))
+        + para(run("Some discussion of the results."))
+        + _image())
+    assert by_caption(xml, "Table 1.").header == ["Country", "Score"]
+
+
 def test_by_caption_says_which_half_failed():
     """A missing caption and a caption with no table are different
     problems, and the message has to say which — the builders locate

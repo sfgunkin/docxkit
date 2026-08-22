@@ -27,6 +27,7 @@ from .errors import AnchorError
 __all__ = [
     "DEFAULT_LABELS",
     "P_RE",
+    "TABLE_LABELS",
     "AnchorError",
     "Site",
     "body_elements",
@@ -48,6 +49,14 @@ __all__ = [
 #: Caption words recognised by default. Add the paper's own if it writes
 #: them differently — DSI's Russian manuscripts use Рисунок/Таблица.
 DEFAULT_LABELS = ("Figure", "Table", "Рисунок", "Таблица")
+
+#: Of those, the labels whose exhibit is a TABLE. What the rest
+#: name is a picture, and the difference decides whether a
+#: `<w:drawing>` after a caption can be that caption's exhibit —
+#: `_table_core` asked only "is there a picture below", so a
+#: horizontal rule (`<w:pict>` is Word's spelling for one) after a
+#: "Table 1." captioned UNDERNEATH its table took the table away.
+TABLE_LABELS = ("Table", "Таблица")
 
 @lru_cache(maxsize=8)
 def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
