@@ -17,7 +17,44 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**Nothing is open, as of 2026-08-22.** The cross-reference entry
+### S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it — the surviving half of the entry closed on 22.08
+
+The cross-reference entry closed as FIXED on 22.08 had two halves. The
+`citations` half is genuinely fixed — REF fields are read now, and HCW's four
+false ORPHAN REFs are gone. **The `crossrefs` half was not touched, and it is
+the half that reports green.**
+
+Measured today, on a document where both bookmarks exist and no hyperlink of
+any form points at the caption:
+
+    audit buckets : {'linked': ['Table3']}
+    link()        : linked [] , already_linked ['Table3']
+
+`audit`'s `linked` means "both bookmarks present" (its own docstring says so),
+so a mention whose link has been eaten reports as linked, and `link()` then
+refuses to repair it because it believes the work is done. One tool now reads
+what a reader clicks; the other still counts bookmarks.
+
+**Why this is S3 rather than S2.** It is not a wrong number in an output — it
+is a gate that cannot fail on the condition it exists to catch. Word strips
+run-level hyperlinks out of any paragraph whose text an author rewrites, so
+this state arises on ordinary author rounds, and `crossrefs --audit` will say
+`linked 20, dangling 0` every time.
+
+**Suggested fix.** `field_targets()` already parses `HYPERLINK \l` and, since
+22.08, `REF`. Give `audit` a bucket keyed on the union of element anchors and
+field targets — an exhibit whose caption bookmark is reached by NOTHING is
+neither `linked` nor `dangling` today, and needs its own name. `link()`
+should treat that state as repairable rather than as `already_linked`.
+
+**How it was found, and the lesson.** By re-running the reproduction after
+the entry was marked FIXED. The entry's own text named both tools; the fix
+addressed the one whose symptom was loud (four false findings on a real
+manuscript) and left the one whose symptom is silence. **A two-tool entry
+needs two reproductions before it closes.**
+
+
+**One open, as of 2026-08-22** (above). Recorded before it: the cross-reference entry
 raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
 2026-08-21** either, the first time since this file was started that the
 section held no live defect. Two records stay below because both are
