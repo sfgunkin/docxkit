@@ -509,3 +509,17 @@ def test_a_caption_DEEP_in_the_document_still_finds_its_table(tmp_path):
 #   loop above has already skipped every block that is a table — so the
 #   extra entry is a block that cannot answer the question being asked
 #   of it.
+
+
+def test_the_old_anchors_spelling_still_works(tmp_path):
+    """docxkit is the shared toolkit every paper imports, and the CLI
+    kept `--anchors-from` for exactly this rename: a paper script should
+    not break on one half of a change that was careful about the other.
+    """
+    path = make_docx(tmp_path, BODY)
+
+    old = probe(path, anchors=("Table 1: Descriptive",))
+    new = probe(path, ("Table 1: Descriptive",))
+
+    assert old.phrases == new.phrases
+    assert old.anchors == old.phrases

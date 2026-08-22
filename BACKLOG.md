@@ -169,6 +169,41 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S4 four ergonomics findings from the same review~~ — FIXED 22.08
+
+**The front door advertised the pair that now raises.** `__init__`'s
+module docstring and the README both opened with
+`from docxkit.ingest import build_overrides  # author-edit round`, and
+that function raises `NoteEdit` the moment the author touches a note
+definition — while `update_overrides` writes the `part`-carrying
+entries `apply_overrides` refuses. So the documented pipeline breaks on
+the next round, and `build_part_overrides`/`apply_part_overrides`
+appeared in neither file. Both now name the pair that works, and
+`build_overrides` says SUPERSEDED in its first line rather than in its
+last paragraph.
+
+**`probe(anchors=)` was renamed with no shim** while the CLI kept
+`--anchors-from` for the identical rename. docxkit is the shared
+toolkit every paper imports; a script should not break on one half of a
+change that was careful about the other. `anchors=` and `Probe.anchors`
+both work again.
+
+**The coverage floor's RED guard was on the wrong side of the
+missing-report check** — but the check it sat behind has a real reason,
+pinned by a test: pytest's exit 4 is a USAGE error, which is what a
+missing pytest-cov looks like, and "the suite is RED" would send that
+reader somewhere nothing is wrong. Both are true of different exit
+codes. Exit 4 with no report keeps the plugin message; any other
+non-zero exit with no report — a collection error, an abort — is now
+reported as RED, with the tail. `stderr` is in the tail too: it was
+captured and dropped, so an internal error's traceback reached nobody.
+
+**`revision._sha` was a byte-for-byte duplicate of `guard.sha256`**,
+which this same round made public. `promote` compared a `built_on`
+produced by one against a `base_hash` produced by the other, across a
+gate. One spelling now.
+
+
 ### ~~S2 three wrong answers nothing was watching~~ — FIXED 22.08
 
 **`audit_parts` returned a false all-clear on a file it could not

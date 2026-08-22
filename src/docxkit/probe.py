@@ -72,6 +72,12 @@ class Probe:
     #: confidently, for a bookmark that is in the file (2026-08-21).
     phrases: dict[str, list[tuple[int, list[str]]]] = field(
         default_factory=dict)
+
+    @property
+    def anchors(self) -> dict[str, list[tuple[int, list[str]]]]:
+        """The old name for :attr:`phrases`. Same reason as `probe`'s."""
+        return self.phrases
+
     #: phrases the two definitions of "what this paragraph says" disagree
     #: about, as (what `find` sees, what `edit` sees). They are both in
     #: this package and they differ over OMML: `visible_text` reads
@@ -122,12 +128,20 @@ class Probe:
         return "\n".join(out)
 
 
-def probe(path: str | Path, phrases: tuple[str, ...] = ()) -> Probe:
+def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
+          anchors: tuple[str, ...] | None = None) -> Probe:
     """Characterise `path`; `phrases` are the ones to show run splits for.
 
     Called PHRASES, not anchors: this module reports bookmark names too,
     and the two senses met in one report (see :attr:`Probe.phrases`).
+
+    ``anchors=`` is the old spelling, kept because docxkit is the shared
+    toolkit every paper imports and the CLI kept `--anchors-from` for
+    exactly this rename — a paper script should not break on one half of
+    a change that was careful about the other.
     """
+    if anchors is not None:
+        phrases = tuple(anchors) + tuple(phrases)
     path = Path(path)
     parts = read_parts(path)
     rep = Probe(path=path)

@@ -204,6 +204,12 @@ def build_overrides(baseline: str | Path, edited: str | Path, *,
                     allow_note_loss: bool = False) -> list[tuple[str, str]]:
     """Align a baseline build against the author's file — the BODY.
 
+    SUPERSEDED by :func:`build_part_overrides` + :func:`apply_part_overrides`,
+    which carry the part an override belongs to. This pair raises
+    :class:`docxkit.errors.NoteEdit` the moment the author touches a note
+    definition, which is not a rare event, so a pipeline built on it
+    stops at the next round rather than at a chosen moment.
+
     Returns (old_xml, new_xml) pairs; ``new == ""`` is a deletion. The
     alignment rules are the ones that took several rounds to get right:
 

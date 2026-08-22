@@ -29,7 +29,8 @@ from docxkit.testing import latest_version, load_xml  # value-test scaffolding
 from docxkit.compare import compare, render      # multi-layer diff
 from docxkit.revisions import text, counts       # read either side of a redline
 from docxkit.tracked import build                # redline deliverable
-from docxkit.ingest import build_overrides       # author-edit round
+from docxkit.ingest import build_part_overrides  # author-edit round
+from docxkit.ingest import apply_part_overrides #   …and its writer
 from docxkit.comments import annotate            # comment every revision
 from docxkit.word import session, export_pdf     # Word automation
 from docxkit.word import locate                  # page/line of a phrase

@@ -31,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
+#: pytest's USAGE error — what a missing plugin looks like.
+_PYTEST_USAGE_ERROR = 4
 
 #: A module may not fall below its floor. Anything not listed here must
 #: clear DEFAULT — a NEW module starts held to the same standard as the
@@ -95,17 +97,32 @@ def measure() -> dict[str, float]:
              f"--cov-report=json:{out}"],
             cwd=ROOT, check=False, capture_output=True, text=True,
             encoding="utf-8", errors="replace")
-        if not out.exists():
+        # Two ways to finish with no report, and they need opposite
+        # answers. Exit 4 is pytest's USAGE error, which is what a
+        # missing pytest-cov looks like ("unrecognized arguments:
+        # --cov") — telling that reader the suite is red sends them
+        # somewhere nothing is wrong. Any other non-zero exit with no
+        # report is a collection error or an abort: the plugin is fine
+        # and the run never got far enough to measure anything, and
+        # naming the plugin there is the same misdiagnosis in reverse.
+        if not out.exists() and done.returncode == _PYTEST_USAGE_ERROR:
             sys.exit("coverage produced no report; is pytest-cov installed? "
                      "(pip install -e .[dev])")
         if done.returncode:
+            # stderr as well as stdout: an internal error writes its
+            # traceback there, and dropping it left the reader the
+            # verdict with none of the evidence.
             tail = "\n".join(
-                ln for ln in (done.stdout or "").splitlines()
-                if ln.startswith("FAILED") or " passed" in ln
-                or " failed" in ln)
+                ln for ln in ((done.stdout or "") + (done.stderr or "")
+                              ).splitlines()
+                if ln.startswith(("FAILED", "ERROR", "INTERNALERROR"))
+                or " passed" in ln or " failed" in ln)
             sys.exit(f"the suite is RED (pytest exit {done.returncode}), so "
                      f"coverage from this run measures nothing. Fix the "
                      f"tests, then read the floors.\n{tail}")
+        if not out.exists():
+            sys.exit("coverage produced no report; is pytest-cov installed? "
+                     "(pip install -e .[dev])")
         data = json.loads(out.read_text(encoding="utf-8"))
     return {Path(name).name: info["summary"]["percent_covered"]
             for name, info in data["files"].items()}

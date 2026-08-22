@@ -2615,16 +2615,18 @@ def test_the_stale_guard_fires_when_the_live_hash_sorts_BELOW(project,
     the baseline. The content here is SEARCHED for, so the fixture
     cannot drift back onto the comfortable side."""
     import shutil
+
+    from docxkit import guard
     a = write(tmp_path / "a.docx", make_parts(para(run("one edit"))))
     b = write(tmp_path / "b.docx", make_parts(para(run("another edit"))))
     # COPIED, not rewritten: a docx carries the time it was zipped, so
     # writing the same content twice gives two different hashes and a
     # search for one that sorts below drifts with the clock. Two
     # candidates, sorted, copied byte for byte.
-    low, high = sorted([a, b], key=revision._sha)
+    low, high = sorted([a, b], key=guard.sha256)
     shutil.copy2(low, project.working)
     shutil.copy2(high, project.prev)
-    assert revision._sha(project.working) < revision._sha(project.prev)
+    assert guard.sha256(project.working) < guard.sha256(project.prev)
 
     write(project.batch, make_parts(para(run("the batch"))))
     before = project.working.read_bytes()

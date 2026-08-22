@@ -73,3 +73,26 @@ def test_a_MISSING_report_still_says_so_first(monkeypatch):
         coverage_floor.measure()
 
     assert re.search("pytest-cov", str(exc.value))
+
+
+def test_a_COLLECTION_error_is_not_diagnosed_as_a_missing_plugin(
+        monkeypatch):
+    """The other way to finish with no report. A collection error exits
+    2 and writes no cov.json, and the environment message then sent the
+    reader to install a plugin that is already there — the same
+    misdiagnosis the RED guard was added to kill, one exit code over."""
+    def run(cmd, **kw):
+        return subprocess.CompletedProcess(
+            cmd, 2, "", "ERROR tests/test_x.py - ImportError: no module foo")
+
+    monkeypatch.setattr(coverage_floor.subprocess, "run", run)
+
+    with pytest.raises(SystemExit) as exc:
+        coverage_floor.measure()
+
+    assert "pytest-cov" not in str(exc.value)
+    assert "the suite is RED (pytest exit 2)" in str(exc.value)
+    # …with the evidence, which lives on stderr for this kind of exit
+    assert "ImportError" in str(exc.value)
+
+

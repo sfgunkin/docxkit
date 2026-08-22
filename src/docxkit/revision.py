@@ -53,7 +53,6 @@ list, because each one is silent if you skip it:
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import shutil
 import tempfile
@@ -1589,7 +1588,7 @@ def promote(paper: Paper, batch: str | Path | None = None,
             f"{live.name} is open in Word. Close it first — a copy made "
             f"now would be overwritten the moment Word saves.")
 
-    live_hash, base_hash = _sha(live), _sha(base)
+    live_hash, base_hash = _guard.sha256(live), _guard.sha256(base)
     if live_hash != base_hash:
         raise StaleBatch(
             f"{live.name} no longer matches the baseline this batch was "
@@ -1620,13 +1619,13 @@ def promote(paper: Paper, batch: str | Path | None = None,
     paper.rescue_dir.mkdir(parents=True, exist_ok=True)
     rescue = rescue_path(paper)
     shutil.copy2(live, rescue)
-    if _sha(rescue) != _sha(live):
+    if _guard.sha256(rescue) != _guard.sha256(live):
         raise ProtocolError(
             f"the rescue copy did not land: {rescue} — refusing to "
             f"overwrite {live.name} with nothing to undo it")
 
     shutil.copyfile(batch, live)
-    if _sha(live) != _sha(batch):
+    if _guard.sha256(live) != _guard.sha256(batch):
         raise ProtocolError(f"the copy did not land: {live}")
 
     # only after the promote has landed: a prune that ran first could
@@ -1634,12 +1633,6 @@ def promote(paper: Paper, batch: str | Path | None = None,
     return PromoteReport(promoted=batch, onto=live, rescue=rescue,
                          pruned=tuple(prune_rescues(paper)))
 
-
-def _sha(path: str | Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-# ------------------------------------------------------------- baseline
 
 def baseline(paper: Paper, *, force: bool = False,
              accept_loss: tuple[str, ...] = (),
@@ -1883,7 +1876,7 @@ def init(root: str | Path, source: str | Path, *, name: str = "",
         log.write_text(_LOG_TEMPLATE.format(
             name=name or root.name,
             date=_today(),
-            digest=_sha(working)[:8].upper(),
+            digest=_guard.sha256(working)[:8].upper(),
         ), encoding="utf-8")
     return load_paper(root)
 

@@ -8,7 +8,8 @@ an empty paragraph).
     from docxkit import read_parts, write_docx, edit_in_place
     from docxkit.compare import compare, render      # multi-layer diff
     from docxkit.tracked import build                # redline deliverable
-    from docxkit.ingest import build_overrides       # author-edit round
+    from docxkit.ingest import build_part_overrides  # author-edit round
+    from docxkit.ingest import apply_part_overrides #   …and its writer
     from docxkit.crossrefs import link               # figure/table links
 
 Word automation lives in :mod:`docxkit.word` and is imported lazily, so the
