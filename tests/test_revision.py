@@ -634,6 +634,13 @@ def test_the_READ_ONLY_commands_snapshot_a_file_Word_holds(project,
     assert st.from_snapshot is True
     assert report.from_snapshot is True
     assert st.path == project.working, "the report names the REAL file"
+    # …and so does the one INSIDE the ingest report, which was built
+    # from the snapshot copy: it named a temp path already deleted by
+    # the time the caller saw it, and said from_snapshot=False inside a
+    # report whose own flag said True.
+    assert report.working_state.path == project.working
+    assert report.working_state.path.exists()
+    assert report.working_state.from_snapshot is True
     assert rev.state(project.prev).from_snapshot is False
 
 

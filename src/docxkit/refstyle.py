@@ -162,13 +162,22 @@ def _snippet(text: str, start: int, end: int, margin: int = 20) -> str:
     return " ".join(text[lo:hi].split())
 
 
-def check_prose(text: str, style: Style = HOUSE) -> list[Issue]:
+def check_prose(text: str, style: Style = HOUSE, *,
+                ignore: Collection[str] = ()) -> list[Issue]:
     """Style departures in one paragraph of body prose."""
-    return _check_prose(text, style, find_citations(text))
+    return _check_prose(text, style, find_citations(text), ignore=ignore)
 
 
 def _check_prose(text: str, style: Style, cites: list[Citation],
-                 known: Collection[str] = ()) -> list[Issue]:
+                 known: Collection[str] = (),
+                 ignore: Collection[str] = ()) -> list[Issue]:
+    # `ignore` is the paper's own list of words that are not authors,
+    # and it has to reach BOTH resolutions. `audit` passed it to its own
+    # `_resolve_lead` and not to this one, so `--ignore Surveys` cleared
+    # the missing-ref half of a finding and left the et-al half standing
+    # on the same phrase: "3 authors named in text — write 'Surveys et
+    # al.'", which no value of the flag could reach. The flag exists
+    # because the paper cannot clear it any other way.
     # audit() already holds the paragraph's citations for its
     # cross-check; taking them here keeps the grammar from running twice
     # on every paragraph of every document. It also holds the reference
@@ -178,7 +187,7 @@ def _check_prose(text: str, style: Style, cites: list[Citation],
     # has no such evidence, so check_prose can still say that.
     issues: list[Issue] = []
     for found in cites:
-        c = _resolve_lead(found, known=known)
+        c = _resolve_lead(found, known=known, ignore=ignore)
         cite = text[c.start:c.end]
         # A later work in a year group — "Sen (1985, 1992)" is two
         # citations and the second's span is "1992)" — shows no author
@@ -768,7 +777,8 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
         cites = _trust_the_links(
             text, find_citations(text),
             [lab for a, lab in internal_links(xml) if a in entry_anchors])
-        for issue in _check_prose(text, style, cites, listed):
+        for issue in _check_prose(text, style, cites, listed,
+                                  ignore=ignored):
             report.issues.append(replace(issue, where=where))
         if not cites and (m := _BARE_CITE_RE.fullmatch(text.strip())):
             cites = [Citation(authors=m.group(1), year=m.group(2),

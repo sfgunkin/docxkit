@@ -367,6 +367,28 @@ def test_ignored_leads_do_not_read_as_citations():
     assert not any(i.code == "missing-ref" for i in report.issues)
 
 
+def test_ignore_clears_the_ET_AL_half_of_the_same_finding():
+    """`--ignore` reached `audit`'s own `_resolve_lead` and not the one
+    inside `_check_prose`, so a paper could clear the missing-ref half
+    of a finding and be left with an et-al finding on the SAME phrase —
+    "3 authors named in text — write 'Surveys et al.'" — that no value
+    of the flag could reach. The flag exists because the paper cannot
+    clear it any other way."""
+    body = (para(run("Data from Regional Household Surveys and Cameron "
+                     "and Roodman (2019) are used."))
+            + para(run("References"))
+            + para(run("Cameron, A., and D. Roodman. (2019). “Bootstrap.” "),
+                   irun("Journal of Econometrics"), run(", 1(1): 1–2.")))
+    parts = make_parts(body)
+
+    plain = [i.code for i in audit(parts).issues]
+    assert "et-al" in plain
+
+    cleared = [i.code for i in
+               audit(parts, ignore={"Surveys"}).issues]
+    assert "et-al" not in cleared, cleared
+
+
 def test_two_entries_that_cite_alike_are_flagged():
     """Author-date's one rule with a name: 2013a, 2013b. Nothing asked for it,
     so applying «et al. from three authors» to DSI collapsed Foster,

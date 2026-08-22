@@ -242,9 +242,15 @@ def audit(*roots: Any) -> list[str]:
 
 
 def audit_parts(parts: dict[str, bytes]) -> list[str]:
-    """:func:`audit` over the text-bearing parts of a package."""
-    roots, _malformed = _roots(parts)
-    return audit(*roots)
+    """:func:`audit` over the text-bearing parts of a package.
+
+    The malformed-XML message is the answer here too, and dropping it
+    audited an EMPTY list of roots — "no duplicate bookmark names" for a
+    document that could not be read at all. `lint_parts` returns it, and
+    this is the half a caller can reach on its own.
+    """
+    roots, malformed = _roots(parts)
+    return malformed or audit(*roots)
 
 
 def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:

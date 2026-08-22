@@ -141,6 +141,18 @@ def test_malformed_xml_is_reported_not_raised():
     assert "not well-formed XML" in problems[0]
 
 
+def test_the_advisory_half_reports_the_parse_failure_too():
+    """`audit_parts` dropped the message and audited an EMPTY list of
+    roots: "no duplicate bookmark names" for a document that could not
+    be read at all. It is public API, and the duplicate-bookmark gate
+    is a caller that reaches it on its own."""
+    parts = make_parts(para(run("x")))
+    parts["word/document.xml"] = b"<w:document><w:body><w:p></w:document>"
+    problems = audit_parts(parts)
+    assert len(problems) == 1
+    assert "not well-formed XML" in problems[0]
+
+
 def test_several_problems_are_all_reported():
     body = ('<w:p><w:del w:id="9" w:author="A" w:date="d">'
             "<w:r><w:t>bad</w:t></w:r></w:del></w:p>"

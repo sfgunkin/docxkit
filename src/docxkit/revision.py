@@ -397,6 +397,20 @@ def state(path: str | Path) -> State:
     # says so rather than refusing (see `package.readable`).
     with package.readable(path) as (readable, snapshot):
         parts = package.read_parts(readable)
+    return _state(parts, path, snapshot)
+
+
+def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
+    """:func:`state` over parts already read.
+
+    The state a caller reports has to name the AUTHOR'S file. `ingest`
+    called `state(live)` with the snapshot copy it was reading from, so
+    the report came back pointing at
+    `<temp>/docxkit_snapshot_xxxx/working.docx` — deleted the moment
+    the context manager closed — and said `from_snapshot=False` inside a
+    report whose own flag said True. Two flags on one report, disagreeing
+    about the same fact.
+    """
     by_part: dict[str, int] = {}
     by_author: dict[str, int] = {}
     for name in TEXT_PARTS:
@@ -547,7 +561,9 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
         prev_parts = package.read_parts(prev)
         working_parts = package.read_parts(live)
         content = dict(_compare.compare(str(prev), str(live)))
-        working_state = state(live)
+    # Named for the author's file and built from the parts already read
+    # out of the snapshot: one read, and a path the caller can open.
+    working_state = _state(working_parts, working, snapshot)
     parts = package.changed_parts(prev_parts, working_parts)
     return IngestReport(
         lost=losses(working_parts, prev_parts),

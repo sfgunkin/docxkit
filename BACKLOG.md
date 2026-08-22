@@ -169,6 +169,34 @@ looked for was in a part of the package it never opened.
 
 ## Fixed
 
+### ~~S2 three wrong answers nothing was watching~~ — FIXED 22.08
+
+**`audit_parts` returned a false all-clear on a file it could not
+read.** `roots, _malformed = _roots(parts)` dropped the message and
+audited an EMPTY list of roots, so a package whose `document.xml` does
+not parse got "no duplicate bookmark names". `lint_parts` returns that
+message; the advisory half is public API and a caller reaches it on its
+own.
+
+**`refstyle --ignore` cleared only half of a finding.** `audit` passed
+the paper's not-an-author list to its own `_resolve_lead` and not to the
+one inside `_check_prose`, which had no `ignore` parameter at all. So
+"Data from Regional Household Surveys and Cameron and Roodman (2019)"
+cleared its missing-ref half and kept `et-al: 3 authors named in text —
+write "Surveys et al."` on the same phrase, which no value of the flag
+could reach. The flag exists because the paper cannot clear it any
+other way.
+
+**`ingest`'s own state report named a deleted temp file.** It called
+`state(live)` with the snapshot copy it was reading from, so
+`IngestReport.working_state.path` pointed inside
+`docxkit_snapshot_xxxx/`, already rmtree'd by the time the caller saw
+it, and carried `from_snapshot=False` inside a report whose own flag
+said True — two flags on one report disagreeing about the same fact.
+`_state(parts, path, snapshot)` builds the state from parts already
+read, so the report names the author's file and nothing is read twice.
+
+
 ### ~~S3 `docxkit lint` exited 1 on advisory findings, which is the gate the library split apart to avoid~~ — FIXED 22.08
 
 `lint.audit` exists because the duplicate-bookmark check "shipped
