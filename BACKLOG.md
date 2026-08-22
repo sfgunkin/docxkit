@@ -23,6 +23,31 @@ raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
 section held no live defect. Two records stay below because both are
 instructive: a retraction, and a Word behaviour worth not chasing twice.
 
+**Fifteen more closed on 2026-08-22, and not one came from a
+manuscript.** They came from a code review of the round just
+committed — the `REF` cross-reference work and the eight commits around
+it — every finding reproduced against the live tree before it was
+believed. Worth recording because the shapes were not the ones the
+papers turn up:
+
+* **five of the fifteen were the SAME change arriving somewhere it had
+  not been carried.** `internal_links` learned the third link form;
+  `crossrefs` still knew two, so `unlink` deleted bookmarks and left
+  the fields dangling. The loss gates learned it by accident and began
+  refusing every build, because Word re-mints those names. A change
+  that teaches one reader a new fact has to be walked to every other
+  reader of the same fact, and the walk is not optional when one of
+  them REFUSES a build.
+* **two were a rule stated in a docstring and not in the code.** `\h`
+  is what makes a REF a link — written down, not required. "Only Word's
+  own anchor confers reach" — written down, and then defeated by two
+  gaps sharing a key.
+* **two were a flag that only half worked**: `--ignore` reaching one of
+  two `_resolve_lead` calls, `--strict` absent where the exit code
+  needed it.
+
+The whole round is below under 22.08. The suite went 4588 → 4610.
+
 **Twenty-one closed on 2026-08-21**, in batches as the manuscripts
 turned them up — and the last four were raised by RETIRING the
 paper-side workarounds the earlier ones replaced, which is the round
