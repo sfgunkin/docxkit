@@ -117,6 +117,8 @@ file is the paper:
 ```
 docxkit revision init MANUSCRIPT.docx      # scaffold around it, in place
 docxkit revision status                    # truth or proposal? (1 pending, 4 stale)
+docxkit revision status --all              # every registered paper, one line each
+docxkit revision status --all --scan DIR   # find papers under DIR and add them
 docxkit revision doctor                    # who else in the repo selects a manuscript
 docxkit revision ingest [--check] [--json R.json]   # what the author changed
 docxkit revision build                     # clean edit -> redline, via Word Compare

@@ -157,3 +157,17 @@ def tracked_docx(tmp_path):
             + table(row("Country", "Dif."), row("Poland", "0.02")))
     return write(tmp_path / "tracked.docx",
                  make_parts(body, comment_items=(comment(1, "seed comment"),)))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_paper_registry(tmp_path_factory, monkeypatch):
+    """No test writes to the author's real paper registry.
+
+    `revision.init` registers the paper it scaffolds, and this file's
+    fixtures scaffold dozens. Without this the suite would append every
+    throwaway tmp_path project to `%LOCALAPPDATA%\\docxkit\\papers.txt`
+    — a machine-wide file, growing by a few dozen dead entries per run,
+    and `status --all` reporting them as papers that have gone missing.
+    """
+    registry = tmp_path_factory.mktemp("registry") / "papers.txt"
+    monkeypatch.setenv("DOCXKIT_PAPERS", str(registry))

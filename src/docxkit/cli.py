@@ -27,7 +27,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
 and the single-file revision protocol, which finds its own paths in
 ``revision/paper.toml`` and so takes almost no arguments::
 
-    docxkit revision status
+    docxkit revision status [--all] [--scan FOLDER]
     docxkit revision doctor
     docxkit revision ingest [--check] [--json R.json]
     docxkit revision build REVISED.docx [--out PATH] [--keep-math]
@@ -1028,6 +1028,72 @@ _SNAPSHOT_NOTE = (
     "typed since.")
 
 
+#: The verdict column, widest first so the rows line up, and ordered by
+#: what it costs to ignore: a proposal is somebody waiting on the author.
+_VERDICT_RANK = {"unreadable": 0, "missing": 1, "PROPOSAL": 2, "stale": 3,
+                 "truth": 4}
+
+
+def _survey_row(item: object) -> str:
+    from .revision import Survey
+    assert isinstance(item, Survey)
+    marks = []
+    if item.state is not None and not item.state.is_truth:
+        where = ", ".join(
+            f"{n} in {p.split('/')[-1].replace('.xml', '')}"
+            for p, n in item.state.by_part.items())
+        marks.append(f"{item.state.pending} pending ({where})")
+    if item.stale:
+        marks.append(f"baseline stale: {_summarize(list(item.stale))}")
+    if item.staged:
+        marks.append("batch staged in build/")
+    if item.locked:
+        marks.append("open in Word")
+    if item.error:
+        marks.append(item.error)
+    tail = f"   {' · '.join(marks)}" if marks else ""
+    # Say that it truncated. "Coercion or Persuasion? Dete" reads as a
+    # name someone typed badly; the ellipsis says the row is short, not
+    # the paper.
+    name = item.name if len(item.name) <= 32 else item.name[:31] + "…"
+    return f"  {item.verdict:<9} {name:<33}{tail}"
+
+
+def cmd_revision_survey(args: argparse.Namespace) -> int:
+    """Every registered paper in one view — `status --all`.
+
+    The protocol is single-paper by design, and with nine papers on it
+    the question an author actually has is which of them is waiting.
+    Nine `status` invocations was the previous answer.
+
+    Exit code is the worst state found, on the same scale one paper
+    uses: 1 if anything is a proposal, 4 if a settled paper's baseline
+    has drifted, 0 when every paper is truth on a current baseline. A
+    row that could not be read exits 2 — it is neither of the states
+    the protocol has, and reporting it as truth would be a lie.
+    """
+    from .revision import registered, registry_path, scan, survey
+    for root in args.scan or []:
+        found = scan(root)
+        print(f"scanned {root}: {len(found)} paper(s)")
+    configs = registered()
+    if not configs:
+        print(f"no papers registered yet ({registry_path()}).\n"
+              f"`docxkit revision status --all --scan <FOLDER>` walks a "
+              f"folder and adds what it finds;\n`revision init` registers "
+              f"a new paper by itself.")
+        return 0
+    rows = survey(configs)
+    rows.sort(key=lambda r: (_VERDICT_RANK.get(r.verdict, 9), r.name.lower()))
+    for row in rows:
+        print(_survey_row(row))
+    worst = min((_VERDICT_RANK.get(r.verdict, 9) for r in rows), default=4)
+    print(f"\n  {len(rows)} paper(s) · {registry_path()}")
+    if worst <= 1:
+        return 2
+    return {2: 1, 3: 4}.get(worst, 0)
+
+
 def cmd_revision_status(args: argparse.Namespace) -> int:
     """Truth or proposal? The one question the layout answers by itself.
 
@@ -1037,6 +1103,8 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     batch on a stale base is refused by `promote` only after a Word
     Compare has been paid for.
     """
+    if getattr(args, "all", False) or getattr(args, "scan", None):
+        return cmd_revision_survey(args)
     from .revision import drift, state
     paper = _paper(args)
     print(f"{paper.name}\n  {paper.working}")
@@ -1706,8 +1774,13 @@ def main() -> None:
         r.set_defaults(fn=fn)
         return r
 
-    _rev("status", cmd_revision_status,
-         "truth or proposal? (exit 1 pending, 4 stale baseline)")
+    r = _rev("status", cmd_revision_status,
+             "truth or proposal? (exit 1 pending, 4 stale baseline)")
+    r.add_argument("--all", action="store_true",
+                   help="survey every registered paper instead of one")
+    r.add_argument("--scan", metavar="FOLDER", action="append",
+                   help="walk FOLDER for paper.toml, register what is "
+                        "found, then survey (repeatable)")
 
     r = _rev("doctor", cmd_revision_doctor,
              "who else in the repo selects a manuscript (exit 2 on a finding)")

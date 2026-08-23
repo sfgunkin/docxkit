@@ -518,6 +518,60 @@ reach it:
 
 ## Fixed
 
+### ~~S4 the protocol is single-paper and the author has nine, so "which of them is waiting on me?" had no answer~~ — FIXED 23.08
+
+Found 2026-08-23 in the protocol review, from the author's own framing:
+*"I work on several papers at the same time."* Not a defect — a capability
+that was never there, which is the shape trigger 4 of the recording rule
+exists for.
+
+**The gap.** Every command takes one `--paper`, correctly: doing work on a
+manuscript is a single-paper act. Deciding WHICH manuscript to work on is
+not, and there was no view for it. The answer was nine invocations of
+`status`, which means the question was not asked — so a proposal could sit
+unadjudicated in a paper nobody had opened for a week, and `prev.docx` could
+go stale behind it with the same silence.
+
+**What landed.** `docxkit revision status --all`: one line per paper, worst
+first, exit code on the same scale one paper uses (1 pending, 4 stale
+baseline, 2 a row that could not be read, 0 all settled).
+
+Measured on the author's nine papers: **1.6 s for all nine**, and it found
+two things on the first run that no per-paper command had been asked —
+`Health Capacity to Work` carrying 9,149 pending revisions, and `AFI` on a
+baseline three parts stale with a batch still staged in `build/`.
+
+* A registry at `%LOCALAPPDATA%\docxkit\papers.txt` (`DOCXKIT_PAPERS`
+  overrides it), plain text, one `paper.toml` per line, `#` comments a
+  finished paper out. `init` registers what it scaffolds — the list has to
+  fill itself, because a registry that must be curated by hand is accurate
+  on the day it is written. `--scan FOLDER` walks a root and adds what it
+  finds, bounded to four levels: the roots these live under are cloud
+  folders and an unbounded walk of one took over two minutes.
+* No read-only command writes to it. A `status` with a machine-wide side
+  effect would be a read command that edits state — including inside anyone
+  else's test suite, which is also why `DOCXKIT_PAPERS` exists and why
+  `conftest` points it at a tmp path for the whole run.
+* A path that no longer resolves is KEPT and reported, never pruned: a
+  project on a disconnected drive is not a project that has been retired.
+* **No row can kill the survey.** A config that will not parse, a manuscript
+  that has been deleted, a package Word is part-way through saving — each
+  comes back as a row with its error, because the eight healthy papers are
+  the point. "unreadable" and "missing" are kept apart: one is a file this
+  tool could not parse, the other is a file that is not where the paper says
+  it is.
+* It also reports what `status` structurally cannot: a batch sitting staged
+  in `build/`, which is not a state of the manuscript and is exactly the
+  thing forgotten between sessions. Three of the nine had one.
+
+Two bugs in it were caught by its own tests before it shipped: a deleted
+manuscript reported as "unreadable" (the word for a config that will not
+parse), and a broken row labelled `revision` — `config.parent` is the
+FOLDER, so the one row that most needs to name its paper named the layout
+instead.
+
+`tests/test_revision_survey.py`, 21 tests.
+
 ### ~~S1 `revision init --force` REWRITES `paper.toml` from the template, and resets the log and the baseline with it~~ — FIXED 23.08
 
 Found 2026-08-23 while reviewing the protocol at the author's request, not

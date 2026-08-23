@@ -63,6 +63,7 @@ VALUES = [
     "revision.PromoteReport",
     "revision.Relabelled",
     "revision.State",
+    "revision.Survey",          # one paper's row in the all-papers view
     "revisions.Revision",
     "styles.Resolved",
     "styles.Style",
