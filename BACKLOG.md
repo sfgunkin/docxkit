@@ -74,62 +74,96 @@ contains a backslash.
 
 ---
 
-### S1 — the protocol kept no copy of the REDLINE, so an accepted batch became invisible everywhere — FIX IN THE WORKING TREE, uncommitted
+### Not three defects — one missing gate: nothing renders by default
 
-Found on Aging_Well, 2026-08-23, by the author: *"I do not see track changes
-in working.docx; this seems to be a systemic problem. Other papers also lost
-track changes."*
+Framing, not a defect of its own. Recorded because three entries in this file
+now share a shape, and the shape is the finding:
 
-**Measured, not suspected.** Across all eight papers carrying
-`revision/paper.toml`, every `working.docx` **and every rescue copy in every
-one of them** holds 0 insertions and 0 deletions. The only tracked artifacts
-alive anywhere are ones that escaped deletion by accident —
-`Parental_style/revision/build/batch.docx` (7 ins / 7 del),
-`Loneliness Index/revision/build/LI7_tracked_prerepair.docx` (1207 / 782),
-`AFI/revision/build/batch.docx` (0 / 2).
+* **spacing dropped** — `\qquad`, `\hspace`, `\;` vanish in conversion (S1);
+* **operator names italic** — `\max`, `\min`, `\lim` (S1);
+* **the prime downgraded** — U+2032 to an apostrophe on the accept path (S4,
+  and that one at least REFUSES rather than shipping).
 
-**The mechanism.** `build` writes the redline to `build/batch.docx`. `promote`
-copies it onto `working.docx` and rescues the file it is REPLACING — which is
-clean, because a completed cycle ends with an accept. The author accepts, and
-the markup leaves `working.docx`. The protocol then said to delete
-`batch.docx`. So after any completed cycle the markup exists nowhere, and the
-rescue ladder cannot help: it is a clean-generation ladder by construction.
+Every one of them produces valid OMML. `equations()` counts them correctly,
+`math --check` reports clean, `lint` is clean, `to_latex` round-trips the
+structure, the `m:oMath` totals are right, and `compare`'s text layer sees
+nothing because no character moved. **The only instrument that detects any of
+them is a person looking at a rendered page**, and nothing in the ladder
+renders.
 
-**Why S1 and not S2.** Nothing reports it. Every gate passes, `status` says
-TRUTH, `losses` is empty, `compare` between generations is clean — and the
-question "what did that batch change?" has no answer left in the package. The
-protocol's own promise is that `working.docx` is *"tracked when proposed"*;
-after the accept there is no artifact that was ever tracked.
+The method exists and is written down — export the PDF through Word, which
+keeps maths where LibreOffice does not, then rasterise and read it. It is in
+the house notes as `verify_omml_word_pdf`. It is in nobody's gate list.
 
-**Rebuilding is not a substitute.** Word Compare over two clean generations
-reproduces a word-only batch (done here for R15 and R16, both passing the full
-ladder). It CANNOT reproduce a span that crosses an untracked apparatus pass:
-`tracked.build` refuses with `rejected: bookmarkStart 132 -> 142`, because
-Compare will not serialize a bookmark insertion. A cumulative redline across an
-apparatus pass is readable and not adjudicable.
+So the useful fix here is probably not three patches. It is a render step
+cheap enough to sit in `revision validate`, or in a paper's `[verify]` block,
+for any manuscript that carries maths — something that renders the pages an
+equation lands on and puts them where a human will actually look. Each of the
+three would have been caught on the first run.
 
-**Fix, written and tested, NOT committed.** `Paper.redline_dir`
-(`build/redlines/`), `redline_path`, and a copy in `promote` that lands and is
-hash-verified BEFORE `working.docx` is overwritten — a redline that did not
-land refuses the promote, on the same reasoning as the rescue that did not
-land. `PromoteReport.redline` and a CLI line. **Redlines are never pruned**:
-`prune_rescues` does not look in that folder, and thinning an audit trail
-recreates the gap it closes. Five tests in `tests/test_revision.py`, all
-verified to fail with the retention block removed.
+Found across Aging_Well's R20 and R21, 2026-08-23/24, which gave that paper
+its first mathematics: all three defects, all three found by reading the page,
+none by any command.
 
-**Why it is not committed.** `src/docxkit/cli.py` and `src/docxkit/revision.py`
-already carried a large uncommitted refactor of `revision init` when this was
-written — adopting the author's manuscript in place instead of copying it to
-`working.docx` (`--working PATH`, the "is not inside" check at
-`revision.py:2003`). That work is unfinished: **16 tests fail against it** on
-the committed tree's own suite, all of them path-resolution tests it has not
-updated. Committing would bundle the two. The suite is otherwise green — 4663
-passed — and none of the 16 touches `promote`, `PromoteReport` or the redline.
-Commit this once the `init` refactor lands or is stashed.
+---
 
-**Per-paper workaround to retire when it commits:**
-`Aging_Well/revision/scripts/rebuild_redlines.py`, the one-off backfill for
-R15 and R16.
+### S1 — `\max`, `\min` and `\lim` come out ITALIC, so an optimization problem renders as three variables
+
+Found on Aging_Well, 2026-08-24, reading the rendered page of the batch that
+gave that paper its first mathematics. Equation (5) is a planner problem and
+its `max` is set as three italic letters, `𝑚𝑎𝑥`, rather than as an upright
+operator name.
+
+**Measured across seven operators**, by counting `<m:sty m:val="p"/>` in the
+converted OMML:
+
+| written | upright? |
+|---|---|
+| `\log x`, `\log_{2} x`, `\exp x` | yes |
+| `\max x`, `\max_{x} y` | **no** |
+| `\min x` | **no** |
+| `\lim_{x} y` | **no** |
+
+`\operatorname{max}` does not help — same result.
+
+**The root cause is upstream and docxkit is the seam.** latex2mathml emits
+different MathML for the two families:
+
+```
+\log x -> <mrow><mi>log</mi><mi>x</mi></mrow>
+\max x -> <mrow><mo>max</mo><mi>x</mi></mrow>
+```
+
+`MML2OMML.XSL` marks a multi-character `<mi>` upright and leaves `<mo>`
+alone, so the operator family loses its styling. Nothing downstream of
+`latex_to_omml` can tell that `max` was meant as a name rather than as the
+product of three variables.
+
+**Why S1, by the same reasoning as the spacing entry above.** The output is
+valid OMML, `equations()` counts it, `math --check` reports it clean, and
+`to_latex` round-trips it. Only a render shows it, and nothing renders by
+default. And the operators it misses are exactly the ones an economics paper
+reaches for: a constrained optimization is written with `\max`, its
+comparative statics with `\lim`.
+
+**Fix shape, and the two candidates are not equivalent.** Either rewrite
+`<mo>` to `<mi>` for the operator names OMML wants upright, before the
+transform; or post-process the OMML to add `<m:sty m:val="p"/>` to a run whose
+text is a known operator name.
+
+**Prefer the second, and measure both against a render before choosing**
+(ezhik-82's point, and it is a good one): `<mo>` and `<mi>` are LAID OUT
+differently, so swapping the element to fix the face may move the gaps around
+it — which would be the spacing defect above, reintroduced by the fix for this
+one. The OMML post-process changes the face and nothing else.
+
+A test that fails without it can assert on the `m:sty` stream, which is
+cheaper than a render and is what the measurement above already does. A test
+for the fix's SIDE EFFECT cannot be, and has to be a render.
+
+**Workaround:** none in use. Aging_Well ships equation (5) with an italic
+`max` and the defect is recorded in its `revision/log.md` as the first item
+for the next round.
 
 ---
 
@@ -634,7 +668,7 @@ reach it:
 
 ---
 
-### S2 — `latex_to_omml` DROPS every LaTeX spacing command, silently
+### S1 — `latex_to_omml` DROPS every LaTeX spacing command, silently
 
 Found on Aging_Well, 2026-08-23, building the paper's first mathematics
 (R20).
@@ -650,7 +684,10 @@ latex2mathml → `MML2OMML.XSL`. Measured, five candidates:
 | `a > 0 \text{\ \ \ \ } b < 0` | four spaces, each preceded by a literal backslash |
 | `a > 0 \mathrm{~~~~} b < 0` | four U+00A0 in their own maths run — clean |
 
-**Why S2.** The output is valid OMML, `equations()` counts it correctly,
+**Why S1, on ezhik-82's argument rather than my first call of S2.** The
+defect is a silent wrong answer *in the output medium*: nothing but a render
+can see it, and nothing renders by default. The output is valid OMML,
+`equations()` counts it correctly,
 `m:oMath` totals are right, `math --check` reports it clean and
 `to_latex` round-trips the structure. Nothing sees it. What it looks like
 on the page is a definition and its sign conditions run together —
@@ -736,7 +773,250 @@ run when nobody is working on the paper is a list that gets run less.
 read-only commands, with the same banner so nobody mistakes a snapshot
 for the live file. `--write` paths must keep refusing.
 
+### S4 — `crossrefs --labels` REPLACES the default labels, so a narrowed run prints a clean report about the exhibits it did not look at
+
+Found 2026-08-23 by the other session, on a paper tonight, and passed to me
+because the flag is mine (21.08). It filed the finding in that paper's config
+as a gotcha; recording it here as well, because a note in one paper's config
+is invisible to the next paper — and this is the shape this file already has
+a name for, a number that cannot tell two states apart.
+
+**Measured on one manuscript**, three runs, three clean reports:
+
+```
+docxkit crossrefs PAPER.docx --audit                  ->  4 linked
+docxkit crossrefs PAPER.docx --audit --labels Box     ->  2 linked
+docxkit crossrefs PAPER.docx --audit --labels Figure,Table,Box  ->  6 linked
+```
+
+Six is the real number. The first run missed the Boxes because `Box` is not
+in the defaults; the second missed the Figures and Tables because naming one
+label REPLACED the defaults rather than adding to them. Neither said so.
+
+**Why S4 and not S2.** Replacement is a defensible reading of `--labels` —
+"these are the labels this paper uses" — and the flag's own help spells the
+full form (`Figure,Table,Box`). The defect is not the semantics, it is the
+SILENCE: a run that examined one of three exhibit kinds prints the same shape
+of clean report as a run that examined all three, and `unlinked 0` reads as
+"nothing is unlinked" rather than "nothing I looked at".
+
+**Shape of a fix.** Say what was examined, always — `4 linked · labels:
+Figure, Table` — so a narrowed run is legible as narrowed. Optionally warn
+when the document contains caption-shaped paragraphs whose label is NOT in
+the set being audited: that is the case where the reader wanted the default
+and got a subset, and the document already knows.
+
+**Workaround in use:** name every label the paper uses, every time; the
+paper's config records which ones those are.
+
+---
+
+### S4 — the math-glyph refusal quotes both strings and never says WHICH CHARACTER differs, which is the one thing a reader cannot see
+
+Found 2026-08-24 by the other session, diagnosing a real build refusal on a
+paper with `\kappa'(a)` in it. Recorded here rather than in that paper
+because the message is `revision`'s, not the paper's.
+
+**Symptom as observed.** `revision build`'s accept-check refuses and prints
+
+```
+equation 26: '…=λκ′(a)' in the clean copy, "…=λκ'(a)" accepted
+```
+
+which is the right pair of strings and genuinely useful — it is how the
+U+2032 gap in `MATH_DOWNGRADES` was found at all. What it does not say is
+that the difference is `′` U+2032 PRIME against `'` U+0027 APOSTROPHE. At a
+terminal's font size those two glyphs are near-identical, and the reader is
+being asked to spot the difference by eye between two quoted strings that
+look the same. **Twenty minutes to diagnose what a codepoint would have
+answered in ten seconds.**
+
+**Why it is worth an entry despite being ergonomics.** This is the class of
+message a person only reads while already stuck, and the whole value of
+quoting both forms is defeated if the difference is invisible in the medium
+the message is printed to. The refusal is otherwise well built — it names the
+equation, both views, and the reason — so the fix is one line of it.
+
+**Shape of a fix.** On the first differing position, append the codepoints:
+
+```
+equation 26: differs at char 5 — '′' U+2032 vs "'" U+0027
+```
+
+`glyph_runs` already walks both strings to build the quoted pair, so the
+index is in hand; `unicodedata.name` gives the rest. Worth doing for every
+glyph refusal in the module, not just this one — the minus/hyphen pair
+(U+2212 vs U+002D) has exactly the same problem and is the one this toolkit
+hits most.
+
+---
+
 ## Fixed
+
+### ~~Twelve from a code review of the round just committed~~ — FIXED 24.08
+
+`/code-review max src/docxkit/revision.py`, run against the four commits of
+2026-08-23 (`00dd491`, `d58c318`, `409d68b`, `ae3605b`). Fifteen findings:
+twelve mine, fixed here; three in the other session's redline retention,
+passed to it. Every one reproduced against the live tree before it was
+believed, and the suite was GREEN throughout — so every finding below is a
+gap no test covered.
+
+**Worth recording about the review itself:** the ten finder agents it
+spawned never returned, and the orchestrator stalled for 600s waiting on
+them before the watchdog killed it. Resumed with "collect whatever they have
+and report it, do not start over", it produced all fifteen from its own
+context in 100 seconds, each verified by EXECUTING the code rather than
+reading it. The fan-out contributed nothing; the verification did.
+
+**S1 — `run_gates`' timeout bounded nothing.** With `shell=True` the gate is
+a GRANDCHILD (cmd.exe is the child), so the kill on timeout reaches the
+shell and the surviving grandchild holds the pipes open, blocking
+`subprocess.run`'s cleanup. Measured: `timeout=1` against a 20-second sleep
+returned after **20.08s**; the same call without a shell returns in 1.03s.
+The docstring promised the opposite — "a timeout reports as code -1 rather
+than blocking a ladder that exists to be run before every hand-back" — and
+`test_a_gate_that_HANGS_is_a_gate_that_fails` certified it while taking
+30.09s, because it asserted the exit code and never the clock. Fixed with
+`Popen` + a drain thread + a process-TREE kill (`taskkill /T` on Windows,
+`killpg` on POSIX). The test now asserts elapsed time, and that one file
+went from **32s to 6s**.
+
+**S2 — `Verdict.links` was a net TOTAL**, which violates the invariant in
+`_links`' own docstring one screen away: *"Counted as a MULTISET of pairs,
+not as a total … a total hides a swap"*. It hid one. A round that keeps
+Lari's link, drops Deaton's to plain text and adds Sen's reported `links=0`
+and printed nothing, while `_link_changes` in the same module named the lost
+one correctly — the Parental Style T4(3) class, 227 against 229, which this
+module exists to catch. `Verdict.bookmarks` had the same shape as a set
+LENGTH delta, so a bibliography re-key (N anchors out, N others in) read as
+zero. Both are `(added, lost)` pairs now.
+
+**S2 — `VERDICT: PASS` on a run that exited 5.** The line printed before
+`_paper_gates` ran. Captured live: `VERDICT: PASS` … `1 of 1 of the paper's
+gates failed.` … exit 5. Both the log template and the README treat that
+line as the answer. It prints last now and reflects both halves; the string
+is unchanged, so anything grepping it keeps working and is no longer lied
+to.
+
+**S2 — two abort paths said nothing about the gates.** `_skipped_gates`
+exists so that silence after `--run-gates` cannot read as "they ran and were
+fine", and it missed the FIRST abort in the function (batch built on another
+baseline, a bare `return 2`) and `ship`'s build failure. Its docstring
+enumerated two paths when there were four.
+
+**S4 — the timeout handler threw away what the gate had printed**, replacing
+`exc.output` with the literal "no output within Ns". A pytest gate wedged on
+test 340 of 500 names that test in the lines before it hangs. Kept now.
+
+**S4 — `except OSError  # a command that is not there` never fires** under a
+shell: a missing command returns 1 on Windows and raises nothing. The case
+it DID catch is a missing cwd, which it labelled 127 "command not found" —
+sending the author after a missing tool when the project root had moved or
+its drive was offline. Now checked up front and reported as 126 with the
+real reason.
+
+**S4 — `--gate-timeout 0`** made every gate report `[TIMED OUT] 0.0s`
+without running and exited 5, under the near-universal convention that 0
+means "no timeout". Refused now, with a message saying why there is no such
+setting.
+
+**S4 — the heartbeat arrived after the wait.** `progress` was wired in the
+engine and never passed, so a 12-minute pytest gate showed an empty terminal
+for twelve minutes under a 900s timeout — indistinguishable from the hang
+that (per the S1 above) would not have timed out either. Passing it was not
+enough: `run_gates` returned a LIST, so every gate was announced up front
+and every verdict arrived together at the end. It streams now, and the
+announce/run/report cycle interleaves. **The generator has a footgun and the
+suite found it within a minute** — `run_gates(paper)` with the result
+discarded runs nothing, which is how `test_gates_run_in_the_ORDER…` first
+failed. Documented, and the call sites take `list(...)`.
+
+**S4 — `verdict()` read `prev.docx` twice** (`compare` on paths unzips both
+again) and walked both documents four more times for two integers that, per
+the entry above, were wrong anyway. One read each now, through
+`compare_docs(load_parts(...), load_parts(...))`.
+
+**S4 — `apparatus_only` silently required `batch is None`**, undocumented,
+so a linking pass run in place while a valid batch sat unpromoted was
+reported as an adjudication of a batch nobody acted on. The condition is
+real and stays; it is written down now.
+
+**Doc — the module header said "There is no separate redline file"**, which
+the other session's redline retention made false the same day.
+
+### One the review MISSED, found by probing while it ran
+
+`verdict`'s paragraph multiset asked *is this text in the document* rather
+than *is it where the batch put it*. When a proposed paragraph's text
+already appeared elsewhere, a batch reported `1 of 2 kept as proposed` BOTH
+when the author accepted everything and when they rejected everything — a
+wrong verdict written permanently into the paper's log. **Table cells make
+this ordinary rather than exotic**: `_para_counts` walks every paragraph,
+and "0.00" or a repeated country name is a paragraph. Fixed by subtracting
+the context — the paragraphs both views share — before asking which version
+survived. Fifteen review angles did not find it; a five-minute probe with
+three synthetic cases did.
+
+### ~~S1 the protocol kept no copy of the REDLINE, so an accepted batch became invisible everywhere~~ — FIXED 23.08, `1c74e08`
+
+Found on Aging_Well, 2026-08-23, by the author: *"I do not see track changes
+in working.docx; this seems to be a systemic problem. Other papers also lost
+track changes."*
+
+**Measured, not suspected.** Across all eight papers carrying
+`revision/paper.toml`, every `working.docx` **and every rescue copy in every
+one of them** holds 0 insertions and 0 deletions. The only tracked artifacts
+alive anywhere are ones that escaped deletion by accident —
+`Parental_style/revision/build/batch.docx` (7 ins / 7 del),
+`Loneliness Index/revision/build/LI7_tracked_prerepair.docx` (1207 / 782),
+`AFI/revision/build/batch.docx` (0 / 2).
+
+**The mechanism.** `build` writes the redline to `build/batch.docx`. `promote`
+copies it onto `working.docx` and rescues the file it is REPLACING — which is
+clean, because a completed cycle ends with an accept. The author accepts, and
+the markup leaves `working.docx`. The protocol then said to delete
+`batch.docx`. So after any completed cycle the markup exists nowhere, and the
+rescue ladder cannot help: it is a clean-generation ladder by construction.
+
+**Why S1 and not S2.** Nothing reports it. Every gate passes, `status` says
+TRUTH, `losses` is empty, `compare` between generations is clean — and the
+question "what did that batch change?" has no answer left in the package. The
+protocol's own promise is that `working.docx` is *"tracked when proposed"*;
+after the accept there is no artifact that was ever tracked.
+
+**Rebuilding is not a substitute.** Word Compare over two clean generations
+reproduces a word-only batch (done here for R15 and R16, both passing the full
+ladder). It CANNOT reproduce a span that crosses an untracked apparatus pass:
+`tracked.build` refuses with `rejected: bookmarkStart 132 -> 142`, because
+Compare will not serialize a bookmark insertion. A cumulative redline across an
+apparatus pass is readable and not adjudicable.
+
+**Fix, committed as `1c74e08`.** `Paper.redline_dir`
+(`build/redlines/`), `redline_path`, and a copy in `promote` that lands and is
+hash-verified BEFORE `working.docx` is overwritten — a redline that did not
+land refuses the promote, on the same reasoning as the rescue that did not
+land. `PromoteReport.redline` and a CLI line. **Redlines are never pruned**:
+`prune_rescues` does not look in that folder, and thinning an audit trail
+recreates the gap it closes. Five tests in `tests/test_revision.py`, all
+verified to fail with the retention block removed.
+
+**Why it sat uncommitted for a day.** `src/docxkit/cli.py` and `src/docxkit/revision.py`
+already carried a large uncommitted refactor of `revision init` when this was
+written — adopting the author's manuscript in place instead of copying it to
+`working.docx` (`--working PATH`, the "is not inside" check at
+`revision.py:2003`). That work is unfinished: **16 tests fail against it** on
+the committed tree's own suite, all of them path-resolution tests it has not
+updated. Committing would bundle the two. The suite is otherwise green — 4663
+passed — and none of the 16 touches `promote`, `PromoteReport` or the redline.
+That refactor landed as `00dd491`; the two were then committed separately, split by identifier and verified by checking the INDEX out into a temp tree rather than trusting the working tree.
+
+**Per-paper workaround to retire when it commits:**
+`Aging_Well/revision/scripts/rebuild_redlines.py`, the one-off backfill for
+R15 and R16.
+
+---
+
 
 ### ~~S2 an untracked apparatus pass changed the manuscript and left no record of what it did~~ — FIXED 23.08
 

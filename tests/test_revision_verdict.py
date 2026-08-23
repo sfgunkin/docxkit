@@ -149,6 +149,38 @@ def test_an_UNSTAMPED_batch_answers_cannot_tell(cycle):
     assert result.batch is None
 
 
+def test_text_that_ALREADY_EXISTS_elsewhere_does_not_fake_a_verdict(
+        tmp_path):
+    """The multiset asks "is this text in the document", and the
+    question is "is it where the batch put it".
+
+    Found by probing rather than by review. A batch proposing text that
+    already appears elsewhere reported "1 of 2 kept as proposed" BOTH
+    when the author accepted everything and when they rejected
+    everything — a wrong verdict, written permanently into the paper's
+    log. Table cells make this ordinary rather than exotic: "0.00" and
+    a repeated country name are paragraphs too.
+    """
+    dup = "a sentence that appears twice"
+    root = tmp_path / "P"
+    root.mkdir()
+    src = write(root / "P.docx",
+                make_parts(para(run("old")) + para(run(dup))))
+    paper = revision.init(root, src)
+    paper.batch.parent.mkdir(parents=True, exist_ok=True)
+    write(paper.batch, make_parts(
+        para(dele("old"), ins(dup)) + para(run(dup))))
+    from docxkit import guard
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    # the author rejected: the manuscript still reads "old"
+    write(paper.working, make_parts(para(run("old")) + para(run(dup))))
+
+    result = verdict(paper)
+
+    assert (result.kept, result.reverted) == (0, 1), result
+    assert result.outcome == "rejected in full"
+
+
 def test_the_verdict_reports_what_MOVED_as_well(cycle):
     _adjudicated(cycle, para(run("the new sentence"))
                  + para(run("an untouched paragraph")))
@@ -201,7 +233,7 @@ def test_a_pass_that_adds_LINKS_and_BOOKMARKS_is_named_as_one(tmp_path):
     result = verdict(paper)
 
     assert result.changed == 0, "the pass changed no visible word"
-    assert result.links == 1 and result.bookmarks == 1
+    assert result.links == (1, 0) and result.bookmarks == (1, 0)
     assert result.apparatus_only
     assert result.outcome == "untracked apparatus pass (nothing to adjudicate)"
     assert "+1 link" in result.summary()
@@ -221,8 +253,53 @@ def test_an_apparatus_pass_that_LOSES_a_link_says_so(tmp_path):
 
     result = verdict(paper)
 
-    assert result.links == -1
+    assert result.links == (0, 1)
     assert "-1 link" in result.summary()
+
+
+def test_a_link_SWAP_is_two_facts_and_not_a_net_zero(tmp_path):
+    """`_links`' own docstring: "a total hides a swap". It hid one.
+
+    A round that keeps one link, drops another to plain text and adds a
+    third reported `links=0` and printed nothing about links at all,
+    while `_link_changes` in the same module named the lost one
+    correctly. That is the class this module was built for — Parental
+    Style T4(3), 227 against 229.
+    """
+    root = tmp_path / "P"
+    root.mkdir()
+    src = write(root / "P.docx", make_parts(
+        para(run("As "), _linked("Lari2023", "Lari (2023)"))
+        + para(run("and "), _linked("Deaton2019", "Deaton (2019)"))))
+    paper = revision.init(root, src)
+    write(paper.working, make_parts(
+        para(run("As "), _linked("Lari2023", "Lari (2023)"))
+        + para(run("and Deaton (2019)"))
+        + para(run("see "), _linked("Sen2020", "Sen (2020)"))))
+
+    result = verdict(paper)
+
+    assert result.links == (1, 1), "one added, one lost — not zero"
+    assert "+1 link" in result.summary() and "-1 link" in result.summary()
+
+
+def test_a_bookmark_REKEY_is_not_zero_change(tmp_path):
+    """Same shape one layer down: re-keying a bibliography removes N
+    anchors and adds N others, and `len(a) - len(b)` is zero for it. An
+    apparatus pass that re-keys and changes no visible word has to be
+    reported, because nothing else can see it."""
+    root = tmp_path / "P"
+    root.mkdir()
+    src = write(root / "P.docx", make_parts(
+        para(run("As "), _linked("Lari2023", "Lari (2023)"))))
+    paper = revision.init(root, src)
+    write(paper.working, make_parts(
+        para(run("As "), _linked("lari_2023", "Lari (2023)"))))
+
+    result = verdict(paper)
+
+    assert result.bookmarks == (1, 1), "one anchor gone, one arrived"
+    assert result.apparatus_only, "no visible word changed"
 
 
 def test_the_apparatus_is_NOT_the_headline_when_words_moved_too(cycle):

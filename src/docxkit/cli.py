@@ -1280,7 +1280,10 @@ def cmd_revision_ship(args: argparse.Namespace) -> int:
     from .word import shared_session
     with shared_session():
         if (code := cmd_revision_build(args)) != 0:
-            return code
+            # Third abort path, and the reason `_skipped_gates` is
+            # called from each return rather than from one exit: every
+            # new one has to remember. `ship` takes --run-gates too.
+            return _skipped_gates(args, code)
         print()
         args.batch = str(Path(args.out) if args.out else _paper(args).batch)
         args.baseline = None
@@ -1308,14 +1311,41 @@ def _say_glyphs(report: object) -> None:
               "does not.")
 
 
+def _seconds(text: str) -> float:
+    """A positive timeout. 0 is refused rather than taken literally.
+
+    Under the near-universal convention that 0 means "no timeout", a
+    caller typing `--gate-timeout 0` got the opposite: `subprocess`
+    raises `TimeoutExpired` immediately, so every gate reported
+    `[TIMED OUT] 0.0s` without running and a clean manuscript exited 5.
+    """
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: expected a number of seconds") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError(
+            f"{text}: a gate timeout must be positive. There is no "
+            f"'no timeout' setting — a gate that cannot be bounded can "
+            f"stop a hand-back, which is what the bound is for.")
+    return value
+
+
 def _skipped_gates(args: argparse.Namespace, code: int) -> int:
     """Say that `--run-gates` did not get to run them.
 
-    The ladder aborts before Word on a lint failure, and on a batch Word
-    cannot open. Neither is a reason to run the paper's own checks — the
-    thing under test is unshippable either way — but silence after a
-    flag was passed reads as "they ran and were fine", which is the one
-    thing it must not read as.
+    Four paths reach it: a batch built on another baseline (the FIRST
+    abort, and the one this function was written for and did not
+    cover), a lint failure, a batch Word cannot open, and a `ship`
+    whose build half failed. None is a reason to run the paper's own
+    checks — the thing under test is unshippable either way — but
+    silence after a flag was passed reads as "they ran and were fine",
+    which is the one thing it must not read as.
+
+    Called from each return rather than from one exit point, which is
+    structurally prone to missing the next one somebody adds. It has
+    missed two already.
     """
     if getattr(args, "run_gates", False) and _paper(args).gates:
         print("\n== the paper's own gates ==  NOT run: the ladder aborted "
@@ -1348,8 +1378,14 @@ def _paper_gates(args: argparse.Namespace, code: int) -> int:
     print(f"\n== the paper's own gates ==  {len(paper.gates)}, from the "
           f"project root")
     failed = 0
-    for gate in run_gates(paper, timeout=args.gate_timeout):
-        print(f"   [{gate.verdict}] {gate.seconds}s  {gate.command}")
+    # A heartbeat, because `capture_output` swallows everything the gate
+    # prints: a 12-minute pytest suite under a 900s timeout showed an
+    # empty terminal, indistinguishable from a hang.
+    def say(line: str) -> None:
+        print(f"   · {line.removeprefix('gate: ')}", flush=True)
+
+    for gate in run_gates(paper, timeout=args.gate_timeout, progress=say):
+        print(f"     [{gate.verdict}] {gate.seconds}s")
         if gate.ok:
             continue
         failed += 1
@@ -1383,8 +1419,9 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
               "would describe a batch nobody is working on. Rebuild on "
               "this baseline — or, if the last build was REFUSED, delete "
               "the stale batch first.")
+        code = _skipped_gates(args, 2)
         print("\nVERDICT: FAIL")
-        return 2
+        return code
     print("== lint ==", "clean" if not report.lint
           else f"{len(report.lint)} problem(s)")
     for problem in report.lint:
@@ -1457,8 +1494,14 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
     # in ONE section rather than two: this used to print its own "run
     # these too" list, so with --run-gates the reader got the commands
     # once as a reminder and again with their verdicts.
-    print("\nVERDICT:", "PASS" if report.ok else "FAIL")
-    return _paper_gates(args, 0 if report.ok else 1)
+    # The verdict is printed AFTER the paper's gates and reflects them.
+    # It used to print here, before `_paper_gates` ran, so a run whose
+    # paper gates failed said "VERDICT: PASS" and then exited 5 — and
+    # both the log template and the README treat that line as the
+    # answer.
+    code = _paper_gates(args, 0 if report.ok else 1)
+    print("\nVERDICT:", "PASS" if code == 0 else "FAIL")
+    return code
 
 
 def cmd_revision_promote(args: argparse.Namespace) -> int:
@@ -1912,7 +1955,7 @@ def main() -> None:
     r.add_argument("--run-gates", action="store_true",
                    help="also run [verify] commands from paper.toml, as\n"
                         "spelled, from the project root (exit 5 if one fails)")
-    r.add_argument("--gate-timeout", type=float, default=900,
+    r.add_argument("--gate-timeout", type=_seconds, default=900,
                    metavar="SECONDS", help="per gate; default 900")
 
     r = _rev("ship", cmd_revision_ship,
@@ -1934,7 +1977,7 @@ def main() -> None:
     r.add_argument("--run-gates", action="store_true",
                    help="also run [verify] commands from paper.toml, as\n"
                         "spelled, from the project root (exit 5 if one fails)")
-    r.add_argument("--gate-timeout", type=float, default=900,
+    r.add_argument("--gate-timeout", type=_seconds, default=900,
                    metavar="SECONDS", help="per gate; default 900")
 
     r = _rev("promote", cmd_revision_promote,

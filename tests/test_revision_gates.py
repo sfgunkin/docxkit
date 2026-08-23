@@ -16,6 +16,7 @@ failure that a script can tell apart from a bad redline.
 from __future__ import annotations
 
 import sys
+import time
 
 import pytest
 from conftest import make_parts, para, run, write
@@ -76,14 +77,62 @@ def test_the_gate_runs_from_the_PROJECT_ROOT(tmp_path):
 
 
 def test_a_gate_that_HANGS_is_a_gate_that_fails(tmp_path):
-    """This ladder is meant to run before every hand-back. A gate with
-    no timeout is one that can stop it happening at all."""
+    """This ladder runs before every hand-back. A gate with no timeout
+    is one that can stop that happening at all.
+
+    **Asserts the CLOCK, and that is the point of it.** The first
+    version checked `code == -1` and nothing else, so it passed — in
+    30.09 seconds — against an implementation whose timeout bounded
+    nothing: `subprocess.run(shell=True, timeout=1)` on a 20-second
+    sleep returned after 20.08s, because the kill reached cmd.exe and
+    the surviving grandchild held the pipes open. A test that certifies
+    a timeout has to fail when the timeout does not fire.
+    """
     paper = paper_with(tmp_path, _py("import time; time.sleep(30)"))
 
+    started = time.monotonic()
     (gate,) = run_gates(paper, timeout=1)
+    elapsed = time.monotonic() - started
 
     assert gate.code == -1 and gate.verdict == "TIMED OUT"
     assert "within 1s" in gate.output
+    assert elapsed < 15, (
+        f"the gate slept 30s and the timeout was 1s; run_gates took "
+        f"{elapsed:.1f}s, so it waited for the child rather than "
+        f"killing it")
+    assert gate.seconds < 15, "and the report agrees with the clock"
+
+
+def test_a_timed_out_gate_keeps_WHAT_IT_PRINTED(tmp_path):
+    """The lines before the hang are the diagnosis. A pytest gate wedged
+    on test 340 of 500 names that test; the first version replaced it
+    with the literal string "no output within 1s"."""
+    paper = paper_with(tmp_path, _py(
+        "import sys, time; print('phase 1 ok'); sys.stdout.flush(); "
+        "time.sleep(30)"))
+
+    (gate,) = run_gates(paper, timeout=2)
+
+    assert gate.code == -1
+    assert "phase 1 ok" in gate.output, gate.output
+    assert "no further output within 2s" in gate.output
+
+
+def test_a_gate_whose_PROJECT_ROOT_is_gone_says_so(tmp_path, monkeypatch):
+    """Not 127. "Command not found" sends the author hunting for a
+    missing tool when the real problem is that the root moved or its
+    drive is offline — and under a shell a missing cwd is the ONLY
+    thing that raises OSError, so the old handler's comment described
+    a case it never saw."""
+    paper = paper_with(tmp_path, _py("print('never runs')"))
+    from dataclasses import replace
+    gone = replace(paper, root=tmp_path / "no_such_dir_xyz")
+
+    (gate,) = run_gates(gone)
+
+    assert not gate.ok and gate.code == 126
+    assert "not a directory" in gate.output
+    assert "moved" in gate.output or "offline" in gate.output
 
 
 def test_a_command_that_does_not_EXIST_is_reported_not_raised(tmp_path):
@@ -114,7 +163,27 @@ def test_a_paper_with_no_gates_runs_nothing(tmp_path):
     src = write(root / "P.docx", make_parts(para(run("The paper."))))
     paper = revision.init(root, src)
 
-    assert run_gates(paper) == []
+    assert list(run_gates(paper)) == []
+
+
+def test_each_gate_is_REPORTED_before_the_next_one_starts(tmp_path):
+    """Streaming, and the reason it matters: a caller printing results
+    as they arrive is the only thing standing between the author and a
+    silent terminal for the length of a pytest suite. The list version
+    announced every gate up front and delivered every verdict at the
+    end."""
+    paper = paper_with(tmp_path,
+                       _py("import time; time.sleep(0.6); print('one')"),
+                       _py("print('two')"))
+    seen: list[str] = []
+
+    for gate in run_gates(paper, progress=seen.append):
+        seen.append(f"result {gate.command[-12:]}")
+
+    # announced, run, reported — then the NEXT one announced
+    assert seen[0].startswith("gate: "), seen
+    assert seen[1].startswith("result "), seen
+    assert seen[2].startswith("gate: "), seen
 
 
 def test_gates_run_in_the_ORDER_the_paper_lists_them(tmp_path):
@@ -126,7 +195,9 @@ def test_gates_run_in_the_ORDER_the_paper_lists_them(tmp_path):
         _py(f"open('{marks.as_posix()}','a').write('first ')"),
         _py(f"open('{marks.as_posix()}','a').write('second')"))
 
-    run_gates(paper)
+    # `list(...)`, because run_gates STREAMS: discarding the iterator
+    # runs nothing at all, which is how this test first failed.
+    list(run_gates(paper))
 
     assert marks.read_text(encoding="utf-8") == "first second"
 

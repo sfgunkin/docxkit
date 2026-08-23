@@ -13,9 +13,13 @@ current:
 
 The cycle is: truth -> checkpoint -> apply the batch to a clean copy in
 ``build/`` -> Word Compare -> the tracked result *is* the new manuscript
--> the author adjudicates in Word -> accept-all -> truth again. There is
-no separate redline file and no baseline file; ``build/prev.docx`` is
-the last accepted truth and the compare reference.
+-> the author adjudicates in Word -> accept-all -> truth again.
+``build/prev.docx`` is the last accepted truth and the compare
+reference. The manuscript is never shadowed by a "current" copy under
+another name — what ``build/`` holds is the baseline, the staged batch,
+the rescue copies and, since 2026-08-23, the redlines kept for the
+record (:attr:`Paper.redline_dir`), none of which is a second place to
+edit the paper.
 
 **Which file is the paper is the author's choice, not this module's.**
 ``revision/paper.toml`` says so in one line (``working = ...``) and every
@@ -73,7 +77,7 @@ import tempfile
 import tomllib
 import unicodedata
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -1155,8 +1159,16 @@ class GateResult:
 
 
 def run_gates(paper: Paper, *, timeout: float = 900,
-              progress: Any = None) -> list[GateResult]:
-    """Run ``[verify] commands`` from the paper's own config.
+              progress: Any = None) -> Iterator[GateResult]:
+    """Run ``[verify] commands`` from the paper's own config, streaming.
+
+    **An iterator, so a caller reports each gate as it finishes.** The
+    first version returned a list, which meant the CLI could only print
+    after every gate had run: the `progress` heartbeat announced all of
+    them up front and the verdicts arrived together at the end, which
+    is precisely the "twelve silent minutes" the heartbeat was added to
+    prevent. Consuming this drives the run — a caller that discards it
+    runs nothing.
 
     **This module deliberately did not shell out**, and the reason is
     written into its docstring: what a paper checks is the paper's
@@ -1176,31 +1188,113 @@ def run_gates(paper: Paper, *, timeout: float = 900,
     A gate that hangs is a gate that fails: `timeout` bounds each one,
     and a timeout reports as code -1 rather than blocking a ladder that
     exists to be run before every hand-back.
+
+    **`subprocess.run(..., timeout=)` does not deliver that on its own,
+    and the first version of this shipped believing it did.** With
+    `shell=True` the real gate is a GRANDCHILD — cmd.exe is the child —
+    so the kill on timeout reaches the shell and not the process doing
+    the work, and the surviving grandchild holds the stdout and stderr
+    pipes open, which blocks the cleanup `run` performs before it
+    re-raises. Measured on this machine: a `timeout=1` against a
+    20-second sleep returned after **20.08s**. The same call without a
+    shell returns in 1.03s. So the whole process TREE is killed here,
+    and the reader is drained on a thread that cannot deadlock the
+    parent.
+
+    The test that certified the old behaviour passed for 30 seconds
+    while asserting the exit code and never the clock — see
+    `test_a_gate_that_HANGS`, which now asserts elapsed time.
     """
     import subprocess
+    import threading
     import time
 
-    out: list[GateResult] = []
     for command in paper.gates:
         if progress:
             progress(f"gate: {command}")
         started = time.monotonic()
-        try:
-            done = subprocess.run(command, shell=True, check=False,
-                                  cwd=paper.root,
-                                  capture_output=True, text=True,
-                                  timeout=timeout, encoding="utf-8",
-                                  errors="replace")
-            code, text = done.returncode, (done.stdout or "") + \
-                (done.stderr or "")
-        except subprocess.TimeoutExpired:
-            code, text = -1, f"no output within {timeout:g}s"
-        except OSError as exc:                  # a command that is not there
-            code, text = 127, str(exc)
-        out.append(GateResult(command=command, code=code,
-                              seconds=round(time.monotonic() - started, 1),
-                              output="\n".join(text.splitlines()[-20:])))
-    return out
+        code, text = _run_one(command, paper.root, timeout, subprocess,
+                              threading)
+        yield GateResult(command=command, code=code,
+                         seconds=round(time.monotonic() - started, 1),
+                         output="\n".join(text.splitlines()[-20:]))
+
+
+def _kill_tree(proc: Any, subprocess: Any) -> None:
+    """Kill the gate AND whatever the shell started for it.
+
+    `proc.kill()` reaches cmd.exe and leaves the grandchild running with
+    the pipes open. On Windows only `taskkill /T` walks the tree; on a
+    POSIX box the session started by `start_new_session` is the handle.
+    Best effort by construction — the point is to stop WAITING for it,
+    and a kill that fails must not become a second hang.
+    """
+    import contextlib
+    import sys
+    # `sys.platform` rather than `os.name`: the type checker narrows on
+    # it, and `os.killpg` / `signal.SIGKILL` do not exist on Windows at
+    # all, so the branch has to be invisible there rather than merely
+    # unreached.
+    with contextlib.suppress(Exception):
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, check=False, timeout=10)
+        else:
+            import os
+            import signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        proc.kill()
+
+
+def _run_one(command: str, cwd: Path, timeout: float,
+             subprocess: Any, threading: Any) -> tuple[int, str]:
+    """One gate: its exit code and the text it printed.
+
+    The reader runs on a daemon thread rather than through
+    `communicate(timeout=)`, because that call is the one that waits on
+    the pipes the orphaned grandchild is holding.
+    """
+    if not cwd.is_dir():
+        # NOT 127: "command not found" sends the author hunting for a
+        # missing tool when the real problem is that the project root
+        # moved or its drive is offline.
+        return 126, (f"cannot run gates: {cwd} is not a directory — the "
+                     f"project root moved, or its drive is offline")
+    import sys
+    kwargs: dict[str, Any] = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(command, shell=True, cwd=cwd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True, encoding="utf-8", errors="replace",
+                            **kwargs)
+    chunks: list[str] = []
+
+    def drain() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            chunks.append(line)
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc, subprocess)
+        reader.join(timeout=5)
+        # What it printed BEFORE it hung is the whole diagnosis: a
+        # pytest gate wedged on test 340 of 500 names that test here,
+        # and the first version threw it away for the literal string
+        # "no output within Ns".
+        printed = "".join(chunks).rstrip()
+        return -1, (f"{printed}\n[no further output within {timeout:g}s]"
+                    if printed else f"no output within {timeout:g}s")
+    reader.join(timeout=5)
+    return proc.returncode, "".join(chunks)
 
 
 def _norm(text: str) -> str:
@@ -2046,11 +2140,27 @@ class Verdict:
     """Paragraphs the author kept as they were."""
     authored: int = 0
     """Paragraphs in neither view — the author's own words."""
-    links: int = 0
-    """Net change in citation links — an apparatus pass, not prose."""
-    bookmarks: int = 0
-    """Net change in bookmarks. Word's Compare cannot serialize one, so
-    a pass that adds them runs UNTRACKED and no redline can show it."""
+    links: tuple[int, int] = (0, 0)
+    """(added, lost) citation links — an apparatus pass, not prose.
+
+    A PAIR, and not the net total the first version reported, because
+    `_links`' own docstring says why: "Counted as a MULTISET of pairs,
+    not as a total ... a total hides a swap". It hid one. Measured: a
+    round that keeps Lari's link, drops Deaton's to plain text and adds
+    Sen's reported `links=0` and printed nothing, while
+    `_link_changes` in the same module correctly named the lost one.
+    That is the Parental Style T4(3) class — 227 against 229 — which
+    this module exists to catch.
+    """
+    bookmarks: tuple[int, int] = (0, 0)
+    """(added, lost) bookmarks, by NAME.
+
+    Word's Compare cannot serialize a bookmark insertion, so a pass that
+    adds them runs untracked and no redline can show it. Counted as a
+    set difference rather than a length delta for the same reason as
+    the links: re-keying a bibliography removes N anchors and adds N
+    others, and `len(a) - len(b)` is zero for it.
+    """
     batch: Path | None = None
     """The proposal this verdict is about, when it could be identified."""
 
@@ -2067,10 +2177,19 @@ class Verdict:
         (`bookmarkStart 132 -> 142`), so the pass runs untracked and in
         place. Nothing was left for the author to adjudicate and nothing
         recorded that it happened — which is the point of naming it.
+
+        **Requires that no batch was identified**, and that is a real
+        condition rather than an implementation detail: with a staged
+        proposal in `build/`, this round is a batch round whatever else
+        happened to the apparatus, and calling it an apparatus pass
+        would name the wrong event. The cost is that a linking pass run
+        in place while a valid batch sits unpromoted is reported as an
+        adjudication of a batch nobody acted on — resolve before
+        extend, and the two are not meant to overlap.
         """
         return (not self.changed and not self.added and not self.removed
                 and self.batch is None
-                and bool(self.links or self.bookmarks))
+                and bool(any(self.links) or any(self.bookmarks)))
 
     @property
     def outcome(self) -> str:
@@ -2106,9 +2225,12 @@ class Verdict:
         ins, dele = self.proposed
         if ins or dele:
             bits.append(f"from {ins + dele} revisions ({ins} ins, {dele} del)")
-        for n, what in ((self.links, "link"), (self.bookmarks, "bookmark")):
-            if n:
-                bits.append(f"{n:+d} {what}{'' if abs(n) == 1 else 's'}")
+        for (added, lost), what in ((self.links, "link"),
+                                    (self.bookmarks, "bookmark")):
+            if added:
+                bits.append(f"+{added} {what}{'' if added == 1 else 's'}")
+            if lost:
+                bits.append(f"-{lost} {what}{'' if lost == 1 else 's'}")
         return ", ".join(bits) or "no visible change"
 
 
@@ -2166,7 +2288,13 @@ def verdict(paper: Paper) -> Verdict:
     work = package.read_parts(paper.working)
     if not paper.prev.is_file():
         return Verdict(changed=0, added=0, removed=0)
-    report = _compare.compare(str(paper.prev), str(paper.working))
+    base = package.read_parts(paper.prev)
+    # `compare_docs` on parts already in hand, rather than `compare` on
+    # two paths: these manuscripts run to several MB and the path form
+    # unzips and parses both again, on top of the two reads here and
+    # the four walks below. Same answer, half the reading.
+    report = _compare.compare_docs(_compare.load_parts(base),
+                                   _compare.load_parts(work))
     structure = Counter(entry["type"] for entry in report["structure"])
 
     batch = _proposal(paper)
@@ -2179,21 +2307,35 @@ def verdict(paper: Paper) -> Verdict:
         final, original = _para_counts(parts, revisions.FINAL), \
             _para_counts(parts, revisions.ORIGINAL)
         live = _para_counts(work, revisions.FINAL)
-        kept = sum(((final - original) & live).values())
-        reverted = sum(((original - final) & live).values())
+        # Subtract the CONTEXT — the paragraphs both views share —
+        # before asking which version the manuscript kept. Without it
+        # the question degrades from "is this text where the batch put
+        # it" to "is this text anywhere in the document", and a
+        # paragraph that already existed elsewhere answers yes whatever
+        # the author decided. Measured on a synthetic pair: a batch
+        # proposing text that appears elsewhere reported "1 of 2 kept
+        # as proposed" both when the author accepted everything and
+        # when they rejected everything. Table cells make this the
+        # ordinary case, not a corner one — "0.00" and a repeated
+        # country name are paragraphs too.
+        context = final & original
+        rest = live - context
+        kept = sum(((final - original) & rest).values())
+        reverted = sum(((original - final) & rest).values())
         authored = sum((live - final - original).values())
     # The apparatus, which no other layer of this verdict can see: a
     # link or a bookmark is invisible to the text comparison above, and
     # a pass that adds 116 of them reports as "no visible change" —
     # which is true, and is the whole reason the round left no trace.
-    base = package.read_parts(paper.prev)
+    was, now = _links(base), _links(work)
+    was_bm, now_bm = _bookmarks(base), _bookmarks(work)
     return Verdict(
         changed=len(report["text"]),
         added=structure.get("INSERT", 0),
         removed=structure.get("DELETE", 0),
         proposed=proposed, kept=kept, reverted=reverted, authored=authored,
-        links=sum(_links(work).values()) - sum(_links(base).values()),
-        bookmarks=len(_bookmarks(work)) - len(_bookmarks(base)),
+        links=(sum((now - was).values()), sum((was - now).values())),
+        bookmarks=(len(now_bm - was_bm), len(was_bm - now_bm)),
         batch=batch)
 
 
