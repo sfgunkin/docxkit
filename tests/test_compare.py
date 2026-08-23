@@ -3819,3 +3819,46 @@ def test_two_figures_that_SWAP_contents_are_two_changes():
 
     assert len(changes) == 2, changes
     assert {c["type"] for c in changes} == {"MEDIA CHANGED"}
+
+# --- the half of a spilled field that says WHERE ----------------------
+
+def _seq_caption(text: str) -> str:
+    return ("<w:p>" + run(text)
+            + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            + "<w:r><w:instrText> SEQ Figure </w:instrText></w:r>"
+            + "</w:p>")
+
+
+_SPILL = '<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+
+
+def test_a_field_spilling_into_an_EMPTY_paragraph_can_be_located():
+    """A field that spills does so into the paragraph next door, and the
+    paragraph next door is a spacer or a section break with no text in
+    it — so the half of the defect that says WHERE printed `in ''`, and
+    locating it took a script counting fldCharType per paragraph."""
+    from docxkit._compare_diff import integrity
+
+    xml = document(_seq_caption("Figure 3. Mortality and LFP") + _SPILL)
+
+    opened, orphan = integrity(xml, "BUILT", set())
+
+    assert "(+1)" in opened and "Figure 3" in opened
+    assert "(-1)" in orphan
+    assert "empty paragraph 2" in orphan, orphan
+    assert "Figure 3" in orphan, "and which paragraph it belongs to"
+
+
+def test_a_paragraph_WITH_text_is_still_named_by_its_text():
+    """The ordinary case is unchanged: a reader who can be given the
+    words should be."""
+    from docxkit._compare_diff import integrity
+
+    xml = document("<w:p>" + run("A sentence that spills.")
+                   + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                   + "</w:p>")
+
+    (issue,) = integrity(xml, "BUILT", set())
+
+    assert "'A sentence that spills.'" in issue
+    assert "empty paragraph" not in issue

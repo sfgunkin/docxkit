@@ -158,35 +158,6 @@ caught a real regression in the fix that landed beside it.
 
 
 
-### S4 — the unbalanced-field integrity flag names an EMPTY paragraph for the orphan half, so the flag cannot be located
-
-Found on HCW, 2026-08-23, on every compare run in the batch.
-
-**Symptom as observed.** The BUILT-DOC INTEGRITY gate prints
-
-```
-** BUILT: unbalanced field (+1) in 'Figure 3. Mortality and LFP, Poland and '
-** BUILT: unbalanced field (-1) in ''
-```
-
-The `+1` line is useful: a caption opens a `SEQ Figure \* ARABIC` field. The
-`-1` line names `''`, because the orphan `fldChar end` sits in the empty
-paragraph after the caption — which is the normal shape of this defect, since
-a field that spills does so into the paragraph next door, and the paragraph
-next door is a spacer or a section break with no text in it. So the half that
-tells you WHERE the field is broken is the half that prints nothing.
-
-**Why S4.** It is a real gate that fires correctly and is simply hard to act
-on. Both halves of one defect were locatable here only by writing a script to
-count `fldCharType` per paragraph.
-
-**Shape of a fix.** When a paragraph has no visible text, name it by
-position — its index, or the previous non-empty paragraph plus "the paragraph
-after" — the way the TEXT layer already says `in (footnotes, table 3 r2c1)`.
-Better still, pair the two halves: `+1 in 'Figure 3. …' / -1 two paragraphs
-later` is one defect, not two flags.
-
----
 
 ### S4 — `RefStyleReport.cited` and `.entries` are COUNTS with collection names
 
@@ -603,43 +574,6 @@ run when nobody is working on the paper is a list that gets run less.
 read-only commands, with the same banner so nobody mistakes a snapshot
 for the live file. `--write` paths must keep refusing.
 
-### S4 — `crossrefs --labels` REPLACES the default labels, so a narrowed run prints a clean report about the exhibits it did not look at
-
-Found 2026-08-23 by the other session, on a paper tonight, and passed to me
-because the flag is mine (21.08). It filed the finding in that paper's config
-as a gotcha; recording it here as well, because a note in one paper's config
-is invisible to the next paper — and this is the shape this file already has
-a name for, a number that cannot tell two states apart.
-
-**Measured on one manuscript**, three runs, three clean reports:
-
-```
-docxkit crossrefs PAPER.docx --audit                  ->  4 linked
-docxkit crossrefs PAPER.docx --audit --labels Box     ->  2 linked
-docxkit crossrefs PAPER.docx --audit --labels Figure,Table,Box  ->  6 linked
-```
-
-Six is the real number. The first run missed the Boxes because `Box` is not
-in the defaults; the second missed the Figures and Tables because naming one
-label REPLACED the defaults rather than adding to them. Neither said so.
-
-**Why S4 and not S2.** Replacement is a defensible reading of `--labels` —
-"these are the labels this paper uses" — and the flag's own help spells the
-full form (`Figure,Table,Box`). The defect is not the semantics, it is the
-SILENCE: a run that examined one of three exhibit kinds prints the same shape
-of clean report as a run that examined all three, and `unlinked 0` reads as
-"nothing is unlinked" rather than "nothing I looked at".
-
-**Shape of a fix.** Say what was examined, always — `4 linked · labels:
-Figure, Table` — so a narrowed run is legible as narrowed. Optionally warn
-when the document contains caption-shaped paragraphs whose label is NOT in
-the set being audited: that is the case where the reader wanted the default
-and got a subset, and the document already knows.
-
-**Workaround in use:** name every label the paper uses, every time; the
-paper's config records which ones those are.
-
----
 
 ### S4 — the math-glyph refusal quotes both strings and never says WHICH CHARACTER differs, which is the one thing a reader cannot see
 
@@ -683,6 +617,94 @@ hits most.
 ---
 
 ## Fixed
+
+### ~~S4 `crossrefs --labels` REPLACES the default labels, so a narrowed run prints a clean report about the exhibits it did not look at~~ — FIXED 24.08
+
+Found 2026-08-23 by the other session, on a paper tonight, and passed to me
+because the flag is mine (21.08). It filed the finding in that paper's config
+as a gotcha; recording it here as well, because a note in one paper's config
+is invisible to the next paper — and this is the shape this file already has
+a name for, a number that cannot tell two states apart.
+
+**Measured on one manuscript**, three runs, three clean reports:
+
+```
+docxkit crossrefs PAPER.docx --audit                  ->  4 linked
+docxkit crossrefs PAPER.docx --audit --labels Box     ->  2 linked
+docxkit crossrefs PAPER.docx --audit --labels Figure,Table,Box  ->  6 linked
+```
+
+Six is the real number. The first run missed the Boxes because `Box` is not
+in the defaults; the second missed the Figures and Tables because naming one
+label REPLACED the defaults rather than adding to them. Neither said so.
+
+**Why S4 and not S2.** Replacement is a defensible reading of `--labels` —
+"these are the labels this paper uses" — and the flag's own help spells the
+full form (`Figure,Table,Box`). The defect is not the semantics, it is the
+SILENCE: a run that examined one of three exhibit kinds prints the same shape
+of clean report as a run that examined all three, and `unlinked 0` reads as
+"nothing is unlinked" rather than "nothing I looked at".
+
+**Shape of a fix.** Say what was examined, always — `4 linked · labels:
+Figure, Table` — so a narrowed run is legible as narrowed. Optionally warn
+when the document contains caption-shaped paragraphs whose label is NOT in
+the set being audited: that is the case where the reader wanted the default
+and got a subset, and the document already knows.
+
+**Workaround in use:** name every label the paper uses, every time; the
+paper's config records which ones those are.
+
+**What changed.** The audit header names the labels it examined:
+`PAPER.docx   labels: Figure, Table, Box`. The semantics of `--labels`
+are untouched — replacement is a defensible reading, and the help text
+spells the full form — because the defect was never the semantics. It
+was that a run which examined one exhibit kind of three printed the same
+shape of clean report as a run that examined all three, so `0 unlinked`
+read as "nothing is unlinked" rather than "nothing I looked at".
+
+---
+
+### ~~S4 the unbalanced-field integrity flag names an EMPTY paragraph for the orphan half, so the flag cannot be located~~ — FIXED 24.08
+
+Found on HCW, 2026-08-23, on every compare run in the batch.
+
+**Symptom as observed.** The BUILT-DOC INTEGRITY gate prints
+
+```
+** BUILT: unbalanced field (+1) in 'Figure 3. Mortality and LFP, Poland and '
+** BUILT: unbalanced field (-1) in ''
+```
+
+The `+1` line is useful: a caption opens a `SEQ Figure \* ARABIC` field. The
+`-1` line names `''`, because the orphan `fldChar end` sits in the empty
+paragraph after the caption — which is the normal shape of this defect, since
+a field that spills does so into the paragraph next door, and the paragraph
+next door is a spacer or a section break with no text in it. So the half that
+tells you WHERE the field is broken is the half that prints nothing.
+
+**Why S4.** It is a real gate that fires correctly and is simply hard to act
+on. Both halves of one defect were locatable here only by writing a script to
+count `fldCharType` per paragraph.
+
+**Shape of a fix.** When a paragraph has no visible text, name it by
+position — its index, or the previous non-empty paragraph plus "the paragraph
+after" — the way the TEXT layer already says `in (footnotes, table 3 r2c1)`.
+Better still, pair the two halves: `+1 in 'Figure 3. …' / -1 two paragraphs
+later` is one defect, not two flags.
+
+**What changed.** An empty paragraph is named by POSITION and by the
+last paragraph that has text: `unbalanced field (-1) in the empty
+paragraph 2, after 'Figure 3. Mortality and LFP…'`. That is the same
+answer the TEXT layer gives when it says `in (footnotes, table 3
+r2c1)` — the flag was correct all along and simply unusable.
+
+The two halves are still two lines rather than one paired finding. That
+was the entry's "better still", and it is not done: pairing them needs a
+rule for which `+1` a given `-1` belongs to, and a field can spill more
+than one paragraph. Both lines now name a place, which is what made the
+pairing worth having.
+
+---
 
 ### ~~S2 `tracked.build` loses `<w:trackRevisions/>` and DUPLICATES a comment present in both inputs~~ — FIXED 24.08
 

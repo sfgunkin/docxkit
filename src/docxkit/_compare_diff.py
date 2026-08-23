@@ -304,14 +304,31 @@ def integrity(xml: str, label: str,
     if dangling:
         issues.append(f"{label}: dangling anchors (no bookmark) {dangling}")
     # An unbalanced HYPERLINK field renders as literal field code.
-    for p in P_RE.findall(xml):
+    #
+    # A field that spills does so into the paragraph NEXT DOOR, and the
+    # paragraph next door is a spacer or a section break with no text in
+    # it — so the half of the defect that says WHERE was reported as
+    # `in ''`, and locating it took a script counting fldCharType per
+    # paragraph (HCW, 2026-08-23). An empty paragraph is named by its
+    # position and by the last paragraph that HAS text, which is the
+    # same thing the TEXT layer does when it says `in (footnotes, table
+    # 3 r2c1)`.
+    paras = P_RE.findall(xml)
+    last_text = ""
+    for i, p in enumerate(paras):
         depth = 0
         for m in re.finditer(r'<w:fldChar w:fldCharType="(begin|end)"/>', p):
             depth += 1 if m.group(1) == "begin" else -1
+        text = html.unescape("".join(WT_RE.findall(p)))
         if depth != 0:
-            text = html.unescape("".join(WT_RE.findall(p)))[:40]
+            where = (f"{text[:40]!r}" if text.strip() else
+                     (f"the empty paragraph {i + 1}, after "
+                      f"{last_text[:40]!r}" if last_text else
+                      f"the empty paragraph {i + 1}"))
             issues.append(f"{label}: unbalanced field ({depth:+d}) in "
-                          f"{text!r}")
+                          f"{where}")
+        if text.strip():
+            last_text = text
     if re.search(r"<w:t[^>]*>[^<]*HYPERLINK[^<]*</w:t>", xml):
         issues.append(f"{label}: literal HYPERLINK field code in body text")
     return issues

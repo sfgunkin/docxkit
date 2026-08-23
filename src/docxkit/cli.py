@@ -302,7 +302,13 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
 
     if args.audit:
         state = crossrefs.audit(doc, also=others, labels=labels)
-        print(name)
+        # WHICH labels, always. `--labels` REPLACES the defaults rather
+        # than extending them, so a run that examined one exhibit kind
+        # of three printed the same shape of clean report as one that
+        # examined all three: 4 linked / 0 unlinked and 2 linked / 0
+        # unlinked are both "nothing is unlinked" to a reader, and only
+        # one of them means it.
+        print(f"{name}   labels: {', '.join(labels)}")
         for key in ("linked", "unlinked", "caption_only", "mention_only",
                     "dangling"):
             found = state[key]
