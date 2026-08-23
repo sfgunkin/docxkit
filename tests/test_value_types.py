@@ -65,6 +65,7 @@ VALUES = [
     "revision.State",
     "revision.Survey",          # one paper's row in the all-papers view
     "revision.Verdict",         # what one cycle did, and what was decided
+    "revision.GateResult",      # one of the paper's own checks, and its exit
     "revisions.Revision",
     "styles.Resolved",
     "styles.Style",

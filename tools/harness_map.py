@@ -65,6 +65,7 @@ HARNESS: dict[str, list[str]] = {
                     "tests/test_revision_state.py",
                     "tests/test_revision_survey.py",
                     "tests/test_revision_verdict.py",
+                    "tests/test_revision_gates.py",
                     "tests/test_cli_revision.py",
                     "tests/test_value_types.py"],
     "revisions.py": ["tests/test_revisions.py",

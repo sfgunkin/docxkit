@@ -134,6 +134,7 @@ __all__ = [
     "BaselinePending",
     "DocumentLocked",
     "Doubt",
+    "GateResult",
     "HandbackLoss",
     "IngestReport",
     "Loss",
@@ -175,6 +176,7 @@ __all__ = [
     "rescue_path",
     "rescues",
     "restored_bookmarks",
+    "run_gates",
     "scan",
     "state",
     "survey",
@@ -1098,6 +1100,77 @@ _FOLD = str.maketrans({"\u2212": "-", "\u2010": "-", "\u2011": "-",
                        "\u2032": "'"})
 
 
+@dataclass(frozen=True)
+class GateResult:
+    """One of the paper's own verification commands, and how it went."""
+
+    command: str
+    code: int
+    """The process's exit code; -1 when it ran out of time."""
+    seconds: float
+    output: str
+    """The tail of what it printed — enough to act on a failure."""
+
+    @property
+    def ok(self) -> bool:
+        return self.code == 0
+
+    @property
+    def verdict(self) -> str:
+        if self.code == -1:
+            return "TIMED OUT"
+        return "pass" if self.ok else f"FAIL ({self.code})"
+
+
+def run_gates(paper: Paper, *, timeout: float = 900,
+              progress: Any = None) -> list[GateResult]:
+    """Run ``[verify] commands`` from the paper's own config.
+
+    **This module deliberately did not shell out**, and the reason is
+    written into its docstring: what a paper checks is the paper's
+    business, and a shared tool that runs per-project commands is a
+    larger promise than the protocol makes. That reasoning holds for the
+    DEFAULT and not for the capability. With nine papers on the
+    protocol, "the gates are listed and you run them yourself" means
+    they run when someone remembers, which is not what a gate is for.
+
+    So: still not part of the ladder, still not run by `validate` unless
+    asked (`--run-gates`), and when asked they run exactly as the config
+    spells them, through the shell, from the project root. The commands
+    are the author's own text in the author's own file; this neither
+    parses nor sanitises them, and a caller who did not intend to run
+    arbitrary commands should not pass the flag.
+
+    A gate that hangs is a gate that fails: `timeout` bounds each one,
+    and a timeout reports as code -1 rather than blocking a ladder that
+    exists to be run before every hand-back.
+    """
+    import subprocess
+    import time
+
+    out: list[GateResult] = []
+    for command in paper.gates:
+        if progress:
+            progress(f"gate: {command}")
+        started = time.monotonic()
+        try:
+            done = subprocess.run(command, shell=True, check=False,
+                                  cwd=paper.root,
+                                  capture_output=True, text=True,
+                                  timeout=timeout, encoding="utf-8",
+                                  errors="replace")
+            code, text = done.returncode, (done.stdout or "") + \
+                (done.stderr or "")
+        except subprocess.TimeoutExpired:
+            code, text = -1, f"no output within {timeout:g}s"
+        except OSError as exc:                  # a command that is not there
+            code, text = 127, str(exc)
+        out.append(GateResult(command=command, code=code,
+                              seconds=round(time.monotonic() - started, 1),
+                              output="\n".join(text.splitlines()[-20:])))
+    return out
+
+
 def _norm(text: str) -> str:
     folded = unicodedata.normalize("NFKC", text).translate(_FOLD)
     return "".join(re.sub(r"[\x00-\x1f]", "", folded).split())
@@ -1634,9 +1707,11 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     Accept and reject are simulated in XML, so Word is opened exactly
     once and read-only — a Word window the author has open is never
     touched. The paper's own gates (``[verify] commands`` in
-    ``paper.toml``) are NOT run from here: what a paper checks is the
-    paper's business, and a shared tool that shells out to per-project
-    commands is a different, larger promise than this one.
+    ``paper.toml``) are not part of this ladder: what a paper checks is
+    the paper's business. They can be RUN, by asking — see
+    :func:`run_gates` and `validate --run-gates` — which is a different
+    thing from running them by default, and the difference is the whole
+    of the promise.
     """
     path = Path(path)
     parts = package.read_parts(path)
@@ -1901,12 +1976,31 @@ class Verdict:
     """Paragraphs the author kept as they were."""
     authored: int = 0
     """Paragraphs in neither view — the author's own words."""
+    links: int = 0
+    """Net change in citation links — an apparatus pass, not prose."""
+    bookmarks: int = 0
+    """Net change in bookmarks. Word's Compare cannot serialize one, so
+    a pass that adds them runs UNTRACKED and no redline can show it."""
     batch: Path | None = None
     """The proposal this verdict is about, when it could be identified."""
 
     @property
     def offered(self) -> int:
         return self.kept + self.reverted
+
+    @property
+    def apparatus_only(self) -> bool:
+        """A pass that moved the machinery and not one visible word.
+
+        The shape Word's Compare cannot carry: linking the citations
+        adds bookmarks, `tracked.build` refuses the batch
+        (`bookmarkStart 132 -> 142`), so the pass runs untracked and in
+        place. Nothing was left for the author to adjudicate and nothing
+        recorded that it happened — which is the point of naming it.
+        """
+        return (not self.changed and not self.added and not self.removed
+                and self.batch is None
+                and bool(self.links or self.bookmarks))
 
     @property
     def outcome(self) -> str:
@@ -1917,6 +2011,8 @@ class Verdict:
         of my own" is the ordinary shape of a round and reporting it as
         "partly adjudicated" would be wrong about the part that matters.
         """
+        if self.apparatus_only:
+            return "untracked apparatus pass (nothing to adjudicate)"
         if self.batch is None:
             return "adjudicated (no batch to compare against)"
         if not self.offered:
@@ -1940,6 +2036,9 @@ class Verdict:
         ins, dele = self.proposed
         if ins or dele:
             bits.append(f"from {ins + dele} revisions ({ins} ins, {dele} del)")
+        for n, what in ((self.links, "link"), (self.bookmarks, "bookmark")):
+            if n:
+                bits.append(f"{n:+d} {what}{'' if abs(n) == 1 else 's'}")
         return ", ".join(bits) or "no visible change"
 
 
@@ -2013,11 +2112,18 @@ def verdict(paper: Paper) -> Verdict:
         kept = sum(((final - original) & live).values())
         reverted = sum(((original - final) & live).values())
         authored = sum((live - final - original).values())
+    # The apparatus, which no other layer of this verdict can see: a
+    # link or a bookmark is invisible to the text comparison above, and
+    # a pass that adds 116 of them reports as "no visible change" —
+    # which is true, and is the whole reason the round left no trace.
+    base = package.read_parts(paper.prev)
     return Verdict(
         changed=len(report["text"]),
         added=structure.get("INSERT", 0),
         removed=structure.get("DELETE", 0),
         proposed=proposed, kept=kept, reverted=reverted, authored=authored,
+        links=sum(_links(work).values()) - sum(_links(base).values()),
+        bookmarks=len(_bookmarks(work)) - len(_bookmarks(base)),
         batch=batch)
 
 
@@ -2272,8 +2378,10 @@ author = "{author}"
 rescue_keep = {rescue_keep}
 
 [verify]
-# The paper's OWN gates. Recorded here so there is one list; run them
-# yourself — `docxkit revision validate` deliberately does not shell out.
+# The paper's OWN gates. Not part of the shared ladder — what this
+# paper checks is this paper's business — but `docxkit revision
+# validate --run-gates` runs them, exactly as spelled here, from the
+# project root.
 commands = [{gates}]
 
 [attic]

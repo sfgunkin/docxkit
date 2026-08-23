@@ -518,6 +518,77 @@ reach it:
 
 ## Fixed
 
+### ~~S2 an untracked apparatus pass changed the manuscript and left no record of what it did~~ — FIXED 23.08
+
+Found 2026-08-23 in the protocol review.
+
+**The shape.** Word's Compare will not serialize a bookmark insertion —
+`tracked.build` refuses such a batch with `rejected: bookmarkStart 132 -> 142`
+— so the citation apparatus (linking, cross-references) runs UNTRACKED and in
+place, gated only by `docxkit compare` showing no text change. That is the
+right call and it has a cost: the round produces no redline, nothing for the
+author to adjudicate, and — since E landed this morning — a log row reading
+`no visible change`, which is true and useless. A pass that added 116
+bookmarks to Aging_Well was indistinguishable in the record from a round
+where nothing happened.
+
+**Fix.** `Verdict` counts the apparatus: `links` and `bookmarks`, as net
+deltas against the previous truth, from `_links` and `_bookmarks` — the two
+things the text comparison structurally cannot see. `apparatus_only` names
+the round where those moved and no visible word did, and the row then reads
+
+```
+| 2026-08-23 | apparatus | +1 link, +1 bookmark | — | untracked apparatus pass (nothing to adjudicate) → truth |
+```
+
+A round that also moved words is still reported as adjudicated, with the
+apparatus counted beside it rather than instead of it. A pass that LOSES
+links reports the negative — Word strips run-level hyperlinks out of every
+paragraph whose text the author rewrites, which is why the pass is re-run
+every round, and a round that came back with fewer is worth a number.
+
+Four tests in `tests/test_revision_verdict.py`. Load-bearing: dropping the
+two counts fails 3, dropping the `apparatus_only` verdict fails 2.
+
+### ~~S4 `[verify] commands` were recorded and never run, so a paper's own gates ran when someone remembered~~ — FIXED 23.08
+
+Found 2026-08-23 in the protocol review; the author asked for it directly.
+
+**The old boundary, and why it moved by exactly one flag.** `validate`
+deliberately did not shell out, and the reasoning is in its docstring: what a
+paper checks is the paper's business, and a shared tool that runs per-project
+commands is a larger promise than the protocol makes. That holds for the
+DEFAULT. It does not hold for the capability — across the nine papers those
+lists hold between one and six commands each, and "listed, and you run them
+yourself" means they run when someone remembers.
+
+**Fix.** `run_gates(paper, timeout=900)` and `validate --run-gates`. Not part
+of the ladder, not run unless asked, and when asked they run exactly as the
+config spells them, through the shell, from the project root. The commands
+are the author's own text in the author's own file; this neither parses nor
+sanitises them, and the docstring says so.
+
+* **A gate that hangs is a gate that fails.** Each is bounded by `timeout`
+  and a timeout reports as code -1 — this ladder is meant to run before every
+  hand-back, and a gate with no bound is one that can stop that happening.
+* **Exit 5, not 1.** "The redline is unshippable" and "the manuscript is
+  wrong" want different responses, and a script that only knows non-zero
+  cannot tell them apart. A batch failure still outranks a paper gate.
+* **An aborted ladder says the gates did not run.** `validate` returns early
+  on a lint failure and on a batch Word cannot open; silence after the flag
+  was passed reads as "they ran and were fine", which is the one thing it
+  must not read as.
+* The listing and the running are ONE section now. `validate` used to print
+  its own "the paper's own gates (run these too)" list, so with `--run-gates`
+  the reader got the commands once as a reminder and again with verdicts.
+
+Verified end to end on a paper with two gates, one passing and one failing:
+the ladder says PASS (the batch is fine), the failing gate prints its own
+output, and the exit code is 5.
+
+`tests/test_revision_gates.py`, 12 tests. Load-bearing: running them without
+the flag fails 1, collapsing 5 into 1 fails 1.
+
 ### ~~S2 the author's VERDICT was recorded nowhere — after adjudication a paper reads the same whether every revision was accepted or every one rejected~~ — FIXED 23.08
 
 Found 2026-08-23 in the protocol review. Not a wrong answer — a fact that

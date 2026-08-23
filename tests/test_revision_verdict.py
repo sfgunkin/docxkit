@@ -171,6 +171,89 @@ def test_the_verdict_writes_NOTHING(cycle):
             if p.is_file()} == before
 
 
+# ------------------------------------------------- the apparatus pass
+
+def _linked(anchor: str, label: str) -> str:
+    """A citation link and the bookmark it resolves to — the shape a
+    linking pass adds, and the shape Word's Compare cannot serialize."""
+    return (f'<w:bookmarkStart w:id="7" w:name="{anchor}"/>'
+            f'<w:bookmarkEnd w:id="7"/>'
+            f'<w:hyperlink w:anchor="{anchor}">{run(label)}</w:hyperlink>')
+
+
+def test_a_pass_that_adds_LINKS_and_BOOKMARKS_is_named_as_one(tmp_path):
+    """The one round no redline can show. Word's Compare will not
+    serialize a bookmark insertion — `tracked.build` refuses the batch
+    with `bookmarkStart 132 -> 142` — so the citation apparatus goes on
+    untracked and in place, and until now the row it produced said
+    "no visible change" and stopped there.
+    """
+    root = tmp_path / "P"
+    root.mkdir()
+    src = write(root / "P.docx",
+                make_parts(para(run("As Lari (2023) shows, ..."))))
+    paper = revision.init(root, src)
+    # the pass: same words, now carrying an apparatus
+    write(paper.working, make_parts(
+        para(run("As "), _linked("Lari2023", "Lari (2023)"),
+             run(" shows, ..."))))
+
+    result = verdict(paper)
+
+    assert result.changed == 0, "the pass changed no visible word"
+    assert result.links == 1 and result.bookmarks == 1
+    assert result.apparatus_only
+    assert result.outcome == "untracked apparatus pass (nothing to adjudicate)"
+    assert "+1 link" in result.summary()
+    assert "+1 bookmark" in result.summary()
+
+
+def test_an_apparatus_pass_that_LOSES_a_link_says_so(tmp_path):
+    """Word strips run-level hyperlinks out of every paragraph whose
+    text the author rewrites, which is why the pass is re-run every
+    round. A round that came back with fewer is worth a number."""
+    root = tmp_path / "P"
+    root.mkdir()
+    src = write(root / "P.docx", make_parts(
+        para(run("As "), _linked("Lari2023", "Lari (2023)"), run(" shows"))))
+    paper = revision.init(root, src)
+    write(paper.working, make_parts(para(run("As Lari (2023) shows"))))
+
+    result = verdict(paper)
+
+    assert result.links == -1
+    assert "-1 link" in result.summary()
+
+
+def test_the_apparatus_is_NOT_the_headline_when_words_moved_too(cycle):
+    """`apparatus_only` is about a round that changed nothing visible.
+    A batch that was adjudicated is still reported as adjudicated, with
+    the apparatus counted beside it rather than instead of it."""
+    _adjudicated(cycle, para(run("the new sentence"))
+                 + para(run("an untouched paragraph")))
+
+    result = verdict(cycle)
+
+    assert not result.apparatus_only
+    assert result.outcome == "accepted in full"
+
+
+def test_baseline_logs_an_apparatus_pass_as_such(tmp_path):
+    root = tmp_path / "P"
+    root.mkdir()
+    src = write(root / "P.docx", make_parts(para(run("As Lari (2023)."))))
+    paper = revision.init(root, src)
+    write(paper.working, make_parts(
+        para(run("As "), _linked("Lari2023", "Lari (2023)."))))
+
+    revision.baseline(paper, note="apparatus")
+
+    row = next(ln for ln in (root / "revision" / "log.md")
+               .read_text(encoding="utf-8").splitlines() if "apparatus" in ln)
+    assert "untracked apparatus pass" in row
+    assert "+1 link" in row and "+1 bookmark" in row
+
+
 # ------------------------------------------------------------ the record
 
 def test_baseline_files_the_round_in_the_log(cycle):

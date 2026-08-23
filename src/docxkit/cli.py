@@ -1308,6 +1308,62 @@ def _say_glyphs(report: object) -> None:
               "does not.")
 
 
+def _skipped_gates(args: argparse.Namespace, code: int) -> int:
+    """Say that `--run-gates` did not get to run them.
+
+    The ladder aborts before Word on a lint failure, and on a batch Word
+    cannot open. Neither is a reason to run the paper's own checks — the
+    thing under test is unshippable either way — but silence after a
+    flag was passed reads as "they ran and were fine", which is the one
+    thing it must not read as.
+    """
+    if getattr(args, "run_gates", False) and _paper(args).gates:
+        print("\n== the paper's own gates ==  NOT run: the ladder aborted "
+              "above")
+    return code
+
+
+def _paper_gates(args: argparse.Namespace, code: int) -> int:
+    """The paper's OWN gates, after the ladder — listed, or run.
+
+    Separate from the ladder in the output as well as in the code,
+    because they answer different questions: everything above is about
+    the BATCH, and these are about the paper. Listing them when they
+    were not run is deliberate — a list of unrun checks is a reminder,
+    and silence reads as "nothing to run".
+    """
+    paper = _paper(args)
+    if not paper.gates:
+        if getattr(args, "run_gates", False):
+            print("\n== the paper's own gates ==  none listed in paper.toml")
+        return code
+    if not getattr(args, "run_gates", False):
+        print(f"\n== the paper's own gates ==  {len(paper.gates)} listed, "
+              f"NOT run (--run-gates)")
+        for command in paper.gates:
+            print(f"   · {command}")
+        return code
+
+    from .revision import run_gates
+    print(f"\n== the paper's own gates ==  {len(paper.gates)}, from the "
+          f"project root")
+    failed = 0
+    for gate in run_gates(paper, timeout=args.gate_timeout):
+        print(f"   [{gate.verdict}] {gate.seconds}s  {gate.command}")
+        if gate.ok:
+            continue
+        failed += 1
+        for line in gate.output.splitlines():
+            print(f"        {line}")
+    if not failed:
+        return code
+    print(f"\n{failed} of {len(paper.gates)} of the paper's gates failed.")
+    # 5, not 1: "the redline is unshippable" and "the manuscript is
+    # wrong" want different responses, and a script that only knows
+    # non-zero cannot tell them apart.
+    return code or 5
+
+
 def cmd_revision_validate(args: argparse.Namespace) -> int:
     """The gate ladder. Gate 5 is the one that proves reviewability."""
     from . import guard as _g
@@ -1335,11 +1391,11 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
         print("   FAIL:", problem)
     if report.lint:
         print("\nABORT before Word - fix lint first.")
-        return 2
+        return _skipped_gates(args, 2)
     print("== counts ==", report.counts)
     if report.word_opened is False:
         print("== Word ==  FAILED (corrupted):", report.word_error)
-        return 3
+        return _skipped_gates(args, 3)
     if report.word_opened:
         # "in the body" is not a hedge: Word's Revisions collection walks
         # the main story, so a footnote-only batch reads 0 here while the
@@ -1397,12 +1453,12 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
         for anchor, png in render_accepted(target, args.render).items():
             print(f"   {anchor!r} -> {png.name}" if png
                   else f"   {anchor!r}: on no page — check the wording")
-    if paper.gates:
-        print("\nThe paper's own gates (run these too):")
-        for gate in paper.gates:
-            print("   ", gate)
+    # The paper's own gates are listed (or run) by `_paper_gates` below,
+    # in ONE section rather than two: this used to print its own "run
+    # these too" list, so with --run-gates the reader got the commands
+    # once as a reminder and again with their verdicts.
     print("\nVERDICT:", "PASS" if report.ok else "FAIL")
-    return 0 if report.ok else 1
+    return _paper_gates(args, 0 if report.ok else 1)
 
 
 def cmd_revision_promote(args: argparse.Namespace) -> int:
@@ -1850,6 +1906,11 @@ def main() -> None:
                    help="rasterise the ACCEPTED page each anchor falls on "
                         "(needs Word and PyMuPDF): the eye gate no markup "
                         "check can make")
+    r.add_argument("--run-gates", action="store_true",
+                   help="also run [verify] commands from paper.toml, as\n"
+                        "spelled, from the project root (exit 5 if one fails)")
+    r.add_argument("--gate-timeout", type=float, default=900,
+                   metavar="SECONDS", help="per gate; default 900")
 
     r = _rev("ship", cmd_revision_ship,
              "build then validate, in one process and one Word session")
@@ -1867,6 +1928,11 @@ def main() -> None:
     r.add_argument("--no-word", action="store_true",
                    help="offline gates only for the validate half")
     r.add_argument("--render", metavar="ANCHOR", nargs="+", default=[])
+    r.add_argument("--run-gates", action="store_true",
+                   help="also run [verify] commands from paper.toml, as\n"
+                        "spelled, from the project root (exit 5 if one fails)")
+    r.add_argument("--gate-timeout", type=float, default=900,
+                   metavar="SECONDS", help="per gate; default 900")
 
     r = _rev("promote", cmd_revision_promote,
              "put a validated batch onto the manuscript")
