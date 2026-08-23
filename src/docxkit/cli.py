@@ -311,11 +311,15 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
         # One finding per line: these carry a sentence, not a name, and
         # `misnamed` was computed and never printed at all — a check
         # nobody can read is a check nobody runs.
-        for key in ("misnamed", "misplaced_anchor"):
+        for key in ("misnamed", "misplaced_anchor", "fieldless"):
             print(f"  {key:<16} {len(state[key]):>3}")
             for line in state[key]:
                 print(f"    {line}")
-        return 1 if state["dangling"] or state["misplaced_anchor"] else 0
+        # `fieldless` gates: a caption that types its number in a
+        # series that computes them is the defect that printed two
+        # "Table 3"s while every other check reported zero.
+        return 1 if (state["dangling"] or state["misplaced_anchor"]
+                     or state["fieldless"]) else 0
 
     linked, report = crossrefs.link(doc, other_parts=others, labels=labels)
     print(name)

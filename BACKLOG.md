@@ -684,6 +684,72 @@ hits most.
 
 ## Fixed
 
+### ~~S3 nothing checks that a caption's NUMBER is a FIELD — a text-reading numbering audit passed a manuscript that prints two "Table 3"s and no "Table 8"~~ — FIXED 24.08
+
+Found 2026-08-24 on Health_Capacity_to_Work, by eye, in a PDF exported for an
+unrelated reason.
+
+Body captions numbered themselves with `SEQ Table \\* ARABIC`. One caption —
+Table 3's — carried a plain-text "3" instead. The counter never advanced there,
+so every caption after it evaluated one low: Table 4 printed as 3, Table 8 as 7.
+**The manuscript prints two "Table 3"s and has no "Table 8".**
+
+**Every check said the numbering was perfect**, including the paper's own
+`numbering_check` (`Table 8 captions: 1..8 contiguous, MISMATCHES: 0`),
+`crossrefs.audit` (18 linked, 0 misnamed) and `renumber`. All of them read the
+caption's visible text — which for a field is the CACHED result Word wrote the
+last time it rendered, not what it will compute next time. `docxkit compare`'s
+INTEGRITY layer saw only a related symptom elsewhere (an unbalanced field).
+
+This is the S3 shape exactly: a gate that cannot fail on the defect it exists to
+catch, and which reports a confident zero while the document is wrong.
+
+**Shape of a fix.** Cheap and text-only, no Word needed: for each label series,
+assert every caption carries `SEQ <label>` in its `instrText`. A series where
+one caption lacks the field is this defect, and the missing one is the culprit.
+Worth folding into `crossrefs.audit` as a `fieldless` bucket, or a small
+`fields.audit(xml)`. Note that the ANNEX captions here are legitimately literal
+(`Table A1`…`A6` carry no field), so the rule is per-series, not global.
+
+Also worth flagging while in there: a `SEQ` field whose `fldChar end` sits in
+the FOLLOWING paragraph. It still evaluates correctly and shows up only as an
+unbalanced-field integrity flag, which reads as noise next to a real one.
+
+**Repair technique, for whoever writes the fixer:** harvest a working caption's
+five runs (begin, instrText, separate, cached result, end) and swap the cached
+digit — do not hand-write the field. The ones here carry `<w:i/>` on the fldChar
+runs, which no specification requires and Word put there anyway. Gate the repair
+on the whole document's visible text being **byte-identical** before and after:
+the pass must make the field agree with the number already displayed, never move
+a number.
+
+**What changed.** `crossrefs.fieldless(xml, labels=...)`, folded into
+`audit` as a bucket and gating `crossrefs --audit`'s exit code beside
+`dangling` and `misplaced_anchor`. Text-only, no Word needed: it reads
+the field INSTRUCTION — `SEQ <label>` in an `instrText` — and never the
+caption's visible text, which for a field is the cached result of the
+last render and is precisely what made every other check agree with
+itself.
+
+**Per SERIES, as the entry asked.** An annex numbers its exhibits
+literally on purpose, so the comparison is against the other captions
+with the same label and the same KIND of number: `Table A1`…`A6` all
+literal is a house style, `Table 1..4` with one typed is this bug, and
+the odd one out is named. A series of one is not a finding — there is
+nothing to be inconsistent with.
+
+Verified on HCW's exact shape (four body captions, one of them typed,
+plus a literal annex pair): one finding, naming Table 3, and the annex
+silent. A test asserts what made this invisible — the visible text of a
+typed caption and a computed one is byte-identical.
+
+The repair technique in the entry above is deliberately NOT implemented:
+swapping a cached digit is a per-document edit that has to be gated on
+the whole document's visible text being unchanged, and the gate that
+finds the defect is the part every paper needs.
+
+---
+
 ### ~~S3 `word.export_pdf` cannot render MARKUP, so a redline renders clean and looks like a batch that marked nothing~~ — FIXED 24.08
 
 Found 2026-08-24 on Health_Capacity_to_Work, while checking that a handed-back
@@ -767,44 +833,6 @@ survivor correctly. Verified in Word rather than assumed.
 **Workaround to retire:** `Health_Capacity_to_Work/revision/scripts/dedupe_comments.py`
 and the settings-patch block in that paper's `revision/scripts/redline.py`.
 
-### S3 nothing checks that a caption's NUMBER is a FIELD — a text-reading numbering audit passed a manuscript that prints two "Table 3"s and no "Table 8"
-
-Found 2026-08-24 on Health_Capacity_to_Work, by eye, in a PDF exported for an
-unrelated reason.
-
-Body captions numbered themselves with `SEQ Table \\* ARABIC`. One caption —
-Table 3's — carried a plain-text "3" instead. The counter never advanced there,
-so every caption after it evaluated one low: Table 4 printed as 3, Table 8 as 7.
-**The manuscript prints two "Table 3"s and has no "Table 8".**
-
-**Every check said the numbering was perfect**, including the paper's own
-`numbering_check` (`Table 8 captions: 1..8 contiguous, MISMATCHES: 0`),
-`crossrefs.audit` (18 linked, 0 misnamed) and `renumber`. All of them read the
-caption's visible text — which for a field is the CACHED result Word wrote the
-last time it rendered, not what it will compute next time. `docxkit compare`'s
-INTEGRITY layer saw only a related symptom elsewhere (an unbalanced field).
-
-This is the S3 shape exactly: a gate that cannot fail on the defect it exists to
-catch, and which reports a confident zero while the document is wrong.
-
-**Shape of a fix.** Cheap and text-only, no Word needed: for each label series,
-assert every caption carries `SEQ <label>` in its `instrText`. A series where
-one caption lacks the field is this defect, and the missing one is the culprit.
-Worth folding into `crossrefs.audit` as a `fieldless` bucket, or a small
-`fields.audit(xml)`. Note that the ANNEX captions here are legitimately literal
-(`Table A1`…`A6` carry no field), so the rule is per-series, not global.
-
-Also worth flagging while in there: a `SEQ` field whose `fldChar end` sits in
-the FOLLOWING paragraph. It still evaluates correctly and shows up only as an
-unbalanced-field integrity flag, which reads as noise next to a real one.
-
-**Repair technique, for whoever writes the fixer:** harvest a working caption's
-five runs (begin, instrText, separate, cached result, end) and swap the cached
-digit — do not hand-write the field. The ones here carry `<w:i/>` on the fldChar
-runs, which no specification requires and Word put there anyway. Gate the repair
-on the whole document's visible text being **byte-identical** before and after:
-the pass must make the field agree with the number already displayed, never move
-a number.
 
 ### S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass
 

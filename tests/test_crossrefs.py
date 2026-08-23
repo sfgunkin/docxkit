@@ -2107,3 +2107,80 @@ def test_dangling_sees_a_FIELD_pointing_at_a_bookmark_that_is_gone():
                    r'<w:r><w:instrText>REF Figure9 \h</w:instrText></w:r>'
                    '<w:r><w:fldChar w:fldCharType="end"/></w:r>'))
     assert crossrefs.audit(xml)["dangling"] == ["Figure9"]
+
+# --- a caption that TYPES its number ---------------------------------
+#
+# HCW, 2026-08-24, found by eye in a PDF exported for another reason:
+# one body caption carried a plain-text "3" where its neighbours carried
+# `SEQ Table \* ARABIC`, so the counter never advanced there and every
+# caption after it evaluated one low. **The manuscript printed two
+# "Table 3"s and had no "Table 8".** Every check in the package said the
+# numbering was perfect — the paper's own numbering check, `audit`,
+# `renumber` — because all of them read the caption's visible text, and
+# for a field that text is the CACHED result of the last render.
+
+
+def _computed(label: str, number: str) -> str:
+    """A caption that numbers itself, the five runs Word writes."""
+    return ("<w:p>" + run(f"{label} ")
+            + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            + '<w:r><w:instrText xml:space="preserve"> SEQ '
+            + label + ' \\* ARABIC </w:instrText></w:r>'
+            + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(number)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            + run(". A caption.") + "</w:p>")
+
+
+def _typed(label: str, number: str) -> str:
+    return para(run(f"{label} {number}. A caption."))
+
+
+def test_a_caption_that_TYPES_its_number_in_a_computed_series():
+    from docxkit.crossrefs import fieldless
+
+    xml = doc(_computed("Table", "1") + _computed("Table", "2")
+                   + _typed("Table", "3") + _computed("Table", "4"))
+
+    (found,) = fieldless(xml)
+
+    assert "Table 3" in found and "types its number" in found
+
+
+def test_the_VISIBLE_text_is_identical_either_way():
+    """Why every existing check missed it: the defect is invisible to
+    anything reading the caption's text, which is what all of them
+    read."""
+    from docxkit._xml import visible_text
+
+    assert visible_text(_computed("Table", "3")).strip() == \
+        visible_text(_typed("Table", "3")).strip()
+
+
+def test_an_ANNEX_series_that_is_literal_THROUGHOUT_is_not_a_finding():
+    """`Table A1`…`A6` carry no field on purpose. The rule is per
+    series, or every paper with an annex reports six defects."""
+    from docxkit.crossrefs import fieldless
+
+    xml = doc(_computed("Table", "1") + _computed("Table", "2")
+                   + _typed("Table", "A1") + _typed("Table", "A2"))
+
+    assert fieldless(xml) == []
+
+
+def test_a_series_of_ONE_is_not_a_finding():
+    """Nothing to be inconsistent with."""
+    from docxkit.crossrefs import fieldless
+
+    assert fieldless(doc(_typed("Figure", "1"))) == []
+
+
+def test_the_audit_carries_it_and_the_other_buckets_are_unmoved():
+    from docxkit.crossrefs import audit
+
+    xml = doc(_computed("Table", "1") + _typed("Table", "2"))
+
+    state = audit(xml)
+
+    assert len(state["fieldless"]) == 1
+    assert state["dangling"] == [] and state["misnamed"] == []

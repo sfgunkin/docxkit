@@ -52,6 +52,7 @@ from typing import NamedTuple
 from ._xml import (
     BOOKMARK_ID_RE,
     HYPERLINK_ANY_RE,
+    INSTR_RE,
     PARA_RE,
     T_RE,
     WT_RE,
@@ -83,6 +84,7 @@ __all__ = [
     "audit",
     "caption_re",
     "field_targets",
+    "fieldless",
     "find_captions",
     "link",
     "link_more",
@@ -694,6 +696,57 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     return xml, report
 
 
+#: A caption numbers ITSELF with `SEQ Table \* ARABIC` in a field
+#: instruction, and `_xml.INSTR_RE` is where this package reads those.
+#: Read from the INSTRUCTION and never from the visible text: what a
+#: field shows is the cached result Word wrote at the last render, which
+#: is exactly why every text-reading check missed this.
+
+
+def _numbers_itself(para_xml: str, label: str) -> bool:
+    wanted = rf"\bSEQ\s+{re.escape(label)}\b"
+    return any(re.search(wanted, instr, re.IGNORECASE)
+               for instr in INSTR_RE.findall(para_xml))
+
+
+def fieldless(xml: str, *,
+              labels: tuple[str, ...] = DEFAULT_LABELS) -> list[str]:
+    r"""Captions that type their number in a series whose others compute it.
+
+    The defect this catches printed **two "Table 3"s and no "Table 8"**
+    and passed every check in the package (HCW, 2026-08-24). One
+    caption carried a plain-text "3" where its neighbours carried `SEQ
+    Table \* ARABIC`; the counter never advanced there, so every caption
+    after it evaluated one low. The paper's own numbering check said
+    "1..8 contiguous, MISMATCHES: 0", `audit` said 18 linked and 0
+    misnamed, and `renumber` agreed — because all of them read the
+    caption's visible TEXT, and for a field that text is the cached
+    result of the last render rather than what Word will compute at the
+    next one.
+
+    **Per SERIES, not globally.** An annex numbers its exhibits
+    literally on purpose — HCW's `Table A1`…`A6` carry no field and are
+    not defects — so the comparison is against the other captions with
+    the same label and the same KIND of number. A series where none of
+    them computes is a house style; a series where all but one does is
+    this bug, and the odd one out is the culprit.
+    """
+    groups: dict[tuple[str, bool], list[tuple[Caption, bool]]] = {}
+    for cap in find_captions(xml, labels=labels):
+        lettered = bool(cap.number[:1].isalpha())
+        groups.setdefault((cap.label, lettered), []).append(
+            (cap, _numbers_itself(xml[cap.start:cap.end], cap.label)))
+    out: list[str] = []
+    for (label, lettered), members in sorted(groups.items()):
+        if len(members) < 2 or not any(has for _, has in members):
+            continue                       # a literal series is a style
+        kind = "annex" if lettered else "body"
+        out += [f"{label} {cap.number} ({kind}) types its number; the "
+                f"other {len(members) - 1} in the series compute it"
+                for cap, has in members if not has]
+    return out
+
+
 def audit(xml: str, *,
           labels: tuple[str, ...] = DEFAULT_LABELS,
           also: str | Iterable[str] = ()) -> dict[str, list[str]]:
@@ -803,6 +856,7 @@ def audit(xml: str, *,
         "dangling": sorted(a for a in reached if a not in names),
         "misnamed": sorted(misnamed),
         "misplaced_anchor": sorted(misplaced),
+        "fieldless": fieldless(xml, labels=labels),
     }
 
 
