@@ -1283,3 +1283,132 @@ def test_an_AUTHORED_bookmark_that_goes_is_still_a_loss():
     notes = compare_collateral(before, after)
     assert any("bookmark dropped: Table6" in n for n in notes), notes
     assert any("link dropped: -> Table6" in n for n in notes), notes
+
+# --- what Compare REWRITES, which `compare_collateral` cannot see -----
+#
+# It answers "what is missing", and neither of these is missing:
+# settings.xml is present and rebuilt with Track Changes off, and the
+# comments part is present and carrying one note twice. Both reach the
+# author (HCW, 2026-08-24).
+
+SETTINGS = "word/settings.xml"
+
+
+def _settings(*children: str) -> bytes:
+    return ('<?xml version="1.0"?><w:settings xmlns:w="http://schemas.'
+            'openxmlformats.org/wordprocessingml/2006/main">'
+            + "".join(children) + "</w:settings>").encode("utf-8")
+
+
+def test_track_changes_is_carried_back_when_compare_turned_it_off():
+    """A batch turned it ON because the paper had never set it, so the
+    author's own typing was not being recorded. Compare writes a fresh
+    settings.xml and the accepted truth had it off again — the author
+    then edits a "tracked" manuscript and nothing is tracked."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings("<w:defaultTabStop w:val=\"720\"/>")}
+    source = {SETTINGS: _settings("<w:trackRevisions/>")}
+
+    assert keep_tracking(parts, source) is True
+    assert b"<w:trackRevisions/>" in parts[SETTINGS]
+
+
+def test_the_element_is_trackREVISIONS_not_trackChanges():
+    """Word reads `w:trackRevisions`. `w:trackChanges` leaves Track
+    Changes OFF with no error and no complaint about an unknown
+    element — measured twice, in two sessions."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings()}
+    keep_tracking(parts, {SETTINGS: _settings("<w:trackRevisions/>")})
+
+    assert b"trackChanges" not in parts[SETTINGS]
+
+
+def test_it_lands_where_CT_Settings_says_it_may():
+    """Order is not decoration: Word refuses a settings part whose
+    children are out of sequence. `w:trackRevisions` sits after
+    `w:revisionView`."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings('<w:revisionView w:markup="0"/>',
+                                 '<w:defaultTabStop w:val="720"/>')}
+    keep_tracking(parts, {SETTINGS: _settings("<w:trackRevisions/>")})
+
+    xml = parts[SETTINGS].decode("utf-8")
+    assert xml.index("revisionView") < xml.index("trackRevisions")
+    assert xml.index("trackRevisions") < xml.index("defaultTabStop")
+
+
+def test_a_paper_that_never_tracked_is_left_alone():
+    """Only carried when the source HAD it. Turning it on for a paper
+    that chose otherwise would be this tool making an editorial
+    decision."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings()}
+
+    assert keep_tracking(parts, {SETTINGS: _settings()}) is False
+    assert b"trackRevisions" not in parts[SETTINGS]
+
+
+def _comment(cid: int, author: str, text: str) -> str:
+    return (f'<w:comment w:id="{cid}" w:author="{author}" '
+            f'w:date="2026-08-24T00:00:00Z"><w:p><w:r><w:t>{text}</w:t>'
+            f"</w:r></w:p></w:comment>")
+
+
+def _comments_part(*items: str) -> bytes:
+    return ('<?xml version="1.0"?><w:comments xmlns:w="http://schemas.'
+            'openxmlformats.org/wordprocessingml/2006/main">'
+            + "".join(items) + "</w:comments>").encode("utf-8")
+
+
+def test_a_comment_present_in_BOTH_inputs_is_kept_once():
+    """The baseline has the author's note because they wrote it; the
+    clean master has it because an earlier round restored one Compare
+    had dropped. Compare does not merge them, and the author gets their
+    own note twice on the same table with no way to tell which copy to
+    resolve."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {"word/comments.xml": _comments_part(
+        _comment(1, "M. Lokshin", "Check this number against Table 3."),
+        _comment(2, "M. Lokshin", "Check this number against  Table 3."))}
+
+    (dropped,) = dedupe_comments(parts)
+
+    assert "Check this number" in dropped
+    assert parts["word/comments.xml"].count(b"<w:comment ") == 1
+
+
+def test_two_authors_saying_the_same_thing_are_two_comments():
+    """Matched on author AND text. Two readers agreeing is not a
+    duplicate."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {"word/comments.xml": _comments_part(
+        _comment(1, "M. Lokshin", "Needs a citation."),
+        _comment(2, "Referee 2", "Needs a citation."))}
+
+    assert dedupe_comments(parts) == []
+    assert parts["word/comments.xml"].count(b"<w:comment ") == 2
+
+
+def test_the_id_is_NOT_what_makes_two_comments_the_same():
+    """Never on id, which Compare renumbers; never on anchor, since the
+    two copies land on different runs of one paragraph."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {"word/comments.xml": _comments_part(
+        _comment(7, "M. Lokshin", "One note."),
+        _comment(9014, "M. Lokshin", "One note."))}
+
+    assert len(dedupe_comments(parts)) == 1
+
+
+def test_a_document_with_no_comments_is_not_an_error():
+    from docxkit.hygiene import dedupe_comments
+
+    assert dedupe_comments({}) == []

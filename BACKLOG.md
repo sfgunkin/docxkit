@@ -684,6 +684,78 @@ hits most.
 
 ## Fixed
 
+### ~~S2 `tracked.build` loses `<w:trackRevisions/>` and DUPLICATES a comment present in both inputs~~ — FIXED 24.08
+
+Found 2026-08-24 on Health_Capacity_to_Work. `build` already carries
+`docProps/core.xml` and `custom.xml` back because Compare regenerates them
+(`hygiene.carry_properties`, entry in `## Fixed`). Two more things Compare
+rewrites, both reaching the author:
+
+**1. Track Changes comes back OFF.** A batch had switched `<w:trackRevisions/>`
+on deliberately, because it had never been set in this paper and the author's
+own typing was therefore not being recorded. It did not survive the next round:
+Compare writes a fresh `settings.xml`, and the accepted truth had it off again.
+The author edits a "tracked" manuscript and nothing is tracked.
+
+Note for whoever fixes this: **the element Word reads is `w:trackRevisions`,
+not the schema's `w:trackChanges`.** Writing `<w:trackChanges/>` leaves Word
+reporting Track Changes OFF, with no error and no complaint about an unknown
+element — measured, twice, in two different sessions. In `CT_Settings` order it
+sits after `w:revisionView` and before `w:defaultTabStop`.
+
+**2. A comment in BOTH inputs is kept TWICE.** The baseline has the author's
+comment because they wrote it; the clean master has it because an earlier round
+restored it after a Compare dropped it. Compare does not merge the two — the
+redline hands the author their own note duplicated on the same table, with no
+way to tell which copy to resolve. Word confirms `Comments.Count = 2`.
+
+Neither end is wrong, which is why this belongs in `build` rather than in either
+input: the comment SHOULD be in the baseline AND in the clean master.
+
+**Shape of a fix.** After the compare, in `build`: insert `<w:trackRevisions/>`
+into `settings.xml` if absent (behind a flag if some caller wants it off), and
+drop comments duplicating one already present, matching on **author +
+whitespace-collapsed text** — never on id, which Compare renumbers, and never on
+anchor, since the two copies land on different runs of one paragraph. Leaving
+the `commentsExtended` / `commentsIds` / `commentsExtensible` entries orphaned
+is safe: they key off paragraph ids, and Word opens, counts and threads the
+survivor correctly. Verified in Word rather than assumed.
+
+**Workaround to retire:** `Health_Capacity_to_Work/revision/scripts/dedupe_comments.py`
+and the settings-patch block in that paper's `revision/scripts/redline.py`.
+
+**What changed.** `hygiene.keep_tracking` and `hygiene.dedupe_comments`,
+called from `build` through `_carry_rewrites` — which exists as a
+function because adding the two inline pushed `build` past the
+complexity ceiling the debt list pins it at, and that list may only
+shrink.
+
+They sit beside `carry_properties` and `restore_parts` for a reason
+worth naming: `compare_collateral` answers *what is MISSING*, and
+neither of these is missing. `settings.xml` is present and rebuilt with
+Track Changes off; the comments part is present and carrying one note
+twice. A gate that asks only about absence cannot see a rewrite.
+
+* **Track Changes** is carried only when the ORIGINAL had it — turning
+  it on for a paper that chose otherwise would be this tool making an
+  editorial decision. The element written is `w:trackRevisions`, and
+  there is a test asserting that `trackChanges` never appears: the
+  entry's measurement, twice in two sessions, is that Word reads the
+  first and silently ignores the second. It is inserted after
+  `w:revisionView` where `CT_Settings` says it belongs, with a test on
+  the ordering, because Word refuses a settings part out of sequence.
+* **Duplicate comments** match on author plus whitespace-collapsed
+  text. Two authors saying the same thing are two comments; the same
+  author's note arriving from both inputs is one. Never on id, which
+  Compare renumbers — there is a test with ids 7 and 9014 — and never
+  on anchor, since the copies land on different runs of one paragraph.
+
+**Workarounds to retire:** `dedupe_comments.py` and the settings-patch
+block in `redline.py`, both in `Health_Capacity_to_Work/revision/scripts/`.
+Not deleted here; that paper has a session in it.
+
+---
+
 ### ~~S3 nothing checks that a caption's NUMBER is a FIELD — a text-reading numbering audit passed a manuscript that prints two "Table 3"s and no "Table 8"~~ — FIXED 24.08
 
 Found 2026-08-24 on Health_Capacity_to_Work, by eye, in a PDF exported for an
@@ -792,46 +864,6 @@ only instrument that catches a whole class of maths defects. If that step is
 built on `export_pdf` as it stands, it will be **blind on every redline** — the
 file the author is actually handed — so this needs fixing first or the new gate
 inherits the false negative.
-
-### S2 `tracked.build` loses `<w:trackRevisions/>` and DUPLICATES a comment present in both inputs — the same class as the `docProps/core.xml` entry
-
-Found 2026-08-24 on Health_Capacity_to_Work. `build` already carries
-`docProps/core.xml` and `custom.xml` back because Compare regenerates them
-(`hygiene.carry_properties`, entry in `## Fixed`). Two more things Compare
-rewrites, both reaching the author:
-
-**1. Track Changes comes back OFF.** A batch had switched `<w:trackRevisions/>`
-on deliberately, because it had never been set in this paper and the author's
-own typing was therefore not being recorded. It did not survive the next round:
-Compare writes a fresh `settings.xml`, and the accepted truth had it off again.
-The author edits a "tracked" manuscript and nothing is tracked.
-
-Note for whoever fixes this: **the element Word reads is `w:trackRevisions`,
-not the schema's `w:trackChanges`.** Writing `<w:trackChanges/>` leaves Word
-reporting Track Changes OFF, with no error and no complaint about an unknown
-element — measured, twice, in two different sessions. In `CT_Settings` order it
-sits after `w:revisionView` and before `w:defaultTabStop`.
-
-**2. A comment in BOTH inputs is kept TWICE.** The baseline has the author's
-comment because they wrote it; the clean master has it because an earlier round
-restored it after a Compare dropped it. Compare does not merge the two — the
-redline hands the author their own note duplicated on the same table, with no
-way to tell which copy to resolve. Word confirms `Comments.Count = 2`.
-
-Neither end is wrong, which is why this belongs in `build` rather than in either
-input: the comment SHOULD be in the baseline AND in the clean master.
-
-**Shape of a fix.** After the compare, in `build`: insert `<w:trackRevisions/>`
-into `settings.xml` if absent (behind a flag if some caller wants it off), and
-drop comments duplicating one already present, matching on **author +
-whitespace-collapsed text** — never on id, which Compare renumbers, and never on
-anchor, since the two copies land on different runs of one paragraph. Leaving
-the `commentsExtended` / `commentsIds` / `commentsExtensible` entries orphaned
-is safe: they key off paragraph ids, and Word opens, counts and threads the
-survivor correctly. Verified in Word rather than assumed.
-
-**Workaround to retire:** `Health_Capacity_to_Work/revision/scripts/dedupe_comments.py`
-and the settings-patch block in that paper's `revision/scripts/redline.py`.
 
 
 ### S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass

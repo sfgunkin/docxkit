@@ -692,6 +692,9 @@ class BuildReport:
         #: OMML, put back from what a source really spells. See
         #: :func:`docxkit.hygiene.restore_math_glyphs`.
         self.restored_glyphs: list[str] = []
+        #: Comments Compare kept TWICE because both inputs carried them.
+        #: See :func:`docxkit.hygiene.dedupe_comments`.
+        self.deduped_comments: list[str] = []
         self.phases: list[tuple[str, float]] = []
         self._t0 = self._last = time.perf_counter()
 
@@ -917,6 +920,28 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
         return 0
 
 
+def _carry_rewrites(parts: dict[str, bytes], original: str | Path,
+                    report: BuildReport, say: Any) -> None:
+    """What Compare REWRITES rather than drops, so nothing else sees it.
+
+    `compare_collateral` answers "what is missing", and neither of these
+    is missing. `settings.xml` is present and rebuilt with Track Changes
+    off; the comments part is present and carrying one note twice. Both
+    reach the author, and both were per-paper scripts before they were
+    here (HCW's `dedupe_comments.py` and the settings patch in its
+    `redline.py`).
+    """
+    if _hygiene.keep_tracking(parts, read_parts(original)):
+        report.carried_properties.append("w:trackRevisions")
+        say("  carried across: Track Changes was ON and Compare wrote a "
+            "fresh settings.xml with it off — an author editing a "
+            "'tracked' manuscript whose typing is not being recorded is "
+            "the quietest way to lose a round")
+    report.deduped_comments = _hygiene.dedupe_comments(parts)
+    for note in report.deduped_comments:
+        say(f"  de-duplicated a comment present in BOTH inputs: {note}")
+
+
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
@@ -1093,6 +1118,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"(Compare regenerates core.xml with only its own save "
                 f"fields; metadata is not tracked-changeable, so nothing "
                 f"else would ever report this)")
+        _carry_rewrites(parts, original, report, say)
         report.dropped = compare_collateral(revised_parts, parts)
         for note in report.dropped:
             say(f"  WARNING: Compare {note}")

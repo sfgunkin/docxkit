@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass, field
 
 from ._xml import (
+    COMMENTS,
     DOCUMENT,
     PARA_RE,
     T_PARTS_RE,
@@ -47,6 +48,8 @@ __all__ = [
     "SmartenReport",
     "SpacingReport",
     "carry_properties",
+    "dedupe_comments",
+    "keep_tracking",
     "restore_math_glyphs",
     "restore_parts",
     "smarten",
@@ -389,6 +392,100 @@ def _restore_section_references(parts: dict[str, bytes],
     for at, entry in sorted(inserts, reverse=True):
         out = out[:at] + entry + out[at:]
     parts[doc] = out.encode("utf-8")
+
+
+#: The element Word actually READS for Track Changes. Not the schema's
+#: `w:trackChanges`: writing that leaves Word reporting Track Changes
+#: OFF, with no error and no complaint about an unknown element —
+#: measured twice, in two sessions. In `CT_Settings` order it sits after
+#: `w:revisionView` and before `w:defaultTabStop`.
+_TRACK = "<w:trackRevisions/>"
+_SETTINGS = "word/settings.xml"
+_AFTER_TRACK = ("<w:revisionView", "<w:documentProtection",
+                "<w:writeProtection", "<w:zoom")
+
+
+def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
+    """Carry `<w:trackRevisions/>` across a Compare that dropped it.
+
+    Word's Compare writes a fresh `settings.xml`, so a batch that turned
+    Track Changes ON — because the paper had never set it and the
+    author's own typing was therefore not being recorded — hands back a
+    manuscript with it OFF again. The author then edits a "tracked"
+    document and nothing is tracked, which is the quietest way to lose
+    an author round: their edits arrive as ordinary text and the next
+    reject-all cannot separate them.
+
+    True when it had to put the element back. `source` is the document
+    whose setting is being preserved — the baseline the redline was
+    built from.
+    """
+    if _TRACK in parts.get(_SETTINGS, b"").decode("utf-8", "replace"):
+        return False
+    if _TRACK not in source.get(_SETTINGS, b"").decode("utf-8", "replace"):
+        return False
+    xml = parts.get(_SETTINGS, b"").decode("utf-8", "replace")
+    if not xml:
+        return False
+    # After the elements that precede it in CT_Settings, or first in the
+    # body if none of them is there. Order is not decoration: Word
+    # refuses a settings part whose children are out of sequence.
+    at = -1
+    for tag in _AFTER_TRACK:
+        found = xml.find(tag)
+        if found != -1:
+            at = max(at, xml.index(">", found) + 1)
+    if at == -1:
+        opened = re.search(r"<w:settings\b[^>]*>", xml)
+        if opened is None:
+            return False
+        at = opened.end()
+    parts[_SETTINGS] = (xml[:at] + _TRACK + xml[at:]).encode("utf-8")
+    return True
+
+
+def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
+    """Drop a comment that says the same thing twice, and say which.
+
+    Compare does not MERGE a comment present in both inputs: the
+    baseline has the author's note because they wrote it, the clean
+    master has it because an earlier round restored one Compare had
+    dropped, and the redline hands the author their own note duplicated
+    on the same table with no way to tell which copy to resolve (Word
+    confirms `Comments.Count = 2`). Neither input is wrong, which is why
+    this belongs to the build.
+
+    Matched on **author plus whitespace-collapsed text**. Never on id,
+    which Compare renumbers; never on anchor, since the two copies land
+    on different runs of one paragraph.
+
+    The `commentsExtended` / `commentsIds` / `commentsExtensible`
+    entries for the dropped copy are left orphaned, and that is safe:
+    they key off paragraph ids, and Word opens, counts and threads the
+    survivor correctly. Verified in Word rather than assumed.
+    """
+    xml = parts.get(COMMENTS, b"").decode("utf-8", "replace")
+    if not xml:
+        return []
+    dropped: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    out, at = [], 0
+    for m in re.finditer(r"<w:comment\b[^>]*>.*?</w:comment>", xml, re.DOTALL):
+        author = re.search(r'w:author="([^"]*)"', m.group(0))
+        text = " ".join(re.findall(r"<w:t[^>]*>(.*?)</w:t>", m.group(0),
+                                   re.DOTALL)).split()
+        key = (author.group(1) if author else "", " ".join(text))
+        if key in seen and key[1]:
+            dropped.append(f"{key[0]}: {key[1][:60]}")
+            out.append(xml[at:m.start()])
+            at = m.end()
+            continue
+        seen.add(key)
+    if not dropped:
+        return []
+    out.append(xml[at:])
+    parts[COMMENTS] = "".join(out).encode("utf-8")
+    return dropped
 
 
 def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],
