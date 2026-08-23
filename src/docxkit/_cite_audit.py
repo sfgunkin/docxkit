@@ -555,12 +555,17 @@ def _audit_findings(parts: dict[str, bytes], *,
                     if any(lb.strip() for _, lb in links.get(name, ()))
                     for owner in (_marker_owner(name, entries),)
                     if owner is not None}
+    # The entries' own surnames, so the audit reads the same spans the
+    # builder writes. Without them the audit counts a clipped mention as
+    # a linked one — "82 of 82, 0 broken" over a link covering half a
+    # name.
+    surnames = tuple({r.surname for r in entries})
     unlinked = later = mentions = 0
     for i, text in enumerate(texts[:head_idx]):
         if i < 5:
             continue
         masked = masked_visible_text(paras[i].group(0))
-        for found in find_citations(text):
+        for found in find_citations(text, surnames):
             c = resolve_lead(found, known=entry_keys, ignore=ignored)
             if c.surname.casefold() in ignored:
                 continue

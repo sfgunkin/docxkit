@@ -81,6 +81,9 @@ from ._cite_grammar import _add_style as _add_style
 from ._cite_grammar import _styled_run as _styled_run
 from ._cite_grammar import anchor_names as anchor_names
 from ._cite_grammar import bookmark as bookmark
+from ._cite_grammar import (
+    citations_clear_of as citations_clear_of,
+)
 from ._cite_grammar import extend_to_name as extend_to_name
 from ._cite_grammar import find_citations as find_citations
 from ._cite_grammar import hyperlink_field as hyperlink_field
@@ -127,6 +130,7 @@ __all__ = [
     "audit_links",
     "bookmark",
     "check_citations",
+    "citations_clear_of",
     "delete_bookmark",
     "extend_to_name",
     "find_citations",

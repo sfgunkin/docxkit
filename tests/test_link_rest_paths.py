@@ -301,12 +301,14 @@ def test_an_entry_with_NO_bookmark_is_reported_with_its_paragraph():
 
     report = link_rest(parts)
 
-    # the NARROW capture, because the widening over an institution's
-    # name happens after this check — the citation grammar refuses free
-    # capitalised adjacency, so "(World Bank Group 2024)" is caught as
-    # "Group 2024" and the line quotes what was caught
-    assert "'Group 2024' (¶4): entry has no bookmark" in report.skipped, \
-        report.skipped
+    # The line quotes the WHOLE name as of 24.08. It used to read
+    # "'Group 2024'", because the grammar refuses free capitalised
+    # adjacency and caught the institution from its last word — so the
+    # report named something the reader could not find in the sentence.
+    # Told the surname by the reference list, the scanner captures what
+    # is written.
+    assert "'World Bank Group 2024' (¶4): entry has no bookmark" \
+        in report.skipped, report.skipped
 
 
 def test_a_citation_INSIDE_an_equation_is_reported_not_crashed():

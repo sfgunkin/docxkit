@@ -21,6 +21,7 @@ from ._cite_grammar import (
     IGNORED_LEADS,
     Reference,
     _reads_as_prose,
+    citations_clear_of,
     extend_to_name,
     find_citations,
     key_for,
@@ -574,6 +575,16 @@ class _Mentions:
     are linked.
     """
 
+    def _surnames(self) -> tuple[str, ...]:
+        """What the reference list parsed, for the in-text scanner.
+
+        Derived rather than carried: this is a frozen record of nine
+        values decided before the scan, and a tenth that is a view of
+        one of the others would be a second place for the same fact.
+        """
+        return tuple({ref.surname
+                      for refs in self.by_key.values() for ref in refs})
+
     def scan(self, matches: list[re.Match[str]],
              into: dict[int, list[tuple[str, str]]],
              skip: tuple[int, int] | None) -> None:
@@ -589,7 +600,7 @@ class _Mentions:
             # writer should not be able to create it (AFI r4 batch 23,
             # 33 of them in one pass).
             labelled = [label for _a, label in internal_links(m.group(0))]
-            for found in find_citations(text):
+            for found in find_citations(text, self._surnames()):
                 c = resolve_lead(found, known=self.answers,
                                  ignore=self.ignored)
                 if c.surname.casefold() in self.ignored:
@@ -977,6 +988,12 @@ def link_rest(parts: dict[str, bytes], *,
             answers.setdefault(k, r.key)
     head_idx = min(r.index for r in entries)
     last_idx = max(r.index for r in entries)
+    # What the ENTRIES say the surnames are. The in-text grammar
+    # cannot infer a surname of two capitalised words and must not
+    # guess at one; told, it matches "de São José et al. (2019)"
+    # whole instead of linking "José et al. (2019)" and leaving the
+    # rest of the name black.
+    surnames = tuple({r.surname for r in entries})
 
     def rewrite(part: str, matches: list[re.Match[str]],
                 skip: tuple[int, int] | None, where: str) -> str:
@@ -987,12 +1004,10 @@ def link_rest(parts: dict[str, bytes], *,
             masked = masked_visible_text(para)
             text = visible_text(para)
             todo: list[tuple[int, int, str]] = []
-            for found in find_citations(text):
+            for found in citations_clear_of(text, masked, surnames):
                 c = resolve_lead(found, known=answers, ignore=ignored)
                 if c.surname.casefold() in ignored:
                     continue
-                if "\x00" in masked[c.start:c.end]:
-                    continue                      # already inside a link
                 key = answers.get(
                     key_for(filed_as.get(c.surname, c.surname), c.year))
                 if key is None:

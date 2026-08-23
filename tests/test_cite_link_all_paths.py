@@ -338,3 +338,88 @@ def test_the_link_rest_report_PRINTS_what_it_counted():
 # `hits[-1]` and left alive: two entries under one key is refused three
 # lines above, so the list has exactly one element by the time this
 # reads it.
+
+# --- a surname the grammar cannot infer, and the entry list can -------
+#
+# Free capitalised adjacency is refused by the in-text grammar on
+# purpose: it would file "As Smith (2020) shows" under "As Smith". That
+# refusal is right for GUESSING and wrong when the answer is in the
+# document, and the difference showed on Aging_Well as a link over half
+# a name — `de São ` black, immediately before a blue underlined
+# `José`. Nothing caught it: `citations` reported 82 of 82 mentions
+# linked with 0 broken, because the anchor resolved and the label was
+# not empty.
+
+PARTICLE_ENTRIES = (
+    para(run("References"))
+    + para(run("de São José, J., and Timonen, V. 2019. \"Ageing well.\" "
+               "Journal of Ageing 12: 1-20.")))
+
+
+def _linked(parts):
+    """(anchor, visible label) for every link in the body."""
+    doc = parts["word/document.xml"]
+    doc = doc.decode("utf-8") if isinstance(doc, bytes) else doc
+    return internal_links(doc)
+
+
+def test_a_PARTICLE_surname_is_linked_WHOLE():
+    """The span, not just the anchor — which is what the old report
+    got right while the page was wrong."""
+    parts = make_parts(
+        para(run("de São José et al. (2019) set out a framework."))
+        + PARTICLE_ENTRIES)
+
+    link_all(parts)
+
+    labels = [label for _anchor, label in _linked(parts)]
+    assert "de São José et al. (2019)" in labels, labels
+    assert "José et al. (2019)" not in labels, "the particle was clipped"
+
+
+def test_the_anchor_was_ALREADY_right_which_is_why_nothing_caught_it():
+    """The entry side parsed the surname correctly all along, particle
+    and all. Only the in-text side was guessing, so every check that
+    reads the anchor agreed with itself."""
+    parts = make_parts(
+        para(run("de São José et al. (2019) set out a framework."))
+        + PARTICLE_ENTRIES)
+
+    link_all(parts)
+
+    anchors = {anchor for anchor, _ in _linked(parts)}
+    assert any(a.startswith("deSaoJose2019") for a in anchors), anchors
+
+
+def test_a_bare_capitalised_adjacency_is_still_NOT_a_surname():
+    """The refusal this fix must not undo. "As Smith (2020) shows" has
+    to file under Smith, or every sentence-opening word joins the name
+    of whoever it introduces."""
+    from docxkit.citations import find_citations
+
+    (found,) = find_citations("As Smith (2020) shows", ("Smith",))
+
+    assert found.surname == "Smith"
+
+
+def test_a_name_the_list_does_not_carry_is_left_to_the_grammar():
+    """Told nothing, the scanner behaves exactly as before — the
+    alternation is an addition, not a replacement."""
+    from docxkit.citations import find_citations
+
+    text = "van der Klaauw (2008) shows"
+
+    assert [c.surname for c in find_citations(text)] == ["van der Klaauw"]
+    assert [c.surname for c in find_citations(text, ("Ravallion",))] == \
+        ["van der Klaauw"]
+
+
+def test_the_LONGEST_known_name_wins():
+    """With both "José" and "de São José" in the list, an alternation
+    that settled for the shorter one would re-create the defect."""
+    from docxkit.citations import find_citations
+
+    (found,) = find_citations("de São José et al. (2019) argues",
+                              ("José", "de São José"))
+
+    assert found.surname == "de São José"

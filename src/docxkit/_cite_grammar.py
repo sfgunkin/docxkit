@@ -13,8 +13,9 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 from ._xml import (
     RUN_RE,
@@ -474,7 +475,44 @@ def _per_year(authors: str, years: str, *, at: int, years_at: int,
         narrative=narrative) for i, m in enumerate(found)]
 
 
-def find_citations(text: str) -> list[Citation]:
+#: The in-text scanner, told what the reference list already knows.
+#:
+#: The grammar cannot read a surname of two capitalised words on its
+#: own, and deliberately: free capitalised adjacency would file "As
+#: Smith (2020) shows" under "As Smith". That refusal is right for
+#: guessing and wrong when the answer is in the document — "de São José
+#: et al. (2019)" linked as "José et al. (2019)", leaving `de São `
+#: black immediately before a blue underlined `José` (Aging_Well,
+#: 2026-08-23). The entry side parses the surname correctly, particle
+#: and all; only the in-text side was guessing.
+#:
+#: Cached because a scan calls this once per paragraph with the same
+#: name list, and compiling an alternation of ninety surnames each time
+#: is the sort of cost that turns a document-wide pass into a coffee
+#: break.
+@lru_cache(maxsize=8)
+def _patterns_for(names: tuple[str, ...]) -> tuple[re.Pattern[str],
+                                                   re.Pattern[str]]:
+    if not names:
+        return _SEGMENT_RE, _NARRATIVE_RE
+    # LONGEST first: with both "José" and "de São José" known, the
+    # alternation must not settle for the shorter one and re-create the
+    # defect it is here to fix.
+    known = "|".join(re.escape(n) for n in
+                     sorted({n for n in names if n}, key=len, reverse=True))
+    surname = rf"(?:{known}|{_SURNAME})"
+    authors = (rf"{surname}"
+               r"(?:\s+et\s+al\.?)?"
+               rf"(?:(?:,\s+|,?\s+(?:and|&)\s+){surname})*"
+               r"(?:['’]s)?")
+    return (re.compile(rf"({authors})\s+({_YEARS})(?=\s*(?:[;,]|$))"),
+            re.compile(rf"({authors})\s+\(({_YEARS})"
+                       r"(?:,\s+pp?\.[^)]*)?\)"))
+
+
+def find_citations(text: str,
+                   names: Sequence[str] | tuple[str, ...] = ()) -> list[
+                       Citation]:
     """Every in-text citation in a paragraph's visible text.
 
     Both forms, in document order. A parenthesis group holding several
@@ -486,20 +524,63 @@ def find_citations(text: str) -> list[Citation]:
     (2023))" — is reported once, as the narrative form; the two loops
     cannot double-report, because a segment's text can hold no
     parenthesis and a narrative match must hold its "(year)".
+
+    `names` is what the REFERENCE LIST says the surnames are, and
+    passing it is how a caller stops this from guessing at the ones the
+    grammar cannot infer. A surname of two capitalised words is the
+    case: "de São José et al. (2019)" scanned as "José et al. (2019)",
+    because free capitalised adjacency is refused here on purpose — it
+    would file "As Smith (2020) shows" under "As Smith". Told the name,
+    the scanner matches it whole.
     """
     if _YEAR_HINT_RE.search(text) is None:
         return []
+    segment_re, narrative_re = _patterns_for(tuple(names))
     found: list[Citation] = []
     for pm in _PAREN_RE.finditer(text):
         base = pm.start(1)
-        for m in _SEGMENT_RE.finditer(pm.group(1)):
+        for m in segment_re.finditer(pm.group(1)):
             found += _per_year(m.group(1), m.group(2),
                                at=base + m.start(), years_at=base + m.start(2),
                                end=base + m.end(), narrative=False)
-    for m in _NARRATIVE_RE.finditer(text):
+    for m in narrative_re.finditer(text):
         found += _per_year(m.group(1), m.group(2), at=m.start(),
                            years_at=m.start(2), end=m.end(), narrative=True)
     return sorted(found, key=lambda c: c.start)
+
+
+def citations_clear_of(text: str, masked: str,
+                       names: Sequence[str] = ()) -> list[Citation]:
+    r"""Citations whose span is not already inside a link.
+
+    The wide span a known surname gives is an improvement — until the
+    earlier words are already inside somebody else's link, where taking
+    it would nest one link in another. `link_rest`'s widening had a
+    guard for exactly that and abandoned the widening, keeping the
+    narrow span: *"linking less prettily, never worse"*.
+
+    Telling the scanner the surname made the wide span the FIRST one it
+    sees, so the blocked case stopped falling back and started skipping
+    the mention altogether — worse, not less pretty. This restores the
+    ladder: the wide capture when it is clear, the grammar's narrower
+    one when it is not, and nothing only when both are blocked.
+
+    `masked` is :func:`masked_visible_text` of the same paragraph — a
+    NUL at an offset means that offset is already linked.
+    """
+    out: list[Citation] = []
+    narrow: list[Citation] | None = None
+    for wide in find_citations(text, names):
+        if "\x00" not in masked[wide.start:wide.end]:
+            out.append(wide)
+            continue
+        if narrow is None:                    # scanned once, and only if
+            narrow = find_citations(text)     # a wide span was blocked
+        out += [n for n in narrow
+                if n.year == wide.year
+                and wide.start <= n.start and n.end <= wide.end
+                and "\x00" not in masked[n.start:n.end]]
+    return out
 
 
 def parse_reference(text: str, index: int = -1) -> Reference | None:

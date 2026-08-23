@@ -248,56 +248,6 @@ into hiding a real miss.
 
 ---
 
-### S2 — `link_all` CLIPS a surname that opens with a lowercase particle, so half the name stays black
-
-Found on Aging_Well, 2026-08-23, adding de São José et al. (2019) under
-referee Issue 4.
-
-The manuscript reads `de São José et al. (2019) set out a capability
-framework…`. `link_all` linked **`José et al. (2019)`** — the particle
-`de São ` left outside the span, black, immediately before a blue
-underlined `José`. The reference entry parsed correctly (the anchor it
-minted is `deSaoJose2019`, particle and all), so this is the in-text
-grammar only: `AUTHORS_PATTERN` reads a surname as its capitalized words.
-
-**Why S2 and not S4.** Nothing catches it.
-
-* `citations` reports `82 of 82 mentions linked, 0 broken` — the anchor
-  resolves and the label is non-empty, which is all it asks.
-* `refstyle` is about the entry, not the span.
-* `compare`'s TEXT and STRUCTURE layers are clean: no character moved.
-* Only the **ungated** HYPERLINK layer shows it, as
-  `[user-only] 'José et al. (2019)'` — and it takes reading the label
-  against the sentence to see that the two differ.
-
-Same shape as the group-tiling entry this file already carries: a valid
-link over the wrong span, invisible to every layer that has an opinion.
-A re-run does not self-correct either — `masked_visible_text` marks the
-clipped span as already linked, so any hand-wiring meant to widen it
-stands aside.
-
-**Reproduce.** A reference entry whose surname carries a particle and an
-in-text mention that spells it out:
-
-```
-de São José et al. (2019)      -> links 'José et al. (2019)'
-van der Klaauw (2008)          -> expected same class, untested
-```
-
-**Fix shape.** Let the surname pattern absorb a leading run of lowercase
-particles (`de`, `da`, `del`, `van`, `van der`, `von`, `di`, `du`, `la`,
-`le`) when the reference list's parsed surname begins with one — the
-entry side already knows, so the in-text side can be told rather than
-guessing. A test that fails without it: link a paragraph citing a
-particle surname and assert the span, not just the anchor.
-
-**Workaround to retire when this lands:** `widen_particle_spans` in
-`Aging_Well/revision/scripts/r2_link_apparatus.py`, with its
-`PARTICLE_SPANS` table. It is the mirror of the `narrow_group_spans`
-workaround sitting beside it in the same file, and both exist for the
-same reason.
-
----
 
 ### S2 — Word's Compare merges a CHANGED FOOTNOTE and writes the merged string into both copies
 
@@ -905,6 +855,104 @@ on 2026-08-24 against the current tree:
 ---
 
 ## Fixed
+
+### ~~S2 `link_all` CLIPS a surname that opens with a lowercase particle, so half the name stays black~~ — FIXED 24.08
+
+Found on Aging_Well, 2026-08-23, adding de São José et al. (2019) under
+referee Issue 4.
+
+The manuscript reads `de São José et al. (2019) set out a capability
+framework…`. `link_all` linked **`José et al. (2019)`** — the particle
+`de São ` left outside the span, black, immediately before a blue
+underlined `José`. The reference entry parsed correctly (the anchor it
+minted is `deSaoJose2019`, particle and all), so this is the in-text
+grammar only: `AUTHORS_PATTERN` reads a surname as its capitalized words.
+
+**Why S2 and not S4.** Nothing catches it.
+
+* `citations` reports `82 of 82 mentions linked, 0 broken` — the anchor
+  resolves and the label is non-empty, which is all it asks.
+* `refstyle` is about the entry, not the span.
+* `compare`'s TEXT and STRUCTURE layers are clean: no character moved.
+* Only the **ungated** HYPERLINK layer shows it, as
+  `[user-only] 'José et al. (2019)'` — and it takes reading the label
+  against the sentence to see that the two differ.
+
+Same shape as the group-tiling entry this file already carries: a valid
+link over the wrong span, invisible to every layer that has an opinion.
+A re-run does not self-correct either — `masked_visible_text` marks the
+clipped span as already linked, so any hand-wiring meant to widen it
+stands aside.
+
+**Reproduce.** A reference entry whose surname carries a particle and an
+in-text mention that spells it out:
+
+```
+de São José et al. (2019)      -> links 'José et al. (2019)'
+van der Klaauw (2008)          -> expected same class, untested
+```
+
+**Fix shape.** Let the surname pattern absorb a leading run of lowercase
+particles (`de`, `da`, `del`, `van`, `van der`, `von`, `di`, `du`, `la`,
+`le`) when the reference list's parsed surname begins with one — the
+entry side already knows, so the in-text side can be told rather than
+guessing. A test that fails without it: link a paragraph citing a
+particle surname and assert the span, not just the anchor.
+
+**Workaround to retire when this lands:** `widen_particle_spans` in
+`Aging_Well/revision/scripts/r2_link_apparatus.py`, with its
+`PARTICLE_SPANS` table. It is the mirror of the `narrow_group_spans`
+workaround sitting beside it in the same file, and both exist for the
+same reason.
+
+**The diagnosis in the entry above is wrong, and the measurement says
+so.** Leading particles were never the problem: `_SURNAME` has handled
+them since it was written, and `van der Klaauw (2008)` and `van Ours
+(2013)` both scan whole. What fails is a surname of TWO CAPITALISED
+WORDS — `São José` — which the grammar refuses on purpose, because free
+capitalised adjacency would file "As Smith (2020) shows" under "As
+Smith". `de São José` matched as far as `de São`, found no year after
+it, backtracked, and started again at `José`.
+
+That refusal is right for GUESSING and wrong when the answer is in the
+document. The entry side parses the surname correctly, particle and
+all; only the in-text side was guessing.
+
+**What changed.** `find_citations(text, names)` takes what the
+reference list parsed and matches those surnames literally, longest
+first, as an alternation ahead of the generic pattern — so a name the
+grammar cannot infer is not inferred, it is READ. `link_all`,
+`link_rest` and the audit all pass their own entries' surnames, so the
+writer and the checker see the same spans. Told nothing, the scanner
+behaves exactly as before.
+
+**One property had to be restored on the way.** `link_rest` widens a
+narrow capture over an institution's name and ABANDONS the widening if
+it would reach into an existing link — *"linking less prettily, never
+worse"*. Making the wide span the first one the scanner sees turned
+that into skipping the mention altogether, which is worse rather than
+less pretty. `citations_clear_of(text, masked, names)` restores the
+ladder: the wide capture when it is clear of existing links, the
+grammar's narrower one when it is not, nothing only when both are
+blocked. It re-scans only when a wide span is actually blocked.
+
+A second report improved with it: `link_rest`'s "entry has no bookmark"
+line quoted `'Group 2024'` for `(World Bank Group 2024)` — naming
+something the reader could not find in the sentence. It quotes the
+whole name now.
+
+Verified end to end: `de São José et al. (2019)` links whole, anchored
+`deSaoJose2019`, where it previously linked `José et al. (2019)` and
+left `de São ` black.
+
+**Workaround to retire:** `widen_particle_spans` and its
+`PARTICLE_SPANS` table in `Aging_Well/revision/scripts/r2_link_apparatus.py`.
+Not deleted here — that paper has a session working in it — but it is
+now dead code, and its mirror `narrow_group_spans` should be checked at
+the same time: the widening it compensates for is the one
+`citations_clear_of` now does correctly.
+
+---
 
 ### ~~S1 `\max`, `\min` and `\lim` come out ITALIC, so an optimization problem renders as three variables~~ — FIXED 24.08
 
