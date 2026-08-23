@@ -64,13 +64,34 @@ indentation — so the repair was provable rather than hopeful. Genuine `\` +
 newline continuations then need the backslash restored by hand; plain
 newlines do not.
 
-**Fix shape.** The mitigation has to be a rule with a gate behind it, not a
-habit: **a patch script containing a backslash is written to a file (Write
-tool) and executed, never piped through a heredoc** — and for a handful of
-lines, an Edit call, which touches no shell at all. Recorded for this agent
-in `feedback_never_patch_via_heredoc.md`. If a gate is wanted here, the
-candidate is a check that refuses a `python - <<` invocation whose payload
-contains a backslash.
+**Fix shape. Stated as a rule about the PAYLOAD, because "be careful" has
+now failed three times in one session.** There is no safe way to put a
+backslash through a Bash heredoc, so the rule is not care but avoidance:
+**a payload containing a backslash never goes through a heredoc at all.**
+Write it to a file with the Write tool and execute the file; for a handful
+of lines use an Edit call, which touches no shell. Recorded for this agent
+in `feedback_never_patch_via_heredoc.md`.
+
+**And "patch script" is too narrow a scope, which is how the third one
+happened.** That payload was not a patch script: it was ordinary source
+being inserted, carrying `\n` inside an f-string. Same converter, same
+halving, different clothes. The rule is about backslashes in a heredoc,
+not about what the heredoc is for.
+
+**The running cost, since a measurement is what gets an entry acted on.**
+Three incidents on 2026-08-23/24, across two agents sharing one tree:
+
+| when | what | cost |
+|---|---|---|
+| 19:47 | `tests/test_revision.py` — a `str.replace` payload | 387 real newlines rewritten as literal `\n`, file collapsed 2821 → 2574 lines, 1113 lint errors, `ast.parse` failing; the second session had to stop, snapshot and wait |
+| — | two further patch attempts by the second session | both failed the same way |
+| 00:38 | `src/docxkit/cli.py` — an f-string in inserted source | two `\n` became real newlines, unterminated literal, **the whole package failed to import**, so every suite in the shared tree was red until repaired |
+
+**If a gate is wanted**, the candidate is a hook that refuses a
+`python - <<` invocation whose payload contains a backslash. The recovery
+procedure, when it happens anyway, is in the entry above: diagnose
+read-only, find a property that SEPARATES the damage from legitimate text,
+and prove it against `git show HEAD:<file>` before writing anything.
 
 ---
 
@@ -101,142 +122,41 @@ for any manuscript that carries maths — something that renders the pages an
 equation lands on and puts them where a human will actually look. Each of the
 three would have been caught on the first run.
 
+**And it has to render the MARKUP view, not just the page** — ezhik-82's
+point, from the `word.export_pdf` entry below. `export_pdf` calls
+`ExportAsFixedFormat` without `Item`, so it renders the DOCUMENT: a redline
+comes out clean and looks like a batch that marked nothing. A gate built on
+it would therefore inherit the very failure this note is about, one level up.
+A PDF of a redline showing no markup and a `math --check` passing an italic
+operator are the same defect in different clothes: **the check watches an
+observable proxy rather than the object it is supposed to be about.** That
+sentence covers every entry named here, the two ezhik-82 found in the
+comparison layers, and the `_kill_tree` mutant that survived because the
+elapsed-time assertion could not see an orphan.
+
 Found across Aging_Well's R20 and R21, 2026-08-23/24, which gave that paper
 its first mathematics: all three defects, all three found by reading the page,
 none by any command.
 
----
+**Partly answered, 24.08.** The two S1s above are fixed, and the render
+gate has a first instance:
+`tests/test_equations_typography.py::test_the_RENDER_shows_upright_operators_and_italic_variables`,
+marked `-m word`, builds the equations into a real package, exports a PDF
+through Word and reads the text layer BY CODEPOINT — Word draws a
+variable from the Mathematical Alphanumeric block and an upright operator
+name in ASCII, so "is the operator upright and the operand not" is a
+machine-readable question about the page rather than about the markup
+that was supposed to produce it. No eyes required, which is what makes it
+a gate rather than a habit.
 
-### S1 — `\max`, `\min` and `\lim` come out ITALIC, so an optimization problem renders as three variables
-
-Found on Aging_Well, 2026-08-24, reading the rendered page of the batch that
-gave that paper its first mathematics. Equation (5) is a planner problem and
-its `max` is set as three italic letters, `𝑚𝑎𝑥`, rather than as an upright
-operator name.
-
-**Measured across seven operators**, by counting `<m:sty m:val="p"/>` in the
-converted OMML:
-
-| written | upright? |
-|---|---|
-| `\log x`, `\log_{2} x`, `\exp x` | yes |
-| `\max x`, `\max_{x} y` | **no** |
-| `\min x` | **no** |
-| `\lim_{x} y` | **no** |
-
-`\operatorname{max}` does not help — same result.
-
-**The root cause is upstream and docxkit is the seam.** latex2mathml emits
-different MathML for the two families:
-
-```
-\log x -> <mrow><mi>log</mi><mi>x</mi></mrow>
-\max x -> <mrow><mo>max</mo><mi>x</mi></mrow>
-```
-
-`MML2OMML.XSL` marks a multi-character `<mi>` upright and leaves `<mo>`
-alone, so the operator family loses its styling. Nothing downstream of
-`latex_to_omml` can tell that `max` was meant as a name rather than as the
-product of three variables.
-
-**Why S1, by the same reasoning as the spacing entry above.** The output is
-valid OMML, `equations()` counts it, `math --check` reports it clean, and
-`to_latex` round-trips it. Only a render shows it, and nothing renders by
-default. And the operators it misses are exactly the ones an economics paper
-reaches for: a constrained optimization is written with `\max`, its
-comparative statics with `\lim`.
-
-**Fix shape, and the two candidates are not equivalent.** Either rewrite
-`<mo>` to `<mi>` for the operator names OMML wants upright, before the
-transform; or post-process the OMML to add `<m:sty m:val="p"/>` to a run whose
-text is a known operator name.
-
-**Prefer the second, and measure both against a render before choosing**
-(ezhik-82's point, and it is a good one): `<mo>` and `<mi>` are LAID OUT
-differently, so swapping the element to fix the face may move the gaps around
-it — which would be the spacing defect above, reintroduced by the fix for this
-one. The OMML post-process changes the face and nothing else.
-
-A test that fails without it can assert on the `m:sty` stream, which is
-cheaper than a render and is what the measurement above already does. A test
-for the fix's SIDE EFFECT cannot be, and has to be a render.
-
-**Workaround:** none in use. Aging_Well ships equation (5) with an italic
-`max` and the defect is recorded in its `revision/log.md` as the first item
-for the next round.
+It is one test, not the ladder: `revision validate` still renders
+nothing, and the prime entry and `export_pdf`'s markup blindness are both
+still open. But the shape is now proven cheap — nine seconds, and it
+caught a real regression in the fix that landed beside it.
 
 ---
 
-### S1 — `compare` does not compare `word/media/` AT ALL: a figure replaced, corrupted or DELETED is reported as zero changes
 
-Found on HCW, 2026-08-23, during T12.2 — a task whose entire deliverable was
-four replaced images.
-
-**Symptom as observed.** `docxkit compare A B` where B differs from A only in
-`word/media/` prints
-
-```
-REAL change locations (excl. glyph): 0   |   glyph-only: 0   |   ...
-```
-
-for all three of these:
-
-* **replaced** — Figure 8.a's PNG swapped for Figure 1's, a completely
-  different chart;
-* **corrupted** — the part overwritten with a 48-byte stub that is not a
-  valid image;
-* **deleted** — the part removed from the package outright.
-
-`--json` carries no media information either: the report's keys are
-`structure, text, glyph, formula, formula_glyph, formula_format, format,
-hyperlinks, integrity, stripped_fields, comments`, and the string "media"
-does not occur anywhere in the output.
-
-**Why S1 and not S2.** The STRUCTURE layer's own header is
-
-```
-STRUCTURE  (paragraph insert / delete / move, part added / removed)
-```
-
-so the layer states that it covers a part being added or removed, and then
-reports `(none)` when one is removed. This is not a documented boundary a
-caller could route around — it is a gate reporting success on a change it
-claims to check. The skill documentation reinforces it: "STRUCTURE (incl.
-moves, and a whole part added/removed)" and "**Never decide 'did this change?'
-by eyeballing truncated text — let the tool enumerate.**" A caller who follows
-that instruction on a figure edit is told nothing changed.
-
-**Why it matters here specifically.** T12.2's acceptance is that the parts in
-`word/media/` hash-match their sources, precisely because Word silently
-recompresses images on save. The compare gate is the tool that is supposed to
-answer "did the right thing land"; on this task it answered "nothing landed"
-while four figures had been swapped. The only reason the swap was known to be
-correct is that the paper's own script re-read the saved file and compared
-SHA-256 itself.
-
-**Repro.**
-
-```python
-from docxkit import read_parts, write_docx
-parts = read_parts("paper.docx")
-parts["word/media/image14.png"] = parts["word/media/image1.png"]  # or `del`
-write_docx("swapped.docx", parts)
-# docxkit compare paper.docx swapped.docx  ->  REAL change locations: 0
-```
-
-**Shape of a fix.** Compare the set of non-XML parts by name and by digest,
-and report three cases in STRUCTURE: part added, part removed, part CHANGED
-(same name, different bytes). A changed image needs no pixel diff to be worth
-reporting — name plus "content differs, 66,203 -> 69,327 bytes" is enough to
-send a person to look, which is all the other layers do. Consider naming the
-exhibit: the caption above the drawing that references the part is available
-from the same walk `crossrefs` already does.
-
-**Workaround, in use on HCW.** `A1_t112_figures.py` hashes each replaced part
-against its source file after `write_docx` and refuses on a mismatch. Every
-paper that touches an image has to write that itself.
-
----
 
 ### S4 — the unbalanced-field integrity flag names an EMPTY paragraph for the orphan half, so the flag cannot be located
 
@@ -668,46 +588,6 @@ reach it:
 
 ---
 
-### S1 — `latex_to_omml` DROPS every LaTeX spacing command, silently
-
-Found on Aging_Well, 2026-08-23, building the paper's first mathematics
-(R20).
-
-`\qquad`, `\hspace{2em}` and `\;` all vanish in
-latex2mathml → `MML2OMML.XSL`. Measured, five candidates:
-
-| written | survives as |
-|---|---|
-| `a > 0 \qquad b < 0` | `a>0`, `b<0` — nothing between them |
-| `a > 0 \hspace{2em} b < 0` | same |
-| `a > 0 \; b < 0` | same |
-| `a > 0 \text{\ \ \ \ } b < 0` | four spaces, each preceded by a literal backslash |
-| `a > 0 \mathrm{~~~~} b < 0` | four U+00A0 in their own maths run — clean |
-
-**Why S1, on ezhik-82's argument rather than my first call of S2.** The
-defect is a silent wrong answer *in the output medium*: nothing but a render
-can see it, and nothing renders by default. The output is valid OMML,
-`equations()` counts it correctly,
-`m:oMath` totals are right, `math --check` reports it clean and
-`to_latex` round-trips the structure. Nothing sees it. What it looks like
-on the page is a definition and its sign conditions run together —
-`c=f(r,θ),∂f/∂r>0,∂f/∂k>0` — because every gap between them is gone.
-Every equation in that paper's two drafts has exactly that shape, so it
-hit all nine.
-
-**Reproduce.** `equations.latex_to_omml(r"a > 0 \qquad b < 0")` and read
-the `m:t` runs.
-
-**Fix shape.** Translate the spacing commands to an explicit maths run
-before handing the MathML to the transform, or post-process the OMML to
-insert one. A test that fails without it can assert on the `m:t` stream
-rather than on a render.
-
-**Workaround in use:** `\mathrm{~~~~}` throughout
-`Aging_Well/revision/scripts/r20_model.py` (the constant `G`), with the
-reason in its module docstring. Retire it when this lands.
-
----
 
 ### S4 — `MATH_DOWNGRADES` knows the MINUS but not the PRIME, so a prime-bearing equation cannot be built
 
@@ -849,9 +729,473 @@ glyph refusal in the module, not just this one — the minus/hyphen pair
 (U+2212 vs U+002D) has exactly the same problem and is the one this toolkit
 hits most.
 
+### S3 `word.export_pdf` cannot render MARKUP, so a redline renders clean and looks like a batch that marked nothing
+
+Found 2026-08-24 on Health_Capacity_to_Work, while checking that a handed-back
+redline actually showed the author what changed.
+
+`export_pdf` calls `ExportAsFixedFormat` without `Item`, which defaults to
+`wdExportDocumentContent` (0) — the document WITHOUT revision marks. Export a
+file carrying 187 `w:ins` and 59 `w:del` and the PDF is **clean text**: no
+strikethrough, no underline, no change bars. Nothing says markup was omitted.
+
+Why that is S3 rather than cosmetic: this module's own advice is to verify
+visually with `export_pdf`, because Word keeps OMML and LibreOffice does not
+(`feedback_verify_omml_word_pdf`, and the docstring says so). On a redline that
+verification **returns a false negative** — the page looks right, and the one
+thing you were checking, whether the revisions are there and land where you
+think, is exactly what was suppressed. It cost twenty minutes of hunting a
+non-existent bug: Word reported `Revisions.Count = 59` and `TrackRevisions =
+True`, `settings.xml` had no `w:revisionView` hiding anything, and the render
+still showed nothing.
+
+**Reproduced and worked around** by calling COM directly:
+
+```python
+doc.ExportAsFixedFormat(OutputFileName=str(out), ExportFormat=17,
+                        Item=7, From=8, To=9, Range=3)   # 7 = with markup
+```
+
+`Item=7` is `wdExportDocumentWithMarkup` and the marks appear where they should.
+
+**Shape of a fix.** `export_pdf(..., markup: bool = False)` passing `Item=7`.
+Worth pairing with a note beside `locate`'s existing "run against the CLEAN
+build" warning — same trap, opposite direction: `locate` is wrong on a redline
+because deleted text is still laid out, `export_pdf` is wrong on a redline
+because the marks are dropped.
+
+**Read with "Not three defects — one missing gate: nothing renders by
+default" above.** That entry proposes a render step in `revision validate` or a
+paper's `[verify]` block, on the grounds that a person looking at a page is the
+only instrument that catches a whole class of maths defects. If that step is
+built on `export_pdf` as it stands, it will be **blind on every redline** — the
+file the author is actually handed — so this needs fixing first or the new gate
+inherits the false negative.
+
+### S2 `tracked.build` loses `<w:trackRevisions/>` and DUPLICATES a comment present in both inputs — the same class as the `docProps/core.xml` entry
+
+Found 2026-08-24 on Health_Capacity_to_Work. `build` already carries
+`docProps/core.xml` and `custom.xml` back because Compare regenerates them
+(`hygiene.carry_properties`, entry in `## Fixed`). Two more things Compare
+rewrites, both reaching the author:
+
+**1. Track Changes comes back OFF.** A batch had switched `<w:trackRevisions/>`
+on deliberately, because it had never been set in this paper and the author's
+own typing was therefore not being recorded. It did not survive the next round:
+Compare writes a fresh `settings.xml`, and the accepted truth had it off again.
+The author edits a "tracked" manuscript and nothing is tracked.
+
+Note for whoever fixes this: **the element Word reads is `w:trackRevisions`,
+not the schema's `w:trackChanges`.** Writing `<w:trackChanges/>` leaves Word
+reporting Track Changes OFF, with no error and no complaint about an unknown
+element — measured, twice, in two different sessions. In `CT_Settings` order it
+sits after `w:revisionView` and before `w:defaultTabStop`.
+
+**2. A comment in BOTH inputs is kept TWICE.** The baseline has the author's
+comment because they wrote it; the clean master has it because an earlier round
+restored it after a Compare dropped it. Compare does not merge the two — the
+redline hands the author their own note duplicated on the same table, with no
+way to tell which copy to resolve. Word confirms `Comments.Count = 2`.
+
+Neither end is wrong, which is why this belongs in `build` rather than in either
+input: the comment SHOULD be in the baseline AND in the clean master.
+
+**Shape of a fix.** After the compare, in `build`: insert `<w:trackRevisions/>`
+into `settings.xml` if absent (behind a flag if some caller wants it off), and
+drop comments duplicating one already present, matching on **author +
+whitespace-collapsed text** — never on id, which Compare renumbers, and never on
+anchor, since the two copies land on different runs of one paragraph. Leaving
+the `commentsExtended` / `commentsIds` / `commentsExtensible` entries orphaned
+is safe: they key off paragraph ids, and Word opens, counts and threads the
+survivor correctly. Verified in Word rather than assumed.
+
+**Workaround to retire:** `Health_Capacity_to_Work/revision/scripts/dedupe_comments.py`
+and the settings-patch block in that paper's `revision/scripts/redline.py`.
+
+### S3 nothing checks that a caption's NUMBER is a FIELD — a text-reading numbering audit passed a manuscript that prints two "Table 3"s and no "Table 8"
+
+Found 2026-08-24 on Health_Capacity_to_Work, by eye, in a PDF exported for an
+unrelated reason.
+
+Body captions numbered themselves with `SEQ Table \\* ARABIC`. One caption —
+Table 3's — carried a plain-text "3" instead. The counter never advanced there,
+so every caption after it evaluated one low: Table 4 printed as 3, Table 8 as 7.
+**The manuscript prints two "Table 3"s and has no "Table 8".**
+
+**Every check said the numbering was perfect**, including the paper's own
+`numbering_check` (`Table 8 captions: 1..8 contiguous, MISMATCHES: 0`),
+`crossrefs.audit` (18 linked, 0 misnamed) and `renumber`. All of them read the
+caption's visible text — which for a field is the CACHED result Word wrote the
+last time it rendered, not what it will compute next time. `docxkit compare`'s
+INTEGRITY layer saw only a related symptom elsewhere (an unbalanced field).
+
+This is the S3 shape exactly: a gate that cannot fail on the defect it exists to
+catch, and which reports a confident zero while the document is wrong.
+
+**Shape of a fix.** Cheap and text-only, no Word needed: for each label series,
+assert every caption carries `SEQ <label>` in its `instrText`. A series where
+one caption lacks the field is this defect, and the missing one is the culprit.
+Worth folding into `crossrefs.audit` as a `fieldless` bucket, or a small
+`fields.audit(xml)`. Note that the ANNEX captions here are legitimately literal
+(`Table A1`…`A6` carry no field), so the rule is per-series, not global.
+
+Also worth flagging while in there: a `SEQ` field whose `fldChar end` sits in
+the FOLLOWING paragraph. It still evaluates correctly and shows up only as an
+unbalanced-field integrity flag, which reads as noise next to a real one.
+
+**Repair technique, for whoever writes the fixer:** harvest a working caption's
+five runs (begin, instrText, separate, cached result, end) and swap the cached
+digit — do not hand-write the field. The ones here carry `<w:i/>` on the fldChar
+runs, which no specification requires and Word put there anyway. Gate the repair
+on the whole document's visible text being **byte-identical** before and after:
+the pass must make the field agree with the number already displayed, never move
+a number.
+
+### S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass
+
+Found 2026-08-24 on Health_Capacity_to_Work, styling one caption's TWO panels.
+
+```python
+for t in reversed(tables.tables_after(xml, "Table 9.", count=2)):
+    xml, _ = tables.house(xml, t)          # AnchorError on the second iteration
+```
+
+`_fresh` compares a whole-document fingerprint, so editing the LATER table
+invalidates the handle on the EARLIER one too — even though nothing before it
+moved, and even though the loop was deliberately written in reverse for exactly
+that reason. `tables_after` invites this by returning a LIST: the API hands you
+several handles and only the first is usable.
+
+The message ("re-read with `read_all()`/`by_caption()` after every edit") is
+right and still did not prevent it — it reads as "after every edit to THIS
+table", and the fix people reach for is re-locating once per pass, which also
+fails. What works is re-locating before **every single call**:
+
+```python
+for pas in (tables.house, tables.fit_columns):
+    for i in (1, 0):
+        xml, rep = pas(xml, tables.tables_after(xml, "Table 9.", count=2)[i])
+```
+
+**Shape of a fix.** Either re-resolve a stale handle by identity when the edit
+provably lies after it, or say the true rule in the message — *"a handle is
+invalid after ANY edit to the part, not just to this table; re-locate before
+each call"* — and note it on `tables_after`, whose return type is what suggests
+the broken loop.
+
+### Checked and NOT defects — recorded so they are not re-derived
+
+Both were suspected in an earlier session on this manuscript and re-measured
+on 2026-08-24 against the current tree:
+
+* **`revisions.accept` and row-level revision marks.** An earlier note had it
+  returning Table A3 at 14 rows where Word's `AcceptAll` gives 46. It does not
+  reproduce: on a 19-table redline (187 insertions, 59 deletions) `accept`
+  reproduces the clean master's table count, every table's row count, and the
+  full visible text exactly.
+* **`by_caption` after a Flat-OPC round-trip.** An earlier note had it reporting
+  Table A2 at "5 rows" against Word's 29. It is correct — `len(table.rows[0])`
+  is a CELL count, and row 0 of these tables is a GROUPED header (`gridSpan`),
+  so it is legitimately 2 cells over 6 columns and 3 over 7. Word agrees with
+  `by_caption` on 29x6 and 46x7. **Read a data row, not row 0, when you want a
+  column count.**
+
+---
+
 ---
 
 ## Fixed
+
+### ~~S1 `\max`, `\min` and `\lim` come out ITALIC, so an optimization problem renders as three variables~~ — FIXED 24.08
+
+Found on Aging_Well, 2026-08-24, reading the rendered page of the batch that
+gave that paper its first mathematics. Equation (5) is a planner problem and
+its `max` is set as three italic letters, `𝑚𝑎𝑥`, rather than as an upright
+operator name.
+
+**Measured across seven operators**, by counting `<m:sty m:val="p"/>` in the
+converted OMML:
+
+| written | upright? |
+|---|---|
+| `\log x`, `\log_{2} x`, `\exp x` | yes |
+| `\max x`, `\max_{x} y` | **no** |
+| `\min x` | **no** |
+| `\lim_{x} y` | **no** |
+
+`\operatorname{max}` does not help — same result.
+
+**The root cause is upstream and docxkit is the seam.** latex2mathml emits
+different MathML for the two families:
+
+```
+\log x -> <mrow><mi>log</mi><mi>x</mi></mrow>
+\max x -> <mrow><mo>max</mo><mi>x</mi></mrow>
+```
+
+`MML2OMML.XSL` marks a multi-character `<mi>` upright and leaves `<mo>`
+alone, so the operator family loses its styling. Nothing downstream of
+`latex_to_omml` can tell that `max` was meant as a name rather than as the
+product of three variables.
+
+**Why S1, by the same reasoning as the spacing entry above.** The output is
+valid OMML, `equations()` counts it, `math --check` reports it clean, and
+`to_latex` round-trips it. Only a render shows it, and nothing renders by
+default. And the operators it misses are exactly the ones an economics paper
+reaches for: a constrained optimization is written with `\max`, its
+comparative statics with `\lim`.
+
+**Fix shape, and the two candidates are not equivalent.** Either rewrite
+`<mo>` to `<mi>` for the operator names OMML wants upright, before the
+transform; or post-process the OMML to add `<m:sty m:val="p"/>` to a run whose
+text is a known operator name.
+
+**Prefer the second, and measure both against a render before choosing**
+(ezhik-82's point, and it is a good one): `<mo>` and `<mi>` are LAID OUT
+differently, so swapping the element to fix the face may move the gaps around
+it — which would be the spacing defect above, reintroduced by the fix for this
+one. The OMML post-process changes the face and nothing else.
+
+A test that fails without it can assert on the `m:sty` stream, which is
+cheaper than a render and is what the measurement above already does. A test
+for the fix's SIDE EFFECT cannot be, and has to be a render.
+
+**Workaround:** none in use. Aging_Well ships equation (5) with an italic
+`max` and the defect is recorded in its `revision/log.md` as the first item
+for the next round.
+
+**SECOND OCCURRENCE, and it generalises past operator names — 2026-08-24,
+Health_Capacity_to_Work.** That manuscript sets its maths upright THROUGHOUT:
+every variable run carries `<m:sty m:val="p"/>` and vectors carry
+`m:val="b"`, so `V`, `X`, `h`, `β` and `γ` are all upright, not just the
+operators. Rebuilding equation (4) with `latex_to_omml` produced maths that
+was correct and **visibly wrong** — the new equation rendered math-italic
+directly beneath equation (3)'s upright one, on the same page.
+
+So the gap is not only "some operators come out italic"; it is that
+`latex_to_omml` has **no way to match the convention of the document it is
+being inserted into**, and the default it emits is the one a LaTeX author
+expects rather than the one Word manuscripts here use. Nothing text-based
+sees it: `compare`'s FORMULA layer compares tokens and structure and reports
+none, and only its FORMULA TYPOGRAPHY layer catches it — which needs a
+before/after pair, so it is silent when the equation is NEW.
+
+**Workaround in use, and it is the right default for this case:** do not
+build, TRUNCATE. Equation (4) was repaired by keeping its own elements
+byte-for-byte and dropping the trailing terms, which cannot change the
+setting of what remains; the inline parameter list was rebuilt from its own
+runs the same way, reusing the existing "and" run rather than emitting one.
+This is the house rule already recorded as `feedback_harvest_omml` —
+deepcopy an existing `m:oMath` when the symbols already appear in the
+document — and it should probably be the documented FIRST resort in
+`equations`' docstring, with `latex_to_omml` reserved for maths the document
+has no precedent for.
+
+**Fix shape for the general case:** a `style=` argument, or a
+`match_document(xml)` helper that reads the prevailing `m:sty` of the
+document's existing runs and applies it to a freshly converted equation.
+
+---
+
+**What changed.** `_name_operators_as_identifiers`, a MathML pre-pass:
+a `<mo>` whose text is two or more ASCII letters is retagged `<mi>`, and
+Word's XSL then applies to it the same upright rule it always applied to
+`\log`. Two or more LETTERS, not a list of names — `\operatorname{…}`
+takes an arbitrary one, and a fixed list would have missed it. One letter
+is left alone, because one letter is a variable.
+
+**The first version of the fix was wrong, and only the RENDER said so.**
+It marked the OMML run upright after the transform, which passed every
+markup assertion — and made the page worse. Left as `mo`, the XSL merges
+the operator into its operand as a single `<m:t>maxx</m:t>`, so styling
+that run took the VARIABLE upright with it: the page showed `maxx` where
+it should show `max` then an italic `x`. `test_the_OPERAND_stays_italic`
+is that lesson as an assertion.
+
+The caution against retagging — that `mo` and `mi` are spaced
+differently, so changing the element to fix the FACE might move the GAPS
+— was worth having and does not survive measurement: `\log x`, an `mi`
+operator all along, renders with the same absent gap as `\max x`,
+because OMML has flattened the distinction by the time Word draws it.
+
+Twelve operators verified upright in the markup and three on a rendered
+page, `\sup` among them — it was broken too and had not been measured.
+
+---
+
+### ~~S1 `latex_to_omml` DROPS every LaTeX spacing command, silently~~ — FIXED 24.08
+
+Found on Aging_Well, 2026-08-23, building the paper's first mathematics
+(R20).
+
+`\qquad`, `\hspace{2em}` and `\;` all vanish in
+latex2mathml → `MML2OMML.XSL`. Measured, five candidates:
+
+| written | survives as |
+|---|---|
+| `a > 0 \qquad b < 0` | `a>0`, `b<0` — nothing between them |
+| `a > 0 \hspace{2em} b < 0` | same |
+| `a > 0 \; b < 0` | same |
+| `a > 0 \text{\ \ \ \ } b < 0` | four spaces, each preceded by a literal backslash |
+| `a > 0 \mathrm{~~~~} b < 0` | four U+00A0 in their own maths run — clean |
+
+**Why S1, on ezhik-82's argument rather than my first call of S2.** The
+defect is a silent wrong answer *in the output medium*: nothing but a render
+can see it, and nothing renders by default. The output is valid OMML,
+`equations()` counts it correctly,
+`m:oMath` totals are right, `math --check` reports it clean and
+`to_latex` round-trips the structure. Nothing sees it. What it looks like
+on the page is a definition and its sign conditions run together —
+`c=f(r,θ),∂f/∂r>0,∂f/∂k>0` — because every gap between them is gone.
+Every equation in that paper's two drafts has exactly that shape, so it
+hit all nine.
+
+**Reproduce.** `equations.latex_to_omml(r"a > 0 \qquad b < 0")` and read
+the `m:t` runs.
+
+**Fix shape.** Translate the spacing commands to an explicit maths run
+before handing the MathML to the transform, or post-process the OMML to
+insert one. A test that fails without it can assert on the `m:t` stream
+rather than on a render.
+
+**Workaround in use:** `\mathrm{~~~~}` throughout
+`Aging_Well/revision/scripts/r20_model.py` (the constant `G`), with the
+reason in its module docstring. Retire it when this lands.
+
+---
+
+**What changed.** `_carry_spacing`, a MathML pre-pass: `<mspace
+width="…">` becomes `<mtext>` carrying em/en/thin spaces chosen to match
+the requested width. It runs BEFORE the transform because the XSL has no
+template for `mspace` at all — after it the gap is gone and cannot be
+recovered.
+
+`mtext` is the vehicle because it is the one construct measured to
+survive that XSL: `\mathrm{~~~~}`, the workaround a paper had already
+invented by hand, is `mtext` underneath. This does for every spacing
+command what that paper was doing for one of them.
+
+The spaces are U+2003/2002/2009 rather than ASCII: they are exact
+fractions of an em, so the gap does not depend on the font's idea of a
+space, and none of them is XML whitespace, so nothing downstream can
+collapse or trim them. A plain space in `m:t` is precisely what
+`edit.preserve_space` exists to rescue, and putting one here would be
+inventing that problem. `\!` is negative and draws nothing — Word has
+no negative space, and an empty run would be worse than none.
+
+Six commands verified, plus a test that a WIDER command produces a wider
+gap: a repair that made every gap identical would have passed the
+first six.
+
+---
+
+### ~~S1 `compare` does not compare `word/media/` AT ALL: a figure replaced, corrupted or DELETED is reported as zero changes~~ — FIXED 24.08, `b657e52`
+
+Found on HCW, 2026-08-23, during T12.2 — a task whose entire deliverable was
+four replaced images.
+
+**Symptom as observed.** `docxkit compare A B` where B differs from A only in
+`word/media/` prints
+
+```
+REAL change locations (excl. glyph): 0   |   glyph-only: 0   |   ...
+```
+
+for all three of these:
+
+* **replaced** — Figure 8.a's PNG swapped for Figure 1's, a completely
+  different chart;
+* **corrupted** — the part overwritten with a 48-byte stub that is not a
+  valid image;
+* **deleted** — the part removed from the package outright.
+
+`--json` carries no media information either: the report's keys are
+`structure, text, glyph, formula, formula_glyph, formula_format, format,
+hyperlinks, integrity, stripped_fields, comments`, and the string "media"
+does not occur anywhere in the output.
+
+**Why S1 and not S2.** The STRUCTURE layer's own header is
+
+```
+STRUCTURE  (paragraph insert / delete / move, part added / removed)
+```
+
+so the layer states that it covers a part being added or removed, and then
+reports `(none)` when one is removed. This is not a documented boundary a
+caller could route around — it is a gate reporting success on a change it
+claims to check. The skill documentation reinforces it: "STRUCTURE (incl.
+moves, and a whole part added/removed)" and "**Never decide 'did this change?'
+by eyeballing truncated text — let the tool enumerate.**" A caller who follows
+that instruction on a figure edit is told nothing changed.
+
+**Why it matters here specifically.** T12.2's acceptance is that the parts in
+`word/media/` hash-match their sources, precisely because Word silently
+recompresses images on save. The compare gate is the tool that is supposed to
+answer "did the right thing land"; on this task it answered "nothing landed"
+while four figures had been swapped. The only reason the swap was known to be
+correct is that the paper's own script re-read the saved file and compared
+SHA-256 itself.
+
+**Repro.**
+
+```python
+from docxkit import read_parts, write_docx
+parts = read_parts("paper.docx")
+parts["word/media/image14.png"] = parts["word/media/image1.png"]  # or `del`
+write_docx("swapped.docx", parts)
+# docxkit compare paper.docx swapped.docx  ->  REAL change locations: 0
+```
+
+**Shape of a fix.** Compare the set of non-XML parts by name and by digest,
+and report three cases in STRUCTURE: part added, part removed, part CHANGED
+(same name, different bytes). A changed image needs no pixel diff to be worth
+reporting — name plus "content differs, 66,203 -> 69,327 bytes" is enough to
+send a person to look, which is all the other layers do. Consider naming the
+exhibit: the caption above the drawing that references the part is available
+from the same walk `crossrefs` already does.
+
+**What changed.** A MEDIA layer, gated, in all three layers of the
+comparison: `_compare_read` reads `word/media/` and `word/embeddings/` and
+digests them, `_compare_diff.compare_media` pairs and reports, and
+`_compare_render` prints them. `GATED` gains a sixth member, so the headline
+count and `--expect-clean` both include it.
+
+**Paired by NAME, and that is measured rather than assumed.** The
+alternative — pairing by digest, to absorb a renumbering — would have hidden
+the case that matters: two figures whose contents trade places keep both
+names and both digests, and only a name pairing calls that two changes.
+Word does not renumber media on save: checked over **110 media parts in
+three real manuscripts**, every one byte-identical through an open-and-save,
+so the noise a digest pairing would have absorbed does not arrive. There is
+a test for the swap.
+
+**The entry names the EXHIBIT.** `word/media/image14.png` sends a reader to
+a folder; `Figure 8.a` sends them to the page. The caption comes from the
+walk `crossrefs` already does — the drawing's `r:embed` through the part's
+rels — looking DOWN first, because that is where a figure's caption sits in
+these manuscripts. `load` therefore reads the rels as well as the parts.
+
+**`docProps/thumbnail` is excluded, and that is measured too**: Word
+regenerates it from whatever the first page renders to, so it differs after
+an open-and-save with nothing edited, and a difference on every round-trip
+is one nobody reads.
+
+No pixel diff, deliberately — "content differs, 40,264 -> 48 bytes" is
+enough to send a person to look, which is all any other layer does.
+
+**Verified on the entry's own repro**, against a real 42-figure manuscript:
+
+```
+replaced   exit=1  [MEDIA CHANGED] word/media/image21.png (40,264 -> 39,484 bytes) — Montenegro
+corrupted  exit=1  [MEDIA CHANGED] word/media/image21.png (40,264 -> 48 bytes)     — Montenegro
+deleted    exit=1  [MEDIA REMOVED] word/media/image21.png (40,264 bytes)           — Montenegro
+```
+
+All three printed `REAL change locations: 0` before. Ten tests in
+`tests/test_compare.py`. **The per-paper workaround can go**:
+`A1_t112_figures.py`'s hash check is what `compare --expect-clean` now does
+for every paper.
+
 
 ### ~~Twelve from a code review of the round just committed~~ — FIXED 24.08
 

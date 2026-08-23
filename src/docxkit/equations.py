@@ -238,6 +238,117 @@ def _rejoin_at_separator(d: Any) -> None:
     sep_el.getparent().remove(sep_el)
 
 
+#: MathML's namespace, for the one pass that runs BEFORE Word's XSL.
+_MML_NS = "http://www.w3.org/1998/Math/MathML"
+
+#: Spaces chosen by WIDTH rather than by count, and not the ASCII one.
+#: U+2003/2002/2009 are exact fractions of an em, so the gap does not
+#: depend on the font's idea of a space; and none of them is XML
+#: whitespace, so nothing downstream may collapse or trim them. A plain
+#: space in `m:t` is exactly the thing `edit.preserve_space` exists to
+#: rescue, and rescuing it here would be inventing the problem.
+_EM_SPACE, _EN_SPACE, _THIN_SPACE = "\u2003", "\u2002", "\u2009"
+
+_WIDTH_RE = re.compile(r"^(-?[\d.]+)\s*em$")
+
+
+def _space_text(width: str) -> str:
+    """The characters that draw `width`, or "" for nothing to draw."""
+    m = _WIDTH_RE.match(width.strip())
+    if not m:
+        return ""
+    try:
+        em = float(m.group(1))
+    except ValueError:
+        return ""
+    if em <= 0:                       # `\!` is negative; Word has no
+        return ""                     # negative space to draw
+    out = _EM_SPACE * int(em)
+    rest = em - int(em)
+    if rest >= 0.4:
+        out += _EN_SPACE
+    elif rest > 0:
+        out += _THIN_SPACE
+    return out
+
+
+def _carry_spacing(root: Any) -> int:
+    r"""`<mspace>` -> `<mtext>`, because the XSL drops the first.
+
+    Word's ``MML2OMML.XSL`` has no template for ``mspace``, so every
+    LaTeX spacing command vanished on the way to OMML — ``\qquad``,
+    ``\quad``, ``\hspace{2em}``, ``\,``, ``\;`` — silently, into
+    valid markup with the right ``m:oMath`` count and a clean
+    ``math --check``. On Aging_Well that ran a definition into its sign
+    conditions in all nine equations of one batch, and only the page
+    showed it.
+
+    ``mtext`` is the vehicle because it is the one construct measured to
+    survive that XSL: ``\mathrm{~~~~}``, the workaround a paper had
+    already invented, is `mtext` underneath. This does for every spacing
+    command what one paper was doing by hand for one of them.
+    """
+    from lxml import etree
+
+    changed = 0
+    for space in list(root.iter(f"{{{_MML_NS}}}mspace")):
+        parent = space.getparent()
+        if parent is None:
+            continue
+        text = _space_text(space.get("width", ""))
+        if text:
+            mtext = etree.Element(f"{{{_MML_NS}}}mtext")
+            mtext.text = text
+            mtext.tail = space.tail
+            parent.replace(space, mtext)
+        else:
+            parent.remove(space)
+        changed += 1
+    return changed
+
+
+#: An operator NAME is two or more letters. One letter is a variable,
+#: and `<mo>` also carries every symbol — ∈, +, = — which this must not
+#: touch.
+_MULTILETTER_RE = re.compile(r"^[A-Za-z]{2,}$")
+
+
+def _name_operators_as_identifiers(root: Any) -> int:
+    r"""Retag a multi-letter ``<mo>`` as ``<mi>``, so Word sets it upright.
+
+    Word's XSL marks a multi-character ``<mi>`` upright and leaves
+    ``<mo>`` alone, and latex2mathml splits the operators between the
+    two: ``\log``, ``\exp``, ``\sin`` and ``\ln`` arrive as ``mi`` and
+    are fine, while ``\max``, ``\min``, ``\lim``, ``\sup`` and every
+    ``\operatorname{…}`` arrive as ``mo`` and render ITALIC. Not
+    "operator styling is missing" — INCONSISTENT, which is why nobody
+    noticed until a paper needed a constrained optimization and shipped
+    its equation (5) with an italic `max`.
+
+    **The first version of this fix marked the OMML run upright instead,
+    and the render caught it.** Left as ``mo``, the XSL merges the
+    operator with its operand into ONE run — `\max x` becomes a single
+    `<m:t>maxx</m:t>` — so styling that run upright takes the VARIABLE
+    with it, and the page showed `maxx` where it should show `max` then
+    an italic `x`. Retagged, the transform produces exactly the shape it
+    already produced for `\log`: an upright run for the name, a
+    separate default-italic run for the operand.
+
+    The caution against this — that ``mo`` and ``mi`` are spaced
+    differently, so changing the element to fix the FACE might move the
+    GAPS — was worth having and does not survive measurement here:
+    `\log x` (an `mi` operator all along) renders with the same absent
+    gap as `\max x` does, because OMML has already flattened the
+    distinction by the time Word draws it.
+    """
+    changed = 0
+    for mo in list(root.iter(f"{{{_MML_NS}}}mo")):
+        if _MULTILETTER_RE.match((mo.text or "").strip()):
+            mo.tag = f"{{{_MML_NS}}}mi"
+            changed += 1
+    return changed
+
+
 def _normalize(root: Any) -> None:
     """Repair what the converter emits and Word cannot draw.
 
@@ -262,8 +373,11 @@ def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
     """Convert LaTeX to an ``<m:oMath>`` element, as an XML string.
 
     LaTeX -> presentation MathML (latex2mathml) -> OMML (Word's own XSL),
-    then :func:`_normalize` for the places that chain produces markup
-    Word cannot draw.
+    with a repair on each side of the transform for what that chain
+    loses: :func:`_carry_spacing` before it, because the XSL has no
+    template for ``mspace`` and a dropped space cannot be recovered
+    afterwards, and :func:`_normalize` after it, for the markup Word
+    cannot draw and the operator names it leaves italic.
     """
     # Optional extra, absent on a plain install: pyright resolves imports
     # from the environment it runs in, and mypy's ignore_missing_imports
@@ -278,7 +392,13 @@ def latex_to_omml(latex: str, *, xsl: str | Path | None = None) -> str:
 
     transform = _transform(xsl)
     mathml = latex2mathml.converter.convert(latex)
-    result = transform(etree.fromstring(mathml.encode("utf-8"))).getroot()
+    tree = etree.fromstring(mathml.encode("utf-8"))
+    # BEFORE the transform: the XSL has no template for `mspace`, so a
+    # spacing command that reaches it is gone and cannot be recovered
+    # from the OMML afterwards.
+    _carry_spacing(tree)
+    _name_operators_as_identifiers(tree)
+    result = transform(tree).getroot()
     if result.tag != f"{{{M_NS}}}oMath":
         found = result.find(f".//{{{M_NS}}}oMath")
         if found is None:
