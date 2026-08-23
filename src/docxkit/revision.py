@@ -146,6 +146,7 @@ __all__ = [
     "State",
     "Survey",
     "ValidateReport",
+    "Verdict",
     "baseline",
     "build",
     "doctor",
@@ -161,6 +162,7 @@ __all__ = [
     # for a new caller; this is where the existing ones already look.
     "internal_links",
     "load_paper",
+    "log_batch",
     "losses",
     "moved_footnotes",
     "promote",
@@ -177,6 +179,7 @@ __all__ = [
     "state",
     "survey",
     "validate",
+    "verdict",
 ]
 
 #: Parts that carry revisable text. ``document.xml`` is not the whole
@@ -1876,9 +1879,197 @@ def promote(paper: Paper, batch: str | Path | None = None,
                          pruned=tuple(prune_rescues(paper)))
 
 
+@dataclass(frozen=True)
+class Verdict:
+    """What one cycle did to the manuscript, and what the author decided.
+
+    Both halves are recoverable from the files and neither was recorded
+    anywhere: after adjudication the manuscript reads 0 pending whether
+    every revision was accepted, every one rejected, or half of each,
+    and `log.md`'s outcome column was filled in by hand or not at all.
+    """
+
+    changed: int
+    """Paragraphs whose text differs from the previous truth."""
+    added: int
+    removed: int
+    proposed: tuple[int, int] = (0, 0)
+    """(insertions, deletions) the batch carried, when one can be read."""
+    kept: int = 0
+    """Paragraphs the author kept AS PROPOSED."""
+    reverted: int = 0
+    """Paragraphs the author kept as they were."""
+    authored: int = 0
+    """Paragraphs in neither view — the author's own words."""
+    batch: Path | None = None
+    """The proposal this verdict is about, when it could be identified."""
+
+    @property
+    def offered(self) -> int:
+        return self.kept + self.reverted
+
+    @property
+    def outcome(self) -> str:
+        """The verdict, in the words a log row wants.
+
+        "accepted in full" survives the author ALSO having edited: those
+        are counted separately, because "31 accepted and two sentences
+        of my own" is the ordinary shape of a round and reporting it as
+        "partly adjudicated" would be wrong about the part that matters.
+        """
+        if self.batch is None:
+            return "adjudicated (no batch to compare against)"
+        if not self.offered:
+            return "nothing to adjudicate"
+        if not self.reverted:
+            verdict = "accepted in full"
+        elif not self.kept:
+            verdict = "rejected in full"
+        else:
+            verdict = f"{self.kept} of {self.offered} kept as proposed"
+        extra = f", +{self.authored} authored" if self.authored else ""
+        return verdict + extra
+
+    def summary(self) -> str:
+        """The `changes` cell: what moved between the two truths."""
+        bits = [f"{self.changed} ¶ changed"] if self.changed else []
+        if self.added:
+            bits.append(f"{self.added} added")
+        if self.removed:
+            bits.append(f"{self.removed} removed")
+        ins, dele = self.proposed
+        if ins or dele:
+            bits.append(f"from {ins + dele} revisions ({ins} ins, {dele} del)")
+        return ", ".join(bits) or "no visible change"
+
+
+def _para_counts(parts: dict[str, bytes], view: str) -> Counter[str]:
+    """Every paragraph's visible text on one side of the markup.
+
+    Named apart from `tracked._paras`, which this module already
+    imports and which answers a different question. The checkers caught
+    the collision; a silent redefinition would have sent one of the two
+    callers to the wrong function.
+    """
+    out: Counter[str] = Counter()
+    for name in TEXT_PARTS:
+        blob = parts.get(name)
+        if blob:
+            out.update(t for t in revisions.text(blob.decode("utf-8"), view)
+                       if t.strip())
+    return out
+
+
+def _proposal(paper: Paper) -> Path | None:
+    """The batch this manuscript grew out of, or None if it cannot be
+    identified with certainty.
+
+    The stamp is what makes it certain: `guard.base_of` says which
+    baseline a batch was built on, so a `batch.docx` left over from an
+    earlier round — the exact file the stale-batch guards exist for — is
+    not mistaken for the proposal the author just adjudicated. An
+    unstamped batch answers "cannot tell", and this returns None rather
+    than counting one round's verdict against another's proposal.
+    """
+    batch = paper.batch
+    if not batch.is_file() or not paper.prev.is_file():
+        return None
+    built_on = _guard.base_of(batch)
+    return batch if built_on == _guard.sha256(paper.prev) else None
+
+
+def verdict(paper: Paper) -> Verdict:
+    """What this cycle changed, and what the author did with the batch.
+
+    Read-only, and called BEFORE `prev.docx` is replaced — the whole
+    computation is against the truth the batch was built on.
+
+    The adjudication is counted per PARAGRAPH rather than per revision,
+    and that is the honest unit here: a revision's identity does not
+    survive the author's Word session, but the text of the paragraph it
+    proposed does. Paragraphs the accepted and rejected views disagree
+    about are the ones the batch touched; which version of each the
+    manuscript now holds is the verdict. Counted as multisets, so a
+    paragraph moved rather than edited is not read as one of each.
+    """
+    from . import compare as _compare  # deferred: heavy import chain
+
+    work = package.read_parts(paper.working)
+    if not paper.prev.is_file():
+        return Verdict(changed=0, added=0, removed=0)
+    report = _compare.compare(str(paper.prev), str(paper.working))
+    structure = Counter(entry["type"] for entry in report["structure"])
+
+    batch = _proposal(paper)
+    kept = reverted = authored = 0
+    proposed = (0, 0)
+    if batch is not None:
+        parts = package.read_parts(batch)
+        counts = tracked.package_counts(parts)
+        proposed = (counts["insertions"], counts["deletions"])
+        final, original = _para_counts(parts, revisions.FINAL), \
+            _para_counts(parts, revisions.ORIGINAL)
+        live = _para_counts(work, revisions.FINAL)
+        kept = sum(((final - original) & live).values())
+        reverted = sum(((original - final) & live).values())
+        authored = sum((live - final - original).values())
+    return Verdict(
+        changed=len(report["text"]),
+        added=structure.get("INSERT", 0),
+        removed=structure.get("DELETE", 0),
+        proposed=proposed, kept=kept, reverted=reverted, authored=authored,
+        batch=batch)
+
+
+#: The log's batch table, as every paper's `log.md` spells it.
+_BATCH_HEADING = "## Batches"
+_ROW_RE = re.compile(r"^\s*\|")
+
+
+def log_batch(paper: Paper, result: Verdict, note: str = "") -> str | None:
+    """Append one row to `log.md`'s batch table; return it, or None.
+
+    None when the paper's log has no table to append to — a log this
+    tool did not scaffold is the author's document, and guessing where a
+    row belongs in it is how a record gets mangled. The caller says so
+    rather than this writing a table nobody asked for.
+
+    The row lands after the LAST row of the table and not at the end of
+    the file: three of the nine papers carry prose after their batch
+    table, and an appended line would have been read as part of it.
+    """
+    log = paper.config.parent / "log.md"
+    if not log.is_file():
+        return None
+    lines = log.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.strip() == _BATCH_HEADING), None)
+    if start is None:
+        return None
+    rows = [i for i in range(start, len(lines)) if _ROW_RE.match(lines[i])]
+    if not rows:
+        return None
+    header = [c.strip() for c in lines[rows[0]].strip().strip("|").split("|")]
+    if len(header) != 5:
+        return None                     # not the table this row is shaped for
+    # contiguous from the header: a second table further down the file
+    # is not this one
+    last = rows[0]
+    for i in rows[1:]:
+        if i != last + 1:
+            break
+        last = i
+    row = (f"| {_today()} | {note or (result.batch.stem if result.batch else '—')} "
+           f"| {result.summary()} | — | {result.outcome} → truth |\n")
+    lines.insert(last + 1, row)
+    log.write_text("".join(lines), encoding="utf-8")
+    return row
+
+
 def baseline(paper: Paper, *, force: bool = False,
              accept_loss: tuple[str, ...] = (),
-             repair_math: bool = False) -> Path:
+             repair_math: bool = False, note: str = "",
+             log: bool = True) -> Path:
     """Record the current ``working.docx`` as the new accepted truth.
 
     Run this after the author has accepted (or rejected) everything: it
@@ -1922,6 +2113,17 @@ def baseline(paper: Paper, *, force: bool = False,
     `working.docx` — every run whose text the baseline spells with the
     glyph put back — and the gates above run against the repair, so
     anything it could NOT reach still refuses.
+
+    It also RECORDS the round, in `log.md`'s batch table, unless
+    `log=False`. That is not bookkeeping for its own sake: this is the
+    moment the evidence stops existing. After adjudication the
+    manuscript reads 0 pending whether every revision was accepted,
+    every one rejected or half of each, and the next line of this
+    function replaces the only other copy of what it grew out of. The
+    verdict was reconstructible until now and unrecorded — `log.md`'s
+    outcome column was filled in by hand, when it was filled in at all.
+    `note` names the batch in that row; without one it takes the
+    proposal's filename.
 
     They run against it IN MEMORY, and the write waits for all of them.
     Writing first meant that `--repair-math` on a manuscript with a
@@ -1983,8 +2185,13 @@ def baseline(paper: Paper, *, force: bool = False,
         # the count this gate is about.
         package.backup(paper.working, tag="pre_math_repair")
         package.write_docx(paper.working, repaired)
+    # BEFORE the copy: the whole computation is against the truth the
+    # batch was built on, and the next line overwrites it.
+    recorded = verdict(paper) if log else None
     paper.build_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(paper.working, paper.prev)
+    if recorded is not None:
+        log_batch(paper, recorded, note)
     return paper.prev
 
 

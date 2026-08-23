@@ -64,6 +64,7 @@ VALUES = [
     "revision.Relabelled",
     "revision.State",
     "revision.Survey",          # one paper's row in the all-papers view
+    "revision.Verdict",         # what one cycle did, and what was decided
     "revisions.Revision",
     "styles.Resolved",
     "styles.Style",

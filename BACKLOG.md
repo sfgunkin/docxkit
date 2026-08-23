@@ -518,6 +518,62 @@ reach it:
 
 ## Fixed
 
+### ~~S2 the author's VERDICT was recorded nowhere — after adjudication a paper reads the same whether every revision was accepted or every one rejected~~ — FIXED 23.08
+
+Found 2026-08-23 in the protocol review. Not a wrong answer — a fact that
+existed and was never written down, and then stopped existing.
+
+**The shape.** The state model is a count of pending revisions, so a settled
+manuscript reads 0 whether the author accepted the batch in full, rejected it
+in full, or split it. The verdict was reconstructible from `prev.docx` and
+the batch right up to the moment `baseline` runs — and `baseline`'s own next
+act is `shutil.copyfile(working, prev)`, which destroys the comparison. Two
+of the nine papers' `log.md` batch tables were filled in by hand and the rest
+had gaps.
+
+**What landed.** `revision.verdict(paper)` and `revision.log_batch(...)`,
+called by `baseline` (default on, `--no-log` to skip, `--note` to name the
+round), and computed BEFORE the copy — that ordering is the whole trick, and
+reverting it makes every round report "no visible change".
+
+* Counted per PARAGRAPH, not per revision, and that is the honest unit: a
+  revision's identity does not survive the author's Word session, the text of
+  the paragraph it proposed does. The batch's accepted and rejected views
+  disagree about exactly the paragraphs it touched; which version the
+  manuscript now holds is the verdict. Multisets, so a paragraph MOVED rather
+  than edited is not counted as one of each.
+* "accepted in full" survives the author having also edited — those come back
+  as `+N authored`. `31 accepted and two sentences of my own` is the ordinary
+  shape of a round, and calling it "partly adjudicated" would be wrong about
+  the part that matters.
+* **The verdict is only as good as its link to the proposal.** `_proposal`
+  returns the batch only when `guard.base_of` says it was built on THIS
+  baseline; a leftover `batch.docx` from an earlier round — the exact file
+  the stale-batch guards exist for — answers None, and the row then says
+  "adjudicated (no batch to compare against)" rather than counting one
+  round's verdict against another's proposal. An unstamped batch (the
+  hand-authored vehicle) answers the same.
+* The row lands after the last row OF THE TABLE, not at the end of the file:
+  three of the nine papers carry prose after their batch table, and an
+  appended line would have been read as part of it. A log with no batch
+  table is left alone entirely and the CLI prints the row for the author to
+  place — a log this tool did not scaffold is the author's document.
+* The row is a record and not a gate: a log that cannot take one does not
+  stop the cycle from closing.
+
+Verified against a log shaped like a real paper's — template row, a
+hand-written row, prose below — with a batch accepted in full plus one
+authored paragraph:
+
+```
+| 2026-08-23 | R15 tables | 1 ¶ changed, 1 added, from 2 revisions (1 ins, 1 del) | — | accepted in full, +1 authored → truth |
+```
+
+`tests/test_revision_verdict.py`, 15 tests. Each half proved load-bearing by
+reverting it in a copy of the tree: computing the verdict after the copy
+fails 2, taking a stale batch as the proposal fails 2, appending to the end
+of the file fails 1.
+
 ### ~~S4 the protocol is single-paper and the author has nine, so "which of them is waiting on me?" had no answer~~ — FIXED 23.08
 
 Found 2026-08-23 in the protocol review, from the author's own framing:

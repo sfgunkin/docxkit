@@ -1447,11 +1447,20 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
     paper = _paper(args)
     accepted = tuple(t.strip() for t in args.accept_loss.split(",")
                      if t.strip())
+    from .revision import log_batch, verdict
+    recorded = verdict(paper) if not args.no_log else None
     written = baseline(paper, force=args.force, accept_loss=accepted,
-                       repair_math=args.repair_math)
+                       repair_math=args.repair_math, log=False)
+    row = log_batch(paper, recorded, args.note) if recorded else None
     for token in accepted:
         print(f"  accepted loss: {token}")
     print(f"baseline updated: {written}")
+    if recorded is not None and row:
+        print(f"\nlogged: {row.strip()}")
+    elif recorded is not None:
+        print("\nlog.md has no batch table to append to — record this "
+              "round by hand:\n"
+              f"  {recorded.summary()} · {recorded.outcome}")
     return 0
 
 
@@ -1867,6 +1876,11 @@ def main() -> None:
 
     r = _rev("baseline", cmd_revision_baseline,
              "the author accepted: record the manuscript as the new truth")
+    r.add_argument("--note", default="", metavar="TEXT",
+                   help="what to call this round in log.md's batch table "
+                        "(default: the batch filename)")
+    r.add_argument("--no-log", action="store_true",
+                   help="do not append a row to log.md")
     r.add_argument("--force", action="store_true",
                    help="adopt a file that still carries revisions "
                         "(migration only)")
