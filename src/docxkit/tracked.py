@@ -240,6 +240,42 @@ def _math_texts(parts: dict[str, bytes]) -> list[str]:
             for m in OMATH_RE.finditer(xml)]
 
 
+#: How wide a quoted equation may be before the difference in it is
+#: impossible to spot. The two strings in this refusal are near-
+#: identical by construction — that is what makes it a glyph problem —
+#: so the reader is being asked to diff them by eye.
+_EQ_QUOTE = 60
+
+
+def _first_difference(was: str, now: str) -> str:
+    """Where two near-identical strings part, by CODEPOINT.
+
+    The refusal below quotes both forms, which is genuinely useful and
+    is how the U+2032 gap in `MATH_DOWNGRADES` was found at all. What it
+    could not say is WHICH CHARACTER differs. PRIME and APOSTROPHE are
+    the same handful of pixels at a terminal's font size, and so are
+    MINUS SIGN and HYPHEN-MINUS, the pair this toolkit hits most —
+    which is also why the two are named here rather than shown, since
+    a docstring is read in the same font as the refusal. Twenty minutes
+    to diagnose what a codepoint answers in ten seconds (Aging_Well,
+    2026-08-24).
+    """
+    import unicodedata
+    for i, (a, b) in enumerate(zip(was, now, strict=False)):
+        if a == b:
+            continue
+        return (f" — differs at char {i}: {a!r} U+{ord(a):04X} "
+                f"({unicodedata.name(a, 'unnamed')}) vs {b!r} "
+                f"U+{ord(b):04X} ({unicodedata.name(b, 'unnamed')})")
+    if len(was) != len(now):
+        longer, at = (was, len(now)) if len(was) > len(now) else (now,
+                                                                 len(was))
+        extra = longer[at]
+        return (f" — one is longer: {extra!r} U+{ord(extra):04X} "
+                f"({unicodedata.name(extra, 'unnamed')}) at char {at}")
+    return ""
+
+
 def accepted_math(revised: dict[str, bytes],
                   accepted: dict[str, bytes]) -> list[str]:
     """Equations the ACCEPTED view does not reproduce from the clean copy.
@@ -266,7 +302,8 @@ def accepted_math(revised: dict[str, bytes],
     if len(was) != len(now):
         return [(f"the clean copy has {len(was)} equation(s) and "
                  f"accepting the redline gives {len(now)}")]
-    return [f"equation {i}: {w!r} in the clean copy, {n!r} accepted"
+    return [f"equation {i}: {w[:_EQ_QUOTE]!r} in the clean copy, "
+            f"{n[:_EQ_QUOTE]!r} accepted{_first_difference(w, n)}"
             for i, (w, n) in enumerate(zip(was, now, strict=True), 1)
             if w != n]
 

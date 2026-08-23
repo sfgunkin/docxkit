@@ -150,7 +150,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
-    _package(args.docx)          # a zip with no document.xml died on KeyError
+    _package(args.docx, read_only=True)   # a zip with no document.xml
     found = check_citations(args.docx, later_mentions=args.later_mentions,
                             ignore=_ignore(args))
     return 1 if found > 0 else 0
@@ -227,7 +227,7 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
     """
     from .refstyle import CHICAGO, HOUSE, audit, convert, layout, refile
     style = CHICAGO if args.chicago else HOUSE
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=not getattr(args, "fix", False))
     print(Path(args.docx).name)
     if args.fix:
         # BEFORE the audit, so what is printed is what is LEFT
@@ -282,7 +282,9 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     """Link every figure and table to its first mention, and back."""
     from . import crossrefs
 
-    parts = _package(args.docx)
+    parts = _package(args.docx,
+                      read_only=getattr(args, "audit", False)
+                      or not getattr(args, "write", False))
     doc = parts[DOCUMENT].decode("utf-8")
     name = Path(args.docx).name
     # every other bookmarked part: a footnote-only citation keeps its
@@ -341,7 +343,7 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=True)
     names = list(parts)
     doc = parts[DOCUMENT].decode("utf-8")
     com = parts.get(COMMENTS, b"").decode("utf-8")
@@ -462,7 +464,7 @@ def cmd_locate(args: argparse.Namespace) -> int:
 
 def cmd_text(args: argparse.Namespace) -> int:
     """Dump visible text from one side of the tracked changes."""
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=True)
     if args.md:
         from .export import to_markdown
         print(to_markdown(parts, view=args.tracked), end="")
@@ -477,7 +479,7 @@ def cmd_text(args: argparse.Namespace) -> int:
 def cmd_sites(args: argparse.Namespace) -> int:
     """Survey the paragraph an edit is about to be written against."""
     from .find import site
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=True)
     from ._xml import ENDNOTES, FOOTNOTES
     wanted = {"body": DOCUMENT, "footnotes": FOOTNOTES,
               "endnotes": ENDNOTES}[args.part]
@@ -571,7 +573,13 @@ def cmd_api(args: argparse.Namespace) -> int:
     return 0
 
 
-def _package(path: str) -> dict[str, bytes]:
+_SNAPSHOT_NOTE = (
+    "  read from a SNAPSHOT: the author has the file open in Word, so this\n"
+    "  describes the moment the copy was taken, not whatever they have "
+    "typed since.")
+
+
+def _package(path: str, *, read_only: bool = False) -> dict[str, bytes]:
     """Every part of a manuscript, or a refusal a reader can act on.
 
     `read_parts` already turns a missing file or a non-zip into a
@@ -580,9 +588,30 @@ def _package(path: str) -> dict[str, bytes]:
     `BadZipFile` traceback instead. A zip that is not a Word document
     reached even further, dying on a `KeyError` naming a part the user
     never mentioned.
+
+    **`read_only=True` reads a SNAPSHOT when Word holds the file**, and
+    says so. The precedent is `revision status` and `ingest`, which
+    learned this on 2026-08-21 — and the fix stopped at those two, so
+    `citations`, `refstyle`, `crossrefs`, `math --check`,
+    `footnotes --check` and `lint` all still exited 1 with "close it and
+    retry". The author having the manuscript open is not an edge case,
+    it is the NORMAL state during adjudication, which is exactly when
+    someone wants to know whether a citation still resolves. A
+    `[verify]` list that can only run when nobody is working on the
+    paper is a list that gets run less.
+
+    Not the default, and deliberately: a command that goes on to WRITE
+    must read the live file, or it would compute its edit from one
+    generation and save it over another.
     """
-    from .package import read_parts
-    parts = read_parts(path)
+    from .package import read_parts, readable
+    if read_only:
+        with readable(path) as (target, copied):
+            parts = read_parts(target)
+        if copied:
+            print(_SNAPSHOT_NOTE)
+    else:
+        parts = read_parts(path)
     if DOCUMENT not in parts:
         raise PackageError(
             f"{Path(path).name} is a zip, but not a Word document: "
@@ -733,7 +762,7 @@ def cmd_math(args: argparse.Namespace) -> int:
         prose_math,
         tokens,
     )
-    doc = _package(args.docx)[DOCUMENT].decode("utf-8")
+    doc = _package(args.docx, read_only=True)[DOCUMENT].decode("utf-8")
     findings = prose_math(doc)
     vocabulary = "".join(sorted(document_symbols(doc)))
     print(f"{Path(args.docx).name}  (math vocabulary: "
@@ -774,7 +803,7 @@ def cmd_math(args: argparse.Namespace) -> int:
 def cmd_figures(args: argparse.Namespace) -> int:
     """Figures and their alt text; --check gates on missing descriptions."""
     from .figures import alt_texts
-    doc = _package(args.docx)[DOCUMENT].decode("utf-8")
+    doc = _package(args.docx, read_only=True)[DOCUMENT].decode("utf-8")
     drawings = alt_texts(doc)
     missing = [d for d in drawings if d.missing]
     print(f"{Path(args.docx).name}  ({len(drawings)} drawing(s), "
@@ -794,7 +823,7 @@ def cmd_figures(args: argparse.Namespace) -> int:
 def cmd_footnotes(args: argparse.Namespace) -> int:
     """What the footnotes are set in, and which one disagrees."""
     from .footnotes import fonts, sizes
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=True)
     notes = parts.get(FOOTNOTES)
     if not notes:
         print(f"{Path(args.docx).name}: no footnotes part")
@@ -852,7 +881,8 @@ def cmd_authors(args: argparse.Namespace) -> int:
     """Who the document credits; ``--set`` restamps every one of them."""
     from .authors import read_authors, set_author
 
-    parts = _package(args.docx)
+    parts = _package(args.docx,
+                     read_only=not getattr(args, "write", False))
     print(Path(args.docx).name)
     for who, n in read_authors(parts).most_common():
         print(f"  {n:5}  {who}")
@@ -876,7 +906,8 @@ def cmd_authors(args: argparse.Namespace) -> int:
 def cmd_probe(args: argparse.Namespace) -> int:
     """What shape is this manuscript? Run it BEFORE choosing an approach."""
     from .probe import probe
-    _package(args.docx)          # a zip with no document.xml died on KeyError
+    # a zip with no document.xml died on KeyError
+    _package(args.docx, read_only=True)
     print(probe(args.docx, tuple(args.phrase)).report())
     return 0
 
@@ -885,7 +916,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
     """Structural checks for the markup Word refuses to open, and the
     findings it opens fine and reads wrongly."""
     from .lint import audit_parts, lint_parts
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=True)
     problems = lint_parts(parts)
     advisory = audit_parts(parts)
     print(f"{Path(args.docx).name}")
@@ -1032,10 +1063,6 @@ def _summarize(parts: list[str], *, keep: int = 4) -> str:
 
 
 #: what the two read-only commands print when Word held the file
-_SNAPSHOT_NOTE = (
-    "  read from a SNAPSHOT: the author has the file open in Word, so this\n"
-    "  describes the moment the copy was taken, not whatever they have "
-    "typed since.")
 
 
 #: The verdict column, widest first so the rows line up, and ordered by

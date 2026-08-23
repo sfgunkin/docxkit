@@ -392,3 +392,55 @@ def test_inspect_counts_the_tables_a_reader_can_index(monkeypatch, tmp_path,
     top = len(tables.read_all(doc))
     assert re.search(rf"tables\s+{top}\b", line)
     assert "+1 nested" in line
+
+# --- a gate that only reads runs while Word holds the file ------------
+#
+# `revision status` and `ingest` learned this on 2026-08-21 and the fix
+# stopped there, so `citations`, `refstyle`, `crossrefs`, `math --check`,
+# `footnotes --check` and `lint` all still exited 1 with "close it and
+# retry" (Aging_Well, 2026-08-23). The author having the manuscript open
+# is not an edge case — it is the normal state during adjudication,
+# which is exactly when someone wants to know whether a citation still
+# resolves. A [verify] list that can only run when nobody is working on
+# the paper is a list that gets run less.
+#
+# `is_locked` is the seam `package.readable` decides on, so locking the
+# file for a test is telling it the truth about the one thing it asks.
+
+READ_ONLY_COMMANDS = [
+    ("citations",), ("lint",), ("refstyle",), ("crossrefs", "--audit"),
+    ("math", "--check"), ("footnotes", "--check"), ("inspect",),
+    ("text",), ("probe",),
+]
+
+
+@pytest.fixture
+def held_by_word(monkeypatch):
+    """Word has the manuscript open."""
+    import docxkit.package as pkg
+    monkeypatch.setattr(pkg, "is_locked", lambda path: True)
+
+
+@pytest.mark.parametrize("command", READ_ONLY_COMMANDS,
+                         ids=[c[0] for c in READ_ONLY_COMMANDS])
+def test_a_read_only_command_runs_while_WORD_HOLDS_the_file(
+        monkeypatch, capsys, command, simple_docx, held_by_word):
+    verb, *flags = command
+
+    code = _run(monkeypatch, verb, str(simple_docx), *flags)
+    out = capsys.readouterr().out
+
+    assert "Close it and retry" not in out and "locked" not in out.lower()
+    assert code in (0, 1, 2), out       # it RAN; the verdict is its own
+    assert "SNAPSHOT" in out, "a snapshot read has to say so"
+
+
+def test_a_command_that_WRITES_still_refuses_a_locked_file(
+        monkeypatch, capsys, simple_docx, held_by_word):
+    """The other half, and the reason `read_only` is not the default: a
+    writer that read a snapshot would compute its edit from one
+    generation and save it over another."""
+    _run(monkeypatch, "crossrefs", str(simple_docx), "--write")
+
+    out = capsys.readouterr().out
+    assert "SNAPSHOT" not in out, out

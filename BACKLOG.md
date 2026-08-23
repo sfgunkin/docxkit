@@ -509,8 +509,9 @@ reach it:
 
 ---
 
+## Fixed
 
-### S4 — `MATH_DOWNGRADES` knows the MINUS but not the PRIME, so a prime-bearing equation cannot be built
+### ~~S4 `MATH_DOWNGRADES` knows the MINUS but not the PRIME, so a prime-bearing equation cannot be built~~ — FIXED 24.08
 
 Found on Aging_Well, 2026-08-23, on the same batch.
 
@@ -541,82 +542,16 @@ U+2032 and assert the accepted copy still holds it.
 **Workaround in use:** R20 writes the derivative as a fraction instead
 of using a prime, recorded in `Aging_Well/revision/paper.toml`.
 
----
+**What changed.** `MATH_DOWNGRADES = {"−": "-", "′": "'"}`. One entry, as
+the entry said — the machinery around it already handles the ambiguity
+conservatively, repairing a run only when its exact text appears in a
+source with the glyph put back.
 
-### S4 — every read-only GATE refuses on a Word lock, though `status` and `ingest` no longer do
-
-Found on Aging_Well, 2026-08-23, running the paper's own `[verify]` list
-while the author had the manuscript open in Word to adjudicate a batch.
-
-All six exit 1 with `working.docx is locked (open in Word). Close it and
-retry. ([Errno 13] Permission denied)`: `citations`, `refstyle`,
-`crossrefs`, `math --check`, `footnotes --check`, `lint`.
-
-**The precedent is already in `## Fixed`** — "S4 read-only `revision
-status` and `ingest` refuse on a Word lock", closed 21.08 by reading a
-snapshot and saying so:
-
-```
-read from a SNAPSHOT: the author has the file open in Word, so this
-describes the moment the copy was taken, not whatever they have typed since.
-```
-
-That fix stopped at those two commands. Everything else that only READS
-still refuses.
-
-**Why it matters more than it sounds.** The author having the manuscript
-open is not an edge case, it is the normal state during adjudication —
-which is exactly when someone wants to check whether a citation resolves
-or an equation is still display mode. And a `[verify]` list that can only
-run when nobody is working on the paper is a list that gets run less.
-
-**Fix shape.** The snapshot fallback already exists; extend it to the
-read-only commands, with the same banner so nobody mistakes a snapshot
-for the live file. `--write` paths must keep refusing.
-
-
-### S4 — the math-glyph refusal quotes both strings and never says WHICH CHARACTER differs, which is the one thing a reader cannot see
-
-Found 2026-08-24 by the other session, diagnosing a real build refusal on a
-paper with `\kappa'(a)` in it. Recorded here rather than in that paper
-because the message is `revision`'s, not the paper's.
-
-**Symptom as observed.** `revision build`'s accept-check refuses and prints
-
-```
-equation 26: '…=λκ′(a)' in the clean copy, "…=λκ'(a)" accepted
-```
-
-which is the right pair of strings and genuinely useful — it is how the
-U+2032 gap in `MATH_DOWNGRADES` was found at all. What it does not say is
-that the difference is `′` U+2032 PRIME against `'` U+0027 APOSTROPHE. At a
-terminal's font size those two glyphs are near-identical, and the reader is
-being asked to spot the difference by eye between two quoted strings that
-look the same. **Twenty minutes to diagnose what a codepoint would have
-answered in ten seconds.**
-
-**Why it is worth an entry despite being ergonomics.** This is the class of
-message a person only reads while already stuck, and the whole value of
-quoting both forms is defeated if the difference is invisible in the medium
-the message is printed to. The refusal is otherwise well built — it names the
-equation, both views, and the reason — so the fix is one line of it.
-
-**Shape of a fix.** On the first differing position, append the codepoints:
-
-```
-equation 26: differs at char 5 — '′' U+2032 vs "'" U+0027
-```
-
-`glyph_runs` already walks both strings to build the quoted pair, so the
-index is in hand; `unicodedata.name` gives the rest. Worth doing for every
-glyph refusal in the module, not just this one — the minus/hyphen pair
-(U+2212 vs U+002D) has exactly the same problem and is the one this toolkit
-hits most.
-
+Fixed together with the refusal that reports it, because the two are one
+experience: the build now both repairs the prime and, when a glyph it
+does NOT know turns up, says which character it was.
 
 ---
-
-## Fixed
 
 ### ~~S4 `crossrefs --labels` REPLACES the default labels, so a narrowed run prints a clean report about the exhibits it did not look at~~ — FIXED 24.08
 

@@ -2795,8 +2795,17 @@ def test_an_equation_the_accept_MANGLES_is_a_finding():
 
     found = accepted_math(revised, _simulate(redline, _accept))
 
-    assert found == ["equation 1: '-0.398' in the clean copy, "
-                     "'-0.20398' accepted"]
+    # The line also names the first character that differs, as of
+    # 24.08: the two quoted forms are near-identical by construction —
+    # that is what makes it a glyph problem — so a reader was being
+    # asked to diff them by eye. Here the difference is a digit rather
+    # than a lookalike, which is the case where the addition says least
+    # and still costs nothing.
+    (line,) = found
+
+    assert line.startswith("equation 1: '-0.398' in the clean copy, "
+                           "'-0.20398' accepted")
+    assert "differs at char" in line, line
 
 
 def test_every_OTHER_check_passes_that_document():

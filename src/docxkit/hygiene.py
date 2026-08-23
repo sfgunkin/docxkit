@@ -811,7 +811,15 @@ def smarten(xml: str) -> tuple[str, SmartenReport]:
 #: the OMML while deriving a redline, and the character comes back as
 #: an ASCII hyphen. Measured on AFI 2026-08-17: 2 in the baseline, 0 in
 #: the built batch, 57 in the PROSE of both — only maths is rewritten.
-MATH_DOWNGRADES = {"−": "-"}
+#:
+#: PRIME is the second, found on Aging_Well 2026-08-23: Word's accept
+#: path returns U+2032 as an ASCII apostrophe, so a paper writing
+#: `\kappa'(a)` or `f'(x)` could not build at all until someone worked
+#: out that the derivative was the problem. Loud rather than silent —
+#: the build refuses instead of shipping the wrong glyph, which is the
+#: gate working — but a refusal nobody can act on costs the same
+#: afternoon as a wrong answer.
+MATH_DOWNGRADES = {"−": "-", "′": "'"}
 
 _MATH_T_RE = re.compile(r"(<m:t[^>]*>)([^<]*)(</m:t>)")
 
