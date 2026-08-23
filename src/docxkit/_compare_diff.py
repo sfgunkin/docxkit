@@ -43,7 +43,8 @@ Report = dict[str, list[Any]]
 #: edit, and a rebuild that drops it has lost one. It is a separate
 #: bucket from `formula` because "the equation now says something else"
 #: and "the equation is set differently" want different responses.
-GATED = ("structure", "text", "formula", "formula_format", "format")
+GATED = ("structure", "text", "formula", "formula_format", "format",
+         "media")
 
 _norm_glyph = normalize_glyphs
 
@@ -603,6 +604,47 @@ def compare_paras(a: list[Para], b: list[Para], report: Report,
 
     align.structure()
     return report
+
+
+def compare_media(a: Doc, b: Doc, report: Report) -> None:
+    """Figures, by name and by content.
+
+    Not compared at all until 2026-08-24, while the STRUCTURE layer's
+    own header claimed "part added / removed". A figure swapped for a
+    different chart, overwritten with a 48-byte stub, or deleted from
+    the package reported as zero changes — on the one task whose whole
+    deliverable was four replaced images (HCW, filed S1).
+
+    **Paired by NAME, and that is measured rather than assumed.** The
+    alternative was pairing by digest to absorb renumbering, and it
+    would have hidden the case that matters: two figures whose contents
+    swap places keep both names and both digests, and only a name
+    pairing calls that two changes. Word does not renumber media parts
+    on save — checked over 110 media parts in three real manuscripts,
+    every one byte-identical through an open-and-save — so the noise
+    the digest pairing would have absorbed does not arrive.
+
+    No pixel diff, deliberately: "content differs, 66,203 -> 69,327
+    bytes" is enough to send a person to look, which is all any other
+    layer does.
+    """
+    for name in sorted(set(a.media) | set(b.media)):
+        before, after = a.media.get(name), b.media.get(name)
+        known = after or before
+        label = known.label if known else ""
+        if before is not None and after is not None:
+            if before.digest != after.digest:
+                report["media"].append(
+                    {"type": "MEDIA CHANGED", "part": name, "label": label,
+                     "from": before.size, "to": after.size})
+        elif before is not None:
+            report["media"].append(
+                {"type": "MEDIA REMOVED", "part": name, "label": label,
+                 "from": before.size, "to": 0})
+        elif after is not None:
+            report["media"].append(
+                {"type": "MEDIA ADDED", "part": name, "label": label,
+                 "from": 0, "to": after.size})
 
 
 def compare_comments(a: Doc, b: Doc, report: Report) -> None:

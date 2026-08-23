@@ -134,6 +134,21 @@ def test_a_settled_paper_whose_BASELINE_has_drifted_is_stale(tmp_path):
     assert row.stale == ("word/document.xml",)
 
 
+def test_a_PROPOSAL_is_not_also_reported_as_stale(tmp_path):
+    """`if current.is_truth` — while a proposal is pending the two files
+    are SUPPOSED to differ, and saying "baseline stale" about every one
+    of them is how a warning stops being read. `status` has always been
+    careful about this; the survey inherited the care and not a test,
+    and a mutant that asked drift of everything survived."""
+    paper = paper_at(tmp_path / "HCW")
+    write(paper.working, make_parts(para(run("x "), ins("proposed"))))
+
+    (row,) = survey()
+
+    assert row.verdict == "PROPOSAL"
+    assert row.stale == (), "a pending proposal is not a stale baseline"
+
+
 def test_a_batch_STAGED_but_not_promoted_is_reported(tmp_path):
     """It is not a state of the manuscript, so `status` cannot show it —
     and it is exactly the thing forgotten between sessions."""

@@ -20,7 +20,11 @@ Parts compared
 
 Layers reported
   STRUCTURE  paragraph insert / delete / MOVE (a delete whose text reappears
-             as an insert elsewhere), and a whole part added or removed
+             as an insert elsewhere), and a whole TEXT part added or removed
+  MEDIA      a figure or embedded object added, removed, or changed — by
+             name and content digest. The STRUCTURE layer claimed this
+             ground and never covered it: until 2026-08-24 a figure
+             swapped for a different chart reported as no change at all
   TEXT       word-level diff of EVERY paragraph in each replace block
              (never truncated — the para 9-11 class of misses)
   GLYPH      text diffs that vanish under minus/asterisk/quote normalization
@@ -72,6 +76,7 @@ from ._compare_diff import FormulaChange as FormulaChange
 from ._compare_diff import Report as Report
 from ._compare_diff import bookmark_names as bookmark_names
 from ._compare_diff import compare_comments as compare_comments
+from ._compare_diff import compare_media as compare_media
 from ._compare_diff import compare_paras as compare_paras
 from ._compare_diff import fmt_diff as fmt_diff
 from ._compare_diff import formula_diff as formula_diff
@@ -82,10 +87,12 @@ from ._compare_diff import stripped_block as stripped_block
 from ._compare_diff import stripped_fields as stripped_fields
 from ._compare_diff import word_diff as word_diff
 from ._compare_read import COMMENTS_PART as COMMENTS_PART
+from ._compare_read import MEDIA_PART_RE as MEDIA_PART_RE
 from ._compare_read import TEXT_PART_RE as TEXT_PART_RE
 from ._compare_read import VOLATILE_FIELDS as VOLATILE_FIELDS
 from ._compare_read import Doc as Doc
 from ._compare_read import Fields as Fields
+from ._compare_read import Media as Media
 from ._compare_read import Para as Para
 from ._compare_read import Part as Part
 from ._compare_read import load as load
@@ -97,11 +104,13 @@ from ._compare_render import render as render
 __all__ = [
     "COMMENTS_PART",
     "GATED",
+    "MEDIA_PART_RE",
     "TEXT_PART_RE",
     "VOLATILE_FIELDS",
     "Doc",
     "Fields",
     "FormulaChange",
+    "Media",
     "Para",
     "Part",
     "Report",
@@ -109,6 +118,7 @@ __all__ = [
     "compare",
     "compare_comments",
     "compare_docs",
+    "compare_media",
     "compare_paras",
     "fmt_diff",
     "formula_diff",
@@ -135,7 +145,7 @@ def compare_docs(a: Doc, b: Doc) -> Report:
     report: Report = {"structure": [], "text": [], "glyph": [], "formula": [],
                       "formula_glyph": [], "formula_format": [], "format": [],
                       "hyperlinks": [], "integrity": [],
-                      "stripped_fields": [], "comments": []}
+                      "stripped_fields": [], "comments": [], "media": []}
 
     # Every field name side B still carries, PACKAGE-wide. A target the
     # author moved is not a target the author lost, and it can move
@@ -166,6 +176,7 @@ def compare_docs(a: Doc, b: Doc) -> Report:
                                         "text": pb.blob[:110]})
 
     compare_comments(a, b, report)
+    compare_media(a, b, report)
 
     # Hyperlink-label diff: a link whose visible text differs between the
     # built and user docs (a content-fix that bled prose into a link grows

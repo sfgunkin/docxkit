@@ -244,8 +244,33 @@ def test_a_key_the_config_does_not_have_yet_is_INSERTED():
     out = _set_key(text, "paper", "working", '"Report/P.docx"')
 
     assert 'working = "Report/P.docx"' in out
-    assert out.index("working") < out.index("[batch]"), "landed in [batch]"
+    # INSIDE [paper]: before the next header is not enough — inserting
+    # at the header index puts the key above `[paper]`, in no section at
+    # all, and "before [batch]" is still true of that. A mutant did
+    # exactly this and survived.
+    assert out.index("[paper]") < out.index("working") < out.index("[batch]")
     assert 'name = "P"' in out and 'author = "A"' in out
+    import tomllib
+    assert tomllib.loads(out)["paper"]["working"] == "Report/P.docx", \
+        "the key has to be READ BACK from the section it was meant for"
+
+
+def test_the_SAME_key_in_another_section_is_left_alone():
+        """`if current != section: continue`. Without it the first
+        matching key anywhere in the file is rewritten — and `path`
+        lives in `[attic]` while a paper's own tooling may keep one
+        under a section of its own. Dropping the scope survived every
+        test until this one, because none had a name in two places."""
+        text = ('[analysis]\npath = "Programs"\n\n'
+                '[attic]\npath = "D:/old"\n')
+
+        out = _set_key(text, "attic", "path", '"D:/PaperAttic/P"')
+
+        import tomllib
+        parsed = tomllib.loads(out)
+        assert parsed["attic"]["path"] == "D:/PaperAttic/P"
+        assert parsed["analysis"]["path"] == "Programs", \
+            "the other section's key was rewritten"
 
 
 def test_a_section_the_config_does_not_have_yet_is_APPENDED():

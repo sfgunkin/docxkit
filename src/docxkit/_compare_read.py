@@ -13,7 +13,9 @@ type-checked and linted like the rest of the toolkit.
 """
 from __future__ import annotations
 
+import hashlib
 import html
+import posixpath
 import re
 import zipfile
 from difflib import SequenceMatcher
@@ -399,6 +401,112 @@ def mask_volatile_fields(xml: str) -> str:
     return FLDSIMPLE_RE.sub(simple, out)
 
 
+#: The binary parts a READER sees. Not compared until 2026-08-24, and
+#: the STRUCTURE layer's own header said "part added / removed" the
+#: whole time: a figure replaced with a different chart, overwritten
+#: with a 48-byte stub, or deleted from the package outright all
+#: reported as zero changes (found on HCW, whose entire deliverable that
+#: round was four replaced images).
+#:
+#: `word/embeddings/` is here for the same reason as `word/media/`: an
+#: embedded workbook behind a chart is content a reader can open.
+MEDIA_PART_RE = re.compile(r"^word/(?:media|embeddings)/")
+
+#: NOT compared, and the exclusion is measured rather than assumed.
+#: Word regenerates the thumbnail from whatever the first page renders
+#: to, so a document opened and saved with nothing changed comes back
+#: with different bytes — a difference on every author round-trip is a
+#: difference nobody reads.
+_VOLATILE_MEDIA = re.compile(r"^docProps/thumbnail")
+
+
+class Media:
+    """One binary part: what it is called, how big, and what it holds."""
+
+    __slots__ = ("digest", "label", "name", "size")
+
+    name: str
+    size: int
+    digest: str
+    label: str
+    """The exhibit it belongs to, when the document says — "Figure 8.a.
+    Mortality and LFP". Empty when nothing nearby names it."""
+
+    def __init__(self, name: str, size: int, digest: str,
+                 label: str = "") -> None:
+        self.name, self.size, self.digest, self.label = (name, size, digest,
+                                                         label)
+
+
+_REL_RE = re.compile(r"<Relationship\b[^>]*>")
+_ID_RE = re.compile(r'Id="([^"]+)"')
+_TARGET_RE = re.compile(r'Target="([^"]+)"')
+#: Every way a part points at a media part: DrawingML uses r:embed (and
+#: r:link for a linked image), VML uses r:id on v:imagedata. A hyperlink
+#: also carries r:id, which is why the id is resolved through the rels
+#: and only kept when it lands on a media part.
+_RID_RE = re.compile(r'r:(?:embed|link|id)="([^"]+)"')
+
+
+def _rel_targets(rels: str, base: str) -> dict[str, str]:
+    """rId -> the part it names, resolved against `base` ("word/")."""
+    out: dict[str, str] = {}
+    for element in _REL_RE.findall(rels):
+        rid, target = _ID_RE.search(element), _TARGET_RE.search(element)
+        if not rid or not target:
+            continue
+        path = target.group(1).replace("\\", "/")
+        if path.startswith("/"):
+            out[rid.group(1)] = path.lstrip("/")
+            continue
+        out[rid.group(1)] = posixpath.normpath(base + path)
+    return out
+
+
+def _media_labels(raw: dict[str, bytes]) -> dict[str, str]:
+    """media part -> the caption of the exhibit that draws it.
+
+    "word/media/image14.png" alone sends a reader to a folder; "Figure
+    8.a" sends them to the page. The walk is the one `crossrefs`
+    already does — a drawing carries an rId, the part's rels say which
+    file that is — and the caption is the nearest paragraph with text,
+    looking DOWN first because a figure's caption sits under it in
+    every one of these manuscripts.
+    """
+    labels: dict[str, str] = {}
+    for name in sorted(raw):
+        if not TEXT_PART_RE.match(name):
+            continue
+        rels = raw.get(f"word/_rels/{name[len('word/'):]}.rels")
+        if not rels:
+            continue
+        targets = _rel_targets(rels.decode("utf-8", "replace"), "word/")
+        paras = [m.group(0) for m in P_RE.finditer(
+            raw[name].decode("utf-8", "replace"))]
+        texts = [printed_text(p).strip() for p in paras]
+        for i, para in enumerate(paras):
+            drawn = {targets.get(rid) for rid in _RID_RE.findall(para)}
+            hit = {t for t in drawn if t and MEDIA_PART_RE.match(t)}
+            if not hit:
+                continue
+            # the caption below first — that is where a figure's
+            # sits in every one of these manuscripts — then above
+            near = [texts[i], *texts[i + 1:i + 3],
+                    *reversed(texts[max(0, i - 2):i])]
+            caption = next((t for t in near if t), "")
+            for target in hit:
+                labels.setdefault(target, caption[:60])
+    return labels
+
+
+def _media_of(raw: dict[str, bytes]) -> dict[str, Media]:
+    labels = _media_labels(raw)
+    return {name: Media(name, len(blob),
+                        hashlib.sha256(blob).hexdigest(), labels.get(name, ""))
+            for name, blob in raw.items()
+            if MEDIA_PART_RE.match(name) and not _VOLATILE_MEDIA.match(name)}
+
+
 class Part:
     """One text-bearing part, with its paragraphs already extracted."""
 
@@ -427,19 +535,26 @@ class Part:
 
 
 class Doc:
-    """A package, as the comparison sees it: parts, and its comments."""
+    """A package as the comparison sees it: parts, comments, and media."""
 
-    __slots__ = ("comments", "parts", "path")
+    __slots__ = ("comments", "media", "parts", "path")
 
     path: str
     parts: list[Part]
     comments: list[tuple[str, str, str]]
+    media: dict[str, Media]
+    """The binary parts, by name. Empty when the caller passed a parts
+    dict holding none — which is not the same as a document with no
+    figures, and is why `compare_media` reports nothing when BOTH sides
+    are empty rather than treating one side's absence as a deletion."""
 
     def __init__(self, path: str, parts: list[Part],
-                 comments: list[tuple[str, str, str]]) -> None:
+                 comments: list[tuple[str, str, str]],
+                 media: dict[str, Media] | None = None) -> None:
         self.path = path
         self.parts = parts
         self.comments = comments
+        self.media = media or {}
 
 
 def _rank(name: str) -> tuple[int, str]:
@@ -463,13 +578,22 @@ def load_parts(raw: dict[str, bytes], path: str = "") -> Doc:
                       if STYLES_PART in raw else None)
     parts = [Part(n, raw[n].decode("utf-8"), cascade)
              for n in sorted(raw, key=_rank) if TEXT_PART_RE.match(n)]
-    return Doc(path, parts, _read_comments(raw))
+    return Doc(path, parts, _read_comments(raw), _media_of(raw))
 
 
 def load(path: str) -> Doc:
+    """Read the parts the comparison needs, and only those.
+
+    The rels are read as well as the parts: without them a media part
+    can be compared but not NAMED, and "word/media/image14.png changed"
+    sends a reader to a folder where "Figure 8.a" sends them to the
+    page.
+    """
     with zipfile.ZipFile(path) as z:
         raw = {n: z.read(n) for n in z.namelist()
                if TEXT_PART_RE.match(n)
+               or MEDIA_PART_RE.match(n)
+               or n.startswith("word/_rels/")
                or n in (COMMENTS_PART, STYLES_PART)}
     return load_parts(raw, path)
 

@@ -94,6 +94,24 @@ def _format(report: Report) -> int:
     return len(report["format"])
 
 
+def _media(report: Report) -> int:
+    _head("MEDIA  (figures and embedded objects — added / removed / "
+          "changed)")
+    print("  Compared by name and by content digest, not by pixels: a "
+          "part whose bytes differ is worth a look whatever changed in "
+          "it. Word does not rewrite these on save, so a difference "
+          "here is an edit and not a round-trip artifact.")
+    for m in report["media"]:
+        where = f"  — {m['label']}" if m.get("label") else ""
+        size = (f"{m['from']:,} -> {m['to']:,} bytes"
+                if m["type"] == "MEDIA CHANGED"
+                else f"{max(m['from'], m['to']):,} bytes")
+        print(f"  [{m['type']}] {m['part']}  ({size}){where}")
+    if not report["media"]:
+        print("  (none)")
+    return len(report["media"])
+
+
 def _review(report: Report) -> None:
     """The layers that inform without gating."""
     _head("HYPERLINK  (link-label differences — REVIEW; not gated)")
@@ -157,6 +175,7 @@ def render(report: Report, expect_clean: bool) -> int:
     """Print every layer; return the exit code."""
     real = _structure(report) + _text(report)
     real += _formula(report) + _formula_format(report) + _format(report)
+    real += _media(report)
     _review(report)
 
     print("\n" + "-" * 72)

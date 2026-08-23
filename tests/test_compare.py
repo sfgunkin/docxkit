@@ -1403,7 +1403,7 @@ def _empty_report() -> Report:
     return {k: [] for k in ("structure", "text", "glyph", "formula",
                             "formula_glyph", "formula_format", "format",
                             "hyperlinks", "integrity", "stripped_fields",
-                            "comments")}
+                            "comments", "media")}
 
 
 def _entry(bucket: str) -> object:
@@ -1417,6 +1417,8 @@ def _entry(bucket: str) -> object:
     """
     mark = f"MARK-{bucket}"
     return {
+        "media": {"type": "MEDIA CHANGED", "part": "word/media/img.png",
+                  "label": mark, "from": 100, "to": 200},
         "structure": {"type": "DELETE", "part": "footnotes", "text": mark,
                       "lost_fields": {"anchors": [], "cites": [],
                                       "footnotes": 0}},
@@ -1502,8 +1504,9 @@ def test_an_integrity_flag_alone_fails_the_gate():
 
 
 @pytest.mark.parametrize("sizes", [
-    (1, 1, 1, 1, 1), (1, 3, 1, 1, 2), (3, 1, 4, 1, 1),
-    (0, 2, 0, 1, 0), (2, 0, 1, 0, 3), (0, 0, 0, 0, 1),
+    (1, 1, 1, 1, 1, 1), (1, 3, 1, 1, 2, 0), (3, 1, 4, 1, 1, 2),
+    (0, 2, 0, 1, 0, 0), (2, 0, 1, 0, 3, 1), (0, 0, 0, 0, 1, 0),
+    (0, 0, 0, 0, 0, 4),
 ])
 def test_the_headline_total_is_every_gated_layer_summed(sizes):
     """The number a reader acts on is the sum of all five, not of the
@@ -3243,9 +3246,14 @@ def test_load_reads_the_parts_it_compares_and_NOTHING_else(tmp_path,
 
     load(str(path))
 
+    # media joined the list on 2026-08-24, with the rels that NAME it:
+    # a figure replaced, corrupted or deleted used to report as zero
+    # changes. settings.xml, the theme and customXml stay out — they are
+    # not prose a reader sees, and two of them are the big ones.
     assert set(read) == {"word/document.xml", "word/footnotes.xml",
                          "word/endnotes.xml", "word/header1.xml",
-                         "word/styles.xml", "word/comments.xml"}, read
+                         "word/styles.xml", "word/comments.xml",
+                         "word/media/image1.png"}, read
 
 
 # --- what the _compare_diff run of 2026-08-20 found -----------------------
@@ -3668,3 +3676,146 @@ def test_a_paragraph_carries_WORDS_id_not_the_attribute_it_sits_in():
 #   `_compare_diff` deletes the zero counts Counter arithmetic leaves
 #   behind before it builds one — so the two can only disagree on a
 #   count no producer emits.
+
+
+# ------------------------------------------------------------- MEDIA
+#
+# The layer that did not exist until 2026-08-24, while the STRUCTURE
+# layer's header claimed its ground: "paragraph insert / delete / move,
+# part added / removed". A figure replaced with a different chart,
+# overwritten with a 48-byte stub, or deleted outright all reported
+# `REAL change locations: 0` — found on HCW, whose entire deliverable
+# that round was four replaced images.
+
+PNG = (b"\x89PNG\r\n\x1a\n" + b"first image bytes" * 4)
+PNG2 = (b"\x89PNG\r\n\x1a\n" + b"a completely different chart" * 3)
+
+_DRAWING = (
+    '<w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData>'
+    '<pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill>'
+    '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>'
+    "</w:r></w:p>")
+_RELS = ('<?xml version="1.0"?><Relationships xmlns="http://schemas.'
+         'openxmlformats.org/package/2006/relationships">'
+         '<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/'
+         'officeDocument/2006/relationships/image" '
+         'Target="media/image1.png"/></Relationships>')
+
+
+def _with_media(image=PNG, caption="Figure 8.a. Mortality and LFP"):
+    parts = make_parts(_DRAWING + para(run(caption)))
+    parts["word/media/image1.png"] = image
+    parts["word/_rels/document.xml.rels"] = _RELS.encode("utf-8")
+    return parts
+
+
+def _media_report(a_parts, b_parts):
+    """NOT `_report` — this file already has one, and shadowing it at
+    module level broke four move tests defined a thousand lines above."""
+    from docxkit.compare import compare_docs, load_parts
+    return compare_docs(load_parts(a_parts), load_parts(b_parts))
+
+
+def test_a_figure_REPLACED_with_a_different_one_is_reported():
+    """The HCW case, exactly: image1's bytes swapped for another
+    chart's. Every other layer is silent — no character moved."""
+    report = _media_report(_with_media(PNG), _with_media(PNG2))
+
+    (entry,) = report["media"]
+    assert entry["type"] == "MEDIA CHANGED"
+    assert entry["part"] == "word/media/image1.png"
+    assert (entry["from"], entry["to"]) == (len(PNG), len(PNG2))
+    assert not report["text"] and not report["structure"], \
+        "no text moved — this layer is the only one that can see it"
+
+
+def test_a_figure_CORRUPTED_to_a_stub_is_reported():
+    report = _media_report(_with_media(PNG),
+                           _with_media(b"not an image at all"))
+
+    (entry,) = report["media"]
+    assert entry["type"] == "MEDIA CHANGED" and entry["to"] == 19
+
+
+def test_a_figure_DELETED_from_the_package_is_reported():
+    before = _with_media()
+    after = _with_media()
+    del after["word/media/image1.png"]
+
+    (entry,) = _media_report(before, after)["media"]
+
+    assert entry["type"] == "MEDIA REMOVED"
+    assert entry["part"] == "word/media/image1.png"
+
+
+def test_a_figure_ADDED_is_reported():
+    before = _with_media()
+    del before["word/media/image1.png"]
+
+    (entry,) = _media_report(before, _with_media())["media"]
+
+    assert entry["type"] == "MEDIA ADDED"
+
+
+def test_an_UNCHANGED_figure_is_not_a_difference():
+    """The everyday case: the gate has to stay quiet through every
+    author round-trip or nobody reads it."""
+    assert _media_report(_with_media(), _with_media())["media"] == []
+
+
+def test_the_entry_NAMES_the_exhibit_not_just_the_part():
+    """"word/media/image14.png" sends a reader to a folder; "Figure 8.a"
+    sends them to the page. The caption comes from the same rels walk
+    `crossrefs` does."""
+    (entry,) = _media_report(_with_media(PNG), _with_media(PNG2))["media"]
+
+    assert entry["label"].startswith("Figure 8.a")
+
+
+def test_a_changed_figure_FAILS_expect_clean():
+    """The whole point: this is a gate, not a note. `--expect-clean` on
+    a build whose figure was replaced used to print OK."""
+    report = _media_report(_with_media(PNG), _with_media(PNG2))
+
+    code, out = _out(report, expect_clean=True)
+
+    assert code == 1
+    assert "MEDIA CHANGED" in out
+
+
+def test_the_THUMBNAIL_is_not_compared():
+    """Word regenerates docProps/thumbnail from whatever the first page
+    renders to, so it differs after an open-and-save with nothing
+    edited. A difference on every round-trip is one nobody reads."""
+    before, after = _with_media(), _with_media()
+    before["docProps/thumbnail.jpeg"] = b"old render"
+    after["docProps/thumbnail.jpeg"] = b"a different render entirely"
+
+    assert _media_report(before, after)["media"] == []
+
+
+def test_an_EMBEDDED_object_counts_as_media():
+    """An embedded workbook behind a chart is content a reader can
+    open."""
+    before, after = _with_media(), _with_media()
+    before["word/embeddings/Microsoft_Excel_Sheet1.xlsx"] = b"workbook one"
+    after["word/embeddings/Microsoft_Excel_Sheet1.xlsx"] = b"workbook two!"
+
+    (entry,) = _media_report(before, after)["media"]
+
+    assert entry["part"].startswith("word/embeddings/")
+
+
+def test_two_figures_that_SWAP_contents_are_two_changes():
+    """Why the pairing is by NAME. Pairing by digest would absorb a
+    renumbering — and would report this, where the pictures genuinely
+    trade places, as nothing at all."""
+    before, after = _with_media(), _with_media()
+    before["word/media/image2.png"] = PNG2
+    after["word/media/image1.png"] = PNG2
+    after["word/media/image2.png"] = PNG
+
+    changes = _media_report(before, after)["media"]
+
+    assert len(changes) == 2, changes
+    assert {c["type"] for c in changes} == {"MEDIA CHANGED"}

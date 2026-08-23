@@ -103,6 +103,31 @@ def test_a_gate_that_HANGS_is_a_gate_that_fails(tmp_path):
     assert gate.seconds < 15, "and the report agrees with the clock"
 
 
+def test_a_timed_out_gate_leaves_NO_ORPHAN_behind(tmp_path):
+    """`_kill_tree`, and the reason `proc.kill()` is not enough.
+
+    Under a shell the gate is a GRANDCHILD, so killing the child ends
+    cmd.exe and leaves the real work running — still holding the pipes,
+    still writing files, invisible to the ladder that thinks it stopped
+    it. The elapsed-time assertion above cannot see that: the parent
+    stops waiting either way. Only the orphan's own side effect can,
+    which is what this watches for. A mutant that downgraded the tree
+    kill to `proc.kill()` survived every other test here.
+    """
+    marker = tmp_path / "the_orphan_was_here.txt"
+    paper = paper_with(tmp_path, _py(
+        f"import time; time.sleep(3); "
+        f"open('{marker.as_posix()}','w').write('still running')"))
+
+    (gate,) = run_gates(paper, timeout=1)
+    assert gate.code == -1
+
+    time.sleep(5)                     # past when the orphan would write
+    assert not marker.exists(), (
+        "the gate was killed but its grandchild kept running — "
+        "`proc.kill()` reaches the shell, not the work")
+
+
 def test_a_timed_out_gate_keeps_WHAT_IT_PRINTED(tmp_path):
     """The lines before the hang are the diagnosis. A pytest gate wedged
     on test 340 of 500 names that test; the first version replaced it
