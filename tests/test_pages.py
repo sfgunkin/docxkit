@@ -32,9 +32,14 @@ A4 = (595, 842)          # points, portrait
 A4_LANDSCAPE = (842, 595)
 
 
-def _render(tmp_path, pages):
+def _render(tmp_path, pages, name: str = "render.pdf"):
     """`pages` is a list of (size, body, footer) or (size, body, footer,
-    header) — the text of one sheet, placed where Word would place it."""
+    header) — the text of one sheet, placed where Word would place it.
+
+    `name`, because two renders in one test with one filename are the
+    SAME FILE: the second overwrites the first and both variables point
+    at it, so a comparison between them silently compares one render
+    with itself."""
     doc = pymupdf.open()
     for size, body, footer, *rest in pages:
         header = rest[0] if rest else None
@@ -42,12 +47,14 @@ def _render(tmp_path, pages):
         if body:
             page.insert_text((72, 200), body, fontsize=11)
         if footer is not None:
-            # the footer band: Word prints the number inside the margin
-            page.insert_text((size[0] / 2, size[1] - 40), footer,
-                             fontsize=11)
+            # the footer band: Word prints the number inside the margin.
+            # `footer` may be (text, x) to say WHERE across the sheet.
+            text, x = footer if isinstance(footer, tuple) else (footer,
+                                                               size[0] / 2)
+            page.insert_text((x, size[1] - 40), text, fontsize=11)
         if header is not None:
             page.insert_text((size[0] / 2, 40), header, fontsize=11)
-    out = tmp_path / "render.pdf"
+    out = tmp_path / name
     doc.save(str(out))
     doc.close()
     return out
@@ -603,3 +610,94 @@ def test_an_import_that_fails_for_ANOTHER_reason_keeps_its_message(
 #   clipped back to the page by PyMuPDF, and a positive one moves the
 #   window one POINT: a page number printed inside the first point of
 #   the sheet is not a page number, it is a sheet with no margin.
+
+
+# --- WHERE the number is printed --------------------------------------
+# Being present and being in the right place are two claims, and only
+# the first was measured: the band scan read the whole width, so a paper
+# numbering bottom-left looked exactly like the house's bottom-right.
+
+
+def test_a_sheet_says_which_corner_its_number_is_in(tmp_path):
+    right = _render(tmp_path, [(A4, "body", ("7", A4[0] - 90))], "r.pdf")
+    left = _render(tmp_path, [(A4, "body", ("7", 60))], "l.pdf")
+    centre = _render(tmp_path, [(A4, "body", "7")], "c.pdf")
+
+    assert read_pdf(right)[0].corner == "lower right"
+    assert read_pdf(left)[0].corner == "lower left"
+    assert read_pdf(centre)[0].corner == "lower centre"
+
+
+def test_the_corner_names_the_BAND_it_was_found_in(tmp_path):
+    pdf = _render(tmp_path, [(A4, "body", None, "7")])
+    (row,) = read_pdf(pdf)
+    assert row.printed == 7
+    assert row.corner == "upper centre"
+
+
+def test_a_number_in_the_WRONG_corner_is_a_problem():
+    rows = [Sheet(1, "portrait", 1, False, "lower right"),
+            Sheet(2, "portrait", 2, False, "lower left")]
+    assert problems(rows) == ["sheet 2 prints its number lower left, "
+                              "not lower right"]
+
+
+def test_the_house_corner_is_the_DEFAULT_so_the_check_runs():
+    rows = [Sheet(1, "portrait", 1, False, "lower centre")]
+    assert problems(rows)
+
+
+def test_a_paper_that_numbers_elsewhere_can_turn_the_check_off():
+    rows = [Sheet(1, "portrait", 1, False, "lower centre"),
+            Sheet(2, "portrait", 2, False, "upper right")]
+    assert problems(rows, corner=None) == []
+
+
+def test_a_sheet_printing_NO_number_is_not_in_the_wrong_corner():
+    """A title page carries no number, and a gate that fails on every
+    paper is a gate nobody runs."""
+    rows = [Sheet(1, "portrait", None, False, None),
+            Sheet(2, "portrait", 2, False, "lower right")]
+    assert problems(rows) == []
+
+
+def test_the_row_prints_the_corner_beside_the_number():
+    assert "lower right" in str(Sheet(4, "portrait", 4, False, "lower right"))
+    assert str(Sheet(4, "portrait", 4, False)).endswith("prints    4")
+
+
+def test_FOOTNOTES_in_the_band_do_not_hide_the_page_number(tmp_path):
+    """The band is not the footer. A paper with footnotes puts them in
+    the same 12 % of the sheet, and their text is full of bare numbers —
+    the marker opening each note, and the note's own citations. On
+    Aging_Well that read as three sheets printing NOTHING and one taking
+    a footnote marker for its page number: `… 3, -, 5 …` and a
+    "numbering RESTARTS 7 -> 5" about a correctly numbered document.
+
+    Word sets the footer BELOW the footnote separator, so the number is
+    the last line on the sheet."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=A4[0], height=A4[1])
+    page.insert_text((72, 200), "Body text.", fontsize=11)
+    # a two-line footnote, inside the band, opening with its marker
+    page.insert_text((72, A4[1] - 62),
+                     "4 The agenda sits within the WHO Decade of Healthy",
+                     fontsize=9)
+    page.insert_text((72, A4[1] - 50), "Ageing, 2021-2030 (WHO 2020).",
+                     fontsize=9)
+    page.insert_text((A4[0] - 90, A4[1] - 30), "4", fontsize=11)
+    out = tmp_path / "notes.pdf"
+    doc.save(str(out))
+    doc.close()
+
+    (row,) = read_pdf(out)
+    assert row.printed == 4
+    assert row.corner == "lower right"
+
+
+def test_a_RUNNING_HEAD_sharing_the_last_line_is_still_ambiguous(tmp_path):
+    """Narrowing to the outermost line must not turn a guess into an
+    answer: a footer that reads "Chapter 3 page 14" has two numbers on
+    one line and no way to tell which is the page."""
+    pdf = _render(tmp_path, [(A4, "body", "Chapter 3 page 14")])
+    assert read_pdf(pdf)[0].printed is None

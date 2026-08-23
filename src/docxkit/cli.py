@@ -949,7 +949,8 @@ def cmd_pages(args: argparse.Namespace) -> int:
     print(f"{len(rows)} sheet(s)")
     for row in rows:
         print(f"  {row}")
-    found = problems(rows)
+    corner = getattr(args, "corner", "lower right")
+    found = problems(rows, corner=None if corner == "any" else corner)
     for note in found:
         print(f"  ** {note}")
     if not args.check:
@@ -1647,8 +1648,14 @@ def main() -> None:
                    help="one row per sheet: orientation, printed number, "
                         "BLANK (renders through Word)")
     p.add_argument("--check", action="store_true",
-                   help="exit 2 on a blank sheet, a numbering restart or "
-                        "a gap in the printed sequence")
+                   help="exit 2 on a blank sheet, a numbering restart, a "
+                        "gap in the printed sequence, or a number printed "
+                        "in the wrong corner")
+    p.add_argument("--corner", default="lower right",
+                   metavar='"lower right"|any',
+                   help="where the page number belongs, checked against "
+                        "the RENDER; the house rule is a right-aligned "
+                        'footer. "any" turns the check off')
     p.add_argument("--keep-pdf", metavar="PATH",
                    help="keep the render instead of using a temp file")
     p.set_defaults(fn=cmd_pages)

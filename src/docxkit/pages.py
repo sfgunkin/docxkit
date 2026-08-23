@@ -71,12 +71,24 @@ class Sheet(NamedTuple):
     the index: the whole defect class here is the two disagreeing."""
     blank: bool
     """No text, no image, no drawing. A sheet that exists to be turned."""
+    corner: str | None = None
+    """WHERE the number is printed — ``"lower right"``, ``"upper
+    centre"`` — or None when none is printed.
+
+    The number being present and the number being in the right place are
+    two claims, and only the first was ever measured: `_printed_number`
+    scans the whole width of the band, so a paper numbering bottom-left
+    or centre read exactly like the house's bottom-right. The house rule
+    for these papers is a right-aligned footer (see the paper-formatting
+    conventions), and a numbering position that drifts mid-document is
+    the shape a section break with its own footer leaves behind."""
 
     def __str__(self) -> str:
         printed = "-" if self.printed is None else str(self.printed)
         flags = " BLANK" if self.blank else ""
+        where = f"  {self.corner}" if self.corner else ""
         return (f"{self.number:4d}  {self.orientation:9s} "
-                f"prints {printed:>4s}{flags}")
+                f"prints {printed:>4s}{where}{flags}")
 
 
 def _import_pymupdf() -> Any:
@@ -125,23 +137,64 @@ def render_anchors(pdf: str | Path, anchors: Sequence[str], *,
     return out
 
 
-def _printed_number(page: Any, band: float) -> int | None:
-    """The page number printed in this sheet's margins, if exactly one.
+def _printed_number(page: Any, band: float) -> tuple[int | None, str | None]:
+    """The page number printed in this sheet's margins, and WHERE.
 
     Both bands, because a paper that numbers in the header is not a
     paper with no numbers. Ambiguity answers None rather than guessing:
     a footer that also carries a running head can hold several numbers,
     and a wrong number here would read as a numbering defect that is not
     there.
+
+    The corner comes from the word's own box rather than from the
+    footer's `w:jc`: what is being checked is the sheet a reader holds,
+    and a right-aligned footer inside a wrongly-indented paragraph
+    prints in the middle of the page while its XML says "right".
     """
-    height = page.rect.height
-    for top, bottom in ((height * (1 - band), height), (0, height * band)):
-        clip = page.rect.__class__(0, top, page.rect.width, bottom)
-        found = [tok for tok in page.get_text(clip=clip).split()
-                 if _NUMBER_RE.match(tok)]
-        if len(found) == 1:
-            return int(found[0])
-    return None
+    height, width = page.rect.height, page.rect.width
+    for edge, top, bottom in (("lower", height * (1 - band), height),
+                              ("upper", 0.0, height * band)):
+        clip = page.rect.__class__(0, top, width, bottom)
+        line = _outermost_line(page.get_text("words", clip=clip), edge)
+        if len(line) != 1 or not _NUMBER_RE.match(line[0][4]):
+            continue
+        x0, x1 = line[0][0], line[0][2]
+        middle = (x0 + x1) / 2
+        side = ("left" if middle < width / 3 else
+                "right" if middle > 2 * width / 3 else "centre")
+        return int(line[0][4]), f"{edge} {side}"
+    return None, None
+
+
+def _outermost_line(words: list[Any], edge: str) -> list[Any]:
+    """The bottom-most (or top-most) line of text in a band.
+
+    **The band is not the footer.** A paper with FOOTNOTES puts them in
+    the same 12 % of the sheet, and their text is full of bare numbers —
+    the marker that opens each note, and the note's own citations. On
+    Aging_Well that made three sheets read as printing NOTHING (two
+    numbers in the band is ambiguity, and ambiguity answers None) and
+    one read the footnote marker at the top of the body as its page
+    number: `… 3, -, 5 …` and a "numbering RESTARTS 7 -> 5" that was
+    not there. Every one of those was a false alarm about a correctly
+    numbered document, which is the kind of gate a reader learns to
+    ignore.
+
+    Word sets the footer BELOW the footnote separator, so the page
+    number is the last line on the sheet — measured on that paper, the
+    number sits at y 742.8 against the footnotes' 720.1. Taking the
+    outermost line, and requiring it to be a lone number, tells the two
+    apart. A running head that shares the line ("Chapter 3 page 14") is
+    still ambiguous and still answers None.
+    """
+    if not words:
+        return []
+    key = (max(w[3] for w in words) if edge == "lower"
+           else min(w[1] for w in words))
+    # 3 pt of tolerance: words on one line differ slightly in their box
+    # depending on ascenders and descenders.
+    return [w for w in words
+            if abs((w[3] if edge == "lower" else w[1]) - key) <= 3.0]
 
 
 def read_pdf(pdf: str | Path, *, band: float = _BAND) -> list[Sheet]:
@@ -153,12 +206,14 @@ def read_pdf(pdf: str | Path, *, band: float = _BAND) -> list[Sheet]:
             rect = page.rect
             blank = not (page.get_text().strip() or page.get_images()
                          or page.get_drawings())
+            printed, corner = _printed_number(page, band)
             out.append(Sheet(
                 number=i,
                 orientation="landscape" if rect.width > rect.height
                             else "portrait",
-                printed=_printed_number(page, band),
-                blank=blank))
+                printed=printed,
+                blank=blank,
+                corner=corner))
     return out
 
 
@@ -181,14 +236,23 @@ def sheets(docx: str | Path, *, keep_pdf: str | Path | None = None,
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def problems(rows: list[Sheet]) -> list[str]:
+def problems(rows: list[Sheet], *,
+             corner: str | None = "lower right") -> list[str]:
     """What ``--check`` exits on, in the order a reader meets them.
 
-    Three verdicts, and each is a defect this package could not see
-    before: a BLANK sheet, a numbering RESTART, and a GAP in the printed
-    sequence. A sheet that prints nothing is REPORTED by the table and
-    is not a failure on its own — a title page legitimately carries no
-    number, and a gate that fails on every paper is a gate nobody runs.
+    Four verdicts, and each is a defect this package could not see
+    before: a BLANK sheet, a numbering RESTART, a GAP in the printed
+    sequence, and a number printed somewhere other than `corner`. A
+    sheet that prints nothing is REPORTED by the table and is not a
+    failure on its own — a title page legitimately carries no number,
+    and a gate that fails on every paper is a gate nobody runs.
+
+    `corner` is the house rule for these papers, a right-aligned footer,
+    and it is checked against the RENDER rather than the footer's `w:jc`
+    — a right-aligned paragraph that is indented off-centre prints in
+    the middle of the page and its XML still says "right". A paper that
+    numbers elsewhere on purpose passes ``corner=None``, which is what
+    ``--corner any`` does.
     """
     out = [f"sheet {row.number} is BLANK" for row in rows if row.blank]
     numbered = [(row.number, row.printed) for row in rows
@@ -200,4 +264,7 @@ def problems(rows: list[Sheet]) -> list[str]:
         elif now > was + 1:
             out.append(f"printed numbers JUMP on sheet {sheet}: {was} -> "
                        f"{now} (the sheets between print nothing)")
+    out += [f"sheet {row.number} prints its number {row.corner}, not "
+            f"{corner}" for row in rows
+            if corner is not None and row.corner not in (None, corner)]
     return out

@@ -178,6 +178,57 @@ into hiding a real miss.
 
 ---
 
+### S2 — `link_all` CLIPS a surname that opens with a lowercase particle, so half the name stays black
+
+Found on Aging_Well, 2026-08-23, adding de São José et al. (2019) under
+referee Issue 4.
+
+The manuscript reads `de São José et al. (2019) set out a capability
+framework…`. `link_all` linked **`José et al. (2019)`** — the particle
+`de São ` left outside the span, black, immediately before a blue
+underlined `José`. The reference entry parsed correctly (the anchor it
+minted is `deSaoJose2019`, particle and all), so this is the in-text
+grammar only: `AUTHORS_PATTERN` reads a surname as its capitalized words.
+
+**Why S2 and not S4.** Nothing catches it.
+
+* `citations` reports `82 of 82 mentions linked, 0 broken` — the anchor
+  resolves and the label is non-empty, which is all it asks.
+* `refstyle` is about the entry, not the span.
+* `compare`'s TEXT and STRUCTURE layers are clean: no character moved.
+* Only the **ungated** HYPERLINK layer shows it, as
+  `[user-only] 'José et al. (2019)'` — and it takes reading the label
+  against the sentence to see that the two differ.
+
+Same shape as the group-tiling entry this file already carries: a valid
+link over the wrong span, invisible to every layer that has an opinion.
+A re-run does not self-correct either — `masked_visible_text` marks the
+clipped span as already linked, so any hand-wiring meant to widen it
+stands aside.
+
+**Reproduce.** A reference entry whose surname carries a particle and an
+in-text mention that spells it out:
+
+```
+de São José et al. (2019)      -> links 'José et al. (2019)'
+van der Klaauw (2008)          -> expected same class, untested
+```
+
+**Fix shape.** Let the surname pattern absorb a leading run of lowercase
+particles (`de`, `da`, `del`, `van`, `van der`, `von`, `di`, `du`, `la`,
+`le`) when the reference list's parsed surname begins with one — the
+entry side already knows, so the in-text side can be told rather than
+guessing. A test that fails without it: link a paragraph citing a
+particle surname and assert the span, not just the anchor.
+
+**Workaround to retire when this lands:** `widen_particle_spans` in
+`Aging_Well/revision/scripts/r2_link_apparatus.py`, with its
+`PARTICLE_SPANS` table. It is the mirror of the `narrow_group_spans`
+workaround sitting beside it in the same file, and both exist for the
+same reason.
+
+---
+
 ### S2 — Word's Compare merges a CHANGED FOOTNOTE and writes the merged string into both copies
 
 Found on LI7, 2026-08-23, by `word_compare.py`'s round-trip gate.
