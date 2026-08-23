@@ -2906,6 +2906,29 @@ def _counted(plan: str) -> tuple[int, int]:
         if ln.startswith("  ") and not ln.startswith("== "))
 
 
+def test_the_two_uncited_kinds_are_routed_APART_by_the_entry_state():
+    """`ORPHAN REF` and `REF WITHOUT CITE` reach the same branch and part
+    on `name in live`, and the repairs are opposite: one recreates a lost
+    citation link, the other proposes DELETING the bookmark once a person
+    confirms the entry text is gone. Mutation analysis, 2026-08-23: both
+    `f.kind ==` comparisons here survived, because the routing was only
+    ever driven with one of the two kinds at a time."""
+    marked = _plan(
+        P(bookmark("Ghost2019txt", 40) + R("As Ghost (2019) showed.")),
+        P(R("References")),
+        P(bookmark("Ghost2019", 30) + R("Ghost, A. (2019). Unseen.")))
+    joined = chr(10).join(_bucket(marked, "recreate the lost link"))
+    assert "first mention, then wrap Ghost2019txt" in joined
+
+    unmarked = _plan(
+        P(R("Prose that never cites it.")),
+        P(R("References")),
+        P(bookmark("Ghost2019", 30) + R("Ghost, A. (2019). Unseen.")))
+    joined = chr(10).join(_bucket(unmarked, "recreate the lost link"))
+    assert "the ENTRY is still in the list" in joined
+    assert not _bucket(unmarked, "debris")
+
+
 def test_EVERY_finding_reaches_a_bucket():
     """The header counts findings and the buckets are what a person
     works through, so the two have to agree or the plan is a list that
@@ -4100,3 +4123,45 @@ def test_markers_sharing_a_place_report_in_a_stable_order():
     issues, _stats = audit_links(parts)
     named = [i.split("'")[1] for i in issues if i.startswith("REF WITHOUT")]
     assert named == ["Alpha2019", "Zeta2020"], issues
+
+
+def test_check_citations_reports_later_mentions_only_when_ASKED(tmp_path,
+                                                                capsys):
+    """`later_mentions=False` is the default and nothing pinned it, so
+    flipping it to True changed what a reader is told and no test moved.
+    The MENTION COUNT prints either way — that is what stopped a
+    half-linked paper reaching "ALL CHECKS PASSED" — but the per-mention
+    findings are opt-in."""
+    from conftest import write
+    parts = make_doc(
+        P(R("First shown (")
+          + _linked_cite("Aksoy2026", "Aksoy 2026") + R(").")),
+        P(R("It is shown again (Aksoy 2026) later on.")),
+        P(R("References")),
+        P(_entry("Aksoy2026", "Aksoy, C. (2026). Working from home. JEP.")))
+    path = write(tmp_path / "later.docx", parts)
+
+    quiet = check_citations(path)
+    out = capsys.readouterr().out
+    assert "Mentions: 1 of 2 linked (1 later mentions" in out
+    assert "LATER-MENTION UNLINKED" not in out
+    assert "ALL CHECKS PASSED" in out
+    assert quiet == 0
+
+    loud = check_citations(path, later_mentions=True)
+    out = capsys.readouterr().out
+    assert "LATER-MENTION UNLINKED" in out
+    assert loud == 1
+
+
+def test_the_report_rule_is_sixty_characters(tmp_path, capsys):
+    """The line between the counts and the findings. A width nothing
+    reads is a width that drifts, and this report is pasted into
+    handovers."""
+    from conftest import write
+    path = write(tmp_path / "rule.docx",
+                 make_doc(P(R("Nothing cited here."))))
+    check_citations(path)
+    rule = [ln for ln in capsys.readouterr().out.splitlines()
+            if set(ln) == {"="}]
+    assert rule == ["=" * 60]

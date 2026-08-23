@@ -192,6 +192,44 @@ The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
 
+### Mutation analysis — the equivalent mutants, by module
+
+Recorded rather than chased. A survivor that CANNOT change behaviour is
+a fact about the code, and the next sweep should not spend an afternoon
+rediscovering it.
+
+**Setup, for cosmic-ray 8.7** (8.4's recipe in the toolkit memory is out
+of date in three ways): `work_items` keeps only `job_id`, so the
+operator and position come from `cosmic-ray dump`; the dump spells
+outcomes lower case where the sqlite column holds them upper; and the
+annotation-equivalent class has MOVED — 8.4 had an operator whose name
+said "annotation", 8.7 reaches the same code through
+`ReplaceBinaryOperator_BitOr_*`, because a modern annotation is a binary
+or (`str | None`). Under `from __future__ import annotations` those are
+never evaluated. They are 341 of `styles.py`'s 604 mutants, and counting
+them scored it 41.9% against a real 85.5%. `PYTHONIOENCODING=utf-8` is
+needed on the DUMP side too, for the same reason as the exec side: it
+re-emits pytest output full of em dashes, dies on a cp1252 pipe, and
+hands back an empty stdout — every module then reads 0.0%.
+
+**`citations.py` — 141 mutants, 119 real, 5 equivalent (95.8%).** Twelve
+survived the sweep; seven are killed by the `repair_plan` bucket tests
+and the `check_citations` report tests added with this entry. The five
+that remain are equivalent because the KINDS ARE A CLOSED SET of six
+strings, and a comparison can only differ from `==` on a value that can
+reach it:
+
+* `f.kind == "BROKEN LINK"` → `<=`. "BROKEN LINK" sorts first of the
+  six, so nothing is less than it.
+* `f.kind == "REF WITHOUT CITE"` → `>=` and `f.kind == "ORPHAN REF"` →
+  `<=`. Both sit inside `elif f.kind in ("ORPHAN REF", "REF WITHOUT
+  CITE")`, so only those two strings reach them, and neither comparison
+  can separate them differently.
+* `f.kind == "DOUBLED LINK"` → `<=`. Every other kind is matched by an
+  earlier branch, so only "DOUBLED LINK" arrives.
+* `check_citations(docx_path, *, ...)` → the keyword-only marker
+  mutated as a binary operator. Equivalent by construction.
+
 ## Fixed
 
 ### ~~S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it~~ — FIXED 23.08
