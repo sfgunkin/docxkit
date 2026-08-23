@@ -679,7 +679,12 @@ glyph refusal in the module, not just this one — the minus/hyphen pair
 (U+2212 vs U+002D) has exactly the same problem and is the one this toolkit
 hits most.
 
-### S3 `word.export_pdf` cannot render MARKUP, so a redline renders clean and looks like a batch that marked nothing
+
+---
+
+## Fixed
+
+### ~~S3 `word.export_pdf` cannot render MARKUP, so a redline renders clean and looks like a batch that marked nothing~~ — FIXED 24.08
 
 Found 2026-08-24 on Health_Capacity_to_Work, while checking that a handed-back
 redline actually showed the author what changed.
@@ -850,11 +855,29 @@ on 2026-08-24 against the current tree:
   `by_caption` on 29x6 and 46x7. **Read a data row, not row 0, when you want a
   column count.**
 
----
+**What changed.** `export_pdf(..., markup=False)`. `Item` is passed by
+KEYWORD and only when markup is wanted: reaching it positionally would
+mean spelling out every argument before it on both paths, so the
+ordinary render — the one every equation check makes — would change
+shape to carry a default it already had. Two existing tests pin that
+shape, and they still pass unmodified.
+
+The default stays False deliberately. The other caller of this is the
+equation check, where the accepted view IS the page a reader gets;
+`markup=True` belongs to whoever is verifying a redline.
+
+**Verified on a real package**, one insertion and one deletion:
+
+```
+markup=False   inserted text on the page: True   deleted text shown: False
+markup=True    inserted text on the page: True   deleted text shown: True
+```
+
+and the render at `markup=True` shows the insertion underlined in red
+and the deletion struck through, which is what an author adjudicating
+from a PDF has to see.
 
 ---
-
-## Fixed
 
 ### ~~S2 `link_all` CLIPS a surname that opens with a lowercase particle, so half the name stays black~~ — FIXED 24.08
 

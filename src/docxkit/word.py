@@ -44,8 +44,10 @@ __all__ = [
     "WD_COLLAPSE_START",
     "WD_COMPARE_TO_NEW",
     "WD_EXPORT_ALL_DOCUMENT",
+    "WD_EXPORT_CONTENT_ONLY",
     "WD_EXPORT_FROM_TO",
     "WD_EXPORT_PDF",
+    "WD_EXPORT_WITH_MARKUP",
     "WD_FIND_STOP",
     "WD_FORMAT_DOCX",
     "WD_HORIZ_POS_PAGE",
@@ -429,12 +431,37 @@ def flat_opc_to_docx(flat_path: str | Path, out_path: str | Path) -> int:
     return len(entries)
 
 
+#: `ExportAsFixedFormat`'s `Item`: what to put on the page. The default
+#: is CONTENT, which on a redline means the document with its revisions
+#: SUPPRESSED — see :func:`export_pdf`.
+WD_EXPORT_CONTENT_ONLY = 0
+WD_EXPORT_WITH_MARKUP = 7
+
 def export_pdf(path: str | Path, out_pdf: str | Path,
-               *, first: int | None = None, last: int | None = None) -> Path:
+               *, first: int | None = None, last: int | None = None,
+               markup: bool = False) -> Path:
     """Render to PDF via Word.
 
     The way to check equations visually: Word keeps OMML, LibreOffice does
     not. Works even when saving hangs, so it is also a liveness check.
+
+    **`markup=True` for a REDLINE, and it is not optional there.**
+    `ExportAsFixedFormat`'s `Item` defaults to `wdExportDocumentContent`,
+    the document WITHOUT revision marks, so a file carrying 187 `w:ins`
+    and 59 `w:del` renders as clean text — no strikethrough, no change
+    bars, nothing saying the markup was omitted. That is a false
+    NEGATIVE in the one check this module recommends for verifying a
+    deliverable by eye, and it cost twenty minutes hunting a bug that
+    did not exist: Word reported `Revisions.Count = 59` and
+    `TrackRevisions = True`, `settings.xml` hid nothing, and the page
+    was still clean (HCW, 2026-08-24).
+
+    The default stays False, because the other caller of this is the
+    equation check, where the accepted view is the page a reader gets.
+    Same trap as :func:`locate`'s "run against the CLEAN build" warning
+    and in the opposite direction: `locate` is wrong on a redline
+    because deleted text is still laid out, and this is wrong on one
+    because it is not.
 
     The destination is RESOLVED first. A relative path is relative to the
     caller's working directory and means nothing to Word, which has its
@@ -443,12 +470,17 @@ def export_pdf(path: str | Path, out_pdf: str | Path,
     PDF that was never written there.
     """
     out_pdf = Path(out_pdf).resolve()
+    # `Item` by KEYWORD, and only when markup is wanted: reaching it
+    # positionally would mean spelling out every argument before it on
+    # both paths, so the ordinary render — the one every equation check
+    # makes — would change shape to carry a default it already had.
+    item = {"Item": WD_EXPORT_WITH_MARKUP} if markup else {}
     with session() as word, open_doc(word, path) as doc:
         if first and last:
             doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, False, 0,
-                                    WD_EXPORT_FROM_TO, first, last)
+                                    WD_EXPORT_FROM_TO, first, last, **item)
         else:
-            doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF)
+            doc.ExportAsFixedFormat(str(out_pdf), WD_EXPORT_PDF, **item)
     return out_pdf
 
 

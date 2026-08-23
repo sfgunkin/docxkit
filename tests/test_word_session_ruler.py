@@ -490,7 +490,8 @@ def faked_word(monkeypatch):
     doc = types.SimpleNamespace(
         exports=exports,
         ComputeStatistics=lambda key: 47,
-        ExportAsFixedFormat=lambda *a: exports.append(a),
+        ExportAsFixedFormat=lambda *a, **kw: exports.append(
+            (*a, kw) if kw else a),
         ActiveWindow=types.SimpleNamespace(
             View=types.SimpleNamespace(Type=None)),
         Repaginate=lambda: None)
@@ -722,3 +723,38 @@ def test_a_shared_session_can_be_asked_NOT_to(com):
 
     with W.shared_session(fast=False):
         assert word.Options.CheckSpellingAsYouType != False    # noqa: E712
+
+def test_a_REDLINE_is_rendered_WITH_its_markup(faked_word, tmp_path):
+    """`Item` defaults to the document without revision marks, so a
+    redline rendered by the old call came out as clean text — no
+    strikethrough, no change bars, nothing saying the markup had been
+    omitted. That is a false NEGATIVE in the check this module
+    recommends for verifying a deliverable by eye, and it cost twenty
+    minutes hunting a bug that did not exist (HCW, 2026-08-24)."""
+    W.export_pdf("in.docx", tmp_path / "o.pdf", markup=True)
+
+    (args,) = faked_word.exports
+
+    assert args[-1] == {"Item": W.WD_EXPORT_WITH_MARKUP}, args
+
+
+def test_the_ORDINARY_render_is_unchanged(faked_word, tmp_path):
+    """The default stays the accepted view: the other caller of this is
+    the equation check, where the page a reader gets is the point. The
+    call keeps its two-argument shape rather than spelling out a
+    default it already had."""
+    W.export_pdf("in.docx", tmp_path / "o.pdf")
+
+    (args,) = faked_word.exports
+
+    assert len(args) == 2 and args[1] == W.WD_EXPORT_PDF, args
+
+
+def test_a_page_RANGE_can_also_carry_markup(faked_word, tmp_path):
+    W.export_pdf("in.docx", tmp_path / "o.pdf", first=2, last=5, markup=True)
+
+    (args,) = faked_word.exports
+
+    assert args[4] == W.WD_EXPORT_FROM_TO
+    assert args[5:7] == (2, 5)
+    assert args[-1] == {"Item": W.WD_EXPORT_WITH_MARKUP}, args
