@@ -245,7 +245,11 @@ def test_refile_refuses_a_stray_paragraph_inside_the_list():
                                      "at all.", pid="00000002"),
                                entry(A, pid="00000003")))
     report = refile(parts)
-    assert report.refused
+    # WHICH guard refused matters: the stray scan and the gap scan can
+    # both reject this document, and only the stray scan reads
+    # `entries[-1]` — so asserting the message is what makes
+    # `entries[-1]` -> `entries[False]` a different answer.
+    assert "sits inside the list and is not an entry" in report.refused
     assert not report.moved
 
 
@@ -297,3 +301,73 @@ def test_doc_defaults_are_not_read_out_of_pprdefault_as_an_empty_blob():
 def test_house_layout_is_the_stated_rule():
     assert (HOUSE_LAYOUT.hanging, HOUSE_LAYOUT.before, HOUSE_LAYOUT.after,
             HOUSE_LAYOUT.page_break) == (720, 0, 80, True)
+
+
+# --- what mutation analysis asked for, 2026-08-23 ---------------------
+
+
+def test_refile_reports_the_entries_it_moved_by_name():
+    """`report.moved` is what a log records; a count with no names is a
+    claim nobody can check."""
+    parts = make_parts(reflist(entry(C, pid="00000001"),
+                               entry(A, pid="00000002"),
+                               entry(B, pid="00000003")))
+    report = refile(parts)
+    assert len(report.moved) == 1
+    assert report.moved[0].startswith("Currie, J. (1999).")
+
+
+def test_layout_keeps_going_after_a_rule_the_style_already_states():
+    """`continue`, not `break`: an entry can inherit the indent from its
+    style and still need the spacing written. Breaking out of the rule
+    loop at the first inherited value left the rest of the entry alone,
+    and every fixture where the FIRST rule needed writing agreed."""
+    styles_xml = ('<w:styles><w:style w:type="paragraph" w:styleId="Ref">'
+                  '<w:pPr><w:ind w:left="720" w:hanging="720"/></w:pPr>'
+                  "</w:style></w:styles>")
+    styled = '<w:pPr><w:pStyle w:val="Ref"/></w:pPr>'
+    parts = make_parts(reflist(entry(A, ppr=styled)),
+                       extra={"word/styles.xml": styles_xml})
+    report = layout(parts)
+
+    assert not report.indented          # the style already says it
+    assert len(report.spaced) == 1      # and the spacing still gets set
+    assert 'w:after="80"' in parts["word/document.xml"].decode()
+
+
+def test_an_indent_finding_and_a_spacing_finding_are_not_interchangeable():
+    """The two codes route to different halves of the report and to
+    different fixers; `tag == "ind"` inverted swapped them and a test
+    asserting the SET of codes could not see it."""
+    issues = entry_layout_issues(entry(A, ppr=""), None)
+    codes = [(i.code, i.message.split(" is ")[0]) for i in issues]
+    assert ("indent", "left indent") in codes
+    assert ("indent", "hanging indent") in codes
+    assert ("spacing", "space after") in codes
+    assert not [c for c, _ in codes if c == "page-break"]
+
+
+def test_the_layout_report_files_indents_and_spacings_apart():
+    parts = make_parts(reflist(entry(A, ppr="")))
+    report = layout(parts)
+    assert all("indent" in line for line in report.indented)
+    assert all("space after" in line for line in report.spaced)
+    assert len(report.indented) == 2 and len(report.spaced) == 1
+
+
+def test_the_page_break_looks_at_the_paragraph_ABOVE_the_first_entry():
+    """`head - 1` and `head > 0`: the heading is found by counting back
+    from the first entry, and an off-by-one there reads the wrong
+    paragraph for the break that is already present."""
+    body = (para(run("Body one."))
+            + para(run("Body two."), '<w:r><w:br w:type="page"/></w:r>')
+            + heading() + entry(A))
+    parts = make_parts(body)
+    assert not layout(parts).page_break
+
+    # the same break one paragraph too high is NOT this heading's
+    body = (para(run("Body one."), '<w:r><w:br w:type="page"/></w:r>')
+            + para(run("Body two."))
+            + heading() + entry(A))
+    parts = make_parts(body)
+    assert layout(parts).page_break

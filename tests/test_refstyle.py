@@ -2264,3 +2264,60 @@ def test_a_continuation_list_is_left_to_the_year_check():
     report = audit(make_parts(body), page_layout=None)
     assert not [i for i in report.issues if i.code == "order"]
     assert [i.code for i in report.issues].count("year-order") == 1
+
+
+def test_the_order_message_names_BOTH_neighbours_of_where_it_belongs():
+    """Mutation analysis, 2026-08-23: `order[j - 1]` and `order[j + 1]`
+    survived every arithmetic mutation, because the fixtures were two
+    entries long and every index collided. Five entries, and the one
+    that moves belongs in the MIDDLE, so `j-1` and `j+1` are distinct
+    surnames a message can be wrong about."""
+    def entry(text: str) -> str:
+        return para(run(text + " "), irun("J"), run(", 1(1): 1-2."))
+
+    body = (para(run("Cited: (Anders 2001), (Baker 2002), (Currie 1999), "
+                     "(Diller 2016) and (Evans 2020)."))
+            + para(run("References"))
+            + entry("Anders, A. (2001). “First.”")
+            + entry("Baker, B. (2002). “Second.”")
+            + entry("Evans, E. (2020). “Fifth.”")
+            + entry("Currie, C. (1999). “Third.”")
+            + entry("Diller, D. (2016). “Fourth.”"))
+    report = audit(make_parts(body), page_layout=None)
+
+    (found,) = [i for i in report.issues if i.code == "order"]
+    assert found.message == ('"Evans" is out of alphabetical order — '
+                             'it files after "Diller"')
+
+
+def test_an_entry_that_belongs_FIRST_is_told_what_it_belongs_before():
+    """`j` is 0 there, so `order[j - 1]` would read the LAST entry and
+    the message would send a reader to the wrong end of the list."""
+    def entry(text: str) -> str:
+        return para(run(text + " "), irun("J"), run(", 1(1): 1-2."))
+
+    body = (para(run("Cited: (Anders 2001), (Baker 2002) and (Currie 1999)."))
+            + para(run("References"))
+            + entry("Baker, B. (2002). “Second.”")
+            + entry("Currie, C. (1999). “Third.”")
+            + entry("Anders, A. (2001). “First.”"))
+    report = audit(make_parts(body), page_layout=None)
+
+    (found,) = [i for i in report.issues if i.code == "order"]
+    assert found.message == ('"Anders" is out of alphabetical order — '
+                             'it files before "Baker"')
+
+
+def test_the_order_finding_points_at_the_paragraph_it_is_about():
+    def entry(text: str) -> str:
+        return para(run(text + " "), irun("J"), run(", 1(1): 1-2."))
+
+    body = (para(run("Cited: (Anders 2001) and (Baker 2002)."))
+            + para(run("References"))
+            + entry("Baker, B. (2002). “Second.”")
+            + entry("Anders, A. (2001). “First.”"))
+    report = audit(make_parts(body), page_layout=None)
+
+    (found,) = [i for i in report.issues if i.code == "order"]
+    assert found.where == "¶4"
+    assert found.snippet.startswith("Anders, A. (2001).")
