@@ -86,6 +86,7 @@ __all__ = [
     "find_captions",
     "link",
     "link_more",
+    "reaching",
     "unlink",
 ]
 
@@ -360,7 +361,7 @@ def _run_parts(run_xml: str, t_start: int, t_end: int) -> _RunParts:
 
 def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
                   t_span: tuple[int, int], anchor: str,
-                  bookmark_name: str, bid: int) -> str:
+                  bookmark_name: str, bid: int, mark: bool = True) -> str:
     """Rewrite one run so the matched label is a bookmarked hyperlink.
 
     The text before and after the label keeps the run's own open tag and
@@ -384,10 +385,11 @@ def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
                      f'<w:t xml:space="preserve">{before}</w:t></w:r>')
         head = ""
     parts.append(
-        f'<w:bookmarkStart w:id="{bid}" w:name="{bookmark_name}"/>'
-        f'<w:hyperlink w:anchor="{anchor}">{cut.open_tag}{link_rpr}{head}'
+        (f'<w:bookmarkStart w:id="{bid}" w:name="{bookmark_name}"/>'
+         if mark else "")
+        + f'<w:hyperlink w:anchor="{anchor}">{cut.open_tag}{link_rpr}{head}'
         f'<w:t xml:space="preserve">{label}</w:t></w:r></w:hyperlink>'
-        f'<w:bookmarkEnd w:id="{bid}"/>')
+        + (f'<w:bookmarkEnd w:id="{bid}"/>' if mark else ""))
     tail = (f'<w:t xml:space="preserve">{after}</w:t>' if after else "")
     if tail or cut.post:
         parts.append(f"{cut.open_tag}{cut.rpr}{tail}{cut.post}</w:r>")
@@ -396,10 +398,15 @@ def _split_run_at(run_xml: str, content: str, m: re.Match[str], *,
 
 def _link_mention(para_xml: str, cap: Caption, bid: int,
                   own_anchors: frozenset[str] = frozenset(),
-                  ) -> tuple[str, str]:
+                  *, mark: bool = True) -> tuple[str, str]:
     """Bookmark and hyperlink the label inside one paragraph.
 
     Returns (new_paragraph, what_happened).
+
+    `mark=False` writes the LINK and not the bookmark, for the repair of
+    a mention whose link Word ate: the ``<key>txt`` marker survived
+    (Word keeps bookmarks and drops run-level hyperlinks), and a second
+    one under the same name is a duplicate no gate would enjoy.
     """
     pattern = _mention_re(cap.label, cap.number)
     anchor, name = cap.name, cap.mention_name
@@ -426,10 +433,10 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
                 # deliberately links to Figure 7's caption; overwriting
                 # that would silently break the author's cross-reference.
                 mode = f"kept the author's own anchor {old!r}"
-        return (para_xml[:hm.start()]
-                + f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
-                + block
-                + f'<w:bookmarkEnd w:id="{bid}"/>'
+        open_mark = (f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
+                     if mark else "")
+        close_mark = f'<w:bookmarkEnd w:id="{bid}"/>' if mark else ""
+        return (para_xml[:hm.start()] + open_mark + block + close_mark
                 + para_xml[hm.end():]), mode
 
     # Plain text: find the <w:t> holding the label and split its run.
@@ -447,7 +454,8 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
                 + _split_run_at(run, tm.group(1), m,
                                 t_span=(tm.start() - r_open,
                                         tm.end() - r_open),
-                                anchor=anchor, bookmark_name=name, bid=bid)
+                                anchor=anchor, bookmark_name=name, bid=bid,
+                                mark=mark)
                 + para_xml[r_close:]), "linked"
     return para_xml, "NOT-FOUND"
 
@@ -602,15 +610,27 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
             continue
         seen.add(cap.name)
 
-        if (_named_bookmark(cap.name).search(xml)
-                and _named_bookmark(cap.mention_name).search(xml)):
+        # BOTH questions: are the bookmarks there, and does anything
+        # reach them? Asking only the first is how a mention whose link
+        # Word ate reported as `already_linked` and was refused a repair
+        # — the state an ordinary author round produces, since Word
+        # strips run-level hyperlinks from any paragraph it rewrites.
+        have_cap = bool(_named_bookmark(cap.name).search(xml))
+        have_txt = bool(_named_bookmark(cap.mention_name).search(xml))
+        reaches = reaching(xml, *other_parts)
+        if (have_cap and have_txt
+                and cap.name in reaches and cap.mention_name in reaches):
             report.already_linked.append(cap.name)
             continue
 
-        # A field already points here. We cannot see it to skip it the way
-        # the element check above does, so linking would stack a second
-        # scheme on the same caption. Say so; do not silently double it.
-        if fielded & {cap.name, cap.mention_name}:
+        # A field already points here and the marker it needs is NOT
+        # there, so linking would stack a second scheme on the same
+        # caption. Say so; do not silently double it. An exhibit whose
+        # markers are both present is past this: `reaches` holds every
+        # field target, so a direction still reached by a field is not
+        # one of the directions below.
+        if fielded & {cap.name, cap.mention_name} and not (
+                have_cap and have_txt):
             report.field_form.append(cap.name)
             continue
 
@@ -620,34 +640,42 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
         if current is None:                     # pragma: no cover - defensive
             continue
 
-        mention = _find_mention(xml, current,
-                                find_captions(xml, labels=labels))
-        if mention is None:
-            report.no_mention.append(cap.name)
-            continue
+        # The forward step has two jobs — make the mention a link, and
+        # MARK it — and either can be the one missing.
+        if cap.name not in reaches or not have_txt:
+            mention = _find_mention(xml, current,
+                                    find_captions(xml, labels=labels))
+            if mention is None:
+                report.no_mention.append(cap.name)
+                continue
 
-        bid = _next_bookmark_id(xml, other_parts)
-        new_para, mode = _link_mention(mention.group(0), current, bid,
-                                       _caption_bookmarks(xml, current))
-        if mode == "NOT-FOUND":
-            # visible_text found the label but it is split across runs
-            report.notes[cap.name] = (
-                "mention found but its label is split across runs")
-            report.no_mention.append(cap.name)
-            continue
-        if mode != "linked":
-            report.notes[cap.name] = mode
-        xml = xml[:mention.start()] + new_para + xml[mention.end():]
+            bid = _next_bookmark_id(xml, other_parts)
+            new_para, mode = _link_mention(
+                mention.group(0), current, bid,
+                _caption_bookmarks(xml, current), mark=not have_txt)
+            if mode == "NOT-FOUND":
+                # visible_text found the label but it is split across runs
+                report.notes[cap.name] = (
+                    "mention found but its label is split across runs")
+                report.no_mention.append(cap.name)
+                continue
+            if mode != "linked":
+                report.notes[cap.name] = mode
+            xml = xml[:mention.start()] + new_para + xml[mention.end():]
 
-        # offsets moved again; re-find the caption before touching it
-        current = next((c for c in find_captions(xml, labels=labels)
-                        if c.name == cap.name), None)
-        if current is None:                     # pragma: no cover - defensive
-            continue
-        bid = _next_bookmark_id(xml, other_parts)
-        para = xml[current.start:current.end]
-        xml = (xml[:current.start] + _backlink_caption(para, current, bid)
-               + xml[current.end:])
+            # offsets moved again; re-find the caption before touching it
+            current = next((c for c in find_captions(xml, labels=labels)
+                            if c.name == cap.name), None)
+            if current is None:                 # pragma: no cover - defensive
+                continue
+
+        # …and so does the back step: the caption's own bookmark, and the
+        # link home. `_backlink_caption` writes each only if it is absent.
+        if cap.mention_name not in reaches or not have_cap:
+            bid = _next_bookmark_id(xml, other_parts)
+            para = xml[current.start:current.end]
+            xml = (xml[:current.start] + _backlink_caption(para, current, bid)
+                   + xml[current.end:])
         report.linked.append(cap.name)
 
     # Mentions with no caption to point at — a figure that was deleted
@@ -713,9 +741,11 @@ def audit(xml: str, *,
     names = {n for part in every
              for n in re.findall(
                  r'<w:bookmarkStart[^>]*w:name="([^"]+)"', part)}
-    anchors = {a for part in every
-               for a in re.findall(
-                   r'<w:hyperlink[^>]*w:anchor="([^"]+)"', part)}
+    # What actually REACHES a bookmark: both link forms, and the REF
+    # cross-reference too. Reading elements alone made `dangling` blind
+    # to a field pointing at a bookmark that is gone, which is the same
+    # half-answer `linked` gave.
+    reached = reaching(*every)
 
     exhibit_re = re.compile(
         rf"^({'|'.join(re.escape(w) for w in labels)})(\d+)$")
@@ -723,12 +753,20 @@ def audit(xml: str, *,
     mentions = _mention_offsets(xml)
     paras = [m.start() for m in PARA_RE.finditer(xml)]
     linked, caption_only, mention_only, misnamed = [], [], [], []
-    misplaced, unlinked = [], []
+    misplaced, unlinked, unreached = [], [], []
     for cap in find_captions(xml, labels=labels):
         has_cap = cap.name in names
         has_txt = cap.mention_name in names
         if has_cap and has_txt:
-            linked.append(cap.name)
+            gone = [what for what, name in
+                    (("nothing links to the caption", cap.name),
+                     ("the caption links back to nothing",
+                      cap.mention_name))
+                    if name not in reached]
+            if gone:
+                unreached.append(f"{cap.name}: " + " and ".join(gone))
+            else:
+                linked.append(cap.name)
         elif has_cap:
             caption_only.append(cap.name)
         elif has_txt:
@@ -759,9 +797,10 @@ def audit(xml: str, *,
     return {
         "linked": sorted(linked),
         "unlinked": sorted(unlinked),
+        "unreached": sorted(unreached),
         "caption_only": sorted(caption_only),
         "mention_only": sorted(mention_only),
-        "dangling": sorted(a for a in anchors if a not in names),
+        "dangling": sorted(a for a in reached if a not in names),
         "misnamed": sorted(misnamed),
         "misplaced_anchor": sorted(misplaced),
     }
@@ -875,6 +914,22 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
             counts[anchor] = counts.get(anchor, 0) + 1
         xml = xml[:pm.start()] + para + xml[pm.end():]
     return xml, counts
+
+
+def reaching(*parts: str) -> set[str]:
+    """Every anchor something in `parts` actually links to, both forms.
+
+    The question a bookmark's existence does not answer. ``audit``'s
+    ``linked`` bucket used to mean "both bookmarks are present", so an
+    exhibit whose link Word had eaten — which is what Word does to every
+    run-level hyperlink in a paragraph an author rewrites — reported as
+    linked, and :func:`link` then refused to repair it because it
+    believed the work was done. Both forms, because the same link can be
+    an element or a field and a manuscript holds both at once.
+    """
+    return ({a for part in parts
+             for a in re.findall(r'<w:hyperlink[^>]*w:anchor="([^"]+)"', part)}
+            | {a for part in parts for a in field_targets(part)})
 
 
 def field_targets(xml: str) -> set[str]:

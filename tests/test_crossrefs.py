@@ -496,8 +496,12 @@ def test_audit_reports_an_anchor_that_does_not_lead_its_mentions():
              '<w:bookmarkEnd w:id="1"/>' + run("Table 5. The caption")),
     )
     got = crossrefs.audit(xml)
-    assert got["linked"] == ["Table5"], got
-    assert not got["dangling"]
+    # The caption carries no link home, so this is `unreached` rather
+    # than `linked` — both bookmarks are present and half the round trip
+    # is missing, which is the state the bucket was added for. The
+    # subject here is the line below it.
+    assert got["unreached"] == ["Table5: the caption links back to nothing"]
+    assert not got["linked"] and not got["dangling"]
     assert len(got["misplaced_anchor"]) == 1, got["misplaced_anchor"]
     line = got["misplaced_anchor"][0]
     assert line.startswith("Table5txt sits at ¶3")
@@ -2012,3 +2016,94 @@ def test_a_caption_whose_runs_all_carry_ATTRIBUTES_is_still_wrapped():
 # what `lint` refuses.
 #
 # `link`'s `mode == "NOT-FOUND"` as `is`: one literal, in this module.
+
+
+# --- a bookmark is not a link -----------------------------------------
+# The state Word leaves on an ordinary author round: it keeps bookmarks
+# and strips run-level hyperlinks out of any paragraph whose text it
+# rewrites. Both markers survive, nothing points at either, and until
+# 2026-08-23 `audit` called that `linked` and `link()` called it done.
+
+
+def _both_marks(*, forward: bool, back: bool) -> str:
+    """A figure with both bookmarks, and only the links asked for."""
+    mention = (('<w:hyperlink w:anchor="Figure1">' + run("Figure 1")
+                + "</w:hyperlink>") if forward else run("Figure 1"))
+    caption = (('<w:hyperlink w:anchor="Figure1txt">' + run("Figure 1")
+                + "</w:hyperlink>") if back else run("Figure 1"))
+    return doc(
+        para('<w:bookmarkStart w:id="1" w:name="Figure1txt"/>'
+             + mention + '<w:bookmarkEnd w:id="1"/>'
+             + run(" shows the trend.")),
+        para('<w:bookmarkStart w:id="2" w:name="Figure1"/>'
+             + caption + run(". The caption") + '<w:bookmarkEnd w:id="2"/>'),
+    )
+
+
+def test_audit_will_not_call_an_exhibit_linked_when_NOTHING_links_to_it():
+    got = crossrefs.audit(_both_marks(forward=False, back=False))
+    assert got["linked"] == []
+    assert got["unreached"] == [
+        "Figure1: nothing links to the caption and "
+        "the caption links back to nothing"]
+
+
+def test_audit_names_WHICH_direction_is_gone():
+    forward_only = crossrefs.audit(_both_marks(forward=True, back=False))
+    assert forward_only["unreached"] == [
+        "Figure1: the caption links back to nothing"]
+    back_only = crossrefs.audit(_both_marks(forward=False, back=True))
+    assert back_only["unreached"] == [
+        "Figure1: nothing links to the caption"]
+
+
+def test_both_links_present_is_the_only_way_to_be_linked():
+    got = crossrefs.audit(_both_marks(forward=True, back=True))
+    assert got["linked"] == ["Figure1"] and got["unreached"] == []
+
+
+def test_link_REPAIRS_an_exhibit_whose_links_word_ate():
+    """It used to refuse: `already_linked`, because the bookmarks were
+    there. The bookmarks are what Word keeps."""
+    out, rep = crossrefs.link(_both_marks(forward=False, back=False))
+    assert rep.linked == ["Figure1"] and rep.already_linked == []
+    assert crossrefs.audit(out)["linked"] == ["Figure1"]
+
+
+def test_the_repair_does_not_mint_a_SECOND_bookmark_of_the_same_name():
+    """The marker survived; a duplicate name is what `link` would have
+    written by re-running its whole first-mention path."""
+    out, _ = crossrefs.link(_both_marks(forward=False, back=False))
+    for name in ("Figure1", "Figure1txt"):
+        assert out.count(f'w:name="{name}"') == 1, name
+
+
+def test_a_field_link_counts_as_reaching_the_caption():
+    r"""`HYPERLINK \l` is the same link to a reader, and a paper holds
+    both forms at once."""
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             r'<w:r><w:instrText>HYPERLINK \l "Figure1" \h</w:instrText>'
+             "</w:r>"
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + run("Figure 1")
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    xml = doc(
+        para('<w:bookmarkStart w:id="1" w:name="Figure1txt"/>' + field
+             + '<w:bookmarkEnd w:id="1"/>' + run(" shows the trend.")),
+        para('<w:bookmarkStart w:id="2" w:name="Figure1"/>'
+             '<w:hyperlink w:anchor="Figure1txt">' + run("Figure 1")
+             + "</w:hyperlink>" + run(". The caption")
+             + '<w:bookmarkEnd w:id="2"/>'),
+    )
+    got = crossrefs.audit(xml)
+    assert got["linked"] == ["Figure1"] and got["unreached"] == []
+
+
+def test_dangling_sees_a_FIELD_pointing_at_a_bookmark_that_is_gone():
+    """The same half-answer on the other side: reading element anchors
+    alone, a REF left behind by a deleted figure was invisible."""
+    xml = doc(para(run("As set out above"),
+                   '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                   r'<w:r><w:instrText>REF Figure9 \h</w:instrText></w:r>'
+                   '<w:r><w:fldChar w:fldCharType="end"/></w:r>'))
+    assert crossrefs.audit(xml)["dangling"] == ["Figure9"]

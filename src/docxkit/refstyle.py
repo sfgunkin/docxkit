@@ -845,21 +845,84 @@ def layout(parts: dict[str, bytes], spec: Layout = HOUSE_LAYOUT, *,
     return report
 
 
-def _list_key(text: str) -> str:
-    """Sort key for a whole entry: its own visible text, diacritics folded.
+def _list_key(surname: str, text: str) -> tuple[str, str]:
+    """Where an entry files: its folded surname, then its own whole text.
 
-    Not the surname. The entries an author files by hand are ordered by
-    the WHOLE string, and two orderings fall out of that which a surname
-    key gets wrong, because ``(`` sorts before ``,``::
+    Both halves are load-bearing, and each is wrong alone.
+
+    The SURNAME decides first, folded by :func:`_fold` — diacritics
+    flattened so Mühlbach files at Mu, punctuation dropped so "U.S.
+    Census Bureau" files after "United Nations", which is where the
+    style manuals and LI7's list put it. Sorting the raw text instead
+    puts it before, because ``.`` sorts ahead of a letter.
+
+    The TEXT breaks the tie, punctuation kept — and that is what settles
+    two orderings a surname alone cannot, because ``(`` sorts before
+    ``,``::
 
         Scott, A. (2024).  ...before...  Scott, A., Ellison, M., and ...
         Venkatapuram, S. (2011).  ...before...  Venkatapuram, S., and ...
 
-    Punctuation is KEPT for that reason, unlike :func:`_fold`, which
-    answers a different question about a surname alone.
+    Same-author entries then run oldest first on their own, since the
+    year is the next thing that differs.
     """
     flat = unicodedata.normalize("NFKD", text.strip())
-    return "".join(c for c in flat if not unicodedata.combining(c)).casefold()
+    whole = "".join(c for c in flat
+                    if not unicodedata.combining(c)).casefold()
+    return _fold(surname), whole
+
+
+def _order_findings(entries: list[Reference]) -> list[Issue]:
+    """Every entry that is not where the list would file it.
+
+    **Not a neighbour test.** Until 2026-08-23 this compared each entry's
+    surname with the one above it, and an appended run of misfiled
+    entries inverted only at its first pair: Aging_Well's author added
+    Diller (2016) and Sen (2004) after Zaidi, and the audit named
+    Diller alone. Fixing the named one and re-running to a clean report
+    would have said the list was sorted when it was not. Same key
+    :func:`refile` sorts by, so the report and the repair cannot
+    disagree about where an entry belongs.
+
+    Silent on a list of CONTINUATION entries ("———. (2015)."), whose
+    key is the entry above them; `year-order` covers those, and
+    :func:`refile` refuses them.
+    """
+    if any(_CONTINUATION_RE.match(r.text) for r in entries):
+        return []
+    keys = [_list_key(r.surname, r.text) for r in entries]
+    order = sorted(entries, key=lambda r: _list_key(r.surname, r.text))
+    at = {id(r): i for i, r in enumerate(order)}
+    found = []
+    for i in _misfiled(keys):
+        r, j = entries[i], at[id(entries[i])]
+        before = order[j - 1].surname if j else None
+        after = order[j + 1].surname if j + 1 < len(order) else None
+        where = ("after " + f'"{before}"' if after is None else
+                 "before " + f'"{after}"' if before is None else
+                 f'between "{before}" and "{after}"')
+        found.append(Issue(
+            "order", f'"{r.surname}" is out of alphabetical order — '
+                     f"it files {where}",
+            where=f"¶{r.index + 1}", snippet=r.text[:60]))
+    return found
+
+
+def _misfiled(keys: list[tuple[str, str]]) -> list[int]:
+    """Indices of the entries that have to MOVE, and no others.
+
+    The smallest set, not everyone who is not where they will end up: an
+    entry filed at the end pushes nothing, but a naive "did your index
+    change" reports every entry below the one that is wrong, and two
+    entries swapped report as two when moving either fixes the list.
+    What a reader needs is the entries to pick up.
+    """
+    moved: list[int] = []
+    for op, i1, i2, _j1, _j2 in SequenceMatcher(
+            None, keys, sorted(keys)).get_opcodes():
+        if op in ("delete", "replace"):
+            moved.extend(range(i1, i2))
+    return moved
 
 
 _CONTINUATION_RE = re.compile(r"^\s*[—–\-_]{2,}")
@@ -909,7 +972,7 @@ def refile(parts: dict[str, bytes], *,
                           "file under the name above them")
         return report
 
-    units: list[tuple[str, str]] = []
+    units: list[tuple[tuple[str, str], str]] = []
     at = matches[lo - 1].end() if lo else matches[lo].start()
     for r in entries:
         gap = doc[at:matches[r.index].start()]
@@ -926,7 +989,7 @@ def refile(parts: dict[str, bytes], *,
                 f"¶{r.index + 1} has {gap[:60]!r} above it, which is not "
                 f"a bookmark")
             return report
-        units.append((_list_key(texts[r.index]),
+        units.append((_list_key(r.surname, texts[r.index]),
                       doc[at:matches[r.index].end()]))
         at = matches[r.index].end()
 
@@ -934,15 +997,11 @@ def refile(parts: dict[str, bytes], *,
     if order == units:
         return report
 
-    keys = [u[0] for u in units]
-    for op, i1, i2, _j1, _j2 in SequenceMatcher(
-            None, keys, sorted(keys)).get_opcodes():
-        # Only the entries that MOVED. An insertion pushes every entry
-        # below it down, and a report naming all of them hides the one
-        # that matters.
-        if op in ("delete", "replace"):
-            report.moved.extend(texts[entries[k].index].strip()[:60]
-                                for k in range(i1, i2))
+    # Only the entries that MOVED, by the same reckoning `audit` reports
+    # them: an insertion pushes every entry below it down, and a report
+    # naming all of them hides the one that matters.
+    report.moved.extend(texts[entries[k].index].strip()[:60]
+                        for k in _misfiled([u[0] for u in units]))
 
     start = matches[lo - 1].end() if lo else matches[lo].start()
     doc = doc[:start] + "".join(u[1] for u in order) + doc[at:]
@@ -1033,21 +1092,87 @@ def _note_paragraphs(
 
 
 def _entry_anchors(doc: str, matches: list[re.Match[str]],
-                   entries: list[Reference]) -> set[str]:
-    """Every bookmark the reference ENTRIES carry.
+                   entries: list[Reference]) -> dict[str, int]:
+    """Every bookmark the reference ENTRIES carry, and whose entry it is.
 
     The gap above each entry counts: Word hoists a marker out of a
     paragraph head on save, and the entry still answers to it. A link
     pointing at one of these is a citation the document has already
     resolved — which is the fact :func:`_trust_the_links` reads instead
-    of guessing at a pattern.
+    of guessing at a pattern, and the fact that answers "is this work
+    cited?" for a form no grammar parses.
     """
-    found: set[str] = set()
-    for r in entries:
+    found: dict[str, int] = {}
+    for i, r in enumerate(entries):
         m = matches[r.index]
         gap = doc[(matches[r.index - 1].end() if r.index else 0):m.start()]
-        found |= set(BOOKMARK_NAME_RE.findall(gap + m.group(0)))
+        for name in BOOKMARK_NAME_RE.findall(gap + m.group(0)):
+            found.setdefault(name, i)
     return found
+
+
+def _credit_links(xml: str, entry_anchors: dict[str, int], where: str,
+                  seen: list[tuple[int, str, str]]) -> list[str]:
+    """Note every entry this paragraph LINKS to, and return the labels.
+
+    **A link to an entry is the document saying the work is cited**, and
+    that settles a form no grammar reaches. "Sen's capability approach
+    (1985, 1999, 2009)" names the author four words before the
+    parenthesis, so `find_citations` yields nothing for it and the entry
+    read as `uncited-ref` — while `citations`, counting the same links,
+    reported the same manuscript 79 of 79 linked. Two tools in one
+    toolkit disagreeing about one document is the part that mattered: a
+    paper acting on that finding would have deleted a cited entry
+    (Aging_Well, 2026-08-23).
+
+    Collected rather than credited on the spot, because "has anything
+    else already counted this work?" cannot be answered until the whole
+    walk is done — see :func:`_credit_unread`.
+
+    The labels are :func:`_trust_the_links`'s input, which is the other
+    question a link answers: which part of a matched span is the real
+    citation.
+    """
+    labels: list[str] = []
+    for anchor, label in internal_links(xml):
+        i = entry_anchors.get(anchor)
+        if i is None:
+            continue
+        labels.append(label)
+        seen.append((i, where, label))
+    return labels
+
+
+def _credit_unread(seen: list[tuple[int, str, str]],
+                   entry_keys: list[tuple[str, frozenset[str]]],
+                   cited: dict[str, tuple[str, str]]) -> None:
+    """Count a linked work the prose scan never read, and only that one.
+
+    **A link to an entry is the document saying the work is cited**, and
+    that settles a form no grammar reaches. "Sen's capability approach
+    (1985, 1999, 2009)" puts four words between the name and the
+    parenthesis, so `find_citations` yields nothing for it and the entry
+    read as `uncited-ref` — while `citations`, counting the same links,
+    reported the same manuscript 79 of 79 linked. Two tools in one
+    toolkit disagreeing about one document is the part that mattered: a
+    paper acting on that finding would have deleted a cited entry
+    (Aging_Well, 2026-08-23).
+
+    Only a work NOTHING else has credited, and under the ENTRY's own
+    key. An entry answers to several — the prose writes "(National
+    Academies 2020)" where the list files "National Academies of
+    Sciences, Engineering, and Medicine." — so crediting a link the
+    prose scan has already counted files one work twice, and the header
+    line reads "60 reference entries, 62 works cited in text", a
+    discrepancy a reader would go looking for.
+
+    After the whole walk, for the same reason: the prose that reads a
+    work may sit in a later paragraph than the link that points at it.
+    """
+    for i, where, label in seen:
+        canonical, answers_to = entry_keys[i]
+        if not (answers_to & cited.keys()):
+            cited[canonical] = (where, label)
 
 
 def _trust_the_links(text: str, cites: list[Citation],
@@ -1159,11 +1284,14 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     cited: dict[str, tuple[str, str]] = {}    # key -> (where, snippet)
 
     entry_anchors = _entry_anchors(doc, matches, entries)
+    entry_keys = [(key_for(r.surname, r.year), frozenset(ks))
+                  for r, ks in zip(entries, answers_to, strict=True)]
+    linked: list[tuple[int, str, str]] = []
 
     def prose(text: str, where: str, xml: str) -> None:
         cites = _trust_the_links(
             text, find_citations(text),
-            [lab for a, lab in internal_links(xml) if a in entry_anchors])
+            _credit_links(xml, entry_anchors, where, linked))
         for issue in _check_prose(text, style, cites, listed,
                                   ignore=ignored):
             report.issues.append(replace(issue, where=where))
@@ -1183,6 +1311,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
         prose(text, f"¶{i + 1}", matches[i].group(0))
     for xml, text, where in _note_paragraphs(parts):
         prose(text, where, xml)
+    _credit_unread(linked, entry_keys, cited)
 
     istyles = _italic_styles(parts.get("word/styles.xml"))
 
@@ -1190,6 +1319,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
         return (_ITALIC_RE.search(xml) is not None
                 or any(v in istyles for v in _RSTYLE_RE.findall(xml)))
 
+    report.issues.extend(_order_findings(entries))
     if page_layout is not None:
         report.issues.extend(_layout_findings(
             parts, matches, texts, entries, page_layout))
@@ -1206,11 +1336,6 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
             report.issues.append(Issue(
                 "italics", "no italicised title or journal in this entry",
                 where=where, snippet=r.text[:60]))
-        if prev is not None and _fold(prev.surname) > _fold(r.surname):
-            report.issues.append(Issue(
-                "order",
-                f'"{r.surname}" is filed after "{prev.surname}" — '
-                "the list is not alphabetical", where=where))
         if (prev is not None and _fold(prev.surname) == _fold(r.surname)
                 and r.year[:4] < prev.year[:4]
                 and r.text.lstrip()[:1] in "—–-_"):

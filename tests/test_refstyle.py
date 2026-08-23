@@ -1,6 +1,8 @@
 """Reference-format audit: the house author-date style, checked."""
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import NS, make_parts, note, notes, para, run
 
@@ -315,7 +317,11 @@ def test_audit_reports_a_disordered_list():
     report = audit(make_parts(body))
     order = [i for i in report.issues if i.code == "order"]
     assert len(order) == 1
-    assert '"Aksoy" is filed after "Zebra"' in order[0].message
+    # The message says where it BELONGS, not merely that it is wrong:
+    # moving either entry of a swapped pair fixes the list, so a reader
+    # needs to be told which one to pick up and where to put it.
+    assert '"Aksoy" is out of alphabetical order' in order[0].message
+    assert 'it files before "Zebra"' in order[0].message
 
 
 def test_diacritics_fold_for_ordering():
@@ -2092,3 +2098,169 @@ def test_the_gap_read_for_an_entry_is_the_one_ABOVE_IT():
 # `find_citations(f"({label})") if f.start >= 1` read as `>= 0`: the
 # parenthetical grammar's span excludes the parentheses it needs, so
 # nothing it finds inside "(label)" can start at the "(" itself.
+
+
+# --- a link IS a citation ---------------------------------------------
+
+
+def _group_cite_paper() -> str:
+    """A work cited only as a bare year inside a multi-year group.
+
+    "Sen's capability approach (1985, 1999, 2009)" puts four words
+    between the name and the parenthesis, so no grammar here reaches it;
+    the paper's own apparatus links each year to its entry.
+    """
+    def link(anchor: str, label: str) -> str:
+        return (f'<w:hyperlink w:anchor="{anchor}">'
+                f'<w:r><w:t>{label}</w:t></w:r></w:hyperlink>')
+
+    return (
+        para(run("This definition draws on Sen's capability approach ("),
+             link("Sen1985", "1985"), run(", "),
+             link("Sen2009", "2009"), run(")."))
+        + para(run("References"))
+        + para('<w:bookmarkStart w:id="1" w:name="Sen1985"/>'
+               '<w:bookmarkEnd w:id="1"/>'
+               + run("Sen, A. (1985). "), irun("Commodities and Capabilities"),
+               run(". Amsterdam: North-Holland."))
+        + para('<w:bookmarkStart w:id="2" w:name="Sen2009"/>'
+               '<w:bookmarkEnd w:id="2"/>'
+               + run("Sen, A. (2009). "), irun("The Idea of Justice"),
+               run(". Cambridge, MA: Harvard University Press."))
+    )
+
+
+def test_a_work_LINKED_from_the_prose_is_cited_whatever_the_grammar_reads():
+    """`citations` counted these links and reported the file fully
+    linked while this audit called both entries uncited. Two tools
+    disagreeing about one document, and a paper acting on the finding
+    would delete a cited entry."""
+    report = audit(make_parts(_group_cite_paper()), page_layout=None)
+
+    assert "uncited-ref" not in _codes(report.issues)
+    assert report.cited == 2
+
+
+def test_the_grammar_still_answers_where_there_are_no_links():
+    """The link is FALLBACK evidence. An unlinked manuscript has only
+    the pattern, and it still runs."""
+    body = (para(run("Robots displace workers (Acemoglu and Restrepo 2020)."))
+            + para(run("References"))
+            + para(run("Acemoglu, D., and P. Restrepo. (2020). "),
+                   irun("JPE"), run(", 128(6): 2188–2244.")))
+    report = audit(make_parts(body), page_layout=None)
+    assert "uncited-ref" not in _codes(report.issues)
+
+
+def test_a_LINKED_citation_keeps_the_snippet_the_prose_scan_read():
+    """`setdefault`: the link is not the better evidence, only the one
+    that is there when the pattern finds nothing."""
+    body = (para(run("Robots displace workers ("),
+                 '<w:hyperlink w:anchor="Acemoglu2020">'
+                 "<w:r><w:t>Acemoglu and Restrepo 2020</w:t></w:r>"
+                 "</w:hyperlink>", run(")."))
+            + para(run("References"))
+            + para('<w:bookmarkStart w:id="1" w:name="Acemoglu2020"/>'
+                   '<w:bookmarkEnd w:id="1"/>'
+                   + run("Acemoglu, D., and P. Restrepo. (2021). "),
+                   irun("JPE"), run(", 128(6): 2188–2244.")))
+    # The entry is dated 2021 and the citation says 2020: the prose scan
+    # and the link disagree, and the finding that survives is the one
+    # about the YEAR, not a phantom uncited entry.
+    report = audit(make_parts(body), page_layout=None)
+    assert "uncited-ref" not in _codes(report.issues)
+
+
+def test_the_same_paper_WITHOUT_the_links_does_report_them_uncited():
+    """The negative control, and the proof the links are what clear it:
+    strip the hyperlinks out of the fixture above and the grammar has
+    nothing left, so both entries report."""
+    stripped = re.sub(r"</?w:hyperlink[^>]*>", "", _group_cite_paper())
+    report = audit(make_parts(stripped), page_layout=None)
+    assert [i.code for i in report.issues].count("uncited-ref") == 2
+
+
+def _appended_run() -> str:
+    """The shape that defeated the neighbour test: two entries added at
+    the END of a filed list, so only the first pair inverts."""
+    def entry(text: str) -> str:
+        return para(run(text + " "), irun("J"), run(", 1(1): 1-2."))
+
+    return (para(run("Cited: (Currie 1999), (Diller 2016), (Sen 2004), "
+                     "(Sen 2009) and (Zaidi 2013)."))
+            + para(run("References"))
+            + entry("Currie, J. (1999). “Health.”")
+            + entry("Sen, A. (2009). “Justice.”")
+            + entry("Zaidi, A. (2013). “Active Ageing.”")
+            + entry("Diller, R. (2016). “Legal Capacity.”")
+            + entry("Sen, A. (2004). “Human Rights.”"))
+
+
+def test_every_misfiled_entry_is_named_not_just_the_first_inversion():
+    """Aging_Well, 2026-08-23: the author appended Diller (2016) and Sen
+    (2004) after Zaidi and the audit named Diller alone, because the
+    check compared each entry with the one above it and the appended run
+    inverts only at its first pair. Fixing the named one and re-running
+    to a clean report says the list is sorted when it is not."""
+    report = audit(make_parts(_appended_run()), page_layout=None)
+
+    named = {i.snippet.split(",")[0] for i in report.issues
+             if i.code == "order"}
+    assert named == {"Diller", "Sen"}
+
+
+def test_a_same_author_entry_out_of_order_is_caught_at_all():
+    """"Sen, A. (2004)" after "Sen, A. (2009)" has nothing for a surname
+    comparison to see, and the year check that would is restricted to
+    continuation entries for a reason of its own."""
+    def entry(text: str) -> str:
+        return para(run(text + " "), irun("J"), run(", 1(1): 1-2."))
+
+    body = (para(run("Cited: (Sen 2004) and (Sen 2009)."))
+            + para(run("References"))
+            + entry("Sen, A. (2009). “Justice.”")
+            + entry("Sen, A. (2004). “Human Rights.”"))
+    report = audit(make_parts(body), page_layout=None)
+    assert [i.code for i in report.issues].count("order") == 1
+
+
+def test_an_institutional_name_still_files_where_the_manuals_put_it():
+    """The tie-break is the whole text, punctuation kept -- but the
+    SURNAME decides first, folded. Sorting raw text alone puts "U.S.
+    Census Bureau" before "United Nations", because `.` sorts ahead of a
+    letter."""
+    body = (para(run("Cited (United Nations 2019) and (Bureau 2023)."))
+            + para(run("References"))
+            + para(run("United Nations (2019). "), irun("World Population"),
+                   run(". New York: UN."))
+            + para(run("U.S. Census Bureau. (2023). "), irun("Age Heaping"),
+                   run(". Washington, DC.")))
+    report = audit(make_parts(body), page_layout=None)
+    assert not [i for i in report.issues if i.code == "order"]
+
+
+def test_a_solo_entry_files_before_the_same_author_with_co_authors():
+    """`(` sorts before `,`, which is what an author's own list does --
+    and what the surname alone cannot settle."""
+    body = (para(run("Cited (Scott 2024) and (Scott et al. 2021)."))
+            + para(run("References"))
+            + para(run("Scott, A. (2024). "), irun("The Longevity Imperative"),
+                   run(". Dublin: Murray."))
+            + para(run("Scott, A., Ellison, M., and D. Sinclair. (2021). "),
+                   irun("Nature Aging"), run(", 1(7): 616-623.")))
+    report = audit(make_parts(body), page_layout=None)
+    assert not [i for i in report.issues if i.code == "order"]
+
+
+def test_a_continuation_list_is_left_to_the_year_check():
+    """"---. (2015)." files under the name above it, so the whole-text
+    key would scatter the group; `refile` refuses such a list too."""
+    body = (para(run("Cited (WHO 2015) and (WHO 2002)."))
+            + para(run("References"))
+            + para(run("WHO. (2015). "), irun("World Report"),
+                   run(". Geneva: WHO."))
+            + para(run("———. (2002). "), irun("Active Ageing"),
+                   run(". Geneva: WHO.")))
+    report = audit(make_parts(body), page_layout=None)
+    assert not [i for i in report.issues if i.code == "order"]
+    assert [i.code for i in report.issues].count("year-order") == 1

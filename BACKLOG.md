@@ -17,98 +17,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 `refstyle`'s order check is a CONSECUTIVE-PAIR test, so a run of misfiled entries reports as one — and a same-author one reports as none
-
-Found on Aging_Well, 2026-08-23. The author appended two new references
-after the end of the list — Diller (2016) and Sen (2004), both after
-Zaidi. `refstyle` reported exactly one finding:
-
-    ¶149  order  "Diller" is filed after "Zaidi" — the list is not alphabetical
-
-Sen (2004) was equally misfiled and was not named. Two separate reasons,
-and both are in the same eight lines:
-
-* The test is `_fold(prev.surname) > _fold(r.surname)` over CONSECUTIVE
-  entries. The appended run reads Zaidi → Diller → Sen: the first pair
-  inverts and is reported, the second does not invert, so everything
-  after the first misfiled entry is invisible. Fix one, re-run, find
-  the next — and a paper that fixes the named one and re-runs to a clean
-  report has been told the list is sorted when it is not.
-* It compares SURNAME only, so "Sen, A. (2004)" filed after "Sen, A.
-  (2009)" cannot be caught by it at all. The `year-order` check that
-  would is deliberately restricted to CONTINUATION entries ("———.
-  (2015)."), for a good reason — a shared lead surname over different
-  co-author lists orders by co-author, not year — but that leaves the
-  plain repeated-name form uncovered.
-
-**The repair landed first**: `refstyle.refile` (fixed entry below) sorts the list, so a paper can act on the finding without hand-moving paragraphs. What is still wrong is the DETECTION.
-
-**Suggested fix.** Sort the entries by their own visible text and report
-every entry whose index moves, rather than walking neighbours. That is
-the whole check, and it happens to be exactly right about the two cases
-the surname test gets wrong: `(` sorts before `,`, so "Scott, A. (2024)"
-lands before "Scott, A., Ellison, M., and D. Sinclair. (2021)" and
-"Venkatapuram, S. (2011)" before "Venkatapuram, S., and J. Thiyagarajan.
-(2023)" — both of which the author had filed exactly that way by hand.
-**Validation is available and cheap**: on Aging_Well's 58
-hand-filed entries a plain sort of the visible text is a NO-OP. A
-proposed key that reorders a list an author has already filed correctly
-is wrong about the house order, and that test is worth writing before
-the check.
-
-### S2 `refstyle` calls a work uncited when its only citation is a bare year inside a multi-year group, and `citations` disagrees on the same file
-
-Aging_Well, 2026-08-23:
-
-    refstyle : ¶138  uncited-ref  "Sen, A. (2009). The Idea of Justice..."
-    citations: Mentions: 79 of 79 linked — ALL CHECKS PASSED
-
-The paper cites it as "Sen's capability approach (1985, 1999, 2009)".
-`_cite_grammar.find_citations` learned this form on 21.08 and yields one
-citation per year, which is why `citations` sees it; `refstyle`'s
-`cited` map does not use that path, so the work reads as listed but never
-cited. Two tools in one toolkit answering "is this work cited?"
-differently about the same document is the part that matters — a paper
-told to delete an uncited entry would be deleting a cited one.
-
-### S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it — the surviving half of the entry closed on 22.08
-
-The cross-reference entry closed as FIXED on 22.08 had two halves. The
-`citations` half is genuinely fixed — REF fields are read now, and HCW's four
-false ORPHAN REFs are gone. **The `crossrefs` half was not touched, and it is
-the half that reports green.**
-
-Measured today, on a document where both bookmarks exist and no hyperlink of
-any form points at the caption:
-
-    audit buckets : {'linked': ['Table3']}
-    link()        : linked [] , already_linked ['Table3']
-
-`audit`'s `linked` means "both bookmarks present" (its own docstring says so),
-so a mention whose link has been eaten reports as linked, and `link()` then
-refuses to repair it because it believes the work is done. One tool now reads
-what a reader clicks; the other still counts bookmarks.
-
-**Why this is S3 rather than S2.** It is not a wrong number in an output — it
-is a gate that cannot fail on the condition it exists to catch. Word strips
-run-level hyperlinks out of any paragraph whose text an author rewrites, so
-this state arises on ordinary author rounds, and `crossrefs --audit` will say
-`linked 20, dangling 0` every time.
-
-**Suggested fix.** `field_targets()` already parses `HYPERLINK \l` and, since
-22.08, `REF`. Give `audit` a bucket keyed on the union of element anchors and
-field targets — an exhibit whose caption bookmark is reached by NOTHING is
-neither `linked` nor `dangling` today, and needs its own name. `link()`
-should treat that state as repairable rather than as `already_linked`.
-
-**How it was found, and the lesson.** By re-running the reproduction after
-the entry was marked FIXED. The entry's own text named both tools; the fix
-addressed the one whose symptom was loud (four false findings on a real
-manuscript) and left the one whose symptom is silence. **A two-tool entry
-needs two reproductions before it closes.**
-
-
-**Three open, as of 2026-08-23** (above) — one from 22.08 and two `refstyle` entries from Aging_Well's reference list, which are one batch: the order check, the missing fixer and the disagreement with `citations` are all the same afternoon on the same list. Recorded before them: the cross-reference entry
+**NOTHING IS OPEN, as of 2026-08-23.** The three that were — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry
 raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
 2026-08-21** either, the first time since this file was started that the
 section held no live defect. Two records stay below because both are
@@ -284,6 +193,93 @@ looked for was in a part of the package it never opened.
 
 
 ## Fixed
+
+### ~~S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it~~ — FIXED 23.08
+
+`audit` asked whether the two bookmarks EXIST. Word keeps bookmarks and
+strips run-level hyperlinks out of any paragraph an author rewrites, so
+the state this was filed for — both markers, no link — is what an
+ordinary round produces, and the audit called it `linked` while `link()`
+called it `already_linked` and refused the repair.
+
+`reaching(*parts)` is the missing question: every anchor something
+actually links to, both element and field form, REF included. Three
+things now read it.
+
+* `audit` gains an `unreached` bucket that names the direction —
+  "nothing links to the caption", "the caption links back to nothing",
+  or both. `linked` means the round trip works.
+* `dangling` counts field targets too. Reading element anchors alone,
+  a `REF` left behind by a deleted figure was invisible: the same
+  half-answer on the other side.
+* `link()` asks both questions and repairs each direction on its own.
+  The marker it finds is the marker it keeps — `_link_mention(...,
+  mark=False)` — because minting a second bookmark of the same name is
+  the failure the last round of this file spent a day on.
+
+The `field_form` refusal narrows to what it was for: a field pointing at
+a marker that is NOT there, where writing an element link would stack a
+second scheme. An exhibit with both markers is past it, since a
+direction a field still reaches is not a direction the repair touches.
+
+Tests in `tests/test_crossrefs.py` — the eaten-link reproduction, one per
+direction, the no-duplicate-bookmark guarantee, a field link counting as
+reach, and a dangling REF.
+
+### ~~S2 `refstyle`'s order check is a CONSECUTIVE-PAIR test~~ — FIXED 23.08
+
+The check compared each entry's surname with the one above it, so an
+appended run inverted only at its first pair: Aging_Well's author added
+Diller (2016) and Sen (2004) after Zaidi and the audit named Diller
+alone. Fixing the named one and re-running to a clean report would have
+said the list was sorted when it was not. A same-surname misfiling —
+"Sen, A. (2004)" after "Sen, A. (2009)" — it could not see at all.
+
+`_order_findings` sorts by the key `refile` sorts by, so the report and
+the repair cannot disagree about where an entry belongs, and names every
+entry that has to MOVE. The message says where it belongs ("it files
+between Currie and Finkelstein") rather than only that it is wrong.
+
+**The key is a PAIR, and each half alone is wrong.** The folded surname
+decides first, or "U.S. Census Bureau" files before "United Nations",
+because `.` sorts ahead of a letter. The whole visible text breaks the
+tie, punctuation kept, or "Scott, A. (2024)" files after "Scott, A.,
+Ellison, M., … (2021)", because `(` sorts before `,`. Both cases are in
+the suite, and both were already right in a hand-filed list — which is
+the validation: on Aging_Well's 58 hand-filed entries the sort is a
+no-op.
+
+Silent on a list of continuation entries ("———. (2015)."), whose key is
+the entry above them; `year-order` covers those and `refile` refuses
+them.
+
+### ~~S2 `refstyle` calls a work uncited when its only citation is a bare year inside a multi-year group~~ — FIXED 23.08
+
+    before: ¶138 uncited-ref "Sen, A. (2009). The Idea of Justice…"
+            while `citations` reported the same file 79 of 79 linked
+    after : 60 reference entries, 60 works cited in text — clean
+
+**A link to an entry is the document saying the work is cited.** The
+module already knew that — `_trust_the_links` reads a link to settle
+which part of a matched span is the citation — but only for spans the
+grammar had matched. "Sen's capability approach (1985, 1999, 2009)" puts
+four words between the name and the parenthesis, so there was no span to
+re-read and no evidence was consulted.
+
+`_credit_unread` credits a linked entry the prose scan never read. Two
+details paid for themselves immediately:
+
+* **after the whole walk**, not per paragraph — the prose that reads a
+  work can sit in a later paragraph than the link that points at it;
+* **only a work nothing else has credited, under the ENTRY's own key.**
+  An entry answers to several keys — the prose writes "(National
+  Academies 2020)" where the list files "National Academies of
+  Sciences, Engineering, and Medicine." — and crediting a link the prose
+  had already counted filed one work twice. The header line read "60
+  reference entries, 62 works cited in text", a discrepancy a reader
+  would go looking for, and it was the first version of this fix that
+  wrote it.
+
 
 ### ~~S4 `refstyle` has no fixer, so every paper writes the sort itself~~ — FIXED 23.08
 
