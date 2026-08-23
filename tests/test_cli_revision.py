@@ -27,7 +27,8 @@ from test_cli import run_cli
 def project(tmp_path):
     """A migrated paper, scaffolded the way `revision init` does it."""
     from docxkit import revision
-    src = write(tmp_path / "manuscript.docx",
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "manuscript.docx",
                 make_parts(para(run("The paper as it stands."))))
     return revision.init(tmp_path / "proj", src, name="Test Paper")
 
@@ -97,16 +98,38 @@ def _fake_build(math: int = 0, revisions: int = 7):
 
 # ----------------------------------------------------------------- init
 
-def test_init_scaffolds_and_copies(monkeypatch, tmp_path, capsys):
-    src = write(tmp_path / "LE7.docx", make_parts(para(run("body"))))
+def test_init_adopts_the_manuscript_in_place(monkeypatch, tmp_path,
+                                            capsys):
+    """The paper keeps its name, and the author is told so."""
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "LE7.docx", make_parts(para(run("body"))))
     code, _ = run_cli(monkeypatch, "revision", "init", str(src),
                       "--root", str(tmp_path / "proj"), "--name", "LE",
                       "--author", "Agent", "--language", "ru",
                       "--attic", str(tmp_path / "attic"))
+    out = capsys.readouterr().out
     assert code == 0
-    assert (tmp_path / "proj" / "revision" / "working.docx").exists()
-    assert Path(src).exists(), "the source manuscript was moved, not copied"
-    assert "Nothing was moved or deleted" in capsys.readouterr().out
+    assert Path(src).exists()
+    assert not (tmp_path / "proj" / "revision" / "working.docx").exists()
+    assert "adopted in place" in out
+    assert "LE7.docx" in out
+
+
+def test_init_WORKING_names_a_copy_and_says_the_source_is_spent(
+        monkeypatch, tmp_path, capsys):
+    """The old migration shape, now asked for by name. The source is
+    left where it was and nothing reads it again — a state the first
+    version of this protocol created silently, on every paper."""
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "LE7.docx", make_parts(para(run("b"))))
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src),
+                      "--root", str(tmp_path / "proj"),
+                      "--working", "Report/LE.docx")
+    out = capsys.readouterr().out
+    assert code == 0
+    assert (tmp_path / "proj" / "Report" / "LE.docx").exists()
+    assert Path(src).exists(), "the source was moved, not copied"
+    assert "COPIED, not moved" in out
 
 
 def test_init_refuses_to_rewrite_a_live_config(monkeypatch, project,
@@ -120,7 +143,7 @@ def test_init_refuses_to_rewrite_a_live_config(monkeypatch, project,
 
 def test_init_force_rewrites_in_place(monkeypatch, project):
     """Re-running init on a MIGRATED paper, to correct its config: the
-    source is working.docx itself, and copying a file onto itself
+    source is the manuscript itself, and copying a file onto itself
     raises rather than being a no-op."""
     before = project.working.read_bytes()
     code, _ = run_cli(monkeypatch, "revision", "init",
@@ -135,7 +158,9 @@ def test_init_defaults_the_root_to_the_manuscripts_folder(monkeypatch,
     src = write(tmp_path / "solo.docx", make_parts(para(run("body"))))
     code, _ = run_cli(monkeypatch, "revision", "init", str(src))
     assert code == 0
-    assert (tmp_path / "revision" / "working.docx").exists()
+    assert (tmp_path / "revision" / "paper.toml").is_file()
+    from docxkit.revision import load_paper
+    assert load_paper(tmp_path).working == Path(src)
 
 
 # --------------------------------------------------------------- status
@@ -984,7 +1009,7 @@ def test_rescues_lists_what_promote_left(monkeypatch, project, capsys):
                       "--paper", str(project.root))
     out = capsys.readouterr().out
     assert code == 0
-    assert out.count("working_rescue_") == 3
+    assert out.count(f"{project.working.stem}_rescue_") == 3
     assert "keeping 5" in out
 
 

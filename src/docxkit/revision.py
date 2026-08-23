@@ -1,8 +1,9 @@
 r"""The single-file revision protocol: one manuscript, two states.
 
-Every paper on this protocol revises through ONE file —
-``revision/working.docx`` — and its state is readable from the file
-itself, so nobody has to remember which copy is current:
+Every paper on this protocol revises through ONE file — **the author's
+own file, under its own name, wherever they keep it** — and its state is
+readable from the file itself, so nobody has to remember which copy is
+current:
 
 ======================  ==========================================
 ``revisions == 0``      **truth**: this is the paper, and an agent
@@ -11,25 +12,37 @@ itself, so nobody has to remember which copy is current:
 ======================  ==========================================
 
 The cycle is: truth -> checkpoint -> apply the batch to a clean copy in
-``build/`` -> Word Compare -> the tracked result *is* the new
-``working.docx`` -> the author adjudicates in Word -> accept-all ->
-truth again. There is no separate redline file and no baseline file;
-``build/prev.docx`` is the last accepted truth and the compare
-reference.
+``build/`` -> Word Compare -> the tracked result *is* the new manuscript
+-> the author adjudicates in Word -> accept-all -> truth again. There is
+no separate redline file and no baseline file; ``build/prev.docx`` is
+the last accepted truth and the compare reference.
+
+**Which file is the paper is the author's choice, not this module's.**
+``revision/paper.toml`` says so in one line (``working = ...``) and every
+command reads it from there. The first shape of this protocol imposed
+one name on every project — ``revision/working.docx`` — and it cost the
+thing it was meant to buy: with nine papers on it, Explorer, the Word
+title bar and the taskbar all say ``working.docx``, and the author
+cannot tell which paper is open (author, 2026-08-23). So :func:`init`
+adopts the manuscript IN PLACE by default: no copy is made, the name
+stays the author's, and there is no second file to go stale. Papers
+scaffolded under the old default keep their configured path and are not
+touched — the declaration is what matters, never the spelling.
 
 This module is the engine. What stays with the paper is
-``revision/paper.toml`` — its name, its author string, and the list of
-its own gates. The protocol itself is identical in every project, which
-is why it is here: it was copied verbatim into a second paper within a
-day of being written, and a third copy would have been the point where
-they started to disagree with each other.
+``revision/`` — its config, its log, ``build/prev.docx``, its own gates
+and notes. That folder is MACHINERY; the manuscript does not have to
+live in it and by default does not. The protocol itself is identical in
+every project, which is why it is here: it was copied verbatim into a
+second paper within a day of being written, and a third copy would have
+been the point where they started to disagree with each other.
 
 Four operations, in the order a batch meets them::
 
     ingest    what the author changed while I was away   (read-only)
     build     clean edit -> redline, via Word Compare
     validate  the gate ladder, fast to slow, failing early
-    promote   put a validated batch onto working.docx
+    promote   put a validated batch onto the manuscript
 
 plus ``state`` (which of the two states is this file in?),
 ``baseline`` (the author accepted — this is the new truth) and ``init``
@@ -45,7 +58,7 @@ list, because each one is silent if you skip it:
   equations bakes them in with nothing to reject;
 * a copy made while Word holds the file is overwritten the moment Word
   saves, and the promotion silently vanishes;
-* a batch promoted onto a working.docx the author has edited since
+* a batch promoted onto a manuscript the author has edited since
   destroys those edits;
 * an accept the author made in Word leaves NOTHING pending on either
   side, so a pending count alone calls a baseline the paper has already
@@ -223,6 +236,13 @@ class Paper:
     """The project root — the folder that CONTAINS ``revision/``."""
     config: Path
     working: Path
+    """THE paper, wherever the author keeps it and whatever they call it.
+
+    Declared by ``[paper] working`` and nowhere else. It is deliberately
+    not a fixed name: nine papers sharing one filename is how an author
+    ends up unable to tell, from Explorer or the Word title bar, which
+    project is open.
+    """
     prev: Path
     build_dir: Path
     name: str
@@ -314,6 +334,11 @@ def load_paper(start: str | Path | None = None) -> Paper:
     def _abs(value: str, fallback: str) -> Path:
         return (root / (value or fallback)).resolve()
 
+    # The fallback is the shape every paper scaffolded before 2026-08-23
+    # was given, and it stays a fallback rather than a default anyone
+    # should rely on: `init` now adopts the author's file where it is,
+    # and writes the path it adopted. A config that says nothing is an
+    # old config, and it still resolves.
     working = _abs(paper.get("working", ""), f"{_DIR}/working.docx")
     prev = _abs(paper.get("prev", ""), f"{_DIR}/build/prev.docx")
     attic = data.get("attic", {}).get("path")
@@ -585,7 +610,8 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
 
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
-          allow_pending_baseline: bool = False, resolve_math: bool = True,
+          allow_pending_baseline: bool = False,
+          allow_stale_baseline: bool = False, resolve_math: bool = True,
           force: bool = False,
           progress: Any = None) -> tracked.BuildReport:
     """Clean-build plus Word Compare: a redline from an edited copy.
@@ -618,7 +644,19 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     the Flat OPC route this build uses carried 1870 tracked revisions
     with the math kept on LI7 (2026-08-15), reject-all included.
 
-    `force` overrides the third refusal — the one
+    A third refusal has nothing to do with equations: a baseline that is
+    no longer the generation the manuscript grew out of
+    (:func:`drift`). `allow_stale_baseline=True` overrides it, and
+    almost nothing should: the redline would present the author's own
+    edits as the agent's proposals, and `promote` refuses such a batch
+    on the hash anyway — one Word Compare later.
+    `allow_pending_baseline` implies it, because a baseline that
+    legitimately carries a proposal CANNOT match a clean manuscript —
+    they are two names for one unusual state, and refusing the second
+    after being told about the first is a gate arguing with its own
+    override.
+
+    `force` overrides the fourth refusal — the one
     :func:`docxkit.guard.check` raises when ``build/batch.docx`` has
     changed since docxkit wrote it. That guard is what stopped a spent
     batch being silently overwritten (Parental Style 2026-08-12) and it
@@ -652,6 +690,32 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
             f"those would be flattened into plain text and could never "
             f"be rejected — the author's open verdicts decided for them. "
             f"Have them accept or reject first.")
+
+    # Is the baseline still the file the manuscript grew out of? The
+    # check above asks whether `prev` carries a proposal; this asks
+    # whether it is the right generation at all. `drift`'s own docstring
+    # named this gap and nothing closed it: after an accept in Word both
+    # files read 0 pending while their content has diverged, and the
+    # redline built then shows the AUTHOR's edits as the agent's
+    # proposals. `promote` refuses it on the hash — but only after a
+    # full Word Compare has been paid for, and after a reader has spent
+    # the round trying to make sense of a redline about the wrong pair.
+    if not (allow_stale_baseline or allow_pending_baseline) \
+            and paper.working.exists() and paper.prev.exists() \
+            and (moved := drift(paper.working, paper.prev)):
+        listed = ", ".join(moved[:4])
+        if len(moved) > 4:
+            listed += f" and {len(moved) - 4} more"
+        raise StaleBatch(
+            f"{paper.prev.name} is no longer what {paper.working.name} "
+            f"grew out of — {listed} differ(s). Something was "
+            f"accepted or edited since the last baseline, so a redline "
+            f"built on this baseline would present the author's own "
+            f"changes as proposals, and `promote` would refuse it on the "
+            f"hash afterwards. First:\n"
+            f"    docxkit revision ingest     (what changed, read-only)\n"
+            f"    docxkit revision baseline   (adopt it as the truth)\n"
+            f"then build again.")
 
     notes: list[str] = []
 
@@ -1750,7 +1814,7 @@ def baseline(paper: Paper, *, force: bool = False,
 
 _LOG_TEMPLATE = """# {name} — revision log
 
-`working.docx` is the manuscript. It is the **only** file to open and
+`{paper_file}` is the manuscript. It is the **only** file to open and
 edit. It is in one of exactly two states, and the state is readable
 from the file:
 
@@ -1762,16 +1826,16 @@ from the file:
     docxkit revision status   # 0 settled · 1 pending · 4 stale baseline
 
 Exit 4 means the two counts agree and the CONTENT does not: `prev.docx`
-is no longer what `working.docx` grew out of (an accept in Word leaves
+is no longer what `{paper_file}` grew out of (an accept in Word leaves
 nothing pending on either side). Ingest, then baseline.
 
 ## Rules
 
-1. **One file.** `working.docx` never changes name. Round names live in
+1. **One file.** `{paper_file}` never changes name. Round names live in
    git tags and in `export/` copies, never in the live filename.
 2. **Ingest before anything.** Every task begins with
    `docxkit revision ingest`; it is read-only and never writes to
-   `working.docx`.
+   `{paper_file}`.
 3. **Resolve before extend.** No new batch while revisions are pending.
 4. **Forward-only.** A script in `scripts/applied/` is spent — a record
    of what was done, not a way to redo it. Recovery from a bad batch is
@@ -1781,19 +1845,23 @@ nothing pending on either side). Ingest, then baseline.
 
 ## Layout
 
-    revision/working.docx     THE paper
+    {paper_path}{pad}THE paper — your file, your name, edited in place
     revision/log.md           this file
-    revision/paper.toml       per-project configuration
+    revision/paper.toml       per-project configuration (says where the paper is)
     revision/scripts/         live tools and the paper's own gates
     revision/scripts/applied/ spent batch migrations — records only
     revision/notes/           response notes, drafts, QA records
     revision/build/           prev.docx (= last accepted truth) + scratch
 
+`revision/` is MACHINERY. The manuscript is not in it and does not need
+to be: `paper.toml` declares where it is, and every command reads that
+one line.
+
 ## Batches
 
 | date | batch | changes | gates | outcome |
 |------|-------|---------|-------|---------|
-| {date} | *(protocol migration — no manuscript change)* | — | working.docx unchanged `{digest}` | truth |
+| {date} | *(protocol migration — no manuscript change)* | — | {paper_file} unchanged `{digest}` | truth |
 """
 
 _TOML_TEMPLATE = """# Unified revision protocol — per-project configuration.
@@ -1802,7 +1870,11 @@ _TOML_TEMPLATE = """# Unified revision protocol — per-project configuration.
 [paper]
 name     = "{name}"
 language = "{language}"
-working  = "revision/working.docx"      # THE paper; author edits here only
+# THE paper: the author's own file, under the author's own name, edited
+# in place. This line is the ONLY place that says where it is — every
+# command reads it, so renaming or moving the manuscript is a one-line
+# change here and nothing else.
+working  = {working}
 prev     = "revision/build/prev.docx"   # last accepted truth (compare baseline)
 
 [batch]
@@ -1824,26 +1896,195 @@ path = '{attic}'
 """
 
 
-def init(root: str | Path, source: str | Path, *, name: str = "",
-         author: str = "Revision", language: str = "en",
+def _toml_str(value: str) -> str:
+    """`value` as a TOML basic string, quotes and backslashes escaped.
+
+    A path reaches the config through here rather than through an
+    f-string: on Windows the natural spelling of an absolute one is full
+    of backslashes, and `"C:\\Users\\..."` is not the string it looks
+    like — TOML reads `\\U` as a unicode escape and refuses the file.
+    Every path this writes is normalised to forward slashes first, so
+    the escaping matters only for the rare name carrying a quote.
+    """
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+#: A `[section]` header on a line of its own, which is how every config
+#: this package writes spells one. A key written in dotted form
+#: (`paper.working = …`) or an inline table would not be seen — and is
+#: not silently ignored either: :func:`_set_key` inserts the key it was
+#: asked for, and `load_paper` then reads the LAST definition, so the
+#: intended value wins rather than a duplicate being written into a file
+#: that already said something else.
+_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+
+
+def _set_key(text: str, section: str, key: str, value: str) -> str:
+    """`key = value` inside `[section]`, and NOTHING else touched.
+
+    A line editor rather than a TOML round-trip, and deliberately:
+    `tomllib` reads and does not write, and re-emitting a parsed
+    document would drop every comment in the file. Half the value of
+    these configs is in the comments — LI7's `[git] repo = ""` carries
+    the sentence saying the project root is not under version control
+    and the attic is the paper's only history, and `[deliverable]`
+    records that its redline is cumulative rather than per-batch. A
+    writer that loses those is not a writer worth having.
+
+    Missing key: inserted under the section header. Missing section:
+    appended. A key whose value opens a bracket is REFUSED rather than
+    mangled — this edits scalars, and the one array in the template
+    (`[verify] commands`) belongs to the paper, not to `init`.
+    """
+    lines = text.splitlines(keepends=True)
+    key_re = re.compile(rf"^(\s*){re.escape(key)}(\s*)=(.*)$", re.DOTALL)
+    current: str | None = None
+    section_at: int | None = None       # the header line of our section
+    for i, line in enumerate(lines):
+        header = _SECTION_RE.match(line)
+        if header:
+            current = header.group(1).strip()
+            if current == section:
+                section_at = i
+            continue
+        if current != section:
+            continue
+        m = key_re.match(line)
+        if not m:
+            continue
+        indent, pad, rest = m.groups()
+        if rest.count("[") > rest.count("]"):
+            raise ProtocolError(
+                f"[{section}] {key} spans several lines; this writer "
+                f"edits single-value keys only. Change it by hand.")
+        # Keep a trailing comment: these lines explain themselves, and
+        # the explanation is as much the file's content as the value.
+        tail = rest.rstrip("\r\n")
+        cut = tail.find("#", _value_end(tail))
+        comment = f"  {tail[cut:].strip()}" if cut != -1 else ""
+        lines[i] = f"{indent}{key}{pad}= {value}{comment}\n"
+        return "".join(lines)
+
+    entry = f"{key} = {value}\n"
+    if section_at is not None:
+        lines.insert(section_at + 1, entry)
+        return "".join(lines)
+    body = "".join(lines)
+    join = "" if body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n"
+    return f"{body}{join}[{section}]\n{entry}"
+
+
+def _value_end(tail: str) -> int:
+    """Where a key's VALUE stops, so a `#` after it is a comment.
+
+    A quoted value can hold a `#` — a Windows path cannot, but a paper's
+    name can — and cutting at the first one would eat half the value and
+    call the rest a comment.
+    """
+    quote = ""
+    for i, ch in enumerate(tail):
+        if quote:
+            if ch == quote:
+                return i + 1
+        elif ch in "\"'":
+            quote = ch
+    return 0
+
+
+def _declare(path: Path, root: Path) -> str:
+    """How `path` is written in ``paper.toml`` — relative to `root` when
+    it is under it, absolute when it is not, forward slashes either way.
+
+    A relative declaration is what makes a project movable: the whole
+    folder can be copied to another machine, or out of OneDrive onto a
+    local clone, and the config still resolves. An absolute one is
+    honest about a manuscript that genuinely lives elsewhere rather than
+    inventing a `../../..` chain nobody can read.
+    """
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def init(root: str | Path, source: str | Path, *,
+         working: str | Path = "", name: str = "",
+         author: str = "", language: str = "",
          attic: str | Path | None = None,
          force: bool = False) -> Paper:
     """Scaffold the protocol layout around an existing manuscript.
 
-    `source` is the paper as it stands today — whatever it is called.
-    It is COPIED to ``revision/working.docx`` and to
-    ``revision/build/prev.docx``; nothing is moved and nothing is
-    deleted, so a migration can be abandoned by removing one folder.
-    Retiring the old filename is a separate, deliberate step, and it
-    belongs after the gates have been run against the new location.
+    `source` is the paper as it stands today. **By default it is adopted
+    IN PLACE**: no copy of it is made, its name and location do not
+    change, and ``paper.toml`` simply records where it is. The only file
+    written beside it is ``revision/build/prev.docx``, the baseline, and
+    the ``revision/`` machinery around it — so a migration is still
+    abandonable by deleting one folder, and now without leaving a second
+    copy of the manuscript behind at all.
 
-    The baseline is seeded from the same bytes on purpose: at migration
-    time the manuscript IS the last accepted truth, whatever revisions
-    it happens to carry.
+    That default is a correction. The first shape of this protocol
+    copied every paper to ``revision/working.docx``, which made "which
+    file do I open" unanswerable in the other direction: nine papers,
+    nine identical filenames, and nothing in Explorer or the Word title
+    bar saying which project is on screen. It also left the author's
+    original sitting in the project unread forever — the protocol called
+    retiring it "a separate, deliberate step" and nothing ever performed
+    that step, so `doctor` exists largely to find scripts still pointing
+    at the abandoned twin.
+
+    Pass `working` to put the manuscript somewhere else — a path,
+    relative to `root` unless absolute. The source is then COPIED there
+    and left where it was, which is the old migration shape and now has
+    to be asked for. Ask the author for that name rather than choosing
+    one: the filename is what they read in Explorer, and it is theirs.
+
+    The baseline is seeded from the manuscript's own bytes on purpose:
+    at migration time the paper IS the last accepted truth, whatever
+    revisions it happens to carry.
+
+    **`force` rewrites the CONFIG KEYS this function is given, and
+    nothing else.** It used to rewrite the whole project: `paper.toml`
+    from the template, `log.md` from the template, and `prev.docx` from
+    the live file. Measured on a scratch paper carrying two rounds of
+    history (2026-08-23): the batch table went from 3 rows to 1, the
+    baseline was re-seeded to the CURRENT manuscript — so every later
+    reject-all would have measured against the wrong generation — and
+    the config came back with `commands = []` and no `[doctor]` section
+    at all. Exit 0, no warning, no backup.
+
+    Every live paper carried something the template cannot express:
+    eight had gate lists, three had whole sections belonging to their
+    own tooling, and Aging_Well had ``[batch] carry =
+    ["word/footer3.xml"]``, which is the fix for a promote that once
+    shipped a World Bank manuscript without its sensitivity label. So a
+    forced re-init now MERGES: the keys it was given are rewritten in
+    place by :func:`_set_key`, the rest of the file — other keys, other
+    sections, every comment — is left byte-identical, and the config is
+    backed up first. An existing `log.md` and an existing `prev.docx`
+    are never touched: one is the paper's history and the other is its
+    baseline, and neither is this function's to reset.
+
+    A value not passed is not changed. That is why `author` and
+    `language` default to empty rather than to "Revision" and "en": on a
+    rewrite there is no way to tell a caller who means "en" from a
+    caller who said nothing, and the paper that spells its author
+    "Revision Agent" would lose it to a default nobody typed. The
+    defaults apply when the config is being CREATED.
     """
     root, source = Path(root).resolve(), Path(source).resolve()
     if not source.is_file():
         raise ProtocolError(f"no manuscript at {source}")
+    # Adopting in place means the paper lives in the project. Every
+    # command finds its config by walking UP from wherever it is
+    # started — including from the manuscript itself — so a paper
+    # outside the root would be a declaration nothing could resolve
+    # from the file the author actually has open.
+    if not working and not source.is_relative_to(root):
+        raise ProtocolError(
+            f"{source} is not inside {root}. The protocol adopts the "
+            f"manuscript where it is, so it has to be in the project: "
+            f"give --root the folder that contains the paper, or "
+            f"--working PATH to put a copy inside the project instead.")
     folder = root / _DIR
     config = folder / _CONFIG
     if config.exists() and not force:
@@ -1854,29 +2095,57 @@ def init(root: str | Path, source: str | Path, *, name: str = "",
     for sub in ("build", "notes", "scripts/applied"):
         (folder / sub).mkdir(parents=True, exist_ok=True)
 
-    # `source` may BE working.docx: re-running init on a migrated paper
-    # to correct its config is a reasonable thing to do, and copying a
-    # file onto itself raises rather than being a no-op
-    working = folder / "working.docx"
-    if (not working.exists() or force) and source != working:
-        shutil.copyfile(source, working)
+    # No `working=`: the paper is where it already is. Naming one copies
+    # the source there — and copying a file onto itself raises rather
+    # than being a no-op, which is the case where the author names the
+    # path the manuscript already occupies.
+    live = source if not working else (root / working).resolve()
+    if live != source and (not live.exists() or force):
+        live.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, live)
+    # NOT `or force`: a baseline that exists is the last accepted truth,
+    # and re-seeding it from the live file is how every later reject-all
+    # comes to measure against the wrong generation.
     prev = folder / "build" / "prev.docx"
-    if not prev.exists() or force:
-        shutil.copyfile(working, prev)
+    if not prev.exists():
+        shutil.copyfile(live, prev)
 
-    config.write_text(_TOML_TEMPLATE.format(
-        name=(name or root.name).replace('"', "'"),
-        language=language, author=author, gates="",
-        rescue_keep=RESCUE_KEEP,
-        attic=str(attic) if attic else f"D:\\PaperAttic\\{root.name}",
-    ), encoding="utf-8")
+    declared = _declare(live, root)
+    if config.exists():
+        package.backup(config, tag="pre_init")
+        text = config.read_text(encoding="utf-8")
+        given = [("paper", "working", _toml_str(declared))]
+        if name:
+            given.append(("paper", "name", _toml_str(name)))
+        if language:
+            given.append(("paper", "language", _toml_str(language)))
+        if author:
+            given.append(("batch", "author", _toml_str(author)))
+        if attic:
+            given.append(("attic", "path", _toml_str(str(attic))))
+        for section, key, value in given:
+            text = _set_key(text, section, key, value)
+        config.write_text(text, encoding="utf-8")
+    else:
+        config.write_text(_TOML_TEMPLATE.format(
+            name=(name or root.name).replace('"', "'"),
+            language=language or "en", author=author or "Revision",
+            gates="", working=_toml_str(declared),
+            rescue_keep=RESCUE_KEEP,
+            attic=str(attic) if attic else f"D:\\PaperAttic\\{root.name}",
+        ), encoding="utf-8")
 
+    # Likewise never rewritten: `log.md` holds the batch history, and the
+    # template would replace it with a single migration row.
     log = folder / "log.md"
-    if not log.exists() or force:
+    if not log.exists():
         log.write_text(_LOG_TEMPLATE.format(
             name=name or root.name,
+            paper_file=live.name,
+            paper_path=declared,
+            pad=" " * max(1, 26 - len(declared)),
             date=_today(),
-            digest=_guard.sha256(working)[:8].upper(),
+            digest=_guard.sha256(live)[:8].upper(),
         ), encoding="utf-8")
     return load_paper(root)
 

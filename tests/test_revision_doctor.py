@@ -23,7 +23,13 @@ from docxkit.revision import doctor, init
 
 @pytest.fixture
 def paper(tmp_path):
-    """A migrated project: the manuscript is `revision/working.docx`."""
+    """A migrated project: the manuscript is `Report/afi_v14.docx`.
+
+    Adopted in place, which is what `init` does now: the paper keeps
+    its own name and its own folder, and `paper.toml` records them.
+    That is also the shape this survey was written for — the doubts
+    below name OTHER generations of the same paper, beside it.
+    """
     source = tmp_path / "Report" / "afi_v14.docx"
     source.parent.mkdir(parents=True)
     from conftest import make_parts, para, run, write
@@ -39,7 +45,7 @@ def _write(paper, rel: str, text: str) -> None:
 
 def test_a_clean_project_reports_nothing(paper):
     _write(paper, "scripts/build.py",
-           'PAPER = "revision/working.docx"\n')
+           'PAPER = "Report/afi_v14.docx"\n')
 
     assert doctor(paper) == []
 
@@ -63,19 +69,19 @@ def test_a_GLOB_that_misses_the_manuscript_is_reported(paper):
     """The AFI shape, and the one no grep for the filename can find:
     the reference never spells it."""
     _write(paper, "tests/helpers.py",
-           'CANDIDATES = sorted(root.glob("Report/afi_v*.docx"))\n')
+           'CANDIDATES = sorted(root.glob("archive/afi_v*.docx"))\n')
 
     found = doctor(paper)
 
     assert [d.kind for d in found] == ["pattern"], found
-    assert found[0].text == "Report/afi_v*.docx"
+    assert found[0].text == "archive/afi_v*.docx"
 
 
 def test_a_glob_that_DOES_select_the_manuscript_is_left_alone(paper):
     """A resolver written against the declared layout is the fix, not
     the finding — reporting it would train the reader to ignore this."""
     _write(paper, "tests/helpers.py",
-           'PAPER = next(root.glob("revision/*.docx"))\n')
+           'PAPER = next(root.glob("Report/*.docx"))\n')
 
     assert doctor(paper) == []
 
@@ -89,7 +95,7 @@ def test_the_BUILD_directory_is_not_surveyed(paper):
 
 
 def test_a_bare_filename_matching_the_manuscript_is_not_a_doubt(paper):
-    _write(paper, "scripts/open.py", 'NAME = "working.docx"\n')
+    _write(paper, "scripts/open.py", 'NAME = "afi_v14.docx"\n')
 
     assert doctor(paper) == []
 
@@ -119,7 +125,8 @@ def test_PATTERNS_come_before_literals(paper):
     buried among 131 literals — an unreadable gate is one people stop
     running, which is the whole reason this is an S3 and not an S4.
     """
-    _write(paper, "z_pattern.py", 'P = root.glob("Report/afi_v*.docx")\n')
+    _write(paper, "z_pattern.py",
+           'P = root.glob("archive/afi_v*.docx")\n')
     _write(paper, "a_literal.py", 'P = "Report/afi_v11.docx"\n')
 
     found = doctor(paper)
@@ -170,19 +177,19 @@ def test_a_path_whose_DIRECTORY_is_wrong_is_still_a_doubt(paper):
     its own and any file called `working.docx`, in any directory, reads
     as the declared manuscript. A script pointing at a copy under
     `backup/` is the whole reason this survey exists."""
-    _write(paper, "scripts/build.py", 'PAPER = "backup/working.docx"\n')
+    _write(paper, "scripts/build.py", 'PAPER = "backup/afi_v14.docx"\n')
 
     (doubt,) = doctor(paper)
 
-    assert doubt.text == "backup/working.docx"
+    assert doubt.text == "backup/afi_v14.docx"
 
 
 def test_a_LONGER_path_ending_in_the_right_two_parts_is_not_a_doubt(paper):
     """`candidate.parts[-2:]`: a script that spells the project out from
-    somewhere else ("proj/revision/working.docx") is naming the declared
+    somewhere else ("proj/Report/afi_v14.docx") is naming the declared
     manuscript, and the last two components are what say so."""
     _write(paper, "scripts/build.py",
-           'PAPER = "some_project/revision/working.docx"\n')
+           'PAPER = "some_project/Report/afi_v14.docx"\n')
 
     assert doctor(paper) == []
 
@@ -208,7 +215,7 @@ def test_the_ATTIC_is_not_surveyed(tmp_path):
     survey would never look whatever this skip did.
     """
     from conftest import make_parts, para, run, write
-    source = tmp_path / "Report" / "afi_v14.docx"
+    source = tmp_path / "proj" / "Report" / "afi_v14.docx"
     source.parent.mkdir(parents=True)
     write(source, make_parts(para(run("The paper."))))
     paper = init(tmp_path / "proj", source, attic=tmp_path / "proj" / "attic")

@@ -1947,9 +1947,18 @@ CVE checklist.
 ## The revision protocol lives here, the paper keeps paper.toml
 
 `docxkit.revision` is the single-file protocol every paper on this
-machine revises through: ONE `revision/working.docx`, whose state is
-readable from the file itself — 0 revisions is the truth, more than 0 is
-a proposal awaiting the author's verdict.
+machine revises through: ONE manuscript — the author's own file, under
+its own name, wherever they keep it — whose state is readable from the
+file itself: 0 revisions is the truth, more than 0 is a proposal
+awaiting the author's verdict.
+
+It used to impose the name `revision/working.docx` on every project,
+and that cost the thing it was meant to buy. With nine papers on the
+protocol, Explorer, the Word title bar and the taskbar all said
+`working.docx`, and the author could not tell which paper was open
+(2026-08-23). `init` adopts the file in place now and writes its path
+into `paper.toml`; `revision/` is machinery, and the manuscript does
+not live in it.
 
 It is here for the same reason as everything else: two papers migrated
 to it on one day, and the second got its tools by copying four files out

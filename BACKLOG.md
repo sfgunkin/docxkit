@@ -269,6 +269,39 @@ links, and a footnote is the one place a person cannot verify by eye.
 
 ---
 
+### S4 — `ship` RE-DECLARES `build`'s flags, so every flag added to `build` is an AttributeError on `ship` until someone remembers
+
+Found 2026-08-23, immediately, by adding one flag.
+
+`cli.py`'s `ship` subparser repeats `build`'s arguments by hand
+(`--allow-math-resolve`, `--keep-math`, `--allow-pending-baseline`,
+`--force`, …) and `cmd_revision_ship` delegates to `cmd_revision_build`,
+which reads `args.<flag>`. Adding `--allow-stale-baseline` to `build` alone
+made every `ship` invocation die with
+
+```
+AttributeError: 'Namespace' object has no attribute 'allow_stale_baseline'.
+Did you mean: 'allow_pending_baseline'?
+```
+
+— four tests, and it would have been every real `ship` run. It is loud rather
+than silent, which is the only reason this is S4: the failure is total and
+immediate, not a wrong answer.
+
+**Why it will happen again.** This is the "a change that teaches one reader a
+new fact has to be walked to every other reader" shape this file already
+records five instances of. The two parsers are one parser written twice.
+
+**Shape of a fix.** Build the shared arguments once —
+`_build_args(parser)` called by both subparsers — so a flag cannot be added
+to one and not the other. Cheap, and it removes the duplication rather than
+documenting it.
+
+**Workaround in use:** the flag was added to `ship` by hand, with a comment
+saying why the line exists.
+
+---
+
 
 **One open, filed 2026-08-23** (above). Before it the section was empty: the three that were open — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry
 raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
@@ -484,6 +517,177 @@ reach it:
   mutated as a binary operator. Equivalent by construction.
 
 ## Fixed
+
+### ~~S1 `revision init --force` REWRITES `paper.toml` from the template, and resets the log and the baseline with it~~ — FIXED 23.08
+
+Found 2026-08-23 while reviewing the protocol at the author's request, not
+from a paper. Measured, then measured again across every live paper.
+
+**Symptom as observed.** On a scratch project whose config had been given two
+gates and a doctor skip:
+
+```
+$ grep -n "commands|skip" revision/paper.toml
+26:commands = ["pytest tests/", "python scripts/qa_links.py"]
+32:skip = ["v8_restructure"]
+$ docxkit revision init Report/HCW_v14.docx --root . --force
+scaffolded .../revision
+$ grep -n "commands|skip|carry" revision/paper.toml
+26:commands = []
+```
+
+Exit 0. No warning, no backup, nothing in the output naming what went.
+
+**Mechanism.** `init` writes the config unconditionally from
+`_TOML_TEMPLATE` (`revision.py:2030`), and the template has parameters for
+`name`, `language`, `working`, `author`, `rescue_keep`, `gates` and `attic`
+and **no representation at all** for `[batch] carry`, `[doctor] skip`, a
+non-default `prev`, or any section a paper has added for its own tooling. A
+forced re-init therefore cannot round-trip them even in principle: `gates` is
+passed as `""` by `init`, and the rest have nowhere to go.
+
+**Why S1 rather than S2.** The command reports success and leaves the paper
+in a state where a LATER command does the wrong thing silently. The blast
+radius is every paper on the protocol — all nine carry something the template
+cannot express:
+
+| paper | would be destroyed |
+|---|---|
+| Aging_Well | `carry = ["word/footer3.xml"]` |
+| AFI, HCW | 2 gates each |
+| HPPA_Index, Life_expectancy_trends | 1 gate each |
+| Life_Expectancy | 2 gates + `[deliverable]` `[analysis]` `[git]` |
+| Loneliness Index | 6 gates + `[deliverable]` `[analysis]` `[git]` |
+| Parental_style | 3 gates + `[analysis]` `[git]` |
+| DSI | 1 gate + `[git]` |
+
+Two of those are load-bearing beyond "a list got shorter".
+
+* **Aging_Well's `carry` line is the fix for a shipped defect.** Word's
+  Compare drops `word/footer3.xml` — the first-page footer — on every rebuild
+  of that manuscript, along with `docProps/custom.xml`, which on a World Bank
+  paper holds the MSIP sensitivity label and the "Official Use Only" content
+  marking. That paper's log records a promote that shipped an unlabelled
+  manuscript with every gate green, and `[batch] carry` is what closed it.
+  Dropping the key puts the paper back in the state the defect was filed for,
+  and no gate looks at whether the key is still there.
+* **LI7's `[git] repo = ""`** records that the project root is NOT under
+  version control and that the attic plus the safekit vault are the paper's
+  only history. A config rewrite deletes the note that says recovery is not
+  available.
+
+**Repro.**
+
+```python
+from docxkit.revision import init, load_paper
+paper = init(root, source)                      # any paper
+cfg = paper.config
+cfg.write_text(cfg.read_text() + '\n[batch]\ncarry = ["word/footer3.xml"]\n')
+init(root, source, force=True)                  # exit 0
+assert load_paper(root).carry == ()             # passes: the key is gone
+```
+
+**Shape of a fix.** `--force` is reached for exactly when a config needs
+correcting, which is when the rest of it must survive. Three options, in the
+order I would try them:
+
+1. **Merge rather than rewrite.** Read the existing TOML, replace only the
+   keys `init` is being asked to change, write the rest back. Needs a
+   round-tripping writer (or a line-level edit of the keys it owns) because
+   `tomllib` is read-only and re-emitting from a parsed dict loses every
+   comment — and the comments in these files are half their value.
+2. **Refuse when the config carries anything the template cannot express**,
+   naming the keys, and tell the caller to edit the file by hand. Cheap,
+   honest, and it cannot lose anything.
+3. At minimum, `package.backup(config, tag="pre_init_force")` before the
+   write, and print the path — the pattern `baseline --repair-math` and
+   `refstyle --fix` already follow.
+
+(2) is the smallest correct thing and (1) is what a user would want; both are
+better than the current silence. Whichever lands, the test is: a config
+carrying `carry`, `[doctor] skip` and an unknown section survives
+`init(..., force=True)` byte-for-byte apart from the keys asked to change.
+
+**What changed.** Option (1), the merge — `--force` is reached for when a
+config needs correcting, and a refusal would have left the flag useless on
+all nine papers, every one of which carries something the template cannot
+express.
+
+* `_set_key(text, section, key, value)` edits ONE key in place. A line
+  editor, not a TOML round-trip: `tomllib` reads and does not write, and
+  re-emitting a parsed document drops every comment — and the comments are
+  half of what these files are for. A missing key is inserted under its
+  section header, a missing section is appended, the trailing comment on a
+  rewritten line survives, a `#` inside a quoted value is not read as one,
+  and a value that opens a bracket is REFUSED rather than mangled (the one
+  array in the template, `[verify] commands`, belongs to the paper).
+* `init` now merges on an existing config and writes the template only when
+  creating one. The keys it rewrites are the ones it was GIVEN, which is why
+  `author` and `language` no longer default to "Revision" and "en": on a
+  rewrite there is no way to tell a caller who means "en" from one who said
+  nothing, and the paper spelling its author "Revision Agent" would lose it
+  to a default nobody typed. The defaults apply to a NEW config.
+* `package.backup(config, tag="pre_init")` before the write; the CLI names
+  the copy.
+* **`log.md` and `prev.docx` are never rewritten** — `or force` is gone from
+  both. One is the paper's batch history and the other is its baseline, and
+  neither was this function's to reset. That half of the defect was found
+  while measuring the first: on a paper with two rounds behind it the batch
+  table went 3 rows -> 1 and the baseline was re-seeded to the CURRENT
+  manuscript, which would have left every later reject-all measuring against
+  the wrong generation.
+
+Verified on a scratch paper carrying two gates, a `carry` line, a `[git]`
+section and a batch row: after `init --force --name "..."` all four survive
+byte-identical, the name changed, the unpassed author did not, and
+`paper_pre_init1.toml` sits beside the config. Tests:
+`test_init_FORCE_keeps_everything_the_paper_declared`,
+`test_init_FORCE_repoints_the_manuscript`, and five unit tests on `_set_key`
+(insert, append, comment survival, `#` inside a value, multi-line refusal).
+Reverting the fix turns the first red.
+
+---
+
+### ~~S2 `build` never checked that the baseline is the generation the manuscript grew out of, so the refusal arrived one Word Compare late~~ — FIXED 23.08
+
+Found 2026-08-23 in the same protocol review as the entry above, and the
+code had already written the finding down: `drift`'s docstring says *"A batch
+built then is built on a stale base, and nothing says so until `promote`
+refuses on a hash mismatch, after a Word Compare has been paid for."*
+Nothing called it.
+
+**The shape.** `build` checked that `prev.docx` carries no pending revisions
+(`revision.py:705`) and not that it is the right generation at all. After an
+accept in Word both files read 0 pending while their content has diverged, so
+the redline built on that baseline presents the AUTHOR's own edits as the
+agent's proposals. Nothing is destroyed — `promote` refuses on the hash — but
+the cost is a full Word Compare plus a reader spending the round trying to
+make sense of a redline about the wrong pair.
+
+**Fix.** `build` calls `drift(paper.working, paper.prev)` before anything
+else and raises `StaleBatch` naming the parts that moved and the two commands
+that resolve it. `allow_stale_baseline=True` overrides it;
+`allow_pending_baseline` implies it, because a baseline that legitimately
+carries a proposal cannot match a clean manuscript — refusing the second
+after being told about the first is a gate arguing with its own override.
+
+Measured end to end: the refusal now lands in **0.29 s, exit 4, with Word
+never launched**. Compared by MEANING (`part_fingerprint`) rather than by
+bytes, so a Word re-save that re-mints rsids is not drift — the hash guard in
+`promote` cannot make that distinction, which is why this gate is `drift` and
+not a digest. Tests:
+`test_build_refuses_a_baseline_the_manuscript_has_OUTGROWN`,
+`test_a_WORD_RESAVE_of_the_manuscript_is_not_a_stale_baseline`,
+`test_the_stale_baseline_refusal_can_be_overridden`.
+
+Three existing fixtures wrote a baseline their manuscript had never grown out
+of and went red on the new gate. They were re-pointed rather than exempted:
+at build time in the real cycle the two files hold the same content, and a
+fixture that could not happen is a fixture testing a state the tool will now
+refuse.
+
+---
+
 
 ### ~~S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it~~ — FIXED 23.08
 

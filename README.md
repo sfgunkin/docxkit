@@ -74,7 +74,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
 | `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included |
 | `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |
-| `revision` | the single-file protocol: one `working.docx`, two states read off the file itself, and the gate ladder between a proposal and the truth |
+| `revision` | the single-file protocol: one manuscript — the author's own file, named in `paper.toml` — two states read off the file itself, and the gate ladder between a proposal and the truth |
 | `cli` | the `docxkit` command line — the one-off jobs, without a throwaway script |
 | `_cite_grammar` / `_cite_audit` / `_cite_build` / `_cite_repair` | internal: the citation apparatus in four layers — what a citation LOOKS like, what is WRONG with a document's, how to BUILD the links, and the bookmark/hyperlink surgery each repair is made of. `citations` is the facade |
 | `_table_core` / `_table_layout` | internal: reading a manuscript table and rewriting its VALUES, and measuring one to set how it LOOKS. They share the `Table` type and nothing else; `tables` is the facade |
@@ -108,18 +108,21 @@ docxkit pages PAPER.docx [--sheets] [--check]
 docxkit verify PAPER.docx                  # does Word read this back unchanged?
 ```
 
-The single-file protocol has a family of its own — one `working.docx`,
-two recorded states, and a gate ladder between them:
+The single-file protocol has a family of its own — one manuscript, two
+recorded states, and a gate ladder between them. `init` adopts the
+author's file where it is, under its own name; `revision/` beside it
+holds the machinery, and `paper.toml` is the one line that says which
+file is the paper:
 
 ```
-docxkit revision init MANUSCRIPT.docx      # scaffold the layout
+docxkit revision init MANUSCRIPT.docx      # scaffold around it, in place
 docxkit revision status                    # truth or proposal? (1 pending, 4 stale)
 docxkit revision doctor                    # who else in the repo selects a manuscript
 docxkit revision ingest [--check] [--json R.json]   # what the author changed
 docxkit revision build                     # clean edit -> redline, via Word Compare
 docxkit revision validate [BATCH] [--no-word] [--render ANCHOR...]
 docxkit revision ship REVISED.docx          # both, in one Word session
-docxkit revision promote                   # put a validated batch on working.docx
+docxkit revision promote                   # put a validated batch on the paper
 docxkit revision baseline                  # the author accepted: record the truth
 docxkit revision rescues                   # the undo copies promote leaves behind
 ```

@@ -165,7 +165,8 @@ def test_anything_state_counts_is_something_the_simulator_applies(kind, view):
 
 def _scaffold(tmp_path, body: str):
     """A migrated project whose working.docx holds `body`."""
-    src = write(tmp_path / "src.docx", make_parts(body))
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "src.docx", make_parts(body))
     paper = revision.init(tmp_path / "proj", src, name="Test Paper",
                           author="Agent", attic=tmp_path / "attic")
     paper.prev.unlink(missing_ok=True)      # init seeds one; start clean

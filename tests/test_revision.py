@@ -46,6 +46,7 @@ from docxkit.errors import (
 from docxkit.revision import (
     _link_changes,
     _selects_declared,
+    _set_key,
     glyph_runs,
     losses,
     moved_footnotes,
@@ -76,8 +77,11 @@ def footnotes_part(body: str) -> str:
 
 @pytest.fixture
 def project(tmp_path):
-    """A migrated paper: working.docx, an identical prev.docx, config."""
-    src = write(tmp_path / "manuscript.docx",
+    """A migrated paper: the author's own file, an identical prev.docx,
+    config. The manuscript sits IN the project and keeps its name —
+    `init` adopts it in place and copies nothing."""
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "manuscript.docx",
                 make_parts(para(run("The paper as it stands."))))
     return revision.init(tmp_path / "proj", src, name="Test Paper",
                          author="Agent", attic=tmp_path / "attic")
@@ -85,14 +89,28 @@ def project(tmp_path):
 
 # ------------------------------------------------------------ config
 
-def test_init_copies_rather_than_moves(tmp_path):
-    """A migration must be abandonable by deleting one folder."""
-    src = Path(write(tmp_path / "ps5_r2.docx",
-                     make_parts(para(run("body")))))
-    paper = revision.init(tmp_path / "proj", src)
+def test_init_adopts_the_manuscript_IN_PLACE(tmp_path):
+    """The author's file IS the working file: same name, same folder.
 
-    assert src.exists(), "the original manuscript was moved, not copied"
-    assert paper.working.read_bytes() == src.read_bytes()
+    The first shape of this protocol copied every paper to
+    `revision/working.docx`, and with nine papers on it nothing in
+    Explorer or the Word title bar said which project was open (author,
+    2026-08-23). The copy also outlived its purpose — the original was
+    never read again, and retiring it was a step nobody performed.
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    src = Path(write(proj / "ps5_r2.docx", make_parts(para(run("body")))))
+    paper = revision.init(proj, src)
+
+    assert paper.working == src, "the manuscript was copied, not adopted"
+    assert src.exists()
+    assert list(proj.glob("*.docx")) == [src], "a second copy was made"
+    assert not (proj / "revision" / "working.docx").exists()
+    # and the config says so, relative to the root so the project stays
+    # movable
+    assert 'working  = "ps5_r2.docx"' in \
+        paper.config.read_text(encoding="utf-8")
     # the baseline is seeded from the same bytes: at migration time the
     # manuscript IS the last accepted truth
     assert paper.prev.read_bytes() == src.read_bytes()
@@ -115,6 +133,169 @@ def test_init_refuses_to_overwrite_a_live_configuration(project):
 def test_init_missing_manuscript(tmp_path):
     with pytest.raises(ProtocolError):
         revision.init(tmp_path / "proj", tmp_path / "nope.docx")
+
+
+def test_init_can_be_given_a_name_and_then_it_COPIES(tmp_path):
+    """`working=`: the author asked for the manuscript somewhere else.
+
+    That is the old migration shape, and it now has to be asked for —
+    the source is left where it was and nothing reads it again, which
+    the CLI says out loud.
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    src = Path(write(proj / "draft.docx", make_parts(para(run("body")))))
+
+    paper = revision.init(proj, src, working="Report/HCW.docx")
+
+    assert paper.working == proj / "Report" / "HCW.docx"
+    assert paper.working.read_bytes() == src.read_bytes()
+    assert src.exists(), "the source was moved, not copied"
+    assert 'working  = "Report/HCW.docx"' in \
+        paper.config.read_text(encoding="utf-8")
+
+
+def _lived_in(paper) -> None:
+    """Everything a paper accumulates that `init` never put there."""
+    cfg = paper.config
+    text = cfg.read_text(encoding="utf-8").replace(
+        "commands = []",
+        'commands = [\n  "pytest tests/",   # the acceptance suite\n'
+        '  "python scripts/qa_links.py",\n]')
+    text = text.replace(
+        f"rescue_keep = {revision.RESCUE_KEEP}",
+        f'rescue_keep = {revision.RESCUE_KEEP}\n'
+        f'carry = ["word/footer3.xml"]', 1)
+    text += ('\n[doctor]\nskip = ["v8_restructure"]\n'
+             '\n[git]\nrepo = ""   # NOT under version control: the attic\n'
+             "            # is this paper's only history\n")
+    cfg.write_text(text, encoding="utf-8")
+    log = paper.root / "revision" / "log.md"
+    log.write_text(log.read_text(encoding="utf-8")
+                   + "| 2026-08-20 | R14 | 31 revs | green | accepted |\n",
+                   encoding="utf-8")
+
+
+def test_init_FORCE_keeps_everything_the_paper_declared(tmp_path):
+    """`--force` is reached for when a config needs correcting, which is
+    exactly when the rest of it has to survive.
+
+    It used to rewrite the config from the template, the log from the
+    template and prev.docx from the live file. Measured 2026-08-23 on a
+    paper with two rounds behind it: the batch table went 3 rows -> 1,
+    the baseline was re-seeded to the CURRENT manuscript, and the config
+    came back with `commands = []` and no `[doctor]` at all — exit 0, no
+    warning, no backup. Every live paper carried something the template
+    cannot express, and Aging_Well's `carry = ["word/footer3.xml"]` is
+    the fix for a promote that once shipped a manuscript without its
+    sensitivity label.
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    src = Path(write(proj / "HCW_v14.docx", make_parts(para(run("body")))))
+    paper = revision.init(proj, src, author="Revision Agent")
+    _lived_in(paper)
+    # the live file moves on, so a re-seeded baseline would be visible
+    write(src, make_parts(para(run("two rounds later"))))
+    before_log = (proj / "revision" / "log.md").read_text(encoding="utf-8")
+    before_prev = paper.prev.read_bytes()
+
+    again = revision.init(proj, src, name="Renamed", force=True)
+
+    text = again.config.read_text(encoding="utf-8")
+    assert again.carry == ("word/footer3.xml",), text
+    assert again.gates == ("pytest tests/", "python scripts/qa_links.py")
+    assert again.doctor_skip == ("v8_restructure",)
+    assert "[git]" in text and "only history" in text, "a section was dropped"
+    assert "# the acceptance suite" in text, "a comment was dropped"
+    # what was asked for DID change, and what was not did not
+    assert again.name == "Renamed"
+    assert again.author == "Revision Agent", "an unpassed default overwrote it"
+    # the paper's history and its baseline are not this function's to reset
+    assert (proj / "revision" / "log.md").read_text(encoding="utf-8") \
+        == before_log
+    assert again.prev.read_bytes() == before_prev
+    # and the config it replaced is beside it
+    assert list((proj / "revision").glob("paper_pre_init*.toml"))
+
+
+def test_init_FORCE_repoints_the_manuscript(tmp_path):
+    """The reason to force a re-init: the paper moved or was renamed."""
+    proj = tmp_path / "proj"
+    (proj / "Report").mkdir(parents=True)
+    src = Path(write(proj / "old.docx", make_parts(para(run("body")))))
+    revision.init(proj, src)
+    moved = proj / "Report" / "HCW_v15.docx"
+    src.rename(moved)
+
+    again = revision.init(proj, moved, force=True)
+
+    assert again.working == moved
+    assert 'working  = "Report/HCW_v15.docx"' in \
+        again.config.read_text(encoding="utf-8")
+
+
+def test_a_key_the_config_does_not_have_yet_is_INSERTED():
+    """A config predating a key still has to receive it: `_set_key`
+    inserts under the section header rather than reporting success and
+    writing nothing."""
+    text = '[paper]\nname = "P"\n\n[batch]\nauthor = "A"\n'
+
+    out = _set_key(text, "paper", "working", '"Report/P.docx"')
+
+    assert 'working = "Report/P.docx"' in out
+    assert out.index("working") < out.index("[batch]"), "landed in [batch]"
+    assert 'name = "P"' in out and 'author = "A"' in out
+
+
+def test_a_section_the_config_does_not_have_yet_is_APPENDED():
+    out = _set_key('[paper]\nname = "P"\n', "attic", "path", '"D:/A"')
+
+    assert out.startswith('[paper]\nname = "P"\n')
+    assert out.rstrip().endswith('[attic]\npath = "D:/A"')
+
+
+def test_the_comment_on_a_rewritten_key_SURVIVES():
+    """These lines explain themselves, and the explanation is as much
+    the file's content as the value is."""
+    text = '[paper]\nworking  = "old.docx"   # THE paper; edited here only\n'
+
+    out = _set_key(text, "paper", "working", '"new.docx"')
+
+    assert "# THE paper; edited here only" in out
+    assert '"old.docx"' not in out
+
+
+def test_a_HASH_inside_the_value_is_not_read_as_a_comment():
+    text = '[paper]\nname = "R#3 draft"\n'
+
+    out = _set_key(text, "paper", "language", '"ru"')
+
+    assert '"R#3 draft"' in out, out
+
+
+def test_a_MULTI_LINE_value_is_refused_rather_than_mangled():
+    """The one array in the template belongs to the paper. Rewriting its
+    first line would leave the rest dangling as TOML nothing can parse,
+    and a config that no longer loads is worse than one not updated."""
+    text = '[verify]\ncommands = [\n  "pytest",\n]\n'
+
+    with pytest.raises(ProtocolError, match="spans several lines"):
+        _set_key(text, "verify", "commands", '"x"')
+
+
+def test_init_refuses_a_manuscript_OUTSIDE_the_project(tmp_path):
+    """Adopting in place means the paper is in the project: every
+    command finds `paper.toml` by walking up from where it is started,
+    including from the manuscript itself."""
+    src = Path(write(tmp_path / "loose.docx", make_parts(para(run("b")))))
+
+    with pytest.raises(ProtocolError, match="not inside"):
+        revision.init(tmp_path / "proj", src)
+
+    # and naming a destination inside the project is the way through
+    paper = revision.init(tmp_path / "proj", src, working="paper.docx")
+    assert paper.working == (tmp_path / "proj" / "paper.docx")
 
 
 def test_config_is_found_from_anywhere_below(project):
@@ -404,7 +585,8 @@ def test_a_DECLARED_loss_that_did_not_happen_is_itself_refused(project):
 def test_a_first_baseline_with_no_prev_is_not_blocked(tmp_path):
     """`init` seeds prev from working, but a paper that has lost its
     build/ directory must still be able to record a truth."""
-    src = write(tmp_path / "m.docx", make_parts(para(run("body"))))
+    (tmp_path / "p2").mkdir()
+    src = write(tmp_path / "p2" / "m.docx", make_parts(para(run("body"))))
     paper = revision.init(tmp_path / "p2", src)
     paper.prev.unlink()
     assert revision.baseline(paper) == paper.prev
@@ -434,6 +616,57 @@ class _FakeBuild:
         # to be a grep over it
         report.math_resolved = self.math
         return report
+
+
+def test_build_refuses_a_baseline_the_manuscript_has_OUTGROWN(project):
+    """`drift`, at the top of `build` instead of at `promote`.
+
+    After an accept in Word both files read 0 pending while their
+    content has diverged, so a redline built then presents the AUTHOR's
+    own edits as the agent's proposals. `promote` refuses it on the
+    hash — one Word Compare later, and after a reader has spent the
+    round trying to make sense of a redline about the wrong pair.
+    `drift`'s own docstring named this gap and nothing closed it.
+    """
+    write(project.working, make_parts(para(run("the author moved on"))))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("a proposed edit"))))
+
+    with pytest.raises(StaleBatch, match="grew out of") as exc:
+        revision.build(project, clean)
+
+    assert "revision ingest" in str(exc.value)
+    assert "revision baseline" in str(exc.value)
+    assert "word/document.xml" in str(exc.value), "which part moved"
+
+
+def test_the_stale_baseline_refusal_can_be_overridden(project, monkeypatch):
+    """`allow_stale_baseline`, and almost nothing should pass it."""
+    write(project.working, make_parts(para(run("the author moved on"))))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    revision.build(project, clean, allow_stale_baseline=True)
+
+
+def test_a_WORD_RESAVE_of_the_manuscript_is_not_a_stale_baseline(
+        project, monkeypatch):
+    """Compared by MEANING, not by bytes: a Word round-trip re-mints the
+    rsids in every part it touches, and a refusal that fires on all of
+    them is one nobody reads. `promote`'s hash guard cannot make that
+    distinction, which is why this gate is `drift` and not a digest."""
+    parts = package.read_parts(project.working)
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "<w:p " in doc
+    parts["word/document.xml"] = doc.replace(
+        "<w:p ", '<w:p w:rsidR="00AB12CD" ').encode("utf-8")
+    package.write_docx(project.working, parts)
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    revision.build(project, clean)          # must not raise StaleBatch
 
 
 def test_build_refuses_a_baseline_with_pending_revisions(project,
@@ -498,7 +731,9 @@ def test_build_names_the_paragraphs_compare_left_untracked(project,
     read "7 revisions, 6 of them in the body" — all six of them two
     word-swaps in an unrelated paragraph (Parental Style 2026-08-10).
     Said BEFORE the handback, not after gate 5 fails."""
-    write(project.prev, make_parts(para(run("the baseline sentence"))))
+    base = make_parts(para(run("the baseline sentence")))
+    write(project.prev, base)
+    write(project.working, base)        # at build time the two agree
     monkeypatch.setattr(revision.tracked, "build",
                         _FakeBuild(out_text="a rewritten sentence"))
     seen: list[str] = []
@@ -511,7 +746,9 @@ def test_build_names_the_paragraphs_compare_left_untracked(project,
 
 def test_a_faithfully_tracked_build_says_nothing_about_untracking(
         project, monkeypatch):
-    write(project.prev, make_parts(para(run("built"))))
+    base = make_parts(para(run("built")))
+    write(project.prev, base)
+    write(project.working, base)        # at build time the two agree
     monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
     seen: list[str] = []
     revision.build(project, project.working, progress=seen.append)
@@ -789,7 +1026,8 @@ def test_rescues_are_stamped_not_numbered(project):
     first FREE number, so pruning 1-3 makes the next promote write a new
     file called _rescue1, older than the _rescue5 beside it."""
     stamped = revision.rescue_path(project, datetime(2026, 8, 7, 21, 54, 3))
-    assert stamped.name == "working_rescue_20260807-215403-000000.docx"
+    assert stamped.name == (f"{project.working.stem}_rescue_"
+                            f"20260807-215403-000000.docx")
 
 
 def test_same_moment_names_keep_their_order(project):
@@ -1573,7 +1811,9 @@ def test_build_says_which_bookmark_compare_put_back(project, monkeypatch):
     can still be told the deletion has to wait for the promote."""
     marked = ('<w:bookmarkStart w:id="4" w:name="Lari2023"/>'
               '<w:bookmarkEnd w:id="4"/>')
-    write(project.prev, make_parts(para(marked + run("Lari, A. (2023)."))))
+    base = make_parts(para(marked + run("Lari, A. (2023).")))
+    write(project.prev, base)
+    write(project.working, base)        # at build time the two agree
     clean = project.build_dir / "clean.docx"
     write(clean, make_parts(para(run("Lari, A. (2023)."))))
     # the fake stands in for Compare, and Compare's behaviour here IS
@@ -1739,7 +1979,8 @@ def test_a_config_at_the_project_ROOT_roots_where_it_stands(tmp_path):
     same as equality there. This layout is where the accident runs
     out — the root comes back as the directory ABOVE the project, and
     every path in the config resolves outside it."""
-    src = write(tmp_path / "manuscript.docx",
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "manuscript.docx",
                 make_parts(para(run("The paper."))))
     paper = revision.init(tmp_path / "proj", src)
     assert paper.config.parent.name == "revision", "the default layout"
@@ -2534,17 +2775,17 @@ def migrated(tmp_path):
 
 
 @pytest.mark.parametrize("declared", [
-    "revision/*.docx",          # relative: `Path.match` reads from the right
-    "**/working.docx",
-    "/revision/*.docx",         # ROOTED: only the "**/" reading finds it
-    "/revision/working.docx",
+    "Report/*.docx",            # relative: `Path.match` reads from the right
+    "**/afi_v14.docx",
+    "/Report/*.docx",           # ROOTED: only the "**/" reading finds it
+    "/Report/afi_v14.docx",
 ])
 def test_a_GLOB_selects_the_manuscript_by_either_reading(declared, migrated):
     """`target.match(text) or target.match(f"**/{text}")` — two ways of
     asking whether a pattern reaches the paper.
 
     A relative pattern is matched from the right, so the first reading
-    answers it; a ROOTED one ("/revision/*.docx", which is how a config
+    answers it; a ROOTED one ("/Report/*.docx", which is how a config
     written against the repository root spells it) is absolute to
     `Path.match` and matches nothing, and only the stripped-and-prefixed
     form finds the file. Read as `and`, every rooted declaration goes
@@ -2557,13 +2798,13 @@ def test_a_GLOB_selects_the_manuscript_by_either_reading(declared, migrated):
 def test_a_declaration_naming_ANOTHER_file_is_not_the_manuscript(
         migrated):
     """`candidate.name != target.name`, and the skip it guards. Read as
-    `<`, every declared name that sorts ABOVE "working.docx" falls
+    `<`, every declared name that sorts ABOVE the manuscript's falls
     through to the bare-name branch and is reported as selecting the
     paper — `zzz_appendix.docx` and half the alphabet with it. A doctor
     that names innocent files is one nobody reads twice."""
     assert _selects_declared("zzz_appendix.docx", migrated) is False
     assert _selects_declared("aaa_appendix.docx", migrated) is False
-    assert _selects_declared("working.docx", migrated) is True
+    assert _selects_declared("afi_v14.docx", migrated) is True
 
 
 def test_state_counts_an_ENDNOTE_when_the_paper_has_no_footnotes():
@@ -2642,7 +2883,8 @@ def test_baseline_creates_a_build_directory_SEVERAL_LEVELS_down(tmp_path):
     baseline deeper than the default gets a path with no intermediate
     directory on disk — and `parents=False` is a FileNotFoundError on
     the first baseline of a fresh project."""
-    src = write(tmp_path / "manuscript.docx",
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "manuscript.docx",
                 make_parts(para(run("The paper."))))
     paper = revision.init(tmp_path / "proj", src)
     config = paper.config.read_text(encoding="utf-8")
@@ -2702,7 +2944,8 @@ _EQ = "<w:p><m:oMath><m:r><m:t>{}</m:t></m:r></m:oMath></w:p>"
 
 def _paper_at(tmp_path, prev, work):
     """A migrated paper whose baseline and hand-back are these parts."""
-    src = write(tmp_path / "m.docx", prev)
+    (tmp_path / "proj").mkdir(exist_ok=True)
+    src = write(tmp_path / "proj" / "m.docx", prev)
     paper = revision.init(tmp_path / "proj", src, attic=tmp_path / "attic")
     write(paper.working, work)
     return paper

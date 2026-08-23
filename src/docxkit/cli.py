@@ -36,7 +36,7 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision promote [BATCH.docx]
     docxkit revision baseline [--force] [--accept-loss A,...]
     docxkit revision rescues [--prune KEEP]
-    docxkit revision init PAPER.docx [--root DIR] [--name NAME]
+    docxkit revision init PAPER.docx [--root DIR] [--name NAME] [--working P]
 """
 from __future__ import annotations
 
@@ -1055,10 +1055,10 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     stale = drift(paper.working, paper.prev) if st.is_truth else []
     if stale:
         print(f"\n  ** baseline STALE: {_summarize(stale)} differ(s) **")
-        print("     Both files count 0 pending, and they are not the same "
-              "paper -\n     prev.docx is not what working.docx grew out "
-              "of. Building a batch\n     on it compares against the wrong "
-              "base. First:\n"
+        print(f"     Both files count 0 pending, and they are not the same "
+              f"paper -\n     prev.docx is not what {paper.working.name} "
+              f"grew out of. Building a batch\n     on it compares against "
+              f"the wrong base. First:\n"
               "       docxkit revision ingest     (what changed, read-only)"
               "\n       docxkit revision baseline   (record it as the new "
               "truth)")
@@ -1129,7 +1129,8 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
         if len(items) > 12:
             print(f"    ... and {len(items) - 12} more")
     if report.untouched:
-        print("   no differences - working.docx is still the baseline")
+        print(f"   no differences - {paper.working.name} is still the "
+              f"baseline")
 
     print("\n== package ==")
     if report.added:
@@ -1185,6 +1186,7 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
     report = build(paper, args.revised, args.out,
                    allow_math_resolve=args.allow_math_resolve,
                    allow_pending_baseline=args.allow_pending_baseline,
+                   allow_stale_baseline=args.allow_stale_baseline,
                    resolve_math=not args.keep_math,
                    force=args.force,
                    progress=lambda line: print("   ", line))
@@ -1287,7 +1289,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
             print(f"   LOST {part}")
         print("   Word's Compare rebuilds rather than annotates and drops "
               "what it will not carry; promote would copy this batch over "
-              "working.docx, so the part goes with it. Restore it with "
+              "the manuscript, so the part goes with it. Restore it with "
               "docxkit.hygiene.restore_parts and rebuild.")
     if report.reject_matches_baseline is not None:
         verdict = "OK" if report.reject_matches_baseline else "MISMATCH"
@@ -1336,7 +1338,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_revision_promote(args: argparse.Namespace) -> int:
-    """Put a validated batch onto working.docx, lock- and hash-guarded."""
+    """Put a validated batch onto the manuscript, lock- and hash-guarded."""
     from .revision import promote
     paper = _paper(args)
     report = promote(paper, args.batch, args.base)
@@ -1346,8 +1348,8 @@ def cmd_revision_promote(args: argparse.Namespace) -> int:
     if report.pruned:
         print(f"pruned {len(report.pruned)} older rescue(s), keeping "
               f"{paper.rescue_keep}")
-    print("\nworking.docx is now a PROPOSAL. The author adjudicates it in "
-          "Word;\nthis tool never accepts on their behalf.")
+    print(f"\n{report.onto.name} is now a PROPOSAL. The author adjudicates "
+          f"it in Word;\nthis tool never accepts on their behalf.")
     return 0
 
 
@@ -1372,7 +1374,7 @@ def cmd_revision_rescues(args: argparse.Namespace) -> int:
 
 
 def cmd_revision_baseline(args: argparse.Namespace) -> int:
-    """The author accepted: record working.docx as the new truth."""
+    """The author accepted: record the manuscript as the new truth."""
     from .revision import baseline
     paper = _paper(args)
     accepted = tuple(t.strip() for t in args.accept_loss.split(",")
@@ -1387,15 +1389,44 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
 
 def cmd_revision_init(args: argparse.Namespace) -> int:
     """Scaffold the layout around a manuscript that has not migrated."""
-    from .revision import init
-    paper = init(args.root or Path(args.source).resolve().parent,
-                 args.source, name=args.name or "", author=args.author,
+    from .revision import _CONFIG, _DIR, init
+    source = Path(args.source).resolve()
+    root = Path(args.root).resolve() if args.root else source.parent
+    # Asked BEFORE the call: afterwards the config exists either way, and
+    # what a reader needs to know is which of the two things happened.
+    rewrite = (root / _DIR / _CONFIG).is_file()
+    paper = init(root, args.source, working=args.working or "",
+                 name=args.name or "", author=args.author,
                  language=args.language, attic=args.attic, force=args.force)
+    adopted = paper.working == source
+
+    if rewrite:
+        kept = paper.config.parent
+        saved = sorted((kept.glob(f"{paper.config.stem}_pre_init*"
+                                  f"{paper.config.suffix}")),
+                       key=lambda p: p.stat().st_mtime)
+        print(f"updated {paper.config}")
+        print(f"  the paper   : {paper.working}")
+        print("  only the keys you gave were rewritten; every other key, "
+              "section\n  and comment is unchanged, and log.md and "
+              "build/prev.docx were not\n  touched — they are the paper's "
+              "history and its baseline.")
+        if saved:
+            print(f"  previous config: {saved[-1].name}")
+        return 0
+
     print(f"scaffolded {paper.config.parent}")
-    print(f"  working.docx  <- {Path(args.source).name}")
+    print(f"  the paper   : {paper.working}"
+          f"{'  (adopted in place — not copied)' if adopted else ''}")
     print("  build/prev.docx (baseline, same bytes)")
-    print("\nNothing was moved or deleted. Retire the old filename only "
-          "after\nthe paper's own gates pass against working.docx.")
+    if adopted:
+        print("\nYour file keeps its name and its folder; revision/ holds the "
+              "machinery\nonly. paper.toml is the one line that says where "
+              "the paper is.")
+        return 0
+    print(f"\n{source.name} was COPIED, not moved: it is still in "
+          f"{source.parent}\nand nothing reads it any more. Retire it to the "
+          "record once the paper's\nown gates pass against the new location.")
     return 0
 
 
@@ -1662,7 +1693,7 @@ def main() -> None:
 
     p = sub.add_parser(
         "revision",
-        help="the single-file protocol: one working.docx, two states")
+        help="the single-file protocol: one manuscript, two states")
     rev = p.add_subparsers(dest="rcmd", required=True)
 
     def _rev(name: str, fn: object, help_: str) -> argparse.ArgumentParser:
@@ -1703,6 +1734,10 @@ def main() -> None:
     r.add_argument("--allow-math-resolve", action="store_true",
                    help="ship equations Word baked in unreviewable "
                         "(they almost never are meant to be)")
+    r.add_argument("--allow-stale-baseline", action="store_true",
+                   help="build even though prev.docx is no longer what the "
+                        "manuscript grew out of (the redline would show the "
+                        "author's own edits as proposals)")
     # The other answer to the same refusal, and the better one: keep the
     # equation revisions TRACKED instead of accepting them. Measured on
     # LI7 (2026-08-15) — the Flat OPC route serialized 1870 revisions
@@ -1742,19 +1777,23 @@ def main() -> None:
     r.add_argument("--allow-math-resolve", action="store_true")
     r.add_argument("--keep-math", action="store_true")
     r.add_argument("--allow-pending-baseline", action="store_true")
+    # `ship` re-declares `build`'s flags rather than sharing them, so a
+    # flag added to one and not the other is an AttributeError on every
+    # ship — which is how this line came to be written.
+    r.add_argument("--allow-stale-baseline", action="store_true")
     r.add_argument("--force", action="store_true")
     r.add_argument("--no-word", action="store_true",
                    help="offline gates only for the validate half")
     r.add_argument("--render", metavar="ANCHOR", nargs="+", default=[])
 
     r = _rev("promote", cmd_revision_promote,
-             "put a validated batch onto working.docx")
+             "put a validated batch onto the manuscript")
     r.add_argument("batch", nargs="?")
     r.add_argument("--base", metavar="PATH",
                    help="the baseline the batch was built on")
 
     r = _rev("baseline", cmd_revision_baseline,
-             "the author accepted: record working.docx as the new truth")
+             "the author accepted: record the manuscript as the new truth")
     r.add_argument("--force", action="store_true",
                    help="adopt a file that still carries revisions "
                         "(migration only)")
@@ -1776,10 +1815,16 @@ def main() -> None:
     r.add_argument("source", help="the paper as it stands today")
     r.add_argument("--root", metavar="DIR",
                    help="project root (default: the manuscript's folder)")
+    r.add_argument("--working", metavar="PATH",
+                   help="copy the manuscript here and revise THAT (default: "
+                        "adopt the author's file in place, under its own "
+                        "name)")
     r.add_argument("--name", metavar="NAME")
-    r.add_argument("--author", default="Revision", metavar="NAME",
-                   help="who tracked changes are credited to")
-    r.add_argument("--language", default="en", metavar="XX")
+    r.add_argument("--author", default="", metavar="NAME",
+                   help="who tracked changes are credited to "
+                        "(new config: Revision)")
+    r.add_argument("--language", default="", metavar="XX",
+                   help="new config: en")
     r.add_argument("--attic", metavar="PATH",
                    help="where retired snapshots go")
     r.add_argument("--force", action="store_true",
