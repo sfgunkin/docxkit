@@ -17,7 +17,209 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-**NOTHING IS OPEN, as of 2026-08-23.** The three that were — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry
+### S1 — `compare` does not compare `word/media/` AT ALL: a figure replaced, corrupted or DELETED is reported as zero changes
+
+Found on HCW, 2026-08-23, during T12.2 — a task whose entire deliverable was
+four replaced images.
+
+**Symptom as observed.** `docxkit compare A B` where B differs from A only in
+`word/media/` prints
+
+```
+REAL change locations (excl. glyph): 0   |   glyph-only: 0   |   ...
+```
+
+for all three of these:
+
+* **replaced** — Figure 8.a's PNG swapped for Figure 1's, a completely
+  different chart;
+* **corrupted** — the part overwritten with a 48-byte stub that is not a
+  valid image;
+* **deleted** — the part removed from the package outright.
+
+`--json` carries no media information either: the report's keys are
+`structure, text, glyph, formula, formula_glyph, formula_format, format,
+hyperlinks, integrity, stripped_fields, comments`, and the string "media"
+does not occur anywhere in the output.
+
+**Why S1 and not S2.** The STRUCTURE layer's own header is
+
+```
+STRUCTURE  (paragraph insert / delete / move, part added / removed)
+```
+
+so the layer states that it covers a part being added or removed, and then
+reports `(none)` when one is removed. This is not a documented boundary a
+caller could route around — it is a gate reporting success on a change it
+claims to check. The skill documentation reinforces it: "STRUCTURE (incl.
+moves, and a whole part added/removed)" and "**Never decide 'did this change?'
+by eyeballing truncated text — let the tool enumerate.**" A caller who follows
+that instruction on a figure edit is told nothing changed.
+
+**Why it matters here specifically.** T12.2's acceptance is that the parts in
+`word/media/` hash-match their sources, precisely because Word silently
+recompresses images on save. The compare gate is the tool that is supposed to
+answer "did the right thing land"; on this task it answered "nothing landed"
+while four figures had been swapped. The only reason the swap was known to be
+correct is that the paper's own script re-read the saved file and compared
+SHA-256 itself.
+
+**Repro.**
+
+```python
+from docxkit import read_parts, write_docx
+parts = read_parts("paper.docx")
+parts["word/media/image14.png"] = parts["word/media/image1.png"]  # or `del`
+write_docx("swapped.docx", parts)
+# docxkit compare paper.docx swapped.docx  ->  REAL change locations: 0
+```
+
+**Shape of a fix.** Compare the set of non-XML parts by name and by digest,
+and report three cases in STRUCTURE: part added, part removed, part CHANGED
+(same name, different bytes). A changed image needs no pixel diff to be worth
+reporting — name plus "content differs, 66,203 -> 69,327 bytes" is enough to
+send a person to look, which is all the other layers do. Consider naming the
+exhibit: the caption above the drawing that references the part is available
+from the same walk `crossrefs` already does.
+
+**Workaround, in use on HCW.** `A1_t112_figures.py` hashes each replaced part
+against its source file after `write_docx` and refuses on a mismatch. Every
+paper that touches an image has to write that itself.
+
+---
+
+### S4 — the unbalanced-field integrity flag names an EMPTY paragraph for the orphan half, so the flag cannot be located
+
+Found on HCW, 2026-08-23, on every compare run in the batch.
+
+**Symptom as observed.** The BUILT-DOC INTEGRITY gate prints
+
+```
+** BUILT: unbalanced field (+1) in 'Figure 3. Mortality and LFP, Poland and '
+** BUILT: unbalanced field (-1) in ''
+```
+
+The `+1` line is useful: a caption opens a `SEQ Figure \* ARABIC` field. The
+`-1` line names `''`, because the orphan `fldChar end` sits in the empty
+paragraph after the caption — which is the normal shape of this defect, since
+a field that spills does so into the paragraph next door, and the paragraph
+next door is a spacer or a section break with no text in it. So the half that
+tells you WHERE the field is broken is the half that prints nothing.
+
+**Why S4.** It is a real gate that fires correctly and is simply hard to act
+on. Both halves of one defect were locatable here only by writing a script to
+count `fldCharType` per paragraph.
+
+**Shape of a fix.** When a paragraph has no visible text, name it by
+position — its index, or the previous non-empty paragraph plus "the paragraph
+after" — the way the TEXT layer already says `in (footnotes, table 3 r2c1)`.
+Better still, pair the two halves: `+1 in 'Figure 3. …' / -1 two paragraphs
+later` is one defect, not two flags.
+
+---
+
+### S4 — `RefStyleReport.cited` and `.entries` are COUNTS with collection names
+
+Found on HCW, 2026-08-23, writing T17.2's cross-check.
+
+**Symptom as observed.** `RefStyleReport`'s fields are `issues`, `entries`,
+`cited`. `issues` is a list of `Issue`; `entries` and `cited` are `int`. The
+obvious code
+
+```python
+for e in report.entries:
+    ...
+```
+
+raises `TypeError: 'int' object is not iterable`, and `len(report.cited)`
+raises the same. Nothing in the field names distinguishes the list from the
+two counts.
+
+**Why S4.** Loud and immediate — it costs one round-trip, not a wrong answer.
+Recorded because two scripts hit it in one afternoon, and because the fix is
+free at the next breaking change: `n_entries` / `n_cited`, or return the
+collections and let callers take `len`. The collections would be the more
+useful shape: a caller checking a specific entry currently has to re-extract
+the reference list itself.
+
+---
+
+### S4 — a year-labelled table COLUMN HEADER parses as a citation, so every paper with one carries an ignore entry
+
+Found on HCW, 2026-08-23.
+
+**Symptom as observed.** `refstyle.audit` reports, as citations with no
+reference entry:
+
+```
+     ¶220  Base 1990
+     ¶964  Base 2000
+```
+
+Both are **column headers** — Table A4's and Table A6's, "Base 1990",
+"Base 2000", "Max LFP". A cell whose entire content is `<Capitalised word>
+<four digits>` reads as a bare author-year citation, which is a form the
+scanner has to accept because narrative citations look like that.
+
+**Why S4 and not S2.** The `ignore` hook exists for exactly this and works —
+`IGNORED_LEADS | {"Base", "Max"}` clears it — and the default set already
+carries `Table`, `Figure`, `Panel`, `Wave`, `Round`, `Band`, `Step`, which is
+the same idea. So this is noise with a supported remedy, not a wrong answer.
+It is recorded because the remedy is per-paper and the trigger is not
+unusual: any exhibit with year-labelled columns produces it, and a paper that
+adds such a table during a revision starts failing a gate that was green.
+
+**Shape of a fix.** A cell that IS a citation and nothing else, in a table
+whose other cells in the same row are also `<word> <year>`, is a header, not a
+bibliography. Alternatively, skip the first row of a table for citation
+extraction — a reference is not cited from a column head. Either would remove
+the need for the per-paper list, which is where a maintained ignore set drifts
+into hiding a real miss.
+
+---
+
+### S2 — Word's Compare merges a CHANGED FOOTNOTE and writes the merged string into both copies
+
+Found on LI7, 2026-08-23, by `word_compare.py`'s round-trip gate.
+
+A footnote whose text changed between the two documents comes back as a
+wholly-deleted copy plus a wholly-inserted copy — which is right — but
+Compare writes the **same character-merged string into both**. On LI7 the
+footnote reads `The decomposition in (4)` in the submitted paper and
+`The decomposition in (A1.1)` in the manuscript; both copies came back as
+`The decomposition in (4A1.1)`. That string is in neither document, so
+accept-all and reject-all each produce text that exists nowhere, and the
+redline misrepresents the footnote in both views.
+
+Why it is S2 and not S4: **nothing a person does in Word will show it.**
+Review > Next walks the body, and Simple/No Markup hides footnote balloons,
+so an author adjudicating the redline never sees the footnote at all. It
+was caught only because LI7's round-trip compares footnote text units
+against both source documents; `docxkit.tracked.verify` and `lint` are both
+clean on the corrupt file, and `compare_collateral` says nothing.
+
+The shape is exact and machine-detectable: Compare leaves the divergent
+fragment in a **run of its own** in both copies —
+
+    <delText>The decomposition in (</delText>
+    <delText>4</delText>
+    <delText>A1.1) weights each component ...</delText>
+
+so the repair is "the deletion keeps the old fragment and drops the new
+one; the insertion does the reverse", with no run added or removed and no
+revision resolved. Per-paper workaround:
+`Loneliness Index/revision/scripts/fix_compare_footnote_merge.py`.
+
+Suggested home: a `compare_collateral` check that every wholly-inserted
+footnote's text appears in the revised document and every wholly-deleted
+one's appears in the original — it is the same "did Compare carry this
+faithfully?" question that function already asks of parts, bookmarks and
+links, and a footnote is the one place a person cannot verify by eye.
+
+---
+
+
+**One open, filed 2026-08-23** (above). Before it the section was empty: the three that were open — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry
 raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
 2026-08-21** either, the first time since this file was started that the
 section held no live defect. Two records stay below because both are
@@ -823,6 +1025,21 @@ backslash. Quoting the heredoc delimiter makes no difference.
 `B = chr(92)`, then build the string — or write the payload to a file with
 the Write tool and exec it. Neither is a resolution: the next patch script
 written the obvious way is wrong again, and wrong INVISIBLY.
+
+**Fourth occurrence, 2026-08-23 on HCW — a shape ruff cannot backstop.**
+The payload was not code being written to a file; it was a SEARCH ANCHOR for
+`str.replace`. The payload was typed `old = '''… .write_text("\\n".join(lines)
+…'''` — a DOUBLED backslash, because the target file contains `"\n"` and the
+anchor is a plain triple-quoted string. It arrived at Python with the
+backslash halved, as `"\n"`, which in a non-raw literal is a real newline. So
+the anchor held a newline where the file holds backslash-n, and matched
+nothing. Nothing is written to a
+`.py` file, so `PLE2510` never runs — the backstop covers the payload, not the
+needle. It was caught only because the patch asserted its anchor
+(`assert old in s`) before replacing. **That assertion is the actual
+mitigation and belongs in every patch script**, independent of this defect:
+the failure mode without it is a `replace` that silently does nothing and a
+script that reports success.
 
 **Measured, 2026-08-21: ruff IS a backstop, in three of four places.**
 `PLE2510` fires on a stray control character in a raw string, a plain
