@@ -168,6 +168,7 @@ __all__ = [
     "moved_footnotes",
     "promote",
     "prune_rescues",
+    "redline_path",
     "register",
     "registered",
     "registry_path",
@@ -293,6 +294,37 @@ class Paper:
     def batch(self) -> Path:
         """Where a batch is staged before it is promoted."""
         return self.build_dir / "batch.docx"
+
+    @property
+    def redline_dir(self) -> Path:
+        """Where `promote` keeps the REDLINE it just put onto the paper.
+
+        The rescue ladder does not hold one. It rescues the previous
+        LIVE file, and once a cycle completes that file is clean — so
+        measured across eight protocol papers on 2026-08-23, every
+        ``working.docx`` and every rescue copy in all of them carried 0
+        insertions and 0 deletions. The markup existed between `build`
+        and the author's accept and then nowhere at all, and the
+        protocol's own "delete ``batch.docx`` after every promote" rule
+        finished the job. An author who opened the manuscript afterwards
+        could not see what had changed, and nothing in the package could
+        tell them.
+
+        A copy kept here is the audit trail: the one artifact that shows
+        a batch as a batch. **It is never pruned** — :func:`prune_rescues`
+        does not look in this folder, and thinning it would recreate
+        exactly the gap it closes. Redlines are small next to what they
+        record, and the folder is the answer to "what did that batch
+        actually change?" long after `prev.docx` has moved on.
+
+        Rebuilding one later is not a substitute. Word Compare over two
+        clean generations reproduces a word-only batch, but a span that
+        crosses an untracked apparatus pass cannot be rebuilt as an
+        adjudicable redline at all: Compare will not serialize a
+        bookmark insertion, so reject-all leaves the new anchors behind
+        (``bookmarkStart 132 -> 142``, Aging_Well 2026-08-23).
+        """
+        return self.build_dir / "redlines"
 
     @property
     def rescue_dir(self) -> Path:
@@ -1820,7 +1852,21 @@ class PromoteReport:
     promoted: Path
     onto: Path
     rescue: Path
+    redline: Path | None = None
     pruned: tuple[Path, ...] = ()
+
+
+def redline_path(paper: Paper, when: datetime | None = None) -> Path:
+    """The next redline file: ``build/redlines/working_redline_<stamp>.docx``.
+
+    Same stamped shape as :func:`rescue_path`, and for the same reason:
+    a counter takes the first FREE number, so pruning would make the
+    next name older than the one beside it. Nothing prunes this folder,
+    but the two are read together — a redline and the rescue taken in
+    the same promote sort adjacent — and one shape is easier to read
+    than two.
+    """
+    return _stamped(paper, paper.redline_dir, "redline", when)
 
 
 def rescue_path(paper: Paper, when: datetime | None = None) -> Path:
@@ -1831,17 +1877,22 @@ def rescue_path(paper: Paper, when: datetime | None = None) -> Path:
     chronologically as a plain string. See :data:`_RESCUE_STAMP` for the
     version that did not and what it cost.
     """
+    return _stamped(paper, paper.rescue_dir, "rescue", when)
+
+
+def _stamped(paper: Paper, folder: Path, kind: str,
+             when: datetime | None = None) -> Path:
+    """``<folder>/<stem>_<kind>_<stamp><suffix>``, first free stamp."""
     moment = when or datetime.now()
     stem, suffix = paper.working.stem, paper.working.suffix
     for _ in range(1000):
-        name = f"{stem}_rescue_{moment.strftime(_RESCUE_STAMP)}{suffix}"
-        candidate = paper.rescue_dir / name
+        name = f"{stem}_{kind}_{moment.strftime(_RESCUE_STAMP)}{suffix}"
+        candidate = folder / name
         if not candidate.exists():
             return candidate
         moment += timedelta(microseconds=1)
     raise ProtocolError(
-        f"no free rescue name near {moment:%Y-%m-%d %H:%M:%S} in "
-        f"{paper.rescue_dir}")
+        f"no free {kind} name near {moment:%Y-%m-%d %H:%M:%S} in {folder}")
 
 
 def rescues(paper: Paper) -> list[Path]:
@@ -1944,13 +1995,32 @@ def promote(paper: Paper, batch: str | Path | None = None,
             f"the rescue copy did not land: {rescue} — refusing to "
             f"overwrite {live.name} with nothing to undo it")
 
+    # Keep the redline BEFORE the batch stops being a separate file.
+    # `promote` is the last moment the markup exists anywhere: the
+    # rescue above is the previous LIVE file and is clean, `live` is
+    # about to become a proposal that the author's accept will flatten,
+    # and the protocol used to delete `batch.docx` right after this.
+    # Copy first, verify the hash, and only then overwrite — a redline
+    # that did not land is worth refusing the promote for, because the
+    # thing it records is about to be the only copy.
+    paper.redline_dir.mkdir(parents=True, exist_ok=True)
+    redline = redline_path(paper)
+    shutil.copy2(batch, redline)
+    if _guard.sha256(redline) != _guard.sha256(batch):
+        raise ProtocolError(
+            f"the redline copy did not land: {redline} — refusing to "
+            f"promote, because after the author accepts, this batch's "
+            f"markup would exist nowhere")
+
     shutil.copyfile(batch, live)
     if _guard.sha256(live) != _guard.sha256(batch):
         raise ProtocolError(f"the copy did not land: {live}")
 
     # only after the promote has landed: a prune that ran first could
-    # delete the one copy this promote was about to need
+    # delete the one copy this promote was about to need. Redlines are
+    # not pruned at all — see `Paper.redline_dir`.
     return PromoteReport(promoted=batch, onto=live, rescue=rescue,
+                         redline=redline,
                          pruned=tuple(prune_rescues(paper)))
 
 

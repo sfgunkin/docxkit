@@ -17,6 +17,122 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 — RE-OPENED: the heredoc backslash defect is marked FIXED, but nothing gates the BASH path, and it corrupted a shared file twice in ten minutes
+
+Re-opened 2026-08-23. The entry below in `## Fixed`
+("~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08") records
+four occurrences and closes on two mitigations: PowerShell does not mangle,
+and `ruff PLE2510` backstops a mangled control character *once the payload is
+written to a `.py` file*. **Neither covers the case that has now caused the
+most damage**, and calling the entry FIXED is what let it be walked into
+again — twice, ten minutes apart, by an agent that had read this file.
+
+**Fifth and sixth occurrences, measured on `tests/test_revision.py`.** The
+payload was not code and not a search anchor; it was the REPLACEMENT text of
+a `str.replace`, `"\\\\\\n        "`, meant to insert a Python line
+continuation. It arrived halved, so the replacement wrote the two characters
+backslash-n into the source. Three lines damaged — loud, a syntax error,
+cheap.
+
+The sixth is the expensive one: **the repair was a second heredoc with the
+same flaw**, and its search string arrived halved too, so instead of matching
+literal backslash-n it matched every REAL newline followed by indentation.
+387 of them, rewritten as literal backslash-n. 2821 lines collapsed to 2574,
+1113 E501s, `ast.parse` failing at line 58.
+
+**Why the existing mitigations did not fire.**
+
+* `assert old in s` — the entry's own "actual mitigation" — cannot help: the
+  search string *did* match. It matched 387 things it was never meant to.
+* `PLE2510` never ran: the mangling happened inside the running script's
+  string literals, not in anything written to a `.py` file. The corrupted
+  file was the OUTPUT.
+* PowerShell not mangling is not a gate. Nothing routes patch scripts there,
+  and `python - <<'PY'` remains the obvious thing to type.
+
+**Why it cost more than a file.** `D:\docxkit` was being edited by a second
+Claude session at the time, with uncommitted work in that same file. It had
+to stop, snapshot the corruption and wait. A tooling trap that costs one
+agent a minute costs two agents an hour when the file is shared.
+
+**What made recovery possible, and it should be the documented procedure:**
+diagnose read-only first and find a property that SEPARATES the damage from
+the legitimate text, rather than fixing forward with more replaces. Here
+`git show HEAD:<file>` proved all 7 real `\n` escapes are followed by a quote
+or a letter and never by a space, while all 387 damaged sites are followed by
+indentation — so the repair was provable rather than hopeful. Genuine `\` +
+newline continuations then need the backslash restored by hand; plain
+newlines do not.
+
+**Fix shape.** The mitigation has to be a rule with a gate behind it, not a
+habit: **a patch script containing a backslash is written to a file (Write
+tool) and executed, never piped through a heredoc** — and for a handful of
+lines, an Edit call, which touches no shell at all. Recorded for this agent
+in `feedback_never_patch_via_heredoc.md`. If a gate is wanted here, the
+candidate is a check that refuses a `python - <<` invocation whose payload
+contains a backslash.
+
+---
+
+### S1 — the protocol kept no copy of the REDLINE, so an accepted batch became invisible everywhere — FIX IN THE WORKING TREE, uncommitted
+
+Found on Aging_Well, 2026-08-23, by the author: *"I do not see track changes
+in working.docx; this seems to be a systemic problem. Other papers also lost
+track changes."*
+
+**Measured, not suspected.** Across all eight papers carrying
+`revision/paper.toml`, every `working.docx` **and every rescue copy in every
+one of them** holds 0 insertions and 0 deletions. The only tracked artifacts
+alive anywhere are ones that escaped deletion by accident —
+`Parental_style/revision/build/batch.docx` (7 ins / 7 del),
+`Loneliness Index/revision/build/LI7_tracked_prerepair.docx` (1207 / 782),
+`AFI/revision/build/batch.docx` (0 / 2).
+
+**The mechanism.** `build` writes the redline to `build/batch.docx`. `promote`
+copies it onto `working.docx` and rescues the file it is REPLACING — which is
+clean, because a completed cycle ends with an accept. The author accepts, and
+the markup leaves `working.docx`. The protocol then said to delete
+`batch.docx`. So after any completed cycle the markup exists nowhere, and the
+rescue ladder cannot help: it is a clean-generation ladder by construction.
+
+**Why S1 and not S2.** Nothing reports it. Every gate passes, `status` says
+TRUTH, `losses` is empty, `compare` between generations is clean — and the
+question "what did that batch change?" has no answer left in the package. The
+protocol's own promise is that `working.docx` is *"tracked when proposed"*;
+after the accept there is no artifact that was ever tracked.
+
+**Rebuilding is not a substitute.** Word Compare over two clean generations
+reproduces a word-only batch (done here for R15 and R16, both passing the full
+ladder). It CANNOT reproduce a span that crosses an untracked apparatus pass:
+`tracked.build` refuses with `rejected: bookmarkStart 132 -> 142`, because
+Compare will not serialize a bookmark insertion. A cumulative redline across an
+apparatus pass is readable and not adjudicable.
+
+**Fix, written and tested, NOT committed.** `Paper.redline_dir`
+(`build/redlines/`), `redline_path`, and a copy in `promote` that lands and is
+hash-verified BEFORE `working.docx` is overwritten — a redline that did not
+land refuses the promote, on the same reasoning as the rescue that did not
+land. `PromoteReport.redline` and a CLI line. **Redlines are never pruned**:
+`prune_rescues` does not look in that folder, and thinning an audit trail
+recreates the gap it closes. Five tests in `tests/test_revision.py`, all
+verified to fail with the retention block removed.
+
+**Why it is not committed.** `src/docxkit/cli.py` and `src/docxkit/revision.py`
+already carried a large uncommitted refactor of `revision init` when this was
+written — adopting the author's manuscript in place instead of copying it to
+`working.docx` (`--working PATH`, the "is not inside" check at
+`revision.py:2003`). That work is unfinished: **16 tests fail against it** on
+the committed tree's own suite, all of them path-resolution tests it has not
+updated. Committing would bundle the two. The suite is otherwise green — 4663
+passed — and none of the 16 touches `promote`, `PromoteReport` or the redline.
+Commit this once the `init` refactor lands or is stashed.
+
+**Per-paper workaround to retire when it commits:**
+`Aging_Well/revision/scripts/rebuild_redlines.py`, the one-off backfill for
+R15 and R16.
+
+---
+
 ### S1 — `compare` does not compare `word/media/` AT ALL: a figure replaced, corrupted or DELETED is reported as zero changes
 
 Found on HCW, 2026-08-23, during T12.2 — a task whose entire deliverable was
@@ -515,6 +631,110 @@ reach it:
   earlier branch, so only "DOUBLED LINK" arrives.
 * `check_citations(docx_path, *, ...)` → the keyword-only marker
   mutated as a binary operator. Equivalent by construction.
+
+---
+
+### S2 — `latex_to_omml` DROPS every LaTeX spacing command, silently
+
+Found on Aging_Well, 2026-08-23, building the paper's first mathematics
+(R20).
+
+`\qquad`, `\hspace{2em}` and `\;` all vanish in
+latex2mathml → `MML2OMML.XSL`. Measured, five candidates:
+
+| written | survives as |
+|---|---|
+| `a > 0 \qquad b < 0` | `a>0`, `b<0` — nothing between them |
+| `a > 0 \hspace{2em} b < 0` | same |
+| `a > 0 \; b < 0` | same |
+| `a > 0 \text{\ \ \ \ } b < 0` | four spaces, each preceded by a literal backslash |
+| `a > 0 \mathrm{~~~~} b < 0` | four U+00A0 in their own maths run — clean |
+
+**Why S2.** The output is valid OMML, `equations()` counts it correctly,
+`m:oMath` totals are right, `math --check` reports it clean and
+`to_latex` round-trips the structure. Nothing sees it. What it looks like
+on the page is a definition and its sign conditions run together —
+`c=f(r,θ),∂f/∂r>0,∂f/∂k>0` — because every gap between them is gone.
+Every equation in that paper's two drafts has exactly that shape, so it
+hit all nine.
+
+**Reproduce.** `equations.latex_to_omml(r"a > 0 \qquad b < 0")` and read
+the `m:t` runs.
+
+**Fix shape.** Translate the spacing commands to an explicit maths run
+before handing the MathML to the transform, or post-process the OMML to
+insert one. A test that fails without it can assert on the `m:t` stream
+rather than on a render.
+
+**Workaround in use:** `\mathrm{~~~~}` throughout
+`Aging_Well/revision/scripts/r20_model.py` (the constant `G`), with the
+reason in its module docstring. Retire it when this lands.
+
+---
+
+### S4 — `MATH_DOWNGRADES` knows the MINUS but not the PRIME, so a prime-bearing equation cannot be built
+
+Found on Aging_Well, 2026-08-23, on the same batch.
+
+`hygiene.MATH_DOWNGRADES` is `{"−": "-"}`. Word's accept path also
+downgrades **U+2032 PRIME to an ASCII apostrophe**, and nothing puts it
+back, so `revision build` refuses:
+
+```
+accepting every revision does not reproduce the EQUATIONS of edited.docx:
+  equation 26: '…=λκ′(a)' in the clean copy, "…=λκ'(a)" accepted
+```
+
+**Why S4 and not S2.** It is loud — the build refuses rather than
+shipping a wrong glyph, which is the gate working. The cost is that a
+paper writing `\kappa'(a)`, `f'(x)` or any other primed derivative
+cannot build at all until someone works out that the prime is the
+problem, and the message names the equation without naming the
+character.
+
+**Fix shape.** Add `"′": "'"` to `MATH_DOWNGRADES`. The machinery around
+it already handles the ambiguity conservatively — a run is repaired only
+when its exact text appears in a source with the glyph put back, and an
+ambiguous key is dropped — and an apostrophe inside maths is about as
+legitimate as a hyphen is, so the same reasoning applies unchanged. A
+test that fails without it: build a redline over an equation containing
+U+2032 and assert the accepted copy still holds it.
+
+**Workaround in use:** R20 writes the derivative as a fraction instead
+of using a prime, recorded in `Aging_Well/revision/paper.toml`.
+
+---
+
+### S4 — every read-only GATE refuses on a Word lock, though `status` and `ingest` no longer do
+
+Found on Aging_Well, 2026-08-23, running the paper's own `[verify]` list
+while the author had the manuscript open in Word to adjudicate a batch.
+
+All six exit 1 with `working.docx is locked (open in Word). Close it and
+retry. ([Errno 13] Permission denied)`: `citations`, `refstyle`,
+`crossrefs`, `math --check`, `footnotes --check`, `lint`.
+
+**The precedent is already in `## Fixed`** — "S4 read-only `revision
+status` and `ingest` refuse on a Word lock", closed 21.08 by reading a
+snapshot and saying so:
+
+```
+read from a SNAPSHOT: the author has the file open in Word, so this
+describes the moment the copy was taken, not whatever they have typed since.
+```
+
+That fix stopped at those two commands. Everything else that only READS
+still refuses.
+
+**Why it matters more than it sounds.** The author having the manuscript
+open is not an edge case, it is the normal state during adjudication —
+which is exactly when someone wants to check whether a citation resolves
+or an equation is still display mode. And a `[verify]` list that can only
+run when nobody is working on the paper is a list that gets run less.
+
+**Fix shape.** The snapshot fallback already exists; extend it to the
+read-only commands, with the same banner so nobody mistakes a snapshot
+for the live file. `--write` paths must keep refusing.
 
 ## Fixed
 
@@ -1434,7 +1654,13 @@ Compare round 153 -> 153, where it used to lose 20. The two files in
 `Documents/JITED_submission/` still carry the duplicates until the
 paper re-syncs them.
 
-### ~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08
+### ~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08, **RE-OPENED 23.08** (see `## Open`)
+
+> **Not fixed.** Occurrences five and six, 2026-08-23, corrupted a shared
+> `tests/test_revision.py` twice in ten minutes and blocked a second session.
+> The mitigations below cover the payload and the search anchor; the damage
+> came through the REPLACEMENT text, where neither reaches. Entry re-opened
+> at the top of `## Open` with the measurement.
 
 **Symptom as observed.** 2026-08-20/21, three times in one session. A patch
 script written as a `python - <<'PY'` heredoc reaches Python with every

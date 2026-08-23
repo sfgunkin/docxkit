@@ -1469,6 +1469,9 @@ def cmd_revision_promote(args: argparse.Namespace) -> int:
     print(f"promoted {report.promoted.name} -> {report.onto.name}")
     print(f"rescue copy of the previous live file: "
           f"{report.rescue.relative_to(paper.root)}")
+    if report.redline is not None:
+        print(f"redline kept (never pruned): "
+              f"{report.redline.relative_to(paper.root)}")
     if report.pruned:
         print(f"pruned {len(report.pruned)} older rescue(s), keeping "
               f"{paper.rescue_keep}")

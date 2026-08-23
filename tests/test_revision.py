@@ -999,6 +999,90 @@ def test_promote_lands_and_leaves_a_rescue_copy(project):
         "the rescue copy does not hold the file that was replaced"
 
 
+def test_promote_keeps_the_REDLINE_the_rescue_ladder_does_not(project):
+    """The rescue holds the file being REPLACED, which is clean. Only
+    this copy holds the markup.
+
+    Measured across eight protocol papers on 2026-08-23: every
+    working.docx and every rescue copy in all of them carried 0
+    insertions and 0 deletions, because a completed cycle ends with the
+    author's accept and the ladder only ever rescued clean generations.
+    The author opened a manuscript and could not see what a batch had
+    changed, and nothing in the package could tell them."""
+    write(project.batch, make_parts(para(run("the batch"))))
+    batch_bytes = project.batch.read_bytes()
+
+    report = revision.promote(project)
+
+    assert report.redline is not None, "no redline was kept"
+    assert report.redline.exists()
+    assert report.redline.read_bytes() == batch_bytes, \
+        "the kept redline is not the batch that was promoted"
+    assert report.redline != report.rescue
+    assert report.redline.read_bytes() != report.rescue.read_bytes(), \
+        "the redline holds the same clean file the rescue does"
+
+
+def test_redlines_live_in_their_own_folder_under_build(project):
+    write(project.batch, make_parts(para(run("the batch"))))
+    report = revision.promote(project)
+    assert report.redline is not None
+    assert report.redline.parent == project.redline_dir
+    assert project.redline_dir.parent == project.build_dir
+    assert project.redline_dir != project.rescue_dir
+    assert not list(project.working.parent.glob("*redline*"))
+
+
+def test_each_promote_keeps_its_own_redline(project):
+    write(project.batch, make_parts(para(run("first"))))
+    first = revision.promote(project)
+    revision.baseline(project)
+    write(project.batch, make_parts(para(run("second"))))
+    second = revision.promote(project)
+    assert first.redline != second.redline
+    assert first.redline is not None and second.redline is not None
+    assert first.redline.exists() and second.redline.exists()
+
+
+def test_pruning_rescues_never_touches_a_redline(project):
+    """Thinning the audit trail would recreate the gap it closes, so
+    `prune_rescues` must not see this folder at all."""
+    project.config.write_text(
+        project.config.read_text(encoding="utf-8").replace(
+            "rescue_keep = 5", "rescue_keep = 1"), encoding="utf-8")
+    paper = revision.load_paper(project.root)
+    for word in ("first", "second", "third"):
+        write(paper.batch, make_parts(para(run(word))))
+        revision.promote(paper)
+        revision.baseline(paper)
+    kept = list(paper.redline_dir.glob("*.docx"))
+    assert len(kept) == 3, f"a redline was pruned away: {kept}"
+    assert len(revision.rescues(paper)) == 1
+
+
+def test_promote_refuses_when_the_REDLINE_copy_did_not_land(project,
+                                                            monkeypatch):
+    """Refuse before overwriting: after the author accepts, this batch's
+    markup would exist nowhere, so a redline that did not land is worth
+    the same refusal a rescue that did not land already gets."""
+    import shutil
+    real = shutil.copy2
+
+    def _bad_redline(src, dst, *a, **k):
+        if Path(dst).parent == project.redline_dir:
+            Path(dst).write_bytes(b"not the file")
+            return dst
+        return real(src, dst, *a, **k)
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    before = project.working.read_bytes()
+    monkeypatch.setattr(shutil, "copy2", _bad_redline)
+    with pytest.raises(ProtocolError, match="redline copy did not land"):
+        revision.promote(project)
+    assert project.working.read_bytes() == before, \
+        "the live file was overwritten with no redline behind it"
+
+
 def test_each_promote_keeps_its_own_rescue(project):
     """The fixed-name version overwrote its own rescue every time, so
     only the most recent live state was ever recoverable."""
