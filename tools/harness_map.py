@@ -156,6 +156,7 @@ HARNESS: dict[str, list[str]] = {
     "pages.py": ["tests/test_pages.py", "tests/test_locate.py"],
     "probe.py": ["tests/test_probe.py", "tests/test_probe_report.py"],
     "refstyle.py": ["tests/test_refstyle.py",
+                    "tests/test_refstyle_layout.py",
                     "tests/test_paragraph_numbering.py",
                     "tests/test_value_types.py"],
     "renumber.py": ["tests/test_renumber.py", "tests/test_footnote_ids.py",

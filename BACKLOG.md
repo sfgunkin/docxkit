@@ -17,6 +17,60 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 `refstyle`'s order check is a CONSECUTIVE-PAIR test, so a run of misfiled entries reports as one — and a same-author one reports as none
+
+Found on Aging_Well, 2026-08-23. The author appended two new references
+after the end of the list — Diller (2016) and Sen (2004), both after
+Zaidi. `refstyle` reported exactly one finding:
+
+    ¶149  order  "Diller" is filed after "Zaidi" — the list is not alphabetical
+
+Sen (2004) was equally misfiled and was not named. Two separate reasons,
+and both are in the same eight lines:
+
+* The test is `_fold(prev.surname) > _fold(r.surname)` over CONSECUTIVE
+  entries. The appended run reads Zaidi → Diller → Sen: the first pair
+  inverts and is reported, the second does not invert, so everything
+  after the first misfiled entry is invisible. Fix one, re-run, find
+  the next — and a paper that fixes the named one and re-runs to a clean
+  report has been told the list is sorted when it is not.
+* It compares SURNAME only, so "Sen, A. (2004)" filed after "Sen, A.
+  (2009)" cannot be caught by it at all. The `year-order` check that
+  would is deliberately restricted to CONTINUATION entries ("———.
+  (2015)."), for a good reason — a shared lead surname over different
+  co-author lists orders by co-author, not year — but that leaves the
+  plain repeated-name form uncovered.
+
+**The repair landed first**: `refstyle.refile` (fixed entry below) sorts the list, so a paper can act on the finding without hand-moving paragraphs. What is still wrong is the DETECTION.
+
+**Suggested fix.** Sort the entries by their own visible text and report
+every entry whose index moves, rather than walking neighbours. That is
+the whole check, and it happens to be exactly right about the two cases
+the surname test gets wrong: `(` sorts before `,`, so "Scott, A. (2024)"
+lands before "Scott, A., Ellison, M., and D. Sinclair. (2021)" and
+"Venkatapuram, S. (2011)" before "Venkatapuram, S., and J. Thiyagarajan.
+(2023)" — both of which the author had filed exactly that way by hand.
+**Validation is available and cheap**: on Aging_Well's 58
+hand-filed entries a plain sort of the visible text is a NO-OP. A
+proposed key that reorders a list an author has already filed correctly
+is wrong about the house order, and that test is worth writing before
+the check.
+
+### S2 `refstyle` calls a work uncited when its only citation is a bare year inside a multi-year group, and `citations` disagrees on the same file
+
+Aging_Well, 2026-08-23:
+
+    refstyle : ¶138  uncited-ref  "Sen, A. (2009). The Idea of Justice..."
+    citations: Mentions: 79 of 79 linked — ALL CHECKS PASSED
+
+The paper cites it as "Sen's capability approach (1985, 1999, 2009)".
+`_cite_grammar.find_citations` learned this form on 21.08 and yields one
+citation per year, which is why `citations` sees it; `refstyle`'s
+`cited` map does not use that path, so the work reads as listed but never
+cited. Two tools in one toolkit answering "is this work cited?"
+differently about the same document is the part that matters — a paper
+told to delete an uncited entry would be deleting a cited one.
+
 ### S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it — the surviving half of the entry closed on 22.08
 
 The cross-reference entry closed as FIXED on 22.08 had two halves. The
@@ -54,7 +108,7 @@ manuscript) and left the one whose symptom is silence. **A two-tool entry
 needs two reproductions before it closes.**
 
 
-**One open, as of 2026-08-22** (above). Recorded before it: the cross-reference entry
+**Three open, as of 2026-08-23** (above) — one from 22.08 and two `refstyle` entries from Aging_Well's reference list, which are one batch: the order check, the missing fixer and the disagreement with `citations` are all the same afternoon on the same list. Recorded before them: the cross-reference entry
 raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
 2026-08-21** either, the first time since this file was started that the
 section held no live defect. Two records stay below because both are
@@ -230,6 +284,43 @@ looked for was in a part of the package it never opened.
 
 
 ## Fixed
+
+### ~~S4 `refstyle` has no fixer, so every paper writes the sort itself~~ — FIXED 23.08
+
+Filed and fixed the same day, with the rule the author stated while it
+was open: the reference list starts on a NEW PAGE and every entry carries
+a 0.5" hanging indent, no space before, 4 pt after.
+
+`refstyle` now owns all three mechanical halves, and `--fix` runs them in
+order — text, then order, then layout:
+
+* `refile(parts)` sorts the list. The sort key is the entry's own visible
+  text with diacritics folded, which reproduces a hand-filed list exactly
+  (`(` before `,`, so "Scott, A. (2024)" comes before "Scott, A.,
+  Ellison, …"). **It moves the GAP with the paragraph**: Word hoists a
+  whole-paragraph bookmark out of its `w:p`, so a linked list keeps each
+  entry's anchor above it as a sibling, and a sorter built on the
+  paragraph matches drops all 60 with nothing but `citations` noticing.
+  Refuses a list with continuation dashes, a stray paragraph, or an EMPTY
+  one — `_xml.PARA_RE` skips a self-closing `<w:p …/>` by design, so a
+  blank line pasted into a list is invisible to every text-layer check
+  and this is where it surfaces.
+* `layout(parts, spec)` writes the page break and the entry indents;
+  `audit` reports the same departures through the same checker
+  (`page-break`, `indent`, `spacing`), so the report and the repair
+  cannot disagree. A value the paragraph would INHERIT is left alone —
+  `styles.paragraph_property` resolves the style chain and docDefaults —
+  because Word deletes a declaration equal to the inherited one and the
+  audit would report it again every run.
+
+Measured on Aging_Well: 60 entries, 46 on the old 6 pt after and 14
+declaring nothing, the heading running on from §9. After: `0 layout/order
+finding(s) left`, `compare` clean of STRUCTURE and TEXT, `citations` 79/79.
+
+`tests/test_refstyle_layout.py`, 25 tests. **`audit` reports the layout
+rules by DEFAULT** — a paper that sets its list differently passes
+`page_layout=None`.
+
 
 ### ~~S4 four ergonomics findings from the same review~~ — FIXED 22.08
 

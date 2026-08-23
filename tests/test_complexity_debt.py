@@ -34,7 +34,11 @@ MAX_COMPLEXITY = 20
 DEBT = {
     "_cite_audit._audit_findings": 31,
     "lint.lint": 31,
-    "refstyle.audit": 25,
+    # 25 -> 26 on 2026-08-23, deliberately: the layout rules (new page,
+    # hanging indent, spacing) are one call to `_layout_findings` rather
+    # than a branch per rule, and what is left here is the single guard
+    # that lets a paper setting its list differently opt out.
+    "refstyle.audit": 26,
     "edit.replace_in_para": 26,
     "revisions._simulate_where": 24,
 }

@@ -97,7 +97,7 @@ max-complexity = 20
 # many cases, not a function doing several jobs, so splitting one is a
 # batch of its own — with the number to beat recorded here:
 #   _cite_audit._audit_findings  31     lint.lint                 31
-#   edit.replace_in_para         26     refstyle.audit            25
+#   edit.replace_in_para         26     refstyle.audit            26
 #   revisions._simulate_where    24
 # `_cite_build.link_all` was the sixth, at 29. Its mention scan is a
 # method on `_Mentions` now and the function is under the threshold, so

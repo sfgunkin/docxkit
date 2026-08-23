@@ -39,6 +39,14 @@ def run_cli(monkeypatch, *argv: str) -> tuple[int | str, str]:
     return (0 if code is None else code, "")
 
 
+#: The house layout for a reference list, which `refstyle` audits: the
+#: heading on a new page, entries on a 0.5" hanging indent with 4 pt
+#: after. A fixture without it is a paper with a real finding in it.
+REF_HEAD_PPR = "<w:pPr><w:pageBreakBefore/></w:pPr>"
+REF_ENTRY_PPR = ('<w:pPr><w:spacing w:after="80"/>'
+                 '<w:ind w:left="720" w:hanging="720"/></w:pPr>')
+
+
 @pytest.fixture
 def paper(tmp_path):
     """A tiny manuscript: prose, a citation, a caption, a table."""
@@ -50,8 +58,9 @@ def paper(tmp_path):
         + "<w:tbl><w:tr><w:tc>"
         + para(run("Country")) + "</w:tc><w:tc>" + para(run("0.31"))
         + "</w:tc></w:tr></w:tbl>"
-        + para(run("References"))
-        + para(run("Maestas, N., Mullen, K., and D. Powell. (2023). "
+        + para(REF_HEAD_PPR, run("References"))
+        + para(REF_ENTRY_PPR,
+               run("Maestas, N., Mullen, K., and D. Powell. (2023). "
                    "“The Effect of Population Aging.” AEJ: Macro.")))
     return write(tmp_path / "paper.docx", make_parts(body))
 
@@ -142,8 +151,9 @@ def test_IGNORE_clears_a_lead_word_the_grammar_read_as_an_author(
     body = (para(run("Employment is consolidated from standardized "
                      "national Labor Force Surveys and ILOSTAT (2024) "
                      "data on employment by occupation."))
-            + para(run("References"))
-            + para(run("ILOSTAT. (2024). Employment by occupation. ")
+            + para(REF_HEAD_PPR, run("References"))
+            + para(REF_ENTRY_PPR,
+                   run("ILOSTAT. (2024). Employment by occupation. ")
                    + '<w:r><w:rPr><w:i/></w:rPr><w:t>ILO Statistics</w:t>'
                      "</w:r>" + run(".")))
     docx = write(tmp_path / "unlinked.docx", make_parts(body))

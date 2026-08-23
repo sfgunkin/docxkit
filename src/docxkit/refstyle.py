@@ -29,6 +29,7 @@ import re
 import unicodedata
 from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field, replace
+from difflib import SequenceMatcher
 
 from ._xml import (
     BOOKMARK_NAME_RE,
@@ -37,6 +38,9 @@ from ._xml import (
     FOOTNOTES,
     PARA_RE,
     internal_links,
+    live_properties,
+    own_properties,
+    set_para_property,
     visible_text,
 )
 from .citations import (
@@ -62,17 +66,22 @@ from .errors import (
     AnchorError,
     ConversionRefused,
 )
+from .styles import paragraph_property
 
 __all__ = [
     "CHICAGO",
     "DISCOURSE_LEADS",
     "HOUSE",
+    "HOUSE_LAYOUT",
     "IGNORED_LEADS",
     "ConversionRefused",
     "ConvertReport",
     "Fix",
     "Issue",
+    "Layout",
+    "LayoutReport",
     "RefStyleReport",
+    "RefileReport",
     "Style",
     "audit",
     "check_entry",
@@ -80,6 +89,9 @@ __all__ = [
     "convert",
     "convert_entry",
     "convert_text",
+    "entry_layout_issues",
+    "layout",
+    "refile",
 ]
 
 
@@ -570,6 +582,374 @@ def convert(parts: dict[str, bytes], style: Style = HOUSE, *,
     return report
 
 
+@dataclass(frozen=True)
+class Layout:
+    """How the reference LIST sits on the page, not how an entry reads.
+
+    Distances are in twentieths of a point, Word's unit: the house 0.5"
+    hanging indent is 720, 4 pt of space after an entry is 80.
+    """
+
+    hanging: int = 720
+    before: int = 0
+    after: int = 80
+    page_break: bool = True
+
+
+HOUSE_LAYOUT = Layout()
+
+
+@dataclass
+class LayoutReport:
+    """What :func:`layout` set, and what it left inheriting on purpose."""
+
+    page_break: str = ""
+    indented: list[str] = field(default_factory=list)
+    spaced: list[str] = field(default_factory=list)
+    #: Entries whose STYLE already states the house value. Writing it on
+    #: the paragraph would be deleted by Word on its next save, so they
+    #: are counted and left alone — see :func:`docxkit.styles.
+    #: paragraph_property`.
+    inherited: list[str] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.page_break or self.indented or self.spaced)
+
+    def format(self) -> str:
+        head = (f"{len(self.indented)} indent(s), {len(self.spaced)} "
+                f"spacing(s) set"
+                + (", page break added" if self.page_break else "")
+                + (f", {len(self.inherited)} left to the style"
+                   if self.inherited else ""))
+        return "\n".join([head]
+                         + [f"  indent   {line}" for line in self.indented]
+                         + [f"  spacing  {line}" for line in self.spaced])
+
+
+@dataclass
+class RefileReport:
+    """What :func:`refile` moved, and why it would not move anything."""
+
+    moved: list[str] = field(default_factory=list)
+    refused: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.moved)
+
+    def format(self) -> str:
+        if self.refused:
+            return f"REFUSED: {self.refused}"
+        if not self.moved:
+            return "the list is already alphabetical"
+        return "\n".join([f"{len(self.moved)} entr(ies) re-filed"]
+                         + [f"  {line}" for line in self.moved])
+
+
+def _pstyle_of(para_xml: str) -> str | None:
+    m = re.search(r'<w:pStyle\b[^>]*w:val="([^"]+)"', _live_ppr(para_xml))
+    return m.group(1) if m else None
+
+
+def _live_ppr(para_xml: str) -> str:
+    """The paragraph's own properties, minus the tracked-change snapshot.
+
+    A ``w:pPrChange`` records the properties a tracked change REPLACED,
+    so reading it answers for the past.
+    """
+    own = own_properties(para_xml, "pPr")
+    return live_properties(own[2]) if own is not None else ""
+
+
+def _declared(para_xml: str, tag: str, attr: str) -> str | None:
+    """The paragraph's OWN value for ``w:<tag>/@w:<attr>``, or None."""
+    m = re.search(rf'<w:{tag}\b[^>]*?\bw:{attr}="([^"]*)"',
+                  _live_ppr(para_xml))
+    return m.group(1) if m else None
+
+
+def _effective(para_xml: str, styles_xml: str | None,
+               tag: str, attr: str) -> tuple[int | None, bool]:
+    """(the value a reader sees, is it declared on the paragraph?).
+
+    None means nothing states it anywhere, which Word renders as 0.
+    """
+    own = _declared(para_xml, tag, attr)
+    if own is not None:
+        return (int(own) if own.lstrip("-").isdigit() else None), True
+    got = paragraph_property(styles_xml, _pstyle_of(para_xml), tag, attr)
+    return (int(got) if got is not None and got.lstrip("-").isdigit()
+            else None), False
+
+
+#: (tag, attribute, the Layout field it must equal, how to say it)
+_LAYOUT_RULES = (
+    ("ind", "left", "hanging", "left indent"),
+    ("ind", "hanging", "hanging", "hanging indent"),
+    ("spacing", "before", "before", "space before"),
+    ("spacing", "after", "after", "space after"),
+)
+
+
+def entry_layout_issues(para_xml: str, styles_xml: str | None,
+                        spec: Layout = HOUSE_LAYOUT) -> list[Issue]:
+    """How one entry's PARAGRAPH departs from `spec`.
+
+    Shared by :func:`audit` and :func:`layout` so the report and the
+    repair cannot disagree about what the rule is — the class of bug
+    where a paper is told about a defect no fixer removes, or has one
+    silently fixed that the audit never mentioned.
+    """
+    issues = []
+    for tag, attr, wanted, said in _LAYOUT_RULES:
+        want = getattr(spec, wanted)
+        have, _ = _effective(para_xml, styles_xml, tag, attr)
+        if (have or 0) != want:
+            code = "indent" if tag == "ind" else "spacing"
+            issues.append(Issue(
+                code, f"{said} is {have if have is not None else 'unset'}, "
+                      f"the house rule is {want}"))
+    return issues
+
+
+def _layout_findings(parts: dict[str, bytes], matches: list[re.Match[str]],
+                     texts: list[str], entries: list[Reference],
+                     spec: Layout) -> list[Issue]:
+    """`audit`'s half of the layout rules — the same checks, unrepaired.
+
+    Its own function so :func:`audit` does not grow a branch per rule:
+    the complexity pin exists to make that growth deliberate, and four
+    rules that belong together are one call.
+    """
+    if not entries:
+        return []
+    styles_xml = (parts["word/styles.xml"].decode("utf-8")
+                  if "word/styles.xml" in parts else None)
+    found: list[Issue] = []
+    head = min(r.index for r in entries) - 1
+    if spec.page_break and head >= 0 and not _starts_a_page(
+            matches[head].group(0),
+            matches[head - 1].group(0) if head > 0 else None):
+        found.append(Issue(
+            "page-break", "the reference list does not start on a new page",
+            where=f"¶{head + 1}", snippet=texts[head][:60]))
+    for r in entries:
+        found.extend(
+            replace(issue, where=f"¶{r.index + 1}", snippet=r.text[:60])
+            for issue in entry_layout_issues(matches[r.index].group(0),
+                                             styles_xml, spec))
+    return found
+
+
+def _pin(para_xml: str, tag: str, attr: str, value: int) -> str:
+    """Set one attribute of one ``w:pPr`` child, keeping its others.
+
+    ``w:spacing`` carries ``w:line`` and ``w:lineRule`` beside the value
+    being set, and ``w:ind`` carries ``w:right`` and ``w:firstLine``;
+    those are the paragraph's own and are not this rule's to drop.
+    Placement is :func:`docxkit._xml.set_para_property`'s, which is the
+    one place CT_PPr's element order is known.
+    """
+    m = re.search(rf"<w:{tag}\b[^>]*/>", _live_ppr(para_xml))
+    if m is None:
+        element = f'<w:{tag} w:{attr}="{value}"/>'
+    else:
+        # APPENDED, not prepended: the rules run left-then-hanging, and a
+        # prepend would write them out backwards. Word's own order is not
+        # semantic, but a stable one keeps `compare` and the idempotence
+        # check reading byte-for-byte.
+        stripped = re.sub(rf'\s*w:{attr}="[^"]*"', "", m.group(0))
+        element = stripped[:-2].rstrip() + f' w:{attr}="{value}"/>'
+    return set_para_property(para_xml, tag, element)
+
+
+def _starts_a_page(head: str, before: str | None) -> str:
+    """Why the heading already starts a page, or "" if it does not."""
+    if re.search(r"<w:pageBreakBefore\b(?![^>]*w:val=\"(?:0|false|off)\")",
+                 _live_ppr(head)):
+        return "pageBreakBefore"
+    if before is None:
+        return "first paragraph"
+    if re.search(r'<w:br\b[^>]*w:type="page"', before):
+        return "an explicit page break above it"
+    if "<w:sectPr" in before:
+        return "a section break above it"
+    return ""
+
+
+def layout(parts: dict[str, bytes], spec: Layout = HOUSE_LAYOUT, *,
+           heading: str | tuple[str, ...] = REF_HEADINGS,
+           stop: tuple[str, ...] = REF_STOPS) -> LayoutReport:
+    """Set the reference list's page position and entry indents, in place.
+
+    Two house rules, and both of them drift on ordinary author rounds:
+    the list starts on a NEW PAGE, and every entry is set with a 0.5"
+    hanging indent, no space before and 4 pt after. An entry pasted from
+    a browser arrives with neither, and Word gives a paragraph typed at
+    the end of the list whatever the one above it had — which is how a
+    list ends up 46 entries in house format and 14 in none.
+
+    **A value the paragraph would INHERIT is left alone.** Word deletes a
+    declaration equal to the inherited one on its next save, so writing
+    an explicit ``w:before="0"`` over an inherited 0 makes a rule that
+    reports the same entries every run for ever (measured on eleven DSI
+    table notes). The check resolves the style chain first and only
+    corrects an explicit disagreement or a genuinely missing value.
+
+    Idempotent, so a second call reports nothing — which makes it an
+    audit as well as a repair.
+    """
+    doc = parts[DOCUMENT].decode("utf-8")
+    styles_xml = (parts["word/styles.xml"].decode("utf-8")
+                  if "word/styles.xml" in parts else None)
+    matches = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in matches]
+    entries = references(texts, heading=heading, stop=stop)
+    report = LayoutReport()
+    if not entries:
+        return report
+
+    edits: list[tuple[re.Match[str], str]] = []
+    for r in entries:
+        para = before = matches[r.index].group(0)
+        for tag, attr, wanted, said in _LAYOUT_RULES:
+            want = getattr(spec, wanted)
+            have, declared = _effective(para, styles_xml, tag, attr)
+            if (have or 0) == want:
+                continue
+            if not declared and have is None and want == 0:
+                # Nothing states it, and the house value is what Word
+                # renders anyway. Writing it would not survive a save.
+                report.inherited.append(f"¶{r.index + 1}: {said}")
+                continue
+            para = _pin(para, tag, attr, want)
+            was = have if have is not None else "-"
+            line = f"¶{r.index + 1}: {said} {was} -> {want}"
+            (report.indented if tag == "ind" else report.spaced).append(line)
+        if para != before:
+            edits.append((matches[r.index], para))
+
+    if spec.page_break:
+        head = min(r.index for r in entries) - 1
+        if head >= 0:
+            para = matches[head].group(0)
+            why = _starts_a_page(
+                para, matches[head - 1].group(0) if head else None)
+            if not why:
+                edits.append((matches[head], set_para_property(
+                    para, "pageBreakBefore", "<w:pageBreakBefore/>")))
+                report.page_break = f"¶{head + 1}: {texts[head].strip()[:40]}"
+
+    for m, para in sorted(edits, key=lambda e: e[0].start(), reverse=True):
+        doc = doc[:m.start()] + para + doc[m.end():]
+    parts[DOCUMENT] = doc.encode("utf-8")
+    return report
+
+
+def _list_key(text: str) -> str:
+    """Sort key for a whole entry: its own visible text, diacritics folded.
+
+    Not the surname. The entries an author files by hand are ordered by
+    the WHOLE string, and two orderings fall out of that which a surname
+    key gets wrong, because ``(`` sorts before ``,``::
+
+        Scott, A. (2024).  ...before...  Scott, A., Ellison, M., and ...
+        Venkatapuram, S. (2011).  ...before...  Venkatapuram, S., and ...
+
+    Punctuation is KEPT for that reason, unlike :func:`_fold`, which
+    answers a different question about a surname alone.
+    """
+    flat = unicodedata.normalize("NFKD", text.strip())
+    return "".join(c for c in flat if not unicodedata.combining(c)).casefold()
+
+
+_CONTINUATION_RE = re.compile(r"^\s*[—–\-_]{2,}")
+
+
+def refile(parts: dict[str, bytes], *,
+           heading: str | tuple[str, ...] = REF_HEADINGS,
+           stop: tuple[str, ...] = REF_STOPS) -> RefileReport:
+    """Sort the reference list alphabetically, in place.
+
+    The other half of the `order` finding, which until now a paper could
+    only read and then fix by hand.
+
+    **An entry is not its paragraph.** Word HOISTS a bookmark that wraps
+    a whole paragraph out of it, so a linked list keeps each entry's
+    anchor in the gap ABOVE its ``w:p``, as a sibling. A sorter built on
+    the paragraph matches alone drops every one of them and nothing in
+    the text or the order looks wrong — `citations` is what notices,
+    with `CITE WITHOUT REF` on most of the paper. So the unit that moves
+    runs from the END of the previous paragraph to the end of this one.
+
+    Refused, rather than guessed at, when:
+
+    * the list uses CONTINUATION entries ("———. (2015)."), whose sort
+      key is the entry above them — sorting those scatters the group;
+    * a non-entry paragraph sits inside the block, since its place
+      afterwards would be arbitrary;
+    * the gap between two entries holds anything but bookmarks.
+    """
+    doc = parts[DOCUMENT].decode("utf-8")
+    matches = list(PARA_RE.finditer(doc))
+    texts = [visible_text(m.group(0)) for m in matches]
+    entries = references(texts, heading=heading, stop=stop)
+    report = RefileReport()
+    if len(entries) < 2:
+        return report
+
+    lo, hi = entries[0].index, entries[-1].index
+    listed = {r.index for r in entries}
+    strays = [i for i in range(lo, hi + 1) if i not in listed]
+    if strays:
+        report.refused = (f"¶{strays[0] + 1} sits inside the list and is not "
+                          f"an entry: {texts[strays[0]].strip()[:40]!r}")
+        return report
+    if any(_CONTINUATION_RE.match(texts[r.index]) for r in entries):
+        report.refused = ("the list uses continuation dashes, whose entries "
+                          "file under the name above them")
+        return report
+
+    units: list[tuple[str, str]] = []
+    at = matches[lo - 1].end() if lo else matches[lo].start()
+    for r in entries:
+        gap = doc[at:matches[r.index].start()]
+        if not re.fullmatch(r"(<w:bookmark(?:Start|End)\b[^>]*/>)*", gap):
+            # An EMPTY paragraph is the common case and deserves its own
+            # sentence: `_xml.PARA_RE` skips a self-closing `<w:p …/>` on
+            # purpose, so a blank line pasted into a reference list is
+            # invisible to every text-layer check and turns up here.
+            blank = "<w:p " in gap or "<w:p/>" in gap
+            report.refused = (
+                f"an empty paragraph sits above ¶{r.index + 1}; delete it "
+                f"first, or sorting moves a blank line into the middle of "
+                f"the list" if blank else
+                f"¶{r.index + 1} has {gap[:60]!r} above it, which is not "
+                f"a bookmark")
+            return report
+        units.append((_list_key(texts[r.index]),
+                      doc[at:matches[r.index].end()]))
+        at = matches[r.index].end()
+
+    order = sorted(units, key=lambda u: u[0])
+    if order == units:
+        return report
+
+    keys = [u[0] for u in units]
+    for op, i1, i2, _j1, _j2 in SequenceMatcher(
+            None, keys, sorted(keys)).get_opcodes():
+        # Only the entries that MOVED. An insertion pushes every entry
+        # below it down, and a report naming all of them hides the one
+        # that matters.
+        if op in ("delete", "replace"):
+            report.moved.extend(texts[entries[k].index].strip()[:60]
+                                for k in range(i1, i2))
+
+    start = matches[lo - 1].end() if lo else matches[lo].start()
+    doc = doc[:start] + "".join(u[1] for u in order) + doc[at:]
+    parts[DOCUMENT] = doc.encode("utf-8")
+    return report
+
+
 def _fold(surname: str) -> str:
     """Alphabetisation key: diacritics folded so Mühlbach files at Mu,
     punctuation dropped so "U.S." files as "US" — after "United", which
@@ -733,7 +1113,8 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
           heading: str | tuple[str, ...] = REF_HEADINGS,
           stop: tuple[str, ...] = REF_STOPS,
           ignore: frozenset[str] | set[str] = IGNORED_LEADS,
-          aliases: dict[str, str] | None = None) -> RefStyleReport:
+          aliases: dict[str, str] | None = None,
+          page_layout: Layout | None = HOUSE_LAYOUT) -> RefStyleReport:
     """Check a whole manuscript against the reference style.
 
     Prose paragraphs (and footnotes) get the in-text checks; the
@@ -742,6 +1123,12 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     citation should have an entry and every entry a citation. Table
     source notes count as prose, so a "Source: Maestas et al. (2023)"
     under an exhibit keeps that entry from reading as uncited.
+
+    `page_layout` adds the rules about where the list SITS rather than
+    how it reads — a new page, a 0.5" hanging indent, 4 pt after — using
+    the same checker :func:`layout` repairs with, so the report and the
+    fixer cannot disagree. Pass None for a paper that sets its list
+    differently on purpose.
 
     `aliases` maps a cited surname to the name the entry files under —
     ``{"WHO": "World Health Organization"}`` — because a paper cites the
@@ -802,6 +1189,10 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     def has_italics(xml: str) -> bool:
         return (_ITALIC_RE.search(xml) is not None
                 or any(v in istyles for v in _RSTYLE_RE.findall(xml)))
+
+    if page_layout is not None:
+        report.issues.extend(_layout_findings(
+            parts, matches, texts, entries, page_layout))
 
     prev: Reference | None = None
     for r in entries:

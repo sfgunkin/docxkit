@@ -55,6 +55,7 @@ VALUES = [
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "refstyle.Issue",
+    "refstyle.Layout",          # the house rule itself, passed in and read
     "refstyle.Style",
     "revision.IngestReport",
     "revision.Loss",
@@ -88,7 +89,9 @@ ACCUMULATORS = {
     "placement.PlacementReport",
     "probe.Probe",
     "refstyle.ConvertReport",
+    "refstyle.LayoutReport",
     "refstyle.RefStyleReport",
+    "refstyle.RefileReport",
     "renumber.ShiftReport",
     "revision.Doubt",
     "revision.ValidateReport",

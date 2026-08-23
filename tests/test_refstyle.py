@@ -701,8 +701,12 @@ def test_every_issue_names_the_paragraph_it_was_found_in():
     """The third entry is the sixth paragraph, and all three of its
     issues have to say so. `¶6` against `¶5` sends a person to the entry
     above the one that is wrong — in a list where every line looks like
-    every other, that is worse than no location at all."""
-    report = audit(make_parts(_entry_paragraphs()))
+    every other, that is worse than no location at all.
+
+    The layout rules are off here so the assertion stays about WHERE a
+    finding points; they have their own test, and a bare fixture states
+    none of the indents they ask for."""
+    report = audit(make_parts(_entry_paragraphs()), page_layout=None)
 
     assert sorted(_rows(report)) == [
         ("en-dash", "¶6"),          # "pp. 45-48" wants an en-dash

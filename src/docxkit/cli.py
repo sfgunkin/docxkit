@@ -225,7 +225,7 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
     "and" not "&", "(2020).", en-dashes, alphabetical order, and the
     cited/listed cross-check.
     """
-    from .refstyle import CHICAGO, HOUSE, audit, convert
+    from .refstyle import CHICAGO, HOUSE, audit, convert, layout, refile
     style = CHICAGO if args.chicago else HOUSE
     parts = _package(args.docx)
     print(Path(args.docx).name)
@@ -233,9 +233,17 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
         # BEFORE the audit, so what is printed is what is LEFT
         # rather than what was there: a report of findings this
         # command has just repaired reads as a failed run.
+        #
+        # Text, then order, then layout — each one reads the list the
+        # one before it left, and only the last two move paragraphs.
         written = convert(parts, style)
         print("  " + written.format().replace("\n", "\n  "))
-        if written and not _save(args.docx, parts, "pre_refstyle"):
+        filed = refile(parts)
+        print("  " + filed.format().replace("\n", "\n  "))
+        set_out = layout(parts)
+        print("  " + set_out.format().replace("\n", "\n  "))
+        if ((written or filed or set_out)
+                and not _save(args.docx, parts, "pre_refstyle")):
             return 1
     report = audit(parts, style, aliases=_aliases(args),
                    ignore=_ignore(args))
@@ -1445,8 +1453,10 @@ def main() -> None:
                    help="AFI's variant: full names, bare year, "
                         "et al. from 4 authors")
     p.add_argument("--fix", action="store_true",
-                   help="write the mechanical fixes into the reference "
-                        "entries: punctuation and glyphs, never a name "
+                   help="write the mechanical fixes: punctuation and "
+                        "glyphs in the entries (never a name), the list "
+                        "alphabetised, and the house layout — new page, "
+                        '0.5" hanging indent, 4 pt after '
                         "(a backup is taken first)")
     p.add_argument("--json", metavar="PATH")
     p.add_argument("--alias", action="append", metavar="CITED=FILED",

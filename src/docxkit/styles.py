@@ -32,6 +32,7 @@ __all__ = [
     "StyleReport",
     "apply_template",
     "ensure",
+    "paragraph_property",
     "read",
     "used",
 ]
@@ -402,3 +403,71 @@ def apply_template(parts: dict[str, bytes],
             referenced |= used(parts[name].decode("utf-8"))
     report.missing = sorted(referenced - defined)
     return report
+
+
+#: The word boundary is load-bearing: without it `<w:pPrDefault>` opens
+#: a match that then runs to the `</w:pPr>` INSIDE it, and docDefaults
+#: reads as an empty blob.
+_PPR_RE = re.compile(r"<w:pPr\b[^>]*(?<!/)>.*?</w:pPr>", re.DOTALL)
+
+
+def _ppr_attr(ppr: str, tag: str, attr: str) -> str | None:
+    """``w:<attr>`` of ``w:<tag>`` inside one ``w:pPr`` blob.
+
+    Not :func:`_attr`, which reads an attribute off an element this
+    module already has in hand; this one goes looking for the element.
+    """
+    m = re.search(rf'<w:{tag}\b[^>]*?\bw:{attr}="([^"]*)"', ppr)
+    return m.group(1) if m else None
+
+
+def paragraph_property(styles_xml: str | None, pstyle: str | None,
+                       tag: str, attr: str) -> str | None:
+    """What a paragraph INHERITS for ``w:<tag>/@w:<attr>``, or None.
+
+    Walks the ``w:basedOn`` chain from `pstyle` (or the default paragraph
+    style when a paragraph names none) and then ``w:docDefaults``. The
+    answer excludes the paragraph's own ``w:pPr`` — the question this
+    exists to answer is "would writing this value be REDUNDANT?".
+
+    **Why it is worth resolving rather than always writing.** Word
+    deletes a paragraph-property declaration whose value equals the
+    inherited one, so a formatting pass that writes a redundant value
+    comes back dirty on the next audit for ever — measured on eleven DSI
+    table notes, where an explicit ``w:before="0"`` over an inherited 0
+    was gone after one save and the audit reported the same eleven every
+    run. Correct an explicit DISAGREEING value; leave an inheriting
+    paragraph inheriting.
+
+    Attribute-shaped rather than ``w:val``-shaped on purpose: the
+    properties this question comes up for — ``w:spacing/@w:before``,
+    ``w:ind/@w:hanging`` — carry their value in an attribute of their
+    own, which :class:`Cascade` (a RUN cascade, reading ``w:val``)
+    cannot answer.
+    """
+    if not styles_xml:
+        return None
+    own: dict[str, str] = {}
+    based: dict[str, str] = {}
+    for sid, body in _STYLE_ID_RE.findall(styles_xml):
+        m = _PPR_RE.search(body)
+        own[sid] = m.group(0) if m else ""
+        if (b := _BASED_ON_VAL_RE.search(body)):
+            based[sid] = b.group(1)
+
+    if pstyle is None and (m := _DEFAULT_PSTYLE_RE.search(styles_xml)):
+        pstyle = m.group(1)
+
+    seen: set[str] = set()
+    sid = pstyle
+    while sid and sid in own and sid not in seen:
+        seen.add(sid)                   # a basedOn cycle is a real file
+        if (found := _ppr_attr(own[sid], tag, attr)) is not None:
+            return found
+        sid = based.get(sid)
+
+    block = _DOC_DEFAULTS_RE.search(styles_xml)
+    if block is None:
+        return None
+    ppr = _PPR_RE.search(block.group(0))
+    return _ppr_attr(ppr.group(0), tag, attr) if ppr else None
