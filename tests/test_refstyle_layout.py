@@ -7,6 +7,7 @@ report and nothing could repair until :func:`refstyle.refile`.
 """
 from __future__ import annotations
 
+import pytest
 from conftest import make_parts, para, run
 
 from docxkit import styles
@@ -847,3 +848,31 @@ def test_a_list_at_the_top_is_not_rescued_by_a_break_at_the_BOTTOM():
     parts = make_parts(heading() + entry(A) + entry(B) + tail)
 
     assert "page-break" not in codes(audit(parts)), "still the first line"
+
+
+@pytest.mark.parametrize("pad", [0, 1])
+def test_a_stray_ABOVE_THE_LAST_ENTRY_is_caught_wherever_the_list_starts(pad):
+    """The scanned span is `range(lo, hi + 1)`, and `hi` is the last
+    entry's own index — which is always in `listed`, so the `+ 1` says
+    "the closed span of the list" and nothing depends on it. What DOES
+    depend on the arithmetic is the far end: a span computed as `hi ^ 1`
+    is `hi + 1` when `hi` is even and `hi - 1` when it is odd, and the
+    odd case stops one paragraph short — exactly the paragraph a stray
+    directly above the last entry sits in.
+
+    The case was already covered, and covered at one parity: a body of
+    three paragraphs put the last entry at an even index, where that
+    arithmetic happens to agree. One paragraph either way is not a
+    property of the manuscript, so the test should not have an opinion
+    about it."""
+    body = [para(run(f"Body {i}.")) for i in range(3 + pad)]
+    parts = _list_with(*body, para(run("References")),
+                       para(run(ENTRY_A)),
+                       para(run("A stray note nobody meant to leave here.")),
+                       para(run(ENTRY_B)))
+
+    report = refile(parts)
+
+    assert not report.moved
+    assert "sits inside the list and is not an entry" in (report.refused or "")
+    assert "A stray note nobody meant" in report.refused
