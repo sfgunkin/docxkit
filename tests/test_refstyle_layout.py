@@ -11,6 +11,7 @@ import pytest
 from conftest import make_parts, para, run
 
 from docxkit import styles
+from docxkit._xml import PARA_RE, visible_text
 from docxkit.refstyle import (
     HOUSE_LAYOUT,
     Layout,
@@ -876,3 +877,29 @@ def test_a_stray_ABOVE_THE_LAST_ENTRY_is_caught_wherever_the_list_starts(pad):
     assert not report.moved
     assert "sits inside the list and is not an entry" in (report.refused or "")
     assert "A stray note nobody meant" in report.refused
+
+
+def test_refiling_the_list_leaves_EVERYTHING_ABOVE_IT_untouched():
+    """The rewrite is `doc[:start] + sorted entries + doc[at:]`, and
+    `start` is the end of the paragraph before the first entry. Get that
+    index wrong and the splice does not misplace anything — it DELETES
+    whatever sits between the wrong start and the list: the "References"
+    heading, or the last paragraph of the paper.
+
+    Nothing held it. The fixtures put the list two paragraphs in, where
+    `lo - 1`, `lo >> 1` and `lo & 1` all land on the same paragraph and
+    every wrong index reads as right. Three body paragraphs and a
+    heading separate them, which is also what a manuscript looks like.
+    """
+    body = [para(run("Intro one.")), para(run("Intro two.")),
+            para(run("Intro three.")), para(run("References"))]
+    parts = _list_with(*body, para(run(ENTRY_C)), para(run(ENTRY_A)),
+                       para(run(ENTRY_B)))
+
+    report = refile(parts)
+
+    assert report.moved == [ENTRY_C]
+    doc = parts["word/document.xml"].decode("utf-8")
+    got = [visible_text(m.group(0)) for m in PARA_RE.finditer(doc)]
+    assert got == ["Intro one.", "Intro two.", "Intro three.", "References",
+                   ENTRY_A, ENTRY_B, ENTRY_C]
