@@ -2390,9 +2390,13 @@ def test_a_bare_citation_in_a_BODY_row_is_still_found():
     the audit must still cross-check — narrowing to the first row is
     what keeps this working."""
     report = audit(_with_table(_cells("Study", "Estimate"),
-                               _cells("Maestas 2023", "0.4")))
+                               _cells("Kowalski 2021", "0.4")))
 
-    assert any("maestas" in k for k in report.cited), report.cited
+    # A surname the surrounding prose does NOT carry. The first version
+    # of this test used one that did, so `report.cited` held it whatever
+    # the table did, and a mutation that swallowed the whole document
+    # into the header span survived it (2026-08-24).
+    assert any("kowalski" in k for k in report.cited), report.cited
 
 
 def test_a_citation_inside_a_header_SENTENCE_is_still_found():
@@ -2400,10 +2404,10 @@ def test_a_citation_inside_a_header_SENTENCE_is_still_found():
     carrying a real citation in prose is found the ordinary way, so the
     fix cannot hide one."""
     report = audit(_with_table(
-        _cells("Source", "Rates as reported by Maestas et al. (2023)"),
+        _cells("Source", "Rates as reported by Kowalski et al. (2021)"),
         _cells("Poland", "54.1")))
 
-    assert any("maestas" in k for k in report.cited), report.cited
+    assert any("kowalski" in k for k in report.cited), report.cited
 
 
 def test_a_NESTED_table_gets_its_own_header_row():
@@ -2436,3 +2440,51 @@ def test_table_PROPERTIES_do_not_open_a_table():
     (span,) = _header_rows(doc)
 
     assert "head" in doc[span[0]:span[1]]
+
+
+
+def test_a_table_with_NO_ROWS_OF_ITS_OWN_borrows_the_next_one_harmlessly():
+    """Worth pinning because it is not what the code looks like it does.
+
+    The row is searched for from the table's opening tag to the END of
+    the document, not within that table, so an empty `<w:tbl>` finds the
+    NEXT table's first row and records it as its own header. The spans
+    then coincide, and membership is a union of spans, so nothing
+    downstream can tell — but a reader of the loop cannot see that, and
+    the `if tr is None: continue` beside it is therefore reachable only
+    when no row follows anywhere, which is why `continue` and `break`
+    are equivalent there rather than untested.
+
+    Bounding the search to the table would need a whole-table match, and
+    a non-greedy one closes on a NESTED table's end tag — the failure
+    the walk-forward shape exists to avoid."""
+    from docxkit.refstyle import _header_rows
+
+    doc = ("<w:body><w:tbl><w:tblPr/></w:tbl>"
+           "<w:tbl><w:tr><w:tc>real head</w:tc></w:tr></w:tbl></w:body>")
+
+    spans = _header_rows(doc)
+
+    assert len(spans) == 2 and spans[0] == spans[1], spans
+    assert "real head" in doc[spans[0][0]:spans[0][1]]
+
+
+def test_a_row_that_NEVER_CLOSES_still_bounds_a_header():
+    """`doc.find` answers -1, and the span then has to be SOMETHING.
+    It runs to the end of the document, which is the fail-safe
+    direction: this span decides where a bare author-year pair is a
+    column label rather than a citation, so an empty span invents
+    citations out of table cells while an over-long one only declines to
+    find some — and the audit's whole complaint about column heads is
+    false positives.
+
+    Eleven survivors sat on that `-1`, every one of them turning the
+    span into `(start, -1)`, which contains nothing at all."""
+    from docxkit.refstyle import _header_rows
+
+    doc = "<w:body><w:tbl><w:tr><w:tc>Base 1990</w:tc></w:body>"
+
+    (span,) = _header_rows(doc)
+
+    assert span[1] == len(doc), "an unterminated row bounds at the end"
+    assert span[0] < span[1], "and the span is not empty or inverted"
