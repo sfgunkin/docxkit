@@ -468,12 +468,25 @@ def test_a_failed_lint_leaves_the_previous_deliverable_untouched(
     assert out.read_bytes() == before
 
 
-def test_a_failed_build_leaves_no_staging_file_behind(monkeypatch,
-                                                      sources):
+def test_a_failed_build_KEEPS_its_artefact_to_be_looked_at(monkeypatch,
+                                                          sources):
+    """It used to delete it, and that cost two diagnoses in one day.
+
+    When `verify` raises — Word answering "the file appears to be
+    corrupted" — the refused build is the only thing that can say WHY,
+    and unlinking it left nothing to open: the way to see the artefact
+    was to rebuild with `verify_in_word=False`, which is a round trip
+    for something already on disk a moment earlier.
+
+    Keeping it costs one stale `~` file. Nothing globs for it — the only
+    `*.docx` walk in the package filters on `<stem>_vN.docx` — and the
+    next build overwrites it."""
     out = sources[2]
     with pytest.raises(PackageError):
         _build(monkeypatch, _broken_document(), sources)
-    assert not list(out.parent.glob("~*.building*"))
+
+    (kept,) = list(out.parent.glob("~*.building*"))
+    assert kept.stat().st_size > 0, "an empty file is not evidence"
 
 
 def test_a_failed_build_does_not_create_the_deliverable(monkeypatch,
@@ -1249,7 +1262,10 @@ def test_a_build_word_repairs_raises_and_keeps_the_old_deliverable(
     with pytest.raises(PackageError, match="repaired on open"):
         tracked.build(sources[0], sources[1], out, verify_in_word=True)
     assert out.read_bytes() == before
-    assert not list(out.parent.glob("~*.building*"))
+    # and the refused build is kept, which is the whole point of a
+    # verify mismatch: the package and Word disagree, and the file they
+    # disagree about is the evidence.
+    assert list(out.parent.glob("~*.building*"))
 
 
 # ------------------------------------------- the annotate path, for real --

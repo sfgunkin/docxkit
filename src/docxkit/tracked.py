@@ -979,6 +979,30 @@ def _carry_rewrites(parts: dict[str, bytes], original: str | Path,
         say(f"  de-duplicated a comment present in BOTH inputs: {note}")
 
 
+def _clear_staging(staging: Path, building: Path, published: bool,
+                   say: Callable[[str], None]) -> None:
+    """Tidy up after a build, keeping the artefact when one was REFUSED.
+
+    A refused build is the one worth looking at, and this used to delete
+    it. Word answering "the file appears to be corrupted" from `verify`
+    left nothing to open, so the only way to see what it had been given
+    was to rebuild with `verify_in_word=False` — which is how a
+    comment-anchor defect cost a bisect rather than a look, twice in one
+    day (2026-08-24).
+
+    On success the file has already been renamed to `out`, so the unlink
+    is a no-op and only the failure path ever loses anything. The kept
+    file is a `~` temp name that the next build overwrites, so the cost
+    of keeping it is one stale file at worst.
+    """
+    shutil.rmtree(staging, ignore_errors=True)
+    if published:
+        building.unlink(missing_ok=True)
+    elif building.exists():
+        say(f"  the refused build is kept at {building.name} — open it to "
+            f"see what Word was given; the next build overwrites it")
+
+
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
@@ -1068,6 +1092,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     # move atomic; a temp directory could be on another volume.
     staging = Path(tempfile.mkdtemp(prefix="docxkit_tracked_"))
     building = out.with_name(f"~{out.stem}.building{out.suffix}")
+    published = False
     try:
         flat = staging / "flat.xml"
 
@@ -1281,6 +1306,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"{report.verified_revisions} revisions in the body")
 
         building.replace(out)          # every gate passed: publish
+        published = True
         # `base_sha256` is the batch's link to the BASELINE it was built
         # on. The names alone cannot answer "is this batch about the
         # current truth" — `prev.docx` is a path whose content changes
@@ -1291,5 +1317,4 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                      base_sha256=_guard.sha256(original))
         return report
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
-        building.unlink(missing_ok=True)   # gone already on success
+        _clear_staging(staging, building, published, say)
