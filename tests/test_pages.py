@@ -772,3 +772,37 @@ def test_an_ambiguous_footer_is_ambiguous_even_when_the_NUMBER_is_first(
     (row,) = read_pdf(pdf)
 
     assert row.printed is None, "two words in the band is not an answer"
+
+
+
+def test_two_words_a_SHADE_apart_are_still_one_footer_line(tmp_path):
+    """2.5 pt apart — a page number and a running head set at different
+    sizes. They are one line, the footer is ambiguous, and the sheet
+    answers None rather than picking the lower word.
+
+    Without the tolerance the two are separate lines, the number is
+    alone on the lower one, and a footer that says "Introduction 7"
+    reports 7 as the printed number — confidently, and on a sheet whose
+    numbering nobody can check by eye."""
+    low = A4[1] - 40
+    pdf = _page_with(tmp_path, (72, low, "7"),
+                     (300, low - 2.5, "Introduction"))
+
+    (row,) = read_pdf(pdf)
+
+    assert row.printed is None, "one line, two words, no answer"
+
+
+def test_two_words_FAR_apart_are_two_lines_and_the_lower_one_answers(
+        tmp_path):
+    """3.5 pt apart — a footnote sitting above the footer, which is the
+    case `_outermost_line` exists for: on Aging_Well the notes' text put
+    bare numbers in the same band and three sheets read as printing
+    nothing. The lower line is the footer, and it answers alone."""
+    low = A4[1] - 40
+    pdf = _page_with(tmp_path, (72, low, "7"),
+                     (300, low - 3.5, "see note"), name="apart.pdf")
+
+    (row,) = read_pdf(pdf)
+
+    assert row.printed == 7, "the footer is the LAST line on the sheet"
