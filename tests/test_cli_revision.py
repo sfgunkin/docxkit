@@ -1469,4 +1469,4 @@ def test_baseline_hands_BACK_the_row_a_log_it_did_not_scaffold_cannot_take(
     out = capsys.readouterr().out
     assert code == 0
     assert "no batch table" in out, out
-    assert "record this round by hand" in out.replace("\\n", " "), out
+    assert "record this round by hand" in out, out

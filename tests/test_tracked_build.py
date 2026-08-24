@@ -2925,3 +2925,82 @@ def test_the_MATH_ONLY_refusal_speaks_only_about_the_maths():
 # `zip(was, now, strict=True)` -> `strict=False` in `accepted_math`: the
 # length check three lines above has already returned when they differ,
 # so there is no ragged pair left for either spelling to meet.
+
+
+# --- Word MERGING a changed footnote (BACKLOG S2, 2026-08-23) ------------
+#
+# A footnote whose text changed comes back as a wholly-deleted copy plus
+# a wholly-inserted one — right — with the SAME character-merged string
+# written into both. On LI7 `(4)` and `(A1.1)` both came back `(4A1.1)`,
+# a string in neither document, so accept-all and reject-all each
+# produce text that exists nowhere.
+#
+# The entry filed it as undetectable. It is detected twice, and these
+# pin that: a person cannot see it (Review > Next walks the body, and
+# footnote balloons are hidden under Simple Markup), so the only thing
+# standing between the merge and the deliverable is these two gates.
+
+_FN_WAS = "The decomposition in (4) weights each component."
+_FN_NOW = "The decomposition in (A1.1) weights each component."
+#: The divergent fragment in a run of its own, which is the shape that
+#: makes the damage machine-detectable at all.
+_FN_PIECES = ("The decomposition in (", "4", "A1.1) weights each component.")
+_STAMP = 'w:author="R" w:date="2026-08-23T00:00:00Z"'
+
+
+def _one_run(tag: str) -> str:
+    return "<w:r>" + "".join(
+        f"<w:{tag}>{t}</w:{tag}>" for t in _FN_PIECES) + "</w:r>"
+
+
+def _run_each(tag: str) -> str:
+    return "".join(f"<w:r><w:{tag}>{t}</w:{tag}></w:r>" for t in _FN_PIECES)
+
+
+def _merged_note(shape, one_para: bool) -> str:
+    gone = f'<w:del w:id="90" {_STAMP}>{shape("delText")}</w:del>'
+    added = f'<w:ins w:id="91" {_STAMP}>{shape("t")}</w:ins>'
+    body = (f"<w:p>{gone}{added}</w:p>" if one_para
+            else f"<w:p>{gone}</w:p><w:p>{added}</w:p>")
+    return f'<w:footnote w:id="2">{body}</w:footnote>'
+
+
+def _note_parts(inner: str) -> dict[str, bytes]:
+    return make_parts(para(run("The paper as it stands.")),
+                      footnotes=notes("footnotes", inner))
+
+
+def _plain_note(text: str) -> str:
+    return f'<w:footnote w:id="2">{para(run(text))}</w:footnote>'
+
+
+@pytest.mark.parametrize("shape", [_one_run, _run_each],
+                         ids=["one-run", "run-per-fragment"])
+@pytest.mark.parametrize("one_para", [True, False],
+                         ids=["one-paragraph", "two-paragraphs"])
+def test_a_MERGED_footnote_is_caught_on_both_sides(shape, one_para):
+    """Whichever way Compare spells it. The fragments arrive as one run
+    with three children or as a run each, and the two copies land in one
+    paragraph or in two — four spellings, and a gate that caught only
+    the one that was reported would be worth very little."""
+    redline = _note_parts(_merged_note(shape, one_para))
+
+    rejected = untracked(redline, _note_parts(_plain_note(_FN_WAS)))
+    accepted = unaccepted(redline, _note_parts(_plain_note(_FN_NOW)))
+
+    assert rejected, "reject-all must not reproduce the original silently"
+    assert accepted, "accept-all must not reproduce the clean copy silently"
+    assert any("4A1.1" in str(u) for u in rejected), rejected
+    assert any("4A1.1" in str(u) for u in accepted), accepted
+
+
+def test_the_merged_footnote_gate_names_the_PART_not_just_the_paragraph():
+    """`(4A1.1)` is a string in neither document, and a reader told only
+    "paragraph 1 differs" would look in the body, where nothing is
+    wrong. The footnote is the one place a person cannot check by eye,
+    so the note has to say where to look."""
+    redline = _note_parts(_merged_note(_one_run, True))
+
+    (found,) = untracked(redline, _note_parts(_plain_note(_FN_WAS)))
+
+    assert "footnote" in str(found).lower(), found

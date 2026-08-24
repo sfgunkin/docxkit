@@ -7,6 +7,7 @@ import pytest
 from conftest import NS, make_parts, note, notes, para, run
 
 from docxkit import refstyle
+from docxkit._cite_grammar import Reference
 from docxkit.citations import find_citations
 from docxkit.errors import ConversionRefused
 from docxkit.refstyle import (
@@ -282,7 +283,7 @@ def body_paragraphs() -> str:
 
 def test_audit_cross_checks_cited_against_listed():
     report = audit(make_parts(body_paragraphs()))
-    assert report.entries == 3
+    assert report.n_entries == 3
     missing = [i for i in report.issues if i.code == "missing-ref"]
     assert [i.snippet for i in missing] == ["Maestas et al. (2023)"]
     uncited = [i for i in report.issues if i.code == "uncited-ref"]
@@ -304,7 +305,7 @@ def test_audit_skips_the_reference_section_as_prose():
     citation, or every entry self-cites."""
     report = audit(make_parts(body_paragraphs()))
     assert not any(i.code == "year-comma" for i in report.issues)
-    assert report.cited == 3     # acemoglu, maestas, angrist — no echoes
+    assert report.n_cited == 3   # acemoglu, maestas, angrist — no echoes
 
 
 def test_audit_reports_a_disordered_list():
@@ -772,7 +773,7 @@ def test_a_reference_HEADING_with_nothing_under_it_swallows_nothing():
 
     report = audit(make_parts(body))
 
-    assert report.entries == 0
+    assert report.n_entries == 0
     assert sorted(_rows(report)) == [("year-comma", "¶2"),
                                      ("year-comma", "¶3")]
 
@@ -1097,7 +1098,12 @@ def test_an_issue_with_no_snippet_prints_no_trailing_quotes():
 def test_a_clean_report_says_so_rather_than_printing_nothing():
     """A report whose second line is absent is indistinguishable from a
     command that failed to run."""
-    assert RefStyleReport(entries=12, cited=12).format() == (
+    entries = [Reference(f"Author{i}, A. ({2000 + i}). A paper. Journal.",
+                         f"Author{i}", str(2000 + i), i)
+               for i in range(12)]
+    cited = {r.key: (f"P{i}", r.text[:20]) for i, r in enumerate(entries)}
+
+    assert RefStyleReport(entries=entries, cited=cited).format() == (
         "12 reference entries, 12 works cited in text\n"
         "  clean — no style departures found")
 
@@ -1107,6 +1113,29 @@ def test_an_empty_report_counts_nothing():
     been audited."""
     assert RefStyleReport().format().startswith(
         "0 reference entries, 0 works cited in text")
+
+
+def test_the_report_hands_back_the_ENTRIES_it_parsed_not_just_how_many():
+    """`entries` and `cited` were ints under collection names until
+    2026-08-24, and two scripts hit `TypeError: 'int' object is not
+    iterable` in one afternoon (backlog S4). The counts are `n_entries`
+    and `n_cited` now; the collections are the collections.
+
+    Worth a test beyond the rename, because the reason to prefer the
+    collections was never the TypeError: `audit` parses the reference
+    list and used to discard it one line later, so a caller wanting to
+    look at an entry had to re-extract what the audit had just built —
+    a second parse that can disagree with the first."""
+    report = audit(make_parts(body_paragraphs()))
+
+    assert report.n_entries == len(report.entries) > 0
+    assert report.n_cited == len(report.cited) > 0
+    assert all(r.surname and r.year for r in report.entries)
+    # The two sides key alike, which is what makes "cited but not
+    # listed" answerable — but they are NOT nested: this fixture cites
+    # `maestas_2023` and does not list it, and that gap IS the finding.
+    assert set(report.cited) & {r.key for r in report.entries}
+    assert all(len(v) == 2 for v in report.cited.values()), "where, snippet"
 
 
 # --- the second refstyle pass, from the re-measurement ------------------
@@ -1505,7 +1534,7 @@ def test_a_LINKED_citation_swallowed_by_the_two_author_pattern_is_re_read():
         (i.code, i.snippet) for i in report.issues]
     assert "uncited-ref" not in _codes(report.issues), [
         (i.code, i.snippet) for i in report.issues]
-    assert report.cited == 1
+    assert report.n_cited == 1
 
 
 def test_a_link_to_something_that_is_NOT_an_entry_governs_nothing():
@@ -1539,7 +1568,7 @@ def test_a_citation_the_pattern_reads_EXACTLY_is_left_alone():
 
     assert not _codes(report.issues) & {"missing-ref", "uncited-ref"}, [
         (i.code, i.snippet) for i in report.issues]
-    assert report.cited == 1
+    assert report.n_cited == 1
 
 
 def test_the_re_read_citation_KEEPS_ITS_PLACE_in_the_paragraph():
@@ -2138,7 +2167,7 @@ def test_a_work_LINKED_from_the_prose_is_cited_whatever_the_grammar_reads():
     report = audit(make_parts(_group_cite_paper()), page_layout=None)
 
     assert "uncited-ref" not in _codes(report.issues)
-    assert report.cited == 2
+    assert report.n_cited == 2
 
 
 def test_the_grammar_still_answers_where_there_are_no_links():
@@ -2321,3 +2350,89 @@ def test_the_order_finding_points_at_the_paragraph_it_is_about():
     (found,) = [i for i in report.issues if i.code == "order"]
     assert found.where == "¶4"
     assert found.snippet.startswith("Anders, A. (2001).")
+
+
+
+# --- a year-labelled COLUMN HEADER is not a citation (BACKLOG S4) --------
+
+def _cells(*texts: str) -> str:
+    return "<w:tr>" + "".join(f"<w:tc>{para(run(t))}</w:tc>"
+                              for t in texts) + "</w:tr>"
+
+
+def _with_table(*rows_: str) -> dict[str, bytes]:
+    """`body_paragraphs` with one table dropped in before the list."""
+    head, _, rest = body_paragraphs().partition(
+        para(run("References")))
+    return make_parts(head + "<w:tbl>" + "".join(rows_) + "</w:tbl>"
+                      + para(run("References")) + rest)
+
+
+def test_a_year_labelled_column_HEADER_is_not_a_missing_citation():
+    """`Base 1990` is Table A4's column head. A cell whose whole content
+    is <Capitalised word> <four digits> is exactly the shape a narrative
+    citation takes, which the scanner has to accept — so before this the
+    audit reported two "cited but not in the reference list" findings per
+    paper, cleared by adding "Base" and "Max" to a per-paper ignore list,
+    which is where a real miss goes to hide."""
+    report = audit(_with_table(_cells("Country", "Base 1990", "Base 2000"),
+                               _cells("Poland", "54.1", "57.3")))
+
+    assert "Base" not in str(report.cited), report.cited
+    assert not [i for i in report.issues
+                if i.code == "missing-ref" and "Base" in i.snippet], \
+        [i.snippet for i in report.issues if i.code == "missing-ref"]
+
+
+def test_a_bare_citation_in_a_BODY_row_is_still_found():
+    """The suppression is the header row only. A table of studies lists
+    its sources in the body, one per cell, and those are real citations
+    the audit must still cross-check — narrowing to the first row is
+    what keeps this working."""
+    report = audit(_with_table(_cells("Study", "Estimate"),
+                               _cells("Maestas 2023", "0.4")))
+
+    assert any("maestas" in k for k in report.cited), report.cited
+
+
+def test_a_citation_inside_a_header_SENTENCE_is_still_found():
+    """Only the whole-paragraph FALLBACK is suppressed. A header cell
+    carrying a real citation in prose is found the ordinary way, so the
+    fix cannot hide one."""
+    report = audit(_with_table(
+        _cells("Source", "Rates as reported by Maestas et al. (2023)"),
+        _cells("Poland", "54.1")))
+
+    assert any("maestas" in k for k in report.cited), report.cited
+
+
+def test_a_NESTED_table_gets_its_own_header_row():
+    """A non-greedy `<w:tbl>...</w:tbl>` closes on the INNER end tag, so
+    a whole-table match reads the rest of the outer table as body and
+    the outer header stops being one. Walked from each opening tag to
+    the next row instead."""
+    from docxkit.refstyle import _header_rows
+
+    doc = ("<w:body><w:tbl><w:tr><w:tc>outer head</w:tc></w:tr>"
+           "<w:tr><w:tc><w:tbl><w:tr><w:tc>inner head</w:tc></w:tr>"
+           "</w:tbl></w:tc></w:tr></w:tbl></w:body>")
+
+    spans = _header_rows(doc)
+
+    assert len(spans) == 2, "one header per table, the nested one included"
+    assert "outer head" in doc[spans[0][0]:spans[0][1]]
+    assert "inner head" in doc[spans[1][0]:spans[1][1]]
+
+
+def test_table_PROPERTIES_do_not_open_a_table():
+    """`<w:tblPr>` starts with the same six characters as `<w:tbl>`; an
+    unguarded pattern opens a table at every table's properties and the
+    first row it then finds is the wrong one."""
+    from docxkit.refstyle import _header_rows
+
+    doc = ("<w:tbl><w:tblPr><w:tblW w:w=\"5000\"/></w:tblPr>"
+           "<w:tr><w:tc>head</w:tc></w:tr></w:tbl>")
+
+    (span,) = _header_rows(doc)
+
+    assert "head" in doc[span[0]:span[1]]

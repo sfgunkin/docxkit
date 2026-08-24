@@ -18,6 +18,13 @@ failure at the scale of a round.
 
     python tools/replay_survivors.py src/docxkit/guard.py
 
+It prints the answer and does NOT write it back into the session. A
+session file is the record of one run against one tree, and editing its
+verdicts would make it a record of nothing in particular — the table
+would then show a figure no single run ever produced. Quote the replayed
+number where you use it, and re-sweep when you want the record itself to
+move.
+
 With 39 of this package's 42 modules holding a stale figure, replaying
 is the difference between minutes and re-sweeping everything.
 """

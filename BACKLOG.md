@@ -17,83 +17,40 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 — RE-OPENED: the heredoc backslash defect is marked FIXED, but nothing gates the BASH path, and it corrupted a shared file twice in ten minutes
+### S3 — a REJECTED tracked deletion does not get its hyperlink back, and only the distance decides
 
-Re-opened 2026-08-23. The entry below in `## Fixed`
-("~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08") records
-four occurrences and closes on two mitigations: PowerShell does not mangle,
-and `ruff PLE2510` backstops a mangled control character *once the payload is
-written to a `.py` file*. **Neither covers the case that has now caused the
-most damage**, and calling the entry FIXED is what let it be walked into
-again — twice, ten minutes apart, by an agent that had read this file.
+Filed 2026-08-24 from a second session's measurement on Aging_Well R24,
+pasted here rather than written by the finder because this file was
+modified in another tree at the time and a concurrent write loses
+whichever of us saves second. The measurement is theirs.
 
-**Fifth and sixth occurrences, measured on `tests/test_revision.py`.** The
-payload was not code and not a search anchor; it was the REPLACEMENT text of
-a `str.replace`, `"\\\\\\n        "`, meant to insert a Python line
-continuation. It arrived halved, so the replacement wrote the two characters
-backslash-n into the source. Three lines damaged — loud, a syntax error,
-cheap.
+**Symptom.** Word's Compare restores the words of a rejected deletion as
+plain text and orphans the bookmark, so the link is gone. Accept-all is
+fine; reject-all is not.
 
-The sixth is the expensive one: **the repair was a second heredoc with the
-same flaw**, and its search string arrived halved too, so instead of matching
-literal backslash-n it matched every REAL newline followed by indentation.
-387 of them, rewritten as literal backslash-n. 2821 lines collapsed to 2574,
-1113 E501s, `ast.parse` failing at line 58.
+| the same clause, the same batch | result |
+| --- | --- |
+| moved §8 -> §9 (a cross-section move) | `links: False`, ladder **FAIL** |
+| folded into the paragraph directly above it in §8 | `links: True`, ladder **PASS** |
 
-**Why the existing mitigations did not fire.**
+Same words, same citation runs. **Only the distance changed** — Compare
+diffs the adjacent case as surviving text and the distant one as delete
+plus insert.
 
-* `assert old in s` — the entry's own "actual mitigation" — cannot help: the
-  search string *did* match. It matched 387 things it was never meant to.
-* `PLE2510` never ran: the mangling happened inside the running script's
-  string literals, not in anything written to a `.py` file. The corrupted
-  file was the OUTPUT.
-* PowerShell not mangling is not a gate. Nothing routes patch scripts there,
-  and `python - <<'PY'` remains the obvious thing to type.
+**Why it is worth an entry.** The gate is doing its job and says WHAT
+broke — "Word's Compare does not rebuild a link inside a rejected
+deletion" — and says nothing about what to do, and the remedy is
+counter-intuitive: shorten the move. Any paper whose protocol says "move
+this cited clause to §N" hits it, and it only appears at the reject-all
+layer, so a batch looks completely healthy until the end of the ladder.
 
-**Why it cost more than a file.** `D:\docxkit` was being edited by a second
-Claude session at the time, with uncommitted work in that same file. It had
-to stop, snapshot the corruption and wait. A tooling trap that costs one
-agent a minute costs two agents an hour when the file is shared.
-
-**What made recovery possible, and it should be the documented procedure:**
-diagnose read-only first and find a property that SEPARATES the damage from
-the legitimate text, rather than fixing forward with more replaces. Here
-`git show HEAD:<file>` proved all 7 real `\n` escapes are followed by a quote
-or a letter and never by a space, while all 387 damaged sites are followed by
-indentation — so the repair was provable rather than hopeful. Genuine `\` +
-newline continuations then need the backslash restored by hand; plain
-newlines do not.
-
-**Fix shape. Stated as a rule about the PAYLOAD, because "be careful" has
-now failed three times in one session.** There is no safe way to put a
-backslash through a Bash heredoc, so the rule is not care but avoidance:
-**a payload containing a backslash never goes through a heredoc at all.**
-Write it to a file with the Write tool and execute the file; for a handful
-of lines use an Edit call, which touches no shell. Recorded for this agent
-in `feedback_never_patch_via_heredoc.md`.
-
-**And "patch script" is too narrow a scope, which is how the third one
-happened.** That payload was not a patch script: it was ordinary source
-being inserted, carrying `\n` inside an f-string. Same converter, same
-halving, different clothes. The rule is about backslashes in a heredoc,
-not about what the heredoc is for.
-
-**The running cost, since a measurement is what gets an entry acted on.**
-Three incidents on 2026-08-23/24, across two agents sharing one tree:
-
-| when | what | cost |
-|---|---|---|
-| 19:47 | `tests/test_revision.py` — a `str.replace` payload | 387 real newlines rewritten as literal `\n`, file collapsed 2821 → 2574 lines, 1113 lint errors, `ast.parse` failing; the second session had to stop, snapshot and wait |
-| — | two further patch attempts by the second session | both failed the same way |
-| 00:38 | `src/docxkit/cli.py` — an f-string in inserted source | two `\n` became real newlines, unterminated literal, **the whole package failed to import**, so every suite in the shared tree was red until repaired |
-
-**If a gate is wanted**, the candidate is a hook that refuses a
-`python - <<` invocation whose payload contains a backslash. The recovery
-procedure, when it happens anyway, is in the entry above: diagnose
-read-only, find a property that SEPARATES the damage from legitimate text,
-and prove it against `git show HEAD:<file>` before writing anything.
+**Shape of a fix.** Either the ladder's message names the remedy, or
+`validate` says it at BUILD time — "this deletion carries N links; a
+rejection will not restore them" — which is where the author can still
+act on it cheaply.
 
 ---
+
 
 ### Not three defects — one missing gate: nothing renders by default
 
@@ -182,106 +139,9 @@ the object, "is each entry in the section that says what it is."
 
 
 
-### S4 — `RefStyleReport.cited` and `.entries` are COUNTS with collection names
-
-Found on HCW, 2026-08-23, writing T17.2's cross-check.
-
-**Symptom as observed.** `RefStyleReport`'s fields are `issues`, `entries`,
-`cited`. `issues` is a list of `Issue`; `entries` and `cited` are `int`. The
-obvious code
-
-```python
-for e in report.entries:
-    ...
-```
-
-raises `TypeError: 'int' object is not iterable`, and `len(report.cited)`
-raises the same. Nothing in the field names distinguishes the list from the
-two counts.
-
-**Why S4.** Loud and immediate — it costs one round-trip, not a wrong answer.
-Recorded because two scripts hit it in one afternoon, and because the fix is
-free at the next breaking change: `n_entries` / `n_cited`, or return the
-collections and let callers take `len`. The collections would be the more
-useful shape: a caller checking a specific entry currently has to re-extract
-the reference list itself.
-
----
-
-### S4 — a year-labelled table COLUMN HEADER parses as a citation, so every paper with one carries an ignore entry
-
-Found on HCW, 2026-08-23.
-
-**Symptom as observed.** `refstyle.audit` reports, as citations with no
-reference entry:
-
-```
-     ¶220  Base 1990
-     ¶964  Base 2000
-```
-
-Both are **column headers** — Table A4's and Table A6's, "Base 1990",
-"Base 2000", "Max LFP". A cell whose entire content is `<Capitalised word>
-<four digits>` reads as a bare author-year citation, which is a form the
-scanner has to accept because narrative citations look like that.
-
-**Why S4 and not S2.** The `ignore` hook exists for exactly this and works —
-`IGNORED_LEADS | {"Base", "Max"}` clears it — and the default set already
-carries `Table`, `Figure`, `Panel`, `Wave`, `Round`, `Band`, `Step`, which is
-the same idea. So this is noise with a supported remedy, not a wrong answer.
-It is recorded because the remedy is per-paper and the trigger is not
-unusual: any exhibit with year-labelled columns produces it, and a paper that
-adds such a table during a revision starts failing a gate that was green.
-
-**Shape of a fix.** A cell that IS a citation and nothing else, in a table
-whose other cells in the same row are also `<word> <year>`, is a header, not a
-bibliography. Alternatively, skip the first row of a table for citation
-extraction — a reference is not cited from a column head. Either would remove
-the need for the per-paper list, which is where a maintained ignore set drifts
-into hiding a real miss.
-
----
 
 
-### S2 — Word's Compare merges a CHANGED FOOTNOTE and writes the merged string into both copies
 
-Found on LI7, 2026-08-23, by `word_compare.py`'s round-trip gate.
-
-A footnote whose text changed between the two documents comes back as a
-wholly-deleted copy plus a wholly-inserted copy — which is right — but
-Compare writes the **same character-merged string into both**. On LI7 the
-footnote reads `The decomposition in (4)` in the submitted paper and
-`The decomposition in (A1.1)` in the manuscript; both copies came back as
-`The decomposition in (4A1.1)`. That string is in neither document, so
-accept-all and reject-all each produce text that exists nowhere, and the
-redline misrepresents the footnote in both views.
-
-Why it is S2 and not S4: **nothing a person does in Word will show it.**
-Review > Next walks the body, and Simple/No Markup hides footnote balloons,
-so an author adjudicating the redline never sees the footnote at all. It
-was caught only because LI7's round-trip compares footnote text units
-against both source documents; `docxkit.tracked.verify` and `lint` are both
-clean on the corrupt file, and `compare_collateral` says nothing.
-
-The shape is exact and machine-detectable: Compare leaves the divergent
-fragment in a **run of its own** in both copies —
-
-    <delText>The decomposition in (</delText>
-    <delText>4</delText>
-    <delText>A1.1) weights each component ...</delText>
-
-so the repair is "the deletion keeps the old fragment and drops the new
-one; the insertion does the reverse", with no run added or removed and no
-revision resolved. Per-paper workaround:
-`Loneliness Index/revision/scripts/fix_compare_footnote_merge.py`.
-
-Suggested home: a `compare_collateral` check that every wholly-inserted
-footnote's text appears in the revised document and every wholly-deleted
-one's appears in the original — it is the same "did Compare carry this
-faithfully?" question that function already asks of parts, bookmarks and
-links, and a footnote is the one place a person cannot verify by eye.
-
----
 
 
 
@@ -676,9 +536,336 @@ gives — wrong advice rather than wrong behaviour, costing a reader a
 cycle and nothing else. Left, and named here so the next round does not
 re-derive them.
 
+
+**`placement.py` — recorded 8.6% (21/245), replayed 6.5% (16/245).** No
+tests written: five of the twenty-one were already dead against the
+harness as it stands. Listed here because the module was INVISIBLE until
+today — the largest in the package, with no entry in the harness map, so
+the overview a round is planned from had no line for it (see the map's
+own note). The sixteen are the classes recorded above almost to a
+mutant: `==` -> `>=`/`<=` over closed domains, `==` -> `is not` on
+interned values, one `True` -> `False` and one number. Not mined
+further, and the figure quoted here is the replayed one — the session
+file still records the run it actually made.
+
 ---
 
 ## Fixed
+
+### ~~S4 a year-labelled table COLUMN HEADER parses as a citation~~ — FIXED 24.08
+
+Found on HCW, 2026-08-23.
+
+**Symptom as observed.** `refstyle.audit` reports, as citations with no
+reference entry:
+
+```
+     ¶220  Base 1990
+     ¶964  Base 2000
+```
+
+Both are **column headers** — Table A4's and Table A6's, "Base 1990",
+"Base 2000", "Max LFP". A cell whose entire content is `<Capitalised word>
+<four digits>` reads as a bare author-year citation, which is a form the
+scanner has to accept because narrative citations look like that.
+
+**Why S4 and not S2.** The `ignore` hook exists for exactly this and works —
+`IGNORED_LEADS | {"Base", "Max"}` clears it — and the default set already
+carries `Table`, `Figure`, `Panel`, `Wave`, `Round`, `Band`, `Step`, which is
+the same idea. So this is noise with a supported remedy, not a wrong answer.
+It is recorded because the remedy is per-paper and the trigger is not
+unusual: any exhibit with year-labelled columns produces it, and a paper that
+adds such a table during a revision starts failing a gate that was green.
+
+**Shape of a fix.** A cell that IS a citation and nothing else, in a table
+whose other cells in the same row are also `<word> <year>`, is a header, not a
+bibliography. Alternatively, skip the first row of a table for citation
+extraction — a reference is not cited from a column head. Either would remove
+the need for the per-paper list, which is where a maintained ignore set drifts
+into hiding a real miss.
+
+**Took the narrow half of the suggested fix.** Not "skip the first row
+for citation extraction" — only the bare-citation FALLBACK is suppressed
+there: the branch that promotes a WHOLE paragraph to a citation when
+nothing else matched. Every other way of finding one still runs inside a
+header, so a real citation in a header sentence (`Rates as reported by
+Maestas et al. (2023)`) is found exactly as before, and a bare citation
+in a BODY row — a table of studies listing its sources one per cell — is
+still cross-checked. Both pinned.
+
+The row spans are walked from each `<w:tbl>` opening tag to the next
+`<w:tr>`, rather than by matching a whole table: a non-greedy
+`<w:tbl>.*?</w:tbl>` closes on a NESTED table's end tag, so the rest of
+the outer table reads as body and the outer header stops being one.
+Tested on a nested pair. `<w:tbl\b` and not `<w:tbl`, for the reason
+`_compare_read.STRUCT_TAG_RE` already records: after "tbl" comes "P" in
+`<w:tblPr>`, both word characters, so an unguarded pattern opens a table
+at every table's PROPERTIES — also tested, and the test fails without
+the boundary.
+
+This removes the need for the per-paper `IGNORED_LEADS | {"Base", "Max"}`,
+which is the point: a maintained ignore list is where a real miss goes to
+hide.
+
+---
+
+### ~~S4 `RefStyleReport.cited` and `.entries` are COUNTS with collection names~~ — FIXED 24.08
+
+Found on HCW, 2026-08-23, writing T17.2's cross-check.
+
+**Symptom as observed.** `RefStyleReport`'s fields are `issues`, `entries`,
+`cited`. `issues` is a list of `Issue`; `entries` and `cited` are `int`. The
+obvious code
+
+```python
+for e in report.entries:
+    ...
+```
+
+raises `TypeError: 'int' object is not iterable`, and `len(report.cited)`
+raises the same. Nothing in the field names distinguishes the list from the
+two counts.
+
+**Why S4.** Loud and immediate — it costs one round-trip, not a wrong answer.
+Recorded because two scripts hit it in one afternoon, and because the fix is
+free at the next breaking change: `n_entries` / `n_cited`, or return the
+collections and let callers take `len`. The collections would be the more
+useful shape: a caller checking a specific entry currently has to re-extract
+the reference list itself.
+
+**Took the second of the two fixes the entry offered, which it called the
+more useful shape.** `entries` is the parsed `list[Reference]` and `cited`
+the `dict[str, tuple[str, str]]` of key -> (where, snippet); the counts
+are `n_entries` and `n_cited`.
+
+The rename alone would have stopped the `TypeError`, and would have left
+the actual waste in place: `audit` builds both collections and, one line
+after computing them, threw them away. A caller wanting to look at an
+entry re-extracted the reference list the audit had just parsed — a
+second parse, by a different route, that can disagree with the first.
+
+A test pins the capability rather than the names: a report's entries can
+be read, they carry surname and year, and the two sides key ALIKE so
+"cited but not listed" is answerable. Not that one nests in the other —
+the fixture cites `maestas_2023` and does not list it, and that gap is
+the finding, not a broken invariant. Six assertions across the suite
+moved to the `n_` names; nothing outside this package was checked, so a
+paper script reading `.entries` as a number gets a list and a loud
+comparison failure, which is the right way for a breaking rename to
+arrive.
+
+---
+
+### ~~S2 Word's Compare merges a CHANGED FOOTNOTE and writes the merged string into both copies~~ — CORRECTED 24.08: it is gated twice, and was when this was filed
+
+Found on LI7, 2026-08-23, by `word_compare.py`'s round-trip gate.
+
+A footnote whose text changed between the two documents comes back as a
+wholly-deleted copy plus a wholly-inserted copy — which is right — but
+Compare writes the **same character-merged string into both**. On LI7 the
+footnote reads `The decomposition in (4)` in the submitted paper and
+`The decomposition in (A1.1)` in the manuscript; both copies came back as
+`The decomposition in (4A1.1)`. That string is in neither document, so
+accept-all and reject-all each produce text that exists nowhere, and the
+redline misrepresents the footnote in both views.
+
+Why it is S2 and not S4: **nothing a person does in Word will show it.**
+Review > Next walks the body, and Simple/No Markup hides footnote balloons,
+so an author adjudicating the redline never sees the footnote at all. It
+was caught only because LI7's round-trip compares footnote text units
+against both source documents; `docxkit.tracked.verify` and `lint` are both
+clean on the corrupt file, and `compare_collateral` says nothing.
+
+The shape is exact and machine-detectable: Compare leaves the divergent
+fragment in a **run of its own** in both copies —
+
+    <delText>The decomposition in (</delText>
+    <delText>4</delText>
+    <delText>A1.1) weights each component ...</delText>
+
+so the repair is "the deletion keeps the old fragment and drops the new
+one; the insertion does the reverse", with no run added or removed and no
+revision resolved. Per-paper workaround:
+`Loneliness Index/revision/scripts/fix_compare_footnote_merge.py`.
+
+Suggested home: a `compare_collateral` check that every wholly-inserted
+footnote's text appears in the revised document and every wholly-deleted
+one's appears in the original — it is the same "did Compare carry this
+faithfully?" question that function already asks of parts, bookmarks and
+links, and a footnote is the one place a person cannot verify by eye.
+
+**The Word behaviour above is real and the description is exact. The
+claim that nothing catches it is wrong**, and is corrected here rather
+than quietly deleted, because the entry was filed as an S2 on the
+strength of it and a reader coming back would otherwise act on it.
+
+**Measured 2026-08-24**, by reconstructing the shape the entry describes
+and running the gates over it. Both fire, on all four spellings the
+description admits — the fragments as one run with three children or as
+a run each, the two copies in one paragraph or in two:
+
+* `tracked.untracked` — reject-all against the ORIGINAL — reports
+  `footnotes ¶1: baseline 'The decomposition in (4)...' batch
+  'The decomposition in (4A1.1)...'`;
+* `tracked.unaccepted` — accept-all against the CLEAN COPY — reports
+  `intended '(A1.1)...' accepted '(4A1.1)...'`.
+
+Neither is advisory. `tracked.build` REFUSES on both by default, and
+`revision.build` leaves `accept_check` ON precisely because "a redline
+whose accepted text is not the clean copy is not a batch to hand back".
+
+**And they are not new.** `untracked` landed 2026-08-15 and `unaccepted`
+2026-08-19; this entry was filed on the 23rd. So the gates existed while
+LI7 shipped the corrupt footnote.
+
+**What the entry got right, and it is the useful half:** `verify`,
+`lint` and `compare_collateral` ARE all clean on such a file, and a
+person cannot see it — Review > Next walks the body and Simple Markup
+hides footnote balloons. The mistake was reading "the three checks I
+looked at say nothing" as "nothing says anything", which is the same
+shape as an all-zero audit being read as a pass. A list of what was
+checked is not a list of what exists.
+
+Five tests now pin the shape in `test_tracked_build.py`, so the two
+gates cannot lose it silently. No new check was added: adding one for a
+defect that is already refused twice would be code written against a
+misreading.
+
+**What remains open belongs to the PAPER, not to this package.** Why
+LI7's build did not refuse is unanswerable from here — the file is in
+the paper's folder, and the candidates are a redline built before 15.08,
+a `force=True`, or a flow that called neither gate. Worth ten minutes
+with the actual file, and nothing in docxkit changes either way.
+
+---
+
+### ~~S3 RE-OPENED: the heredoc backslash defect is marked FIXED, but nothing gates the BASH path~~ — FIXED 24.08
+
+Re-opened 2026-08-23. The entry below in `## Fixed`
+("~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08") records
+four occurrences and closes on two mitigations: PowerShell does not mangle,
+and `ruff PLE2510` backstops a mangled control character *once the payload is
+written to a `.py` file*. **Neither covers the case that has now caused the
+most damage**, and calling the entry FIXED is what let it be walked into
+again — twice, ten minutes apart, by an agent that had read this file.
+
+**Fifth and sixth occurrences, measured on `tests/test_revision.py`.** The
+payload was not code and not a search anchor; it was the REPLACEMENT text of
+a `str.replace`, `"\\\\\\n        "`, meant to insert a Python line
+continuation. It arrived halved, so the replacement wrote the two characters
+backslash-n into the source. Three lines damaged — loud, a syntax error,
+cheap.
+
+The sixth is the expensive one: **the repair was a second heredoc with the
+same flaw**, and its search string arrived halved too, so instead of matching
+literal backslash-n it matched every REAL newline followed by indentation.
+387 of them, rewritten as literal backslash-n. 2821 lines collapsed to 2574,
+1113 E501s, `ast.parse` failing at line 58.
+
+**Why the existing mitigations did not fire.**
+
+* `assert old in s` — the entry's own "actual mitigation" — cannot help: the
+  search string *did* match. It matched 387 things it was never meant to.
+* `PLE2510` never ran: the mangling happened inside the running script's
+  string literals, not in anything written to a `.py` file. The corrupted
+  file was the OUTPUT.
+* PowerShell not mangling is not a gate. Nothing routes patch scripts there,
+  and `python - <<'PY'` remains the obvious thing to type.
+
+**Why it cost more than a file.** `D:\docxkit` was being edited by a second
+Claude session at the time, with uncommitted work in that same file. It had
+to stop, snapshot the corruption and wait. A tooling trap that costs one
+agent a minute costs two agents an hour when the file is shared.
+
+**What made recovery possible, and it should be the documented procedure:**
+diagnose read-only first and find a property that SEPARATES the damage from
+the legitimate text, rather than fixing forward with more replaces. Here
+`git show HEAD:<file>` proved all 7 real `\n` escapes are followed by a quote
+or a letter and never by a space, while all 387 damaged sites are followed by
+indentation — so the repair was provable rather than hopeful. Genuine `\` +
+newline continuations then need the backslash restored by hand; plain
+newlines do not.
+
+**Fix shape. Stated as a rule about the PAYLOAD, because "be careful" has
+now failed three times in one session.** There is no safe way to put a
+backslash through a Bash heredoc, so the rule is not care but avoidance:
+**a payload containing a backslash never goes through a heredoc at all.**
+Write it to a file with the Write tool and execute the file; for a handful
+of lines use an Edit call, which touches no shell. Recorded for this agent
+in `feedback_never_patch_via_heredoc.md`.
+
+**And "patch script" is too narrow a scope, which is how the third one
+happened.** That payload was not a patch script: it was ordinary source
+being inserted, carrying `\n` inside an f-string. Same converter, same
+halving, different clothes. The rule is about backslashes in a heredoc,
+not about what the heredoc is for.
+
+**The running cost, since a measurement is what gets an entry acted on.**
+Three incidents on 2026-08-23/24, across two agents sharing one tree:
+
+| when | what | cost |
+|---|---|---|
+| 19:47 | `tests/test_revision.py` — a `str.replace` payload | 387 real newlines rewritten as literal `\n`, file collapsed 2821 → 2574 lines, 1113 lint errors, `ast.parse` failing; the second session had to stop, snapshot and wait |
+| — | two further patch attempts by the second session | both failed the same way |
+| 00:38 | `src/docxkit/cli.py` — an f-string in inserted source | two `\n` became real newlines, unterminated literal, **the whole package failed to import**, so every suite in the shared tree was red until repaired |
+
+**If a gate is wanted**, the candidate is a hook that refuses a
+`python - <<` invocation whose payload contains a backslash. The recovery
+procedure, when it happens anyway, is in the entry above: diagnose
+read-only, find a property that SEPARATES the damage from legitimate text,
+and prove it against `git show HEAD:<file>` before writing anything.
+
+**The gate exists: `tools/heredoc_guard.py`, a `PreToolUse` hook on
+Bash, registered in `.claude/settings.json`.** It reads the tool call on
+stdin and exits 2 — the blocking status — when a heredoc BODY contains a
+backslash. Windows paths in the command itself are untouched, because
+only text between the delimiters is examined; `python "C:\Users\..."`
+is the most common command in this environment and a guard that refused
+it would be switched off within the hour. Ten tests, including the two
+that matter for a guard: that it does not block the Write tool (the
+remedy — a guard that judged it would refuse the way out of its own
+refusal) and that malformed stdin returns 0 rather than raising, since
+one bad frame must not cost a shell.
+
+**And the mechanism, MEASURED rather than inherited (24.08).** This
+entry asserted there is no safe way to put a backslash through a
+heredoc. True, and now precise. The probe was `<<'PY'` — POSIX-QUOTED,
+which is specified to deliver its body untouched:
+
+| written in the heredoc | what Python received |
+| --- | --- |
+| `\\n` | a newline |
+| `\\\\` | one backslash |
+| `\t` | a TAB (unchanged) |
+| `\\t` | a TAB |
+
+**A doubled backslash is halved; a single `\x` passes through.** That is
+unquoted-heredoc behaviour applied to a quoted one, so the quoting is
+being lost before the shell sees it and no spelling inside the heredoc
+can recover it. It also explains why the trap keeps winning: `"\n"` in a
+payload is FINE, and `"\\n"` — the spelling you reach for the moment
+you want a literal backslash-n, which is exactly what a patch script
+rewriting escapes is doing — is silently wrong.
+
+**A seventh occurrence, found while reading this entry.** Same day,
+same agent, same session: a heredoc meant to DELETE a no-op
+`out.replace("\\n", " ")` from a test had its search string halved, so
+it matched nothing and the replace stayed. It shipped in a pushed
+commit, passing every gate, because a `.replace` of a literal
+backslash-n against text that has none is a no-op that reads as
+deliberate. Removed. Nothing broke — which is the point: the sixth
+occurrence was loud and cost an hour, the seventh was silent and would
+have stayed for ever.
+
+**What the gate does not cover.** Hook configuration is read when a
+session starts, so the session that wrote this one is not itself
+guarded; and the hook is project-scoped, so the trap is still live in
+the paper repositories, where the payloads are longer and the files are
+manuscripts. Promoting it to the user-level settings is a change to the
+environment rather than to this package, and is the author's call rather
+than an agent's.
+
+---
 
 ### ~~S1 every gate reads the WORKING copy, so a commit missing a definition was green here and broken everywhere else~~ — FIXED 24.08
 

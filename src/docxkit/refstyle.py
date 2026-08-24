@@ -1046,17 +1046,63 @@ _RSTYLE_RE = re.compile(r'<w:rStyle w:val="([^"]+)"')
 _BARE_CITE_RE = re.compile(rf"({AUTHORS_PATTERN})\s+({YEAR_PATTERN})")
 
 
+#: `<w:tbl\b`, not `<w:tbl`: after "tbl" comes "P" in `<w:tblPr>`, both
+#: word characters, so there is no boundary and an unguarded pattern
+#: opens a table at every table's PROPERTIES. The same reading
+#: `_compare_read.STRUCT_TAG_RE` takes, and for the same reason.
+_TBL_OPEN_RE = re.compile(r"<w:tbl\b[^>]*(?<!/)>")
+_TR_OPEN_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>")
+
+
+def _header_rows(doc: str) -> list[tuple[int, int]]:
+    """The span of the FIRST row of every table.
+
+    Walked from each `<w:tbl>` to the next `<w:tr>` rather than by
+    matching a whole table, because a non-greedy `<w:tbl>.*?</w:tbl>`
+    closes a nested table on the INNER end tag and reads the rest of the
+    outer one as body. Taking the first row after each opening tag gives
+    a nested table its own header, which is what it has.
+    """
+    spans: list[tuple[int, int]] = []
+    for tbl in _TBL_OPEN_RE.finditer(doc):
+        tr = _TR_OPEN_RE.search(doc, tbl.end())
+        if tr is None:
+            continue
+        end = doc.find("</w:tr>", tr.end())
+        spans.append((tr.start(), end if end != -1 else len(doc)))
+    return spans
+
+
 @dataclass
 class RefStyleReport:
-    """Everything :func:`audit` found, and the sizes it found it in."""
+    """Everything :func:`audit` found, and the two collections it read.
+
+    `entries` and `cited` were COUNTS until 2026-08-24, under those
+    names, and two scripts hit `TypeError: 'int' object is not iterable`
+    in one afternoon (HCW, backlog S4). They are the collections now,
+    with the counts as `n_entries` and `n_cited` — which is the shape
+    that was wanted anyway: `audit` parses the reference list and then
+    discarded it one line later, so a caller wanting to look at an entry
+    had to re-extract what the audit had just built.
+    """
 
     issues: list[Issue] = field(default_factory=list)
-    entries: int = 0
-    cited: int = 0               # distinct works cited in the text
+    entries: list[Reference] = field(default_factory=list)
+    """The reference list as parsed, in document order."""
+    cited: dict[str, tuple[str, str]] = field(default_factory=dict)
+    """Distinct works cited in the text: key -> (where, snippet)."""
+
+    @property
+    def n_entries(self) -> int:
+        return len(self.entries)
+
+    @property
+    def n_cited(self) -> int:
+        return len(self.cited)
 
     def format(self) -> str:
-        lines = [(f"{self.entries} reference entries, "
-                  f"{self.cited} works cited in text")]
+        lines = [(f"{self.n_entries} reference entries, "
+                  f"{self.n_cited} works cited in text")]
         for i in self.issues:
             where = i.where or "list"
             tail = f'  "{i.snippet}"' if i.snippet else ""
@@ -1280,6 +1326,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     answers_to = [_entry_keys(r) for r in entries]
     listed = set().union(*answers_to) if entries else set()
 
+    header_rows = _header_rows(doc)
     report = RefStyleReport()
     cited: dict[str, tuple[str, str]] = {}    # key -> (where, snippet)
 
@@ -1288,14 +1335,21 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
                   for r, ks in zip(entries, answers_to, strict=True)]
     linked: list[tuple[int, str, str]] = []
 
-    def prose(text: str, where: str, xml: str) -> None:
+    def prose(text: str, where: str, xml: str, *,
+              in_header: bool = False) -> None:
         cites = _trust_the_links(
             text, find_citations(text),
             _credit_links(xml, entry_anchors, where, linked))
         for issue in _check_prose(text, style, cites, listed,
                                   ignore=ignored):
             report.issues.append(replace(issue, where=where))
-        if not cites and (m := _BARE_CITE_RE.fullmatch(text.strip())):
+        # A whole paragraph that IS an author-year pair and nothing
+        # else is a narrative citation — unless it is a column head,
+        # where `Base 1990` is a label and a reference is not cited
+        # from one (backlog S4, HCW: two headers per paper, cleared
+        # by a per-paper ignore list that then hides real misses).
+        if not cites and not in_header and (
+                m := _BARE_CITE_RE.fullmatch(text.strip())):
             cites = [Citation(authors=m.group(1), year=m.group(2),
                               start=0, end=len(text), narrative=False)]
         for found in cites:
@@ -1308,7 +1362,9 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
     for i, text in enumerate(texts):
         if head_idx is not None and head_idx <= i <= last_entry:
             continue              # the reference section is not prose
-        prose(text, f"¶{i + 1}", matches[i].group(0))
+        prose(text, f"¶{i + 1}", matches[i].group(0),
+              in_header=any(a <= matches[i].start() < b
+                            for a, b in header_rows))
     for xml, text, where in _note_paragraphs(parts):
         prose(text, where, xml)
     _credit_unread(linked, entry_keys, cited)
@@ -1374,8 +1430,8 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
                 f'"{r.surname} {r.year}" — distinguish them as {letters}',
                 where=f"¶{r.index + 1}", snippet=r.text[:60]))
 
-    report.entries = len(entries)
-    report.cited = len(cited)
+    report.entries = entries
+    report.cited = cited
     if entries:
         for key, (where, snip) in cited.items():
             if key not in listed:
