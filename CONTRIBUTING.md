@@ -1803,7 +1803,7 @@ file anyone else is reading. A probe that needs to compare two
 behaviours belongs in it, or in a copy of the module under a scratch
 name — never in `src/`.
 
-### A PIPELINE's exit code is the last command's, three times now
+### A gate's status is lost to whatever runs after it — four times now
 
 `pyright | tail -1` swallowed pyright's status and is written up above.
 On 2026-08-20 the same shape came back as `pytest -q | tail -2`, run
@@ -1816,6 +1816,26 @@ it after the chain, not inside it.
 `&&` chain with `git commit`: mypy refused a new test file, the gate exited
 1, `tail` exited 0, and the commit went in red. The runner exists because of
 this exact shape and was invoked through it.
+
+**A FOURTH, 2026-08-24, and it was not a pipeline.** The command was the
+recommended shape above with one word changed:
+
+    python tools/gates.py > g.txt 2>&1; echo "exit=$?"; \
+        grep -E "^FAILED|pytest" g.txt | head -2 && git add … && git commit …
+
+`grep` found the failure, so grep SUCCEEDED, so `&&` ran the commit — and
+a red mypy reached master. Reading the failure and acting on it were the
+same command, so the exit code that mattered sat two commands upstream of
+the `&&`.
+
+The rule survives the variant; the reason for it gets wider. It is not
+"a pipeline hides a status", it is **anything between the gate and the
+commit has its own exit code, and `&&` reads the nearest one.** A grep, a
+`tail`, an `echo`, a `head` — each is a command that can succeed while
+the thing it is reporting failed.
+
+So the shape below is not "redirect instead of piping". It is: the gate
+run ENDS the command. Read the status. Then, separately, commit.
 
 There is no wording that fixes a habit. What does: never put a gate run and
 a commit in one chain. Redirect and read the status —
