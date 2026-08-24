@@ -2613,3 +2613,27 @@ def test_the_widening_STOPS_at_the_front_of_the_entry():
     out, _ = convert_text(entry)
 
     assert out == 'et al. (2020). "A." And Jones et al. (eds.), H.'
+
+
+def test_a_bare_citation_in_PROSE_ABOVE_a_table_is_not_a_column_head():
+    """The header suppression is a SPAN test, and a span has two ends.
+    Written with only the far one — "starts before this row ends" —
+    every paragraph in the document above the first table qualifies,
+    and a narrative citation standing alone in body prose is silently
+    dropped from `cited`. It then reads as never cited at all, which is
+    the failure this suppression was added to stop, moved one paragraph
+    up.
+
+    The existing header tests cannot see it: a body ROW starts after the
+    header row ends, so the far end alone is enough for them."""
+    head, _, rest = body_paragraphs().partition(para(run("References")))
+    parts = make_parts(head + para(run("Nowak 2018"))
+                       + "<w:tbl>"
+                       + _cells("Country", "Base 1990")
+                       + _cells("Poland", "54.1")
+                       + "</w:tbl>"
+                       + para(run("References")) + rest)
+
+    report = audit(parts)
+
+    assert any("nowak" in k for k in report.cited), report.cited
