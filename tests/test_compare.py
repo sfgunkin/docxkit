@@ -3863,6 +3863,7 @@ def test_a_paragraph_WITH_text_is_still_named_by_its_text():
     assert "'A sentence that spills.'" in issue
     assert "empty paragraph" not in issue
 
+
 def test_a_field_spilling_with_NO_paragraph_before_it_still_says_where():
     """The other branch, and the one the first test never reached.
 
@@ -3879,6 +3880,7 @@ def test_a_field_spilling_with_NO_paragraph_before_it_still_says_where():
     opened, orphan = integrity(xml, "BUILT", set())
 
     assert "(+1)" in opened
+    assert "the empty paragraph 1" in opened, opened
     assert "empty paragraph 2" in orphan, orphan
     assert "after" not in orphan, "there is nothing before it to name"
 
@@ -3916,3 +3918,75 @@ def test_the_size_of_what_is_NOT_there_is_zero():
 
     assert (removed["from"], removed["to"]) == (len(PNG), 0)
     assert (added["from"], added["to"]) == (0, len(PNG))
+
+
+def test_a_LONG_repetitive_document_still_reports_the_ONE_paragraph_added(
+        tmp_path):
+    """`autojunk=False` on the paragraph alignment, which nothing pinned.
+
+    difflib calls an element junk when it appears in more than 1% of the
+    sequence and the sequence is 200 or longer — and then declines to
+    match it. A regression table is exactly that: hundreds of paragraphs
+    drawn from a vocabulary of "Yes", "-", "(0.00)", "***". Measured
+    with autojunk left on, one added cell in a 210-paragraph table comes
+    back as 211 paragraphs replaced — every cell from the insertion to
+    the end of the document — which is the report-a-human-cannot-audit
+    failure `word_diff` documents, one level up and unpinned until a
+    cosmic-ray sweep found the mutant alive (2026-08-24).
+    """
+    cells = ["Yes", "No", "-", "0.00", "0.01", "(0.00)", "***", "n.a."]
+    rows = [para(run(cells[i % len(cells)])) for i in range(210)]
+    a_body = "".join(rows)
+    b_body = "".join(rows[:105]) + para(run("0.42")) + "".join(rows[105:])
+
+    report = compare(*docs(tmp_path, a_body, b_body))
+
+    assert report["text"] == [], "not one cell of prose changed"
+    assert len(report["structure"]) == 1, report["structure"]
+    assert "0.42" in str(report["structure"][0])
+
+
+def test_the_field_report_COUNTS_paragraphs_and_truncates_the_one_before():
+    """Both halves of `where`, and neither was observable before.
+
+    The paragraph number was only ever asserted at paragraph 2, where
+    `i + 1` and `i * 2` agree, so the arithmetic was free to be anything
+    else. The 40-character truncation was only ever asserted on a
+    27-character caption, where every truncation width agrees. Two
+    sweeps' worth of survivors sat in those two coincidences.
+    """
+    from docxkit._compare_diff import integrity
+
+    lead = "Figure 3. Mortality and labour-force participation in ECA"
+    assert len(lead) > 40, "the point of the case is to be truncated"
+    xml = document(
+        para(run(lead) + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>')
+        + para(run(" "))          # a spacer does not become the `after`
+        + _SPILL)
+
+    opened, orphan = integrity(xml, "BUILT", set())
+
+    assert f"{lead[:40]!r}" in opened, opened
+    assert "the empty paragraph 3" in orphan, orphan
+    assert f"after {lead[:40]!r}" in orphan, orphan
+
+
+def test_a_stripped_field_shows_the_START_of_the_paragraph_that_held_it(
+        tmp_path):
+    """The context is a reader's only handle on WHERE the machinery went,
+    and every case that reached it used a paragraph shorter than the
+    truncation — under which the width is unobservable and the mutants
+    that moved it survived."""
+    from docxkit.citations import hyperlink_field
+
+    lead = ("The within-occupation component of the change in age-friendly "
+            "employment accounts for most of it, see ")
+    a, b = docs(tmp_path,
+                para(run(lead) + hyperlink_field("ref_x", "Table 4")
+                     + run(" for detail.")),
+                para(run(lead + "Table 4 for more detail.")))
+
+    (entry,) = compare(a, b)["stripped_fields"]
+
+    assert entry["context"] == lead[:60]
+    assert len(entry["context"]) == 60

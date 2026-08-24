@@ -498,6 +498,68 @@ reach it:
 * `check_citations(docx_path, *, ...)` → the keyword-only marker
   mutated as a binary operator. Equivalent by construction.
 
+
+**`_compare_diff.py` — 743 mutants, 653 real, 617 killed (94.5%).** Of
+the 36 that remain, 34 cannot change a report and 2 are cosmetic. The
+sweep is also the first here to demonstrate its own staleness rule: it
+reported 60 survivors against a worktree snapshot taken twenty minutes
+before three tests landed, and **17 of the 60 were already dead** when
+replayed against the harness as it stood. A survivor list is a
+measurement of the tree it was taken from, not of the tree you have.
+Four tests then killed 7 more — `autojunk`, the field report's paragraph
+number, and two truncation widths.
+
+The one that mattered: **`compare_paras` passes `autojunk=False` and
+nothing pinned it.** difflib calls an element junk when it appears in
+more than 1% of the sequence and the sequence is 200 or longer, and then
+declines to match it — which describes a regression table exactly, being
+hundreds of paragraphs drawn from a vocabulary of "Yes", "-", "(0.00)",
+"***". Measured with autojunk left on, one added cell in a 210-paragraph
+table comes back as **211 paragraphs replaced**: every cell from the
+insertion to the end of the document. That is the same
+report-a-human-cannot-audit failure `word_diff`'s docstring measures at
+the WORD level, one level up, and the paragraph-level twin had no test.
+
+The two left alive are the `[:60]` context width in `replaced`'s
+second exit — the loss whose paragraph never reached the text layer.
+Reachable only through the glyph-identical path, and cosmetic there.
+
+The 34 equivalents fall into five classes, none worth a sixth look:
+
+* **Interned string literals under `is` (14).** difflib's opcode tags
+  and this module's own `kind`/`where` values are all identifier-like,
+  so CPython interns them and `is` agrees with `==` on every input.
+  Fragile as style, equivalent as behaviour.
+* **Ordering over a closed domain (10)** — `citations.py`'s class,
+  again. `elif tag <= "delete"` is reached only by "delete", "insert"
+  and "replace", of which "delete" sorts first. The sharpest is
+  `m.group(1) <= "begin"`, whose domain is fixed by the alternation
+  `(begin|end)` two characters away in the regex that produced it.
+* **`label_moves` (5), each for a different structural reason.**
+  `-len(s)` → `~len(s)` in two sort keys is a monotone transform, so the
+  order is identical; `continue` → `break` on the too-short label is
+  equivalent because the walk is sorted by DESCENDING length, so once
+  one is too short every later one is; `break` → `continue` on an
+  exhausted count only adds iterations whose `while` guard is already
+  false; and `>` → `>=` in "grew"/"shrank" cannot separate, because
+  pairing requires one label to contain the other and to differ from it,
+  which equal lengths forbid.
+* **`hyperlink_labels`' `m.group(1)` → `m.group(0)` (2).** Group 0 adds
+  the `<w:hyperlink …>` wrapper and nothing else, and `WT_RE` matches
+  `<w:t>`, which the wrapper has none of. Same for the field form.
+* **Three mutants on two guards whose second clause cannot fire.**
+  `fmt_diff`'s `or len(pa.fmt) != len(pb.fmt)`: `_char_fmt` appends a
+  character and its flags in lockstep, so equal `wtext_f` forces equal
+  `len(fmt)`. `_marker_segments`' `len(before) != len(text)`: `marks` is
+  collected from the `<m:r>` matches INSIDE the block `toks` is
+  collected from, so `len(marks) <= len(toks)` and `!=` cannot separate
+  from `<`. **That is the third and fourth dead clause this same family
+  of construction invariants has produced** — `replaced` records two
+  more in a comment — and the first found by a sweep rather than by
+  reading. Both are kept: the invariant is a property of one helper, and
+  a future `wtext_f` that normalizes where `fmt` does not would make
+  them live again.
+
 ---
 
 ## Fixed
