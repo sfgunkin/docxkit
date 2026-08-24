@@ -270,6 +270,28 @@ def staleness(src_path: str) -> list[str]:
             ""]
 
 
+#: Where the argued equivalences live. Beside the tooling that reads
+#: them rather than in the module they describe: a claim is about a
+#: mutant, not about the code, and putting it in the source would be a
+#: comment nobody could check.
+CLAIMS = ROOT / "tools" / "equivalents.toml"
+
+
+def claimed_equivalents(src_path: str) -> dict[str, str]:
+    """Mutated lines argued equivalent for this module -> the argument.
+
+    Keyed on the line the mutation PRODUCED, as `became` renders it,
+    because a row number does not survive the module moving and these
+    are meant to outlive several such moves.
+    """
+    if not CLAIMS.exists():
+        return {}
+    with CLAIMS.open("rb") as fh:
+        doc = tomllib.load(fh)
+    entry = doc.get(Path(src_path).name, {})
+    return {c["line"].strip(): c["why"] for c in entry.get("claims", ())}
+
+
 def became(diff: str | None) -> str:
     """The line the mutation produced, out of cosmic-ray's stored diff.
 
@@ -295,6 +317,7 @@ class Counts(NamedTuple):
     in_guard: int
     in_marker: int
     in_nocov: int
+    claimed: int
     real: list[tuple[int, int, str, str, str | None]]
     lines: list[str]
     tree: ast.Module
@@ -333,7 +356,7 @@ class Counts(NamedTuple):
     def base(self) -> int:
         """The denominator: what a test COULD have killed."""
         return (self.ran - self.annotated - self.in_guard - self.in_marker
-                - self.in_nocov)
+                - self.in_nocov - self.claimed)
 
     @property
     def share(self) -> float:
@@ -385,13 +408,20 @@ def classify(db_path: str, src_path: str) -> Counts | None:
                    if within(nocov, r[0], r[1])
                    and not within(spans, r[0], r[1])
                    and not within(guards, r[0], r[1]))
+    # Argued equivalences come out LAST, so a mutant that is already
+    # discounted for being in an annotation is not discounted twice —
+    # which would take it out of the denominator once per reason and
+    # deflate the rate.
+    claims = claimed_equivalents(src_path)
+    open_ = [r for r in survived if r not in unreached]
+    settled = [r for r in open_ if became(r[4]) in claims]
     return Counts(
         ran=len(ran), killed=len(ran) - len(survived), survived=len(survived),
         graded=len(rows), planned=planned,
         annotated=annotated, in_guard=in_guard,
         in_marker=len(unreached) - annotated - in_guard - in_nocov,
-        in_nocov=in_nocov,
-        real=[r for r in survived if r not in unreached],
+        in_nocov=in_nocov, claimed=len(settled),
+        real=[r for r in open_ if r not in settled],
         lines=text.splitlines(), tree=tree)
 
 
@@ -446,6 +476,12 @@ def main() -> int:
         print(f"  {in_marker} {is_are} the keyword-only `*` of a signature, "
               f"mutated to `/`:\n  an interface constraint, and no call in "
               f"this package changes meaning")
+    if counts.claimed:
+        is_are = "is" if counts.claimed == 1 else "are"
+        print(f"  {counts.claimed} {is_are} argued EQUIVALENT in "
+              f"tools/equivalents.toml — a claim that\n  starts being "
+              f"killed is a claim that expired, and "
+              f"`verify_equivalents.py` says so")
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.

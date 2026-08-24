@@ -1,0 +1,33 @@
+# Mutants argued to be EQUIVALENT — they change the source and cannot
+# change behaviour, so no test can kill them and none should be written.
+#
+# This exists for the same reason the annotation discount does. A
+# survivor list is only useful if its entries are questions, and a
+# module whose list is padded with mutants that were settled weeks ago
+# gets re-triaged from scratch every sweep — which is how a figure ends
+# up being quoted at people with a denominator nobody rechecked.
+#
+# A claim is keyed on the LINE THE MUTATION PRODUCED, exactly as
+# `mutation_survivors.became()` renders it (stripped). Keying on the row
+# would break the first time the module moved, and these outlive several
+# such moves. Two identical lines in one module share a claim; that has
+# not come up, and when it does the claim covers both, which is the
+# conservative direction only if the argument covers both — so say so in
+# `why` when it matters.
+#
+# Every claim is re-checked by `python tools/verify_equivalents.py`,
+# which applies it and expects it to SURVIVE. A claim that starts being
+# killed is not a victory: it means the code or the harness moved and
+# the argument no longer describes them. Delete it and look again.
+
+["refstyle.py"]
+claims = [
+  { was = "strays = [i for i in range(lo, hi + 1) if i not in listed]", line = "strays = [i for i in range(lo, hi * 1) if i not in listed]", why = "The span's far end is `entries[-1].index`, and `listed` holds every entry's index — so `hi` is dropped by the `if i not in listed` clause however the range ends. Any variant yielding `hi` or `hi + 1` scans the same paragraphs. This one yields `hi`." },
+  { was = "strays = [i for i in range(lo, hi + 1) if i not in listed]", line = "strays = [i for i in range(lo, hi + 0) if i not in listed]", why = "Yields `hi`, which `listed` filters out. See the `hi * 1` claim." },
+  { was = "strays = [i for i in range(lo, hi + 1) if i not in listed]", line = "strays = [i for i in range(lo, hi // 1) if i not in listed]", why = "Yields `hi`, which `listed` filters out. See the `hi * 1` claim." },
+  { was = "strays = [i for i in range(lo, hi + 1) if i not in listed]", line = "strays = [i for i in range(lo, hi ** 1) if i not in listed]", why = "Yields `hi`, which `listed` filters out. See the `hi * 1` claim." },
+  { was = "strays = [i for i in range(lo, hi + 1) if i not in listed]", line = "strays = [i for i in range(lo, hi | 1) if i not in listed]", why = "`hi | 1` is `hi + 1` when `hi` is even and `hi` when it is odd — both scan the same paragraphs, because `hi` itself is filtered. Its sibling `hi ^ 1` is NOT equivalent: that one yields `hi - 1` at odd `hi` and misses a stray directly above the last entry, which is why the stray test is parameterised over both parities." },
+  { was = "if order == units:", line = "if order > units:", why = "Skips an early return whose work is a no-op. Measured on an already-sorted list with the guard forced off: `report.moved` stays empty, `report.refused` stays empty, and the rewrite `doc[:start] + join(order) + doc[at:]` reproduces `document.xml` byte for byte. The guard buys clarity and a little time, not correctness." },
+  { was = "if order == units:", line = "if order >= units:", why = "`order` is `sorted(units)`, which is the lexicographically smallest arrangement of the same items, so `order <= units` always holds and `>=` is true exactly when `==` is. Equivalent by the comparison itself, before the no-op argument applies." },
+  { was = "if order == units:", line = "if order is units:", why = "`order` is a fresh list from `sorted()`, so `is` is never true — the guard never fires, which is the `order > units` case. Same measurement." },
+]

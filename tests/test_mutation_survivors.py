@@ -512,3 +512,114 @@ def test_a_FINISHED_sample_is_not_called_incomplete(tmp_path):
 
     assert "INCOMPLETE" not in done.stdout, done.stdout
     assert "(sampled from 4)" in done.stdout, done.stdout
+
+
+# --- argued equivalences ------------------------------------------------
+
+CLAIMED_SRC = """\
+def widen(lo: int, hi: int) -> list[int]:
+    listed = {hi}
+    return [i for i in range(lo, hi + 1) if i not in listed]
+"""
+
+MUTANT = "return [i for i in range(lo, hi * 1) if i not in listed]"
+
+
+def _claims_file(tmp_path, module, *lines):
+    text = ['["' + module + '"]', "claims = ["]
+    text += ['  { was = "x", line = "' + ln + '", why = "argued" },'
+             for ln in lines]
+    text.append("]")
+    path = tmp_path / "equivalents.toml"
+    path.write_text(chr(10).join(text), encoding="utf-8")
+    return path
+
+
+def _claimed_counts(tmp_path, monkeypatch, *rows, claims=(MUTANT,)):
+    """`classify` in process, so the claims file can be swapped."""
+    tool = _tool_module()
+    src = tmp_path / "widen.py"
+    src.write_text(CLAIMED_SRC, encoding="utf-8")
+    monkeypatch.setattr(tool, "CLAIMS",
+                        _claims_file(tmp_path, "widen.py", *claims))
+    return tool.classify(str(_database(tmp_path / "run.sqlite", *rows)),
+                         str(src))
+
+
+def test_a_mutant_argued_EQUIVALENT_is_not_counted_as_a_gap(tmp_path,
+                                                            monkeypatch):
+    """The same discount the annotations get, for the same reason: a
+    mutant that cannot change behaviour is not a missing test, and a
+    survivor list padded with settled ones gets re-triaged from scratch
+    every sweep."""
+    counts = _claimed_counts(tmp_path, monkeypatch,
+                             (3, "SURVIVED", 0, "+    " + MUTANT))
+
+    assert counts.claimed == 1
+    assert counts.real == []
+    assert counts.base == 0
+
+
+def test_an_UNCLAIMED_mutant_on_the_same_line_is_still_a_gap(tmp_path,
+                                                             monkeypatch):
+    """The claim is about one mutation, not about the line it sits on.
+    `hi ^ 1` and `hi * 1` differ — the first misses a stray above an
+    odd-indexed last entry — so discounting by line would have hidden a
+    real defect behind a neighbour's argument."""
+    other = "return [i for i in range(lo, hi ^ 1) if i not in listed]"
+    counts = _claimed_counts(tmp_path, monkeypatch,
+                             (3, "SURVIVED", 0, "+    " + other))
+
+    assert counts.claimed == 0
+    assert len(counts.real) == 1
+
+
+def test_a_claim_for_ANOTHER_module_does_not_reach_this_one(tmp_path,
+                                                            monkeypatch):
+    """Keyed by module, because the same line of code means different
+    things in two files and an argument made about one of them is not
+    evidence about the other."""
+    tool = _tool_module()
+    src = tmp_path / "widen.py"
+    src.write_text(CLAIMED_SRC, encoding="utf-8")
+    monkeypatch.setattr(tool, "CLAIMS",
+                        _claims_file(tmp_path, "somewhere_else.py", MUTANT))
+
+    counts = tool.classify(
+        str(_database(tmp_path / "run.sqlite",
+                      (3, "SURVIVED", 0, "+    " + MUTANT))), str(src))
+
+    assert counts.claimed == 0
+    assert len(counts.real) == 1
+
+
+def test_a_claimed_mutant_inside_an_ANNOTATION_is_discounted_ONCE(tmp_path,
+                                                                  monkeypatch):
+    """Both discounts come out of the denominator, so counting a mutant
+    under each one takes it out twice and the rate is quietly deflated —
+    an error in the direction everybody is hoping for, which is the
+    direction nobody checks. The claims are applied to what the earlier
+    passes left, not to the whole survivor list."""
+    col = CLAIMED_SRC.splitlines()[0].index("int")
+    counts = _claimed_counts(tmp_path, monkeypatch,
+                             (1, "SURVIVED", col, "+    " + MUTANT))
+
+    assert counts.annotated == 1
+    assert counts.claimed == 0, "discounted twice"
+    assert counts.base == 0
+
+
+def test_the_verifier_REFUSES_a_claim_whose_line_is_ambiguous(tmp_path):
+    """`kill_check` needs the line as it really appears, and insists its
+    anchor occur exactly once. A stripped claim matching two lines would
+    otherwise mutate whichever came first and report "survived, as
+    claimed" about a line nobody argued for."""
+    _tools_on_path()
+    import verify_equivalents  # pyright: ignore[reportMissingImports]
+
+    src = tmp_path / "twice.py"
+    src.write_text("def f():\n    x = 1\n    return x\n\n"
+                   "def g():\n    x = 1\n    return x\n", encoding="utf-8")
+
+    assert verify_equivalents.anchored(src, "return x") is None
+    assert verify_equivalents.anchored(src, "def f():") == "def f():"

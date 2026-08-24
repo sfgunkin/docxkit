@@ -497,6 +497,27 @@ than by the numbers:
   inside `or back == m.group(2)`; it is gone, with the argument in its
   place.
 
+### An equivalence argued once should not be argued again
+
+Some survivors are not gaps: the mutation changes the source and cannot
+change behaviour. Annotations are discounted wholesale, but the
+interesting ones are specific — `range(lo, hi + 1)` where `hi` is
+filtered by the next clause, an early return whose work is a no-op.
+Argue one of those in a commit message and the next sweep re-derives it
+from nothing, because the survivor list looks exactly the same.
+
+`tools/equivalents.toml` records them, keyed on the line the mutation
+PRODUCED — a row number does not survive the module moving.
+`mutation_survivors` takes them out of the numerator AND the
+denominator, the way it treats annotations.
+
+A wrong claim improves the module's figure, which is the one direction
+of error nobody checks. So `python tools/verify_equivalents.py` applies
+every claim and expects it to SURVIVE. A claim that starts being killed
+has not been vindicated — the code or the harness moved and the argument
+no longer describes them. Delete it and decide afresh. Run it after
+changing a module whose claims touch the lines you moved.
+
 ### Many survivors on ONE line is a design question, not a missing test
 
 The usual survivor is a line whose behaviour no test happens to reach,
