@@ -277,19 +277,32 @@ def staleness(src_path: str) -> list[str]:
 CLAIMS = ROOT / "tools" / "equivalents.toml"
 
 
-def claimed_equivalents(src_path: str) -> dict[str, str]:
-    """Mutated lines argued equivalent for this module -> the argument.
+def claimed_equivalents(src_path: str,
+                        kind: str = "equivalent") -> dict[str, str]:
+    """Settled mutants of one KIND for this module -> the argument.
 
     Keyed on the line the mutation PRODUCED, as `became` renders it,
     because a row number does not survive the module moving and these
     are meant to outlive several such moves.
+
+    Two kinds, and the difference is what may be done with the number.
+    An `equivalent` mutant CANNOT be killed, so it leaves the numerator
+    and the denominator together — the same arithmetic the annotations
+    get. A `cosmetic` one — a truncation width, the length of a quoted
+    snippet — really does change what the code does, and a test
+    asserting the exact character count would kill it. It is simply not
+    worth one. So it leaves the LIST, which is a queue of tests to
+    write, and stays in the FIGURE, which is a claim about how much of
+    the module is held: discounting it would report work nobody means to
+    do as work that cannot be done.
     """
     if not CLAIMS.exists():
         return {}
     with CLAIMS.open("rb") as fh:
         doc = tomllib.load(fh)
     entry = doc.get(Path(src_path).name, {})
-    return {c["line"].strip(): c["why"] for c in entry.get("claims", ())}
+    return {c["line"].strip(): c["why"] for c in entry.get("claims", ())
+            if c.get("kind", "equivalent") == kind}
 
 
 def became(diff: str | None) -> str:
@@ -318,6 +331,7 @@ class Counts(NamedTuple):
     in_marker: int
     in_nocov: int
     claimed: int
+    skin: list[tuple[int, int, str, str, str | None]]
     real: list[tuple[int, int, str, str, str | None]]
     lines: list[str]
     tree: ast.Module
@@ -360,7 +374,17 @@ class Counts(NamedTuple):
 
     @property
     def share(self) -> float:
-        return len(self.real) / self.base * 100 if self.base else 0.0
+        """How much of this module a test would not notice changing.
+
+        The COSMETIC ones count. They are out of the printed list
+        because nobody is going to write a test for the width of a
+        truncation, but they are survivors: the code does something
+        different and the suite does not notice. Leaving them out of the
+        rate as well would turn a decision not to bother into a claim
+        that there was nothing there.
+        """
+        found = len(self.real) + len(self.skin)
+        return found / self.base * 100 if self.base else 0.0
 
 
 def classify(db_path: str, src_path: str) -> Counts | None:
@@ -431,13 +455,15 @@ def classify(db_path: str, src_path: str) -> Counts | None:
     claims = claimed_equivalents(src_path)
     open_ = [r for r in survived if r not in unreached]
     settled = [r for r in open_ if became(r[4]) in claims]
+    skin_of = claimed_equivalents(src_path, "cosmetic")
+    skin = [r for r in open_ if r not in settled and became(r[4]) in skin_of]
     return Counts(
         ran=len(ran), killed=len(ran) - len(survived), survived=len(survived),
         graded=len(rows), planned=planned,
         annotated=annotated, in_guard=in_guard,
         in_marker=len(unreached) - annotated - in_guard - in_nocov,
-        in_nocov=in_nocov, claimed=len(settled),
-        real=[r for r in open_ if r not in settled],
+        in_nocov=in_nocov, claimed=len(settled), skin=skin,
+        real=[r for r in open_ if r not in settled and r not in skin],
         lines=text.splitlines(), tree=tree)
 
 
@@ -501,8 +527,15 @@ def main() -> int:
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.
+    if counts.skin:
+        is_are = "is" if len(counts.skin) == 1 else "are"
+        print(f"  {len(counts.skin)} {is_are} COSMETIC — a truncation "
+              f"width, the length of a quoted\n  snippet. Out of the list "
+              f"below and still IN the rate: a test could kill\n  them, and "
+              f"nobody is going to write it")
+    found = len(real) + len(counts.skin)
     print(f"  {len(real)} to actually look at — REAL SURVIVAL "
-          f"{counts.share:.1f}% ({len(real)}/{counts.base})\n")
+          f"{counts.share:.1f}% ({found}/{counts.base})\n")
 
     defs = definitions(tree)
     by_line: dict[int, list[str]] = {}

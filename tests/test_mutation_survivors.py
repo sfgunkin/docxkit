@@ -649,7 +649,10 @@ def test_the_SHIPPED_claims_file_parses_and_every_claim_is_complete():
         assert module.endswith(".py"), module
         assert entry.get("claims"), f"{module} has no claims"
         for claim in entry["claims"]:
-            assert set(claim) == {"was", "line", "why"}, claim
+            assert set(claim) <= {"was", "line", "why", "kind"}, claim
+            assert {"was", "line", "why"} <= set(claim), claim
+            assert claim.get("kind", "equivalent") in {"equivalent",
+                                                       "cosmetic"}, claim
             assert claim["was"] != claim["line"], claim
             assert len(claim["why"]) > 40, claim["why"]
 
@@ -686,3 +689,34 @@ def test_classify_reads_the_SNAPSHOT_even_when_handed_the_live_file(tmp_path):
 
     assert counts.annotated == 1, "the annotation discount was lost"
     assert counts.real == []
+
+
+def test_a_COSMETIC_claim_leaves_the_list_and_stays_in_the_rate(tmp_path,
+                                                                monkeypatch):
+    """The two kinds are not the same discount. An `equivalent` mutant
+    CANNOT be killed, so it leaves numerator and denominator together.
+    A `cosmetic` one — the width of a truncation, the length of a quoted
+    snippet — really does change what the code does, and a test
+    asserting the character count would kill it. Nobody is going to
+    write that test, which is a decision about effort and not a fact
+    about the code: discounting it from the rate would report the
+    decision as though there had been nothing there."""
+    tool = _tool_module()
+    src = tmp_path / "widen.py"
+    src.write_text(CLAIMED_SRC, encoding="utf-8")
+    toml = tmp_path / "equivalents.toml"
+    toml.write_text('["widen.py"]\nclaims = [\n'
+                    '  { was = "x", line = ' + repr(MUTANT).replace("'", '"')
+                    + ', kind = "cosmetic", why = "a width nobody chose" },\n'
+                    "]\n", encoding="utf-8")
+    monkeypatch.setattr(tool, "CLAIMS", toml)
+
+    counts = tool.classify(
+        str(_database(tmp_path / "run.sqlite",
+                      (3, "SURVIVED", 0, "+    " + MUTANT))), str(src))
+
+    assert counts.real == [], "a cosmetic mutant is not a queue entry"
+    assert len(counts.skin) == 1
+    assert counts.claimed == 0, "it is not equivalent, and must not say so"
+    assert counts.base == 1, "the denominator keeps it"
+    assert counts.share == 100.0, "and so does the rate"
