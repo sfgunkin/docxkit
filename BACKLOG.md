@@ -374,6 +374,14 @@ the experiment being designed was a second paper, and the answer was in
 this paper's next handback. The cheaper experiment was the one already
 running.
 
+And the rule that generalises out of it, which is NOT "wait for a second
+sighting": **ask what a second sighting could rule OUT.** Here it could
+rule out nothing — Compare and the author's save both drop the part, so
+two independent-looking observations would have agreed for a reason
+neither observer knew, and the agreement would have read as replication.
+A second observation that cannot fail is not evidence; it is
+repetition.
+
 So: **the form of a link is not evidence about who wrote it.** Verify a
 repair by counting anchors and resolving them, never by "mine writes
 elements and this file has fields". Both forms are live in any manuscript a
