@@ -815,11 +815,23 @@ def layout(parts: dict[str, bytes], spec: Layout = HOUSE_LAYOUT, *,
             want = getattr(spec, wanted)
             have, declared = _effective(para, styles_xml, tag, attr)
             if (have or 0) == want:
-                continue
-            if not declared and have is None and want == 0:
-                # Nothing states it, and the house value is what Word
-                # renders anyway. Writing it would not survive a save.
-                report.inherited.append(f"¶{r.index + 1}: {said}")
+                # Already right. Say so when the STYLE is what makes it
+                # right and the paragraph states nothing: writing the
+                # value would be deleted by Word on its next save, so
+                # the entry is counted and left alone.
+                #
+                # This lived one branch DOWN until 2026-08-24, as `not
+                # declared and have is None and want == 0` — which no
+                # input can reach: `have is None` makes `(have or 0)`
+                # zero, so the `continue` above fires for exactly the
+                # `want == 0` case its own condition required.
+                # `LayoutReport.inherited`, its docstring and the
+                # ", N left to the style" clause in `format` were all
+                # live and fed by nothing, and a sweep of this module
+                # read twenty mutants there as untested rather than as
+                # unreachable.
+                if not declared and have is not None:
+                    report.inherited.append(f"¶{r.index + 1}: {said}")
                 continue
             para = _pin(para, tag, attr, want)
             was = have if have is not None else "-"

@@ -638,3 +638,70 @@ def test_LAYOUT_reports_the_paragraph_it_put_the_break_on():
 
     assert report.page_break.startswith("\u00b65: References"), \
         report.page_break
+
+
+
+def test_the_lines_layout_writes_name_the_rule_the_entry_and_BOTH_values():
+    """What a person reads to check a pass, one line per rule per entry.
+
+    The renderer was tested with lists handed to it; this is the code
+    that BUILDS them, and every part of the line was free: which
+    paragraph, which rule, what it was, what it became. `- -> 720` is
+    the shape for a value nothing stated, and the dash matters — `0 ->
+    720` would say the entry declared a zero indent, which is a
+    different document.
+    """
+    parts = _deep_list(entry(LONG_A, ppr=""), entry(B, ppr=""))
+
+    report = layout(parts)
+
+    assert report.indented == [
+        "\u00b66: left indent - -> 720", "\u00b66: hanging indent - -> 720",
+        "\u00b67: left indent - -> 720", "\u00b67: hanging indent - -> 720"]
+    assert report.spaced == ["\u00b66: space after - -> 80",
+                             "\u00b67: space after - -> 80"]
+    # `space before` is 0 in the house spec and 0 by default, so there is
+    # nothing to write and nothing a style provided: neither a change nor
+    # an inheritance.
+    assert report.inherited == []
+
+
+def test_an_OLD_VALUE_is_quoted_as_itself_not_as_a_dash():
+    """The dash means "nothing stated it". An entry that states 360 has
+    to say 360, because "the entry sets a quarter-inch indent" and "the
+    entry sets nothing" are different problems with different fixes."""
+    quarter = '<w:pPr><w:ind w:left="360" w:hanging="360"/></w:pPr>'
+    parts = _deep_list(entry(LONG_A, ppr=quarter))
+
+    report = layout(parts)
+
+    assert "\u00b66: left indent 360 -> 720" in report.indented
+    assert "\u00b66: hanging indent 360 -> 720" in report.indented
+
+
+def test_a_value_the_STYLE_provides_is_counted_and_left_alone():
+    """The `inherited` list, which was fed by nothing until 2026-08-24:
+    its condition sat one branch below the `continue` that already
+    caught every case it asked for, so `LayoutReport.inherited`, its
+    docstring and the ", N left to the style" clause were all live and
+    unreachable.
+
+    Word deletes a paragraph declaration equal to the inherited value on
+    its next save, so writing one makes an audit that can never come
+    back clean. Counting it says the pass SAW the entry."""
+    styles_xml = (
+        '<w:styles><w:style w:type="paragraph" w:styleId="Ref">'
+        '<w:pPr><w:spacing w:before="0" w:after="80"/>'
+        '<w:ind w:left="720" w:hanging="720"/></w:pPr></w:style></w:styles>')
+    styled = '<w:pPr><w:pStyle w:val="Ref"/></w:pPr>'
+    body = "".join(para(run(f"Body paragraph {n}.")) for n in range(4))
+    parts = make_parts(body + heading() + entry(LONG_A, ppr=styled),
+                       extra={"word/styles.xml": styles_xml})
+
+    report = layout(parts)
+
+    assert report.inherited == [
+        "\u00b66: left indent", "\u00b66: hanging indent",
+        "\u00b66: space before", "\u00b66: space after"]
+    assert not report.indented and not report.spaced, "nothing was written"
+    assert "4 left to the style" in report.format()
