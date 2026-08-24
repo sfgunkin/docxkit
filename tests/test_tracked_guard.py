@@ -163,3 +163,85 @@ def test_a_corrupt_stamp_does_not_stop_a_repair_recording_itself(built):
 # anyone should edit.
 #
 # Nothing else in the module survives, which makes this one CLOSED.
+
+
+# --------------------------------------------------------------- base_of
+# The staleness gate. Every one of these is a way of saying "cannot
+# tell", and each has to answer None rather than guess, because the
+# caller's fallback for None is to allow — an unstamped batch is the
+# hand-authored vehicle and is legitimate. A wrong string here is worse
+# than no answer: it would let `promote` believe a stale redline is
+# about the current truth.
+
+
+def test_base_of_returns_the_baseline_the_batch_was_built_from(built):
+    """The happy path, which nothing asserted."""
+    from docxkit.guard import base_of, stamp
+
+    stamp(built, original="v11.docx", base_sha256="c0ffee")
+
+    assert base_of(built) == "c0ffee"
+
+
+def test_base_of_says_CANNOT_TELL_for_a_batch_with_no_stamp(tmp_path):
+    from docxkit.guard import base_of
+
+    assert base_of(tmp_path / "never_built.docx") is None
+
+
+def test_base_of_says_CANNOT_TELL_for_a_stamp_that_PREDATES_the_field(built):
+    """`built` stamps the original as a FILE NAME, which is what every
+    stamp did before this field existed and is exactly the thing that
+    could not answer the question."""
+    from docxkit.guard import base_of
+
+    assert json.loads(_stamp_path(built).read_text(encoding="utf-8"))
+    assert base_of(built) is None
+
+
+def test_base_of_says_CANNOT_TELL_for_a_stamp_that_will_not_PARSE(built):
+    """A truncated write, or a file someone opened and saved. The
+    cautious answer is the same as no stamp — and this path had no test
+    and no coverage, so a mutant turning the `except` into a re-raise
+    would have turned an unreadable stamp into a crash inside
+    `validate`."""
+    from docxkit.guard import base_of
+
+    _stamp_path(built).write_text('{"sha256": "a", "base_sha',
+                                  encoding="utf-8")
+
+    assert base_of(built) is None
+
+
+@pytest.mark.parametrize("value", ["", None, 12345, ["c0ffee"]])
+def test_base_of_says_CANNOT_TELL_for_a_field_that_is_not_A_HASH(built, value):
+    """Empty string, absent, and the two shapes a hand-edited stamp
+    produces. `""` is the interesting one: it is falsy but present, so
+    an `isinstance` check alone would return it and a caller comparing
+    hashes would find no match and call a FRESH batch stale."""
+    from docxkit.guard import base_of
+
+    path = _stamp_path(built)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["base_sha256"] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert base_of(built) is None
+
+
+def test_restamp_records_a_repair_on_a_deliverable_with_NO_stamp(tmp_path):
+    """The branch where there is nothing to carry forward. `was` is
+    empty because there is no previous hash — not omitted, because the
+    repairs list is the evidence a guard was retired and a missing key
+    reads as a different event from a known-absent one."""
+    from docxkit.guard import restamp, sha256
+
+    out = tmp_path / "batch.docx"
+    write(out, make_parts(para(run("repaired, never stamped"))))
+
+    path = restamp(out, why="restore_math_glyphs")
+
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    assert recorded["sha256"] == sha256(out)
+    assert recorded["repairs"] == [
+        {"why": "restore_math_glyphs", "was": "", "now": sha256(out)}]
