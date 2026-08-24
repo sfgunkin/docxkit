@@ -2549,3 +2549,67 @@ def test_an_entry_that_belongs_BETWEEN_two_others_names_both_of_them():
 
     assert said.endswith('it files between "Barr" and "Diller"'), said
     assert '"Currie" is out of alphabetical order' in said
+
+
+# L424 of the converter carried 15 of refstyle's real survivors on ONE
+# line — every arithmetic variant of its window lived. Chasing why found
+# a live bug rather than a missing assertion.
+
+def test_an_entry_ENDING_in_a_bare_et_al_does_not_double_an_earlier_one():
+    """The fix is applied with `replace(old, new, 1)`, which takes the
+    FIRST occurrence in the entry, so `old` has to be unique. A bare
+    "et al" at the very end has no trailing character to widen into;
+    its fragment was then a plain " et al", which is a substring of the
+    " et al. " the earlier occurrence had already become, and the
+    replace landed there instead. `--fix` wrote "et al.." into the
+    first position and left the trailing one bare."""
+    entry = 'Smith, J., et al (2020). "A." Journal. See also Jones et al'
+
+    out, _ = convert_text(entry)
+
+    assert out == ('Smith, J., et al. (2020). "A." Journal. '
+                   "See also Jones et al.")
+
+
+def test_THREE_bare_et_als_convert_when_the_last_one_ends_the_entry():
+    """Two is the case the window was written for; the third is where
+    widening by a fixed amount runs out, because "Lee et al" at the end
+    and " et al " in the middle share every character the old rule
+    looked at."""
+    entry = ("Smith et al (2020). \"A.\" In Jones et al (eds.), H. "
+             "See also Lee et al")
+
+    out, _ = convert_text(entry)
+
+    assert out.count("et al.") == 3
+    assert ".." not in out
+
+
+def test_an_entry_that_OPENS_on_a_bare_et_al_has_nothing_to_widen_into():
+    """There is no character to the left of position 0. The widening
+    stops there rather than running off the front, where a negative
+    index would quietly take the fragment from the END of the entry."""
+    out, _ = convert_text('et al (2020). "A." Journal.')
+
+    assert out == 'et al. (2020). "A." Journal.'
+
+
+@pytest.mark.timeout(10)
+def test_the_widening_STOPS_at_the_front_of_the_entry():
+    """An entry that opens on a bare "et al" AND repeats that fragment
+    later walks the widening all the way to position 0 with the
+    fragment still not unique — and unique is not available, because
+    there is nothing further left to take. Stopping there is right: the
+    fragment starts at 0, so the replace lands on the occurrence it was
+    derived from anyway.
+
+    Without the boundary the index goes negative, `text[at:end]` reads
+    as the empty string, `count("")` is the length of the entry, and the
+    loop never ends. Measured: `convert_text` on this entry does not
+    return. A timeout because the regression is a HANG, and a hang in a
+    suite reads as a broken machine rather than as this line."""
+    entry = 'et al (2020). "A." And Jones et al (eds.), H.'
+
+    out, _ = convert_text(entry)
+
+    assert out == 'et al. (2020). "A." And Jones et al. (eds.), H.'

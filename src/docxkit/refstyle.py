@@ -415,13 +415,31 @@ def convert_entry(text: str, style: Style = HOUSE) -> list[Fix]:
                          text[sp.start():sp.end()] + " "
                          + text[sp.end():sp.end() + 3]))
     for et in _ETAL_BARE_RE.finditer(text):
-        # A character each side, and it is load-bearing: `new` CONTAINS
-        # `old` here — "et al" is a prefix of "et al." — so the bare
-        # fragment matches the text its OWN fix has already written, and
-        # an entry with two of them came out "et al.." with the second
-        # one untouched. Every other fix here writes something that does
-        # not contain what it replaced; this is the exception.
-        at, end = max(0, et.start() - 1), et.end() + 1
+        # `new` CONTAINS `old` here — "et al" is a prefix of "et al." —
+        # so the bare fragment matches the text its OWN fix has already
+        # written. Every other fix writes something its own pattern no
+        # longer reads; this is the exception, and it is applied with
+        # `str.replace(old, new, 1)`, which takes the FIRST occurrence
+        # wherever it happens to be.
+        #
+        # So the fragment has to be UNIQUE, not merely wider. One
+        # character each side was the old rule and it held only while a
+        # trailing character existed to take: an entry ENDING in a bare
+        # "et al" has none, its `old` is then a plain " et al" — which
+        # is a substring of the " et al. " an earlier occurrence has
+        # already become — and the replace landed on that one instead.
+        # `Smith, J., et al (2020). "A." Journal. See also Jones et al`
+        # converted to "et al.." in the FIRST position with the trailing
+        # one untouched, and `--fix` wrote that into the bibliography.
+        #
+        # Widening left until the fragment occurs once says what was
+        # actually meant. A window another fix has since rewritten
+        # simply vanishes from `out` and is re-derived on the next
+        # pass, which is what the settle loop in `convert_text` is for.
+        end = min(len(text), et.end() + 1)
+        at = et.start()
+        while at > 0 and text.count(text[at:end]) > 1:
+            at -= 1
         fixes.append(Fix("et-al-period", text[at:end],
                          text[at:et.end()] + "." + text[et.end():end]))
     return fixes
