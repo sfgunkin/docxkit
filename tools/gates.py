@@ -93,10 +93,36 @@ GATES: list[Gate] = [
 ]
 
 
+#: What mypy prints when it has finished having an opinion — either
+#: one. Anything else on a non-zero exit is mypy not having run.
+_MYPY_SPOKE = re.compile(r"^(Success: no issues found|Found \d+ error)",
+                         re.MULTILINE)
+
+
 def _failed(gate: Gate, out: str, code: int) -> bool:
-    """Did this gate fail? `mypy` is judged on its lines, not its code."""
+    """Did this gate fail?
+
+    `mypy`'s exit code alone is not usable: it is non-zero for a run
+    that found nothing but notes, which is why this gate reads its
+    LINES. Reading only the lines is not usable either, and that half
+    was missing until 2026-08-24.
+
+    `python -m mypy` on a checkout installed without `[dev]` prints
+    "No module named mypy", exits 1, and contains no `: error` — so the
+    gate said `ok` and the chain moved on to the next one. A bad config
+    key (exit 2) and a run the OOM killer took (exit 137, no output at
+    all) both did the same. That is "a type error read as a pass", the
+    defeat this module's docstring exists to describe, reached without
+    a pipe being involved.
+
+    So: the lines decide when mypy SPOKE, and a non-zero exit with
+    nothing that looks like mypy's own verdict is a failure of the gate
+    itself.
+    """
     if gate[2]:
-        return any(": error" in line for line in out.splitlines())
+        if any(": error" in line for line in out.splitlines()):
+            return True
+        return code != 0 and not _MYPY_SPOKE.search(out)
     return code != 0
 
 

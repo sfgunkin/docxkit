@@ -138,6 +138,46 @@ def _nth_replace(text: str, old: str, new: str, nth: int) -> str:
     return text[:at] + new + text[at + len(old):]
 
 
+def _vet(original: str, path: Path, label: str, *,
+         old: str, new: str, nth: int) -> tuple[str | None, str | None]:
+    """The mutated source, or why this case cannot be run.
+
+    Every refusal here is a statement about the ARGUMENTS, and none of
+    them needs a checkout to reach — which is why they happen before
+    `sync()` claims one. Saying "you passed me the wrong string" is not
+    worth a machine-wide lock, and taking one to say it made the tests
+    for these refusals fight each other: the suite runs across eight
+    workers, several land in this file at once, and the ones that lose
+    the race report the lock message instead of the refusal they asked
+    about. The lock and the `-n 8` landed the same morning.
+    """
+    n = original.count(old)
+    if not nth and n != 1:
+        return None, (f"  ?? {label}: anchor occurs {n} times — SKIPPED "
+                      f"(pass a 5th element, 1..{n}, to pick one)")
+    if nth and not 1 <= nth <= n:
+        return None, (f"  ?? {label}: asked for occurrence {nth} of {n} — "
+                      f"SKIPPED")
+    if new == old:
+        # A case built with `old.replace(...)` whose inner pattern does
+        # not match leaves `new` identical to `old`: the file is
+        # rewritten with itself, the suite passes, and the case reports
+        # SURVIVED — a missing test where there is none. Twice on
+        # 2026-08-19, both times on `len(stack) - 1, -1, -1)`, where the
+        # source has a space after the minus and the pattern did not.
+        return None, (f"  ?? {label}: the replacement changes nothing — "
+                      f"SKIPPED, since an unmutated file always survives")
+    mutated = (_nth_replace(original, old, new, nth) if nth
+               else original.replace(old, new))
+    try:
+        compile(mutated, str(path), "exec")
+    except SyntaxError as exc:
+        return None, (f"  ?? {label}: does not compile ({exc.msg}) — "
+                      f"SKIPPED, since pytest would exit non-zero on the "
+                      f"import and that reads as a kill")
+    return mutated, None
+
+
 def check(module: str, tests: list[str],
           cases: Sequence[tuple[str, str, str, bool]
                           | tuple[str, str, str, bool, int]]) -> int:
@@ -152,47 +192,29 @@ def check(module: str, tests: list[str],
     works and costs an iteration every time; naming the occurrence says
     what was meant.
     """
+    # The LIVE tree, because `sync()` copies from it: the text a case is
+    # vetted against is the text it will be applied to.
+    original = (LIVE / module).read_text(encoding="utf-8")
+    runnable: list[tuple[str, str, bool]] = []
+    bad = 0
+    for case in cases:
+        label, old, new, expect_kill = case[:4]
+        nth = case[4] if len(case) > 4 else 0
+        mutated, why = _vet(original, LIVE / module, label,
+                            old=old, new=new, nth=nth)
+        if why is not None:
+            print(why)
+            bad += 1
+            continue
+        assert mutated is not None
+        runnable.append((label, mutated, expect_kill))
+    if not runnable:
+        return bad
+
     sync()
     path = ROOT / module
-    original = path.read_text(encoding="utf-8")
-    bad = 0
     try:
-        for case in cases:
-            label, old, new, expect_kill = case[:4]
-            nth = case[4] if len(case) > 4 else 0
-            n = original.count(old)
-            if not nth and n != 1:
-                print(f"  ?? {label}: anchor occurs {n} times — SKIPPED "
-                      f"(pass a 5th element, 1..{n}, to pick one)")
-                bad += 1
-                continue
-            if nth and not 1 <= nth <= n:
-                print(f"  ?? {label}: asked for occurrence {nth} of {n} — "
-                      f"SKIPPED")
-                bad += 1
-                continue
-            if new == old:
-                # A case built with `old.replace(...)` whose inner
-                # pattern does not match leaves `new` identical to
-                # `old`: the file is rewritten with itself, the suite
-                # passes, and the case reports SURVIVED — a missing test
-                # where there is none. Twice on 2026-08-19, both times
-                # on `len(stack) - 1, -1, -1)`, where the source has a
-                # space after the minus and the pattern did not.
-                print(f"  ?? {label}: the replacement changes nothing — "
-                      f"SKIPPED, since an unmutated file always survives")
-                bad += 1
-                continue
-            mutated = (_nth_replace(original, old, new, nth) if nth
-                       else original.replace(old, new))
-            try:
-                compile(mutated, str(path), "exec")
-            except SyntaxError as exc:
-                print(f"  ?? {label}: does not compile ({exc.msg}) — "
-                      f"SKIPPED, since pytest would exit non-zero on the "
-                      f"import and that reads as a kill")
-                bad += 1
-                continue
+        for label, mutated, expect_kill in runnable:
             path.write_text(mutated, encoding="utf-8")
             proc = subprocess.run(
                 [sys.executable, "-m", "pytest", "-x", "-q",

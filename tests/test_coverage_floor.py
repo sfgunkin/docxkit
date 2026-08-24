@@ -128,3 +128,44 @@ def test_a_report_that_is_NOT_THERE_says_so_rather_than_measuring_zero(
         coverage_floor.measure(tmp_path / "never-written.json")
 
     assert "no coverage report" in str(exc.value)
+
+
+def test_a_floored_module_MISSING_from_the_report_is_a_failure():
+    """`check` used to walk the measurement, so a floor whose module is
+    absent was not passed — it was unasked. Two ways that happens and
+    both are quiet: a suite that died half way writes a report covering
+    the files it reached, and a renamed module leaves its floor behind
+    while the new name inherits DEFAULT. word.py and revision.py
+    carry the highest floors in the file and are exactly the ones
+    that would go, with nothing red."""
+    below = coverage_floor.check({"cli.py": 100.0})
+
+    assert len(below) == len(coverage_floor.FLOORS) - 1, below
+    assert all("NOT in the coverage report" in line for line in below)
+
+
+def test_REPORT_does_not_end_with_an_all_clear_under_its_own_failures(
+        tmp_path, monkeypatch, capsys):
+    """The all-clear was printed unconditionally, so `--report` closed
+    with "every module is at or above its floor" directly beneath the
+    rows it had just flagged BELOW FLOOR — exit 0, which is right for a
+    report, under a sentence that is not.
+
+    That sentence is also what `gates.py`'s summary regex picks out of a
+    gate's output ("at or above"), so it could have been the last word
+    shown for a floors gate that had just listed failures."""
+    every = {f"src/docxkit/{m}": {"summary": {"percent_covered": 99.0}}
+             for m in coverage_floor.FLOORS}
+    every["src/docxkit/word.py"]["summary"]["percent_covered"] = 12.0
+    report = tmp_path / "cov.json"
+    report.write_text(json.dumps({"files": every}), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv",
+                        ["coverage_floor.py", "--report",
+                         "--from-json", str(report)])
+
+    code = coverage_floor.main()
+
+    said = capsys.readouterr().out
+    assert code == 0, "a report still reports"
+    assert "BELOW FLOOR" in said
+    assert "every module is at or above its floor" not in said, said

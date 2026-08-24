@@ -144,12 +144,30 @@ def measure(from_json: Path | None = None) -> dict[str, float]:
 
 
 def check(actual: dict[str, float]) -> list[str]:
+    """Every floor, against what was measured — and every floor.
+
+    Walking `actual` alone answers only about modules the report
+    happens to contain, so a floor whose module is MISSING is not
+    passed, it is unasked. Two ways that happens and both are quiet:
+    a suite that died half way writes a report covering the files it
+    reached, and a renamed module leaves its floor behind while the new
+    name inherits DEFAULT. `word.py` at 99 and `revision.py` at 97 are
+    exactly the floors that would go, and nothing would be red.
+
+    So a floor with no measurement is a failure of its own, worded as
+    what it is rather than as a coverage number nobody has.
+    """
     below = []
     for module, pct in sorted(actual.items()):
         floor = FLOORS.get(module, DEFAULT)
         if pct + 0.05 < floor:          # rounding, not a real regression
             below.append(f"{module}: {pct:.1f}% is below its floor of "
                          f"{floor}%")
+    for module in sorted(set(FLOORS) - set(actual)):
+        below.append(f"{module}: has a floor of {FLOORS[module]}% and is "
+                     f"NOT in the coverage report — a run that stopped "
+                     f"early, or a module that was renamed and left its "
+                     f"floor behind")
     return below
 
 
@@ -194,13 +212,19 @@ def main() -> int:
             print(f"  {pct:6.1f}%  (floor {floor:3}%)  {module}{flag}")
 
     below = check(actual)
-    if below and not args.report:
+    if below:
+        # Printed on `--report` too, and the exit code is what differs.
+        # The all-clear used to be unconditional, so a `--report` run
+        # closed with "every module is at or above its floor" directly
+        # under the rows it had just flagged BELOW FLOOR — and that
+        # sentence is also the line `gates.py` picks out as a gate's
+        # summary, so it could be the last word on a red one.
         print("\nCOVERAGE FLOOR FAILED")
         for line in below:
             print(f"  {line}")
         print("\nAdd the test, or — if the drop is deliberate — lower the "
               "floor in tools/coverage_floor.py and say why.")
-        return 1
+        return 0 if args.report else 1
     print("\nevery module is at or above its floor")
     return 0
 

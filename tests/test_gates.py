@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import docxkit
 
 TOOLS = Path(docxkit.__file__).resolve().parents[2] / "tools"
@@ -150,3 +152,34 @@ def test_the_chain_does_not_LEAVE_its_coverage_report_behind(tmp_path):
 
     assert gates.run([stop], say=lambda _: None) == 1
     assert not gates.COVERAGE_JSON.exists()
+
+
+@pytest.mark.parametrize("out, code, why", [
+    ("python.exe: No module named mypy", 1, "not installed"),
+    ("mypy: error: unrecognized config option", 2, "a bad config key"),
+    ("", 137, "killed by the OOM killer, no output at all"),
+])
+def test_a_mypy_that_did_NOT_RUN_is_not_a_mypy_that_found_nothing(out, code,
+                                                                  why):
+    """This gate reads mypy's LINES because its exit code is not usable:
+    non-zero for a run that found nothing but notes. Reading only the
+    lines is not usable either, and that half was missing.
+
+    A checkout installed without `[dev]` prints "No module named mypy",
+    exits 1, and contains no `: error` — so the gate said `ok` and the
+    chain went on to the next one. That is "a type error read as a
+    pass", the defeat this module exists to describe, reached without a
+    pipe being involved."""
+    mypy = next(g for g in gates.GATES if g[0] == "mypy")
+
+    assert gates._failed(mypy, out, code), why
+
+
+def test_mypy_NOTES_on_a_non_zero_exit_are_still_not_a_failure():
+    """The reason the gate reads lines at all. Losing this to the fix
+    above would make every run with a note in it red."""
+    mypy = next(g for g in gates.GATES if g[0] == "mypy")
+    out = ("src/x.py:3: note: a hint\n"
+           "Success: no issues found in 1 source file")
+
+    assert not gates._failed(mypy, out, 1)
