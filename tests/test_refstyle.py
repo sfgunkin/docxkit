@@ -2512,3 +2512,40 @@ def test_the_YEAR_fix_is_anchored_by_the_EIGHT_characters_before_it():
     fixed, _ = convert_text(text, HOUSE)
     assert fixed.endswith("1990\u20132020.")
     assert fixed.count("(2020)") == 1
+
+
+
+# --- where an out-of-order entry BELONGS (mutation round, 2026-08-24) ----
+
+def _ordered_list(*entries: str) -> dict:
+    body = para(run("Body text before the list."))
+    head = f'<w:p w14:paraId="90000000">{run("References")}</w:p>'
+    return make_parts(body + head + "".join(
+        f'<w:p w14:paraId="0000000{i}">{run(t)}</w:p>'
+        for i, t in enumerate(entries)))
+
+
+_ACEMOGLU = ('Acemoglu, D. (2020). "Robots." Journal of Political '
+             "Economy, 1(1), 1-20.")
+_BARR = "Barr, N. (2010). Pension Reform: A Short Guide. Oxford: OUP Press."
+_CURRIE = ('Currie, J. (1999). "Health." Handbook of Labor Economics, '
+           "3(1), 5-60.")
+_DILLER = ('Diller, M. (2016). "Ageing." Journal of Ageing Studies, '
+           "2(2), 9-30.")
+
+
+def _order_message(*entries: str) -> str:
+    found = [i for i in audit(_ordered_list(*entries)).issues
+             if i.code == "order"]
+    assert len(found) == 1, [(i.where, i.message) for i in found]
+    return found[0].message
+
+
+def test_an_entry_that_belongs_BETWEEN_two_others_names_both_of_them():
+    """The ordinary case, and the one that carries the most for a
+    reader: two surnames locate the entry exactly, in a list where
+    scrolling to the right place is the whole task."""
+    said = _order_message(_CURRIE, _ACEMOGLU, _BARR, _DILLER)
+
+    assert said.endswith('it files between "Barr" and "Diller"'), said
+    assert '"Currie" is out of alphabetical order' in said
