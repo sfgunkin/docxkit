@@ -445,3 +445,31 @@ def test_the_value_objects_cannot_be_MUTATED_between_preflight_and_apply():
                              (verdict, "ok", False)):
         with pytest.raises(dataclasses.FrozenInstanceError):
             setattr(obj, attr, value)
+
+
+def test_a_document_of_MORE_THAN_256_PARAGRAPHS_passes_its_own_invariants():
+    """The gate compares counts, and CONTRIBUTING already names what
+    that costs: Python caches integers to 256 and builds the rest, so
+    two counts of 300 are equal and are NOT the same object. Under
+    `is not` every invariant reads as moved, every batch against an
+    ordinary manuscript fails with `paragraphs 301 -> 301, expected
+    301`, and nothing that could be edited would ever be written.
+
+    301 paragraphs is not a stress case. It is a paper. Every fixture in
+    this file has two, which is why the comparison could be anything at
+    all — and `report.text()` compares the same counts a second time to
+    decide what to print as moved, so both of them need a document long
+    enough to tell equality from identity."""
+    long_body = BODY + "".join(
+        para(run(f"Filler paragraph {i}."), pid=f"F{i}")
+        for i in range(299))
+    parts = parts_of(long_body)
+    assert batch.invariants(xml_of(parts))["paragraphs"] > 256
+
+    report = batch.run("b", [
+        batch.Edit("fine", "Table 3 shows", "within 4 points", "within 5"),
+    ], parts=parts)
+
+    assert report.ok, report.failures
+    assert report.failures == []
+    assert "invariants unchanged" in report.text(), report.text()
