@@ -1543,3 +1543,38 @@ def test_redlines_on_a_paper_with_NONE_says_why_there_are_none(
     assert code == 0
     assert "no redlines" in out
     assert "predate" in out, "say why, not just that there are none"
+
+
+
+def test_a_LOST_part_says_DECLARE_it_rather_than_naming_a_function(
+        monkeypatch, project, capsys):
+    """`validate` is a protocol command, so the paper has a paper.toml
+    and the protocol drives the carry. Pointing at
+    `hygiene.restore_parts` sends the reader two floors down: past the
+    config that would have done it, into a function they then call by
+    hand — and copying the part alone is enough for some parts and not
+    others, so the hand-written version works until the day it meets a
+    footer and produces one that is present, referenced by nothing, and
+    on no page.
+    """
+    from docxkit import package
+
+    base = package.read_parts(project.prev)
+    base["customXml/item1.xml"] = (
+        b'<b:Sources xmlns:b="http://schemas.openxmlformats.org'
+        b'/officeDocument/2006/bibliography"/>')
+    write(project.prev, base)
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert "LOST customXml/item1.xml" in out
+    assert "[batch] carry" in out, out
+    assert "restore_parts" not in out, (
+        "the function is the mechanism; the config is the instruction")
+    # and WHY the config rather than a copy: the three coordinated edits
+    # a hand-written copy leaves out.
+    assert "Content-Types" in out and "sectPr" in out, out

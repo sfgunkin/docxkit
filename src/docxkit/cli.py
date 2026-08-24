@@ -1486,10 +1486,24 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
               f"NOT in the batch")
         for part in report.lost_parts:
             print(f"   LOST {part}")
+        # Named at the layer the reader is STANDING on. This is
+        # `revision validate`, so the paper is on the protocol and the
+        # protocol drives the carry: pointing at `restore_parts` sent a
+        # second session two floors down to write a per-paper script
+        # for a paper that was already using `[batch] carry` three
+        # lines above where it was looking (2026-08-24). The function
+        # is the mechanism; the config is the instruction.
         print("   Word's Compare rebuilds rather than annotates and drops "
               "what it will not carry; promote would copy this batch over "
-              "the manuscript, so the part goes with it. Restore it with "
-              "docxkit.hygiene.restore_parts and rebuild.")
+              "the manuscript, so the part goes with it.\n"
+              "   Add it to [batch] carry in paper.toml and rebuild. The "
+              "build then restores the part WITH its Content-Types "
+              "override, a relationship on an id free in the target, and "
+              "— for a header or footer — the section reference that puts "
+              "it on the page. Copying the file alone is enough for some "
+              "parts and not others: a footer restored without its sectPr "
+              "reference is present, referenced by nothing, on no page, "
+              "and this gate goes green because the file is there.")
     if report.reject_matches_baseline is not None:
         verdict = "OK" if report.reject_matches_baseline else "MISMATCH"
         print(f"== reject-all == baseline ?  {report.reject_detail} "
