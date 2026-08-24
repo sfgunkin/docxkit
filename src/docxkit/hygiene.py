@@ -722,17 +722,32 @@ def table_spacing(xml: str, *, before: int = 120,
     """
     report = SpacingReport()
     out = xml
-    for start, end in reversed(element_spans(xml, "tbl")):
+    # Reversed, so that every edit lands AFTER the table still to be
+    # looked at and positions taken from `xml` stay good in `out`.
+    spans = element_spans(xml, "tbl")
+    for i, (start, end) in reversed(list(enumerate(spans))):
         tbl = xml[start:end]
         if _is_equation_carrier(tbl):
             report.skipped.append(
                 f"equation {visible_text(tbl)[-8:].strip()}: a carrier, "
                 f"not a table")
             continue
+        # The walk stops at the NEXT table, because a table is not text
+        # that resumes after the one above it. Unbounded, the search
+        # steps over an empty spacer — correctly, it is not the text
+        # that resumes — and finds the first paragraph of the next
+        # table's first CELL, writing 6pt above a header row and
+        # reporting it as a paragraph spaced. Two tables with a spacer
+        # between them is what a paper that stacks its exhibits at the
+        # end looks like, which is this house style.
+        #
+        # `element_spans` gives the outermost table only, so the next
+        # span is always a sibling and its start is the true boundary.
+        limit = spans[i + 1][0] if i + 1 < len(spans) else len(xml)
         pos = end
         while True:
             m = PARA_RE.search(out, pos)
-            if m is None:
+            if m is None or m.start() >= limit:
                 break
             para, text = m.group(0), visible_text(m.group(0))
             if not text.strip():

@@ -523,3 +523,52 @@ def test_a_heading_that_keeps_its_own_spacing_is_named_to_FORTY():
 #   the flag, so the mutant that set it True could not be killed by any
 #   input. A value assigned and never read is the one survivor class
 #   that answers to a deletion.
+
+
+# Stacked exhibits. Every fixture above has ONE table with prose under
+# it, and the walk for "the text that resumes" had no boundary — so on
+# two tables in a row it stepped over the spacer between them, correctly
+# (a spacer is not text that resumes), and landed in the NEXT TABLE'S
+# first cell.
+
+def test_a_SPACER_between_two_tables_does_not_send_the_rule_into_the_second():
+    """Figures and tables stacked at the end, each separated by an empty
+    paragraph, is what this house style produces — so this is the
+    ordinary shape of the back of a paper, not an edge case. Unbounded,
+    the second table's header row is pushed down 6pt and the report
+    claims it as a paragraph spaced, which is the part that would have
+    kept it hidden."""
+    xml = doc(table("Region", "Value")
+              + para(run(""))
+              + table("Country", "Share")
+              + para(run("The tables show.")))
+
+    out, report = table_spacing(xml)
+
+    assert report.spaced == ["The tables show."]
+    assert before_of(out, "Country") is None, "spacing inside the next table"
+    assert before_of(out, "The tables show") == "120"
+
+
+def test_two_tables_with_NOTHING_between_them_are_left_alone():
+    """The same boundary with no spacer to step over: the next
+    paragraph in document order is already inside the second table."""
+    xml = doc(table("Region", "Value")
+              + table("Country", "Share")
+              + para(run("The tables show.")))
+
+    out, report = table_spacing(xml)
+
+    assert report.spaced == ["The tables show."]
+    assert before_of(out, "Country") is None
+
+
+def test_a_table_that_ENDS_the_document_spaces_nothing():
+    """The other end of the same bound: no next table and no paragraph
+    after it either, so the walk has to run off the end and stop."""
+    xml = doc(para(run("Before.")) + table("Region", "Value"))
+
+    out, report = table_spacing(xml)
+
+    assert report.spaced == []
+    assert before_of(out, "Before") is None
