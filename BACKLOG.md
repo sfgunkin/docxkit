@@ -17,107 +17,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so
 
-Found 2026-08-24, while reading CONTRIBUTING's calibration table against
-the live session files.
-
-**The two disagree, and the better measurement is the one that is gone.**
-CONTRIBUTING records `crossrefs.py` at **6.9% (57/822)** and says of it,
-in the table's own words, that "the run is the WHOLE module rather than a
-460 sample". `stale_figures --figures` now reports `crossrefs.py 9.3%
-(24/259) SAMPLED 260/947`. A later `--sample 260` run replaced the
-complete one: `--fresh` discards the session and the sample writes a new
-plan, so 822 real mutants' worth of verdicts became 259.
-
-**Nothing about that is visible at the time or afterwards.** The sample
-completes, prints a plausible number, and the only trace of the better
-run is a sentence in a document nobody diffs against the tool's output.
-Until today the table did not even mark the result as a sample (see the
-entry above), so the regression read as a re-measurement that happened
-to move.
-
-**Why it is S3 rather than S4.** The figures are what a round is planned
-from, and this is the one failure mode that makes a figure worse over
-time while looking like maintenance. Sampling is the right thing to do
-on a 2757-mutant module when the question is "roughly where is this" —
-it is the wrong thing to leave behind as the module's record.
-
-**Shape of a fix.** `mutation_session` refuses `--sample N` when the
-session it is about to discard graded MORE mutants than N, unless the
-caller says so — the same shape as `--force` on the protocol commands. A
-warning would do; the check is `ran` in the old session against the new
-sample size, and both numbers are in hand before the plan is written.
-
-Deliberately not fixed while three sweeps were running against that
-tool. `measure_all` spawns a fresh `mutation_session` per module, so an
-edit mid-queue reaches the modules that have not started yet, and a
-mistake would take the queue down silently hours from now.
-
----
-
-### S3 — an ANCHOR does not survive Word's Compare in either direction: a deletion loses it, an insertion strands it
-
-Filed 2026-08-24 from a second session's measurement on Aging_Well R24,
-pasted here rather than written by the finder because this file was
-modified in another tree at the time and a concurrent write loses
-whichever of us saves second. The measurement is theirs.
-
-**Symptom.** Word's Compare restores the words of a rejected deletion as
-plain text and orphans the bookmark, so the link is gone. Accept-all is
-fine; reject-all is not.
-
-| the same clause, the same batch | result |
-| --- | --- |
-| moved §8 -> §9 (a cross-section move) | `links: False`, ladder **FAIL** |
-| folded into the paragraph directly above it in §8 | `links: True`, ladder **PASS** |
-
-Same words, same citation runs. **Only the distance changed** — Compare
-diffs the adjacent case as surviving text and the distant one as delete
-plus insert.
-
-**Why it is worth an entry.** The gate is doing its job and says WHAT
-broke — "Word's Compare does not rebuild a link inside a rejected
-deletion" — and says nothing about what to do, and the remedy is
-counter-intuitive: shorten the move. Any paper whose protocol says "move
-this cited clause to §N" hits it, and it only appears at the reject-all
-layer, so a batch looks completely healthy until the end of the ladder.
-
-**Shape of a fix.** Either the ladder's message names the remedy, or
-`validate` says it at BUILD time — "this deletion carries N links; a
-rejection will not restore them" — which is where the author can still
-act on it cheaply.
-
-**The other half, found an hour later on the same paper, and it is what
-makes this general.** Two references added, their links minted BEFORE
-Word's Compare ran. The ladder refused the batch: `STRUCTURE
-bookmarkStart: 146 -> 150` on reject-all. **Compare does not track a
-bookmark at all** — it tracks runs — so the four anchors survived a
-rejection as orphans, pointing into text that no longer existed.
-Accept-all was perfect; only reject-all could see it.
-
-So the rule is not about deletions:
-
-> **An anchor does not survive Compare in either direction. A rejected
-> deletion LOSES the anchors inside it; a rejected insertion STRANDS the
-> anchors minted with it.**
-
-Both are invisible until reject-all, and both are invisible to the
-author in Word, because a bookmark has no appearance.
-
-**And this is why the papers' convention is to mint links AFTER the
-handback** — which was folklore this morning and is measured now. The
-convention is not a style preference; it is the only ordering in which
-the anchors and the tracking model agree.
-
-**Worth separating from the render-gate note it was nearly filed
-under.** The four instances there share a shape — a check watching a
-proxy instead of the object. This is not that: the check was correct and
-fired. What failed is that the OPERATION was outside what the tracking
-model can represent, and no amount of checking the right object helps
-when the format cannot carry the thing being checked.
-
----
 
 
 ### Not three defects — one missing gate: nothing renders by default
@@ -750,6 +650,249 @@ falls in a 0.4-point window.
 ---
 
 ## Fixed
+
+### ~~S1 `hygiene.dedupe_comments` drops the comment BODY and leaves its anchors~~ — FIXED 24.08
+
+Found 2026-08-24 on Health Capacity to Work, rebuilding batch A2b's
+redline for the author. `tracked.build` raised
+`com_error ... 'The file appears to be corrupted.'` from its own
+`verify_in_word` step, on inputs that all open in Word individually.
+
+**Bisected to `312c301` (08-24 02:04), which wired
+`_hygiene.dedupe_comments(parts)` into `tracked.build`.** Same two inputs,
+same call, two versions of docxkit:
+
+| docxkit | comments.xml | commentsExtended / Ids / Extensible | `w:commentReference` in document.xml | Word opens it |
+|---|---|---|---|---|
+| `1c74e08` (08-23 23:55) | ids **212, 213** | 2 / 2 / 2 | 212, 213 | **yes** — 3057 paras, 61 revisions |
+| HEAD | id **213** | 2 / 2 / 2 | **212, 213** | **no** — "appears to be corrupted" |
+
+`dedupe_comments` deletes the duplicate `<w:comment>` element from
+`word/comments.xml` and nothing else. `document.xml` keeps
+`<w:commentRangeStart w:id="212"/>`, `<w:commentRangeEnd w:id="212"/>`
+and `<w:commentReference w:id="212"/>`, all now pointing at a comment
+that does not exist. That dangling reference is what Word refuses, and
+it refuses the whole document.
+
+**The port lost half of the code it generalised.** The function is
+HCW's `revision/scripts/dedupe_comments.py` moved into the toolkit, but
+only its `duplicates()` half came across. The original's `strip()` does
+the other half, and its comment says why:
+
+```python
+for cid in ids:
+    doc = re.sub(rf'<w:commentRangeStart w:id="{cid}"/>', "", doc)
+    doc = re.sub(rf'<w:commentRangeEnd w:id="{cid}"/>', "", doc)
+    # the reference sits inside a run of its own; drop the whole run, or
+    # a bare <w:r> with only rPr is left behind and renders as nothing
+    doc = re.sub(rf'<w:r(?: [^>]*)?>(?:(?!</w:r>).)*?'
+                 rf'<w:commentReference w:id="{cid}"/>'
+                 rf'(?:(?!</w:r>).)*?</w:r>', "", doc, flags=re.S)
+```
+
+**The docstring reasons about the wrong parts.** It argues, correctly,
+that the orphaned `commentsExtended` / `commentsIds` /
+`commentsExtensible` rows are safe because they key off paragraph ids,
+and closes "Verified in Word rather than assumed." The satellite parts
+were indeed verified; `document.xml` was never considered, and it is the
+one that breaks. A claim of Word verification sitting above the defect
+is worse than no claim.
+
+**Why no test caught it.** `tracked.build`'s own `verify_in_word` is
+exactly the gate that would — and did, once a real manuscript reached
+it. The fixture that exercises `dedupe_comments` cannot have carried a
+`commentReference` for the duplicate, so the function looked correct
+in isolation. A duplicate comment only arises when Compare merges the
+same note from BOTH inputs, which needs a baseline and a revised copy
+that each carry it: that is a two-document condition, not a parts-dict
+one.
+
+**Fix:** port `strip()`'s anchor removal into `hygiene.dedupe_comments`
+and take the fixture from this pair — a baseline and a revised file that
+both carry one author comment on the same table. Assert on the built
+redline that no `w:commentReference` / `commentRangeStart` /
+`commentRangeEnd` id is absent from `comments.xml`. That invariant is
+cheap and belongs in the parts gate regardless of this function.
+
+**Blast radius:** every `tracked.build` since `312c301` on a paper whose
+two Compare inputs share a comment. It is not silent — Word refuses the
+file outright — but the error names nothing, and the build has already
+discarded the artefact by the time it surfaces (`building` is unlinked
+on the failure path), so there is nothing left to inspect. Consider
+keeping `~<stem>.building.docx` when `verify` raises.
+
+**Workaround in use:** HCW built its handback with
+`PYTHONPATH=<clone of docxkit @ 1c74e08>/src`. `redline.py show` then
+completed and its own `dedupe_comments.py` removed the duplicate
+correctly, anchors and all.
+
+
+### S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so
+
+Found 2026-08-24, while reading CONTRIBUTING's calibration table against
+the live session files.
+
+**The two disagree, and the better measurement is the one that is gone.**
+CONTRIBUTING records `crossrefs.py` at **6.9% (57/822)** and says of it,
+in the table's own words, that "the run is the WHOLE module rather than a
+460 sample". `stale_figures --figures` now reports `crossrefs.py 9.3%
+(24/259) SAMPLED 260/947`. A later `--sample 260` run replaced the
+complete one: `--fresh` discards the session and the sample writes a new
+plan, so 822 real mutants' worth of verdicts became 259.
+
+**Nothing about that is visible at the time or afterwards.** The sample
+completes, prints a plausible number, and the only trace of the better
+run is a sentence in a document nobody diffs against the tool's output.
+Until today the table did not even mark the result as a sample (see the
+entry above), so the regression read as a re-measurement that happened
+to move.
+
+**Why it is S3 rather than S4.** The figures are what a round is planned
+from, and this is the one failure mode that makes a figure worse over
+time while looking like maintenance. Sampling is the right thing to do
+on a 2757-mutant module when the question is "roughly where is this" —
+it is the wrong thing to leave behind as the module's record.
+
+**Shape of a fix.** `mutation_session` refuses `--sample N` when the
+session it is about to discard graded MORE mutants than N, unless the
+caller says so — the same shape as `--force` on the protocol commands. A
+warning would do; the check is `ran` in the old session against the new
+sample size, and both numbers are in hand before the plan is written.
+
+Deliberately not fixed while three sweeps were running against that
+tool. `measure_all` spawns a fresh `mutation_session` per module, so an
+edit mid-queue reaches the modules that have not started yet, and a
+mistake would take the queue down silently hours from now.
+
+**Fixed as diagnosed.** `_drop_comment_anchors` removes the dropped
+copy's `commentRangeStart`, `commentRangeEnd` and the RUN holding its
+`commentReference` — the run, because a `<w:r>` left with only its
+`rPr` renders as nothing and is litter of a second kind. From every
+TEXT PART rather than the body: a comment can be anchored in a footnote,
+and an endnote is where several journals put the whole apparatus.
+
+Three tests, three mutants kill_check'd, and the middle one is the
+finder's own point: **removing the call reproduces the defect exactly**,
+which is what makes the test worth having rather than a restatement.
+
+**The docstring's claim was the sharpest part of the report and it is
+corrected in place rather than deleted.** It said "Verified in Word
+rather than assumed", and the verification was real — of the three
+satellite parts it was reasoning about. It never looked at
+`document.xml`. The docstring now says which parts were verified and
+which was not considered, because a claim of Word verification sitting
+above a defect is worse than no claim, and deleting the sentence would
+lose the only record of how a true statement came to cover a false one.
+
+**Why no fixture caught it, kept because it generalises.** Every
+existing case hands this function a parts dict holding
+`word/comments.xml` and nothing else, so no anchor could dangle and the
+function was correct about the only part it was given. A duplicate
+comment is a TWO-DOCUMENT condition — Compare merging the same note from
+a baseline and a revised copy — and no parts-dict fixture can express
+one. The new tests supply the body the old ones omitted.
+
+**Not done, and worth doing separately:** the finder's suggestion that
+`build` keep `~<stem>.building.docx` when `verify` raises. The failure
+path unlinks it, so a Word refusal leaves nothing to inspect — which is
+why this cost a bisect rather than a look.
+
+---
+
+### ~~S3 an ANCHOR does not survive Word's Compare in either direction~~ — WARNED AT BUILD TIME 24.08
+
+Filed 2026-08-24 from a second session's measurement on Aging_Well R24,
+pasted here rather than written by the finder because this file was
+modified in another tree at the time and a concurrent write loses
+whichever of us saves second. The measurement is theirs.
+
+**Symptom.** Word's Compare restores the words of a rejected deletion as
+plain text and orphans the bookmark, so the link is gone. Accept-all is
+fine; reject-all is not.
+
+| the same clause, the same batch | result |
+| --- | --- |
+| moved §8 -> §9 (a cross-section move) | `links: False`, ladder **FAIL** |
+| folded into the paragraph directly above it in §8 | `links: True`, ladder **PASS** |
+
+Same words, same citation runs. **Only the distance changed** — Compare
+diffs the adjacent case as surviving text and the distant one as delete
+plus insert.
+
+**Why it is worth an entry.** The gate is doing its job and says WHAT
+broke — "Word's Compare does not rebuild a link inside a rejected
+deletion" — and says nothing about what to do, and the remedy is
+counter-intuitive: shorten the move. Any paper whose protocol says "move
+this cited clause to §N" hits it, and it only appears at the reject-all
+layer, so a batch looks completely healthy until the end of the ladder.
+
+**Shape of a fix.** Either the ladder's message names the remedy, or
+`validate` says it at BUILD time — "this deletion carries N links; a
+rejection will not restore them" — which is where the author can still
+act on it cheaply.
+
+**The other half, found an hour later on the same paper, and it is what
+makes this general.** Two references added, their links minted BEFORE
+Word's Compare ran. The ladder refused the batch: `STRUCTURE
+bookmarkStart: 146 -> 150` on reject-all. **Compare does not track a
+bookmark at all** — it tracks runs — so the four anchors survived a
+rejection as orphans, pointing into text that no longer existed.
+Accept-all was perfect; only reject-all could see it.
+
+So the rule is not about deletions:
+
+> **An anchor does not survive Compare in either direction. A rejected
+> deletion LOSES the anchors inside it; a rejected insertion STRANDS the
+> anchors minted with it.**
+
+Both are invisible until reject-all, and both are invisible to the
+author in Word, because a bookmark has no appearance.
+
+**And this is why the papers' convention is to mint links AFTER the
+handback** — which was folklore this morning and is measured now. The
+convention is not a style preference; it is the only ordering in which
+the anchors and the tracking model agree.
+
+**Worth separating from the render-gate note it was nearly filed
+under.** The four instances there share a shape — a check watching a
+proxy instead of the object. This is not that: the check was correct and
+fired. What failed is that the OPERATION was outside what the tracking
+model can represent, and no amount of checking the right object helps
+when the format cannot carry the thing being checked.
+
+**What is fixed is WHEN you find out, not the Word behaviour.** Compare
+still does not track an anchor and never will; nothing here can change
+that. What changed is that the deletion half is now said at build time
+instead of at the end of the ladder.
+
+`revision.links_in_deletions` — the reject-side counterpart of
+`restored_bookmarks` — walks every `w:del` span in every text part and
+reports the internal links inside it. `revision.build` prints the count,
+the anchors, and the remedy:
+
+> N link(s) sit inside a tracked deletion (…) — Compare does not track
+> an anchor, so REJECTING one of these restores its words as plain text
+> and does not rebuild the link. Accept-all is unaffected; gate 5 is
+> not. … Shorten the move, or mint the links after the handback.
+
+The remedy is in the message because it is counter-intuitive, and
+because by the end of the ladder the author has a batch to throw away
+and the only act available to them is the one this sentence prevents.
+
+**The insertion half needs nothing.** Links minted before Compare runs
+come back as orphaned `bookmarkStart`s, and the STRUCTURE layer already
+counts those — `bookmarkStart: 146 -> 150` is how the second session
+found it. That half was never silent; it was only unexplained, and the
+rule above explains it.
+
+Four tests, four mutants kill_check'd. The walk is non-greedy, so two
+deletions in one paragraph do not swallow the surviving link between
+them; links outside a deletion are not reported, since a check that
+named every link in a manuscript would fire on every batch and be
+switched off within a day; and it reads `text_parts` rather than the
+body, because several journals take the whole apparatus as endnotes.
+
+---
 
 ### ~~S2 `kill_check` shares one checkout with every other caller and takes no lock~~ — FIXED 24.08
 

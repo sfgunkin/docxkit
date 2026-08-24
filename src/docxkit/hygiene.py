@@ -34,6 +34,7 @@ from ._xml import (
     live_properties,
     own_properties,
     set_para_property,
+    text_parts,
     visible_text,
 )
 from .errors import PackageError
@@ -459,15 +460,33 @@ def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
     which Compare renumbers; never on anchor, since the two copies land
     on different runs of one paragraph.
 
+    **The dropped copy's ANCHORS go with it**, from every text-bearing
+    part: `commentRangeStart`, `commentRangeEnd`, and the whole run
+    holding `commentReference` — the run, because a bare `<w:r>` left
+    with only its `rPr` renders as nothing and is a second kind of
+    litter. A reference pointing at a comment that no longer exists is
+    what Word calls "the file appears to be corrupted", and it refuses
+    the WHOLE document (found on Health Capacity to Work, 2026-08-24,
+    bisected to the commit that wired this into `tracked.build`).
+
+    That half was missing from the port. The paper script this
+    generalises has a `strip()` beside its `duplicates()`, and only
+    `duplicates()` came across — so the function was correct about the
+    part it edited and silent about the one that breaks.
+
     The `commentsExtended` / `commentsIds` / `commentsExtensible`
     entries for the dropped copy are left orphaned, and that is safe:
     they key off paragraph ids, and Word opens, counts and threads the
-    survivor correctly. Verified in Word rather than assumed.
+    survivor correctly. Verified in Word rather than assumed — and worth
+    saying plainly that the verification covered those three satellite
+    parts and never looked at `document.xml`. A claim of Word
+    verification sitting above a defect is worse than no claim.
     """
     xml = parts.get(COMMENTS, b"").decode("utf-8", "replace")
     if not xml:
         return []
     dropped: list[str] = []
+    gone: list[str] = []
     seen: set[tuple[str, str]] = set()
     out, at = [], 0
     for m in re.finditer(r"<w:comment\b[^>]*>.*?</w:comment>", xml, re.DOTALL):
@@ -477,6 +496,8 @@ def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
         key = (author.group(1) if author else "", " ".join(text))
         if key in seen and key[1]:
             dropped.append(f"{key[0]}: {key[1][:60]}")
+            if cid := re.search(r'w:id="(\d+)"', m.group(0)):
+                gone.append(cid.group(1))
             out.append(xml[at:m.start()])
             at = m.end()
             continue
@@ -485,7 +506,32 @@ def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
         return []
     out.append(xml[at:])
     parts[COMMENTS] = "".join(out).encode("utf-8")
+    _drop_comment_anchors(parts, gone)
     return dropped
+
+
+def _drop_comment_anchors(parts: dict[str, bytes], ids: list[str]) -> None:
+    """Remove every anchor for `ids` from the text-bearing parts.
+
+    Three things per id, and the third is a RUN rather than an element:
+    the reference sits inside a run of its own, and deleting only the
+    `<w:commentReference/>` leaves a `<w:r>` carrying nothing but its
+    `rPr`, which renders as nothing and is litter of a second kind.
+
+    Every text part, not `document.xml`: a comment can be anchored in a
+    footnote, and an endnote is where several journals put the whole
+    apparatus.
+    """
+    for cid in ids:
+        for name, xml in text_parts(parts):
+            fixed = re.sub(rf'<w:commentRange(?:Start|End) w:id="{cid}"/>',
+                           "", xml)
+            fixed = re.sub(
+                rf"<w:r(?: [^>]*)?>(?:(?!</w:r>).)*?"
+                rf'<w:commentReference w:id="{cid}"/>'
+                rf"(?:(?!</w:r>).)*?</w:r>", "", fixed, flags=re.DOTALL)
+            if fixed != xml:
+                parts[name] = fixed.encode("utf-8")
 
 
 def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],

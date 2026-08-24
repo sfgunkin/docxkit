@@ -1412,3 +1412,97 @@ def test_a_document_with_no_comments_is_not_an_error():
     from docxkit.hygiene import dedupe_comments
 
     assert dedupe_comments({}) == []
+
+
+
+def _anchored(cid: int, text: str) -> str:
+    """A comment's three anchors in the body, as Word writes them."""
+    return (f'<w:commentRangeStart w:id="{cid}"/>'
+            f"<w:r><w:t>{text}</w:t></w:r>"
+            f'<w:commentRangeEnd w:id="{cid}"/>'
+            f'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+            f'<w:commentReference w:id="{cid}"/></w:r>')
+
+
+def _body(inner: str) -> bytes:
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:document xmlns:w="http://schemas.openxmlformats.org/'
+            f'wordprocessingml/2006/main"><w:body><w:p>{inner}</w:p>'
+            f"</w:body></w:document>").encode()
+
+
+def test_the_dropped_comment_takes_its_ANCHORS_with_it():
+    """A reference to a comment that no longer exists is what Word calls
+    "the file appears to be corrupted", and it refuses the WHOLE
+    document — on inputs that each open perfectly. Found on Health
+    Capacity to Work, 2026-08-24, from `tracked.build`'s own
+    verify-in-Word step.
+
+    Every fixture before this one passed comments.xml alone, so no
+    anchor could dangle and the function was correct about the only part
+    it was given."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(212, "M. Lokshin", "Check this against Table 3."),
+            _comment(213, "M. Lokshin", "Check this against Table 3.")),
+        "word/document.xml": _body(_anchored(212, "first")
+                                   + _anchored(213, "second")),
+    }
+
+    (dropped,) = dedupe_comments(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "Check this against" in dropped
+    kept = {m for m in ("212", "213")
+            if f'w:commentReference w:id="{m}"' in doc}
+    assert len(kept) == 1, "one reference, and it is the one that survived"
+    gone = ({"212", "213"} - kept).pop()
+    assert f'w:commentRangeStart w:id="{gone}"' not in doc
+    assert f'w:commentRangeEnd w:id="{gone}"' not in doc
+    # and the surviving comment still HAS its anchors
+    assert f'w:commentRangeStart w:id="{kept.pop()}"' in doc
+
+
+def test_the_reference_RUN_goes_and_not_just_the_reference():
+    """The reference sits in a run of its own. Dropping the element
+    alone leaves `<w:r><w:rPr>…</w:rPr></w:r>` — a run with no content,
+    which renders as nothing and is litter of a second kind."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "R", "One note."), _comment(2, "R", "One note.")),
+        "word/document.xml": _body(_anchored(1, "a") + _anchored(2, "b")),
+    }
+
+    dedupe_comments(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "CommentReference" in doc, "the survivor keeps its run"
+    assert doc.count("<w:rStyle") == 1, doc
+
+
+def test_an_anchor_in_a_FOOTNOTE_is_dropped_too():
+    """A comment can be anchored in a note, and an endnote is where
+    several journals put the whole apparatus."""
+    from docxkit.hygiene import dedupe_comments
+
+    notes_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
+        'wordprocessingml/2006/main"><w:footnote w:id="2"><w:p>'
+        + _anchored(9, "in a note") +
+        "</w:p></w:footnote></w:footnotes>").encode("utf-8")
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(8, "R", "Same note."), _comment(9, "R", "Same note.")),
+        "word/document.xml": _body(_anchored(8, "in the body")),
+        "word/footnotes.xml": notes_xml,
+    }
+
+    dedupe_comments(parts)
+
+    assert b'w:id="9"' not in parts["word/footnotes.xml"]
+    assert b'w:id="8"' in parts["word/document.xml"], "the survivor stays"
