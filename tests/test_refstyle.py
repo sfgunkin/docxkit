@@ -2665,3 +2665,74 @@ def test_DASH_LED_entries_opening_a_list_are_still_checked_for_year_order():
 
     assert [i.message for i in report.issues if i.code == "year-order"] == [
         "same-author entries run oldest first: (2012) follows (2015)"]
+
+
+# `_order_findings` names the neighbours a misfiled entry belongs
+# between. Its `j + 1 < len(order)` and `order[j + 1]` carried six
+# survivors between them, and the existing fixtures could not reach any
+# of it: five entries put the last one at `j == 4`, where `4 ^ 1` and
+# `4 | 1` are both 5 and agree with `j + 1`, and the entry that belongs
+# FIRST sits at `j == 0`, where `0 ^ 1` and `0 | 1` are both 1 and agree
+# again. An EVEN number of entries separates them.
+
+def _ref(surname: str, year: str, index: int):
+    from docxkit.refstyle import Reference
+
+    return Reference(text=f'{surname}, X. ({year}). "T." J.',
+                     surname=surname, year=year, index=index)
+
+
+def test_an_entry_that_belongs_LAST_in_an_EVEN_list_reads_no_further():
+    """`j` is 3 of 4, so `j + 1` is 4 and there is no entry after it —
+    but `3 ^ 1` is 2 and `3 | 1` is 3, both of which are still less than
+    4, and either one walks off the end of the list. The five-entry
+    fixture cannot show it: at `j == 4` every one of them is 5."""
+    from docxkit.refstyle import _order_findings
+
+    entries = [_ref("Anders", "2001", 1), _ref("Diller", "2016", 2),
+               _ref("Baker", "2002", 3), _ref("Currie", "1999", 4)]
+
+    (found,) = _order_findings(entries)
+
+    assert found.message == ('"Diller" is out of alphabetical order — '
+                             'it files after "Currie"')
+
+
+def test_a_misfiled_entry_is_told_BOTH_neighbours_it_belongs_between():
+    """`j` is 1 here, where the three readings finally differ: `j + 1`
+    is 2, `j ^ 1` is 0 — the entry BEFORE it, so the message would name
+    one neighbour twice — and `j | 1` is 1, the misfiled entry itself,
+    which would tell a reader it files between another entry and its own
+    name."""
+    from docxkit.refstyle import _order_findings
+
+    entries = [_ref("Anders", "2001", 1), _ref("Currie", "1999", 2),
+               _ref("Diller", "2016", 3), _ref("Baker", "2002", 4)]
+
+    (found,) = _order_findings(entries)
+
+    assert found.message == ('"Baker" is out of alphabetical order — '
+                             'it files between "Anders" and "Currie"')
+
+
+def test_a_list_of_MORE_THAN_256_entries_still_finds_its_own_end():
+    """The count comparison CONTRIBUTING names: Python caches integers
+    to 256 and builds the rest, so `j + 1` and `len(order)` are the same
+    object below that and merely equal above it. Under `is not` the
+    guard stops recognising the end of the list and the lookup runs off
+    it — on a bibliography of 300, which is an ordinary literature
+    review.
+
+    Called directly rather than through `audit`: the arithmetic is the
+    subject, and 300 paragraphs of Word XML would be a slow way to ask
+    about it."""
+    from docxkit.refstyle import _order_findings
+
+    entries = [_ref(f"Author{i:03d}", "2001", i + 1) for i in range(300)]
+    entries.append(_ref("Zzz", "2001", 301))
+    entries.insert(0, entries.pop())          # the last name, filed first
+
+    found = _order_findings(entries)
+
+    assert [i.message for i in found] == [
+        '"Zzz" is out of alphabetical order — it files after "Author299"']
