@@ -705,3 +705,46 @@ def test_a_value_the_STYLE_provides_is_counted_and_left_alone():
         "\u00b66: space before", "\u00b66: space after"]
     assert not report.indented and not report.spaced, "nothing was written"
     assert "4 left to the style" in report.format()
+
+
+
+def test_something_that_is_NOT_a_bookmark_between_entries_is_QUOTED():
+    """`refile` moves whole spans, so whatever sits between two entries
+    moves with one of them. Bookmarks are safe — they belong to the
+    entry either way — and anything else is a decision the tool will not
+    make silently.
+
+    The refusal has to quote what it found: "not a bookmark" sends an
+    author looking at XML they cannot see in Word, and a comment anchor
+    stranded by an accepted revision looks like nothing at all on the
+    page. Truncated at 60, because the gap can be an entire tracked
+    deletion."""
+    stranded = ('<w:proofErr w:type="spellStart"/>'
+                '<w:commentRangeEnd w:id="1"/>'
+                '<w:proofErr w:type="spellEnd"/>')
+    body = "".join(para(run(f"Body paragraph {n}.")) for n in range(4))
+    parts = make_parts(body + heading() + entry(LONG_A)
+                       + stranded + entry(B))
+
+    report = refile(parts)
+
+    assert not report.moved
+    assert report.refused.startswith("\u00b67 has "), report.refused
+    assert repr(stranded[:60]) in report.refused
+    assert report.refused.endswith("which is not a bookmark")
+
+
+def test_a_BOOKMARK_between_two_entries_is_not_a_refusal():
+    """The half that must NOT refuse. A citation's anchor sits exactly
+    there, on every paper this tool is for, so a rule that called it an
+    obstruction would refuse every real reference list."""
+    marks = ('<w:bookmarkStart w:id="7" w:name="ref_Barr2010"/>'
+             '<w:bookmarkEnd w:id="7"/>')
+    body = "".join(para(run(f"Body paragraph {n}.")) for n in range(4))
+    parts = make_parts(body + heading() + entry(C, pid="00000001")
+                       + marks + entry(A, pid="00000002"))
+
+    report = refile(parts)
+
+    assert not report.refused, report.refused
+    assert report.moved, "Currie after Acemoglu: it had work to do"

@@ -2488,3 +2488,27 @@ def test_a_row_that_NEVER_CLOSES_still_bounds_a_header():
 
     assert span[1] == len(doc), "an unterminated row bounds at the end"
     assert span[0] < span[1], "and the span is not empty or inverted"
+
+
+
+# --- the two anchors in `convert_entry` (mutation round, 2026-08-24) -----
+
+def test_the_YEAR_fix_is_anchored_by_the_EIGHT_characters_before_it():
+    """A bare year is four digits, and four digits also sit in a DOI and
+    in a page range further down the entry. The fix carries the eight
+    characters in front so the fragment it replaces is unique to the
+    year — without them it can rewrite the tail of a page range into a
+    parenthesised year, in an entry that reads correctly afterwards
+    except for the numbers nobody re-reads."""
+    text = "Smith, J. 2020. A Paper. Journal, 1(1), 1990-2020."
+
+    (year,) = [f for f in convert_entry(text, HOUSE)
+               if f.code == "year-parens"]
+
+    assert year.old == "ith, J. 2020."
+    assert year.old.index("2020.") == 8, "eight characters of lead"
+    assert year.new == "ith, J. (2020)."
+    # and the page range is left to the en-dash rule, not eaten by this
+    fixed, _ = convert_text(text, HOUSE)
+    assert fixed.endswith("1990\u20132020.")
+    assert fixed.count("(2020)") == 1
