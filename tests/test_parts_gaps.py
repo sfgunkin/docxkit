@@ -1572,3 +1572,92 @@ def test_two_SPELLINGS_of_one_note_are_still_one_note():
     kept = [c for c in ("1", "2")
             if f'<w:comment w:id="{c}"' in parts["word/comments.xml"].decode()]
     assert kept == ["1"], kept
+
+
+def _sections(first: str, *, with_ref: bool) -> dict[str, bytes]:
+    """Three sections; the footer belongs to the MIDDLE one."""
+    ref = ('<w:footerReference w:type="default" r:id="rId4"/>'
+           if with_ref else "")
+    body = (para(run("front")) + first
+            + para(run("mid"))
+            + f'<w:sectPr><w:pgSz w:w="2"/>{ref}</w:sectPr>'
+            + para(run("end"))
+            + '<w:sectPr><w:pgSz w:w="3"/></w:sectPr>')
+    parts = make_parts(body)
+    if with_ref:
+        parts["word/footer1.xml"] = b"<w:ftr>page</w:ftr>"
+    parts["[Content_Types].xml"] = ("<Types>" + (
+        '<Override PartName="/word/footer1.xml" ContentType="footer"/>'
+        if with_ref else "") + "</Types>").encode("utf-8")
+    parts["word/_rels/document.xml.rels"] = (
+        '<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+        + ('<Relationship Id="rId4" Target="footer1.xml"/>'
+           if with_ref else "")
+        + "</Relationships>").encode("utf-8")
+    return parts
+
+
+def test_an_EMPTY_section_does_not_shift_a_footer_onto_a_LATER_one():
+    """A section with every property at its default is written
+    `<w:sectPr/>`, and `element_spans` skips a self-closing element on
+    purpose — an empty `<w:p/>` is a paragraph with no content, not the
+    start of one. For `w:sectPr` that skip drops a whole section from
+    the count.
+
+    Source and target are then paired BY POSITION across two lists that
+    counted differently. Three sections against two: the footer belongs
+    to the middle one and is wired into the LAST, measured. The
+    `at >= len(sects)` guard cannot see it — the index is still inside
+    the shorter list, so the reference is inserted rather than skipped,
+    the orphan check is satisfied, and the build reports the part
+    carried across while the footer prints on the wrong pages.
+
+    Both symmetric cases pass either way, which is why this one is
+    written asymmetrically: when source and target agree about which
+    sections are empty they lose the same one and the positions still
+    line up."""
+    from docxkit.hygiene import _section_spans
+
+    source = _sections('<w:sectPr><w:pgSz w:w="1"/></w:sectPr>',
+                       with_ref=True)
+    rebuilt = _sections("<w:sectPr/>", with_ref=False)
+
+    restore_parts(rebuilt, source, prefixes=("word/footer1.xml",))
+
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    spans = _section_spans(doc)
+    assert len(spans) == 3, spans
+    holder = next(doc[a:b] for a, b in spans if "footerReference" in doc[a:b])
+    assert 'w:w="2"' in holder, f"wired to the wrong section: {holder}"
+
+
+def test_a_reference_can_be_put_into_an_EMPTY_section():
+    """The other half: when the section that WANTS the footer is the
+    empty one, there is no inside to insert into. `<w:sectPr/>` and
+    `<w:sectPr></w:sectPr>` are the same section, so it is opened up
+    around the reference rather than skipped."""
+    source = make_parts(
+        para(run("a"))
+        + '<w:sectPr><w:footerReference w:type="default" r:id="rId4"/>'
+          "</w:sectPr>")
+    source["word/footer1.xml"] = b"<w:ftr>page</w:ftr>"
+    source["[Content_Types].xml"] = (
+        b'<Types><Override PartName="/word/footer1.xml" '
+        b'ContentType="footer"/></Types>')
+    source["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+        b'<Relationship Id="rId4" Target="footer1.xml"/>'
+        b"</Relationships>")
+
+    rebuilt = make_parts(para(run("a")) + "<w:sectPr/>")
+    rebuilt["[Content_Types].xml"] = b"<Types></Types>"
+    rebuilt["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+        b"</Relationships>")
+
+    restore_parts(rebuilt, source, prefixes=("word/footer1.xml",))
+
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    assert "<w:sectPr/>" not in doc, "the empty section was left empty"
+    assert re.search(r"<w:sectPr><w:footerReference[^>]*/></w:sectPr>", doc), \
+        doc

@@ -334,6 +334,42 @@ def _section_bound(pkg: dict[str, bytes], part: str) -> bool:
                      rf'r:id="{re.escape(rid)}"', doc) is not None
 
 
+#: Both spellings of a section. `element_spans` deliberately skips a
+#: SELF-CLOSING element — an empty `<w:p/>` is a paragraph with no
+#: content and not the start of one — and for `w:sectPr` that skip is
+#: silent data loss: a section with every property left at its default
+#: is written `<w:sectPr/>`, is a section, and simply does not appear in
+#: the list. Pairing source to target BY POSITION across two lists that
+#: count differently is how a footer ends up wired to the wrong section,
+#: with the reference present, the orphan check satisfied, and the build
+#: reporting the part carried across.
+_SECTPR_OPEN = re.compile(r"<w:sectPr\b[^>]*>")
+_SECTPR_CLOSE = "</w:sectPr>"
+
+
+def _section_spans(xml: str) -> list[tuple[int, int]]:
+    """Every `w:sectPr`, empty ones included, in document order.
+
+    The open tag is matched first and the two forms told apart after,
+    because an alternation cannot do it: in
+    `<w:sectPr\b[^>]*(?:/>|>.*?</w:sectPr>)` the character class is
+    happy to eat the closing SLASH, so `/>` fails, the second branch
+    matches the `>` that is left, and one span runs from an empty
+    section to the END of the next one. Written that way first, and it
+    put the restored reference outside the section entirely.
+    """
+    out = []
+    for m in _SECTPR_OPEN.finditer(xml):
+        if m.group(0).endswith("/>"):
+            out.append((m.start(), m.end()))
+            continue
+        shut = xml.find(_SECTPR_CLOSE, m.end())
+        if shut == -1:                      # malformed; not ours to repair
+            continue
+        out.append((m.start(), shut + len(_SECTPR_CLOSE)))
+    return out
+
+
 def _restore_section_references(parts: dict[str, bytes],
                                 source: dict[str, bytes],
                                 missing: list[str],
@@ -361,10 +397,10 @@ def _restore_section_references(parts: dict[str, bytes],
         return
     src, out = source[doc].decode("utf-8"), parts[doc].decode("utf-8")
     src_rels = source.get(_DOC_RELS, b"").decode("utf-8")
-    src_sects = element_spans(src, "sectPr")
+    src_sects = _section_spans(src)
     # Newest first, so an earlier section's insertion cannot move a later
     # section's offsets out from under the next edit.
-    inserts: list[tuple[int, str]] = []
+    inserts: list[tuple[int, int, str]] = []
     for name in want:
         rid = _rid_for(src_rels, _DOC_RELS, name)
         if rid is None:
@@ -375,23 +411,32 @@ def _restore_section_references(parts: dict[str, bytes],
             kind = m.group(1)
             at = next((i for i, (lo, hi) in enumerate(src_sects)
                        if lo <= m.start() < hi), None)
-            sects = element_spans(out, "sectPr")
+            sects = _section_spans(out)
             if at is None or at >= len(sects):
                 continue
             type_m = re.search(r'w:type="([^"]*)"', m.group(0))
             kind_type = f' w:type="{type_m.group(1)}"' if type_m else ""
             lo, hi = sects[at]
             block = out[lo:hi]
+            entry = (f'<w:{kind}Reference{kind_type} '
+                     f'r:id="{rid_for[name]}"/>')
+            if block.endswith("/>"):
+                # An EMPTY section, which has no inside to insert into:
+                # it is opened up around the reference. `<w:sectPr/>` and
+                # `<w:sectPr></w:sectPr>` are the same section, and a
+                # reference has to go in one as readily as the other.
+                inserts.append((hi - 2, hi, f">{entry}</w:sectPr>"))
+                continue
             last = None
             for r in _SECT_REF_RE.finditer(block):
                 last = r
             opens = re.match(r"<w:sectPr\b[^>]*>", block)
             assert opens is not None
-            inserts.append((
-                lo + (last.end() if last else opens.end()),
-                f'<w:{kind}Reference{kind_type} r:id="{rid_for[name]}"/>'))
-    for at, entry in sorted(inserts, reverse=True):
-        out = out[:at] + entry + out[at:]
+            at_in = lo + (last.end() if last else opens.end())
+            inserts.append((at_in, at_in, entry))
+    # Newest first, so an earlier edit cannot move a later one's offsets.
+    for lo, hi, entry in sorted(inserts, reverse=True):
+        out = out[:lo] + entry + out[hi:]
     parts[doc] = out.encode("utf-8")
 
 
