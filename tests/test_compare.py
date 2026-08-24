@@ -3862,3 +3862,57 @@ def test_a_paragraph_WITH_text_is_still_named_by_its_text():
 
     assert "'A sentence that spills.'" in issue
     assert "empty paragraph" not in issue
+
+def test_a_field_spilling_with_NO_paragraph_before_it_still_says_where():
+    """The other branch, and the one the first test never reached.
+
+    A field can open in the very FIRST paragraph, leaving nothing to
+    name the orphan half by — and that branch had no test at all, which
+    a cosmic-ray sweep of this module said out loud: five arithmetic
+    mutants on its paragraph number, all alive (2026-08-24).
+    """
+    from docxkit._compare_diff import integrity
+
+    xml = document('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r></w:p>'
+                   + _SPILL)
+
+    opened, orphan = integrity(xml, "BUILT", set())
+
+    assert "(+1)" in opened
+    assert "empty paragraph 2" in orphan, orphan
+    assert "after" not in orphan, "there is nothing before it to name"
+
+
+def test_an_ADDED_or_REMOVED_figure_is_named_by_its_exhibit_too():
+    """`known = after or before`. Mutated to `and`, a figure that was
+    ADDED or REMOVED loses its caption and the entry falls back to
+    "word/media/image21.png" — which is the folder-not-the-page problem
+    the label exists to solve, surviving in the two cases where the
+    reader has least other context."""
+    before = _with_media()
+    after = _with_media()
+    del after["word/media/image1.png"]
+
+    (removed,) = _media_report(before, after)["media"]
+    (added,) = _media_report(after, before)["media"]
+
+    assert removed["type"] == "MEDIA REMOVED"
+    assert removed["label"].startswith("Figure 8.a"), removed
+    assert added["type"] == "MEDIA ADDED"
+    assert added["label"].startswith("Figure 8.a"), added
+
+
+def test_the_size_of_what_is_NOT_there_is_zero():
+    """A removal reports the size it had and 0 for what it became; an
+    addition the reverse. Nothing pinned either, so a mutant writing -1
+    into a report survived — invisible on the page, because the renderer
+    prints max(from, to), and nonsense to anything reading the JSON."""
+    before = _with_media()
+    after = _with_media()
+    del after["word/media/image1.png"]
+
+    (removed,) = _media_report(before, after)["media"]
+    (added,) = _media_report(after, before)["media"]
+
+    assert (removed["from"], removed["to"]) == (len(PNG), 0)
+    assert (added["from"], added["to"]) == (0, len(PNG))
