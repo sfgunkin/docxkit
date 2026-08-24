@@ -49,3 +49,9 @@ claims = [
   { was = "if len(applied) == done:", line = "if len(applied) <= done:", why = "`done` is `len(applied)` read at the top of the pass and `applied` only ever grows, so `len(applied) >= done` holds always and `<=` is true exactly when `==` is." },
   { was = "if len(applied) == done:", line = "if len(applied) is done:", why = "Both sides count the fixes applied to ONE reference entry, bounded by the handful of rules times `_SETTLE_ROUNDS` — an order of magnitude below the 256 where identity and equality part company. The unbounded count comparison in this module, `j + 1 is not len(order)` over a bibliography, IS a real gap and has its own test." },
 ]
+
+["batch.py"]
+claims = [
+  { was = "if len(hits) > 1:", line = "if len(hits) != 1:", why = "`diagnose` returns on `if not hits` immediately above, so `len(hits)` is at least 1 wherever this runs and the two comparisons select the same paragraphs. The empty case has its own message — the one about an earlier edit having rewritten the sentence." },
+  { was = "para = hits[0].group(0)", line = "para = hits[-1].group(0)", why = "Reached only when the two returns above it did not fire, which leaves exactly one hit: `hits[0]` and `hits[-1]` are the same match." },
+]

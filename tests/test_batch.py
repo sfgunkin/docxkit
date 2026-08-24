@@ -473,3 +473,62 @@ def test_a_document_of_MORE_THAN_256_PARAGRAPHS_passes_its_own_invariants():
     assert report.ok, report.failures
     assert report.failures == []
     assert "invariants unchanged" in report.text(), report.text()
+
+
+# `diagnose` exists to say WHICH cause applies, so a wrong diagnosis
+# sends a reader down the round trip it was written to remove. Every
+# case above satisfies both halves of the condition it tests — the
+# hyperlink label EQUALS `old`, the equation paragraph really has an
+# equation — so an `and` widened to `or` produced the same message and
+# survived.
+
+def test_diagnose_quotes_the_FIRST_near_sentence_not_just_any_of_them():
+    """The nearest-text clause is a hint about where the anchor drifted
+    to, and quoting a different sentence than the one at the top of the
+    paragraph points somewhere the reader has to rule out by hand.
+
+    Two sentences carry the fragment here, which is what tells `near[0]`
+    from `near[-1]`; every earlier fixture had one, where they are the
+    same string."""
+    body = para(run("Results: the share of older workers rose. "
+                    "Also: the share of older workers fell. "
+                    "Nothing else."), pid="A1")
+
+    said = batch.diagnose(document(body), "Nothing else",
+                          "the share of older workers held steady")
+
+    assert "`old` is not in that paragraph" in said
+    assert "rose" in said, said
+    assert "fell" not in said, said
+
+
+def test_diagnose_does_NOT_blame_an_equation_in_a_paragraph_without_one():
+    """The equation branch is two conditions and both earn their place:
+    the paragraph holds `m:oMath`, AND `old` is missing from the raw
+    `w:t` text. The second alone is true of any escaped character —
+    `visible_text` unescapes `&amp;` and the raw join does not — so a
+    paragraph with an ampersand and no maths in it reads as an equation
+    the moment those are joined by `or`, and the reader is sent to look
+    for OMML that is not there."""
+    body = para(run("Smith &amp; Lee report the result."), pid="A1")
+
+    said = batch.diagnose(document(body), "report the result",
+                          "Smith & Lee")
+
+    assert "spans an equation" not in said, said
+    assert "preflight does not model" in said, said
+
+
+def test_diagnose_names_a_label_that_is_only_PART_of_the_match():
+    """The label test runs both ways on purpose: the match may sit
+    inside the label, or the label inside the match. Narrowed to `and`
+    only an exact equality qualifies — which is what the existing case
+    happens to be — and an anchor that merely CONTAINS the label falls
+    through to "a reason preflight does not model", which is the answer
+    that means "go and look"."""
+    xml = document(para(f"<w:r><w:t>see </w:t></w:r>{LINK_LABEL}"
+                        "<w:r><w:t> for the split.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "for the split", "see Table 3 for")
+
+    assert "hyperlink label 'Table 3'" in said, said
