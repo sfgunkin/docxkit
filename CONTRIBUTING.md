@@ -497,6 +497,46 @@ than by the numbers:
   inside `or back == m.group(2)`; it is gone, with the argument in its
   place.
 
+### Many survivors on ONE line is a design question, not a missing test
+
+The usual survivor is a line whose behaviour no test happens to reach,
+and the answer is a test. A line carrying a whole CLUSTER is a different
+finding, and reading it as the usual kind wastes the signal.
+
+`refstyle`'s converter had 15 of its real survivors on one line:
+
+```python
+at, end = max(0, et.start() - 1), et.end() + 1
+```
+
+Every arithmetic variant lived — plus one, minus two, shifted, xor'd.
+That is not "no test covers this window". A window can only have one
+right value, so fifteen wrong ones surviving says the value was never
+what mattered: the line was widening a fragment by a fixed amount when
+what the code needed was a fragment that occurs ONCE. On an entry
+ending in a bare "et al" — no trailing character to widen into — the
+fragment became a substring of an occurrence already rewritten, and
+`--fix` wrote "et al.." into the first one while leaving the real one
+bare. A live corruption of the author's bibliography, shipped.
+
+So when the survivors pile onto one line, ask what the line is FOR
+before writing a test for it. A test written against that line would
+have pinned the arithmetic and the bug with it.
+
+Two things the chase depended on:
+
+**Simulate the loop the code actually runs.** The first model of the
+settle loop added to `seen` as it applied, where the real one updates at
+the END of a pass. That single difference reported the two-occurrence
+case as killing seven mutants when it kills none, and would have aimed
+the test at the wrong entry entirely.
+
+**A guard against a HANG needs a timeout, not an assertion.** The left
+boundary here stops an index going negative, where the fragment reads as
+`""` and `count("")` never falls to 1. Remove it and the suite does not
+fail — it stops. That test carries `@pytest.mark.timeout`, because the
+regression otherwise reads as a broken machine rather than as this line.
+
 ### Subtraction hides inside its operands
 
 The "mutant that survives at zero" note below has a second half, and it
