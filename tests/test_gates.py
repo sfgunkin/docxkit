@@ -11,6 +11,7 @@ its LINES.
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -121,3 +122,31 @@ def test_the_LAST_summary_line_wins_when_a_gate_prints_several():
     out = "tests/test_a.py 3 passed\n" + "12 passed, 1 skipped in 2s"
 
     assert gates._summary(out) == "12 passed, 1 skipped in 2s"
+
+
+def test_two_PROCESSES_do_not_share_one_coverage_report():
+    """The report is a handoff between two gates, and its name used to
+    be fixed. Two gate runs on one machine — two sessions on this repo
+    is the ordinary case here, not the exotic one — would then clobber
+    each other's report and hand `floors` somebody ELSE's coverage:
+    read as a floor failure in code the reader never touched, or read
+    as a pass. Asked of a real second process, because that is the
+    thing being claimed."""
+    argv = [sys.executable, "-c",
+            "import sys; sys.path.insert(0, 'tools'); "
+            "import gates; print(gates.COVERAGE_JSON)"]
+    done = subprocess.run(argv, cwd=gates.ROOT, capture_output=True,
+                          text=True, check=True)
+
+    assert done.stdout.strip() != str(gates.COVERAGE_JSON)
+
+
+def test_the_chain_does_not_LEAVE_its_coverage_report_behind(tmp_path):
+    """Scratch between two gates, and a chain that stops at gate one
+    still wrote it. Left behind, it accumulates a copy per run in the
+    temp directory forever."""
+    gates.COVERAGE_JSON.write_text("{}", encoding="utf-8")
+    stop = ("stop", [sys.executable, "-c", "raise SystemExit(1)"], False)
+
+    assert gates.run([stop], say=lambda _: None) == 1
+    assert not gates.COVERAGE_JSON.exists()

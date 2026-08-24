@@ -41,10 +41,20 @@ ROOT = Path(__file__).resolve().parents[1]
 Gate = tuple[str, list[str], bool]
 
 #: Where the one coverage run puts its report, for the floors gate to
-#: read. Beside the session's other scratch rather than in the tree: it
-#: is derived, it is rewritten on every run, and a stray copy in the
-#: repo would be committed by somebody eventually.
-COVERAGE_JSON = Path(tempfile.gettempdir()) / "docxkit-gates-coverage.json"
+#: read. In the temp directory rather than the tree: it is derived, it is
+#: rewritten on every run, and a stray copy in the repo would be
+#: committed by somebody eventually.
+#:
+#: Per PROCESS, and that is not decoration. A fixed name is one shared
+#: file, and two gate runs on one machine — two sessions on this repo is
+#: the ordinary case, not the exotic one — would clobber each other's
+#: report and hand `floors` somebody else's coverage. It would read as a
+#: floor failure in code the reader had not touched, or worse as a pass.
+#: Written as a fixed name first, and caught while scoping a review of
+#: the change: the same one-shared-resource shape as the `kill_check`
+#: lock, hours later, in a different costume.
+COVERAGE_JSON = (Path(tempfile.gettempdir())
+                 / f"docxkit-gates-coverage-{os.getpid()}.json")
 
 
 def _workers() -> str:
@@ -110,17 +120,24 @@ def _summary(out: str) -> str:
 def run(gates: Sequence[Gate] = tuple(GATES),
         say: Callable[[str], None] = print) -> int:
     """Run each gate until one fails; return the number that failed."""
-    for gate in gates:
-        name, argv, _reads = gate
-        done = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", check=False)
-        out = done.stdout + done.stderr
-        if _failed(gate, out, done.returncode):
-            say(f"FAILED  {name}")
-            say(out.strip()[-3000:])
-            return 1
-        say(f"ok      {name}  {_summary(out)[:90]}")
-    return 0
+    try:
+        for gate in gates:
+            name, argv, _reads = gate
+            done = subprocess.run(argv, cwd=ROOT, capture_output=True,
+                                  text=True, encoding="utf-8",
+                                  errors="replace", check=False)
+            out = done.stdout + done.stderr
+            if _failed(gate, out, done.returncode):
+                say(f"FAILED  {name}")
+                say(out.strip()[-3000:])
+                return 1
+            say(f"ok      {name}  {_summary(out)[:90]}")
+        return 0
+    finally:
+        # The report is scratch between two gates, and a chain that
+        # stops early still wrote it. `missing_ok` because most runs of
+        # this function in the tests never reach the pytest gate at all.
+        COVERAGE_JSON.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":                  # pragma: no cover
