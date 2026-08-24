@@ -326,3 +326,122 @@ def test_the_note_PART_NAMES_are_re_exported_beside_DOCUMENT():
     assert (DOCUMENT, FOOTNOTES, ENDNOTES) == (
         "word/document.xml", "word/footnotes.xml", "word/endnotes.xml")
     assert {"DOCUMENT", "FOOTNOTES", "ENDNOTES"} <= set(batch.__all__)
+
+
+def test_an_invariant_that_goes_UP_is_blocked_as_well_as_one_that_FALLS():
+    """Every invariant case here loses something — bookmarks 1 -> 0,
+    paragraphs 2 -> 1 — so the gate was only ever asked about a fall.
+    Read `!=` as `<` and a carrier that DUPLICATES sails through: an
+    edit applied twice, a bookmark cloned with its name, a row copied.
+    That is the same invisible-to-a-text-diff damage the gate exists
+    for, arriving from the other side.
+    """
+    body = para('<w:bookmarkStart w:id="1" w:name="ref_x"/>',
+                run("Figure 1 shows country averages."),
+                '<w:bookmarkEnd w:id="1"/>', pid="B1")
+
+    def clone_the_bookmark(xml: str, _p: dict[str, bytes]) -> str:
+        return xml.replace(
+            '<w:bookmarkEnd w:id="1"/>',
+            '<w:bookmarkEnd w:id="1"/>'
+            '<w:bookmarkStart w:id="2" w:name="ref_x"/>'
+            '<w:bookmarkEnd w:id="2"/>')
+
+    report = batch.run("b", [batch.Step("clone", clone_the_bookmark)],
+                       parts=parts_of(body))
+
+    assert not report.ok, report.text()
+    assert any("bookmarks 1 -> 2" in f for f in report.failures), \
+        report.failures
+
+    # and the REPORT says which way it went, for the same reason: read
+    # `!=` as `>` there and the line a human reads omits the increase
+    # while the gate still blocks it, which is the worst of both.
+    assert "'bookmarks': (1, 2)" in report.text(), report.text()
+
+    declared = batch.run("declared", [batch.Step("clone", clone_the_bookmark)],
+                         parts=parts_of(body),
+                         allow={"bookmarks": 1, "bookmark_ends": 1})
+
+    assert declared.ok, declared.text()
+
+
+def test_preflight_keeps_going_PAST_an_edit_that_changed_nothing():
+    """Reporting all of them at once is the whole point — three anchor
+    problems otherwise cost three cycles. The no-op verdict had a test
+    and the all-at-once promise had a test, and no test put a no-op
+    FIRST, so the branch was free to stop the pass there."""
+    xml = document(para(run("Alpha beta gamma."), pid="A1")
+                   + para(run("Delta epsilon zeta."), pid="A2"))
+
+    verdicts = batch.preflight([
+        batch.Edit("noop", "Alpha", "beta", "beta"),
+        batch.Edit("fine", "Delta", "epsilon", "eta"),
+    ], xml)
+
+    assert [v.ok for v in verdicts] == [False, True], \
+        "the no-op must not end the pass"
+    assert verdicts[0].reason == "matched but changed nothing"
+
+
+def test_apply_steps_keeps_going_after_a_step_RAISES():
+    """`test_a_step_that_RAISES_is_reported_and_the_xml_is_rolled_back`
+    says in its docstring that apply_steps keeps going so one failure
+    does not hide the rest — and passes ONE step, so it cannot see it.
+    The mutant that turns that `continue` into a `break` survived it."""
+    def boom(xml: str, _p: dict[str, bytes]) -> str:
+        raise ValueError("the swap could not find its drawing")
+
+    xml = document(para(run("Alpha beta gamma."), pid="A1"))
+
+    out, applied, failures = batch.apply_steps(xml, {}, [
+        batch.Step("swap the figure", boom),
+        batch.Edit("after", "Alpha", "gamma", "delta"),
+    ])
+
+    assert applied == ["after"], "the step after the failure still ran"
+    assert len(failures) == 1
+    assert "delta" in out and "gamma" not in out
+
+
+def test_apply_steps_reports_a_NO_OP_edit_and_still_applies_the_rest():
+    """Reachable even though `run` preflights, because preflight sees
+    only the Edits and applies them cumulatively WITHOUT the Steps
+    between them: a Step that rewrites the sentence an Edit targets
+    makes that Edit a no-op at apply time, having passed preflight.
+    Nothing downstream can tell a no-op from a batch that worked."""
+    xml = document(para(run("Alpha beta gamma."), pid="A1")
+                   + para(run("Delta epsilon zeta."), pid="A2"))
+
+    out, applied, failures = batch.apply_steps(xml, {}, [
+        batch.Edit("noop", "Alpha", "beta", "beta"),
+        batch.Edit("after", "Delta", "epsilon", "eta"),
+    ])
+
+    assert failures == ["noop  matched but changed nothing"]
+    assert applied == ["after"], "the edit after the no-op still ran"
+    assert "eta" in out
+
+
+def test_the_value_objects_cannot_be_MUTATED_between_preflight_and_apply():
+    """`preflight` reports on the edits it was handed; `apply_steps`
+    then applies them again, separately. That verdict only means
+    something if the two are the same object AND it cannot have changed
+    in between — a Step's `fn` is arbitrary caller code holding whatever
+    references the script gave it, and a batch that preflighted one
+    anchor and applied another would be gated on a document state that
+    never existed.
+
+    Cheap to state, and three mutants turn `frozen=True` off.
+    """
+    import dataclasses
+
+    edit = batch.Edit("t", "sig", "old", "new")
+    step = batch.Step("label", lambda xml, parts: xml)
+    verdict = batch.Verdict("t", True)
+
+    for obj, attr, value in ((edit, "old", "something else"),
+                             (step, "label", "renamed"),
+                             (verdict, "ok", False)):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(obj, attr, value)

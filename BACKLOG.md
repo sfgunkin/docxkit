@@ -632,6 +632,50 @@ Pick a target by replaying or re-sweeping, never by the recorded number
 — which is what `stale_figures` has been saying about QUOTING a figure,
 now also true of choosing one.
 
+
+**`batch.py` — 222 mutants, 166 real, 148 killed (89.2%).** Its FIRST
+measurement: the module had no entry in the harness map, so no round had
+ever picked it. It opened at 17.5% (29/166), the highest real figure
+measured here in a day of measuring, and five tests took it to 10.8%
+(18/166). Eleven mutants died for those five, replayed rather than
+re-swept — the source had not moved, only the tests, which is the case
+`replay_survivors` exists for and answered in a minute.
+
+Four of the five are about what the module is FOR, and each was invisible
+for a reason worth keeping:
+
+* **the invariant gate only knew how to catch a FALL.** Every case in
+  the file loses something — bookmarks 1 -> 0, paragraphs 2 -> 1 — so
+  `!=` read as `<` still blocked all of them, and a carrier that
+  DUPLICATES sailed through: an edit applied twice, a bookmark cloned
+  with its name, a row copied. Same invisible-to-a-text-diff damage the
+  gate exists for, arriving from the other side.
+* **`apply_steps` "keeps going so one failure does not hide the rest"**
+  — its existing test says exactly that in its docstring, and passes ONE
+  step, so it cannot see it. Both `continue`s read as `break` and
+  survived.
+* **`preflight` reports every failure in one pass** — tested, and tested
+  for the no-op verdict, and never with a no-op FIRST, so the no-op
+  branch was free to end the pass there. That is the round-trip the
+  whole module exists to remove.
+* **the value objects are frozen, and nothing said so.** A preflight
+  verdict means something only because the edits cannot change between
+  being preflighted and being applied — a `Step`'s `fn` is arbitrary
+  caller code holding whatever the script handed it. Three mutants turn
+  `frozen=True` off.
+
+The 18 left are bounded, and none of them moves a gate or a written
+document. Eight are truncation widths in `diagnose`'s advisory sentence
+(`old[:20]`, `near[0][:80]`). Five are equivalent: `hits[0]` -> `hits[-1]`
+and `> 1` -> `!= 1` sit after `if not hits` and `if len(hits) > 1` have
+both returned, so the list has exactly one element; `ok: bool = True` is
+overwritten by `report.ok = not report.failures` on every path that
+reaches it; and two `!=` -> `is not` are the interned-small-int class
+recorded above. The remaining three change WHICH explanation `diagnose`
+gives — wrong advice rather than wrong behaviour, costing a reader a
+cycle and nothing else. Left, and named here so the next round does not
+re-derive them.
+
 ---
 
 ## Fixed
