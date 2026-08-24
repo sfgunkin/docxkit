@@ -289,6 +289,62 @@ def test_paragraph_property_walks_based_on_then_doc_defaults():
     assert styles.paragraph_property(None, "Ref", "ind", "hanging") is None
 
 
+def test_a_value_is_inherited_from_the_PARENT_over_doc_defaults():
+    """The chain has to be walked, not just started.
+
+    The fixture above cannot see this: its `Normal` carries no `w:pPr`,
+    so `Ref` -> `Normal` -> docDefaults and a mutation that breaks the
+    middle step still arrives at the same 160 by the same route. Here
+    the parent disagrees with the default, so only an actual walk
+    answers 240 — which is the case the function exists for, since
+    "would writing this be redundant?" is asked against what the
+    paragraph really inherits.
+    """
+    xml = ('<w:styles><w:docDefaults><w:pPrDefault><w:pPr>'
+           '<w:spacing w:after="160"/></w:pPr></w:pPrDefault></w:docDefaults>'
+           '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+           '<w:pPr><w:spacing w:after="240"/></w:pPr></w:style>'
+           '<w:style w:type="paragraph" w:styleId="Ref">'
+           '<w:basedOn w:val="Normal"/><w:pPr>'
+           '<w:ind w:hanging="720"/></w:pPr></w:style>'
+           "</w:styles>")
+
+    assert styles.paragraph_property(xml, "Ref", "spacing", "after") == "240"
+
+
+def test_a_paragraph_naming_NO_style_inherits_the_default_ones():
+    """`w:default="1"` names the style a paragraph without a `w:pStyle`
+    is IN, and its properties are what such a paragraph inherits —
+    docDefaults only after that. Asserted against a default style that
+    DISAGREES with docDefaults, because agreeing proves nothing."""
+    xml = ('<w:styles><w:docDefaults><w:pPrDefault><w:pPr>'
+           '<w:spacing w:after="160"/></w:pPr></w:pPrDefault></w:docDefaults>'
+           '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+           '<w:pPr><w:spacing w:after="240"/></w:pPr></w:style>'
+           "</w:styles>")
+
+    assert styles.paragraph_property(xml, None, "spacing", "after") == "240"
+
+
+def test_a_paragraph_naming_a_style_the_STYLESHEET_LACKS_still_answers():
+    """The case this module's own docstring is about: a document that
+    references a style the part does not define, which Word renders in
+    its defaults silently. `paragraph_property` has to answer what the
+    paragraph really inherits — the defaults — rather than raise, since
+    every caller is asking it in order to decide whether to write a
+    value, and a crash there stops a formatting pass on the one
+    manuscript that most needs one.
+    """
+    xml = ('<w:styles><w:docDefaults><w:pPrDefault><w:pPr>'
+           '<w:spacing w:after="160"/></w:pPr></w:pPrDefault></w:docDefaults>'
+           '<w:style w:type="paragraph" w:styleId="Normal">'
+           '<w:pPr><w:spacing w:after="240"/></w:pPr></w:style>'
+           "</w:styles>")
+
+    assert styles.paragraph_property(xml, "NoSuchStyle", "spacing",
+                                     "after") == "160"
+
+
 def test_doc_defaults_are_not_read_out_of_pprdefault_as_an_empty_blob():
     """`<w:pPrDefault>` starts with the same seven characters as `<w:pPr>`;
     without a word boundary the match runs to the INNER close tag."""

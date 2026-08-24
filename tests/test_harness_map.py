@@ -36,6 +36,32 @@ def test_a_mapped_module_still_exists(module):
     assert (SRC / module).is_file(), f"{module} is not a module any more"
 
 
+def test_every_module_has_an_ENTRY_so_the_TABLE_can_see_it():
+    """The other direction, and the one that fails silently.
+
+    `harness_for` falls back to the files that NAME a module, so a
+    module with no entry is still measurable — and invisible.
+    `stale_figures` walks this dict, so the table a round is planned
+    from simply had no line for it, and "not in the table" reads
+    exactly like "nothing to do here".
+
+    Two were, until 2026-08-24: `placement.py`, the largest module in
+    the package, carrying the worst figure recorded in it; and
+    `batch.py`, 327 lines that had never been measured at all. Neither
+    was new — the fallback is how a module gets its FIRST run, not
+    somewhere to leave one.
+    """
+    modules = {p.name for p in SRC.glob("*.py") if p.name != "__init__.py"}
+
+    unmapped = sorted(modules - set(HARNESS_MAP.HARNESS))
+
+    assert not unmapped, (
+        f"{unmapped} have no entry in HARNESS, so `stale_figures` cannot "
+        f"list them and no round will ever pick them. `harness_for` will "
+        f"still run them off the files that name them — put that list in "
+        f"the map once a run says which files actually reach the module.")
+
+
 @pytest.mark.parametrize("module,files", sorted(HARNESS_MAP.HARNESS.items()))
 def test_every_test_file_in_a_harness_exists(module, files):
     missing = [f for f in files if not (ROOT / f).is_file()]

@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness_map import HARNESS  # pyright: ignore[reportMissingImports]
+from harness_map import harness_for  # pyright: ignore[reportMissingImports]
 from kill_check import check  # pyright: ignore[reportMissingImports]
 from mutation_survivors import (  # pyright: ignore[reportMissingImports]
     became,
@@ -105,10 +105,12 @@ def main() -> int:
     args = ap.parse_args()
 
     module = Path(args.module)
-    tests = args.tests or HARNESS.get(module.name, [])
-    if not tests:
-        print(f"no harness known for {module.name} — pass --tests")
-        return 2
+    # `harness_for`, not `HARNESS[...]`: two modules have no entry and
+    # are measured through its named-after fallback, and reading the
+    # dict directly refused them where `mutation_session` would have
+    # run. It raises SystemExit with the remedy when nothing names the
+    # module, which is the right answer and not this tool's to reword.
+    tests = args.tests or harness_for(module.name)
 
     verdict, moved = state(module.name, tests)
     print(f"{module.name}: the run is {verdict}"

@@ -74,7 +74,17 @@ HARNESS: dict[str, list[str]] = {
                      "tests/test_revisions_selective.py",
                      "tests/test_revision_state.py", "tests/test_comments.py",
                      "tests/test_value_types.py"],
+    # `test_refstyle_layout.py` is where `paragraph_property` is tested,
+    # because that is where the question comes up — refstyle asks "would
+    # writing this value be redundant?". Leaving it out read the function
+    # as almost entirely unpinned: 26 of styles.py's 36 real survivors
+    # were in it, including `for sid, body in []`, which says no test
+    # walks the basedOn chain at all. Adding this one line took the
+    # module from 36 real survivors to 10, no test written. Same shape
+    # as `errors.py`, which read 100% survival for the same reason (see
+    # CONTRIBUTING).
     "styles.py": ["tests/test_styles.py",
+                  "tests/test_refstyle_layout.py",
                   "tests/test_value_types.py"],
     "tracked.py": ["tests/test_tracked_build.py", "tests/test_tracked_guard.py",
                    "tests/test_cli_revision.py", "tests/test_parts_gaps.py",
@@ -123,6 +133,14 @@ HARNESS: dict[str, list[str]] = {
                 "tests/test_field_walk.py", "tests/test_find_edit.py",
                 "tests/test_locate_spans.py"],
     "authors.py": ["tests/test_authors.py", "tests/test_authors_parts.py"],
+    # Neither of these had an entry until 2026-08-24, and the cost was
+    # not that they were unmeasurable — `harness_for` falls back to the
+    # files that NAME a module — but that they were INVISIBLE.
+    # `stale_figures` walks this dict, so the table a round is planned
+    # from could not see them: `placement.py` is the largest module in
+    # the package and its recorded 20.2% is the worst figure in it, and
+    # `batch.py` had never been measured at all.
+    "batch.py": ["tests/test_batch.py"],
     "body.py": ["tests/test_body.py", "tests/test_booktabs_plan.py"],
     "citations.py": ["tests/test_citations.py",
                      "tests/test_cite_anchor_reuse.py",
@@ -158,6 +176,7 @@ HARNESS: dict[str, list[str]] = {
     "package.py": ["tests/test_package.py", "tests/test_parts_gaps.py",
                    "tests/test_pathological.py"],
     "pages.py": ["tests/test_pages.py", "tests/test_locate.py"],
+    "placement.py": ["tests/test_placement.py"],
     "probe.py": ["tests/test_probe.py", "tests/test_probe_report.py"],
     "refstyle.py": ["tests/test_refstyle.py",
                     "tests/test_refstyle_layout.py",

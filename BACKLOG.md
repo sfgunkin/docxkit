@@ -597,6 +597,41 @@ quoted in the table was three days old, `base_of` was untested for all
 of them, and the number a reader would have acted on was wrong by an
 order of magnitude in the direction that wastes an afternoon.
 
+
+**`styles.py` — 604 mutants, 259 real, 252 killed (97.3%).** The seven
+survivors are the `_own_rpr` set, argued equivalent one by one in a
+comment at the foot of `test_styles.py` and not re-argued here.
+
+**It was not the worst module in the package; it was the worst-MAPPED.**
+The table read 51.2% (200/391). A full sweep read 13.9% (36/259), and 29
+of those 36 sat in `paragraph_property` and `_ppr_attr` — whose tests
+live in `test_refstyle_layout.py`, because that is where the question
+comes up, and which the harness map did not name. Adding that one line
+took it to 10, with no test written. This is the third instance of the
+same shape (`errors.py`, `_table_core.py`, now this), and the first
+found by asking the map a question rather than by being surprised by a
+figure: every test file that IMPORTS a module, against the files the map
+names for it.
+
+The three that survived the map fix were a FIXTURE problem, not a
+missing test. `test_paragraph_property_walks_based_on_then_doc_defaults`
+walks a chain whose parent style carries no `w:pPr` of its own, so `Ref`
+-> `Normal` -> docDefaults, and a mutant that breaks the middle step
+arrives at the same 160 by the same route. An inherited value has to
+DISAGREE with the default before the walk is observable. The third is
+the one worth having beyond its mutant: a paragraph naming a style the
+stylesheet does not define — the exact case this module's docstring is
+about, Word rendering it in its defaults silently — was never passed to
+the resolver, and the mutant there is a `KeyError` in a function every
+caller is asking in order to decide whether to write a value.
+
+**Twice in one day a stale figure sent the round at the wrong module.**
+`guard.py` read 43.6% and measures 4.5%; `styles.py` read 51.2% and
+measures 3.9% before any work at all. Both were the top of the table.
+Pick a target by replaying or re-sweeping, never by the recorded number
+— which is what `stale_figures` has been saying about QUOTING a figure,
+now also true of choosing one.
+
 ---
 
 ## Fixed
