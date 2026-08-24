@@ -802,3 +802,48 @@ def test_the_DISPLACED_entries_are_not_named_either_way_round():
     assert len(moved) == 1, moved
     assert moved[0].startswith("Barr"), moved
     assert len(moved[0]) == 60, "the entry text is quoted, truncated at 60"
+
+
+
+def test_a_list_that_IS_the_top_of_the_document_needs_no_page_break():
+    """There is nothing above it to break from. A finding here would ask
+    an author to insert a page break before the first line of the file.
+
+    The guard that gets this right also stops the lookup running off the
+    front: `matches[head - 1]` with `head == 0` is `matches[-1]`, the
+    LAST paragraph of the document, so a version without it answers "does
+    the list start a page?" by looking at how the paper ENDS — and a
+    manuscript that happens to close with a section break would report
+    a clean list."""
+    parts = make_parts(heading() + entry(A) + entry(B))
+
+    report = audit(parts)
+    repaired = layout(make_parts(heading() + entry(A) + entry(B)))
+
+    assert "page-break" not in codes(report), codes(report)
+    assert not repaired.page_break
+
+
+def test_the_AUDIT_reads_the_paragraph_above_the_heading_too():
+    """`layout` has a test for a break above the heading; the audit's
+    own copy of that lookup did not, so it could read the paragraph
+    BELOW instead — the first entry — and report a page break needed on
+    a list that already starts one. The two must agree, because the
+    audit is what says whether the repair has anything to do."""
+    body = (para(run("Body."), '<w:r><w:br w:type="page"/></w:r>')
+            + heading() + entry(A) + entry(B))
+
+    assert "page-break" not in codes(audit(make_parts(body)))
+
+
+def test_a_list_at_the_top_is_not_rescued_by_a_break_at_the_BOTTOM():
+    """The same guard, asked the way that separates it from `head >= 0`
+    rather than from nothing. The document ends with a section break —
+    which IS one of the things `_starts_a_page` accepts — so a lookup
+    that wrapped to the end would find it and call the list correctly
+    placed for the wrong reason."""
+    tail = para(run("Appendix."), "<w:pPr><w:sectPr><w:type "
+                                  'w:val="nextPage"/></w:sectPr></w:pPr>')
+    parts = make_parts(heading() + entry(A) + entry(B) + tail)
+
+    assert "page-break" not in codes(audit(parts)), "still the first line"
