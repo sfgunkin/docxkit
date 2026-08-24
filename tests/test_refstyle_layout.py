@@ -576,3 +576,65 @@ def test_an_EMPTY_paragraph_above_an_entry_gets_its_own_sentence():
     assert report.refused.startswith(
         "an empty paragraph sits above \u00b65"), report.refused
     assert "delete it first" in report.refused
+
+
+
+# --- WHERE a finding points, and what it quotes (2026-08-24) -------------
+
+#: Long enough that a 60-character truncation is observable. A real
+#: reference entry always is; a fixture built from a short one pins
+#: nothing about the width.
+LONG_A = ('Acemoglu, D., and P. Restrepo. (2020). "Robots and Jobs: '
+          'Evidence from US Labor Markets." Journal of Political Economy.')
+
+
+def _deep_list(*entries: str) -> dict[str, bytes]:
+    """Four body paragraphs, then the heading at index 4."""
+    body = "".join(para(run(f"Body paragraph {n}.")) for n in range(4))
+    return make_parts(body + heading() + "".join(entries))
+
+
+def test_the_page_break_finding_points_at_the_HEADING_paragraph():
+    """`¶5`, and the whole value of the finding is that number: the
+    house rule is that the list starts on a new page, and the paragraph
+    to put the break on is the heading, not the first entry."""
+    report = audit(_deep_list(entry(LONG_A, ppr=""), entry(B, ppr="")))
+
+    (issue,) = [i for i in report.issues if i.code == "page-break"]
+
+    assert issue.where == "\u00b65", issue
+    assert issue.snippet.startswith("References")
+
+
+def test_an_ENTRY_finding_points_at_its_OWN_paragraph_and_quotes_it():
+    """Each entry answers for itself. A finding that named the list's
+    first entry for all of them would send an author to fix a paragraph
+    that is already right, forty times."""
+    report = audit(_deep_list(entry(LONG_A, ppr=""), entry(B, ppr="")))
+
+    # The CODES this line produces, not "any issue at that paragraph".
+    # `italics` and `uncited-ref` are stamped somewhere else entirely and
+    # land on the same paragraphs, so asking only for \u00b66 passed whatever
+    # the layout finding did with its number \u2014 measured: the mutant that
+    # points every entry finding at \u00b61 survived the first version.
+    layout_codes = ("indent", "spacing")
+    first = [i for i in report.issues
+             if i.where == "\u00b66" and i.code in layout_codes]
+    second = [i for i in report.issues
+              if i.where == "\u00b67" and i.code in layout_codes]
+
+    assert first and second, [(i.code, i.where) for i in report.issues]
+    assert all(i.snippet == LONG_A[:60] for i in first), first[0].snippet
+    assert len(first[0].snippet) == 60, "truncated, and at 60"
+
+
+def test_LAYOUT_reports_the_paragraph_it_put_the_break_on():
+    """The repair's own record, read by whoever checks what it did. It
+    quotes 40 characters where the audit quotes 60, and both numbers are
+    load-bearing for a reader scanning a list of changes."""
+    parts = _deep_list(entry(LONG_A, ppr=""), entry(B, ppr=""))
+
+    report = layout(parts)
+
+    assert report.page_break.startswith("\u00b65: References"), \
+        report.page_break
