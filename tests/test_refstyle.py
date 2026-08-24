@@ -2517,7 +2517,7 @@ def test_the_YEAR_fix_is_anchored_by_the_EIGHT_characters_before_it():
 
 # --- where an out-of-order entry BELONGS (mutation round, 2026-08-24) ----
 
-def _ordered_list(*entries: str) -> dict:
+def _ordered_list(*entries: str) -> dict[str, bytes]:
     body = para(run("Body text before the list."))
     head = f'<w:p w14:paraId="90000000">{run("References")}</w:p>'
     return make_parts(body + head + "".join(
