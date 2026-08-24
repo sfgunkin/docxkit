@@ -1370,3 +1370,45 @@ def test_ship_stops_on_a_build_that_RETURNS_a_code_too(monkeypatch, project,
 
     assert code == 4
     assert "== lint ==" not in capsys.readouterr().out
+
+
+def test_ship_takes_every_flag_BUILD_takes(monkeypatch, capsys):
+    """`ship` runs `build` and delegates to `cmd_revision_build`, which
+    reads `args.<flag>` — so a flag on one parser and not the other is
+    not a gap, it is an AttributeError on every ship. That is what
+    `--allow-stale-baseline` did the day it was added: four tests, and
+    it would have been every real run.
+
+    Asserted as the RELATIONSHIP between the two parsers rather than as
+    a list, so the next flag cannot fall out of one of them."""
+    import argparse
+
+    from docxkit import cli
+
+    build = argparse.ArgumentParser()
+    ship = argparse.ArgumentParser()
+    cli._build_args(build)
+    cli._build_args(ship)
+
+    def flags(p):
+        return {o for a in p._actions for o in a.option_strings}
+
+    assert flags(build) == flags(ship)
+    assert "--allow-stale-baseline" in flags(build), (
+        "the flag whose absence from ship was the defect")
+
+
+def test_the_two_parsers_come_from_ONE_declaration(monkeypatch, capsys):
+    """The point of the helper: not that the lists agree today, but that
+    there is only one list. A second copy would pass the test above the
+    day it was written and drift the day after."""
+    import inspect
+
+    from docxkit import cli
+
+    source = inspect.getsource(cli.main)
+
+    assert source.count("_build_args(r)") == 2, (
+        "build and ship should each call the shared declaration once")
+    assert '"--allow-math-resolve"' not in source, (
+        "a flag is declared in _build_args, not in main")

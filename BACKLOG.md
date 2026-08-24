@@ -154,6 +154,29 @@ nothing, and the prime entry and `export_pdf`'s markup blindness are both
 still open. But the shape is now proven cheap — nine seconds, and it
 caught a real regression in the fix that landed beside it.
 
+**The sharpest instance of it is not in a manuscript at all — it is in
+this file, 2026-08-24.** A close-helper that cut an entry "to the next
+`### `" took the `## Fixed` heading with it, because the entry it was
+cutting was the last one before that heading. Every closed entry then
+sat inside `## Open`, struck through and misfiled, for three commits.
+
+Read the shape rather than the mistake:
+
+* **the anchor was correct on every input except one** — the case where
+  the section ends, which is exactly the case a helper that closes
+  entries walks into eventually;
+* **the damage was invisible in the rendered view.** The entries were
+  all present, in order, correctly struck through. Nothing looked
+  wrong;
+* **what caught it was a NUMBER that had no business agreeing.** A
+  count of open sections came back 187 when six were open. Not a
+  reading — a count, of the kind nobody runs on a markdown file.
+
+That is this note's own claim about maths, about `compare`'s media
+layer, and about the `_kill_tree` mutant, applied to a record: the check
+watched an observable proxy — "do the entries look right" — rather than
+the object, "is each entry in the section that says what it is."
+
 ---
 
 
@@ -260,38 +283,6 @@ links, and a footnote is the one place a person cannot verify by eye.
 
 ---
 
-### S4 — `ship` RE-DECLARES `build`'s flags, so every flag added to `build` is an AttributeError on `ship` until someone remembers
-
-Found 2026-08-23, immediately, by adding one flag.
-
-`cli.py`'s `ship` subparser repeats `build`'s arguments by hand
-(`--allow-math-resolve`, `--keep-math`, `--allow-pending-baseline`,
-`--force`, …) and `cmd_revision_ship` delegates to `cmd_revision_build`,
-which reads `args.<flag>`. Adding `--allow-stale-baseline` to `build` alone
-made every `ship` invocation die with
-
-```
-AttributeError: 'Namespace' object has no attribute 'allow_stale_baseline'.
-Did you mean: 'allow_pending_baseline'?
-```
-
-— four tests, and it would have been every real `ship` run. It is loud rather
-than silent, which is the only reason this is S4: the failure is total and
-immediate, not a wrong answer.
-
-**Why it will happen again.** This is the "a change that teaches one reader a
-new fact has to be walked to every other reader" shape this file already
-records five instances of. The two parsers are one parser written twice.
-
-**Shape of a fix.** Build the shared arguments once —
-`_build_args(parser)` called by both subparsers — so a flag cannot be added
-to one and not the other. Cheap, and it removes the duplication rather than
-documenting it.
-
-**Workaround in use:** the flag was added to `ship` by hand, with a comment
-saying why the line exists.
-
----
 
 
 **One open, filed 2026-08-23** (above). Before it the section was empty: the three that were open — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry
@@ -510,6 +501,55 @@ reach it:
 ---
 
 ## Fixed
+
+### ~~S4 `ship` RE-DECLARES `build`'s flags, so every flag added to `build` is an AttributeError on `ship` until someone remembers~~ — FIXED 24.08
+
+Found 2026-08-23, immediately, by adding one flag.
+
+`cli.py`'s `ship` subparser repeats `build`'s arguments by hand
+(`--allow-math-resolve`, `--keep-math`, `--allow-pending-baseline`,
+`--force`, …) and `cmd_revision_ship` delegates to `cmd_revision_build`,
+which reads `args.<flag>`. Adding `--allow-stale-baseline` to `build` alone
+made every `ship` invocation die with
+
+```
+AttributeError: 'Namespace' object has no attribute 'allow_stale_baseline'.
+Did you mean: 'allow_pending_baseline'?
+```
+
+— four tests, and it would have been every real `ship` run. It is loud rather
+than silent, which is the only reason this is S4: the failure is total and
+immediate, not a wrong answer.
+
+**Why it will happen again.** This is the "a change that teaches one reader a
+new fact has to be walked to every other reader" shape this file already
+records five instances of. The two parsers are one parser written twice.
+
+**Shape of a fix.** Build the shared arguments once —
+`_build_args(parser)` called by both subparsers — so a flag cannot be added
+to one and not the other. Cheap, and it removes the duplication rather than
+documenting it.
+
+**Workaround in use:** the flag was added to `ship` by hand, with a comment
+saying why the line exists.
+
+**What changed.** `_build_args(parser)` — one declaration, called by
+both subparsers. The two were one parser written twice, so the walk this
+file keeps recording ("a change that teaches one reader a new fact has
+to be walked to every other reader") can be DELETED here rather than
+remembered.
+
+`ship` also gained the help text it never had: its copy declared the
+flags bare, so `docxkit revision ship --help` listed `--keep-math` and
+`--allow-pending-baseline` with no explanation of either.
+
+Two tests, and the second is the one that matters. The first asserts the
+two parsers accept the same flags — which a second copy would pass on
+the day it was written and fail a week later. The second asserts there
+is only ONE declaration: `main`'s source calls `_build_args(r)` twice
+and names no flag itself.
+
+---
 
 ### ~~S4 `MATH_DOWNGRADES` knows the MINUS but not the PRIME, so a prime-bearing equation cannot be built~~ — FIXED 24.08
 

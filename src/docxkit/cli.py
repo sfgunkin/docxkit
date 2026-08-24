@@ -1949,34 +1949,7 @@ def main() -> None:
 
     r = _rev("build", cmd_revision_build,
              "clean edit -> redline, via Word Compare")
-    r.add_argument("revised", help="the edited CLEAN copy of prev.docx")
-    r.add_argument("--out", metavar="PATH",
-                   help="default: revision/build/batch.docx")
-    r.add_argument("--allow-math-resolve", action="store_true",
-                   help="ship equations Word baked in unreviewable "
-                        "(they almost never are meant to be)")
-    r.add_argument("--allow-stale-baseline", action="store_true",
-                   help="build even though prev.docx is no longer what the "
-                        "manuscript grew out of (the redline would show the "
-                        "author's own edits as proposals)")
-    # The other answer to the same refusal, and the better one: keep the
-    # equation revisions TRACKED instead of accepting them. Measured on
-    # LI7 (2026-08-15) — the Flat OPC route serialized 1870 revisions
-    # with the math kept, reject-all included.
-    r.add_argument("--keep-math", action="store_true",
-                   help="leave equation revisions TRACKED rather than "
-                        "accepting them (try this before "
-                        "--allow-math-resolve)")
-    r.add_argument("--allow-pending-baseline", action="store_true",
-                   help="absorb the baseline's pending revisions "
-                        "deliberately")
-    # The staleness refusal has named this flag since it was written,
-    # and `build --help` did not list it: the one way out the reader was
-    # told about was `error: unrecognized arguments: --force`. The
-    # backup is taken either way, so the previous batch survives.
-    r.add_argument("--force", action="store_true",
-                   help="rebuild over a batch.docx that was edited since "
-                        "docxkit wrote it (a backup is taken first)")
+    _build_args(r)
 
     r = _rev("validate", cmd_revision_validate, "run the gate ladder")
     r.add_argument("batch", nargs="?",
@@ -1997,17 +1970,7 @@ def main() -> None:
 
     r = _rev("ship", cmd_revision_ship,
              "build then validate, in one process and one Word session")
-    r.add_argument("revised", help="the edited CLEAN copy of prev.docx")
-    r.add_argument("--out", metavar="PATH",
-                   help="default: revision/build/batch.docx")
-    r.add_argument("--allow-math-resolve", action="store_true")
-    r.add_argument("--keep-math", action="store_true")
-    r.add_argument("--allow-pending-baseline", action="store_true")
-    # `ship` re-declares `build`'s flags rather than sharing them, so a
-    # flag added to one and not the other is an AttributeError on every
-    # ship — which is how this line came to be written.
-    r.add_argument("--allow-stale-baseline", action="store_true")
-    r.add_argument("--force", action="store_true")
+    _build_args(r)
     r.add_argument("--no-word", action="store_true",
                    help="offline gates only for the validate half")
     r.add_argument("--render", metavar="ANCHOR", nargs="+", default=[])
