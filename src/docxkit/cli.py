@@ -1646,6 +1646,52 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_args(parser: argparse.ArgumentParser) -> None:
+    """Every argument the BUILD half takes, declared once.
+
+    `ship` runs `build` and then `validate`, and `cmd_revision_ship`
+    delegates to `cmd_revision_build`, which reads `args.<flag>` — so a
+    flag added to one parser and not the other is not a gap, it is an
+    `AttributeError` on every ship. That is exactly what
+    `--allow-stale-baseline` did the day it was added: four tests, and
+    it would have been every real run.
+
+    The two parsers were one parser written twice. This is the same
+    "walk the change to every reader of the fact" lesson the backlog
+    records five instances of — except here the walk can be deleted
+    instead of remembered.
+    """
+    parser.add_argument("revised", help="the edited CLEAN copy of prev.docx")
+    parser.add_argument("--out", metavar="PATH",
+                        help="default: revision/build/batch.docx")
+    parser.add_argument("--allow-math-resolve", action="store_true",
+                        help="ship equations Word baked in unreviewable "
+                             "(they almost never are meant to be)")
+    parser.add_argument("--allow-stale-baseline", action="store_true",
+                        help="build even though prev.docx is no longer what "
+                             "the manuscript grew out of (the redline would "
+                             "show the author's own edits as proposals)")
+    # The other answer to the math refusal, and the better one: keep the
+    # equation revisions TRACKED instead of accepting them. Measured on
+    # LI7 (2026-08-15) — the Flat OPC route serialized 1870 revisions
+    # with the math kept, reject-all included.
+    parser.add_argument("--keep-math", action="store_true",
+                        help="leave equation revisions TRACKED rather than "
+                             "accepting them (try this before "
+                             "--allow-math-resolve)")
+    parser.add_argument("--allow-pending-baseline", action="store_true",
+                        help="absorb the baseline's pending revisions "
+                             "deliberately")
+    # The staleness refusal has named this flag since it was written,
+    # and `build --help` did not list it: the one way out the reader was
+    # told about was `error: unrecognized arguments: --force`. The backup
+    # is taken either way, so the previous batch survives.
+    parser.add_argument("--force", action="store_true",
+                        help="rebuild over a batch.docx that was edited "
+                             "since docxkit wrote it (a backup is taken "
+                             "first)")
+
+
 def main() -> None:
     utf8_console()
     ap = argparse.ArgumentParser(
