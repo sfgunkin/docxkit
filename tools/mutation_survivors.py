@@ -371,7 +371,23 @@ def classify(db_path: str, src_path: str) -> Counts | None:
     readers of it now — the survivor list a round is mined from, and the
     table `stale_figures --figures` prints. Two would drift, and the
     drift would be in the number quoted at people.
+
+    Sharing the function was not enough, and the drift happened anyway:
+    the two readers handed it DIFFERENT SOURCES. The report resolved the
+    snapshot first, the table passed the live file, and every row of the
+    table for a module that had moved was computed by applying this
+    run's row numbers to a file those rows no longer describe. The
+    annotation discount is what collapses — it is a span test, and spans
+    move. `_compare_read` printed 30.0 % (128/426) beside a true 6.0 %
+    (19/317), discounting ONE annotation mutant where there were 110,
+    and read as the worst module in the package while being one of the
+    better ones.
+
+    So the resolution happens HERE, where no caller can skip it.
+    :func:`pristine_source` stays public for the banner the report
+    prints; what it returns is no longer the caller's responsibility.
     """
+    src_path, _ = pristine_source(db_path, src_path)
     text = Path(src_path).read_text(encoding="utf-8")
     tree = ast.parse(text)
     spans = annotation_spans(tree)

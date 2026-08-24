@@ -652,3 +652,37 @@ def test_the_SHIPPED_claims_file_parses_and_every_claim_is_complete():
             assert set(claim) == {"was", "line", "why"}, claim
             assert claim["was"] != claim["line"], claim
             assert len(claim["why"]) > 40, claim["why"]
+
+
+def test_classify_reads_the_SNAPSHOT_even_when_handed_the_live_file(tmp_path):
+    """Every row in the database indexes the source the run was PLANNED
+    against, and the discounts are span tests — spans move. Handed a
+    file that has since gained a line, `classify` tests each survivor's
+    position against spans that have shifted underneath it, and the
+    annotation discount collapses.
+
+    It is not hypothetical and it was not small: `stale_figures
+    --figures` passed the live path where the report passed the
+    snapshot, and `_compare_read` printed 30.0% (128/426) beside a true
+    6.0% (19/317) — one annotation mutant discounted where there were
+    110. It read as the worst module in the package while being one of
+    the better ones, in the table that decides where the effort goes.
+
+    Sharing `classify` was not enough to stop that, because the two
+    callers handed it different sources. So it resolves the snapshot
+    itself, and this asks it the question the way the table did."""
+    tool = _tool_module()
+    kept = tmp_path / ".mutation-widen.pristine"
+    kept.mkdir()
+    (kept / "widen.py").write_text(CLAIMED_SRC, encoding="utf-8")
+    # the live file, one line further down than the run measured
+    live = tmp_path / "widen.py"
+    live.write_text('"""A docstring nobody had written yet."""\n'
+                    + CLAIMED_SRC, encoding="utf-8")
+    col = CLAIMED_SRC.splitlines()[0].index("int")
+    db = _database(tmp_path / ".mutation-widen.sqlite", (1, "SURVIVED", col))
+
+    counts = tool.classify(str(db), str(live))
+
+    assert counts.annotated == 1, "the annotation discount was lost"
+    assert counts.real == []
