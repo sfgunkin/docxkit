@@ -17,6 +17,45 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so
+
+Found 2026-08-24, while reading CONTRIBUTING's calibration table against
+the live session files.
+
+**The two disagree, and the better measurement is the one that is gone.**
+CONTRIBUTING records `crossrefs.py` at **6.9% (57/822)** and says of it,
+in the table's own words, that "the run is the WHOLE module rather than a
+460 sample". `stale_figures --figures` now reports `crossrefs.py 9.3%
+(24/259) SAMPLED 260/947`. A later `--sample 260` run replaced the
+complete one: `--fresh` discards the session and the sample writes a new
+plan, so 822 real mutants' worth of verdicts became 259.
+
+**Nothing about that is visible at the time or afterwards.** The sample
+completes, prints a plausible number, and the only trace of the better
+run is a sentence in a document nobody diffs against the tool's output.
+Until today the table did not even mark the result as a sample (see the
+entry above), so the regression read as a re-measurement that happened
+to move.
+
+**Why it is S3 rather than S4.** The figures are what a round is planned
+from, and this is the one failure mode that makes a figure worse over
+time while looking like maintenance. Sampling is the right thing to do
+on a 2757-mutant module when the question is "roughly where is this" —
+it is the wrong thing to leave behind as the module's record.
+
+**Shape of a fix.** `mutation_session` refuses `--sample N` when the
+session it is about to discard graded MORE mutants than N, unless the
+caller says so — the same shape as `--force` on the protocol commands. A
+warning would do; the check is `ran` in the old session against the new
+sample size, and both numbers are in hand before the plan is written.
+
+Deliberately not fixed while three sweeps were running against that
+tool. `measure_all` spawns a fresh `mutation_session` per module, so an
+edit mid-queue reaches the modules that have not started yet, and a
+mistake would take the queue down silently hours from now.
+
+---
+
 ### S3 — an ANCHOR does not survive Word's Compare in either direction: a deletion loses it, an insertion strands it
 
 Filed 2026-08-24 from a second session's measurement on Aging_Well R24,
