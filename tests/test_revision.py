@@ -1048,6 +1048,49 @@ def test_promote_keeps_the_REDLINE_the_rescue_ladder_does_not(project):
         "the redline holds the same clean file the rescue does"
 
 
+def test_a_corrupt_redline_copy_is_DELETED_not_left_behind(project,
+                                                           monkeypatch):
+    """The refusal must not leave a lie in the one folder nothing prunes.
+
+    A truncated copy here is stamped and named exactly like a good
+    redline, and the batch it claims to record is the one thing nobody
+    can reconstruct afterwards. An audit trail with a corrupt entry in
+    it is worse than a gap: a gap is visible."""
+    import shutil
+    real = shutil.copy2
+
+    def _bad_redline(src, dst, *a, **k):
+        if Path(dst).parent == project.redline_dir:
+            Path(dst).write_bytes(b"truncated")
+            return dst
+        return real(src, dst, *a, **k)
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    monkeypatch.setattr(shutil, "copy2", _bad_redline)
+    with pytest.raises(ProtocolError, match="redline copy did not land"):
+        revision.promote(project)
+
+    left = list(project.redline_dir.glob("*.docx"))
+    assert left == [], f"a corrupt redline was left behind: {left}"
+
+
+def test_redlines_lists_them_oldest_first(project):
+    """The permanent record gets a first-class accessor, as rescues do."""
+    assert revision.redlines(project) == [], "nothing promoted yet"
+    kept = []
+    for word in ("first", "second", "third"):
+        write(project.batch, make_parts(para(run(word))))
+        kept.append(revision.promote(project).redline)
+        revision.baseline(project)
+    assert revision.redlines(project) == kept, "not in promote order"
+
+
+def test_redlines_is_empty_not_an_error_without_the_folder(project):
+    """A paper whose batches all predate the retention has no folder."""
+    assert not project.redline_dir.exists()
+    assert revision.redlines(project) == []
+
+
 def test_redlines_live_in_their_own_folder_under_build(project):
     write(project.batch, make_parts(para(run("the batch"))))
     report = revision.promote(project)

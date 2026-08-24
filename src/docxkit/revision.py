@@ -173,6 +173,7 @@ __all__ = [
     "promote",
     "prune_rescues",
     "redline_path",
+    "redlines",
     "register",
     "registered",
     "registry_path",
@@ -1996,6 +1997,27 @@ def rescues(paper: Paper) -> list[Path]:
     return sorted(paper.rescue_dir.glob(_RESCUE_GLOB + paper.working.suffix))
 
 
+def redlines(paper: Paper) -> list[Path]:
+    """Every kept redline, oldest first.
+
+    The counterpart of :func:`rescues`, and it exists for the same reason
+    that one does: the copies are stamped rather than numbered, so sorting
+    them as strings sorts them chronologically, and a caller should not
+    have to know that to list them.
+
+    The asymmetry with rescues is deliberate and worth stating here, since
+    the two folders sit side by side. A rescue is TRANSIENT — it undoes the
+    promote that just happened, and `prune_rescues` thins it to
+    ``[batch] rescue_keep``. A redline is the RECORD, it is what a batch
+    actually proposed, and nothing prunes it: see :attr:`Paper.redline_dir`
+    for what it cost to learn that.
+    """
+    if not paper.redline_dir.is_dir():
+        return []
+    return sorted(paper.redline_dir.glob(
+        f"{paper.working.stem}_redline_*{paper.working.suffix}"))
+
+
 def prune_rescues(paper: Paper, keep: int | None = None) -> list[Path]:
     """Delete all but the newest `keep` rescue copies; return what went.
 
@@ -2039,6 +2061,22 @@ def promote(paper: Paper, batch: str | Path | None = None,
     manuscript either, and not numbered — see :attr:`Paper.rescue_dir`
     and :data:`_RESCUE_STAMP`. Older copies are pruned to
     :attr:`Paper.rescue_keep`.
+
+    **Two copies are made, and they are not the same kind of thing.** The
+    rescue above holds the file being REPLACED, and it is transient. The
+    REDLINE — the batch itself — is copied into ``build/redlines/``
+    before the manuscript is overwritten, and it is permanent: nothing
+    prunes that folder, and :func:`redlines` lists it. It is taken here
+    because this is the last moment the markup exists as a file of its
+    own; the author's accept then flattens it, and after that no gate,
+    no diff and no rescue copy can say what the batch proposed. See
+    :attr:`Paper.redline_dir` for the measurement that established it.
+
+    So there is a third refusal beside the lock and the hash: **if the
+    redline copy does not verify, the promote is refused and the partial
+    file is deleted.** A truncated copy left in the one folder nothing
+    prunes, stamped and named exactly like a good one, would be an audit
+    trail that lies — worse than a gap, because a gap is visible.
     """
     batch = Path(batch) if batch else paper.batch
     base = Path(base) if base else paper.prev
@@ -2101,10 +2139,18 @@ def promote(paper: Paper, batch: str | Path | None = None,
     redline = redline_path(paper)
     shutil.copy2(batch, redline)
     if _guard.sha256(redline) != _guard.sha256(batch):
+        # Take the bad copy with us. A truncated file left here would sit
+        # in the ONE folder nothing prunes, stamped and named exactly like
+        # a good redline, and the batch it claims to record would be the
+        # thing nobody could reconstruct. An audit trail with a corrupt
+        # entry in it is worse than a gap, because a gap is visible.
+        redline.unlink(missing_ok=True)
         raise ProtocolError(
-            f"the redline copy did not land: {redline} — refusing to "
+            f"the redline copy did not land: {redline.name} — refusing to "
             f"promote, because after the author accepts, this batch's "
-            f"markup would exist nowhere")
+            f"markup would exist nowhere. The partial copy has been "
+            f"removed; {rescue.name} still holds the file this would have "
+            f"replaced.")
 
     shutil.copyfile(batch, live)
     if _guard.sha256(live) != _guard.sha256(batch):

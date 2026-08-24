@@ -127,6 +127,7 @@ docxkit revision ship REVISED.docx          # both, in one Word session
 docxkit revision promote                   # put a validated batch on the paper
 docxkit revision baseline                  # the author accepted: record the truth
 docxkit revision rescues                   # the undo copies promote leaves behind
+docxkit revision redlines                  # what each batch proposed, kept for good
 ```
 
 `validate` runs the ladder; `--render` adds the one gate no markup check

@@ -36,6 +36,7 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision promote [BATCH.docx]
     docxkit revision baseline [--force] [--accept-loss A,...]
     docxkit revision rescues [--prune KEEP]
+    docxkit revision redlines
     docxkit revision init PAPER.docx [--root DIR] [--name NAME] [--working P]
 """
 from __future__ import annotations
@@ -1580,6 +1581,25 @@ def cmd_revision_rescues(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_revision_redlines(args: argparse.Namespace) -> int:
+    """List the kept redlines: what each batch actually proposed."""
+    from .revision import redlines
+    paper = _paper(args)
+    found = redlines(paper)
+    if not found:
+        print(f"no redlines in {paper.redline_dir}")
+        print("Kept from the first promote after docxkit learned to keep "
+              "them; a paper whose batches all predate that has none.")
+        return 0
+    print(f"{paper.redline_dir}  (never pruned)")
+    for path in found:
+        print(f"  {path.name:<46} {path.stat().st_size:>9,} bytes")
+    print(f"\n{len(found)} redline(s). Each is the batch as the author was "
+          f"handed it — open one to see what a round proposed, including "
+          f"what was rejected.")
+    return 0
+
+
 def cmd_revision_baseline(args: argparse.Namespace) -> int:
     """The author accepted: record the manuscript as the new truth."""
     from .revision import baseline
@@ -2049,6 +2069,9 @@ def main() -> None:
     r.add_argument("--repair-math", action="store_true",
                    help="put back the equation glyphs Word downgraded on "
                         "the author's save, before the loss gate runs")
+
+    _rev("redlines", cmd_revision_redlines,
+         "the kept redlines in build/redlines/: what each batch proposed")
 
     r = _rev("rescues", cmd_revision_rescues,
              "the undo copies promote leaves in build/rescue/")
