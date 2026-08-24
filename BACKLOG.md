@@ -595,9 +595,10 @@ further, and the figure quoted here is the replayed one — the session
 file still records the run it actually made.
 
 
-**`pages.py` — 480 mutants, 333 real, 311 killed (93.4%).** Recorded at
-42.8%, the top of the table; a full sweep read 9.0% before any work, and
-three tests took it to 6.6% (22/333). **That is the third module in one
+**`pages.py` — 480 mutants, 333 real, 314 killed (94.3%), and the 19
+that remain are equivalent to a mutant.** Recorded at 42.8%, the top of
+the table; a full sweep read 9.0% before any work, and five tests took
+it to 5.7% (19/333). **That is the third module in one
 day whose recorded figure overstated it by 3-10x** — after `guard.py`
 (43.6% -> 4.5%) and `styles.py` (51.2% -> 13.9%) — and the three between
 them were the three worst rows in the table. Choosing by that column
@@ -620,15 +621,27 @@ first in an ambiguous footer, because the existing ambiguity case put
 the running head first and so passed a check that only looked at the
 first word.
 
-The 22 that remain are argued rather than chased. Most are equivalent by
-the same construction that makes them look interesting: `line[0]` ->
-`line[-1]` sits under `if len(line) != 1: continue`, so the list has one
-element and the two indexes are the same object; `(x0 + x1) / 2` ->
-`// 2` moves a midpoint by less than a point, which no third-boundary
-can see; and `<` -> `<=` on a threshold needs a midpoint EXACTLY on it,
-which text metrics do not produce. `width / 3` -> `width // 3` is the
-sharpest of them and still needs a number whose centre falls in a
-0.4-point window.
+Two more went to the 3 pt tolerance in `_outermost_line`, which took
+measuring before it could be tested at all. The obvious case does not
+work: **PyMuPDF gives every word on one baseline the same box** — `7`,
+`page` and `Introduction` inserted at the same y all report y1 805.289 —
+so descenders cannot separate them and the tolerance never applies
+within a line. It applies across BASELINES: a footer holding a number
+and a running head at different sizes, or a footnote sitting above the
+footer. So it has a floor and a ceiling, and 2.5 pt apart is one line
+while 3.5 pt apart is two. A test built on the descender theory would
+have passed for the wrong reason.
+
+The 19 that remain are equivalent, each by a construction in the code
+around it. `line[0]` -> `line[-1]` sits under `if len(line) != 1:
+continue`, so the list has one element and the two indexes are the same
+object. `elif now > was + 1` sits under `if now <= was`, so `>` and `!=`
+cannot separate. `edge == "lower"` -> `<=` or `is` is the closed-domain
+and interned-literal pair recorded above. And the rest need an input
+text metrics cannot produce: `(x0 + x1) / 2` -> `// 2` moves a midpoint
+by less than a point, `<` -> `<=` needs one EXACTLY on a threshold, and
+`width / 3` -> `width // 3` — the sharpest — needs a number whose centre
+falls in a 0.4-point window.
 
 ---
 
