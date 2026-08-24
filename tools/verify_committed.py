@@ -5,11 +5,12 @@ Every other gate reads the file the author has open. In a working tree
 shared by two sessions that is a different file from the one the commit
 contains, and on 2026-08-24 the difference was the whole CLI: an earlier
 split-staging committed both calls to `_build_args` and left the
-definition unstaged. `docxkit <anything>` then raised NameError on a
-fresh clone for two commits and a push — this script, run backwards over
-the history, is what dated the window to f3a6fd4..01b1c7e — while every
+definition unstaged. Anyone holding only the commit would then have got
+NameError from `docxkit <anything>`, for the two commits this script —
+run backwards over the history — dates to f3a6fd4..01b1c7e, while every
 gate here stayed green, because each of them read the working copy,
-which had the function.
+which had the function. The tip was repaired before the branch was
+pushed, which was luck about timing rather than anything a gate did.
 
 Nothing that reads the working tree can see that, however carefully it
 reads. This exports a ref into a temp directory and asks two questions

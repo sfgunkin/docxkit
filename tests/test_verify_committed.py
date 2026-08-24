@@ -2,10 +2,10 @@
 
 Every other gate reads the working copy, and on 2026-08-24 that was a
 different file: `_build_args` was called by a committed `main()` and
-defined only in an unstaged edit, so the whole CLI raised NameError on a
-fresh clone across two commits and a push while five green gates said
-nothing. The property under test is the one that makes this gate worth
-having — that a fix present in the tree you are holding does NOT make a
+defined only in an unstaged edit, so for two commits the whole CLI
+raised NameError for anyone holding only the commit, while five green
+gates said nothing. The property under test is the one that makes this
+gate worth having — a fix present in the tree you are holding does NOT make a
 broken commit pass — and it is tested against the real history rather
 than a fixture, because the fixture would be the thing that got it
 wrong.

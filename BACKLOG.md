@@ -571,10 +571,24 @@ The 34 equivalents fall into five classes, none worth a sixth look:
 ### ~~S1 every gate reads the WORKING copy, so a commit missing a definition was green here and broken everywhere else~~ — FIXED 24.08
 
 `main()` called `_build_args(r)` twice; the definition was never staged.
-Two commits shipped that way and both were pushed, so `docxkit
-<anything>` raised NameError on a fresh clone while ruff, mypy, pyright,
-4,846 tests and the coverage floor all passed — every one of them
-reading the file on disk, which had the function.
+Two commits sat in local history that way — f3a6fd4..01b1c7e — and
+anyone who had only the commit would have got `NameError` from `docxkit
+<anything>`, while ruff, mypy, pyright, 4,846 tests and the coverage
+floor all passed here: every one of them reading the file on disk, which
+had the function. The tip was repaired before the branch was pushed, so
+no clone was ever actually broken; that was luck about timing, not about
+the gates, and the window was two commits wide.
+
+**The blast radius was first written up here as "and both were pushed",
+which was wrong, and wrong for a reason worth keeping.** The check was
+`git log --oneline origin/main..HEAD 2>/dev/null`, which printed
+nothing. The branch is `master`. `origin/main` does not exist, so git
+exited fatal and `2>/dev/null` ate the sentence saying so — and empty
+output from a suppressed error reads exactly like empty output from a
+true answer. It is the pipeline-exit-code lesson this file records three
+instances of, wearing a different hat: a status was discarded and the
+remaining output was believed. Never `2>/dev/null` a command whose
+EMPTINESS is the answer.
 
 **What makes it a gate defect rather than a slip.** The split-staging
 that caused it is unavoidable in a working tree two sessions share: you
