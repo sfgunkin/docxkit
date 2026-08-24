@@ -314,6 +314,22 @@ class Counts(NamedTuple):
         return self.graded < self.planned
 
     @property
+    def sampled(self) -> bool:
+        """Was this a `--sample` run rather than the whole module?
+
+        `partial` cannot answer it. A sampled run marks the mutants it
+        will not run SKIPPED, which IS a row, so `graded == planned` and
+        the figure prints as though the module had been measured whole.
+
+        That is a number hiding its own denominator: `refstyle.py` was
+        recorded at 13.1% (34/259) and the module has 1750 mutants, so
+        the figure was a sixth of it wearing no mark. The same defect as
+        a count that cannot tell "nothing there" from "not looking",
+        which this file exists to prevent.
+        """
+        return self.ran < self.graded
+
+    @property
     def base(self) -> int:
         """The denominator: what a test COULD have killed."""
         return (self.ran - self.annotated - self.in_guard - self.in_marker

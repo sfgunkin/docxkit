@@ -131,6 +131,13 @@ def figure(module: str) -> str:
     # and it flatters: `_table_core` read 1.0 % from 209 of 903 against
     # a true 2.7 % from all of them.
     mark = " PARTIAL" if counts.partial else ""
+    # A SAMPLED figure is an estimate over a fraction, and until
+    # 2026-08-24 it printed like a measurement of the whole module:
+    # `refstyle.py` read 13.1% from 460 of its 1750 mutants and said so
+    # nowhere. `partial` cannot catch it, because a sample marks the
+    # rest SKIPPED and a skip is a row.
+    if not mark and counts.sampled:
+        mark = f" SAMPLED {counts.ran}/{counts.graded}"
     return f"{counts.share:5.1f}%  ({len(counts.real)}/{counts.base}){mark}"
 
 

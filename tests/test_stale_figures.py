@@ -214,3 +214,67 @@ def test_a_facade_with_NOTHING_to_mutate_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(stale_figures, "session_file", lambda module: db)
 
     assert stale_figures.figure("facade.py") == "no mutants"
+
+
+
+def _session_with(db, outcomes):
+    """A session file whose rows carry the given outcomes, in order."""
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE mutation_specs (job_id TEXT, "
+                 "start_pos_row INT, start_pos_col INT, operator_name TEXT)")
+    conn.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT, "
+                 "diff TEXT)")
+    for i, outcome in enumerate(outcomes):
+        conn.execute("INSERT INTO mutation_specs VALUES (?, 2, 4, ?)",
+                     (f"job{i}", "core/NumberReplacer"))
+        conn.execute("INSERT INTO work_results VALUES (?, ?, ?)",
+                     (f"job{i}", outcome, "--- a\n+++ b\n@@\n-was\n+now\n"))
+    conn.commit()
+    conn.close()
+
+
+SRC_ONE_LINE = "def f(x):\n    return x + 1\n"
+
+
+def test_a_SAMPLED_run_says_so_in_the_table(tmp_path, monkeypatch):
+    """The figure of a sample is an estimate over a fraction, and it
+    printed as a measurement of the whole module. A reader planning a
+    round off that column cannot tell the two apart, and the whole
+    column exists to be planned off."""
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    db = tmp_path / ".mutation-thing.sqlite"
+    _session_with(db, ["SURVIVED", "KILLED", "SKIPPED", "SKIPPED"])
+    src = tmp_path / "thing.py"
+    src.write_text(SRC_ONE_LINE, encoding="utf-8")
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(stale_figures, "session_file", lambda _m: db)
+    (tmp_path / "src" / "docxkit").mkdir(parents=True)
+    (tmp_path / "src" / "docxkit" / "thing.py").write_text(
+        SRC_ONE_LINE, encoding="utf-8")
+
+    line = stale_figures.figure("thing.py")
+
+    assert "SAMPLED 2/4" in line, line
+
+
+def test_a_run_of_EVERY_mutant_is_not_marked(tmp_path, monkeypatch):
+    """The mark has to mean something, so a complete run must not carry
+    it — otherwise the column reads as "estimate" everywhere and the
+    distinction is gone again."""
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    db = tmp_path / ".mutation-thing.sqlite"
+    _session_with(db, ["SURVIVED", "KILLED", "KILLED", "KILLED"])
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(stale_figures, "session_file", lambda _m: db)
+    (tmp_path / "src" / "docxkit").mkdir(parents=True)
+    (tmp_path / "src" / "docxkit" / "thing.py").write_text(
+        SRC_ONE_LINE, encoding="utf-8")
+
+    line = stale_figures.figure("thing.py")
+
+    assert "SAMPLED" not in line, line
+    assert "PARTIAL" not in line, line
