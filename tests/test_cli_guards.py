@@ -444,3 +444,36 @@ def test_a_command_that_WRITES_still_refuses_a_locked_file(
 
     out = capsys.readouterr().out
     assert "SNAPSHOT" not in out, out
+
+
+def test_a_gate_timeout_that_is_not_a_NUMBER_names_the_argument():
+    """`--gate-timeout abc` is a typo, and a typo should come back as a
+    sentence rather than a ValueError traceback out of float()."""
+    with pytest.raises(argparse.ArgumentTypeError) as exc:
+        cli._seconds("abc")
+
+    assert "expected a number of seconds" in str(exc.value)
+    assert "abc" in str(exc.value)
+
+
+@pytest.mark.parametrize("text", ["0", "-1", "-0.5"])
+def test_a_gate_timeout_of_ZERO_or_LESS_is_refused_with_the_reason(text):
+    """0 reads as "no timeout" to everyone who has met a timeout
+    setting, and here it is the one thing the bound exists to prevent:
+    a gate that cannot be bounded can stop a hand-back. The refusal says
+    so, because a bare "must be positive" invites the reader to think the
+    tool is being fussy."""
+    with pytest.raises(argparse.ArgumentTypeError) as exc:
+        cli._seconds(text)
+
+    said = str(exc.value)
+    assert "must be positive" in said
+    assert "no timeout" in said, said
+
+
+def test_a_gate_timeout_that_IS_a_number_comes_back_as_one():
+    """argparse calls this for its `type=`, so the return value is what
+    the command actually runs with — a string here would be compared
+    against elapsed seconds and raise at the worst moment."""
+    assert cli._seconds("90") == 90.0
+    assert isinstance(cli._seconds("0.5"), float)

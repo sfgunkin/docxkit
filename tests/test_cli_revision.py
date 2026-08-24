@@ -1412,3 +1412,61 @@ def test_the_two_parsers_come_from_ONE_declaration(monkeypatch, capsys):
         "build and ship should each call the shared declaration once")
     assert '"--allow-math-resolve"' not in source, (
         "a flag is declared in _build_args, not in main")
+
+
+def test_a_survey_row_says_a_batch_is_STAGED_and_the_file_is_OPEN(tmp_path):
+    """Two marks a reader acts on immediately: something is built and
+    waiting, and the paper cannot be written to because Word has it.
+    Neither was covered, and a row that silently drops them sends the
+    author to a paper that is not in the state the row claims."""
+    from docxkit import cli
+    from docxkit.revision import Survey
+
+    row = cli._survey_row(Survey(config=tmp_path / "revision" / "paper.toml",
+                                 paper=None, state=None,
+                                 staged=True, locked=True))
+
+    assert "batch staged in build/" in row
+    assert "open in Word" in row
+
+
+def test_a_SECOND_init_names_the_config_it_SAVED(monkeypatch, tmp_path,
+                                                 capsys):
+    """Re-running init rewrites the keys you gave and keeps a copy of
+    what was there. The copy is only useful if its name is said — the
+    author is being told "your settings changed" and needs the thing
+    that lets them check what they were."""
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "LE7.docx", make_parts(para(run("body"))))
+    run_cli(monkeypatch, "revision", "init", str(src),
+            "--root", str(tmp_path / "proj"), "--name", "LE")
+    capsys.readouterr()
+
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src),
+                      "--root", str(tmp_path / "proj"), "--name", "LE7",
+                      "--force")
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "updated" in out
+    assert "previous config:" in out, out
+    assert "_pre_init" in out, out
+
+
+def test_baseline_hands_BACK_the_row_a_log_it_did_not_scaffold_cannot_take(
+        monkeypatch, project, capsys):
+    """`log_batch` returns None for a log with no batch table, because
+    guessing where a row belongs in the author's own document is how a
+    record gets mangled. The round still happened, so the CLI prints the
+    row for the author to place — silence here loses it."""
+    (project.config.parent / "log.md").write_text(
+        "# Revision log\n\nProse, and no table anywhere in it.\n",
+        encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "no batch table" in out, out
+    assert "record this round by hand" in out.replace("\\n", " "), out
