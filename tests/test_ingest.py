@@ -708,3 +708,60 @@ def test_a_document_with_NEITHER_note_store_still_builds_overrides(tmp_path):
 # * `elif len(bls) > len(us):` written `>=`. The `if` above it took the
 #   equal case, so the two readings answer the same on everything that
 #   reaches this line.
+
+
+
+_SHARED = "Source: authors\' calculations."
+
+
+def _notes_saying(text: str) -> str:
+    return notes("footnotes",
+                 f'<w:footnote w:id="2">{para(run(text))}</w:footnote>')
+
+
+def test_chaining_stays_INSIDE_the_part_it_started_in(tmp_path):
+    """Two stores' paragraphs can be byte-identical — a table note and a
+    body line both reading "Source: authors' calculations." — and
+    chaining across them rewrites the wrong entry: the BODY override
+    would silently start producing the footnote's new text, and the
+    footnote would get no entry at all.
+
+    Every other fixture here avoids the condition by giving each
+    paragraph its own text, which is why the guard could be removed and
+    the suite would agree."""
+    store = tmp_path / "overrides.json"
+
+    # Round 1: a BODY paragraph becomes the shared sentence.
+    base1 = write(tmp_path / "b1.docx",
+                  make_parts(para(run("was something else"))))
+    ed1 = write(tmp_path / "e1.docx", make_parts(para(run(_SHARED))))
+    update_overrides(base1, ed1, store)
+
+    # Round 2: a FOOTNOTE that reads exactly the same is re-typed.
+    base2 = write(tmp_path / "b2.docx", make_parts(
+        para(run(_SHARED)), footnotes=_notes_saying(_SHARED)))
+    ed2 = write(tmp_path / "e2.docx", make_parts(
+        para(run(_SHARED)), footnotes=_notes_saying("re-typed")))
+
+    _, chained, appended, total = update_overrides(base2, ed2, store)
+
+    assert (chained, appended, total) == (0, 1, 2), "appended, not chained"
+    data = json.loads(store.read_text(encoding="utf-8"))
+    assert _SHARED in data[0]["new"], "the body entry is untouched"
+    assert data[1]["part"] == "word/footnotes.xml"
+    assert "re-typed" in data[1]["new"]
+
+
+def test_a_BODY_entry_keeps_the_two_key_shape_it_always_had(tmp_path):
+    """An entry outside the body names its store; a body entry does not.
+    That is what keeps an existing store byte-comparable and lets
+    `apply_overrides` read one written before notes were handled at
+    all."""
+    store = tmp_path / "overrides.json"
+    base = write(tmp_path / "b.docx", make_parts(para(run("before"))))
+    edited = write(tmp_path / "e.docx", make_parts(para(run("after"))))
+
+    update_overrides(base, edited, store)
+
+    (entry,) = json.loads(store.read_text(encoding="utf-8"))
+    assert set(entry) == {"old", "new"}, entry
