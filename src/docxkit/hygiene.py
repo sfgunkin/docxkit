@@ -489,10 +489,27 @@ def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
     gone: list[str] = []
     seen: set[tuple[str, str]] = set()
     out, at = [], 0
-    for m in re.finditer(r"<w:comment\b[^>]*>.*?</w:comment>", xml, re.DOTALL):
+    # `(?<!/)>` — the guard PARA_RE and RUN_RE both carry, for the same
+    # reason. CT_Comment's block content is optional, so an EMPTY
+    # comment is written `<w:comment w:id="2" w:author="A"/>` and
+    # without the guard one match opens on it and closes on the NEXT
+    # comment's `</w:comment>`. That match then carries two comments'
+    # text and one of their ids: the pair reads as a duplicate, both
+    # definitions are cut, and `gone` collects only the id it found —
+    # so the OTHER comment's anchors stay in the body pointing at a
+    # definition that no longer exists. A dangling `commentReference`
+    # is what Word calls "unreadable content", which is the failure
+    # this function's anchor sweep was added to prevent, arriving
+    # through a different door.
+    for m in re.finditer(r"<w:comment\b[^>]*(?<!/)>.*?</w:comment>",
+                         xml, re.DOTALL):
         author = re.search(r'w:author="([^"]*)"', m.group(0))
-        text = " ".join(re.findall(r"<w:t[^>]*>(.*?)</w:t>", m.group(0),
-                                   re.DOTALL)).split()
+        # Through `visible_text`, not a bare `w:t` scrape: one copy
+        # written by the author's Word and one restored by an earlier
+        # round from another writer differ in ESCAPING — `&quot;`
+        # against a literal `"` — and two spellings of one note are the
+        # duplicate this exists to find, not two notes.
+        text = visible_text(m.group(0)).split()
         key = (author.group(1) if author else "", " ".join(text))
         if key in seen and key[1]:
             dropped.append(f"{key[0]}: {key[1][:60]}")

@@ -1506,3 +1506,69 @@ def test_an_anchor_in_a_FOOTNOTE_is_dropped_too():
 
     assert b'w:id="9"' not in parts["word/footnotes.xml"]
     assert b'w:id="8"' in parts["word/document.xml"], "the survivor stays"
+
+
+def test_an_EMPTY_comment_does_not_swallow_the_one_after_it():
+    """CT_Comment's block content is optional, so an empty comment is
+    written `<w:comment w:id="2" w:author="A"/>` — and without the
+    `(?<!/)>` guard PARA_RE and RUN_RE both carry, one match opens on it
+    and closes on the NEXT comment's `</w:comment>`.
+
+    That match then holds two comments' text and one of their ids. The
+    pair reads as a duplicate, both definitions are cut, and the id
+    collected is the empty one — so the OTHER comment's anchors stay in
+    the body pointing at a definition that is gone. A dangling
+    `commentReference` is the corruption this function's anchor sweep
+    was added to prevent, arriving through a different door."""
+    from docxkit.hygiene import dedupe_comments
+
+    empty = '<w:comment w:id="2" w:author="M. Lokshin"/>'
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "M. Lokshin", "Check this against Table 3."),
+            empty,
+            _comment(3, "M. Lokshin", "Check this against Table 3.")),
+        "word/document.xml": _body(_anchored(1, "first")
+                                   + _anchored(2, "second")
+                                   + _anchored(3, "third")),
+    }
+
+    dedupe_comments(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    kept = {c for c in ("1", "2", "3")
+            if f'<w:comment w:id="{c}"' in parts["word/comments.xml"].decode()}
+    refs = {c for c in ("1", "2", "3")
+            if f'w:commentReference w:id="{c}"' in doc}
+    assert "2" in kept, "the empty comment is not a duplicate of anything"
+    assert refs <= kept, f"anchors with no comment: {refs - kept}"
+    assert len(kept) == 2, kept
+
+
+def test_two_SPELLINGS_of_one_note_are_still_one_note():
+    """The duplicate this exists to find is one copy written by the
+    author's Word and one restored by an earlier round from a different
+    writer — and those differ in ESCAPING, not in what they say.
+    `&quot;` against a literal `"` is two legal spellings of the same
+    sentence, and a raw `w:t` scrape calls them two notes.
+
+    The author then gets their own comment twice on the same table with
+    no way to tell which to resolve, which is the whole defect the
+    function removes. `visible_text` unescapes, and is what the rest of
+    this module already reads with."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "M. Lokshin", "Say &quot;within 4 points&quot;."),
+            _comment(2, "M. Lokshin", 'Say "within 4 points".')),
+        "word/document.xml": _body(_anchored(1, "first")
+                                   + _anchored(2, "second")),
+    }
+
+    (dropped,) = dedupe_comments(parts)
+
+    assert "within 4 points" in dropped
+    kept = [c for c in ("1", "2")
+            if f'<w:comment w:id="{c}"' in parts["word/comments.xml"].decode()]
+    assert kept == ["1"], kept
