@@ -712,6 +712,52 @@ falls in a 0.4-point window.
 
 ## Fixed
 
+### ~~S2 `kill_check` shares one checkout with every other caller and takes no lock~~ — FIXED 24.08
+
+`mutation_session` guards its worktree with a lock, and the comment on
+it says why: *"Two runs measuring DIFFERENT modules still mutate one
+checkout, so each reads the other's mutation and every result is suspect
+— silently, because both complete and both print a plausible number. A
+lock in the tool is worth more than care in the caller."*
+
+`kill_check` has the identical hazard — one checkout, mutated and
+restored once per case — and had no lock.
+
+**It matters more than it looks, because `replay_survivors` IS
+`kill_check`, called once per survivor.** A replay of `refstyle.py`'s
+348 holds that checkout for twenty minutes while looking exactly like
+nothing is running, which is when a quick check gets run beside it.
+
+**Measured, on the author of the entry.** A `kill_check` run during a
+replay reported **four mutants SURVIVED that its tests do kill**. Both
+processes mutate and restore the same files; each reads the other's
+state; both finish and print a number that looks like an answer. The
+four were being read as "my new tests do not work" — which is the
+expensive form of this failure, because the next move is to rewrite
+tests that were right.
+
+Everything verified against that checkout while a replay was running had
+to be thrown away and redone: two rounds of `kill_check` evidence, and a
+348-case replay whose verdicts could not be told apart from the
+corrupted ones. **The cost of the missing lock was not a wrong answer;
+it was not knowing which answers were wrong.**
+
+**The fix is the sibling's, moved one file across.** Same shape, same
+stale-holder takeover, and `_alive` imported rather than written again —
+on Windows the existence check cannot be `os.kill(pid, 0)`, which
+TerminateProcess would make into a check that kills the holder it asked
+about.
+
+**And the shape of the miss is one this file already records five
+instances of.** The lesson was learned, written down, and implemented —
+in the tool where it was learned. It was never walked to the tool beside
+it, which grew a caller that runs it 348 times in a row. A change that
+teaches one reader a new fact has to be walked to every other reader of
+the same fact; here the other reader was the same fact's other
+implementation.
+
+---
+
 ### ~~S4 a year-labelled table COLUMN HEADER parses as a citation~~ — FIXED 24.08
 
 Found on HCW, 2026-08-23.
