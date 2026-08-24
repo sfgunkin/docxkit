@@ -1470,3 +1470,76 @@ def test_baseline_hands_BACK_the_row_a_log_it_did_not_scaffold_cannot_take(
     assert code == 0
     assert "no batch table" in out, out
     assert "record this round by hand" in out, out
+
+
+
+def test_validate_says_a_paper_lists_NO_gates_of_its_own(monkeypatch,
+                                                         project, capsys):
+    """`--run-gates` on a paper whose toml lists none.
+
+    Silence here reads as "they ran and passed". The line exists so that
+    a paper nobody has written gates for says so — which is the same
+    argument the branch above it makes for listing gates that were NOT
+    run: a list of unrun checks is a reminder."""
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word", "--run-gates",
+            "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert "none listed in paper.toml" in out, out
+
+
+def test_baseline_with_NO_LOG_says_nothing_about_the_log(monkeypatch,
+                                                         project, capsys):
+    """`--no-log` is the author saying they will record the round
+    themselves, so neither the logged line nor the hand-it-back refusal
+    belongs — and a baseline that quietly logged anyway under a flag
+    asking it not to would be the kind of thing nobody checks."""
+    code, _ = run_cli(monkeypatch, "revision", "baseline", "--no-log",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "baseline updated" in out
+    assert "logged:" not in out
+    assert "no batch table" not in out
+
+
+
+# ------------------------------------------------------------- redlines
+
+def test_redlines_lists_what_each_batch_PROPOSED(monkeypatch, project,
+                                                 capsys):
+    """The kept redlines are the only record of what a round offered —
+    including what the author rejected, which nothing else holds once
+    the manuscript moves on. Listing them with their sizes is how you
+    find the one worth opening."""
+    project.redline_dir.mkdir(parents=True, exist_ok=True)
+    kept = project.redline_dir / (
+        f"{project.working.stem}_redline_20260824-140618.docx")
+    write(kept, make_parts(para(run("what round one proposed"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "redlines",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert kept.name in out
+    assert "never pruned" in out
+    assert "1 redline(s)" in out
+
+
+def test_redlines_on_a_paper_with_NONE_says_why_there_are_none(
+        monkeypatch, project, capsys):
+    """A paper whose batches all predate the keeping has no redlines and
+    is not broken. Silence would read as a failure, and "no redlines"
+    alone would read as "your rounds proposed nothing"."""
+    code, _ = run_cli(monkeypatch, "revision", "redlines",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "no redlines" in out
+    assert "predate" in out, "say why, not just that there are none"

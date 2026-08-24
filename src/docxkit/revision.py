@@ -1240,7 +1240,7 @@ def _kill_tree(proc: Any, subprocess: Any) -> None:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                            capture_output=True, check=False, timeout=10)
-        else:
+        else:                            # pragma: no cover - POSIX only
             import os
             import signal
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -1266,7 +1266,7 @@ def _run_one(command: str, cwd: Path, timeout: float,
     kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
+    else:                                # pragma: no cover - POSIX only
         kwargs["start_new_session"] = True
     proc = subprocess.Popen(command, shell=True, cwd=cwd,
                             stdout=subprocess.PIPE,
@@ -1947,7 +1947,15 @@ class PromoteReport:
     promoted: Path
     onto: Path
     rescue: Path
-    redline: Path | None = None
+    #: Not optional. `promote` either RAISES — the copy did not land, and
+    #: it says so rather than returning a report with a hole in it — or
+    #: returns with the redline it made, and there is one construction
+    #: site. It was `Path | None = None` until 2026-08-24, which made
+    #: the CLI's `if report.redline is not None:` look necessary: a
+    #: branch nothing could take, and the second of that shape found in
+    #: `cmd_revision_*` in one afternoon. An Optional the constructor
+    #: cannot produce is a claim about the code that is not true.
+    redline: Path
     pruned: tuple[Path, ...] = ()
 
 

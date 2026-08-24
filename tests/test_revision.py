@@ -3214,3 +3214,63 @@ def test_repair_math_BACKS_UP_the_file_it_rewrites(tmp_path):
     kept = list(paper.working.parent.glob("*pre_math_repair*.docx"))
     assert len(kept) == 1, kept
     assert kept[0].read_bytes() == before
+
+
+
+# --- the config writer's helpers ----------------------------------------
+
+def test_a_HASH_inside_a_quoted_value_is_not_a_comment():
+    """A Windows path cannot hold a `#`; a paper's NAME can — "Health #2",
+    a journal's issue number. Cutting at the first `#` would eat half
+    the value, call the rest a comment, and rewrite the key with the
+    truncation."""
+    from docxkit.revision import _value_end
+
+    tail = '"Health #2 — capacity to work"  # the paper\'s own name'
+
+    cut = _value_end(tail)
+
+    assert tail[:cut] == '"Health #2 — capacity to work"'
+    assert "#" in tail[:cut], "the one inside the quotes survived"
+
+
+def test_a_manuscript_OUTSIDE_the_project_root_is_declared_absolute(
+        tmp_path):
+    """A relative declaration is what makes a project movable — copy the
+    folder to another machine and the config still resolves. A paper
+    that genuinely lives elsewhere has to say so instead, because a
+    relative path to somewhere above the root resolves differently the
+    moment the folder moves, which is the failure the relative form
+    exists to prevent."""
+    from docxkit.revision import _declare
+
+    root = tmp_path / "project"
+    root.mkdir()
+    inside = root / "sub" / "paper.docx"
+    outside = tmp_path / "elsewhere" / "paper.docx"
+
+    assert _declare(inside, root) == "sub/paper.docx"
+    declared = _declare(outside, root)
+    assert Path(declared).is_absolute(), declared
+    assert "\\" not in declared, "forward slashes either way"
+
+
+def test_re_init_giving_NO_keys_rewrites_only_the_paper_path(tmp_path):
+    """`init --force` with nothing else is how a paper that MOVED is
+    corrected. Every other key the author set — name, language, author —
+    has to survive it, and the three that are absent must not be written
+    as empty strings over what is there."""
+    from docxkit import revision
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    src = write(root / "HCW.docx", make_parts(para(run("body"))))
+    revision.init(root, src, name="Health Capacity", language="en",
+                  author="M. Lokshin")
+
+    revision.init(root, src, force=True)
+
+    text = (root / "revision" / "paper.toml").read_text(encoding="utf-8")
+    assert "Health Capacity" in text, "the name the author set survived"
+    assert "M. Lokshin" in text
+    assert 'language = "en"' in text

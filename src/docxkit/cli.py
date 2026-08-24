@@ -1550,9 +1550,8 @@ def cmd_revision_promote(args: argparse.Namespace) -> int:
     print(f"promoted {report.promoted.name} -> {report.onto.name}")
     print(f"rescue copy of the previous live file: "
           f"{report.rescue.relative_to(paper.root)}")
-    if report.redline is not None:
-        print(f"redline kept (never pruned): "
-              f"{report.redline.relative_to(paper.root)}")
+    print(f"redline kept (never pruned): "
+          f"{report.redline.relative_to(paper.root)}")
     if report.pruned:
         print(f"pruned {len(report.pruned)} older rescue(s), keeping "
               f"{paper.rescue_keep}")
@@ -1647,8 +1646,16 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
               "section\n  and comment is unchanged, and log.md and "
               "build/prev.docx were not\n  touched — they are the paper's "
               "history and its baseline.")
-        if saved:
-            print(f"  previous config: {saved[-1].name}")
+        # Unguarded on purpose. `rewrite` IS `config.exists()`, read
+        # before the call, and `init` backs the config up under exactly
+        # that condition — so by the time this prints there is always one
+        # to name. It was `if saved:` until 2026-08-24, which is a branch
+        # nothing can take: the third dead guard this package has grown
+        # out of a construction invariant, and the first found by a
+        # COVERAGE floor rather than by a mutation sweep, because a
+        # branch that cannot be taken is exactly a floor that cannot be
+        # reached.
+        print(f"  previous config: {saved[-1].name}")
         return 0
 
     print(f"scaffolded {paper.config.parent}")

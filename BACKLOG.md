@@ -69,6 +69,23 @@ nothing because no character moved. **The only instrument that detects any of
 them is a person looking at a rendered page**, and nothing in the ladder
 renders.
 
+**A fourth, 2026-08-24, and the first found by a DIFFERENT agent on a
+different manuscript** — which is what turns a shape into a claim. An
+expression was authored half as OMML and half as body text: `α` in
+maths, `= 0.5` in prose. One expression, two fonts, and on the page it
+reads as a typesetting mistake. Valid markup, clean redline, all six
+gates exit 0, the whole ladder green — and the paper's own `math
+--check` then reported four SPLIT EXPRESSIONs after the promote.
+
+Two things it adds to the three above. The defect is not in the
+CONVERSION this time: nothing was downgraded or lost in transit, the
+document simply says something different from what the author meant, so
+a gate comparing input to output could never have seen it. And it was
+found AFTER a promote, by the paper's own list rather than by the
+package's — the ladder cannot see it and is not supposed to, which is
+the note's argument arriving from the outside rather than from more
+examples of its own.
+
 The method exists and is written down — export the PDF through Word, which
 keeps maths where LibreOffice does not, then rasterise and read it. It is in
 the house notes as `verify_omml_word_pdf`. It is in nobody's gate list.
@@ -547,6 +564,42 @@ mutant: `==` -> `>=`/`<=` over closed domains, `==` -> `is not` on
 interned values, one `True` -> `False` and one number. Not mined
 further, and the figure quoted here is the replayed one — the session
 file still records the run it actually made.
+
+
+**`pages.py` — 480 mutants, 333 real, 311 killed (93.4%).** Recorded at
+42.8%, the top of the table; a full sweep read 9.0% before any work, and
+three tests took it to 6.6% (22/333). **That is the third module in one
+day whose recorded figure overstated it by 3-10x** — after `guard.py`
+(43.6% -> 4.5%) and `styles.py` (51.2% -> 13.9%) — and the three between
+them were the three worst rows in the table. Choosing by that column
+sent every round of the day at a module that did not need one.
+
+Twenty-one of the thirty were in `_printed_number`, and all of them are
+GEOMETRY: the margin band a page number must sit in, and the thirds that
+name its corner. Every existing case put the number unambiguously inside
+both, so each threshold could be widened, halved or floored and still
+answer the same. The fixtures did not disagree with the code; they never
+asked it anything.
+
+Three tests, and the first is worth having on its own account: **a lone
+`42` in the middle of a sheet is not a page number.** That is what the
+band is FOR, and a band widened to the whole page reads a table cell as
+the printed number — silently, and as a numbering defect that is not
+there. The second places a number at 28% and at 40% of the width, which
+is where `left` and `centre` actually part; the third puts the NUMBER
+first in an ambiguous footer, because the existing ambiguity case put
+the running head first and so passed a check that only looked at the
+first word.
+
+The 22 that remain are argued rather than chased. Most are equivalent by
+the same construction that makes them look interesting: `line[0]` ->
+`line[-1]` sits under `if len(line) != 1: continue`, so the list has one
+element and the two indexes are the same object; `(x0 + x1) / 2` ->
+`// 2` moves a midpoint by less than a point, which no third-boundary
+can see; and `<` -> `<=` on a threshold needs a midpoint EXACTLY on it,
+which text metrics do not produce. `width / 3` -> `width // 3` is the
+sharpest of them and still needs a number whose centre falls in a
+0.4-point window.
 
 ---
 

@@ -426,3 +426,53 @@ def test_the_CLI_prints_the_row_it_wrote(monkeypatch, cycle, capsys):
     assert code == 0
     assert "logged:" in out and "R15" in out
     assert "accepted in full" in out
+
+
+
+def test_a_paper_with_NO_log_file_still_baselines(cycle):
+    """A paper migrated by hand has no `log.md`. Baselining is the act
+    that matters and must not depend on the record existing — and this
+    must not CREATE one either, because a log this tool scaffolds
+    somewhere the author did not ask for it is a second place the
+    history lives."""
+    log = cycle.root / "revision" / "log.md"
+    log.unlink()
+    _adjudicated(cycle, para(run("the new sentence")))
+
+    revision.baseline(cycle, note="R15")
+
+    assert not log.exists(), "no log was asked for and none was invented"
+    assert cycle.prev.read_bytes() == cycle.working.read_bytes()
+
+
+def test_a_batch_heading_with_NO_TABLE_under_it_is_left_alone(cycle):
+    """The heading is there and the table is not — an author who
+    emptied it, or a scaffold half written. There is no row to append
+    after, and guessing a position under a heading is the same mangling
+    as guessing one in prose."""
+    log = cycle.root / "revision" / "log.md"
+    log.write_text("# Log\n\n## Batches\n\nNothing yet.\n", encoding="utf-8")
+    _adjudicated(cycle, para(run("the new sentence")))
+
+    revision.baseline(cycle, note="R15")
+
+    assert log.read_text(encoding="utf-8") == \
+        "# Log\n\n## Batches\n\nNothing yet.\n"
+
+
+def test_a_batch_table_of_a_DIFFERENT_SHAPE_is_left_alone(cycle):
+    """Five columns is the shape the row is built for. Appending it to a
+    four-column table produces a row that renders wrong and reads as
+    data — the failure mode is not a crash, it is a record that looks
+    fine and says something else."""
+    log = cycle.root / "revision" / "log.md"
+    theirs = ("# Log\n\n## Batches\n\n"
+              "| date | round | note |\n"
+              "| --- | --- | --- |\n"
+              "| 2026-08-01 | R14 | by hand |\n")
+    log.write_text(theirs, encoding="utf-8")
+    _adjudicated(cycle, para(run("the new sentence")))
+
+    revision.baseline(cycle, note="R15")
+
+    assert log.read_text(encoding="utf-8") == theirs

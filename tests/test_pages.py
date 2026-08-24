@@ -701,3 +701,74 @@ def test_a_RUNNING_HEAD_sharing_the_last_line_is_still_ambiguous(tmp_path):
     one line and no way to tell which is the page."""
     pdf = _render(tmp_path, [(A4, "body", "Chapter 3 page 14")])
     assert read_pdf(pdf)[0].printed is None
+
+
+
+# --- where the thresholds actually decide (mutation round, 2026-08-24) --
+#
+# 21 of pages.py's 30 real survivors were in `_printed_number`, and they
+# are all geometry: the margin BAND, and the thirds that name the
+# corner. Nothing moved a number to where those numbers matter, so every
+# one of them could be widened, halved or floored and still answer the
+# same. These are the cases that separate them.
+
+
+def _page_with(tmp_path, *placed, name="placed.pdf", size=A4):
+    """A sheet with text at exact points: `(x, y, text)` each."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=size[0], height=size[1])
+    for x, y, text in placed:
+        page.insert_text((x, y), text, fontsize=11)
+    out = tmp_path / name
+    doc.save(str(out))
+    doc.close()
+    return out
+
+
+def test_a_lone_NUMBER_in_the_BODY_is_not_read_as_the_page_number(tmp_path):
+    """What the band is FOR. A table cell holding `42` in the middle of
+    the sheet is not a page number, and a band widened to the whole page
+    reads it as one — silently, and as a numbering defect that is not
+    there. Placed at two-thirds height: outside the real band, inside
+    every widened one."""
+    pdf = _page_with(tmp_path, (72, 600, "42"))
+
+    (row,) = read_pdf(pdf)
+
+    assert row.printed is None, "a body number is not a printed number"
+    assert row.corner is None
+
+
+def test_the_THIRDS_name_the_corner_from_where_the_number_actually_IS(
+        tmp_path):
+    """`left` is the first third, `centre` the second. A number at 40%
+    of the width is CENTRE and reads as left if the boundary moves to
+    half; one at 28% is LEFT and reads as centre if it moves to a
+    quarter. Both are ordinary placements — a footer indented by a
+    stray tab lands in exactly that range, which is the case the corner
+    is read from the word's own box to catch."""
+    width = A4[0]
+    low = A4[1] - 40
+
+    (left,) = read_pdf(_page_with(tmp_path, (width * 0.28, low, "7"),
+                                  name="left.pdf"))
+    (centre,) = read_pdf(_page_with(tmp_path, (width * 0.40, low, "7"),
+                                    name="centre.pdf"))
+
+    assert left.corner == "lower left", left.corner
+    assert centre.corner == "lower centre", centre.corner
+
+
+def test_an_ambiguous_footer_is_ambiguous_even_when_the_NUMBER_is_first(
+        tmp_path):
+    """The existing ambiguity case puts the running head first, so a
+    check that looked only at the FIRST word still answered None — for
+    the wrong reason. With the number first, only counting the words
+    gets it right: two things in the footer band means the sheet cannot
+    say which is the page number."""
+    low = A4[1] - 40
+    pdf = _page_with(tmp_path, (72, low, "7"), (300, low, "Introduction"))
+
+    (row,) = read_pdf(pdf)
+
+    assert row.printed is None, "two words in the band is not an answer"

@@ -315,3 +315,63 @@ def test_the_survey_never_needs_a_paper_to_be_current(tmp_path, monkeypatch,
 
     assert code == 0, out
     assert "HCW" in out
+
+
+
+def test_the_registry_lands_under_LOCALAPPDATA_when_the_variable_is_unset(
+        monkeypatch):
+    """What a real machine does, and what every test here overrides."""
+    from docxkit.revision import REGISTRY_ENV
+
+    monkeypatch.delenv(REGISTRY_ENV, raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Someone/AppData/Local")
+
+    found = registry_path()
+
+    assert found.parts[-2:] == ("docxkit", "papers.txt")
+    assert "AppData" in str(found)
+
+
+def test_the_registry_falls_back_to_HOME_when_the_platform_says_nothing(
+        monkeypatch):
+    """Neither variable set — a bare POSIX shell, or a Windows session
+    with a scrubbed environment. `~/.local/share` is the convention, and
+    a registry that landed in the working directory instead would be a
+    different list depending on where you ran from."""
+    from docxkit.revision import REGISTRY_ENV
+
+    monkeypatch.delenv(REGISTRY_ENV, raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    found = registry_path()
+
+    assert found.parts[-4:] == (".local", "share", "docxkit", "papers.txt")
+    assert found.is_absolute(), "absolute, or the list follows the cwd"
+
+
+def test_one_UNREADABLE_paper_does_not_end_the_survey(tmp_path, monkeypatch):
+    """The docstring's one hard requirement, and nothing held it. A
+    manuscript on a drive that went away is a ROW; the papers after it
+    in the registry are the ones nobody has looked at, and an aborted
+    sweep hides exactly those."""
+    good = paper_at(tmp_path / "good")
+    bad = paper_at(tmp_path / "bad")
+    real = revision.state
+
+    def explode(path, *args, **kw):
+        if str(path) == str(bad.working):
+            raise OSError("the drive went away")
+        return real(path, *args, **kw)
+
+    monkeypatch.setattr(revision, "state", explode)
+
+    rows = survey()
+
+    assert len(rows) == 2, "the good paper is still reported"
+    (broken,) = [r for r in rows if r.config == bad.config]
+    (fine,) = [r for r in rows if r.config == good.config]
+    assert broken.state is None
+    assert "OSError" in broken.error and "drive went away" in broken.error
+    assert fine.state is not None, "the healthy row is unaffected"
