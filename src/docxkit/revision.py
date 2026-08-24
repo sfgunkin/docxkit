@@ -166,6 +166,7 @@ __all__ = [
     # spelling Pyright is right to refuse. `docxkit.find` is the home
     # for a new caller; this is where the existing ones already look.
     "internal_links",
+    "links_in_deletions",
     "load_paper",
     "log_batch",
     "losses",
@@ -998,6 +999,21 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
              f"to working.docx AFTER the promote; the revision count is "
              f"unaffected, a bookmark is not tracked content.")
 
+    # Said HERE and not at the end of the ladder. By then the author has
+    # a batch to throw away and the only act available to them is the
+    # one this sentence would have prevented.
+    if carried := links_in_deletions(package.read_parts(out)):
+        targets = ", ".join(sorted({a for a, _ in carried})[:4])
+        _say(f"{len(carried)} link(s) sit inside a tracked deletion "
+             f"({targets}{' ...' if len(carried) > 4 else ''}) — Compare "
+             f"does not track an anchor, so REJECTING one of these "
+             f"restores its words as plain text and does not rebuild the "
+             f"link. Accept-all is unaffected; gate 5 is not. Measured: "
+             f"the same clause moved across a section fails, and folded "
+             f"into the paragraph above it passes, because only the "
+             f"DISTANCE changed. Shorten the move, or mint the links "
+             f"after the handback.")
+
     # What Compare baked in with no revision on it, named paragraph by
     # paragraph. The math count alone understated this badly: a merged,
     # rewritten math-bearing paragraph shipped WHOLE and untracked while
@@ -1691,6 +1707,43 @@ def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
 #: A footnote Compare emitted as one insertion with nothing to delete.
 #: The shape of a note definition is `_xml`'s to state.
 _MOVED_NOTE_RE = NOTE_DEF_RE[FOOTNOTES]
+
+
+#: One tracked deletion. `(?<!/)>` keeps a self-closing `<w:del/>` out
+#: of the walk, and the match is non-greedy so two deletions in one
+#: paragraph are two spans rather than everything between them.
+_DELETION_RE = re.compile(r"<w:del\b[^>]*(?<!/)>.*?</w:del>", re.DOTALL)
+
+
+def links_in_deletions(parts: dict[str, bytes]) -> list[tuple[str, str]]:
+    """``(anchor, label)`` for every internal link inside a DELETION.
+
+    The other half of :func:`restored_bookmarks`, and the half that
+    fails on the reject side rather than the accept side. **Word's
+    Compare does not track an anchor.** A rejected deletion restores its
+    words as plain text and does not rebuild the link that was in them,
+    so a batch whose accept-all is perfect can fail reject-all on
+    `links: False` — and no author sees it in Word, because a lost link
+    is blue text that is still blue until you click it.
+
+    Measured on Aging_Well R24 (2026-08-24): the same clause moved
+    §8 -> §9 failed the ladder, and folded into the paragraph directly
+    above it in §8 it passed. Same words, same citation runs, same
+    batch. **Only the distance changed** — Compare diffs an adjacent
+    move as surviving text and a distant one as delete plus insert — so
+    the remedy is counter-intuitive enough to be worth naming: shorten
+    the move, or mint the links AFTER the handback.
+
+    Reported at BUILD time rather than left to the ladder, because by
+    the end of the ladder the author has a batch they have to throw
+    away, and the only thing they can do with the finding is what this
+    would have told them before they made it.
+    """
+    found: list[tuple[str, str]] = []
+    for _name, xml in text_parts(parts):
+        for span in _DELETION_RE.finditer(xml):
+            found.extend(internal_links(span.group(0)))
+    return found
 
 
 def moved_footnotes(parts: dict[str, bytes],

@@ -3274,3 +3274,74 @@ def test_re_init_giving_NO_keys_rewrites_only_the_paper_path(tmp_path):
     assert "Health Capacity" in text, "the name the author set survived"
     assert "M. Lokshin" in text
     assert 'language = "en"' in text
+
+
+
+# --- a link inside a DELETION (backlog S3, 2026-08-24) ------------------
+
+_DEL_STAMP = 'w:id="90" w:author="R" w:date="2026-08-24T00:00:00Z"'
+
+
+def _deleted(inner: str) -> str:
+    return f"<w:del {_DEL_STAMP}>{inner}</w:del>"
+
+
+def _linked_run(anchor: str, label: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}">'
+            f"<w:r><w:delText>{label}</w:delText></w:r></w:hyperlink>")
+
+
+def test_a_link_inside_a_deletion_is_reported_with_its_anchor():
+    """Compare does not track an anchor. Rejecting the deletion restores
+    its words as plain text and does not rebuild the link, so a batch
+    whose accept-all is perfect fails reject-all — and no author sees it
+    in Word, because a lost link is blue text that stays blue until
+    somebody clicks it."""
+    from docxkit.revision import links_in_deletions
+
+    body = para(run("Kept. ")) + para(_deleted(
+        _linked_run("ref_Barr2010", "Barr (2010)")))
+
+    found = links_in_deletions(make_parts(body))
+
+    assert [a for a, _ in found] == ["ref_Barr2010"], found
+
+
+def test_a_link_OUTSIDE_a_deletion_is_not_reported():
+    """The ordinary case is every other link in the manuscript. A check
+    that named them all would fire on every batch and be switched off."""
+    from docxkit.revision import links_in_deletions
+
+    body = (para('<w:hyperlink w:anchor="ref_Kept"><w:r><w:t>Kept</w:t>'
+                 "</w:r></w:hyperlink>")
+            + para(_deleted("<w:r><w:delText>gone</w:delText></w:r>")))
+
+    assert links_in_deletions(make_parts(body)) == []
+
+
+def test_TWO_deletions_in_one_paragraph_are_two_spans():
+    """Non-greedy, so the walk does not swallow the text between them
+    and report a link that is staying put."""
+    from docxkit.revision import links_in_deletions
+
+    body = para(_deleted(_linked_run("ref_A", "A"))
+                + '<w:hyperlink w:anchor="ref_SAFE"><w:r><w:t>safe</w:t>'
+                  "</w:r></w:hyperlink>"
+                + _deleted(_linked_run("ref_B", "B")))
+
+    anchors = {a for a, _ in links_in_deletions(make_parts(body))}
+
+    assert anchors == {"ref_A", "ref_B"}, anchors
+
+
+def test_a_deletion_in_a_FOOTNOTE_counts_too():
+    """`text_parts`, not `document.xml`: several journals take the whole
+    apparatus as endnotes, and a citation link there is the one a reader
+    is most likely to follow."""
+    from docxkit.revision import links_in_deletions
+
+    parts = make_parts(para(run("Body.")),
+                       footnotes=footnotes_part(para(_deleted(
+                           _linked_run("ref_Note", "Note")))))
+
+    assert [a for a, _ in links_in_deletions(parts)] == ["ref_Note"]
