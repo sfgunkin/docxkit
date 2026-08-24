@@ -748,3 +748,57 @@ def test_a_BOOKMARK_between_two_entries_is_not_a_refusal():
 
     assert not report.refused, report.refused
     assert report.moved, "Currie after Acemoglu: it had work to do"
+
+
+
+# --- what the refile report SAYS (mutation round, 2026-08-24) -----------
+
+def _refile_report(**kw):
+    from docxkit.refstyle import RefileReport
+    return RefileReport(**kw)
+
+
+def test_a_refusal_is_the_whole_report_and_says_so_first():
+    """A refused pass moved nothing, so the counts would all be zero and
+    a reader would take it for a clean list. The word REFUSED is what
+    separates "nothing to do" from "I would not touch this"."""
+    got = _refile_report(refused="\u00b64 sits inside the list").format()
+
+    assert got == "REFUSED: \u00b64 sits inside the list"
+
+
+def test_a_list_already_filed_says_so_rather_than_printing_nothing():
+    """Silence is indistinguishable from a command that failed to run —
+    the same argument the audit's "clean" line is there for."""
+    assert _refile_report().format() == "the list is already alphabetical"
+
+
+def test_the_report_counts_the_entries_and_then_names_them():
+    """The count first, because it is what a reader checks against the
+    number of entries they expected to move."""
+    got = _refile_report(moved=["Currie, J. (1999).", "Barr, N. (2010)."])
+
+    assert got.format().splitlines() == [
+        "2 entr(ies) re-filed",
+        "  Currie, J. (1999).",
+        "  Barr, N. (2010)."]
+
+
+def test_the_DISPLACED_entries_are_not_named_either_way_round():
+    """`test_refile_reports_the_entries_it_moved_by_name` covers a first
+    entry that belongs last. This is the other direction — a LAST entry
+    that belongs in the middle — because the rule is about which entry
+    is misfiled, not about where in the list it sits, and one ordering
+    cannot tell those apart.
+
+    Sorting moves most of the list: an entry out of place displaces
+    every entry between its old and new position. Naming all of them
+    buries the one an author has to look at."""
+    last_middle = _deep_list(entry(A, pid="00000001"), entry(C, pid="2"),
+                             entry(B, pid="3"))
+
+    moved = refile(last_middle).moved
+
+    assert len(moved) == 1, moved
+    assert moved[0].startswith("Barr"), moved
+    assert len(moved[0]) == 60, "the entry text is quoted, truncated at 60"
