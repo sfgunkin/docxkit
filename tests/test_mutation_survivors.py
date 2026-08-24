@@ -18,6 +18,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -623,3 +624,31 @@ def test_the_verifier_REFUSES_a_claim_whose_line_is_ambiguous(tmp_path):
 
     assert verify_equivalents.anchored(src, "return x") is None
     assert verify_equivalents.anchored(src, "def f():") == "def f():"
+
+
+def test_the_SHIPPED_claims_file_parses_and_every_claim_is_complete():
+    """A claim is prose about code, and prose in TOML is one stray
+    double quote away from ending its own string. That is not a
+    hypothetical: writing one of these with a quoted phrase inside it
+    truncated the value and left an unclosed inline table, which
+    surfaces as `mutation_survivors` crashing part way down a report
+    rather than as anything about the file.
+
+    Each claim also needs all three keys. `why` missing is a claim
+    nobody can check; `was` missing hides it from
+    `verify_equivalents.py`, which is the only thing that ever asks
+    whether it is still true."""
+    _tools_on_path()
+    import verify_equivalents  # pyright: ignore[reportMissingImports]
+
+    with verify_equivalents.CLAIMS.open("rb") as fh:
+        doc = tomllib.load(fh)
+
+    assert doc, "the claims file is empty"
+    for module, entry in doc.items():
+        assert module.endswith(".py"), module
+        assert entry.get("claims"), f"{module} has no claims"
+        for claim in entry["claims"]:
+            assert set(claim) == {"was", "line", "why"}, claim
+            assert claim["was"] != claim["line"], claim
+            assert len(claim["why"]) > 40, claim["why"]

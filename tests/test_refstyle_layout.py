@@ -903,3 +903,81 @@ def test_refiling_the_list_leaves_EVERYTHING_ABOVE_IT_untouched():
     got = [visible_text(m.group(0)) for m in PARA_RE.finditer(doc)]
     assert got == ["Intro one.", "Intro two.", "Intro three.", "References",
                    ENTRY_A, ENTRY_B, ENTRY_C]
+
+
+# `head` is `min(entry index) - 1` — the paragraph the heading sits in.
+# It cannot go negative: `references` finds no list at all without a
+# heading above it, so the first entry is never paragraph 0. Every
+# fixture here also put exactly ONE body paragraph above the heading,
+# which pinned `head` at 1 — where `head - 1`, `head >> 1`, `head ^ 1`
+# and `head % 1` all land on paragraph 0 and cannot be told apart.
+
+def test_paragraphs_that_LOOK_like_entries_are_not_a_list_without_a_heading():
+    """Two house-formatted entries and nothing above them. `references`
+    wants a heading, so this is body text that happens to be shaped like
+    a bibliography — a paper whose opening quotes a reference, say — and
+    the layout rules have no list to act on.
+
+    Written first as a test of the page rule's lower bound, which it is
+    not: with no entries there is no `head` to bound. `kill_check` said
+    so by killing nothing, and the claim is recorded in
+    tools/equivalents.toml instead."""
+    parts = make_parts(entry(A) + entry(B, pid="22222222"))
+    before = parts["word/document.xml"]
+
+    report = layout(parts)
+
+    assert not report.page_break
+    assert not report.indented and not report.spaced
+    assert parts["word/document.xml"] == before
+
+
+def test_the_AUDIT_reads_the_paragraph_DIRECTLY_above_the_heading():
+    """Four body paragraphs, and the break on the fourth. `head` is 4,
+    so `head - 1` is 3 while `head >> 1` is 2, `head ^ 1` is 5 and
+    `head % 1` is 0 — four different paragraphs. At `head == 1`, which
+    is all this file used to have, they are one paragraph and the
+    arithmetic is unfalsifiable. Three is not enough either: `3 ^ 1` is
+    2, which is `head - 1` again.
+
+    Reading the wrong paragraph finds no break and reports a list that
+    DOES start on a new page as though it did not."""
+    body = (para(run("Body one.")) + para(run("Body two."))
+            + para(run("Body three."))
+            + para(run("Body four."), '<w:r><w:br w:type="page"/></w:r>')
+            + heading() + entry(A))
+
+    report = audit(make_parts(body))
+
+    assert not [i for i in report.issues if i.code == "page-break"], \
+        [i.where for i in report.issues if i.code == "page-break"]
+
+
+def test_the_REPAIR_reads_the_paragraph_directly_above_the_heading_too():
+    """`audit` and `layout` carry the same rule twice, and the pair is
+    the thing that goes wrong: a paper told about a defect no fixer
+    removes, or one silently fixed the audit never mentioned. So the
+    fixer gets the same four paragraphs."""
+    body = (para(run("Body one.")) + para(run("Body two."))
+            + para(run("Body three."))
+            + para(run("Body four."), '<w:r><w:br w:type="page"/></w:r>')
+            + heading() + entry(A))
+    parts = make_parts(body)
+
+    report = layout(parts)
+
+    assert not report.page_break
+    assert "<w:pageBreakBefore/>" not in parts["word/document.xml"].decode()
+
+
+def test_neither_side_reports_a_page_when_the_HEADING_OPENS_the_document():
+    """`head` is 0: no paragraph above to carry a break, and a first
+    paragraph already starts one. Both halves have to agree about that,
+    and `_starts_a_page` is where they do — its "first paragraph" answer
+    is the only thing keeping the rule quiet here."""
+    parts = make_parts(heading() + entry(A) + entry(B, pid="22222222"))
+    doc_before = parts["word/document.xml"]
+
+    assert not [i for i in audit(parts).issues if i.code == "page-break"]
+    assert not layout(parts).page_break
+    assert parts["word/document.xml"] == doc_before
