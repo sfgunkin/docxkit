@@ -78,8 +78,16 @@ FLOORS = {
 }
 
 
-def measure() -> dict[str, float]:
+def measure(from_json: Path | None = None) -> dict[str, float]:
     """Run the suite under coverage and return module -> percent.
+
+    `from_json` reads a report the CALLER already produced instead of
+    running the suite again. `tools/gates.py` uses it: without it the
+    chain runs 4,971 tests twice — once bare and once under coverage —
+    which measured 108 s + 126 s of a 247 s chain. The two runs execute
+    the same tests over the same code and differ only in whether the
+    tracer is attached, and coverage under `-n 8` was verified identical
+    to serial (98.102 % both, no file lower).
 
     A RED suite produces no measurement. `check=False` is deliberate —
     the report has to be read even when pytest exits non-zero — but the
@@ -90,6 +98,13 @@ def measure() -> dict[str, float]:
     sent a reader looking for tests that were there all along. A number
     from a partial run is not a low number, it is not a number.
     """
+    if from_json is not None:
+        if not from_json.exists():
+            sys.exit(f"no coverage report at {from_json} — the run that was "
+                     f"supposed to write it did not")
+        data = json.loads(from_json.read_text(encoding="utf-8"))
+        return {Path(name).name: info["summary"]["percent_covered"]
+                for name, info in data["files"].items()}
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "cov.json"
         done = subprocess.run(
@@ -161,9 +176,12 @@ def main() -> int:
                     help="print the table and exit 0 whatever it says")
     ap.add_argument("--update", action="store_true",
                     help="raise the floors to match this run")
+    ap.add_argument("--from-json", metavar="PATH", type=Path,
+                    help="read a coverage report the caller already "
+                         "produced instead of running the suite again")
     args = ap.parse_args()
 
-    actual = measure()
+    actual = measure(args.from_json)
     if args.update:
         update(actual)
         return 0

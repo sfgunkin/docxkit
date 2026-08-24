@@ -23,9 +23,11 @@ after a red one tells you nothing you can act on yet.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -38,12 +40,41 @@ ROOT = Path(__file__).resolve().parents[1]
 #: OUTPUT rather than its exit code — `mypy` is the only one.
 Gate = tuple[str, list[str], bool]
 
+#: Where the one coverage run puts its report, for the floors gate to
+#: read. Beside the session's other scratch rather than in the tree: it
+#: is derived, it is rewritten on every run, and a stray copy in the
+#: repo would be committed by somebody eventually.
+COVERAGE_JSON = Path(tempfile.gettempdir()) / "docxkit-gates-coverage.json"
+
+
+def _workers() -> str:
+    """How many pytest workers, measured on this suite rather than
+    assumed.
+
+    4971 tests: serial 108 s, `-n 4` 45.5 s, `-n 8` 37.1 s, `-n auto`
+    (16 logical) 53.4 s. The knee is at the PHYSICAL core count —
+    oversubscribing costs more than it buys, so `auto` is the wrong
+    default on an SMT machine. Half the logical count is the physical
+    count wherever SMT is on and a safe under-estimate where it is not.
+    """
+    return str(max(2, min(8, (os.cpu_count() or 4) // 2)))
+
+
 GATES: list[Gate] = [
     ("ruff", [sys.executable, "-m", "ruff", "check", "."], False),
     ("mypy", [sys.executable, "-m", "mypy"], True),
     ("pyright", [sys.executable, "-m", "pyright"], False),
-    ("pytest", [sys.executable, "-m", "pytest", "-q"], False),
-    ("floors", [sys.executable, "tools/coverage_floor.py"], False),
+    # ONE run of the suite, under coverage, across the cores. It used to
+    # be two: this gate bare, and `floors` running the whole thing again
+    # with the tracer attached — 108 s + 126 s of a 247 s chain, for the
+    # same tests over the same code. `floors` reads the report this
+    # writes. Coverage under `-n 8` was checked against serial and is
+    # identical: 98.102 % both, not one file lower.
+    ("pytest", [sys.executable, "-m", "pytest", "-q", "-n", _workers(),
+                "--cov=docxkit", f"--cov-report=json:{COVERAGE_JSON}"],
+     False),
+    ("floors", [sys.executable, "tools/coverage_floor.py",
+                "--from-json", str(COVERAGE_JSON)], False),
     # Last on purpose. It reports on HEAD rather than on the work
     # in hand, and a broken HEAD must not stand between the author
     # and the lint error they are actually here to fix.

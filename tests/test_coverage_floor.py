@@ -96,3 +96,35 @@ def test_a_COLLECTION_error_is_not_diagnosed_as_a_missing_plugin(
     assert "ImportError" in str(exc.value)
 
 
+def test_a_report_the_CALLER_produced_is_read_instead_of_re_running(
+        tmp_path, monkeypatch):
+    """`gates.py` runs the suite once, under coverage, and hands the
+    report here. Without that the chain ran 4,971 tests TWICE — bare and
+    then again with the tracer attached — which measured 108 s + 126 s
+    of a 247 s chain for the same tests over the same code.
+
+    The test that matters is that reading a report does not quietly run
+    the suite anyway: a subprocess call here would make the saving
+    imaginary and nothing else would notice."""
+    def _explode(*a, **kw):
+        raise AssertionError("the suite must not be run again")
+
+    monkeypatch.setattr(coverage_floor.subprocess, "run", _explode)
+    report = tmp_path / "cov.json"
+    report.write_text(json.dumps(REPORT), encoding="utf-8")
+
+    found = coverage_floor.measure(report)
+
+    assert found == {"_table_core.py": 55.8}
+
+
+def test_a_report_that_is_NOT_THERE_says_so_rather_than_measuring_zero(
+        tmp_path):
+    """The caller was supposed to write it. An empty measurement would
+    read as "every module is at 0%" and fail every floor at once, which
+    sends a reader looking at their code instead of at the run that did
+    not happen."""
+    with pytest.raises(SystemExit) as exc:
+        coverage_floor.measure(tmp_path / "never-written.json")
+
+    assert "no coverage report" in str(exc.value)
