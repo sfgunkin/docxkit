@@ -2637,3 +2637,31 @@ def test_a_bare_citation_in_PROSE_ABOVE_a_table_is_not_a_column_head():
     report = audit(parts)
 
     assert any("nowak" in k for k in report.cited), report.cited
+
+
+def test_DASH_LED_entries_opening_a_list_are_still_checked_for_year_order():
+    """A continuation entry takes its surname from the entry above it,
+    so the same-author test is normally satisfied by the continuation
+    dash itself. Not when the dashes come FIRST: there is nothing above
+    to inherit from, and the surname stays as the dashes — which
+    `_fold` reduces to the empty string, punctuation being dropped.
+
+    Two of those in a row still compare equal, and out-of-order years
+    between them are still the finding the check exists for. It is a
+    malformed list, which is precisely what an audit is for.
+
+    The shape also separates equality from identity here in a way no
+    other entry does. `_fold` returns a fresh string for a real name, so
+    `==` and `is` agree by accident everywhere else; both of these fold
+    to "", and CPython hands out one object for that. `is not` then says
+    the surnames differ and the finding disappears."""
+    dashes = "\u2014\u2014\u2014"
+    parts = make_parts(
+        para(run("Some prose.")) + para(run("References"))
+        + para(run(f'{dashes}. (2015). "One." X.'))
+        + para(run(f'{dashes}. (2012). "Two." X.')))
+
+    report = audit(parts)
+
+    assert [i.message for i in report.issues if i.code == "year-order"] == [
+        "same-author entries run oldest first: (2012) follows (2015)"]
