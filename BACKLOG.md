@@ -564,6 +564,39 @@ The 34 equivalents fall into five classes, none worth a sixth look:
   a future `wtext_f` that normalizes where `fmt` does not would make
   them live again.
 
+
+**`guard.py` — 178 mutants, 88 real, 84 killed (95.5%).** The four
+survivors are `indent=1` in the two `json.dumps` calls, mutated to 0 and
+to 2. The stamp is machine-read and nothing branches on its whitespace:
+cosmetic, and recorded here rather than tested.
+
+The finding is not in the survivors. It is that **`base_of` had no test
+anywhere in the suite** — the function the whole staleness gate rests
+on, whose own docstring records what its absence cost (`validate`
+reporting twenty findings against a batch nobody was working on, and
+`promote` about to copy a redline built before an entire author round
+over the manuscript, Aging_Well R5). Line coverage said 96% and was not
+lying: `revision.py` calls it in passing, so the lines execute. Nothing
+asserted the contract, and the contract is almost entirely about the
+four ways it must answer "cannot tell" rather than guess — no stamp, a
+stamp predating the field, a stamp that will not parse, and a field that
+is present but not a hash. The last is the sharp one: `""` is falsy but
+present, so an `isinstance` check alone would return it, and a caller
+comparing hashes would then find no match and call a FRESH batch stale.
+
+Six tests, written BEFORE the sweep rather than after it, because the
+harness is half of what a figure measures and there is no point
+measuring a harness you already know is missing a function.
+
+**The recorded figure was 43.6% (61/140), from 2026-08-21.** Today's is
+4.5% (4/88), against a module byte-identical in length. The two cannot
+be compared mutant for mutant — `--fresh` discarded the old session, so
+the denominator's move from 140 to 88 has no evidence left to explain
+it, and this entry does not invent one. What is certain: the figure
+quoted in the table was three days old, `base_of` was untested for all
+of them, and the number a reader would have acted on was wrong by an
+order of magnitude in the direction that wastes an afternoon.
+
 ---
 
 ## Fixed

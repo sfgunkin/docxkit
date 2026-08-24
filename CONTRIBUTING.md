@@ -712,6 +712,15 @@ therefore reads: **a figure is void when the source or the harness has
 moved SINCE the run — or DURING it.** `stale_figures.py` answers the
 first; the session itself now answers the second.
 
+A void figure does not have to be re-swept to be useful.
+`python tools/replay_survivors.py src/docxkit/<module>.py` asks its
+survivor list again, one mutation at a time through `kill_check`, and
+prints which are still alive. On `_compare_diff.py` (2026-08-24) that
+was 60 reported survivors and **17 already dead** against a harness
+three tests newer — an afternoon of tests aimed at mutants that were
+killed twenty minutes after the sweep began. Replay before mining, and
+quote the replayed number, not the recorded one.
+
 The practical rule for a session that measures while it works: pick the
 module you are NOT editing. Two worktrees make two sweeps safe, and
 neither makes an edit to the module under measurement safe.
