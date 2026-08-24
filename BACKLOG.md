@@ -17,6 +17,46 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 — `carry` restores from the CLEAN COPY, which is the file that lost the part
+
+Reported 2026-08-24 from Health Capacity to Work: a rebuilt redline is
+missing `docProps/custom.xml` and the `customXml/` triple against
+`prev.docx`. On a World Bank manuscript those carry the MSIP sensitivity
+label and the "Official Use Only" content marking, so a promote ships an
+UNLABELLED document with every gate green.
+
+**The mechanism is not a missing list.** `CARRIED_PARTS` already names
+both — `(_hygiene.CUSTOM_XML, USER_PROPERTIES)` — and
+`package.regenerated_by_word` already excludes `docProps/custom.xml` by
+name, with a docstring about this exact label. What restores them is
+`restore_parts(parts, revised_parts, prefixes=carry)`, and the source is
+the REVISED input: the author's clean copy.
+
+**So the carry cannot help when the clean copy is where the part went.**
+The baseline still has it; the file the author saved does not; and carry
+copies from the one that does not. Every gate is then green, because
+every gate compares the redline against the clean copy and they agree —
+about the absence.
+
+**Shape of a fix, and the judgment in it.** Fall back to the BASELINE
+for a carried part the revised copy lacks. The judgment is that
+"baseline has it, revised does not" cannot be distinguished from a
+deliberate removal this round: the author may have stripped the
+bibliography store on purpose, and restoring it would undo that. For a
+compliance marking the safe default is to restore and SAY so, leaving
+`strip_parts` as the way to mean it — but that is a decision about
+whose intent wins, and it should be made deliberately rather than as a
+side effect of widening a prefix list.
+
+**Related and separate:** `tracked.build` unlinks `~<stem>.building.docx`
+on the failure path, so a verify-in-Word refusal leaves nothing to
+inspect. That cost the S1 above a bisect rather than a look, and it cost
+this report a rebuild with `verify_in_word=False` to get the artefact at
+all. Keeping the file on failure is a two-line change and would have
+saved both.
+
+---
+
 
 
 
@@ -1037,10 +1077,22 @@ be read, they carry surname and year, and the two sides key ALIKE so
 "cited but not listed" is answerable. Not that one nests in the other —
 the fixture cites `maestas_2023` and does not list it, and that gap is
 the finding, not a broken invariant. Six assertions across the suite
-moved to the `n_` names; nothing outside this package was checked, so a
-paper script reading `.entries` as a number gets a list and a loud
-comparison failure, which is the right way for a breaking rename to
-arrive.
+moved to the `n_` names.
+
+**And the claim made here when it landed was wrong.** It said a paper
+script reading `.entries` as a number would get "a loud comparison
+failure". Two of Health Capacity to Work's gates interpolate it in an
+f-string — `f"{report.entries} entries; {len(issues)} deviations"` — and
+an f-string is not loud: since the change both had been printing all 42
+`Reference` objects where a number belongs, in an audit line that still
+ends "0 deviations" and so still scans as passing. It was read past
+once before anyone noticed.
+
+The check that missed it was the same on both sides of the fence: a
+search for ARITHMETIC on the attributes. **Grep for the attribute, not
+for what you expect to be done with it** — an f-string, a `format()`,
+a log line and a JSON dump all accept a list silently, and only the
+first of those looks like code that reads a number.
 
 ---
 
