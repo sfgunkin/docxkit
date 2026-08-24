@@ -372,6 +372,29 @@ Recorded rather than chased. A survivor that CANNOT change behaviour is
 a fact about the code, and the next sweep should not spend an afternoon
 rediscovering it.
 
+**Do not choose the next module from `stale_figures --figures`, and do
+not quote a figure from it without re-measuring.** Two independent
+reasons, both established 2026-08-24 and both worth stating before the
+entries below, because every entry below is a figure and a reader will
+reach for the newest one they can see.
+
+*The figures age, and the worst rows age worst.* The three highest in
+the table each measured 3-10x lower when swept again, before a single
+test was written: `guard.py` 43.6% -> 4.5%, `styles.py` 51.2% -> 13.9%,
+`pages.py` 42.8% -> 9.0%. A figure ages against the SOURCE and against
+the HARNESS, and `styles.py` fell from 36 real survivors to 10 on one
+line added to the harness map — the recorded figure had been measuring
+the map, not the module. `tools/replay_survivors.py` re-asks a stale
+list in a minute; use it before mining one.
+
+*And 23 of the rows were SAMPLES that did not say so.* `--sample` marks
+the mutants it will not run SKIPPED, and a skip is a row, so `partial`
+read them as complete: `_table_layout.py` at 460 of 2757, `placement.py`
+at 260 of 1689, `edit.py` at 260 of 1411. They carry `SAMPLED n/N` now.
+A share over a fifth of a module is a real estimate and worth having —
+it is not a measurement of the module, and the column could not tell
+you which it was.
+
 **Setup, for cosmic-ray 8.7** (8.4's recipe in the toolkit memory is out
 of date in three ways): `work_items` keeps only `job_id`, so the
 operator and position come from `cosmic-ray dump`; the dump spells
