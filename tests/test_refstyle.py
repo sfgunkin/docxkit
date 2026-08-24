@@ -2736,3 +2736,64 @@ def test_a_list_of_MORE_THAN_256_entries_still_finds_its_own_end():
 
     assert [i.message for i in found] == [
         '"Zzz" is out of alphabetical order — it files after "Author299"']
+
+
+@pytest.mark.timeout(20)
+def test_a_fix_that_NEVER_SETTLES_is_refused_rather_than_looped_on(
+        monkeypatch):
+    """The backstop none of the shipped fixes can reach: each of them
+    writes something its own pattern no longer reads, so two passes
+    settle every real entry. It exists for the fix somebody adds next,
+    and "never settles" is exactly the shape a new fix fails in — so it
+    has to produce a message rather than a hang.
+
+    Eleven survivors sat in this loop because nothing had ever run it to
+    the end. The count in the message is the load-bearing part: it says
+    how many passes were spent and which fixes were applied, and a
+    counter that starts or steps wrong reports a different number of
+    them while still refusing.
+
+    A timeout because one mutation of that counter does not fail here —
+    it never increments, and the loop simply never ends."""
+    passes = []
+
+    def never_settles(text, style=HOUSE):
+        # A DISTINCT fix every pass. Appending a fixed marker is not
+        # enough: the fragment stabilises after three or four rounds,
+        # the fix repeats, and `seen` settles the loop after all.
+        passes.append(1)
+        return [refstyle.Fix("loop", text, f"{text}<{len(passes)}>")]
+
+    monkeypatch.setattr(refstyle, "convert_entry", never_settles)
+
+    with pytest.raises(ConversionRefused) as raised:
+        convert_text(CHICAGO_ENTRY)
+
+    said = str(raised.value)
+    assert "did not settle in 6 passes" in said, said
+    assert said.count("'loop'") == 6, said
+    assert "Nothing was written" in said
+
+
+def test_a_fix_ALREADY_APPLIED_does_not_stop_the_others_in_its_pass(
+        monkeypatch):
+    """The skip is a `continue`, and it is reached whenever a fix was
+    applied in an earlier pass or an earlier fix rewrote the window this
+    one quoted. As a `break` it would abandon every remaining fix in
+    that pass — and the ones after it are the ones that have not been
+    applied yet.
+
+    Two fixes, the first of which is not in the entry at all: under a
+    `break` the second is never reached and the entry comes back
+    unconverted."""
+    monkeypatch.setattr(
+        refstyle, "convert_entry",
+        lambda text, style=HOUSE: [
+            refstyle.Fix("absent", "NOT IN THE ENTRY AT ALL", "x"),
+            refstyle.Fix("ampersand", "&", "and"),
+        ])
+
+    out, applied = convert_text('Smith, J. & Lee, K. (2020). "T." J.')
+
+    assert "and" in out and "&" not in out, out
+    assert [f.code for f in applied] == ["ampersand"]
