@@ -427,3 +427,82 @@ def test_the_page_break_looks_at_the_paragraph_ABOVE_the_first_entry():
             + heading() + entry(A))
     parts = make_parts(body)
     assert layout(parts).page_break
+
+
+
+# --- what the layout report SAYS (mutation round, 2026-08-24) -----------
+#
+# Nothing called `LayoutReport.format()`, and 46 mutants lived in its six
+# lines: the counts, the two optional clauses, the units, and the body.
+# It is what a person reads after a layout pass, and the pass itself is
+# well covered — which is the whole shape: the algorithm was tested and
+# the sentence about it was not.
+
+def _report(**kw):
+    from docxkit.refstyle import LayoutReport
+    return LayoutReport(**kw)
+
+
+THREE = ["Acemoglu 2020", "Brown 2020", "Chen 2021"]
+FIVE = [*THREE, "Dahl 2019", "Evans 2022"]
+SEVEN = [*FIVE, "Foster 2013", "Garcia 2024"]
+
+
+def test_a_report_that_set_NOTHING_still_states_both_counts():
+    """Zero and zero. A renderer that dropped the head when there was
+    nothing to list would be indistinguishable from a pass that did not
+    run — the same argument the audit's "clean" line is there for."""
+    assert _report().format() == "0 indent(s), 0 spacing(s) set"
+
+
+def test_the_two_counts_are_the_two_LISTS_and_not_each_other():
+    """3 indents and 5 spacings, which no arithmetic mutant can swap
+    into the other or produce from the wrong list."""
+    got = _report(indented=THREE, spaced=FIVE).format()
+
+    assert got.splitlines()[0] == "3 indent(s), 5 spacing(s) set"
+    assert [ln for ln in got.splitlines() if ln.startswith("  indent")] == [
+        f"  indent   {name}" for name in THREE]
+    assert [ln for ln in got.splitlines() if ln.startswith("  spacing")] == [
+        f"  spacing  {name}" for name in FIVE]
+
+
+def test_the_page_break_clause_appears_only_when_one_was_added():
+    """It is a fact about the list, not a count, so it reads as a phrase
+    — and a reader who sees it on a pass that added none would go
+    looking for a page break nobody inserted."""
+    assert ", page break added" in _report(page_break="Ref").format()
+    assert "page break" not in _report(indented=THREE).format()
+
+
+def test_the_INHERITED_clause_names_what_was_deliberately_left_alone():
+    """Entries whose style already states the house value: writing it on
+    the paragraph would be deleted by Word on its next save, so they are
+    counted and left. Silence would read as "the pass missed seven"."""
+    got = _report(indented=THREE, inherited=SEVEN).format()
+
+    assert got.splitlines()[0] == (
+        "3 indent(s), 0 spacing(s) set, 7 left to the style")
+    assert not [ln for ln in got.splitlines() if "Foster" in ln], \
+        "counted, not listed — they are the ones nothing was done to"
+
+
+def test_the_whole_head_reads_as_one_sentence_in_order():
+    """All four parts at once, because the clauses are assembled by
+    concatenation and the order is what makes it a sentence."""
+    got = _report(indented=THREE, spaced=FIVE, page_break="Ref",
+                  inherited=SEVEN).format()
+
+    assert got.splitlines()[0] == (
+        "3 indent(s), 5 spacing(s) set, page break added, "
+        "7 left to the style")
+
+
+def test_a_report_is_TRUTHY_only_when_it_changed_something():
+    """`inherited` alone is a pass that deliberately did nothing, and a
+    caller printing on truthiness must not announce it."""
+    assert not _report()
+    assert not _report(inherited=SEVEN)
+    assert _report(indented=THREE)
+    assert _report(spaced=FIVE)
+    assert _report(page_break="Ref")
