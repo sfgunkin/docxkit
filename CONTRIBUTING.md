@@ -1953,6 +1953,68 @@ None of those changes whether a round passes. Every one of them changes
 what the person doing the round is looking at, which is the whole
 product of a comparison.
 
+### The eighth sweep: the FIGURES were the thing that was wrong
+
+Four rounds ran against `guard`, `styles`, `pages`, `batch`, `placement`
+and `refstyle` on 2026-08-24, and the largest finding was not in any of
+them. **The table those modules were chosen from was wrong in three
+independent ways, and each way flatters or damns a module without
+touching its code.**
+
+**The three worst rows in the table were overstated by 3-10x.**
+`guard.py` recorded 43.6% and measured 4.5%; `styles.py` 51.2% and
+13.9%; `pages.py` 42.8% and 9.0% — every one of them before a single
+test was written. A figure ages against the SOURCE and against the
+HARNESS, and `stale_figures` says which moved. Believe it: the whole day
+was spent at modules that did not need one.
+
+**A recorded figure can be measuring the harness rather than the
+module.** 29 of `styles.py`'s 36 real survivors sat in two functions
+whose tests live in `test_refstyle_layout.py`, a file the map did not
+name. Adding that one line took it from 36 to 10 with no test written.
+Third instance of that shape (`errors.py`, `_table_core.py`, now this),
+and the first found by ASKING rather than by being surprised: list every
+test file that IMPORTS a module, diff against what the map names, look
+at the ones with a whole function's worth of survivors.
+
+**A `--sample` run reads as a complete one.** It marks the mutants it
+will not run SKIPPED, and a skip IS a row, so the "did it finish" check
+said yes. 23 of ~44 rows turned out to be samples wearing no mark, some
+a sixth of the module — `_table_layout` 460 of 2757, `placement` 260 of
+1689. The test is `ran < graded`, not `graded < planned`. They carry
+`SAMPLED n/N` now. And a sample can REPLACE a complete run: see the open
+backlog entry, where `crossrefs.py` went from 57/822 to a 260 sample and
+the better measurement is simply gone.
+
+**A module with no entry in the map is invisible rather than
+unmeasured.** `harness_for` falls back to the files that NAME a module,
+so it still runs — but the table walks the map, and "not in the table"
+reads exactly like "nothing to do here". Two modules sat outside the
+programme that way, one of them the largest in the package. A test now
+asserts every module has an entry.
+
+**And the tool that verifies a finding needs the same lock as the tool
+that finds them.** `replay_survivors` IS `kill_check` called once per
+survivor, so a replay holds one shared checkout for twenty minutes while
+looking exactly like nothing is running. A `kill_check` run beside one
+reported four mutants SURVIVED that its tests do kill. The cost was not
+a wrong answer — it was not knowing which answers were wrong, so two
+rounds of evidence and a 348-case replay all had to be redone.
+
+**Two habits that came out of the round itself**, both cheap:
+
+* **kill_check names the test that killed each mutant. Read that name.**
+  A kill attributed to a test you did not write means yours is not
+  carrying it — which is the cheapest redundancy check there is, because
+  it costs nothing beyond the verification you were already running.
+  Three tests were written and dropped that way in one afternoon.
+* **Ask what ELSE would make this number come out right.** Twice a test
+  of mine was green for a reason other than the one in its docstring: a
+  table fixture asserting a surname the surrounding PROSE supplied, and
+  an assertion for "any issue at paragraph 6" that three different code
+  paths could satisfy. If the answer is "several things", the check is
+  decoration.
+
 ## Do not "harden" the XML parser without measuring it first
 
 A review will eventually propose passing
