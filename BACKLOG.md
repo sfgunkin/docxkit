@@ -340,6 +340,40 @@ the file no longer looks like what the repair wrote, and it cost twenty
 minutes of believing the repair had never applied. `ingest` calls it
 save-noise, correctly.
 
+**An UNREFERENCED `word/numbering.xml` goes the same way, and the agent
+is Word rather than Compare.** Aging_Well, 2026-08-24: a build was
+refused with `LOST word/numbering.xml`, which read as Compare dropping
+it. One handback later `ingest` on the AUTHOR's returned file reported
+`removed: ['word/numbering.xml']` — the author's own save deleted it, in
+a manuscript with zero `numPr` and zero `numId`. Word drops an
+unreferenced numbering part on any save; Compare was never the agent,
+only the first save anyone happened to be watching.
+
+**So do not carry it, and do not add it to `CARRIED_PARTS`.** Carrying
+means restoring at every build for Word to delete at every accept —
+a config line that never wins, and one that reads as a live constraint
+to whoever finds it next. Worse, it would have LOOKED right
+indefinitely: the part present in every redline, absent from every
+accepted file, and no gate compares those two.
+
+**Nor can it go in `regenerated_by_word`**, which is the obvious home
+and the wrong one. That function takes a NAME, and the rule here is
+conditional on the document: a paper that uses numbered lists and loses
+this part has lost something real. A blanket exclusion would buy silence
+on the harmless case by going blind on the harmful one, which is the
+`docProps/custom.xml` mistake that function's own docstring exists to
+record.
+
+**One observation of the new mechanism, on one manuscript.** Recorded as
+a warning against a plausible fix rather than as an established fact.
+The path there is the part worth keeping: three positions in one evening
+— a per-paper script, a config entry, nothing — and the third was right
+because the third OBSERVATION explained the first two. The disconfirming
+evidence also arrived from a direction nobody had proposed to look in;
+the experiment being designed was a second paper, and the answer was in
+this paper's next handback. The cheaper experiment was the one already
+running.
+
 So: **the form of a link is not evidence about who wrote it.** Verify a
 repair by counting anchors and resolving them, never by "mine writes
 elements and this file has fields". Both forms are live in any manuscript a
