@@ -17,7 +17,7 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S3 — a REJECTED tracked deletion does not get its hyperlink back, and only the distance decides
+### S3 — an ANCHOR does not survive Word's Compare in either direction: a deletion loses it, an insertion strands it
 
 Filed 2026-08-24 from a second session's measurement on Aging_Well R24,
 pasted here rather than written by the finder because this file was
@@ -48,6 +48,35 @@ layer, so a batch looks completely healthy until the end of the ladder.
 `validate` says it at BUILD time — "this deletion carries N links; a
 rejection will not restore them" — which is where the author can still
 act on it cheaply.
+
+**The other half, found an hour later on the same paper, and it is what
+makes this general.** Two references added, their links minted BEFORE
+Word's Compare ran. The ladder refused the batch: `STRUCTURE
+bookmarkStart: 146 -> 150` on reject-all. **Compare does not track a
+bookmark at all** — it tracks runs — so the four anchors survived a
+rejection as orphans, pointing into text that no longer existed.
+Accept-all was perfect; only reject-all could see it.
+
+So the rule is not about deletions:
+
+> **An anchor does not survive Compare in either direction. A rejected
+> deletion LOSES the anchors inside it; a rejected insertion STRANDS the
+> anchors minted with it.**
+
+Both are invisible until reject-all, and both are invisible to the
+author in Word, because a bookmark has no appearance.
+
+**And this is why the papers' convention is to mint links AFTER the
+handback** — which was folklore this morning and is measured now. The
+convention is not a style preference; it is the only ordering in which
+the anchors and the tracking model agree.
+
+**Worth separating from the render-gate note it was nearly filed
+under.** The four instances there share a shape — a check watching a
+proxy instead of the object. This is not that: the check was correct and
+fired. What failed is that the OPERATION was outside what the tracking
+model can represent, and no amount of checking the right object helps
+when the format cannot carry the thing being checked.
 
 ---
 
