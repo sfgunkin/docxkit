@@ -501,13 +501,17 @@ reach it:
 
 **`_compare_diff.py` — 743 mutants, 653 real, 617 killed (94.5%).** Of
 the 36 that remain, 34 cannot change a report and 2 are cosmetic. The
-sweep is also the first here to demonstrate its own staleness rule: it
-reported 60 survivors against a worktree snapshot taken twenty minutes
-before three tests landed, and **17 of the 60 were already dead** when
-replayed against the harness as it stood. A survivor list is a
-measurement of the tree it was taken from, not of the tree you have.
-Four tests then killed 7 more — `autojunk`, the field report's paragraph
-number, and two truncation widths.
+sweep also puts a NUMBER on the staleness rule `tools/stale_figures.py`
+already enforces: it reported 60 survivors against a worktree snapshot
+taken twenty minutes before three tests landed, and **17 of the 60 were
+already dead** when replayed against the harness as it stood. The tool
+called it correctly and specifically — `_compare_diff.py  stale:
+tests/test_compare.py`, the harness side alone, the source not having
+moved — so what this adds is the cost of ignoring it: 28% of a survivor
+list, all of it in the part of the module most recently worked on, which
+is where the next round would have mined first. Four tests then killed 7
+more — `autojunk`, the field report's paragraph number, and two
+truncation widths.
 
 The one that mattered: **`compare_paras` passes `autojunk=False` and
 nothing pinned it.** difflib calls an element junk when it appears in
@@ -563,6 +567,49 @@ The 34 equivalents fall into five classes, none worth a sixth look:
 ---
 
 ## Fixed
+
+### ~~S1 every gate reads the WORKING copy, so a commit missing a definition was green here and broken everywhere else~~ — FIXED 24.08
+
+`main()` called `_build_args(r)` twice; the definition was never staged.
+Two commits shipped that way and both were pushed, so `docxkit
+<anything>` raised NameError on a fresh clone while ruff, mypy, pyright,
+4,846 tests and the coverage floor all passed — every one of them
+reading the file on disk, which had the function.
+
+**What makes it a gate defect rather than a slip.** The split-staging
+that caused it is unavoidable in a working tree two sessions share: you
+stage your files, not the tree. What was missing is anything that ever
+looked at the RESULT. "Does this commit stand alone" was already in the
+routine and was already being run — on the commit about to be made.
+Nobody re-runs it on the commit made twenty minutes ago, and that is the
+one that had the hole.
+
+**The tell was visible and dismissed.** Two `test_compare` CLI tests
+failed in the isolated tree and passed live. That reads as "my
+verification harness is off" — a temp tree with no `.git` genuinely does
+fail eight of this suite's tests, which had trained the reflex. The
+difference is that those eight fail for a NAMED reason. `NameError:
+name '_build_args' is not defined` names nothing about the harness.
+
+**`tools/verify_committed.py`**, sixth gate. It exports a ref with `git
+archive` — not `checkout-index`, which reads the index, where a staged
+fix would hide the defect it is looking for — and asks two questions of
+the export: does every module import, and does the CLI build its
+parsers. The second is the one that matters, because `_build_args` is
+looked up while `main()` declares subcommands, so the module imported
+perfectly and only an invocation failed.
+
+Run backwards over the history it dates the window exactly:
+f3a6fd4..01b1c7e, clean either side. Its own test asserts the property
+that would silently disappear if `git archive` were ever swapped for a
+read of the tree: a definition present in the working copy must NOT make
+the broken commit pass.
+
+**Cheap, and last in the chain on purpose.** It reports on HEAD rather
+than on the work in hand, and a broken HEAD must not stand between an
+author and the lint error they are actually there to fix.
+
+---
 
 ### ~~S4 `ship` RE-DECLARES `build`'s flags, so every flag added to `build` is an AttributeError on `ship` until someone remembers~~ — FIXED 24.08
 

@@ -1,4 +1,4 @@
-"""`tools/gates.py` — the five gates, run so the answer cannot be lost.
+"""`tools/gates.py` — the six gates, run so the answer cannot be lost.
 
 The runner exists because the CHAIN is where they go wrong, and every
 failure it guards against has happened here: a piped gate whose status
@@ -63,11 +63,11 @@ def test_mypy_is_judged_on_its_LINES_not_its_exit_code():
     assert "FAILED  mypy" in said
 
 
-def test_the_real_list_is_the_five_CONTRIBUTING_names():
+def test_the_real_list_is_the_six_CONTRIBUTING_names():
     """A runner that drifts from the documented gates is worse than
     none: it would report a pass over a gate nobody ran."""
     assert [name for name, _argv, _reads in gates.GATES] == [
-        "ruff", "mypy", "pyright", "pytest", "floors"]
+        "ruff", "mypy", "pyright", "pytest", "floors", "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
 

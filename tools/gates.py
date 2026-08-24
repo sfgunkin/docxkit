@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the five gates in order and say which one stopped.
+"""Run the six gates in order and say which one stopped.
 
     python tools/gates.py
 
@@ -18,7 +18,7 @@ wrong:
 
 Nothing here is new: it is the same five commands CONTRIBUTING lists,
 run so that the answer cannot be lost between them. Exit status is 0
-only when all five pass, and the first failure stops the run — a gate
+only when all six pass, and the first failure stops the run — a gate
 after a red one tells you nothing you can act on yet.
 """
 from __future__ import annotations
@@ -44,6 +44,11 @@ GATES: list[Gate] = [
     ("pyright", [sys.executable, "-m", "pyright"], False),
     ("pytest", [sys.executable, "-m", "pytest", "-q"], False),
     ("floors", [sys.executable, "tools/coverage_floor.py"], False),
+    # Last on purpose. It reports on HEAD rather than on the work
+    # in hand, and a broken HEAD must not stand between the author
+    # and the lint error they are actually here to fix.
+    ("committed", [sys.executable, "tools/verify_committed.py"],
+     False),
 ]
 
 

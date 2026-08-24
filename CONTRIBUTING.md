@@ -77,10 +77,10 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Five gates, all of which must pass:
+Six gates, all of which must pass:
 
 ```
-python tools/gates.py   # all five, in order, first failure stops
+python tools/gates.py   # all six, in order, first failure stops
 ```
 
 or, one at a time:
@@ -91,6 +91,7 @@ python -m ruff check .
 python -m mypy
 python -m pyright       # what Pylance shows in the editor
 python tools/coverage_floor.py
+python tools/verify_committed.py   # HEAD, not the working copy
 ```
 
 **Use the runner, or chain them with `&&`.** Never `;`, and never a
@@ -1798,7 +1799,7 @@ name — never in `src/`.
 `pyright | tail -1` swallowed pyright's status and is written up above.
 On 2026-08-20 the same shape came back as `pytest -q | tail -2`, run
 that way all afternoon so the summary line would show: `tail` returns 0
-over a failing suite, and a commit went through red. The five gates are
+over a failing suite, and a commit went through red. The six gates are
 run UNPIPED, chained with `&&`, and anything that needs trimming gets
 it after the chain, not inside it.
 
