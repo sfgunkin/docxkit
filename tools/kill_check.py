@@ -41,6 +41,7 @@ mutation broke something else on the way.
 """
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import subprocess
@@ -53,9 +54,52 @@ LIVE = Path(__file__).resolve().parents[1]
 ROOT = Path(os.environ.get("DOCXKIT_KILL_CHECK_WORKTREE",
                            str(LIVE.parent / f"{LIVE.name}-kc")))
 
+#: One checkout, so one caller at a time — the same rule
+#: `mutation_session` states for its own worktree, and the same reason:
+#: two callers mutate and restore the SAME files, each reads the other's
+#: state, and both finish and print a plausible number.
+#:
+#: It matters more here than it looks, because `replay_survivors` IS
+#: this module, called once per survivor: a replay holds the checkout
+#: for twenty minutes while looking like nothing is running. Measured
+#: 2026-08-24 — a `kill_check` beside a replay reported four mutants
+#: SURVIVED that its tests do kill.
+LOCK = ROOT.parent / f"{ROOT.name}.lock"
+
+
+def _take_lock() -> None:
+    """Refuse to start while another caller holds the checkout.
+
+    A lock whose holder is GONE is taken over rather than obeyed: the
+    release is an `atexit` handler, so a caller that is killed leaves
+    the file behind and the next one would refuse for a process that no
+    longer exists. `_alive` comes from `mutation_session` rather than
+    being written again — on Windows it cannot be `os.kill(pid, 0)`,
+    which TerminateProcess would make an existence check that kills the
+    holder it asked about.
+    """
+    from mutation_session import _alive  # noqa: PLC0415
+
+    try:
+        fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        holder = LOCK.read_text(encoding="utf-8").strip() or "unknown"
+        if holder.isdigit() and not _alive(int(holder)):
+            LOCK.unlink(missing_ok=True)
+            return _take_lock()
+        sys.exit(f"another caller holds {ROOT} (pid {holder}). It is one "
+                 f"checkout, so running both makes each read the other's "
+                 f"mutations — a replay is this module 348 times over. "
+                 f"Wait for it, or delete {LOCK} if it is stale.")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(str(os.getpid()))
+    atexit.register(lambda: LOCK.unlink(missing_ok=True))
+    return None
+
 
 def sync() -> None:
-    """Refresh the private checkout from the live tree."""
+    """Refresh the private checkout from the live tree, and CLAIM it."""
+    _take_lock()
     if not ROOT.exists():
         subprocess.run(["git", "worktree", "add", "-q", str(ROOT),
                         "HEAD", "--detach"], cwd=LIVE, check=True)

@@ -506,3 +506,73 @@ def test_a_report_is_TRUTHY_only_when_it_changed_something():
     assert _report(indented=THREE)
     assert _report(spaced=FIVE)
     assert _report(page_break="Ref")
+
+
+
+# --- what `refile` says when it REFUSES (mutation round, 2026-08-24) -----
+
+def _list_with(*paragraphs: str) -> dict[str, bytes]:
+    """A body whose reference list starts at a known paragraph index."""
+    return make_parts("".join(paragraphs))
+
+
+ENTRY_A = 'Acemoglu, D. (2020). "Robots." Journal, 1(1), 1-20.'
+ENTRY_B = 'Brown, A. (2019). "A Title." Journal, 2(2), 30-40.'
+ENTRY_C = 'Chen, L. (2021). "Another." Journal, 3(3), 50-60.'
+
+
+def test_a_STRAY_paragraph_inside_the_list_is_named_by_its_own_number():
+    """The refusal is the whole output when `refile` declines, and it
+    sends a person to one paragraph out of a list of forty. Off by one
+    and they are looking at the entry above the problem, which reads
+    correctly — so the wrong number does not look like a wrong number.
+
+    The stray is at index 5, printing as 6: a value `5 + 1` produces and
+    `5 % 1`, `5 & 1`, `5 * 1` and `5 >> 1` do not."""
+    parts = _list_with(
+        para(run("Body one.")), para(run("Body two.")),
+        para(run("Body three.")), para(run("References")),
+        para(run(ENTRY_A)),
+        para(run("A stray note nobody meant to leave here.")),
+        para(run(ENTRY_B)))
+
+    report = refile(parts)
+
+    assert not report.moved
+    assert report.refused.startswith("\u00b66 sits inside the list"), \
+        report.refused
+    assert "A stray note nobody meant" in report.refused
+
+
+def test_the_stray_is_QUOTED_so_the_author_can_see_which_one():
+    """A number alone makes them count paragraphs. The text is
+    truncated, because a stray can be a whole pasted paragraph and a
+    refusal that prints it is a refusal nobody reads."""
+    long_stray = "This stray is far longer than forty characters and runs on."
+    parts = _list_with(
+        para(run("Body one.")), para(run("References")),
+        para(run(ENTRY_A)), para(run(long_stray)), para(run(ENTRY_B)))
+
+    report = refile(parts)
+
+    assert repr(long_stray[:40]) in report.refused, report.refused
+    assert long_stray[:41] not in report.refused, "truncated at 40"
+
+
+def test_an_EMPTY_paragraph_above_an_entry_gets_its_own_sentence():
+    """`_xml.PARA_RE` skips a self-closing `<w:p/>` on purpose, so a
+    blank line pasted into a reference list is invisible to every
+    text-layer check and turns up only here. It names the entry BELOW
+    the blank, which is the one that would move."""
+    parts = _list_with(
+        para(run("Body one.")), para(run("Body two.")),
+        para(run("References")),
+        para(run(ENTRY_A)), "<w:p/>", para(run(ENTRY_B)),
+        para(run(ENTRY_C)))
+
+    report = refile(parts)
+
+    assert not report.moved
+    assert report.refused.startswith(
+        "an empty paragraph sits above \u00b65"), report.refused
+    assert "delete it first" in report.refused

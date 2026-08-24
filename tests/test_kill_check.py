@@ -20,13 +20,21 @@ the wrong thing about the tests is worse than no tool.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import docxkit
 
 TOOLS = Path(docxkit.__file__).resolve().parents[2] / "tools"
+# Everything below drives `kill_check` through `_DRIVER` in a SUBPROCESS,
+# because it mutates files and a test that imported it would mutate this
+# checkout. The lock tests are the exception and may import it: they
+# monkeypatch ROOT and LOCK into `tmp_path` and touch nothing else.
+sys.path.insert(0, str(TOOLS))
 
 _DRIVER = '''
 import sys
@@ -143,3 +151,49 @@ def test_an_occurrence_that_is_not_THERE_is_refused(tmp_path):
 
     assert "occurrence 9 of" in out
     assert "BAD 1" in out
+
+
+
+# --- one checkout, one caller (2026-08-24) ------------------------------
+
+def test_a_SECOND_caller_is_refused_rather_than_sharing_the_checkout(
+        tmp_path, monkeypatch):
+    """Two callers mutate and restore the SAME files, so each reads the
+    other's state and both finish printing a plausible number. It is not
+    hypothetical: a `kill_check` run beside a `replay_survivors` reported
+    four mutants SURVIVED that its tests do kill.
+
+    `replay_survivors` is this module called once per survivor, so a
+    replay holds the checkout for twenty minutes while looking exactly
+    like nothing is running — which is what makes a lock worth more than
+    care in the caller.
+    """
+    import kill_check  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(kill_check, "ROOT", tmp_path / "wt")
+    monkeypatch.setattr(kill_check, "LOCK", tmp_path / "wt.lock")
+    (tmp_path / "wt.lock").write_text(str(os.getpid()), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        kill_check._take_lock()
+
+    assert "one checkout" in str(exc.value)
+    assert str(tmp_path / "wt.lock") in str(exc.value), "say how to clear it"
+
+
+def test_a_lock_whose_HOLDER_IS_GONE_is_taken_over(tmp_path, monkeypatch):
+    """The release is an atexit handler, so a caller that is killed —
+    which is how a long replay gets stopped — leaves the file behind.
+    Obeying that forever would make one interrupted run cost every later
+    one."""
+    import kill_check  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(kill_check, "ROOT", tmp_path / "wt")
+    monkeypatch.setattr(kill_check, "LOCK", tmp_path / "wt.lock")
+    # a pid nothing can be running under
+    (tmp_path / "wt.lock").write_text("999999999", encoding="utf-8")
+
+    kill_check._take_lock()
+
+    assert (tmp_path / "wt.lock").read_text(encoding="utf-8") == str(
+        os.getpid()), "the live caller owns it now"
