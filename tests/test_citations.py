@@ -4165,3 +4165,100 @@ def test_the_report_rule_is_sixty_characters(tmp_path, capsys):
     rule = [ln for ln in capsys.readouterr().out.splitlines()
             if set(ln) == {"="}]
     assert rule == ["=" * 60]
+
+
+# --- the half-eaten pair, one module over from `crossrefs` -------------
+#
+# The convention is a PAIR: the forward link on the first mention, and
+# the `<Key>txt` bookmark wrapping it that the entry's back-link points
+# at. Word drops them independently — it rewrites a paragraph, keeps the
+# hyperlink and takes the bookmark — and the idempotence guard tested
+# one half. `citations` then reported BROKEN LINK while `link_all`
+# reported a benign skip, both exit 0 (Aging_Well R11, 2026-08-25).
+
+def _half_eaten() -> dict[str, bytes]:
+    """A wired document with the in-text bookmark taken back out."""
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("As shown (Smith 2020) the effect holds."))
+            + P(R("References"))
+            + P(R("Smith, J. (2020). A title. Journal, 1(1): 1-2.")))
+    from docxkit.citations import link_all
+
+    parts = xml_parts(body)
+    link_all(parts)
+    doc = parts["word/document.xml"].decode("utf-8")
+    twin = next(n for n in re.findall(
+        r'w:bookmarkStart[^>]*w:name="([^"]+)"', doc) if n.endswith("txt"))
+    doc = re.sub(rf'<w:bookmarkStart[^>]*w:name="{twin}"/>', "", doc)
+    doc = re.sub(r'<w:bookmarkEnd w:id="\d+"/>', "", doc, count=1)
+    parts["word/document.xml"] = doc.encode("utf-8")
+    return parts
+
+
+def test_a_half_eaten_pair_is_REPAIRED_rather_than_skipped():
+    """The skip message is true — wrapping a mention already inside a
+    link would nest one link in another — and it is the wrong answer
+    here, because the link that is there is this work's OWN and only its
+    bookmark is missing. Rebuilding that bookmark adds no second link,
+    so the nesting the branch refuses cannot happen."""
+    from docxkit.citations import audit_links, link_all
+
+    parts = _half_eaten()
+    assert audit_links(parts)[0], "the fixture is not broken"
+
+    report = link_all(parts)
+
+    assert len(report.repaired) == 1, report.format()
+    assert not report.skipped, report.format()
+    assert audit_links(parts)[0] == [], audit_links(parts)[0]
+    # a repair, not a second link
+    assert parts["word/document.xml"].decode("utf-8").count(
+        'w:anchor="Smith2020"') == 1
+
+
+def test_the_repair_is_IDEMPOTENT_like_the_pass_it_belongs_to():
+    """A third run has nothing to do. `link_all` runs after every author
+    hand-back, and a repair that repeated would add a bookmark per
+    round."""
+    from docxkit.citations import link_all
+
+    parts = _half_eaten()
+    link_all(parts)
+
+    again = link_all(parts)
+
+    assert not again.repaired and not again.linked, again.format()
+    assert len(again.already) == 1, again.format()
+
+
+def test_a_twin_bookmark_in_the_FOOTNOTES_is_not_reported_missing():
+    """Bookmarks are unique document-wide and a work cited only in a
+    footnote carries its in-text twin in `footnotes.xml`. Read from the
+    body alone that twin is missing — so the work reads as half-linked
+    and the repair would put a SECOND bookmark of the same name in the
+    body, which is the corruption this exists to prevent rather than
+    cause."""
+    from docxkit.citations import link_all
+
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(R("Prose with no citation in it."))
+            + P(R("References"))
+            + P(R("Smith, J. (2020). A title. Journal, 1(1): 1-2.")))
+    parts = xml_parts(body)
+    parts["word/footnotes.xml"] = (
+        b'<w:footnotes xmlns:w="http://schemas.openxmlformats.org/'
+        b'wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r>'
+        b"<w:t>As shown (Smith 2020).</w:t></w:r></w:p></w:footnote>"
+        b"</w:footnotes>")
+
+    link_all(parts)
+    body_doc = parts["word/document.xml"].decode("utf-8")
+    notes = parts["word/footnotes.xml"].decode("utf-8")
+    twins = re.findall(r'w:bookmarkStart[^>]*w:name="(\w+txt)"',
+                       body_doc + notes)
+
+    assert twins.count("Smith2020txt") == 1, twins
+    assert "Smith2020txt" not in re.findall(
+        r'w:bookmarkStart[^>]*w:name="([^"]+)"', body_doc), body_doc

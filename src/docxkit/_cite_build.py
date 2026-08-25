@@ -11,7 +11,7 @@ import html
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterator
 from dataclasses import dataclass, field, replace
 
 from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE, _name_runs
@@ -298,6 +298,12 @@ class LinkAllReport:
     backlinked: list[str] = field(default_factory=list)
     unmatched: list[str] = field(default_factory=list)   # cite, no entry
     skipped: list[str] = field(default_factory=list)     # anchor trouble
+    #: Mentions whose forward link SURVIVED while the `<Key>txt`
+    #: bookmark under it did not, and which had that bookmark rebuilt
+    #: where the link sits. Counted apart from `linked`, because nothing
+    #: new points anywhere: something that already pointed somewhere can
+    #: be followed back again.
+    repaired: list[str] = field(default_factory=list)
     suspect: list[str] = field(default_factory=list)     # entry reads as prose
 
     def format(self) -> str:
@@ -306,6 +312,9 @@ class LinkAllReport:
                   f"{len(self.already)}, back-links added "
                   f"{len(self.backlinked)}, unmatched "
                   f"{len(self.unmatched)}, skipped {len(self.skipped)}{more}")]
+        if self.repaired:
+            lines.append(f"  half-linked, bookmark rebuilt under the "
+                         f"surviving link: {', '.join(self.repaired)}")
         for tag, items in (("UNMATCHED", self.unmatched),
                            ("SUSPECT", self.suspect),
                            ("SKIPPED", self.skipped)):
@@ -638,6 +647,23 @@ class _Mentions:
                 # citation sitting inside SOMEBODY ELSE'S link.
                 cited = text[c.start:c.end]
                 if any(cited in label for label in labelled):
+                    # HALF-LINKED, and not the same thing as skipped.
+                    # `unmarked` says a link DEMANDS this work's in-text
+                    # twin and no such bookmark exists — the state an
+                    # author round produces, since Word rewrites the
+                    # paragraph and takes the bookmark while leaving the
+                    # link. Rebuilding the bookmark around the link that
+                    # is already there adds no second link, so the
+                    # nesting this branch refuses cannot happen.
+                    #
+                    # An empty `cite` is the plan's way of saying so:
+                    # wrap only, do not link. Without it the entry's
+                    # back-link points at a bookmark that is not there —
+                    # `citations` reports BROKEN LINK, `link_all` reports
+                    # a benign skip, and both exit 0 (Aging_Well, R11).
+                    if name in self.unmarked:
+                        into.setdefault(i, []).append(("", name))
+                        continue
                     self.report.skipped.append(
                         f"{cited!r} (\u00b6{i + 1}) is already inside a "
                         f"link — wrapping it would nest one link in "
@@ -645,6 +671,40 @@ class _Mentions:
                     continue
                 c = extend_to_name(text, c, hits[0].surname)
                 into.setdefault(i, []).append((text[c.start:c.end], name))
+
+
+def _wire_mentions(para: str, items: list[tuple[str, str]], *, at: str,
+                   twin_name: dict[str, str], bids: Iterator[int],
+                   report: LinkAllReport) -> str:
+    """Wire this paragraph's planned mentions, and say which kind each was.
+
+    Two kinds, told apart by whether `cite` is empty.
+
+    A cite means the ordinary job: make the mention a link, then wrap it
+    in the `<Key>txt` bookmark the entry's back-link points at. Both
+    halves of the pair, in one place, because a pair built by two passes
+    is a pair that can be half built.
+
+    An EMPTY cite means the forward link is already there and only the
+    bookmark is missing — the state an author round produces, since Word
+    rewrites a paragraph and takes the bookmark while leaving the link.
+    Rebuilding it around the link that survives adds no second link, so
+    it is a repair and is counted as one: nothing new points anywhere,
+    and something that already pointed somewhere can be followed back
+    again.
+    """
+    for cite, name in items:
+        try:
+            if cite:
+                para = link_in_para(para, cite, name)
+            para = wrap_link_in_bookmark(para, name, twin_name[name],
+                                         next(bids))
+        except AnchorError as exc:
+            report.skipped.append(f"{cite!r} {at}: {exc}")
+            continue
+        where = report.linked if cite else report.repaired
+        where.append(f"{name} @ {at}")
+    return para
 
 
 def link_all(parts: dict[str, bytes], *,
@@ -704,7 +764,15 @@ def link_all(parts: dict[str, bytes], *,
 
     report.suspect += _prose_entries(entries)
     bid = next_bookmark_id(doc, *notes.values())
+    # EVERY part that can hold one, not the body alone. A bookmark is
+    # unique document-wide, and a work cited only in a footnote carries
+    # its in-text twin in `footnotes.xml` — so a body-only reading calls
+    # that name free (and mints a duplicate) and calls its twin missing
+    # (and would rebuild one). `linked_anchors` below already reads the
+    # notes; this is the same document seen from the other side.
     taken = set(_BOOKMARK_NAME_RE.findall(doc))
+    taken |= {n for xml in notes.values() if xml
+              for n in _BOOKMARK_NAME_RE.findall(xml)}
     linked_anchors = {a for m in paras for a, _ in internal_links(m.group(0))}
     linked_anchors |= {a for xml in notes.values() if xml
                        for a, _ in internal_links(xml)}
@@ -790,15 +858,8 @@ def link_all(parts: dict[str, bytes], *,
                     except AnchorError as exc:
                         report.skipped.append(f"back-link ¶{i + 1}: {exc}")
         here = plan if where == "¶" else note_plans[by_label[where]]
-        for cite, name in here.get(i, []):
-            try:
-                para = link_in_para(para, cite, name)
-                para = wrap_link_in_bookmark(para, name, twin_name[name],
-                                             next(bids))
-                report.linked.append(f"{name} @ {where}{i + 1}")
-            except AnchorError as exc:
-                report.skipped.append(f"{cite!r} {where}{i + 1}: {exc}")
-        return para
+        return _wire_mentions(para, here.get(i, []), at=f"{where}{i + 1}",
+                              twin_name=twin_name, bids=bids, report=report)
 
     todo = sorted(set(plan) | set(by_entry), reverse=True)
     for i in todo:
