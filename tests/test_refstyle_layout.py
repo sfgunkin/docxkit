@@ -981,3 +981,52 @@ def test_neither_side_reports_a_page_when_the_HEADING_OPENS_the_document():
     assert not [i for i in audit(parts).issues if i.code == "page-break"]
     assert not layout(parts).page_break
     assert parts["word/document.xml"] == doc_before
+
+
+ENTRY_D = 'Diller, D. (2016). "Fourth." Journal, 4(4), 70-80.'
+
+
+def test_a_stray_PAST_THE_SECOND_ENTRY_is_still_inside_the_list():
+    """The span is `entries[0].index` to `entries[-1].index`, and with
+    TWO entries `entries[-1]` and `entries[1]` are the same paragraph —
+    which is every fixture in this file. Four entries tell them apart:
+    read as `entries[1]`, the scan stops at the second and a stray
+    below it is never seen.
+
+    That is not a missed message. `refile` goes on to SORT a list it has
+    not checked, and the stray — which is not an entry and has no
+    sort key of its own — is carried along with whatever entry it
+    happens to follow."""
+    parts = _list_with(
+        para(run("Body one.")), para(run("References")),
+        para(run(ENTRY_A)), para(run(ENTRY_B)), para(run(ENTRY_C)),
+        para(run("A stray note nobody meant to leave here.")),
+        para(run(ENTRY_D)))
+
+    report = refile(parts)
+
+    assert not report.moved
+    assert "sits inside the list and is not an entry" in (report.refused or "")
+    assert "A stray note nobody meant" in report.refused
+
+
+def test_the_stray_named_is_the_FIRST_of_them():
+    """A refusal sends a reader to one paragraph. With several strays it
+    has to be the one nearest the top: fixing them in order is what a
+    person does, and the last one is the least useful place to start.
+
+    Every fixture before this had a single stray, where the first and
+    the last are the same paragraph."""
+    parts = _list_with(
+        para(run("Body one.")), para(run("References")),
+        para(run(ENTRY_A)),
+        para(run("The FIRST stray.")),
+        para(run(ENTRY_B)),
+        para(run("The second stray.")),
+        para(run(ENTRY_C)))
+
+    report = refile(parts)
+
+    assert "The FIRST stray" in report.refused, report.refused
+    assert "second stray" not in report.refused, report.refused
+    assert report.refused.startswith("\u00b64 "), report.refused
