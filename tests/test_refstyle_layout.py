@@ -1130,3 +1130,21 @@ def test_the_page_break_line_names_the_paragraph_a_reader_must_open():
 
     assert report.page_break.startswith("\u00b62: References"), \
         report.page_break
+
+
+def test_the_AUDITS_page_break_finding_names_the_paragraph_as_well():
+    """Every test of this finding so far asserts that there ISN'T one —
+    no heading, a break already present, the heading opening the
+    document — so the `where` it carries when there IS one was never
+    read. It is the same number as the repair's report line and it does
+    the same job: sends a person to one paragraph out of a hundred.
+
+    `head` is 1 in this fixture, where `head + 1` is 2 while `head ^ 1`
+    is 0 and `head | 1` is 1."""
+    parts = make_parts(reflist(entry(A)))
+
+    report = audit(parts)
+
+    (found,) = [i for i in report.issues if i.code == "page-break"]
+    assert found.where == "\u00b62", found.where
+    assert "References" in found.snippet, found.snippet

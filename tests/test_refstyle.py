@@ -2868,3 +2868,51 @@ def test_a_bare_citation_that_is_a_whole_FOOTNOTE_is_still_cited():
     assert snippet == "Nowak 2018"
     assert not [i for i in report.issues if i.code == "uncited"], \
         [i.snippet for i in report.issues if i.code == "uncited"]
+
+
+def test_a_REFUSED_entry_does_not_stop_the_ones_below_it(monkeypatch):
+    """`convert` walks the list and reports per entry. A refusal is a
+    statement about ONE entry — its letters and digits would change —
+    and every other entry in the list is still convertible.
+
+    As a `break` the first refusal ends the pass: the entries below it
+    are neither converted nor reported, and the run looks like a list
+    with one problem in it rather than a list that was half read. A
+    bibliography usually has one awkward entry."""
+    real = refstyle.convert_text
+
+    def refuse_the_first(text, style=HOUSE):
+        if "Acemoglu" in text:
+            raise ConversionRefused("nope")
+        return real(text, style)
+
+    monkeypatch.setattr(refstyle, "convert_text", refuse_the_first)
+    parts = _list_parts('Acemoglu, D. 2020. "Robots." JPE.',
+                        'Brown, A. 2019. "A Title." Journal.')
+
+    report = convert(parts)
+
+    assert len(report.refused) == 1, report.refused
+    assert any("Brown" in c or "\u00b64" in c for c in report.changed), \
+        (report.changed, report.refused)
+
+
+def test_a_fix_whose_ANCHOR_MISSES_does_not_stop_the_other_fixes(monkeypatch):
+    """The same shape one level down. A fix is skipped when its anchor
+    is not in the paragraph — an earlier fix rewrote the window it
+    quoted — and the fixes after it are the ones that have not been
+    tried yet. As a `break` they are silently dropped and the entry is
+    written half converted."""
+    monkeypatch.setattr(
+        refstyle, "convert_text",
+        lambda text, style=HOUSE: (text, [
+            refstyle.Fix("absent", "NOT IN THIS ENTRY AT ALL", "x"),
+            refstyle.Fix("ampersand", "&", "and"),
+        ]))
+    parts = _list_parts('Smith, J. & Lee, K. 2020. "T." Journal.')
+
+    report = convert(parts)
+
+    assert [c.split(": ")[-1] for c in report.changed] == ["ampersand"], \
+        (report.changed, report.skipped)
+    assert len(report.skipped) == 1, report.skipped
