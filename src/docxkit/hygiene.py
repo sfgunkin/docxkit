@@ -680,7 +680,21 @@ def _is_note(text: str) -> bool:
 
 
 def _is_heading(para_xml: str) -> bool:
-    m = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+    """Is this paragraph styled as a heading — NOW.
+
+    Through `_live_ppr`, for the reason `_declared_before` states twenty
+    lines below: a `w:pPrChange` snapshot records the properties a
+    tracked change REPLACED, and reading it answers for the past. This
+    one searched the whole paragraph, so a change that turned a Heading2
+    into body text left its only `w:pStyle` inside the snapshot and the
+    paragraph still read as a heading.
+
+    It is not a cosmetic misreading. `table_spacing` treats a heading as
+    "has its own spacing" and BREAKS — so the paragraph that really does
+    resume after the table gets no space, and the whole table is
+    abandoned with a skip line about a heading nobody can see.
+    """
+    m = re.search(r'<w:pStyle w:val="([^"]+)"', _live_ppr(para_xml))
     # `m is not None`, not `bool(m)`: only the former narrows the Optional
     # away for a type checker, and the gate went red on the difference.
     return m is not None and m.group(1).lower().startswith("heading")
@@ -718,6 +732,43 @@ def _live_ppr(para_xml: str) -> str:
     return live_properties(own[2]) if own is not None else ""
 
 
+#: The paragraph MARK's run properties. CT_PPr's own `w:rPr` is a
+#: CT_ParaRPr, and CT_ParaRPr has a `w:spacing` of its own — CHARACTER
+#: spacing, in a different unit, about the pilcrow. It is not the
+#: paragraph's spacing and must not be read as it.
+_MARK_RPR_RE = re.compile(r"<w:rPr\b[^>]*(?<!/)>.*?</w:rPr>", re.DOTALL)
+_SPACING_OPEN_RE = re.compile(r"<w:spacing\b[^>]*>")
+
+
+def _own_spacing(para_xml: str) -> str | None:
+    """The paragraph's own `w:spacing`, as a self-closing tag.
+
+    Two ways the plain search for `<w:spacing\b[^>]*/>` over the whole
+    `pPr` got this wrong, and each one damaged the paragraph.
+
+    TOO BROAD: it reached inside the paragraph mark's `w:rPr` and found
+    the character spacing there. `_set_before` then carried that tag's
+    attributes up, and wrote `<w:spacing w:before="120" w:val="20"/>` as
+    a direct child of `pPr` — `w:val` is not a CT_Spacing attribute, so
+    a schema-invalid element, on a paragraph that had declared no
+    spacing at all.
+
+    TOO NARROW: `<w:spacing w:after="0" w:line="240"></w:spacing>` is
+    legal and did not match, so the branch that KEEPS the paragraph's
+    other attributes was skipped and a bare `<w:spacing w:before="120"/>`
+    replaced it — `w:after` and `w:line` gone, which is the exact loss
+    the element is built here to prevent.
+
+    CT_Spacing has no child elements, so the long form is the short one
+    with a closing tag and normalising it loses nothing.
+    """
+    m = _SPACING_OPEN_RE.search(_MARK_RPR_RE.sub("", _live_ppr(para_xml)))
+    if m is None:
+        return None
+    tag = m.group(0)
+    return tag if tag.endswith("/>") else tag[:-1] + "/>"
+
+
 def _set_before(para_xml: str, twentieths: int) -> tuple[str, bool]:
     """Set `w:spacing/@w:before` on a paragraph, inserting pPr if need be.
 
@@ -726,9 +777,8 @@ def _set_before(para_xml: str, twentieths: int) -> tuple[str, bool]:
     `w:line` beside the value being set and those are the paragraph's
     own.
     """
-    m = re.search(r"<w:spacing\b[^>]*/>", _live_ppr(para_xml))
-    if m is not None:
-        tag = m.group(0)
+    tag = _own_spacing(para_xml)
+    if tag is not None:
         if re.search(rf'w:before="{twentieths}"', tag):
             return para_xml, False
         stripped = re.sub(r'\s*w:before="[^"]*"', "", tag)

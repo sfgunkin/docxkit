@@ -15,6 +15,7 @@ from conftest import NS, para, run
 from docxkit._xml import visible_text
 from docxkit.hygiene import (
     _is_equation_carrier,
+    _set_before,
     restore_math_glyphs,
     restore_parts,
     table_spacing,
@@ -572,3 +573,84 @@ def test_a_table_that_ENDS_the_document_spaces_nothing():
 
     assert report.spaced == []
     assert before_of(out, "Before") is None
+
+
+def test_a_heading_a_tracked_change_DEMOTED_is_not_a_heading_any_more():
+    """`w:pPrChange` records the properties a tracked change REPLACED,
+    so a change that turned a Heading2 into body text leaves the only
+    `w:pStyle` in the paragraph inside that snapshot. Searching the
+    whole paragraph reads it and answers for the past — the defect
+    `_declared_before` states, in this same file, twenty lines away.
+
+    The cost is not a misread flag. A heading is treated as carrying its
+    own spacing and BREAKS the walk, so the paragraph that really does
+    resume gets no space and the table is abandoned with a skip line
+    about a heading nobody can see in the document."""
+    demoted = ('<w:p><w:pPr><w:pPrChange w:id="7" w:author="A" '
+               'w:date="2026-08-24T00:00:00Z"><w:pPr>'
+               '<w:pStyle w:val="Heading2"/></w:pPr></w:pPrChange></w:pPr>'
+               "<w:r><w:t>The table shows.</w:t></w:r></w:p>")
+    xml = doc(table("Region", "Value") + demoted)
+
+    out, report = table_spacing(xml)
+
+    assert report.skipped == [], report.skipped
+    assert report.spaced == ["The table shows."]
+    assert before_of(out, "The table shows") == "120"
+
+
+def test_a_paragraph_that_IS_a_heading_is_still_skipped():
+    """The other side of the same read: a live `w:pStyle` still counts,
+    and a heading carries its own, larger spacing from its style —
+    giving it 6pt would make the gap smaller, not larger."""
+    heading = ('<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>'
+               "<w:r><w:t>Results</w:t></w:r></w:p>")
+    xml = doc(table("Region", "Value") + heading)
+
+    out, report = table_spacing(xml)
+
+    assert report.spaced == []
+    assert any("heading" in line for line in report.skipped), report.skipped
+    assert before_of(out, "Results") is None
+
+
+def test_the_paragraph_MARKS_character_spacing_is_not_the_paragraphs():
+    """CT_PPr's own `w:rPr` is a CT_ParaRPr, and that has a `w:spacing`
+    too — character spacing, in a different unit, about the pilcrow.
+    Ordinary Word output.
+
+    Searching the whole `pPr` found it and carried its attributes up, so
+    a paragraph that had declared no spacing at all came out with
+    `<w:spacing w:before="120" w:val="20"/>` as a direct child of `pPr`.
+    `w:val` is not a CT_Spacing attribute: a schema-invalid element,
+    written by a repair."""
+    para_xml = ('<w:p><w:pPr><w:rPr><w:spacing w:val="20"/></w:rPr></w:pPr>'
+                "<w:r><w:t>The table shows.</w:t></w:r></w:p>")
+
+    out, changed = _set_before(para_xml, 120)
+
+    assert changed
+    assert '<w:spacing w:before="120"/>' in out, out
+    assert 'w:before="120" w:val' not in out, out
+    # …and the mark's own spacing is left exactly as it was
+    assert '<w:rPr><w:spacing w:val="20"/></w:rPr>' in out, out
+
+
+def test_a_LONG_FORM_spacing_keeps_the_attributes_beside_the_one_being_set():
+    """`<w:spacing w:after="0" w:line="240"></w:spacing>` is legal and
+    is the same element as the self-closing spelling. Matched only in
+    the short form, the branch that KEEPS the paragraph's other
+    attributes was skipped and a bare `w:before` replaced the lot —
+    `w:after` and `w:line` gone, which is the exact loss this function
+    builds the element by hand to prevent."""
+    para_xml = ('<w:p><w:pPr><w:spacing w:after="0" w:line="240" '
+                'w:lineRule="auto"></w:spacing></w:pPr>'
+                "<w:r><w:t>The table shows.</w:t></w:r></w:p>")
+
+    out, changed = _set_before(para_xml, 120)
+
+    assert changed
+    assert 'w:before="120"' in out
+    assert 'w:after="0"' in out, out
+    assert 'w:line="240"' in out, out
+    assert 'w:lineRule="auto"' in out, out
