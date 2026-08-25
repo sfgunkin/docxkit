@@ -1030,3 +1030,60 @@ def test_the_stray_named_is_the_FIRST_of_them():
     assert "The FIRST stray" in report.refused, report.refused
     assert "second stray" not in report.refused, report.refused
     assert report.refused.startswith("\u00b64 "), report.refused
+
+
+def test_an_entry_with_TOO_MUCH_space_is_a_finding_as_much_as_too_little():
+    """The rule is a house VALUE, not a floor. An entry pasted from a
+    browser arrives with 200 twentieths after it where the house wants
+    80, and read as `have < want` that is not a deviation at all — the
+    audit comes back clean on a list that visibly does not match, and
+    `layout` fixes a paragraph the audit never mentioned, which is the
+    pair this helper is shared to prevent."""
+    roomy = ('<w:pPr><w:spacing w:before="0" w:after="200"/>'
+             '<w:ind w:left="720" w:hanging="720"/></w:pPr>')
+
+    issues = entry_layout_issues(entry(A, ppr=roomy), None)
+
+    assert [i.code for i in issues] == ["spacing"], issues
+    assert "200" in issues[0].message, issues[0].message
+
+
+def test_the_finding_NAMES_the_value_it_found():
+    """"is unset" and "is 200" are different instructions to whoever
+    reads the report: one says the paragraph declares nothing and
+    inherits, the other says it declares the wrong number. Inverted, the
+    message says "unset" about every value it found and prints the value
+    only when there is none."""
+    roomy = ('<w:pPr><w:spacing w:before="0" w:after="200"/>'
+             '<w:ind w:left="720" w:hanging="720"/></w:pPr>')
+
+    (found,) = entry_layout_issues(entry(A, ppr=roomy), None)
+
+    assert found.message == "space after is 200, the house rule is 80"
+
+
+def test_a_paragraph_that_declares_NOTHING_is_reported_as_unset():
+    """The other half of the same message. No `w:spacing` anywhere and
+    no style to inherit from: the reader is told the paragraph states
+    nothing, which is a different repair from a wrong number."""
+    bare = '<w:pPr><w:ind w:left="720" w:hanging="720"/></w:pPr>'
+
+    (found,) = entry_layout_issues(entry(A, ppr=bare), None)
+
+    assert found.message == "space after is unset, the house rule is 80"
+
+
+def test_an_entry_that_DECLARES_the_house_value_is_not_left_to_the_style():
+    """`_effective` answers two things — the value a reader sees, and
+    whether the PARAGRAPH is what states it. The second is what tells
+    "already right because it says so" from "already right because the
+    style says so", and only the second is reported as left to the
+    style: writing a value equal to the inherited one is a change Word
+    deletes on its next save."""
+    house = ('<w:pPr><w:spacing w:before="0" w:after="80"/>'
+             '<w:ind w:left="720" w:hanging="720"/></w:pPr>')
+    parts = make_parts(reflist(entry(A, ppr=house)))
+
+    report = layout(parts)
+
+    assert report.inherited == [], report.inherited
