@@ -2184,3 +2184,99 @@ def test_the_audit_carries_it_and_the_other_buckets_are_unmoved():
 
     assert len(state["fieldless"]) == 1
     assert state["dangling"] == [] and state["misnamed"] == []
+
+
+# --- half-linked: the forward link survived, the marker did not --------
+#
+# What an author round produces. Word rewrites the paragraph a mention
+# sits in and takes the `<key>txt` bookmark with it, leaving the link
+# alone — so `crossrefs --audit` says `caption_only: Figure2,
+# dangling: Figure2txt` and `--write` used to answer "already linked by
+# a Word field", exit 0, write a file and repair nothing (Aging_Well
+# R11, 2026-08-24).
+
+def _ref_field(anchor: str) -> str:
+    """Word's own cross-reference back-link, as it writes it."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> REF {anchor} '
+            + chr(92) + 'h </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            "<w:r><w:t>back</w:t></w:r>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def _half_linked(back: str = "") -> str:
+    """A caption bookmarked and reached, with no `Figure2txt` under the
+    mention that still links to it."""
+    return doc(
+        para(run("As shown in "),
+             '<w:hyperlink w:anchor="Figure2"><w:r><w:t>Figure 2</w:t>'
+             "</w:r></w:hyperlink>", run(", the gap widens.")),
+        para('<w:bookmarkStart w:id="9" w:name="Figure2"/>',
+             run("Figure 2: The gap over time."), back,
+             '<w:bookmarkEnd w:id="9"/>'))
+
+
+def test_a_half_linked_exhibit_has_its_BOOKMARK_REBUILT_not_refused():
+    """The caption's back-link is a FIELD here, and the field guard was
+    reaching it: a field pointing at `Figure2txt` while that bookmark is
+    GONE is not a link this would double, it is a dangling one whose
+    target this can restore."""
+    xml = _half_linked(_ref_field("Figure2txt"))
+
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.repaired == ["Figure2"], report.format()
+    assert report.field_form == [], report.format()
+    assert 'w:name="Figure2txt"' in out
+    # a repair, not a second link
+    assert out.count('w:anchor="Figure2"') == 1
+    assert report.linked == []
+
+
+def test_the_rebuilt_bookmark_makes_the_AUDIT_come_back_clean():
+    """The two halves have to agree. Before, the audit reported the
+    dangle, the writer refused it, and the audit reported the same
+    dangle afterwards — which is the whole of the complaint."""
+    xml = _half_linked(_ref_field("Figure2txt"))
+
+    before = crossrefs.audit(xml, labels=("Figure",))
+    out, _ = crossrefs.link(xml, labels=("Figure",))
+    after = crossrefs.audit(out, labels=("Figure",))
+
+    assert before["caption_only"] == ["Figure2"]
+    assert before["dangling"] == ["Figure2txt"]
+    assert not after["caption_only"] and not after["dangling"], after
+    assert after["linked"] == ["Figure2"]
+
+
+def test_half_linked_is_repaired_with_no_field_in_the_document_at_all():
+    """The field was incidental to the report and is not what makes this
+    case: an element-form forward link with its marker eaten is the same
+    half-linked state, and was reached by the guard above it only by
+    luck of which half survived."""
+    xml = _half_linked()
+
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.repaired == ["Figure2"], report.format()
+    assert 'w:name="Figure2txt"' in out
+
+
+def test_a_GHOST_forward_link_is_reported_rather_than_called_repaired():
+    """A self-closing `<w:hyperlink/>` is an empty shell Word leaves
+    behind, with no span to wrap a bookmark around, and
+    `wrap_link_in_bookmark` will not take one. Saying so beats reporting
+    a repair that did not happen."""
+    xml = doc(
+        para(run("As shown in "), '<w:hyperlink w:anchor="Figure2"/>',
+             run("Figure 2, the gap widens.")),
+        para('<w:bookmarkStart w:id="9" w:name="Figure2"/>',
+             run("Figure 2: The gap over time."),
+             '<w:bookmarkEnd w:id="9"/>'))
+
+    _, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.repaired == [], report.format()
+    note = report.notes.get("Figure2", "")
+    assert "half-linked, not repaired" in note, report.format()

@@ -61,7 +61,7 @@ from ._xml import (
     own_properties,
     visible_text,
 )
-from .citations import next_bookmark_id
+from .citations import next_bookmark_id, wrap_link_in_bookmark
 from .errors import AnchorError, ConversionGap
 
 # The caption DEFINITION lives in `find`, one layer down, because
@@ -172,6 +172,14 @@ class LinkReport:
     #: link on top — two schemes over one caption. Reported rather than
     #: raised: linking the REST of the document is still worth doing.
     field_form: list[str] = field(default_factory=list)
+    #: Objects whose forward link SURVIVED while the `<key>txt` bookmark
+    #: under it did not — the state an author round produces, since Word
+    #: rewrites a paragraph and takes the bookmark with it. Rebuilding
+    #: that bookmark where the surviving link sits is a repair and not a
+    #: second link, so it is counted apart from `linked`: nothing new
+    #: points anywhere, something that already pointed somewhere can be
+    #: followed back again.
+    repaired: list[str] = field(default_factory=list)
     notes: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -182,6 +190,9 @@ class LinkReport:
     def format(self) -> str:
         lines = [(f"linked {len(self.linked)}, already linked "
                   f"{len(self.already_linked)}")]
+        if self.repaired:
+            lines.append(f"  half-linked, bookmark rebuilt under the "
+                         f"surviving link: {', '.join(self.repaired)}")
         if self.no_mention:
             lines.append(f"  no in-text mention: {', '.join(self.no_mention)}")
         if self.no_caption:
@@ -624,6 +635,36 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
                 and cap.name in reaches and cap.mention_name in reaches):
             report.already_linked.append(cap.name)
             continue
+
+        # HALF-LINKED, and it is not the same thing as already
+        # linked. The forward link survives — element form or field —
+        # and the `<key>txt` bookmark under it is gone, which is what an
+        # author round produces: Word rewrites the paragraph and takes
+        # the bookmark with it while leaving the link alone.
+        #
+        # Rebuilding that bookmark where the surviving link sits adds no
+        # second scheme, so the field refusal below must not reach it.
+        # It did, and the result was `crossrefs --audit` reporting
+        # `caption_only: Figure2, dangling: Figure2txt` while
+        # `crossrefs --write` answered "ALREADY LINKED BY A WORD FIELD",
+        # exited 0, wrote a file and repaired nothing (Aging_Well R11,
+        # 2026-08-24). The paper carried a script whose whole job was to
+        # call `wrap_link_in_bookmark` by hand.
+        if have_cap and not have_txt and cap.name in reaches | fielded:
+            bid = _next_bookmark_id(xml, other_parts)
+            try:
+                xml = wrap_link_in_bookmark(xml, cap.name, cap.mention_name,
+                                            bid, which="first")
+            except AnchorError as exc:
+                # A GHOST link — self-closing, no span to wrap — is not
+                # one the helper will take, and it RAISES rather than
+                # declining. This module reports rather than raises: a
+                # paper legitimately holds one, and failing the whole
+                # linking run over it would be worse than saying so.
+                report.notes[cap.name] = f"half-linked, not repaired: {exc}"
+            else:
+                report.repaired.append(cap.name)
+                continue
 
         # A field already points here and the marker it needs is NOT
         # there, so linking would stack a second scheme on the same
