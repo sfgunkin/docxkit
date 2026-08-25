@@ -1458,6 +1458,23 @@ class Relabelled:
     was: str
     now: str
 
+    @property
+    def unbalanced(self) -> str:
+        """The bracket the new label opens or closes and the other does not.
+
+        RE-LABELLED exists to say "the anchor is intact, nothing is
+        lost, do not block the baseline" — which is right about the
+        anchor and silent about the SPAN. An author turning a narrative
+        citation parenthetical leaves Word holding the old right-hand
+        boundary, so the link covers `Klimaviciute and Pestieau 2023)`:
+        a closing bracket with no opening one inside the blue. That is
+        damage wearing a re-label's clothes, and this is what tells the
+        two apart.
+        """
+        from .citations import unbalanced_span
+
+        return unbalanced_span(self.now)
+
     def __str__(self) -> str:
         return f"link {self.anchor}: {self.was[:40]!r} -> {self.now[:40]!r}"
 

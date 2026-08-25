@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from typing import NamedTuple
 
 from ._cite_grammar import (
@@ -376,6 +377,66 @@ def _misplaced_markers(doc: str, paras: list[re.Match[str]],
     return found
 
 
+def unbalanced_span(label: str) -> str:
+    """The bracket a link's label opens or closes and the other does not.
+
+    A link SPAN is invisible to everything else. `citations` counts a
+    link whose anchor resolves, `refstyle` does not look at spans,
+    `compare`'s TEXT layer sees no character move because none moved,
+    and `revision ingest` files it under RE-LABELLED — a section that
+    exists to say "nothing is lost, do not block the baseline", which is
+    right about the anchor and silent about the span.
+
+    Bracket balance is the cheap, precise rule for the way spans really
+    break. An author turns a narrative citation parenthetical —
+    "Klimaviciute and Pestieau (2023)" becomes "(Klimaviciute and
+    Pestieau 2023)" — and Word keeps the old right-hand boundary, so the
+    link covers `Klimaviciute and Pestieau 2023)`: a closing bracket
+    with no opening one inside the blue.
+
+    Every house form closes what it opens — "Grossman (1972)",
+    "de São José et al. (2019)", "Klimaviciute, A. and P. Pestieau.
+    (2023)." — so this fires on the damage and not on the convention.
+    Returns "" when the label is balanced.
+    """
+    depth = 0
+    for ch in label:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return ")"
+    return "(" if depth else ""
+
+
+def _span_findings(links: dict[str, list[tuple[int, str]]],
+                   bookmarks: dict[str, int],
+                   where: Callable[[int], str]) -> list[_Finding]:
+    """Links whose label does not close what it opens.
+
+    A BROKEN one is reported elsewhere and reported first: an anchor
+    that resolves nowhere is the bigger fact about the same link, and
+    saying both would be two lines about one repair. So this asks only
+    of links that are otherwise sound — where the anchor is fine and the
+    blue is wrong.
+    """
+    out: list[_Finding] = []
+    for anchor, sites in sorted(links.items()):
+        if anchor not in bookmarks:
+            continue
+        for i, label in sites:
+            if not (bracket := unbalanced_span(label)):
+                continue
+            out.append(_Finding(
+                "UNBALANCED SPAN", anchor,
+                f"UNBALANCED SPAN: the link to '{anchor}' "
+                f'({where(i)}) covers "{label[:48]}" — an unmatched '
+                f"'{bracket}', so the span has reached past its "
+                f"mention; the anchor is fine and the blue is wrong"))
+    return out
+
+
 def _audit_findings(parts: dict[str, bytes], *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
@@ -503,6 +564,7 @@ def _audit_findings(parts: dict[str, bytes], *,
                     f'({where(i)}, "{label[:40]}") '
                     "— no such bookmark"))
                 broken += 1
+    issues += _span_findings(links, bookmarks, where)
     for i, m in enumerate(paras):
         for outer, inner in _doubled_links(m.group(0)):
             issues.append(_Finding(

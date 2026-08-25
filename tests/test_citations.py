@@ -4262,3 +4262,87 @@ def test_a_twin_bookmark_in_the_FOOTNOTES_is_not_reported_missing():
     assert twins.count("Smith2020txt") == 1, twins
     assert "Smith2020txt" not in re.findall(
         r'w:bookmarkStart[^>]*w:name="([^"]+)"', body_doc), body_doc
+
+
+# --- the span nothing had an opinion about ------------------------------
+#
+# The author turns a narrative citation parenthetical — "Klimaviciute and
+# Pestieau (2023)" becomes "(Klimaviciute and Pestieau 2023)" — and Word
+# keeps the old right-hand boundary, so the link covers a closing bracket
+# with no opening one inside the blue. `citations` counted a link whose
+# anchor resolves, `refstyle` does not look at spans, `compare`'s TEXT
+# layer saw no character move because none moved, and `ingest` filed it
+# under RE-LABELLED (Aging_Well, 2026-08-25).
+
+def _linked(anchor: str, label: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+            "</w:r></w:hyperlink>")
+
+
+def _spanned(label: str) -> dict[str, bytes]:
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + "<w:p>" + R("As shown ") + bookmark("Klim2023txt", 70)
+            + _linked("Klim2023", label) + R(" the effect holds.")
+            + "</w:p>"
+            + P(R("References"))
+            + P(bookmark("Klim2023", 71)
+                + _linked("Klim2023txt",
+                          "Klimaviciute, A. and P. Pestieau. (2023).")
+                + R(" A title. Journal.")))
+    return xml_parts(body)
+
+
+def test_a_link_that_swallowed_a_CLOSING_BRACKET_is_a_finding():
+    """The anchor resolves and the words are all there, so every other
+    layer is content. The bracket is what says the span moved."""
+    from docxkit.citations import audit_links
+
+    issues, _ = audit_links(_spanned("Klimaviciute and Pestieau 2023)"))
+
+    (found,) = [i for i in issues if "UNBALANCED SPAN" in i]
+    assert "Klim2023" in found
+    assert "unmatched ')'" in found, found
+
+
+def test_a_link_left_OPEN_is_the_same_finding_the_other_way():
+    """The mirror image, from an author who moved the left boundary
+    instead: the blue opens a bracket the label never closes."""
+    from docxkit.citations import audit_links
+
+    issues, _ = audit_links(_spanned("(Klimaviciute and Pestieau 2023"))
+
+    (found,) = [i for i in issues if "UNBALANCED SPAN" in i]
+    assert "unmatched '('" in found, found
+
+
+@pytest.mark.parametrize("label", [
+    "Grossman (1972)",                            # the house narrative form
+    "de São José et al. (2019)",                  # a particle and accents
+    "Maestas et al. (2023, p. 45)",               # a locator
+    "(Klimaviciute and Pestieau 2023)",           # parenthetical, whole
+    "Klimaviciute and Pestieau 2023",             # bare, no brackets at all
+])
+def test_every_house_form_closes_what_it_opens(label):
+    """The rule has to fire on the damage and never on the convention,
+    or it is one more warning a reader learns to scroll past."""
+    from docxkit.citations import audit_links
+
+    issues, _ = audit_links(_spanned(label))
+
+    assert not [i for i in issues if "UNBALANCED SPAN" in i], issues
+
+
+def test_RE_LABELLED_says_when_a_re_label_left_the_span_unbalanced():
+    """That section exists to say "the anchor is intact, nothing is
+    lost, do not block the baseline" — right about the anchor and silent
+    about the span, which is the one thing that would send a reader past
+    this. An unbalanced label is damage wearing a re-label's clothes."""
+    from docxkit.revision import Relabelled
+
+    damage = Relabelled("Klim2023", "Klimaviciute and Pestieau (2023)",
+                        "Klimaviciute and Pestieau 2023)")
+    ordinary = Relabelled("Smith2020", "Smith (2020)", "(Smith 2020)")
+
+    assert damage.unbalanced == ")"
+    assert not ordinary.unbalanced

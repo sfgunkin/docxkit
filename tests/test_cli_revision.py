@@ -1578,3 +1578,57 @@ def test_a_LOST_part_says_DECLARE_it_rather_than_naming_a_function(
     # and WHY the config rather than a copy: the three coordinated edits
     # a hand-written copy leaves out.
     assert "Content-Types" in out and "sectPr" in out, out
+
+
+def test_ingest_says_when_a_RE_LABEL_left_the_span_UNBALANCED(monkeypatch,
+                                                              project,
+                                                              capsys):
+    """The section's own message is what would send a reader past this:
+    "the anchors are intact, nothing is lost, `revision baseline` does
+    not refuse". That is right about the anchor and silent about the
+    SPAN.
+
+    The author turned a narrative citation parenthetical and Word kept
+    the old right-hand boundary, so the link covers a closing bracket
+    with no opening one inside the blue. Nothing else can see it — the
+    anchor resolves, no character moved — and it is damage wearing a
+    re-label's clothes (Aging_Well, 2026-08-25)."""
+    write(project.prev, make_parts(para(
+        run("As shown "),
+        '<w:hyperlink w:anchor="ref_Klim2023">'
+        "<w:r><w:t>Klimaviciute and Pestieau (2023)</w:t></w:r>"
+        "</w:hyperlink>")))
+    write(project.working, make_parts(para(
+        run("As shown ("),
+        '<w:hyperlink w:anchor="ref_Klim2023">'
+        "<w:r><w:t>Klimaviciute and Pestieau 2023)</w:t></w:r>"
+        "</w:hyperlink>")))
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "== RE-LABELLED (1) ==" in out, out
+    assert "UNBALANCED" in out, out
+    assert "unmatched ')'" in out, out
+    assert "reached past its mention" in out, out
+
+
+def test_an_ORDINARY_re_label_gets_no_span_warning(monkeypatch, project,
+                                                   capsys):
+    """The other side, and the one that decides whether the warning is
+    worth having: an author editing the visible text of a citation is an
+    ordinary edit, and a section that cried damage over one would be a
+    section people stop reading."""
+    _ate_a_link(project)
+    write(project.working, make_parts(para(
+        run("see "),
+        '<w:hyperlink w:anchor="ref_Ritchie2023b">'
+        "<w:r><w:t>Ritchie and Roser (2023b)</w:t></w:r></w:hyperlink>")))
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert "== RE-LABELLED (1) ==" in out, out
+    assert "UNBALANCED" not in out, out

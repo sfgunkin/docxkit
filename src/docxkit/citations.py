@@ -33,6 +33,7 @@ from ._cite_audit import _audit_findings as _audit_findings
 from ._cite_audit import _doubled_links as _doubled_links
 from ._cite_audit import _Finding as _Finding
 from ._cite_audit import audit_links as audit_links
+from ._cite_audit import unbalanced_span as unbalanced_span
 from ._cite_build import _ACRONYM_RE as _ACRONYM_RE
 
 # re-exported from _cite_build: `as` form marks it deliberate
@@ -146,6 +147,7 @@ __all__ = [
     "references",
     "remove_outer_field",
     "repair_plan",
+    "unbalanced_span",
     "unlink_by_anchor",
     "wrap_link_in_bookmark",
     "wrap_visible_span",

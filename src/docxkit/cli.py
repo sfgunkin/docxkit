@@ -1265,6 +1265,19 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
               "lost and\n   `revision baseline` does not refuse: an author "
               "editing the visible\n   text of a citation is an ordinary "
               "edit, not damage.")
+        # …unless the new label does not close what it opens. Then the
+        # anchor is fine and the SPAN has reached past its mention, and
+        # this section's whole message — nothing is lost — is the one
+        # thing that would send a reader past it.
+        if odd := [c for c in report.relabelled if c.unbalanced]:
+            print(f"\n   BUT {len(odd)} of these left the span "
+                  f"UNBALANCED, which is not a re-label:")
+            for change in odd:
+                print(f"     {change.anchor}: {change.now[:48]!r} carries "
+                      f"an unmatched {change.unbalanced!r}")
+            print("   The link has reached past its mention — run "
+                  "`docxkit citations` for\n   the UNBALANCED SPAN "
+                  "findings, and repair the spans before the baseline.")
 
     print("\n== state ==")
     _show_state("working", report.working_state)
