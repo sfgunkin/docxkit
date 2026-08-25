@@ -1803,3 +1803,80 @@ def test_a_part_in_ANOTHER_ENCODING_does_not_stop_the_glyph_repair():
 
     assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
     assert built["customXml/item1.xml"] == store, "the store was rewritten"
+
+
+# --- the carry has TWO sources -----------------------------------------
+#
+# `restore_parts` puts a dropped part back from the revised input. When
+# Word ate the part THERE too, that restores nothing and every gate
+# agrees — because every gate compares the redline against that same
+# clean copy, and they agree about the absence. The baseline still has
+# it (HCW, 2026-08-24).
+
+def _zotero_package(with_store: bool) -> dict[str, bytes]:
+    """A manuscript with Word's bibliography store and Zotero's prefs —
+    which is what these parts really hold: measured across 197 papers,
+    `<b:Sources>` in 146 and `ZOTERO_PREF` in 68."""
+    parts = make_parts(para(run("body")))
+    parts["[Content_Types].xml"] = (
+        b'<Types><Override PartName="/word/document.xml" '
+        b'ContentType="doc"/></Types>')
+    parts["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="styles.xml"/></Relationships>')
+    parts["_rels/.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Type="T" '
+        b'Target="word/document.xml"/></Relationships>')
+    if with_store:
+        parts["customXml/item1.xml"] = b"<b:Sources><b:Source/></b:Sources>"
+        parts["customXml/itemProps1.xml"] = b"<ds:datastoreItem/>"
+        parts["[Content_Types].xml"] = (
+            b'<Types><Override PartName="/word/document.xml" '
+            b'ContentType="doc"/>'
+            b'<Override PartName="/customXml/itemProps1.xml" '
+            b'ContentType="application/xml"/></Types>')
+        parts["word/_rels/document.xml.rels"] = (
+            b'<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+            b'<Relationship Id="rId5" Target="../customXml/item1.xml"/>'
+            b"</Relationships>")
+    return parts
+
+
+def test_a_carried_part_the_CLEAN_COPY_lost_comes_from_the_baseline():
+    """The state the entry describes: the redline has no data store and
+    neither has the file the author sent back, so restoring from the
+    revised input restores nothing at all and says so by returning an
+    empty list. Asking the baseline second is what puts it back."""
+    from docxkit.hygiene import restore_parts
+
+    redline = _zotero_package(with_store=False)
+    revised = _zotero_package(with_store=False)   # Word ate it here too
+    baseline = _zotero_package(with_store=True)
+
+    from_clean = restore_parts(redline, revised, prefixes=("customXml/",))
+    assert from_clean == [], "the clean copy has nothing to give"
+
+    from_base = restore_parts(redline, baseline, prefixes=("customXml/",))
+
+    assert from_base == ["customXml/item1.xml", "customXml/itemProps1.xml"]
+    assert b"<b:Sources>" in redline["customXml/item1.xml"]
+
+
+def test_the_baseline_is_asked_SECOND_so_the_clean_copy_still_wins():
+    """A rescue, not a sync: the revised copy is the newer document, so
+    a part it still HAS must not be overwritten by the baseline's older
+    one. Asking the baseline afterwards relies on `restore_parts`
+    leaving a part that is already present exactly as it is."""
+    from docxkit.hygiene import restore_parts
+
+    redline = _zotero_package(with_store=False)
+    revised = _zotero_package(with_store=True)
+    revised["customXml/item1.xml"] = b"<b:Sources>NEWER</b:Sources>"
+    baseline = _zotero_package(with_store=True)
+    baseline["customXml/item1.xml"] = b"<b:Sources>OLDER</b:Sources>"
+
+    restore_parts(redline, revised, prefixes=("customXml/",))
+    second = restore_parts(redline, baseline, prefixes=("customXml/",))
+
+    assert second == [], "nothing was still missing"
+    assert b"NEWER" in redline["customXml/item1.xml"]

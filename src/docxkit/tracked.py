@@ -721,6 +721,12 @@ class BuildReport:
         #: customXml data store, by default. See
         #: :func:`docxkit.hygiene.restore_parts`.
         self.carried: list[str] = []
+        #: Part-trees neither the redline NOR the clean copy still has,
+        #: taken from the BASELINE. Named apart from `carried` because
+        #: it is a different sentence: this build went back a version
+        #: for these, and that is the one case where an author might
+        #: want to look. See the note on the fallback in `build`.
+        self.carried_from_baseline: list[str] = []
         #: Core properties Compare's regenerated ``docProps/core.xml``
         #: no longer carried, and the build copied back by VALUE. See
         #: :func:`docxkit.hygiene.carry_properties`.
@@ -761,6 +767,10 @@ class BuildReport:
         if self.carried:
             lines.append(f"  carried back across the Compare: "
                          f"{', '.join(self.carried)}")
+        if self.carried_from_baseline:
+            lines.append(f"  the clean copy had lost these too, so they "
+                         f"come from the BASELINE: "
+                         f"{', '.join(self.carried_from_baseline)}")
         if self.carried_properties:
             lines.append(f"  properties carried back into core.xml: "
                          f"{', '.join(self.carried_properties)}")
@@ -1003,6 +1013,49 @@ def _clear_staging(staging: Path, building: Path, published: bool,
             f"see what Word was given; the next build overwrites it")
 
 
+def _carry_parts(parts: dict[str, bytes], revised_parts: dict[str, bytes],
+                 original: str | Path, *, carry: tuple[str, ...],
+                 report: BuildReport, say: Callable[[str], None]) -> None:
+    """Put back what Compare dropped, from the clean copy or the baseline.
+
+    Two sources on purpose. The clean copy is the usual one and is not
+    always A source: when Word ate the part THERE too, restoring from it
+    restores nothing and every gate agrees, because every gate compares
+    the redline against that same clean copy. The baseline still has it,
+    so it is asked second and reported apart — "this build went back a
+    version for these" is a different sentence, and the one case where
+    an author might want to look.
+
+    Whether to fall back at all is a judgment, and it was made on
+    measurement. Across 197 manuscripts in these projects `customXml/`
+    holds Word's `<b:Sources>` bibliography store in 146 of them and
+    `docProps/custom.xml` holds `ZOTERO_PREF` in 68 — the database
+    behind every CITATION field, and what makes Zotero recognise a
+    document as one it manages. Six carry an MSIP sensitivity label
+    besides. Losing any of it stops the author's citation workflow with
+    nothing red anywhere.
+
+    Against that, "the author deleted it deliberately" is a thin story
+    for these particular parts: Word barely exposes custom properties
+    and does not expose the data store at all, so it is not something a
+    prose edit does on purpose. The way to MEAN it stays explicit —
+    `strip_parts`, and `[batch] carry` for a paper that wants something
+    else.
+    """
+    report.carried = _hygiene.restore_parts(parts, revised_parts,
+                                            prefixes=carry)
+    for name in report.carried:
+        say(f"  carried across: {name} (Compare drops it; it is not "
+            f"referenced from the body, so it goes back with its "
+            f"content type and a free rId)")
+    report.carried_from_baseline = _hygiene.restore_parts(
+        parts, read_parts(original), prefixes=carry)
+    for name in report.carried_from_baseline:
+        say(f"  carried from the BASELINE: {name} (the clean copy no "
+            f"longer has it either — `strip_parts` is how to mean "
+            f"its removal)")
+
+
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
@@ -1161,12 +1214,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # back is three mechanical edits and no judgment — which is
         # exactly the sort of thing that belongs here rather than in a
         # paper's script directory, hand-run after every single build.
-        report.carried = _hygiene.restore_parts(parts, revised_parts,
-                                                prefixes=carry)
-        for name in report.carried:
-            say(f"  carried across: {name} (Compare drops it; it is not "
-                f"referenced from the body, so it goes back with its "
-                f"content type and a free rId)")
+        _carry_parts(parts, revised_parts, original, carry=carry,
+                     report=report, say=say)
         # And the same argument one level down, on the FIELDS of
         # docProps/core.xml: Word rebuilds that part with its own four
         # save fields and nothing else, so a titled manuscript becomes an
