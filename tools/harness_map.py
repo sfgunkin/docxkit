@@ -44,6 +44,7 @@ HARNESS: dict[str, list[str]] = {
                          "tests/test_tables_house.py",
                          "tests/test_tables_nested.py",
                          "tests/test_tables_decimals.py",
+                         "tests/test_tables_pin_stub.py",
                          "tests/test_tables_regrid.py",
                          "tests/test_width_model.py"],
     "cli.py": ["tests/test_cli.py", "tests/test_cli_guards.py",
@@ -241,6 +242,7 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
                        # printed precision, and reach _table_core only
                        # through rows_of/cells_of/_cell_text
                        "tests/test_tables_decimals.py",
+                       "tests/test_tables_pin_stub.py",
                        "tests/test_tables_regrid.py"),
     # the DATA half's files: they read cells and rewrite values, which
     # the layout module has no part in, and each costs wall clock on
@@ -253,6 +255,7 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
                   "tests/test_tables_fit_edges.py",
                   "tests/test_tables_house.py",
                   "tests/test_tables_decimals.py",
+                  "tests/test_tables_pin_stub.py",
                   "tests/test_tables_regrid.py",
                   "tests/test_tables_blank_rows.py"),
 }

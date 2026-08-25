@@ -495,8 +495,8 @@ def _set_tc_w(cell: str, tcw: str) -> str:
 
 
 def fit_columns(xml: str, table: Table, *, total: int | None = None,
-                pad: float = 1.05, margin: int | None = None
-                ) -> tuple[str, FitReport]:
+                pad: float = 1.05, margin: int | None = None,
+                pin_stub: bool = False) -> tuple[str, FitReport]:
     """Re-divide `table`'s width by what each column actually holds.
 
     Every column gets the width of its widest content (so coefficient
@@ -517,8 +517,23 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     makes Word honor the division. Offsets in other Table objects are
     stale after this; re-read them.
 
+    `pin_stub` gives the FIRST column exactly the width its longest
+    entry needs on one line, and divides what is left over the others —
+    equally, except where one of them needs more than an equal share.
+    Use it for a table whose other columns hold VALUES: a value column
+    has a widest number and anything past it is waste, so the room is
+    there to give, and a row label broken in two costs a line on every
+    data row where a column heading broken in two costs one line once.
+    Proportional division cannot express that priority — it hands the
+    stub the largest share of the slack in a table with room to spare
+    and shaves it below its own need in a table without. Ignored, with
+    the ordinary division kept, when pinning would push the other
+    columns under their unbreakable minima.
+
     Check the result visually once (PDF render) — the width model
-    approximates Word's layout engine, `pad` covering its error.
+    approximates Word's layout engine, `pad` covering its error. That
+    matters most with `pin_stub`, which spends the whole margin for
+    error on `pad` and keeps no accidental cushion.
     """
     _fresh(xml, table, "fit_columns")
     body = xml[table.start:table.end]
@@ -546,7 +561,9 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
             f"table {table.index}: total={total} - a table width must be "
             f"positive, and a width in dxa is what Word divides")
 
-    widths, cramped = _divide(grid, need_h, need_f, filled, total)
+    pinned = (_divide_pinned(grid, need_h, need_f, filled, total)
+              if pin_stub else None)
+    widths, cramped = pinned or _divide(grid, need_h, need_f, filled, total)
     body = _apply_widths(body, widths, total, margin)
     report = FitReport(
         columns=[ColumnFit(old, new, drv)
@@ -628,6 +645,84 @@ def _column_needs(body: str, grid: list[int], side: int, pad: float
                                                       for c in cols))
     need_f = [max(need_f[c], need_h[c]) for c in range(n)]
     return need_h, need_f, driver, filled
+
+
+def _water_fill(budget: int, needs: list[int]) -> list[int] | None:
+    """`budget` split EQUALLY over `needs`, except a column needing more
+    than an equal share takes its need and the rest re-divide.
+
+    None when the needs cannot all be met — the caller then falls back
+    to shaving, which is what `_divide` already does.
+
+    Equal shares alone are wrong the moment one column's HEADING is much
+    longer than its neighbours': "Percentage Points gained" wants 2,287
+    dxa where an equal share is 908, and it would wrap to three lines to
+    give six sibling columns width they do not need. Where the columns
+    are homogeneous — a table of coefficients, a table of means — every
+    need is under the share and this IS an equal division.
+    """
+    if sum(needs) > budget:
+        return None
+    alloc = [0] * len(needs)
+    live = list(range(len(needs)))
+    left = budget
+    while live:
+        share = left // len(live)
+        big = [i for i in live if needs[i] > share]
+        if not big:
+            # `_round_to` rather than `share` each: the remainder from
+            # the integer division has to land somewhere, and dropping
+            # it leaves the table narrower than its own tblW.
+            for i, w in zip(live, _round_to(left, [1.0] * len(live)),
+                            strict=True):
+                alloc[i] = w
+            return alloc
+        for i in big:
+            alloc[i] = needs[i]
+            left -= needs[i]
+            live.remove(i)
+    return alloc
+
+
+def _divide_pinned(grid: list[int], need_h: list[int], need_f: list[int],
+                   filled: list[bool], total: int
+                   ) -> tuple[list[int], bool] | None:
+    """`_divide`, but the STUB column gets exactly its one-line need.
+
+    Returns None when pinning would leave the value columns under their
+    unbreakable minima — there the stub cannot be satisfied at all and
+    the caller keeps the ordinary division.
+
+    Why the stub goes first: a row label broken in two costs a line on
+    EVERY data row, and a column heading broken in two costs one line
+    once. Proportional division has no way to express that, so it gave
+    the stub the largest share of the slack in a table with room to
+    spare (Table A2's stub held 797 dxa it had no use for) and shaved it
+    below its own need in a table without (Table 2's stub sat at 1,627
+    needing 2,093, and its country names wrapped on twenty rows).
+    """
+    live = [c for c in range(len(grid)) if filled[c]]
+    if len(live) < 2:
+        return None
+    stub, rest = live[0], live[1:]
+    avail = total - sum(grid[c] for c in range(len(grid)) if not filled[c])
+    budget = avail - need_f[stub]
+    if budget < sum(need_h[c] for c in rest):
+        return None
+    alloc = _water_fill(budget, [need_f[c] for c in rest])
+    if alloc is None:
+        # every value column's full need does not fit beside the pinned
+        # stub, so shave them from full toward hard — the middle branch
+        # of `_divide`, over the reduced budget
+        room = [need_f[c] - need_h[c] for c in rest]
+        cut = _round_to(sum(need_f[c] for c in rest) - budget,
+                        [r if sum(room) else 1 for r in room])
+        alloc = [need_f[c] - x for c, x in zip(rest, cut, strict=True)]
+    widths = list(grid)
+    widths[stub] = need_f[stub]
+    for c, w in zip(rest, alloc, strict=True):
+        widths[c] = w
+    return widths, False
 
 
 def _divide(grid: list[int], need_h: list[int], need_f: list[int],
