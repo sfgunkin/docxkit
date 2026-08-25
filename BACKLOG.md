@@ -700,39 +700,6 @@ falls in a 0.4-point window.
 
 ---
 
-### S2 — `repkit` and `safekit` carry a FORK of `coverage_floor.py`, without the guard this one paid for
-
-Found 2026-08-25 while acting on a code review of this file. `D:\repkit\
-tools\coverage_floor.py` and `D:\safekit\tools\coverage_floor.py` are
-copies of an older docxkit version, and both still read:
-
-    subprocess.run([... "--cov=repkit", f"--cov-report=json:{out}"],
-                   cwd=ROOT, check=False, capture_output=True)
-
-with the `CompletedProcess` thrown away. Neither has `_PYTEST_USAGE_ERROR`,
-neither has the `if done.returncode:` RED-suite exit, neither has
-`--from-json`. Verified by inspection of both files.
-
-So they reproduce today the defect docxkit already spent a debugging
-session diagnosing on 2026-08-21: a suite that fails or stops half way
-still writes a report, `out.exists()` is true, and per-module coverage is
-compared against the floors as though the run had finished — which is how
-`_table_core.py: 55.8% is below its floor of 85%` sent a reader after
-tests that were there all along.
-
-Both also predate `check()` walking the FLOORS rather than the
-measurement, so a floored module missing from a partial report is not
-failed there either — it is simply never asked about.
-
-**Three copies of one file with the fix in one of them is the actual
-finding.** A third hand-port would leave the same shape for the next
-guard. The alternatives are one shared module that all three depend on,
-or a `repkit`/`safekit` dependency on `docxkit.testing` — and that is a
-decision about coupling three toolkits, which is why this is filed
-rather than done.
-
----
-
 ### S3 — three Relationship parsers, and they have already drifted
 
 `hygiene` has `_free_rid` / `_rid_for` / `_references` / `_resolve`,
@@ -792,6 +759,74 @@ order`) about exactly that having happened once.
 ---
 
 ## Fixed
+
+### S2 — `repkit` and `safekit` carry a FORK of `coverage_floor.py`, without the guard this one paid for
+
+**Withdrawn 2026-08-25, the same day it was filed, and wrong when it was
+filed.** Both copies had already been brought up to date — repkit and
+safekit each carry a commit "The floors were read from a suite that
+never finished", trees clean — and all three now hold
+`_PYTEST_USAGE_ERROR`, the red-suite exit, `--from-json` and the
+`check()` that walks FLOORS rather than the measurement. The inspection
+behind this entry was accurate when it ran and stale by the time it was
+written down, and nothing checked it again before it was filed.
+
+**The design question it raised was also already answered.** This said
+the alternatives were one shared module or a dependency between the
+toolkits, "which is a decision about coupling three toolkits". They
+carry `tools/upstream_parity.py`: it compares the LOGIC of the three
+copies — normalising away formatting, docstrings, the `--cov=` package
+name and the console helper — so the per-repo floors and prose stay free
+to differ while the implementations cannot. It is byte-identical in both
+repos, takes the package name from whichever one it sits in so the guard
+cannot itself fork, and has a test called
+`test_the_guard_itself_is_not_a_fork`. Both report in step.
+
+That is a better answer than the shared module this entry was reaching
+for, and it was in the tree the whole time.
+
+**What is worth keeping from this.** Reading three files and filing what
+they said is not the same as checking whether anyone had acted on it, and
+an entry that names other repositories has no gate of its own to keep it
+honest — `stale_figures` covers measurements, and nothing covers a claim
+about a sibling checkout. When both parity checks came back "in step"
+the first reading was that the GUARD was broken, which is the more
+alarming story and the one that fits a stale premise. Run the tool the
+other repo already has before deciding it needs one.
+
+Found 2026-08-25 while acting on a code review of this file. `D:\repkit\
+tools\coverage_floor.py` and `D:\safekit\tools\coverage_floor.py` are
+copies of an older docxkit version, and both still read:
+
+    subprocess.run([... "--cov=repkit", f"--cov-report=json:{out}"],
+                   cwd=ROOT, check=False, capture_output=True)
+
+with the `CompletedProcess` thrown away. Neither has `_PYTEST_USAGE_ERROR`,
+neither has the `if done.returncode:` RED-suite exit, neither has
+`--from-json`. Verified by inspection of both files.
+
+So they reproduce today the defect docxkit already spent a debugging
+session diagnosing on 2026-08-21: a suite that fails or stops half way
+still writes a report, `out.exists()` is true, and per-module coverage is
+compared against the floors as though the run had finished — which is how
+`_table_core.py: 55.8% is below its floor of 85%` sent a reader after
+tests that were there all along.
+
+Both also predate `check()` walking the FLOORS rather than the
+measurement, so a floored module missing from a partial report is not
+failed there either — it is simply never asked about.
+
+**Three copies of one file with the fix in one of them is the actual
+finding.** A third hand-port would leave the same shape for the next
+guard. The alternatives are one shared module that all three depend on,
+or a `repkit`/`safekit` dependency on `docxkit.testing` — and that is a
+decision about coupling three toolkits, which is why this is filed
+rather than done.
+
+---
+
+---
+
 
 ### ~~S1 `hygiene.dedupe_comments` drops the comment BODY and leaves its anchors~~ — FIXED 24.08
 
