@@ -2797,3 +2797,43 @@ def test_a_fix_ALREADY_APPLIED_does_not_stop_the_others_in_its_pass(
 
     assert "and" in out and "&" not in out, out
     assert [f.code for f in applied] == ["ampersand"]
+
+
+@pytest.mark.parametrize("entry", [
+    'Smith, J., et al (2020). "A." Journal.',
+    'Smith, J., et al (2020). "A." In Jones et al (eds.), H. OUP.',
+    'Smith, J., et al (2020). "A." Journal. See also Jones et al',
+    'et al (2020). "A." Journal.',
+    'et al (2020). "A." And Jones et al (eds.), H.',
+    'Smith et al (2020). "A." In Jones et al (eds.), H. See also Lee et al',
+    'Smith et al and Jones et al (2020). "A." Journal.',
+])
+def test_an_et_al_fixs_fragment_FINDS_THE_MATCH_IT_CAME_FROM(entry):
+    """Every fix in this module is applied with
+    `out.replace(fix.old, fix.new, 1)`, which takes the FIRST occurrence
+    of `old` wherever it happens to be — so the property that makes the
+    et-al fix correct is not the WIDTH of its fragment but where that
+    fragment first occurs.
+
+    Stated case by case, this line has been written three ways and two
+    of them were wrong: a fixed character each side (which failed at the
+    end of an entry, where there is no character to take), and widening
+    until unique (which cannot always get there — an entry that OPENS on
+    a bare "et al" has nothing to its left, and the fragment then occurs
+    twice and is still right, because the first occurrence is the one it
+    came from).
+
+    So the invariant is asked directly, over every shape those attempts
+    disagreed about. It is what a reader has to believe to read the loop
+    and it holds for all of them, which the width never did."""
+    from docxkit.refstyle import _ETAL_BARE_RE, convert_entry
+
+    fixes = [f for f in convert_entry(entry) if f.code == "et-al-period"]
+    matches = list(_ETAL_BARE_RE.finditer(entry))
+
+    assert len(fixes) == len(matches), (fixes, [m.span() for m in matches])
+    for fix, m in zip(fixes, matches, strict=True):
+        at = entry.index(fix.old)
+        assert at <= m.start() < at + len(fix.old), (
+            f"{fix.old!r} first occurs at {at}, and the match it was "
+            f"derived from is at {m.start()}")

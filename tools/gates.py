@@ -16,7 +16,7 @@ wrong:
   found nothing but notes — so the gate is "no line matching `: error`",
   which is what this applies.
 
-Nothing here is new: it is the same five commands CONTRIBUTING lists,
+Nothing here is new: it is the same six commands CONTRIBUTING lists,
 run so that the answer cannot be lost between them. Exit status is 0
 only when all six pass, and the first failure stops the run — a gate
 after a red one tells you nothing you can act on yet.

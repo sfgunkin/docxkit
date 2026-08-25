@@ -377,9 +377,10 @@ class Counts(NamedTuple):
         """How much of this module a test would not notice changing.
 
         The COSMETIC ones count. They are out of the printed list
-        because nobody is going to write a test for the width of a
-        truncation, but they are survivors: the code does something
-        different and the suite does not notice. Leaving them out of the
+        because no test should pin what they change — the width of a
+        truncation, the arithmetic of a fragment whose correctness
+        rests on something else — but they are survivors: the code does
+        something different and the suite does not notice. Leaving them out of the
         rate as well would turn a decision not to bother into a claim
         that there was nothing there.
         """
@@ -529,10 +530,7 @@ def main() -> int:
     # count out of the denominator, or the rate is quietly deflated.
     if counts.skin:
         is_are = "is" if len(counts.skin) == 1 else "are"
-        print(f"  {len(counts.skin)} {is_are} COSMETIC — a truncation "
-              f"width, the length of a quoted\n  snippet. Out of the list "
-              f"below and still IN the rate: a test could kill\n  them, and "
-              f"nobody is going to write it")
+        print(f"  {len(counts.skin)} {is_are} COSMETIC — a width, a quoted length, an\n  arithmetic the answer does not turn on. Out of the list below and\n  still IN the rate: a test could kill them, and none should be written")
     found = len(real) + len(counts.skin)
     print(f"  {len(real)} to actually look at — REAL SURVIVAL "
           f"{counts.share:.1f}% ({found}/{counts.base})\n")
