@@ -2837,3 +2837,34 @@ def test_an_et_al_fixs_fragment_FINDS_THE_MATCH_IT_CAME_FROM(entry):
         assert at <= m.start() < at + len(fix.old), (
             f"{fix.old!r} first occurs at {at}, and the match it was "
             f"derived from is at {m.start()}")
+
+
+def test_a_bare_citation_that_is_a_whole_FOOTNOTE_is_still_cited():
+    """The header suppression is passed explicitly for every body
+    paragraph and left at its DEFAULT for the notes — `prose(text,
+    where, xml)`, with no `in_header`. So the default is the only thing
+    saying that a footnote is prose rather than a column head, and it is
+    the one caller that never states it.
+
+    Flipped, a note whose whole text is an author-year pair stops being
+    a citation at all: it drops out of `cited`, and the entry it names
+    is then reported as listed but never cited — the finding the
+    suppression was added to stop, moved from a table into the notes.
+    An economics manuscript cites heavily in footnotes.
+
+    The key is checked too, not just the presence: it is built from the
+    match's first GROUP, and the whole match is `Nowak 2018` where the
+    author is `Nowak`."""
+    body = (para(run("Prose citing something.")) + para(run("References"))
+            + para(run('Nowak, A. (2018). "Title." Journal.')))
+    notes = ('<w:footnotes><w:footnote w:id="1"><w:p><w:r><w:t>'
+             "Nowak 2018</w:t></w:r></w:p></w:footnote></w:footnotes>")
+
+    report = audit(make_parts(body, footnotes=notes))
+
+    assert "nowak_2018" in report.cited, report.cited
+    where, snippet = report.cited["nowak_2018"]
+    assert where.startswith("fn "), where
+    assert snippet == "Nowak 2018"
+    assert not [i for i in report.issues if i.code == "uncited"], \
+        [i.snippet for i in report.issues if i.code == "uncited"]
