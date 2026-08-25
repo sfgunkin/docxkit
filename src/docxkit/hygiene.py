@@ -472,8 +472,53 @@ def _restore_section_references(parts: dict[str, bytes],
 #: `w:revisionView` and before `w:defaultTabStop`.
 _TRACK = "<w:trackRevisions/>"
 _SETTINGS = "word/settings.xml"
-_AFTER_TRACK = ("<w:revisionView", "<w:documentProtection",
-                "<w:writeProtection", "<w:zoom")
+#: `CT_Settings` is a SEQUENCE, and Word refuses a settings part whose
+#: children are out of order — so the position is decided by both
+#: neighbours, not by a handful of elements to sit after.
+#:
+#: The old list had four entries and one of them was on the wrong side:
+#: `w:documentProtection` FOLLOWS `w:trackChanges` in the sequence, so
+#: "insert after it" put the element out of order in the commonest
+#: shape there is. It also named none of `proofState`,
+#: `attachedTemplate` or `mailMerge`, so a settings part carrying those
+#: and nothing from the list got `w:trackRevisions` inserted FIRST,
+#: ahead of them. Measured on all four shapes: only a lone
+#: `w:revisionView` — the case the test pinned — came out right.
+_BEFORE_TRACK = (
+    "writeProtection", "view", "zoom", "removePersonalInformation",
+    "removeDateAndTime", "doNotDisplayPageBoundaries",
+    "displayBackgroundShape", "printPostScriptOverText",
+    "printFractionalCharacterWidth", "printFormsData",
+    "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts",
+    "saveFormsData", "mirrorMargins", "alignBordersAndEdges",
+    "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter",
+    "gutterAtTop", "hideSpellingErrors", "hideGrammaticalErrors",
+    "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate",
+    "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod",
+    "documentType", "mailMerge", "revisionView",
+)
+_AFTER_TRACK = (
+    "doNotTrackMoves", "doNotTrackFormatting", "documentProtection",
+    "autoFormatOverride", "styleLockTheme", "styleLockQFSet",
+    "defaultTabStop", "autoHyphenation", "consecutiveHyphenLimit",
+    "hyphenationZone", "doNotHyphenateCaps", "showEnvelope",
+    "summaryLength", "clickAndTypeStyle", "defaultTableStyle",
+    "evenAndOddHeaders", "bookFoldRevPrinting", "bookFoldPrinting",
+    "bookFoldPrintingSheets", "drawingGridHorizontalSpacing",
+    "drawingGridVerticalSpacing", "displayHorizontalDrawingGridEvery",
+    "displayVerticalDrawingGridEvery", "characterSpacingControl",
+    "noPunctuationKerning", "printTwoOnOne", "strictFirstAndLastChars",
+    "savePreviewPicture", "doNotValidateAgainstSchema",
+    "saveInvalidXml", "ignoreMixedContent", "alwaysShowPlaceholderText",
+    "doNotDemarcateInvalidXml", "saveXmlDataOnly", "useXSLTWhenSaving",
+    "showXMLTags", "alwaysMergeEmptyNamespace", "updateFields",
+    "footnotePr", "endnotePr", "compat", "docVars", "rsids",
+    "attachedSchema", "themeFontLang", "clrSchemeMapping",
+    "doNotIncludeSubdocsInStats", "doNotAutoCompressPictures",
+    "forceUpgrade", "captions", "readModeInkLockDown", "smartTagType",
+    "shapeDefaults", "doNotEmbedSmartTags", "decimalSymbol",
+    "listSeparator",
+)
 
 
 def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
@@ -501,16 +546,26 @@ def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
     # After the elements that precede it in CT_Settings, or first in the
     # body if none of them is there. Order is not decoration: Word
     # refuses a settings part whose children are out of sequence.
-    at = -1
-    for tag in _AFTER_TRACK:
-        found = xml.find(tag)
-        if found != -1:
-            at = max(at, xml.index(">", found) + 1)
-    if at == -1:
-        opened = re.search(r"<w:settings\b[^>]*>", xml)
-        if opened is None:
-            return False
-        at = opened.end()
+    opened = re.search(r"<w:settings\b[^>]*>", xml)
+    if opened is None:
+        return False
+    shut = xml.rfind("</w:settings>")
+    body = (opened.end(), shut if shut != -1 else len(xml))
+
+    # After everything that PRECEDES it and before anything that
+    # FOLLOWS. Either bound alone gets it wrong: a part with only
+    # followers takes the element first, and a part with only
+    # predecessors takes it last, and both are what real settings look
+    # like.
+    after = max([body[0]] + [xml.index(">", at) + 1
+                             for tag in _BEFORE_TRACK
+                             if (at := xml.find(f"<w:{tag}")) != -1])
+    before = min([body[1]] + [at for tag in _AFTER_TRACK
+                              if (at := xml.find(f"<w:{tag}")) != -1])
+    # A document whose own children are already out of sequence is not
+    # this function's to repair; the follower wins, because inserting
+    # after one is the arrangement Word refuses.
+    at = min(after, before)
     parts[_SETTINGS] = (xml[:at] + _TRACK + xml[at:]).encode("utf-8")
     return True
 

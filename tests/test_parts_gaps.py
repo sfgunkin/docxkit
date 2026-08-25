@@ -1735,3 +1735,48 @@ def test_strip_parts_keeps_an_EXTERNAL_relationship_that_merely_looks_alike():
 
     doc = parts["word/_rels/document.xml.rels"].decode("utf-8")
     assert "https://example.org/docProps/custom.xml" in doc, doc
+
+
+# `test_it_lands_where_CT_Settings_says_it_may` pins ONE shape — a lone
+# `w:revisionView` — and that was the only shape the old placement got
+# right. The list it worked from named four elements to sit after, and
+# one of them, `w:documentProtection`, FOLLOWS `w:trackChanges` in the
+# sequence rather than preceding it.
+
+@pytest.mark.parametrize("children, expect", [
+    # documentProtection follows trackChanges; sitting after it is the
+    # arrangement Word refuses, and it is the commonest shape there is.
+    (("<w:documentProtection/>",),
+     ["trackRevisions", "documentProtection"]),
+    # None of the old four is here, so the element went in FIRST —
+    # ahead of proofState, which precedes it.
+    (("<w:proofState/>", '<w:defaultTabStop w:val="720"/>'),
+     ["proofState", "trackRevisions", "defaultTabStop"]),
+    # `w:zoom` WAS in the list, so the element landed after it and
+    # still ahead of proofState.
+    (("<w:zoom/>", "<w:proofState/>"),
+     ["zoom", "proofState", "trackRevisions"]),
+    (("<w:attachedTemplate/>", '<w:defaultTabStop w:val="720"/>'),
+     ["attachedTemplate", "trackRevisions", "defaultTabStop"]),
+    # what a real settings.xml looks like
+    (("<w:zoom/>", "<w:proofState/>", '<w:defaultTabStop w:val="720"/>',
+      "<w:compat/>", "<w:rsids/>"),
+     ["zoom", "proofState", "trackRevisions", "defaultTabStop",
+      "compat", "rsids"]),
+    ((), ["trackRevisions"]),
+])
+def test_trackRevisions_lands_in_CT_Settings_order_whatever_is_there(
+        children, expect):
+    """The position is decided by BOTH neighbours. Either bound alone
+    gets it wrong: a part carrying only followers takes the element
+    first, a part carrying only predecessors takes it last, and both of
+    those are what real settings parts look like."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings(*children)}
+    keep_tracking(parts, {SETTINGS: _settings("<w:trackRevisions/>")})
+
+    xml = parts[SETTINGS].decode("utf-8")
+    got = re.findall(r"<w:(\w+)", xml)[1:]
+
+    assert got == expect, xml
