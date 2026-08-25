@@ -861,21 +861,20 @@ def cmd_footnotes(args: argparse.Namespace) -> int:
 
 def cmd_smarten(args: argparse.Namespace) -> int:
     """Straight quotes to typographic ones; dry run unless --write."""
-    from .hygiene import smarten
+    from .hygiene import smarten_parts
 
     parts = _package(args.docx)
-    doc = parts[DOCUMENT].decode("utf-8")
-    fixed, report = smarten(doc)
+    before = dict(parts)
+    report = smarten_parts(parts)
     print(Path(args.docx).name)
     print("  " + report.format().replace("\n", "\n  "))
     if not args.write:
         print("  (dry run - pass --write to save)")
         return 0
-    if fixed == doc:
+    if parts == before:
         print("  nothing to write")
         return 0
-    return 0 if _write_document(args.docx, parts, fixed, "pre_smarten") \
-        else 1
+    return 0 if _save(args.docx, parts, "pre_smarten") else 1
 
 
 def cmd_authors(args: argparse.Namespace) -> int:

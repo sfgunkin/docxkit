@@ -54,6 +54,7 @@ __all__ = [
     "restore_math_glyphs",
     "restore_parts",
     "smarten",
+    "smarten_parts",
     "strip_parts",
     "table_spacing",
 ]
@@ -1031,6 +1032,36 @@ def _smarten_para(para: str, report: SmartenReport) -> str:
     return para
 
 
+def smarten_parts(parts: dict[str, bytes]) -> SmartenReport:
+    """:func:`smarten`, over every part a reader sees. Mutates `parts`.
+
+    `_xml.TEXT_PARTS` states the rule this exists for: an operation that
+    describes the DOCUMENT is wrong if it stops at the body. `smarten`
+    takes one part's XML — every other chore in this module takes the
+    package — so its only caller smartened `word/document.xml` and left
+    the footnotes alone. An economics manuscript keeps a large share of
+    its prose in footnotes, so the phantom diffs this exists to end
+    survived in exactly the part nobody re-reads.
+
+    One report for the package, with an unbalanced paragraph labelled by
+    the part it is in: "the quotes are odd somewhere" is not an
+    actionable sentence when the somewhere could be four files.
+    """
+    total = SmartenReport()
+    for name, xml in text_parts(parts):
+        fixed, report = smarten(xml)
+        total.apostrophes += report.apostrophes
+        total.quotes += report.quotes
+        total.ambiguous += report.ambiguous
+        where = name.removeprefix("word/").removesuffix(".xml")
+        total.unbalanced += [snippet if where == "document"
+                             else f"{where}: {snippet}"
+                             for snippet in report.unbalanced]
+        if fixed != xml:
+            parts[name] = fixed.encode("utf-8")
+    return total
+
+
 def smarten(xml: str) -> tuple[str, SmartenReport]:
     """Straight quotes to typographic ones, where it cannot go wrong.
 
@@ -1083,6 +1114,27 @@ def _downgraded(text: str) -> str:
     return text
 
 
+def _as_utf8(blob: bytes) -> str | None:
+    """The part as text, or None when it is not UTF-8 at all.
+
+    NOT `errors="replace"`, which is what the read-only scanners in this
+    module use. This one WRITES BACK, and a lossy decode re-encoded is
+    silent corruption: every undecodable byte returns as U+FFFD. A part
+    that cannot be read as UTF-8 is not a part this function can act on,
+    so it is left byte for byte alone.
+
+    Bare `.decode("utf-8")` was the third option and the worst of them.
+    A `customXml/` data store written by another tool in UTF-16 is legal
+    and is carried by `restore_parts` — which `tracked.build` calls
+    before this — so one third-party store killed the whole build with a
+    UnicodeDecodeError, after Word's Compare had already run.
+    """
+    try:
+        return blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def restore_math_glyphs(parts: dict[str, bytes],
                         *sources: dict[str, bytes]) -> list[str]:
     """Put back math glyphs a Word round-trip flattened, per ``m:t``.
@@ -1116,7 +1168,9 @@ def restore_math_glyphs(parts: dict[str, bytes],
         for name, blob in source.items():
             if not name.endswith(".xml"):
                 continue
-            for m in _MATH_T_RE.finditer(blob.decode("utf-8")):
+            if (src_text := _as_utf8(blob)) is None:
+                continue
+            for m in _MATH_T_RE.finditer(src_text):
                 text = m.group(2)
                 intent.setdefault(_downgraded(text), set()).add(text)
     wanted = {plain: next(iter(texts)) for plain, texts in intent.items()
@@ -1128,7 +1182,8 @@ def restore_math_glyphs(parts: dict[str, bytes],
     for name, blob in list(parts.items()):
         if not name.endswith(".xml"):
             continue
-        text = blob.decode("utf-8")
+        if (text := _as_utf8(blob)) is None:
+            continue
 
         def fix(m: re.Match[str], part: str = name) -> str:
             # `back == m.group(2)` was a second guard here and could not

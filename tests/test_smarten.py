@@ -152,3 +152,78 @@ def test_two_runs_that_SHRINK_are_written_back_right_to_left():
     assert report.apostrophes == 2
     assert visible_text(xml) == "don’t it’s so"
     assert xml == para(run("don’t"), run(" it’s so"))
+
+
+# --- the whole package ----------------------------------------------------
+
+def _package(body: str, footnote: str = "", endnote: str = ""):
+    parts = {"word/document.xml":
+             f"<w:document><w:body>{body}</w:body></w:document>".encode()}
+    if footnote:
+        parts["word/footnotes.xml"] = (
+            f"<w:footnotes><w:footnote>{footnote}"
+            "</w:footnote></w:footnotes>").encode()
+    if endnote:
+        parts["word/endnotes.xml"] = (
+            f"<w:endnotes><w:endnote>{endnote}"
+            "</w:endnote></w:endnotes>").encode()
+    return parts
+
+
+def test_smarten_parts_reaches_the_FOOTNOTES_and_the_ENDNOTES():
+    """`_xml.TEXT_PARTS` states the rule: an operation that describes
+    the DOCUMENT is wrong if it stops at the body. `smarten` takes one
+    part's XML — every other chore in `hygiene` takes the package — so
+    its only caller smartened `word/document.xml` and left the notes
+    alone.
+
+    An economics manuscript keeps a large share of its prose in
+    footnotes, so the phantom class of diffs this exists to end survived
+    in exactly the part nobody re-reads."""
+    from docxkit.hygiene import smarten_parts
+
+    parts = _package(
+        para(run("the workers' share")),
+        footnote=para(run('See Smith\'s note on "growth".')),
+        endnote=para(run("the authors' own data")))
+
+    report = smarten_parts(parts)
+
+    assert visible_text(parts["word/footnotes.xml"].decode()) == (
+        "See Smith’s note on “growth”.")
+    assert visible_text(parts["word/endnotes.xml"].decode()) == (
+        "the authors’ own data")
+    assert report.apostrophes == 3
+    assert report.quotes == 2
+
+
+def test_an_UNBALANCED_paragraph_is_named_by_the_part_it_is_in():
+    """One report for the package, so "the quotes are odd somewhere" is
+    not an actionable sentence when the somewhere could be four files.
+    The body is left unlabelled, because that is where a reader looks
+    first and a prefix on every line would be noise."""
+    from docxkit.hygiene import smarten_parts
+
+    parts = _package(
+        para(run('an odd " in the body')),
+        footnote=para(run('an odd " in a note')))
+
+    report = smarten_parts(parts)
+
+    assert len(report.unbalanced) == 2, report.unbalanced
+    body = [u for u in report.unbalanced if not u.startswith("footnotes:")]
+    note = [u for u in report.unbalanced if u.startswith("footnotes:")]
+    assert len(body) == 1 and len(note) == 1, report.unbalanced
+
+
+def test_a_package_with_no_notes_is_not_an_error():
+    """An absent part is not a failure — a document with no footnotes
+    simply has none, which is what `text_parts` is for."""
+    from docxkit.hygiene import smarten_parts
+
+    parts = _package(para(run("the workers' share")))
+
+    report = smarten_parts(parts)
+
+    assert report.apostrophes == 1
+    assert set(parts) == {"word/document.xml"}

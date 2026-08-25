@@ -1780,3 +1780,26 @@ def test_trackRevisions_lands_in_CT_Settings_order_whatever_is_there(
     got = re.findall(r"<w:(\w+)", xml)[1:]
 
     assert got == expect, xml
+
+
+def test_a_part_in_ANOTHER_ENCODING_does_not_stop_the_glyph_repair():
+    """Every `.xml` part is scanned, and they were decoded bare. A
+    `customXml/` data store written by another tool in UTF-16 is legal,
+    and `restore_parts` carries it — `tracked.build` calls that BEFORE
+    this — so one third-party store raised UnicodeDecodeError and took
+    the whole build with it, after Word's Compare had already run.
+
+    Skipped rather than decoded with `errors="replace"`, which is what
+    the read-only scanners in this module use. This one WRITES BACK, and
+    a lossy decode re-encoded is silent corruption: every undecodable
+    byte would return as U+FFFD."""
+    store = '<?xml version="1.0" encoding="UTF-16"?><x/>'.encode("utf-16")
+    built = _parts_with("a - b")
+    built["customXml/item1.xml"] = store
+    source = _parts_with("a − b")
+    source["customXml/item1.xml"] = store
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+    assert built["customXml/item1.xml"] == store, "the store was rewritten"
