@@ -2076,3 +2076,95 @@ def test_a_target_with_FAR_fewer_sections_is_left_alone():
 
     doc = parts["word/document.xml"].decode("utf-8")
     assert "footerReference" not in doc, doc
+
+
+def test_TWO_EMPTY_comments_by_one_author_are_not_duplicates():
+    """The guard is `key in seen and key[1]` — the TEXT — because two
+    comments that say nothing are not two copies of one note. Read as
+    `key[0]`, the AUTHOR, the second empty comment by a named author is
+    deleted and its anchors go with it: a note the author left as a
+    placeholder, gone, with the build reporting it as a duplicate
+    removed."""
+    from docxkit.hygiene import dedupe_comments
+
+    # The LONG form. Self-closing is not scanned at all — the guard
+    # that stops one comment swallowing the next — so a self-closing
+    # pair would pass this test without the rule ever being consulted.
+    empty = ('<w:comment w:id="{}" w:author="M. Lokshin">'
+             "<w:p/></w:comment>")
+    parts = {
+        "word/comments.xml": _comments_part(empty.format(1),
+                                            empty.format(2)),
+        "word/document.xml": _body(_anchored(1, "a") + _anchored(2, "b")),
+    }
+
+    dropped = dedupe_comments(parts)
+
+    assert dropped == [], dropped
+    kept = parts["word/comments.xml"].decode("utf-8")
+    assert 'w:id="1"' in kept and 'w:id="2"' in kept
+
+
+def test_the_dropped_line_names_the_AUTHOR_and_then_the_NOTE():
+    """What a reader is handed when a comment disappears. The author
+    comes from the attribute's VALUE, not from the whole
+    `w:author="..."` match, and the note is the note — swap either and
+    the line still looks like a line while naming the wrong thing."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "M. Lokshin", "Check this against Table 3."),
+            _comment(2, "M. Lokshin", "Check this against Table 3.")),
+        "word/document.xml": _body(_anchored(1, "a") + _anchored(2, "b")),
+    }
+
+    (dropped,) = dedupe_comments(parts)
+
+    assert dropped == "M. Lokshin: Check this against Table 3."
+
+
+def test_a_SECOND_pair_of_duplicates_is_dropped_as_well():
+    """`continue`, not `break`. A manuscript that has been round the
+    houses carries more than one doubled note, and stopping at the first
+    leaves the rest — with the report saying only that ONE was
+    removed, which reads as a document that had one."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "M. Lokshin", "First note."),
+            _comment(2, "M. Lokshin", "First note."),
+            _comment(3, "A. Smith", "Second note."),
+            _comment(4, "A. Smith", "Second note.")),
+        "word/document.xml": _body("".join(
+            _anchored(i, f"p{i}") for i in (1, 2, 3, 4))),
+    }
+
+    dropped = dedupe_comments(parts)
+
+    assert len(dropped) == 2, dropped
+    kept = parts["word/comments.xml"].decode("utf-8")
+    assert [c for c in "1234" if f'w:id="{c}"' in kept] == ["1", "3"]
+
+
+def test_the_comments_part_survives_as_a_whole_DOCUMENT():
+    """The part is rebuilt by slicing around what is dropped, and the
+    running position starts at 0 because the first character of the file
+    is part of the file. Starting anywhere else eats the XML
+    declaration, and a comments part that does not parse is a document
+    Word refuses — for a repair whose whole purpose is the opposite."""
+    from docxkit.hygiene import dedupe_comments
+
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "M. Lokshin", "Same note."),
+            _comment(2, "M. Lokshin", "Same note.")),
+        "word/document.xml": _body(_anchored(1, "a") + _anchored(2, "b")),
+    }
+
+    dedupe_comments(parts)
+
+    out = parts["word/comments.xml"].decode("utf-8")
+    assert out.startswith("<?xml"), out[:60]
+    assert out.rstrip().endswith("</w:comments>"), out[-60:]
