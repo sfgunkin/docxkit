@@ -2916,3 +2916,53 @@ def test_a_fix_whose_ANCHOR_MISSES_does_not_stop_the_other_fixes(monkeypatch):
     assert [c.split(": ")[-1] for c in report.changed] == ["ampersand"], \
         (report.changed, report.skipped)
     assert len(report.skipped) == 1, report.skipped
+
+
+def test_an_ISBN_TEN_keeps_its_hyphens_as_well_as_a_thirteen():
+    """The rule is three hyphens or more, and the fixture that pinned it
+    is an ISBN-13 — `978-0-19-874017-4`, which has FOUR. So "three or
+    more" and "four or more" agreed on every input the suite had, and
+    the boundary was unheld in both directions.
+
+    An ISBN-10 has exactly three. Read as `> 3` it stops being an
+    identifier and its hyphens are converted to en-dashes, which is a
+    number that no longer resolves — written into the author's
+    bibliography by a tool run to tidy it."""
+    # `0-521-49-12`, a Cambridge ISBN-10: three hyphens, and the range
+    # pattern DOES match `521-49` inside it. `978-0-19-874017-4` was no
+    # test of the boundary twice over — four hyphens, and the pattern
+    # finds nothing in it to convert, so the skip is never consulted.
+    entry = "Smith, J. (2020). Robots. Cambridge: CUP. ISBN 0-521-49-12."
+
+    out, fixes = convert_text(entry)
+
+    assert "0-521-49-12" in out, out
+    assert "521–549" not in out, out
+    assert not fixes
+
+
+def test_a_range_ABBREVIATED_TO_ONE_DIGIT_keeps_the_lead_it_needs():
+    """"174-79" expands by taking one digit of the low number: the lead
+    is `len(lo) - len(hi)` characters of it. Every fixture until now was
+    three digits to two, where that difference is 1 — and `len(lo) //
+    len(hi)` is also 1, so the two readings agreed everywhere.
+
+    Four digits to one tells them apart: the difference is 3 and the
+    quotient is 4, so the wrong one takes the WHOLE low number as the
+    lead and writes "1875–18759". A year range abbreviated to its last
+    digit is an ordinary citation style."""
+    out, fixes = convert_text('A. (2020). "T." Journal, 4(2): 1875-9.')
+
+    assert "1875\u20131879" in out, out
+    assert [f.code for f in fixes] == ["en-dash"]
+
+
+def test_a_range_whose_halves_are_the_SAME_length_is_only_joined():
+    """The other side of that branch. "45-48" has nothing to expand, so
+    the lead is empty and the two halves are joined with an en-dash —
+    which is what the greater-or-EQUAL says, and what the else branch
+    computes anyway when the lengths match, `lo[:0]` being empty."""
+    out, _ = convert_text('A. (2020). "T." Journal, 4(2): 45-48.')
+
+    assert "45\u201348" in out, out
+    assert "4548" not in out
