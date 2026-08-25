@@ -1445,3 +1445,91 @@ def test_a_blank_paragraph_before_a_FIGURE_is_stepped_over_too():
 # new string on every call, so the identity test is always True and the
 # answer falls to the `pPr/sectPr` lookup — which no element other than
 # a paragraph has as a direct child.
+
+
+# --- tables with COLUMNS ------------------------------------------------
+#
+# `TBL` above builds one cell per row, and that is why the render path
+# looked like it worked for so long: a single-column table has no cell
+# boundary to lose. `_text` joins every `w:t` under an element with
+# nothing between them, so a real row came out
+# `'Social connectednessNussbaum Affiliation'` while the page reads
+# `'Social connectedness Nussbaum Affiliation'` — the needle never
+# matched, `last_sheet` stayed None, and None is not split, so no
+# escalation, with `rendered` still True (Aging_Well, 2026-08-24).
+
+
+def WIDE(*rows: tuple[str, ...]) -> str:
+    """A table whose rows have more than one cell."""
+    out = []
+    for cells in rows:
+        tcs = "".join(f"<w:tc><w:p><w:r><w:t>{c}</w:t></w:r></w:p></w:tc>"
+                      for c in cells)
+        out.append(f"<w:tr>{tcs}</w:tr>")
+    return f"<w:tbl>{''.join(out)}</w:tbl>"
+
+
+def test_a_MULTI_COLUMN_table_that_splits_is_found_and_given_its_own_page():
+    """The row text only matches the page when the cells are separated,
+    which is what the fixtures above never asked for."""
+    calls = []
+
+    def render(_parts):
+        calls.append(1)
+        if len(calls) == 1:
+            return ["See table 1. Table 1. Heading Capability Source",
+                    "Social connectedness Affiliation 0.42"]
+        return ["See table 1.",
+                "Table 1. Heading Capability Source "
+                "Social connectedness Affiliation 0.42"]
+
+    out, rep = placement.place(
+        parts(P("See table 1.") + P("Table 1. Heading")
+              + WIDE(("Capability", "Source"),
+                     ("Social connectedness", "Affiliation", "0.42"))),
+        render=render)
+
+    pl = rep.placements[0]
+    assert pl.last_sheet is not None, "the last row was never located"
+    assert pl.own_page, rep.format()
+    assert not pl.unmeasured
+    assert len(calls) == 2
+    assert out is not None
+
+
+def test_a_table_whose_END_is_not_on_any_sheet_says_so_instead_of_whole():
+    """`split` has two states and a `None` `last_sheet` falls into the
+    wrong one: not split, therefore whole, therefore nothing to fix —
+    while `rendered` stays True, which is the report's own claim that
+    the fit was measured. A check watching a proxy, and the proxy
+    agreed."""
+    def render(_parts):
+        # the caption is on the page; the table's last row is not
+        return ["See table 1. Table 1. Heading"]
+
+    _out, rep = placement.place(
+        parts(P("See table 1.") + P("Table 1. Heading")
+              + WIDE(("Capability", "Source"), ("Nothing", "Rendered"))),
+        render=render)
+
+    pl = rep.placements[0]
+    assert pl.unmeasured and not pl.split
+    assert "END NOT FOUND" in rep.format(), rep.format()
+    assert any("UNMEASURED" in p for p in rep.problems), rep.problems
+    assert not pl.own_page, "nothing to escalate on a fit nobody measured"
+
+
+def test_a_single_column_table_still_measures_as_it_did():
+    """The shape that worked, and the reason the defect above hid: with
+    one cell per row there is no separator to lose, so the old probe and
+    the new one read the same string."""
+    def render(_parts):
+        return ["See table 1.", "Table 1. Heading head row"]
+
+    _out, rep = placement.place(
+        parts(P("See table 1.") + P("Table 1. Heading") + TBL("head", "row")),
+        render=render)
+
+    pl = rep.placements[0]
+    assert pl.caption_sheet == 2 and pl.last_sheet == 2
+    assert not pl.split and not pl.unmeasured

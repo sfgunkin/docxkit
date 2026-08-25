@@ -130,6 +130,18 @@ class Placement:
                 and self.last_sheet != self.caption_sheet)
 
     @property
+    def unmeasured(self) -> bool:
+        """The caption was found on the page and the table's end was not.
+
+        A third state, because `split` has only two and a `None`
+        `last_sheet` falls into the wrong one: not split, therefore
+        whole, therefore no escalation to `own_page` — and `rendered`
+        stays True, which is the report's own claim that the fit WAS
+        measured. The check watched a proxy and the proxy agreed.
+        """
+        return self.caption_sheet is not None and self.last_sheet is None
+
+    @property
     def drift(self) -> int | None:
         """Sheets between the mention and the table. None if not rendered."""
         if self.mention_sheet is None or self.caption_sheet is None:
@@ -163,7 +175,8 @@ class PlacementReport:
             for p in self.placements:
                 where = (f"sheet {p.caption_sheet}" if p.caption_sheet
                          else "not found")
-                state = "split" if p.split else "whole"
+                state = ("split" if p.split else
+                         "END NOT FOUND" if p.unmeasured else "whole")
                 drift = "" if p.drift is None else f", drift {p.drift:+d}"
                 lines.append(f"  table {p.number}: {where}, {state}{drift}")
         return "\n".join(lines + [f"  ! {x}" for x in self.problems])
@@ -181,6 +194,26 @@ def _body(parts: dict[str, bytes]) -> etree._Element:
 
 def _text(el: etree._Element) -> str:
     return "".join(t.text or "" for t in el.iter(W + "t"))
+
+
+def _row_text(row: etree._Element) -> str:
+    """A table row as the PAGE reads it: cells separated.
+
+    `_text` joins every `w:t` under an element with nothing between
+    them, which is right for a paragraph and wrong across cells. A row
+    of three came out
+    `'Social connectednessNussbaum's Affiliati'` while the render — where
+    those are separate table cells — reads
+    `'Social connectedness Nussbaum's Affiliat'`. `_sheet_of` collapses
+    runs of whitespace on both sides but cannot insert a separator that
+    is not there, so the needle never matched and `last_sheet` came back
+    None on every table with columns.
+
+    A single-column table has no cell boundary to lose, which is why the
+    render path looked like it worked: boxes measured, and every real
+    paper table skipped the measurement in silence.
+    """
+    return " ".join(_text(tc) for tc in row.findall(W + "tc"))
 
 
 def _blocks(body: etree._Element, caption: re.Pattern[str],
@@ -706,8 +739,9 @@ def _measure_and_fix(report: PlacementReport,
         if tbl is not None and pl.caption_sheet:
             rows = tbl.findall(W + "tr")
             if rows:
-                pl.last_sheet = _sheet_of(sheets, _text(rows[-1]).strip()[:40],
-                                          pl.caption_sheet - 1)
+                pl.last_sheet = _sheet_of(
+                    sheets, _row_text(rows[-1]).strip()[:40],
+                    pl.caption_sheet - 1)
         if pl.anchor_text:
             pl.mention_sheet = _sheet_of(sheets, pl.anchor_text[:40])
         if pl.split:
@@ -723,9 +757,17 @@ def _measure_and_fix(report: PlacementReport,
             tbl = next((e for e in block if e.tag == W + "tbl"), None)
             rows = tbl.findall(W + "tr") if tbl is not None else []
             if rows and pl.caption_sheet:
-                pl.last_sheet = _sheet_of(sheets, _text(rows[-1]).strip()[:40],
-                                          pl.caption_sheet - 1)
+                pl.last_sheet = _sheet_of(
+                    sheets, _row_text(rows[-1]).strip()[:40],
+                    pl.caption_sheet - 1)
 
+    for pl in report.placements:
+        if pl.unmeasured:
+            report.problems.append(
+                f"table {pl.number}: its caption is on sheet "
+                f"{pl.caption_sheet} and its last row was not found on any "
+                f"sheet — the fit is UNMEASURED, so a split would not have "
+                f"been seen and `own_page` could not fire")
     for pl in report.placements:
         # `and not pl.own_page` was here, and it made the line
         # unreachable for the case it describes: `own_page` is applied to
