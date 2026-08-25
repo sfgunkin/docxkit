@@ -105,6 +105,23 @@ NOTE_DEF_RE = {
 }
 
 
+def append_before_close(xml: str, close_tag: str, addition: str) -> str:
+    """Splice `addition` in just before the LAST `close_tag`.
+
+    Three lines, and it lived in `comments` while `hygiene` wrote the
+    body out again four times — twice for `</Types>` and twice for
+    `</Relationships>`, each with its own `rindex` and two-slice
+    concatenation. Every copy was correct; four is the count at which a
+    fifth gets written without anyone deciding to, and this package has
+    already paid for that once (see the CT_PPr order entry in BACKLOG).
+
+    `rindex`, not `index`: a part's closing tag is its last, and a
+    `</Relationships>` inside a Target string would otherwise take it.
+    """
+    at = xml.rindex(close_tag)
+    return xml[:at] + addition + xml[at:]
+
+
 def text_parts(parts: dict[str, bytes]) -> list[tuple[str, str]]:
     """The (name, xml) of every text-bearing part present, in reading order.
 

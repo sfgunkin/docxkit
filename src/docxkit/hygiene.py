@@ -37,6 +37,9 @@ from ._xml import (
     text_parts,
     visible_text,
 )
+from ._xml import (
+    append_before_close as _append_before_close,
+)
 from .errors import PackageError
 from .package import CORE_PART, core_property, set_core_property
 
@@ -223,9 +226,8 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
                and (m := re.search(
                    rf'<Override PartName="/{re.escape(name)}"[^>]*/>', src))]
         if add:
-            at = types.rindex("</Types>")
-            parts[_CONTENT_TYPES] = (types[:at] + "".join(add)
-                                     + types[at:]).encode("utf-8")
+            parts[_CONTENT_TYPES] = _append_before_close(
+                types, "</Types>", "".join(add)).encode("utf-8")
 
     # EVERY rels part, not the document's alone: a footer's relationship
     # is in `word/_rels/document.xml.rels`, but `docProps/custom.xml`'s
@@ -251,8 +253,8 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
             was = _ID_RE.search(m.group(0))
             rid = _free_rid(rels, f"rId{was.group(1)}" if was else "")
             entry = re.sub(r'\bId="[^"]*"', f'Id="{rid}"', m.group(0))
-            at = rels.rindex("</Relationships>")
-            rels = rels[:at] + entry + rels[at:]
+            rels = _append_before_close(
+                rels, "</Relationships>", entry)
             rid_for[name] = rid
         parts[rels_name] = rels.encode("utf-8")
 
@@ -314,8 +316,16 @@ def _resolve(rels_name: str, target: str) -> str:
     :func:`restore_parts` copied the file back and matched no
     relationship at all (Aging_Well R1, 2026-08-21).
     """
+    # The SEPARATOR first. A Target may legally be written with
+    # backslashes — some writers emit them on Windows — and
+    # `_compare_read` normalises them while this did not, so one package
+    # was read two ways: `compare` matched the relationship and every
+    # `hygiene` operation that restores or strips a part did not.
+    # Nothing here has been seen to write that spelling; what earns the
+    # change is that two readers of one format had drifted apart.
     base = posixpath.dirname(posixpath.dirname(rels_name))
-    return posixpath.normpath(posixpath.join(base, target)).lstrip("/")
+    flat = target.replace(chr(92), "/")
+    return posixpath.normpath(posixpath.join(base, flat)).lstrip("/")
 
 
 def _rid_for(rels_xml: str, rels_name: str, part: str) -> str | None:
@@ -665,16 +675,24 @@ def _drop_comment_anchors(parts: dict[str, bytes], ids: list[str]) -> None:
     footnote, and an endnote is where several journals put the whole
     apparatus.
     """
-    for cid in ids:
-        for name, xml in text_parts(parts):
-            fixed = re.sub(rf'<w:commentRange(?:Start|End) w:id="{cid}"/>',
-                           "", xml)
-            fixed = re.sub(
-                rf"<w:r(?: [^>]*)?>(?:(?!</w:r>).)*?"
-                rf'<w:commentReference w:id="{cid}"/>'
-                rf"(?:(?!</w:r>).)*?</w:r>", "", fixed, flags=re.DOTALL)
-            if fixed != xml:
-                parts[name] = fixed.encode("utf-8")
+    if not ids:
+        return
+    # ONE pass over each part for ALL the ids. The loops used to nest
+    # the other way round, so N duplicate comments meant N decodes of
+    # every text part and 2N runs of the tempered-lookahead pattern
+    # below, which is the costliest regex in this module. Measured at
+    # 71 ms for forty ids on a small body — nobody was waiting on it.
+    # What earns the change is that the shape invites being copied.
+    which = "|".join(re.escape(cid) for cid in ids)
+    anchor = re.compile(rf'<w:commentRange(?:Start|End) w:id="(?:{which})"/>')
+    reference = re.compile(
+        rf"<w:r(?: [^>]*)?>(?:(?!</w:r>).)*?"
+        rf'<w:commentReference w:id="(?:{which})"/>'
+        rf"(?:(?!</w:r>).)*?</w:r>", re.DOTALL)
+    for name, xml in text_parts(parts):
+        fixed = reference.sub("", anchor.sub("", xml))
+        if fixed != xml:
+            parts[name] = fixed.encode("utf-8")
 
 
 def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],
@@ -716,17 +734,15 @@ def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],
         if _CONTENT_TYPES in parts:
             types = parts[_CONTENT_TYPES].decode("utf-8")
             if f'PartName="/{CORE_PART}"' not in types:
-                at = types.rindex("</Types>")
-                parts[_CONTENT_TYPES] = (types[:at] + _CORE_CT
-                                         + types[at:]).encode("utf-8")
+                parts[_CONTENT_TYPES] = _append_before_close(
+                    types, "</Types>", _CORE_CT).encode("utf-8")
         if _PKG_RELS in parts:
             rels = parts[_PKG_RELS].decode("utf-8")
             if f'Target="{CORE_PART}"' not in rels:
                 entry = (f'<Relationship Id="{_free_rid(rels, "")}" '
                          f'Type="{_CORE_REL_TYPE}" Target="{CORE_PART}"/>')
-                at = rels.rindex("</Relationships>")
-                parts[_PKG_RELS] = (rels[:at] + entry
-                                    + rels[at:]).encode("utf-8")
+                parts[_PKG_RELS] = _append_before_close(
+                    rels, "</Relationships>", entry).encode("utf-8")
 
     return [tag for tag, value in wanted.items()
             if set_core_property(parts, tag, value)]

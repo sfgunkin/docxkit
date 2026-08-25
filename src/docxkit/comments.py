@@ -32,6 +32,9 @@ from ._xml import (
     set_run_text,
     visible_text,
 )
+from ._xml import (
+    append_before_close as _append_before_close,
+)
 from .errors import AnchorError, PackageError, ScaffoldMissing
 from .find import para_text_at, table_index_at, table_spans
 
@@ -171,11 +174,6 @@ def _clone_comment(template: str, cid: int, para_id: str, text: str) -> str:
     x = re.sub(r'w14:paraId="[0-9A-Fa-f]{8}"', f'w14:paraId="{para_id}"',
                x, count=1)
     return set_run_text(x, text)
-
-
-def _append_before_close(xml: str, close_tag: str, addition: str) -> str:
-    i = xml.rindex(close_tag)
-    return xml[:i] + addition + xml[i:]
 
 
 def _anchor(cid: int) -> tuple[str, str]:

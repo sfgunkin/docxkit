@@ -1880,3 +1880,65 @@ def test_the_baseline_is_asked_SECOND_so_the_clean_copy_still_wins():
 
     assert second == [], "nothing was still missing"
     assert b"NEWER" in redline["customXml/item1.xml"]
+
+
+def test_a_relationship_TARGET_written_with_backslashes_still_resolves():
+    """A Target may legally carry backslashes — some writers emit them
+    on Windows — and `_compare_read` normalised them while `_resolve`
+    did not. One package read two ways: `compare` matched the
+    relationship and every `hygiene` operation that restores or strips a
+    part did not, so a restore would report the part orphaned and a
+    strip would leave it dangling.
+
+    Nothing here has been seen to write that spelling. What earns the
+    change is that two readers of one format had drifted apart."""
+    from docxkit.hygiene import _resolve
+
+    flat = "word" + chr(92) + "footer3.xml"
+
+    assert _resolve("_rels/.rels", flat) == "word/footer3.xml"
+    assert _resolve("word/_rels/document.xml.rels", "footer3.xml") == (
+        "word/footer3.xml")
+    assert _resolve("word/_rels/document.xml.rels",
+                    ".." + chr(92) + "customXml/item1.xml") == (
+        "customXml/item1.xml")
+
+
+def test_dropping_SEVERAL_comments_takes_every_anchor_in_one_pass():
+    """The loops used to nest the other way round — one pass over every
+    text part per ID — so N duplicates meant N decodes and 2N runs of
+    the tempered-lookahead run pattern. Correct, and the shape invites
+    being copied.
+
+    What matters is that folding them into one alternation did not
+    change the answer: every id's three anchors go, and an id NOT in the
+    list keeps all of its own."""
+    from docxkit.hygiene import _drop_comment_anchors
+
+    parts = {"word/document.xml": _body(
+        _anchored(11, "first") + _anchored(22, "second")
+        + _anchored(33, "third"))}
+
+    _drop_comment_anchors(parts, ["11", "33"])
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    for gone in ("11", "33"):
+        assert f'w:commentRangeStart w:id="{gone}"' not in doc
+        assert f'w:commentRangeEnd w:id="{gone}"' not in doc
+        assert f'w:commentReference w:id="{gone}"' not in doc
+    assert 'w:commentRangeStart w:id="22"' in doc
+    assert 'w:commentReference w:id="22"' in doc
+
+
+def test_dropping_NO_comments_touches_nothing():
+    """An empty alternation would match the empty string between every
+    pair of characters, so the id list being empty has to return before
+    the pattern is built rather than after."""
+    from docxkit.hygiene import _drop_comment_anchors
+
+    parts = {"word/document.xml": _body(_anchored(11, "first"))}
+    before = parts["word/document.xml"]
+
+    _drop_comment_anchors(parts, [])
+
+    assert parts["word/document.xml"] == before
