@@ -86,3 +86,9 @@ claims = [
   { was = "if len(hits) > 1:", line = "if len(hits) != 1:", why = "`diagnose` returns on `if not hits` immediately above, so `len(hits)` is at least 1 wherever this runs and the two comparisons select the same paragraphs. The empty case has its own message — the one about an earlier edit having rewritten the sentence." },
   { was = "para = hits[0].group(0)", line = "para = hits[-1].group(0)", why = "Reached only when the two returns above it did not fire, which leaves exactly one hit: `hits[0]` and `hits[-1]` are the same match." },
 ]
+
+["hygiene.py"]
+claims = [
+  { was = 'if shut == -1:                      # malformed; not ours to repair', line = 'if shut <= -1:                      # malformed; not ours to repair', why = '`shut` is `str.find`, whose whole range is -1 and the non-negative indices — there is no value below -1 for the two comparisons to disagree about. Its siblings that compare against a DIFFERENT number are killed: those select real spans as malformed, or malformed ones as real.' },
+  { was = 'if shut == -1:                      # malformed; not ours to repair', line = 'if shut is -1:                      # malformed; not ours to repair', why = "Identity against -1, which is inside CPython's cached-int range, so `is` is true wherever `==` is. Python warns about the shape and is right to; it works here and is not a thing to rely on. The same case as the interned literals recorded for refstyle." },
+]

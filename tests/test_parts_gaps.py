@@ -2013,3 +2013,66 @@ def test_an_element_in_NEITHER_list_does_not_move_the_position():
     got = re.findall(r"<w:(\w+)", parts[SETTINGS].decode("utf-8"))[1:]
     assert got.index("proofState") < got.index("trackRevisions")
     assert got.index("trackRevisions") < got.index("defaultTabStop")
+
+
+def test_a_section_span_is_EXACTLY_the_element_in_both_spellings():
+    """The spans are used to slice, so their ends are load-bearing and
+    nothing had asserted one. Both forms in one document, because the
+    open tag is matched first and the two are told apart afterwards —
+    an alternation cannot do it, and the version that tried ran one span
+    from an empty section to the end of the next."""
+    from docxkit.hygiene import _section_spans
+
+    empty = '<w:sectPr w:rsidR="00A"/>'
+    full = '<w:sectPr><w:pgSz w:w="11906"/></w:sectPr>'
+    doc = f"<w:body><w:p/>{empty}<w:p/>{full}</w:body>"
+
+    spans = _section_spans(doc)
+
+    assert [doc[a:b] for a, b in spans] == [empty, full]
+
+
+def test_an_UNCLOSED_sectPr_is_SKIPPED_rather_than_guessed_at():
+    """A `<w:sectPr>` with no closing tag is a malformed document and
+    not this function's to repair. Taking the rest of the file as its
+    contents would hand `_restore_section_references` a span running to
+    the end of the body, and it would then wire a footer into it.
+
+    The well-formed sections around it are still found: one bad element
+    is not a reason to stop reading the document."""
+    from docxkit.hygiene import _section_spans
+
+    full = '<w:sectPr><w:pgSz w:w="11906"/></w:sectPr>'
+    doc = f"<w:body>{full}<w:p/><w:sectPr><w:pgSz w:w=\"2\"/></w:body>"
+
+    spans = _section_spans(doc)
+
+    assert [doc[a:b] for a, b in spans] == [full]
+
+
+def test_a_target_with_FAR_fewer_sections_is_left_alone():
+    """The guard is `at >= len(sects)`, not `==`: a source section index
+    can be several past the end of a shorter target, and read as an
+    equality only the off-by-one case is caught — the rest walk off the
+    list. Three sections in the source and one in the target puts the
+    index two past it."""
+    from docxkit.hygiene import _restore_section_references
+
+    src = ("<w:body><w:p/>"
+           '<w:sectPr><w:pgSz w:w="1"/></w:sectPr><w:p/>'
+           '<w:sectPr><w:pgSz w:w="2"/></w:sectPr><w:p/>'
+           '<w:sectPr><w:footerReference w:type="default" r:id="rId4"/>'
+           '<w:pgSz w:w="3"/></w:sectPr></w:body>')
+    parts = {"word/document.xml": b"<w:body><w:p/><w:sectPr/></w:body>"}
+    source = {
+        "word/document.xml": src.encode("utf-8"),
+        "word/_rels/document.xml.rels": (
+            b'<Relationships><Relationship Id="rId4" '
+            b'Target="footer1.xml"/></Relationships>'),
+    }
+
+    _restore_section_references(parts, source, ["word/footer1.xml"],
+                                {"word/footer1.xml": "rId9"})
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert "footerReference" not in doc, doc
