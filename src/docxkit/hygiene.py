@@ -116,18 +116,43 @@ def strip_parts(parts: dict[str, bytes],
         del parts[name]
 
     for prefix in prefixes:
-        quoted = re.escape(prefix)
         if _CONTENT_TYPES in parts:
+            quoted = re.escape(prefix)
             xml = parts[_CONTENT_TYPES].decode("utf-8")
             xml = re.sub(rf'<Override PartName="/{quoted}[^"]*"[^>]*/>',
                          "", xml)
             parts[_CONTENT_TYPES] = xml.encode("utf-8")
-        if _DOC_RELS in parts:
-            xml = parts[_DOC_RELS].decode("utf-8")
-            xml = re.sub(
-                rf'<Relationship[^>]*Target="(?:\.\./)?{quoted}[^"]*"[^>]*/>',
-                "", xml)
-            parts[_DOC_RELS] = xml.encode("utf-8")
+
+    # EVERY rels part, and the Target RESOLVED rather than pattern
+    # matched — the same rule `restore_parts` states, since this is its
+    # mirror. A footer's relationship is in
+    # `word/_rels/document.xml.rels`, but `docProps/custom.xml`'s is in
+    # the PACKAGE rels and a data store's is in its own. Patching the
+    # document's alone left `<Relationship Target="docProps/custom.xml"/>`
+    # in `_rels/.rels` pointing at a part that is no longer in the
+    # package, which is what Word reports as unreadable content — and
+    # `docProps/custom.xml` is half of `tracked.CARRIED_PARTS`, so it is
+    # the ordinary case rather than a contrived one.
+    #
+    # Resolving beats matching the text: a Target is relative to the
+    # folder of the part its rels file describes, so one part is written
+    # `docProps/custom.xml` from the package rels and
+    # `../docProps/custom.xml` from `word/`, and a prefix test on the
+    # raw string has to guess which spelling to expect.
+    stripped = set(dropped)
+
+    def _unwire(m: re.Match[str]) -> str:
+        entry = m.group(0)
+        target = _TARGET_RE.search(entry)
+        if _external(entry) or target is None:
+            return entry
+        return "" if _resolve(name, target.group(1)) in stripped else entry
+
+    for name in [n for n in parts if _is_rels(n)]:
+        xml = parts[name].decode("utf-8")
+        fixed = re.sub(r"<Relationship\b[^>]*/>", _unwire, xml)
+        if fixed != xml:
+            parts[name] = fixed.encode("utf-8")
     return dropped
 
 

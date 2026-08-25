@@ -1661,3 +1661,77 @@ def test_a_reference_can_be_put_into_an_EMPTY_section():
     assert "<w:sectPr/>" not in doc, "the empty section was left empty"
     assert re.search(r"<w:sectPr><w:footerReference[^>]*/></w:sectPr>", doc), \
         doc
+
+
+def _with_doc_props() -> dict[str, bytes]:
+    """A package whose `docProps/custom.xml` is wired from the PACKAGE
+    rels, which is where docProps are actually referenced from."""
+    parts = make_parts(para(run("body")))
+    parts["docProps/custom.xml"] = b"<Properties/>"
+    parts["[Content_Types].xml"] = (
+        b'<Types><Override PartName="/docProps/custom.xml" '
+        b'ContentType="custom"/>'
+        b'<Override PartName="/word/document.xml" ContentType="doc"/>'
+        b"</Types>")
+    parts["_rels/.rels"] = (
+        b'<Relationships>'
+        b'<Relationship Id="rId1" Type="T" Target="word/document.xml"/>'
+        b'<Relationship Id="rId3" Type="T" Target="docProps/custom.xml"/>'
+        b"</Relationships>")
+    parts["word/_rels/document.xml.rels"] = (
+        b'<Relationships>'
+        b'<Relationship Id="rId9" Type="T" Target="../docProps/custom.xml"/>'
+        b'<Relationship Id="rId2" Type="T" Target="styles.xml"/>'
+        b'<Relationship Id="rId8" Type="T" TargetMode="External" '
+        b'Target="https://example.org/docProps/custom.xml"/>'
+        b"</Relationships>")
+    return parts
+
+
+def test_strip_parts_unwires_a_part_from_the_PACKAGE_rels_too():
+    """`strip_parts` patched `word/_rels/document.xml.rels` and nothing
+    else, while its mirror `restore_parts` walks EVERY rels part and
+    says why in a comment: a footer's relationship lives in the
+    document's rels, but `docProps/custom.xml`'s lives in the package
+    rels and a data store's in its own.
+
+    So stripping docProps left `<Relationship Target="docProps/custom.xml"/>`
+    in `_rels/.rels` pointing at a part no longer in the package — which
+    is what Word reports as unreadable content, and what this function
+    exists to prevent. `docProps/custom.xml` is half of
+    `tracked.CARRIED_PARTS`, so it is the ordinary case."""
+    parts = _with_doc_props()
+
+    dropped = strip_parts(parts, prefixes=("docProps/",))
+
+    assert dropped == ["docProps/custom.xml"]
+    pkg = parts["_rels/.rels"].decode("utf-8")
+    assert "docProps/custom.xml" not in pkg, pkg
+    assert 'Id="rId1"' in pkg, "unrelated relationships must survive"
+
+
+def test_strip_parts_resolves_a_target_rather_than_matching_its_text():
+    """A Target is relative to the folder of the part its rels file
+    describes, so one part is written `docProps/custom.xml` from the
+    package rels and `../docProps/custom.xml` from `word/`. Both name
+    the same part and both have to go."""
+    parts = _with_doc_props()
+
+    strip_parts(parts, prefixes=("docProps/",))
+
+    doc = parts["word/_rels/document.xml.rels"].decode("utf-8")
+    assert "../docProps/custom.xml" not in doc, doc
+    assert 'Id="rId2"' in doc, "unrelated relationships must survive"
+
+
+def test_strip_parts_keeps_an_EXTERNAL_relationship_that_merely_looks_alike():
+    """A URL is not a part name. `TargetMode="External"` names something
+    outside the package, and its path can spell anything at all —
+    deleting it because the string matched would break a live link over
+    a part that was never in the file."""
+    parts = _with_doc_props()
+
+    strip_parts(parts, prefixes=("docProps/",))
+
+    doc = parts["word/_rels/document.xml.rels"].decode("utf-8")
+    assert "https://example.org/docProps/custom.xml" in doc, doc
