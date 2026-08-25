@@ -1087,3 +1087,46 @@ def test_an_entry_that_DECLARES_the_house_value_is_not_left_to_the_style():
     report = layout(parts)
 
     assert report.inherited == [], report.inherited
+
+
+def test_layout_makes_SEVERAL_edits_without_eating_the_document():
+    """Every edit is spliced by the offsets of the ORIGINAL document, so
+    they have to be applied last-first: an earlier splice that changes
+    length moves everything after it, and the next one then cuts in the
+    wrong place.
+
+    Applied left-to-right on a three-entry list this does not misformat
+    anything — it DESTROYS the document. Measured: five paragraphs come
+    back as three, the "References" heading and two entries are gone,
+    one entry appears twice, and the `w:p` opens and closes no longer
+    balance, which is a file Word refuses to open.
+
+    Nothing held it: every fixture that reached this loop had a single
+    edit in it, and one edit is in the same place whichever way the list
+    is sorted."""
+    parts = _list_with(
+        para(run("Body one.")), para(run("References")),
+        para(run(ENTRY_A)), para(run(ENTRY_B)), para(run(ENTRY_C)))
+
+    report = layout(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    got = [visible_text(m.group(0)) for m in PARA_RE.finditer(doc)]
+    assert got == ["Body one.", "References", ENTRY_A, ENTRY_B, ENTRY_C], got
+    assert doc.count("<w:p ") == doc.count("</w:p>"), "unbalanced paragraphs"
+    assert len(report.indented) + len(report.spaced) > 1, (
+        "the fixture must make more than one edit or it proves nothing")
+
+
+def test_the_page_break_line_names_the_paragraph_a_reader_must_open():
+    """The report is the whole output of an audit, and this line sends a
+    person to one paragraph out of a hundred. `head` is 1 in this
+    fixture, where `head + 1` is 2 while `head ^ 1` is 0 and `head | 1`
+    is 1 — a reader sent to the top of the document, or to the body
+    paragraph above the heading."""
+    parts = make_parts(reflist(entry(A)))
+
+    report = layout(parts)
+
+    assert report.page_break.startswith("\u00b62: References"), \
+        report.page_break
