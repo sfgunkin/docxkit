@@ -17,60 +17,6 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
-### S2 — `carry` restores from the CLEAN COPY, which is the file that lost the part
-
-Reported 2026-08-24 from Health Capacity to Work: a rebuilt redline is
-missing `docProps/custom.xml` and the `customXml/` triple against
-`prev.docx`. **Sized down 2026-08-25.** This was filed saying those parts carry a
-World Bank MSIP sensitivity label and an "Official Use Only" content
-marking, so a promote would ship an UNLABELLED document. That framing
-was withdrawn by the session that reported it: on Health Capacity to
-Work `docProps/custom.xml` holds a Zotero preference and a Grammarly
-document id, and no manuscript here has been shown to carry a
-sensitivity label at all. The MECHANISM below is unchanged and still
-worth fixing — a carried part is restored from the file that lost it —
-but it loses a part a reader would not miss, not a compliance marking,
-and it is an S2 for the mechanism rather than for the consequence.
-
-Recorded here rather than quietly edited away, because the entry was
-acted on while it said the other thing, and a reader of the fix should
-be able to see what it was sized against.
-
-**The mechanism is not a missing list.** `CARRIED_PARTS` already names
-both — `(_hygiene.CUSTOM_XML, USER_PROPERTIES)` — and
-`package.regenerated_by_word` already excludes `docProps/custom.xml` by
-name, with a docstring about this exact label. What restores them is
-`restore_parts(parts, revised_parts, prefixes=carry)`, and the source is
-the REVISED input: the author's clean copy.
-
-**So the carry cannot help when the clean copy is where the part went.**
-The baseline still has it; the file the author saved does not; and carry
-copies from the one that does not. Every gate is then green, because
-every gate compares the redline against the clean copy and they agree —
-about the absence.
-
-**Shape of a fix, and the judgment in it.** Fall back to the BASELINE
-for a carried part the revised copy lacks. The judgment is that
-"baseline has it, revised does not" cannot be distinguished from a
-deliberate removal this round: the author may have stripped the
-bibliography store on purpose, and restoring it would undo that. For a
-compliance marking the safe default is to restore and SAY so, leaving
-`strip_parts` as the way to mean it — but that is a decision about
-whose intent wins, and it should be made deliberately rather than as a
-side effect of widening a prefix list.
-
-**Related and separate:** `tracked.build` unlinks `~<stem>.building.docx`
-on the failure path, so a verify-in-Word refusal leaves nothing to
-inspect. That cost the S1 above a bisect rather than a look, and it cost
-this report a rebuild with `verify_in_word=False` to get the artefact at
-all. Keeping the file on failure is a two-line change and would have
-saved both.
-
----
-
-
-
-
 ### Not three defects — one missing gate: nothing renders by default
 
 Framing, not a defect of its own. Recorded because three entries in this file
@@ -700,7 +646,68 @@ falls in a 0.4-point window.
 
 ---
 
+## Fixed
+
+### S4 — four inlined copies of `comments._append_before_close`
+
+**Fixed 2026-08-25** — `9ba39e7`. The helper moved to `_xml`, where both
+modules already get their XML primitives, rather than `hygiene`
+importing a private from `comments`. Four call sites now share one
+writer, and the `rindex` is documented where it lives: a part's closing
+tag is its LAST, and a `</Relationships>` inside a Target string would
+otherwise take it.
+
+`comments.py:176` is three lines: find the closing tag, splice before it.
+`hygiene.py` writes that body out again at lines 226, 254, 719 and 727 —
+twice for `</Types>` and twice for `</Relationships>` — with the
+`rindex` and the two-slice concatenation each time.
+
+Not a defect: every copy is correct today. It is filed because four is
+the number at which a fifth gets written without anyone deciding to, and
+because this package already has an entry (S4, `a fifth writer of CT_PPr
+order`) about exactly that having happened once.
+
+---
+
+---
+
+
+### S4 — `_drop_comment_anchors` re-reads every text part once per COMMENT
+
+**Fixed 2026-08-25** — `9ba39e7`. One alternation over all the ids
+instead of one pass per id: 71 ms -> 2.5 ms for forty on the same body,
+and linear became near-flat. The answer is unchanged and now says so —
+every listed id loses all three anchors, an unlisted one keeps its own —
+with a test for the empty list, which has to return BEFORE the pattern
+is built rather than after, since an empty alternation matches between
+every pair of characters.
+
+`for cid in ids: for name, xml in text_parts(parts):` — so dropping N
+duplicate comments decodes `document.xml`, `footnotes.xml` and
+`endnotes.xml` N times over, and runs 2N passes of the tempered-lookahead
+run pattern, which is the costliest regex in the file.
+
+Measured 2026-08-25 on a body of 300 anchored comments (0.12 MB): 1.9 ms
+for one id, 18.4 ms for ten, 71.0 ms for forty — linear, as expected. On
+a manuscript-sized body it is under a second. So this is a note, not a
+problem: an id ALTERNATION in one pass would do the same work once, and
+the reason to write it down is that the shape invites being copied, not
+that anyone is waiting on it.
+
+---
+
+---
+
+
 ### S3 — three Relationship parsers, and they have already drifted
+
+**Fixed 2026-08-25** — `9ba39e7`. `_resolve` normalises the separator
+before resolving, as `_compare_read` already did, so a Target written
+with backslashes names the same part to both readers. The wider
+duplication stands: `hygiene`, `figures` and `_compare_read` still hold
+three readings of one format, and one of them learning something the
+others have not is how this arrived. What is closed is the drift that
+existed; what remains is the shape that produced it.
 
 `hygiene` has `_free_rid` / `_rid_for` / `_references` / `_resolve`,
 `figures` has `_next_rid` / `_relationship_target`, and `_compare_read`
@@ -728,37 +735,89 @@ have since learned something the third has not.
 
 ---
 
-### S4 — `_drop_comment_anchors` re-reads every text part once per COMMENT
+---
 
-`for cid in ids: for name, xml in text_parts(parts):` — so dropping N
-duplicate comments decodes `document.xml`, `footnotes.xml` and
-`endnotes.xml` N times over, and runs 2N passes of the tempered-lookahead
-run pattern, which is the costliest regex in the file.
 
-Measured 2026-08-25 on a body of 300 anchored comments (0.12 MB): 1.9 ms
-for one id, 18.4 ms for ten, 71.0 ms for forty — linear, as expected. On
-a manuscript-sized body it is under a second. So this is a note, not a
-problem: an id ALTERNATION in one pass would do the same work once, and
-the reason to write it down is that the shape invites being copied, not
-that anyone is waiting on it.
+### S2 — `carry` restores from the CLEAN COPY, which is the file that lost the part
+
+**Fixed 2026-08-25** — `977d78b`. The clean copy is asked first and the
+BASELINE second, and what is taken from the baseline is reported apart
+from what is carried across: "this build went back a version for these"
+is a different sentence, and the one case where an author might want to
+look. Asked second and not instead, because `restore_parts` leaves a
+part that is already there alone — the revised copy is the newer
+document, and this is a rescue rather than a sync. There is a test for
+that ordering.
+
+The judgment this entry flagged — restore, or respect what might be a
+deliberate removal — was settled on measurement rather than on the
+framing it was filed with. Across 197 manuscripts in these projects
+`customXml/` holds Word's `<b:Sources>` bibliography store in 146 of
+them and `docProps/custom.xml` holds `ZOTERO_PREF` in 68: the database
+behind every CITATION field, and what makes Zotero recognise a document
+as one it manages. Six carry an MSIP sensitivity label besides — so the
+original framing was right in general and wrong about the paper it was
+filed from, and the retraction that replaced it was wrong the other way.
+Nobody READS these parts; the tools do, and losing them stops the
+author's citation workflow with nothing red anywhere.
+
+Against that, "the author deleted it deliberately" is thin for these
+particular parts: Word barely exposes custom properties and does not
+expose the data store at all. The way to MEAN it stays explicit —
+`strip_parts`, and `[batch] carry` for a paper that wants something
+else.
+
+Reported 2026-08-24 from Health Capacity to Work: a rebuilt redline is
+missing `docProps/custom.xml` and the `customXml/` triple against
+`prev.docx`. **Sized down 2026-08-25.** This was filed saying those parts carry a
+World Bank MSIP sensitivity label and an "Official Use Only" content
+marking, so a promote would ship an UNLABELLED document. That framing
+was withdrawn by the session that reported it: on Health Capacity to
+Work `docProps/custom.xml` holds a Zotero preference and a Grammarly
+document id, and no manuscript here has been shown to carry a
+sensitivity label at all. The MECHANISM below is unchanged and still
+worth fixing — a carried part is restored from the file that lost it —
+but it loses a part a reader would not miss, not a compliance marking,
+and it is an S2 for the mechanism rather than for the consequence.
+
+Recorded here rather than quietly edited away, because the entry was
+acted on while it said the other thing, and a reader of the fix should
+be able to see what it was sized against.
+
+**The mechanism is not a missing list.** `CARRIED_PARTS` already names
+both — `(_hygiene.CUSTOM_XML, USER_PROPERTIES)` — and
+`package.regenerated_by_word` already excludes `docProps/custom.xml` by
+name, with a docstring about this exact label. What restores them is
+`restore_parts(parts, revised_parts, prefixes=carry)`, and the source is
+the REVISED input: the author's clean copy.
+
+**So the carry cannot help when the clean copy is where the part went.**
+The baseline still has it; the file the author saved does not; and carry
+copies from the one that does not. Every gate is then green, because
+every gate compares the redline against the clean copy and they agree —
+about the absence.
+
+**Shape of a fix, and the judgment in it.** Fall back to the BASELINE
+for a carried part the revised copy lacks. The judgment is that
+"baseline has it, revised does not" cannot be distinguished from a
+deliberate removal this round: the author may have stripped the
+bibliography store on purpose, and restoring it would undo that. For a
+compliance marking the safe default is to restore and SAY so, leaving
+`strip_parts` as the way to mean it — but that is a decision about
+whose intent wins, and it should be made deliberately rather than as a
+side effect of widening a prefix list.
+
+**Related and separate:** `tracked.build` unlinks `~<stem>.building.docx`
+on the failure path, so a verify-in-Word refusal leaves nothing to
+inspect. That cost the S1 above a bisect rather than a look, and it cost
+this report a rebuild with `verify_in_word=False` to get the artefact at
+all. Keeping the file on failure is a two-line change and would have
+saved both.
 
 ---
 
-### S4 — four inlined copies of `comments._append_before_close`
-
-`comments.py:176` is three lines: find the closing tag, splice before it.
-`hygiene.py` writes that body out again at lines 226, 254, 719 and 727 —
-twice for `</Types>` and twice for `</Relationships>` — with the
-`rindex` and the two-slice concatenation each time.
-
-Not a defect: every copy is correct today. It is filed because four is
-the number at which a fifth gets written without anyone deciding to, and
-because this package already has an entry (S4, `a fifth writer of CT_PPr
-order`) about exactly that having happened once.
-
 ---
 
-## Fixed
 
 ### S2 — `repkit` and `safekit` carry a FORK of `coverage_floor.py`, without the guard this one paid for
 
