@@ -57,9 +57,12 @@ __all__ = [
     "MENTION",
     "NOTE",
     "Block",
+    "FitFinding",
+    "FitReport",
     "PackageError",
     "Placement",
     "PlacementReport",
+    "audit",
     "exhibit_block",
     "keep_together",
     "own_page",
@@ -603,6 +606,136 @@ def own_page(block: list[etree._Element]) -> None:
             rpr = row.find(W + "trPr")
             if rpr is not None:
                 _flag(rpr, "cantSplit", False)
+
+
+@dataclass(frozen=True)
+class FitFinding:
+    """One exhibit breaking the fit rule, and which half it broke."""
+
+    number: int
+    caption: str
+    kind: str                    # "row may split", "row unbound", "straddles"
+    detail: str
+
+    def __str__(self) -> str:
+        return f"table {self.number} ({self.caption[:40]}): {self.detail}"
+
+
+@dataclass
+class FitReport:
+    """What :func:`audit` found. `ok` is the gate."""
+
+    findings: list[FitFinding] = field(default_factory=list)
+    tables: int = 0
+    rendered: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return not self.findings
+
+    def format(self) -> str:
+        head = (f"{self.tables} table(s): {len(self.findings)} fit "
+                f"finding(s)")
+        if not self.rendered:
+            head += " — markup only; pass a renderer to see what STRADDLES"
+        return "\n".join([head] + [f"  ! {f}" for f in self.findings])
+
+
+def _has(el: etree._Element | None, tag: str) -> bool:
+    """Is this property present and not switched off?
+
+    `<w:cantSplit w:val="false"/>` is the property saying the opposite,
+    and reading it as present is how an audit reports a rule kept by a
+    document that switches it off.
+    """
+    if el is None:
+        return False
+    found = el.find(W + tag)
+    return found is not None and found.get(W + "val") not in ("false", "0",
+                                                              "off")
+
+
+def audit(parts: dict[str, bytes], *,
+          caption: re.Pattern[str] = CAPTION,
+          note: re.Pattern[str] = NOTE,
+          render: Callable[[dict[str, bytes]], list[str]] | None = None,
+          ) -> FitReport:
+    """Does every exhibit obey the house fit rule? (report, not a repair.)
+
+    The rule `keep_together` writes, read back: every row carries
+    `w:cantSplit`, every row but the last binds to the next with
+    `keepNext`, and the caption binds to the table. Nothing audited for
+    its ABSENCE — `refstyle` has `audit` beside its writers and the table
+    rules had no equivalent — so the rule was enforceable only by
+    remembering to run a writer, which is a rule that decays. Aging_Well
+    is the proof: its Table 1 was hand-typed and dropped in whole, so no
+    build ever had the chance to style it, and eight rounds of green
+    gates went by while it straddled sheets 8 and 9.
+
+    Two layers, and the first needs no renderer. The MARKUP question —
+    "is the property there?" — is the one that would have prevented the
+    split, and it is cheap enough for any paper's `[verify]` block. Give
+    it a `render` callback and it also reports what actually STRADDLES a
+    boundary, which is the only way to catch a table too tall to fit at
+    all: `cantSplit` cannot make an oversized table fit, and nothing can.
+
+    `pages --check` was the other candidate home. It renders, and its
+    questions are about the SHEETS — blank ones, numbering restarts, the
+    corner a number prints in. This defect is about the content that
+    landed on them, which is a different question and belongs beside the
+    code that writes the property.
+    """
+    body = _body(parts)
+    blocks = _blocks(body, caption, note)
+    report = FitReport(tables=len(blocks))
+
+    for number, block in sorted(blocks.items()):
+        text = _caption_of(block)
+        tbl = next((e for e in block if e.tag == W + "tbl"), None)
+        if tbl is None:
+            continue
+        head = next((e for e in block if e.tag == W + "p"), None)
+        if head is not None and not _has(head.find(W + "pPr"), "keepNext"):
+            report.findings.append(FitFinding(
+                number, text, "caption unbound",
+                "its caption does not keep with the table, so Word may "
+                "leave the caption behind on the sheet above"))
+        rows = tbl.findall(W + "tr")
+        loose = [n for n, row in enumerate(rows)
+                 if not _has(row.find(W + "trPr"), "cantSplit")]
+        if loose:
+            report.findings.append(FitFinding(
+                number, text, "row may split",
+                f"{len(loose)} of {len(rows)} row(s) carry no cantSplit — "
+                f"a tall one will break ACROSS a page, mid-row"))
+        unbound = [n for n, row in enumerate(rows[:-1])
+                   if not all(_has(p.find(W + "pPr"), "keepNext")
+                              for p in row.iter(W + "p"))]
+        if unbound:
+            report.findings.append(FitFinding(
+                number, text, "row unbound",
+                f"{len(unbound)} row(s) do not keep with the row after — "
+                f"the table may break BETWEEN rows"))
+
+    if render is not None:
+        report.rendered = True
+        sheets = render(parts)
+        for number, block in sorted(blocks.items()):
+            tbl = next((e for e in block if e.tag == W + "tbl"), None)
+            rows = tbl.findall(W + "tr") if tbl is not None else []
+            first = _sheet_of(sheets, _caption_of(block)[:40])
+            last = (_sheet_of(sheets, _row_text(rows[-1]).strip()[:40],
+                              (first or 1) - 1) if rows and first else None)
+            if first and last and last != first:
+                report.findings.append(FitFinding(
+                    number, _caption_of(block), "straddles",
+                    f"it starts on sheet {first} and ends on sheet {last}"))
+            elif first and rows and last is None:
+                report.findings.append(FitFinding(
+                    number, _caption_of(block), "end not found",
+                    f"its caption is on sheet {first} and its last row is "
+                    f"on none of them — the fit is UNMEASURED"))
+    return report
 
 
 def place(parts: dict[str, bytes], *,

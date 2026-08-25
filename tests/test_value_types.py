@@ -54,6 +54,7 @@ VALUES = [
     "refstyle.Fix",             # one span and what it should say
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
+    "placement.FitFinding",     # one exhibit breaking the fit rule
     "refstyle.Issue",
     "refstyle.Layout",          # the house rule itself, passed in and read
     "refstyle.Style",
@@ -88,6 +89,7 @@ ACCUMULATORS = {
     "footnotes.SizeReport",
     "hygiene.SmartenReport",
     "hygiene.SpacingReport",
+    "placement.FitReport",
     "placement.Placement",
     "placement.PlacementReport",
     "probe.Probe",

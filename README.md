@@ -105,6 +105,7 @@ docxkit authors PAPER.docx [--set NAME] [--only A,B] [--initials XX] [--write]
 docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx [--sheets] [--check]
+docxkit fit PAPER.docx [--render] [--check]
 docxkit verify PAPER.docx                  # does Word read this back unchanged?
 ```
 

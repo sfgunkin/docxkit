@@ -1533,3 +1533,88 @@ def test_a_single_column_table_still_measures_as_it_did():
     pl = rep.placements[0]
     assert pl.caption_sheet == 2 and pl.last_sheet == 2
     assert not pl.split and not pl.unmeasured
+
+
+# --- the rule read BACK ------------------------------------------------
+#
+# `keep_together` writes cantSplit on every row, keepNext on every row
+# but the last, and keepNext on the caption. Nothing audited for its
+# ABSENCE: `refstyle` has `audit` beside its writers and the table rules
+# had no equivalent, so the rule was enforceable only by remembering to
+# run a writer. Aging_Well's Table 1 was hand-typed and dropped in
+# whole, so no build ever styled it, and eight rounds of green gates
+# went by while it straddled sheets 8 and 9.
+
+
+def test_a_hand_typed_table_breaks_all_three_halves_of_the_rule():
+    """The state a paper is really in when nobody has run a writer over
+    it: no cantSplit anywhere, no keepNext binding the rows, and a
+    caption that does not keep with its table."""
+    report = placement.audit(parts(
+        P("See table 1.") + P("Table 1. Heading")
+        + WIDE(("Capability", "Source"), ("Health", "Nussbaum"))))
+
+    kinds = sorted(f.kind for f in report.findings)
+    assert kinds == ["caption unbound", "row may split", "row unbound"]
+    assert not report.ok
+    assert not report.rendered
+
+
+def test_the_auditor_agrees_with_the_WRITER_it_reads_back():
+    """The round trip is the point. An audit that disagreed with
+    `place` would be a second opinion about the house rule, and the
+    module would then have two."""
+    raw = parts(P("See table 1.") + P("Table 1. Heading")
+                + WIDE(("Capability", "Source"), ("Health", "Nussbaum")))
+
+    styled, _ = placement.place(dict(raw))
+
+    assert placement.audit(styled).ok, placement.audit(styled).format()
+
+
+def test_a_property_switched_OFF_is_not_a_property_kept():
+    """`<w:cantSplit w:val="false"/>` is the rule being declined, and
+    reading a present element as a kept rule is how an audit comes back
+    green over a document that says the opposite."""
+    off = ('<w:tbl><w:tr><w:trPr><w:cantSplit w:val="false"/></w:trPr>'
+           "<w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr></w:tbl>")
+
+    report = placement.audit(parts(P("See table 1.")
+                                   + P("Table 1. Heading") + off))
+
+    assert any(f.kind == "row may split" for f in report.findings), \
+        report.format()
+
+
+def test_with_a_RENDERER_it_reports_what_actually_straddles():
+    """The markup question is the one that PREVENTS a split. This is the
+    one that catches a table too tall to fit at all, which no property
+    can save."""
+    def render(_parts):
+        return ["See table 1. Table 1. Heading Capability Source",
+                "Health Nussbaum"]
+
+    report = placement.audit(
+        parts(P("See table 1.") + P("Table 1. Heading")
+              + WIDE(("Capability", "Source"), ("Health", "Nussbaum"))),
+        render=render)
+
+    assert report.rendered
+    (straddle,) = [f for f in report.findings if f.kind == "straddles"]
+    assert "sheet 1" in straddle.detail and "sheet 2" in straddle.detail
+
+
+def test_a_table_the_render_cannot_LOCATE_is_said_so_not_passed():
+    """The same third state `place` needed: a caption found and an end
+    not found is unmeasured, and silence about it is a gate reporting
+    that it checked."""
+    def render(_parts):
+        return ["See table 1. Table 1. Heading"]
+
+    report = placement.audit(
+        parts(P("See table 1.") + P("Table 1. Heading")
+              + WIDE(("Capability", "Source"), ("Health", "Nussbaum"))),
+        render=render)
+
+    assert any(f.kind == "end not found" for f in report.findings), \
+        report.format()

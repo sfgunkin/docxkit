@@ -2509,3 +2509,77 @@ def test_refstyle_fix_exits_ZERO_when_it_leaves_a_clean_list(monkeypatch,
     out = capsys.readouterr().out
     assert "fix(es) written" in out
     assert code == 0, out
+
+
+# --- `docxkit fit` -----------------------------------------------------
+
+def _fit_docx(tmp_path, styled: bool):
+    from docxkit.package import write_docx
+    from docxkit.placement import place
+
+    rows = ("<w:tr><w:tc><w:p><w:r><w:t>Capability</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:r><w:t>Source</w:t></w:r></w:p></w:tc></w:tr>"
+            "<w:tr><w:tc><w:p><w:r><w:t>Health</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:r><w:t>Nussbaum</w:t></w:r></w:p></w:tc></w:tr>")
+    parts = make_parts(para(run("See table 1.")) + para(run("Table 1. Head"))
+                       + f"<w:tbl>{rows}</w:tbl>")
+    if styled:
+        parts, _ = place(parts)
+    path = tmp_path / ("styled.docx" if styled else "raw.docx")
+    write_docx(path, parts)
+    return path
+
+
+def test_fit_reports_without_gating_by_default(monkeypatch, tmp_path, capsys):
+    """A report is a report. `--check` is what makes it a gate, and a
+    command that exited non-zero without being asked could not be run
+    for a look."""
+    code, _ = run_cli(monkeypatch, "fit", str(_fit_docx(tmp_path, False)))
+
+    assert code == 0
+    assert "fit finding(s)" in capsys.readouterr().out
+
+
+def test_fit_check_EXITS_on_a_table_that_breaks_the_rule(monkeypatch,
+                                                         tmp_path, capsys):
+    """The whole point of the entry: a paper's [verify] block can carry
+    it, and the answer to "why was this not caught" stops being
+    "because nothing asked"."""
+    code, _ = run_cli(monkeypatch, "fit", str(_fit_docx(tmp_path, False)),
+                      "--check")
+
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "cantSplit" in out
+    assert "enforceable only by" in out
+
+
+def test_fit_check_is_QUIET_on_a_manuscript_that_obeys_the_rule(monkeypatch,
+                                                               tmp_path,
+                                                               capsys):
+    """A gate that fires on a correct document is a gate people turn
+    off. `place` has just styled this one."""
+    code, _ = run_cli(monkeypatch, "fit", str(_fit_docx(tmp_path, True)),
+                      "--check")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "0 fit finding(s)" in out
+
+
+def test_fit_RENDER_asks_what_landed_on_the_sheets(monkeypatch, tmp_path,
+                                                   capsys):
+    """`--render` is the half that needs Word. The renderer is stubbed
+    here: what this holds is that the flag reaches `audit` and the
+    report says it rendered, not what Word does with a page."""
+    monkeypatch.setattr("docxkit.pages.sheets",
+                        lambda *_a, **_k: ["See table 1. Table 1. Head "
+                                           "Capability Source",
+                                           "Health Nussbaum"])
+
+    code, _ = run_cli(monkeypatch, "fit", str(_fit_docx(tmp_path, True)),
+                      "--render", "--check")
+
+    out = capsys.readouterr().out
+    assert "straddle" in out.lower() or "markup only" not in out, out
+    assert code in (0, 2), out

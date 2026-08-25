@@ -22,6 +22,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit math PAPER.docx [--check]
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
+    docxkit fit PAPER.docx [--render] [--check]
     docxkit pages PAPER.docx [--sheets] [--check]
 
 and the single-file revision protocol, which finds its own paths in
@@ -45,6 +46,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
@@ -976,6 +978,35 @@ def cmd_pdf(args: argparse.Namespace) -> int:
     out = export_pdf(args.docx, args.out, first=first, last=last)
     print(f"wrote {out} ({out.stat().st_size} bytes)")
     return 0
+
+
+def cmd_fit(args: argparse.Namespace) -> int:
+    """Does every exhibit obey the house fit rule? --check to gate on it."""
+    from .placement import audit
+
+    render: Callable[[dict[str, bytes]], list[str]] | None = None
+    if args.render:
+        from .pages import sheets
+
+        def _render(_parts: dict[str, bytes]) -> list[str]:
+            # The parts are the file's own; `sheets` renders the FILE,
+            # which is the same document and one conversion cheaper.
+            return [str(row) for row in sheets(args.docx)]
+
+        render = _render
+
+    report = audit(_package(args.docx, read_only=True), render=render)
+    print(Path(args.docx).name)
+    print("  " + report.format().replace("\n", "\n  "))
+    if not args.check:
+        return 0
+    if not report.ok:
+        print("\n  The rule is `placement.keep_together` / `tables.house`, "
+              "and nothing\n  audited for its ABSENCE until now: a house "
+              "rule enforceable only by\n  remembering to run a writer is "
+              "one that decays. Aging_Well's Table 1\n  was hand-typed and "
+              "dropped in whole, so no build ever styled it.")
+    return 2 if not report.ok else 0
 
 
 def cmd_pages(args: argparse.Namespace) -> int:
@@ -2005,6 +2036,21 @@ def main() -> None:
     p.add_argument("--keep-pdf", metavar="PATH",
                    help="keep the render instead of using a temp file")
     p.set_defaults(fn=cmd_pages)
+
+    p = sub.add_parser(
+        "fit",
+        help="audit the house fit rule: cantSplit, keepNext, and (with "
+             "--render) what actually straddles a sheet")
+    p.add_argument("docx")
+    p.add_argument("--render", action="store_true",
+                   help="also render and report the exhibits that STRADDLE "
+                        "a boundary — the only way to catch a table too "
+                        "tall to fit at all, which no property can save")
+    p.add_argument("--check", action="store_true",
+                   help="exit 2 when an exhibit breaks the rule, so a "
+                        "paper's [verify] block can carry it")
+    p.set_defaults(fn=cmd_fit)
+
 
     p = sub.add_parser(
         "revision",
