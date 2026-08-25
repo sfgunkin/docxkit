@@ -130,11 +130,45 @@ def _env() -> dict[str, str]:
             "PYTHONIOENCODING": "utf-8"}
 
 
+def _places(text: str, old: str) -> list[int]:
+    """Where `old` occurs — as a LINE when it is written as one.
+
+    An anchor that starts with whitespace is a line of source, and a
+    reader counting occurrences counts lines. The string does not:
+    `"            continue"` is a SUBSTRING of `"                continue"`,
+    so a `continue` indented twelve spaces also matches inside every one
+    indented sixteen. On `refstyle._header_rows` the fifth such line was
+    the ninth such string, `nth=5` mutated somebody else's `continue`
+    that no test covers, and the case reported SURVIVED — a false
+    negative, and the direction that reads as "no test needed here".
+
+    So an indented anchor is matched only at a line start. A fragment
+    written without leading whitespace — `hits[0]`, `!= want` — is meant
+    as a fragment and is counted wherever it appears.
+
+    Both ENDS, not just the start. Counting line starts alone still
+    disagrees with a reader, because an anchor is a prefix of any
+    longer line beginning the same way: `            continue` also
+    matches `            continue      # applied already`. Twelve such
+    places against nine identical lines, and the `nth` a reader
+    arrives at by counting is neither. So an indented anchor is the
+    WHOLE line, and a partial one matches nothing and is refused
+    rather than quietly picking something else.
+    """
+    line_only = old[:1].isspace()
+    out, at = [], text.find(old)
+    while at != -1:
+        starts = at == 0 or text[at - 1] == chr(10)
+        ends = at + len(old) == len(text) or text[at + len(old)] == chr(10)
+        if not line_only or (starts and ends):
+            out.append(at)
+        at = text.find(old, at + 1)
+    return out
+
+
 def _nth_replace(text: str, old: str, new: str, nth: int) -> str:
     """`text` with only the `nth` (1-based) occurrence of `old` replaced."""
-    at = -1
-    for _ in range(nth):
-        at = text.index(old, at + 1)
+    at = _places(text, old)[nth - 1]
     return text[:at] + new + text[at + len(old):]
 
 
@@ -151,7 +185,7 @@ def _vet(original: str, path: Path, label: str, *,
     the race report the lock message instead of the refusal they asked
     about. The lock and the `-n 8` landed the same morning.
     """
-    n = original.count(old)
+    n = len(_places(original, old))
     if not nth and n != 1:
         return None, (f"  ?? {label}: anchor occurs {n} times — SKIPPED "
                       f"(pass a 5th element, 1..{n}, to pick one)")

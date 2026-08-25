@@ -1094,9 +1094,19 @@ def _header_rows(doc: str) -> list[tuple[int, int]]:
     a nested table its own header, which is what it has.
     """
     spans: list[tuple[int, int]] = []
+    opens = [m.start() for m in _TBL_OPEN_RE.finditer(doc)]
     for tbl in _TBL_OPEN_RE.finditer(doc):
         tr = _TR_OPEN_RE.search(doc, tbl.end())
-        if tr is None:
+        # Not past the next TABLE. A `<w:tbl>` with no row of its own —
+        # `<w:tbl><w:tblPr/></w:tbl>`, which Word writes — otherwise took
+        # the next table's first row as its header and the same span was
+        # recorded twice. Harmless to the membership test that reads
+        # these, and a trap for anything that ever counts them.
+        #
+        # A NESTED table does not trip this: it opens inside its
+        # parent's first row, so the parent's `<w:tr>` still comes first.
+        after = next((at for at in opens if at > tbl.start()), len(doc))
+        if tr is None or tr.start() >= after:
             continue
         end = doc.find("</w:tr>", tr.end())
         spans.append((tr.start(), end if end != -1 else len(doc)))

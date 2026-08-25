@@ -197,3 +197,71 @@ def test_a_lock_whose_HOLDER_IS_GONE_is_taken_over(tmp_path, monkeypatch):
 
     assert (tmp_path / "wt.lock").read_text(encoding="utf-8") == str(
         os.getpid()), "the live caller owns it now"
+
+
+# `nth` picks an occurrence, and a reader arrives at one by counting
+# LINES. The string does not agree, in two different ways, and each
+# disagreement picks a line nobody meant — which reports SURVIVED about
+# a mutation that was never applied. That is a false negative in the
+# direction that reads as "no test needed here".
+
+INDENTS = (
+    "def f():\n"
+    "    for x in xs:\n"
+    "        if a:\n"
+    "            continue\n"          # the one a reader means: #1
+    "        for y in ys:\n"
+    "            if b:\n"
+    "                continue\n"      # deeper: NOT a match
+    "        if c:\n"
+    "            continue      # with a trailing note\n"   # longer: NOT one
+    "        if d:\n"
+    "            continue\n"          # #2
+)
+
+
+def test_an_indented_anchor_does_not_match_a_DEEPER_line():
+    """`"            continue"` is a substring of
+    `"                continue"`, so plain counting finds the deeper
+    lines too and `nth` lands past where a reader is pointing."""
+    from kill_check import _places  # pyright: ignore[reportMissingImports]
+
+    assert len(_places(INDENTS, "            continue")) == 2
+
+
+def test_an_indented_anchor_does_not_match_a_LONGER_line_either():
+    """The other half, and the one that survives a line-start check: an
+    anchor is a prefix of any longer line that begins the same way. Both
+    ends have to be a line boundary."""
+    from kill_check import _places  # pyright: ignore[reportMissingImports]
+
+    places = _places(INDENTS, "            continue")
+    starts = [INDENTS[:at].count(chr(10)) + 1 for at in places]
+
+    assert starts == [4, 11], starts
+
+
+def test_a_BARE_fragment_is_still_counted_wherever_it_appears():
+    """An anchor written without leading whitespace is meant as a
+    fragment — `hits[0]`, `!= want` — and narrowing it to whole lines
+    would refuse every case in this file that uses one."""
+    from kill_check import _places  # pyright: ignore[reportMissingImports]
+
+    assert len(_places(INDENTS, "continue")) == 4
+
+
+def test_the_nth_replacement_uses_the_same_counting_as_the_refusal():
+    """The count that decides "anchor occurs N times" and the pick that
+    applies the mutation have to be one rule. Two would refuse on one
+    number and mutate by another."""
+    from kill_check import (  # pyright: ignore[reportMissingImports]
+        _nth_replace,
+        _places,
+    )
+
+    anchor = "            continue"
+    out = _nth_replace(INDENTS, anchor, "            break", 2)
+
+    assert out.splitlines()[10].strip() == "break"
+    assert out.splitlines()[3].strip() == "continue", "the first is untouched"
+    assert len(_places(INDENTS, anchor)) == 2

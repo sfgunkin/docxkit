@@ -2443,21 +2443,31 @@ def test_table_PROPERTIES_do_not_open_a_table():
 
 
 
-def test_a_table_with_NO_ROWS_OF_ITS_OWN_borrows_the_next_one_harmlessly():
-    """Worth pinning because it is not what the code looks like it does.
+def test_the_row_search_is_bounded_WITHOUT_matching_a_whole_table():
+    """This pinned the opposite until 2026-08-25, and the reason it gave
+    is still the important part.
 
-    The row is searched for from the table's opening tag to the END of
-    the document, not within that table, so an empty `<w:tbl>` finds the
-    NEXT table's first row and records it as its own header. The spans
-    then coincide, and membership is a union of spans, so nothing
-    downstream can tell — but a reader of the loop cannot see that, and
-    the `if tr is None: continue` beside it is therefore reachable only
-    when no row follows anywhere, which is why `continue` and `break`
-    are equivalent there rather than untested.
+    The row was searched for from a table's opening tag to the END of
+    the document, so an empty `<w:tbl>` found the NEXT table's first row
+    and recorded it as its own. The spans coincided and membership is a
+    union of them, so nothing downstream could tell — but a reader of
+    the loop could not see that either, and `if tr is None: continue`
+    was reachable only when no row followed ANYWHERE, which made
+    `continue` and `break` equivalent there.
 
-    Bounding the search to the table would need a whole-table match, and
-    a non-greedy one closes on a NESTED table's end tag — the failure
-    the walk-forward shape exists to avoid."""
+    The note said bounding would need a whole-table match, and that a
+    non-greedy one closes on a NESTED table's end tag — the failure this
+    walk-forward shape exists to avoid. That is still true, and it is
+    not what the bound does: the search stops at the next `<w:tbl>`
+    OPENING tag, so no table is ever matched as a unit. A nested table
+    opens inside its parent's first row, so the parent's `<w:tr>` still
+    comes first and both keep a header of their own — which the test
+    below asserts.
+
+    What the bound buys is not the duplicate span, which was harmless.
+    It is that `continue` now means something: an empty table no longer
+    ends the scan for the tables after it.
+    """
     from docxkit.refstyle import _header_rows
 
     doc = ("<w:body><w:tbl><w:tblPr/></w:tbl>"
@@ -2465,9 +2475,8 @@ def test_a_table_with_NO_ROWS_OF_ITS_OWN_borrows_the_next_one_harmlessly():
 
     spans = _header_rows(doc)
 
-    assert len(spans) == 2 and spans[0] == spans[1], spans
+    assert len(spans) == 1, spans
     assert "real head" in doc[spans[0][0]:spans[0][1]]
-
 
 def test_a_row_that_NEVER_CLOSES_still_bounds_a_header():
     """`doc.find` answers -1, and the span then has to be SOMETHING.
@@ -2966,3 +2975,60 @@ def test_a_range_whose_halves_are_the_SAME_length_is_only_joined():
 
     assert "45\u201348" in out, out
     assert "4548" not in out
+
+
+def _tbl(*cells: str) -> str:
+    inner = "".join(f"<w:tc><w:p><w:r><w:t>{c}</w:t></w:r></w:p></w:tc>"
+                    for c in cells)
+    return f"<w:tbl><w:tr>{inner}</w:tr></w:tbl>"
+
+
+def test_a_table_with_NO_ROW_does_not_borrow_the_next_tables():
+    """`<w:tbl><w:tblPr/></w:tbl>` is a table Word writes and it has no
+    row at all. Searching forward from it without a bound found the NEXT
+    table's first row and filed it as this one's header, so the same
+    span came back twice — harmless to the membership test that reads
+    these, and a trap for anything that ever counts them."""
+    from docxkit.refstyle import _header_rows
+
+    doc = f"<w:body><w:tbl><w:tblPr/></w:tbl>{_tbl('Base 1990')}</w:body>"
+
+    spans = _header_rows(doc)
+
+    assert len(spans) == 1, spans
+    assert "Base 1990" in doc[spans[0][0]:spans[0][1]]
+
+
+def test_a_table_with_no_row_does_not_STOP_the_scan_either():
+    """`continue`, not `break`. The empty table comes first, and under a
+    `break` every table after it loses its header suppression — so
+    `Base 1990` in a column head is read as a citation again, which is
+    the finding this suppression exists to remove."""
+    from docxkit.refstyle import _header_rows
+
+    doc = (f"<w:body><w:tbl><w:tblPr/></w:tbl>{_tbl('Base 1990')}"
+           f"{_tbl('Max 2000')}</w:body>")
+
+    spans = _header_rows(doc)
+
+    assert len(spans) == 2, spans
+    covered = [doc[a:b] for a, b in spans]
+    assert any("Base 1990" in c for c in covered), covered
+    assert any("Max 2000" in c for c in covered), covered
+
+
+def test_a_NESTED_table_still_gets_a_header_of_its_own():
+    """The bound must not cost the thing the function was written for.
+    A nested table opens INSIDE its parent's first row, so the parent's
+    `<w:tr>` still comes first and both are found — which is what a
+    nested table has, and why this walks from each `<w:tbl>` rather than
+    matching a whole one."""
+    from docxkit.refstyle import _header_rows
+
+    inner = _tbl("inner head")
+    doc = (f"<w:body><w:tbl><w:tr><w:tc>{inner}</w:tc></w:tr>"
+           f"</w:tbl></w:body>")
+
+    spans = _header_rows(doc)
+
+    assert len(spans) == 2, spans
