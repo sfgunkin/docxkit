@@ -58,6 +58,7 @@ from ._table_layout import _SPAN_RE as _SPAN_RE
 # ruff --fix strips it and the papers stop importing
 from ._table_layout import BooktabsPlan as BooktabsPlan
 from ._table_layout import ColumnFit as ColumnFit
+from ._table_layout import DecimalsReport as DecimalsReport
 from ._table_layout import FitReport as FitReport
 from ._table_layout import HouseReport as HouseReport
 from ._table_layout import RegridReport as RegridReport
@@ -73,12 +74,14 @@ from ._table_layout import house_ppr as house_ppr
 from ._table_layout import house_rpr as house_rpr
 from ._table_layout import plan_booktabs as plan_booktabs
 from ._table_layout import regrid as regrid
+from ._table_layout import set_decimals as set_decimals
 from ._table_layout import superscript_stars as superscript_stars
 
 __all__ = [
     "BooktabsPlan",
     "CellChange",
     "ColumnFit",
+    "DecimalsReport",
     "FitReport",
     "HouseReport",
     "RegridReport",
@@ -102,6 +105,7 @@ __all__ = [
     "row_signature",
     "rows_preserved",
     "set_cell",
+    "set_decimals",
     "set_row",
     "superscript_stars",
     "tables_after",

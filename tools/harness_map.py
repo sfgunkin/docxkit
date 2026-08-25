@@ -43,6 +43,7 @@ HARNESS: dict[str, list[str]] = {
                          "tests/test_tables_fit_edges.py",
                          "tests/test_tables_house.py",
                          "tests/test_tables_nested.py",
+                         "tests/test_tables_decimals.py",
                          "tests/test_tables_regrid.py",
                          "tests/test_width_model.py"],
     "cli.py": ["tests/test_cli.py", "tests/test_cli_guards.py",
@@ -235,9 +236,11 @@ FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
 EXCLUDED: dict[str, tuple[str, ...]] = {
     "_table_core.py": ("tests/test_tables_fit.py",
                        "tests/test_tables_fit_edges.py",
-                       # regrid is the layout half too: it rewrites the
-                       # grid and the spans, and reaches _table_core
-                       # only through rows_of/cells_of
+                       # regrid and set_decimals are the layout half
+                       # too: they rewrite the grid, the spans and the
+                       # printed precision, and reach _table_core only
+                       # through rows_of/cells_of/_cell_text
+                       "tests/test_tables_decimals.py",
                        "tests/test_tables_regrid.py"),
     # the DATA half's files: they read cells and rewrite values, which
     # the layout module has no part in, and each costs wall clock on
@@ -249,6 +252,7 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
     "tables.py": ("tests/test_tables_fit.py",
                   "tests/test_tables_fit_edges.py",
                   "tests/test_tables_house.py",
+                  "tests/test_tables_decimals.py",
                   "tests/test_tables_regrid.py",
                   "tests/test_tables_blank_rows.py"),
 }

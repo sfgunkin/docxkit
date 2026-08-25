@@ -19,6 +19,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
 from ._table_core import (
@@ -43,6 +44,7 @@ from ._xml import (
     set_run_text,
     visible_text,
 )
+from .edit import replace_in_para
 from .errors import AnchorError
 from .revisions import _has_revisions
 
@@ -709,6 +711,148 @@ def _apply_widths(body: str, widths: list[int], total: int,
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
     return body
+
+
+# ------------------------------------------------------ decimal places ----
+# A results table states one precision, and a table that states several is
+# reporting its estimator's default rather than a decision. Stata's
+# `esttab` writes THREE SIGNIFICANT DIGITS, so one column comes out
+# holding 1.660, 0.0277 and 0.00749 — three, four and five decimals — and
+# the reader has to re-read the exponent on every line.
+#
+# Two things make this more than a `format()` call. The significance
+# stars are usually their OWN superscript run, so the rewrite has to
+# land on the numeric run and leave the run beside it alone; and the
+# rounding is a SECOND one, because the exported value is already
+# rounded — so the cells sitting exactly on a midpoint are named in the
+# report rather than quietly resolved.
+
+#: A cell that is one decimal number: optional bracket or paren, sign,
+#: digits with a decimal point, significance stars, closing bracket.
+#: The decimal point is REQUIRED — a year, a count and a cluster total
+#: are integers and must not be given a fractional part.
+_DECIMAL_CELL_RE = re.compile(
+    r"^(?P<open>[(\[]?\s*)"
+    r"(?P<sign>[-−+]?)"
+    r"(?P<num>\d[\d,  ]*\.\d+)"
+    r"(?P<tail>\s*\*{0,3}\s*)"
+    r"(?P<close>[)\]]?)$")
+_GROUPED_RE = re.compile(r"[,  ]")
+
+
+class DecimalsReport(NamedTuple):
+    """What :func:`set_decimals` did.
+
+    `midpoints` names the cells whose printed value sat exactly on the
+    rounding midpoint — ``(0.0165)`` asked for three places. The value
+    in the document is already rounded, so rounding it again cannot know
+    which way the original went, and this is where a double rounding can
+    disagree with rounding the true estimate. Check those against the
+    estimator if the last digit matters.
+    """
+
+    changed: int
+    unchanged: int
+    midpoints: list[str]
+
+
+def _regroup(digits: str, sep: str) -> str:
+    """`digits` with `sep` every three from the right."""
+    out = []
+    while len(digits) > 3:
+        out.append(digits[-3:])
+        digits = digits[:-3]
+    out.append(digits)
+    return sep.join(reversed(out))
+
+
+def _to_places(text: str, places: int) -> tuple[str, bool]:
+    """`text` at exactly `places` decimals, and whether it sat on a
+    midpoint. Quantized as a DECIMAL, never a float: `round(2.675, 2)`
+    is 2.67 because the binary value is under the midpoint, and a table
+    of estimates is the last place to explain that."""
+    sep = next((c for c in text if _GROUPED_RE.match(c)), "")
+    plain = _GROUPED_RE.sub("", text)
+    frac = plain.split(".")[1]
+    midpoint = (len(frac) > places and frac[places] == "5"
+                and set(frac[places + 1:]) <= {"0"})
+    value = Decimal(plain).quantize(
+        Decimal(1).scaleb(-places) if places else Decimal(1),
+        rounding=ROUND_HALF_UP)
+    out = f"{value:f}"
+    if sep:
+        whole, _, rest = out.partition(".")
+        out = _regroup(whole, sep) + ("." + rest if rest else "")
+    return out, midpoint
+
+
+def set_decimals(xml: str, table: Table, places: int, *,
+                 columns: Sequence[int] | None = None
+                 ) -> tuple[str, DecimalsReport]:
+    """Give every decimal value in `table` exactly `places` decimals.
+
+    A cell is rewritten only if it is a single number that ALREADY
+    carries a decimal point, so years, counts, cluster totals and every
+    em dash are left as they are. Brackets, parentheses, the sign
+    character as written (ASCII hyphen or U+2212) and trailing
+    significance stars are all preserved: only the digits are replaced,
+    through a run-aware edit, so stars raised to superscript stay in
+    their own run.
+
+    `columns` restricts the rewrite to those GRID column indices.
+
+    Idempotent — a table already at `places` comes back unchanged.
+
+    The rounding is HALF UP on the printed value. That is a second
+    rounding: what the document holds has already been rounded once by
+    whatever wrote it, so a cell sitting exactly on the midpoint cannot
+    be resolved from the page. Those cells are named in the report.
+    """
+    if not 0 <= places <= 10:
+        raise AnchorError(f"places must be between 0 and 10, not {places}")
+    _fresh(xml, table, "set_decimals")
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - set the "
+            f"decimals on the clean build and rebuild the redline from it")
+
+    wanted = None if columns is None else set(columns)
+    changed = unchanged = 0
+    midpoints: list[str] = []
+    edits: list[tuple[int, int, str]] = []
+    grid = _own_grid(body)
+    n = len(_GRIDCOL_RE.findall(grid.group(0))) if grid is not None else 0
+    for tr, tc, col, _span in _cell_walk(body, n):
+        if wanted is not None and col not in wanted:
+            continue
+        cell = tc.group(0)
+        m = _DECIMAL_CELL_RE.match(_cell_text(cell).strip())
+        if m is None:
+            continue
+        new, midpoint = _to_places(m.group("num"), places)
+        if midpoint:
+            midpoints.append(_cell_text(cell).strip())
+        if new == m.group("num"):
+            unchanged += 1
+            continue
+        rebuilt = cell
+        for para in PARA_RE.finditer(cell):
+            if m.group("num") not in visible_text(para.group(0)):
+                continue
+            rebuilt = (rebuilt[:para.start()]
+                       + replace_in_para(para.group(0), m.group("num"), new)
+                       + rebuilt[para.end():])
+            break
+        if rebuilt != cell:
+            changed += 1
+            edits.append((tr.start() + tc.start(),
+                          tr.start() + tc.end(), rebuilt))
+    # Back to front, so an edit never moves the span of one not yet made.
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return (xml[:table.start] + body + xml[table.end:],
+            DecimalsReport(changed, unchanged, midpoints))
 
 
 # ----------------------------------------------------------- regrid -------
