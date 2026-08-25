@@ -1682,8 +1682,13 @@ def _with_doc_props() -> dict[str, bytes]:
         b'<Relationships>'
         b'<Relationship Id="rId9" Type="T" Target="../docProps/custom.xml"/>'
         b'<Relationship Id="rId2" Type="T" Target="styles.xml"/>'
+        # RELATIVE and external. A URL would have been no test at all:
+        # it resolves to `word/https:/example.org/...`, which is not in
+        # the stripped set however the guard reads, so the guard is
+        # never what saves it. This one resolves squarely onto the
+        # part being stripped, so only `TargetMode` can tell them apart.
         b'<Relationship Id="rId8" Type="T" TargetMode="External" '
-        b'Target="https://example.org/docProps/custom.xml"/>'
+        b'Target="../docProps/custom.xml"/>'
         b"</Relationships>")
     return parts
 
@@ -1720,7 +1725,10 @@ def test_strip_parts_resolves_a_target_rather_than_matching_its_text():
     strip_parts(parts, prefixes=("docProps/",))
 
     doc = parts["word/_rels/document.xml.rels"].decode("utf-8")
-    assert "../docProps/custom.xml" not in doc, doc
+    # By ID, not by the Target text: the EXTERNAL relationship in this
+    # fixture names the same path on purpose, and asserting on the
+    # string would be asserting that the external one went too.
+    assert 'Id="rId9"' not in doc, doc
     assert 'Id="rId2"' in doc, "unrelated relationships must survive"
 
 
@@ -1734,7 +1742,8 @@ def test_strip_parts_keeps_an_EXTERNAL_relationship_that_merely_looks_alike():
     strip_parts(parts, prefixes=("docProps/",))
 
     doc = parts["word/_rels/document.xml.rels"].decode("utf-8")
-    assert "https://example.org/docProps/custom.xml" in doc, doc
+    assert 'Id="rId8"' in doc, doc
+    assert 'TargetMode="External"' in doc, doc
 
 
 # `test_it_lands_where_CT_Settings_says_it_may` pins ONE shape — a lone
@@ -1942,3 +1951,65 @@ def test_dropping_NO_comments_touches_nothing():
     _drop_comment_anchors(parts, [])
 
     assert parts["word/document.xml"] == before
+
+
+# The placement lists carry 87 element names between them and a fixture
+# per name would be 87 fixtures proving nothing. What the position has
+# to be right about is the settings parts that exist: measured over 199
+# of them in these projects, every one carries `w:compat` and 194 carry
+# `w:zoom`, `w:defaultTabStop`, `w:characterSpacingControl`, `w:rsids`,
+# `w:themeFontLang`, `w:clrSchemeMapping`, `w:shapeDefaults`,
+# `w:decimalSymbol` and `w:listSeparator`; 84 carry `w:proofState`.
+
+REAL_SETTINGS = (
+    '<w:zoom w:percent="100"/>', "<w:proofState/>",
+    '<w:defaultTabStop w:val="720"/>', "<w:characterSpacingControl/>",
+    "<w:footnotePr/>", "<w:endnotePr/>", "<w:compat/>", "<w:rsids/>",
+    "<w:themeFontLang/>", "<w:clrSchemeMapping/>", "<w:shapeDefaults/>",
+    "<w:decimalSymbol/>", "<w:listSeparator/>",
+)
+
+
+def test_trackRevisions_lands_right_in_a_REAL_settings_part():
+    """The one fixture that is not invented. `w:trackChanges` sits after
+    `w:proofState` and before `w:defaultTabStop` in the sequence, and
+    both are present here — so this pins the position from BOTH sides at
+    once, which is what the two lists exist to do."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings(*REAL_SETTINGS)}
+    keep_tracking(parts, {SETTINGS: _settings("<w:trackRevisions/>")})
+
+    got = re.findall(r"<w:(\w+)", parts[SETTINGS].decode("utf-8"))[1:]
+    assert got.index("trackRevisions") == got.index("proofState") + 1
+    assert got.index("trackRevisions") == got.index("defaultTabStop") - 1
+
+
+def test_the_two_placement_lists_do_not_CONTRADICT_each_other():
+    """A name in both says the element precedes `w:trackChanges` and
+    follows it, and the position would then depend on which bound
+    happened to be tighter — which is not a rule, it is an accident.
+    `w:documentProtection` was on the wrong list, and that is the whole
+    reason this placement was rewritten."""
+    from docxkit.hygiene import _AFTER_TRACK, _BEFORE_TRACK
+
+    assert set(_BEFORE_TRACK) & set(_AFTER_TRACK) == set()
+    assert len(set(_BEFORE_TRACK)) == len(_BEFORE_TRACK), "a repeat"
+    assert len(set(_AFTER_TRACK)) == len(_AFTER_TRACK), "a repeat"
+
+
+def test_an_element_in_NEITHER_list_does_not_move_the_position():
+    """`w:useFELayout` is in 37 of these manuscripts and in neither
+    list. An unknown name has to leave both bounds alone: the parts that
+    carry it also carry `w:compat` and `w:defaultTabStop`, which bound
+    the position properly, and a name that shifted a bound by being
+    unrecognised would break those."""
+    from docxkit.hygiene import keep_tracking
+
+    with_fe = (*REAL_SETTINGS[:2], "<w:useFELayout/>", *REAL_SETTINGS[2:])
+    parts = {SETTINGS: _settings(*with_fe)}
+    keep_tracking(parts, {SETTINGS: _settings("<w:trackRevisions/>")})
+
+    got = re.findall(r"<w:(\w+)", parts[SETTINGS].decode("utf-8"))[1:]
+    assert got.index("proofState") < got.index("trackRevisions")
+    assert got.index("trackRevisions") < got.index("defaultTabStop")
