@@ -43,6 +43,7 @@ HARNESS: dict[str, list[str]] = {
                          "tests/test_tables_fit_edges.py",
                          "tests/test_tables_house.py",
                          "tests/test_tables_nested.py",
+                         "tests/test_tables_regrid.py",
                          "tests/test_width_model.py"],
     "cli.py": ["tests/test_cli.py", "tests/test_cli_guards.py",
                "tests/test_cli_revision.py"],
@@ -233,7 +234,11 @@ FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
           "_compare_read.py": "compare"}
 EXCLUDED: dict[str, tuple[str, ...]] = {
     "_table_core.py": ("tests/test_tables_fit.py",
-                       "tests/test_tables_fit_edges.py"),
+                       "tests/test_tables_fit_edges.py",
+                       # regrid is the layout half too: it rewrites the
+                       # grid and the spans, and reaches _table_core
+                       # only through rows_of/cells_of
+                       "tests/test_tables_regrid.py"),
     # the DATA half's files: they read cells and rewrite values, which
     # the layout module has no part in, and each costs wall clock on
     # every one of its 2,217 mutants. MEASURED, on 2026-08-18, after
@@ -244,6 +249,7 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
     "tables.py": ("tests/test_tables_fit.py",
                   "tests/test_tables_fit_edges.py",
                   "tests/test_tables_house.py",
+                  "tests/test_tables_regrid.py",
                   "tests/test_tables_blank_rows.py"),
 }
 

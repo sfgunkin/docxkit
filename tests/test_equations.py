@@ -144,6 +144,59 @@ def test_is_display_distinguishes_inline_from_display():
     assert not is_display(para(run("no maths here")))
 
 
+def test_display_centres_an_equation_ALREADY_in_display_mode():
+    """Display and centred are two properties. Word promotes an
+    equation to display on its own save without centring it, and
+    returning such a paragraph untouched left no way to state the rule.
+    """
+    promoted = para('<m:oMathPara>' + omath(frac("L", "N"))
+                    + '</m:oMathPara>')
+    assert in_display_mode(promoted)
+
+    fixed = display(promoted)
+
+    assert '<m:jc m:val="center"/>' in fixed
+    # m:oMathParaPr is the FIRST child, or Word repairs the document
+    assert "<m:oMathPara><m:oMathParaPr>" in fixed
+    assert display(fixed) == fixed              # still idempotent
+
+
+def test_display_repoints_an_alignment_that_is_already_stated():
+    promoted = para('<m:oMathPara><m:oMathParaPr><m:jc m:val="left"/>'
+                    '</m:oMathParaPr>' + omath(frac("L", "N"))
+                    + '</m:oMathPara>')
+
+    fixed = display(promoted)
+
+    assert '<m:jc m:val="center"/>' in fixed
+    assert '<m:jc m:val="left"/>' not in fixed
+    assert fixed.count("<m:oMathParaPr>") == 1
+
+
+def test_display_with_jc_None_leaves_a_promoted_equation_alone():
+    promoted = para('<m:oMathPara><m:oMathParaPr><m:jc m:val="left"/>'
+                    '</m:oMathParaPr>' + omath(frac("L", "N"))
+                    + '</m:oMathPara>')
+
+    assert display(promoted, jc=None) == promoted
+
+
+def test_the_comma_closing_a_displayed_equation_is_not_prose():
+    """A display is part of the sentence that introduces it, so authors
+    write ", (3)" after the maths.
+
+    Counted as prose, that comma made `is_display` return False — so
+    `display_equations` never listed the equation, no house check saw
+    it, and it stayed inline. Three of one manuscript's seven equations
+    were invisible to every equation tool for exactly this.
+    """
+    assert is_display(para(omath(frac("L", "N")) + run(", (3)")))
+    assert is_display(para(omath(frac("L", "N")) + run(".")))
+    # and the guard: real prose beside the maths is still prose
+    assert not is_display(
+        para(omath(frac("L", "N")) + run(", where L is labour.")))
+
+
 def test_display_equations_skips_inline_and_prose():
     found = display_equations(_doc())
     assert len(found) == 1

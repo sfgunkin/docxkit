@@ -711,6 +711,255 @@ def _apply_widths(body: str, widths: list[int], total: int,
     return body
 
 
+# ----------------------------------------------------------- regrid -------
+# A PHANTOM GRID is a table whose `w:tblGrid` declares far more columns
+# than the table has, with every cell spanning a handful of them. It is
+# what a paste out of a fixed-width source produces: the grid records
+# where the CHARACTERS fell, not where the columns are.
+#
+# The damage is not the column count, which no reader sees. It is that
+# each row then chooses its own spans, so a boundary 24 grid columns in
+# on one row is 20 on the next and the two rows' cells do not line up.
+# Word renders that exactly as written — one block of rows shifted
+# against the block above it, starting at whatever row the spans change.
+#
+# `fit_columns` cannot repair it: it divides the grid it is given, and a
+# phantom grid divided perfectly is still ragged. The grid itself has to
+# go, which is what this does — and it is a SEPARATE step because
+# collapsing the grid is a judgement about which cells are the same
+# column, while fitting widths is arithmetic over their content.
+
+class RegridReport(NamedTuple):
+    """What :func:`regrid` did.
+
+    `snapped` names the rows with a different number of cells from the
+    canonical row, which had to be mapped onto it — a spanning header is
+    the ordinary case and not a fault. `ragged` counts the rows whose
+    boundaries did NOT fall on the canonical ones, which is the size of
+    the defect: those are the rows a reader sees shifted.
+    """
+
+    before: int
+    after: int
+    widths: list[int]
+    ragged: int
+    snapped: list[str]
+
+
+def _row_structure(body: str, n: int) -> list[list[int]]:
+    """Every row's cell spans, truncated to the `n`-column grid."""
+    out: list[list[int]] = []
+    for tr in rows_of(body):
+        spans: list[int] = []
+        c = 0
+        for tc in cells_of(tr.group(0)):
+            if c >= n:
+                break
+            s = _SPAN_RE.search(tc.group(0))
+            k = int(s.group(1)) if s else 1
+            spans.append(k)
+            c += k
+        out.append(spans)
+    return out
+
+
+def _canonical(structs: Sequence[Sequence[int]]) -> list[int]:
+    """The table's real column structure, as spans over the old grid.
+
+    The modal row wins, and cell COUNT is settled before shape: a table
+    whose rows describe the same seven columns with three different span
+    patterns IS seven columns, and taking the most frequent SHAPE over
+    all rows could return a spanning header's three instead.
+    """
+    counts = Counter(len(s) for s in structs)
+    if not counts:
+        raise AnchorError("regrid: the table has no rows")
+    top = max(counts.values())
+    # A tie on frequency goes to the FINER structure. A table split
+    # evenly between six-cell and seven-cell rows is seven columns: the
+    # seven can express the six, and the six cannot express the seven.
+    width = max(k for k, v in counts.items() if v == top)
+    shapes = Counter(tuple(s) for s in structs if len(s) == width)
+    return list(shapes.most_common(1)[0][0])
+
+
+def _snap(spans: Sequence[int], canon_cuts: Sequence[int], k: int
+          ) -> list[int]:
+    """`spans` re-expressed over `k` canonical columns.
+
+    A row with one cell per canonical column maps straight across —
+    cell *i* IS column *i*, whatever widths the old grid gave it. That
+    is the case this exists for and it needs no measurement: the defect
+    being repaired is precisely that two such rows were drawn against
+    different boundaries.
+
+    A row with FEWER cells is a spanning header, and there the old
+    boundaries are the only evidence of which columns each cell covers,
+    so they are snapped to the nearest canonical cut.
+    """
+    if len(spans) == k:
+        return [1] * k
+    if len(spans) > k:
+        raise AnchorError(
+            f"regrid: a row has {len(spans)} cells but the table has {k} "
+            f"columns - no mapping can be inferred without dropping one")
+    cuts, acc = [], 0
+    for v in spans[:-1]:
+        acc += v
+        cuts.append(acc)
+    out: list[int] = []
+    taken = 0
+    for i, cut in enumerate(cuts):
+        # Leave room for the cells still to come, and at least one
+        # column here: a snap that gave two cells the same boundary
+        # would produce a zero-width cell, which Word drops.
+        lo, hi = taken + 1, k - (len(cuts) - i)
+        best = min(range(lo, hi + 1),
+                   key=lambda j: (abs(canon_cuts[j - 1] - cut), j))
+        out.append(best - taken)
+        taken = best
+    out.append(k - taken)
+    return out
+
+
+def _set_span(cell: str, span: int) -> str:
+    """`cell` with `span` as its own ``w:gridSpan`` (removed when 1).
+
+    Through the cell's LIVE properties only, for the reason
+    :func:`_set_tc_w` gives: a cell can contain a table, and a search
+    over the whole cell reaches the inner cells' spans.
+    """
+    own = _own_tcpr(cell)
+    element = f'<w:gridSpan w:val="{span}"/>' if span > 1 else ""
+    if own is None:
+        if not element:
+            return cell
+        opening = re.match(r"<w:tc\b[^>]*>", cell)
+        at = opening.end() if opening else 0
+        return cell[:at] + f"<w:tcPr>{element}</w:tcPr>" + cell[at:]
+    start, end, inner = own
+    hits = list(_SPAN_RE.finditer(live_properties(inner)))
+    if hits:
+        # Back to front, and all of them — see `_set_tbl_pr`. A second
+        # `w:gridSpan` left standing is a cell still spanning what it
+        # used to.
+        for m in reversed(hits[1:]):
+            inner = inner[:m.start()] + inner[m.end():]
+        new_inner = inner[:hits[0].start()] + element + inner[hits[0].end():]
+    elif element:
+        # w:gridSpan's schema slot: after w:cnfStyle and w:tcW.
+        at = 0
+        for nm in ("cnfStyle", "tcW"):
+            slot = re.compile(rf"<w:{nm}\b[^>]*/>").match(inner, at)
+            if slot:
+                at = slot.end()
+        new_inner = inner[:at] + element + inner[at:]
+    else:
+        return cell
+    return cell[:start] + f"<w:tcPr>{new_inner}</w:tcPr>" + cell[end:]
+
+
+def regrid(xml: str, table: Table) -> tuple[str, RegridReport]:
+    """Collapse `table`'s grid onto the columns it actually has.
+
+    Rewrites ``w:tblGrid`` to one column per real column and restates
+    every ``w:gridSpan`` against it, so the same boundary falls in the
+    same place on every row. Column WIDTHS are carried over unchanged —
+    each new column takes the sum of the old ones it replaces — so pass
+    the result to :func:`fit_columns` to size them by content, which is
+    almost always the next thing you want.
+
+    Idempotent: a table already on its own grid comes back unchanged,
+    with ``ragged == 0``.
+
+    The structure is taken from the table's most common row. A row with
+    one cell per column maps across directly; a row with fewer cells is
+    read as a spanning header and its old boundaries are snapped to the
+    nearest new one. A row with MORE cells than the table has columns is
+    refused — collapsing it would have to merge two cells and lose one's
+    content.
+    """
+    _fresh(xml, table, "regrid")
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - regrid the "
+            f"clean build and rebuild the redline from it")
+    own_grid = _own_grid(body)
+    grid = ([int(m.group(1)) for m in _GRIDCOL_RE.finditer(own_grid.group(0))]
+            if own_grid is not None else [])
+    if not grid:
+        raise AnchorError(f"table {table.index} has no tblGrid")
+
+    n = len(grid)
+    structs = _row_structure(body, n)
+    canon = _canonical(structs)
+    k = len(canon)
+
+    cuts, widths, acc = [], [], 0
+    for v in canon:
+        widths.append(sum(grid[acc:acc + v]))
+        acc += v
+        cuts.append(acc)
+    if acc != n:
+        # The modal row does not span the grid, so its spans are not
+        # reliable evidence of where the columns are, and rewriting the
+        # grid from them would move content sideways.
+        raise AnchorError(
+            f"table {table.index}: its most common row covers {acc} of "
+            f"{n} grid columns - the grid and the rows disagree by more "
+            f"than a regrid can settle")
+
+    ragged = 0
+    snapped: list[str] = []
+    new_spans: list[list[int]] = []
+    edges = set(cuts)
+    for spans, tr in zip(structs, rows_of(body), strict=True):
+        # RAGGED is about boundaries, not about shape. A spanning header
+        # has a different span tuple from the body and is not ragged at
+        # all: its cuts are a SUBSET of the body's, so its cells still
+        # line up with the columns beneath them. Comparing tuples
+        # instead called every grouped table ragged and rewrote tables
+        # that had nothing wrong with them.
+        acc, cell_cuts = 0, []
+        for v in spans[:-1]:
+            acc += v
+            cell_cuts.append(acc)
+        if not set(cell_cuts) <= edges:
+            ragged += 1
+        if len(spans) != k:
+            label = visible_text(tr.group(0)).strip()[:30]
+            snapped.append(label or f"row {len(new_spans)}")
+        new_spans.append(_snap(spans, cuts, k))
+
+    report = RegridReport(before=n, after=k, widths=widths, ragged=ragged,
+                          snapped=snapped)
+    if n == k and ragged == 0:
+        return xml, report
+
+    new_grid = "<w:tblGrid>" + "".join(
+        f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
+    if own_grid is not None:
+        body = body[:own_grid.start()] + new_grid + body[own_grid.end():]
+
+    edits: list[tuple[int, int, str]] = []
+    for row, tr in zip(new_spans, rows_of(body), strict=True):
+        col = 0
+        for span, tc in zip(row, cells_of(tr.group(0)), strict=False):
+            cell = _set_span(tc.group(0), span)
+            cell = _set_tc_w(
+                cell, f'<w:tcW w:w="{sum(widths[col:col + span])}" '
+                      f'w:type="dxa"/>')
+            col += span
+            if cell != tc.group(0):
+                edits.append((tr.start() + tc.start(),
+                              tr.start() + tc.end(), cell))
+    # Back to front, so an edit never moves the span of one not yet made.
+    for start, end, replacement in sorted(edits, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return xml[:table.start] + body + xml[table.end:], report
+
+
 # ------------------------------------------------- superscript stars -------
 
 # exactly a number (the shared cell grammar) with trailing stars
@@ -1031,22 +1280,53 @@ def plan_booktabs(table: Table) -> BooktabsPlan:
 
     The header is the run of leading rows with an EMPTY first cell —
     every one of these papers labels its stub column only from the first
-    data row down. A panel row has a label and no values beside it. The
-    summary block starts at the first trailing row whose label names a
-    statistic rather than a regressor.
+    data row down — plus the leading rows that SPAN, and the row that
+    follows the last of them.
+
+    That second clause is not a refinement, it is the common case. A
+    table whose group heads sit above a row of column names that DOES
+    label the stub ("VARIABLES", "Country") satisfies neither the
+    empty-first-cell test on the group row nor on the names row, so the
+    header came back as 1 and the mid rule was drawn under the group
+    heads — ruling the column names off into the data. Measured on a
+    manuscript where nine tables had been ruled by hand: the rule below
+    reproduces all nine, the empty-first-cell rule alone reproduced
+    three.
+
+    A panel row has a label and no values beside it. The summary block
+    starts at the first trailing row whose label names a statistic
+    rather than a regressor.
     """
     rows = table.rows
+    width = max((len(r) for r in rows), default=0)
+
+    def spans(i: int) -> bool:
+        """Row `i` is a group head: fewer cells than the table is wide."""
+        return len(rows[i]) < width and any(c.strip() for c in rows[i])
+
+    def holds_values(i: int) -> bool:
+        """Row `i` is DATA: something beside its label parses as a
+        number. A row of column NAMES does not."""
+        return any(_NUM_RE.match(c.strip()) for c in rows[i][1:])
+
     header = 0
-    while header < len(rows) and not (rows[header][:1] or [""])[0].strip():
+    while header < len(rows) and (
+            not (rows[header][:1] or [""])[0].strip() or spans(header)):
+        header += 1
+    # A group head is never the LAST header row — the row of column
+    # names it heads is — so a header that stopped on one takes the row
+    # below it as well. Unless that row holds VALUES: a lone spanning
+    # head over a table whose first data row follows it directly is a
+    # one-row header, and swallowing that row would rule off real data.
+    if (header and spans(header - 1) and header < len(rows)
+            and not holds_values(header)):
         header += 1
     header = max(header, 1)
 
     # A header row that SPANS carries fewer cells than the table is
     # wide. The last header row gets the full mid rule instead, so it
     # is never a cmidrule row however it is built.
-    width = max((len(r) for r in rows), default=0)
-    groups = [i for i in range(header - 1)
-              if len(rows[i]) < width and any(c.strip() for c in rows[i])]
+    groups = [i for i in range(header - 1) if spans(i)]
 
     def label_of(i: int) -> str:
         return (rows[i][:1] or [""])[0].strip()

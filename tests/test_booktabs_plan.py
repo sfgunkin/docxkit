@@ -97,6 +97,45 @@ def test_the_last_header_row_is_never_a_group_head():
     assert plan.group_rows == []
 
 
+def test_group_heads_over_a_LABELLED_names_row_are_still_the_header():
+    """The common shape, and the one the empty-first-cell rule alone
+    read wrongly: group heads above a row of column names that DOES
+    label the stub column.
+
+    The empty-first-cell run stops at the names row, so the header came
+    back as 1 — and `group_rows`, scanning only INSIDE the header, then
+    could not see row 0 either. The mid rule was drawn under
+    "Robust"/"Clustered", ruling "VARIABLES Retired Disabled Other" off
+    into the data.
+    """
+    plan = plan_of([["", "Robust", "Clustered"],
+                    ["VARIABLES", "Retired", "Disabled", "Other"],
+                    ["Age", "0.1", "0.2", "0.3"],
+                    ["", "(0.05)", "(0.07)", "(0.09)"]], width=4)
+
+    assert plan.header_rows == 2
+    assert plan.group_rows == [0]
+
+
+def test_a_lone_group_head_over_DATA_does_not_swallow_the_first_row():
+    """The guard on the rule above. A spanning head whose next row
+    holds VALUES heads the data directly; taking that row into the
+    header would rule off a real observation."""
+    plan = plan_of([["", "Discipline"],
+                    ["Age", "0.1", "0.2"],
+                    ["Sex", "0.3", "0.4"]], width=3)
+
+    assert plan.header_rows == 1
+    assert plan.group_rows == []
+
+
+def test_a_table_that_is_nothing_but_a_spanning_row_keeps_a_header():
+    """The bump must not read past the last row."""
+    plan = plan_of([["", "Discipline"]], width=3)
+
+    assert plan.header_rows == 1
+
+
 def test_a_short_header_row_with_no_content_is_not_a_group_head():
     """A rule under an empty cell is a rule under nothing."""
     plan = plan_of([["", ""],

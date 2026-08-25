@@ -60,6 +60,7 @@ from ._table_layout import BooktabsPlan as BooktabsPlan
 from ._table_layout import ColumnFit as ColumnFit
 from ._table_layout import FitReport as FitReport
 from ._table_layout import HouseReport as HouseReport
+from ._table_layout import RegridReport as RegridReport
 from ._table_layout import _bump as _bump
 from ._table_layout import _const as _const
 from ._table_layout import _round_to as _round_to
@@ -71,6 +72,7 @@ from ._table_layout import house as house
 from ._table_layout import house_ppr as house_ppr
 from ._table_layout import house_rpr as house_rpr
 from ._table_layout import plan_booktabs as plan_booktabs
+from ._table_layout import regrid as regrid
 from ._table_layout import superscript_stars as superscript_stars
 
 __all__ = [
@@ -79,6 +81,7 @@ __all__ = [
     "ColumnFit",
     "FitReport",
     "HouseReport",
+    "RegridReport",
     "RowsReport",
     "Table",
     "booktabs",
@@ -94,6 +97,7 @@ __all__ = [
     "parse_number",
     "plan_booktabs",
     "read_all",
+    "regrid",
     "reorder_rows",
     "row_signature",
     "rows_preserved",

@@ -955,8 +955,15 @@ def is_display(para_xml: str) -> bool:
     """True if a paragraph is a display equation.
 
     A display equation is a paragraph whose visible content is the maths:
-    it carries an ``<m:oMath>`` and no prose beyond an equation number
-    and whitespace.
+    it carries an ``<m:oMath>`` and no prose beyond an equation number,
+    the sentence punctuation that closes the equation, and whitespace.
+
+    The punctuation clause is not pedantry. A displayed equation is part
+    of the sentence that introduces it, so authors write ``... , (3)``
+    after the maths — and with the comma counted as prose this returned
+    False, so `display_equations` did not list the equation, the house
+    check never saw it and it stayed inline. Three of one manuscript's
+    seven were invisible to every equation tool for that reason.
     """
     if "<m:oMath" not in para_xml:
         return False
@@ -964,7 +971,7 @@ def is_display(para_xml: str) -> bool:
     # would make every display equation look like a paragraph of prose
     prose = visible_text(OMATH_RE.sub("", para_xml))
     without_number = EQ_NUMBER_RE.sub("", prose)
-    return not without_number.strip()
+    return not without_number.strip(" \t\r\n.,;:")
 
 
 def display_equations(xml: str) -> list[re.Match[str]]:
@@ -1006,12 +1013,51 @@ def inline_display(xml: str) -> list[re.Match[str]]:
             if not in_display_mode(m.group(0))]
 
 
+_OMATHPARAPR_RE = re.compile(r"<m:oMathParaPr\b[^>]*?(/?)>")
+_MJC_RE = re.compile(r'<m:jc m:val="[^"]*"\s*/>')
+
+
+def _set_math_jc(para_xml: str, jc: str) -> str:
+    """`para_xml` with its `m:oMathPara` aligned `jc`.
+
+    ``m:oMathParaPr`` is the FIRST child of ``m:oMathPara`` — written
+    anywhere else Word repairs the document — and ``m:jc`` is its only
+    child, so there is no slot to compute.
+    """
+    element = f'<m:jc m:val="{jc}"/>'
+    opening = re.search(r"<m:oMathPara\b[^>]*>", para_xml)
+    if opening is None:                     # not in display mode
+        return para_xml
+    pr = _OMATHPARAPR_RE.match(para_xml, opening.end())
+    if pr is None:
+        return (para_xml[:opening.end()]
+                + f"<m:oMathParaPr>{element}</m:oMathParaPr>"
+                + para_xml[opening.end():])
+    if pr.group(1) == "/":                  # <m:oMathParaPr/>
+        return (para_xml[:pr.start()]
+                + f"<m:oMathParaPr>{element}</m:oMathParaPr>"
+                + para_xml[pr.end():])
+    close = para_xml.index("</m:oMathParaPr>", pr.end())
+    inner = para_xml[pr.end():close]
+    inner = (_MJC_RE.sub(element, inner, count=1) if _MJC_RE.search(inner)
+             else element + inner)
+    return para_xml[:pr.end()] + inner + para_xml[close:]
+
+
 def display(para_xml: str, *, jc: str | None = "center",
             absorb: bool = False) -> str:
     """Put a paragraph's equation into display mode, centred.
 
-    Idempotent: a paragraph already in display mode comes back
-    unchanged, so this can be run over a whole document.
+    Idempotent: run over a whole document twice, the second pass changes
+    nothing.
+
+    A paragraph ALREADY in display mode has its alignment set to `jc`
+    and is otherwise left alone. Returning it untouched was the obvious
+    reading of "idempotent" and it made the function unable to state the
+    house rule it exists for: display AND centred are two properties,
+    and an equation Word promoted on its own save has the first without
+    the second. One such equation sat uncentred in a manuscript with no
+    tool able to fix it — `display` skipped it as already done.
 
     **An ``oMathPara`` must be the only content of its paragraph.** A
     run left beside it — a comma, an equation number — makes Word demote
@@ -1030,7 +1076,7 @@ def display(para_xml: str, *, jc: str | None = "center",
     if jc is not None and jc not in _JC_VALUES:
         raise AnchorError(f"m:jc takes one of {_JC_VALUES}, not {jc!r}")
     if in_display_mode(para_xml):
-        return para_xml
+        return para_xml if jc is None else _set_math_jc(para_xml, jc)
     maths = list(OMATH_RE.finditer(para_xml))
     if len(maths) != 1:
         raise AnchorError(
