@@ -2168,3 +2168,166 @@ def test_the_comments_part_survives_as_a_whole_DOCUMENT():
     out = parts["word/comments.xml"].decode("utf-8")
     assert out.startswith("<?xml"), out[:60]
     assert out.rstrip().endswith("</w:comments>"), out[-60:]
+
+
+def _two_footered(wired: bool) -> dict[str, bytes]:
+    """A document in two sections, each with a footer of its own."""
+    def ref(rid: str) -> str:
+        return (f'<w:footerReference w:type="default" r:id="{rid}"/>'
+                if wired else "")
+
+    body = (para(run("front"))
+            + f'<w:sectPr><w:pgSz w:w="1"/>{ref("rId4")}</w:sectPr>'
+            + para(run("back"))
+            + f'<w:sectPr><w:pgSz w:w="2"/>{ref("rId5")}</w:sectPr>')
+    parts = make_parts(body)
+    ct = ["<Types>"]
+    rels = ['<Relationships><Relationship Id="rId1" Target="styles.xml"/>']
+    if wired:
+        for i in (1, 2):
+            parts[f"word/footer{i}.xml"] = f"<w:ftr>page {i}</w:ftr>".encode()
+            ct.append(f'<Override PartName="/word/footer{i}.xml" '
+                      f'ContentType="f"/>')
+            rels.append(f'<Relationship Id="rId{i + 3}" '
+                        f'Target="footer{i}.xml"/>')
+    parts["[Content_Types].xml"] = ("".join(ct) + "</Types>").encode("utf-8")
+    parts["word/_rels/document.xml.rels"] = (
+        "".join(rels) + "</Relationships>").encode("utf-8")
+    return parts
+
+
+def test_TWO_restored_footers_each_reach_their_OWN_section():
+    """Every reference is spliced by offsets taken from the document as
+    it was, so they go back last-first: an earlier splice moves
+    everything after it, and the next one then cuts in the wrong place.
+
+    Applied left-to-right this does not corrupt anything — which is why
+    nothing noticed. The second reference is simply LOST: the document
+    is well-formed, the footer is still in the package, and it is
+    referenced by nothing, which Word ignores. That is the exact failure
+    `restore_parts` exists to prevent, one level down from the part it
+    already puts back.
+
+    Every fixture before this restored ONE footer, and one splice lands
+    in the same place whichever way the list is sorted."""
+    source = _two_footered(wired=True)
+    rebuilt = _two_footered(wired=False)
+
+    restore_parts(rebuilt, source,
+                  prefixes=("word/footer1.xml", "word/footer2.xml"))
+
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    from docxkit.hygiene import _section_spans
+
+    spans = _section_spans(doc)
+    assert len(spans) == 2, spans
+    first, second = (doc[a:b] for a, b in spans)
+    assert 'r:id="rId4"' in first, first
+    assert 'r:id="rId5"' in second, second
+
+
+def test_a_SECOND_missing_footer_is_wired_as_well_as_the_first():
+    """`continue`, not `break`, three times over in that loop. A rebuild
+    that dropped two footers is the ordinary case — Compare drops the
+    lot — and stopping at the first leaves the second in the package
+    with nothing pointing at it, while the report says both came
+    across."""
+    source = _two_footered(wired=True)
+    rebuilt = _two_footered(wired=False)
+
+    back = restore_parts(rebuilt, source,
+                         prefixes=("word/footer1.xml", "word/footer2.xml"))
+
+    assert back == ["word/footer1.xml", "word/footer2.xml"], back
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    assert doc.count("<w:footerReference") == 2, doc
+
+
+def test_a_restored_reference_goes_AFTER_the_ones_already_there():
+    """The schema puts every header and footer reference at the head of
+    the `sectPr`, and the ORDER among them is the document's: default,
+    then even, then first. The restore finds the LAST reference present
+    and inserts after it.
+
+    Dropped, the new one goes in at the opening tag instead — still
+    contiguous, still schema-valid, and in front of references it should
+    follow. Every test before this asserted the GROUP was contiguous,
+    which both readings satisfy."""
+    source = _with_footers()
+    rebuilt = _with_footers(drop="word/footer3.xml")
+
+    restore_parts(rebuilt, source, prefixes=("word/footer3.xml",))
+
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    order = re.findall(r'<w:footerReference w:type="(\w+)"', doc)
+    assert order == list(_FOOTER_TYPES), order
+
+
+def test_an_EMPTY_section_is_opened_up_EXACTLY_around_the_reference():
+    """`<w:sectPr/>` has no inside, so the two closing characters are
+    replaced by `>`, the reference and a closing tag. The span is
+    `hi - 2`: anything else splices at the wrong offset and duplicates
+    or eats the characters around it, which the earlier test could not
+    see because it asked whether a pattern was PRESENT rather than what
+    the document had become.
+
+    The paragraph is three characters and not one, and that is the test.
+    `hi ^ 2` is `hi - 2` whenever bit 1 of `hi` is set, so at the offset
+    a one-character body produces the two are the same splice and this
+    proves nothing. Three moves the section two bytes along and they
+    part company — the same parity accident that hid a stray scan, a
+    page-break message and a header-row span earlier in this file."""
+    source = make_parts(
+        para(run("abc"))
+        + '<w:sectPr><w:footerReference w:type="default" r:id="rId4"/>'
+          "</w:sectPr>")
+    source["word/footer1.xml"] = b"<w:ftr>page</w:ftr>"
+    source["[Content_Types].xml"] = (
+        b'<Types><Override PartName="/word/footer1.xml" '
+        b'ContentType="footer"/></Types>')
+    source["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+        b'<Relationship Id="rId4" Target="footer1.xml"/>'
+        b"</Relationships>")
+
+    rebuilt = make_parts(para(run("abc")) + "<w:sectPr/>")
+    rebuilt["[Content_Types].xml"] = b"<Types></Types>"
+    rebuilt["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+        b"</Relationships>")
+    before = rebuilt["word/document.xml"].decode("utf-8")
+
+    restore_parts(rebuilt, source, prefixes=("word/footer1.xml",))
+
+    doc = rebuilt["word/document.xml"].decode("utf-8")
+    # the ONLY change is the empty element opening up around the entry
+    # rId4 in the source; the restore mints a FREE id in the target,
+    # which here is rId4 as well — read from the document rather than
+    # assumed, since the point of the test is the offsets.
+    rid = re.search(r'Target="footer1.xml"[^>]*',
+                    rebuilt["word/_rels/document.xml.rels"].decode("utf-8"))
+    assert rid is not None
+    got = re.search(r'<w:footerReference[^>]*/>', doc)
+    assert got is not None, doc
+    entry = got.group(0)
+    assert doc == before.replace(
+        "<w:sectPr/>", f"<w:sectPr>{entry}</w:sectPr>"), doc
+
+
+def test_wiring_a_section_reference_needs_BOTH_documents():
+    """`or`, not `and`. The source is read for the reference type and
+    the target is written to, so either one missing `document.xml` means
+    there is nothing to do — and read as `and` a source without it gets
+    past the guard and raises `KeyError` two lines later, from a
+    function whose whole contract is to report rather than raise."""
+    from docxkit.hygiene import _restore_section_references
+
+    parts = {"word/document.xml": b"<w:body><w:sectPr/></w:body>"}
+
+    _restore_section_references(parts, {}, ["word/footer1.xml"],
+                                {"word/footer1.xml": "rId9"})
+    _restore_section_references({}, parts, ["word/footer1.xml"],
+                                {"word/footer1.xml": "rId9"})
+
+    assert parts["word/document.xml"] == b"<w:body><w:sectPr/></w:body>"
+
