@@ -21,9 +21,20 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 Reported 2026-08-24 from Health Capacity to Work: a rebuilt redline is
 missing `docProps/custom.xml` and the `customXml/` triple against
-`prev.docx`. On a World Bank manuscript those carry the MSIP sensitivity
-label and the "Official Use Only" content marking, so a promote ships an
-UNLABELLED document with every gate green.
+`prev.docx`. **Sized down 2026-08-25.** This was filed saying those parts carry a
+World Bank MSIP sensitivity label and an "Official Use Only" content
+marking, so a promote would ship an UNLABELLED document. That framing
+was withdrawn by the session that reported it: on Health Capacity to
+Work `docProps/custom.xml` holds a Zotero preference and a Grammarly
+document id, and no manuscript here has been shown to carry a
+sensitivity label at all. The MECHANISM below is unchanged and still
+worth fixing — a carried part is restored from the file that lost it —
+but it loses a part a reader would not miss, not a compliance marking,
+and it is an S2 for the mechanism rather than for the consequence.
+
+Recorded here rather than quietly edited away, because the entry was
+acted on while it said the other thing, and a reader of the fix should
+be able to see what it was sized against.
 
 **The mechanism is not a missing list.** `CARRIED_PARTS` already names
 both — `(_hygiene.CUSTOM_XML, USER_PROPERTIES)` — and
@@ -686,6 +697,97 @@ text metrics cannot produce: `(x0 + x1) / 2` -> `// 2` moves a midpoint
 by less than a point, `<` -> `<=` needs one EXACTLY on a threshold, and
 `width / 3` -> `width // 3` — the sharpest — needs a number whose centre
 falls in a 0.4-point window.
+
+---
+
+### S2 — `repkit` and `safekit` carry a FORK of `coverage_floor.py`, without the guard this one paid for
+
+Found 2026-08-25 while acting on a code review of this file. `D:\repkit\
+tools\coverage_floor.py` and `D:\safekit\tools\coverage_floor.py` are
+copies of an older docxkit version, and both still read:
+
+    subprocess.run([... "--cov=repkit", f"--cov-report=json:{out}"],
+                   cwd=ROOT, check=False, capture_output=True)
+
+with the `CompletedProcess` thrown away. Neither has `_PYTEST_USAGE_ERROR`,
+neither has the `if done.returncode:` RED-suite exit, neither has
+`--from-json`. Verified by inspection of both files.
+
+So they reproduce today the defect docxkit already spent a debugging
+session diagnosing on 2026-08-21: a suite that fails or stops half way
+still writes a report, `out.exists()` is true, and per-module coverage is
+compared against the floors as though the run had finished — which is how
+`_table_core.py: 55.8% is below its floor of 85%` sent a reader after
+tests that were there all along.
+
+Both also predate `check()` walking the FLOORS rather than the
+measurement, so a floored module missing from a partial report is not
+failed there either — it is simply never asked about.
+
+**Three copies of one file with the fix in one of them is the actual
+finding.** A third hand-port would leave the same shape for the next
+guard. The alternatives are one shared module that all three depend on,
+or a `repkit`/`safekit` dependency on `docxkit.testing` — and that is a
+decision about coupling three toolkits, which is why this is filed
+rather than done.
+
+---
+
+### S3 — three Relationship parsers, and they have already drifted
+
+`hygiene` has `_free_rid` / `_rid_for` / `_references` / `_resolve`,
+`figures` has `_next_rid` / `_relationship_target`, and `_compare_read`
+has `_REL_RE` / `_rel_targets`. Three readings of one part format.
+
+They no longer agree, measured 2026-08-25:
+
+    hygiene._resolve("_rels/.rels", "word\\footer3.xml")
+      -> 'word\\footer3.xml'          # untouched
+    _compare_read._rel_targets       # normalises the separator, and a
+                                     # leading slash, and does both
+
+`_resolve` handles the ABSOLUTE form — `/word/footer3.xml` resolves to
+`word/footer3.xml` — and does nothing about a backslash separator, which
+is legal in a Target and is what some writers emit on Windows. So a
+package whose rels were written that way is read one way by `compare`
+and another by every `hygiene` operation that restores or strips a part:
+`restore_parts` would fail to match the relationship and report the part
+orphaned, and `strip_parts` would leave it dangling.
+
+Nothing has been seen to produce that spelling here, which is why this
+is S3 and not higher. What makes it worth an entry is that the drift is
+already real: the three were written to do the same job and two of them
+have since learned something the third has not.
+
+---
+
+### S4 — `_drop_comment_anchors` re-reads every text part once per COMMENT
+
+`for cid in ids: for name, xml in text_parts(parts):` — so dropping N
+duplicate comments decodes `document.xml`, `footnotes.xml` and
+`endnotes.xml` N times over, and runs 2N passes of the tempered-lookahead
+run pattern, which is the costliest regex in the file.
+
+Measured 2026-08-25 on a body of 300 anchored comments (0.12 MB): 1.9 ms
+for one id, 18.4 ms for ten, 71.0 ms for forty — linear, as expected. On
+a manuscript-sized body it is under a second. So this is a note, not a
+problem: an id ALTERNATION in one pass would do the same work once, and
+the reason to write it down is that the shape invites being copied, not
+that anyone is waiting on it.
+
+---
+
+### S4 — four inlined copies of `comments._append_before_close`
+
+`comments.py:176` is three lines: find the closing tag, splice before it.
+`hygiene.py` writes that body out again at lines 226, 254, 719 and 727 —
+twice for `</Types>` and twice for `</Relationships>` — with the
+`rindex` and the two-slice concatenation each time.
+
+Not a defect: every copy is correct today. It is filed because four is
+the number at which a fifth gets written without anyone deciding to, and
+because this package already has an entry (S4, `a fifth writer of CT_PPr
+order`) about exactly that having happened once.
 
 ---
 
