@@ -6,6 +6,7 @@ in tests/corpus/ (gitignored) for the optional round-trip tests.
 """
 from __future__ import annotations
 
+import sys
 import zipfile
 
 import pytest
@@ -171,3 +172,44 @@ def _isolated_paper_registry(tmp_path_factory, monkeypatch):
     """
     registry = tmp_path_factory.mktemp("registry") / "papers.txt"
     monkeypatch.setenv("DOCXKIT_PAPERS", str(registry))
+
+@pytest.fixture(autouse=True)
+def _no_real_word(request, monkeypatch):
+    """No test outside `-m word` starts or attaches to a Word instance.
+
+    `shared_session` opens one COM instance for a whole ladder, and
+    several CLI paths enter it before reading any flag — `revision
+    ship` does, because its BUILD half needs Compare whatever
+    `--no-word` says about the validate half. A test that fakes
+    `tracked.build` still went through it and still reached Word.
+
+    Under `-n 8` that is eight workers attaching to one Word at once,
+    and it fails the way COM fails: `Windows fatal exception: code
+    0x800706be` — RPC_S_CALL_FAILED — dumped by faulthandler, the
+    worker gone, the run partial. Three gate chains went red that way
+    on 2026-08-25 and passed on the retry, with the FLOORS gate
+    reporting `_table_layout.py` at 56.5% and then 66.3%: a coverage
+    drop in a module nobody had touched, which is the shape of a
+    partial run and not of a defect.
+
+    Yielding None is not a stub, it is what `shared_session` already
+    does when Word cannot be started — "the point is to save a start,
+    never to turn no-Word-here into a different error in a different
+    place" — so every `session()` inside behaves as it does on a
+    machine without Word. A test that WANTS Word says so with the
+    `word` marker and gets the real one.
+    """
+    if request.node.get_closest_marker("word"):
+        return
+    # The IMPORT, not the function. `session` opens with `import
+    # pythoncom`, and a None in `sys.modules` makes that raise exactly
+    # as it does on a machine without the `word` extra — which is what
+    # CI is. Blocking the function instead would have answered for the
+    # two things worth keeping real: `shared_session`'s sharing, which
+    # one test exists to count, and `session` itself, which
+    # `test_word_session_ruler` tests against fakes of its own. Those
+    # fakes go into `sys.modules` too, from a fixture that runs after
+    # this one, so they win where they are wanted.
+    monkeypatch.setitem(sys.modules, "pythoncom", None)
+    monkeypatch.setitem(sys.modules, "win32com", None)
+    monkeypatch.setitem(sys.modules, "win32com.client", None)
