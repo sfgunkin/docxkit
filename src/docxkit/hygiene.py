@@ -1128,12 +1128,37 @@ def smarten(xml: str) -> tuple[str, SmartenReport]:
 MATH_DOWNGRADES = {"−": "-", "′": "'", "𝜚": "ϱ", "ℓ": "l"}
 
 _MATH_T_RE = re.compile(r"(<m:t[^>]*>)([^<]*)(</m:t>)")
+#: One equation. `[ >]` after the name excludes `m:oMathPara`, which
+#: WRAPS an `m:oMath` rather than being one; the non-greedy body then
+#: closes on the inner `</m:oMath>`, which is the right end for both.
+_OMATH_RE = re.compile(r"<m:oMath[ >].*?</m:oMath>", re.DOTALL)
 
 
 def _downgraded(text: str) -> str:
     for glyph, plain in MATH_DOWNGRADES.items():
         text = text.replace(glyph, plain)
     return text
+
+
+def _joined(block: str) -> str:
+    """One equation's text, with the run boundaries taken out.
+
+    Which is the point: Word re-fragments the runs on the way through
+    Compare, so the boundaries are the one thing about an equation that
+    cannot be trusted to survive.
+    """
+    return "".join(m.group(2) for m in _MATH_T_RE.finditer(block))
+
+
+def _unambiguous(intent: dict[str, set[str]]) -> dict[str, str]:
+    """The downgraded forms exactly one source spelling explains.
+
+    Two source spellings that disagree are dropped rather than guessed,
+    and a spelling identical to its downgraded form carries no glyph and
+    would be a no-op.
+    """
+    return {plain: next(iter(texts)) for plain, texts in intent.items()
+            if len(texts) == 1 and next(iter(texts)) != plain}
 
 
 def _as_utf8(blob: bytes) -> str | None:
@@ -1159,7 +1184,7 @@ def _as_utf8(blob: bytes) -> str | None:
 
 def restore_math_glyphs(parts: dict[str, bytes],
                         *sources: dict[str, bytes]) -> list[str]:
-    """Put back math glyphs a Word round-trip flattened, per ``m:t``.
+    """Put back math glyphs a Word round-trip flattened.
 
     `sources` are the documents this one was DERIVED from — for a
     redline, the original and the clean edit — and they are the
@@ -1179,13 +1204,20 @@ def restore_math_glyphs(parts: dict[str, bytes],
     * prose is never touched: only ``m:t``, which is what the
       round-trip rewrites.
 
-    Mutates `parts`; returns one line per run repaired.
+    Matched per ``m:t`` first and then per ``m:oMath``, because the same
+    round-trip that flattens the glyph also redraws the run boundaries
+    around it — see :func:`_restore_by_equation`. The equation pass
+    inherits every guard above; it only stops keying on a boundary Word
+    is free to move.
+
+    Mutates `parts`; returns one line per run or equation repaired.
     """
     # EVERY source run, not only the ones carrying a glyph: a source
     # that spells this run with a plain hyphen is exactly the evidence
     # that says "leave it alone", and collecting only the glyph-bearing
     # ones would make that vote invisible.
     intent: dict[str, set[str]] = {}
+    equations: dict[str, set[str]] = {}
     for source in sources:
         for name, blob in source.items():
             if not name.endswith(".xml"):
@@ -1195,9 +1227,13 @@ def restore_math_glyphs(parts: dict[str, bytes],
             for m in _MATH_T_RE.finditer(src_text):
                 text = m.group(2)
                 intent.setdefault(_downgraded(text), set()).add(text)
-    wanted = {plain: next(iter(texts)) for plain, texts in intent.items()
-              if len(texts) == 1 and next(iter(texts)) != plain}
-    if not wanted:
+            for m in _OMATH_RE.finditer(src_text):
+                if joined := _joined(m.group(0)):
+                    equations.setdefault(
+                        _downgraded(joined), set()).add(joined)
+    wanted = _unambiguous(intent)
+    wanted_equations = _unambiguous(equations)
+    if not (wanted or wanted_equations):
         return []
 
     restored: list[str] = []
@@ -1218,7 +1254,60 @@ def restore_math_glyphs(parts: dict[str, bytes],
             restored.append(f"{part}: {m.group(2)!r} -> {back!r}")
             return m.group(1) + back + m.group(3)
 
-        out = _MATH_T_RE.sub(fix, text)
+        out = _restore_by_equation(_MATH_T_RE.sub(fix, text),
+                                   wanted_equations, name, restored)
         if out != text:
             parts[name] = out.encode("utf-8")
     return restored
+
+
+def _restore_by_equation(text: str, wanted: dict[str, str], part: str,
+                         restored: list[str]) -> str:
+    """The second pass: repair an equation whose RUNS Word refragmented.
+
+    The run map above can only answer for a run whose whole text it has
+    seen, and Word's Compare rewrites the glyphs AND redraws the run
+    boundaries in the same pass — so a character it could otherwise put
+    back is missed whenever the run it lands in is not the run it came
+    from. Measured on Aging_Well (A7), 2026-08-27: the source held
+    ``'+'`` and ``'𝜚'`` as separate runs, the built batch held ``'+ϱ'``
+    as one, no source run holds that key, and `tracked.build` refused
+    the whole batch over the one character after restoring fourteen
+    others in the same document.
+
+    So when the runs miss, ask the EQUATION. Its joined text has the run
+    boundaries taken out of it, which is the only part Word moved; if
+    exactly one source equation flattens to the same thing, that is what
+    this one is meant to say, and its characters are laid back along
+    whatever boundaries the built copy now has.
+
+    Nothing is guessed that the run pass would not have guessed: the
+    one-spelling-only guard is the same, applied to a longer key.
+    """
+    if not wanted:
+        return text
+
+    def fix(equation: re.Match[str]) -> str:
+        block = equation.group(0)
+        built = _joined(block)
+        back = wanted.get(_downgraded(built))
+        # A length mismatch cannot happen while every downgrade is one
+        # character for one — which a test pins, because this walk is
+        # positional and would otherwise truncate in silence. It is the
+        # belt for the day the table gains a multi-character mapping.
+        if back is None or back == built or len(back) != len(built):
+            return block
+        cursor = 0
+
+        def relay(run: re.Match[str]) -> str:
+            nonlocal cursor
+            width = len(run.group(2))
+            chunk = back[cursor:cursor + width]
+            cursor += width
+            return run.group(1) + chunk + run.group(3)
+
+        out = _MATH_T_RE.sub(relay, block)
+        restored.append(f"{part}: equation {built!r} -> {back!r}")
+        return out
+
+    return _OMATH_RE.sub(fix, text)

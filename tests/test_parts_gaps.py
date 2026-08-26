@@ -14,6 +14,7 @@ from docxkit.comments import read_all, remove
 from docxkit.errors import AnchorError, PackageError
 from docxkit.footnotes import append, find, find_all, remap, renumber_map
 from docxkit.hygiene import (
+    MATH_DOWNGRADES,
     carry_properties,
     restore_math_glyphs,
     restore_parts,
@@ -561,6 +562,114 @@ def test_a_document_with_no_math_glyphs_anywhere_is_a_no_op():
 
     assert restore_math_glyphs(built, _parts_with("p + q")) == []
     assert built == before
+
+
+# --------------------------------- ...and the runs Word FUSED (2026-08-27) ---
+#
+# Compare flattens the glyph AND redraws the run boundaries in the same
+# pass, so keying on a run's whole text misses every character that
+# landed in a run it did not come from. Aging_Well (A7): the source held
+# '+' and '𝜚' separately, the batch held '+ϱ' as one run, and
+# `tracked.build` refused the whole batch over that character after
+# restoring fourteen others in the same document.
+
+def _runs(*texts: str, prose: str = "unchanged prose") -> dict[str, bytes]:
+    """One equation, its `m:t` runs split exactly where asked."""
+    runs = "".join(f"<m:r><m:t>{t}</m:t></m:r>" for t in texts)
+    doc = (f"<w:document><w:body><w:p><w:r><w:t>{prose}</w:t></w:r>"
+           f"<m:oMath>{runs}</m:oMath></w:p></w:body></w:document>")
+    return {"word/document.xml": doc.encode("utf-8")}
+
+
+def test_a_glyph_in_a_run_Word_FUSED_is_put_back():
+    """(A7) itself: no source run holds '+ϱ', so the run map has no
+    answer and the equation has to give one."""
+    built = _runs("=", "λ", "1", "+ϱ")
+    source = _runs("=", "λ", "1", "+", "𝜚")
+
+    restored = restore_math_glyphs(built, source)
+
+    doc = built["word/document.xml"].decode("utf-8")
+    assert "+𝜚" in doc
+    assert restored == ["word/document.xml: equation '=λ1+ϱ' -> '=λ1+𝜚'"]
+
+
+def test_the_fused_run_keeps_its_own_BOUNDARIES():
+    """The characters are laid back along the boundaries the built copy
+    now has — not the source's. Rewriting the fragmentation as well
+    would make the repair a second edit to the equation, and a redline
+    is watching."""
+    built = _runs("=", "λ", "1", "+ϱ")
+
+    restore_math_glyphs(built, _runs("=", "λ", "1", "+", "𝜚"))
+
+    doc = built["word/document.xml"].decode("utf-8")
+    assert doc.count("<m:t>") == 4, "the run count moved"
+    assert "<m:t>+𝜚</m:t>" in doc
+
+
+def test_a_fused_SUBSCRIPT_comma_and_minus_come_back_together():
+    """The second shape from the same document: `c_{i,−j}` came back
+    with ',' and '−' fused into ',-'. Two flattened characters in one
+    run, and the walk has to place both."""
+    built = _runs("c", "i", ",-", "j")
+    source = _runs("c", "i", ",", "−", "j")
+
+    restore_math_glyphs(built, source)
+
+    assert "<m:t>,−</m:t>" in built["word/document.xml"].decode("utf-8")
+
+
+def test_the_RUN_map_still_answers_first_where_it_can():
+    """The equation pass is a fallback, not a replacement: a run the map
+    can explain is reported as that run, so the log keeps naming the
+    smallest thing that changed."""
+    built = _parts_with("a - b")
+
+    restored = restore_math_glyphs(built, _parts_with("a − b"))
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+
+
+def test_an_AMBIGUOUS_equation_is_dropped_rather_than_guessed():
+    """The run guard, one key longer. Two source equations flatten to
+    the same thing and disagree about which character is the minus;
+    neither can explain this one, so it is left as Word left it."""
+    built = _runs("a", "- b", "- c")
+    a = _runs("a", "− b", "- c")
+    b = _runs("a", "- b", "− c")
+
+    assert restore_math_glyphs(built, a, b) == []
+    assert "<m:t>- b</m:t>" in built["word/document.xml"].decode("utf-8")
+
+
+def test_an_equation_that_ALREADY_agrees_is_not_reported():
+    """The fallback runs over every equation, including the ones the run
+    map just finished repairing. It has to be a no-op on those or an
+    idempotent pass reports work on a file it did not change."""
+    built = _runs("=", "λ", "1", "+𝜚")
+
+    assert restore_math_glyphs(built, _runs("=", "λ", "1", "+", "𝜚")) == []
+
+
+def test_a_DIFFERENT_equation_is_not_reached_for():
+    """Keyed on the flattened text being equal, so an equation the
+    source simply does not contain matches nothing. Only the boundaries
+    are treated as untrustworthy — never the characters."""
+    built = _runs("=", "λ", "2", "+ϱ")
+
+    assert restore_math_glyphs(built, _runs("=", "λ", "1", "+", "𝜚")) == []
+    assert "ϱ" in built["word/document.xml"].decode("utf-8")
+
+
+def test_every_DOWNGRADE_is_one_character_for_one():
+    """The equation walk is positional: it lays the source's characters
+    back along the built copy's run widths. That is only sound while
+    downgrading preserves length, and the day a mapping is added whose
+    two sides differ, this test is what says so — the walk itself would
+    truncate a run in silence."""
+    for glyph, plain in MATH_DOWNGRADES.items():
+        assert len(glyph) == 1 and len(plain) == 1, (glyph, plain)
 
 
 # ---------------------------------------------- the relationship ids ------
