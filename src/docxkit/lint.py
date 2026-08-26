@@ -238,7 +238,7 @@ def audit(*roots: Any) -> list[str]:
     output: a gate nobody can satisfy, on a condition the toolkit
     offered no way to clear.
     """
-    return _repeated_bookmarks(roots)
+    return _repeated_bookmarks(roots) + _unbalanced_fields(roots)
 
 
 def audit_parts(parts: dict[str, bytes]) -> list[str]:
@@ -296,6 +296,78 @@ def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
     return [(f"{len(repeated)} bookmark name(s) defined more than once: "
              f"{named}{' ...' if len(repeated) > 8 else ''} — Word keeps the "
              f"first and every link to the name is a coin flip")]
+
+
+def _field_where(fld: Any) -> str:
+    """Name the paragraph an orphaned field half sits in.
+
+    Its visible text is what a person searches for, and the field's
+    INSTRUCTION is what identifies it when there is none — which is the
+    usual case, because the half that survives a deleted sentence is
+    the half with no display runs left.
+    """
+    para = fld
+    while para is not None and para.tag != W + "p":
+        para = para.getparent()
+    if para is None:
+        return "outside any paragraph"
+    text = "".join(t.text or "" for t in para.iter(W + "t")).strip()
+    instr = "".join(t.text or "" for t in para.iter(W + "instrText")).strip()
+    where = f"¶ {text[:40]!r}" if text else "¶ with no visible text"
+    return f"{where} [{instr[:40]}]" if instr else where
+
+
+def _unbalanced_fields(roots: tuple[Any, ...]) -> list[str]:
+    """``w:fldChar`` begins with no end, and ends with no begin.
+
+    A field is three runs — ``begin``, the ``instrText``, ``end`` — and
+    deleting the sentence around one takes the display runs and leaves
+    the rest standing. Word then decides where the field ends on its
+    own, which in practice means swallowing the rest of the paragraph
+    into it. Found on Aging_Well 2026-08-26, dropping a figure whose
+    in-text mention was a field-form hyperlink; measured on that paper's
+    own file with one ``end`` run removed, `lint` said "clean - no
+    structural problems found" and exited 0.
+
+    Nothing else names it either. `citations` did exit 1, for an
+    UNBALANCED SPAN two paragraphs away — a link that is in fact fine —
+    and `crossrefs --audit` called it a misplaced anchor, i.e. a live
+    mention of a figure no longer in the paper. Three tools, three
+    misleading descriptions, and none of them "a field has no end".
+
+    Counted per PART and not per paragraph: a TOC or an index field
+    legitimately spans many paragraphs, and a per-paragraph balance
+    would report every one of them. ``w:fldSimple`` carries its
+    instruction as an attribute and pairs with nothing, so it is not a
+    ``w:fldChar`` and never reaches this walk.
+
+    Advisory rather than a refusal, because Word opens the file — the
+    same reason the bookmark check sits here. What it reads is wrong.
+    """
+    out: list[str] = []
+    for root in roots:
+        if root is None:
+            continue
+        # Nested fields are ordinary — a HYPERLINK inside a
+        # cross-reference — so this is a depth walk and not two counts.
+        # Two counts agree on `end begin`, which is two orphans.
+        open_fields: list[Any] = []
+        for fld in root.iter(W + "fldChar"):
+            kind = fld.get(W + "fldCharType")
+            if kind == "begin":
+                open_fields.append(fld)
+            elif kind == "end":
+                if open_fields:
+                    open_fields.pop()
+                else:
+                    out.append("field END with no begin, in "
+                               f"{_field_where(fld)} — Word reads the "
+                               "run before it as part of the field")
+        for fld in open_fields:
+            out.append(f"field BEGIN with no end, in {_field_where(fld)} — "
+                       "Word decides where it ends, and swallows the rest "
+                       "of the paragraph into it")
+    return out
 
 
 def lint_parts(parts: dict[str, bytes]) -> list[str]:

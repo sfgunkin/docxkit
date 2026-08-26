@@ -582,3 +582,113 @@ def test_the_worst_offender_is_never_the_one_elided():
     assert listed.startswith("zWorst x6, yBad x4")
     assert "..." in listed          # eight of ten, so it is truncated
     assert "hMild" not in listed    # and the truncation drops the mild
+
+
+# ------------------------------------- a field with no end (2026-08-27) ---
+#
+# Aging_Well, dropping a figure whose in-text mention was a field-form
+# hyperlink: deleting the sentence took the field's display runs and
+# left `begin` + `instrText` standing. `lint` said "clean - no
+# structural problems found" and exited 0. What DID exit 1 was
+# `citations`, for an unbalanced SPAN two paragraphs away in a link that
+# is fine, and `crossrefs --audit`, calling it a misplaced anchor.
+# Three tools, three misleading descriptions, none of them "a field has
+# no end".
+
+def _fld(kind: str) -> str:
+    return f'<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>'
+
+
+def _instr(text: str) -> str:
+    return f'<w:r><w:instrText xml:space="preserve">{text}</w:instrText></w:r>'
+
+
+def _field(instruction: str, shown: str) -> str:
+    """A whole field: begin, its instruction, the text Word displays, end."""
+    return (_fld("begin") + _instr(instruction) + _fld("separate")
+            + run(shown) + _fld("end"))
+
+
+def test_a_WHOLE_field_is_not_a_finding():
+    body = para(run("As ") + _field(r' HYPERLINK \l "Figure2" ', "Figure 2")
+                + run(" shows, the gradient steepens."))
+
+    assert audit_parts(_parts(body)) == []
+
+
+def test_a_field_BEGIN_with_no_end_is_a_finding():
+    """The sentence went and took the display runs with it."""
+    body = para(_fld("begin") + _instr(r' HYPERLINK \l "Figure2" '))
+
+    (problem,) = audit_parts(_parts(body))
+
+    assert problem.startswith("field BEGIN with no end")
+    assert "Figure2" in problem, "the instruction is what identifies it"
+    assert "swallows the rest of the paragraph" in problem
+
+
+def test_a_field_END_with_no_begin_is_a_finding():
+    """The other half of the same cut, and the opposite mistake: Word
+    reads back from it into text that was never part of a field."""
+    body = para(run("ordinary prose") + _fld("end"))
+
+    (problem,) = audit_parts(_parts(body))
+
+    assert problem.startswith("field END with no begin")
+    assert "ordinary prose" in problem
+
+
+def test_a_field_spanning_MANY_paragraphs_is_not_a_finding():
+    """A TOC field opens in one paragraph and closes several later, so
+    the balance is counted per PART. Counted per paragraph, every table
+    of contents in every paper reports twice."""
+    body = (para(_fld("begin") + _instr(r' TOC \o "1-3" \h ')
+                 + _fld("separate") + run("1. Introduction"))
+            + para(run("2. The capability framework"))
+            + para(run("3. Evidence") + _fld("end")))
+
+    assert audit_parts(_parts(body)) == []
+
+
+def test_NESTED_fields_are_counted_by_DEPTH_not_by_totals():
+    """A HYPERLINK inside a cross-reference is ordinary markup. Two
+    counts would call `end begin` balanced — and that is two orphans,
+    the exact damage a cut between two fields leaves behind."""
+    nested = para(_fld("begin") + _instr(" REF _Ref1 ") + _fld("separate")
+                  + _field(r' HYPERLINK \l "Table1" ', "Table 1")
+                  + _fld("end"))
+    assert audit_parts(_parts(nested)) == []
+
+    crossed = para(_fld("end") + run("between two cuts") + _fld("begin")
+                   + _instr(" REF _Ref2 "))
+    assert len(audit_parts(_parts(crossed))) == 2
+
+
+def test_a_fldSimple_pairs_with_NOTHING_and_is_not_reported():
+    """It carries its instruction as an attribute and has no halves to
+    lose, so it must not read as an unterminated field."""
+    body = para(f'<w:fldSimple w:instr=" PAGE ">{run("7")}</w:fldSimple>')
+
+    assert audit_parts(_parts(body)) == []
+
+
+def test_an_orphan_in_the_FOOTNOTES_is_found_too():
+    """Compare rewrites every part it touches, and a figure mention in a
+    note is as ordinary as one in the body."""
+    foot = (f'<w:footnotes {NS}><w:footnote w:id="2"><w:p>'
+            + _fld("begin") + _instr(r' HYPERLINK \l "Table3" ')
+            + "</w:p></w:footnote></w:footnotes>")
+
+    (problem,) = audit_parts(make_parts(para(run("body")), footnotes=foot))
+
+    assert "Table3" in problem
+
+
+def test_an_unterminated_field_does_NOT_refuse_the_write():
+    """Word opens the file — it just reads it wrongly. The refusal path
+    is for markup Word rejects outright, and putting a correctness
+    finding there is what bricked every mutating command once already."""
+    body = para(_fld("begin") + _instr(r' HYPERLINK \l "Figure2" '))
+
+    assert lint_parts(_parts(body)) == []
+    assert audit_parts(_parts(body)) != []
