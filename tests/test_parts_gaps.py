@@ -469,6 +469,28 @@ def test_a_flattened_MINUS_is_put_back():
     assert "a − b" in built["word/document.xml"].decode("utf-8")
 
 
+@pytest.mark.parametrize(("flat", "glyph", "what"), [
+    ("ϱ=0.03", "𝜚=0.03", "a varrho discount rate"),
+    ("∂Ψ/∂al", "∂Ψ/∂aℓ", "an ell instrument index"),
+])
+def test_the_other_glyphs_the_accept_path_flattens(flat, glyph, what):
+    """U+1D71A and U+2113, measured on Aging_Well 2026-08-26.
+
+    Word's Compare returned `𝜚` as `ϱ` in ten equations and `ℓ` as a
+    plain `l` in five, and `tracked.build` refused the batch because
+    accepting every revision no longer reproduced the equations. Same
+    class as the minus and the prime, and invisible to every text layer:
+    both flattenings are legal characters that read almost the same.
+    """
+    built = _parts_with(flat)
+    source = _parts_with(glyph)
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == [f"word/document.xml: {flat!r} -> {glyph!r}"], what
+    assert glyph in built["word/document.xml"].decode("utf-8")
+
+
 def test_PROSE_is_never_touched():
     """Only `m:t`. A hyphen in a sentence is a hyphen, and the
     round-trip does not rewrite prose in the first place."""

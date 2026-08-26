@@ -1119,7 +1119,13 @@ def smarten(xml: str) -> tuple[str, SmartenReport]:
 #: the build refuses instead of shipping the wrong glyph, which is the
 #: gate working — but a refusal nobody can act on costs the same
 #: afternoon as a wrong answer.
-MATH_DOWNGRADES = {"−": "-", "′": "'"}
+#: Glyphs Word's Compare/accept round-trip flattens inside `m:t`, and what
+#: it flattens each one TO. Every entry was measured on a manuscript, not
+#: guessed: U+2212 and U+2032 on LE and LI, then U+1D71A and U+2113 on
+#: Aging_Well 2026-08-26, where a `\varrho` discount rate and an `\ell`
+#: instrument index came back as their plain cousins in ten and five
+#: equations and `tracked.build` refused the batch on gate 4.
+MATH_DOWNGRADES = {"−": "-", "′": "'", "𝜚": "ϱ", "ℓ": "l"}
 
 _MATH_T_RE = re.compile(r"(<m:t[^>]*>)([^<]*)(</m:t>)")
 
