@@ -889,6 +889,37 @@ def test_math_reports_a_display_equation_word_will_set_inline(monkeypatch,
     assert code == 1, "--check must gate on an inline display equation"
 
 
+def test_math_can_go_green_on_a_paper_with_a_NOTATION_TABLE(monkeypatch,
+                                                            tmp_path, capsys):
+    """Aging_Well's Appendix opens with a two-column notation table, so
+    17 maths-only cells counted as display equations stranded inline and
+    `--check` could never exit 0 — useless as a gate on exactly the
+    papers that have the most equations. The exclusion is announced
+    rather than silent: a count that quietly drops findings reads as
+    "there are none"."""
+    from docxkit.package import write_docx
+    cell = ("<w:tc><w:tcPr/><w:p><m:oMath><m:r><m:t>α</m:t></m:r>"
+            "</m:oMath></w:p></w:tc>")
+    gloss = f"<w:tc><w:tcPr/>{para(run('what it means'))}</w:tc>"
+    path = tmp_path / "notation.docx"
+    write_docx(path, make_parts(
+        f"<w:tbl><w:tblPr/><w:tr>{cell}{gloss}</w:tr>"
+        f"<w:tr>{cell}{gloss}</w:tr><w:tr>{cell}{gloss}</w:tr></w:tbl>"
+        + para(run("Prose after the table."))))
+
+    code, _ = run_cli(monkeypatch, "math", str(path), "--check")
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "0 display equation(s), 0 still in INLINE mode" in out
+    assert "3 maths-only paragraph(s) inside tables not counted" in out
+
+    code, _ = run_cli(monkeypatch, "math", str(path), "--check", "--in-tables")
+    out = capsys.readouterr().out
+    assert code == 1, "the literal question is still askable, and still red"
+    assert "3 display equation(s), 3 still in INLINE mode" in out
+
+
 def test_math_says_nothing_is_stranded_once_it_is_promoted(monkeypatch,
                                                            tmp_path, capsys):
     from docxkit.equations import display

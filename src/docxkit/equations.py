@@ -35,7 +35,9 @@ from ._xml import (
     OMML_STRUCT_RE,
     PARA_RE,
     RUN_RE,
+    element_spans,
     escape,
+    in_span,
     used_prefixes,
     visible_text,
 )
@@ -974,9 +976,32 @@ def is_display(para_xml: str) -> bool:
     return not without_number.strip(" \t\r\n.,;:")
 
 
-def display_equations(xml: str) -> list[re.Match[str]]:
-    """Paragraph matches for every display equation, in body order."""
-    return [m for m in PARA_RE.finditer(xml) if is_display(m.group(0))]
+def display_equations(xml: str, *,
+                      in_tables: bool = False) -> list[re.Match[str]]:
+    """Paragraph matches for every display equation, in body order.
+
+    A paragraph inside a ``w:tbl`` is not one, and `in_tables` is the
+    escape hatch for a caller who means the literal question. A display
+    equation is a BLOCK in the flow of the text — the thing this module
+    centres, numbers and audits — and a cell is a different container
+    with its own width and alignment. It is not where a display
+    equation gets stranded.
+
+    Found on Aging_Well 2026-08-27, whose Appendix opens with a
+    two-column notation table: each cell of the symbol column holds
+    nothing but maths, so `math --check` reported 17 display equations
+    "still in INLINE mode" and could not exit 0. Every one was a
+    notation cell — verified, not assumed — and the printed remedy
+    could not be taken either, since `display` raises on cells like
+    "α, β, γ" that hold three ``m:oMath``. The gate was therefore
+    unpassable on exactly the papers with the most equations.
+    """
+    paragraphs = [m for m in PARA_RE.finditer(xml) if is_display(m.group(0))]
+    if in_tables:
+        return paragraphs
+    tables = element_spans(xml, "tbl")
+    return [m for m in paragraphs
+            if not any(in_span(m.start(), t) for t in tables)]
 
 
 # ------------------------------------------------------ display MODE ----
@@ -1002,14 +1027,20 @@ def in_display_mode(para_xml: str) -> bool:
     return bool(_OMATHPARA_RE.search(para_xml))
 
 
-def inline_display(xml: str) -> list[re.Match[str]]:
+def inline_display(xml: str, *,
+                   in_tables: bool = False) -> list[re.Match[str]]:
     """Display equations Word will lay out INLINE, in body order.
 
     The audit half of :func:`display`. A paragraph holding nothing but
     its equation, with that equation in a bare ``m:oMath``, renders as a
     left-aligned run of text where the paper means a centred display.
+
+    Table cells are excluded with :func:`display_equations`, and for the
+    same reason: `display` is the repair this reports, and it refuses a
+    notation cell holding three ``m:oMath`` — so a finding there names
+    a fix that cannot be applied.
     """
-    return [m for m in display_equations(xml)
+    return [m for m in display_equations(xml, in_tables=in_tables)
             if not in_display_mode(m.group(0))]
 
 

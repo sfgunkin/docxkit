@@ -775,15 +775,26 @@ def cmd_math(args: argparse.Namespace) -> int:
     # check: a bare m:oMath is INLINE to Word, and the house rule is
     # display + centred. Word promotes a lone one on save SOMETIMES,
     # which is why it has to be set rather than trusted.
-    displays = display_equations(doc)
-    stranded = inline_display(doc)
+    displays = display_equations(doc, in_tables=args.in_tables)
+    stranded = inline_display(doc, in_tables=args.in_tables)
     at = {m.start(): i for i, m in enumerate(P_RE.finditer(doc), 1)}
     print(f"  {len(displays)} display equation(s), "
           f"{len(stranded)} still in INLINE mode")
+    # Say what was left out. A notation table is the ordinary reason a
+    # paper has maths-only cells, and excluding them silently reads as
+    # "there are none" — the shape this file's backlog keeps finding.
+    if not args.in_tables:
+        skipped = (len(display_equations(doc, in_tables=True))
+                   - len(displays))
+        if skipped:
+            print(f"  ({skipped} maths-only paragraph(s) inside tables not "
+                  "counted — a cell is not a stranded display; --in-tables "
+                  "to include them)")
     for m in stranded:
         print(f"     ¶{at[m.start()]:<5} {tokens(m.group(0))[:60]!r}")
     if stranded:
-        print("     -> equations.display(para) wraps them in m:oMathPara")
+        print("     -> equations.display(para) wraps them in m:oMathPara "
+              "(one m:oMath per paragraph; it refuses more)")
 
     if not findings:
         print("  clean — every symbol in the text is OMML")
@@ -1973,6 +1984,9 @@ def main() -> None:
     p.add_argument("docx")
     p.add_argument("--check", action="store_true",
                    help="exit 1 if anything is found")
+    p.add_argument("--in-tables", action="store_true",
+                   help="count maths-only TABLE CELLS as display equations "
+                        "too (a notation table is not stranded maths)")
     p.set_defaults(fn=cmd_math)
 
     p = sub.add_parser(

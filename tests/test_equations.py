@@ -203,6 +203,86 @@ def test_display_equations_skips_inline_and_prose():
     assert "(1)" in found[0].group(0)
 
 
+# --- a notation TABLE is not stranded maths (2026-08-27, Aging_Well) ---
+#
+# That paper's Appendix opens with a two-column notation table, so each
+# cell of the symbol column holds nothing but maths. `math --check`
+# counted 17 of them as display equations "still in INLINE mode" and
+# could not exit 0 — useless as a gate on exactly the papers with the
+# most equations — and the remedy it printed could not be taken either:
+# `display` raises on a cell like "α, β, γ" that holds three m:oMath.
+
+def _cell(*paras: str) -> str:
+    return f"<w:tc><w:tcPr/>{''.join(paras)}</w:tc>"
+
+
+def _notation_table(*symbols: str) -> str:
+    """The shape a notation table really has: symbol cell, gloss cell."""
+    rows = "".join(
+        f"<w:tr>{_cell(para(omath(mr(s))))}"
+        f"{_cell(para(run('what it means')))}</w:tr>" for s in symbols)
+    return f"<w:tbl><w:tblPr/>{rows}</w:tbl>"
+
+
+def test_a_maths_only_TABLE_CELL_is_not_a_display_equation():
+    xml = document(_notation_table("α", "β", "γ", "δ", "ε")
+                   + para(omath(frac("L", "N")) + run("\t(1)")))
+
+    found = display_equations(xml)
+
+    assert len(found) == 1, [m.group(0)[:60] for m in found]
+    assert "(1)" in found[0].group(0)
+
+
+def test_the_literal_question_is_still_askable():
+    """`--in-tables` for a caller who means every maths-only paragraph
+    in the file. Excluding them is the DEFAULT, not the only answer."""
+    xml = document(_notation_table("α", "β", "γ", "δ", "ε")
+                   + para(omath(frac("L", "N")) + run("\t(1)")))
+
+    assert len(display_equations(xml, in_tables=True)) == 6
+
+
+def test_a_cell_is_not_reported_as_stranded_INLINE_either():
+    """The finding named a repair that refuses: `display` raises
+    `display needs exactly one m:oMath in the paragraph` on a cell
+    holding "α, β, γ". A gate whose only remedy is unavailable is the
+    shape this backlog ranks above a wrong answer."""
+    xml = document(_notation_table("α", "β", "γ"))
+
+    assert inline_display(xml) == []
+    assert len(inline_display(xml, in_tables=True)) == 3
+
+
+def test_an_equation_AFTER_a_table_is_still_found():
+    """The exclusion is a span test, and a span test that runs to the
+    end of the document hides every equation below the paper's first
+    table — which on these papers is most of them."""
+    xml = document(_notation_table("α")
+                   + para(omath(frac("L", "N")) + run("\t(2)"))
+                   + _notation_table("β")
+                   + para(omath(frac("K", "N")) + run("\t(3)")))
+
+    found = display_equations(xml)
+
+    assert [t for m in found for t in ("(2)", "(3)")
+            if t in m.group(0)] == ["(2)", "(3)"]
+
+
+def test_a_NESTED_table_does_not_swallow_the_rest_of_the_document():
+    """`element_spans` is depth-counted for exactly this reason: a
+    non-greedy match closes on the inner table's end tag, so the outer
+    span would stop early and the paragraphs between the two closes
+    would read as body."""
+    inner = _notation_table("α")
+    xml = document(f"<w:tbl><w:tblPr/><w:tr>{_cell(inner)}</w:tr></w:tbl>"
+                   + para(omath(frac("L", "N")) + run("\t(1)")))
+
+    found = display_equations(xml)
+
+    assert len(found) == 1 and "(1)" in found[0].group(0)
+
+
 # --- the LaTeX pipeline needs Word's XSL, so it is environment-dependent ---
 
 def test_xsl_is_locatable_or_reports_why():
