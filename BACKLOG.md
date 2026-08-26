@@ -753,7 +753,7 @@ falls in a 0.4-point window.
 
 ## Fixed
 
-### ~~S4 — `math --check` reads a symbol-only TABLE CELL as a display equation stranded inline, and offers a repair that refuses~~ — FIXED 27.08, `766a8df`
+### ~~S4 — `math --check` reads a symbol-only TABLE CELL as a display equation stranded inline, and offers a repair that refuses~~ — FIXED 27.08, `766a8df`; REGRESSED, RE-FIXED 27.08, `9e68cf7`
 
 Found 2026-08-27 on Aging_Well, whose new Appendix opens with a two-column
 notation table. `display_equations` counts any paragraph holding nothing but
@@ -782,6 +782,34 @@ refuses on multi-`oMath` paragraphs.
 **Workaround in use:** the paper asserts every finding is inside the notation
 table and reports the gate red with that reason attached
 (`r37_equation_vehicle.py`), rather than contorting the cells.
+
+
+**REGRESSED and re-fixed the same day, `9e68cf7`.** The first cut skipped
+every maths-only paragraph inside a `w:tbl`, and a NUMBERED display
+equation is one: the house vehicle is a full-width table with the maths
+centred in the left cell and "(3)" right-aligned in the right, because
+Word has no other way to put a number on the margin beside a centred
+block. All thirteen of this paper's equations live in one. So the check
+went from honestly red on nine false positives to green on a document
+with thirteen display equations and one of them stranded — it could not
+tell the healthy file from a sabotaged one in either mode.
+
+Told apart by the equation NUMBER now: a maths-only paragraph whose row
+carries a cell holding a number and nothing else is a display equation,
+one whose row does not is a cell that happens to contain maths. Per row
+and not per table, because (A2) and (A3) share a two-row table and "one
+row is a vehicle, many rows is notation" loses both.
+
+**The lesson is about the TESTING, not the rule.** Both cuts had tests
+that failed without them, and the second one is not cleverer than the
+first — it is the first one measured against the actual manuscript. The
+fixtures were invented from the defect report, so they contained the
+table shape the report named and not the other one in the same file,
+four paragraphs away. A change that makes a gate QUIETER has one
+obligatory check that a fixture cannot supply: run it on the real
+document in both states, healthy and broken, and confirm the two still
+come out different. That is two commands, it was not run, and ezhik-82
+ran it instead.
 
 ---
 
