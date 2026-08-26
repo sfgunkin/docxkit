@@ -17,6 +17,163 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S2 — `crossrefs --write` cannot repair what `crossrefs --audit` reports: a half-eaten pair reads as "already linked"
+
+Found 2026-08-24 on Aging_Well. The author rewrote the paragraph mentioning
+Figure 2; Word kept the forward `<w:hyperlink w:anchor="Figure2">` and ate the
+`Figure2txt` bookmark the CAPTION's back-link points at. The audit says so
+plainly — `caption_only: Figure2`, `dangling: Figure2txt`, every other exhibit
+clean — and the writer cannot act on it:
+
+    docxkit crossrefs PAPER.docx --write --labels Figure,Table,Box
+      linked 0, already linked 5
+        ALREADY LINKED BY A WORD FIELD, which link() cannot see — check for a
+        doubled link: Figure2
+      written; previous version kept at PAPER_pre_crossrefs1.docx
+
+Exit 0, a file written, nothing repaired, and the audit still reporting the
+same dangle afterwards.
+
+**The pair is two objects and the guard tests one.** `link` asks "is this
+mention already linked?" — which it must, because the pass is re-run after
+every author hand-back and has to be idempotent — but the convention it
+maintains is a PAIR: the forward hyperlink on the first mention, and the
+`<key>txt` bookmark under it that the caption links back to. Word eats them
+independently. A guard keyed on the half that survived is blind to the half
+that did not, and the same shape has now cost this paper twice: R2's re-run
+guard read a TILED link as "already linked" on 2026-08-23 (recorded in that
+script's docstring), and R11's read a surviving forward link as "already
+linked" here.
+
+**Fix:** make the presence test the PAIR, not the link — a mention that is
+linked but whose `<key>txt` bookmark is missing is not "already linked", it is
+half-linked, and the writer should rebuild the bookmark where the surviving
+link sits. `citations.wrap_link_in_bookmark(xml, anchor, name, bid,
+which="first")` already does exactly that and knows both link forms; it is
+what the paper's `r31_figure2_backlink.py` had to call by hand. The
+per-paper workaround should not have to exist: `link`'s guard has the audit's
+own vocabulary available to it (`dangling`, `caption_only`) and is not using
+it.
+
+**A second, milder point in the same output.** "check for a doubled link" is
+advice, printed where the tool has everything needed to answer it: it knows
+the anchor, it can see both forms, it could say "one field, no element" or
+"both — here". A warning that hands the reader a task the tool could complete
+is where a repair gets skipped.
+
+---
+
+### S1 — `place(render=…)` cannot find a multi-COLUMN table on the page, so its fit is never measured and `own_page` can never fire
+
+Found 2026-08-24 on Aging_Well, the first real use of `place`'s render path on
+a table with more than one column. The run printed:
+
+    Table 1: kept_together=True own_page=False caption sheet 9 -> last sheet None
+
+`last_sheet` is `None`, and `Placement.split` is `caption_sheet is not None
+and last_sheet is not None and they differ` — so a `None` reads as NOT split.
+`PlacementReport.format` then prints "sheet 9, whole", `_measure_and_fix`
+never escalates to `own_page`, and `rendered` is `True`, which is the report's
+own claim that the fit was measured. It was not.
+
+**The probe is built without cell separators.** `_measure_and_fix` locates the
+table's last row with
+
+    _sheet_of(sheets, _text(rows[-1]).strip()[:40], pl.caption_sheet - 1)
+
+and `_text` joins every `w:t` under the element with nothing between them. A
+row of three cells therefore yields `'Social connectednessNussbaum’s Affiliati'`,
+while the render — where those cells are separate table cells — reads
+`'Social connectedness Nussbaum’s Affiliat'`. `_sheet_of` normalises runs of
+whitespace on both sides but cannot insert a separator that is not there, so
+the needle never matches. Measured on this manuscript: the joined probe
+returns `None`, the same 40 characters with one space between the cells return
+sheet 9.
+
+**So the render path is a no-op on exactly the tables it is for.** A
+single-column table (a box) has no cell boundary to lose and works; every
+paper table with columns silently skips the measurement and the escalation.
+The properties `keep_together` writes are still written — that part is fine,
+and it is what actually fixed this paper's Table 1 — but "did it work" was
+answered by hand, with a separate render and a per-row probe, because the
+report could not answer it.
+
+**Fix:** join a row's CELLS with a space (or a sentinel the normaliser
+collapses), not its `w:t` values — `" ".join(_text(tc) for tc in
+row.findall(W + "tc"))`. `_text` itself is correct for a paragraph and is used
+elsewhere for captions and anchors; the bug is using it across cells. A test
+needs a two-column table whose row text only matches when the cells are
+separated, which is the shape every real table has and no fixture had.
+
+**And the report should not say "whole" about a table it could not find.**
+`split` conflates "measured, whole" with "not located". A third state — or a
+problem appended when `caption_sheet` is known and `last_sheet` is not —
+turns a silent pass into a visible one. This is the same shape as the entry
+above about `pages --check`: the check watches a proxy, and the proxy agreed.
+
+---
+
+### S2 — the one gate that RENDERS has no opinion about WHERE content lands, and the rule that would prevent it has no auditor and no CLI
+
+Reported 2026-08-24 from Aging_Well, by the author reading the paper:
+"Table 1 is split across pages — this is against the house rule."
+
+Measured on the render: Table 1 straddles sheets 8→9 and its second row
+breaks MID-ROW, the Health row's grounding cell starting on 8 and finishing
+on 9. Box 1 straddles 6→7 and Box 2 13→14. The manuscript carries **zero**
+`w:cantSplit` and **zero** `w:keepNext` — in any of its twelve table objects,
+in `build/prev.docx`, and in `Documents/faw1.docx`, the file it arrived as.
+The property has never been in this paper.
+
+Every gate is green over exactly that file: `citations`, `refstyle`,
+`crossrefs --audit`, `math --check`, `footnotes --check` and `lint` all exit
+0, and so does `pages --check` — over its own render of the same 27 sheets.
+
+**Three layers, and each one is looking somewhere else.**
+
+* A paper's `[verify]` block audits what the markup SAYS — citations,
+  reference style, cross-references, maths, footnotes, structure. Layout is
+  not in any of their vocabularies, and correctly so.
+* `pages --check` is the only command that renders as a gate, and it checks a
+  blank sheet, a numbering restart, a gap in the printed sequence, and the
+  corner the page number prints in. It knows how many sheets there are and
+  what each one is numbered. It does not ask what LANDED on them.
+* `placement.keep_together` and `tables.house` SET the property. Nothing
+  audits for its absence. `refstyle` has `audit` beside `refile`, `layout`
+  and `convert`; the table rules have no equivalent — and neither module has
+  a CLI subcommand, so both are reachable only from a script that imports
+  them. Across every paper on this machine, three implementations of the same
+  house rule exist and none of them is the toolkit's: HPPA appends
+  `w:cantSplit` per row in `Code/docx_postprocess.py`, LI7 string-inserts it
+  in `revision/scripts/apply_r2b.py`, and `docxkit.placement` does it
+  properly for nobody.
+
+**The measurement already exists.** `placement.Placement` records each
+table's caption sheet, its last sheet and whether it split — but only when a
+caller hands `place()` a renderer, which no CLI does. The gate is not a new
+capability; it is an existing dataclass with no way to reach it.
+
+**What makes this one sharper than the framing note below.** That note says
+nothing renders, so nobody sees. Here the render HAPPENS, inside a command
+whose whole purpose is to report what the render says, and the defect is
+still invisible — because the command's questions are about the sheets and
+the defect is about the content on them. A house rule enforceable only by
+remembering to run a writer is a house rule that decays, and this manuscript
+is the proof: its table was hand-typed by the author and dropped in whole, so
+no build ever had an opportunity to style it, and eight rounds of gates since
+have all been green.
+
+**Shape of a fix.** `pages` already renders and already knows the sheets;
+teach it, or a `placement --audit`, to report an exhibit that straddles a
+boundary and a row with no `cantSplit`. Then a paper's `[verify]` block can
+carry it, and the answer to "why was this not caught" stops being "because
+nothing asked".
+
+---
+
+
+
+
 ### Not three defects — one missing gate: nothing renders by default
 
 Framing, not a defect of its own. Recorded because three entries in this file
@@ -643,6 +800,278 @@ text metrics cannot produce: `(x0 + x1) / 2` -> `// 2` moves a midpoint
 by less than a point, `<` -> `<=` needs one EXACTLY on a threshold, and
 `width / 3` -> `width // 3` — the sharpest — needs a number whose centre
 falls in a 0.4-point window.
+
+---
+
+### S2 — `citations.link_all` has the SAME half-eaten pair as `crossrefs`, and reports it as a benign skip
+
+Found 2026-08-25 on Aging_Well, and it is the entry at the top of this file
+with the nouns changed: the convention is a PAIR — the forward link on the
+first mention, and the `<Key>txt` bookmark wrapping that mention, which the
+reference entry's back-link points at — and the idempotence guard tests one
+half.
+
+The author rewrote §3's social-capability row and §9's measurement paragraph.
+Word kept the hyperlinks and ate the bookmarks. `link_all` then said:
+
+    link_all: linked 19, already 45, back-links 3, unmatched 0, skipped 7
+      ! 'Grewal et al. 2006' (¶50) is already inside a link — wrapping it
+        would nest one link in another, and the click goes to the outer one
+
+That message is TRUE and reads as a non-problem — it is the guard that stops
+a doubled link, and it fires on every re-run of an idempotent pass. What it
+does not say is that the mention it skipped is missing the bookmark half of
+its pair. The manuscript was left with three reference entries linking to
+bookmarks that do not exist:
+
+    docxkit citations PAPER.docx
+      - BROKEN LINK: hyperlink to 'Coast2008txt' (¶145) — no such bookmark
+      - BROKEN LINK: hyperlink to 'Grewal2006txt' (¶154) — no such bookmark
+      - BROKEN LINK: hyperlink to 'Zaidi2013txt' (¶202) — no such bookmark
+
+So the audit CAN see it and the writer cannot act on it, which is the same
+shape as the `crossrefs` entry: `citations` reports three broken links,
+`link_all` re-run reports "already linked" and repairs nothing, exit 0 both
+times.
+
+**Fix:** ask the two questions separately — "is the mention linked?" and
+"does its `<Key>txt` bookmark exist?" — as Aging_Well's `MULTI_YEAR` table
+has done for five hand-wired works since R2 was written. When the second
+answer is no and the first is yes, wrap the existing link rather than
+skipping. The lookup must read `footnotes.xml` and `endnotes.xml` as well as
+the body: five of that paper's works are cited only in footnotes, so a
+body-only search reports their bookmarks missing and prints five warnings
+about a correct manuscript.
+
+**Workaround:** `remint_backlinks` in
+`Aging_Well/revision/scripts/r2_link_apparatus.py`, which re-minted all three
+and is idempotent (a second run does no work). Delete it when this lands.
+
+### S2 — a citation's link SPAN survives an author's edit to the mention, and `ingest` calls that RE-LABELLED
+
+Found 2026-08-25 on Aging_Well. **The fourth span defect on this one paper,
+and the first not caused by the grammar.** The author changed a narrative
+citation to the parenthetical form — "Klimaviciute and Pestieau (2023)" to
+"(Klimaviciute and Pestieau 2023)". Word kept the old span's right-hand
+boundary, so the link ended up covering
+
+    Klimaviciute and Pestieau 2023)
+
+a closing bracket with no opening one inside the blue. Nothing refuses it:
+`citations` counts a link whose anchor resolves, `refstyle` does not look at
+spans, `compare`'s TEXT layer sees no character move, and `revision ingest`
+files it under **RE-LABELLED** — a section that exists precisely to say
+"nothing is lost, do not block the baseline". Which is right about the
+anchor and silent about the span.
+
+**Fix:** an audit that has an opinion about spans. The cheap, precise version
+is bracket balance: a label carrying an unmatched `(` or `)` has reached past
+its mention, and a legitimate narrative citation — "de São José et al.
+(2019)", "Grossman (1972)" — always closes what it opens. That rule fires on
+exactly this defect and never on the house forms. It belongs beside
+`audit_links`, and `ingest`'s RE-LABELLED note should carry it: an author
+edit that leaves the span unbalanced is damage wearing a re-label's clothes.
+
+**Workaround:** `repair_paren_spans` in the same script, which replaced the
+paper's `PARTICLE_SPANS` table. Note what that swap bought beyond the fix —
+the old workaround named its paragraph by a hard-coded signature, the author
+deleted that paragraph, and `edit_para` refused with `0 hits, need 1`, killing
+the whole apparatus pass after `link_all` had run and before `write_docx`.
+Second time a stale signature has cost that script a silent no-op. A repair
+that reads the links needs no signature and cannot go stale.
+
+### S4 — `write_docx` stamps every zip entry with the CURRENT time, so "byte-identical" can never prove "changed nothing"
+
+Measured 2026-08-26 on Aging_Well while timing the round-close chain. Run any
+idempotent pass twice on an unchanged manuscript and the two outputs have
+different md5s:
+
+    r29_table1_keep_together   1st=3626e3e7  2nd=049d32a8
+    r30_boxes_keep_together    1st=436da11b  2nd=42cb83f4
+
+Every entry's CONTENT is identical — `all(a.read(n) == b.read(n))` is True for
+the whole namelist. What differs is `ZipInfo.date_time`, stamped from the clock
+at write:
+
+    [Content_Types].xml   a=(2026, 8, 26, 0, 37, 40)  b=(2026, 8, 26, 0, 38, 6)
+    word/document.xml     a=(2026, 8, 26, 0, 37, 40)  b=(2026, 8, 26, 0, 38, 6)
+
+Two passes that happen to finish inside the same second come out identical,
+which is why this reads as intermittent: three of six passes looked
+"byte-idempotent" on one run and "churning" on the next, purely by clock luck.
+
+**Why it costs something.** The house idiom for an untracked apparatus pass is
+"a re-run that reports no work IS the check that nothing was eaten" — and the
+strongest form of that check, `md5 before == md5 after`, is unavailable. So is
+any cheap skip-if-unchanged cache: a layout pass that wants to avoid a 6-second
+Word render cannot ask "is this the file I last rendered?" without unzipping and
+hashing the parts. Rescue copies cannot dedupe either — six no-op passes in one
+close produce six distinct files of identical content. On a manuscript that
+lives in OneDrive, each is also a sync event.
+
+**Fix:** stamp a fixed `date_time` (or one derived from the source package)
+rather than `time.localtime()`. Word does not care what the entries say. Then
+byte-equality means content-equality, `md5` becomes a legitimate gate, and a
+render cache keyed on the file hash is one line.
+
+**Related, same file:** the passes write unconditionally — `r11`, `r22`, `r29`,
+`r30` all print "wrote …" on a run that reported no work. Writing only when the
+content actually changed would make the no-op case free, and would make the
+timestamp fix visible immediately.
+
+---
+
+### S3 — `figures` assumes the caption sits ABOVE the drawing, so a caption-BELOW paper has no addressable figures and `figures --check` can never go green
+
+Found 2026-08-26 on Aging_Well, whose three figures are conceptual diagrams
+with the caption in the paragraph directly AFTER the image — paragraphs 22/23,
+72/73, 98/99, every one of them. `_window` scans only forward from the caption,
+so every figure in the paper comes back with no drawings:
+
+    caption_index=23 number='1' embeds=[]
+    caption_index=73 number='2' embeds=[]
+    caption_index=99 number='3' embeds=[]
+    set_alt_text: AnchorError: 'Figure 1.' has 0 drawing(s); no image_index 0
+    alt_texts: [(None, 'Picture 927649438', 'rId7', None), … x3, caption None]
+
+    docxkit figures working.docx --check
+      working.docx  (3 drawing(s), 3 without alt text)
+        ! (no caption window)  [Picture 927649438]      … x3
+      CHECK FAILED: 3 drawing(s) without alt text
+
+**The gate is permanently red and the only writer that could clear it
+refuses.** The count of missing alt text is correct, so the failure reads as
+honest; what is not visible is that `set_alt_text` — the one function that
+would fix it — raises `AnchorError` on all three captions, because it addresses
+its drawing through the same forward-only window. A journal accessibility pass
+on this manuscript cannot be done through docxkit at all. `(no caption window)`
+also reads as "this drawing has no caption" when the caption is the very next
+paragraph.
+
+**The module knows this trap in one direction only.** Its own docstring says "A
+caption sits ABOVE its figure, as it does above a table. Mapping captions to
+drawings by 'the nearest one before' gets every figure wrong by one" — measured
+on AFI and true there. Both conventions are in use across these papers, and
+nothing in the module can tell which one it is looking at.
+
+**Fix:** let the window look BOTH ways — the drawings between the previous
+caption and this one as well as those after it — or infer the convention once
+per document (which side of its captions the drawings sit on, by majority) and
+apply it to every figure. Inferring it also protects the off-by-one the module
+already guards: on a caption-below paper a forward window whose next drawing
+happens to fall within `_DRAWING_WINDOW` paragraphs hands one caption the NEXT
+figure's image, silently. Not reachable on Aging_Well, whose drawings sit 49
+paragraphs apart, so that half is reasoned and not measured — but it is the
+same wrong-neighbour shape `_window` was written to prevent.
+
+**No workaround in use.** Aging_Well's figures have no alt text and `figures`
+is not among the paper's six gates, so nothing was routed around — the paper
+simply cannot pass `figures --check` today.
+
+---
+
+### S2 — `restore_math_glyphs` matches WHOLE `m:t` runs, so a run Word FUSED is never repaired
+
+Found 2026-08-27 on Aging_Well, inserting a 13-equation model. Word's Compare
+flattens glyphs inside `m:t` AND re-fragments the runs, and the restorer keys
+on the run's whole text — so a character it could otherwise put back is missed
+whenever the run it lands in is not the run it came from. Measured on (A7):
+
+    edited.docx   runs: [… '=', 'λ', '1', '+', '𝜚']
+    the batch     runs: [… '=', 'λ', '1', '+ϱ']
+
+`'+ϱ'` is a key no source run holds, so nothing matched and `tracked.build`
+refused the batch on that one character — after restoring fourteen others in
+the same document. The same shape hit `c_{i,−j}`, where `','` and `'−'` came
+back fused as `',-'`.
+
+**Fix:** fall back to the EQUATION when the run misses. Concatenate each
+source `m:oMath`'s `m:t` text, key on its downgraded form as the run map
+already does, and — for the one source equation that matches unambiguously —
+walk the built equation's runs restoring character by character. The existing
+one-variant-only guard carries over unchanged, so nothing is guessed.
+
+**Workaround in use:** `Aging_Well/revision/scripts/r37_equation_vehicle.py`
+merges adjacent `m:r` that already share their `m:rPr` (3,380 of them), so the
+source key has the same shape Word will emit, and separately normalises
+U+1D71A to U+03F1 so that glyph never needs restoring. Both are the paper
+working around the library.
+
+---
+
+### S4 — `math --check` reads a symbol-only TABLE CELL as a display equation stranded inline, and offers a repair that refuses
+
+Found 2026-08-27 on Aging_Well, whose new Appendix opens with a two-column
+notation table. `display_equations` counts any paragraph holding nothing but
+maths, so each cell of the symbol column is one:
+
+    docxkit math working.docx --check
+      30 display equation(s), 17 still in INLINE mode
+         ¶183   'cjΦj'
+         ¶189   'λμij'
+         -> equations.display(para) wraps them in m:oMathPara
+
+Every one of the 17 is a notation cell — verified, not assumed. The paper does
+not mean a centred display block there; it means a symbol set in the line of a
+cell. And the printed remedy cannot be taken: `equations.display` raises
+`display needs exactly one m:oMath in the paragraph, found 3` on cells like
+"α, β, γ".
+
+So `math --check` cannot exit 0 on any paper with a notation table, which
+makes it useless as a gate for exactly the papers that have most equations.
+
+**Fix:** exclude paragraphs inside a `w:tbl` from `display_equations`, or give
+the check a `--in-tables` opt-in. A cell is not where a display equation gets
+stranded. If they stay in, the advice line should not name a function that
+refuses on multi-`oMath` paragraphs.
+
+**Workaround in use:** the paper asserts every finding is inside the notation
+table and reports the gate red with that reason attached
+(`r37_equation_vehicle.py`), rather than contorting the cells.
+
+---
+
+### S2 — nothing checks that a FIELD is balanced: `lint` passes a document with an unterminated `fldChar`
+
+Found 2026-08-26 on Aging_Well, dropping a figure whose in-text mention is a
+field-form hyperlink. Deleting the sentence took the field's display runs and
+left `fldChar begin` + `instrText HYPERLINK \l "Figure2"` standing. Measured
+on that paper's own `prev.docx` with one `fldChar end` run removed:
+
+    before:  begin 150  end 150
+    after:   begin 150  end 149
+    docxkit lint halffield.docx
+      clean - no structural problems found        exit 0
+
+`lint`'s docstring says it is for "the 'Word says the file is corrupted' bug
+classes … Every check here corresponds to something that actually happened",
+and an unterminated field is squarely in that class: Word decides where the
+field ends on its own, which in practice means swallowing the rest of the
+paragraph into it.
+
+**Nothing else names it either.** `citations` does exit 1 on the mutated file,
+but for the *symptom* two paragraphs away —
+
+    UNBALANCED SPAN: the link to 'Shkolnikov2026' (¶10) covers
+    "Shkolnikov et al. 2026). Longer lives are an opp" — an unmatched ')'
+
+— which reads as a span-width bug in a link that is in fact fine. On the real
+edit the symptom was different again: `crossrefs --audit` reported
+`misplaced_anchor` for a figure whose only surviving trace was the orphaned
+`instrText`, i.e. a live mention of a figure no longer in the paper. Three
+tools, three misleading descriptions, and none of them "a field has no end".
+
+**Fix:** count `w:fldChar` begin/end per part in `lint.audit` — one pass, the
+same shape as the existing bookmark-balance check — and report the paragraph
+of any unmatched one. A `w:fldSimple` needs no pairing and should be skipped.
+
+**Workaround in use:** `Aging_Well/revision/scripts/r34_drop_figure2.py` walks
+the paragraph's run-level children tracking field depth and extends a cut
+backwards to the run that opened the field, so the whole field goes with the
+sentence. That belongs in a paper only because no library helper deletes a
+span of visible text — `replace_in_para` and `insert_in_para` exist, a
+`delete_in_para` does not, and the hand-rolled version is exactly where this
+defect gets introduced.
 
 ---
 
