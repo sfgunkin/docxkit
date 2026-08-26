@@ -17,6 +17,69 @@ fixed entries; "did we ever fix that?" is a real question later.
 
 ## Open
 
+### S3 — `tools/heredoc_guard.py` is written, tested, and wired to nothing: the trap it exists to refuse was walked into twice while closing this batch
+
+Found 2026-08-27, during the batch that closed the ten entries below.
+
+**Symptom as observed.** Two patch scripts written through a Bash
+heredoc came out corrupted, in the two ways the guard's own docstring
+names. The first silently failed to match its anchor:
+
+    b = '''        z.writestr("[Content_Types].xml",  ... b"\r\n" + ...'''
+    AssertionError: flat OPC writer anchor
+
+The second was worse, because it wrote a file that then would not parse
+at all:
+
+    SyntaxError: unterminated string literal (detected at line 82)
+
+The line was `text.index("\r\n" + heading + "\r\n")`. Both escapes had
+lost their backslash and become REAL newlines inside the string literal,
+so it never closed. Both heredocs were POSIX-quoted (`<<'PY'`), which is
+specified to pass the body through untouched.
+
+**The guard is correct and was never asked.** Run by hand it answers
+straight away:
+
+    >>> from heredoc_guard import offending
+    >>> offending("python - <<'PY'\ns = t.replace('\\\\', x)\nPY")
+    "s = t.replace('\\\\', x)"
+
+What is missing is the registration. `~/.claude/settings.json` carries a
+`Stop` hook and a `SessionStart` hook and no `PreToolUse` entry at all,
+so nothing ever invokes it. `tests/test_heredoc_guard.py` passes on
+every run and tests a function nobody calls.
+
+**Why S3 and not S4.** The file's own docstring states the job: "what is
+tested here is the thing the rule could not be: a refusal that does not
+depend on anybody remembering." An uninstalled refusal IS the rule it
+was written to replace, and the entry above it records seven prior
+occurrences across two agents, the worst rewriting 387 real newlines in
+a file another session was editing. Tonight makes nine. A green suite
+over a gate that cannot fire is the false confidence this file ranks
+above a wrong answer — and here the suite is not merely unable to fail,
+it is measuring a dead path.
+
+**Fix sketch.** The code exists; only the wiring is missing. A
+`PreToolUse` matcher on `Bash` in `~/.claude/settings.json`:
+
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+      "command": "python D:/docxkit/tools/heredoc_guard.py"}]}]
+
+That is a change to the USER's harness configuration rather than to this
+repo, which is why it is filed rather than done — it changes how every
+session on this machine behaves, including sessions that have nothing to
+do with docxkit. Worth deciding once and deliberately. The repo half
+worth doing regardless: `test_heredoc_guard.py` should assert that the
+hook is REGISTERED somewhere, not only that the function is right, or
+this recurs the next time a settings file is rewritten.
+
+**Workaround in use:** write the script with the Write tool and run it
+by path, never through a heredoc. Which is the rule that has now failed
+nine times, and is exactly why the guard was built.
+
+---
+
 ### S3 — five fixes shipped with no `## Fixed` entry, so tonight the backlog read as ten open defects when five were done
 
 Found 2026-08-27, starting this batch. `## Open` listed ten entries. Five
