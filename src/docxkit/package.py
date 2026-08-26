@@ -29,7 +29,7 @@ from lxml import etree
 # caller naming one part itself, the drift R6 removed from fourteen
 # modules. It belongs here because it takes the parts dict, which is this
 # module's subject.
-from ._xml import escape, text_parts
+from ._xml import escape, text_parts, zip_entry
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
@@ -397,6 +397,14 @@ def write_docx(path: str | Path, parts: dict[str, bytes],
     read-only mid-write (the same race Stata reports as r(608)), and a
     save that gives up on the first refusal turns a hiccup into lost
     work.
+
+    The bytes are REPRODUCIBLE: the same parts, in the same order, write
+    the same file. `writestr` stamps each entry from the clock, which
+    made an idempotent pass over an unchanged manuscript produce a
+    different md5 every time it took longer than a second — see
+    :data:`docxkit._xml.ZIP_STAMP`. With that out, `md5 before == md5
+    after` is a legitimate gate, and a render cache keyed on the file
+    hash is one line.
     """
     path = Path(path)
     if problems := malformed_parts(parts):
@@ -411,7 +419,7 @@ def write_docx(path: str | Path, parts: dict[str, bytes],
         with open(tmp, "wb") as fh:
             with zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as z:
                 for name in names:
-                    z.writestr(name, parts[name])
+                    z.writestr(zip_entry(name), parts[name])
             fh.flush()
             os.fsync(fh.fileno())
         _replace_atomically(tmp, path)

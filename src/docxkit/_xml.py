@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import re
+import zipfile
 from collections.abc import Iterable, Iterator
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "T_RUN_RE",
     "WORD_ANCHOR",
     "XML_WS",
+    "ZIP_STAMP",
     "delta_text",
     "editable_text",
     "element_spans",
@@ -69,6 +71,7 @@ __all__ = [
     "used_prefixes",
     "visible_text",
     "word_minted",
+    "zip_entry",
 ]
 
 # THE PART NAMES, ONCE. Every module used to spell them itself — 38
@@ -90,6 +93,43 @@ COMMENTS = "word/comments.xml"
 #: describes the document — counting revisions, renumbering an exhibit,
 #: searching for a phrase — is wrong if it stops at the body.
 TEXT_PARTS = (DOCUMENT, FOOTNOTES, ENDNOTES)
+
+#: The timestamp every zip entry docxkit writes carries — the zip
+#: epoch, the earliest a member can be stamped. `writestr` defaults to
+#: `time.localtime()`, which made a docx a function of the clock:
+#: measured on Aging_Well 2026-08-26, two runs of the SAME idempotent
+#: pass over an unchanged manuscript produced different md5s with every
+#: entry's CONTENT identical, and two runs finishing inside one second
+#: produced the same one. So "byte-identical" could never prove
+#: "changed nothing" — and could not be trusted to prove the opposite
+#: either, which is the half that reads as intermittent.
+#:
+#: Word does not read these; it stamps its own on save. What they cost
+#: while they moved was every cheap check built on a file hash: the
+#: house idiom "a re-run that reports no work IS the check that nothing
+#: was eaten", any skip-if-unchanged render cache, and deduplicating
+#: rescue copies — six no-op passes in one round-close wrote six
+#: distinct files of identical content, each a sync event on a
+#: OneDrive-backed tree.
+ZIP_STAMP = (1980, 1, 1, 0, 0, 0)
+
+
+def zip_entry(name: str,
+              *, compress_type: int = zipfile.ZIP_DEFLATED
+              ) -> zipfile.ZipInfo:
+    """A `ZipInfo` for `name`, stamped so the bytes are reproducible.
+
+    Everything `writestr` would set from a bare string name, with the
+    clock taken out of it. Defined here rather than in `package`
+    because `word`'s Flat OPC writer needs the same stamp and the two
+    are siblings — and a constant spelled in two places is the drift
+    this module exists to prevent.
+    """
+    info = zipfile.ZipInfo(name, date_time=ZIP_STAMP)
+    info.compress_type = compress_type
+    info.external_attr = 0o600 << 16
+    return info
+
 
 #: A note DEFINITION, per store: (id, body). Word renumbers note ids on
 #: save, so several passes match a definition by its TEXT and then work

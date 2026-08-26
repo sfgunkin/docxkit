@@ -35,6 +35,7 @@ from typing import Any, NamedTuple, cast
 
 from lxml import etree
 
+from ._xml import zip_entry
 from .errors import AnchorError, FontMissing, PackageError
 
 __all__ = [
@@ -423,11 +424,11 @@ def flat_opc_to_docx(flat_path: str | Path, out_path: str | Path) -> int:
             ov.set("ContentType", ctype)
 
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml",
+        z.writestr(zip_entry("[Content_Types].xml"),
                    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                    b"\r\n" + etree.tostring(ct_root, encoding="utf-8"))
         for name, payload in entries:
-            z.writestr(name, payload)
+            z.writestr(zip_entry(name), payload)
     return len(entries)
 
 

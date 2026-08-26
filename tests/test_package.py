@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import zipfile
 from pathlib import Path
 
@@ -878,3 +879,84 @@ def test_the_read_retry_BACKS_OFF_instead_of_hammering(monkeypatch,
 # `if attempt < retries - 1` -> `!= retries - 1`. `attempt` runs over
 # `range(retries)`, so it reaches the last index exactly and never
 # passes it — the two spellings stop the loop on the same attempt.
+
+
+# ------------------------------------ the bytes are the CONTENT (27.08) ---
+#
+# `writestr` stamps every entry from the clock, so an idempotent pass
+# over an unchanged manuscript wrote a different md5 each time it took
+# more than a second to run — and the SAME one when two runs happened
+# to finish inside one, which is why it read as intermittent rather
+# than as always. Measured on Aging_Well 2026-08-26: three of six
+# passes looked byte-idempotent on one run and churning on the next,
+# purely by clock luck. Every entry's content was identical throughout.
+
+def _md5(path: Path) -> str:
+    import hashlib
+
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def test_the_SAME_parts_write_the_SAME_bytes(simple_docx, tmp_path,
+                                             monkeypatch):
+    """"A re-run that reports no work IS the check that nothing was
+    eaten" is the house idiom, and its strongest form — md5 before ==
+    md5 after — was unavailable while the clock was in the file.
+
+    The clock is MOVED between the two writes on purpose. Two runs that
+    finish inside one second came out identical even before this was
+    fixed, which is exactly why the defect read as intermittent — and
+    a test that writes twice in a millisecond passes either way.
+    """
+    parts = read_parts(simple_docx)
+    first, second = tmp_path / "a.docx", tmp_path / "b.docx"
+    a_day_later = iter([1_000_000_000.0, 1_000_086_400.0])
+    monkeypatch.setattr(time, "time",
+                        lambda: next(a_day_later, 1_000_086_400.0))
+
+    write_docx(first, parts)
+    write_docx(second, parts)
+
+    assert _md5(first) == _md5(second)
+
+
+def test_a_REAL_edit_still_changes_the_bytes(simple_docx, tmp_path):
+    """The other half, and the one that makes the first mean anything:
+    a fixed stamp must not make two DIFFERENT documents hash alike."""
+    parts = read_parts(simple_docx)
+    before = tmp_path / "before.docx"
+    write_docx(before, parts)
+
+    parts["word/document.xml"] += b"<!-- a real edit -->"
+    after = tmp_path / "after.docx"
+    write_docx(after, parts)
+
+    assert _md5(before) != _md5(after)
+
+
+def test_every_entry_carries_the_FIXED_stamp(simple_docx, tmp_path):
+    """Named by value, because the hash equality above holds for any
+    constant and would not notice the stamp moving to a different one —
+    and a stamp that moved between docxkit versions would make every
+    cached hash in every paper stale at once."""
+    out = tmp_path / "out.docx"
+    write_docx(out, read_parts(simple_docx))
+
+    with zipfile.ZipFile(out) as z:
+        stamps = {i.date_time for i in z.infolist()}
+
+    assert stamps == {(1980, 1, 1, 0, 0, 0)}
+
+
+def test_the_entries_are_still_DEFLATED(simple_docx, tmp_path):
+    """`writestr` took the archive's compression from a bare name and a
+    hand-built ZipInfo does not — a `ZipInfo` defaults to STORED, which
+    would quietly triple the size of every manuscript the toolkit
+    writes."""
+    out = tmp_path / "out.docx"
+    write_docx(out, read_parts(simple_docx))
+
+    with zipfile.ZipFile(out) as z:
+        kinds = {i.compress_type for i in z.infolist()}
+
+    assert kinds == {zipfile.ZIP_DEFLATED}
