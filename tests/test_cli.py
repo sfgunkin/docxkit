@@ -920,6 +920,45 @@ def test_math_can_go_green_on_a_paper_with_a_NOTATION_TABLE(monkeypatch,
     assert "3 display equation(s), 3 still in INLINE mode" in out
 
 
+def test_math_still_gates_on_an_equation_STRANDED_IN_ITS_VEHICLE(
+        monkeypatch, tmp_path, capsys):
+    """The regression the first cut of the table rule shipped. Every
+    NUMBERED equation in these papers sits in a table — maths in the
+    left cell, "(3)" in the right, because Word has no other way to put
+    a number on the margin beside a centred block. Skipping every
+    maths-only paragraph inside a `w:tbl` therefore skipped the
+    equations the check exists for, and `--check` could not tell a
+    healthy manuscript from one with a stranded equation in it.
+
+    Measured on Aging_Well: 13 display equations, 0 stranded on the
+    healthy file and 1 on the sabotaged one, in the DEFAULT mode.
+    """
+    from docxkit.package import write_docx
+    maths = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+
+    def vehicle(number: str, *, promoted: bool = True) -> str:
+        inner = (f"<m:oMathPara><m:oMathParaPr/>{maths}</m:oMathPara>"
+                 if promoted else maths)
+        return (f"<w:tbl><w:tblPr/><w:tr><w:tc><w:tcPr/><w:p>{inner}</w:p>"
+                f"</w:tc><w:tc><w:tcPr/>{para(run(number))}</w:tc>"
+                "</w:tr></w:tbl>")
+
+    healthy = tmp_path / "healthy.docx"
+    write_docx(healthy, make_parts(vehicle("(1)") + vehicle("(2)")))
+    code, _ = run_cli(monkeypatch, "math", str(healthy), "--check")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "2 display equation(s), 0 still in INLINE mode" in out
+
+    stranded = tmp_path / "stranded.docx"
+    write_docx(stranded, make_parts(
+        vehicle("(1)") + vehicle("(2)", promoted=False)))
+    code, _ = run_cli(monkeypatch, "math", str(stranded), "--check")
+    out = capsys.readouterr().out
+    assert code == 1, "a stranded equation in its vehicle must gate\n" + out
+    assert "2 display equation(s), 1 still in INLINE mode" in out
+
+
 def test_math_says_nothing_is_stranded_once_it_is_promoted(monkeypatch,
                                                            tmp_path, capsys):
     from docxkit.equations import display

@@ -269,6 +269,88 @@ def test_an_equation_AFTER_a_table_is_still_found():
             if t in m.group(0)] == ["(2)", "(3)"]
 
 
+# --- ...but the equation VEHICLE is a table too (regression, 27.08) ---
+#
+# The first cut of the fix above skipped every maths-only paragraph
+# inside a `w:tbl`, and Aging_Well puts all thirteen of its NUMBERED
+# equations in one — a full-width table, maths in the left cell, "(3)"
+# right-aligned in the right, because Word has no other way to put a
+# number on the margin beside a centred block. So `math --check` went
+# green on a document with thirteen display equations and one of them
+# stranded: it could not tell the healthy file from a sabotaged one in
+# either mode. Green and blind is worse than honestly red.
+
+def _vehicle(number: str, *, promoted: bool = True) -> str:
+    """The house vehicle: maths in one cell, its number in the next."""
+    maths = omath(frac("L", "N"))
+    if promoted:
+        maths = f"<m:oMathPara><m:oMathParaPr/>{maths}</m:oMathPara>"
+    return (f"<w:tbl><w:tblPr/><w:tr>{_cell(f'<w:p>{maths}</w:p>')}"
+            f"{_cell(para(run(number)))}</w:tr></w:tbl>")
+
+
+def test_an_equation_in_its_NUMBER_VEHICLE_is_still_a_display_equation():
+    xml = document(_vehicle("(1)") + _vehicle("(2)") + _vehicle("(3)"))
+
+    assert len(display_equations(xml)) == 3
+
+
+def test_a_STRANDED_equation_in_a_vehicle_is_still_reported():
+    """The whole point of the check. One of three left in a bare
+    m:oMath, and the gate has to be able to say which."""
+    xml = document(_vehicle("(1)") + _vehicle("(2)", promoted=False)
+                   + _vehicle("(3)"))
+
+    stranded = inline_display(xml)
+
+    assert len(stranded) == 1
+    assert "(2)" not in stranded[0].group(0), "the maths cell, not the number"
+
+
+def test_a_healthy_vehicle_document_reports_NOTHING_stranded():
+    """The other half: a gate that fires on both files is as useless as
+    one that fires on neither."""
+    xml = document(_vehicle("(1)") + _vehicle("(2)") + _vehicle("(3)"))
+
+    assert inline_display(xml) == []
+
+
+def test_a_vehicle_is_read_per_ROW_not_per_TABLE():
+    """Aging_Well's (A2) and (A3) share a two-row table. "One row is a
+    vehicle, many rows is a notation table" is what the two shapes look
+    like side by side, and it drops both of these."""
+    two_rows = ("<w:tbl><w:tblPr/>"
+                f"<w:tr>{_cell(f'<w:p>{omath(frac(chr(76), chr(78)))}</w:p>')}"
+                f"{_cell(para(run('(A2)')))}</w:tr>"
+                f"<w:tr>{_cell(f'<w:p>{omath(frac(chr(75), chr(78)))}</w:p>')}"
+                f"{_cell(para(run('(A3)')))}</w:tr></w:tbl>")
+
+    assert len(display_equations(document(two_rows))) == 2
+
+
+def test_the_two_KINDS_of_table_are_told_apart_in_one_document():
+    """Which is the real shape: this paper has both, and the appendix
+    puts them within a few paragraphs of each other."""
+    xml = document(_notation_table("α", "β", "γ", "δ", "ε")
+                   + _vehicle("(A1)") + _vehicle("(A2)") + _vehicle("(A3)"))
+
+    assert len(display_equations(xml)) == 3
+    assert len(display_equations(xml, in_tables=True)) == 8
+
+
+def test_a_gloss_cell_is_not_an_equation_NUMBER():
+    """`_is_number_cell` is the whole discriminator, so its edge is
+    worth stating: a cell is a number cell only when the number is ALL
+    it holds. A notation table's meaning column mentions numbers."""
+    from docxkit.equations import _is_number_cell
+
+    assert _is_number_cell(para(run("(3)")))
+    assert _is_number_cell(para(run("(A12)")))
+    assert not _is_number_cell(para(run("individual, i=1,…,N (3) of them")))
+    assert not _is_number_cell(para(run("Meaning")))
+    assert not _is_number_cell(para(run("")))
+
+
 def test_a_NESTED_table_does_not_swallow_the_rest_of_the_document():
     """`element_spans` is depth-counted for exactly this reason: a
     non-greedy match closes on the inner table's end tag, so the outer

@@ -980,28 +980,71 @@ def display_equations(xml: str, *,
                       in_tables: bool = False) -> list[re.Match[str]]:
     """Paragraph matches for every display equation, in body order.
 
-    A paragraph inside a ``w:tbl`` is not one, and `in_tables` is the
-    escape hatch for a caller who means the literal question. A display
-    equation is a BLOCK in the flow of the text — the thing this module
-    centres, numbers and audits — and a cell is a different container
-    with its own width and alignment. It is not where a display
-    equation gets stranded.
+    Tables hold both kinds of maths-only paragraph and they have to be
+    told apart, which is what :func:`_vehicle_rows` does. A NOTATION
+    table's symbol cell is a label — Aging_Well's Appendix opens with
+    eighteen rows of symbol and meaning, and counting those made
+    `math --check` report seventeen display equations "still in INLINE
+    mode" that were nothing of the kind, with a printed remedy that
+    refuses them (`display` raises on a cell like "α, β, γ" holding
+    three ``m:oMath``). An equation VEHICLE is the opposite: a table
+    used precisely so a display equation can carry its number, the
+    maths in one cell and "(3)" in the next. Every numbered equation in
+    that same paper is in one.
 
-    Found on Aging_Well 2026-08-27, whose Appendix opens with a
-    two-column notation table: each cell of the symbol column holds
-    nothing but maths, so `math --check` reported 17 display equations
-    "still in INLINE mode" and could not exit 0. Every one was a
-    notation cell — verified, not assumed — and the printed remedy
-    could not be taken either, since `display` raises on cells like
-    "α, β, γ" that hold three ``m:oMath``. The gate was therefore
-    unpassable on exactly the papers with the most equations.
+    So the discriminator is the equation NUMBER, not the table. A
+    maths-only paragraph whose row carries a number cell is a display
+    equation; one whose row does not is a cell that happens to contain
+    maths. It is the number that says the paper means a numbered
+    display block, and it is already the marker :func:`is_display` uses
+    to read one in running text.
+
+    `in_tables` counts every maths-only paragraph in a table, vehicle
+    or not — the literal question, for a caller who means it.
+
+    An UNNUMBERED display equation inside a table is the case this gets
+    wrong, and it is skipped rather than reported. Callers are told how
+    many: see `docxkit math`, which prints the count it did not check.
     """
     paragraphs = [m for m in PARA_RE.finditer(xml) if is_display(m.group(0))]
     if in_tables:
         return paragraphs
     tables = element_spans(xml, "tbl")
+    numbered = _vehicle_rows(xml)
     return [m for m in paragraphs
-            if not any(in_span(m.start(), t) for t in tables)]
+            if not any(in_span(m.start(), t) for t in tables)
+            or any(in_span(m.start(), r) for r in numbered)]
+
+
+def _is_number_cell(cell_xml: str) -> bool:
+    """A cell holding an equation number and nothing else."""
+    text = visible_text(cell_xml).strip()
+    return bool(text) and not EQ_NUMBER_RE.sub("", text).strip()
+
+
+def _vehicle_rows(xml: str) -> list[tuple[int, int]]:
+    """Table rows carrying an equation NUMBER in a cell of their own.
+
+    The house vehicle for a numbered display equation: a full-width
+    table, the maths centred in the left cell, "(3)" right-aligned in
+    the right. Word has no other way to put a number on the margin
+    beside a centred block.
+
+    Per ROW and not per table, because a vehicle is not always one row.
+    Aging_Well's (A2) and (A3) share a two-row table, so "a multi-row
+    table is a notation table" — which is what the shapes look like
+    side by side — would drop both. What the two really disagree about
+    is whether the row numbers something.
+    """
+    rows: list[tuple[int, int]] = []
+    for lo, _hi in element_spans(xml, "tbl"):
+        block = xml[lo:_hi]
+        for r_lo, r_hi in element_spans(block, "tr"):
+            row = block[r_lo:r_hi]
+            if any(_is_number_cell(row[c_lo:c_hi])
+                   for c_lo, c_hi in element_spans(row, "tc")):
+                rows.append((lo + r_lo, lo + r_hi))
+    return rows
 
 
 # ------------------------------------------------------ display MODE ----
