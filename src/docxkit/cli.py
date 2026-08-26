@@ -805,15 +805,22 @@ def cmd_math(args: argparse.Namespace) -> int:
 
 def cmd_figures(args: argparse.Namespace) -> int:
     """Figures and their alt text; --check gates on missing descriptions."""
-    from .figures import alt_texts
+    from .figures import alt_texts, caption_side
     doc = _package(args.docx, read_only=True)[DOCUMENT].decode("utf-8")
     drawings = alt_texts(doc)
     missing = [d for d in drawings if d.missing]
+    # Which convention was read, because it decides every attribution
+    # below it and the paper is the only thing that knows if it is
+    # wrong. Silence here is what made "(no caption window)" read as
+    # "this drawing has no caption" on a paper whose captions all sit
+    # one paragraph away, on the other side.
+    sits = "above" if caption_side(doc) == "after" else "below"
     print(f"{Path(args.docx).name}  ({len(drawings)} drawing(s), "
-          f"{len(missing)} without alt text)")
+          f"{len(missing)} without alt text; captions read as sitting "
+          f"{sits} their figures)")
     for d in drawings:
         mark = " " if not d.missing else "!"
-        where = d.caption or "(no caption window)"
+        where = d.caption or f"(no caption {sits} it)"
         has_alt = (d.descr or "").strip()
         alt = f" alt: {(d.descr or '')[:50]!r}" if has_alt else ""
         print(f"  {mark} {where[:56]}  [{d.name or d.embed or '?'}]{alt}")

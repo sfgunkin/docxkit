@@ -254,3 +254,49 @@ def test_an_AltText_row_cannot_be_edited_after_the_audit():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         first.descr = "something else"      # type: ignore[misc]
+
+
+# --- a caption BELOW its figure (2026-08-27, Aging_Well) ---------------
+#
+# The accessibility gate was permanently red on that paper and the only
+# writer that could clear it refused: `set_alt_text` addressed its
+# drawing through a forward-only window, so all three captions raised
+# `AnchorError: has 0 drawing(s)`. A journal accessibility pass could
+# not be done through docxkit at all.
+
+GAP = "".join(para(f"body prose {i}") for i in range(9))
+
+BELOW = (GAP
+         + drawing("rId4", name="Diagram 1")
+         + para("Figure 1. The capability space")
+         + GAP
+         + drawing("rId5", name="Diagram 2")
+         + para("Figure 2. Freedom and functioning")
+         + GAP)
+
+
+def test_alt_texts_attributes_a_drawing_to_the_caption_BELOW_it():
+    """`(no caption window)` read as "this drawing has no caption" for a
+    caption sitting one paragraph away, on the other side."""
+    found = [d for d in alt_texts(BELOW) if d.embed]
+
+    assert [(d.caption or "")[:8] for d in found] == ["Figure 1", "Figure 2"]
+
+
+def test_set_alt_text_reaches_a_figure_captioned_BELOW_it():
+    """The gate could be read but never cleared."""
+    out = set_alt_text(BELOW, "Figure 2.", "Freedom on one axis")
+
+    (described,) = [d for d in alt_texts(out) if not d.missing]
+    assert described.embed == "rId5"
+    assert described.descr == "Freedom on one axis"
+
+
+def test_alt_text_lands_on_the_RIGHT_figure_when_captions_sit_below():
+    """Off by one on this side describes Figure 1's diagram under
+    Figure 2 — and the check then reports both as done, which is the
+    failure the forward window was written to prevent, mirrored."""
+    out = set_alt_text(BELOW, "Figure 1.", "The capability space")
+
+    described = {d.embed: d.descr for d in alt_texts(out) if not d.missing}
+    assert described == {"rId4": "The capability space"}

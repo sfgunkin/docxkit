@@ -7,7 +7,12 @@ kept going wrong:
 
 * **A caption sits ABOVE its figure**, as it does above a table. Mapping
   captions to drawings by "the nearest one before" gets every figure
-  wrong by one.
+  wrong by one. **But not in every paper** — Aging_Well's diagrams carry
+  the caption in the paragraph directly AFTER the image, and a
+  forward-only window found no drawings for any of them, which left
+  ``figures --check`` permanently red with the one writer that could
+  clear it raising `AnchorError`. :func:`caption_side` reads the
+  convention off the document, by majority, once.
 * **One figure can be several images.** AFI's Figure 6 is three Lorenz
   curves, so image indices and figure numbers do not correspond.
 * **Replacing image bytes changes every drawing that shares the
@@ -23,7 +28,6 @@ import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from ._xml import DOCUMENT, PARA_RE, SECTPR_RE, visible_text
 from .errors import AnchorError, PackageError
@@ -35,6 +39,7 @@ __all__ = [
     "Figure",
     "PackageError",
     "alt_texts",
+    "caption_side",
     "find",
     "find_all",
     "landscape",
@@ -56,26 +61,91 @@ _PGSZ_RE = re.compile(r'<w:pgSz([^/]*)/>')
 # those found 18 figures in AFI's 14-figure paper.
 _CAPTION_RE = re.compile(
     r"^\s*(?:Figure|Рисунок|Fig\.?)\s+([\w.]+?)\s*[.:]\s")
-# how many paragraphs after a caption may hold its drawings
+# how many paragraphs away from a caption may hold its drawings
 _DRAWING_WINDOW = 6
 
 
-def _window(texts: list[str], caption_index: int) -> range:
+def _window(texts: list[str], caption_index: int,
+            side: str = "after") -> range:
     """Paragraph indices this caption's drawings may sit in.
 
-    Up to `_DRAWING_WINDOW` paragraphs after the caption, stopping early
-    at the NEXT caption: a figure whose own drawing is missing must not
-    adopt the following figure's. This walk had five copies and only
-    `alt_texts` stopped — so `find`, and everything addressing a drawing
-    through it, could hand back a neighbour's image. `set_alt_text` on a
-    captionless figure would then describe the next figure's picture,
-    and the accessibility check would report both as done.
+    Up to `_DRAWING_WINDOW` paragraphs on `side` of the caption,
+    stopping early at the NEIGHBOURING caption: a figure whose own
+    drawing is missing must not adopt the next figure's. This walk had
+    five copies and only `alt_texts` stopped — so `find`, and everything
+    addressing a drawing through it, could hand back a neighbour's
+    image. `set_alt_text` on a captionless figure would then describe
+    the next figure's picture, and the accessibility check would report
+    both as done.
+
+    Always ascending, whichever side it reads: `set_alt_text` addresses
+    a multi-image figure by position, and position means document order.
     """
+    if side == "before":
+        floor = max(caption_index - _DRAWING_WINDOW, 0)
+        for j in range(caption_index - 1, floor - 1, -1):
+            if _CAPTION_RE.match(texts[j]):
+                return range(j + 1, caption_index)
+        return range(floor, caption_index)
     stop = min(caption_index + 1 + _DRAWING_WINDOW, len(texts))
     for j in range(caption_index + 1, stop):
         if _CAPTION_RE.match(texts[j]):
             return range(caption_index + 1, j)
     return range(caption_index + 1, stop)
+
+
+def caption_side(doc_xml: str) -> str:
+    """Which side of its captions this document keeps its drawings on.
+
+    ``"after"`` is the convention this module was written for — a
+    caption above its figure, as it sits above a table — and it is
+    still the answer when nothing argues otherwise. ``"before"`` is the
+    other one in use across these papers: Aging_Well's three figures
+    are conceptual diagrams with the caption in the paragraph directly
+    AFTER the image, and a forward-only window found no drawings for
+    any of them, so `figures --check` could not go green and
+    `set_alt_text` raised `AnchorError` on every caption — the one
+    writer that would have cleared the gate.
+
+    Decided by MAJORITY over the document rather than per figure, which
+    is the part that matters. A per-figure "look both ways" would
+    reintroduce exactly the wrong-neighbour bug `_window` exists to
+    prevent: on a caption-below paper, a figure whose own drawing is
+    missing would take the next caption's image from the forward side.
+    A caption with drawings on both sides votes for neither, since it
+    cannot tell them apart, and a document that never resolves keeps
+    ``"after"``.
+    """
+    paras = list(PARA_RE.finditer(doc_xml))
+    texts = [visible_text(p.group(0)).strip() for p in paras]
+    return _side(paras, texts)
+
+
+def _side(paras: list[re.Match[str]], texts: list[str]) -> str:
+    before = after = 0
+    for i, text in enumerate(texts):
+        if not _CAPTION_RE.match(text):
+            continue
+        ahead = any(_EMBED_RE.search(paras[j].group(0))
+                    for j in _window(texts, i, "after"))
+        behind = any(_EMBED_RE.search(paras[j].group(0))
+                     for j in _window(texts, i, "before"))
+        if ahead and not behind:
+            after += 1
+        elif behind and not ahead:
+            before += 1
+    return "before" if before > after else "after"
+
+
+def _read(doc_xml: str) -> tuple[list[re.Match[str]], list[str], str]:
+    """The paragraphs, their visible text, and the caption convention.
+
+    One place, because five call sites each recomputing the first two
+    is how the window came to have five copies that disagreed.
+    """
+    paras = list(PARA_RE.finditer(doc_xml))
+    texts = [visible_text(p.group(0)).strip() for p in paras]
+    return paras, texts, _side(paras, texts)
 
 
 @dataclass(frozen=True)
@@ -102,33 +172,46 @@ def find_all(doc_xml: str) -> list[Figure]:
     which is what makes a three-image figure one Figure with three
     embeds.
     """
-    paras = list(PARA_RE.finditer(doc_xml))
-    texts = [visible_text(p.group(0)).strip() for p in paras]
+    paras, texts, side = _read(doc_xml)
     out = []
     for i, text in enumerate(texts):
         if not _CAPTION_RE.match(text):
             continue
         out.append(Figure(caption=text, caption_index=i,
-                          embeds=_embeds_in(paras, texts, i)))
+                          embeds=_embeds_in(paras, texts, i, side)))
     return out
 
 
-def _embeds_in(paras: list[Any], texts: list[str], i: int) -> list[str]:
+def _embeds_in(paras: list[re.Match[str]], texts: list[str], i: int,
+               side: str = "after") -> list[str]:
     """The ``r:embed`` ids belonging to the caption at `i`."""
-    embeds: list[str] = []
-    for j in _window(texts, i):
-        found = _EMBED_RE.findall(paras[j].group(0))
-        if found:
-            embeds.extend(found)
-        elif embeds:
+    return [rid for j in _drawing_paras(paras, texts, i, side)
+            for rid in _EMBED_RE.findall(paras[j].group(0))]
+
+
+def _drawing_paras(paras: list[re.Match[str]], texts: list[str], i: int,
+                   side: str) -> list[int]:
+    """This figure's drawing-bearing paragraph indices, document order.
+
+    Walked OUTWARD from the caption so that "the first paragraph
+    without a drawing closes the figure" means the same thing on both
+    sides — on a caption-below paper the source note sits above the
+    image, and a walk that started at the far edge of the window would
+    close the figure before reaching it.
+    """
+    window = _window(texts, i, side)
+    found: list[int] = []
+    for j in (window if side == "after" else reversed(window)):
+        if _EMBED_RE.search(paras[j].group(0)):
+            found.append(j)
+        elif found:
             break              # drawings ended; the figure is complete
-    return embeds
+    return found if side == "after" else found[::-1]
 
 
 def find(doc_xml: str, caption_prefix: str) -> Figure:
     """The single figure whose caption starts with `caption_prefix`."""
-    paras = list(PARA_RE.finditer(doc_xml))
-    texts = [visible_text(p.group(0)).strip() for p in paras]
+    paras, texts, side = _read(doc_xml)
     hits = [i for i, text in enumerate(texts)
             if text.startswith(caption_prefix)]
     if not hits:
@@ -139,7 +222,7 @@ def find(doc_xml: str, caption_prefix: str) -> Figure:
             "'Figure 1.' also prefixes 'Figure 10.', so include the dot")
     i = hits[0]
     return Figure(caption=texts[i], caption_index=i,
-                  embeds=_embeds_in(paras, texts, i))
+                  embeds=_embeds_in(paras, texts, i, side))
 
 
 def shared_relationships(doc_xml: str) -> dict[str, int]:
@@ -266,12 +349,11 @@ def alt_texts(doc_xml: str) -> list[AltText]:
     ``caption=None`` but is still listed, because the accessibility
     check applies to it all the same.
     """
-    paras = list(PARA_RE.finditer(doc_xml))
-    texts = [visible_text(p.group(0)).strip() for p in paras]
+    paras, texts, side = _read(doc_xml)
     owner: dict[int, str] = {}
     for i, text in enumerate(texts):
         if _CAPTION_RE.match(text):
-            for j in _window(texts, i):
+            for j in _window(texts, i, side):
                 owner[j] = text
     out = []
     for j, p in enumerate(paras):
@@ -301,10 +383,9 @@ def set_alt_text(doc_xml: str, caption_prefix: str, text: str, *,
     not inherit each other's text.
     """
     figure = find(doc_xml, caption_prefix)
-    paras = list(PARA_RE.finditer(doc_xml))
-    texts = [visible_text(p.group(0)).strip() for p in paras]
+    paras, texts, side = _read(doc_xml)
     blocks: list[tuple[int, int, str]] = []
-    for j in _window(texts, figure.caption_index):
+    for j in _window(texts, figure.caption_index, side):
         p = paras[j]
         for dm in _DRAWING_RE.finditer(p.group(0)):
             blocks.append((p.start() + dm.start(), p.start() + dm.end(),
@@ -344,9 +425,8 @@ def _repoint_one_drawing(doc: str, figure: Figure, old_rid: str,
                          new_rid: str) -> str:
     """Repoint only THIS figure's drawing, leaving its siblings on the
     shared relationship."""
-    paras = list(PARA_RE.finditer(doc))
-    texts = [visible_text(p.group(0)).strip() for p in paras]
-    for j in _window(texts, figure.caption_index):
+    paras, texts, side = _read(doc)
+    for j in _window(texts, figure.caption_index, side):
         p = paras[j]
         block = p.group(0)
         if f'r:embed="{old_rid}"' in block:

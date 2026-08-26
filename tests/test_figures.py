@@ -12,6 +12,7 @@ from docxkit.errors import AnchorError, PackageError
 from docxkit.figures import (
     EMU_PER_INCH,
     _png_size,
+    caption_side,
     find,
     find_all,
     landscape,
@@ -565,3 +566,128 @@ def test_the_scaled_height_is_ROUNDED_not_floored(tmp_path):
 #   larger count has nothing more to find. (`_DRAWING_RE` splits an
 #   `mc:AlternateContent` into two blocks rather than one with two
 #   docPr, which is what would make this a question.)
+
+
+# --- the OTHER convention (2026-08-27, Aging_Well) ---------------------
+#
+# The module was written against AFI, where a caption sits above its
+# figure, and its window only ever looked forward. Aging_Well's three
+# figures are conceptual diagrams captioned in the paragraph directly
+# AFTER the image, so every one of them came back with no drawings,
+# `figures --check` was permanently red, and `set_alt_text` — the one
+# writer that could have cleared it — raised `AnchorError` on all three.
+#
+# The convention is read off the document by majority, once. The
+# alternative, looking both ways per figure, is the wrong fix and these
+# tests say so by holding the case it would break.
+
+GAP = "".join(para(run(f"body prose {i}")) for i in range(9))
+
+
+def _below(*figures: tuple[str, str]) -> str:
+    """A caption-BELOW document: image, then its caption, then a gap.
+
+    The gap is Aging_Well's — its drawings sit 49 paragraphs apart, so
+    no forward window can reach the next figure and the convention is
+    unambiguous, which is the case the majority vote has to get right
+    before the mixed ones are worth arguing about.
+    """
+    body = GAP
+    for rid, caption in figures:
+        body += (drawing(rid) if rid else "") + para(run(caption)) + GAP
+    return document(body)
+
+
+def test_a_caption_BELOW_its_figure_finds_the_drawing_ABOVE_it():
+    """Every figure in the paper came back empty, and the count of
+    missing alt text was correct, so the gate read as honest."""
+    xml = _below(("rId7", "Figure 1. The capability space"),
+                 ("rId8", "Figure 2. Freedom and functioning"),
+                 ("rId9", "Figure 3. The ageing gradient"))
+
+    first, second, third = find_all(xml)
+
+    assert [first.embeds, second.embeds, third.embeds] == \
+        [["rId7"], ["rId8"], ["rId9"]]
+
+
+def test_the_convention_is_read_by_MAJORITY_not_per_figure():
+    """The reason this is not "look both ways".
+
+    On a caption-below paper the drawing AFTER a caption belongs to the
+    NEXT figure. A figure whose own image failed to embed must report
+    nothing rather than reach across its caption and take it — the
+    wrong-neighbour bug `_window` was written to prevent, arriving from
+    the other side.
+    """
+    xml = _below(("rId7", "Figure 1. Has its image"),
+                 ("", "Figure 2. Lost its image"),
+                 ("rId9", "Figure 3. Has its image"))
+
+    first, second, third = find_all(xml)
+
+    assert first.embeds == ["rId7"]
+    assert second.embeds == [], "it took Figure 3's drawing"
+    assert third.embeds == ["rId9"]
+
+
+def test_a_caption_ABOVE_paper_still_reads_as_ABOVE():
+    """The AFI convention is the default and stays the default: this is
+    the fixture the module was built on."""
+    assert caption_side(_doc()) == "after"
+    assert find(_doc(), "Figure 1.").embeds == ["rId7"]
+
+
+def test_a_document_that_never_RESOLVES_keeps_the_ABOVE_convention():
+    """No captions, or captions with no drawings anywhere near them:
+    nothing has been learned, so nothing changes."""
+    assert caption_side(document(para(run("No captions at all.")))) == "after"
+    assert caption_side(document(para(run("Figure 1. Alone")))) == "after"
+
+
+def test_a_caption_with_drawings_on_BOTH_sides_votes_for_NEITHER():
+    """It cannot tell which one is its own, so it does not get an
+    opinion. One unambiguous figure then decides the document — and if
+    the ambiguous one voted "after" instead, the tie would hand this
+    paper the wrong convention."""
+    ambiguous = drawing("rIdBEFORE") + para(run("Figure 1. Between two")) \
+        + drawing("rIdAFTER")
+    xml = document(ambiguous + GAP
+                   + drawing("rId9") + para(run("Figure 2. Captioned below"))
+                   + GAP)
+
+    assert caption_side(xml) == "before"
+
+
+def test_the_drawings_END_at_the_first_paragraph_without_one_ABOVE_TOO():
+    """Walked OUTWARD from the caption, or the rule means something
+    different on each side. Ascending from the far edge of the window,
+    the stray drawing above the source note is found FIRST and the note
+    then closes the figure on it — handing back a neighbour's image
+    with the caption's own panel still unread."""
+    xml = document(GAP
+                   + drawing("rIdSTRAY")
+                   + para(run("Source: authors' calculations."))
+                   + drawing("rIdA")
+                   + para(run("Figure 5. One panel")))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rIdA"]
+
+
+def test_a_MULTI_IMAGE_figure_captioned_BELOW_keeps_DOCUMENT_order():
+    """Walking outward reverses the PARAGRAPHS; the embeds inside one
+    paragraph must not reverse with them. `set_alt_text` addresses a
+    panel by position, and a flat reversal here describes panel (c)
+    under panel (a) while every count still agrees."""
+    xml = document(GAP
+                   + f"<w:p><w:r>{inline('rIdA')}{inline('rIdB')}"
+                     f"{inline('rIdC')}</w:r></w:p>"
+                   + f"<w:p><w:r>{inline('rIdD')}{inline('rIdE')}"
+                     "</w:r></w:p>"
+                   + para(run("Figure 6. Five panels")))
+
+    figure, = find_all(xml)
+
+    assert figure.embeds == ["rIdA", "rIdB", "rIdC", "rIdD", "rIdE"]
