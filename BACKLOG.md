@@ -800,6 +800,14 @@ one whose row does not is a cell that happens to contain maths. Per row
 and not per table, because (A2) and (A3) share a two-row table and "one
 row is a vehicle, many rows is notation" loses both.
 
+Enumerated on working.docx afterwards, by ezhik-82, because a rejected
+suggestion deserves the same standard as an accepted one: twelve one-row
+vehicles, ONE two-row (tbl@103, carrying (A2) and (A3)), and the 18-row
+notation table with no numbered row at all. So the row-count rule would
+have been right about twelve of the thirteen and silently dropped the
+other two equations — which is the worst way for a rule to be wrong, and
+the reason to write this number down rather than the conclusion alone.
+
 **The lesson is about the TESTING, not the rule.** Both cuts had tests
 that failed without them, and the second one is not cleverer than the
 first — it is the first one measured against the actual manuscript. The
