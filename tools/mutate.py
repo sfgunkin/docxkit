@@ -81,9 +81,20 @@ MUTATIONS = [
     Mutation("_table_core.py", "nested tables close on the first end tag",
              '        end = matching_close(xml, at + len("<w:tbl>"), "tbl")',
              '        end = xml.index("</w:tbl>", at) + len("</w:tbl>")'),
+    # Two, because the guard is now two questions. The first says "is
+    # this the document it was read from"; the second, reached only when
+    # it is not, says "are this table's own bytes still at its offsets".
+    # Sabotaging either one makes a stale handle slice the wrong bytes,
+    # and the single mutation that used to stand here was re-anchored on
+    # 2026-08-27 — its old line had been rewritten out of the module, so
+    # `mutate.py` skipped it and exited 1 while the regression cover for
+    # the whole guard sat dead.
     Mutation("_table_core.py", "stale table offsets are used instead of refused",
-             "    if table.source is not None and table.source != hash(xml):",
-             "    if False:"),
+             "    if table.source is None or table.source == hash(xml):",
+             "    if True:"),
+    Mutation("_table_core.py", "a MOVED table is rebound instead of refused",
+             "    if hash(xml[table.start:table.end]) == table.body:",
+             "    if True:"),
     Mutation("_table_layout.py", "spans constrain by full width (the ~250 dxa bug)",
              "            spans.append((c, k, h))",
              "            spans.append((c, k, f))"),

@@ -1060,6 +1060,130 @@ def test_a_row_operation_refuses_a_table_read_from_OLDER_xml():
             call()
 
 
+#  --- a handle that only MOVED is not a handle that went wrong --------
+#
+# Found 2026-08-24 on Health_Capacity_to_Work, styling one caption's TWO
+# panels. The guard compared a whole-DOCUMENT fingerprint, so editing the
+# LATER table invalidated the handle on the EARLIER one — even though
+# nothing before it had moved, and even though the loop was written in
+# reverse for exactly that reason:
+#
+#     for t in reversed(tables_after(xml, "Table 9.", count=2)):
+#         xml, _ = house(xml, t)        # AnchorError on the second pass
+#
+# The message was right and still did not prevent it: "re-read after
+# every edit" reads as *after every edit to THIS table*, and the fix
+# people reach for — re-locating once per pass — fails the same way.
+# `tables_after` invites it by returning a LIST: the API hands you
+# several handles and only the first was usable.
+
+
+def _two_panels() -> str:
+    return document(
+        para(run("Table 9. Two panels"))
+        + table(row("Panel A", "n"), row("Men", "1"))
+        + table(row("Panel B", "n"), row("Women", "2")))
+
+
+def test_the_batch_loop_the_API_invites_now_WORKS():
+    """The whole finding, as the caller wrote it: fetch the batch, edit
+    each. Reverse order, so no earlier table's offsets are disturbed."""
+    xml = _two_panels()
+
+    for t in reversed(tables_after(xml, "Table 9.", count=2)):
+        xml = set_cell(xml, t, 1, 1, "9")
+
+    assert [r[1] for r in read_all(xml)[0].rows] == ["n", "9"]
+    assert [r[1] for r in read_all(xml)[1].rows] == ["n", "9"]
+
+
+def test_an_edit_to_ANOTHER_table_leaves_this_handle_usable():
+    """The narrow claim underneath it. Editing table 1 moves nothing
+    inside table 0, so table 0's handle still means what it meant."""
+    xml = _two_panels()
+    first, second = read_all(xml)
+
+    xml = set_cell(xml, second, 1, 1, "22")
+    out = set_cell(xml, first, 1, 1, "11")
+
+    assert read_all(out)[0].rows[1] == ["Men", "11"]
+    assert read_all(out)[1].rows[1] == ["Women", "22"]
+
+
+def test_a_FORWARD_loop_is_refused_because_the_handle_really_did_move():
+    """The other order, and the reason `tables_after`'s docstring says to
+    run in reverse. Editing panel A shifts panel B's offsets, so B's own
+    bytes are no longer at them — indistinguishable, without searching
+    the document for its content, from B having been rewritten. It is
+    refused, and the message says to re-read."""
+    xml = _two_panels()
+    first, second = read_all(xml)
+    grown = set_cell(xml, first, 1, 0, "Men and women of working age")
+
+    with pytest.raises(AnchorError, match="MOVED this table or rewrote it"):
+        set_cell(grown, second, 1, 1, "9")
+
+
+def test_a_table_whose_OWN_content_changed_is_still_refused():
+    """The case the guard exists for. These bytes are not at these
+    offsets any more, and the handle is not a way to find them."""
+    xml = _two_panels()
+    t = read_all(xml)[0]
+    out = set_cell(xml, t, 1, 1, "9")
+
+    with pytest.raises(AnchorError, match="different version"):
+        set_cell(out, t, 1, 0, "Men and women")
+
+
+def test_editing_ONE_of_two_identical_panels_does_not_redirect_the_handle():
+    """The regression that killed the first draft of this fix, found by
+    review and reproduced four times.
+
+    That draft re-resolved a stale handle by searching the document for
+    its bytes, guarded on the match being UNIQUE. The guard cannot fire
+    here, because the edit that makes the handle stale is the same edit
+    that destroys the twin: after panel 1 is written, panel 2 is the only
+    byte-match left, so the second call silently rewrote the OTHER panel.
+    Content is not identity when content is what an edit changes.
+    """
+    twin = table(row("Country", "Estimate"), row("Poland", ""))
+    xml = document(para(run("Table 9. Two panels")) + twin + twin)
+    t = read_all(xml)[0]
+    step = set_cell(xml, t, 1, 1, "0.31")
+
+    with pytest.raises(AnchorError, match="different version"):
+        set_cell(step, t, 1, 0, "Poland (rural)")
+
+    assert read_all(step)[1].rows[1] == ["Poland", ""], \
+        "the untouched panel stays untouched"
+
+
+def test_a_handle_from_a_DIFFERENT_document_does_not_bind():
+    """The whole-document hash was the only thing tying a `Table` to the
+    file it was read from, and a content search throws that away.
+
+    A clean build and its redline are two strings in one scope, and so
+    are a manuscript and its journal copy; a swapped variable has to stay
+    a loud refusal rather than become a silent write into the wrong
+    document. Same table, two documents, captions of different lengths —
+    so the shared table does not sit at the same offsets either.
+    """
+    shared = table(row("Country", "Estimate"), row("Poland", "0.31"))
+    doc_a = document(para(run("Table 9. Manuscript A")) + shared)
+    doc_b = document(para(run("Table 3. A different manuscript")) + shared)
+
+    with pytest.raises(AnchorError, match="different version"):
+        set_cell(doc_b, read_all(doc_a)[0], 1, 1, "X")
+
+
+def test_a_HAND_BUILT_table_is_not_anchored_and_is_left_alone():
+    """`source` is None on a Table nobody read out of a document, so the
+    guard has nothing to compare and no business objecting."""
+    loose = Table(index=0, start=0, end=0, rows=[["a"], ["1"]])
+
+    assert _table_core._fresh("<w:document/>", loose, "probe") is loose
+
+
 #
 # `trs[:index + 1] + [trs[index]] * count + trs[index + 1:]` in
 # `clone_row` is EQUIVALENT to the `index`/`index` spelling and left

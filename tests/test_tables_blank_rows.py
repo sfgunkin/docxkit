@@ -150,7 +150,15 @@ def test_it_refuses_a_table_that_is_nothing_but_blank_rows():
 def test_a_stale_table_is_refused_rather_than_slicing_the_wrong_bytes():
     """Offsets read before an earlier edit point into the wrong bytes, and
     the slice is still valid-looking XML — so it has to be refused, not
-    detected afterwards."""
+    detected afterwards.
+
+    A handle survives an edit to ANOTHER table (see `test_tables_api`),
+    but only while its own bytes stay at its own offsets. Here text was
+    inserted ABOVE it, so they did not: this table MOVED, and being
+    moved is indistinguishable from being rewritten without searching
+    the document for its content — which is a search this deliberately
+    does not do, because content is what an edit changes.
+    """
     xml = doc(table(("A", "1"), ("", ""), ("B", "2")))
     stale = read_all(xml)[0]
     shifted = xml.replace("<w:body>",

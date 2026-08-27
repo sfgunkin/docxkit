@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, NamedTuple, overload
 
 from ._xml import (
@@ -120,6 +120,15 @@ class Table:
     #: docstrings could only ASK callers to re-read. `None` on a
     #: hand-built Table, which is not anchored to any source.
     source: int | None = None
+    #: Hash of this table's OWN bytes — ``xml[start:end]``. What
+    #: `source` cannot say is whether a handle is stale because THIS
+    #: table changed or because some other one did, and the second is
+    #: harmless: an edit elsewhere leaves these bytes at these offsets.
+    #: :func:`_fresh` asks that question and nothing wider — it never
+    #: searches for the bytes at another offset, because the content of
+    #: a table is what an edit changes, so content is not identity.
+    #: `None` alongside `source`.
+    body: int | None = None
 
     @property
     def header(self) -> list[str]:
@@ -149,8 +158,18 @@ class Table:
         :class:`FitReport` (grid columns) and :func:`set_cell` (cell
         indices) on purpose, instead of assuming they coincide — they
         only do in a table with no merged cells.
+
+        Freshness-checked like every mutator. These two readers were the
+        only ``(xml, table)`` entry points without the check, which was
+        survivable while a handle died on the first edit anywhere and is
+        not now that one legitimately outlives an edit to another table:
+        a caller carrying a handle through a batch loop would otherwise
+        get merge geometry read out of a neighbouring table's bytes, with
+        ``rows`` still holding the right text — or a bare ``ValueError``
+        from ``matching_close`` with nothing to say about a Table.
         """
-        trs = list(rows_of(xml[self.start:self.end]))
+        me = _fresh(xml, self, "grid_columns")
+        trs = list(rows_of(xml[me.start:me.end]))
         if row >= len(trs):
             raise AnchorError(f"table {self.index} has {len(trs)} rows, "
                               f"cannot read row {row}")
@@ -176,8 +195,11 @@ class Table:
 
         Cells still come from the chosen `view`, so this reads a redline
         the same way :func:`read_all` does.
+
+        Freshness-checked, for the reason given on :meth:`grid_columns`.
         """
-        body = xml[self.start:self.end]
+        me = _fresh(xml, self, "grid_rows")
+        body = xml[me.start:me.end]
         width = len(_GRIDCOL_RE.findall(body))
         rows = list(rows_of(body))
         if not width:                       # no tblGrid: take the widest row
@@ -204,19 +226,80 @@ class Table:
         return out
 
 
-def _fresh(xml: str, table: Table, what: str) -> None:
-    """Refuse a Table whose offsets belong to a different string.
+def _fresh(xml: str, table: Table, what: str) -> Table:
+    """The Table as it stands in `xml`, or a refusal.
 
     Editing a table returns a new document and moves every offset after
     it, so a `Table` read before that edit now slices the wrong bytes —
     silently, since the slice is still valid XML-ish text. Cheap to
     check: CPython caches a str's hash after the first call.
+
+    **Why a handle survives an edit to ANOTHER table.** The guard used to
+    compare a whole-DOCUMENT fingerprint and raise, which made the
+    natural batch loop impossible: fetching a caption's two panels and
+    styling each raised on the second pass, because editing the LATER
+    table invalidated the handle on the EARLIER one — even though nothing
+    before it had moved, and even though the loop was written in reverse
+    for exactly that reason. Found on Health_Capacity_to_Work,
+    2026-08-24. The message ("re-read after every edit") was right and
+    still did not prevent it: it reads as *after every edit to THIS
+    table*, and the fix people reach for — re-locating once per pass —
+    fails the same way.
+
+    So the question asked is not "is the document the same" but **"are
+    this table's own bytes still exactly where they were"**. If they are,
+    the edit lay elsewhere and this handle still means what it meant; the
+    document hash is refreshed and nothing else changes.
+
+    **It deliberately does NOT search for the table's bytes elsewhere**,
+    and the first draft of this fix did. Two ways that goes wrong, both
+    reproduced against the live tree before this was narrowed:
+
+    * **the edit that creates the staleness also defeats the uniqueness
+      check.** Two identical panels; edit one; the OTHER is now the only
+      byte-match, so a reused handle silently rewrites the wrong panel.
+      Guarding on "exactly one match" cannot see this, because there is
+      exactly one match;
+    * **a handle from a DIFFERENT document binds.** The whole-document
+      hash was the only thing tying a `Table` to the file it was read
+      from, and a content search throws that away. The clean-build and
+      redline of one manuscript are two strings in one scope; a swapped
+      variable was a loud refusal and would have become a silent write.
+
+    Both are the cost of treating content as identity when the content is
+    exactly what an edit changes. An in-place check has neither, is O(1)
+    rather than O(document), and covers the case the defect was filed
+    about — the entry's own words were *re-resolve when the edit provably
+    lies after it*, and "the bytes are still here" is that proof.
+
+    A handle whose table MOVED — text inserted above it, an exhibit added
+    — is refused, as is one whose own table was rewritten. Both re-read.
     """
-    if table.source is not None and table.source != hash(xml):
+    if table.source is None or table.source == hash(xml):
+        return table
+
+    if table.body is None:
+        # `source` without `body`: a Table assembled by hand from another
+        # one's offsets. Nothing was fingerprinted, so the question this
+        # function asks cannot be put — and saying "its content changed"
+        # would send the reader looking for an edit that never happened.
         raise AnchorError(
             f"{what}: this Table was read from a different version of the "
-            "document — an edit since then moved its offsets. Re-read with "
-            "read_all()/by_caption() after every edit.")
+            "document and carries no fingerprint of its own bytes, so "
+            "whether it still means the same table cannot be decided. "
+            "Re-read with read_all()/by_caption().")
+
+    if hash(xml[table.start:table.end]) == table.body:
+        return replace(table, source=hash(xml))
+
+    raise AnchorError(
+        f"{what}: this Table was read from a different version of the "
+        "document, and its own bytes are no longer at its offsets — the "
+        "edit since then either MOVED this table or rewrote it. A handle "
+        "survives an edit to another table only while its own bytes stay "
+        "put, which is why a batch loop runs in REVERSE document order. "
+        "Re-read with read_all()/by_caption()/tables_after() and call "
+        "again.")
 
 
 def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
@@ -234,7 +317,7 @@ def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
             cells = [_cell_text(tc.group(0)) for tc in cells_of(tr.group(0))]
             rows.append(cells)
         out.append(Table(index=i, start=start, end=end, rows=rows,
-                         source=hash(xml)))
+                         source=hash(xml), body=hash(xml[start:end])))
     return out
 
 
@@ -540,6 +623,20 @@ def tables_after(xml: str, caption: str, *, view: str = FINAL,
     There is no rule for where such a group ENDS that a document can be
     asked: a caption is text, and the next one may be a figure's. The
     caller knows how many blocks the exhibit has; this asserts it.
+
+    **Editing one of these does not spoil the others.** Every handle in
+    the list stays usable across edits to the OTHER tables — a stale one
+    is re-resolved by identity, so the loop the return type invites works
+    as written::
+
+        for t in reversed(tables_after(xml, "Table A3.", count=2)):
+            xml, _ = house(xml, t)
+
+    What still invalidates a handle is an edit to ITS OWN table: those
+    bytes are then not in the document any longer and there is nothing to
+    find. Re-read that one — `tables_after` again, or `read_all` — before
+    the next call on it. Two passes over the same table therefore need
+    two lookups; two tables in one pass need one.
     """
     if count < 1:
         raise AnchorError(f"tables_after: count must be at least 1, not "
@@ -688,7 +785,7 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
     cell takes the new text and any others are blanked, so fonts,
     borders and shading survive.
     """
-    _fresh(xml, table, "set_cell")
+    table = _fresh(xml, table, "set_cell")
     body = xml[table.start:table.end]
     trs = list(rows_of(body))
     row = _row_at(table, len(trs), row, "set")
@@ -739,7 +836,7 @@ def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
     before and after. "No value changed, only the order" is then a
     claim rather than a hope.
     """
-    _fresh(xml, table, "reorder_rows")
+    table = _fresh(xml, table, "reorder_rows")
     body = xml[table.start:table.end]
     trs = [tr.group(0) for tr in rows_of(body)]
     fixed, movable = trs[:header], trs[header:]
@@ -777,7 +874,7 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
     Offsets move, so re-read the table before the next call — the
     freshness guard says so if you forget.
     """
-    _fresh(xml, table, "clone_row")
+    table = _fresh(xml, table, "clone_row")
     if count < 1:
         raise AnchorError(f"clone_row: count must be at least 1, not {count}")
     body = xml[table.start:table.end]
@@ -805,7 +902,7 @@ def set_row(xml: str, table: Table, row: int,
     the first ``w:t`` and any others are blanked, so a value split
     across runs does not keep its old tail hanging off the new one.
     """
-    _fresh(xml, table, "set_row")
+    table = _fresh(xml, table, "set_row")
     body = xml[table.start:table.end]
     trs = list(rows_of(body))
     row = _row_at(table, len(trs), row, "set")
@@ -939,7 +1036,7 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
     if not grid:
         raise AnchorError("update: no rows given")
 
-    _fresh(xml, table, "update")
+    table = _fresh(xml, table, "update")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(

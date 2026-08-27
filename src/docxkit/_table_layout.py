@@ -535,7 +535,7 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     matters most with `pin_stub`, which spends the whole margin for
     error on `pad` and keeps no accidental cushion.
     """
-    _fresh(xml, table, "fit_columns")
+    table = _fresh(xml, table, "fit_columns")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -905,7 +905,7 @@ def set_decimals(xml: str, table: Table, places: int, *,
     """
     if not 0 <= places <= 10:
         raise AnchorError(f"places must be between 0 and 10, not {places}")
-    _fresh(xml, table, "set_decimals")
+    table = _fresh(xml, table, "set_decimals")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -1118,7 +1118,7 @@ def regrid(xml: str, table: Table) -> tuple[str, RegridReport]:
     refused — collapsing it would have to merge two cells and lose one's
     content.
     """
-    _fresh(xml, table, "regrid")
+    table = _fresh(xml, table, "regrid")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -1247,7 +1247,7 @@ def superscript_stars(xml: str, table: Table) -> tuple[str, int]:
     ``w:vertAlign`` rather than reconciling one, so the skip is what
     guarantees it never meets a run carrying its own.
     """
-    _fresh(xml, table, "superscript_stars")
+    table = _fresh(xml, table, "superscript_stars")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -1298,7 +1298,7 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
     full width. Returns (xml, cells changed); idempotent once applied.
     """
     _check_rule(val, sz, "bottom_border")
-    _fresh(xml, table, "bottom_border")
+    table = _fresh(xml, table, "bottom_border")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -1617,7 +1617,7 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
     those two only coincide in a table with no merged cells.
     """
     _check_rule(bottom, rule, "booktabs")
-    _fresh(xml, table, "booktabs")
+    table = _fresh(xml, table, "booktabs")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -1687,7 +1687,7 @@ def drop_blank_rows(xml: str, table: Table) -> tuple[str, list[int]]:
     not a spacer, so it stays — the same rule that keeps a `w:drawing`
     run from being swept up as an empty run.
     """
-    _fresh(xml, table, "drop_blank_rows")
+    table = _fresh(xml, table, "drop_blank_rows")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
@@ -1818,7 +1818,7 @@ def house(xml: str, table: Table, *, font: str = "Arial Narrow",
     Refuses a table carrying tracked changes, like every other mutator
     here: style the clean build and rebuild the redline from it.
     """
-    _fresh(xml, table, "house")
+    table = _fresh(xml, table, "house")
     body = xml[table.start:table.end]
     if _has_revisions(body):
         raise AnchorError(
