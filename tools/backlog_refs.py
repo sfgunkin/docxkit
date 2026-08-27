@@ -193,7 +193,7 @@ def main() -> int:
         print(f"every {MARKER} commit is recorded in {FILE}")
         return 0
     print(f"{len(open_)} commit(s) say {MARKER} and no commit since has "
-          f"touched {FILE}:\n")
+          f"CLOSED an entry in {FILE}:\n")
     for sha, subject in open_:
         print(f"  {sha[:8]}  {subject[:70]}")
     print("\nMove the entry to `## Fixed` with its hash, and the workaround "
