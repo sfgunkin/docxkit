@@ -120,9 +120,27 @@ def run(module: str, minutes: float, sample: int = 0, *,
             moved = line
         elif line:
             others.append(line)
-    proc.wait()
+    code = proc.wait()
     if not last:                 # no chunk ever graded: say why, not "0%"
         say("    " + (" | ".join(others)[-300:] or "no output"))
+
+    if code:
+        # A session that REFUSED is not a measurement, and returning here
+        # is the whole point. `mutation_session` guards `--fresh --sample
+        # N` against discarding a session that graded more than N, and it
+        # returns BEFORE the unlink — so the old database is still on
+        # disk, `db.exists()` below is still true, and this function used
+        # to walk straight past into `mutation_survivors.py` and print
+        # months-old numbers as this round's figure. The guard against
+        # regressing a figure would have caused one.
+        #
+        # Eight of fifty live sessions have graded more than the
+        # `--sample 460` CONTRIBUTING calls usual, so this is the
+        # ordinary path for the most-measured modules, not a corner.
+        say(f"    REFUSED (exit {code}) — no measurement taken, and the "
+            f"existing session is untouched. Read it with --report, "
+            f"re-measure it whole, or pass --force.")
+        return
 
     if not moved and fingerprint(module, tests) != before:
         # The session checks this at the START of each chunk, so a run

@@ -1015,6 +1015,17 @@ WHOLE — 861 mutants rather than the usual `--sample 460` — because the
 sample had been read twice already and the second reading turned up ten
 survivors the first had never run.
 
+**`--sample 460` is now REFUSED on a module already measured deeper**,
+which as of 2026-08-27 is eight of the fifty live sessions: refstyle
+1744, placement 1689, edit 1411, hygiene 939, compare_diff 743, styles
+604, xml2 538, pages 480. That is deliberate — replacing 1,744 verdicts
+with 460 makes the module's record worse while looking like maintenance,
+and `crossrefs.py` above is the case it is named for. Re-measure such a
+module WHOLE (`--fresh --chunks 0`, no `--sample`), read what is there
+with `--report`, or pass `--force` to discard it on purpose. A sweep that
+hits the refusal now says REFUSED and takes no measurement, rather than
+reprinting the existing session's numbers as this round's.
+
 **Every crossrefs survivor left is a documented equivalent**, argued in
 a note at the foot of `tests/test_crossrefs.py` and confirmed one at a
 time with `kill_check`. Fifty-seven stood at the measurement; reading

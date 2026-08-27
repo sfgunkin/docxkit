@@ -80,7 +80,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKTREE = Path(os.environ.get("DOCXKIT_MUT_WORKTREE", r"D:/docxkit-mut"))
@@ -284,18 +284,19 @@ def sample(session: Path, keep: int, seed: int) -> None:
     for a sampled module was two independent draws, and the promise in
     the paragraph above was not kept until this line was added.
     """
-    con = sqlite3.connect(session)
-    jobs = [r[0] for r in con.execute(
-        "select job_id from mutation_specs order by module_path, "
-        "start_pos_row, start_pos_col, operator_name, occurrence")]
-    if keep >= len(jobs):
-        return
-    random.seed(seed)
-    skip = random.sample(jobs, len(jobs) - keep)
-    con.executemany(
-        "insert into work_results (job_id, worker_outcome, test_outcome, "
-        "output) values (?, 'SKIPPED', 'SKIPPED', '')", [(j,) for j in skip])
-    con.commit()
+    with contextlib.closing(sqlite3.connect(session)) as con:
+        jobs = [r[0] for r in con.execute(
+            "select job_id from mutation_specs order by module_path, "
+            "start_pos_row, start_pos_col, operator_name, occurrence")]
+        if keep >= len(jobs):
+            return
+        random.seed(seed)
+        skip = random.sample(jobs, len(jobs) - keep)
+        con.executemany(
+            "insert into work_results (job_id, worker_outcome, test_outcome, "
+            "output) values (?, 'SKIPPED', 'SKIPPED', '')",
+            [(j,) for j in skip])
+        con.commit()
     print(f"  sampling {keep} of {len(jobs)} mutants (seed {seed})",
           flush=True)
 
@@ -311,14 +312,73 @@ def progress(session: Path) -> tuple[int, int, int, int]:
     another chunk every few seconds for two hours (2026-08-17). The tell
     was a sequential sweep that never reached its next module.
     """
-    con = sqlite3.connect(session)
-    counts = Counter((r[0] or "PENDING").upper() for r in
-                     con.execute("select test_outcome from work_results"))
-    total = con.execute("select count(*) from mutation_specs").fetchone()[0]
+    # CLOSED, and that is not tidiness on Windows: an open handle makes
+    # `session.unlink()` raise WinError 32, and `--fresh` reads the
+    # session before deleting it. Refcount timing decided whether the
+    # ordinary re-sample worked.
+    with contextlib.closing(sqlite3.connect(session)) as con:
+        counts = Counter((r[0] or "PENDING").upper() for r in
+                         con.execute("select test_outcome from work_results"))
+        total = con.execute(
+            "select count(*) from mutation_specs").fetchone()[0]
     planned = total - counts["SKIPPED"]
     finished = sum(n for outcome, n in counts.items()
                    if outcome not in ("SKIPPED", "PENDING"))
     return counts["KILLED"], counts["SURVIVED"], finished, planned
+
+
+class Discard(NamedTuple):
+    """What a `--sample keep --fresh` run would throw away.
+
+    Two numbers because they are worth two different answers. `graded` is
+    verdicts — a measurement, and losing one is the regression this guard
+    exists for, so it REFUSES. `planned` is a wider plan that has not
+    been run yet: discarding it costs the planning time and nothing else,
+    so it only warrants a note.
+    """
+
+    graded: int                  # verdicts that would be replaced by `keep`
+    planned: int                 # a wider plan that would be re-planned
+
+
+def would_lose(session: Path, keep: int) -> Discard:
+    """What a `--sample keep --fresh` run would discard from `session`.
+
+    Both zero when there is nothing to lose: no session, an unreadable
+    one, or one no wider than the sample about to replace it.
+
+    **Why this is worth a refusal.** A sample is the right thing to run
+    on a 2,757-mutant module when the question is "roughly where is
+    this"; it is the wrong thing to leave behind as that module's
+    record. On 2026-08-24 `crossrefs.py` stood at 6.9 % measured over the
+    WHOLE module — 57 of 822 — and a later `--sample 260` replaced it
+    with 9.3 % over 259. `--fresh` discards the session and the sample
+    writes a new plan, so 822 mutants' worth of verdicts became 259, the
+    run printed a plausible number, and the only trace of the better
+    measurement was a sentence in a document nobody diffs against the
+    tool's output.
+
+    That is the one failure mode which makes a figure WORSE over time
+    while looking like maintenance, and the figures are what a round is
+    planned from. Both numbers are in hand before the plan is written,
+    so the check costs nothing.
+
+    **An unreadable session is not something to protect.** `--fresh` is
+    the documented way to clear a session that went wrong, and a
+    zero-byte or truncated db is exactly what one looks like — there is
+    one sitting in this repo root. Raising here would put the guard
+    between the caller and the recovery it is asking for, so a db that
+    cannot be read answers "nothing to lose", which is true.
+    """
+    if not session.exists():
+        return Discard(0, 0)
+    try:
+        killed, survived, _, planned = progress(session)
+    except sqlite3.Error:
+        return Discard(0, 0)
+    graded = killed + survived
+    return Discard(graded if graded > keep else 0,
+                   planned if planned > keep and graded <= keep else 0)
 
 
 def chunk(module: Path, tests: list[str], config: Path, session: Path,
@@ -392,6 +452,10 @@ def main() -> int:
                          "same, the wall clock is not")
     ap.add_argument("--fresh", action="store_true",
                     help="discard an existing session and start over")
+    ap.add_argument("--force", action="store_true",
+                    help="allow --fresh --sample N to discard a session that "
+                         "graded MORE than N mutants; the coarser figure "
+                         "then replaces the better one")
     ap.add_argument("--report", action="store_true",
                     help="just print where the session got to")
     args = ap.parse_args()
@@ -415,6 +479,27 @@ def main() -> int:
         return print("--tests is required: the harness decides which "
                      "mutants CAN be killed") or 2
     snapshot = snapshot_dir(stem)
+    # BEFORE the unlink, which is the step that makes it permanent.
+    if args.fresh and args.sample and not args.force:
+        lost = would_lose(session, args.sample)
+        if lost.graded:
+            return print(
+                f"{session.name} has graded {lost.graded} mutants and "
+                f"--sample {args.sample} would replace that with "
+                f"{args.sample}. The coarser figure would then be the "
+                f"module's record, and nothing afterwards could say a "
+                f"better one had existed.\n"
+                f"  --report            read what is there\n"
+                f"  --fresh --chunks 0  re-measure it WHOLE\n"
+                f"  --force             discard it anyway") or 2
+        if lost.planned:
+            # Not a refusal: no verdict is lost, only the planning time.
+            # Said out loud because the figure this produces will be
+            # about `args.sample` mutants where one about `lost.planned`
+            # was already set up, and nothing downstream records which.
+            print(f"  NOTE: {session.name} had a {lost.planned}-mutant plan "
+                  f"barely started; --sample {args.sample} re-plans it "
+                  f"narrower. No verdict is lost.", flush=True)
     if args.fresh:
         session.unlink(missing_ok=True)
         shutil.rmtree(snapshot, ignore_errors=True)
@@ -448,6 +533,15 @@ def main() -> int:
             sys.exit(f"cosmic-ray init failed: {out.stderr.strip()[:400]}")
         if args.sample:
             sample(session, args.sample, args.seed)
+    elif args.sample:
+        # The draw is planned at `init`, so a `--sample` handed to a
+        # RESUME does nothing at all — and used to do it silently, which
+        # reads as "I sampled it" against a run that is measuring
+        # something else entirely.
+        print(f"  NOTE: --sample {args.sample} is not applied here. The draw "
+              f"is planned when the session is created, and this run RESUMES "
+              f"{session.name} as it was planned. --fresh to re-plan.",
+              flush=True)
 
     more, n = True, 0
     while more and (args.chunks == 0 or n < args.chunks):

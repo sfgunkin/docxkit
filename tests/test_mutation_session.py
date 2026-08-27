@@ -314,3 +314,221 @@ class _Ok:
 
     returncode = 0
     stderr = ""
+
+
+# --- a SAMPLE must not quietly replace a better measurement --------------
+#
+# Found 2026-08-24, reading CONTRIBUTING's calibration table against the
+# live session files. `crossrefs.py` was recorded at 6.9 % over the WHOLE
+# module (57/822); `stale_figures` reported 9.3 % over 259. A later
+# `--sample 260` had replaced the complete run — `--fresh` discards the
+# session and the sample writes a new plan — and nothing about that is
+# visible at the time or afterwards. The sample completes, prints a
+# plausible number, and the only trace of the better run is a sentence in
+# a document nobody diffs against the tool's output.
+
+
+def _graded(path, killed=0, survived=0, other=0):
+    """Write verdicts into a session db built by `_session`."""
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    jobs = [r[0] for r in con.execute("select job_id from mutation_specs")]
+    outcomes = (["killed"] * killed + ["survived"] * survived
+                + ["incompetent"] * other)
+    con.executemany(
+        "insert into work_results (job_id, worker_outcome, test_outcome, "
+        "output) values (?, 'normal', ?, '')",
+        list(zip(jobs, outcomes, strict=False)))
+    con.commit()
+    con.close()
+    return path
+
+
+def test_a_sample_SMALLER_than_what_was_already_graded_is_a_loss(tmp_path):
+    """The measured case: 822 mutants' worth of verdicts, and a
+    `--sample 260` about to stand in for them. The answer is the size of
+    what would go, because that is the number the refusal has to say."""
+    import uuid
+
+    session = _graded(
+        _session(tmp_path, "a.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        killed=30, survived=5)
+
+    assert ms.would_lose(session, 12).graded == 35
+
+
+def test_a_sample_at_LEAST_as_big_as_the_grading_loses_nothing(tmp_path):
+    """Re-sampling at the same size, or wider, is the ordinary thing to
+    do between suites — and a guard that stopped it would be turned off
+    inside a week. 35 graded, 35 kept: nothing to protect."""
+    import uuid
+
+    session = _graded(
+        _session(tmp_path, "b.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        killed=30, survived=5)
+
+    assert ms.would_lose(session, 35).graded == 0
+    assert ms.would_lose(session, 400).graded == 0
+
+
+def test_only_a_VERDICT_counts_as_something_to_lose(tmp_path):
+    """A mutant that came back INCOMPETENT is finished and is not an
+    answer — cosmic-ray could not run it at all. A session holding
+    nothing but those has measured nothing, so discarding it costs
+    nothing, and refusing would be a gate firing on an empty hand."""
+    import uuid
+
+    session = _graded(
+        _session(tmp_path, "c.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        other=20)
+
+    assert ms.would_lose(session, 5).graded == 0
+
+
+def test_there_is_nothing_to_lose_when_there_is_no_session(tmp_path):
+    """The first run of a module, which is most of them."""
+    assert ms.would_lose(tmp_path / "absent.sqlite", 5) == (0, 0)
+
+
+def _sample_run(tree, monkeypatch, capsys, *argv):
+    """`main` up to the point the session would be discarded."""
+    _root, module, tests = tree
+    monkeypatch.setattr(sys, "argv",
+                        ["mutation_session.py", str(module).replace("\\", "/"),
+                         "--tests", *tests, *argv])
+    code = ms.main()
+    return code, capsys.readouterr().out
+
+
+def test_the_run_that_would_LOSE_the_better_figure_is_refused(
+        tree, monkeypatch, capsys):
+    """End to end, and the session file has to still be there afterwards:
+    the refusal is only worth anything if it lands BEFORE the unlink."""
+    import uuid
+
+    root, _, _ = tree
+    session = _graded(
+        _session(root, ".mutation-thing.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        killed=30, survived=5)
+
+    code, said = _sample_run(tree, monkeypatch, capsys,
+                             "--fresh", "--sample", "12")
+
+    assert code == 2, "a refusal, not a warning printed on the way past"
+    assert session.exists(), "the session was discarded by the refused run"
+    assert "35" in said and "12" in said, \
+        "both numbers, or the reader cannot judge the trade"
+    assert "--force" in said, "a refusal has to name the way through"
+
+
+def test_force_discards_it_deliberately(tree, monkeypatch, capsys):
+    """The same shape as `--force` on the protocol commands: the judgment
+    is the caller's, and what the guard buys is that it is a judgment."""
+    import uuid
+
+    root, _, _ = tree
+    session = _graded(
+        _session(root, ".mutation-thing.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        killed=30, survived=5)
+    drawn = []
+    monkeypatch.setattr(ms, "_take_lock", lambda: None)
+    monkeypatch.setattr(ms, "ensure_worktree", lambda *a: None)
+    monkeypatch.setattr(ms, "take_snapshot", lambda *a: None)
+    monkeypatch.setattr(ms, "write_config", lambda *a, **kw: None)
+    monkeypatch.setattr(ms, "_run", lambda *a, **kw: _Ok())
+    monkeypatch.setattr(ms, "chunk", lambda *a, **kw: False)
+    # `init` is the mocked subprocess, so it writes no db for the real
+    # `sample` to draw from; what is being asserted is that the run got
+    # PAST the guard and re-planned, which is the whole of `--force`.
+    monkeypatch.setattr(ms, "sample",
+                        lambda session, keep, seed: drawn.append(keep))
+
+    code, _ = _sample_run(tree, monkeypatch, capsys,
+                          "--fresh", "--sample", "12", "--force")
+
+    assert code == 0
+    assert not session.exists(), "--force means discard it"
+    assert drawn == [12], "and re-plan at the size the caller asked for"
+
+
+def test_a_sample_handed_to_a_RESUME_says_it_is_doing_nothing(
+        tree, monkeypatch, capsys):
+    """The draw is planned at `init`, so `--sample` on a resume has never
+    done anything — silently, which reads as "I sampled it" against a run
+    measuring something else entirely."""
+    import uuid
+
+    root, _, _ = tree
+    _graded(_session(root, ".mutation-thing.sqlite",
+                     job_ids=[uuid.uuid4().hex for _ in range(40)]),
+            killed=2)
+    monkeypatch.setattr(ms, "_take_lock", lambda: None)
+    monkeypatch.setattr(ms, "ensure_worktree", lambda *a: None)
+    monkeypatch.setattr(ms, "take_snapshot", lambda *a: None)
+    monkeypatch.setattr(ms, "write_config", lambda *a, **kw: None)
+    monkeypatch.setattr(ms, "moved_since", lambda *a: [])
+    monkeypatch.setattr(ms, "chunk", lambda *a, **kw: False)
+
+    code, said = _sample_run(tree, monkeypatch, capsys, "--sample", "12")
+
+    assert code == 0
+    assert "not applied here" in said and "--fresh" in said
+
+
+def test_a_session_that_cannot_be_READ_is_nothing_to_protect(tmp_path):
+    """`--fresh` is the documented way to clear a session that went
+    wrong, and a zero-byte or truncated db is what one looks like —
+    there is one in this repo root right now. Raising here would put the
+    guard between the caller and the recovery they are asking for, so an
+    unreadable session answers "nothing to lose", which is true."""
+    empty = tmp_path / "empty.sqlite"
+    empty.touch()
+    junk = tmp_path / "junk.sqlite"
+    junk.write_bytes(b"not a database at all, just bytes")
+
+    assert ms.would_lose(empty, 5) == (0, 0)
+    assert ms.would_lose(junk, 5) == (0, 0)
+
+
+def test_a_wider_PLAN_barely_started_is_a_note_and_not_a_refusal(tmp_path):
+    """Two numbers because they deserve two answers. Losing a VERDICT is
+    the regression the guard exists for; re-planning 822 mutants that
+    have produced five verdicts costs the planning time and nothing
+    else, so it is said out loud and allowed."""
+    import uuid
+
+    session = _graded(
+        _session(tmp_path, "plan.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        killed=5)
+
+    lost = ms.would_lose(session, 12)
+
+    assert lost.graded == 0, "five verdicts, and twelve are being kept"
+    assert lost.planned == 40, "but the plan it replaces was wider"
+
+
+def test_reading_the_session_does_not_BLOCK_deleting_it(tmp_path):
+    """Windows, and the ordinary path rather than an exotic one.
+    `progress` left its sqlite connection open; `--fresh` reads the
+    session and then unlinks it, so the common re-sample raised
+    WinError 32 whenever the refcount had not yet dropped. Whether it
+    failed was decided by garbage-collection timing, which is the worst
+    way for a tool to be intermittently broken."""
+    import uuid
+
+    session = _graded(
+        _session(tmp_path, "lock.sqlite",
+                 job_ids=[uuid.uuid4().hex for _ in range(40)]),
+        killed=2)
+
+    ms.would_lose(session, 12)
+    session.unlink()               # raises WinError 32 with a handle open
+
+    assert not session.exists()

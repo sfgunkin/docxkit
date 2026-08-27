@@ -39,10 +39,11 @@ class _Child:
     """A session that emits its chunk lines one at a time."""
 
     def __init__(self, lines: list[str], log: list[tuple[str, str]],
-                 env: dict[str, str] | None = None) -> None:
+                 env: dict[str, str] | None = None,
+                 code: int = 0) -> None:
         self._lines, self._log = list(lines), log
         self.env = env or {}
-        self.returncode = 0
+        self.returncode = self._code = code
 
     @property
     def stdout(self):
@@ -52,7 +53,7 @@ class _Child:
 
     def wait(self) -> int:
         self._log.append(("waited", ""))
-        return 0
+        return self._code
 
 
 @pytest.fixture
@@ -63,14 +64,15 @@ def sweep(monkeypatch):
     and ("printed", text) for each line the sweep wrote, in the order
     the two happened.
     """
-    def go(lines: list[str], *, db: bool = False,
-           tag: bool = False) -> list[tuple[str, str]]:
+    def go(lines: list[str], *, db: bool = False, tag: bool = False,
+           code: int = 0) -> list[tuple[str, str]]:
         log: list[tuple[str, str]] = []
         monkeypatch.setattr(measure_all, "harness_for",
                             lambda module: ["tests/test_a.py"])
         monkeypatch.setattr(subprocess, "Popen",
                             lambda *a, **kw: _Child(lines, log,
-                                                    kw.get("env")))
+                                                    kw.get("env"),
+                                                    code))
         monkeypatch.setattr(measure_all.Path, "exists", lambda self: db)
         monkeypatch.setattr(
             measure_all, "print",
@@ -359,3 +361,71 @@ def test_a_harness_that_moves_DURING_the_run_is_reported_at_the_end(
 
     assert "changed while this ran" in said, said
     assert "as it was PLANNED" in said
+
+
+def _refusing(monkeypatch, code, lines):
+    """`run` over a session that exits `code` with its database still on
+    disk. Separate from the `sweep` fixture because that one answers
+    `Path.exists` True for everything, and `fingerprint` then opens a
+    harness file that does not exist."""
+    log: list[tuple[str, str]] = []
+    monkeypatch.setattr(measure_all, "harness_for",
+                        lambda module: ["tests/test_a.py"])
+    monkeypatch.setattr(measure_all, "fingerprint",
+                        lambda module, tests: "same")
+    monkeypatch.setattr(subprocess, "Popen",
+                        lambda *a, **kw: _Child(lines, log, kw.get("env"),
+                                                code))
+    monkeypatch.setattr(measure_all.Path, "exists", lambda self: True)
+    monkeypatch.setattr(
+        measure_all, "print",
+        lambda *a, **kw: log.append(("printed", " ".join(map(str, a)))),
+        raising=False)
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: _Finished("REAL SURVIVAL 6.9% (57/822)"))
+    measure_all.run("tracked.py", minutes=1)
+    return log
+
+
+class _Finished:
+    """A completed `mutation_survivors.py`."""
+
+    def __init__(self, stdout: str) -> None:
+        self.stdout, self.returncode, self.stderr = stdout, 0, ""
+
+
+def test_a_session_that_REFUSED_is_not_reported_as_a_measurement(monkeypatch):
+    """The guard against regressing a figure would have caused one.
+
+    `mutation_session` refuses `--fresh --sample N` when the session it
+    would discard graded more than N, and it returns BEFORE the unlink —
+    so the old database is still on disk. The exit code was never read,
+    so this function walked past the refusal into
+    `mutation_survivors.py` and printed months-old numbers as this
+    round's figure: the exact failure the guard was written to prevent,
+    arriving from the other side.
+
+    Eight of the fifty live sessions have graded more than the
+    `--sample 460` CONTRIBUTING calls usual, so this is the ordinary path
+    for the most-measured modules in the repo, not a corner of it.
+    """
+    log = _refusing(monkeypatch, 2,
+                    ["refusing: --force to discard it anyway"])
+    said = _said(log)
+
+    assert "REFUSED (exit 2)" in said
+    assert "no measurement taken" in said
+    assert "REAL SURVIVAL" not in said, \
+        "the old session must not be read back as this round's figure"
+
+
+def test_a_session_that_SUCCEEDED_still_reports_as_before(monkeypatch):
+    """The other half. Exit 0 with a database present is the ordinary
+    completed run, and it has to reach the survivors report exactly as
+    it did — a guard that also silenced the success path would be worse
+    than the defect it fixes."""
+    said = _said(_refusing(monkeypatch, 0, CHUNKS))
+
+    assert "REFUSED" not in said
+    assert "REAL SURVIVAL 6.9%  (57/822)" in said
