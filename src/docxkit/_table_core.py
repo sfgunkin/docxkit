@@ -129,6 +129,14 @@ class Table:
     #: a table is what an edit changes, so content is not identity.
     #: `None` alongside `source`.
     body: int | None = None
+    #: Which side of the tracked changes :attr:`rows` was read from.
+    #:
+    #: Carried because a mutator that re-reads the table to check its own
+    #: work has to read it the SAME way, and `reorder_rows` did not: it
+    #: took the default `final` whatever the caller had asked for, so a
+    #: correct reorder of a redline read in `original` failed its own
+    #: integrity check with a message about rows being lost.
+    view: str = FINAL
 
     @property
     def header(self) -> list[str]:
@@ -317,7 +325,8 @@ def read_all(xml: str, *, view: str = FINAL) -> list[Table]:
             cells = [_cell_text(tc.group(0)) for tc in cells_of(tr.group(0))]
             rows.append(cells)
         out.append(Table(index=i, start=start, end=end, rows=rows,
-                         source=hash(xml), body=hash(xml[start:end])))
+                         source=hash(xml), body=hash(xml[start:end]),
+                         view=view))
     return out
 
 
@@ -835,19 +844,36 @@ def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
     of every row's cells is not, and :func:`rows_preserved` compares it
     before and after. "No value changed, only the order" is then a
     claim rather than a hope.
+
+    **Everything here speaks the table's own `view`.** `key` is called
+    with the cell text as the CALLER read it, and the check re-reads the
+    result the same way. Both used to take the default `final` whatever
+    had been asked for, so a table read with ``view="original"`` — which
+    `by_caption` and `tables_after` both offer — was permuted on one
+    side of the tracked changes and audited against the other. The
+    permutation was correct and the audit said ``2 row(s) LOST, 2
+    GAINED``; two cells inside a ``w:ins`` was enough to produce it.
     """
     table = _fresh(xml, table, "reorder_rows")
     body = xml[table.start:table.end]
     trs = [tr.group(0) for tr in rows_of(body)]
+    if len(trs) != len(table.rows):
+        # Only reachable if a view transform drops a whole `w:tr` — a
+        # row-level revision. Refusing beats permuting one list by the
+        # other's indices, which would move the wrong rows and still
+        # pass a multiset check.
+        raise AnchorError(
+            f"table {table.index} has {len(trs)} rows in the document and "
+            f"{len(table.rows)} in the {table.view} view; re-read it before "
+            f"reordering")
     fixed, movable = trs[:header], trs[header:]
-    cells = [[_cell_text(tc.group(0)) for tc in cells_of(tr)]
-             for tr in movable]
+    cells = table.rows[header:]
     tail = [i for i, c in enumerate(cells) if c and c[0] in last]
     order = [i for i in range(len(movable)) if i not in tail]
     order.sort(key=lambda i: key(cells[i]))
     out = _rows_replaced(xml, table,
                          fixed + [movable[i] for i in order + tail])
-    moved = read_all(out)[table.index]
+    moved = read_all(out, view=table.view)[table.index]
     if not (report := rows_preserved(table, moved, skip_header=False)):
         raise AnchorError(
             f"reordering table {table.index} changed its rows, not just "

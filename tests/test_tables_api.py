@@ -8,7 +8,7 @@ they were the last uncovered branches in the module.
 from __future__ import annotations
 
 import pytest
-from conftest import document, para, row, run, table
+from conftest import document, ins, para, row, run, table
 
 from docxkit import _table_core
 from docxkit.errors import AnchorError
@@ -1174,6 +1174,79 @@ def test_a_handle_from_a_DIFFERENT_document_does_not_bind():
 
     with pytest.raises(AnchorError, match="different version"):
         set_cell(doc_b, read_all(doc_a)[0], 1, 1, "X")
+
+
+#  --- a mutator re-reads the table the way the CALLER read it --------
+
+
+def _redline_panel() -> str:
+    """Two data rows whose scores are tracked INSERTIONS, so the two
+    views disagree about every one of them."""
+    return document(
+        para(run("Table 4. Scores"))
+        + "<w:tbl>"
+        + "<w:tr><w:tc>" + para(run("Country")) + "</w:tc><w:tc>"
+        + para(run("Score")) + "</w:tc></w:tr>"
+        + "<w:tr><w:tc>" + para(run("POL")) + "</w:tc><w:tc>"
+        + para(ins("0.31", 90)) + "</w:tc></w:tr>"
+        + "<w:tr><w:tc>" + para(run("ALB")) + "</w:tc><w:tc>"
+        + para(ins("0.22", 91)) + "</w:tc></w:tr>"
+        + "</w:tbl>")
+
+
+def test_reorder_rows_audits_its_work_in_the_CALLERS_view():
+    """`reorder_rows` re-read the result with the DEFAULT view whatever
+    the caller had asked for, so a table read as `original` was permuted
+    on one side of the tracked changes and audited against the other.
+
+    The permutation was correct and the gate said `2 row(s) LOST, 2
+    GAINED`. Two cells inside a `w:ins` is enough, which makes this
+    ordinary on any redline rather than exotic — and `by_caption` and
+    `tables_after` both hand callers an `original`-view handle.
+    """
+    xml = _redline_panel()
+    before = read_all(xml, view="original")[0]
+    assert [r[1] for r in before.rows[1:]] == ["", ""], \
+        "the fixture only bites if the two views really disagree"
+
+    out = reorder_rows(xml, before, key=lambda c: ["ALB", "POL"].index(c[0]))
+
+    assert [r[0] for r in read_all(out, view="original")[0].rows[1:]] == \
+        ["ALB", "POL"]
+    assert [r[1] for r in read_all(out)[0].rows[1:]] == ["0.22", "0.31"], \
+        "and the accepted side moved with it"
+
+
+def test_the_KEY_is_given_the_cells_the_caller_read_too():
+    """The other half, and the one that would have gone on being wrong
+    silently. `key` was called with text scraped from the raw XML rather
+    than from the view, so on a redline it saw both sides of every
+    revision at once — an ordering function reading `0.310.22` where the
+    caller's own `table.rows` says `0.31`."""
+    xml = _redline_panel()
+    seen: list[list[str]] = []
+
+    def _by_country(cells: list[str]) -> str:
+        seen.append(cells)
+        return cells[0]
+
+    reorder_rows(xml, read_all(xml)[0], key=_by_country)
+
+    assert seen == [["POL", "0.31"], ["ALB", "0.22"]], \
+        "the accepted side, which is what view='final' means"
+
+
+def test_a_view_the_table_was_NOT_read_in_is_not_used():
+    """The field is carried, not guessed: a handle read as `original`
+    keeps saying so after a freshness re-check, or the audit silently
+    goes back to the default."""
+    xml = _redline_panel()
+    first, = read_all(xml, view="original")
+    grown = xml.replace("<w:body>", "<w:body>" + para(run("Preamble")))
+
+    assert first.view == "original"
+    assert _table_core._fresh(xml, first, "probe").view == "original"
+    assert read_all(grown, view="final")[0].view == "final"
 
 
 def test_a_HAND_BUILT_table_is_not_anchored_and_is_left_alone():
