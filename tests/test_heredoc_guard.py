@@ -14,8 +14,14 @@ from __future__ import annotations
 
 import io
 import json
+import re
+import shlex
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 import docxkit
 
@@ -137,3 +143,156 @@ def test_offending_names_the_body_it_objected_to():
     that caused the worst incident was two heredocs in one command."""
     assert offending("python - <<'PY'\nclean = 1\nPY") is None
     assert offending(HEREDOC.format(body="x = '\\\\'")) == "x = '\\\\'"
+
+
+# --- the half the function cannot test: is it WIRED to anything? ---------
+#
+# Found 2026-08-27. The guard was written, tested, and registered nowhere
+# that a session outside this repo would read — so the trap it exists to
+# refuse was walked into twice while the entry about it was being closed,
+# the eighth and ninth occurrences, one of them writing a file that would
+# not parse at all. Every test above passed on both of those runs,
+# because each of them measured a function nobody was calling.
+#
+# A green suite over a gate that cannot fire is the false confidence this
+# package ranks above a wrong answer. So the registration is asserted as
+# well as the behaviour.
+
+
+def _hooked(settings: dict[str, Any], tool: str = "Bash") -> list[str]:
+    """The PreToolUse commands that would run for `tool`.
+
+    An entry with no matcher, or ``*``, runs for everything; anything
+    else is a regex against the tool name, which is how the harness
+    reads it.
+    """
+    out = []
+    for entry in settings.get("hooks", {}).get("PreToolUse", []):
+        pattern = entry.get("matcher", "")
+        if pattern and pattern != "*" and not re.search(pattern, tool):
+            continue
+        out += [h.get("command", "") for h in entry.get("hooks", [])
+                if h.get("type") == "command"]
+    return out
+
+
+def _settings(path: Path) -> dict[str, Any]:
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict), f"{path} is not an object"
+    return loaded
+
+
+def _user_settings() -> list[Path]:
+    home = Path.home() / ".claude"
+    return [p for p in (home / "settings.json", home / "settings.local.json")
+            if p.exists()]
+
+
+def test_THIS_repo_registers_the_guard_for_sessions_rooted_here():
+    """`.claude/settings.json` is committed, so this is a repo invariant
+    rather than a fact about one machine: a session working on docxkit
+    gets the refusal whether or not anybody remembered to install it."""
+    path = TOOLS.parent / ".claude" / "settings.json"
+
+    assert path.exists(), f"{path} is the repo's own harness config"
+    commands = _hooked(_settings(path))
+
+    assert any("heredoc_guard" in c for c in commands), \
+        f"PreToolUse/Bash does not run the guard: {commands!r}"
+
+
+def test_the_USER_harness_registers_it_TOO_because_that_is_where_it_bites():
+    """A project-scoped hook only fires in sessions rooted at the
+    project, and not one of the nine occurrences happened in such a
+    session: they happened in paper directories and in the home
+    directory, editing manuscripts with docxkit imported. The repo
+    registration above could not have stopped any of them.
+
+    Skipped where there is no user harness at all — CI, a clean
+    machine — since there is then nothing to be wrong about. It FAILS
+    when a settings file exists and does not carry the hook, which is
+    the state to notice the next time one of them is rewritten.
+    """
+    present = _user_settings()
+    if not present:
+        pytest.skip("no user-level Claude settings on this machine")
+
+    commands = [c for p in present for c in _hooked(_settings(p))]
+
+    assert any("heredoc_guard" in c for c in commands), (
+        "none of " + ", ".join(p.name for p in present) + " runs the guard "
+        "before a Bash call; every occurrence so far was in a session "
+        "rooted outside this repo")
+
+
+def _guard_paths(command: str) -> list[Path]:
+    """The script paths a hook command names, resolved.
+
+    `shlex` with `posix=False` rather than `str.split`, because a hook
+    command routinely names `C:\\Program Files\\...` and splitting on
+    spaces turns one path into two words that are each not a file.
+    `$env:CLAUDE_PROJECT_DIR` is the repo root by definition — expanded
+    rather than skipped, since the committed registration uses it and
+    skipping it is how this test came to assert nothing at all in CI.
+    """
+    root = TOOLS.parent.as_posix()
+    out = []
+    for word in shlex.split(command, posix=False):
+        bare = word.strip("\"'")
+        if "heredoc_guard" not in bare:
+            continue
+        bare = bare.replace("$env:CLAUDE_PROJECT_DIR", root)
+        bare = bare.replace("${CLAUDE_PROJECT_DIR}", root)
+        bare = bare.replace("$CLAUDE_PROJECT_DIR", root)
+        if "$" not in bare:                  # any other variable: not ours
+            out.append(Path(bare))
+    return out
+
+
+def test_a_registration_naming_a_path_that_is_not_THERE_is_not_one():
+    """The other way this goes quietly dead: the file moves, the entry
+    stays, and every session then fails the hook open.
+
+    This SKIPPED any command containing `$` — which is exactly the form
+    the repo's own committed registration uses, and on a CI runner there
+    is no `~/.claude`, so the loop had one exempt entry and passed having
+    checked no path whatsoever. A test that cannot fail on the only
+    input it will ever see in CI is the dead gate this package ranks
+    above a wrong answer.
+    """
+    here = TOOLS.parent / ".claude" / "settings.json"
+    checked = 0
+    for path in [here, *_user_settings()]:
+        for command in _hooked(_settings(path)):
+            for named in _guard_paths(command):
+                assert named.exists(), f"{path.name} names {named}, absent"
+                checked += 1
+
+    assert checked, "no registration was actually checked — see above"
+
+
+def test_the_REGISTERED_command_really_refuses_a_heredoc():
+    """The claim every other test here only approximates.
+
+    A substring match on `heredoc_guard` says the entry is present; it
+    cannot say the interpreter starts, that the path resolves, or that
+    the thing at the end of it is this guard. Review made exactly that
+    point about the committed registration, which names a bare `python`
+    where the entry in the backlog says an absolute path. So run it: the
+    registered script, with the harness's own JSON on stdin, and the
+    blocking status out.
+    """
+    here = TOOLS.parent / ".claude" / "settings.json"
+    scripts = [p for command in _hooked(_settings(here))
+               for p in _guard_paths(command)]
+    if not scripts:
+        pytest.skip("no registration to run")
+
+    call = {"tool_name": "Bash",
+            "tool_input": {"command": HEREDOC.format(body="x = '\\\\n'")}}
+    out = subprocess.run([sys.executable, str(scripts[0])],
+                         input=json.dumps(call), capture_output=True,
+                         text=True, check=False)
+
+    assert out.returncode == 2, "the registered script does not BLOCK"
+    assert "must not contain a backslash" in out.stderr
