@@ -71,6 +71,16 @@ modules it is about to touch, so a leftover cannot hide among real edits.
 Neither needs the tool to survive being killed; both need it to say so
 afterwards.
 
+**The restore also REWRITES the line endings**, found in the same
+sitting. `path.read_text()` reads through universal newlines and the
+restore writes back with `newline=""`, so every module the run touched
+comes back LF in a working copy that is CRLF — twelve of them here, after
+one run. Invisible on this repo because `core.autocrlf=true` normalises
+it away and `git diff` is empty; on a checkout with `autocrlf=false`,
+which is how `BACKLOG.md` itself has to be committed, it is a twelve-file
+whole-file diff that appears from nowhere. Same one-line cause as the
+entry above: read and write the bytes, or read with `newline=""` too.
+
 **Workaround in use:** read `git diff --stat` against what the patch
 actually changed before believing a test failure. That is the check that
 caught it, and it is not a rule anybody can be asked to remember.
