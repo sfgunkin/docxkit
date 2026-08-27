@@ -13,111 +13,189 @@ toolkit has been bitten twice that way.
 workaround deleted + entry moved to `## Fixed` with its commit. Keep
 fixed entries; "did we ever fix that?" is a real question later.
 
+**Write `Refs BACKLOG.md` in the commit that carries a fix**, and
+`tools/backlog_refs.py` — in the suite, so it is a gate — turns the
+missing move into a red build instead of a thing somebody notices weeks
+later. The entry may move in that commit or the next; what it refuses is
+a fix sitting at the tip with the record never written. That last clause
+of the rule above is the one that gets dropped, every time, because it
+is last: on 2026-08-27 five of the ten entries under `## Open` were
+already fixed, and the batch was ordered off the stale list.
+
 ---
 
 ## Open
 
-### S3 — `tools/heredoc_guard.py` is written, tested, and wired to nothing: the trap it exists to refuse was walked into twice while closing this batch
+### S1 — a KILLED `mutate.py` leaves its sabotage in the working tree, and the next thing to read that file is a commit
 
-Found 2026-08-27, during the batch that closed the ten entries below.
+Found 2026-08-27, in this repo, by nearly committing one.
 
-**Symptom as observed.** Two patch scripts written through a Bash
-heredoc came out corrupted, in the two ways the guard's own docstring
-names. The first silently failed to match its anchor:
+**What happened.** A `mutate.py` run was killed part way through. It
+restores each mutation in a `finally`, which covers an exception and does
+not cover the process being killed — so `_set_borders` in
+`_table_layout.py` was left carrying its sabotage:
 
-    b = '''        z.writestr("[Content_Types].xml",  ... b"\r\n" + ...'''
-    AssertionError: flat OPC writer anchor
+    +    if _EDGE_RE.search(cell):
+    +        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
 
-The second was worse, because it wrote a file that then would not parse
-at all:
+That is the defect the mutation is named for — the nested table's
+borders rewritten instead of the outer cell's — sitting in the source, in
+a batch about to be committed. It was caught by five failing tests being
+three lines further down the diff than they should have been, and then
+only because the diffstat had three more lines than the patch that made
+it. **A `git commit -a` at any point in the previous hour would have
+shipped it.**
 
-    SyntaxError: unterminated string literal (detected at line 82)
+**Why nothing said so.** `mutation_session.py` treats exactly this as
+hazard two of six — "cosmic-ray restores the file after each mutant but
+NOT when it is terminated, so a killed run leaves its mutation in the
+tree" — and guards it by verifying the unmutated baseline before every
+chunk, which turns a leftover into an immediate refusal. `mutate.py` runs
+the same risk with none of that: no baseline check, no refusal on a dirty
+tree, and no record of what it was holding when it died. The lesson was
+learned once, written down, and applied to one of the two tools that
+needs it.
 
-The line was `text.index("\r\n" + heading + "\r\n")`. Both escapes had
-lost their backslash and become REAL newlines inside the string literal,
-so it never closed. Both heredocs were POSIX-quoted (`<<'PY'`), which is
-specified to pass the body through untouched.
+**It is worse here than there**, because `mutation_session` works in a
+separate `git worktree` and `mutate.py` mutates the CHECKOUT the author
+is editing — and because a sabotage mutation is by construction a defect
+the suite can catch, so the leftover looks like "my change broke five
+tests" rather than like contamination. That reading costs a debugging
+hour and then a wrong fix.
 
-**The guard is correct and was never asked.** Run by hand it answers
-straight away:
+**Shape of a fix.** The cheap half: write the mutation and the path to a
+sentinel file before applying it, delete the sentinel after restoring,
+and refuse to start while one exists — naming the file to put back. The
+cheaper half still: refuse to start on a dirty `git status` for the
+modules it is about to touch, so a leftover cannot hide among real edits.
+Neither needs the tool to survive being killed; both need it to say so
+afterwards.
 
-    >>> from heredoc_guard import offending
-    >>> offending("python - <<'PY'\ns = t.replace('\\\\', x)\nPY")
-    "s = t.replace('\\\\', x)"
-
-What is missing is the registration. `~/.claude/settings.json` carries a
-`Stop` hook and a `SessionStart` hook and no `PreToolUse` entry at all,
-so nothing ever invokes it. `tests/test_heredoc_guard.py` passes on
-every run and tests a function nobody calls.
-
-**Why S3 and not S4.** The file's own docstring states the job: "what is
-tested here is the thing the rule could not be: a refusal that does not
-depend on anybody remembering." An uninstalled refusal IS the rule it
-was written to replace, and the entry above it records seven prior
-occurrences across two agents, the worst rewriting 387 real newlines in
-a file another session was editing. Tonight makes nine. A green suite
-over a gate that cannot fire is the false confidence this file ranks
-above a wrong answer — and here the suite is not merely unable to fail,
-it is measuring a dead path.
-
-**Fix sketch.** The code exists; only the wiring is missing. A
-`PreToolUse` matcher on `Bash` in `~/.claude/settings.json`:
-
-    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
-      "command": "python D:/docxkit/tools/heredoc_guard.py"}]}]
-
-That is a change to the USER's harness configuration rather than to this
-repo, which is why it is filed rather than done — it changes how every
-session on this machine behaves, including sessions that have nothing to
-do with docxkit. Worth deciding once and deliberately. The repo half
-worth doing regardless: `test_heredoc_guard.py` should assert that the
-hook is REGISTERED somewhere, not only that the function is right, or
-this recurs the next time a settings file is rewritten.
-
-**Workaround in use:** write the script with the Write tool and run it
-by path, never through a heredoc. Which is the rule that has now failed
-nine times, and is exactly why the guard was built.
+**Workaround in use:** read `git diff --stat` against what the patch
+actually changed before believing a test failure. That is the check that
+caught it, and it is not a rule anybody can be asked to remember.
 
 ---
 
-### S3 — five fixes shipped with no `## Fixed` entry, so tonight the backlog read as ten open defects when five were done
+### S3 — three of `mutate.py`'s anchors have drifted, so it exits 1 on every run and nobody has noticed
 
-Found 2026-08-27, starting this batch. `## Open` listed ten entries. Five
-of them — the `crossrefs` half-eaten pair, `place`'s multi-column table,
-the fit gate, `citations.link_all`, the link SPAN — were already fixed,
-in `805e1ad`, `67459c9`, `cb25235`, `e56906e` and `924cd2e`. Every one of
-those commits carries a message describing the defect in this file's own
-words. None of them touched `BACKLOG.md`.
+Found 2026-08-27, alongside the entry above, by running the tool with its
+exit code visible for the first time in a while.
 
-**Why it is a finding and not just untidiness.** The batch order is set
-by severity, so a stale `## Open` sets the wrong order: the S1 at the top
-of tonight's list was the one entry already closed, and the real first
-job was an S3 three entries down. And "did we ever fix that?" is the
-question `## Fixed` exists to answer — a fix with no entry is invisible
-to it, so the next person to hit the symptom re-derives the diagnosis.
-That is the same cost as an unrecorded defect, arriving from the
-opposite direction.
+    39/39 mutations caught
+      SKIPPED (anchor drifted): the staging directory leaks again
+      SKIPPED (anchor drifted): the run-open scan matches w:rPr again
+      SKIPPED (anchor drifted): a field ends at the first end tag, so a
+                                nested field closes its parent
+    MUTATE_EXIT=1
 
-**Why the rule did not catch it.** Every trigger in the house rule fires
-on RECORDING a defect. Nothing fires on CLOSING one, because closing
-already feels like the bookkeeping — the code is written, the test is
-green, the commit is made, and moving a heading afterwards reads as
-filing rather than as finishing. The rule says as much itself ("Done =
-fix + a test that FAILS without it + the per-paper workaround deleted +
-entry moved to `## Fixed` with its commit hash") and the last clause is
-the one that gets dropped, every time, because it is last.
+`mutate.py` is the CURATED list — every mutation in it re-introduces a
+defect this package has really shipped — so a drifted anchor is a defect
+whose regression cover has silently gone. Three of them. The one this
+batch re-anchored was a fourth, and it drifted because *this batch*
+rewrote the line; these three drifted at some earlier point nobody
+recorded.
 
-**Fix sketch.** This is checkable mechanically and cheaply, which is why
-it is worth a gate rather than a resolution. A test walks `## Open`'s
-headings and `git log` since the file's last change, and fails when a
-commit message names a module and a symptom an open entry also names.
-Cruder and probably enough: fail when a commit's body contains
-`Refs BACKLOG.md` and the same commit does not touch `BACKLOG.md`. That
-convention started in this batch, so it costs one line per commit and
-turns the missing move into a red suite rather than a thing somebody
-notices weeks later.
+**The tool says so and nothing reads it.** It exits 1 on a skip, prints
+the reason, and is in neither `tools/gates.py` nor `ci.yml` — so its
+report has been true and unread. `39/39 caught` at the top of the output
+is what a person's eye lands on, and it is the number that looks like a
+pass.
 
-**Workaround in use:** none. The five were moved by hand in this batch.
+Both halves are the same shape as the entry above and as the `## Fixed`
+entry about `heredoc_guard`: a check that is correct, that is not wired
+to anything, and that therefore reports into an empty room.
+
+**Shape of a fix.** Add `mutate.py` to the gate list — it is the fastest
+mutation cover in the repo and the only one that is curated — and
+re-anchor the three. A drifted anchor should probably also FAIL rather
+than skip: the whole point is that these mutations are the ones known to
+matter.
+
+**Workaround in use:** none. Three curated defects currently have no
+mutation cover, and this entry is the only record of which.
+
+---
+
+### S2 — `reorder_rows` reads the table back in the FINAL view whatever view the caller read it in, so a correct reorder of a REDLINE is refused
+
+Found 2026-08-27 by review, while looking at a batch that touches this
+function for another reason. Filed rather than fixed: it is pre-existing,
+it needs `Table` to remember its view, and folding a second behaviour
+change into that batch is how a fix arrives with nothing to bisect
+against.
+
+**The self-check contradicts the caller.** `reorder_rows` verifies its
+own work by re-reading the table — `moved = read_all(out)[table.index]` —
+and that call takes the DEFAULT view. A caller who read the document with
+`view="original"`, which `by_caption(..., view=...)` and
+`tables_after(..., view=...)` both offer, gets a handle whose `rows` are
+the original side compared against rows read from the accepted side. The
+row multisets then differ for a reason that has nothing to do with the
+reorder:
+
+    AnchorError: reordering table 0 changed its rows, not just their
+    order: 2 row(s) LOST, 2 GAINED — lost ('POL','') gained ('POL','0.31')
+
+The permutation was correct. Two cells whose text sits inside `w:ins` is
+enough to produce it.
+
+**It is also the only mutator here with no tracked-changes refusal.**
+`_has_revisions` appears twice in `_table_core.py` and neither call is in
+this function, so where `house()` refuses a redline cleanly and says why,
+this one accepts it and then fails an integrity check about itself. Two
+different answers to the same document, from one module.
+
+**Shape of a fix.** `Table` gains the `view` it was read in, and
+`reorder_rows` re-reads with it; or the function refuses a table carrying
+revisions like every sibling does. The first is better — a reorder of the
+original view is a legitimate thing to want — and it is the one that
+needs the extra field, which is why this is a separate change.
+
+**Workaround in use:** none needed yet; no paper has reordered a redline
+table. Read the clean build, reorder, rebuild the redline — which is what
+every other mutator here already requires.
+
+---
+
+### S4 — nothing checks that an entry sits in the SECTION that describes it, and the cheap check cannot
+
+Filed 2026-08-27, out of the measurement that closed *five fixes shipped
+with no `## Fixed` entry* (in `## Fixed`, 27.08).
+
+Two misfilings were live in this file this morning, and in both
+directions at once. `--sample` and the `Table` handle sat under
+`## Fixed` while open — three days each, and both are closed in this
+batch. The RETRACTED `link_all` entry sits under `## Open` on purpose,
+and so does a not-a-defect record. On 2026-08-24 the reverse happened and
+was worse: a close-helper cutting an entry "to the next `### `" took the
+`## Fixed` heading with it, and every closed entry sat inside `## Open`
+for three commits.
+
+**The obvious gate was built, measured and thrown away, and that is the
+finding.** A resolution-detector over all 209 entries — strikethrough,
+`FIXED`, `WITHDRAWN`, `RETRACTED`, `CORRECTED`, a commit hash in the
+heading — run against the real file:
+
+    ## Open     6 entries,  4 flagged,  0 real
+    ## Fixed  203 entries, 89 flagged,  2 real
+
+**93 findings, two of them true.** Every false positive comes from a
+convention this file GREW rather than declared: an entry closed by a bare
+hash in the heading, twelve closed together under one parent heading, a
+record that was never a defect, a body that quotes the word FIXED while
+describing something else. A gate at 2 % precision is read once and
+ignored, which is the dead-gate shape this file ranks above a wrong
+answer.
+
+**What would work is a declared field, not a better regex** — a
+`status:` on each heading, or sections a parser can trust. That is a
+change to 209 existing entries, which is why this is S4 and filed rather
+than done.
+
+**Workaround in use:** `tools/backlog_refs.py`, which asks whether the
+record was WRITTEN rather than where it sits, and the two misfilings
+corrected by hand in this batch.
 
 ---
 
@@ -192,10 +270,20 @@ machine-readable question about the page rather than about the markup
 that was supposed to produce it. No eyes required, which is what makes it
 a gate rather than a habit.
 
-It is one test, not the ladder: `revision validate` still renders
-nothing, and the prime entry and `export_pdf`'s markup blindness are both
-still open. But the shape is now proven cheap — nine seconds, and it
-caught a real regression in the fix that landed beside it.
+It is one test, not the ladder. But the shape is now proven cheap — nine
+seconds, and it caught a real regression in the fix that landed beside
+it.
+
+**Corrected 27.08: every "still open" this paragraph used to name has
+since closed, and the sentence stood stale for three days.** It said
+`revision validate` still rendered nothing, and that the prime and
+`export_pdf`'s markup blindness were open. All three are in `## Fixed`:
+`revision validate --render ANCHOR...` renders the accepted view;
+`MATH_DOWNGRADES` carries the prime (`′`); and `export_pdf(markup=True)`
+renders a redline WITH its markup, so a gate built on it no longer
+inherits the failure this note is about. What survives of the claim is
+the part that was never about a particular defect — **the ladder still
+renders nothing by DEFAULT for a manuscript carrying maths.**
 
 **The sharpest instance of it is not in a manuscript at all — it is in
 this file, 2026-08-24.** A close-helper that cut an entry "to the next
@@ -752,6 +840,216 @@ falls in a 0.4-point window.
 
 
 ## Fixed
+
+### ~~S3 — `tools/heredoc_guard.py` is written, tested, and wired to nothing: the trap it exists to refuse was walked into twice while closing this batch~~ — FIXED 27.08, `4f6b3bc`
+
+**Fixed 2026-08-27.** The hook is registered in the USER's
+`~/.claude/settings.json` as `PreToolUse` on `Bash`, and the TENTH
+occurrence was refused four tool calls later — by this batch, appending
+this file's own test additions through `cat >> … <<'ENDOFTEST'`. The
+refusal named the offending line and the way through; the payload went in
+through the Write tool instead.
+
+**Measured before installing it**, because it now runs ahead of every
+shell command in every session on this machine: **71 ms median** over ten
+calls, min 66, max 78 — one Python start-up.
+
+The user-level entry names the interpreter by ABSOLUTE path. That is a
+choice to take PATH out of the question for a hook that must work in
+every session on one machine, and **not a measurement that a bare
+`python` fails** — an earlier draft of this entry said it was, and
+review caught the contradiction, because the repo's own committed
+registration uses a bare `python` and `$env:CLAUDE_PROJECT_DIR` and has
+to, being the copy that ships to any machine. Two spellings, two jobs.
+
+The reason that mattered is the one worth keeping: **a substring match
+on the settings file cannot tell either of them apart from a dead
+one.** It cannot say the interpreter starts, that the path resolves, or
+that the thing at the end of it is this guard —
+`test_a_registration_naming_a_path_that_is_not_THERE_is_not_one` was
+worse still, skipping any command containing `$`, which is exactly the
+form the repo commits, so on a CI runner it passed having checked
+nothing at all. It now expands `$env:CLAUDE_PROJECT_DIR`, splits with
+`shlex` so a path under `C:\Program Files` survives, and asserts that it
+checked something. And
+`test_the_REGISTERED_command_really_refuses_a_heredoc` RUNS the
+registered script with the harness's own JSON on stdin and requires exit
+2 — which is the only form of this check that cannot go quietly dead.
+
+The repo half is three tests, and they assert what the function cannot:
+
+* `test_THIS_repo_registers_the_guard_for_sessions_rooted_here` reads the
+  COMMITTED `.claude/settings.json`, so it is a repo invariant rather
+  than a fact about one machine;
+* `test_the_USER_harness_registers_it_TOO_because_that_is_where_it_bites`
+  is the one that would have been red all week, and it is the half the
+  entry got wrong. A project-scoped hook only fires in sessions rooted at
+  the project, and **not one of the nine occurrences happened in such a
+  session** — they happened in paper directories and in the home
+  directory, with docxkit imported. The repo registration that already
+  existed could not have stopped any of them. The test SKIPS where there
+  is no user harness at all (CI, a clean machine) and FAILS where one
+  exists without the hook, which is the state to notice the next time a
+  settings file is rewritten;
+* `test_a_registration_naming_a_path_that_is_not_THERE_is_not_one` covers
+  the other way this goes quietly dead: the file moves, the entry stays,
+  and every session then fails the hook open.
+
+Kill-checked rather than assumed. Fed the settings this machine carried
+an hour earlier — a `Stop` hook, a `SessionStart` hook, no `PreToolUse` —
+`_hooked` returns `[]`; fed one whose matcher is `Write` rather than
+`Bash`, `[]` again.
+
+Found 2026-08-27, during the batch that closed the ten entries below.
+
+**Symptom as observed.** Two patch scripts written through a Bash
+heredoc came out corrupted, in the two ways the guard's own docstring
+names. The first silently failed to match its anchor:
+
+    b = '''        z.writestr("[Content_Types].xml",  ... b"\r\n" + ...'''
+    AssertionError: flat OPC writer anchor
+
+The second was worse, because it wrote a file that then would not parse
+at all:
+
+    SyntaxError: unterminated string literal (detected at line 82)
+
+The line was `text.index("\r\n" + heading + "\r\n")`. Both escapes had
+lost their backslash and become REAL newlines inside the string literal,
+so it never closed. Both heredocs were POSIX-quoted (`<<'PY'`), which is
+specified to pass the body through untouched.
+
+**The guard is correct and was never asked.** Run by hand it answers
+straight away:
+
+    >>> from heredoc_guard import offending
+    >>> offending("python - <<'PY'\ns = t.replace('\\\\', x)\nPY")
+    "s = t.replace('\\\\', x)"
+
+What is missing is the registration. `~/.claude/settings.json` carries a
+`Stop` hook and a `SessionStart` hook and no `PreToolUse` entry at all,
+so nothing ever invokes it. `tests/test_heredoc_guard.py` passes on
+every run and tests a function nobody calls.
+
+**Why S3 and not S4.** The file's own docstring states the job: "what is
+tested here is the thing the rule could not be: a refusal that does not
+depend on anybody remembering." An uninstalled refusal IS the rule it
+was written to replace, and the entry above it records seven prior
+occurrences across two agents, the worst rewriting 387 real newlines in
+a file another session was editing. Tonight makes nine. A green suite
+over a gate that cannot fire is the false confidence this file ranks
+above a wrong answer — and here the suite is not merely unable to fail,
+it is measuring a dead path.
+
+**Fix sketch.** The code exists; only the wiring is missing. A
+`PreToolUse` matcher on `Bash` in `~/.claude/settings.json`:
+
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+      "command": "python D:/docxkit/tools/heredoc_guard.py"}]}]
+
+That is a change to the USER's harness configuration rather than to this
+repo, which is why it is filed rather than done — it changes how every
+session on this machine behaves, including sessions that have nothing to
+do with docxkit. Worth deciding once and deliberately. The repo half
+worth doing regardless: `test_heredoc_guard.py` should assert that the
+hook is REGISTERED somewhere, not only that the function is right, or
+this recurs the next time a settings file is rewritten.
+
+**Workaround in use:** write the script with the Write tool and run it
+by path, never through a heredoc. Which is the rule that has now failed
+nine times, and is exactly why the guard was built.
+
+---
+
+### ~~S3 — five fixes shipped with no `## Fixed` entry, so tonight the backlog read as ten open defects when five were done~~ — FIXED 27.08, `9b41c10`
+
+**Fixed 2026-08-27** — `tools/backlog_refs.py`, with
+`tests/test_backlog_refs.py`.
+
+**The stricter rule this entry proposed is wrong, and measurably.** "Fail
+when a commit says `Refs BACKLOG.md` and does not itself touch
+`BACKLOG.md`" was checked against the history before it was written:
+**all six commits that had adopted the convention broke it**, because the
+code lands first and the entry moves in the commit after. A gate red six
+times for six correctly-closed defects is a gate somebody deletes.
+
+So the rule is the weaker, true one: a `Refs BACKLOG.md` commit must be
+accompanied or FOLLOWED by a commit that touches the file. Nothing is
+said about WHICH commit; what is refused is the state where a fix sits at
+the tip with the record never written. Over the same 905 commits it
+reports zero, which is what it should say about a history whose gaps were
+every one closed in the next commit — and it goes red for exactly as long
+as a gap is open, which is the red suite this entry asked for.
+
+**What it cannot see, stated rather than papered over:** a fix committed
+with no mention of the backlog. The convention costs one line per commit.
+The alternative that would need no convention — reading the FILE's own
+structure instead of the commit messages — was built, measured and
+rejected in the same sitting; it is the S4 now standing in `## Open`.
+
+**Two ways it was still dead when first written, both from review.**
+
+*It counted a TOUCH as a record.* Filing a new defect is the most
+frequent reason to open this file, so one filing commit retroactively
+marked every pending fix as recorded — and the exact history this tool
+was written for came back clean through it. What the rule names is *entry
+moved to `## Fixed`*, so that is what is asked: did the commit's diff ADD
+a heading that says an entry is resolved. One `git show` per commit,
+restricted to the one path, walked lazily and stopped at the first
+closure — typically one call.
+
+*A git FAILURE read as "no history".* `fatal: detected dubious ownership
+in repository` is ordinary for a repo on a second drive, in a container,
+or under another user, and it made the tool print "nothing to check" and
+exit 0 while the live-repo test took its skip. Green suite, green tool,
+dead gate — the shape a suppressed git error always has, since a fatal
+error looks exactly like a true nothing. Only the spellings that mean
+"not a repository" answer None now; anything else raises with what git
+said.
+
+And CI could not see the history at all: `actions/checkout@v4` defaults
+to depth 1, so the gate reported a clean answer over commits it never
+read, and on a pull request the merge commit lists no files whatsoever.
+`fetch-depth: 0`.
+
+Found 2026-08-27, starting this batch. `## Open` listed ten entries. Five
+of them — the `crossrefs` half-eaten pair, `place`'s multi-column table,
+the fit gate, `citations.link_all`, the link SPAN — were already fixed,
+in `805e1ad`, `67459c9`, `cb25235`, `e56906e` and `924cd2e`. Every one of
+those commits carries a message describing the defect in this file's own
+words. None of them touched `BACKLOG.md`.
+
+**Why it is a finding and not just untidiness.** The batch order is set
+by severity, so a stale `## Open` sets the wrong order: the S1 at the top
+of tonight's list was the one entry already closed, and the real first
+job was an S3 three entries down. And "did we ever fix that?" is the
+question `## Fixed` exists to answer — a fix with no entry is invisible
+to it, so the next person to hit the symptom re-derives the diagnosis.
+That is the same cost as an unrecorded defect, arriving from the
+opposite direction.
+
+**Why the rule did not catch it.** Every trigger in the house rule fires
+on RECORDING a defect. Nothing fires on CLOSING one, because closing
+already feels like the bookkeeping — the code is written, the test is
+green, the commit is made, and moving a heading afterwards reads as
+filing rather than as finishing. The rule says as much itself ("Done =
+fix + a test that FAILS without it + the per-paper workaround deleted +
+entry moved to `## Fixed` with its commit hash") and the last clause is
+the one that gets dropped, every time, because it is last.
+
+**Fix sketch.** This is checkable mechanically and cheaply, which is why
+it is worth a gate rather than a resolution. A test walks `## Open`'s
+headings and `git log` since the file's last change, and fails when a
+commit message names a module and a symptom an open entry also names.
+Cruder and probably enough: fail when a commit's body contains
+`Refs BACKLOG.md` and the same commit does not touch `BACKLOG.md`. That
+convention started in this batch, so it costs one line per commit and
+turns the missing move into a red suite rather than a thing somebody
+notices weeks later.
+
+**Workaround in use:** none. The five were moved by hand in this batch.
+
+---
 
 ### ~~S4 — `math --check` reads a symbol-only TABLE CELL as a display equation stranded inline, and offers a repair that refuses~~ — FIXED 27.08, `766a8df`; REGRESSED, RE-FIXED 27.08, `9e68cf7`
 
@@ -1531,8 +1829,91 @@ keeping `~<stem>.building.docx` when `verify` raises.
 completed and its own `dedupe_comments.py` removed the duplicate
 correctly, anchors and all.
 
+**Fixed as diagnosed.** `_drop_comment_anchors` removes the dropped
+copy's `commentRangeStart`, `commentRangeEnd` and the RUN holding its
+`commentReference` — the run, because a `<w:r>` left with only its
+`rPr` renders as nothing and is litter of a second kind. From every
+TEXT PART rather than the body: a comment can be anchored in a footnote,
+and an endnote is where several journals put the whole apparatus.
 
-### S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so
+Three tests, three mutants kill_check'd, and the middle one is the
+finder's own point: **removing the call reproduces the defect exactly**,
+which is what makes the test worth having rather than a restatement.
+
+**The docstring's claim was the sharpest part of the report and it is
+corrected in place rather than deleted.** It said "Verified in Word
+rather than assumed", and the verification was real — of the three
+satellite parts it was reasoning about. It never looked at
+`document.xml`. The docstring now says which parts were verified and
+which was not considered, because a claim of Word verification sitting
+above a defect is worse than no claim, and deleting the sentence would
+lose the only record of how a true statement came to cover a false one.
+
+**Why no fixture caught it, kept because it generalises.** Every
+existing case hands this function a parts dict holding
+`word/comments.xml` and nothing else, so no anchor could dangle and the
+function was correct about the only part it was given. A duplicate
+comment is a TWO-DOCUMENT condition — Compare merging the same note from
+a baseline and a revised copy — and no parts-dict fixture can express
+one. The new tests supply the body the old ones omitted.
+
+**Done since, 2026-08-27:** the finder's suggestion that
+`build` keep `~<stem>.building.docx` when `verify` raises. The failure
+path unlinks it, so a Word refusal leaves nothing to inspect — which is
+why this cost a bisect rather than a look. `_clear_staging` keeps the
+refused build and says where it is; the unlink now happens only on the
+success path, where the file has already been renamed to `out`.
+
+*(This fix narrative had been appended to the `--sample` entry below rather than to the entry it describes; moved here 2026-08-27.)*
+
+
+### ~~S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so~~ — FIXED 27.08, `b8fcb69`
+
+**Fixed 2026-08-27** — `would_lose()` in `tools/mutation_session.py`,
+with `--force`. A `--fresh --sample N` run whose existing session graded
+MORE than N mutants is refused before the unlink, naming both numbers and
+the three ways on: `--report` to read what is there, `--fresh --chunks 0`
+to re-measure it whole, `--force` to discard it anyway. Only a VERDICT
+counts as something to lose — an INCOMPETENT mutant is finished and is
+not an answer, so a session holding nothing but those has measured
+nothing and the guard stays out of the way.
+
+**A second thing was found while fixing the first**, and it is the same
+shape one level down: `--sample` handed to a RESUME does nothing at all,
+because the draw is planned at `init`. Silently, so it reads as "I
+sampled it" against a run that is measuring something else entirely. It
+says so now.
+
+**Four more came out of review, and the first is the guard causing the
+failure it was written to prevent.** `measure_all.py` builds
+`--fresh --sample N` without `--force` and never read the exit code — and
+the refusal returns BEFORE the unlink, so the old database is still on
+disk, `db.exists()` is still true, and the sweep walked past into
+`mutation_survivors.py` and printed months-old numbers as this round's
+figure. Eight of the fifty live sessions have graded more than the
+`--sample 460` CONTRIBUTING calls usual (refstyle 1744, placement 1689,
+edit 1411, hygiene 939, compare_diff 743, styles 604, xml2 538, pages
+480), so that is the ordinary path for the most-measured modules, not a
+corner of it. It reads the code now and says REFUSED instead of a number.
+
+The other three are in the guard itself:
+
+* **`progress()` never closed its sqlite connection**, and `--fresh`
+  reads the session and then unlinks it — on Windows that is
+  `WinError 32`, decided by refcount timing, on the ordinary re-sample
+  path. `sample()` had the same leak. Both closed;
+* **an unreadable session crashed the guard**, so `--fresh` — the
+  documented way to clear a session that went wrong — could no longer
+  clear the one shape it is most often needed for. There is a zero-byte
+  `.mutation-_xml.sqlite` in this repo root. An unreadable session now
+  answers "nothing to lose", which is true;
+* **`planned` was measured and thrown away.** A whole-module plan barely
+  started — 822 planned, five verdicts — was replaced by a 260 sample
+  with no word said. It is a NOTE and not a refusal: no verdict is lost,
+  only the planning time, and the two deserve different answers.
+
+**This entry had been sitting under `## Fixed` since it was filed**,
+unfixed, which is the misfiling the S4 in `## Open` is about.
 
 Found 2026-08-24, while reading CONTRIBUTING's calibration table against
 the live session files.
@@ -1568,39 +1949,6 @@ Deliberately not fixed while three sweeps were running against that
 tool. `measure_all` spawns a fresh `mutation_session` per module, so an
 edit mid-queue reaches the modules that have not started yet, and a
 mistake would take the queue down silently hours from now.
-
-**Fixed as diagnosed.** `_drop_comment_anchors` removes the dropped
-copy's `commentRangeStart`, `commentRangeEnd` and the RUN holding its
-`commentReference` — the run, because a `<w:r>` left with only its
-`rPr` renders as nothing and is litter of a second kind. From every
-TEXT PART rather than the body: a comment can be anchored in a footnote,
-and an endnote is where several journals put the whole apparatus.
-
-Three tests, three mutants kill_check'd, and the middle one is the
-finder's own point: **removing the call reproduces the defect exactly**,
-which is what makes the test worth having rather than a restatement.
-
-**The docstring's claim was the sharpest part of the report and it is
-corrected in place rather than deleted.** It said "Verified in Word
-rather than assumed", and the verification was real — of the three
-satellite parts it was reasoning about. It never looked at
-`document.xml`. The docstring now says which parts were verified and
-which was not considered, because a claim of Word verification sitting
-above a defect is worse than no claim, and deleting the sentence would
-lose the only record of how a true statement came to cover a false one.
-
-**Why no fixture caught it, kept because it generalises.** Every
-existing case hands this function a parts dict holding
-`word/comments.xml` and nothing else, so no anchor could dangle and the
-function was correct about the only part it was given. A duplicate
-comment is a TWO-DOCUMENT condition — Compare merging the same note from
-a baseline and a revised copy — and no parts-dict fixture can express
-one. The new tests supply the body the old ones omitted.
-
-**Not done, and worth doing separately:** the finder's suggestion that
-`build` keep `~<stem>.building.docx` when `verify` raises. The failure
-path unlinks it, so a Word refusal leaves nothing to inspect — which is
-why this cost a bisect rather than a look.
 
 ---
 
@@ -2490,7 +2838,54 @@ file the author is actually handed — so this needs fixing first or the new gat
 inherits the false negative.
 
 
-### S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass
+### ~~S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass~~ — FIXED 27.08, `1115816`
+
+**Fixed 2026-08-27** — a `Table` carries the hash of its OWN bytes
+alongside the hash of the document, and `_fresh` asks whether those bytes
+are still at those offsets. If they are, the edit lay elsewhere, the
+handle still means what it meant, and it is returned with the document
+hash refreshed; all thirteen call sites bind what it gives back. The
+reverse-order loop `tables_after` invites now works as written, which is
+the defect as filed.
+
+**The first draft of this fix was wrong, and the way it was wrong is the
+part worth keeping.** It re-resolved a stale handle by SEARCHING the
+document for its bytes, guarded on the match being unique. Review
+reproduced two silent wrong answers against the live tree:
+
+* **the edit that creates the staleness also defeats the uniqueness
+  check.** Two identical panels, edit one, and the OTHER is now the only
+  byte-match — so the second call rewrote the wrong panel, with no error,
+  where the old code had raised. Guarding on "exactly one match" cannot
+  see this, because there is exactly one match;
+* **a handle from a DIFFERENT document bound and edited it.** The
+  whole-document hash was the only thing tying a `Table` to the file it
+  came from, and a content search throws that away. A clean build and its
+  redline are two strings in one scope.
+
+Both are one mistake: **content is not identity when content is exactly
+what an edit changes.** The entry's own wording had the narrower rule all
+along — *re-resolve when the edit provably lies after it* — and "the
+bytes are still here" is that proof, with no search, in O(1). A table
+that MOVED is refused again, which is what the test that had been
+rewritten to assert the lookup goes back to asserting.
+
+`grid_columns` and `grid_rows` gained the freshness check they never
+had — the only two `(xml, table)` entry points without one. Survivable
+while a handle died on the first edit anywhere; not survivable once one
+legitimately outlives an edit to another table.
+
+`tools/mutate.py`'s curated sabotage for this very guard had been
+anchored on a line this change rewrote out of the module, so it was
+skipped — and `mutate.py` exits 1 on a skip, silently, since nothing runs
+it. Re-anchored, and split in two: one mutation per question the guard
+now asks.
+
+`tables_after`'s docstring states the true rule, since its return type is
+what suggested the broken loop: an edit to ANOTHER table is fine, an edit
+to THIS one means re-read, and a batch runs in reverse document order.
+
+**This entry too had been sitting under `## Fixed` while open.**
 
 Found 2026-08-24 on Health_Capacity_to_Work, styling one caption's TWO panels.
 
