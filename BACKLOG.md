@@ -26,107 +26,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S1 — a KILLED `mutate.py` leaves its sabotage in the working tree, and the next thing to read that file is a commit
-
-Found 2026-08-27, in this repo, by nearly committing one.
-
-**What happened.** A `mutate.py` run was killed part way through. It
-restores each mutation in a `finally`, which covers an exception and does
-not cover the process being killed — so `_set_borders` in
-`_table_layout.py` was left carrying its sabotage:
-
-    +    if _EDGE_RE.search(cell):
-    +        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
-
-That is the defect the mutation is named for — the nested table's
-borders rewritten instead of the outer cell's — sitting in the source, in
-a batch about to be committed. It was caught by five failing tests being
-three lines further down the diff than they should have been, and then
-only because the diffstat had three more lines than the patch that made
-it. **A `git commit -a` at any point in the previous hour would have
-shipped it.**
-
-**Why nothing said so.** `mutation_session.py` treats exactly this as
-hazard two of six — "cosmic-ray restores the file after each mutant but
-NOT when it is terminated, so a killed run leaves its mutation in the
-tree" — and guards it by verifying the unmutated baseline before every
-chunk, which turns a leftover into an immediate refusal. `mutate.py` runs
-the same risk with none of that: no baseline check, no refusal on a dirty
-tree, and no record of what it was holding when it died. The lesson was
-learned once, written down, and applied to one of the two tools that
-needs it.
-
-**It is worse here than there**, because `mutation_session` works in a
-separate `git worktree` and `mutate.py` mutates the CHECKOUT the author
-is editing — and because a sabotage mutation is by construction a defect
-the suite can catch, so the leftover looks like "my change broke five
-tests" rather than like contamination. That reading costs a debugging
-hour and then a wrong fix.
-
-**Shape of a fix.** The cheap half: write the mutation and the path to a
-sentinel file before applying it, delete the sentinel after restoring,
-and refuse to start while one exists — naming the file to put back. The
-cheaper half still: refuse to start on a dirty `git status` for the
-modules it is about to touch, so a leftover cannot hide among real edits.
-Neither needs the tool to survive being killed; both need it to say so
-afterwards.
-
-**The restore also REWRITES the line endings**, found in the same
-sitting. `path.read_text()` reads through universal newlines and the
-restore writes back with `newline=""`, so every module the run touched
-comes back LF in a working copy that is CRLF — twelve of them here, after
-one run. Invisible on this repo because `core.autocrlf=true` normalises
-it away and `git diff` is empty; on a checkout with `autocrlf=false`,
-which is how `BACKLOG.md` itself has to be committed, it is a twelve-file
-whole-file diff that appears from nowhere. Same one-line cause as the
-entry above: read and write the bytes, or read with `newline=""` too.
-
-**Workaround in use:** read `git diff --stat` against what the patch
-actually changed before believing a test failure. That is the check that
-caught it, and it is not a rule anybody can be asked to remember.
-
----
-
-### S3 — three of `mutate.py`'s anchors have drifted, so it exits 1 on every run and nobody has noticed
-
-Found 2026-08-27, alongside the entry above, by running the tool with its
-exit code visible for the first time in a while.
-
-    39/39 mutations caught
-      SKIPPED (anchor drifted): the staging directory leaks again
-      SKIPPED (anchor drifted): the run-open scan matches w:rPr again
-      SKIPPED (anchor drifted): a field ends at the first end tag, so a
-                                nested field closes its parent
-    MUTATE_EXIT=1
-
-`mutate.py` is the CURATED list — every mutation in it re-introduces a
-defect this package has really shipped — so a drifted anchor is a defect
-whose regression cover has silently gone. Three of them. The one this
-batch re-anchored was a fourth, and it drifted because *this batch*
-rewrote the line; these three drifted at some earlier point nobody
-recorded.
-
-**The tool says so and nothing reads it.** It exits 1 on a skip, prints
-the reason, and is in neither `tools/gates.py` nor `ci.yml` — so its
-report has been true and unread. `39/39 caught` at the top of the output
-is what a person's eye lands on, and it is the number that looks like a
-pass.
-
-Both halves are the same shape as the entry above and as the `## Fixed`
-entry about `heredoc_guard`: a check that is correct, that is not wired
-to anything, and that therefore reports into an empty room.
-
-**Shape of a fix.** Add `mutate.py` to the gate list — it is the fastest
-mutation cover in the repo and the only one that is curated — and
-re-anchor the three. A drifted anchor should probably also FAIL rather
-than skip: the whole point is that these mutations are the ones known to
-matter.
-
-**Workaround in use:** none. Three curated defects currently have no
-mutation cover, and this entry is the only record of which.
-
----
-
 ### S2 — `reorder_rows` reads the table back in the FINAL view whatever view the caller read it in, so a correct reorder of a REDLINE is refused
 
 Found 2026-08-27 by review, while looking at a batch that touches this
@@ -850,6 +749,162 @@ falls in a 0.4-point window.
 
 
 ## Fixed
+
+### ~~S1 — a KILLED `mutate.py` leaves its sabotage in the working tree, and the next thing to read that file is a commit~~ — FIXED 27.08, `9c47728`
+
+**Fixed 2026-08-27.** The pre-mutation bytes go to `.mutate-in-flight/`
+BEFORE the mutation is applied, which is the only ordering that helps: the
+case being guarded is the one where nothing after the write runs. A later
+run finds the stash, REFUSES, and names the file and its saved original;
+`--restore` puts it back.
+
+**Refusing rather than restoring silently**, which was the choice worth
+making. The saved bytes are right by construction, but an author who has
+EDITED that file since the kill would have the edit overwritten by a tool
+they only asked to measure something. So it says what it found and leaves
+the decision.
+
+**The line-ending half is fixed in the same loop**, and it needed both
+halves. Reading bytes alone would have broken every multi-line anchor on
+a CRLF checkout, since the anchors are written with `\n`: the file is
+read as bytes, matched in LF, the mutant written back in the file's own
+convention, and the restore is byte-for-byte from the original bytes.
+
+`tests/test_mutate.py` is new — the tool had no tests at all, which is
+most of why this and the entry below both survived. Nine of them, and the
+two that matter here are the byte-exact restore and a CRLF file still
+being mutated correctly.
+
+
+Found 2026-08-27, in this repo, by nearly committing one.
+
+**What happened.** A `mutate.py` run was killed part way through. It
+restores each mutation in a `finally`, which covers an exception and does
+not cover the process being killed — so `_set_borders` in
+`_table_layout.py` was left carrying its sabotage:
+
+    +    if _EDGE_RE.search(cell):
+    +        return _EDGE_RE.sub(lambda _: borders, cell, count=1)
+
+That is the defect the mutation is named for — the nested table's
+borders rewritten instead of the outer cell's — sitting in the source, in
+a batch about to be committed. It was caught by five failing tests being
+three lines further down the diff than they should have been, and then
+only because the diffstat had three more lines than the patch that made
+it. **A `git commit -a` at any point in the previous hour would have
+shipped it.**
+
+**Why nothing said so.** `mutation_session.py` treats exactly this as
+hazard two of six — "cosmic-ray restores the file after each mutant but
+NOT when it is terminated, so a killed run leaves its mutation in the
+tree" — and guards it by verifying the unmutated baseline before every
+chunk, which turns a leftover into an immediate refusal. `mutate.py` runs
+the same risk with none of that: no baseline check, no refusal on a dirty
+tree, and no record of what it was holding when it died. The lesson was
+learned once, written down, and applied to one of the two tools that
+needs it.
+
+**It is worse here than there**, because `mutation_session` works in a
+separate `git worktree` and `mutate.py` mutates the CHECKOUT the author
+is editing — and because a sabotage mutation is by construction a defect
+the suite can catch, so the leftover looks like "my change broke five
+tests" rather than like contamination. That reading costs a debugging
+hour and then a wrong fix.
+
+**Shape of a fix.** The cheap half: write the mutation and the path to a
+sentinel file before applying it, delete the sentinel after restoring,
+and refuse to start while one exists — naming the file to put back. The
+cheaper half still: refuse to start on a dirty `git status` for the
+modules it is about to touch, so a leftover cannot hide among real edits.
+Neither needs the tool to survive being killed; both need it to say so
+afterwards.
+
+**The restore also REWRITES the line endings**, found in the same
+sitting. `path.read_text()` reads through universal newlines and the
+restore writes back with `newline=""`, so every module the run touched
+comes back LF in a working copy that is CRLF — twelve of them here, after
+one run. Invisible on this repo because `core.autocrlf=true` normalises
+it away and `git diff` is empty; on a checkout with `autocrlf=false`,
+which is how `BACKLOG.md` itself has to be committed, it is a twelve-file
+whole-file diff that appears from nowhere. Same one-line cause as the
+entry above: read and write the bytes, or read with `newline=""` too.
+
+**Workaround in use:** read `git diff --stat` against what the patch
+actually changed before believing a test failure. That is the check that
+caught it, and it is not a rule anybody can be asked to remember.
+
+---
+
+### ~~S3 — three of `mutate.py`'s anchors have drifted, so it exits 1 on every run and nobody has noticed~~ — FIXED 27.08, `9c47728`
+
+**Fixed 2026-08-27.** All three re-anchored, and each had drifted a
+different way — which is the part worth keeping, because only one of the
+three is visible by reading the anchor:
+
+* *the staging directory leaks again* — the call moved into
+  `_clear_staging`, so its indentation went from eight spaces to four;
+* *the run-open scan matches `w:rPr` again* — the pattern gained
+  `(?<!/)` so a self-closing `<w:r/>` no longer reads as an opening tag;
+* *a field ends at the first end tag* — **the function MOVED to another
+  module.** The anchor text was still correct and still unique; the
+  module name was the stale part. No amount of reading the anchor would
+  have shown that.
+
+So the gate is not "does the anchor still match" but "does it match ITS
+MODULE, exactly once" — `tests/test_mutate.py::
+test_EVERY_anchor_matches_its_module_exactly_once`, in the suite people
+actually run rather than only inside the tool nobody was running.
+
+**In CI, in its own job — and NOT in `tools/gates.py`, which is where
+this entry proposed putting it.** Measured before deciding: 42 mutations
+at `-n <physical cores>` is **18m23s**, against about four minutes for
+the whole local chain. `-x` already stops each mutation at its first red
+test and it still costs eighteen minutes. A pre-commit gate five times
+longer than the thing it guards is one people route around, so the entry
+was right that it needed wiring and wrong about where. One job on 3.14
+rather than a step in the three-version matrix: it is 42 suite runs, and
+the answer does not depend on the interpreter.
+
+The run that closed this: **42/42 caught, no drifted anchors, exit 0.**
+
+
+Found 2026-08-27, alongside the entry above, by running the tool with its
+exit code visible for the first time in a while.
+
+    39/39 mutations caught
+      SKIPPED (anchor drifted): the staging directory leaks again
+      SKIPPED (anchor drifted): the run-open scan matches w:rPr again
+      SKIPPED (anchor drifted): a field ends at the first end tag, so a
+                                nested field closes its parent
+    MUTATE_EXIT=1
+
+`mutate.py` is the CURATED list — every mutation in it re-introduces a
+defect this package has really shipped — so a drifted anchor is a defect
+whose regression cover has silently gone. Three of them. The one this
+batch re-anchored was a fourth, and it drifted because *this batch*
+rewrote the line; these three drifted at some earlier point nobody
+recorded.
+
+**The tool says so and nothing reads it.** It exits 1 on a skip, prints
+the reason, and is in neither `tools/gates.py` nor `ci.yml` — so its
+report has been true and unread. `39/39 caught` at the top of the output
+is what a person's eye lands on, and it is the number that looks like a
+pass.
+
+Both halves are the same shape as the entry above and as the `## Fixed`
+entry about `heredoc_guard`: a check that is correct, that is not wired
+to anything, and that therefore reports into an empty room.
+
+**Shape of a fix.** Add `mutate.py` to the gate list — it is the fastest
+mutation cover in the repo and the only one that is curated — and
+re-anchor the three. A drifted anchor should probably also FAIL rather
+than skip: the whole point is that these mutations are the ones known to
+matter.
+
+**Workaround in use:** none. Three curated defects currently have no
+mutation cover, and this entry is the only record of which.
+
+---
 
 ### ~~S3 — `tools/heredoc_guard.py` is written, tested, and wired to nothing: the trap it exists to refuse was walked into twice while closing this batch~~ — FIXED 27.08, `4f6b3bc`
 
