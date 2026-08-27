@@ -13,6 +13,25 @@ toolkit has been bitten twice that way.
 workaround deleted + entry moved to `## Fixed` with its commit. Keep
 fixed entries; "did we ever fix that?" is a real question later.
 
+**Every entry declares its own status**, on the line under its heading:
+
+    ### S2 — the thing that is wrong
+    <!-- status: open -->
+
+`open` · `fixed` · `withdrawn` · `not-a-defect` · `note`. Invisible in
+rendered markdown, and `tools/backlog_status.py` gates on it: `open` may
+only sit under `## Open` and `fixed` only under `## Fixed`, while the
+three record statuses may sit in either, because some are kept in
+`## Open` deliberately.
+
+Declared rather than inferred, and that was measured. A detector reading
+strikethrough, `FIXED`, `RETRACTED` and a commit hash out of the headings
+scored **93 findings, 2 of them real** — because one entry's body says
+"Raised by the same review, and not fixed" in its first paragraph and
+"Closed 2026-08-18" in its fifth. Entries accumulate history and only the
+last word counts; no pattern can tell which sentence is the verdict, and
+the author can, once, while writing it.
+
 **Write `Refs BACKLOG.md` in the commit that carries a fix**, and
 `tools/backlog_refs.py` — in the suite, so it is a gate — turns the
 missing move into a red build instead of a thing somebody notices weeks
@@ -26,48 +45,8 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — nothing checks that an entry sits in the SECTION that describes it, and the cheap check cannot
-
-Filed 2026-08-27, out of the measurement that closed *five fixes shipped
-with no `## Fixed` entry* (in `## Fixed`, 27.08).
-
-Two misfilings were live in this file this morning, and in both
-directions at once. `--sample` and the `Table` handle sat under
-`## Fixed` while open — three days each, and both are closed in this
-batch. The RETRACTED `link_all` entry sits under `## Open` on purpose,
-and so does a not-a-defect record. On 2026-08-24 the reverse happened and
-was worse: a close-helper cutting an entry "to the next `### `" took the
-`## Fixed` heading with it, and every closed entry sat inside `## Open`
-for three commits.
-
-**The obvious gate was built, measured and thrown away, and that is the
-finding.** A resolution-detector over all 209 entries — strikethrough,
-`FIXED`, `WITHDRAWN`, `RETRACTED`, `CORRECTED`, a commit hash in the
-heading — run against the real file:
-
-    ## Open     6 entries,  4 flagged,  0 real
-    ## Fixed  203 entries, 89 flagged,  2 real
-
-**93 findings, two of them true.** Every false positive comes from a
-convention this file GREW rather than declared: an entry closed by a bare
-hash in the heading, twelve closed together under one parent heading, a
-record that was never a defect, a body that quotes the word FIXED while
-describing something else. A gate at 2 % precision is read once and
-ignored, which is the dead-gate shape this file ranks above a wrong
-answer.
-
-**What would work is a declared field, not a better regex** — a
-`status:` on each heading, or sections a parser can trust. That is a
-change to 209 existing entries, which is why this is S4 and filed rather
-than done.
-
-**Workaround in use:** `tools/backlog_refs.py`, which asks whether the
-record was WRITTEN rather than where it sits, and the two misfilings
-corrected by hand in this batch.
-
----
-
 ### Not three defects — one missing gate: nothing renders by default
+<!-- status: note -->
 
 Framing, not a defect of its own. Recorded because three entries in this file
 now share a shape, and the shape is the finding:
@@ -294,6 +273,7 @@ nothing ships silently now.
 
 
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
+<!-- status: withdrawn -->
 
 **Not a defect. `link_all` was right and the report was wrong.** It said
 `linked 0, already linked 54, back-links added 0, unmatched 0, skipped 0` for
@@ -317,6 +297,7 @@ one the work happened to touch.
 
 
 ### Not a defect — recorded so it is not chased twice
+<!-- status: not-a-defect -->
 
 Editing a table CELL, or deleting paragraphs just above a table caption, makes
 Word's Compare rewrite that caption's HYPERLINK FIELD as a `w:hyperlink`
@@ -405,6 +386,7 @@ looked for was in a part of the package it never opened.
 
 
 ### Mutation analysis — the equivalent mutants, by module
+<!-- status: note -->
 
 Recorded rather than chased. A survivor that CANNOT change behaviour is
 a fact about the code, and the next sweep should not spend an afternoon
@@ -709,7 +691,89 @@ falls in a 0.4-point window.
 
 ## Fixed
 
+### ~~S4 — nothing checks that an entry sits in the SECTION that describes it, and the cheap check cannot~~ — FIXED 27.08, `9f851d0`
+<!-- status: fixed -->
+
+**Fixed 2026-08-27.** Every entry now declares its own status on the line
+under its heading — `<!-- status: … -->`, one of `open`, `fixed`,
+`withdrawn`, `not-a-defect`, `note` — and `tools/backlog_status.py`
+gates on it: `open` only under `## Open`, `fixed` only under `## Fixed`,
+the three record statuses in either, because some are kept in `## Open`
+on purpose.
+
+**213 entries stamped, and not one character of an existing heading or
+body changed** — 213 insertions, 0 deletions. That was the design
+constraint rather than a happy accident: a pass over every entry in a
+9,700-line file is exactly where a misfiling gets introduced, and an
+additive marker cannot corrupt what it annotates.
+
+**The statuses were adjudicated, not inferred.** 205 took their section's
+status; 8 were read in full first and named as records — two withdrawals,
+three not-a-defects, two notes, and this entry. Reading them turned up
+the sharpest argument for the whole approach, which no fixture would have
+produced: *a fifth writer of CT_PPr order* says **"Raised by the same
+review, and not fixed"** in its first paragraph and **"Closed
+2026-08-18"** in its fifth. It is correctly filed. Entries accumulate
+history and only the last word counts — no pattern can know which
+sentence is the verdict, and the author can, once, at the moment of
+writing.
+
+**Kill-checked against the REAL file, healthy and deliberately broken**,
+in memory rather than on disk — an hour after filing that a killed tool
+leaves its sabotage in the tree, writing a deliberate defect to disk to
+watch a check fail is the wrong instrument. Healthy: 0 problems. An
+`open` left under `## Fixed` (the `--sample` shape): named, 1 problem. A
+`fixed` left under `## Open` (the 2026-08-24 close-helper shape): named.
+An entry written with no marker: named. Ten tests, and the one that keeps
+the field from decaying is that a MISSING status is a finding rather than
+an assumption.
+
+**What it deliberately does not do** is check that the declaration is
+TRUE. A `fixed` on a live defect passes. That is the same bargain
+`tables_after`'s stated count makes, and the alternative is the inference
+this entry exists to reject.
+
+Filed 2026-08-27, out of the measurement that closed *five fixes shipped
+with no `## Fixed` entry* (in `## Fixed`, 27.08).
+
+Two misfilings were live in this file this morning, and in both
+directions at once. `--sample` and the `Table` handle sat under
+`## Fixed` while open — three days each, and both are closed in this
+batch. The RETRACTED `link_all` entry sits under `## Open` on purpose,
+and so does a not-a-defect record. On 2026-08-24 the reverse happened and
+was worse: a close-helper cutting an entry "to the next `### `" took the
+`## Fixed` heading with it, and every closed entry sat inside `## Open`
+for three commits.
+
+**The obvious gate was built, measured and thrown away, and that is the
+finding.** A resolution-detector over all 209 entries — strikethrough,
+`FIXED`, `WITHDRAWN`, `RETRACTED`, `CORRECTED`, a commit hash in the
+heading — run against the real file:
+
+    ## Open     6 entries,  4 flagged,  0 real
+    ## Fixed  203 entries, 89 flagged,  2 real
+
+**93 findings, two of them true.** Every false positive comes from a
+convention this file GREW rather than declared: an entry closed by a bare
+hash in the heading, twelve closed together under one parent heading, a
+record that was never a defect, a body that quotes the word FIXED while
+describing something else. A gate at 2 % precision is read once and
+ignored, which is the dead-gate shape this file ranks above a wrong
+answer.
+
+**What would work is a declared field, not a better regex** — a
+`status:` on each heading, or sections a parser can trust. That is a
+change to 209 existing entries, which is why this is S4 and filed rather
+than done.
+
+**Workaround in use:** `tools/backlog_refs.py`, which asks whether the
+record was WRITTEN rather than where it sits, and the two misfilings
+corrected by hand in this batch.
+
+---
+
 ### ~~S2 — `reorder_rows` reads the table back in the FINAL view whatever view the caller read it in, so a correct reorder of a REDLINE is refused~~ — FIXED 27.08, `0dc84d4`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27.** `Table` carries the `view` it was read in, and the
 self-check re-reads with it. That is the first of the two shapes this
@@ -779,6 +843,7 @@ every other mutator here already requires.
 ---
 
 ### ~~S1 — a KILLED `mutate.py` leaves its sabotage in the working tree, and the next thing to read that file is a commit~~ — FIXED 27.08, `9c47728`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27.** The pre-mutation bytes go to `.mutate-in-flight/`
 BEFORE the mutation is applied, which is the only ordering that helps: the
@@ -864,6 +929,7 @@ caught it, and it is not a rule anybody can be asked to remember.
 ---
 
 ### ~~S3 — three of `mutate.py`'s anchors have drifted, so it exits 1 on every run and nobody has noticed~~ — FIXED 27.08, `9c47728`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27.** All three re-anchored, and each had drifted a
 different way — which is the part worth keeping, because only one of the
@@ -935,6 +1001,7 @@ mutation cover, and this entry is the only record of which.
 ---
 
 ### ~~S3 — `tools/heredoc_guard.py` is written, tested, and wired to nothing: the trap it exists to refuse was walked into twice while closing this batch~~ — FIXED 27.08, `4f6b3bc`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27.** The hook is registered in the USER's
 `~/.claude/settings.json` as `PreToolUse` on `Bash`, and the TENTH
@@ -1055,6 +1122,7 @@ nine times, and is exactly why the guard was built.
 ---
 
 ### ~~S3 — five fixes shipped with no `## Fixed` entry, so tonight the backlog read as ten open defects when five were done~~ — FIXED 27.08, `9b41c10`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27** — `tools/backlog_refs.py`, with
 `tests/test_backlog_refs.py`.
@@ -1145,6 +1213,7 @@ notices weeks later.
 ---
 
 ### ~~S4 — `math --check` reads a symbol-only TABLE CELL as a display equation stranded inline, and offers a repair that refuses~~ — FIXED 27.08, `766a8df`; REGRESSED, RE-FIXED 27.08, `9e68cf7`
+<!-- status: fixed -->
 
 Found 2026-08-27 on Aging_Well, whose new Appendix opens with a two-column
 notation table. `display_equations` counts any paragraph holding nothing but
@@ -1213,6 +1282,7 @@ ran it instead.
 ---
 
 ### ~~S4 — `write_docx` stamps every zip entry with the CURRENT time, so "byte-identical" can never prove "changed nothing"~~ — FIXED 27.08, `56f44ea`
+<!-- status: fixed -->
 
 Measured 2026-08-26 on Aging_Well while timing the round-close chain. Run any
 idempotent pass twice on an unchanged manuscript and the two outputs have
@@ -1254,6 +1324,7 @@ timestamp fix visible immediately.
 ---
 
 ### ~~S2 — nothing checks that a FIELD is balanced: `lint` passes a document with an unterminated `fldChar`~~ — FIXED 27.08, `ffeed8c`
+<!-- status: fixed -->
 
 Found 2026-08-26 on Aging_Well, dropping a figure whose in-text mention is a
 field-form hyperlink. Deleting the sentence took the field's display runs and
@@ -1297,6 +1368,7 @@ defect gets introduced.
 
 ---
 ### ~~S2 — `restore_math_glyphs` matches WHOLE `m:t` runs, so a run Word FUSED is never repaired~~ — FIXED 27.08, `0a3046c`
+<!-- status: fixed -->
 
 Found 2026-08-27 on Aging_Well, inserting a 13-equation model. Word's Compare
 flattens glyphs inside `m:t` AND re-fragments the runs, and the restorer keys
@@ -1326,6 +1398,7 @@ working around the library.
 ---
 
 ### ~~S3 — `figures` assumes the caption sits ABOVE the drawing, so a caption-BELOW paper has no addressable figures and `figures --check` can never go green~~ — FIXED 27.08, `fe6bb5d`
+<!-- status: fixed -->
 
 Found 2026-08-26 on Aging_Well, whose three figures are conceptual diagrams
 with the caption in the paragraph directly AFTER the image — paragraphs 22/23,
@@ -1375,6 +1448,7 @@ simply cannot pass `figures --check` today.
 ---
 
 ### ~~S2 — the one gate that RENDERS has no opinion about WHERE content lands, and the rule that would prevent it has no auditor and no CLI~~ — FIXED 26.08, `cb25235`
+<!-- status: fixed -->
 
 Reported 2026-08-24 from Aging_Well, by the author reading the paper:
 "Table 1 is split across pages — this is against the house rule."
@@ -1436,6 +1510,7 @@ nothing asked".
 
 
 ### ~~S1 — `place(render=…)` cannot find a multi-COLUMN table on the page, so its fit is never measured and `own_page` can never fire~~ — FIXED 26.08, `67459c9`
+<!-- status: fixed -->
 
 Found 2026-08-24 on Aging_Well, the first real use of `place`'s render path on
 a table with more than one column. The run printed:
@@ -1486,6 +1561,7 @@ above about `pages --check`: the check watches a proxy, and the proxy agreed.
 ---
 
 ### ~~S2 — a citation's link SPAN survives an author's edit to the mention, and `ingest` calls that RE-LABELLED~~ — FIXED 25.08, `924cd2e`
+<!-- status: fixed -->
 
 Found 2026-08-25 on Aging_Well. **The fourth span defect on this one paper,
 and the first not caused by the grammar.** The author changed a narrative
@@ -1519,6 +1595,7 @@ Second time a stale signature has cost that script a silent no-op. A repair
 that reads the links needs no signature and cannot go stale.
 
 ### ~~S2 — `citations.link_all` has the SAME half-eaten pair as `crossrefs`, and reports it as a benign skip~~ — FIXED 25.08, `e56906e`
+<!-- status: fixed -->
 
 Found 2026-08-25 on Aging_Well, and it is the entry at the top of this file
 with the nouns changed: the convention is a PAIR — the forward link on the
@@ -1563,6 +1640,7 @@ about a correct manuscript.
 and is idempotent (a second run does no work). Delete it when this lands.
 
 ### ~~S2 — `crossrefs --write` cannot repair what `crossrefs --audit` reports: a half-eaten pair reads as "already linked"~~ — FIXED 25.08, `805e1ad`
+<!-- status: fixed -->
 
 Found 2026-08-24 on Aging_Well. The author rewrote the paragraph mentioning
 Figure 2; Word kept the forward `<w:hyperlink w:anchor="Figure2">` and ate the
@@ -1609,6 +1687,7 @@ is where a repair gets skipped.
 ---
 
 ### S4 — four inlined copies of `comments._append_before_close`
+<!-- status: fixed -->
 
 **Fixed 2026-08-25** — `9ba39e7`. The helper moved to `_xml`, where both
 modules already get their XML primitives, rather than `hygiene`
@@ -1633,6 +1712,7 @@ order`) about exactly that having happened once.
 
 
 ### S4 — `_drop_comment_anchors` re-reads every text part once per COMMENT
+<!-- status: fixed -->
 
 **Fixed 2026-08-25** — `9ba39e7`. One alternation over all the ids
 instead of one pass per id: 71 ms -> 2.5 ms for forty on the same body,
@@ -1660,6 +1740,7 @@ that anyone is waiting on it.
 
 
 ### S3 — three Relationship parsers, and they have already drifted
+<!-- status: fixed -->
 
 **Fixed 2026-08-25** — `9ba39e7`. `_resolve` normalises the separator
 before resolving, as `_compare_read` already did, so a Target written
@@ -1699,6 +1780,7 @@ have since learned something the third has not.
 
 
 ### S2 — `carry` restores from the CLEAN COPY, which is the file that lost the part
+<!-- status: fixed -->
 
 **Fixed 2026-08-25** — `977d78b`. The clean copy is asked first and the
 BASELINE second, and what is taken from the baseline is reported apart
@@ -1780,6 +1862,7 @@ saved both.
 
 
 ### S2 — `repkit` and `safekit` carry a FORK of `coverage_floor.py`, without the guard this one paid for
+<!-- status: withdrawn -->
 
 **Withdrawn 2026-08-25, the same day it was filed, and wrong when it was
 filed.** Both copies had already been brought up to date — repkit and
@@ -1848,6 +1931,7 @@ rather than done.
 
 
 ### ~~S1 `hygiene.dedupe_comments` drops the comment BODY and leaves its anchors~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found 2026-08-24 on Health Capacity to Work, rebuilding batch A2b's
 redline for the author. `tracked.build` raised
@@ -1961,6 +2045,7 @@ success path, where the file has already been renamed to `out`.
 
 
 ### ~~S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so~~ — FIXED 27.08, `b8fcb69`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27** — `would_lose()` in `tools/mutation_session.py`,
 with `--force`. A `--fresh --sample N` run whose existing session graded
@@ -2046,6 +2131,7 @@ mistake would take the queue down silently hours from now.
 ---
 
 ### ~~S3 an ANCHOR does not survive Word's Compare in either direction~~ — WARNED AT BUILD TIME 24.08
+<!-- status: fixed -->
 
 Filed 2026-08-24 from a second session's measurement on Aging_Well R24,
 pasted here rather than written by the finder because this file was
@@ -2141,6 +2227,7 @@ body, because several journals take the whole apparatus as endnotes.
 ---
 
 ### ~~S2 `kill_check` shares one checkout with every other caller and takes no lock~~ — FIXED 24.08
+<!-- status: fixed -->
 
 `mutation_session` guards its worktree with a lock, and the comment on
 it says why: *"Two runs measuring DIFFERENT modules still mutate one
@@ -2187,6 +2274,7 @@ implementation.
 ---
 
 ### ~~S4 a year-labelled table COLUMN HEADER parses as a citation~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on HCW, 2026-08-23.
 
@@ -2244,6 +2332,7 @@ hide.
 ---
 
 ### ~~S4 `RefStyleReport.cited` and `.entries` are COUNTS with collection names~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on HCW, 2026-08-23, writing T17.2's cross-check.
 
@@ -2303,6 +2392,7 @@ first of those looks like code that reads a number.
 ---
 
 ### ~~S2 Word's Compare merges a CHANGED FOOTNOTE and writes the merged string into both copies~~ — CORRECTED 24.08: it is gated twice, and was when this was filed
+<!-- status: fixed -->
 
 Found on LI7, 2026-08-23, by `word_compare.py`'s round-trip gate.
 
@@ -2386,6 +2476,7 @@ with the actual file, and nothing in docxkit changes either way.
 ---
 
 ### ~~S3 RE-OPENED: the heredoc backslash defect is marked FIXED, but nothing gates the BASH path~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Re-opened 2026-08-23. The entry below in `## Fixed`
 ("~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08") records
@@ -2514,6 +2605,7 @@ than an agent's.
 ---
 
 ### ~~S1 every gate reads the WORKING copy, so a commit missing a definition was green here and broken everywhere else~~ — FIXED 24.08
+<!-- status: fixed -->
 
 `main()` called `_build_args(r)` twice; the definition was never staged.
 Two commits sat in local history that way — f3a6fd4..01b1c7e — and
@@ -2571,6 +2663,7 @@ author and the lint error they are actually there to fix.
 ---
 
 ### ~~S4 `ship` RE-DECLARES `build`'s flags, so every flag added to `build` is an AttributeError on `ship` until someone remembers~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found 2026-08-23, immediately, by adding one flag.
 
@@ -2620,6 +2713,7 @@ and names no flag itself.
 ---
 
 ### ~~S4 `MATH_DOWNGRADES` knows the MINUS but not the PRIME, so a prime-bearing equation cannot be built~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on Aging_Well, 2026-08-23, on the same batch.
 
@@ -2662,6 +2756,7 @@ does NOT know turns up, says which character it was.
 ---
 
 ### ~~S4 `crossrefs --labels` REPLACES the default labels, so a narrowed run prints a clean report about the exhibits it did not look at~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found 2026-08-23 by the other session, on a paper tonight, and passed to me
 because the flag is mine (21.08). It filed the finding in that paper's config
@@ -2708,6 +2803,7 @@ read as "nothing is unlinked" rather than "nothing I looked at".
 ---
 
 ### ~~S4 the unbalanced-field integrity flag names an EMPTY paragraph for the orphan half, so the flag cannot be located~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on HCW, 2026-08-23, on every compare run in the batch.
 
@@ -2750,6 +2846,7 @@ pairing worth having.
 ---
 
 ### ~~S2 `tracked.build` loses `<w:trackRevisions/>` and DUPLICATES a comment present in both inputs~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found 2026-08-24 on Health_Capacity_to_Work. `build` already carries
 `docProps/core.xml` and `custom.xml` back because Compare regenerates them
@@ -2822,6 +2919,7 @@ Not deleted here; that paper has a session in it.
 ---
 
 ### ~~S3 nothing checks that a caption's NUMBER is a FIELD — a text-reading numbering audit passed a manuscript that prints two "Table 3"s and no "Table 8"~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found 2026-08-24 on Health_Capacity_to_Work, by eye, in a PDF exported for an
 unrelated reason.
@@ -2888,6 +2986,7 @@ finds the defect is the part every paper needs.
 ---
 
 ### ~~S3 `word.export_pdf` cannot render MARKUP, so a redline renders clean and looks like a batch that marked nothing~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found 2026-08-24 on Health_Capacity_to_Work, while checking that a handed-back
 redline actually showed the author what changed.
@@ -2932,6 +3031,7 @@ inherits the false negative.
 
 
 ### ~~S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass~~ — FIXED 27.08, `1115816`
+<!-- status: fixed -->
 
 **Fixed 2026-08-27** — a `Table` carries the hash of its OWN bytes
 alongside the hash of the document, and `_fresh` asks whether those bytes
@@ -3011,6 +3111,7 @@ each call"* — and note it on `tables_after`, whose return type is what suggest
 the broken loop.
 
 ### Checked and NOT defects — recorded so they are not re-derived
+<!-- status: not-a-defect -->
 
 Both were suspected in an earlier session on this manuscript and re-measured
 on 2026-08-24 against the current tree:
@@ -3052,6 +3153,7 @@ from a PDF has to see.
 ---
 
 ### ~~S2 `link_all` CLIPS a surname that opens with a lowercase particle, so half the name stays black~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on Aging_Well, 2026-08-23, adding de São José et al. (2019) under
 referee Issue 4.
@@ -3150,6 +3252,7 @@ the same time: the widening it compensates for is the one
 ---
 
 ### ~~S1 `\max`, `\min` and `\lim` come out ITALIC, so an optimization problem renders as three variables~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on Aging_Well, 2026-08-24, reading the rendered page of the batch that
 gave that paper its first mathematics. Equation (5) is a planner problem and
@@ -3267,6 +3370,7 @@ page, `\sup` among them — it was broken too and had not been measured.
 ---
 
 ### ~~S1 `latex_to_omml` DROPS every LaTeX spacing command, silently~~ — FIXED 24.08
+<!-- status: fixed -->
 
 Found on Aging_Well, 2026-08-23, building the paper's first mathematics
 (R20).
@@ -3333,6 +3437,7 @@ first six.
 ---
 
 ### ~~S1 `compare` does not compare `word/media/` AT ALL: a figure replaced, corrupted or DELETED is reported as zero changes~~ — FIXED 24.08, `b657e52`
+<!-- status: fixed -->
 
 Found on HCW, 2026-08-23, during T12.2 — a task whose entire deliverable was
 four replaced images.
@@ -3441,6 +3546,7 @@ for every paper.
 
 
 ### ~~Twelve from a code review of the round just committed~~ — FIXED 24.08
+<!-- status: fixed -->
 
 `/code-review max src/docxkit/revision.py`, run against the four commits of
 2026-08-23 (`00dd491`, `d58c318`, `409d68b`, `ae3605b`). Fifteen findings:
@@ -3533,6 +3639,7 @@ real and stays; it is written down now.
 the other session's redline retention made false the same day.
 
 ### One the review MISSED, found by probing while it ran
+<!-- status: fixed -->
 
 `verdict`'s paragraph multiset asked *is this text in the document* rather
 than *is it where the batch put it*. When a proposed paragraph's text
@@ -3546,6 +3653,7 @@ survived. Fifteen review angles did not find it; a five-minute probe with
 three synthetic cases did.
 
 ### ~~S1 the protocol kept no copy of the REDLINE, so an accepted batch became invisible everywhere~~ — FIXED 23.08, `1c74e08`
+<!-- status: fixed -->
 
 Found on Aging_Well, 2026-08-23, by the author: *"I do not see track changes
 in working.docx; this seems to be a systemic problem. Other papers also lost
@@ -3606,6 +3714,7 @@ R15 and R16.
 
 
 ### ~~S2 an untracked apparatus pass changed the manuscript and left no record of what it did~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Found 2026-08-23 in the protocol review.
 
@@ -3638,6 +3747,7 @@ Four tests in `tests/test_revision_verdict.py`. Load-bearing: dropping the
 two counts fails 3, dropping the `apparatus_only` verdict fails 2.
 
 ### ~~S4 `[verify] commands` were recorded and never run, so a paper's own gates ran when someone remembered~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Found 2026-08-23 in the protocol review; the author asked for it directly.
 
@@ -3677,6 +3787,7 @@ output, and the exit code is 5.
 the flag fails 1, collapsing 5 into 1 fails 1.
 
 ### ~~S2 the author's VERDICT was recorded nowhere — after adjudication a paper reads the same whether every revision was accepted or every one rejected~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Found 2026-08-23 in the protocol review. Not a wrong answer — a fact that
 existed and was never written down, and then stopped existing.
@@ -3733,6 +3844,7 @@ fails 2, taking a stale batch as the proposal fails 2, appending to the end
 of the file fails 1.
 
 ### ~~S4 the protocol is single-paper and the author has nine, so "which of them is waiting on me?" had no answer~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Found 2026-08-23 in the protocol review, from the author's own framing:
 *"I work on several papers at the same time."* Not a defect — a capability
@@ -3787,6 +3899,7 @@ instead.
 `tests/test_revision_survey.py`, 21 tests.
 
 ### ~~S1 `revision init --force` REWRITES `paper.toml` from the template, and resets the log and the baseline with it~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Found 2026-08-23 while reviewing the protocol at the author's request, not
 from a paper. Measured, then measured again across every live paper.
@@ -3917,6 +4030,7 @@ Reverting the fix turns the first red.
 ---
 
 ### ~~S2 `build` never checked that the baseline is the generation the manuscript grew out of, so the refusal arrived one Word Compare late~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Found 2026-08-23 in the same protocol review as the entry above, and the
 code had already written the finding down: `drift`'s docstring says *"A batch
@@ -3958,6 +4072,7 @@ refuse.
 
 
 ### ~~S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it~~ — FIXED 23.08
+<!-- status: fixed -->
 
 `audit` asked whether the two bookmarks EXIST. Word keeps bookmarks and
 strips run-level hyperlinks out of any paragraph an author rewrites, so
@@ -3990,6 +4105,7 @@ direction, the no-duplicate-bookmark guarantee, a field link counting as
 reach, and a dangling REF.
 
 ### ~~S2 `refstyle`'s order check is a CONSECUTIVE-PAIR test~~ — FIXED 23.08
+<!-- status: fixed -->
 
 The check compared each entry's surname with the one above it, so an
 appended run inverted only at its first pair: Aging_Well's author added
@@ -4017,6 +4133,7 @@ the entry above them; `year-order` covers those and `refile` refuses
 them.
 
 ### ~~S2 `refstyle` calls a work uncited when its only citation is a bare year inside a multi-year group~~ — FIXED 23.08
+<!-- status: fixed -->
 
     before: ¶138 uncited-ref "Sen, A. (2009). The Idea of Justice…"
             while `citations` reported the same file 79 of 79 linked
@@ -4045,6 +4162,7 @@ details paid for themselves immediately:
 
 
 ### ~~S4 `refstyle` has no fixer, so every paper writes the sort itself~~ — FIXED 23.08
+<!-- status: fixed -->
 
 Filed and fixed the same day, with the rule the author stated while it
 was open: the reference list starts on a NEW PAGE and every entry carries
@@ -4082,6 +4200,7 @@ rules by DEFAULT** — a paper that sets its list differently passes
 
 
 ### ~~S4 four ergonomics findings from the same review~~ — FIXED 22.08
+<!-- status: fixed -->
 
 **The front door advertised the pair that now raises.** `__init__`'s
 module docstring and the README both opened with
@@ -4117,6 +4236,7 @@ gate. One spelling now.
 
 
 ### ~~S2 three wrong answers nothing was watching~~ — FIXED 22.08
+<!-- status: fixed -->
 
 **`audit_parts` returned a false all-clear on a file it could not
 read.** `roots, _malformed = _roots(parts)` dropped the message and
@@ -4145,6 +4265,7 @@ read, so the report names the author's file and nothing is read twice.
 
 
 ### ~~S3 `docxkit lint` exited 1 on advisory findings, which is the gate the library split apart to avoid~~ — FIXED 22.08
+<!-- status: fixed -->
 
 `lint.audit` exists because the duplicate-bookmark check "shipped
 inside `lint` for one commit and bricked every mutating command on a
@@ -4163,6 +4284,7 @@ wonder why a printed finding did not fail.
 
 
 ### ~~S3 Word's own anchors reached the loss gates, and one of them REFUSES the build~~ — FIXED 22.08
+<!-- status: fixed -->
 
 Teaching `internal_links` the `REF` form fed Word's auto-minted
 `_Ref211944524` names into three comparisons that ask "what went
@@ -4195,6 +4317,7 @@ before someone "simplifies" one of the two.
 
 
 ### ~~S1 two gaps shared one key, so a link at the top cleared a bookmark at the bottom~~ — FIXED 22.08
+<!-- status: fixed -->
 
 `_reached` files each bookmark under the PLACE it sits in: a paragraph
 index, or a negative key for the gap Word hoisted it into. Both ends of
@@ -4214,6 +4337,7 @@ key is then `-1 - i` in every case, with no special one to fold.
 
 
 ### ~~S1 a four-digit page number was read as a second work~~ — FIXED 22.08
+<!-- status: fixed -->
 
 `(Acemoglu and Robinson 2012, 1215)` produced TWO citations: the work,
 and a phantom by the same authors dated 1215. `audit_links` then
@@ -4236,6 +4360,7 @@ sentence says and what the linker must wrap.
 
 
 ### ~~S1 a horizontal rule after a caption took its table away~~ — FIXED 22.08
+<!-- status: fixed -->
 
 `_owns_an_image` asked "is there a picture after this caption" and
 nothing else. When the caption sits UNDERNEATH its table — AFI's Tables
@@ -4262,6 +4387,7 @@ panel images is still a table.
 
 
 ### ~~S1 `crossrefs` could not see a Word cross-reference, so `unlink` removed the bookmarks and left the fields dangling~~ — FIXED 22.08
+<!-- status: fixed -->
 
 Teaching `internal_links` the `REF` form on 22.08 left `crossrefs`
 reading the two it already knew. On a document whose exhibit mentions
@@ -4295,6 +4421,7 @@ next rebuild.
 
 
 ### ~~S2 neither audit reads a Word CROSS-REFERENCE, so a working link reports as "the mention reaches nothing"~~ — FIXED 22.08
+<!-- status: fixed -->
 
 `internal_links` reads the third form now — `REF <bookmark> \h`, which
 is what Insert ▸ Cross-reference writes — alongside the `w:hyperlink`
@@ -4338,6 +4465,7 @@ worse than the gap while it stays that way. Worth doing the day a paper
 produces one.
 
 ### ~~S4 the citation report's order was decided by PYTHONHASHSEED~~ — FIXED 22.08
+<!-- status: fixed -->
 
 Found while A/B-ing the entry above: two runs of `docxkit citations` on
 li7, same file and same code, reported the same 29 findings in a
@@ -4352,6 +4480,7 @@ as churn that isn't there. The name breaks the tie now. Confirmed
 identical across four hash seeds.
 
 ### ~~S3 the coverage floors read a RED suite as a measurement~~ — FIXED 22.08
+<!-- status: fixed -->
 
 `coverage_floor.measure()` runs the suite itself and reads the JSON
 report. `check=False` is right — the report has to be readable when
@@ -4374,6 +4503,7 @@ reader somewhere there is nothing wrong. `tests/test_coverage_floor.py`
 pins all three paths.
 
 ### Not a defect — the Windows fatal exception in a GREEN run
+<!-- status: not-a-defect -->
 
 `pytest -q tests/test_cli_revision.py` prints, in most runs:
 
@@ -4394,6 +4524,7 @@ spend the same hour — what it costs is a fatal-looking line in a green
 run, which is a real cost, but not a defect to fix here.
 
 ### ~~S1 a FIGURE caption takes the table ABOVE it, and every table caption in the paper shifts~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **A paper's gate went red without the paper changing.** HCW's
 `test_paper_values.py` was 19 green on 08-08 and 12 RED on 08-21 with
@@ -4451,6 +4582,7 @@ is a question about the toolkit first.
 
 
 ### ~~S2 a DUPLICATE bookmark name is invisible to every gate~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Found by testing the Word path on a second paper.** A one-word round
 through `tracked.build` on FLOPS v34 came back **20 bookmarks lighter**
@@ -4522,6 +4654,7 @@ Compare round 153 -> 153, where it used to lose 20. The two files in
 paper re-syncs them.
 
 ### ~~S3 the agent's Bash heredocs EAT BACKSLASHES~~ — FIXED 21.08, **RE-OPENED 23.08** (see `## Open`)
+<!-- status: fixed -->
 
 > **Not fixed.** Occurrences five and six, 2026-08-23, corrupted a shared
 > `tests/test_revision.py` twice in ten minutes and blocked a second session.
@@ -4624,6 +4757,7 @@ Recorded in CONTRIBUTING under "A backslash does not survive the BASH
 tool", where a session working here will meet it.
 
 ### ~~S2 `link_all` MARKS an entry nothing cites, and the audit reports the marker twice~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **The redundancy was a theorem, not a coincidence.** `REF WITHOUT CITE`
 fires for a key in `ref_marks - cited_keys`, and `cited_keys` holds
@@ -4670,6 +4804,7 @@ Parental Style and DSI stay at 0 either way. 41 lines gone, none of them
 carrying a fact the line under it did not.
 
 ### ~~S2 the LOST-link repair does not fire when Word left a LATER mention linked~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** `already linked` is a fact about a MENTION and the scan read it
 as one about the work — any surviving link to the entry made the whole
@@ -4695,6 +4830,7 @@ this. le14 stays 45 -> 45; Parental Style and DSI stay 0 -> 0.
 `build_r5d.py` — see the note left in that script.
 
 ### ~~S2 `link_rest` cannot resolve an entry whose YEAR carries a letter~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** `'Maestas et al. (2023b)' (¶89): entry has no bookmark`, for an
 entry that carries one. The fold must END with the work's year, and
@@ -4716,6 +4852,7 @@ that already had one — the doubling `_own_bookmark`'s docstring records.
 `build_r5d.py`.
 
 ### ~~S3 `crossrefs.audit` cannot fail on a document where NOTHING is cross-linked~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** a caption carrying NEITHER bookmark fell through all three
 buckets and was counted nowhere, so five unlinked exhibits printed the
@@ -4728,6 +4865,7 @@ case the audit exists for — a caption and a mention and no bookmarks
 anywhere — and fails without it.
 
 ### ~~S4 the `crossrefs` CLI cannot be given a label the document actually uses~~ — FIXED 21.08
+<!-- status: fixed -->
 
 `docxkit crossrefs PAPER.docx --labels Figure,Table,Box`, on both
 `--audit` and `--write`; `crossrefs.link` and `audit` have taken the
@@ -4736,6 +4874,7 @@ label set since they were written, and only the command baked
 script.
 
 ### ~~S1 `link` cannot repair a LOST citation link~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** a Word round-trip with track changes off drops in-text links
 and the bookmarks they carried while every word on the page survives.
@@ -4781,6 +4920,7 @@ without the fix with exactly the reported symptom.
 hand-wiring r4 batch 23 did for the same reason.
 
 ### ~~S4 read-only `revision status` and `ingest` refuse on a Word lock~~ — FIXED 21.08
+<!-- status: fixed -->
 
 `package.readable(path)` yields `(path, copied)`: the path itself, or a
 byte COPY when Word holds the file — which is what the measurement in
@@ -4798,6 +4938,7 @@ was no answer at all, at the one moment the command is most useful. If
 the copy fails too, the old refusal is what comes back.
 
 ### ~~S4 `locate` and `probe` call their positional an ANCHOR and mean a PHRASE~~ — FIXED 21.08
+<!-- status: fixed -->
 
 Both positionals are `phrase` now, `--anchors-from` is `--phrases-from`
 (the old spelling still accepted), `probe(path, phrases=…)` fills
@@ -4815,11 +4956,13 @@ A wrong answer that reads like a finding costs more than the sentence
 that prevents it.
 
 ### ~~S4 `docxkit.batch` re-exports `DOCUMENT` but not `FOOTNOTES`~~ — FIXED 21.08
+<!-- status: fixed -->
 
 `FOOTNOTES` and `ENDNOTES` too. Bookmark ids must be unique across the
 whole document, notes included. One line, plus the test that says why.
 
 ### ~~S1 nothing ties a batch to the BASELINE it was built on~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** a refused `revision build` left the PREVIOUS redline in
 `build/batch.docx`, and nothing downstream could tell. `validate` then
@@ -4856,6 +4999,7 @@ pipe a protocol command into `tail` — the shell gives you `tail`'s exit
 code.
 
 ### ~~S2 `build_overrides` ingests BODY paragraphs only~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** the alignment ran over body paragraphs and both note stores
 were read for one thing, remapping the ids Word renumbered. An edit the
@@ -4899,6 +5043,7 @@ skipped. A missing part is a package loss (`missing_parts`,
 time has no baseline paragraph to anchor an insert on.
 
 ### ~~S2 a MULTI-YEAR citation parses as nothing at all~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** `find_citations("Sen (1985, 1992)")` returned `[]`. Not the
 first year — NOTHING, so the author went missing with the extra years.
@@ -4930,6 +5075,7 @@ parenthesis, and admitting intervening words is how the grammar's
 recorded false positives were made.
 
 ### ~~S2 `citations` counts a WORK, not a MENTION~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** after `link_all`, Aging_Well's audit said `0 unlinked
 citation-like mentions` and `ALL CHECKS PASSED` while 20 of its 73
@@ -4959,6 +5105,7 @@ uses to decide what is left to wire.
 scratchpad.
 
 ### ~~S2 `docProps/custom.xml` is exempted as "Word regenerates it on save"~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** `REGENERATED_BY_WORD = ("docProps/",)`, so the parts gate
 skipped a part Word does not synthesise. On the Aging_Well Bank
@@ -4978,6 +5125,7 @@ way the `customXml/` store already was.
 `Aging_Well/revision/scripts/restore_compare_losses.py`'s custom.xml half.
 
 ### ~~S2 `restore_parts` cannot restore a FOOTER~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** the relationship walk keyed on the rels Target with `../`
 stripped, which is the customXml spelling and nothing else. A footer's
@@ -5013,6 +5161,7 @@ reference lands in is the one the author meant.
 **Workaround retired:** the same paper script's other three edits.
 
 ### ~~S4 no safe way to set run properties without walking into a field~~ — CLOSED 21.08
+<!-- status: fixed -->
 
 `edit.set_run_properties` and `edit.is_field_run` landed 2026-08-20.
 What was left open was one question: whether AFI's r3 note about
@@ -5037,6 +5186,7 @@ Nothing to change here — `probe` already answers the question, and it
 was never asked.
 
 ### ~~S4 `_NO_ITALICS_MARKERS` knows "working paper" and not the other names a series goes by~~ — FIXED 21.08
+<!-- status: fixed -->
 
 **Was:** both of Aging_Well's italics findings were false — "Social
 Development Papers No. 1, Asian Development Bank" and "Research
@@ -5052,6 +5202,7 @@ check exists for. "World Development Report 2020" is still flagged;
 both cases are pinned.
 
 ### ~~S2 `refstyle` reads "<Capitalised noun> and <Source> (Year)" as a two-author citation~~ — CLOSED 21.08
+<!-- status: fixed -->
 
 The LINKED half was fixed 2026-08-20 (`_trust_the_links`). The UNLINKED
 half now has the only answer that is not a guess: the paper says the
@@ -5075,6 +5226,7 @@ two-author work missing from the list whose co-author has a same-year
 entry, which turns an S2 false finding into an S1 silent one.
 
 ### ~~S4 `refstyle` converts the punctuation but not the NAMES~~ — DECIDED 21.08
+<!-- status: fixed -->
 
 The mechanical half ships (`convert`, `--fix`). The name half is not a
 gap waiting to be filled, it is a decision: reducing "Till Von Wachter"
@@ -5090,6 +5242,7 @@ answer: which span is the outlet is a judgment the audit deliberately
 does not make.
 
 ### ~~S1 splitting a run DUPLICATES its `<w:noBreakHyphen/>` into every fragment — and no layer of `compare` can see it~~
+<!-- status: fixed -->
 
 **Symptom as observed.** 2026-08-21, Aging_Well. The author read the printed
 page and found hyphens inside his citations:
@@ -5194,6 +5347,7 @@ REPAIRED that manuscript; what it no longer has to do is guard every
 apparatus pass, because the pass can no longer put one there.
 
 ### ~~S2 `audit_links` cannot read a paper's OWN anchor scheme, and reports its live citations UNLINKED~~
+<!-- status: fixed -->
 
 Found 2026-08-21 by auditing AFI's finished manuscript — the same blindness
 `link_all` was fixed for the day before, one module over.
@@ -5240,6 +5394,7 @@ the check could not read its names.
 walk is `_misplaced_markers` now.
 
 ### ~~S3 the build's math-glyph restore covers ONE view, so validate is red every round~~
+<!-- status: fixed -->
 
 Found on AFI, 2026-08-19, across three consecutive rounds.
 
@@ -5360,6 +5515,7 @@ note to come back to.
 `--expect OLD=NEW` flag with it.
 
 ### ~~S2 `refstyle.convert_text` REFUSES an entry whose title contains "&"~~
+<!-- status: fixed -->
 
 Found by review, 2026-08-21, an hour after the converter landed and while
 `refstyle.py` was under measurement — recorded here rather than fixed on the
@@ -5407,6 +5563,7 @@ passed as TEXT rather than as XML — which is the distinction the fixtures
 had lost.
 
 ### ~~S4 the revision ladder opens Word two to three times per batch~~
+<!-- status: fixed -->
 
 Fixed 2026-08-21 — `word.shared_session()` and `docxkit revision ship`.
 
@@ -5430,6 +5587,7 @@ as this repository's Word tests do — so the SAVING is the claim to check on
 the next batch, not a number this entry can assert.
 
 ### ~~S4 the primitives papers hand-roll ALREADY EXIST, filed under the task that first needed them~~
+<!-- status: fixed -->
 
 Fixed 2026-08-21 — `docxkit api [TOPIC]`.
 
@@ -5464,6 +5622,7 @@ now answers — worth doing when something else needs that module, not on its
 own.
 
 ### ~~S1 `by_caption` anchors on the first paragraph CONTAINING the caption, so body prose shadows the real caption~~
+<!-- status: fixed -->
 
 **Symptom as observed.** 2026-08-21, AFI `working.docx` (r4 round).
 `repkit doctor` G4 reports `no table under caption 'Table 3.'` — while the
@@ -5522,6 +5681,7 @@ table back with no error at all. All three were checked by mutation, the
 fallback included.
 
 ### ~~S4 no table-ROW operations: reordering or adding a row is `w:tr` surgery every time~~
+<!-- status: fixed -->
 
 Fixed 2026-08-21 — `tables.reorder_rows`, `tables.clone_row`,
 `tables.set_row`, all three exported from the facade.
@@ -5554,6 +5714,7 @@ the module's freshness guard: re-read the table between calls, or be told.
 multiset gate) and `build_r5b.py` (`fill_row`). Left in the paper's tree.
 
 ### ~~S4 no way to ask what is AT an edit site, so every batch surveys it two or three times~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20 — `docxkit.find.site(xml, sig)` and `docxkit sites`, with
 the fields the sketch named: `index, matches, text, labels, has_math,
@@ -5592,6 +5753,7 @@ returns the same three facts the script printed for the same paragraph —
 index, the link labels an edit may not cross, and the footnote marks in it.
 
 ### ~~S4 no helper for moving an EXHIBIT BLOCK, and the block is not what it looks like~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20 — `placement.exhibit_block(parts, caption)` returns a
 frozen `Block`: the elements, and the three traps this job walked into.
@@ -5633,6 +5795,7 @@ caption became its own block with the table left behind. Found by hand
 before the tests existed, which is the argument for the tests.
 
 ### ~~S4 `replace_in_para` refuses a relabel without naming the flag that allows it~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20, both halves — the free one and the verb.
 
@@ -5660,6 +5823,7 @@ paragraph does not link to, an anchor it links to twice, and an empty label.
 tree for its owner to delete.
 
 ### ~~S4 `internal_links` is public in fact and private by import path~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20. Declared in TWO public homes, deliberately: `docxkit.find`,
 because locating things inside one part's XML is what that module is and a
@@ -5687,6 +5851,7 @@ needs. So the decision is pinned by name instead, in
 `test_a_PRIMITIVE_a_public_module_hands_out_is_declared_THERE`.
 
 ### ~~S1 Compare CORRUPTS a replacement inside an inline OMML field, and `resolve_math` bakes the corruption in as the accepted view~~
+<!-- status: fixed -->
 
 Found on AFI, 2026-08-19, doing R3/T3.2: two inline `<m:oMath>` fields holding
 `-0.20` and `-0.38` had to become `-0.398` and `-0.487`.
@@ -5780,6 +5945,7 @@ redline at all — the trade v12 made for its 19 equation changes — and
 edit is not read as damage while every other difference still refuses.
 
 ### ~~S1 a footnote whose DEFINITION is out of document order passes every read-only gate, then blows up the next Compare~~
+<!-- status: fixed -->
 
 **Symptom as observed.** AFI r4 batch 17 added a footnote by appending its
 `<w:footnote>` to the end of `word/footnotes.xml` and inserting the reference
@@ -5856,6 +6022,7 @@ left to do on this paper.
 ---
 
 ### ~~S4 nothing can test a set of edits against a document before building it~~ — FIXED 20.08, `9b7a5b3`
+<!-- status: fixed -->
 
 Shipped as `batch.preflight`, not `edit.preflight` as sketched below: it
 belongs with the unit of work, not with the verb it wraps. Cumulative by
@@ -5911,6 +6078,7 @@ CLI reading the same tuple list would cover the common case without any script.
 ---
 
 ### ~~S4 the missing thing is not a verb, it is the UNIT OF WORK~~ — SHIPPED 20.08, `9b7a5b3`
+<!-- status: fixed -->
 
 `docxkit.batch`: `Edit`, `Step`, `Verdict`, `Report`, `preflight`, `diagnose`,
 `invariants`, `apply_steps`, `run`. It covers both paths, and it gates EIGHT
@@ -5981,6 +6149,7 @@ already import only public docxkit surface.
 ---
 
 ### ~~S3 `write_docx` retries the sharing-violation race; `read_parts` does not~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20 in `package.py`. `read_parts` rides out a `PermissionError`
 on the same bounded schedule `_replace_atomically` uses for the write side —
@@ -6005,6 +6174,7 @@ the sleep COUNT — sleeping after the last attempt delays the error by more
 than a second and changes nothing about it.
 
 ### ~~S2 `tables.by_caption` assumes the caption sits ABOVE, and silently returns the wrong table~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20 in `_table_core.py`. On AFI's `working.docx` two of six
 lookups came back with the 2x2 grid holding Figure 5's panels — a `Table`,
@@ -6038,6 +6208,7 @@ tables by index against expected row counts. Left in place — it is in the
 paper's own tree, and deleting it is the paper owner's call.
 
 ### ~~S2 `revision build` blames footnotes for a gap that is Word's revision GROUPING~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20 in `tracked.py`. `revisions_by_part` counts revision
 elements per text-bearing part (public — a paper asking "where are they?"
@@ -6058,6 +6229,7 @@ both causes at once, footnotes alone, and a `footnotes.xml` present but
 unrevised. The last of those is what the old message got wrong.
 
 ### ~~S1 `citations.link_all` layers its OWN anchor scheme over a paper that already has one~~
+<!-- status: fixed -->
 
 Fixed 2026-08-20 in `_cite_build.py`, both halves of the sketch below.
 
@@ -6091,6 +6263,7 @@ at (29): the scan is a method on a frozen `_Mentions` carrier now, so the
 debt entry and the file's `C901` exemption are both gone.
 
 ### ~~S2 `unlink` left half of a DUPLICATED bookmark and reported success~~
+<!-- status: fixed -->
 
 Found 2026-08-20 by auditing the arguments in a survivor note rather than by
 a mutant — the second wrong one in that list, and wrong the same way.
@@ -6119,6 +6292,7 @@ schema describes, not about the string the function is handed. Ask what it
 excludes — a tracked-change snapshot, an empty element, a copy Word made.
 
 ### ~~S1 the Hyperlink style was written into the tracked-change SNAPSHOT~~
+<!-- status: fixed -->
 
 Found 2026-08-20 by the mutation pass over `crossrefs`, while checking what
 an argued equivalence had excluded. `_with_hyperlink_style` searched the whole
@@ -6148,6 +6322,7 @@ argued from what the schema allows is an argument about the element, not
 about the string the function is handed** — and the note now says so.
 
 ### ~~S1 a property present TWICE was only half removed — `22a09e6`~~
+<!-- status: fixed -->
 
 Found 2026-08-20 by the mutation pass over `_xml`, and it is the defect the
 docstrings around it already named as fixed. `set_para_property` took the
@@ -6184,6 +6359,7 @@ offsets objection in the old note is answered by re-reading the properties
 after each cut.
 
 ### ~~S2 the citation apparatus does not read ENDNOTES~~ — FIXED 20.08, `0db8361`, `c116411`
+<!-- status: fixed -->
 
 Found the same way, 2026-08-19, and demonstrated: the identical bookmark and
 hyperlink, placed in a footnote and then in an endnote, audit as
@@ -6225,6 +6401,7 @@ kept it honest still stand: a reader may not join it without one of them
 failing.
 
 ### S1 an ENDNOTE id was spliced into an override unremapped — `a6377af`
+<!-- status: fixed -->
 
 Found 2026-08-20 while widening the citation apparatus, and it is the defect
 the FOOTNOTE remap was written to prevent, unfixed for the other store. Word
@@ -6244,6 +6421,7 @@ the same regex, which `test_no_element_pattern_is_compiled_in_two_modules`
 caught the moment this one was compiled rather than inlined.
 
 ### S2 `fit_columns` wrote a column's width into a NESTED table's cell
+<!-- status: fixed -->
 
 Found 2026-08-19, mining `_table_layout`'s survivors, and it is the defect
 `_own_grid`/`_own_tblpr` exist for — one element further in. The cell loop
@@ -6267,6 +6445,7 @@ Fixed by `_own_tcpr` / `_set_tc_w`, the cell-level twins of `_own_tblpr` /
 before everything else). Two tests in `test_tables_nested.py`.
 
 ### S1 a mutation session restored the module from the LIVE tree between chunks — `tools/mutation_session.py`
+<!-- status: fixed -->
 
 **The instrument, not the package — and it produced a plausible wrong number.**
 `tracked.py` stands at 4.9 % (29/589), verified and kill_check'd. Re-measured
@@ -6295,6 +6474,7 @@ CONTRIBUTING — a figure is void when the source or the harness has moved — n
 covers *during* as well as *since*.
 
 ### S2 `placement` reported a table it could not fix as fixed, and hid the findings a render cannot make — `0269f70`, `37023a7`
+<!-- status: fixed -->
 
 Two in the same report, both found by mutation testing the module the day
 after it landed, neither visible to any test it had.
@@ -6333,6 +6513,7 @@ in the tests) and are fixed in `0269f70`. The lesson is the one this file keeps
 recording: a gate that is not run is not a gate.
 
 ### S1 `placement.place` moves a block OUT of its own section, silently — `831ef24`
+<!-- status: fixed -->
 
 DSI's таблица 4 is wide and owns a landscape section: «Информативность…» ends
 the portrait section, and the `*` note after the table ends a landscape one, so
@@ -6365,6 +6546,7 @@ footnote * and incorrect page orientation». Repaired in the paper by
 section; the placement pass must not be re-run on that table until this lands.
 
 ### S2 `placement.NOTE` knows four words, and a table's note is not always one — `831ef24`
+<!-- status: fixed -->
 
 `NOTE = ^\s*(?:Примечание|Источник|Note|Source)\b` decides where a table's block
 ENDS. DSI's таблица 4 carries a second note under the first — `* Высокая доля
@@ -6399,6 +6581,7 @@ the rule that zeroes the resuming paragraph's spacing silently did nothing.
 
 
 ### S4 `revision validate` had no `--render`, so the eye gate stayed per-paper — `render_accepted`
+<!-- status: fixed -->
 
 `docxkit revision validate ... --render "anchor" ["anchor" ...]` now does what
 DSI's ladder did: accept-all, export through Word, and rasterise the page each
@@ -6428,6 +6611,7 @@ Three decisions the item did not specify, each with a test:
 here, since this repository does not edit the papers.
 
 ### S3 `losses` called a RE-LABELLED link a lost one, and blocked `baseline` — `relabelled_links`
+<!-- status: fixed -->
 
 Split on the one fact that decides it, as the item asked: a link is LOST when
 its anchor is no longer linked from anywhere in the hand-back, and RE-LABELLED
@@ -6451,6 +6635,7 @@ deliberate re-label lives in the working copy rather than in a rejected batch.
 anchors had been verified by hand. DSI can stop passing it.
 
 ### S2 `build` gated reject-all's TEXT but only accept-all's STRUCTURE — `unaccepted`
+<!-- status: fixed -->
 
 `tracked.unaccepted(parts, revised, *, limit=8, fold_space=False)` mirrors
 `untracked`, and `build` refuses on it behind `accept_check: bool = True`. The
@@ -6484,6 +6669,7 @@ this comparison nowhere. It can be deleted from DSI now — not done here, since
 this repository does not edit the papers.
 
 ### S1 a GHOST hyperlink made the repair helpers wrap the wrong span
+<!-- status: fixed -->
 
 `<w:hyperlink w:anchor="X"/>` is an empty ghost Word leaves behind when
 it strips a link's contents, and `_xml._HYPERLINK_EL_RE` carries a
@@ -6511,6 +6697,7 @@ to wrap is not there.
 
 
 ### S1 a write into an EMPTY run landed nowhere and reported success
+<!-- status: fixed -->
 
 `set_run_text` matched only the paired `<w:t>…</w:t>`, and a run whose
 text has been deleted arrives as `<w:t/>`. The write found no `w:t` to
@@ -6534,6 +6721,7 @@ thing on the tag that must survive being filled.
 
 
 ### S2 setting a core property Word left EMPTY wrote it twice
+<!-- status: fixed -->
 
 `docProps/core.xml` carries an unset property as `<dc:title/>`, and the
 reader matched only the paired `<dc:title>…</dc:title>` form. So
@@ -6557,6 +6745,7 @@ docstring already drew and could not honour.
 
 
 ### S4 `repair_plan` promised three issues and printed two
+<!-- status: fixed -->
 
 The header counts findings (`REPAIR PLAN — N audit issue(s)`) and the buckets
 are what a person actually works through, so the two have to agree. They did
@@ -6580,6 +6769,7 @@ turns out to be.
 
 
 ### S1 Word Compare duplicates a table when a block containing it is MOVED
+<!-- status: fixed -->
 
 Move body children so a `w:tbl` and its caption change position, then
 `tracked.build` (clean edit + Word `CompareDocuments`). Word emits
@@ -6612,6 +6802,7 @@ is Word's.
 
 
 ### S1 a moved paragraph carrying BOOKMARKS loses them on reject
+<!-- status: fixed -->
 
 Same mechanism, different casualty. A paragraph holding three citation anchors,
 moved through Compare: accept is correct, but **reject returns 125 bookmarks
@@ -6645,6 +6836,7 @@ unknown.
 Compare and rejected back cleanly. Move it in the clean copy in its own round.
 
 ### S3 `reject-all == baseline` is blind to everything that carries no glyph
+<!-- status: fixed -->
 
 `tracked.build`'s reject check — the one that proves a batch is fully
 reviewable — compares paragraph text, the glyph stream and footnotes. It does
@@ -6674,6 +6866,7 @@ Tags counted: `tbl`, `tr`, `tc`, `bookmarkStart`, `sectPr`, `drawing`,
 as DEFECTS, but neither can now reach a paper through a green gate.
 
 ### S4 a fifth writer of CT_PPr order, when the package already had four
+<!-- status: fixed -->
 
 Raised by the same review, and not fixed: `_keep_with_table` now carries
 its own `w:pStyle` regex and its own "only pStyle precedes keepNext"
@@ -6723,6 +6916,7 @@ tuples) — a different sequence, and rewriting it as a rank table is a
 separate round.
 
 ### S1 four more shapes in the two S1 fixes of the same day, each reported as success — `04472c1`, `f5336ea`
+<!-- status: fixed -->
 
 Found by `/code-review` over the day's 58 commits (2026-08-18), every
 one reproduced before it was believed. All four are the case the fix's
@@ -6756,6 +6950,7 @@ chooses between two on open — possibly the one that says no.
 shapes), with a test for each shape.
 
 ### S2 `_own_grid` handed every caller a NESTED table's grid — `04472c1`
+<!-- status: fixed -->
 
 Found in the same review. The docstring said "everything before the
 first `w:tblGrid` belongs to the outer table and the first match is
@@ -6772,6 +6967,7 @@ written that morning had no grid on the inner table, which is why it
 passed.
 
 ### S2 the fix for the misordered properties could not repair what the last release wrote — `eefa243`
+<!-- status: fixed -->
 
 Also from the review, and the one that decides whether the CT_TblPr fix
 was worth anything. Every table `house` touched before it carries
@@ -6789,6 +6985,7 @@ tblLayout against `w:tblLook`, then tblW against the now-correct
 tblLayout. The repair settles: a second run changes nothing.
 
 ### S3 `!cancelled()` ran four gates that could not run, and the floors ran the suite twice — `pushed 2026-08-18`
+<!-- status: fixed -->
 
 The condition added that morning so a red gate stops hiding the ones
 behind it said too much. It did not cover ruff (whose default is
@@ -6804,6 +7001,7 @@ on a red suite it costs a second full run per version to report every
 module under its floor.
 
 ### S4 four notes that were wrong about the code beside them — `eefa243`, `33f1b8b`, and the CI commit
+<!-- status: fixed -->
 
 Small, and all four would mislead the next reader:
 
@@ -6831,6 +7029,7 @@ Small, and all four would mislead the next reader:
   line becomes `None / 2`.
 
 ### S2 `probe` called a bookmark above every paragraph "nested", so a block move would drop it — `98a522f`
+<!-- status: fixed -->
 
 Found 2026-08-18 by mutation testing, and the surviving mutant was the
 CORRECT spelling — the first time that has happened here.
@@ -6859,6 +7058,7 @@ nothing gates on it — a batch reads it to choose an approach, and this
 one understates what a move must carry.
 
 ### S3 the Word-driven width gate failed on a clean machine, on the shortest cell in its list — `984156f`
+<!-- status: fixed -->
 
 Run on 2026-08-18 because CONTRIBUTING says to run `pytest -m word`
 after any edit to `_table_layout`, and that day had two. Result: 7
@@ -6899,6 +7099,7 @@ a 10 % error in the Arial Narrow digits survived months for exactly
 that reason (V4 in ROBUSTNESS_PLAN.md).
 
 ### S1 `set_done` wrote a SECOND `w15:done` beside the one it could not see — `bf30a89`
+<!-- status: fixed -->
 
 Found 2026-08-18 by asking what the `done_m.group(1) == "1"` survivor in
 `threads` would mean if the attribute were spelled the other legal way.
@@ -6932,6 +7133,7 @@ other spelling, and `_compare_read.on()` in this same package already
 reads `0/false/none`, which is the shape this should have had.
 
 ### S1 `house(caption=...)` wrote keepNext into the middle of the caption's style name — `2ea64f5`
+<!-- status: fixed -->
 
 Found 2026-08-18, the same cluster as the entry below and worse.
 `_keep_with_table` computed where to insert as
@@ -6962,6 +7164,7 @@ element in the output" but "WHERE did it go". The tests that missed them
 asserted the first.
 
 ### S2 `house` put the table width ahead of the style CT_TblPr requires first — `f1b101b`
+<!-- status: fixed -->
 
 Found 2026-08-18 by asking WHERE the 12 survivors in `_house_width` put
 the element, rather than whether it was in the output. CT_TblPr is a
@@ -7007,6 +7210,7 @@ The first three fail without the fix; the fourth fails without the
 it, which ends the series. The next measurement is a fresh draw.
 
 ### S2 three of `_table_layout`'s five harness exclusions were never true, and the number it produced is void
+<!-- status: fixed -->
 
 Found 2026-08-18 while reading the sweep's survivor list. Twelve of the
 79 real survivors were in `drop_blank_rows`, whose whole test file —
@@ -7065,6 +7269,7 @@ which is the point of the entry: not that 18.4 % was too low, but that
 it was a number about a run rather than about the module.
 
 ### S1 `comments.remove` deletes the paragraph when the reference mark is not in a run — `d5c9e25`
+<!-- status: fixed -->
 
 Found 2026-08-18 by mutation testing `_drop_reference_run` (7 real
 survivors, all on the branch below), and reproduced before it was
@@ -7099,6 +7304,7 @@ the kind this toolkit is pointed at, and the reason `remove` exists at
 all is the DSI paper's five resolved review comments.
 
 ### S4 `tools/mutation_survivors.py` dies on the one module whose source it cannot print
+<!-- status: fixed -->
 
 Found 2026-08-18, reading the survivor report for `_table_layout.py` —
 the module the current wave is measuring:
@@ -7150,6 +7356,7 @@ rather than the behaviour — where the console can hold the minus sign it
 is printed as written. The `PYTHONIOENCODING=utf-8` workaround is gone.
 
 ### S2 `renumber.py` is the least-pinned module measured — 15.1 %, and a third of it is `footnote_audit`
+<!-- status: fixed -->
 
 Measured 2026-08-17, never looked at before. It rewrites caption numbers
 and cross-references across a whole manuscript, and `shift()` is what a
@@ -7227,6 +7434,7 @@ values, a default on a report field nothing asserts by number, a
 `max(0, ...)` clamp no fixture reaches from the far side.
 
 ### S2 41 % of mutations to `_cite_build.py` survive, and half of them are on lines the tests never run
+<!-- status: fixed -->
 
 Regenerated 2026-08-15 after the first run's database was deleted; the
 two runs agree (49.3 % raw then, 49.0 % now).
@@ -7307,6 +7515,7 @@ are fixed and held by tests.
 
 
 ### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
+<!-- status: fixed -->
 
 Measured 2026-08-17, the first time this module has been looked at —
 and it is the bottom of the package: 33 modules import it, and today it
@@ -7369,6 +7578,7 @@ the open tag and its span covers the close, a self-closing element has
 no properties and no span).
 
 ### S2 the link guards' own machinery is not pinned: 17 % of mutations to `edit.py` survive, and they cluster on `label_extent`
+<!-- status: fixed -->
 
 Found by mutation testing `edit.py` on 2026-08-15, in a worktree, after
 the structural review asked for it.
@@ -7651,6 +7861,7 @@ the junk one were indistinguishable to the suite.
 
 
 ### S1 WORD downgrades U+2212 to an ASCII hyphen inside OMML — on Compare AND on the author's own accept-and-save — and `validate` reports it as an unattributed `glyphs: False`
+<!-- status: fixed -->
 
 **Widened 2026-08-17, hours after filing.** This entry first blamed
 `CompareDocuments`. That is too narrow, and the narrower claim would have
@@ -7759,6 +7970,7 @@ the build does it.
 
 
 ### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
+<!-- status: fixed -->
 
 `tables` can `update`, `set_cell` and `to_frame`, but nothing answers the
 question a row reorder raises: *is the multiset of row tuples the same as
@@ -7816,6 +8028,7 @@ which every other layer reads as "rows moved".
 
 
 ### S1 `build_overrides` put a newly INSERTED paragraph wherever the author's last other edit was — and refused the edit outright when there was no other edit
+<!-- status: fixed -->
 
 Found by measuring `ingest.py` (2026-08-17): 35.1 % real survival, the
 worst module in the package, with 33 of its 65 survivors on one line —
@@ -7870,6 +8083,7 @@ checked with `compare --expect-clean` against the author's file, which
 does catch it.
 
 ### S2 `ingest` alignment broke at a run of blank paragraphs in any manuscript over 200 paragraphs
+<!-- status: fixed -->
 
 Same measurement. `SequenceMatcher(..., autojunk=False)` carried a live
 mutant, and the setting is load-bearing: above 200 elements difflib calls
@@ -7885,6 +8099,7 @@ filed as a gap rather than a bug. `test_a_LONG_document_aligns_ACROSS_a_
 run_of_blank_paragraphs` now does, at 250 paragraphs.
 
 ### S3 `revision doctor` reports 134 selections on AFI and about three of them matter — a paper with a build archive drowns the signal — patterns first, spent folders declarable
+<!-- status: fixed -->
 
 Run against AFI 2026-08-17, the day `doctor` shipped, on the very repo
 whose defect motivated it. It is correct: every line really is a
@@ -7952,6 +8167,7 @@ is the thing this file keeps reserving an S3 for. A declared skip list is
 explicit, reviewable in the diff, and wrong in a way somebody can see.
 
 ### S4 `footnotes()` refuses a document with a spare note, and blames the renumbering for it — the message names the note now
+<!-- status: fixed -->
 
 Found 2026-08-17 by a test written on the assumption that it would not.
 
@@ -7992,6 +8208,7 @@ tool and never mentioned the note. The generic settle check stays behind
 it for anything else that fails to converge.
 
 ### S4 `revision` raises six exception types and exports none of them, so `except` must import from a module the caller never called — `test_an_exception_a_module_RAISES_is_importable_from_it`
+<!-- status: fixed -->
 
 `docxkit.revision` raises `ProtocolError` in eight places — `find_config`
 documents it as the failure mode when a tree has not migrated — but it is
@@ -8045,6 +8262,7 @@ grouped with by habit — `errors` is the bottom layer and costs nothing to
 import at module level.
 
 ### S3 nothing surveys a migrated repo for code that still selects the OLD manuscript — and the reference that breaks is the one that does NOT name the file — `revision doctor`
+<!-- status: fixed -->
 
 `revision init` scaffolds the layout and the manuscript takes its final
 name, `working.docx`. Retiring the old name is left to the migrator, who
@@ -8125,6 +8343,7 @@ a line copied into an issue should read the same on the machine that
 reads it.
 
 ### S1 `insert_in_para` places content by a count that ignores the MATHS — the DSI defect, still live in the third copy of the walk — `b34cb12`
+<!-- status: fixed -->
 
 Found 2026-08-16 by asking whether the package was ready for a refactor,
 and looking for duplication to justify the answer. The run-span walk
@@ -8278,6 +8497,7 @@ Three findings, in descending order of what they cost:
 
 
 ### S4 `_HEAD_RE` and `_REF_YEAR_RE` disagree about a space, and the entry silently loses its back-link — `0f12e2a`
+<!-- status: fixed -->
 
 Found 2026-08-16 while building a fixture for `rebuild`'s "no head"
 path. Both regexes decide where a reference's year ends, and they
@@ -8350,6 +8570,7 @@ a gap. A guard across a module boundary is not dead computation — the
 two sides drifting apart is what this entry was.
 
 ### S1 a sentence in the back matter parses as a reference ENTRY, and a real citation then links to it — reported as "linked 1, unmatched 0" — `1f4f7e9`
+<!-- status: fixed -->
 
 Found 2026-08-16 while writing the `scan` tests, from a fixture that
 would not link: a paragraph placed after the reference block had been
@@ -8425,6 +8646,7 @@ Cyrillic institution names, which are why the prose test is Latin-script
 only.
 
 ### S1 two reference entries with the same surname AND year get the SAME bookmark name, and every link to it lands on a coin flip — `36a569f`
+<!-- status: fixed -->
 
 Found 2026-08-16 while writing the tests the mutation entries asked for
 — not by mutation testing itself, but by the case a test needed.
@@ -8458,6 +8680,7 @@ pyproject.toml and in `tests/test_complexity_debt.py` — which is what
 made me notice the growth at all.
 
 ### S3 the hand-back loss gate calls an EDITED footnote a lost one, and then refuses the exemption for it — the two paths disagree and the gate cannot be passed — `17701a5`
+<!-- status: fixed -->
 
 The new `baseline` loss check (exit 5) is the fix for the S1 entry below, and
 it is the right idea. But it identifies a footnote by its TEXT, so editing one
@@ -8535,6 +8758,7 @@ case — the S1 it fixes was about Word destroying structure, and the
 test set inherited that framing whole.
 
 ### S2 `body.table` builds a table in NO house style, so every paper re-derives the same six settings — and copying a neighbouring table propagates the wrong one — `edd0202`
+<!-- status: fixed -->
 
 `booktabs` sets the RULES beautifully and stops there. Everything else the
 house style specifies — Arial Narrow 10 pt at run level *and* in each cell's
@@ -8613,6 +8837,7 @@ and local `cant_split()` in LI7's `apply_r2b.py` — an applied script, so
 it stays as the record of that batch; the next paper calls `house`.
 
 ### S2 `link --write` names bookmarks in ITS convention, not the paper's, and cannot be told otherwise — `edd0202`
+<!-- status: fixed -->
 
 `docxkit link` builds citation↔entry links document-wide, and the names it
 mints are its own: `UnitedNations2024`, `WorldHealthOrganization2024`,
@@ -8662,6 +8887,7 @@ Tests: six in `tests/test_link_convention.py`.
 six-item list in LI7's `apply_r2b.py`.
 
 ### S4 `renumber` handles caption numbers but not footnote/endnote ids — `edd0202`
+<!-- status: fixed -->
 
 `renumber` remaps "Figure N"/"Table N" labels and their bookmarks. Footnote
 `w:id`s are a different namespace with the same problem, and nothing addresses
@@ -8706,6 +8932,7 @@ TEXT follows its id — the property the whole entry is about.
 (already applied; `renumber.footnotes` is what the next paper calls).
 
 ### S1 `RUN_RE` reads a self-closing `<w:r/>` as an OPENING tag — the defect `PARA_RE` was fixed for, in the walk nine modules use — `865faa8`
+<!-- status: fixed -->
 
 Found by the structural review of 2026-08-15, not by a paper — which is
 the point: it had been there since the pattern was written, and every
@@ -8760,6 +8987,7 @@ re-derive it.
 
 
 ### S1 `replace_in_para` guards hyperlinks but NOT footnote references, and a match hops over one invisibly — `865faa8`
+<!-- status: fixed -->
 
 `labels_a_link` refuses a match that starts inside or spans a hyperlink, with
 `allow_hyperlink` as the deliberate escape hatch — the entry above records what
@@ -8824,6 +9052,7 @@ Figure-1 paragraph), `test_the_guard_covers_endnotes_and_comments_too`,
 **Workaround to retire:** LI7 can anchor its R2a edits normally again.
 
 ### S1 nothing GATES a hand-back: `ingest` reports what the author's Word session destroyed, `validate` does not look, and `baseline` records it as truth — `865faa8`
+<!-- status: fixed -->
 
 The protocol's whole safety claim is that `working.docx` is the one file and
 its state is readable. But between the author handing it back and
@@ -8918,6 +9147,7 @@ suite for the exit codes.
 **Workaround to retire:** LI7's `revision/scripts/qa_links.py`.
 
 ### S2 no public way to ask whether a MATH run is bold, so every guard written against `w:b` guards NOTHING — `865faa8`
+<!-- status: fixed -->
 
 A paper that renames one symbol and must not touch its bold twin has to
 ask "is this `m:r` bold?" and there is no API for it. The obvious
@@ -8972,6 +9202,7 @@ Tests: `test_face_reads_m_sty_not_w_b`,
 **Workaround to retire:** `Parental_style`'s regex against `m:sty`.
 
 ### S2 replacement is guarded against links, INSERTION is not offered at all — so callers hand-roll it and land inside one — `865faa8`
+<!-- status: fixed -->
 
 `replace_in_para` takes this class seriously: `labels_a_link` refuses a
 match that starts inside a hyperlink *or* spans one, with
@@ -9066,6 +9297,7 @@ Tests: `test_insert_at_the_front_of_a_LINK_LED_paragraph_stays_outside_it`
 **Workaround to retire:** `Parental_style`'s hand-rolled splices.
 
 ### S2 `pages` returns a count and nothing else, so pagination defects ship — `865faa8`
+<!-- status: fixed -->
 
 `docxkit pages PAPER.docx` prints `52`. Everything a pagination question
 actually needs is absent: which sheets are BLANK, what number each sheet
@@ -9145,6 +9377,7 @@ Tests: eight in `tests/test_pages.py`.
 hand-rolled three times in one session.
 
 ### S4 `visible_text` is public API in practice but exported from no public module, so a typed caller must import a private one — `865faa8`
+<!-- status: fixed -->
 
 `visible_text` is the reader's text — the entry in Fixed below settles that it
 lives in `_xml` and names the reading `para_slice`, `crossrefs`, `citations`
@@ -9186,6 +9419,7 @@ listed in the test with its reason: declaring them would bless four
 copies of a constant that belongs in `_xml`.
 
 ### S1 `_resolve_math` accepts revisions that merely INTERSECT an equation, and takes hundreds of unrelated ones with them — `a03d9d1`
+<!-- status: fixed -->
 
 `tracked.build` calls `_resolve_math` unconditionally. With `classify=None`
 that is `_accept_math_via_equations`, which walks `doc.OMaths` and accepts
@@ -9289,6 +9523,7 @@ Reverting it to `tracked.build(..., resolve_math=False)` needs a Word run
 against the manuscript, so it is not done here.
 
 ### S1 Compare REGENERATES `docProps/core.xml` empty, and `compare_collateral` calls that "not a loss" — `a03d9d1`
+<!-- status: fixed -->
 
 `tracked.build` carries `customXml/` back and then classifies the
 `docProps/*` parts as regenerated rather than lost — correct at the part
@@ -9363,6 +9598,7 @@ and `apply_title.py`. The title string is the paper's, so `qa_metadata`
 keeps a job; `apply_title`'s part-rebuilding half is now redundant.
 
 ### S1 `Cascade` skips the DEFAULT paragraph style, so a paragraph that names none resolves through docDefaults instead — `a87f201`
+<!-- status: fixed -->
 
 `Cascade.resolve` walks direct → character style → paragraph style →
 docDefaults, and `Cascade.paragraph_style` returns the style a `w:p`
@@ -9431,6 +9667,7 @@ FLOPs pair that surfaced it now reports 0 FORMAT entries where it reported
 22, with its 10 real text edits untouched.
 
 ### S1 `export_pdf`'s page range is DISCARDED — every "pages 1–3" render is the whole document — `9a9fdfc`
+<!-- status: fixed -->
 
 `docxkit pdf PAPER.docx OUT.pdf --pages 1-3` writes all 52 pages and
 reports success. Measured on `Parental_style/revision/working.docx`
@@ -9477,6 +9714,7 @@ Word on the 52-page manuscript: `--pages 1-3` → **3 pages, 143KB**,
 `--pages 9` → **1 page**, against 52 pages and 1.9MB before.
 
 ### S4 `edit.RUN_RE` is not exported although `T_RUN_RE` is — `9a9fdfc`
+<!-- status: fixed -->
 
 `edit.__all__` lists `T_RUN_RE` but not `RUN_RE`, so
 `from docxkit.edit import RUN_RE` — the way to walk whole `w:r`
@@ -9497,6 +9735,7 @@ exported and that `RUN_RE` matches `<w:r>` but not `<w:rPr>` — the
 distinction the hand-rolled version got wrong.
 
 ### S1 `allow_hyperlink=True` lets the LINK SWALLOW the replacement — `e04b700`
+<!-- status: fixed -->
 **Pre-fix damage still in a submitted manuscript (found 2026-08-12).**
 Parental_style's Table 5 caption back-link owns the whole phrase
 "Table 5: The incidence of harsh parental coercive actions", where
@@ -9534,6 +9773,7 @@ for the reader to correlate. Both directions, because a label that
 SHRANK is the emptying case caught partway.
 
 ### S2 `crossrefs --audit` never checks that an anchor leads its mentions — `79d6163`, `8c6ffb8`
+<!-- status: fixed -->
 `misplaced_anchor`, beside `misnamed` — and both are PRINTED now. The
 second was computed and never shown by the CLI at all, which is the same
 class one notch quieter.
@@ -9559,6 +9799,7 @@ at ¶60, a paragraph about Figure 3. Exits 1, as `dangling` does.
 session; it stays in that paper's `log.md` as the record of the round.
 
 ### S2 `validate`'s reject-all check is blind to HYPERLINKS — `91055cd`, `8c6ffb8`
+<!-- status: fixed -->
 `links` is the fourth thing gate 5 compares: a MULTISET of (anchor,
 label) pairs over every text-bearing part, so a link that survives
 somewhere else is not called lost and a swap cannot hide inside a total.
@@ -9576,6 +9817,7 @@ revisions), Loneliness Index (23) and DSI (0) — both new gates pass and
 silent on work that is fine.
 
 ### S2 `revision build` silently DROPS every `customXml/` part — `c288968`, `91055cd`
+<!-- status: fixed -->
 Both suggestions, because they answer different halves.
 
 **(1) The build CARRIES it across.** `hygiene.restore_parts` is the
@@ -9602,6 +9844,7 @@ for it to read.
 batch carried.
 
 ### S4 `revision build`'s staleness refusal advertises a flag that does not exist — `91055cd`, `8c6ffb8`
+<!-- status: fixed -->
 The flag exists now: `revision.build(..., force=True)`, CLI `--force`,
 passed down to the guard. Added rather than deleted from the message,
 because `guard.check` takes the backup BEFORE it refuses — so the spent
@@ -9614,6 +9857,7 @@ because it hand-restored `customXml/` after each one; the entry above
 means it no longer has to.
 
 ### S4 `footnotes --check` calls the malformed majority "house" — `aea00f5`
+<!-- status: fixed -->
 The marks are grouped by HOW they resolve, and **the styled ones set the
 house however few they are**. On Parental_style five footnote paragraphs
 carried no `w:pStyle`, fell through `Normal` to a 12pt `docDefaults` and
@@ -9650,6 +9894,7 @@ our own wording.
 record of its round, but its reasoning is upstream now.
 
 ### S4 two definitions of "what this paragraph says" — `35fd07b`
+<!-- status: fixed -->
 **Decision (2026-08-11, the author's): name both.** `visible_text` is
 the reader's — `w:t` and `m:t` — and what `para_slice`, `crossrefs`,
 `citations` and compare locate with. `editable_text` is what a run walk
@@ -9668,6 +9913,7 @@ visible in one call path is one too many", and `replace_in_para` beside
 it still joined the runs alone.
 
 ### S2 `PARA_RE` read a self-closing `<w:p/>` as an open tag — `6acc545`
+<!-- status: fixed -->
 Found by the refactor that consolidated the duplicated element patterns
 into `_xml`, and it was in the shared definition itself: `[^>]*`
 swallows the slash of an EMPTY paragraph, so the walk ran on to the next
@@ -9687,6 +9933,7 @@ empty paragraph is invisible to the walk rather than returned as its
 own, which keeps every report's `¶N` numbering where it was.
 
 ### S4 `footnotes.sizes` skips the reference mark untested — `cf6c0f2`
+<!-- status: fixed -->
 The entry refused to widen anything without evidence and named the
 evidence it wanted. Measured over 331 manuscripts with footnotes: **26
 state a size on the mark, and in 22 of them exactly ONE mark RESOLVES
@@ -9708,6 +9955,7 @@ declines. `--check` says which of the two it met, because they need
 different repairs.
 
 ### S4 `citations.repair_plan` proposed deleting a live entry as debris — `fda1788`
+<!-- status: fixed -->
 The evidence it used could not work for that name: the bookmark was
 minted by an older strip-only stem (accents dropped, not folded) while
 "Bühler-Niederberger (2022)" keys as `bühlerniederberger_2022`, because
@@ -9721,6 +9969,7 @@ actually is. Both bookmark placements tested: reading the entry
 paragraph alone brings the false debris call straight back.
 
 ### S4 a bookmark deletion cannot ship through Word Compare — `114b464`
+<!-- status: fixed -->
 `restored_bookmarks(baseline, clean, built)` names them and `build` says
 so before the handback, with the remedy the three rounds arrived at.
 Three sides, because the BASELINE is what makes the answer mean
@@ -9729,11 +9978,13 @@ Word MINTED during the compare, and reporting that as the author's
 deletion sends them looking for an edit they never made.
 
 ### S4 `build/batch.docx` is reserved but not guarded — `114b464`
+<!-- status: fixed -->
 It refuses at the call now, and names `build/clean.docx` as the place to
 put a hand-built edit. The old failure came from the far end — the
 provenance stamp reading the edit as a Word session that never happened.
 
 ### S4 `wrap_link_in_bookmark` has no "first mention" mode — `3d42a31`
+<!-- status: fixed -->
 `which="first"`. The rewrite also fixed a counting bug the entry did not
 know about: the two link FORMS were counted separately, so a work linked
 once as a field and once as an element passed the element branch as
@@ -9746,8 +9997,11 @@ landed wherever form churn left it.
 technique is forced on the next paper.
 
 ### S2 `revision build` under-reports what Compare baked in untracked — `af355b7`
+<!-- status: fixed -->
 ### S2 a moved footnote ANCHOR makes Compare emit the footnote as an unmatched insert — `af355b7`
+<!-- status: fixed -->
 ### S4 `revision validate` says reject-all MISMATCH but not WHAT failed — `af355b7`
+<!-- status: fixed -->
 Three entries, one commit, because they are the same complaint from
 different ends: the protocol knew a batch was unreviewable and would not
 say what.
@@ -9769,6 +10023,7 @@ rejected cleanly, so both mutations lived. They test the function
 directly now.
 
 ### S2 `citations.link_rest` is blind to entry bookmarks Word has HOISTED — `a2f28a2`
+<!-- status: fixed -->
 `link_all` already reads the body-level gap before each entry, for this
 exact reason and with this exact comment. `_entry_names_from_document`
 did not, so the two halves of one convention disagreed about where a
@@ -9797,6 +10052,7 @@ where the count belongs, and it is there.
 script stays as the record of the round.
 
 ### S2 `compare`'s FIELD layer reports targets that are present as lost — `122a180`
+<!-- status: fixed -->
 The entry guessed "pairs paragraphs by text"; the real mechanism is that
 inside a replace run the pairing is POSITIONAL, so the inserted Heading2
 made the block 4 against 5 and shifted every pair after it by one.
@@ -9816,6 +10072,7 @@ STRUCTURE and GLYPH are byte-identical across all 748.
 The header no longer asserts a cause and a direction it cannot know.
 
 ### S1 `replace_in_para` empties a hyperlink's LABEL when the match spans it — `031e96d`
+<!-- status: fixed -->
 Both halves, because the entry's own "why it is S1" was that nothing
 catches it.
 
@@ -9848,6 +10105,7 @@ longer needed as a guard — the refusal is upstream of it now — but the
 script stays as the record of the round.
 
 ### S2 a possessive citation is left unlinked and reported UNLINKED — `a66259c`
+<!-- status: fixed -->
 The entry blamed the author-chain grammar and the grammar was innocent:
 `find_citations` returns `"Doepke and Zilibotti's (2017)"` whole. Two
 other things were wrong, one per layer, and both are wider than the
@@ -9876,6 +10134,7 @@ must be visible in the FINAL document.
 the technique is no longer forced on the next paper.
 
 ### S3 `compare`'s FORMAT layer cannot see size or colour — `6920980`
+<!-- status: fixed -->
 FORMAT now carries `size` and `colour`, **resolved** through the new
 `styles.Cascade` — direct run properties, then the character style
 chain, then the paragraph style chain, then docDefaults — rather than
@@ -9913,6 +10172,7 @@ had known paragraph styles only, and a run's own character style carries
 a size just as well.
 
 ### S3 `revisions.accept`/`reject` ignore every PROPERTY revision — `760b45b`
+<!-- status: fixed -->
 Both views passed a `*PrChange` straight through, so an XML-accepted
 file still counted as a proposal and a rejected one kept the formatting
 it was supposed to undo. What that cost: **gate 5, `reject-all ==
@@ -9936,6 +10196,7 @@ it — anything `state` counts is something the simulator can APPLY —
 which fails 8 ways without this fix.
 
 ### S3 a batch of 25 revisions is reported as "0 revisions" — `760b45b`
+<!-- status: fixed -->
 `revision build` printed `revisions: 0` and gate 3 `opened, 0 revision
 groups` for a batch carrying 25 `w:rPrChange` in `word/footnotes.xml`,
 because Word's `Document.Revisions` walks the MAIN STORY only. It reads
@@ -9947,6 +10208,7 @@ PACKAGE with Word's count kept beside it as `body_revisions`, and both
 messages now say "in the body" where that is what they mean.
 
 ### S2 `footnotes.sizes` flags a note whose STYLE supplies the size — `760b45b`
+<!-- status: fixed -->
 `sizes` takes `styles_xml` and resolves a run that states nothing
 through its paragraph's `pStyle` chain (`basedOn` followed, cycles
 survived), then the document default. On the manuscript that produced
@@ -9969,6 +10231,7 @@ genuinely is not in `footnotes.xml`, and silence would be a claim this
 cannot support.
 
 ### S4 `revision status` printed every stale part on one line — `760b45b`
+<!-- status: fixed -->
 Sixteen names, twelve of them `word/fonts/font*.odttf` from one tick of
 Word's embed-fonts box. Folded by directory —
 `word/fonts/ (12 parts)` — and capped at four entries with "and N more".
@@ -9977,6 +10240,7 @@ package ROOT has no directory, and folding it under `""` dropped
 `[Content_Types].xml` off the line entirely.
 
 ### S2 no check that footnotes share one size — `a07f8fd`
+<!-- status: fixed -->
 `footnotes.sizes(xml) -> SizeReport`, plus `docxkit footnotes PAPER.docx
 [--check]`. It went to `footnotes` rather than `hygiene` as the entry
 suggested, because `footnotes.fonts` was already asking the neighbouring
@@ -10007,6 +10271,7 @@ one — the mark's own formatting, not the runs'. Worth a batch on that
 paper: `footnotes.set_font(xml, size=10)`.
 
 ### S2 no display-mode support, and Word's auto-promotion is unreliable — `eee8274`
+<!-- status: fixed -->
 `equations.display(para, jc="center")` wraps the paragraph's maths in an
 `m:oMathPara`, idempotently; `equations.inline_display(xml)` is the audit
 half and `docxkit math` now prints "N display equation(s), M still in
@@ -10032,6 +10297,7 @@ refused even under `absorb`: moving it after the maths is a reordering
 no text diff would show.
 
 ### S2 `latex_to_omml` output needs a normalization pass — `ab891bd`
+<!-- status: fixed -->
 New `equations._normalize`, run on every conversion. Each before/after
 was RENDERED through Word, which is the only gate that sees any of this.
 
@@ -10067,6 +10333,7 @@ path it wrote the render into WORD's working directory and returned a
 path with no file at it. Found by using it for the render above.
 
 ### S3 gate 6 counts a drawing as a text difference — `712e2fd`
+<!-- status: fixed -->
 Measured before encoding, as the entry demanded — a synthetic package
 whose only content was a picture and two letters, so the character at
 the drawing's offset could not be a neighbour's. Word's `Range.Text`:
@@ -10092,6 +10359,7 @@ drawing vanished.
 `working.docx`, zero revisions — gate 6 `False` before, `True` after.
 
 ### S3 `revision status` says TRUTH/TRUTH when prev and working differ — `a897948`
+<!-- status: fixed -->
 New `revision.drift(working, prev)` compares MEANING part by part
 (`package.part_fingerprint`, save-noise excluded) and returns the parts
 that differ; `status` asks it only of a settled file — while a proposal
@@ -10106,6 +10374,7 @@ exited 0.
 S3 class as the entry above.
 
 ### S1 `crossrefs.unlink`/`link` blind to field-form hyperlinks — `1c09490`
+<!-- status: fixed -->
 `unlink` removed the bookmarks, left every HYPERLINK field standing and
 returned "24 removed". Now raises `ConversionGap` naming the anchors and
 saying what to do instead; `link` reports them as `field_form` rather
@@ -10120,12 +10389,14 @@ SAFE mutator outcome (nothing written ⇒ parseable, text-preserving and
 idempotent all hold). Only an uncontrolled exception is a failure.
 
 ### S3 `_norm` did not fold U+2032 `′` against U+0027 `'` — `00db587`
+<!-- status: fixed -->
 Gate 6 (XML accept == Word accept) could not pass on a paper that writes
 derivatives; proved on a ZERO-revision file. Folded, with a test verified
 to fail without the fix. What remains of that entry is the drawing
 placeholder, still open above.
 
 ### S3 cover letter printed "ALL CHECKS PASSED: /" — repkit, `c3391ab`
+<!-- status: fixed -->
 Recorded here because it is the same class: `refresh` re-writes the
 letter without re-running the suite, so it passes no check count, and the
 template interpolated it anyway. Fixed with a fallback and a regression
