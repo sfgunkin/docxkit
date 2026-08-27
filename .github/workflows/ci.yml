@@ -20,6 +20,18 @@ jobs:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history, because two gates READ it and both go
+          # blind without it. `tools/backlog_refs.py` walks back to the
+          # newest commit that closed a backlog entry, and
+          # `tools/verify_committed.py` exports a ref. At the default
+          # depth of 1 the backlog gate cannot see the commits it judges,
+          # so it reports a clean answer over a history it never read —
+          # measured against depth-1 clones: at a tip one commit above an
+          # unrecorded fix it returned nothing where the full history
+          # named it. Worse on a pull request, where checkout resolves
+          # `refs/pull/N/merge` and a merge commit lists no files at all.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
