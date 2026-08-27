@@ -26,47 +26,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `reorder_rows` reads the table back in the FINAL view whatever view the caller read it in, so a correct reorder of a REDLINE is refused
-
-Found 2026-08-27 by review, while looking at a batch that touches this
-function for another reason. Filed rather than fixed: it is pre-existing,
-it needs `Table` to remember its view, and folding a second behaviour
-change into that batch is how a fix arrives with nothing to bisect
-against.
-
-**The self-check contradicts the caller.** `reorder_rows` verifies its
-own work by re-reading the table — `moved = read_all(out)[table.index]` —
-and that call takes the DEFAULT view. A caller who read the document with
-`view="original"`, which `by_caption(..., view=...)` and
-`tables_after(..., view=...)` both offer, gets a handle whose `rows` are
-the original side compared against rows read from the accepted side. The
-row multisets then differ for a reason that has nothing to do with the
-reorder:
-
-    AnchorError: reordering table 0 changed its rows, not just their
-    order: 2 row(s) LOST, 2 GAINED — lost ('POL','') gained ('POL','0.31')
-
-The permutation was correct. Two cells whose text sits inside `w:ins` is
-enough to produce it.
-
-**It is also the only mutator here with no tracked-changes refusal.**
-`_has_revisions` appears twice in `_table_core.py` and neither call is in
-this function, so where `house()` refuses a redline cleanly and says why,
-this one accepts it and then fails an integrity check about itself. Two
-different answers to the same document, from one module.
-
-**Shape of a fix.** `Table` gains the `view` it was read in, and
-`reorder_rows` re-reads with it; or the function refuses a table carrying
-revisions like every sibling does. The first is better — a reorder of the
-original view is a legitimate thing to want — and it is the one that
-needs the extra field, which is why this is a separate change.
-
-**Workaround in use:** none needed yet; no paper has reordered a redline
-table. Read the clean build, reorder, rebuild the redline — which is what
-every other mutator here already requires.
-
----
-
 ### S4 — nothing checks that an entry sits in the SECTION that describes it, and the cheap check cannot
 
 Filed 2026-08-27, out of the measurement that closed *five fixes shipped
@@ -749,6 +708,75 @@ falls in a 0.4-point window.
 
 
 ## Fixed
+
+### ~~S2 — `reorder_rows` reads the table back in the FINAL view whatever view the caller read it in, so a correct reorder of a REDLINE is refused~~ — FIXED 27.08, `0dc84d4`
+
+**Fixed 2026-08-27.** `Table` carries the `view` it was read in, and the
+self-check re-reads with it. That is the first of the two shapes this
+entry proposed, and the reason for preferring it stands: reordering the
+original view is a legitimate thing to want, and refusing a table with
+revisions would take that away to fix a bug in the audit.
+
+**Reproducing it turned up a second half the entry had not seen**, and
+that one was silent rather than loud. `key` was called with cell text
+scraped from the RAW xml rather than from the view, so on a redline an
+ordering function saw both sides of every revision at once — `0.310.22`
+where the caller's own `table.rows` says `0.31`. A key on the leading
+cell would not notice; a key on a NUMBER would sort the table wrongly
+and nothing downstream could tell. It reads `table.rows` now, so there is
+one extraction where there were two and it is the caller's own.
+
+Refusing where the raw row count and the view's disagree, which only a
+row-level revision can cause: permuting one list by the other's indices
+would move the wrong rows and still pass the multiset check, which is the
+one failure this function's gate exists to make impossible.
+
+**Kill-checked without touching the tree.** An hour after filing that a
+killed `mutate.py` leaves its sabotage behind, editing the module to
+watch a test fail was the wrong instrument. The old comparison is
+reproducible directly — the table as the caller read it against the
+result re-read as `final` gives `2 row(s) LOST, 2 GAINED`, and against
+the result re-read in its own view it passes.
+
+
+Found 2026-08-27 by review, while looking at a batch that touches this
+function for another reason. Filed rather than fixed: it is pre-existing,
+it needs `Table` to remember its view, and folding a second behaviour
+change into that batch is how a fix arrives with nothing to bisect
+against.
+
+**The self-check contradicts the caller.** `reorder_rows` verifies its
+own work by re-reading the table — `moved = read_all(out)[table.index]` —
+and that call takes the DEFAULT view. A caller who read the document with
+`view="original"`, which `by_caption(..., view=...)` and
+`tables_after(..., view=...)` both offer, gets a handle whose `rows` are
+the original side compared against rows read from the accepted side. The
+row multisets then differ for a reason that has nothing to do with the
+reorder:
+
+    AnchorError: reordering table 0 changed its rows, not just their
+    order: 2 row(s) LOST, 2 GAINED — lost ('POL','') gained ('POL','0.31')
+
+The permutation was correct. Two cells whose text sits inside `w:ins` is
+enough to produce it.
+
+**It is also the only mutator here with no tracked-changes refusal.**
+`_has_revisions` appears twice in `_table_core.py` and neither call is in
+this function, so where `house()` refuses a redline cleanly and says why,
+this one accepts it and then fails an integrity check about itself. Two
+different answers to the same document, from one module.
+
+**Shape of a fix.** `Table` gains the `view` it was read in, and
+`reorder_rows` re-reads with it; or the function refuses a table carrying
+revisions like every sibling does. The first is better — a reorder of the
+original view is a legitimate thing to want — and it is the one that
+needs the extra field, which is why this is a separate change.
+
+**Workaround in use:** none needed yet; no paper has reordered a redline
+table. Read the clean build, reorder, rebuild the redline — which is what
+every other mutator here already requires.
+
+---
 
 ### ~~S1 — a KILLED `mutate.py` leaves its sabotage in the working tree, and the next thing to read that file is a commit~~ — FIXED 27.08, `9c47728`
 
