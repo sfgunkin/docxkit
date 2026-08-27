@@ -81,3 +81,30 @@ jobs:
       - name: Coverage floors
         if: ${{ !cancelled() && steps.pytest.outcome == 'success' }}
         run: python tools/coverage_floor.py
+
+  mutations:
+    # The CURATED mutations. Every one re-introduces a defect this package
+    # has really shipped, or removes a guard that exists because one did,
+    # and every one of them must turn the suite red.
+    #
+    # Wired here 2026-08-27, having never been wired to anything. It is in
+    # neither this file nor the local gate chain, so its report has been
+    # true and unread: three anchors had drifted, it said so and exited 1
+    # on every run, and `39/39 mutations caught` at the top of the output
+    # is the number an eye lands on. A drifted anchor is a curated defect
+    # whose regression cover has silently gone.
+    #
+    # Its OWN job, not a step in the matrix above: it is 39 runs of the
+    # suite, and running that on three interpreters would treble the bill
+    # for an answer that does not depend on the version.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - id: install
+        run: pip install -e ".[dev,pdf]"
+      - name: Curated mutations
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python tools/mutate.py

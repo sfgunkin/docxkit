@@ -15,3 +15,8 @@ tests/corpus/*.docx
 # and the log a backgrounded `tools/measure_all.py` writes: the figure
 # in it belongs in CONTRIBUTING, not in the tree
 .measure-*.log
+# the pre-mutation bytes `tools/mutate.py` holds while a mutation is
+# applied. Ignored because it is derived — but if you SEE it, a run was
+# killed and a source file is carrying a deliberate defect: `mutate.py
+# --restore`.
+.mutate-in-flight/

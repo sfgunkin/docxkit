@@ -218,6 +218,37 @@ first (2026-08-15/16; the detail is in its docstring):
   into INCOMPETENT, dropping them out of the denominator, and cost 60x
   in wall clock as well.
 
+`tools/mutate.py` is the other half and the curated one: 42 mutations,
+each re-introducing a defect this package has really shipped, and every
+one of them must turn the suite red. **It runs in CI, in its own job,
+and not in `tools/gates.py`** — measured 2026-08-27 at **18m23s** for
+the full set at `-n <physical cores>`, against about four minutes for
+the whole local chain. A pre-commit gate five times longer than the
+thing it guards is one people route around.
+
+Two things it learned the hard way, both on 2026-08-27:
+
+* **a killed run leaves its mutation in the tree.** The restore is a
+  `finally`, and a kill is not an exception — an unattended run is
+  stopped by being killed. One left `_set_borders` carrying its sabotage
+  through an hour of unrelated work and into a batch about to be
+  committed, reading the whole time as "my change broke five tests". The
+  pre-mutation bytes now go to `.mutate-in-flight/` first, the next run
+  REFUSES and names the file, and `--restore` puts it back. **If you see
+  that directory, a source file is carrying a deliberate defect.**
+* **run it on a quiet tree.** It edits `src/docxkit/` in place, so a
+  pytest run started beside it reads a mutant and fails for reasons that
+  have nothing to do with the change in hand. That happened here too,
+  and cost a false diagnosis before the diffstat gave it away.
+
+A DRIFTED anchor is as bad as a survivor and is reported separately: the
+mutation stops testing anything and the tool exits 1 to say so. Three had
+drifted by the time anyone looked — one on indentation, one on a regex
+that gained a guard, and one because the function MOVED to another module
+while its anchor text stayed valid. `tests/test_mutate.py` checks every
+anchor against its module on every suite run, which is the fast half of
+this gate and the one that catches the failure that actually happens.
+
 A chunk is also the unit that survives being KILLED. When the run is
 backgrounded under anything that caps runtime — CI, an agent harness —
 size the chunk to fit inside the cap (`--chunks 1 --minutes 8`) and call
