@@ -688,6 +688,80 @@ falls in a 0.4-point window.
 
 ---
 
+### S2 — `reorder_rows` refuses outright on a table with a row-level tracked deletion, and tells the caller to do the one thing that cannot help
+<!-- status: open -->
+
+The row-count guard added in `0dc84d4` compares the raw `<w:tr>` count against
+the count in the table's VIEW:
+
+```python
+trs = [tr.group(0) for tr in rows_of(body)]
+if len(trs) != len(table.rows):
+    raise AnchorError(f"table {table.index} has {len(trs)} rows in the document "
+                      f"and {len(table.rows)} in the {table.view} view; "
+                      f"re-read it before reordering")
+```
+
+`view_transform` → `_simulate` → `_drop_row` deletes whole `w:tr` elements for
+row-level revisions, so the two counts diverge whenever a table carries one —
+and the advice is unactionable, because re-reading reproduces the same
+mismatch. It is a property of the transform, not a stale handle.
+
+Repro, four rows with one row-level `w:del`, read with plain `read_all`:
+
+    final view: 3 rows (raw 4) -> AnchorError ...; re-read it before reordering
+    re-read and retry         -> the identical AnchorError
+
+**Narrower than it first looks, and worth writing down so nobody re-derives
+it.** Only DELETIONS break the default `final` view: an inserted row survives
+into `final`, so counts stay equal and reorder works. Row insertions break
+`view="original"` instead, by the mirror argument. So the exposure is
+row-deleted tables in the default view, plus row-inserted tables read as
+`original` — which `by_caption` and `tables_after` both offer.
+
+**The pre-guard code was not silently corrupting; it was correct.** Worth
+stating because the comment above the guard ("Refusing beats permuting one
+list by the other's indices, which would move the wrong rows and still pass a
+multiset check") reads as though it were fencing off a pre-existing hazard,
+and it is not — it is fencing off a hazard the same commit introduced by
+moving `cells` to the caller's view while `movable` stayed raw. Checked
+against a tree built from `0dc84d4~1`, on three fixtures chosen so an index
+misalignment could not hide — the deleted row sorting last, first, and in the
+middle. All three produced correctly sorted RAW xml:
+
+    deleted row sorts FIRST : ['Country','POL','AAA','ALB'] -> ['Country','AAA','ALB','POL']
+    deleted row in MIDDLE   : ['Country','POL','MMM','ALB'] -> ['Country','ALB','MMM','POL']
+
+(Read back the results in the `final` view and the deleted row is hidden, so a
+check that looks only at the view sees a shorter list and can mistake it for a
+correct sort of the visible rows. Compare raw order, not view order.)
+
+So this is a behavioural regression on the documented core workflow — one
+country order applied across Tables 1, 3, 4, 5, A3 and A4 over Word Compare
+redlines — not a guard that started catching something old.
+
+**S2 rather than S1** because it refuses loudly rather than shipping a wrong
+document; but no gate sees it. The suite is green at 5274 passed with the
+regression present, because all three tests added alongside the guard use
+cell-level `w:ins` (`_redline_panel`), where the row counts stay equal. The
+guard's only reachable branch has no fixture. A `<w:trPr><w:del/></w:trPr>`
+row would have caught this before the commit landed.
+
+**The fix is to pair the rows, not to refuse.** The transform only ever drops
+rows, never adds or reorders them, so a per-row application of the same
+transform gives the raw→view mapping; permute `movable` by that, and key on
+the view cells as `0dc84d4` intended. Reverting the guard is not the answer —
+with `cells` on the view and `movable` raw, the misalignment it warns about is
+real. If the mapping turns out to be more than a small change, the interim
+must at least say that re-reading cannot help and name row-level revisions as
+the cause, since the present message sends the caller in a circle.
+
+Found by a code review pointed at this repo by accident (it was aimed at
+another project and fell back to the most recent commits here), then
+reproduced and narrowed independently.
+
+---
+
 
 ## Fixed
 
