@@ -688,80 +688,6 @@ falls in a 0.4-point window.
 
 ---
 
-### S2 — `reorder_rows` refuses outright on a table with a row-level tracked deletion, and tells the caller to do the one thing that cannot help
-<!-- status: open -->
-
-The row-count guard added in `0dc84d4` compares the raw `<w:tr>` count against
-the count in the table's VIEW:
-
-```python
-trs = [tr.group(0) for tr in rows_of(body)]
-if len(trs) != len(table.rows):
-    raise AnchorError(f"table {table.index} has {len(trs)} rows in the document "
-                      f"and {len(table.rows)} in the {table.view} view; "
-                      f"re-read it before reordering")
-```
-
-`view_transform` → `_simulate` → `_drop_row` deletes whole `w:tr` elements for
-row-level revisions, so the two counts diverge whenever a table carries one —
-and the advice is unactionable, because re-reading reproduces the same
-mismatch. It is a property of the transform, not a stale handle.
-
-Repro, four rows with one row-level `w:del`, read with plain `read_all`:
-
-    final view: 3 rows (raw 4) -> AnchorError ...; re-read it before reordering
-    re-read and retry         -> the identical AnchorError
-
-**Narrower than it first looks, and worth writing down so nobody re-derives
-it.** Only DELETIONS break the default `final` view: an inserted row survives
-into `final`, so counts stay equal and reorder works. Row insertions break
-`view="original"` instead, by the mirror argument. So the exposure is
-row-deleted tables in the default view, plus row-inserted tables read as
-`original` — which `by_caption` and `tables_after` both offer.
-
-**The pre-guard code was not silently corrupting; it was correct.** Worth
-stating because the comment above the guard ("Refusing beats permuting one
-list by the other's indices, which would move the wrong rows and still pass a
-multiset check") reads as though it were fencing off a pre-existing hazard,
-and it is not — it is fencing off a hazard the same commit introduced by
-moving `cells` to the caller's view while `movable` stayed raw. Checked
-against a tree built from `0dc84d4~1`, on three fixtures chosen so an index
-misalignment could not hide — the deleted row sorting last, first, and in the
-middle. All three produced correctly sorted RAW xml:
-
-    deleted row sorts FIRST : ['Country','POL','AAA','ALB'] -> ['Country','AAA','ALB','POL']
-    deleted row in MIDDLE   : ['Country','POL','MMM','ALB'] -> ['Country','ALB','MMM','POL']
-
-(Read back the results in the `final` view and the deleted row is hidden, so a
-check that looks only at the view sees a shorter list and can mistake it for a
-correct sort of the visible rows. Compare raw order, not view order.)
-
-So this is a behavioural regression on the documented core workflow — one
-country order applied across Tables 1, 3, 4, 5, A3 and A4 over Word Compare
-redlines — not a guard that started catching something old.
-
-**S2 rather than S1** because it refuses loudly rather than shipping a wrong
-document; but no gate sees it. The suite is green at 5274 passed with the
-regression present, because all three tests added alongside the guard use
-cell-level `w:ins` (`_redline_panel`), where the row counts stay equal. The
-guard's only reachable branch has no fixture. A `<w:trPr><w:del/></w:trPr>`
-row would have caught this before the commit landed.
-
-**The fix is to pair the rows, not to refuse.** The transform only ever drops
-rows, never adds or reorders them, so a per-row application of the same
-transform gives the raw→view mapping; permute `movable` by that, and key on
-the view cells as `0dc84d4` intended. Reverting the guard is not the answer —
-with `cells` on the view and `movable` raw, the misalignment it warns about is
-real. If the mapping turns out to be more than a small change, the interim
-must at least say that re-reading cannot help and name row-level revisions as
-the cause, since the present message sends the caller in a circle.
-
-Found by a code review pointed at this repo by accident (it was aimed at
-another project and fell back to the most recent commits here), then
-reproduced and narrowed independently.
-
----
-
 
 ## Fixed
 
@@ -10476,3 +10402,143 @@ letter without re-running the suite, so it passes no check count, and the
 template interpolated it anyway. Fixed with a fallback and a regression
 test verified to fail against the old template. (Lives in repkit; listed
 once here as the worked example of the format.)
+
+
+### S1 — `citations` refused on a Word lock under a printed snapshot banner — FIXED 29.08, `95024d9`
+<!-- status: fixed -->
+
+Two reads: `cmd_citations` took the snapshot through `_package`, printed
+the banner, and then handed `check_citations` the PATH, which read it
+again and refused. `check_citations(parts=...)` takes the package the
+caller already holds; the CLI passes it.
+
+**`probe` had the identical defect**, and was found by the test written
+for this one — same shape, same fix (`probe(parts=...)`). The entry's
+"worth checking" list is now answered: `count`, `tasks` (read mode),
+`smarten` (dry run) and `compare` were all refusing and now fall back —
+`compare` mattered most, since diffing the file the author has open IS
+the author round, and `compare.load` opened the zip itself; `figures`,
+`fit` and `sites` were already falling back; `pages`, `locate`, `pdf`
+and `verify` drive Word over the live file and refuse by design.
+
+**The banner is printed LAST now.** It promises a result, so a read that
+fails must not carry it — `_package` validated the package AFTER
+printing it, so "not a Word document" arrived under the same banner.
+
+**The gate could not fail, in two independent ways**, which is the part
+worth keeping. `main` exits with `sys.exit(f"docxkit: {exc}")`, and
+`pytest.raises(SystemExit)` catches that before anything is written, so
+the refusal reached neither stdout nor stderr and
+`assert "Close it and retry" not in capsys.readouterr().out` was
+vacuous. And `held_by_word` patched `is_locked` alone, leaving a DIRECT
+`read_parts` of the live path succeeding — so the second read this
+defect is made of worked in the suite and raised on the author's
+machine. The fixture now makes opening the live path raise
+`PermissionError`, which is what Windows does and what `readable`'s copy
+survives, and the test asserts a REPORT follows the banner: the banner
+and nothing else is what "did not run" looks like.
+
+**Tests:** `test_cli_guards.py` — fifteen read-only commands
+parametrized under a real lock, the banner-order refusal, and `compare`
+against a held side. Verified red before the fix.
+
+### S1 — a binary operator inside `\left( … \right)` became the delimiter's `m:sepChr`, and NO layer could see it — FIXED 29.08, `95024d9`
+<!-- status: fixed -->
+
+**Filed as an S2 and escalated on the measurement the entry asked for.**
+It named the condition itself: *"The FORMULA layer compares tokens and
+structure and may well catch it; that was NOT measured here and should
+be, because if it does not, this is an S1 and not an S2."* Measured on
+2026-08-29 — `(a+b)` against `(a−b)`, two documents, one character
+apart:
+
+    formula          (none)      tokens 'ab' both sides, skeleton 'd' both
+    text / glyph     (none)      no character moved in any m:t
+    every layer      (none)      --expect-clean GREEN
+
+A sign flip in a revision passed every gate the toolkit has.
+
+Both halves fixed. `_rejoin_at_separator` now fires on the SEPARATOR
+rather than on an empty element, so the character lands in an `m:t`
+where a text pass can read it; and `equations.tokens` reads an
+`m:sepChr` in a document this converter did NOT build — which is every
+manuscript built before today — placing it where it is DRAWN. That
+needs a parse: `m:sepChr` sits in `m:dPr` ahead of every argument, so
+scraping the attribute reads `+ab`, and the arguments cannot be counted
+by matching `<m:e>` because a subscript inside one has `m:e` of its own.
+It is gated on the substring, so a document without one pays nothing.
+`_compare_read._omml` held a SECOND copy of the token join and went on
+reading the runs alone; it now calls the shared one.
+
+**The narrow rule was checked against Word before being widened**, since
+the old docstring's reason for it was a claim about the page: rendered,
+`(x, y)` is identical in both spellings, while a binary operator as
+`m:sepChr` is set TIGHT — `(a+b)`, punctuation spacing — and gets the
+medium space it is owed only once it is a run. So rejoining is the
+better page as well as the readable markup, and one rule beats an
+operator-versus-separator list nobody could maintain. An empty
+`m:sepChr` is still left alone.
+
+**Tests:** `test_equations.py` (the rejoin, an empty separator left
+alone, `tokens` on an unrepaired document, and a separator read past a
+nested `m:e`) and `test_compare.py::test_a_SIGN_FLIP_inside_a_fence_is_a_finding`
+— the end-to-end gate. The test that asserted the OPPOSITE rule was
+replaced, with the render measurement in its docstring.
+
+### S2 — `reorder_rows` refused on a table with a row-level tracked deletion — FIXED 29.08, `95024d9`
+<!-- status: fixed -->
+
+The guard from `0dc84d4` compared the raw `<w:tr>` count against the
+count in the table's VIEW, which diverge for exactly one reason — a
+row-level revision — and told the caller to re-read, which reproduces
+the identical refusal. It was a behavioural regression on the documented
+core workflow (one country order across Tables 1, 3, 4, 5, A3 and A4,
+over a Word Compare redline, which is where row-level deletions live).
+
+**Paired, not refused**, as the entry proposed: `revisions.rows_in_view`
+answers per row whether it is in a view — the transform only ever DROPS
+rows, so that is the whole mapping — and the permutation runs over the
+slots holding a visible row past the header. A row the view hides keeps
+its slot; `header` now counts the rows the CALLER can see, which is the
+only reading that survives a deleted row above the header. The remaining
+refusal is the row walk and the transform disagreeing about what a row
+is, and it says that is a docxkit bug rather than sending the caller
+round the loop again.
+
+A RAW multiset check sits beside the view-level one, marked defensive:
+`rows_preserved` reads the view, where a hidden row is not there to be
+counted, so a row dropped by the slot loop would pass it as "a correct
+sort of the visible rows".
+
+**The missing fixture is the reusable half.** The suite was green at
+5274 with the regression present, because the three tests added beside
+the guard used cell-level `w:ins`, where the row counts stay equal — the
+guard's only reachable branch had no fixture. `conftest.row` now takes
+`revision="del"`/`"ins"`, and four tests use it: the sort that used to
+refuse, where the hidden rows end up, the mirror case (an inserted row
+read as `original`), and the refusal that is left.
+
+### S4 — `smarten --write` dropped its backup beside the manuscript — FIXED 29.08, `95024d9`
+<!-- status: fixed -->
+
+`working_pre_smarten1.docx` landed in `revision/`, whose first rule is
+ONE file — a second .docx there is one keystroke from being the one the
+author opens next.
+
+Option 2 from the entry, because it fixes the command as it was actually
+typed: `cli._prior_generations` resolves `paper.toml` the way `revision
+status` finds its own paths, and returns `build/rescue/` for the file
+that config NAMES as working — a build artifact or an export under the
+same project keeps its backup beside itself, and a paper not on the
+protocol is unchanged. `package.backup` grew `into=`, creating the
+folder if needed.
+
+**One fix rather than four**, as the entry suspected: `link --write`,
+`crossrefs --write`, `authors --set --write`, `refstyle --fix`,
+`tasks --done` and `smarten --write` all write through `_write_back`.
+The "previous version kept at ..." line is now relative to the
+manuscript, because a bare name reads as "beside your file" wherever it
+actually went.
+
+**Workaround to retire:** the hand `move` of `working_pre_smarten1.docx`
+into `build/rescue/` on Aging_Well.
