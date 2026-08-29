@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections.abc import Callable
@@ -136,15 +137,22 @@ def _word_limit(text: str) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    from .compare import compare, render
+    from .compare import compare_docs, load_parts, render
     # Both sides checked FIRST. `compare.load` reads only the text parts
     # it knows, so two files that are not manuscripts compared as two
     # empty documents and reported no differences — and `--expect-clean`
     # in CI passed on them. A gate that cannot fail on garbage input is
     # not a gate.
-    for side in (args.built, args.edited):
-        _package(side)
-    rep = compare(args.built, args.edited)
+    #
+    # And each side is read ONCE, through the read-only path: `load`
+    # opened the zip again itself, so a comparison against the file the
+    # author has open in Word refused — the one moment an author round
+    # is adjudicated. `load_parts` takes the package this already holds
+    # and is given the real path, so the report names the manuscript
+    # rather than the temporary copy it may have been read from.
+    sides = [load_parts(_package(side, read_only=True), side)
+             for side in (args.built, args.edited)]
+    rep = compare_docs(*sides)
     if args.json:
         _write_json(args.json, rep)
     # compare is a verbatim port and untyped; render returns the exit code
@@ -153,8 +161,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_citations(args: argparse.Namespace) -> int:
     from .citations import check_citations
-    _package(args.docx, read_only=True)   # a zip with no document.xml
-    found = check_citations(args.docx, later_mentions=args.later_mentions,
+    # The parts are PASSED on, not just validated: read twice, the
+    # second read was of the live path and refused the moment Word held
+    # it — under the snapshot banner the first read had already printed.
+    parts = _package(args.docx, read_only=True)
+    found = check_citations(args.docx, parts=parts,
+                            later_mentions=args.later_mentions,
                             ignore=_ignore(args))
     return 1 if found > 0 else 0
 
@@ -606,28 +618,76 @@ def _package(path: str, *, read_only: bool = False) -> dict[str, bytes]:
     Not the default, and deliberately: a command that goes on to WRITE
     must read the live file, or it would compute its edit from one
     generation and save it over another.
+
+    **The banner is printed LAST, and that order is the rule.** It is a
+    promise that a result follows, so a run that cannot produce one must
+    not carry it: `citations` printed the lock refusal AND the banner
+    (Aging_Well, 2026-08-28) and its output then had the shape of every
+    other gate's — a banner and no findings, which is what a clean run
+    also looks like. A caller reading the tail of a six-gate sweep could
+    not tell "clean" from "did not run" without counting lines. Once
+    this returns, the manuscript is in memory and no lock downstream can
+    refuse anything; what a command must not do is print the banner and
+    then read the PATH again, which is exactly what `citations` did.
     """
     from .package import read_parts, readable
+    copied = False
     if read_only:
         with readable(path) as (target, copied):
             parts = read_parts(target)
-        if copied:
-            print(_SNAPSHOT_NOTE)
     else:
         parts = read_parts(path)
     if DOCUMENT not in parts:
         raise PackageError(
             f"{Path(path).name} is a zip, but not a Word document: "
             f"it has no {DOCUMENT}")
+    if copied:
+        print(_SNAPSHOT_NOTE)
     return parts
 
 
 def _write_back(path: str, parts: dict[str, bytes], tag: str) -> str:
-    """Backup, then save — the one way an in-place command writes."""
+    """Backup, then save — the one way an in-place command writes.
+
+    Where the backup lands is decided by :func:`_prior_generations`, and
+    it is one fix rather than four: `link --write`, `crossrefs --write`,
+    `authors --set --write`, `refstyle --fix`, `tasks --done` and
+    `smarten --write` all come through here.
+    """
     from .package import backup, write_docx
-    kept = backup(path, tag=tag)
+    kept = backup(path, tag=tag, into=_prior_generations(path))
     write_docx(path, parts)
-    return kept.name
+    # Relative to the manuscript, because that is what makes the
+    # DIFFERENCE legible: a bare name reads as "beside your file"
+    # wherever it actually went.
+    return os.path.relpath(kept, Path(path).resolve().parent)
+
+
+def _prior_generations(path: str) -> Path | None:
+    """Where this paper keeps prior generations, or None for beside it.
+
+    Beside the manuscript is right for a file the author keeps in a
+    folder of their own. It is wrong in a revision-protocol folder,
+    whose first rule is ONE file: `working.docx` never changes name,
+    round names live in git tags and `export/`, and `build/rescue/` is
+    where earlier generations go. `docxkit smarten working.docx --write`
+    dropped `working_pre_smarten1.docx` beside it (Aging_Well,
+    2026-08-29) — exactly the second .docx that rule exists to prevent,
+    one keystroke from being the file the author opens next. It was
+    moved by hand, which is a workaround and not a resolution.
+
+    Resolved from ``paper.toml``, the way `revision status` finds its
+    own paths, and only for the file that config NAMES as the working
+    manuscript: a build artifact or an export that happens to sit under
+    the same project keeps its backup beside itself.
+    """
+    from .revision import ProtocolError, load_paper
+    target = Path(path).resolve()
+    try:
+        paper = load_paper(target.parent)
+    except (ProtocolError, OSError, ValueError):
+        return None           # no protocol here, or an unreadable config
+    return paper.rescue_dir if paper.working.resolve() == target else None
 
 
 def _save(path: str, parts: dict[str, bytes], tag: str) -> bool:
@@ -682,7 +742,7 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     """The margin comments as a work list; --check gates a submission."""
     from .comments import set_done, threads
 
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=not args.done)
     if args.done:
         n = set_done(parts, [i.strip() for i in args.done.split(",")])
         if n == 0:
@@ -728,7 +788,7 @@ def cmd_tasks(args: argparse.Namespace) -> int:
 def cmd_count(args: argparse.Namespace) -> int:
     """Bucketed word count — the number a journal cap is phrased in."""
     from .wordcount import count
-    counts = count(_package(args.docx), view=args.tracked)
+    counts = count(_package(args.docx, read_only=True), view=args.tracked)
     print(Path(args.docx).name)
     for name, n in counts.as_dict().items():
         print(f"  {name:<11}{n:>8,}")
@@ -883,7 +943,7 @@ def cmd_smarten(args: argparse.Namespace) -> int:
     """Straight quotes to typographic ones; dry run unless --write."""
     from .hygiene import smarten_parts
 
-    parts = _package(args.docx)
+    parts = _package(args.docx, read_only=not args.write)
     before = dict(parts)
     report = smarten_parts(parts)
     print(Path(args.docx).name)
@@ -926,9 +986,11 @@ def cmd_authors(args: argparse.Namespace) -> int:
 def cmd_probe(args: argparse.Namespace) -> int:
     """What shape is this manuscript? Run it BEFORE choosing an approach."""
     from .probe import probe
-    # a zip with no document.xml died on KeyError
-    _package(args.docx, read_only=True)
-    print(probe(args.docx, tuple(args.phrase)).report())
+    # a zip with no document.xml died on KeyError — and the parts are
+    # PASSED on, or this reads the live path a second time and refuses
+    # the moment Word holds it
+    parts = _package(args.docx, read_only=True)
+    print(probe(args.docx, tuple(args.phrase), parts=parts).report())
     return 0
 
 

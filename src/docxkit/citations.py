@@ -286,6 +286,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
 
 
 def check_citations(docx_path: str | Path, *,
+                    parts: dict[str, bytes] | None = None,
                     later_mentions: bool = False,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS) -> int:
     """Print the link audit for a manuscript; the count of issues found.
@@ -299,8 +300,18 @@ def check_citations(docx_path: str | Path, *,
     below prints either way — a half-linked paper used to reach "ALL
     CHECKS PASSED" (Aging_Well, 20 of 73 plain), because every count
     here was about works.
+
+    `parts` is a package the caller has ALREADY read, and it is how the
+    CLI hands over the snapshot it takes when Word holds the file. This
+    used to read `docx_path` itself whatever the caller had done, so
+    `citations` alone of the read-only gates refused during an author
+    round — while printing the snapshot banner that promises a result.
+    `docx_path` is still what the report NAMES, so the header line says
+    the manuscript rather than a temporary copy of it.
     """
-    issues, stats = audit_links(read_parts(docx_path), ignore=ignore,
+    if parts is None:
+        parts = read_parts(docx_path)
+    issues, stats = audit_links(parts, ignore=ignore,
                                 later_mentions=later_mentions)
     print(f"Document: {docx_path}")
     print(f"Paragraphs: {stats['paragraphs']}")

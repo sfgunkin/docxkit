@@ -129,7 +129,8 @@ class Probe:
 
 
 def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
-          anchors: tuple[str, ...] | None = None) -> Probe:
+          anchors: tuple[str, ...] | None = None,
+          parts: dict[str, bytes] | None = None) -> Probe:
     """Characterise `path`; `phrases` are the ones to show run splits for.
 
     Called PHRASES, not anchors: this module reports bookmark names too,
@@ -139,11 +140,18 @@ def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
     toolkit every paper imports and the CLI kept `--anchors-from` for
     exactly this rename — a paper script should not break on one half of
     a change that was careful about the other.
+
+    `parts` is a package the caller has already read — the CLI's
+    snapshot, when Word holds the file. Reading `path` again regardless
+    is what made this refuse an author round under a printed snapshot
+    banner, the same defect `citations` carried; `path` stays what the
+    report NAMES.
     """
     if anchors is not None:
         phrases = tuple(anchors) + tuple(phrases)
     path = Path(path)
-    parts = read_parts(path)
+    if parts is None:
+        parts = read_parts(path)
     rep = Probe(path=path)
 
     for name in (DOCUMENT, FOOTNOTES, ENDNOTES):

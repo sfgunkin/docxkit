@@ -30,7 +30,7 @@ from ._xml import (
 )
 from .errors import AnchorError
 from .find import TABLE_LABELS, caption_re
-from .revisions import FINAL, _has_revisions, view_transform
+from .revisions import FINAL, _has_revisions, rows_in_view, view_transform
 
 _TR_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>", re.DOTALL)
 _TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
@@ -853,26 +853,63 @@ def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
     side of the tracked changes and audited against the other. The
     permutation was correct and the audit said ``2 row(s) LOST, 2
     GAINED``; two cells inside a ``w:ins`` was enough to produce it.
+
+    **A row the view HIDES does not move, and does not stop the sort.**
+    A row-level revision — ``w:del`` in ``trPr``, or ``w:ins`` read as
+    ``original`` — means the document has one more row than the view
+    does, and pairing the two lists by index would move the wrong rows
+    while still passing the multiset check below. This refused instead,
+    and told the caller to re-read, which reproduces the same mismatch:
+    it is a property of the view, not a stale handle. So the lists are
+    PAIRED, by :func:`revisions.rows_in_view` — the transform only ever
+    drops rows, so its per-row answer is the mapping — and the hidden
+    row keeps the slot it has. `header` counts the rows the CALLER can
+    see, which is the only reading that survives a deleted row above the
+    header.
     """
     table = _fresh(xml, table, "reorder_rows")
     body = xml[table.start:table.end]
     trs = [tr.group(0) for tr in rows_of(body)]
-    if len(trs) != len(table.rows):
-        # Only reachable if a view transform drops a whole `w:tr` — a
-        # row-level revision. Refusing beats permuting one list by the
-        # other's indices, which would move the wrong rows and still
-        # pass a multiset check.
+    shown = rows_in_view(body, table.view)
+    if len(shown) != len(trs) or sum(shown) != len(table.rows):
+        # Not reachable through a row-level revision any more — those
+        # are what `shown` accounts for. This is the transform and the
+        # row walk disagreeing about what a row is, which is a defect
+        # here rather than anything the caller can act on.
         raise AnchorError(
             f"table {table.index} has {len(trs)} rows in the document and "
-            f"{len(table.rows)} in the {table.view} view; re-read it before "
-            f"reordering")
-    fixed, movable = trs[:header], trs[header:]
-    cells = table.rows[header:]
+            f"{len(table.rows)} in the {table.view} view, and they could "
+            f"not be paired ({sum(shown)} of the document's rows are in "
+            f"that view) — this is a docxkit bug, not a stale handle")
+    # Where a MOVABLE row may land: the slots holding a visible row past
+    # the header. Everything else — the header, and every row the view
+    # hides — stays exactly where it is.
+    slots, seen = [], 0
+    for i, visible in enumerate(shown):
+        if visible:
+            if seen >= header:
+                slots.append(i)
+            seen += 1
+    movable, cells = [trs[i] for i in slots], table.rows[header:]
     tail = [i for i, c in enumerate(cells) if c and c[0] in last]
     order = [i for i in range(len(movable)) if i not in tail]
     order.sort(key=lambda i: key(cells[i]))
-    out = _rows_replaced(xml, table,
-                         fixed + [movable[i] for i in order + tail])
+    rows = list(trs)
+    for slot, i in zip(slots, order + tail, strict=True):
+        rows[slot] = movable[i]
+    # The RAW gate, and it is not the one below: `rows_preserved` reads
+    # the view, where a hidden row is not there to be counted, so a row
+    # this loop dropped or duplicated would pass it as "a correct sort
+    # of the visible rows". Unreachable while the loop above only
+    # ASSIGNS — kept because the bug it names (building `rows` from
+    # `slots` alone, and losing every hidden row) is one refactor away,
+    # and nothing else in this function would see it.
+    if sorted(rows) != sorted(trs):    # pragma: no cover - defensive
+        raise AnchorError(
+            f"reordering table {table.index} did not permute its "
+            f"document rows: {len(trs)} in, {len(rows)} out, and the "
+            f"multiset differs")
+    out = _rows_replaced(xml, table, rows)
     moved = read_all(out, view=table.view)[table.index]
     if not (report := rows_preserved(table, moved, skip_header=False)):
         raise AnchorError(

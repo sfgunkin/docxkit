@@ -586,15 +586,68 @@ def test_the_brackets_of_a_rejoined_fence_survive():
     assert tokens(out) == "−1"
 
 
-@pytest.mark.parametrize("sep", [",", "−"])
-def test_a_real_separator_between_two_filled_elements_is_untouched(sep):
-    """The tell is the EMPTY element, not the separator. `(x,y)` and
-    `(a-b)` arrive in exactly this shape with both elements filled, and
-    there the separator is real and drawn between them. Firing on the
-    separator alone would flatten both."""
+@pytest.mark.parametrize("sep", [",", "−", "+"])
+def test_a_separator_between_two_FILLED_elements_is_rejoined_TOO(sep):
+    """This asserted the opposite until 2026-08-29 — that the tell is
+    the EMPTY element, because `(x,y)` arrives in the same shape with
+    both filled and there the separator is real and drawn between them.
+
+    It is drawn either way, and the narrow rule cost the whole text
+    layer. A character in an attribute is in no `m:t`, so `docxkit
+    text`, `compare`'s TEXT layer and every per-paper gate written
+    against extracted text read `(c_ij − c̄_j)` as `cijcj`. Measured:
+    `(a+b)` against `(a−b)` produced no finding on ANY layer of compare.
+
+    What the two spellings do to the PAGE was measured too, through
+    Word: `(x, y)` renders identically, while a binary operator as
+    `m:sepChr` is set TIGHT — `(a+b)`, punctuation spacing — and gets
+    the medium space it is owed only once it is a run. So rejoining is
+    the better page as well as the readable markup, and one rule beats
+    an operator-vs-separator list nobody could maintain."""
     src = _d(f'<m:sepChr m:val="{sep}"/>',
              f"<m:e>{mr('x')}</m:e>", f"<m:e>{mr('y')}</m:e>")
+
+    out = _normalized(src)
+
+    assert "sepChr" not in out and out.count("<m:e>") == 1
+    assert tokens(out) == f"x{sep}y"
+    assert f"<m:t>{sep}</m:t>" in out, "the character a text pass can read"
+
+
+def test_an_EMPTY_separator_is_left_alone():
+    """`m:sepChr m:val=""` is what the XSL writes when it put everything
+    in one element already — the shape rejoining produces. There is no
+    character to move and nothing to rejoin."""
+    src = _d('<m:sepChr m:val=""/>', f"<m:e>{mr('x')}{mr(',')}{mr('y')}</m:e>")
+
     assert _normalized(src) == src
+
+
+def test_TOKENS_read_a_separator_in_a_document_this_converter_did_not_build():
+    """The other half, and the one that reaches manuscripts already
+    written: every equation built before the rejoin still holds its
+    operator in an attribute, and a reader that walks `m:t` alone cannot
+    tell `(a+b)` from `(a−b)`. `tokens` is what `compare`'s FORMULA
+    layer fingerprints with."""
+    plus = _d('<m:sepChr m:val="+"/>',
+              f"<m:e>{mr('a')}</m:e>", f"<m:e>{mr('b')}</m:e>")
+    minus = _d('<m:sepChr m:val="−"/>',
+               f"<m:e>{mr('a')}</m:e>", f"<m:e>{mr('b')}</m:e>")
+
+    assert tokens(plus) == "a+b" and tokens(minus) == "a−b"
+
+
+def test_a_separator_is_read_where_it_is_DRAWN_not_where_it_is_STORED():
+    """`m:sepChr` sits in `m:dPr`, ahead of every argument, so scraping
+    the attribute and appending it reads `+ab`. And the arguments cannot
+    be counted by matching `<m:e>`: a subscript inside one has `m:e` of
+    its own, which is the shape half this paper's symbols have."""
+    sub = "<m:sSub><m:e>" + mr("c") + "</m:e><m:sub>" + mr("ij") \
+        + "</m:sub></m:sSub>"
+    src = _d('<m:sepChr m:val="−"/>',
+             f"<m:e>{sub}</m:e>", f"<m:e>{mr('1')}</m:e>")
+
+    assert tokens(src) == "cij−1"
 
 
 def test_normalisation_reaches_a_fence_inside_a_fraction():

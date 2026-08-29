@@ -15,6 +15,7 @@ import json
 import re
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import comment, make_parts, para, run, write
@@ -410,29 +411,121 @@ def test_inspect_counts_the_tables_a_reader_can_index(monkeypatch, tmp_path,
 READ_ONLY_COMMANDS = [
     ("citations",), ("lint",), ("refstyle",), ("crossrefs", "--audit"),
     ("math", "--check"), ("footnotes", "--check"), ("inspect",),
-    ("text",), ("probe",),
+    ("text",), ("probe",), ("count",), ("tasks",), ("smarten",),
+    ("figures",), ("fit",), ("sites", "Intro paragraph"),
 ]
 
 
 @pytest.fixture
-def held_by_word(monkeypatch):
-    """Word has the manuscript open."""
+def held_by_word(monkeypatch, simple_docx):
+    """Word has the manuscript open — the whole lock, not just the flag.
+
+    Patching `is_locked` alone is not the truth about a held file, and
+    the difference is what let `citations` pass this gate for as long as
+    it was refusing in the field: a DIRECT read of the live path still
+    succeeded here, so the second read that command made — of the path,
+    after the snapshot had already been taken and announced — worked in
+    the suite and raised on the author's machine.
+
+    So the refusal is put where Windows puts it: opening the live path
+    raises `PermissionError`, which is what every reader meets and what
+    `read_parts` turns into "is locked (open in Word)". The snapshot
+    copy is a `shutil.copy2`, which Word's share mode does allow, so it
+    still works — that asymmetry IS the fallback.
+    """
+    import zipfile as zf
+
     import docxkit.package as pkg
     monkeypatch.setattr(pkg, "is_locked", lambda path: True)
+
+    live, real = Path(simple_docx).resolve(), zf.ZipFile
+
+    def held(file: Any, *args: Any, **kw: Any) -> Any:
+        mode = args[0] if args else kw.get("mode", "r")
+        if (mode == "r" and isinstance(file, str | Path)
+                and Path(file).resolve() == live):
+            raise PermissionError(
+                13, "The process cannot access the file because it is being "
+                    "used by another process")
+        return real(file, *args, **kw)
+
+    monkeypatch.setattr(zf, "ZipFile", held)
+    # `read_parts` retries a sharing violation on a bounded schedule —
+    # right for a OneDrive race, three wasted seconds per refusing
+    # command here, and the retry itself is not what is under test.
+    monkeypatch.setattr(pkg.time, "sleep", lambda _seconds: None)
 
 
 @pytest.mark.parametrize("command", READ_ONLY_COMMANDS,
                          ids=[c[0] for c in READ_ONLY_COMMANDS])
 def test_a_read_only_command_runs_while_WORD_HOLDS_the_file(
         monkeypatch, capsys, command, simple_docx, held_by_word):
+    """The banner is a PROMISE that a result follows, and this is what
+    holds it.
+
+    Both halves of that were unchecked until 2026-08-29. The refusal
+    goes to STDERR — `main` exits with `sys.exit(f"docxkit: {exc}")` —
+    and this read `capsys.readouterr().out`, so "Close it and retry"
+    could not appear in what it looked at however loudly the command
+    refused. `citations` had been refusing under a printed banner since
+    the fallback landed, and this test was green on it the whole time:
+    the two-line refusal has the same SHAPE as a clean run, which is the
+    reason the defect was worth an S1, and the reason a negative
+    assertion alone cannot be the gate.
+
+    So the report itself is asserted. Whatever the command prints after
+    the banner is its result — a finding, a count, a clean verdict — and
+    a run with nothing after it did not run.
+    """
     verb, *flags = command
 
     code = _run(monkeypatch, verb, str(simple_docx), *flags)
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out, everything = captured.out, captured.out + captured.err
 
-    assert "Close it and retry" not in out and "locked" not in out.lower()
-    assert code in (0, 1, 2), out       # it RAN; the verdict is its own
-    assert "SNAPSHOT" in out, "a snapshot read has to say so"
+    assert "Close it and retry" not in everything, everything
+    assert "locked" not in everything.lower(), everything
+    assert code in (0, 1, 2), everything  # it RAN; the verdict is its own
+    assert cli._SNAPSHOT_NOTE in out, "a snapshot read has to say so"
+    assert out.replace(cli._SNAPSHOT_NOTE, "").strip(), \
+        "the banner and NOTHING else is what 'did not run' looks like"
+
+
+def test_COMPARE_diffs_a_side_the_author_has_open(
+        monkeypatch, capsys, tmp_path, simple_docx, held_by_word):
+    """The two paths make it awkward to parametrize and easy to forget,
+    and it is the gate most worth having on the fallback: a comparison
+    against the author's live file is the whole of an author round, so
+    the one command that adjudicates one refused at exactly the moment
+    it was wanted. `load` opened the zip itself, under the banner
+    `_package` had already printed."""
+    built = write(tmp_path / "built.docx",
+                  make_parts(para(run("Intro paragraph about "
+                                      "age-friendly work."))))
+
+    code = _run(monkeypatch, "compare", str(built), str(simple_docx))
+    captured = capsys.readouterr()
+
+    assert "Close it and retry" not in captured.out + captured.err
+    assert code in (0, 1), captured.out + captured.err
+    assert cli._SNAPSHOT_NOTE in captured.out
+    assert "[INSERT] Second paragraph" in captured.out, \
+        "the snapshot's own content is what was diffed"
+
+
+def test_the_snapshot_banner_is_not_printed_when_the_read_FAILS(
+        capsys, tmp_path, held_by_word):
+    """A package that is a zip and not a manuscript is refused — and the
+    refusal used to arrive under the banner, which says a result
+    follows. Ordering the two is the whole of the rule."""
+    not_a_paper = tmp_path / "notes.docx"
+    with zipfile.ZipFile(not_a_paper, "w") as z:
+        z.writestr("hello.txt", "not a manuscript")
+
+    with pytest.raises(PackageError, match="not a Word document"):
+        cli._package(str(not_a_paper), read_only=True)
+
+    assert cli._SNAPSHOT_NOTE not in capsys.readouterr().out
 
 
 def test_a_command_that_WRITES_still_refuses_a_locked_file(
@@ -444,6 +537,69 @@ def test_a_command_that_WRITES_still_refuses_a_locked_file(
 
     out = capsys.readouterr().out
     assert "SNAPSHOT" not in out, out
+
+
+# --- where an in-place write keeps the file it is about to replace ----
+#
+# `docxkit smarten revision/working.docx --write` left
+# `working_pre_smarten1.docx` in `revision/` (Aging_Well, 2026-08-29).
+# That folder is governed by the protocol's first rule — ONE file — and
+# a second .docx in it is one keystroke from being the one the author
+# opens next. It was moved to `build/rescue/` by hand, which is a
+# workaround and not a resolution.
+
+
+@pytest.fixture
+def protocol_paper(tmp_path):
+    """A paper on the single-file protocol, scaffolded as `init` does."""
+    from docxkit import revision
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "manuscript.docx",
+                make_parts(para(run("The author's own text isn't smart."))))
+    return revision.init(tmp_path / "proj", src, name="Test Paper")
+
+
+def test_an_in_place_write_keeps_the_old_generation_OUT_of_the_folder(
+        monkeypatch, capsys, protocol_paper):
+    paper = protocol_paper
+
+    code = _run(monkeypatch, "smarten", str(paper.working), "--write")
+
+    assert code == 0, capsys.readouterr().out
+    beside = [p.name for p in paper.working.parent.glob("*.docx")]
+    assert beside == [paper.working.name], \
+        f"the author's folder must hold ONE .docx, and holds {beside}"
+    kept = list(paper.rescue_dir.glob("*_pre_smarten*.docx"))
+    assert len(kept) == 1, f"prior generations go to {paper.rescue_dir}"
+    assert "rescue" in capsys.readouterr().out, \
+        "and the line says where, or a bare name reads as 'beside your file'"
+
+
+def test_a_docx_that_is_NOT_the_paper_keeps_its_backup_beside_it(
+        monkeypatch, capsys, protocol_paper):
+    """The narrowing that makes the rule safe: a build artifact or an
+    export under the same project is not the manuscript `paper.toml`
+    names, and its backup belongs where it is."""
+    other = write(protocol_paper.build_dir / "batch.docx",
+                  make_parts(para(run("A batch isn't smart either."))))
+
+    code = _run(monkeypatch, "smarten", str(other), "--write")
+
+    assert code == 0, capsys.readouterr().out
+    assert (Path(other).parent / "batch_pre_smarten1.docx").is_file()
+
+
+def test_a_paper_NOT_on_the_protocol_keeps_its_backup_beside_it(
+        monkeypatch, capsys, tmp_path):
+    """No `paper.toml` anywhere above it: beside the manuscript is the
+    right answer and stays the default."""
+    loose = write(tmp_path / "loose.docx",
+                  make_parts(para(run("There isn't a protocol here."))))
+
+    code = _run(monkeypatch, "smarten", str(loose), "--write")
+
+    assert code == 0, capsys.readouterr().out
+    assert (tmp_path / "loose_pre_smarten1.docx").is_file()
 
 
 def test_a_gate_timeout_that_is_not_a_NUMBER_names_the_argument():

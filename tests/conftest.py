@@ -81,9 +81,23 @@ def table(*rows: str) -> str:
     return f"<w:tbl>{''.join(rows)}</w:tbl>"
 
 
-def row(*cells: str) -> str:
-    return "<w:tr>" + "".join(f"<w:tc>{para(run(c))}</w:tc>"
-                              for c in cells) + "</w:tr>"
+def row(*cells: str, revision: str | None = None, rid: int = 95) -> str:
+    """A table row; `revision` flags the ROW itself as ins/del.
+
+    A row-level revision lives in ``w:trPr`` and is a FLAG on the row,
+    not a wrapper around content — Word makes the whole row appear or
+    disappear, so the document has one more row than the view does. It
+    is the case every `w:tr` walk has to account for and the one no
+    fixture here carried: `reorder_rows` shipped a guard whose only
+    reachable branch fired on exactly this shape, and the suite was
+    green at 5274 because the three tests written beside it used
+    cell-level ``w:ins``, where the two row counts stay equal.
+    """
+    trpr = (f'<w:trPr><w:{revision} w:id="{rid}" w:author="Revision" '
+            f'w:date="2026-07-29T00:00:00Z"/></w:trPr>') if revision else ""
+    return ("<w:tr>" + trpr
+            + "".join(f"<w:tc>{para(run(c))}</w:tc>" for c in cells)
+            + "</w:tr>")
 
 
 def ins(text: str, rid: int = 90) -> str:

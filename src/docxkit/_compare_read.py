@@ -33,6 +33,7 @@ from ._xml import (
     printed_text,
 )
 from .comments import read_all as _read_comments
+from .equations import tokens
 from .styles import Cascade
 
 # ------------------------------------------------------------- extraction
@@ -192,7 +193,12 @@ def _omml(p_xml: str) -> list[tuple[str, str, list[str]]]:
     for m in OMATH_RE.finditer(p_xml):
         block = m.group(0)
         skel = "/".join(OMML_STRUCT_RE.findall(block))
-        toks = html.unescape("".join(MT_RE.findall(block)))
+        # `equations.tokens`, not a second copy of the same join: this
+        # WAS the copy, and it went on reading the runs alone after the
+        # shared one learned to read a delimiter's `m:sepChr` — the
+        # character Word draws between two arguments and stores in an
+        # attribute. `(a+b)` against `(a−b)` was clean on every layer.
+        toks = tokens(block)
         marks: list[str] = []
         for r in MATH_RUN_RE.finditer(block):
             marker = _fmt_markers(r.group(0))

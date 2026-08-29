@@ -932,6 +932,106 @@ def test_reorder_rows_REFUSES_when_the_rows_themselves_moved(monkeypatch):
         reorder_rows(xml, t, key=_by_name(["ALB", "POL", "UZB", "All"]))
 
 
+# --- a row the VIEW hides ---------------------------------------------
+#
+# The case the row-count guard fired on, and the one no fixture here
+# carried: a row-level revision makes the document's row list and the
+# view's row list different lengths, so pairing them by index moves the
+# wrong rows. The guard refused instead and said "re-read it before
+# reordering", which reproduces the identical refusal — it is a property
+# of the transform, not a stale handle.
+
+def _six_countries() -> str:
+    """Seven rows, of which the `final` view shows five: two data rows
+    carry a row-level `w:del`, so the two lists differ by two.
+
+    Counts chosen so a wrong list cannot coincide with the right one:
+    seven raw rows, five in the view, four of them movable."""
+    return document(
+        para(run("Table 5. By country"))
+        + table(row("Country", "Score"),
+                row("POL", "0.31"),
+                row("MDA", "0.42", revision="del", rid=95),
+                row("ALB", "0.22"),
+                row("UZB", "0.15"),
+                row("KGZ", "0.19", revision="del", rid=96),
+                row("SRB", "0.28")))
+
+
+def test_reorder_rows_SORTS_a_table_holding_a_row_level_deletion():
+    """It refused, and told the caller to do the one thing that cannot
+    help. One country order across Tables 1, 3, 4, 5, A3 and A4 over a
+    Word Compare redline is the documented core workflow, and a redline
+    is where row-level deletions live."""
+    xml = _six_countries()
+    t = read_all(xml)[0]
+    assert [r[0] for r in t.rows] == ["Country", "POL", "ALB", "UZB", "SRB"], \
+        "the fixture only bites if the two row lists really differ"
+
+    out = reorder_rows(xml, t, key=_by_name(["ALB", "POL", "SRB", "UZB"]))
+
+    assert [r[0] for r in read_all(out)[0].rows] == [
+        "Country", "ALB", "POL", "SRB", "UZB"]
+    assert read_all(out)[0].rows[1] == ["ALB", "0.22"], \
+        "and every cell travelled with its row"
+
+
+def test_a_row_the_view_HIDES_keeps_its_place_and_its_cells():
+    """Where the deleted rows go is the question the pairing has to
+    answer, and "nowhere" is the answer: they are not in the order the
+    caller sorted, so they hold the slots they had. Read in `original`,
+    which is the only view that can see them at all."""
+    xml = _six_countries()
+
+    out = reorder_rows(xml, read_all(xml)[0],
+                       key=_by_name(["ALB", "POL", "SRB", "UZB"]))
+
+    assert [r[0] for r in read_all(out, view="original")[0].rows] == [
+        "Country", "ALB", "MDA", "POL", "SRB", "KGZ", "UZB"]
+    assert [r[1] for r in read_all(out, view="original")[0].rows] == [
+        "Score", "0.22", "0.42", "0.31", "0.28", "0.19", "0.15"], \
+        "the hidden rows keep their own values, not a neighbour's"
+
+
+def test_the_MIRROR_case_an_inserted_row_read_as_original():
+    """The exposure is not only deletions. An inserted row survives into
+    `final` — counts stay equal, and reorder always worked there — but
+    it is gone from `original`, which `by_caption` and `tables_after`
+    both hand out."""
+    xml = document(
+        para(run("Table 3. By country"))
+        + table(row("Country", "Score"),
+                row("POL", "0.31"),
+                row("ZZZ", "0.99", revision="ins", rid=97),
+                row("ALB", "0.22"),
+                row("UZB", "0.15")))
+
+    out = reorder_rows(xml, read_all(xml, view="original")[0],
+                       key=_by_name(["ALB", "POL", "UZB"]))
+
+    assert [r[0] for r in read_all(out, view="original")[0].rows] == [
+        "Country", "ALB", "POL", "UZB"]
+    assert [r[0] for r in read_all(out)[0].rows] == [
+        "Country", "ALB", "ZZZ", "POL", "UZB"], \
+        "and the inserted row kept the slot it was inserted at"
+
+
+def test_reorder_rows_still_refuses_when_the_two_lists_CANNOT_be_paired(
+        monkeypatch):
+    """The guard that is left. It no longer fires on a row-level
+    revision — that is what the pairing accounts for — so what reaches
+    it is the row walk and the view transform disagreeing about what a
+    row is, which is a defect here and says so instead of sending the
+    caller round the re-read loop again."""
+    xml = _six_countries()
+    t = read_all(xml)[0]
+    monkeypatch.setattr(_table_core, "rows_in_view",
+                        lambda body, view: [True] * 7)
+
+    with pytest.raises(AnchorError, match="could not be paired"):
+        reorder_rows(xml, t, key=_by_name(["ALB", "POL", "SRB", "UZB"]))
+
+
 def test_clone_row_copies_the_row_BELOW_itself_with_its_formatting():
     """A new row built from nothing has to invent the cell properties —
     borders, shading, widths — that make it look like the table it

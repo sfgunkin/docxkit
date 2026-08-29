@@ -203,25 +203,48 @@ _M = f"{{{M_NS}}}"
 
 
 def _rejoin_at_separator(d: Any) -> None:
-    """Undo a fence the converter split at an operator.
+    """Undo a fence the converter split at its separator.
 
-    `latex2mathml` reads the minus in ``(-1)`` as the delimiter's
-    SEPARATOR rather than as a sign, so the fence comes back as two
-    ``m:e`` — an empty one and ``1`` — with the minus in ``m:sepChr``.
-    Word lays the empty element out as a gap and the page reads
-    ``(   −1)``, the parenthesis adrift from the sign. Rejoining at the
-    separator gives back the ``(−1)`` that was written. Same for
-    ``(-)``, ``[-1]``, ``|-1|``.
+    Word's ``MML2OMML.XSL`` turns the operator inside a fence into the
+    delimiter's SEPARATOR: ``\\left(a+b\\right)`` comes back as two
+    ``m:e`` holding ``a`` and ``b``, with the ``+`` in ``m:sepChr`` and
+    in no ``m:t`` at all. Same for ``(-1)``, where the first element is
+    empty, and for ``(x,y)``.
 
-    **The tell is the EMPTY element, not the separator.** ``(x,y)``
-    arrives in exactly this shape with both elements filled, and there
-    the separator is real and drawn between them — as it is in
-    ``(a-b)``. Firing on the separator alone would flatten those.
+    **Rejoining is both halves of a defect, and neither was visible.**
+
+    The page: as ``m:sepChr`` Word draws a binary operator TIGHT —
+    ``(a+b)``, punctuation spacing — where the same expression written
+    as runs gets the medium space it is owed, ``(a + b)``. ``(-1)`` was
+    worse and is what this function was written for: Word lays the empty
+    element out as a gap and the page reads ``(   −1)``.
+
+    The text layer: a character in an attribute is in no ``m:t``, so
+    `docxkit text`, the TEXT layer of `compare` and every per-paper gate
+    written against extracted text read ``c_ij − c̄_j`` as ``cijcj`` —
+    with no way to tell a minus from a plus. Measured 2026-08-29:
+    ``(a+b)`` against ``(a−b)`` produced NO finding on any layer of
+    `compare`, tokens and skeleton identical, `--expect-clean` green. A
+    sign flip in a revision passed every gate the toolkit has.
+
+    **The tell is the SEPARATOR, not the empty element.** It used to be
+    the other way round — fire only when an element is empty — on the
+    reasoning that ``(x,y)`` arrives in the same shape with both filled
+    and there the comma is real and drawn. It is drawn either way:
+    rendered through Word, ``(x, y)`` is identical in both spellings
+    (2026-08-29), while the operator cases differ as above. So the
+    narrow rule bought nothing and cost the observability of every fence
+    an author happened to write with ``\\left…\\right`` — ``\\frac{a}{b+c}``
+    keeps its operator in an ``m:t`` and ``\\left(b+c\\right)`` did not,
+    which is not a property anyone would predict.
+
+    An EMPTY ``m:sepChr`` is left alone: it means the XSL put everything
+    in one element already, which is the shape this produces.
     """
     from lxml import etree
 
     els = [e for e in d if e.tag == _M + "e"]
-    if len(els) < 2 or all(len(e) for e in els):
+    if len(els) < 2:
         return
     sep_el = d.find(f"{_M}dPr/{_M}sepChr")
     sep = sep_el.get(_M + "val") if sep_el is not None else None
@@ -417,8 +440,50 @@ def equations(xml: str) -> list[Equation]:
 
 
 def tokens(omml: str) -> str:
-    """The symbol stream of an equation."""
+    """The symbol stream of an equation, separators included.
+
+    A delimiter's ``m:sepChr`` is a character in an ATTRIBUTE: Word
+    draws it between the arguments, and it is in no ``m:t``, so a stream
+    read from the runs alone cannot tell ``(a+b)`` from ``(a−b)``.
+    Measured 2026-08-29: `compare` reported no finding on any layer for
+    that pair — tokens equal, skeleton equal, `--expect-clean` green —
+    which made a sign flip inside a fence invisible to every gate.
+
+    :func:`latex_to_omml` no longer WRITES that shape, but every
+    manuscript built before it does, so the reader has to know it too.
+    """
+    if "m:sepChr" in omml:
+        omml = _with_separators(omml)
     return html.unescape("".join(MT_RE.findall(omml)))
+
+
+def _with_separators(omml: str) -> str:
+    """`omml` with each separator moved to where it is DRAWN.
+
+    :func:`_rejoin_at_separator` again, and deliberately the same
+    function: the converter's repair and the reader's view of an
+    unrepaired document have to agree about what the page says, and two
+    spellings of that rule would be one drift per defect.
+
+    Ordering is why this parses rather than scraping the attribute out
+    with a regex. ``m:sepChr`` sits in ``m:dPr``, ahead of every
+    argument, so an appended token reads ``+ab``; and the arguments
+    cannot be counted by matching ``<m:e>`` either, because a subscript
+    inside one has ``m:e`` of its own. Gated on the substring, so the
+    documents that do not carry one — which after this is all of the
+    ones docxkit builds — pay nothing.
+    """
+    from lxml import etree
+
+    wrapped = f"<x {_fragment_declarations(omml)}>{omml}</x>"
+    try:
+        root = etree.fromstring(wrapped.encode("utf-8"))
+    except etree.XMLSyntaxError:
+        return omml           # a token stream is not worth a hard failure
+    for d in list(root.iter(_M + "d")):
+        _rejoin_at_separator(d)
+    return "".join(etree.tostring(child, encoding="unicode")
+                   for child in root)
 
 
 def skeleton(omml: str) -> str:

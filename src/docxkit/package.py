@@ -500,24 +500,40 @@ def edit_in_place(path: str | Path,
         return report
 
 
-def next_backup_path(path: str | Path, tag: str = "backup") -> Path:
-    """First free ``<stem>_<tag>N.docx`` beside `path` (N starts at 1)."""
-    path = Path(path)
-    n = 1
+def next_backup_path(path: str | Path, tag: str = "backup", *,
+                     into: str | Path | None = None) -> Path:
+    """First free ``<stem>_<tag>N.docx`` beside `path` (N starts at 1).
+
+    `into` puts it in another folder instead, keeping the name. Beside
+    the manuscript is right for a file the author keeps in a folder of
+    their own, and wrong in a revision-protocol folder, whose first rule
+    is ONE file: a second .docx there is one keystroke from being the
+    one the author opens and edits. See :func:`backup`.
+    """
+    path, n = Path(path), 1
+    folder = Path(into) if into is not None else path.parent
     while True:
-        cand = path.with_name(f"{path.stem}_{tag}{n}{path.suffix}")
+        cand = folder / f"{path.stem}_{tag}{n}{path.suffix}"
         if not cand.exists():
             return cand
         n += 1
 
 
-def backup(path: str | Path, tag: str = "backup") -> Path:
+def backup(path: str | Path, tag: str = "backup", *,
+           into: str | Path | None = None) -> Path:
     """Copy `path` to the next free numbered backup and return that path.
 
     Call this before any build that writes to the file the author edited —
     the build clobbers their work otherwise, and OneDrive version history
     is a poor substitute for a snapshot you took deliberately.
+
+    `into` names the folder the copy goes to, created if it is not
+    there. It is how a caller inside the single-file protocol keeps
+    prior generations in ``build/rescue/`` rather than beside
+    ``working.docx``, where `docxkit smarten --write` put one on
+    Aging_Well and a hand `move` took it out again.
     """
-    dest = next_backup_path(path, tag)
+    dest = next_backup_path(path, tag, into=into)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, dest)
     return dest

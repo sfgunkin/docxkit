@@ -58,6 +58,7 @@ __all__ = [
     "reject",
     "revision_elements",
     "revision_text",
+    "rows_in_view",
     "spans",
     "text",
     "view_transform",
@@ -686,6 +687,33 @@ def view_transform(view: str) -> Callable[[str], str]:
     if view == ORIGINAL:
         return reject
     raise ValueError(f"view must be {FINAL!r} or {ORIGINAL!r}")
+
+
+def rows_in_view(table_xml: str, view: str) -> list[bool]:
+    """For each of a table's OWN rows, in order: is it in `view`?
+
+    The raw→view row mapping, and the reason it exists: a table's rows
+    in the document and its rows in a VIEW are not the same list. A row
+    whose ``w:trPr`` carries ``w:del`` is gone from ``final``, one
+    carrying ``w:ins`` is gone from ``original``, and a caller holding
+    both — raw ``w:tr`` elements on one side, `Table.rows` on the
+    other — cannot pair them by index.
+
+    :func:`accept` and :func:`reject` only ever DROP rows here; nothing
+    adds or reorders them. So a per-row answer is the whole mapping: the
+    True entries, in order, are the view's rows.
+
+    Nested tables are not this table's rows, matching ``tables.rows_of``
+    — the two are read together, so they have to agree about what a row
+    is.
+    """
+    view_transform(view)                   # validates the view name
+    vanish = ("del", "moveFrom") if view == FINAL else ("ins", "moveTo")
+    root, wrapped = _parse(table_xml)
+    tbl = root.find(W + "tbl") if wrapped else root
+    if tbl is None:
+        return []
+    return [_row_flag(tr, vanish) is None for tr in tbl.findall(W + "tr")]
 
 
 def text(xml: str, view: str = FINAL) -> list[str]:

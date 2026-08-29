@@ -503,6 +503,30 @@ def test_a_rewritten_equation_is_not_also_reported_as_typography(tmp_path):
     assert report["formula_format"] == []
 
 
+def test_a_SIGN_FLIP_inside_a_fence_is_a_finding(tmp_path):
+    """The character Word draws between a delimiter's arguments lives in
+    an ATTRIBUTE — `m:sepChr` — and in no `m:t`, so the token stream
+    read from the runs alone says `ab` for both `(a+b)` and `(a−b)`.
+
+    Measured 2026-08-29 on exactly this pair: every layer clean,
+    skeleton equal, `--expect-clean` green. A sign flip in a revision
+    passed every gate the toolkit has, which is what makes this the
+    gate rather than the converter fix beside it — the converter stops
+    WRITING the shape, and every manuscript built before it still
+    holds it."""
+    def fence(sep: str) -> str:
+        return ("<w:p>" + "<m:oMath><m:d>"
+                f'<m:dPr><m:sepChr m:val="{sep}"/></m:dPr>'
+                f"<m:e>{mrun('a')}</m:e><m:e>{mrun('b')}</m:e>"
+                "</m:d></m:oMath></w:p>")
+
+    report = compare(*docs(tmp_path, fence("+"), fence("−")))
+
+    assert [f["change"] for f in report["formula"]] == ["tokens"]
+    assert report["formula"][0]["from"][1] == "a+b"
+    assert report["formula"][0]["to"][1] == "a−b"
+
+
 def test_a_restructured_equation_is_not_also_reported_as_typography(tmp_path):
     """The same rule where the paragraphs DO align: identical tokens,
     a different skeleton, and formatting that moved with it. One
@@ -1356,13 +1380,20 @@ def test_neither_door_loses_a_report_json_cannot_encode(
 
     a, b = docs(tmp_path, BASE, BASE)
 
-    def with_a_set(path_a, path_b):
-        rep = facade.compare_docs(facade.load(path_a), facade.load(path_b))
+    # `compare_docs`, not `compare`: the CLI door reads each side once
+    # through `_package` — so that it can diff a file the author has
+    # open in Word — and calls this directly, while the module door
+    # still goes through `compare`, which calls it too. It is the one
+    # seam both doors share.
+    real = facade.compare_docs
+
+    def with_a_set(doc_a, doc_b):
+        rep = real(doc_a, doc_b)
         rep["structure"].append({"type": "PART REMOVED", "part": "body",
                                  "text": "a part", "names": {"b1", "b2"}})
         return rep
 
-    monkeypatch.setattr(facade, "compare", with_a_set)
+    monkeypatch.setattr(facade, "compare_docs", with_a_set)
     entry = cli.main if door == "cli" else facade.main
     argv0 = ["docxkit", "compare"] if door == "cli" else ["docxkit-compare"]
     dest = tmp_path / "report.json"
