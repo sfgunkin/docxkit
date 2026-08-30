@@ -46,6 +46,34 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### Not seven defects — one habit: a `*.py` glob is a claim that the package is flat
+<!-- status: note -->
+
+Seven of the entries closed on 2026-08-30 are the same line of code written
+seven times. `revision.py` became `revision/`, and every tool that enumerated
+the package with `glob("*.py")` stopped seeing it — `test_api_surface`,
+`test_layering`, `test_harness_map`, `coverage_floor`, `mutation_session`,
+`measure_all`, `stale_figures`.
+
+**Not one of them failed.** That is the whole finding. Each went on printing a
+confident answer about a package it could no longer read: a coverage floor met
+by a file that no longer exists, a layering graph with a hole in it, a
+whole-package sweep that opened 43 of 57 modules, an API-surface test that
+resolved to `docxkit` and passed. The gates in this repository are unusually
+strong AND they are keyed by filename, so a rename is a two-part change whose
+second part is invisible.
+
+The lesson is not "use rglob". It is that **a gate which enumerates the thing
+it guards should say how many it found**, so that a number dropping is
+visible without anyone anticipating the reason. `test_harness_map` and
+`test_api_surface` now derive their lists from the tree and fail on a module
+they cannot place; `coverage_floor` fails on a floor naming a file that is
+gone. Those three would each have caught this alone.
+
+Left open as a note because the rule is not implemented anywhere — it is a
+thing to ask when writing the next gate, not a check that exists.
+
+
 ### S1 — `[batch] carry` restores a footer beside the one Compare RE-TYPED, so the section gets two `default` footers and the promoted manuscript prints its page number twice
 <!-- status: open -->
 

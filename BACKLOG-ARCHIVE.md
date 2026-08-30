@@ -14,6 +14,178 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — a survivor list quotes the LIVE file as though it were the run's own source, and says nothing when the snapshot is gone~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+`mutation_survivors.pristine_source` reads the `.pristine` copy a session
+took when it planned the run, because every line number in the report indexes
+into the file the mutants were generated from. When the snapshot is missing it
+fell back to the live file and returned an **empty note**.
+
+Its own docstring already says what that costs: *"a source that has moved
+since — a docstring added, a helper inserted — shifts every quote below the
+edit, so the report names the wrong line with complete confidence."* An empty
+note is indistinguishable from "this is the source the run used".
+
+Eight of the fifty sessions on this machine have no snapshot — they predate
+the mechanism — so the silent path was the live one, not a corner. It became
+much more dangerous while a retention rule was being considered: the
+`.pristine` half of a session *looks* like the disposable one, and pruning it
+would have turned every later report on 42 sessions into confident wrong
+lines with nothing on the page to say so.
+
+**Fixed 2026-08-30.** The fallback returns a warning naming which of the two
+cases it is — a session that never kept a snapshot, or a `.pristine` that
+exists without the file, which is a pruning mistake with somewhere to go and
+look. It is still not an error: the fallback is what this tool always did.
+
+### ~~S1 — `mutation_session` copies only `src/docxkit/*.py` into the worktree and deletes nothing, so a module that became a subpackage is measured as its own stale predecessor~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+`ensure_worktree` refreshes the private checkout from the working tree, and
+its comment says why it copies ALL of `src/` rather than just the module under
+test: *"refreshing only the target left every other module at whatever HEAD
+was that day."* The glob is `src/docxkit/*.py`.
+
+Measured 2026-08-30, the day `revision.py` became `revision/`: the worktree
+held **no `revision/` at all** and a **144 KB `revision.py` dated six days
+earlier**, which nothing removed. A round planned against
+`src/docxkit/revision/_build.py` would have run with `docxkit.revision`
+resolving to the pre-split module — a plausible number for source the
+session's plan does not describe.
+
+That is this module's own opening hazard, arriving through the one path it did
+not guard. Not a stale MODULE: a stale LAYOUT.
+
+**Fixed 2026-08-30.** The copy is recursive and a `.py` under
+`src/docxkit` that the working tree does not have is deleted. Both halves
+were needed — copying the new layout in beside the ghost leaves both, and
+the loader picks.
+
+### ~~S1 — the mutation session stem drops the folder, so `revision/_ingest.py` and `ingest.py` share one database and one `.pristine`~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+A session is named `.mutation-<stem>.sqlite`, and the stem was
+`module.stem.lstrip("_")`. `revision/_ingest.py` and `ingest.py` both reduce to
+`ingest`.
+
+The failure is not a crash. The second run to start resumes or overwrites the
+first's database, and `mutation_survivors` then pairs that database with a
+`.pristine` holding the **other module's source** — line numbers indexing into
+a file the run never saw, printed with complete confidence. It is the S1 above
+reached from a different direction, and the same shape as the coverage-floor
+key beneath it.
+
+The rule had **three copies**, in `mutation_session`, `measure_all` and
+`stale_figures`, in three slightly different spellings — and `stale_figures`
+lacked the fallback the other two had for a name that is nothing but
+underscores. A rule written out three times is a rule with three chances to be
+fixed in two places.
+
+**Fixed 2026-08-30.** `harness_map.session_stem` is the only copy. A module in
+a subpackage keeps its folder (`revision_build`); a top-level module keeps
+exactly the name its session has always had, because 49 of them exist here and
+renaming them would orphan every recorded figure.
+
+### ~~S2 — `coverage_floor` keys on the basename, so two `__init__.py` collapse into one entry and a module is checked against another file's floor~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+`measure` returned `{Path(name).name: percent}`. That was unique while every
+module sat directly under `src/docxkit`, and stopped being unique the moment
+`revision/` existed: `revision/__init__.py` and the package's own
+`__init__.py` collide head-on, and one silently overwrites the other in the
+dict.
+
+A collision here does not raise. A module is measured against a percentage
+belonging to a different file, and the gate reports a confident pass — or a
+confident failure — about neither of them.
+
+**Fixed 2026-08-30.** A module inside a subpackage keeps its folder in the
+key (`revision/_losses.py`); every other key is unchanged, which is why the
+40-entry FLOORS list did not have to be rewritten.
+
+**What the split turned up on the way.** `revision.py` carried one floor at
+97, described as *"held above DEFAULT deliberately: every refusal in here is a
+thing that failed SILENTLY in a real paper."* Restated as fourteen floors,
+`_build.py` measured **84.7 %** — below the package DEFAULT of 85, in the half
+that drives Word's Compare. Nothing was lost in the split. That half had been
+the least-tested thing in the protocol all along, and one aggregate over 3,118
+lines could not say so. It is at 100 % now.
+
+### ~~S2 — `measure_all --all` walks `src/docxkit/*.py`, so a whole-package sweep silently omits every module in a subpackage~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+`--all` is the entry point for a fan-out sweep across several worktrees — the
+thing that turns a day of wall clock into twenty minutes of thought. It
+expanded to 43 modules and **none of `revision/`'s fourteen halves**, and
+would have reported a whole-package sweep with 3,118 lines of the protocol
+never opened.
+
+Worse than a gap: the report reads as complete. Nothing in it names what it
+did not measure.
+
+**Fixed 2026-08-30.** `rglob`, with the name kept relative to `src/docxkit` —
+which is the spelling `harness_map` keys on and the one `run` interpolates
+back into a path. The smallest-first ordering is unchanged, because `--in`
+deals round-robin and sorting the other way puts every big module in the last
+stream.
+
+### ~~S3 — `tools/sweep.py` was bound to nothing: no chain, no workflow, no gate~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+The sweep runs every read-only routine over a corpus of real manuscripts, and
+CONTRIBUTING said to run it *"after any change to the reading routines"*. That
+sentence was its only binding. It is in neither `tools/gates.py` nor
+`.github/workflows/ci.yml`, and no hook or command called it.
+
+This is the state the curated mutations were in until 2026-08-27, and it
+matters more here: the synthetic suite holds only the shapes somebody already
+knew to write, and the sweep's whole subject is the document nobody
+anticipated. `test_corpus_regressions.py` records what one pass over 347
+manuscripts found — a byte-order mark, an undeclared namespace prefix, nested
+tables — every one of which passed the unit suite.
+
+**Fixed 2026-08-30.** Sixth gate in the chain. CI cannot run it — a runner has
+no manuscripts and a checkout cannot carry any — so the local chain is the only
+place it can live, and without `DOCXKIT_CORPUS` it exits 3 and the chain prints
+`skip sweep` with the reason. That third exit state is the point: `ok` over
+zero documents and `ok` over 347 are the same line.
+
+Two things the wiring found. A configured root that does not exist used to be
+swept past, reporting a clean run over a fraction of the corpus; it fails now.
+And `--limit` took `paths[:N]` — one alphabetical corner of one directory, so a
+bounded sweep could never find anything it had not already found. It strides.
+
+### ~~S3 — three gates go blind to a module the day it becomes a subpackage, and one of them then reports on the WRONG module rather than none~~ — FIXED 30.08, `4fc4da7`
+<!-- status: fixed -->
+
+`src/docxkit/*.py` is how several gates enumerate the package. A directory is
+not a `.py`, so on 2026-08-30 they stopped seeing `revision` — and not one of
+them failed:
+
+* **`test_api_surface`** dropped `revision`'s 53-name `__all__`, the largest
+  in the package, from every test in the file. Worse than absent: `MODULES`
+  was fixable with a glob, but `test_everything_DECLARED_can_actually_be_imported`
+  builds its import from `path.stem`, and the stem of `revision/__init__.py`
+  is `__init__` — so `__import__("docxkit.__init__")` resolves to `docxkit`
+  itself. The test would have gone on passing, over the package's own 16-name
+  surface, while reporting on `revision`;
+* **`test_layering`** lost the whole subpackage from its graph. Only the cycle
+  test noticed, and only because `revision` happens to be named in `_CYCLE`;
+* **`test_harness_map`**'s "every module has an ENTRY" check left fourteen
+  modules unmapped at once — the state its own docstring calls out as the one
+  that fails silently, because `stale_figures` walks that dict and "not in the
+  table" reads exactly like "nothing to do here".
+
+**Fixed 2026-08-30.** All three walk subpackages. `test_api_surface` gained
+`_module` (the importable name) separately from `_id` (the name a failure
+prints), and a test pinning that the walk reaches `docxkit.revision` and not
+`docxkit` — asserted as an object identity, because both failures produce a
+real module with a real `__all__` and neither raises. `test_layering` gained
+`SUBPACKAGE_HALVES`: the internal order, declared bottom-first and enforced,
+which cannot live in `__init__.py` because ruff's isort sorts that block.
+
+
 ### ~~S4 — nothing checks that an entry sits in the SECTION that describes it, and the cheap check cannot~~ — FIXED 27.08, `9f851d0`
 <!-- status: fixed -->
 
