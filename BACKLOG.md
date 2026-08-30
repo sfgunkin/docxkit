@@ -74,116 +74,6 @@ Left open as a note because the rule is not implemented anywhere — it is a
 thing to ask when writing the next gate, not a check that exists.
 
 
-### S1 — `[batch] carry` restores a footer beside the one Compare RE-TYPED, so the section gets two `default` footers and the promoted manuscript prints its page number twice
-<!-- status: open -->
-
-`carry` puts a dropped part back "with its content type, a relationship on an
-id free in the target, and — for a header or footer — the section reference
-that puts it on the page". It restores the reference with the type the
-BASELINE gave that part, and does not look at what the section already has.
-
-Word's Compare does not only drop parts: it RE-TYPES the one it keeps.
-Measured 2026-08-29 on Life_Expectancy's round-2 batch —
-
-    baseline   f:even=footer1  f:default=footer2  f:first=footer3
-    batch      f:default=footer1  f:default=footer2  f:first=footer3
-                        ^ Compare re-typed it     ^ carry restored it
-
-`footer1` is the paper's *even* footer (inert: `evenAndOddHeaders` is not
-set, so nothing rendered it). Compare kept it and called it `default`; carry
-then restored `footer2` — the real default footer, the one holding the
-`PAGE` field — as a **second** `default` reference. Two default footers in
-one section: the promoted proposal printed the page number TWICE on every
-page, and ran 45 pages where the baseline runs 41.
-
-**Every gate was green.** `revision validate`'s parts gate asks whether the
-part is in the package; `compare` reads runs, paragraphs and links; a page
-number is a field inside a part neither of them opens. It was found by
-rendering the promoted file and looking at it — the same lesson as the
-"nothing renders by default" note below, now with a promote behind it.
-
-The build's own line about it is misleading too: for each carried part it
-prints "it is not referenced from the body, so it goes back with its content
-type and a free rId". A header or footer IS referenced from the body — from
-`sectPr` — and that reference is the whole difficulty.
-
-Fix: when restoring a header/footer reference, reconcile the whole section
-against the baseline's type→part mapping rather than appending one
-reference — if the section already carries a reference of that type to a
-DIFFERENT part, appending is always wrong. The invariant worth encoding is
-"a batch's page furniture is the baseline's page furniture". Per-paper
-workaround meanwhile: `Life_Expectancy/revision/fix_section_refs.py`, which
-writes the baseline's mapping onto a batch and is idempotent. A regression
-test wants a baseline whose parts are typed `even`/`default`/`first` and a
-Compare that keeps exactly one of them under the wrong type.
-
-### S1 — `compare`'s FORMAT layer is blind to bold/italic in a PANDOC-written docx: `<w:b />` (space before the slash) does not match its regex
-<!-- status: open -->
-
-`_compare_read._flags` reads a run property with
-
-    re.search(rf'<w:{tag}(?:/>|\s+w:val="([^"]*)"\s*/>)', rpr)
-
-which matches `<w:b/>` and `<w:b w:val="0"/>` but **not `<w:b />`**. XML says
-those are the same element; pandoc writes the spaced form for every
-self-closing tag.
-
-Measured 2026-08-29 on Life_Expectancy's round-2 response letter, written by
-pandoc: 15 `<w:b />` and 85 `<w:i />`, and `compare` reported the file as
-carrying **no bold and no italic anywhere**. Reformatting it (an lxml
-round-trip, which normalises the spacing) then produced **28 phantom FORMAT
-change locations** of the shape
-
-    'Reviewer 2': ['size 24'] -> ['bold', 'size 24']
-
-on a pass that changed nothing but paragraph spacing. The noise is the
-harmless half. The dangerous half is the false NEGATIVE: on any
-pandoc-produced document — every `.md`-to-`.docx` deliverable — a genuine
-loss of italics or bold passes `compare --expect-clean` silently, which is
-the same class of failure as the size/colour blindness that entry above it
-records.
-
-Fix: tolerate whitespace before the slash (`\s*/>`), for the on/off tags AND
-for `<w:vertAlign .../>` beside them, and test with a fixture written by
-pandoc rather than by python-docx — every existing fixture is written by a
-serializer that omits the space, which is why no test caught this.
-
-### S2 — `compare` reads the on/off run flags WITHOUT the style cascade, so every Word save that drops a redundant `<w:i/>` under an `Emphasis` run is reported as ITALIC LOST
-<!-- status: open -->
-
-`_VALUED` (size, colour) is resolved through `styles.Cascade`, and its
-comment says exactly why: *"Word deletes a direct property equal to the
-inherited one, so comparing what is STATED reports a difference on documents
-that render identically — which is how a check that cries wolf gets
-written."* The on/off flags in `_flags` — italic, bold, strike, smallCaps —
-were left reading the run's own `rPr`.
-
-So they cry wolf. Measured 2026-08-29 on Life_Expectancy, comparing the
-clean generation against the same manuscript after the author's Accept All
-in Word:
-
-    'Demographic Research':       ['italic', 'size 24'] -> ['size 24']
-    'Demography':                 ['italic', 'size 24'] -> ['size 24']
-    'Review of Economic Studies': ['italic', 'size 24'] -> ['size 24']
-    'Papeles de Población':       ['italic', 'size 24'] -> ['size 24']
-
-Every one is false. Those runs carry `<w:rStyle w:val="Emphasis"/>`, the
-style is defined `<w:rPr><w:i/><w:iCs/></w:rPr>`, and Word dropped the
-direct `<w:i/>` as redundant on save. The four journal names are still
-italic on the page; the runs that had `<w:i/>` with no character style kept
-it, which is the tell.
-
-**Why it matters more than noise.** This fires on an ACCEPTANCE — the one
-comparison a paper runs at its most dangerous moment, when the author's
-Accept All really can strip run properties (that is a documented failure on
-this very toolkit's papers). A layer that reports four false losses there
-teaches the reader to skim past the real one. The fix is the same Cascade
-the valued properties already use.
-
-Pairs with the pandoc `<w:b />` entry above: the on/off flags are wrong in
-two independent ways — blind to a spacing variant, and blind to the style
-that supplies the property.
-
 ### S2 — `compare` has NO view of paragraph properties: an indent or a spacing change is invisible at every layer, and `--expect-clean` prints OK
 <!-- status: open -->
 
@@ -217,48 +107,6 @@ inherited one, so comparing what is STATED reports differences on documents
 that render identically. Report it under its own heading so a deliberate
 typesetting pass can be read and dismissed. Worth pairing with the render
 gate the note below asks for: an indent is a thing you can see.
-
-### S4 — `revision validate` at a truth state dies with a raw file-not-found instead of saying there is no batch to validate
-<!-- status: open -->
-
-At a truth state — the normal state of a paper between rounds — there is no
-`build/batch.docx`, and the ladder says:
-
-    $ docxkit revision validate
-    docxkit: cannot read …\revision\build\batch.docx: [Errno 2] No such
-    file or directory: '…\\revision\\build\\batch.docx'
-    exit 1
-
-It reads as a broken installation or a lost file, not as "there is nothing
-pending; `revision status` is the check you want". It cost a real detour:
-Life_Expectancy's round-2 protocol listed `revision validate` as a
-PRECONDITION, to be run green before any edit, and the step is not runnable
-as written — the protocol author reasonably assumed a gate ladder could be
-run on a clean paper.
-
-Fix: catch the missing batch and print what state the paper is in and what
-to run instead. Exit code is a judgment call; refusing with 3 (the
-BaselinePending code's sibling) beats a traceback-shaped 1.
-
-### S4 — the accept-check refusal tells you to pass `accept_check=False`, which the CLI cannot do
-<!-- status: open -->
-
-`revision build`'s anchor-loss refusal ends:
-
-    Pass accept_check=False to build the file anyway and inspect it.
-
-That is a Python keyword argument. The CLI's flags are `--allow-math-resolve`,
-`--allow-stale-baseline`, `--keep-math`, `--allow-pending-baseline` and
-`--force`, none of which is it. A CLI user reading that line has been told to
-do something the CLI does not offer, and the honest workaround — write a
-throwaway script that imports `docxkit.revision` — is the thing the CLI
-exists to avoid.
-
-Met 2026-08-29 on Life_Expectancy, where the refusal was RIGHT (two
-unterminated bookmarks Compare would have dropped) and the repair was to fix
-the manuscript, not to bypass the check. So the message wants both halves:
-name the CLI escape if one is added, and keep saying that the refusal is
-usually correct.
 
 ### Not three defects — one missing gate: nothing renders by default
 <!-- status: note -->
@@ -371,14 +219,6 @@ watched an observable proxy — "do the entries look right" — rather than
 the object, "is each entry in the section that says what it is."
 
 ---
-
-
-
-
-
-
-
-
 
 
 **One open, filed 2026-08-23** (above). Before it the section was empty: the three that were open — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry

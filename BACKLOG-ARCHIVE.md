@@ -14,6 +14,174 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `[batch] carry` restored a footer beside the one Compare RE-TYPED, so the section got two `default` footers and the promoted manuscript printed its page number twice~~ — FIXED 30.08, `d83444b`
+<!-- status: fixed -->
+
+**Fixed 2026-08-30.** `_restore_section_references` reconciles the section against the baseline's type -> part map instead of appending beside what Compare left. A stale reference of the same kind and type is moved to the type the BASELINE gives its part; one the baseline does not place in that section at all is dropped, because it is a reference Compare invented. Idempotent, so `carry` stays safe to leave on.
+
+Four tests in `test_parts_gaps.py`, three of which fail against the old code with the measured symptom — `footer1: default, footer2: default`. The build's misleading line went too: it said the carried part "is not referenced from the body", which is true of the data store and false of the two parts where it matters.
+
+`carry` puts a dropped part back "with its content type, a relationship on an
+id free in the target, and — for a header or footer — the section reference
+that puts it on the page". It restores the reference with the type the
+BASELINE gave that part, and does not look at what the section already has.
+
+Word's Compare does not only drop parts: it RE-TYPES the one it keeps.
+Measured 2026-08-29 on Life_Expectancy's round-2 batch —
+
+    baseline   f:even=footer1  f:default=footer2  f:first=footer3
+    batch      f:default=footer1  f:default=footer2  f:first=footer3
+                        ^ Compare re-typed it     ^ carry restored it
+
+`footer1` is the paper's *even* footer (inert: `evenAndOddHeaders` is not
+set, so nothing rendered it). Compare kept it and called it `default`; carry
+then restored `footer2` — the real default footer, the one holding the
+`PAGE` field — as a **second** `default` reference. Two default footers in
+one section: the promoted proposal printed the page number TWICE on every
+page, and ran 45 pages where the baseline runs 41.
+
+**Every gate was green.** `revision validate`'s parts gate asks whether the
+part is in the package; `compare` reads runs, paragraphs and links; a page
+number is a field inside a part neither of them opens. It was found by
+rendering the promoted file and looking at it — the same lesson as the
+"nothing renders by default" note below, now with a promote behind it.
+
+The build's own line about it is misleading too: for each carried part it
+prints "it is not referenced from the body, so it goes back with its content
+type and a free rId". A header or footer IS referenced from the body — from
+`sectPr` — and that reference is the whole difficulty.
+
+Fix: when restoring a header/footer reference, reconcile the whole section
+against the baseline's type→part mapping rather than appending one
+reference — if the section already carries a reference of that type to a
+DIFFERENT part, appending is always wrong. The invariant worth encoding is
+"a batch's page furniture is the baseline's page furniture". Per-paper
+workaround meanwhile: `Life_Expectancy/revision/fix_section_refs.py`, which
+writes the baseline's mapping onto a batch and is idempotent. A regression
+test wants a baseline whose parts are typed `even`/`default`/`first` and a
+Compare that keeps exactly one of them under the wrong type.
+
+### ~~S1 — `compare`'s FORMAT layer was blind to bold/italic in a PANDOC-written docx: `<w:b />` (space before the slash) did not match its regex~~ — FIXED 30.08, `d83444b`
+<!-- status: fixed -->
+
+**Fixed 2026-08-30.** `\s*/>` rather than `/>`, for the four on/off tags and for `<w:vertAlign>` beside them. Both spellings are now in the parametrised table in `test_compare.py`, and a test compares two PANDOC-spelled documents against each other — the bug survives any fixture where only one side carries the space.
+
+Proved against the old regex: every pandoc spelling read `[]`. `<w:bCs/>` still does not answer for `w:b`, and `w:val="0"` still reads as off.
+
+`_compare_read._flags` reads a run property with
+
+    re.search(rf'<w:{tag}(?:/>|\s+w:val="([^"]*)"\s*/>)', rpr)
+
+which matches `<w:b/>` and `<w:b w:val="0"/>` but **not `<w:b />`**. XML says
+those are the same element; pandoc writes the spaced form for every
+self-closing tag.
+
+Measured 2026-08-29 on Life_Expectancy's round-2 response letter, written by
+pandoc: 15 `<w:b />` and 85 `<w:i />`, and `compare` reported the file as
+carrying **no bold and no italic anywhere**. Reformatting it (an lxml
+round-trip, which normalises the spacing) then produced **28 phantom FORMAT
+change locations** of the shape
+
+    'Reviewer 2': ['size 24'] -> ['bold', 'size 24']
+
+on a pass that changed nothing but paragraph spacing. The noise is the
+harmless half. The dangerous half is the false NEGATIVE: on any
+pandoc-produced document — every `.md`-to-`.docx` deliverable — a genuine
+loss of italics or bold passes `compare --expect-clean` silently, which is
+the same class of failure as the size/colour blindness that entry above it
+records.
+
+Fix: tolerate whitespace before the slash (`\s*/>`), for the on/off tags AND
+for `<w:vertAlign .../>` beside them, and test with a fixture written by
+pandoc rather than by python-docx — every existing fixture is written by a
+serializer that omits the space, which is why no test caught this.
+
+### ~~S2 — `compare` read the on/off run flags WITHOUT the style cascade, so every Word save that drops a redundant `<w:i/>` under an `Emphasis` run was reported as ITALIC LOST~~ — FIXED 30.08, `d83444b`
+<!-- status: fixed -->
+
+**Fixed 2026-08-30.** `Cascade` could not resolve these at all: `_val` reads `w:val`, and a toggle's ON form is the bare element, so `of("i", ...)` answered None for `<w:i/>`. `Cascade.toggle` is the resolver for a property whose presence IS its value — run, then the character style's `basedOn` chain, then the paragraph style's, then docDefaults — and `_compare_read._resolved_flags` uses it.
+
+Falls back to the stated flags with no styles part, which is the answer `_valued` gives and the honest one. Two of the five tests fail against the old code with the reported shape, `{'from': ['bold'], 'to': []}`.
+
+`_VALUED` (size, colour) is resolved through `styles.Cascade`, and its
+comment says exactly why: *"Word deletes a direct property equal to the
+inherited one, so comparing what is STATED reports a difference on documents
+that render identically — which is how a check that cries wolf gets
+written."* The on/off flags in `_flags` — italic, bold, strike, smallCaps —
+were left reading the run's own `rPr`.
+
+So they cry wolf. Measured 2026-08-29 on Life_Expectancy, comparing the
+clean generation against the same manuscript after the author's Accept All
+in Word:
+
+    'Demographic Research':       ['italic', 'size 24'] -> ['size 24']
+    'Demography':                 ['italic', 'size 24'] -> ['size 24']
+    'Review of Economic Studies': ['italic', 'size 24'] -> ['size 24']
+    'Papeles de Población':       ['italic', 'size 24'] -> ['size 24']
+
+Every one is false. Those runs carry `<w:rStyle w:val="Emphasis"/>`, the
+style is defined `<w:rPr><w:i/><w:iCs/></w:rPr>`, and Word dropped the
+direct `<w:i/>` as redundant on save. The four journal names are still
+italic on the page; the runs that had `<w:i/>` with no character style kept
+it, which is the tell.
+
+**Why it matters more than noise.** This fires on an ACCEPTANCE — the one
+comparison a paper runs at its most dangerous moment, when the author's
+Accept All really can strip run properties (that is a documented failure on
+this very toolkit's papers). A layer that reports four false losses there
+teaches the reader to skim past the real one. The fix is the same Cascade
+the valued properties already use.
+
+Pairs with the pandoc `<w:b />` entry above: the on/off flags are wrong in
+two independent ways — blind to a spacing variant, and blind to the style
+that supplies the property.
+
+### ~~S4 — `revision validate` at a truth state died with a raw file-not-found instead of saying there is no batch to validate~~ — FIXED 30.08, `d83444b`
+<!-- status: fixed -->
+
+**Fixed 2026-08-30.** The missing batch is caught before the read: it prints what is not there, how many pending revisions the manuscript holds and which state that puts it in, and points at `revision status`. Exit 3, as the entry suggested. A paper whose `paper.toml` names a manuscript that is gone gets the answer about the batch without the state line, rather than a second traceback.
+
+At a truth state — the normal state of a paper between rounds — there is no
+`build/batch.docx`, and the ladder says:
+
+    $ docxkit revision validate
+    docxkit: cannot read …\revision\build\batch.docx: [Errno 2] No such
+    file or directory: '…\\revision\\build\\batch.docx'
+    exit 1
+
+It reads as a broken installation or a lost file, not as "there is nothing
+pending; `revision status` is the check you want". It cost a real detour:
+Life_Expectancy's round-2 protocol listed `revision validate` as a
+PRECONDITION, to be run green before any edit, and the step is not runnable
+as written — the protocol author reasonably assumed a gate ladder could be
+run on a clean paper.
+
+Fix: catch the missing batch and print what state the paper is in and what
+to run instead. Exit code is a judgment call; refusing with 3 (the
+BaselinePending code's sibling) beats a traceback-shaped 1.
+
+### ~~S4 — the accept-check refusal told you to pass `accept_check=False`, which the CLI cannot do~~ — FIXED 30.08, `d83444b`
+<!-- status: fixed -->
+
+**Fixed 2026-08-30.** One `_ACCEPT_ESCAPE` sentence behind both refusals, which used to spell it out separately and were both wrong the same way. It names where the switch really lives — `tracked.build(..., accept_check=False)` from Python — says the CLI has no flag for it on purpose, and keeps the half worth keeping: the refusal is usually right and the repair is usually in the manuscript.
+
+`revision build`'s anchor-loss refusal ends:
+
+    Pass accept_check=False to build the file anyway and inspect it.
+
+That is a Python keyword argument. The CLI's flags are `--allow-math-resolve`,
+`--allow-stale-baseline`, `--keep-math`, `--allow-pending-baseline` and
+`--force`, none of which is it. A CLI user reading that line has been told to
+do something the CLI does not offer, and the honest workaround — write a
+throwaway script that imports `docxkit.revision` — is the thing the CLI
+exists to avoid.
+
+Met 2026-08-29 on Life_Expectancy, where the refusal was RIGHT (two
+unterminated bookmarks Compare would have dropped) and the repair was to fix
+the manuscript, not to bypass the check. So the message wants both halves:
+name the CLI escape if one is added, and keep saying that the refusal is
+usually correct.
+
 ### ~~S1 — a survivor list quotes the LIVE file as though it were the run's own source, and says nothing when the snapshot is gone~~ — FIXED 30.08, `4fc4da7`
 <!-- status: fixed -->
 
