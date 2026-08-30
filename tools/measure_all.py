@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from harness_map import harness_for
+from harness_map import harness_for, session_stem
 
 from docxkit.console import utf8_stdout
 
@@ -151,7 +151,7 @@ def run(module: str, minutes: float, sample: int = 0, *,
                  "The figure describes the tree as it was PLANNED.")
         say(f"    {moved}")
 
-    stem = module[:-3].lstrip("_") or module[:-3]
+    stem = session_stem(module)
     db = ROOT / f".mutation-{stem}.sqlite"
     if not db.exists():
         say("    NO SESSION")
@@ -226,8 +226,16 @@ def main() -> int:
 
     modules = list(args.modules)
     if args.all:
-        found = sorted((p.stat().st_size, p.name)
-                       for p in (ROOT / "src/docxkit").glob("*.py")
+        # `rglob`, and the name kept RELATIVE to `src/docxkit` — which
+        # is the spelling `harness_map` keys on and `run` interpolates
+        # back into a path. A `glob("*.py")` swept 43 modules and none
+        # of `revision/`'s fourteen halves on the day it became a
+        # subpackage: `--all` would have reported a whole-package sweep
+        # over 3,118 lines it never opened.
+        src = ROOT / "src/docxkit"
+        found = sorted((p.stat().st_size,
+                        p.relative_to(src).as_posix())
+                       for p in src.rglob("*.py")
                        if p.name != "__init__.py")
         modules += [name for _size, name in found if name not in modules]
     if not modules:

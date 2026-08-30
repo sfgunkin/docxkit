@@ -52,6 +52,14 @@ def test_every_module_has_an_ENTRY_so_the_TABLE_can_see_it():
     somewhere to leave one.
     """
     modules = {p.name for p in SRC.glob("*.py") if p.name != "__init__.py"}
+    # and the subpackages' halves, which are modules a run mutates like
+    # any other. `revision/` arrived on 2026-08-30 and a top-level glob
+    # stopped seeing fourteen of them at once — every one silently
+    # unmapped, which this test exists to refuse.
+    modules |= {f"{folder.name}/{p.name}"
+                for folder in SRC.iterdir()
+                if folder.is_dir() and (folder / "__init__.py").is_file()
+                for p in folder.glob("*.py") if p.name != "__init__.py"}
 
     unmapped = sorted(modules - set(HARNESS_MAP.HARNESS))
 
@@ -106,3 +114,73 @@ def test_a_test_file_NAMED_after_a_module_is_in_its_harness(module):
         f"{module}: {sorted(named - entry - excluded)} is named after it "
         f"and is neither in its harness nor excluded — a run without it "
         f"invents survivors in whatever it covers")
+
+
+# --- the session name a module measures into -----------------------------
+
+
+def test_a_TOP_LEVEL_module_keeps_the_session_name_it_has_always_had():
+    """49 sessions exist on this machine. Renaming them would orphan
+    every figure recorded against them, so the rule for a module beside
+    the others is unchanged: drop the leading underscore, nothing more.
+    """
+    assert HARNESS_MAP.session_stem("edit.py") == "edit"
+    assert HARNESS_MAP.session_stem("_table_core.py") == "table_core"
+    assert HARNESS_MAP.session_stem("src/docxkit/edit.py") == "edit"
+
+
+def test_a_SUBPACKAGE_half_keeps_its_folder_in_the_session_name():
+    """`revision/` arrived on 2026-08-30 and the basename rule stopped
+    being unique the same day."""
+    assert HARNESS_MAP.session_stem(
+        "revision/_build.py") == "revision_build"
+    assert HARNESS_MAP.session_stem(
+        "src/docxkit/revision/_losses.py") == "revision_losses"
+
+
+def test_a_HALF_and_a_TOP_LEVEL_module_of_the_same_name_do_not_collide():
+    """`revision/_ingest.py` and `ingest.py` both reduced to `ingest`.
+
+    Stated as the collision rather than as two spellings, because the
+    failure is not a crash: the second session to run resumes or
+    overwrites the first's database, and `mutation_survivors` then
+    pairs it with a `.pristine` holding the OTHER module's source —
+    line numbers indexing into a file the run never saw, printed with
+    complete confidence.
+    """
+    assert (HARNESS_MAP.session_stem("revision/_ingest.py")
+            != HARNESS_MAP.session_stem("ingest.py"))
+
+
+def test_EVERY_mapped_module_has_a_session_name_of_its_own():
+    """The general form, over the map as it really is — so a future
+    subpackage cannot reintroduce the collision unnoticed."""
+    stems = [HARNESS_MAP.session_stem(m) for m in HARNESS_MAP.HARNESS]
+    clashes = sorted({s for s in stems if stems.count(s) > 1})
+
+    assert not clashes, (
+        f"{clashes}: two modules would measure into one session file, "
+        f"and the second run silently replaces the first")
+
+
+def test_a_WINDOWS_path_is_read_the_same_as_a_posix_one():
+    """`mutation_session` is handed a `Path`, which stringifies with
+    backslashes on this platform; `measure_all` and `stale_figures`
+    pass the map's own forward-slash keys."""
+    posix = "src/docxkit/revision/_build.py"
+
+    assert HARNESS_MAP.session_stem(pathlib.Path(posix)) == "revision_build"
+    assert HARNESS_MAP.session_stem(
+        posix.replace("/", chr(92))) == "revision_build"
+
+
+def test_a_name_of_NOTHING_BUT_underscores_still_has_a_stem():
+    """`lstrip("_")` on `_.py` leaves the empty string, and a session
+    file called `.mutation-.sqlite` is one every such module shares.
+
+    Two of the three copies of this rule carried the `or` fallback and
+    `stale_figures` did not — which is the ordinary fate of a rule
+    written out three times, and the reason it is written once now.
+    """
+    assert HARNESS_MAP.session_stem("_.py") == "_"
+    assert HARNESS_MAP.session_stem("revision/_.py") == "revision__"

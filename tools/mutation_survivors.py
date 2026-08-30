@@ -218,6 +218,16 @@ def pristine_source(db_path: str, src_path: str) -> tuple[str, str]:
     quote below the edit, so the report names the wrong line with
     complete confidence. `mutation_session` snapshots the module when it
     plans a run for exactly this reason; this reads it back.
+
+    With no snapshot the fallback is the live file — what this tool
+    always did, and it must not become an error — but that now returns a
+    WARNING rather than an empty note. Silence there reads as "this is
+    the source the run used", which is indistinguishable from "this is
+    whatever is on disk today". The `.pristine` half of a session looks
+    like the disposable one (49 sessions, 86 MB), so pruning it to
+    reclaim space is a live temptation; doing that used to turn every
+    later report on those runs into confident wrong lines with nothing
+    on the page to say so.
     """
     stem = Path(db_path).stem.removeprefix(".mutation-")
     kept = Path(db_path).resolve().parent / f".mutation-{stem}.pristine"
@@ -230,7 +240,18 @@ def pristine_source(db_path: str, src_path: str) -> tuple[str, str]:
         # the snapshot is matched on the file name instead
         inside = next(kept.rglob(Path(src_path).name), kept)
     if not inside.is_file():
-        return src_path, ""
+        # Which of the two it is decides what the reader does next: a
+        # session that never kept a snapshot is history and nothing can
+        # be done; a session whose snapshot is GONE is a pruning
+        # mistake, and the sqlite beside it is worth no more than this.
+        why = ("that session kept no snapshot"
+               if not kept.is_dir()
+               else f"{kept.name} exists but does not hold "
+                    f"{Path(src_path).name}")
+        return src_path, (
+            f"  (no pristine copy — {why}. The lines below index into "
+            f"the LIVE file: if it has changed since the run was "
+            f"planned, they name the wrong ones.)")
     if inside.read_bytes() == Path(src_path).read_bytes():
         return str(inside), ""
     return str(inside), (

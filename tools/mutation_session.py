@@ -215,8 +215,23 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
     # `errors.py` on 2026-08-17 did: `test_api_surface`'s exception gate
     # walks every module, read 42 stale ones, and failed the baseline
     # check with sixteen errors that had nothing to do with the mutation.
-    for src in sorted(ROOT.glob("src/docxkit/*.py")):
-        shutil.copy2(src, WORKTREE / "src" / "docxkit" / src.name)
+    #
+    # RECURSIVE, and stale files are DELETED. Both halves were wrong the
+    # day `revision.py` became `revision/` (2026-08-30): a `*.py` glob
+    # copied none of the fourteen halves, and nothing removed the
+    # 144 KB `revision.py` the worktree still held from 24 August. A run
+    # would then have imported the pre-split module — the same source
+    # the session's plan does not describe — and produced a number for
+    # it. That is this file's own opening hazard, arriving through the
+    # one path it did not guard: not a stale MODULE, a stale LAYOUT.
+    live = {p.relative_to(ROOT) for p in ROOT.rglob("src/docxkit/**/*.py")}
+    for path in sorted(live):
+        target = WORKTREE / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / path, target)
+    for stale in sorted((WORKTREE / "src" / "docxkit").rglob("*.py")):
+        if stale.relative_to(WORKTREE) not in live:
+            stale.unlink()
     # `tests/conftest.py` is in no module's harness — nothing names it —
     # and every test file copied here imports it. Without it the
     # worktree runs TODAY's tests against whatever conftest was in the
@@ -460,8 +475,11 @@ def main() -> int:
                     help="just print where the session got to")
     args = ap.parse_args()
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from harness_map import session_stem  # noqa: PLC0415
+
     module = Path(args.module)
-    stem = module.stem.lstrip("_") or module.stem
+    stem = session_stem(module)
     config = ROOT / f".mutation-{stem}.toml"
     session = ROOT / f".mutation-{stem}.sqlite"
 

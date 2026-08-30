@@ -63,7 +63,20 @@ ROOT = Path(__file__).resolve().parents[1]
 #: recognised through its variants.
 MARKER = "Refs BACKLOG.md"
 
-FILE = "BACKLOG.md"
+#: Both halves. `## Fixed` moved to `BACKLOG-ARCHIVE.md` on 2026-08-30,
+#: so a closure is now an entry APPEARING in the archive rather than a
+#: heading being struck in place. Left reading BACKLOG.md alone, this
+#: gate would have seen a deletion where a closure was, found no
+#: closure at any depth, and reported every `Refs BACKLOG.md` commit in
+#: 200 of history as unrecorded — a permanently-red gate, which by this
+#: repo's own severity scale outranks a wrong answer nobody sees.
+#:
+#: BACKLOG.md stays first and stays in :data:`MARKER`: the commit-message
+#: convention is a literal string to copy, and repointing it at a second
+#: filename would invalidate every commit that already carries it.
+FILES = ("BACKLOG.md", "BACKLOG-ARCHIVE.md")
+
+FILE = FILES[0]
 
 
 def unrecorded(commits: Iterable[tuple[str, str, bool]]
@@ -167,16 +180,21 @@ def _parse(records: Iterable[str], field: str) -> Iterable[tuple[str, str]]:
 
 
 def _closes(root: Path, sha: str) -> bool:
-    """Did that commit add a CLOSED heading to `BACKLOG.md`?
+    """Did that commit add a CLOSED heading to either backlog file?
 
     Asked per commit rather than from one `--name-only` walk, because
     "touched the file" is not the question — see :func:`unrecorded`. It
-    costs one `git show` per commit, so the diff is restricted to the one
-    path and to zero lines of context, and the walk stops at the first
+    costs one `git show` per commit, so the diff is restricted to those
+    paths and to zero lines of context, and the walk stops at the first
     commit that answers yes.
+
+    Both paths in ONE `git show`: two calls would double the cost of the
+    walk to answer a question that is an OR. Commits from before the
+    2026-08-30 split closed entries in BACKLOG.md itself and are still
+    recognised, because the pattern is about the heading, not the file.
     """
     out = subprocess.run(
-        ["git", "show", "--format=", "-U0", sha, "--", FILE],
+        ["git", "show", "--format=", "-U0", sha, "--", *FILES],
         cwd=root, capture_output=True, text=True, encoding="utf-8",
         errors="replace")
     return not out.returncode and bool(_CLOSES.search(out.stdout))

@@ -429,3 +429,59 @@ def test_a_session_that_SUCCEEDED_still_reports_as_before(monkeypatch):
 
     assert "REFUSED" not in said
     assert "REAL SURVIVAL 6.9%  (57/822)" in said
+
+
+# --- `--all` has to mean all of them -------------------------------------
+
+
+def test_ALL_reaches_a_module_inside_a_SUBPACKAGE(tmp_path, monkeypatch):
+    """`glob("*.py")` swept the top level and called it the package.
+
+    `revision/` became a subpackage of fourteen halves on 2026-08-30,
+    and `--all` would have reported a whole-package sweep without
+    opening one of them — 3,118 lines of the protocol, silently outside
+    the round. The name is kept RELATIVE to `src/docxkit`, because that
+    is the spelling `harness_map` keys on and the one `run` puts back
+    into a path.
+    """
+    src = tmp_path / "src" / "docxkit" / "revision"
+    src.mkdir(parents=True)
+    (src.parent / "__init__.py").write_text("x = 1")
+    (src.parent / "edit.py").write_text("x = 1")
+    (src / "__init__.py").write_text("x = 1")
+    (src / "_build.py").write_text("x = 1")
+    (src / "_losses.py").write_text("x = 1" * 40)        # the biggest
+
+    monkeypatch.setattr(measure_all, "ROOT", tmp_path)
+    asked: list[str] = []
+    monkeypatch.setattr(measure_all, "run",
+                        lambda m, *a, **k: asked.append(m))
+    monkeypatch.setattr(sys, "argv", ["measure_all.py", "--all"])
+
+    measure_all.main()
+
+    assert "revision/_build.py" in asked
+    assert "revision/_losses.py" in asked
+    assert "edit.py" in asked
+    assert not any(m.endswith("__init__.py") for m in asked), \
+        "a facade has nothing to mutate"
+
+
+def test_ALL_still_deals_the_SMALLEST_module_first(tmp_path, monkeypatch):
+    """The order is a fan-out property: `--in` deals round-robin, and
+    sorting largest-first would put every big module in the last
+    stream. Adding the recursive walk must not disturb it."""
+    src = tmp_path / "src" / "docxkit" / "revision"
+    src.mkdir(parents=True)
+    (src.parent / "big.py").write_text("x = 1" * 200)
+    (src / "_small.py").write_text("x = 1")
+
+    monkeypatch.setattr(measure_all, "ROOT", tmp_path)
+    asked: list[str] = []
+    monkeypatch.setattr(measure_all, "run",
+                        lambda m, *a, **k: asked.append(m))
+    monkeypatch.setattr(sys, "argv", ["measure_all.py", "--all"])
+
+    measure_all.main()
+
+    assert asked == ["revision/_small.py", "big.py"]

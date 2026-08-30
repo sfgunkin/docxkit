@@ -60,25 +60,65 @@ FACADE_HALVES = {
     "compare": ("_compare_read", "_compare_diff", "_compare_render"),
 }
 
-MODULES = {p.stem for p in SRC.glob("*.py") if p.stem != "__init__"}
+#: A facade whose halves are a SUBPACKAGE rather than files beside it.
+#: `revision.py` was 3,118 lines and the top of the layering; on
+#: 2026-08-30 it became `revision/`, fourteen halves behind
+#: `revision/__init__.py`. Same rule, one directory down — and it has to
+#: be stated here, because `SRC.glob("*.py")` does not see a directory
+#: and the whole module would otherwise have dropped out of every check
+#: in this file the day it was split. It did: the cycle test was the
+#: only thing that noticed, and only because `revision` is named in
+#: `_CYCLE`.
+#:
+#: BOTTOM FIRST, like FACADE_HALVES.
+SUBPACKAGE_HALVES = {
+    "revision": ("_common", "_config", "_losses", "_state", "_verdict",
+                 "_baseline", "_build", "_doctor", "_gates", "_ingest",
+                 "_registry", "_init", "_promote", "_validate"),
+}
+
+MODULES = ({p.stem for p in SRC.glob("*.py") if p.stem != "__init__"}
+           | {p.name for p in SRC.iterdir()
+              if p.is_dir() and (p / "__init__.py").is_file()})
 
 
-def _imports(path: pathlib.Path) -> set[str]:
-    """Sibling modules this one imports, at ANY depth in the file."""
+def _imports(path: pathlib.Path, *, depth: int = 1) -> set[str]:
+    """Sibling modules this one imports, at ANY depth in the file.
+
+    `depth` is how far the file sits below `docxkit/`: a subpackage
+    half reaches its siblings with `from ..x import y`, so what counts
+    as "one level up" is one dot more.
+    """
     out: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.ImportFrom):
-            if node.level == 1 and node.module:          # from .x import y
+            if node.level == depth and node.module:      # from .x import y
                 out.add(node.module.split(".")[0])
-            elif node.level == 1:                        # from . import x
+            elif node.level == depth:                    # from . import x
                 out.update(a.name for a in node.names)
             elif node.module and node.module.startswith("docxkit."):
                 out.add(node.module.split(".")[1])
     return {m for m in out if m in MODULES}
 
 
+def _package_imports(folder: pathlib.Path) -> set[str]:
+    """What a SUBPACKAGE reaches outside itself, over all its halves.
+
+    The union, because the layering question is about `import
+    docxkit.revision` — which executes every half — not about any one
+    of them. A half deferring an import inside a function is still an
+    edge the facade owns.
+    """
+    out: set[str] = set()
+    for path in sorted(folder.glob("*.py")):
+        out |= _imports(path, depth=2)
+    return out - {folder.name}
+
+
 GRAPH = {p.stem: _imports(p) for p in sorted(SRC.glob("*.py"))
          if p.stem != "__init__"}
+GRAPH |= {name: _package_imports(SRC / name)
+          for name in sorted(SUBPACKAGE_HALVES)}
 
 #: Half of the package is layered; the private halves belong to their
 #: facade's layer and are checked by the facade rule instead.
@@ -143,6 +183,48 @@ def test_a_private_half_is_reached_only_through_its_facade(facade, halves):
             f"{sorted(importers - allowed)} import docxkit.{half} "
             f"directly — it exists to keep {facade}.py readable, not to "
             f"widen the surface. Import docxkit.{facade}.")
+
+
+@pytest.mark.parametrize("facade,halves",
+                         sorted(SUBPACKAGE_HALVES.items()))
+def test_a_SUBPACKAGE_holds_exactly_the_halves_declared(facade, halves):
+    """A half added to `revision/` without a line here is a half in no
+    layer — the same hole `test_every_module_is_placed` closes upstairs,
+    one directory down."""
+    on_disk = tuple(sorted(p.stem for p in (SRC / facade).glob("*.py")
+                           if p.stem != "__init__"))
+
+    assert on_disk == tuple(sorted(halves)), (
+        f"docxkit/{facade}/ holds {on_disk}; SUBPACKAGE_HALVES declares "
+        f"{tuple(sorted(halves))}. Put the new half in the order, which "
+        f"means deciding what it may import.")
+
+
+@pytest.mark.parametrize("facade,halves",
+                         sorted(SUBPACKAGE_HALVES.items()))
+def test_a_SUBPACKAGE_half_imports_only_the_halves_below_it(facade, halves):
+    """The order INSIDE the subpackage — the reason it is a package.
+
+    `revision.py` was one file, so this order lived only in the reader's
+    head and in the section banners. Splitting it is worth nothing if
+    the halves may reach each other freely: that is the same 3,118 lines
+    with more files.
+    """
+    folder = SRC / facade
+    for i, half in enumerate(halves):
+        path = folder / f"{half}.py"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.ImportFrom) or node.level != 1:
+                continue
+            deps = ([node.module.split(".")[0]] if node.module
+                    else [a.name for a in node.names])
+            for dep in deps:
+                if dep not in halves:
+                    continue
+                assert halves.index(dep) < i, (
+                    f"docxkit.{facade}.{half} imports .{dep}, which is "
+                    f"not below it. Either it belongs lower, or the "
+                    f"import belongs elsewhere.")
 
 
 @pytest.mark.parametrize("facade,halves", sorted(FACADE_HALVES.items()))

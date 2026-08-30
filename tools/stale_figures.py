@@ -42,16 +42,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from harness_map import HARNESS
+from harness_map import HARNESS, session_stem
 
 from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
 
 #: What a module's session file is called. `_table_core.py` measures
-#: into `.mutation-table_core.sqlite` — the leading underscore goes.
+#: into `.mutation-table_core.sqlite` — the leading underscore goes, and
+#: a subpackage half keeps its folder. The rule is `harness_map`'s, and
+#: this used to hold a third copy of it (without the fallback the other
+#: two had).
 def session_file(module: str) -> Path:
-    return ROOT / f".mutation-{module[:-3].lstrip('_')}.sqlite"
+    return ROOT / f".mutation-{session_stem(module)}.sqlite"
 
 
 @cache

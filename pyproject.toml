@@ -168,12 +168,21 @@ max-complexity = 20
 # pymupdf is an optional extra and `word` is Windows-only: `import
 # docxkit` must not need either.
 "src/docxkit/pages.py" = ["PLC0415"]
-# revision.py holds the log.md and paper.toml TEMPLATES it writes into a
-# migrating project. Their line length is the generated file's business —
-# a markdown table row cannot be wrapped without changing what is emitted
-# — and the deferred imports keep compare's heavy chain, lxml and
-# datetime off the cost of `import docxkit`.
-"src/docxkit/revision.py" = ["E501", "PLC0415"]
+# `revision/_init.py` holds the log.md and paper.toml TEMPLATES it
+# writes into a migrating project. Their line length is the generated
+# file's business — a markdown table row cannot be wrapped without
+# changing what is emitted — and the deferred imports across the
+# subpackage keep compare's heavy chain, lxml and datetime off the cost
+# of `import docxkit`.
+#
+# `revision.py` was one 3,118-line module until 2026-08-30 and carried
+# both exemptions as one line. Split into `revision/`, E501 belongs to
+# the ONE half that holds the templates and PLC0415 to the package: a
+# directory-wide E501 would have exempted thirteen files that never
+# needed it, which is how an exemption written for one reason becomes
+# an exemption for none.
+"src/docxkit/revision/_init.py" = ["E501", "PLC0415"]
+"src/docxkit/revision/*.py" = ["PLC0415"]
 # Tests assert on the very glyphs Word normalizes, reach for private
 # helpers deliberately, and import optional deps inside the tests that
 # skip without them.

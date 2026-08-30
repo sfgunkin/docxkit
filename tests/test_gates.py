@@ -1,4 +1,4 @@
-"""`tools/gates.py` — the six gates, run so the answer cannot be lost.
+"""`tools/gates.py` — the seven gates, run so the answer cannot be lost.
 
 The runner exists because the CHAIN is where they go wrong, and every
 failure it guards against has happened here: a piped gate whose status
@@ -66,13 +66,77 @@ def test_mypy_is_judged_on_its_LINES_not_its_exit_code():
     assert "FAILED  mypy" in said
 
 
-def test_the_real_list_is_the_six_CONTRIBUTING_names():
+def test_the_real_list_is_the_seven_CONTRIBUTING_names():
     """A runner that drifts from the documented gates is worse than
-    none: it would report a pass over a gate nobody ran."""
+    none: it would report a pass over a gate nobody ran.
+
+    `sweep` joined on 2026-08-30. It is the one that usually SKIPS —
+    there is no corpus on most machines and none on any CI runner — and
+    it is in the list precisely because of that: an unrun gate is
+    invisible, an unrunnable one prints a line asking to be given a
+    corpus on every single chain.
+    """
     assert [name for name, _argv, _reads in gates.GATES] == [
-        "ruff", "mypy", "pyright", "pytest", "floors", "committed"]
+        "ruff", "mypy", "pyright", "pytest", "floors", "sweep",
+        "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
+
+
+def test_sweep_runs_AFTER_the_suite_and_BEFORE_committed():
+    """Order is the contract. It costs minutes over a real corpus, so it
+    must not stand in front of the gates that answer in seconds; and
+    `committed` stays last for the reason its own comment gives."""
+    names = [name for name, _argv, _reads in gates.GATES]
+
+    assert names.index("sweep") > names.index("pytest")
+    assert names.index("sweep") < names.index("committed")
+
+
+# --- a gate that did not run --------------------------------------------
+
+
+SKIP = [sys.executable, "-c",
+        "import sys; print('SKIPPED: no corpus'); sys.exit(3)"]
+
+
+def test_a_SKIPPED_gate_is_not_a_failure():
+    """Exit 3 means "I did not run". The chain continues, because there
+    is nothing to fix — the machine has no corpus."""
+    code, said = _run(("sweep", SKIP, False), ("committed", OK, False))
+
+    assert code == 0
+    assert "committed" in said, "a skip must not stop the chain"
+
+
+def test_a_SKIPPED_gate_does_not_print_ok():
+    """The whole reason for the third exit code.
+
+    `ok sweep` over zero documents and `ok sweep` over 347 are the same
+    line, and this is the gate whose entire subject is the document
+    nobody anticipated. If a skip reads as a pass, the corpus never gets
+    configured and nobody finds out.
+    """
+    _code, said = _run(("sweep", SKIP, False))
+
+    assert "skip    sweep" in said
+    assert "ok      sweep" not in said
+
+
+def test_a_SKIPPED_gate_shows_its_REASON():
+    """A skip is only useful if it says what to set to un-skip it."""
+    _code, said = _run(("sweep", SKIP, False))
+
+    assert "SKIPPED: no corpus" in said
+
+
+def test_a_gate_that_FAILS_is_still_a_failure_beside_the_skip_code():
+    """3 is the skip; 1 is still red. Read as "non-zero is fine now" the
+    change would have disarmed every gate in the chain."""
+    code, said = _run(("sweep", RED, False))
+
+    assert code == 1
+    assert "FAILED  sweep" in said
 
 
 def test_the_runner_prints_a_failure_that_is_NOT_ascii(capsys):

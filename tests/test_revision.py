@@ -620,18 +620,27 @@ def test_a_first_baseline_with_no_prev_is_not_blocked(tmp_path):
 # -------------------------------------------------------------- build
 
 class _FakeBuild:
-    """tracked.build, replaced: it reports what Word Compare resolved."""
+    """tracked.build, replaced: it reports what Word Compare resolved.
+
+    `notes_xml` writes a footnotes part into the BUILT file. Three of
+    `build`'s warnings read the file Compare produced rather than the
+    parts that made it — deliberately, so that what they say describes
+    the deliverable the author is about to open — and a fake that can
+    only write one paragraph cannot reach any of them.
+    """
 
     def __init__(self, math: int = 0, out_text: str = "built",
-                 extra: str = "") -> None:
+                 extra: str = "", notes_xml: str | None = None) -> None:
         self.math, self.out_text, self.extra = math, out_text, extra
+        self.notes_xml = notes_xml
         self.called_with: tuple[Any, ...] = ()
         self.kwargs: dict[str, Any] = {}
 
     def __call__(self, original, revised, out, classify=None, **kw):
         self.called_with = (Path(original), Path(revised), Path(out))
         self.kwargs = kw
-        write(Path(out), make_parts(para(self.extra + run(self.out_text))))
+        write(Path(out), make_parts(para(self.extra + run(self.out_text)),
+                                    footnotes=self.notes_xml))
         say = kw.get("progress") or (lambda _: None)
         say(f"resolved {self.math} math revisions")
         report = revision.tracked.BuildReport()
@@ -663,6 +672,344 @@ def test_build_refuses_a_baseline_the_manuscript_has_OUTGROWN(project):
     assert "revision ingest" in str(exc.value)
     assert "revision baseline" in str(exc.value)
     assert "word/document.xml" in str(exc.value), "which part moved"
+    # ONE part moved, so there is nothing to summarise. Asserted because
+    # `> 4` and `!= 4` agree at every count this file used to test, and
+    # only a case BELOW the threshold separates them.
+    assert "more" not in str(exc.value)
+
+
+def _stale_message(project, differing: int) -> str:
+    """`build`'s refusal when exactly `differing` parts have moved.
+
+    One of them is always `word/document.xml`; the rest are invented
+    parts, which `drift` counts as ADDED.
+    """
+    extra = {f"word/custom{i}.xml": f"<x>{i}</x>"
+             for i in range(differing - 1)}
+    write(project.working,
+          make_parts(para(run("the author moved on")), extra=extra))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("a proposed edit"))))
+
+    with pytest.raises(StaleBatch) as exc:
+        revision.build(project, clean)
+    return str(exc.value)
+
+
+def test_the_stale_baseline_refusal_names_a_SHORT_list_in_full(project):
+    """At the boundary exactly, where the summary must NOT appear.
+
+    Four is the threshold, and it is the only count that separates
+    `> 4` from `> 3`, `>= 4` and `!= 4` — every one of which prints the
+    same sentence at any larger number. Measured: those three survived
+    a round against a seven-part fixture.
+    """
+    said = _stale_message(project, 4)
+
+    assert "more" not in said, said
+    assert said.count("word/custom") == 3, "all three, plus document.xml"
+
+
+def test_the_stale_baseline_refusal_summarises_from_FIVE(project):
+    """One past the threshold, which is what separates `> 4` from
+    `> 5` — the two agree at four and at nine, the counts this file
+    tested first."""
+    said = _stale_message(project, 5)
+
+    assert "and 1 more" in said, said
+    assert said.count("word/custom") == 4
+
+
+def test_the_stale_baseline_refusal_SUMMARISES_a_long_list(project):
+    """Four parts named, then a count. A refusal that prints every part
+    of a package the author re-saved is one nobody reads to the end —
+    and the instruction to run `ingest` is at the end.
+
+    NINE differ, not seven. The count is `len(moved) - 4`, and at seven
+    `- 4`, `% 4` and `^ 4` all evaluate to 3: the fixture agreed with
+    two wrong operators, and both survived the first round. Nine is the
+    smallest count above the threshold where the three disagree
+    (5, 1, 13).
+    """
+    said = _stale_message(project, 9)
+
+    assert "and 5 more" in said, said
+    assert said.count("word/custom") == 4, "four named, then the count"
+    assert "revision ingest" in said, "the instruction survives the trim"
+
+
+def test_build_says_a_NOTE_DEFINITION_is_out_of_document_order(
+        project, monkeypatch):
+    """Cheap, and said before Word sees the file.
+
+    Word numbers a note by where its REFERENCE is and stores the
+    definitions in whatever order the file holds them, so a paper whose
+    definitions are shuffled renders correctly and passes every
+    read-only gate. Compare then rewrites the definitions INTO document
+    order, and the whole part reads as MOVED against the baseline — on
+    AFI, 81 glyph runs and a structure count for a one-line prose batch,
+    reported against the batch after the one that appended the note.
+    """
+    body = (para(run("first") + _ref(3))
+            + para(run("second") + _ref(2)))
+    shuffled = notes("footnotes", note("b", nid=2), note("a", nid=3))
+    write(project.prev, make_parts(body, footnotes=shuffled))
+    write(project.working, make_parts(body, footnotes=shuffled))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(body, footnotes=shuffled))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+
+    order = [ln for ln in said if "not in document order" in ln]
+    assert order, said
+    assert any(ln.startswith("baseline:") for ln in order), (
+        "which SIDE carries it — the baseline and the edit are fixed "
+        "in different files")
+    assert any(ln.startswith("clean edit:") for ln in order)
+    assert "footnote" in order[0]
+    # TWO ids, so nothing is trimmed. Below the threshold is the only
+    # place `> 6` and `!= 6` disagree.
+    assert "..." not in order[0]
+
+
+def _reversed_notes(count: int, kind: str = "footnotes", *,
+                    defined: list[int] | None = None) -> tuple[str, str]:
+    """(body, notes part) for `count` notes, DEFINED out of order.
+
+    `defined` gives the definition order explicitly. `out_of_order` does
+    not simply count the shuffled ones — a seven-note reversal yields
+    six ids, not seven — so a fixture that needs an exact answer has to
+    state the arrangement rather than derive it.
+    """
+    ids = list(range(2, 2 + count))
+    tag = kind.removesuffix("s")
+    body = "".join(
+        para(run(f"p{i}")
+             + f'<w:r><w:{tag}Reference w:id="{i}"/></w:r>') for i in ids)
+    part = notes(kind, *(note(f"n{i}", nid=i, kind=tag)
+                         for i in (defined or list(reversed(ids)))))
+    return body, part
+
+
+def _order_note(project, monkeypatch, count: int, *,
+                defined: list[int] | None = None) -> str:
+    """The out-of-order line `build` says for `count` shuffled notes."""
+    body, part = _reversed_notes(count, defined=defined)
+    write(project.prev, make_parts(body, footnotes=part))
+    write(project.working, make_parts(body, footnotes=part))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(body, footnotes=part))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+    return next(ln for ln in said
+                if ln.startswith("baseline:") and "document order" in ln)
+
+
+def test_the_note_order_warning_names_SIX_in_full(project, monkeypatch):
+    """Six is the threshold and the only count that separates `> 6`
+    from `> 5`, `>= 6` and `!= 6` — eight mutants of that comparison
+    survived the first round against a two-note fixture, which takes
+    the same branch whatever the operator says."""
+    line = _order_note(project, monkeypatch, 6)
+
+    assert "..." not in line, line
+    for nid in range(2, 8):
+        assert str(nid) in line, f"note {nid} is not named"
+
+
+def test_the_note_order_warning_TRIMS_a_longer_one(project, monkeypatch):
+    """Eight rather than seven: `out_of_order` returns six ids for a
+    seven-note reversal, so a seven-note fixture is a six-id case
+    wearing a different number and the slice boundary goes untested."""
+    line = _order_note(project, monkeypatch, 8)
+
+    assert "..." in line, line
+    named = [nid for nid in range(2, 10) if str(nid) in line]
+    assert len(named) == 6, f"six named, then the ellipsis: {named}"
+
+
+def test_the_note_order_warning_trims_at_SEVEN_as_well(project, monkeypatch):
+    """One past the threshold, which is what separates `> 6` from
+    `> 7`. Seven is awkward to reach — a seven-note reversal yields six
+    ids — so the definition order is stated rather than derived.
+    """
+    line = _order_note(project, monkeypatch, 8,
+                       defined=[2, 4, 3, 6, 5, 8, 9, 7])
+
+    named = [nid for nid in range(2, 10) if str(nid) in line]
+    assert len(named) == 6, f"six named, then the ellipsis: {named}"
+    assert "..." in line, line
+
+
+def test_an_ENDNOTE_is_checked_even_when_there_are_NO_footnotes(
+        project, monkeypatch):
+    """The loop runs over both kinds and SKIPS a part that is absent.
+
+    `continue` -> `break` survived the first round: with a footnotes
+    part present in every fixture the two are indistinguishable. A
+    paper with endnotes and no footnotes is the ordinary shape for a
+    journal that wants them at the back, and `break` reports nothing
+    for it.
+    """
+    body, part = _reversed_notes(3, kind="endnotes")
+    parts = make_parts(body, extra={"word/endnotes.xml": part})
+    write(project.prev, parts)
+    write(project.working, parts)
+    clean = write(project.build_dir / "clean.docx", parts)
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+
+    assert any("endnote definitions are not in document order" in ln
+               for ln in said), said
+
+
+def test_build_names_the_links_sitting_inside_a_DELETION(project,
+                                                         monkeypatch):
+    """Reject-all cannot restore them, and no author sees it in Word.
+
+    Compare does not track an anchor: rejecting a deletion restores its
+    words as plain text and does not rebuild the link that was in them.
+    A batch whose accept-all is perfect then fails gate 5 on
+    `links: False`, and on the page a lost link is blue text that is
+    still blue until you click it.
+
+    Said at BUILD time on purpose — by the end of the ladder the author
+    has a batch to throw away and the finding is unusable.
+    """
+    gone = ('<w:del w:id="77" w:author="R" w:date="2026-08-07T00:00:00Z">'
+            '<w:hyperlink w:anchor="Table1">'
+            "<w:r><w:delText>Table 1</w:delText></w:r>"
+            "</w:hyperlink></w:del>")
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild(extra=gone))
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+
+    (line,) = [ln for ln in said if "tracked deletion" in ln]
+    assert "Table1" in line, "the anchor, so it can be found"
+    assert "REJECTING" in line
+    assert "Shorten the move" in line, "the remedy is counter-intuitive"
+    # ONE link, so nothing is trimmed — the only place `> 4` and
+    # `!= 4` disagree is below the threshold.
+    assert "..." not in line
+
+
+def _deleted_links(project, monkeypatch, count: int) -> str:
+    """The links-in-deletions line for `count` distinct anchors."""
+    gone = "".join(
+        f'<w:del w:id="{70 + i}" w:author="R" '
+        f'w:date="2026-08-07T00:00:00Z">'
+        f'<w:hyperlink w:anchor="Anchor{i}">'
+        f"<w:r><w:delText>label {i}</w:delText></w:r>"
+        f"</w:hyperlink></w:del>" for i in range(count))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild(extra=gone))
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+    return next(ln for ln in said if "tracked deletion" in ln)
+
+
+def test_the_deleted_links_warning_names_FOUR_in_full(project, monkeypatch):
+    """The threshold exactly, and the only count at which `> 4` differs
+    from `> 3`, `>= 4` and `!= 4`. Eight mutants of this one comparison
+    survived the first round against a single-link fixture."""
+    line = _deleted_links(project, monkeypatch, 4)
+
+    assert "..." not in line, line
+    for i in range(4):
+        assert f"Anchor{i}" in line
+
+
+def test_the_deleted_links_warning_TRIMS_a_longer_one(project, monkeypatch):
+    """Five: one past the boundary, so the slice `[:4]` is pinned from
+    both sides — `[:3]` drops an anchor that must be there and `[:5]`
+    keeps one that must not."""
+    line = _deleted_links(project, monkeypatch, 5)
+
+    assert "..." in line, line
+    assert "5 link(s)" in line
+    for i in range(4):
+        assert f"Anchor{i}" in line
+    assert "Anchor4" not in line, "the fifth is behind the ellipsis"
+
+
+def test_build_hands_tracked_the_settings_the_PROTOCOL_depends_on(
+        project, monkeypatch):
+    """Four constants, each load-bearing and each invisible in the
+    output, so a round mutated all four and the suite noticed none.
+
+    `verify_in_word` is what makes a batch openable at all;
+    `reject_check=False` is the asymmetry this module's own comment
+    argues for at length — the protocol REPORTS an unrejectable
+    paragraph and lets gate 5 judge it, because refusing here would
+    leave the author paragraph names and no file to look at.
+    """
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(project, clean)
+
+    assert fake.kwargs["verify_in_word"] is True
+    assert fake.kwargs["reject_check"] is False, (
+        "refusing here would hand back names and no file — see the "
+        "comment above the call")
+    assert fake.kwargs["resolve_math"] is True, "the default"
+    assert fake.kwargs["force"] is False, "the default"
+
+
+def test_build_PASSES_ON_the_two_switches_it_is_given(project, monkeypatch):
+    """The other side of the defaults: both reach `tracked.build`
+    rather than being read and dropped."""
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(project, clean, resolve_math=False, force=True)
+
+    assert fake.kwargs["resolve_math"] is False
+    assert fake.kwargs["force"] is True
+
+
+def test_build_names_a_footnote_whose_REFERENCE_moved(project, monkeypatch):
+    """Compare emits the whole note as an insertion with no matching
+    deletion, so rejecting empties it and gate 5 fails on a note the
+    counts say nothing about (Parental Style 2026-08-10, footnote 2
+    re-anchored onto a new opening sentence).
+
+    Accepting is right, which is why this is a note and not a refusal.
+    """
+    with_note = make_parts(para(run("body") + _ref(2)),
+                           footnotes=notes("footnotes", note("the note")))
+    write(project.prev, with_note)
+    write(project.working, with_note)     # else `drift` fires first
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    reinserted = notes("footnotes",
+                       f'<w:footnote w:id="2">'
+                       f'<w:p>{ins("the note")}</w:p></w:footnote>')
+    monkeypatch.setattr(revision.tracked, "build",
+                        _FakeBuild(notes_xml=reinserted))
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+
+    (line,) = [ln for ln in said if "REFERENCE moved" in ln]
+    assert "footnote 2" in line
+    assert "Accepting is right" in line
+    assert "gate 5" in line, "and what it costs if they do not"
 
 
 def test_the_stale_baseline_refusal_can_be_overridden(project, monkeypatch):
@@ -1318,7 +1665,7 @@ def test_validate_aborts_before_word_when_lint_fails(tmp_path,
     monkeypatch.setattr(revision._lint, "lint_parts",
                         lambda _parts: ["orphan bookmark 3"])
     opened: list[str] = []
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         type("W", (), {"session": lambda *a, **k:
                                        opened.append("word")})())
 
@@ -1330,7 +1677,7 @@ def test_validate_aborts_before_word_when_lint_fails(tmp_path,
 
 def test_validate_reports_a_file_word_refuses(tmp_path, monkeypatch):
     path = write(tmp_path / "x.docx", make_parts(para(run("x"))))
-    monkeypatch.setattr(revision, "_word", _FakeWord(explode=True))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(explode=True))
     report = revision.validate(path)
     assert report.word_opened is False
     assert report.word_error
@@ -1645,7 +1992,7 @@ def test_the_main_story_walk_does_not_stop_at_a_text_box(tmp_path,
     path = write(tmp_path / "box.docx", make_parts(body))
     rendered = _FakeDoc(revisions=0,
                         text="Before the box.\rAfter the box.\r")
-    monkeypatch.setattr(revision, "_word", _FakeWord(rendered))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(rendered))
     assert revision.validate(path).accept_paths_agree is True
 
 
@@ -1691,13 +2038,13 @@ def test_validate_compares_the_two_accept_paths(tmp_path, monkeypatch):
     manuscript that shipped broken equations is what they disagreed on."""
     path = write(tmp_path / "x.docx", make_parts(
         para(run("kept", preserve=True), ins("added"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(text="keptadded")))
     report = revision.validate(path)
     assert report.accept_paths_agree is True
     assert report.ok
 
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(text="something else")))
     disagree = revision.validate(path)
     assert disagree.accept_paths_agree is False
@@ -1709,7 +2056,7 @@ def test_validate_folds_presentational_differences(tmp_path, monkeypatch):
     Mathematical Italic block; the XML holds a hyphen and ASCII. Folding
     those is what stops every equation reporting a mismatch."""
     path = write(tmp_path / "m.docx", make_parts(para(run("a-b"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(revisions=0, text="a−b\r")))
     report = revision.validate(path)
     assert report.accept_paths_agree is True
@@ -1722,7 +2069,7 @@ def test_validate_folds_the_math_asterisk(tmp_path, monkeypatch):
     failed there on a file holding ZERO revisions."""
     path = write(tmp_path / "t.docx", make_parts(para(run("T* is the age"))))
     rendered = _FakeDoc(revisions=0, text="T∗ is the age\r")
-    monkeypatch.setattr(revision, "_word", _FakeWord(rendered))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(rendered))
     assert revision.validate(path).accept_paths_agree is True
 
 
@@ -1733,7 +2080,7 @@ def test_validate_folds_the_derivative_prime(tmp_path, monkeypatch):
     revisions — the same shape as the T* case."""
     path = write(tmp_path / "p.docx", make_parts(para(run("V' is the value"))))
     rendered = _FakeDoc(revisions=0, text="V′ is the value\r")
-    monkeypatch.setattr(revision, "_word", _FakeWord(rendered))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(rendered))
     assert revision.validate(path).accept_paths_agree is True
 
 
@@ -1742,7 +2089,7 @@ def test_validate_still_sees_a_real_difference_in_math(tmp_path, monkeypatch):
     RENDER differently is still a mismatch."""
     path = write(tmp_path / "t.docx", make_parts(para(run("T* is the age"))))
     different = _FakeDoc(revisions=0, text="T+ is the age\r")
-    monkeypatch.setattr(revision, "_word", _FakeWord(different))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(different))
     assert revision.validate(path).accept_paths_agree is False
 
 
@@ -1766,7 +2113,7 @@ def test_validate_counts_an_inline_figure_as_word_does(tmp_path,
     holding ZERO revisions."""
     path = write(tmp_path / "fig.docx",
                  make_parts(para(run("A"), picture(), run("B"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(revisions=0, text="A/B\r")))
     assert revision.validate(path).accept_paths_agree is True
 
@@ -1778,7 +2125,7 @@ def test_validate_gives_a_floating_figure_no_character(tmp_path,
     placeholder for every `w:drawing` alike would fail here."""
     path = write(tmp_path / "float.docx",
                  make_parts(para(run("E"), picture("anchor"), run("F"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(revisions=0, text="EF\r")))
     assert revision.validate(path).accept_paths_agree is True
 
@@ -1789,7 +2136,7 @@ def test_validate_still_sees_a_slash_the_author_typed(tmp_path,
     solidus away would blind the gate to every "and/or" and every URL in
     the manuscript."""
     path = write(tmp_path / "s.docx", make_parts(para(run("and/or"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(revisions=0, text="and or\r")))
     assert revision.validate(path).accept_paths_agree is False
 
@@ -1803,7 +2150,7 @@ def test_validate_does_not_compare_a_text_box_against_the_body(tmp_path,
                 f"<w:r><w:pict><w:txbxContent>{para(run('BOXED'))}"
                 f"</w:txbxContent></w:pict></w:r>")
     path = write(tmp_path / "box.docx", make_parts(body))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(revisions=0, text="Body prose.\r")))
     assert revision.validate(path).accept_paths_agree is True
 
@@ -1829,14 +2176,14 @@ def test_gate_6_compares_for_EQUALITY_not_for_order(tmp_path, monkeypatch,
     The one existing mismatch fixture sorted the other way — these two
     put the XML on both sides of Word's answer."""
     path = write(tmp_path / "t.docx", make_parts(para(run("T* is the age"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _FakeWord(_FakeDoc(revisions=0, text=rendered)))
     assert revision.validate(path).accept_paths_agree is False
 
 
 def test_validate_skips_word_when_asked(tmp_path, monkeypatch):
     path = write(tmp_path / "x.docx", make_parts(para(run("x"))))
-    monkeypatch.setattr(revision, "_word", _FakeWord(explode=True))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(explode=True))
     report = revision.validate(path, use_word=False)
     assert report.word_opened is None
     assert report.ok
@@ -1848,7 +2195,7 @@ def test_validate_does_not_accept_in_a_file_word_has_open(tmp_path,
     what they are looking at."""
     path = write(tmp_path / "x.docx", make_parts(para(run("x"))))
     doc = _FakeDoc()
-    monkeypatch.setattr(revision, "_word", _FakeWord(doc))
+    monkeypatch.setattr(revision._validate, "_word", _FakeWord(doc))
     monkeypatch.setattr(revision.package, "is_locked", lambda _p: True)
     revision.validate(path)
     assert not doc.accepted
@@ -1907,7 +2254,7 @@ def test_rescue_names_cannot_be_exhausted_silently(project, monkeypatch):
     """Bounded, and it says so rather than looping forever. Forced here
     by coarsening the stamp so every candidate collides."""
     project.rescue_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(revision, "_RESCUE_STAMP", "%Y%m%d")
+    monkeypatch.setattr(revision._promote, "_RESCUE_STAMP", "%Y%m%d")
     taken = revision.rescue_path(project, datetime(2026, 8, 7))
     taken.write_bytes(b"x")
     with pytest.raises(ProtocolError, match="no free rescue name"):
@@ -2101,13 +2448,13 @@ def test_two_identical_streams_are_not_DIFFED_at_all(monkeypatch):
     characters, and it runs on every clean build. The streams come out
     of two documents, so they are never one object."""
     calls: list[int] = []
-    real = revision.SequenceMatcher
+    real = revision._losses.SequenceMatcher
 
     def spy(*args, **kwargs):
         calls.append(1)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(revision, "SequenceMatcher", spy)
+    monkeypatch.setattr(revision._losses, "SequenceMatcher", spy)
     before = " ".join(["the", "same"])
     after = " ".join(["the", "same"])
 

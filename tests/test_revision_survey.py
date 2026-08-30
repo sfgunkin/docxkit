@@ -365,7 +365,7 @@ def test_one_UNREADABLE_paper_does_not_end_the_survey(tmp_path, monkeypatch):
             raise OSError("the drive went away")
         return real(path, *args, **kw)
 
-    monkeypatch.setattr(revision, "state", explode)
+    monkeypatch.setattr(revision._registry, "state", explode)
 
     rows = survey()
 

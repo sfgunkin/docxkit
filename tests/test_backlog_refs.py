@@ -124,6 +124,44 @@ def test_a_CLOSED_heading_is_what_counts_as_the_record():
     assert not br._CLOSES.search(prose), "a heading, not any line"
 
 
+def test_a_closure_is_looked_for_in_BOTH_backlog_files(monkeypatch):
+    """After the 2026-08-30 split a closure is an entry APPEARING in
+    `BACKLOG-ARCHIVE.md`, not a heading struck in place.
+
+    Restricted to BACKLOG.md this gate would see a deletion where the
+    closure was, find no closure at any depth of the walk, and report
+    every `Refs BACKLOG.md` commit in 200 of history as unrecorded —
+    permanently red, which by this repo's own severity scale outranks a
+    wrong answer nobody sees.
+    """
+    seen: list[list[str]] = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(argv, **_kw):
+        seen.append(list(argv))
+        return _Done()
+
+    monkeypatch.setattr(br.subprocess, "run", fake_run)
+    br._closes(br.ROOT, "aaa1111")
+
+    (argv,) = seen
+    assert "BACKLOG.md" in argv
+    assert "BACKLOG-ARCHIVE.md" in argv
+    assert argv.count("--") == 1, "one show, both paths — not two walks"
+
+
+def test_the_commit_MARKER_still_names_BACKLOG_md_only():
+    """The convention is a literal string people copy into a commit
+    message. Repointing it at the archive would invalidate every commit
+    that already carries it, for no gain: what the marker opts into is
+    the rule, not a file."""
+    assert br.MARKER == "Refs BACKLOG.md"
+    assert br.FILES[0] == "BACKLOG.md"
+
+
 def test_a_git_FAILURE_is_not_reported_as_an_empty_history(monkeypatch):
     """`fatal: detected dubious ownership` is ordinary for a repo on a
     second drive, in a container, or under another user — and it used to

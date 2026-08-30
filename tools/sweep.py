@@ -1,6 +1,6 @@
 r"""Run every read-only docxkit routine over a corpus of real manuscripts.
 
-    python tools/sweep.py <root> [<root> ...] [--limit N] [--slow MS]
+    python tools/sweep.py [<root> ...] [--limit N] [--slow MS]
 
 A unit suite on synthetic fixtures proves the rules; this proves they
 survive contact with documents nobody wrote them for — Russian
@@ -14,11 +14,27 @@ Reports, in order of what is worth acting on:
               paragraphs, captions but no figures, citations but no
               reference list)
   SLOW        operations above the --slow threshold
+
+**Where the corpus is.** With no roots on the command line this reads
+``DOCXKIT_CORPUS`` — one or more directories, separated the way the
+platform separates ``PATH``. Unset, the sweep SKIPS (exit 3) and says
+so, because there is no corpus to sweep and pretending otherwise is
+worse than not running: this is the gate whose whole subject is
+documents nobody anticipated, and a green line over zero of them reads
+exactly like a green line over 347.
+
+Wired into ``tools/gates.py`` on 2026-08-30. Until then it was a
+documented tool bound to nothing — CONTRIBUTING said "run it before a
+release" and no chain, workflow or gate ever did, which is the shape the
+curated mutations were in until 2026-08-27. CI cannot run it (there is
+no corpus on a runner and a checkout cannot carry one), so the local
+chain is the only place it can live.
 """
 from __future__ import annotations
 
 import argparse
 import io
+import os
 import re
 import statistics
 import sys
@@ -26,7 +42,7 @@ import time
 import traceback
 import zipfile
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -212,23 +228,93 @@ def report(failures, anomalies, timings, results, slow_ms) -> None:
               f"{times[-1]:8.1f}{flag}")
 
 
+#: Exit code for "this did not run, and here is why" — distinct from
+#: both 0 (swept, nothing failed) and 1 (a routine raised). `gates.py`
+#: prints it as `skip`, so a chain over a machine with no corpus reads
+#: as six gates and one nag rather than seven greens.
+SKIPPED = 3
+
+#: Where the corpus is, when it is not on the command line. Several
+#: roots separated the way the platform separates PATH.
+CORPUS_ENV = "DOCXKIT_CORPUS"
+
+#: An upper bound for the gate. A full sweep of a manuscript tree on a
+#: sync-on-demand drive is minutes of enumeration alone, and a gate that
+#: slow gets switched off, which costs more than a bounded one.
+LIMIT_ENV = "DOCXKIT_CORPUS_LIMIT"
+
+
+def corpus_roots(argv_roots: Sequence[str]) -> list[str]:
+    """Roots from the command line, else from the environment."""
+    if argv_roots:
+        return list(argv_roots)
+    raw = os.environ.get(CORPUS_ENV, "")
+    return [part for part in raw.split(os.pathsep) if part.strip()]
+
+
+def sample(paths: list[Path], limit: int) -> list[Path]:
+    """At most `limit` documents, STRIDED across the corpus.
+
+    Not `paths[:limit]`, which is what this did. Sorted paths are
+    alphabetical, so a prefix is one corner of one directory — and a
+    bounded sweep that reads the same corner every time is a sweep that
+    can never find anything it has not already found. That is the exact
+    failure this tool exists to avoid: its whole subject is the document
+    nobody anticipated, and those are distributed through the corpus,
+    not gathered under A.
+    """
+    if limit <= 0 or len(paths) <= limit:
+        return paths
+    stride = len(paths) / limit
+    return [paths[int(i * stride)] for i in range(limit)]
+
+
 def main() -> int:
     utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("roots", nargs="+")
+    ap.add_argument("roots", nargs="*")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--slow", type=float, default=250.0,
                     help="flag routines whose p95 exceeds this, in ms")
     args = ap.parse_args()
 
+    roots = corpus_roots(args.roots)
+    if not roots:
+        # The FIRST line is the one `gates.py` shows, so it carries the
+        # instruction; the rest is for somebody reading the tool's own
+        # output and wondering whether to bother.
+        print(f"SKIPPED: no corpus — set {CORPUS_ENV} to the manuscript "
+              f"root(s)")
+        print(f"  Several roots separate with {os.pathsep!r}, or pass "
+              f"them as arguments.")
+        print("  The synthetic suite cannot answer what this asks: it "
+              "holds only the")
+        print("  shapes somebody already knew to write.")
+        return SKIPPED
+
+    missing = [r for r in roots if not Path(r).is_dir()]
+    if missing:
+        # A configured root that is not there is a MISCONFIGURATION, not
+        # an empty corpus: silently sweeping the roots that do resolve
+        # would report a clean sweep over a fraction of the documents.
+        print("FAILED: configured corpus root(s) do not exist:")
+        for root in missing:
+            print(f"  {root}")
+        return 1
+
+    limit = args.limit or int(os.environ.get(LIMIT_ENV, "0") or 0)
     paths: list[Path] = []
-    for root in args.roots:
+    for root in roots:
         base = Path(root)
         paths.extend(sorted(p for p in base.rglob("*.docx")
                             if not SKIP.search(str(p))))
-    if args.limit:
-        paths = paths[:args.limit]
-    return sweep(paths, args.slow)
+    if not paths:
+        print(f"SKIPPED: no .docx under {', '.join(roots)}")
+        return SKIPPED
+    chosen = sample(paths, limit)
+    if len(chosen) < len(paths):
+        print(f"  ({len(chosen)} of {len(paths)} documents, strided)")
+    return sweep(chosen, args.slow)
 
 
 if __name__ == "__main__":

@@ -58,15 +58,22 @@ VALUES = [
     "refstyle.Issue",
     "refstyle.Layout",          # the house rule itself, passed in and read
     "refstyle.Style",
-    "revision.IngestReport",
-    "revision.Loss",
-    "revision.Paper",
-    "revision.PromoteReport",
-    "revision.Relabelled",
-    "revision.State",
-    "revision.Survey",          # one paper's row in the all-papers view
-    "revision.Verdict",         # what one cycle did, and what was decided
-    "revision.GateResult",      # one of the paper's own checks, and its exit
+    # `revision` is a subpackage since 2026-08-30, so these name the
+    # private half each type belongs to rather than one 3,118-line
+    # module. The halves carry the `_` prefix `_cite_build` and
+    # `_compare_read` carry, and for the same reason plus one more:
+    # `revision.validate` and `revision.build` are FUNCTIONS on the
+    # facade, so a submodule spelled the same way is unreachable by
+    # attribute.
+    "revision._ingest.IngestReport",
+    "revision._losses.Loss",
+    "revision._config.Paper",
+    "revision._promote.PromoteReport",
+    "revision._losses.Relabelled",
+    "revision._state.State",
+    "revision._registry.Survey",   # one paper's row in the all-papers view
+    "revision._verdict.Verdict",   # what one cycle did, and what was decided
+    "revision._gates.GateResult",  # one of the paper's checks, and its exit
     "revisions.Revision",
     "styles.Resolved",
     "styles.Style",
@@ -98,24 +105,32 @@ ACCUMULATORS = {
     "refstyle.RefStyleReport",
     "refstyle.RefileReport",
     "renumber.ShiftReport",
-    "revision.Doubt",
-    "revision.ValidateReport",
+    "revision._doctor.Doubt",
+    "revision._validate.ValidateReport",
     "styles.StyleReport",
 }
 
 
 def _dataclasses() -> dict[str, type]:
-    """Every dataclass DEFINED in the package, by `module.Name`."""
+    """Every dataclass DEFINED in the package, by `module.Name`.
+
+    `walk_packages`, not `iter_modules`: `revision` became a SUBPACKAGE
+    on 2026-08-30, and a walk one level deep stopped seeing the eleven
+    dataclasses inside it. They were all still there and all still
+    frozen — the list below just could not find them, which is a gate
+    going quiet over the code it was written for rather than a finding.
+    """
     found: dict[str, type] = {}
-    for info in pkgutil.iter_modules(docxkit.__path__):
+    for info in pkgutil.walk_packages(docxkit.__path__, prefix="docxkit."):
         try:
-            mod = importlib.import_module(f"docxkit.{info.name}")
+            mod = importlib.import_module(info.name)
         except ImportError:                     # pragma: no cover - optional
             continue
+        short = info.name.removeprefix("docxkit.")
         for name, obj in vars(mod).items():
             if (isinstance(obj, type) and dataclasses.is_dataclass(obj)
                     and obj.__module__ == mod.__name__):
-                found[f"{info.name}.{name}"] = obj
+                found[f"{short}.{name}"] = obj
     return found
 
 

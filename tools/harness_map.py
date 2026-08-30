@@ -18,7 +18,7 @@ once the run says which files actually reach it.
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
@@ -65,13 +65,28 @@ HARNESS: dict[str, list[str]] = {
     "footnotes.py": ["tests/test_footnotes.py", "tests/test_footnote_ids.py",
                      "tests/test_parts_gaps.py",
                      "tests/test_value_types.py"],
-    "revision.py": ["tests/test_revision.py", "tests/test_revision_doctor.py",
-                    "tests/test_revision_state.py",
-                    "tests/test_revision_survey.py",
-                    "tests/test_revision_verdict.py",
-                    "tests/test_revision_gates.py",
-                    "tests/test_cli_revision.py",
-                    "tests/test_value_types.py"],
+    # `revision.py` became `revision/` on 2026-08-30, and each of the
+    # fourteen halves gets the harness the whole module had. That is
+    # deliberately a SUPERSET, not a measurement: these files certainly
+    # reach each half, and narrowing one without running it would be
+    # inventing a harness — the mistake `_table_core` paid 216 phantom
+    # survivors for, in the other direction.
+    #
+    # So the per-half figures are NOT comparable with the `revision.py`
+    # line in CONTRIBUTING's calibration table, which was a figure over
+    # 3,118 lines against this same suite. Re-measure before quoting one,
+    # and narrow an entry once a run says which files actually reach it.
+    **{f"revision/{half}.py": ["tests/test_revision.py",
+                               "tests/test_revision_doctor.py",
+                               "tests/test_revision_state.py",
+                               "tests/test_revision_survey.py",
+                               "tests/test_revision_verdict.py",
+                               "tests/test_revision_gates.py",
+                               "tests/test_cli_revision.py",
+                               "tests/test_value_types.py"]
+       for half in ("_common", "_config", "_losses", "_state", "_verdict",
+                    "_baseline", "_build", "_doctor", "_gates", "_ingest",
+                    "_registry", "_init", "_promote", "_validate")},
     "revisions.py": ["tests/test_revisions.py",
                      "tests/test_revisions_marks.py",
                      "tests/test_revisions_selective.py",
@@ -259,6 +274,39 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
                   "tests/test_tables_regrid.py",
                   "tests/test_tables_blank_rows.py"),
 }
+
+
+def session_stem(module: str | Path) -> str:
+    """The `.mutation-<stem>.*` name a session for this module uses.
+
+    Accepts either spelling in use: a HARNESS key (`edit.py`,
+    `revision/_build.py`) or a full path (`src/docxkit/revision/
+    _build.py`). The leading underscore is dropped because a filename
+    beginning with a dot and an underscore is awkward to type, and a
+    top-level module keeps exactly the name its session has always had —
+    49 of them exist on this machine and renaming them would orphan
+    every recorded figure.
+
+    **A module in a subpackage keeps its folder.** `revision/` arrived
+    on 2026-08-30 and the basename rule stopped being unique the same
+    day: `revision/_ingest.py` and `ingest.py` both reduced to `ingest`,
+    so the second session to run would silently resume or overwrite the
+    first's, and `mutation_survivors` would then pair that database with
+    a `.pristine` holding the other module's source — line numbers
+    indexing into a file the run never saw. Same shape as the coverage
+    floor keys, and one folder deeper.
+
+    Written here because three tools derived this independently —
+    `mutation_session`, `measure_all` and `stale_figures` — in three
+    slightly different spellings, one of which had no fallback for a
+    name that is nothing but underscores. A rule with three copies is a
+    rule with three chances to be fixed in two places.
+    """
+    parts = PurePosixPath(str(module).replace("\\", "/")).parts
+    base = parts[-1].removesuffix(".py")
+    base = base.lstrip("_") or base
+    folder = parts[-2] if len(parts) >= 2 and parts[-2] != "docxkit" else ""
+    return f"{folder}_{base}" if folder else base
 
 
 def named_after(module: str) -> list[str]:

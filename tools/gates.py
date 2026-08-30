@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the six gates in order and say which one stopped.
+"""Run the seven gates in order and say which one stopped.
 
     python tools/gates.py
 
@@ -16,10 +16,16 @@ wrong:
   found nothing but notes — so the gate is "no line matching `: error`",
   which is what this applies.
 
-Nothing here is new: it is the same six commands CONTRIBUTING lists,
-run so that the answer cannot be lost between them. Exit status is 0
-only when all six pass, and the first failure stops the run — a gate
-after a red one tells you nothing you can act on yet.
+Nothing here is new: it is the same commands CONTRIBUTING lists, run so
+that the answer cannot be lost between them. Exit status is 0 only when
+all of them pass, and the first failure stops the run — a gate after a
+red one tells you nothing you can act on yet.
+
+One of the seven can SKIP. `sweep` needs a corpus of real manuscripts,
+which no CI runner has and most machines do not either, so it exits 3
+and prints what to set. That is a third state on purpose: `ok` over
+zero documents and `ok` over 347 are the same line, and the corpus gate
+is the one where the difference is the entire point.
 """
 from __future__ import annotations
 
@@ -85,12 +91,25 @@ GATES: list[Gate] = [
      False),
     ("floors", [sys.executable, "tools/coverage_floor.py",
                 "--from-json", str(COVERAGE_JSON)], False),
+    # The corpus. It SKIPS without `DOCXKIT_CORPUS` (exit 3, printed as
+    # `skip`), which is why it can sit in the chain at all — CI has no
+    # manuscripts and never will. Named here even when it cannot run,
+    # because that is the whole repair: it was a documented tool bound
+    # to nothing, and an unrun gate is invisible in a way an unrunnable
+    # one is not. Every chain now prints a line asking for a corpus.
+    ("sweep", [sys.executable, "tools/sweep.py"], False),
     # Last on purpose. It reports on HEAD rather than on the work
     # in hand, and a broken HEAD must not stand between the author
     # and the lint error they are actually here to fix.
     ("committed", [sys.executable, "tools/verify_committed.py"],
      False),
 ]
+
+#: A gate's way of saying "I did not run, and here is why". Distinct
+#: from 0 so that "swept 347 documents, nothing raised" and "there were
+#: no documents" cannot print the same word — which is the difference
+#: between a gate and a decoration.
+SKIPPED = 3
 
 
 #: What mypy prints when it has finished having an opinion — either
@@ -119,6 +138,8 @@ def _failed(gate: Gate, out: str, code: int) -> bool:
     nothing that looks like mypy's own verdict is a failure of the gate
     itself.
     """
+    if code == SKIPPED:
+        return False
     if gate[2]:
         if any(": error" in line for line in out.splitlines()):
             return True
@@ -133,7 +154,7 @@ def _failed(gate: Gate, out: str, code: int) -> bool:
 #: instead of "4430 passed". A passing gate prints one line here, so
 #: the one line has to be the answer.
 _SUMMARY = re.compile(r"\b(passed|failed|error|no issues|All checks|"
-                      r"0 errors|at or above)\b")
+                      r"0 errors|at or above|SKIPPED|swept)\b")
 
 
 def _summary(out: str) -> str:
@@ -157,6 +178,11 @@ def run(gates: Sequence[Gate] = tuple(GATES),
                 say(f"FAILED  {name}")
                 say(out.strip()[-3000:])
                 return 1
+            if done.returncode == SKIPPED:
+                # The reason, not a summary line: a skip is only useful
+                # if it says what to set to un-skip it.
+                say(f"skip    {name}  {_summary(out)[:90]}")
+                continue
             say(f"ok      {name}  {_summary(out)[:90]}")
         return 0
     finally:

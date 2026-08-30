@@ -130,6 +130,57 @@ def test_a_report_that_is_NOT_THERE_says_so_rather_than_measuring_zero(
     assert "no coverage report" in str(exc.value)
 
 
+def test_a_module_in_a_SUBPACKAGE_keeps_its_folder_in_the_key():
+    """`revision/` arrived on 2026-08-30 and a basename key stopped
+    being unique. `revision/__init__.py` and the package's own
+    `__init__.py` collide head-on: one silently overwrites the other in
+    the dict, and a module is then measured against a percentage
+    belonging to a different file — a confident pass, or a confident
+    failure, about neither of them."""
+    assert coverage_floor._key(
+        "src/docxkit/revision/_losses.py") == "revision/_losses.py"
+    assert coverage_floor._key(
+        "src/docxkit/revision/__init__.py") == "revision/__init__.py"
+
+
+def test_a_TOP_LEVEL_module_is_keyed_the_way_it_always_was():
+    """The other half of the change, and the reason the FLOORS list did
+    not have to be rewritten: 40 entries keep their spelling."""
+    assert coverage_floor._key("src/docxkit/cli.py") == "cli.py"
+    assert coverage_floor._key("src/docxkit/__init__.py") == "__init__.py"
+
+
+def test_the_two_INIT_files_do_not_collapse_into_one_key():
+    """Stated as the collision rather than as two spellings, because
+    what is being prevented is a dict with one entry where two files
+    were measured."""
+    keys = {coverage_floor._key(p) for p in
+            ("src/docxkit/__init__.py", "src/docxkit/revision/__init__.py")}
+
+    assert len(keys) == 2, keys
+
+
+def test_EVERY_floor_names_a_module_that_exists():
+    """The direction the split breaks. A floor keyed on a file that is
+    gone cannot be met by anything, and the entry for `revision.py` at
+    97 — the highest in the package after cli and word — would have gone
+    on describing 3,118 lines that are now fourteen files.
+
+    `test_a_floored_module_MISSING_from_the_report_is_a_failure` below
+    catches it at RUN time, off the coverage report. This catches it
+    from the tree, which is the cheaper answer and the one that does not
+    need a green suite first.
+    """
+    src = Path(docxkit.__file__).parent
+    gone = sorted(name for name in coverage_floor.FLOORS
+                  if not (src / name).is_file())
+
+    assert not gone, (
+        f"floors for modules that do not exist: {gone}. A renamed or "
+        f"split module leaves its floor behind, and the new name "
+        f"inherits DEFAULT — the protection is given back silently.")
+
+
 def test_a_floored_module_MISSING_from_the_report_is_a_failure():
     """`check` used to walk the measurement, so a floor whose module is
     absent was not passed — it was unasked. Two ways that happens and

@@ -43,6 +43,12 @@ def doc(*entries: str) -> str:
 OPEN = "## Open\n"
 FIXED = "## Fixed\n"
 
+#: The two halves, since 2026-08-30. Sections are file-scoped now:
+#: `## Open` lives in one, `## Fixed` in the other, and `problems` is
+#: told which file it is reading.
+WORKING = "BACKLOG.md"
+ARCHIVE = "BACKLOG-ARCHIVE.md"
+
 
 def entry(head: str, status: str | None) -> str:
     mark = f"\n<!-- status: {status} -->" if status else ""
@@ -56,11 +62,10 @@ def test_an_OPEN_entry_under_Fixed_is_refused():
     """`--sample` and the `Table` handle, three days each. `## Fixed`
     exists to answer "did we ever fix that?", and an open entry sitting
     there answers it wrongly — worse than not answering."""
-    text = doc(OPEN, entry("A live one", "open"),
-               FIXED, entry("A `--sample` run OVERWRITES a complete one",
+    text = doc(FIXED, entry("A `--sample` run OVERWRITES a complete one",
                             "open"))
 
-    (found,) = bs.problems(text)
+    (found,) = bs.problems(text, ARCHIVE)
 
     assert "'open' under `## Fixed`" in found
     assert "--sample" in found, "the reader has to see WHICH entry"
@@ -71,19 +76,65 @@ def test_a_FIXED_entry_under_Open_is_refused():
     order is set by severity within `## Open`, so a closed entry left
     there sets the wrong order. That is how 2026-08-27 began — the
     top-severity entry was one already fixed."""
-    text = doc(OPEN, entry("Already done", "fixed"), FIXED)
+    text = doc(OPEN, entry("Already done", "fixed"))
 
-    (found,) = bs.problems(text)
+    (found,) = bs.problems(text, WORKING)
 
     assert "'fixed' under `## Open`" in found
 
 
 def test_the_ordinary_file_is_SILENT():
     """The half that decides whether a gate survives its first week."""
-    text = doc(OPEN, entry("A live one", "open"),
-               FIXED, entry("A closed one", "fixed"))
+    assert bs.problems(doc(OPEN, entry("A live one", "open")),
+                       WORKING) == []
+    assert bs.problems(doc(FIXED, entry("A closed one", "fixed")),
+                       ARCHIVE) == []
 
-    assert bs.problems(text) == []
+
+# --- the split, and the one failure it can introduce ---------------------
+
+
+def test_a_FIXED_section_in_the_WORKING_file_is_refused():
+    """The only new way to be wrong after 2026-08-30.
+
+    Status and section AGREE here — a `fixed` entry under `## Fixed` —
+    and the entry is still in the wrong file. Nothing in the original
+    check could see that, because it was written when there was one
+    file; the archive would then answer "did we ever fix that?" over a
+    subset, which is the exact reading `## Fixed` exists to prevent.
+    """
+    text = doc(OPEN, entry("A live one", "open"),
+               FIXED, entry("Closed, and left behind", "fixed"))
+
+    (found,) = bs.problems(text, WORKING)
+
+    assert "`## Fixed` in BACKLOG.md" in found
+    assert "BACKLOG-ARCHIVE.md" in found
+    assert "left behind" in found
+
+
+def test_an_OPEN_section_in_the_ARCHIVE_is_refused():
+    """The other direction. An open entry filed into the archive is off
+    the working list entirely — not misordered, invisible."""
+    text = doc(OPEN, entry("Filed into the wrong file", "open"))
+
+    (found,) = bs.problems(text, ARCHIVE)
+
+    assert "`## Open` in BACKLOG-ARCHIVE.md" in found
+    assert "BACKLOG.md" in found
+
+
+def test_the_FILE_rule_is_checked_BEFORE_the_status_rule():
+    """One finding per entry, and it must be the actionable one. An
+    entry in the wrong file also has the wrong section for its status,
+    so reporting both says "move it to `## Fixed`" beside "move it to
+    the other file" — and the first is advice that makes it worse."""
+    text = doc(FIXED, entry("Closed, left behind", "fixed"))
+
+    found = bs.problems(text, WORKING)
+
+    assert len(found) == 1
+    assert "`## Fixed` in BACKLOG.md" in found[0]
 
 
 # --- narrow on purpose ---------------------------------------------------
@@ -95,16 +146,17 @@ def test_a_RECORD_may_sit_in_either_section():
     and a Word behaviour worth not chasing twice. Refusing those would be
     a gate firing on the file's own conventions, which is exactly what
     the regex did."""
-    text = doc(OPEN,
-               entry("A retraction kept on purpose", "withdrawn"),
-               entry("Not a defect, recorded so it is not chased twice",
-                     "not-a-defect"),
-               entry("A framing note", "note"),
-               FIXED,
-               entry("Withdrawn the day it was filed", "withdrawn"),
-               entry("Checked and NOT defects", "not-a-defect"))
+    working = doc(OPEN,
+                  entry("A retraction kept on purpose", "withdrawn"),
+                  entry("Not a defect, recorded so it is not chased twice",
+                        "not-a-defect"),
+                  entry("A framing note", "note"))
+    archive = doc(FIXED,
+                  entry("Withdrawn the day it was filed", "withdrawn"),
+                  entry("Checked and NOT defects", "not-a-defect"))
 
-    assert bs.problems(text) == []
+    assert bs.problems(working, WORKING) == []
+    assert bs.problems(archive, ARCHIVE) == []
 
 
 def test_an_entry_with_NO_status_is_a_finding():
@@ -144,22 +196,77 @@ def test_the_marker_must_FOLLOW_ITS_OWN_heading():
 # --- the live file -------------------------------------------------------
 
 
-def test_THIS_backlog_is_consistent():
-    """The gate itself, over the file it exists for."""
-    text = bs.FILE.read_text(encoding="utf-8").replace("\r\n", "\n")
+def _live(path):
+    return path.read_text(encoding="utf-8").replace("\r\n", "\n")
 
-    assert bs.problems(text) == []
+
+def test_THIS_backlog_is_consistent():
+    """The gate itself, over the files it exists for — BOTH of them."""
+    for path in bs.FILES:
+        assert bs.problems(_live(path), path.name) == [], path.name
 
 
 def test_EVERY_entry_declares_a_status():
     """Stated separately from the check above so the failure says which
     of the two things went wrong: an unstamped entry and a misfiled one
     are different mistakes with different fixes."""
-    text = bs.FILE.read_text(encoding="utf-8").replace("\r\n", "\n")
-    found = bs.entries(text)
+    for path in bs.FILES:
+        found = bs.entries(_live(path))
 
-    assert found, "the backlog has entries"
-    assert [h for _s, status, h in found if status is None] == []
+        assert found, f"{path.name} has entries"
+        assert [h for _s, status, h in found if status is None] == []
+
+
+def test_BOTH_halves_of_the_backlog_exist():
+    """The split's own invariant. A checker reading a file that is not
+    there answers "nothing to check" — which is how a gate dies — so the
+    tool refuses, and this pins that the pair is really the shape on
+    disk rather than only the shape the tool wants."""
+    assert [path.name for path in bs.FILES] == ["BACKLOG.md",
+                                                "BACKLOG-ARCHIVE.md"]
+    for path in bs.FILES:
+        assert path.is_file(), f"{path.name} is missing"
+
+
+#: What the two files held the moment the archive was split out of
+#: BACKLOG.md, 2026-08-30. A FLOOR, not a target — see below.
+AT_THE_SPLIT = 224
+
+
+def test_NO_ENTRY_was_lost_when_the_archive_was_split_out():
+    """The split moved 9,852 lines between two files. The way that goes
+    wrong is not a crash: it is a boundary off by one section, which
+    reads as a tidy file and a checker that never sees the entries it
+    dropped. The total is the only thing that notices.
+
+    `>=`, and the first spelling of this was `== 224` — which went red
+    within the hour, on somebody filing an ordinary entry. A gate that
+    fires on the normal use of the thing it guards is a gate that gets
+    deleted, and it would have been deleted for being wrong. What is
+    actually invariant is the archive's own rule: nothing is ever
+    removed, so the total can only grow.
+    """
+    total = sum(len(bs.entries(_live(path))) for path in bs.FILES)
+
+    assert total >= AT_THE_SPLIT, (
+        f"{AT_THE_SPLIT - total} entries fewer than the split produced. "
+        f"Entries are never deleted — check the `## Fixed` boundary.")
+
+
+def test_FIXED_is_a_heading_in_the_ARCHIVE_ONLY():
+    """What makes the split gated rather than merely tidy.
+
+    A closed entry left in BACKLOG.md needs a `## Fixed` to sit under.
+    If BACKLOG.md still had one, that entry would be legal — right
+    status, right section, wrong file — so the working file's pointer
+    paragraph is deliberately headed something else.
+    """
+    working, archive = (_live(path) for path in bs.FILES)
+
+    assert "\n## Fixed\n" in archive
+    assert "\n## Fixed\n" not in working
+    assert "\n## Open\n" in working
+    assert "\n## Open\n" not in archive
 
 
 def test_the_tool_runs_and_reports_its_own_verdict():

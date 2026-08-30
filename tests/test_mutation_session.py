@@ -309,6 +309,75 @@ def test_the_worktree_gets_todays_CONFTEST_too(tmp_path, monkeypatch):
     assert (work / "tests" / "conftest.py").read_text() == "HELPER = 'today'\n"
 
 
+def test_the_worktree_gets_a_SUBPACKAGE_too(tmp_path, monkeypatch):
+    """`src/docxkit/*.py` copied the top level and nothing under it.
+
+    `revision.py` became `revision/` on 2026-08-30 — fourteen halves,
+    none of which a top-level glob can see. The session would then have
+    planned against a module that is not in the worktree, or mutated
+    whatever the checkout's own copy was.
+    """
+    root, work = tmp_path / "root", tmp_path / "docxkit-mut9"
+    (root / "src" / "docxkit" / "revision").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (work / "src" / "docxkit").mkdir(parents=True)
+    (root / "src" / "docxkit" / "thing.py").write_text("x = 1\n")
+    (root / "src" / "docxkit" / "revision" / "__init__.py").write_text("y=2\n")
+    (root / "src" / "docxkit" / "revision" / "_build.py").write_text("z=3\n")
+    (root / "tests" / "test_thing.py").write_text("def test_f(): pass\n")
+    (root / "tests" / "conftest.py").write_text("HELPER = 'today'\n")
+    for name in ("README.md", "pyproject.toml"):
+        (root / name).write_text("#\n")
+
+    monkeypatch.setattr(ms, "ROOT", root)
+    monkeypatch.setattr(ms, "WORKTREE", work)
+    monkeypatch.setattr(ms, "_run", lambda *a, **kw: _Ok())
+
+    ms.ensure_worktree(Path("src/docxkit/revision/_build.py"),
+                       ["tests/test_thing.py"])
+
+    half = work / "src" / "docxkit" / "revision" / "_build.py"
+    assert half.read_text() == "z=3\n", "the half under test is not there"
+    assert (work / "src" / "docxkit" / "revision"
+            / "__init__.py").read_text() == "y=2\n", "nor its facade"
+
+
+def test_a_module_that_no_longer_EXISTS_is_removed_from_the_worktree(
+        tmp_path, monkeypatch):
+    """The other half, and the dangerous one.
+
+    The worktree is created once at HEAD and reused for weeks, so a
+    module that has since been split or renamed is still sitting in it —
+    `revision.py`, 144 KB, dated six days before the split. Copying the
+    new layout in beside it leaves BOTH, and `import docxkit.revision`
+    resolves to whichever the loader prefers. A run then produces a
+    number for source the session's plan does not describe, which is the
+    hazard this module's docstring opens with, arriving as a stale
+    LAYOUT rather than a stale module.
+    """
+    root, work = tmp_path / "root", tmp_path / "docxkit-mut9"
+    (root / "src" / "docxkit").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (work / "src" / "docxkit").mkdir(parents=True)
+    (root / "src" / "docxkit" / "thing.py").write_text("x = 1\n")
+    (root / "tests" / "test_thing.py").write_text("def test_f(): pass\n")
+    (root / "tests" / "conftest.py").write_text("HELPER = 'today'\n")
+    for name in ("README.md", "pyproject.toml"):
+        (root / name).write_text("#\n")
+    ghost = work / "src" / "docxkit" / "gone.py"
+    ghost.write_text("the module that was split up\n")
+
+    monkeypatch.setattr(ms, "ROOT", root)
+    monkeypatch.setattr(ms, "WORKTREE", work)
+    monkeypatch.setattr(ms, "_run", lambda *a, **kw: _Ok())
+
+    ms.ensure_worktree(Path("src/docxkit/thing.py"), ["tests/test_thing.py"])
+
+    assert not ghost.exists(), "a module the working tree does not have"
+    assert (work / "src" / "docxkit" / "thing.py").exists(), \
+        "and the live ones are still there"
+
+
 class _Ok:
     """A finished subprocess that succeeded."""
 

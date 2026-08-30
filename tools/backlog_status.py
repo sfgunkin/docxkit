@@ -51,7 +51,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
-FILE = ROOT / "BACKLOG.md"
+
+#: BOTH halves. The `## Fixed` section moved to its own file on
+#: 2026-08-30 — BACKLOG.md was 91 % archive, 11 working entries behind
+#: 213 closed ones — and a checker that kept reading only the first
+#: would have gone on printing a confident count over 11 of 224 entries.
+#: That is the failure this whole file exists to prevent, so the split
+#: could not be made without making the checker read the pair.
+FILES = (ROOT / "BACKLOG.md", ROOT / "BACKLOG-ARCHIVE.md")
+
+#: Which file each section is allowed to live in. The section names are
+#: the same as they always were; what is new is that `## Fixed` exists
+#: in the archive and nowhere else, so a closed entry left behind in
+#: BACKLOG.md has no legal section and fails here rather than quietly
+#: finding one. BACKLOG.md's pointer paragraph is deliberately headed
+#: `## Where the fixed entries are` for exactly this reason.
+SECTION_FILE = {"Open": "BACKLOG.md", "Fixed": "BACKLOG-ARCHIVE.md"}
 
 #: The vocabulary. Small on purpose: a status nobody can tell apart from
 #: its neighbour is a status people guess at.
@@ -89,10 +104,23 @@ def entries(text: str) -> list[tuple[str, str | None, str]]:
     return out
 
 
-def problems(text: str) -> list[str]:
-    """Every entry whose declared status and section disagree."""
+def problems(text: str, filename: str = "BACKLOG.md") -> list[str]:
+    """Every entry whose declared status and section disagree.
+
+    `filename` is which half this text is, and it carries the rule the
+    split added: a section may only appear in the file
+    :data:`SECTION_FILE` names for it. Without that a closed entry left
+    in BACKLOG.md under a re-added `## Fixed` would pass — the status
+    and the section would agree, and the entry would still be in the
+    wrong file, which is the only failure the split can introduce.
+    """
     out = []
     for section, status, head in entries(text):
+        where = SECTION_FILE.get(section)
+        if where and where != filename:
+            out.append(f"`## {section}` in {filename}, belongs in "
+                       f"{where}: {head[:70]}")
+            continue
         if status is None:
             out.append(f"no status declared: [{section}] {head[:70]}")
         elif status not in STATUSES:
@@ -105,14 +133,27 @@ def problems(text: str) -> list[str]:
 
 def main() -> int:
     utf8_stdout()
-    if not FILE.exists():
-        print(f"no {FILE.name} here — nothing to check")
+    present = [path for path in FILES if path.exists()]
+    if not present:
+        print("no BACKLOG.md here — nothing to check")
         return 0
-    text = FILE.read_text(encoding="utf-8").replace("\r\n", "\n")
-    found = problems(text)
+    missing = [path.name for path in FILES if not path.exists()]
+    if missing:
+        # Not "nothing to check". Half the entries silently unread is
+        # the shape this tool is here to refuse, and after the split
+        # each half is load-bearing.
+        print(f"missing: {', '.join(missing)} — both halves of the "
+              f"backlog must be present to check either")
+        return 1
+    found: list[str] = []
+    total = 0
+    for path in present:
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+        total += len(entries(text))
+        found.extend(problems(text, path.name))
     if not found:
-        print(f"{len(entries(text))} entries, each in the section its "
-              f"declared status names")
+        print(f"{total} entries across {len(present)} files, each in the "
+              f"section its declared status names")
         return 0
     print(f"{len(found)} entry/entries are not where their status says:\n")
     for line in found:

@@ -52,10 +52,46 @@ FLOORS = {
     # which needs the fuller document fake `test_locate.py` already
     # carries — worth folding in when something else touches that class.
     "word.py": 99,
-    # Held above DEFAULT deliberately: every refusal in here is a thing
-    # that failed SILENTLY in a real paper, and an uncovered refusal is
-    # one nobody would notice had stopped working.
-    "revision.py": 97,
+    # ---- the revision protocol, held above DEFAULT deliberately: every
+    # refusal in here is a thing that failed SILENTLY in a real paper,
+    # and an uncovered refusal is one nobody would notice had stopped
+    # working.
+    #
+    # `revision.py` was ONE line here, at 97, until it became
+    # `revision/` on 2026-08-30. Restating it as fourteen is not
+    # bookkeeping: a floor keyed on a file that no longer exists is a
+    # floor that cannot be met, and a half with no entry falls to
+    # DEFAULT — so the split would have handed back twelve points on the
+    # highest-risk module in the package with the gate still green.
+    #
+    # The numbers are MEASURED, not apportioned, and the measurement is
+    # the interesting part: the 97 was an average, and it was hiding
+    # `_build.py` at 84.7 — below the package DEFAULT, in the half that
+    # drives Word's Compare. Nothing was lost in the split; that module
+    # had been the least-tested thing in the protocol all along, and one
+    # aggregate over 3,118 lines could not say so.
+    #
+    # It is at 100 now (2026-08-30). What was uncovered was four
+    # WARNINGS and the long-list arm of one refusal — a note definition
+    # out of document order, links inside a tracked deletion, a footnote
+    # whose reference moved — which is the exact class this block is
+    # held above DEFAULT for. Each had failed silently in a real paper
+    # once; none had a test.
+    "revision/__init__.py": 100,
+    "revision/_baseline.py": 100,
+    "revision/_build.py": 100,
+    "revision/_common.py": 100,
+    "revision/_config.py": 100,
+    "revision/_gates.py": 100,
+    "revision/_ingest.py": 100,
+    "revision/_promote.py": 100,
+    "revision/_registry.py": 100,
+    "revision/_validate.py": 100,
+    "revision/_doctor.py": 98,
+    "revision/_state.py": 98,
+    "revision/_losses.py": 97,
+    "revision/_verdict.py": 97,
+    "revision/_init.py": 94,
     # Was 73, described as "the branches are for a machine with no
     # console attached, which pytest always has". They are not: a real
     # `io.TextIOWrapper` over a `BytesIO` IS what a console stream is,
@@ -103,7 +139,7 @@ def measure(from_json: Path | None = None) -> dict[str, float]:
             sys.exit(f"no coverage report at {from_json} — the run that was "
                      f"supposed to write it did not")
         data = json.loads(from_json.read_text(encoding="utf-8"))
-        return {Path(name).name: info["summary"]["percent_covered"]
+        return {_key(name): info["summary"]["percent_covered"]
                 for name, info in data["files"].items()}
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "cov.json"
@@ -139,8 +175,29 @@ def measure(from_json: Path | None = None) -> dict[str, float]:
             sys.exit("coverage produced no report; is pytest-cov installed? "
                      "(pip install -e .[dev])")
         data = json.loads(out.read_text(encoding="utf-8"))
-    return {Path(name).name: info["summary"]["percent_covered"]
+    return {_key(name): info["summary"]["percent_covered"]
             for name, info in data["files"].items()}
+
+
+def _key(path: str) -> str:
+    """How a module is named in :data:`FLOORS`.
+
+    The BASENAME until 2026-08-30, which stopped working the moment
+    `revision.py` became `revision/`: fourteen halves, plus a second
+    `__init__.py` that collides head-on with the package's own. A
+    collision here does not crash — one entry overwrites the other in
+    the dict, and a module is then measured against a percentage
+    belonging to a different file. The gate reports a confident pass, or
+    a confident failure, about neither of them.
+
+    So a module inside a subpackage keeps its folder:
+    `revision/_losses.py`. Every other key is unchanged, which is why
+    the FLOORS list above did not have to be rewritten.
+    """
+    parts = Path(path).parts
+    if len(parts) >= 2 and parts[-2] != "docxkit":
+        return f"{parts[-2]}/{parts[-1]}"
+    return Path(path).name
 
 
 def check(actual: dict[str, float]) -> list[str]:

@@ -16,10 +16,47 @@ import pathlib
 import pytest
 
 import docxkit
+import docxkit.revision  # a subpackage is not imported by the package
 
 SRC = pathlib.Path(docxkit.__file__).parent
-MODULES = sorted(p for p in SRC.glob("*.py")
-                 if p.name != "__init__.py" and not p.name.startswith("_"))
+
+#: A public SUBPACKAGE is a public module: `revision` became `revision/`
+#: on 2026-08-30 and a `*.py` glob stopped seeing it, so its 53-name
+#: `__all__` — the largest in the package — went unchecked by every test
+#: in this file on the day it was split. Its `__init__.py` is the
+#: surface, exactly as `citations.py` is for its halves.
+PACKAGES = sorted(p / "__init__.py" for p in SRC.iterdir()
+                  if p.is_dir() and not p.name.startswith("_")
+                  and (p / "__init__.py").is_file())
+
+MODULES = sorted(
+    [p for p in SRC.glob("*.py")
+     if p.name != "__init__.py" and not p.name.startswith("_")] + PACKAGES,
+    key=lambda p: p.parent.name if p.name == "__init__.py" else p.stem)
+
+
+def _module(path: pathlib.Path) -> str:
+    """The importable name: `revision`, not `__init__`.
+
+    `path.stem` answered this until 2026-08-30 and then answered it
+    WRONGLY rather than failing: the stem of `revision/__init__.py` is
+    `__init__`, and `__import__("docxkit.__init__")` resolves to
+    `docxkit` itself. The test below would have gone on passing, over
+    the package's own 16-name `__all__`, while reporting on
+    `revision`'s 53.
+    """
+    return path.parent.name if path.name == "__init__.py" else path.stem
+
+
+def _id(path: pathlib.Path) -> str:
+    """The name a FAILURE should print.
+
+    `path.name` for a subpackage is `__init__.py`, which names no module
+    a reader can go and look at — and with more than one subpackage it
+    would name several, identically.
+    """
+    return path.parent.name if path.name == "__init__.py" else path.name
+
 
 #: Namespace-URI shorthands several modules define for themselves. Not
 #: API: a caller wants `_xml`'s spelling, not four copies of it — and
@@ -61,7 +98,7 @@ def _public_names(path: pathlib.Path, *, callables_only: bool = False
     return public, declared
 
 
-@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", MODULES, ids=_id)
 def test_every_public_name_is_DECLARED(path):
     """Defined public and not in `__all__` = unreachable for a typed
     caller, and reachable only through a private module for anyone
@@ -69,28 +106,50 @@ def test_every_public_name_is_DECLARED(path):
     public, declared = _public_names(path)
     if path.name in NO_ALL:
         pytest.skip("an entry point, not a library surface")
-    assert declared is not None, f"{path.name} declares no __all__"
+    assert declared is not None, f"{_id(path)} declares no __all__"
     missing = sorted(public - declared - NOT_API)
     assert not missing, (
-        f"{path.name} defines {missing} publicly and does not declare "
-        f"them — Pyright rejects `from docxkit.{path.stem} import "
+        f"{_id(path)} defines {missing} publicly and does not declare "
+        f"them — Pyright rejects `from docxkit.{_module(path)} import "
         f"{missing[0]}` in a py.typed consumer")
 
 
-@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", MODULES, ids=_id)
 def test_everything_DECLARED_can_actually_be_imported(path):
     """The mirror: a name in `__all__` that is not there is an import
     that fails at the point of use rather than here."""
-    module = __import__(f"docxkit.{path.stem}", fromlist=["*"])
+    module = __import__(f"docxkit.{_module(path)}", fromlist=["*"])
     for name in getattr(module, "__all__", ()):
         assert hasattr(module, name), \
-            f"docxkit.{path.stem}.__all__ names {name}, which is not there"
+            f"docxkit.{_module(path)}.__all__ names {name}, not there"
+
+
+def test_the_walk_reaches_a_SUBPACKAGE_and_not_the_package_itself():
+    """The two ways this file could look green over `revision` while
+    reading something else: not seeing it at all (a `*.py` glob), or
+    resolving `revision/__init__.py` to `docxkit` (its stem).
+
+    Pinned as an identity rather than a name, because both failures
+    produce a real module with a real `__all__` and neither raises.
+    """
+    package = next(p for p in MODULES if _id(p) == "revision")
+
+    assert _module(package) == "revision"
+    module = __import__(f"docxkit.{_module(package)}", fromlist=["*"])
+    assert module is docxkit.revision
+    assert module is not docxkit
+    assert len(module.__all__) > len(docxkit.__all__)
 
 
 #: Every module, including the private halves: a positional bool is as
 #: bad in `_cite_build.link_all` as in `edit.replace_in_para`, and the
-#: papers import both.
-ALL_MODULES = sorted(p for p in SRC.glob("*.py") if p.name != "__init__.py")
+#: papers import both. `rglob`, so the halves inside a SUBPACKAGE count
+#: too — `revision/` added fourteen modules on 2026-08-30, holding
+#: `use_word`, `allow_stale_baseline` and `force`, which are precisely
+#: the shape this refuses.
+ALL_MODULES = sorted((p for p in SRC.rglob("*.py")
+                      if p.name != "__init__.py"),
+                     key=lambda p: (p.parent.name, p.name))
 
 
 def _bool_positionals(path: pathlib.Path) -> list[str]:
@@ -120,7 +179,7 @@ def _bool_positionals(path: pathlib.Path) -> list[str]:
     return out
 
 
-@pytest.mark.parametrize("path", ALL_MODULES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", ALL_MODULES, ids=_id)
 def test_a_BOOL_option_is_always_keyword_only(path):
     """Every flag in this package turns a guard OFF — `allow_hyperlink`,
     `allow_notes`, `grow_link_label`, `normalize`. Passed by position a
@@ -188,7 +247,7 @@ def _raises(tree: ast.Module, known: set[str]) -> set[str]:
     return out
 
 
-@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", MODULES, ids=_id)
 def test_an_exception_a_module_RAISES_is_importable_from_it(path):
     """`except` should name the module whose function raised.
 
@@ -262,19 +321,30 @@ def test_every_module_has_a_row_in_the_README_table():
     Private ones count: the table already documented `_xml` and the
     three `_compare_*` layers, and a reader following a traceback into
     `_cite_grammar` needs the same one line about what it is for."""
-    on_disk = {p.stem for p in SRC.glob("*.py")
-               if p.stem not in {"__init__", "__main__"}}
-
-    missing = sorted(on_disk - _documented_modules())
+    missing = sorted(_on_disk() - _documented_modules())
     assert not missing, f"no row in the README table: {missing}"
+
+
+def _on_disk() -> set[str]:
+    """Every module a reader can import, subpackages included.
+
+    A `*.py` glob answered this until 2026-08-30, when `revision.py`
+    became `revision/` and the README's row for it read as documenting
+    something that no longer exists. The name a reader types is
+    unchanged — `docxkit.revision` — so the row is right and the glob
+    was wrong.
+    """
+    return ({p.stem for p in SRC.glob("*.py")
+             if p.stem not in {"__init__", "__main__"}}
+            | {p.name for p in SRC.iterdir()
+               if p.is_dir() and (p / "__init__.py").is_file()})
 
 
 def test_the_README_table_names_no_module_that_is_GONE():
     """The direction a deletion breaks. A row for a module that no
     longer exists is worse than no row: it sends a reader looking for
     a file, and the search returns nothing to correct them with."""
-    on_disk = {p.stem for p in SRC.glob("*.py")}
     documented = {n for n in _documented_modules() if "." not in n}
 
-    gone = sorted(documented - on_disk)
+    gone = sorted(documented - _on_disk())
     assert not gone, f"documented, but no such module: {gone}"

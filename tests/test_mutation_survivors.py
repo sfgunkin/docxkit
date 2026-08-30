@@ -275,6 +275,42 @@ def test_a_session_with_NO_snapshot_still_reports(tmp_path):
     assert "moved since" not in done.stdout
 
 
+def test_a_session_with_no_snapshot_SAYS_the_lines_are_unverified(tmp_path):
+    """The fallback is not an error, but it must not be silent either.
+
+    An empty note reads as "this is the source the run used". It is not:
+    it is whatever is on disk today, and the line numbers below index
+    into the file the mutants were generated from. The two are the same
+    file only until somebody edits it, and nothing here can tell.
+    """
+    done = _script_report(tmp_path, (5, "SURVIVED"))
+
+    assert done.returncode == 0, done.stderr
+    assert "no pristine copy" in done.stdout
+    assert "kept no snapshot" in done.stdout
+
+
+def test_a_PRUNED_snapshot_is_named_as_such(tmp_path):
+    """A `.pristine` that exists without the file is a pruning mistake,
+    and reads differently from a session that never kept one: there is
+    somewhere to go and look. Both fall back to the live file; only this
+    one means a `.sqlite` was kept while its snapshot was deleted."""
+    src = tmp_path / "runnable.py"
+    src.write_text(SCRIPT, encoding="utf-8")
+    (tmp_path / ".mutation-run.pristine").mkdir()      # emptied, not absent
+    db = _database(tmp_path / ".mutation-run.sqlite", (5, "SURVIVED"))
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(db), str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 0, done.stderr
+    assert "no pristine copy" in done.stdout
+    assert "does not hold runnable.py" in done.stdout
+    assert "kept no snapshot" not in done.stdout
+
+
 # --- the banner that says the list is already void ----------------------
 
 

@@ -867,7 +867,7 @@ def test_validate_reports_a_file_word_refuses(monkeypatch, project,
                                               capsys):
     from docxkit import revision
     write(project.batch, make_parts(para(run("x"))))
-    monkeypatch.setattr(revision, "_word", _Word(explode=True))
+    monkeypatch.setattr(revision._validate, "_word", _Word(explode=True))
     code, _ = run_cli(monkeypatch, "revision", "validate",
                       "--paper", str(project.root))
     assert code == 3
@@ -886,7 +886,7 @@ def test_validate_with_word_lists_the_papers_own_gates(monkeypatch,
         encoding="utf-8")
     write(project.batch, make_parts(
         para(run("The paper as it stands."), _ins("more"))))
-    monkeypatch.setattr(revision, "_word",
+    monkeypatch.setattr(revision._validate, "_word",
                         _Word(_Doc(text="The paper as it stands.more")))
     code, _ = run_cli(monkeypatch, "revision", "validate",
                       "--paper", str(project.root))
