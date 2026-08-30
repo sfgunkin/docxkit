@@ -1564,10 +1564,27 @@ def _paper_gates(args: argparse.Namespace, code: int) -> int:
 def cmd_revision_validate(args: argparse.Namespace) -> int:
     """The gate ladder. Gate 5 is the one that proves reviewability."""
     from . import guard as _g
-    from .revision import validate
+    from .revision import state, validate
     paper = _paper(args)
     target = Path(args.batch) if args.batch else paper.batch
     base = Path(args.baseline) if args.baseline else paper.prev
+    if not target.exists():
+        # A TRUTH state is the normal state of a paper between rounds,
+        # and there is no batch in it. The raw `cannot read …batch.docx:
+        # [Errno 2]` reads as a broken installation or a lost file
+        # rather than as "there is nothing pending" — it cost a real
+        # detour on Life_Expectancy, whose round-2 protocol listed this
+        # command as a PRECONDITION to be run green before any edit.
+        # The protocol author reasonably assumed a gate ladder could be
+        # run on a clean paper.
+        here = state(paper.working) if paper.working.exists() else None
+        print(f"no batch to validate: {target} is not there.")
+        if here is not None:
+            print(f"{paper.working.name} holds {here.pending} pending "
+                  f"revision(s) — {here.label}.")
+        print("`docxkit revision status` is the check for a paper between "
+              "rounds; `revision build` is what makes a batch.")
+        return 3
     report = validate(target, base if base.exists() else None,
                       use_word=not args.no_word)
 

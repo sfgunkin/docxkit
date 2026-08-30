@@ -92,10 +92,24 @@ def run(module: str, minutes: float, sample: int = 0, *,
     # U+FFFD to a cp1252 console. Both halves of a fan-out did on
     # 2026-08-20, and neither said a word about what went wrong.
     child = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # `--fast`, always. `mutant_tests` runs the tests that COVER the
+    # mutated line first and falls through to the whole harness when
+    # none of them fails, so a survivor is never declared by the short
+    # run — it is declared by the same command this would have used
+    # anyway. The only thing a wrong or stale coverage map can cost is
+    # time, which is the asymmetry the flag exists for: kills are the
+    # common case and a kill decided by three tests costs what pytest's
+    # start-up costs.
+    #
+    # A sweep is where that matters most and this is the one caller that
+    # did not pass it. Left off, a 13-module round over an 8-file
+    # harness spends most of its wall clock re-running tests that cannot
+    # reach the mutated line.
     proc = subprocess.Popen(
         [sys.executable, "tools/mutation_session.py", f"src/docxkit/{module}",
          "--tests", *tests, "--minutes", str(minutes), "--chunks", "0",
-         "--fresh", *(["--sample", str(sample)] if sample else [])],
+         "--fresh", "--fast",
+         *(["--sample", str(sample)] if sample else [])],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1, env=child)
     assert proc.stdout is not None

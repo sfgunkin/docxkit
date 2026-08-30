@@ -3020,3 +3020,34 @@ def test_the_merged_footnote_gate_names_the_PART_not_just_the_paragraph():
     (found,) = untracked(redline, _note_parts(_plain_note(_FN_WAS)))
 
     assert "footnote" in str(found).lower(), found
+
+
+def test_the_accept_refusal_does_not_name_a_flag_the_CLI_LACKS():
+    """It said "Pass accept_check=False", which is a Python keyword
+    argument. The CLI's flags are `--allow-math-resolve`,
+    `--allow-stale-baseline`, `--keep-math`, `--allow-pending-baseline`
+    and `--force`, none of which is it — so a CLI reader had been told
+    to do something the CLI does not offer, and the honest workaround
+    (a throwaway script importing `docxkit.revision`) is the thing the
+    CLI exists to avoid."""
+    said = tracked._ACCEPT_ESCAPE
+
+    assert "tracked.build(" in said, "name where the switch really lives"
+    assert "from Python" in said
+    assert "the CLI has no flag for this" in said
+    assert "usually right" in said, (
+        "the refusal was RIGHT on Life_Expectancy — two unterminated "
+        "bookmarks — and the repair was the manuscript, not the switch")
+
+
+def test_every_accept_side_refusal_carries_the_same_escape():
+    """One sentence, not two that can drift. Both refusals used to spell
+    it out separately and both were wrong the same way."""
+    import re as _re
+
+    src = Path(tracked.__file__).read_text(encoding="utf-8")
+    body = src.split("def _refuse_accept_side")[1].split("\ndef ")[0]
+
+    assert "accept_check=False to build" not in body
+    assert body.count("_ACCEPT_ESCAPE") == 2
+    assert not _re.search(r"Pass accept_check", body)

@@ -406,6 +406,58 @@ def _section_spans(xml: str) -> list[tuple[int, int]]:
     return out
 
 
+def _typed_ref(block: str, kind: str, kind_type: str) -> re.Match[str] | None:
+    """The section's existing reference of this KIND and TYPE, if any.
+
+    An untyped reference (`kind_type` empty) is the schema's `default`,
+    so the two spellings have to match each other: Word writes
+    `w:type="default"` and a hand-built section often writes nothing,
+    and a collision between those two is still a collision.
+    """
+    wanted = re.search(r'w:type="([^"]*)"', kind_type)
+    want = wanted.group(1) if wanted else "default"
+    for m in re.finditer(rf"<w:{kind}Reference\b[^>]*/>", block):
+        found = re.search(r'w:type="([^"]*)"', m.group(0))
+        if (found.group(1) if found else "default") == want:
+            return m
+    return None
+
+
+def _part_of_rid(parts: dict[str, bytes], ref: str) -> str | None:
+    """Which part a `<w:…Reference r:id="rIdN"/>` reaches, in `parts`."""
+    rid = re.search(r'r:id="([^"]+)"', ref)
+    if rid is None:
+        return None
+    rels = parts.get(_DOC_RELS, b"").decode("utf-8")
+    for m in re.finditer(r"<Relationship\b[^>]*/>", rels):
+        got = re.search(r'\bId="([^"]*)"', m.group(0))
+        target = _TARGET_RE.search(m.group(0))
+        if got and target and got.group(1) == rid.group(1):
+            return _resolve(_DOC_RELS, target.group(1))
+    return None
+
+
+def _source_type(src: str, src_rels: str, spans: list[tuple[int, int]],
+                 at: int, *, kind: str, part: str | None) -> str:
+    """The `w:type=` the SOURCE section gives this part, as an attribute.
+
+    Empty when the source does not place it in that section at all —
+    which is the reference Compare invented, and the caller drops it.
+    """
+    if part is None or at >= len(spans):
+        return ""
+    rid = _rid_for(src_rels, _DOC_RELS, part)
+    if rid is None:
+        return ""
+    lo, hi = spans[at]
+    m = re.search(rf'<w:{kind}Reference\b[^>]*r:id="{rid}"[^>]*/>',
+                  src[lo:hi])
+    if m is None:
+        return ""
+    found = re.search(r'w:type="([^"]*)"', m.group(0))
+    return f' w:type="{found.group(1)}"' if found else ' w:type="default"'
+
+
 def _restore_section_references(parts: dict[str, bytes],
                                 source: dict[str, bytes],
                                 missing: list[str],
@@ -456,6 +508,41 @@ def _restore_section_references(parts: dict[str, bytes],
             block = out[lo:hi]
             entry = (f'<w:{kind}Reference{kind_type} '
                      f'r:id="{rid_for[name]}"/>')
+            # Does the target section already carry this KIND and TYPE,
+            # pointing somewhere else? Compare does not only drop parts:
+            # it RE-TYPES the one it keeps. Measured 2026-08-29 on
+            # Life_Expectancy's round 2 —
+            #
+            #   baseline  even=footer1  default=footer2  first=footer3
+            #   batch     default=footer1               first=footer3
+            #
+            # so restoring footer2 as `default` APPENDED a second
+            # default reference beside the re-typed footer1. Two default
+            # footers in one section: the promoted proposal printed its
+            # page number twice on every page and ran 45 pages where the
+            # baseline runs 41, with every gate green — the parts gate
+            # asks whether the file is present, and `compare` does not
+            # open a footer's fields.
+            #
+            # The invariant is that a batch's page furniture is the
+            # BASELINE's page furniture, so the stale reference is moved
+            # to the type the baseline gives its part rather than left
+            # to collide. A part the baseline does not place in this
+            # section at all loses the reference outright: it is one
+            # Compare invented.
+            stale = _typed_ref(block, kind, kind_type)
+            if stale is not None:
+                held = _part_of_rid(parts, stale.group(0))
+                if held == name:
+                    continue                # already right; idempotent
+                was = _source_type(src, src_rels, src_sects, at,
+                                   kind=kind, part=held)
+                inserts.append(
+                    (lo + stale.start(), lo + stale.end(),
+                     re.sub(r'\s*w:type="[^"]*"', "", stale.group(0), count=1)
+                     .replace(f"<w:{kind}Reference",
+                              f"<w:{kind}Reference{was}", 1)
+                     if was else ""))
             if block.endswith("/>"):
                 # An EMPTY section, which has no inside to insert into:
                 # it is opened up around the reference. `<w:sectPr/>` and

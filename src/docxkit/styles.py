@@ -199,6 +199,40 @@ def _val(rpr: str, prop: str) -> str | None:
     return m.group(1) if m else None
 
 
+#: An ON/OFF run property, present-means-on. `\s*/>` and not `/>`: XML
+#: says `<w:i/>` and `<w:i />` are one element and pandoc writes the
+#: spaced form for every self-closing tag — the same blindness that made
+#: `compare` read a pandoc document as carrying no italics at all.
+_TOGGLE_RE: dict[str, re.Pattern[str]] = {}
+
+#: What OOXML writes for "off" in a toggle's `w:val`. Everything else,
+#: the absent attribute included, is on.
+_OFF = frozenset({"0", "false", "off", "none"})
+
+
+def _toggle(rpr: str, prop: str) -> bool | None:
+    """Is this toggle ON, OFF, or unstated (None) in this blob?
+
+    Toggles do not resolve the way `sz` and `color` do: presence is the
+    value. `<w:i/>` is italic on, `<w:i w:val="0"/>` is italic off, and
+    neither can be read by :func:`_val`, which needs an attribute —
+    which is why the cascade could not see a single one of them.
+
+    `<w:bCs/>` must not answer for `w:b`, so the tag is closed off with
+    ``\\b`` and the two forms are spelled out rather than left to a
+    prefix match.
+    """
+    pattern = _TOGGLE_RE.get(prop)
+    if pattern is None:
+        pattern = _TOGGLE_RE[prop] = re.compile(
+            rf'<w:{prop}(?:\s*/>|\s+[^>]*?/>|\s*>)')
+    m = pattern.search(rpr)
+    if m is None:
+        return None
+    got = re.search(r'\bw:val="([^"]*)"', m.group(0))
+    return got is None or got.group(1) not in _OFF
+
+
 class Cascade:
     """Effective run properties, styles applied.
 
@@ -292,6 +326,55 @@ class Cascade:
         """
         got = self.resolve(prop, rpr=rpr, rstyle=rstyle, pstyle=pstyle)
         return got.value, got.via
+
+    def toggle(self, prop: str, *, rpr: str | None = None,
+               rstyle: str | None = None, pstyle: str | None = None
+               ) -> bool:
+        """Is this ON/OFF property in force for a run, styles applied?
+
+        The `of`/`explain` pair cannot answer for these: they read
+        ``w:val``, and a toggle's ON form is the bare element. So the
+        cascade was blind to italic, bold, strike and smallCaps
+        entirely, and `compare` read them off the run instead — which
+        cries wolf for exactly the reason the valued properties are
+        resolved here and not read off the run.
+
+        Word deletes a direct property equal to the inherited one, so a
+        run styled `Emphasis` (which defines ``<w:i/>``) loses its own
+        ``<w:i/>`` on save. Measured 2026-08-29 on Life_Expectancy: four
+        journal names reported as ITALIC LOST, on a comparison against
+        the author's own Accept All, every one of them still italic on
+        the page. A layer that reports four false losses at the moment
+        an acceptance really can strip run properties teaches its reader
+        to skim past the real one.
+
+        Resolution order is the run, then the character style's
+        ``basedOn`` chain, then the paragraph style's, then the document
+        default — the same order :meth:`resolve` uses. Word's true
+        toggle semantics XOR a direct value against the style's; that
+        difference only shows for a run that turns a styled italic OFF,
+        which reads correctly here as off.
+        """
+        if rpr is not None and (direct := _toggle(rpr, prop)) is not None:
+            return direct
+        for start in (rstyle, pstyle or self._default_pstyle):
+            if (found := self._toggle_chain(start, prop)) is not None:
+                return found
+        if self._default:
+            got = _toggle(self._default, prop)
+            if got is not None:
+                return got
+        return False
+
+    def _toggle_chain(self, sid: str | None, prop: str) -> bool | None:
+        """:meth:`_chain`, for a property whose ON form has no value."""
+        seen: set[str] = set()
+        while sid and sid in self._own and sid not in seen:
+            seen.add(sid)               # a basedOn cycle is a real file
+            if (found := _toggle(self._own[sid], prop)) is not None:
+                return found
+            sid = self._based.get(sid)
+        return None
 
     def of(self, prop: str, *, rpr: str | None = None,
            rstyle: str | None = None, pstyle: str | None = None

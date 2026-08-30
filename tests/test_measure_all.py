@@ -485,3 +485,39 @@ def test_ALL_still_deals_the_SMALLEST_module_first(tmp_path, monkeypatch):
     measure_all.main()
 
     assert asked == ["revision/_small.py", "big.py"]
+
+
+def test_a_sweep_runs_the_COVERING_tests_first(monkeypatch, tmp_path):
+    """`--fast`, on the one caller that did not pass it.
+
+    `mutant_tests` runs the tests covering the mutated line and falls
+    through to the whole harness when none of them fails, so a survivor
+    is never declared by the short run — it is declared by the same
+    command the session would have used anyway. The verdict cannot
+    move; only the wall clock can, and a sweep is where that is worth
+    most: without it a 13-module round over an 8-file harness spends
+    most of its time re-running tests that cannot reach the mutation.
+    """
+    seen: list[list[str]] = []
+
+    class _Stream:
+        stdout = iter(())
+
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, **kw):
+        seen.append(list(cmd))
+        return _Stream()
+
+    monkeypatch.setattr(measure_all, "ROOT", tmp_path)
+    monkeypatch.setattr(measure_all, "harness_for", lambda m: ["tests/t.py"])
+    monkeypatch.setattr(measure_all, "fingerprint", lambda m, t: "same")
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    measure_all.run("revision/_losses.py", minutes=1)
+
+    (cmd,) = seen
+    assert "--fast" in cmd
+    assert "--fresh" in cmd
+    assert "src/docxkit/revision/_losses.py" in cmd

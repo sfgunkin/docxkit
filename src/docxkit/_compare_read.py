@@ -69,22 +69,91 @@ class Fields(TypedDict):
 
 
 def _flags(rpr: str | None) -> frozenset[str]:
+    """The on/off run properties this run STATES: bold, italic, …
+
+    **`\\s*/>`, not `/>`.** XML says `<w:b/>` and `<w:b />` are the same
+    element, and pandoc writes the spaced form for every self-closing
+    tag. Matching only the tight one made this layer report a
+    pandoc-written document as carrying no bold and no italic anywhere —
+    measured 2026-08-29 on Life_Expectancy's round-2 response letter, 15
+    `<w:b />` and 85 `<w:i />`, all invisible.
+
+    The phantom differences that produces are the harmless half: an lxml
+    round-trip normalises the spacing, and 28 FORMAT locations then
+    appeared on a pass that changed nothing but paragraph spacing. The
+    dangerous half is the false NEGATIVE — on any `.md`-to-`.docx`
+    deliverable a genuine loss of italics passes `--expect-clean` in
+    silence.
+
+    Every fixture in the suite is written by a serializer that omits the
+    space, which is why nothing caught it; `tests/test_compare.py` now
+    carries pandoc's spelling beside Word's.
+    """
     if not rpr:
         return frozenset()
     found: set[str] = set()
 
     def on(tag: str) -> bool:
-        m = re.search(rf'<w:{tag}(?:/>|\s+w:val="([^"]*)"\s*/>)', rpr)
+        m = re.search(rf'<w:{tag}(?:\s*/>|\s+w:val="([^"]*)"\s*/>)', rpr)
         return m is not None and m.group(1) not in ("0", "false", "none")
 
-    for tag, name in (("i", "italic"), ("b", "bold"), ("strike", "strike"),
-                      ("smallCaps", "smallCaps")):
+    for tag, name in _TOGGLES:
         if on(tag):
             found.add(name)
-    va = re.search(r'<w:vertAlign w:val="([^"]+)"/>', rpr)
+    va = re.search(r'<w:vertAlign w:val="([^"]+)"\s*/>', rpr)
     if va:
         found.add(va.group(1))
     return frozenset(found)
+
+
+#: The on/off run properties, tag to the word a report shows.
+_TOGGLES = (("i", "italic"), ("b", "bold"), ("strike", "strike"),
+            ("smallCaps", "smallCaps"))
+
+
+def _resolved_flags(cascade: Cascade, rpr: str | None,
+                    pstyle: str | None) -> frozenset[str]:
+    """The on/off properties in force for a run, STYLES APPLIED.
+
+    `_flags` above reads what the run itself states, which is what this
+    layer did for every one of these — while `_valued` beside it
+    resolved size and colour through the cascade, for a reason its own
+    comment gives: *"Word deletes a direct property equal to the
+    inherited one, so comparing what is STATED reports a difference on
+    documents that render identically."*
+
+    The toggles were left out of that and so they cried wolf. Measured
+    2026-08-29 on Life_Expectancy, comparing a clean generation against
+    the same manuscript after the author's Accept All:
+
+        'Demographic Research': ['italic', 'size 24'] -> ['size 24']
+
+    and three more like it. Those runs carry ``<w:rStyle
+    w:val="Emphasis"/>``, the style defines ``<w:i/>``, and Word dropped
+    the redundant direct one on save. All four are still italic on the
+    page — the runs that had ``<w:i/>`` with no character style kept it,
+    which is the tell.
+
+    It matters more than noise because of WHERE it fires: an acceptance
+    is the one comparison a paper runs at its most dangerous moment,
+    when Accept All really can strip run properties. Four false losses
+    there teach the reader to skim the real one.
+
+    Falls back to the stated flags when there is no styles part, which
+    is the same answer `_valued` gives and the honest one: nothing to
+    resolve with.
+    """
+    if not cascade.known:
+        return _flags(rpr)
+    rstyle = cascade.style_of(rpr)
+    out = {name for tag, name in _TOGGLES
+           if cascade.toggle(tag, rpr=rpr, rstyle=rstyle, pstyle=pstyle)}
+    # vertAlign is a VALUE, not a toggle — superscript or subscript —
+    # and it resolves through the same chain.
+    va = cascade.of("vertAlign", rpr=rpr, rstyle=rstyle, pstyle=pstyle)
+    if va and va != "baseline":
+        out.add(va)
+    return frozenset(out)
 
 
 #: Properties reported as a resolved VALUE rather than as on/off, and
@@ -138,7 +207,8 @@ def _char_fmt(p_xml: str, cascade: Cascade | None = None
         rpr_m = RPR_RE.search(body)
         rpr = rpr_m.group(1) if rpr_m else None
         is_hyper = rpr is not None and 'w:val="Hyperlink"' in rpr
-        flags = (frozenset[str]() if is_hyper else _flags(rpr)) \
+        flags = (frozenset[str]() if is_hyper
+                 else _resolved_flags(cascade, rpr, pstyle)) \
             | _valued(cascade, rpr, pstyle)
         for t in WT_RE.findall(body):
             for ch in html.unescape(t):

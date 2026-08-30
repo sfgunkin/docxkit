@@ -1110,6 +1110,24 @@ def test_a_volatile_field_inside_another_is_masked_once(tmp_path):
     ("<w:strike/>", "strike"),
     ("<w:smallCaps/>", "smallCaps"),
     ('<w:vertAlign w:val="superscript"/>', "superscript"),
+    # PANDOC's spelling of every one of them. XML says `<w:b/>` and
+    # `<w:b />` are the same element; pandoc writes the spaced form for
+    # every self-closing tag, and this layer matched only the tight one
+    # — so a `.md`-to-`.docx` deliverable read as carrying no bold and
+    # no italic anywhere. Measured 2026-08-29 on Life_Expectancy's
+    # round-2 response letter: 15 `<w:b />`, 85 `<w:i />`, all invisible.
+    #
+    # Every fixture in this file is written by a serializer that omits
+    # the space, which is exactly why nothing caught it. Both spellings
+    # are held here now.
+    ("<w:i />", "italic"),
+    ("<w:b />", "bold"),
+    ("<w:strike />", "strike"),
+    ("<w:smallCaps />", "smallCaps"),
+    ('<w:vertAlign w:val="superscript" />', "superscript"),
+    # and the valued form, which already tolerated the space before the
+    # slash — pinned so the two branches cannot drift apart again
+    ('<w:b w:val="1" />', "bold"),
 ])
 def test_every_run_property_the_format_layer_knows(tmp_path, prop, shown):
     """Italic had a test and the other four did not, so a mutation that
@@ -1121,6 +1139,33 @@ def test_every_run_property_the_format_layer_knows(tmp_path, prop, shown):
     report = compare(*docs(tmp_path, plain, marked))
     assert report["text"] == []
     assert any(shown in str(e) for e in report["format"]), report["format"]
+
+
+def test_a_pandoc_written_document_is_not_read_as_UNFORMATTED(tmp_path):
+    """The false NEGATIVE, which is the half that ships.
+
+    The phantom differences a spaced tag produces are noise: an lxml
+    round-trip normalises the spacing and 28 FORMAT locations appear on
+    a pass that changed nothing. The dangerous reading is the other one
+    — a genuine loss of italics between two pandoc documents passing
+    `--expect-clean` in silence, which is the same class of failure as
+    the size and colour blindness this file records above.
+
+    So this compares two PANDOC-spelled documents against each other,
+    not one against a Word-spelled one: the bug survives any test where
+    only one side carries the space.
+    """
+    with_it = ('<w:p><w:r><w:rPr><w:i /></w:rPr>'
+               "<w:t>Reviewer 2</w:t></w:r></w:p>")
+    without = "<w:p><w:r><w:t>Reviewer 2</w:t></w:r></w:p>"
+
+    report = compare(*docs(tmp_path, with_it, without))
+
+    assert report["text"] == [], "the words are the same"
+    assert any("italic" in str(e) for e in report["format"]), (
+        "a lost italic between two pandoc files, which used to pass "
+        "--expect-clean in silence")
+    assert render(report, expect_clean=True) == 1
 
 
 # ------------------------------------------- size and colour ------------
@@ -4021,3 +4066,102 @@ def test_a_stripped_field_shows_the_START_of_the_paragraph_that_held_it(
 
     assert entry["context"] == lead[:60]
     assert len(entry["context"]) == 60
+
+
+# --- the on/off flags resolve through the STYLES, like size and colour --
+#
+# Word deletes a direct property equal to the inherited one. `_VALUED`
+# has always been resolved through `styles.Cascade` for that reason; the
+# toggles were read off the run, so they cried wolf. Measured 2026-08-29
+# on Life_Expectancy, comparing a clean generation against the same
+# manuscript after the author's Accept All:
+#
+#   'Demographic Research': ['italic', 'size 24'] -> ['size 24']
+#
+# and three more like it. Every one is false: those runs carry
+# `<w:rStyle w:val="Emphasis"/>`, the style defines `<w:i/>`, and the
+# names are still italic on the page. It fires on an ACCEPTANCE, which
+# is the one comparison a paper runs when Accept All really can strip
+# run properties — four false losses there teach the reader to skim past
+# the real one.
+
+EMPHASIS_STYLES = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/'
+    'wordprocessingml/2006/main">'
+    '<w:style w:type="character" w:styleId="Emphasis">'
+    "<w:rPr><w:i/><w:iCs/></w:rPr></w:style>"
+    '<w:style w:type="character" w:styleId="Strong">'
+    "<w:rPr><w:b/></w:rPr></w:style>"
+    "</w:styles>")
+
+
+def _emph_run(rpr: str) -> str:
+    return (f"<w:p><w:r><w:rPr>{rpr}</w:rPr>"
+            "<w:t>Demographic Research</w:t></w:r></w:p>")
+
+
+def test_a_REDUNDANT_direct_italic_dropped_by_Word_is_not_a_loss(tmp_path):
+    """The four journal names. Before: the run states `<w:i/>` AND names
+    the Emphasis style. After Word's save: the style alone, because the
+    direct one was redundant. Same italic on the page, and the layer
+    reported it as lost."""
+    before = _emph_run('<w:rStyle w:val="Emphasis"/><w:i/>')
+    after = _emph_run('<w:rStyle w:val="Emphasis"/>')
+    styles = {"word/styles.xml": EMPHASIS_STYLES}
+
+    report = compare(*docs(tmp_path, before, after,
+                           extra=(styles, styles)))
+
+    assert report["format"] == [], report["format"]
+    assert render(report, expect_clean=True) == 0
+
+
+def test_a_REAL_loss_of_italic_is_still_reported(tmp_path):
+    """The signal the change must not cost: the style goes too."""
+    before = _emph_run('<w:rStyle w:val="Emphasis"/>')
+    after = _emph_run("")
+    styles = {"word/styles.xml": EMPHASIS_STYLES}
+
+    report = compare(*docs(tmp_path, before, after,
+                           extra=(styles, styles)))
+
+    assert any("italic" in str(e) for e in report["format"]), report["format"]
+
+
+def test_a_run_that_turns_a_STYLED_italic_off_reads_as_off(tmp_path):
+    """`<w:i w:val="0"/>` against a style that sets `<w:i/>`. The direct
+    value wins, so this run is NOT italic — and a comparison against a
+    plain run must see no difference."""
+    off = _emph_run('<w:rStyle w:val="Emphasis"/><w:i w:val="0"/>')
+    plain = _emph_run("")
+    styles = {"word/styles.xml": EMPHASIS_STYLES}
+
+    report = compare(*docs(tmp_path, off, plain, extra=(styles, styles)))
+
+    assert not any("italic" in str(e) for e in report["format"]), \
+        report["format"]
+
+
+def test_bold_resolves_through_a_style_too(tmp_path):
+    """All four toggles go through the cascade, not italic alone — the
+    other three had no test when italic got one."""
+    before = _emph_run('<w:rStyle w:val="Strong"/><w:b/>')
+    after = _emph_run('<w:rStyle w:val="Strong"/>')
+    styles = {"word/styles.xml": EMPHASIS_STYLES}
+
+    report = compare(*docs(tmp_path, before, after, extra=(styles, styles)))
+
+    assert report["format"] == [], report["format"]
+
+
+def test_with_NO_styles_part_the_flags_are_read_off_the_run(tmp_path):
+    """The honest answer when there is nothing to resolve with, and the
+    same one `_valued` gives. A package with no styles.xml must not
+    start reporting every styled run as unformatted."""
+    before = _emph_run("<w:i/>")
+    after = _emph_run("")
+
+    report = compare(*docs(tmp_path, before, after))
+
+    assert any("italic" in str(e) for e in report["format"]), report["format"]

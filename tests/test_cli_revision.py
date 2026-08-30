@@ -1632,3 +1632,46 @@ def test_an_ORDINARY_re_label_gets_no_span_warning(monkeypatch, project,
 
     assert "== RE-LABELLED (1) ==" in out, out
     assert "UNBALANCED" not in out, out
+
+
+def test_validate_at_a_TRUTH_state_says_there_is_nothing_to_validate(
+        project, monkeypatch, capsys):
+    """A truth state is the NORMAL state of a paper between rounds, and
+    there is no `build/batch.docx` in one.
+
+    It used to die with `cannot read …batch.docx: [Errno 2] No such file
+    or directory`, which reads as a broken installation or a lost file.
+    It cost a real detour: Life_Expectancy's round-2 protocol listed
+    `revision validate` as a PRECONDITION to be run green before any
+    edit, and the step is not runnable as written — the protocol author
+    reasonably assumed a gate ladder could be run on a clean paper.
+    """
+    assert not project.batch.exists(), "the fixture is at a truth state"
+    monkeypatch.chdir(project.root)
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word")
+
+    out = capsys.readouterr().out
+    assert code == 3, out
+    assert "no batch to validate" in out
+    assert "revision status" in out, "and what to run instead"
+    assert "Errno" not in out and "Traceback" not in out
+    assert "pending revision(s)" in out, "and which state the paper is in"
+
+
+def test_validate_says_so_when_the_MANUSCRIPT_is_missing_too(
+        project, monkeypatch, capsys):
+    """No batch AND no working file — `paper.toml` naming a manuscript
+    that is not there. Reading the state would raise, so it is not
+    read; the answer about the batch is still worth giving, and it is
+    the one the reader asked for."""
+    project.working.unlink()
+    monkeypatch.chdir(project.root)
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word")
+
+    out = capsys.readouterr().out
+    assert code == 3, out
+    assert "no batch to validate" in out
+    assert "pending revision(s)" not in out, "there is nothing to read"
+    assert "Errno" not in out and "Traceback" not in out

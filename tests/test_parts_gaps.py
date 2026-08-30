@@ -2462,3 +2462,118 @@ def test_wiring_a_section_reference_needs_BOTH_documents():
 
     assert parts["word/document.xml"] == b"<w:body><w:sectPr/></w:body>"
 
+
+# --- Compare does not only DROP a part; it RE-TYPES the one it keeps ----
+#
+# Measured 2026-08-29 on Life_Expectancy's round-2 batch:
+#
+#   baseline   even=footer1  default=footer2  first=footer3
+#   batch      default=footer1               first=footer3
+#
+# `footer1` is the paper's EVEN footer and inert — `evenAndOddHeaders` is
+# not set, so nothing rendered it. Compare kept it and called it
+# `default`. Restoring footer2 (the real default, the one holding the
+# PAGE field) then APPENDED a second default reference beside it: two
+# default footers in one section, the page number printed twice on every
+# page, and 45 pages where the baseline runs 41.
+#
+# Every gate was green. The parts gate asks whether the file is in the
+# package; `compare` reads runs, paragraphs and links, and a page number
+# is a field inside a part neither of them opens. It was found by
+# rendering the promoted file and looking at it.
+
+
+def _typed_footers(mapping: dict[str, str]) -> dict[str, bytes]:
+    """A package whose section gives each footer the named type.
+
+    `mapping` is part-number -> type, so the baseline and the mangled
+    batch are written the same way and differ only where they differ.
+    """
+    refs = "".join(f'<w:footerReference w:type="{t}" r:id="rId{int(n) + 3}"/>'
+                   for n, t in mapping.items())
+    parts = make_parts(para(run("body")) + f"<w:sectPr>{refs}</w:sectPr>")
+    for n in mapping:
+        parts[f"word/footer{n}.xml"] = (
+            f"<w:ftr>{para(run(f'page {n}'))}</w:ftr>").encode()
+    parts["[Content_Types].xml"] = (
+        "<Types>" + "".join(
+            f'<Override PartName="/word/footer{n}.xml" '
+            f'ContentType="footer"/>' for n in mapping)
+        + "</Types>").encode("utf-8")
+    parts["word/_rels/document.xml.rels"] = (
+        "<Relationships>"
+        '<Relationship Id="rId1" Target="styles.xml"/>' + "".join(
+            f'<Relationship Id="rId{int(n) + 3}" Target="footer{n}.xml"/>'
+            for n in mapping)
+        + "</Relationships>").encode("utf-8")
+    return parts
+
+
+def _footer_types(parts: dict[str, bytes]) -> dict[str, str]:
+    """part name -> the section type it is referenced under."""
+    doc = parts["word/document.xml"].decode("utf-8")
+    rels = parts["word/_rels/document.xml.rels"].decode("utf-8")
+    where = {m.group(1): m.group(2) for m in re.finditer(
+        r'<Relationship Id="([^"]+)" Target="([^"]+)"/>', rels)}
+    out = {}
+    for m in re.finditer(r"<w:footerReference\b[^>]*/>", doc):
+        rid = re.search(r'r:id="([^"]+)"', m.group(0))
+        kind = re.search(r'w:type="([^"]*)"', m.group(0))
+        assert rid is not None, m.group(0)
+        out[where.get(rid.group(1), "?")] = (
+            kind.group(1) if kind else "default")
+    return out
+
+
+def test_a_RE_TYPED_footer_does_not_leave_the_section_with_two_defaults():
+    """The page number printed twice, and no gate could see it."""
+    source = _typed_footers({"1": "even", "2": "default", "3": "first"})
+    batch = _typed_footers({"1": "default", "3": "first"})   # footer2 gone
+
+    back = restore_parts(batch, source, prefixes=("word/footer2.xml",))
+
+    assert back == ["word/footer2.xml"]
+    doc = batch["word/document.xml"].decode("utf-8")
+    defaults = [m for m in re.finditer(r"<w:footerReference[^>]*/>", doc)
+                if 'w:type="default"' in m.group(0)]
+    assert len(defaults) == 1, f"two default footers: {doc}"
+
+
+def test_the_re_typed_footer_goes_back_to_the_type_the_BASELINE_gives_it():
+    """Not merely de-collided. The invariant worth encoding is that a
+    batch's page furniture IS the baseline's page furniture — so
+    footer1 returns to `even`, which is what it was before Compare
+    renamed it, rather than being dropped to make room."""
+    source = _typed_footers({"1": "even", "2": "default", "3": "first"})
+    batch = _typed_footers({"1": "default", "3": "first"})
+
+    restore_parts(batch, source, prefixes=("word/footer2.xml",))
+
+    assert _footer_types(batch) == _footer_types(source)
+
+
+def test_a_reference_the_BASELINE_does_not_place_here_is_dropped():
+    """The other shape: Compare invents a reference to a part the source
+    does not put in this section at all. There is no type to move it to,
+    and leaving it is the collision again."""
+    source = _typed_footers({"2": "default", "3": "first"})
+    batch = _typed_footers({"1": "default", "3": "first"})
+    batch["word/footer1.xml"] = b"<w:ftr/>"          # a part source lacks
+
+    restore_parts(batch, source, prefixes=("word/footer2.xml",))
+
+    doc = batch["word/document.xml"].decode("utf-8")
+    assert _footer_types(batch).get("footer1.xml") is None, doc
+    assert 'w:type="default"' in doc and doc.count('w:type="default"') == 1
+
+
+def test_restoring_a_footer_the_section_ALREADY_holds_changes_nothing():
+    """Idempotence, which is what makes `carry` safe to leave on. A
+    second run must not move a reference that is already right."""
+    source = _typed_footers({"1": "even", "2": "default", "3": "first"})
+    batch = _typed_footers({"1": "even", "2": "default", "3": "first"})
+    before = batch["word/document.xml"]
+
+    restore_parts(batch, source, prefixes=("word/footer2.xml",))
+
+    assert batch["word/document.xml"] == before

@@ -101,11 +101,51 @@ def newer_than(when: float, paths: list[Path]) -> list[Path]:
     return [p for p in paths if last_touched(p) > when]
 
 
+def snapshot_of(module: str) -> Path:
+    """Where the session kept the source and harness it planned against."""
+    return ROOT / f".mutation-{session_stem(module)}.pristine"
+
+
+def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
+    """Which watched files the working tree no longer AGREES with.
+
+    Bytes, not mtimes — the rule `mutation_session.moved_since` already
+    applies to the same question, with the same reason: *"a file
+    rewritten with identical content has not moved for this purpose"*.
+
+    None when the session kept no snapshot, which is the eight runs here
+    that predate the mechanism; the caller falls back to timestamps and
+    says so.
+
+    **A COMMIT is not a change, and the timestamp rule cannot tell.**
+    `last_touched` is `max(mtime, last commit time)`, so committing a
+    file re-dates it and voids every figure measured before the commit —
+    measured 2026-08-30: `revision/_build.py` untouched on disk since
+    01:35, measured at 15:48, committed unchanged at 21:41, and read
+    `stale`. A whole round goes void the moment it is recorded, which
+    makes the tool's real signal unreadable exactly when it matters.
+    """
+    kept = snapshot_of(module)
+    if not kept.is_dir():
+        return None
+    out: list[str] = []
+    for rel in [f"src/docxkit/{module}", *tests]:
+        was, now = kept / rel, ROOT / rel
+        if not was.is_file():
+            return None                 # a partial snapshot answers nothing
+        if not now.is_file() or was.read_bytes() != now.read_bytes():
+            out.append(rel)
+    return out
+
+
 def state(module: str, tests: list[str]) -> tuple[str, list[str]]:
     """``("fresh" | "stale" | "never measured", what changed since)``."""
     db = session_file(module)
     if not db.exists():
         return "never measured", []
+    by_content = moved_by_content(module, tests)
+    if by_content is not None:
+        return "stale" if by_content else "fresh", by_content
     watched = [ROOT / "src" / "docxkit" / module,
                *(ROOT / t for t in tests)]
     moved = newer_than(db.stat().st_mtime, watched)

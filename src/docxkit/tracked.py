@@ -308,6 +308,27 @@ def accepted_math(revised: dict[str, bytes],
             if w != n]
 
 
+#: How to build the file anyway — and the warning that goes with it.
+#:
+#: It used to say "Pass accept_check=False", which is a Python keyword
+#: argument. The CLI's flags are `--allow-math-resolve`,
+#: `--allow-stale-baseline`, `--keep-math`, `--allow-pending-baseline`
+#: and `--force`, none of which is it, so a CLI reader had been told to
+#: do something the CLI does not offer — and the honest workaround,
+#: writing a throwaway script that imports `docxkit.revision`, is the
+#: thing the CLI exists to avoid.
+#:
+#: The second sentence is the half worth keeping. Met 2026-08-29 on
+#: Life_Expectancy, where the refusal was RIGHT — two unterminated
+#: bookmarks Compare would have dropped — and the repair was to fix the
+#: manuscript, not to bypass the gate.
+_ACCEPT_ESCAPE = (
+    "To build it anyway and look at it, call `tracked.build(..., "
+    "accept_check=False)` from Python; the CLI has no flag for this on "
+    "purpose. The refusal is usually right, and the repair is usually "
+    "in the manuscript rather than in the switch.")
+
+
 def _refuse_accept_side(report: BuildReport, revised: str, *,
                         math_only: bool = False) -> None:
     """Raise for whatever the ACCEPTED view does not reproduce.
@@ -330,8 +351,7 @@ def _refuse_accept_side(report: BuildReport, revised: str, *,
             f"A bookmark and a hyperlink carry no text, so the paragraph "
             f"comparison beside this one cannot see them go, and they "
             f"are present in the redline as built — inside a deletion, "
-            f"until the author accepts it. Pass accept_check=False to "
-            f"build the file anyway and inspect it.")
+            f"until the author accepts it. " + _ACCEPT_ESCAPE)
     if not math_only and report.unaccepted:
         listed = "\n  ".join(str(u) for u in report.unaccepted)
         raise PackageError(
@@ -341,9 +361,8 @@ def _refuse_accept_side(report: BuildReport, revised: str, *,
             f"redline was built from:\n  {listed}\n"
             f"Word rewriting content while it derives the redline is the "
             f"usual cause, and the reject-all gate cannot see it: "
-            f"rejecting deletes the insertion the damage is inside. Pass "
-            f"accept_check=False to build the file anyway and inspect "
-            f"it.")
+            f"rejecting deletes the insertion the damage is inside. "
+            + _ACCEPT_ESCAPE)
     if report.accepted_math:
         listed = "\n  ".join(report.accepted_math)
         raise PackageError(
@@ -1045,9 +1064,18 @@ def _carry_parts(parts: dict[str, bytes], revised_parts: dict[str, bytes],
     report.carried = _hygiene.restore_parts(parts, revised_parts,
                                             prefixes=carry)
     for name in report.carried:
-        say(f"  carried across: {name} (Compare drops it; it is not "
-            f"referenced from the body, so it goes back with its "
-            f"content type and a free rId)")
+        # It said "it is not referenced from the body, so it goes back
+        # with its content type and a free rId". True of the data
+        # store, and false of the two parts where it matters: a header
+        # or footer IS referenced from the body, from the section
+        # properties, and that reference is the whole difficulty. The
+        # sentence sent the one reader who would have looked at the
+        # sectPr somewhere else.
+        say(f"  carried across: {name} (Compare drops it; it goes back "
+            f"with its content type, a free rId and — for a header or "
+            f"footer — its section reference, reconciled against the "
+            f"baseline's type map rather than appended beside whatever "
+            f"Compare re-typed)")
     report.carried_from_baseline = _hygiene.restore_parts(
         parts, read_parts(original), prefixes=carry)
     for name in report.carried_from_baseline:

@@ -278,3 +278,102 @@ def test_a_run_of_EVERY_mutant_is_not_marked(tmp_path, monkeypatch):
 
     assert "SAMPLED" not in line, line
     assert "PARTIAL" not in line, line
+
+
+# --- a COMMIT is not a change --------------------------------------------
+
+
+def _session(tmp_path, monkeypatch, *, module_now: str, module_then: str,
+             test_now: str = "t", test_then: str = "t"):
+    """A measured module, its snapshot, and a working tree beside it."""
+    import stale_figures as sf  # pyright: ignore[reportMissingImports]
+
+    (tmp_path / "src" / "docxkit").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "docxkit" / "thing.py").write_text(module_now)
+    (tmp_path / "tests" / "test_thing.py").write_text(test_now)
+    (tmp_path / ".mutation-thing.sqlite").write_text("")
+
+    kept = tmp_path / ".mutation-thing.pristine"
+    (kept / "src" / "docxkit").mkdir(parents=True)
+    (kept / "tests").mkdir(parents=True)
+    (kept / "src" / "docxkit" / "thing.py").write_text(module_then)
+    (kept / "tests" / "test_thing.py").write_text(test_then)
+
+    monkeypatch.setattr(sf, "ROOT", tmp_path)
+    return sf
+
+
+def test_a_file_COMMITTED_UNCHANGED_is_still_fresh(tmp_path, monkeypatch):
+    """The defect this replaced, measured 2026-08-30.
+
+    `last_touched` is `max(mtime, last commit time)`, so committing a
+    file re-dates it. `revision/_build.py` was untouched on disk since
+    01:35, measured at 15:48 and committed unchanged at 21:41 — and read
+    `stale`. Every figure in the repository goes void the moment the
+    round that produced it is recorded, which makes the real signal
+    unreadable exactly when it is wanted.
+    """
+    sf = _session(tmp_path, monkeypatch, module_now="x = 1",
+                  module_then="x = 1")
+
+    verdict, moved = sf.state("thing.py", ["tests/test_thing.py"])
+
+    assert verdict == "fresh", moved
+
+
+def test_a_file_whose_CONTENT_moved_is_stale(tmp_path, monkeypatch):
+    """The signal itself, which the change must not cost."""
+    sf = _session(tmp_path, monkeypatch, module_now="x = 2",
+                  module_then="x = 1")
+
+    verdict, moved = sf.state("thing.py", ["tests/test_thing.py"])
+
+    assert verdict == "stale"
+    assert moved == ["src/docxkit/thing.py"]
+
+
+def test_a_HARNESS_that_moved_is_stale_too(tmp_path, monkeypatch):
+    """The half this tool was written for: a test added after a run
+    kills mutants the list still calls survivors."""
+    sf = _session(tmp_path, monkeypatch, module_now="x = 1",
+                  module_then="x = 1", test_now="t2", test_then="t")
+
+    verdict, moved = sf.state("thing.py", ["tests/test_thing.py"])
+
+    assert verdict == "stale"
+    assert moved == ["tests/test_thing.py"]
+
+
+def test_a_session_with_NO_snapshot_falls_back_to_timestamps(
+        tmp_path, monkeypatch):
+    """Eight of the fifty sessions here predate the snapshot mechanism.
+    They cannot be answered by content, and the weaker rule is better
+    than no answer."""
+    import stale_figures as sf  # pyright: ignore[reportMissingImports]
+
+    (tmp_path / "src" / "docxkit").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "docxkit" / "thing.py").write_text("x = 1")
+    (tmp_path / "tests" / "test_thing.py").write_text("t")
+    (tmp_path / ".mutation-thing.sqlite").write_text("")
+    monkeypatch.setattr(sf, "ROOT", tmp_path)
+
+    assert sf.moved_by_content("thing.py", ["tests/test_thing.py"]) is None
+    # and `state` still answers rather than raising
+    verdict, _moved = sf.state("thing.py", ["tests/test_thing.py"])
+    assert verdict in {"fresh", "stale"}
+
+
+def test_a_PARTIAL_snapshot_answers_nothing(tmp_path, monkeypatch):
+    """A run measured against a NARROWER harness than the map declares
+    leaves a snapshot that does not cover it — `revision/_build.py` is
+    one. Comparing the files that happen to be there would report
+    `fresh` over a harness the run never used."""
+    sf = _session(tmp_path, monkeypatch, module_now="x = 1",
+                  module_then="x = 1")
+
+    got = sf.moved_by_content(
+        "thing.py", ["tests/test_thing.py", "tests/test_other.py"])
+
+    assert got is None, "a snapshot missing a harness file cannot answer"
