@@ -408,12 +408,72 @@ def test_inspect_counts_the_tables_a_reader_can_index(monkeypatch, tmp_path,
 # `is_locked` is the seam `package.readable` decides on, so locking the
 # file for a test is telling it the truth about the one thing it asks.
 
-READ_ONLY_COMMANDS = [
-    ("citations",), ("lint",), ("refstyle",), ("crossrefs", "--audit"),
-    ("math", "--check"), ("footnotes", "--check"), ("inspect",),
-    ("text",), ("probe",), ("count",), ("tasks",), ("smarten",),
-    ("figures",), ("fit",), ("sites", "Intro paragraph"),
-]
+#: How each command is invoked so that it READS the manuscript and
+#: nothing else — the form that must answer from a snapshot.
+#:
+#: A dict keyed on the subcommand, because the point of this sweep is
+#: that it covers every command the CLI defines rather than the ones
+#: somebody remembered. `test_every_command_is_on_one_side_of_the_lock`
+#: below derives the command list from `cli.build_parser()` and fails on
+#: a command that is in neither this map nor `LOCK_EXEMPT`, so a new
+#: command cannot join the CLI without an answer to "what does this do
+#: while the author has the file open?".
+#:
+#: It was a list of 15 tuples, written by hand on 2026-08-23. The CLI
+#: had 25 commands: `link` and `linkfix` were never swept and both
+#: refused under a lock — the same defect this list was written for,
+#: in the two commands `citations` sends its reader to next.
+READ_ONLY_COMMANDS = {
+    "citations": (), "lint": (), "refstyle": (), "inspect": (),
+    "text": (), "probe": (), "count": (), "tasks": (), "smarten": (),
+    "figures": (), "fit": (), "authors": (), "linkfix": (), "link": (),
+    "crossrefs": ("--audit",), "math": ("--check",),
+    "footnotes": ("--check",), "sites": ("Intro paragraph",),
+}
+
+#: Commands the sweep does not run, each with the reason. A command
+#: belongs here when it cannot answer from a snapshot at all, not when
+#: nobody has got round to it — that distinction is the whole value of
+#: the list, and `LOCK_EXEMPT` is checked as strictly as the map above.
+LOCK_EXEMPT = {
+    "compare": "two paths, so it is awkward to parametrize — and it has "
+               "its own test below, which is the one this fallback most "
+               "needs: a comparison against the author's live file IS an "
+               "author round",
+    "verify": "opens the document in Word, which is the question rather "
+              "than an obstacle to it — `verify` asks what Word reads "
+              "back, and Word already has this file open",
+    "pdf": "renders through Word; a snapshot would answer about a "
+           "generation the author cannot see on their screen",
+    "pages": "renders through Word, same as `pdf`",
+    "locate": "drives Word to lay the document out — the page a phrase "
+              "lands on is Word's answer, not the package's",
+    "api": "prints the package's own API surface and never opens a "
+           "manuscript",
+    "revision": "its subcommands take a PAPER rather than a docx, and "
+                "the two that read one under a lock — `status` and "
+                "`ingest` — are swept in test_cli_revision.py. The "
+                "writers (`build`, `promote`, `baseline`) must refuse, "
+                "and `promote` has its own test for that",
+}
+
+
+def _subcommands() -> dict[str, argparse.ArgumentParser]:
+    """Every subcommand the CLI defines, from the parser itself.
+
+    `cli.build_parser()` exists for this: `main` used to build its
+    parser inline, so the only way to know what commands there are was
+    to write them down again — and a written-down list is what this
+    sweep exists to replace.
+
+    Reaching into `_actions` is argparse's private surface and is
+    deliberate here. The alternative is parsing `--help`, which is
+    prose, and the failure this file is about is a list that quietly
+    stops matching the thing it describes.
+    """
+    (action,) = [a for a in cli.build_parser()._actions
+                 if isinstance(a, argparse._SubParsersAction)]
+    return dict(action.choices)
 
 
 @pytest.fixture
@@ -456,10 +516,9 @@ def held_by_word(monkeypatch, simple_docx):
     monkeypatch.setattr(pkg.time, "sleep", lambda _seconds: None)
 
 
-@pytest.mark.parametrize("command", READ_ONLY_COMMANDS,
-                         ids=[c[0] for c in READ_ONLY_COMMANDS])
+@pytest.mark.parametrize("verb", sorted(READ_ONLY_COMMANDS))
 def test_a_read_only_command_runs_while_WORD_HOLDS_the_file(
-        monkeypatch, capsys, command, simple_docx, held_by_word):
+        monkeypatch, capsys, verb, simple_docx, held_by_word):
     """The banner is a PROMISE that a result follows, and this is what
     holds it.
 
@@ -477,9 +536,8 @@ def test_a_read_only_command_runs_while_WORD_HOLDS_the_file(
     the banner is its result — a finding, a count, a clean verdict — and
     a run with nothing after it did not run.
     """
-    verb, *flags = command
-
-    code = _run(monkeypatch, verb, str(simple_docx), *flags)
+    code = _run(monkeypatch, verb, str(simple_docx),
+                *READ_ONLY_COMMANDS[verb])
     captured = capsys.readouterr()
     out, everything = captured.out, captured.out + captured.err
 
@@ -528,15 +586,97 @@ def test_the_snapshot_banner_is_not_printed_when_the_read_FAILS(
     assert cli._SNAPSHOT_NOTE not in capsys.readouterr().out
 
 
-def test_a_command_that_WRITES_still_refuses_a_locked_file(
-        monkeypatch, capsys, simple_docx, held_by_word):
-    """The other half, and the reason `read_only` is not the default: a
-    writer that read a snapshot would compute its edit from one
-    generation and save it over another."""
-    _run(monkeypatch, "crossrefs", str(simple_docx), "--write")
+def test_every_command_is_on_one_side_of_the_LOCK_contract():
+    """The property the two sweeps have and a hand-written list cannot.
 
-    out = capsys.readouterr().out
-    assert "SNAPSHOT" not in out, out
+    The lists above are checked against the parser itself, so a command
+    added to the CLI fails this test until somebody answers "what does
+    it do while the author has the file open?" — in the map, by being
+    swept, or in `LOCK_EXEMPT`, with the reason.
+
+    Written because the answer had been missed twice. `citations`
+    refused under a lock for two months after its five siblings learned
+    to fall back (S1, `95024d9`), and the list written to stop that
+    happening again covered 15 of the CLI's 25 commands — `link` and
+    `linkfix` were not among them, and both were still refusing on
+    2026-08-31, in the two commands `citations` sends its reader to
+    next.
+
+    This is the `*.py` glob lesson from BACKLOG applied to a test
+    rather than to a tool: **a gate that enumerates the thing it guards
+    has to say how many it found**, or it goes quiet about the ones it
+    stops seeing. The count below is the saying-so; the set comparison
+    is what makes it act."""
+    commands = set(_subcommands())
+    placed = set(READ_ONLY_COMMANDS) | set(LOCK_EXEMPT)
+
+    assert len(commands) >= 25, (
+        f"the CLI enumerated only {len(commands)} commands — the sweep "
+        f"cannot be trusted when its own list of what to sweep shrinks")
+    assert commands == placed, (
+        f"not swept and not exempt: {sorted(commands - placed)}; "
+        f"named here but not in the CLI: {sorted(placed - commands)}")
+
+
+def test_the_two_lock_lists_do_not_overlap():
+    """A command in both is a command whose exemption is not true, and
+    the sweep would keep passing while the reason sat there being read
+    by whoever came next."""
+    both = set(READ_ONLY_COMMANDS) & set(LOCK_EXEMPT)
+    assert not both, both
+
+
+#: The WRITING form of every command that has one. The other side of
+#: the contract: these must refuse, because a writer that read a
+#: snapshot would compute its edit from one generation and save it over
+#: another.
+WRITING_COMMANDS = {
+    "link": ("--write",),
+    "crossrefs": ("--write",),
+    "smarten": ("--write",),
+    "refstyle": ("--fix",),
+    "tasks": ("--done", "1"),
+    "authors": ("--set", "Michael Lokshin", "--write"),
+}
+
+
+def test_every_WRITE_flag_the_CLI_has_is_swept():
+    """The same completeness rule as the read side, from the parser's
+    own option strings — so a `--write` added to a seventh command
+    cannot arrive without an answer about the lock."""
+    have = {verb for verb, parser in _subcommands().items()
+            if {"--write", "--fix", "--done", "--set"}
+            & {o for a in parser._actions for o in a.option_strings}}
+
+    assert have == set(WRITING_COMMANDS), (
+        f"a write form nothing sweeps: {sorted(have - set(WRITING_COMMANDS))}")
+
+
+@pytest.mark.parametrize("verb", sorted(WRITING_COMMANDS))
+def test_a_command_that_WRITES_still_refuses_a_locked_file(
+        monkeypatch, capsys, verb, simple_docx, held_by_word):
+    """The other half of the contract, and the reason `read_only` is not
+    the default.
+
+    Asserted on the FILE and not only on the message, which is the rule
+    `cli.py`'s tests already follow: a message is not what an author
+    loses. One command stood for all six here until 2026-08-31, and it
+    checked the banner alone.
+    """
+    before = Path(simple_docx).read_bytes()
+
+    outcome = _run(monkeypatch, verb, str(simple_docx),
+                   *WRITING_COMMANDS[verb])
+    captured = capsys.readouterr()
+
+    assert "SNAPSHOT" not in captured.out, captured.out
+    assert Path(simple_docx).read_bytes() == before, "it wrote anyway"
+    # `main` refuses a DocxKitError with `sys.exit(f"docxkit: {exc}")`,
+    # so the message IS the exit status — a str, which the interpreter
+    # prints and pytest hands back here. Asserting on captured output
+    # instead finds nothing and says the command was silent.
+    assert isinstance(outcome, str), f"exited {outcome!r}, not a refusal"
+    assert "locked" in outcome.lower(), outcome
 
 
 # --- where an in-place write keeps the file it is about to replace ----

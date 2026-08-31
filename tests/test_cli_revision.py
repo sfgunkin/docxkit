@@ -1488,12 +1488,19 @@ def test_ship_takes_every_flag_BUILD_takes(monkeypatch, capsys):
 def test_the_two_parsers_come_from_ONE_declaration(monkeypatch, capsys):
     """The point of the helper: not that the lists agree today, but that
     there is only one list. A second copy would pass the test above the
-    day it was written and drift the day after."""
+    day it was written and drift the day after.
+
+    Reads `build_parser`, which is where the declarations went when the
+    parser was split out of `main` on 2026-08-31 so the CLI's command
+    list could be ENUMERATED (`tests/test_cli_guards.py`'s lock sweep).
+    This failed loudly on that move rather than passing over an empty
+    `main` — a gate keyed to a location, which is the shape the backlog
+    note about `*.py` globs is about, on the side where it works."""
     import inspect
 
     from docxkit import cli
 
-    source = inspect.getsource(cli.main)
+    source = inspect.getsource(cli.build_parser)
 
     assert source.count("_build_args(r)") == 2, (
         "build and ship should each call the shared declaration once")

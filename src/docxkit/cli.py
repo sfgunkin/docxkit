@@ -209,7 +209,13 @@ def cmd_link(args: argparse.Namespace) -> int:
     a numbered backup beside the manuscript.
     """
     from .citations import link_all
-    parts = _package(args.docx)
+    # `read_only` follows the FLAG, as it does in `authors` and `tasks`:
+    # the dry run is a report and answers from a snapshot, and only the
+    # writing form needs the file to itself. It was an unconditional
+    # read, so `link` on a manuscript the author had open refused to say
+    # what it WOULD do — the `citations` defect of 2026-08-23, in the
+    # command citations sends people to next.
+    parts = _package(args.docx, read_only=not args.write)
     # --only scopes a REPAIR. Turned loose on a whole manuscript this
     # builder took one paper's audit from 26 findings to 56, so "wire
     # these six" has to be sayable.
@@ -229,7 +235,9 @@ def cmd_linkfix(args: argparse.Namespace) -> int:
     """The audit's findings classified into proposed repairs — a plan
     for a human to review, never an edit."""
     from .citations import repair_plan
-    print(repair_plan(_package(args.docx)))
+    # "never an edit" — so there is no invocation of this that needs the
+    # file to itself, and it read it as though there were.
+    print(repair_plan(_package(args.docx, read_only=True)))
     return 0
 
 
@@ -1912,8 +1920,18 @@ def _build_args(parser: argparse.ArgumentParser) -> None:
                              "first)")
 
 
-def main() -> None:
-    utf8_console()
+def build_parser() -> argparse.ArgumentParser:
+    """Every command the CLI offers, as a parser nobody has run yet.
+
+    Split out of :func:`main` so the command list can be ENUMERATED.
+    `tests/test_cli_guards.py` sweeps every subcommand against a file
+    Word holds and asserts one contract for all of them — answer from a
+    snapshot and say so, or refuse in a way a clean run cannot be
+    mistaken for. A hand-written list of commands to sweep is a list
+    that stops covering the next command somebody adds, which is the
+    property that sweep exists to have (BACKLOG: "one missing class of
+    test: nothing exercises the toolkit AS A WORKFLOW").
+    """
     ap = argparse.ArgumentParser(
         prog="docxkit", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2318,7 +2336,12 @@ def main() -> None:
                    help="rewrite an existing configuration")
     r.set_defaults(fn=cmd_revision_init)
 
-    args = ap.parse_args()
+    return ap
+
+
+def main() -> None:
+    utf8_console()
+    args = build_parser().parse_args()
     try:
         sys.exit(args.fn(args))
     except ProtocolError as exc:
