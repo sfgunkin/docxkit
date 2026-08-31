@@ -14,6 +14,45 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `link` and `linkfix` still refused a Word lock two months after their five siblings learned to fall back~~ — FIXED 31.08, `eac1053`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31**, and filed at the same time: it was found by the gate
+that closes it rather than by a round, so there was never an open entry.
+
+`cmd_link` read `_package(args.docx)` unconditionally, so the DRY run — a
+report about what it WOULD do, which is what `link` does by default — needed
+the file to itself. `cmd_linkfix`, whose own docstring says "a plan for a
+human to review, never an edit", did the same. Both now take `read_only` the
+way `authors` and `tasks` already did: `not args.write` for `link`, always
+for `linkfix`.
+
+**S4 rather than S1**, and the difference is worth stating because the
+`citations` entry above it is an S1. That one printed the snapshot banner —
+a promise that a result follows — and then refused underneath it. These two
+refuse cleanly, with the message the lock deserves, so nothing is silent and
+nothing is wrong: the cost is that a report about a manuscript cannot be run
+while the author has the manuscript open, which is the normal state during
+adjudication and exactly when someone asks what the apparatus looks like.
+
+**The second finding is the one worth keeping.** `95024d9` fixed the
+`citations` family and its entry lists what it checked — `count`, `tasks`,
+`smarten`, `compare`, `figures`, `fit`, `sites`, and the four that drive
+Word. `link` and `linkfix` appear nowhere in that list, and the parametrised
+sweep written the same day to stop this recurring covered 15 of the CLI's 25
+commands. **A hand-written list of things to sweep is a list that stops
+covering what it does not remember**, which is the `*.py` glob note's lesson
+arriving in a test rather than in a tool.
+
+So the fix is the sweep as much as the two lines: the command list is derived
+from `cli.build_parser()` now, every command is either swept or exempt with a
+reason, the two lists may not overlap, and the write forms are swept against
+the other half of the contract. Six of those, where one hand-written case had
+stood for all of them. See the workflow note in `BACKLOG.md`, whose first
+proposed gate this is.
+
+---
+
 ### ~~S1 — the XML accept leaves a DELETED footnote's definition in the part, so `tracked.build` refuses a redline that is actually correct~~ — FIXED 31.08, `39fe472`
 <!-- status: fixed -->
 
