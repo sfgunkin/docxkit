@@ -708,7 +708,8 @@ siblings fell back (fixed, `95024d9`), `smarten --write` dropping its backup
 beside the manuscript (fixed, `95024d9`), a binary operator inside
 `\left( … \right)` becoming `m:sepChr` and vanishing from every text layer
 (fixed, `95024d9`), and `revision baseline` computing a verdict against a batch
-that was never promoted (open, above).
+that was never promoted (fixed 31.08, `39fe472` — the third workflow state
+this note asks for below is what it needed).
 
 **The suite is not thin, which is the point.** 4,036 test functions across 122
 files, plus `test_corpus_regressions.py`, whose docstring records a sweep of
