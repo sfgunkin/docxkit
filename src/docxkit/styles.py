@@ -406,6 +406,20 @@ class Cascade:
         that carries a ``w:spacing`` of its own — the letter spacing of
         a run, which states none of these attributes and must not stop
         the walk.
+
+        That inner loop is DEFENCE and not mechanism, which is worth
+        saying because a mutation reducing it to the first match
+        survives the suite. Measured 2026-08-31 over 300 manuscripts:
+        685 blobs hold two or more ``w:spacing`` and **not one** puts
+        the letter-spacing element before the paragraph's own. Schema
+        order is why — ``w:spacing`` precedes ``w:rPr`` in ``CT_PPr``
+        and ``w:pPr`` precedes ``w:rPr`` in ``CT_Style`` — and Word
+        repairs a pPr written out of order by dropping the misplaced
+        child (see :data:`docxkit._xml.PPR_ORDER`). Kept anyway, at the
+        cost of one loop: the failure it prevents is silent, the
+        paragraph would read as stating no spacing at all, and a
+        contrived test for a shape Word repairs would pin the wrong
+        thing.
         """
         pattern = _element_re(tag)
         for blob in self._para_sources(ppr, pstyle):
