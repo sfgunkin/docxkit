@@ -21,8 +21,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from lxml import etree
-
 # `text_parts` is re-exported, not re-implemented: a build that
 # post-processes its own output — protect every edge space, everywhere a
 # reader looks — needs the text-bearing parts, and the alternative is the
@@ -293,6 +291,14 @@ def part_fingerprint(blob: bytes) -> str:
 
     Non-XML members (images, the mimetype) hash their bytes directly.
     """
+    # Imported HERE, as `malformed_parts` below already did. `package`
+    # is what `import docxkit` reaches, so a module-level `from lxml
+    # import etree` made the whole package pay ~9 ms for a parser most
+    # of it never uses — against a docstring in `tests/test_layering.py`
+    # saying it must not. That deferral was already written once and
+    # bought nothing while line 24 stood above it.
+    from lxml import etree
+
     try:
         root = etree.fromstring(blob)
     except etree.XMLSyntaxError:

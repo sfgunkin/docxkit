@@ -77,15 +77,17 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Seven gates, all of which must pass:
+Eight gates, all of which must pass:
 
 ```
-python tools/gates.py   # all seven, in order, first failure stops
+python tools/gates.py   # all eight, in order, first failure stops
 ```
 
-One of them can SKIP rather than pass: `sweep` needs a corpus of real
+Two of them can SKIP rather than pass: `sweep` needs a corpus of real
 manuscripts, so on a machine without `DOCXKIT_CORPUS` it prints `skip`
-and the reason. That is a third state on purpose — see the sweep below.
+and the reason; `api` needs a baseline to compare the public surface
+against, and skips when the repo has neither a tag nor an upstream.
+That is a third state on purpose — see the sweep below.
 
 or, one at a time:
 
@@ -95,6 +97,7 @@ python -m ruff check .
 python -m mypy
 python -m pyright       # what Pylance shows in the editor
 python tools/coverage_floor.py
+python tools/api_check.py          # did this break the API the papers call?
 python tools/sweep.py              # needs DOCXKIT_CORPUS; skips without
 python tools/verify_committed.py   # HEAD, not the working copy
 ```

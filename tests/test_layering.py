@@ -6,6 +6,13 @@ and load-bearing — `import docxkit` must not pay for lxml, pandas,
 pywin32 or the comparison's chain, which is why several modules import
 inside their functions. Nothing checked any of it.
 
+The import COST half of that sentence is checked by
+`tests/test_import_cost.py` since 2026-08-31, and it had to be: this
+file asserted the layering and the sentence about what the layering
+buys went on being false for lxml, which `package.py` imported at
+module level. What is here is the SHAPE of the graph; what is there is
+what the shape was for.
+
 Written against the standard library rather than `import-linter`: the
 contract is small enough to state as data, and a gate that needs no
 extra dependency is a gate that actually runs. Function-level imports

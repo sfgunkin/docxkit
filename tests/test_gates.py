@@ -66,9 +66,14 @@ def test_mypy_is_judged_on_its_LINES_not_its_exit_code():
     assert "FAILED  mypy" in said
 
 
-def test_the_real_list_is_the_seven_CONTRIBUTING_names():
+def test_the_real_list_is_the_eight_CONTRIBUTING_names():
     """A runner that drifts from the documented gates is worse than
     none: it would report a pass over a gate nobody ran.
+
+    `api` joined on 2026-08-31: it asks whether the public surface
+    still matches what a consumer was written against, which no other
+    gate here can see — `test_api_surface` pins that a name is LISTED,
+    not that its signature held.
 
     `sweep` joined on 2026-08-30. It is the one that usually SKIPS —
     there is no corpus on most machines and none on any CI runner — and
@@ -77,7 +82,7 @@ def test_the_real_list_is_the_seven_CONTRIBUTING_names():
     corpus on every single chain.
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
-        "ruff", "mypy", "pyright", "pytest", "floors", "sweep",
+        "ruff", "mypy", "pyright", "pytest", "floors", "api", "sweep",
         "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]

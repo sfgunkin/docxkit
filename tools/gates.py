@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the seven gates in order and say which one stopped.
+"""Run the eight gates in order and say which one stopped.
 
     python tools/gates.py
 
@@ -21,11 +21,14 @@ that the answer cannot be lost between them. Exit status is 0 only when
 all of them pass, and the first failure stops the run — a gate after a
 red one tells you nothing you can act on yet.
 
-One of the seven can SKIP. `sweep` needs a corpus of real manuscripts,
+Two of the eight can SKIP. `sweep` needs a corpus of real manuscripts,
 which no CI runner has and most machines do not either, so it exits 3
 and prints what to set. That is a third state on purpose: `ok` over
 zero documents and `ok` over 347 are the same line, and the corpus gate
-is the one where the difference is the entire point.
+is the one where the difference is the entire point. `api` skips the
+same way, and for the same reason: with neither a tag nor an upstream
+branch there is no baseline to compare a public surface against, and a
+comparison against nothing must not print the word a clean one prints.
 """
 from __future__ import annotations
 
@@ -91,6 +94,13 @@ GATES: list[Gate] = [
      False),
     ("floors", [sys.executable, "tools/coverage_floor.py",
                 "--from-json", str(COVERAGE_JSON)], False),
+    # Cheap (2 s) and about the OTHER consumer: nine papers import this
+    # package from an editable install, so they run the tip, and a
+    # signature that moved under a name `test_api_surface` still finds
+    # is an error at their next round rather than at this edit. Only the
+    # eleven breakage kinds that break a CALL fail it — the twelfth,
+    # a constant's value, is reported. See the tool for the measurement.
+    ("api", [sys.executable, "tools/api_check.py"], False),
     # The corpus. It SKIPS without `DOCXKIT_CORPUS` (exit 3, printed as
     # `skip`), which is why it can sit in the chain at all — CI has no
     # manuscripts and never will. Named here even when it cannot run,
@@ -154,7 +164,7 @@ def _failed(gate: Gate, out: str, code: int) -> bool:
 #: instead of "4430 passed". A passing gate prints one line here, so
 #: the one line has to be the answer.
 _SUMMARY = re.compile(r"\b(passed|failed|error|no issues|All checks|"
-                      r"0 errors|at or above|SKIPPED|swept)\b")
+                      r"0 errors|at or above|SKIPPED|swept|breaking)\b")
 
 
 def _summary(out: str) -> str:
