@@ -14,6 +14,44 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `import docxkit` paid ~9 ms for lxml against a docstring saying it must not, and nothing checked~~ — FIXED 31.08, `817e2f7`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31.** `package.py` had `from lxml import etree` at module
+level, and `package` is what `import docxkit` reaches — so every command the
+CLI runs and every paper script that imports the toolkit at all parsed lxml
+first. Measured in a fresh interpreter: **53.7 ms -> 43.3 ms** for `import
+docxkit`, and **55.4 -> 43.5** for `docxkit.cli`, which is the one paid per
+invocation.
+
+`tests/test_layering.py` states the invariant — *"`import docxkit` must not
+pay for lxml, pandas, pywin32 or the comparison's chain, which is why several
+modules import inside their functions"* — and asserted the layering while the
+sentence about what the layering BUYS went unchecked. pandas and pywin32 were
+clean; lxml was not.
+
+**The deferral was already written.** `malformed_parts` imports lxml inside
+the function, four hundred lines below the module-level import that made it
+pointless. An intention recorded in one place and contradicted in another,
+where no test looked — which is the same shape as the `*.py` glob note in
+`BACKLOG.md`, and the reason this is filed rather than just fixed.
+
+`tests/test_import_cost.py` asks the question in a SUBPROCESS, which is the
+only place it can be asked: by the time pytest runs, lxml and pandas are in
+`sys.modules` because other tests imported them, so an in-process check
+passes whatever the package does. Four tests — no third-party parser behind
+`import docxkit` or `docxkit.cli`, the base chain pinned to its seven modules,
+and one that asks the probe about a module that genuinely DOES import lxml,
+because every other assertion is a negative and a broken probe reports those
+as absent.
+
+S4: nothing was wrong on the page, and no answer was affected. It is startup
+cost and a false sentence in a docstring — but the false sentence is what
+makes it worth a record, because the next person to read it would have
+believed it.
+
+---
+
 ### ~~S4 — `link` and `linkfix` still refused a Word lock two months after their five siblings learned to fall back~~ — FIXED 31.08, `eac1053`
 <!-- status: fixed -->
 

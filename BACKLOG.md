@@ -78,6 +78,49 @@ with its own message and its own escape. The two-lane rule elsewhere in this
 toolkit is stated as "a file with revision marks is never the clean master,
 whatever its mtime"; `build` is where that rule should first bite.
 
+### S1 — `citations` reports neither an unlinked mention inside a FOOTNOTE nor a reference entry with no back-link, and both were live in the same manuscript
+
+<!-- status: open -->
+
+Two blind spots in the same gate, both measured on `Aging_Well` on 31 August
+and 1 September. Each leaves the gate exiting 0 with a clean-looking count
+while the house convention it exists to protect is broken.
+
+**1. An unlinked mention in a footnote is not reported.** A round added
+`(World Bank 2026)` to footnote 2 as plain text — verified: no hyperlink in
+the paragraph, no `WorldBank2026` bookmark anywhere. `citations` exited 0 and
+printed `Mentions: 103 of 103 linked`. After `r2` linked it, the count was
+still `103 of 103`. So the counter reads the BODY only: the mention was never
+in the denominator, which is why its being unlinked could not be reported.
+The same round's three new BODY mentions were reported correctly, so the gap
+is the part, not the case. On this manuscript six works are cited only in
+footnotes.
+
+**2. A reference entry with no back-link is not reported.** The `<key>txt`
+convention is bidirectional — the mention links to the entry, the entry links
+home to the first mention. One entry of 87 had lost its `Lokshin2022txt`
+bookmark; the entry pointed at a name that did not exist, `remint_backlinks`
+removed the dead link, and the entry sat with nothing pointing home. `citations`
+exited 0 every time.
+
+The second is worse than a missed report because it is SELF-PERPETUATING and
+silent. `link_all` skips a mention that already carries a forward link, so the
+`<key>txt` bookmark is never re-minted; `remint_backlinks` then finds the
+target missing and removes the back-link again. The paper printed the same
+warning at three consecutive close-outs and passed its gates every time. The
+warning is `r2`'s, not the gate's, and it reads like a note rather than a
+finding.
+
+Both belong in `citations`'s audit: count mentions in footnotes and endnotes as
+well as the body, and report an entry whose back-link target does not resolve —
+or which has no back-link at all where the rest of the list does. The second
+check is cheap: the convention is visible in the list's own consistency, and a
+single entry differing from 86 others is exactly what a gate should notice.
+
+Per-paper workaround while this is open:
+`Aging_Well/revision/scripts/r77_lokshin_backlink.py`, which rebuilds the
+bookmark with `_cite_repair.wrap_link_in_bookmark` and is idempotent.
+
 ### Not seven defects — one habit: a `*.py` glob is a claim that the package is flat
 <!-- status: note -->
 
