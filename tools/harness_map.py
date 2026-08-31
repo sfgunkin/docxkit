@@ -26,6 +26,7 @@ TESTS = ROOT / "tests"
 #: module file name -> the test files that exercise it
 HARNESS: dict[str, list[str]] = {
     "_compare_read.py": ["tests/test_compare.py",
+                         "tests/test_compare_paragraph.py",
                          "tests/test_pathological.py"],
     # the last three joined on 2026-08-18, measured rather than argued:
     # importing the module alone covers 13 % of it, and these three take
@@ -127,8 +128,10 @@ HARNESS: dict[str, list[str]] = {
                          "tests/test_value_types.py"],
     "_cite_repair.py": ["tests/test_citations.py", "tests/test_pathological.py",
                         "tests/test_cite_anchor_reuse.py"],
-    "_compare_diff.py": ["tests/test_compare.py"],
-    "_compare_render.py": ["tests/test_compare.py"],
+    "_compare_diff.py": ["tests/test_compare.py",
+                         "tests/test_compare_paragraph.py"],
+    "_compare_render.py": ["tests/test_compare.py",
+                           "tests/test_compare_paragraph.py"],
     # test_tables_update and test_tables were MISSING here on the first
     # sweep, and the run came back at 44.9 % with 216 survivors in
     # `update` — a module reported as the worst in the package because
@@ -163,7 +166,9 @@ HARNESS: dict[str, list[str]] = {
     "citations.py": ["tests/test_citations.py",
                      "tests/test_cite_anchor_reuse.py",
                      "tests/test_cite_names.py"],
-    "compare.py": ["tests/test_compare.py", "tests/test_cli.py"],
+    "compare.py": ["tests/test_compare.py",
+                   "tests/test_compare_paragraph.py",
+                   "tests/test_cli.py"],
     "console.py": ["tests/test_console.py", "tests/test_cli_guards.py"],
     "edit.py": ["tests/test_find_edit.py", "tests/test_edit_boundaries.py",
                 "tests/test_edit_branches.py",

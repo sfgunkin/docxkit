@@ -31,7 +31,7 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision status [--all] [--scan FOLDER]
     docxkit revision doctor
     docxkit revision ingest [--check] [--json R.json]
-    docxkit revision build REVISED.docx [--out PATH] [--keep-math]
+    docxkit revision build REVISED.docx [--out PATH] [--keep-math] [--no-moves]
     docxkit revision validate [BATCH.docx] [--no-word] [--render ANCHOR...]
     docxkit revision ship REVISED.docx   # both, one Word session
     docxkit revision promote [BATCH.docx]
@@ -1250,6 +1250,12 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     non-zero status is to let a script refuse to start a batch, and a
     batch on a stale base is refused by `promote` only after a Word
     Compare has been paid for.
+
+    So a run that could not ASK the second question does not exit 0
+    either. With the file open in Word the counts come from a snapshot
+    and the drift check cannot run at all; it exits 1 and says which
+    answer is missing, rather than printing the two lines that a settled,
+    current paper prints.
     """
     if getattr(args, "all", False) or getattr(args, "scan", None):
         return cmd_revision_survey(args)
@@ -1265,6 +1271,27 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
               "against; run `docxkit revision baseline`")
         return 0 if st.is_truth else 1
     _show_state("prev", state(paper.prev))
+    # The drift check needs the file's SAVED bytes and `drift` reads
+    # them directly, so under a lock it raised and the command died —
+    # after printing two "0 pending -> TRUTH" lines, which is exactly
+    # the shape of a healthy, current baseline. Measured on Aging_Well,
+    # 2026-08-30: the same pair, seconds apart, answered "both sides
+    # settled" locked and "** baseline STALE: word/ (8 parts) **"
+    # closed. The counts are right either way — they come from the
+    # snapshot — and it is the missing check that has to be named, not
+    # inferred from a warning that did not appear.
+    #
+    # Exit 1, which is what the lock produced before, so nothing
+    # gating on this command changes its mind: what changed is that the
+    # reader is told which question went unanswered.
+    if st.from_snapshot:
+        print("\n  drift     NOT CHECKED - the file is open in Word and "
+              "this comparison\n            needs its saved bytes. The "
+              "counts above are the snapshot's and\n            are right; "
+              "whether prev.docx is still the baseline this paper\n"
+              "            grew out of is unknown. Close the file and "
+              "re-run.")
+        return 1
     # Only worth asking of a settled file: while a proposal is pending
     # the two are SUPPOSED to differ, and saying so every time is how a
     # warning stops being read.
@@ -1417,6 +1444,7 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
                    allow_pending_baseline=args.allow_pending_baseline,
                    allow_stale_baseline=args.allow_stale_baseline,
                    resolve_math=not args.keep_math,
+                   moves=not args.no_moves,
                    force=args.force,
                    progress=lambda line: print("   ", line))
     out = Path(args.out) if args.out else paper.batch
@@ -1860,6 +1888,17 @@ def _build_args(parser: argparse.ArgumentParser) -> None:
                         help="leave equation revisions TRACKED rather than "
                              "accepting them (try this before "
                              "--allow-math-resolve)")
+    # Word's move detection is a heuristic, and a wrong one truncates
+    # the paragraph it scored as moved — measured on Aging_Well, where
+    # the accepted view lost a clause, a link and the sentence after it,
+    # and the same pair with moves off reproduced it exactly. Until this
+    # flag existed a round that MOVED a passage could not be built
+    # through the CLI at all: the accept gate refused it, correctly, and
+    # the only switch on offer turned the gate off.
+    parser.add_argument("--no-moves", action="store_true",
+                        help="compare without Word's move detection (a "
+                             "longer redline, and the answer when a round "
+                             "that RELOCATES text fails the accept gate)")
     parser.add_argument("--allow-pending-baseline", action="store_true",
                         help="absorb the baseline's pending revisions "
                              "deliberately")
@@ -2168,7 +2207,8 @@ def main() -> None:
         return r
 
     r = _rev("status", cmd_revision_status,
-             "truth or proposal? (exit 1 pending, 4 stale baseline)")
+             "truth or proposal? (exit 1 pending or unchecked, 4 stale "
+             "baseline)")
     r.add_argument("--all", action="store_true",
                    help="survey every registered paper instead of one")
     r.add_argument("--scan", metavar="FOLDER", action="append",

@@ -78,13 +78,16 @@ class Verdict:
         recorded that it happened — which is the point of naming it.
 
         **Requires that no batch was identified**, and that is a real
-        condition rather than an implementation detail: with a staged
-        proposal in `build/`, this round is a batch round whatever else
+        condition rather than an implementation detail: with a PROMOTED
+        proposal behind it, this round is a batch round whatever else
         happened to the apparatus, and calling it an apparatus pass
-        would name the wrong event. The cost is that a linking pass run
-        in place while a valid batch sits unpromoted is reported as an
-        adjudication of a batch nobody acted on — resolve before
-        extend, and the two are not meant to overlap.
+        would name the wrong event.
+
+        It used to cost something: a linking pass run in place while a
+        valid batch sat unpromoted was reported as an adjudication of a
+        batch nobody acted on. `_proposal` asks whether the batch was
+        promoted now, so an unpromoted one identifies nothing and this
+        answers for the pass that really happened.
         """
         return (not self.changed and not self.added and not self.removed
                 and self.batch is None
@@ -150,22 +153,64 @@ def _para_counts(parts: dict[str, bytes], view: str) -> Counter[str]:
     return out
 
 
+def _promoted(paper: Paper, batch: Path) -> bool:
+    """Did this batch ever reach the manuscript?
+
+    `promote` copies the batch into ``build/redlines/`` before it
+    overwrites the paper, verifies the copy's hash and refuses the
+    promote if it did not land — so a redline with the batch's bytes in
+    that folder is the record that the batch was put on. Nothing else
+    is: `batch.docx` is written by `build` and says nothing about what
+    happened to it afterwards.
+
+    Sizes first, hashes only for a file that could match. A paper
+    accumulates one redline per round and each is the whole manuscript.
+    """
+    want, size = None, batch.stat().st_size
+    for redline in paper.redlines():
+        if redline.stat().st_size != size:
+            continue
+        want = want or _guard.sha256(batch)
+        if _guard.sha256(redline) == want:
+            return True
+    return False
+
+
 def _proposal(paper: Paper) -> Path | None:
     """The batch this manuscript grew out of, or None if it cannot be
     identified with certainty.
 
-    The stamp is what makes it certain: `guard.base_of` says which
+    Two questions, and both have to answer yes.
+
+    **Was it built on this baseline?** `guard.base_of` says which
     baseline a batch was built on, so a `batch.docx` left over from an
     earlier round — the exact file the stale-batch guards exist for — is
     not mistaken for the proposal the author just adjudicated. An
-    unstamped batch answers "cannot tell", and this returns None rather
-    than counting one round's verdict against another's proposal.
+    unstamped batch answers "cannot tell" and is refused here.
+
+    **Did it reach the manuscript?** The hash above cannot answer that,
+    and the difference is invisible in the files: a batch the author
+    REJECTED in full and a batch that was never promoted leave the
+    manuscript in exactly the same state — its revisions absent — so
+    absence reads as rejection. Measured on Aging_Well, 2026-08-28: a
+    Major 2 build was deliberately held back, the author's own Word
+    round was ingested with two untracked repairs, and `revision
+    baseline` printed a log row saying ``rejected in full, +2 authored``
+    for a round in which nothing had been offered and nothing rejected.
+    That row is pre-formatted for `revision/log.md`, which is the
+    paper's permanent record and the first thing the next session
+    reads; it was hand-corrected three times.
+
+    So it is refused rather than inferred, and the caller says
+    "adjudicated (no batch to compare against)" — the string
+    :attr:`Verdict.outcome` already had for exactly this case.
     """
     batch = paper.batch
     if not batch.is_file() or not paper.prev.is_file():
         return None
-    built_on = _guard.base_of(batch)
-    return batch if built_on == _guard.sha256(paper.prev) else None
+    if _guard.base_of(batch) != _guard.sha256(paper.prev):
+        return None
+    return batch if _promoted(paper, batch) else None
 
 
 def verdict(paper: Paper) -> Verdict:

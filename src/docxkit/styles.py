@@ -14,6 +14,7 @@ remap and the audit.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES
@@ -233,6 +234,55 @@ def _toggle(rpr: str, prop: str) -> bool | None:
     return got is None or got.group(1) not in _OFF
 
 
+#: One compiled pattern per paragraph property, for the same reason
+#: `_VAL_RE` is kept: the comparison asks for several of these per
+#: paragraph over a whole manuscript.
+_EL_RE: dict[str, re.Pattern[str]] = {}
+
+
+def _element_re(tag: str) -> re.Pattern[str]:
+    pattern = _EL_RE.get(tag)
+    if pattern is None:
+        pattern = _EL_RE[tag] = re.compile(
+            rf"<w:{tag}\b[^>]*?(?:/>|>.*?</w:{tag}>)", re.DOTALL)
+    return pattern
+
+
+_ATTR_RE: dict[str, re.Pattern[str]] = {}
+
+
+def _attr_of(element: str, name: str) -> str | None:
+    """``w:<name>`` ON this element — ``<w:ind w:hanging="360"/>`` -> 360.
+
+    Not :func:`_attr` above, which searches a whole blob and falls back
+    to any attribute of that name anywhere in it. Here the element is
+    the question: an indent's `left` is the one on the `w:ind`, and a
+    blob-wide search would answer with a table cell's.
+    """
+    pattern = _ATTR_RE.get(name)
+    if pattern is None:
+        pattern = _ATTR_RE[name] = re.compile(rf'\bw:{name}="([^"]*)"')
+    m = pattern.search(element)
+    return m.group(1) if m else None
+
+
+def _element(xml: str, tag: str) -> str | None:
+    """The first whole ``w:<tag>`` element in `xml`, or None (see below).
+
+    The element and not a value, because a paragraph property is not
+    one: ``<w:jc w:val="both"/>`` states a value, ``<w:ind w:left="360"
+    w:hanging="360"/>`` states four, and ``<w:keepNext/>`` states none
+    and means yes. :func:`_val` can read the first of those and no more,
+    which is why the cascade could answer for a run's size and had
+    nothing to say about an indent.
+    """
+    m = _element_re(tag).search(xml)
+    return m.group(0) if m else None
+
+
+_PPR_DEFAULT_RE = re.compile(r"<w:pPrDefault\b.*?</w:pPrDefault>", re.DOTALL)
+
+
 class Cascade:
     """Effective run properties, styles applied.
 
@@ -241,12 +291,14 @@ class Cascade:
     than a guess about a part nobody handed over.
     """
 
-    __slots__ = ("_based", "_default", "_default_pstyle", "_memo", "_own")
+    __slots__ = ("_based", "_default", "_default_pstyle", "_memo", "_own",
+                 "_pdefault")
 
     def __init__(self, styles_xml: str | None = None) -> None:
         self._own: dict[str, str] = {}
         self._based: dict[str, str] = {}
         self._default = ""
+        self._pdefault = ""
         self._default_pstyle: str | None = None
         #: Resolution is a pure function of (prop, rpr, rstyle, pstyle)
         #: and a Cascade never changes after this constructor, so the
@@ -259,6 +311,12 @@ class Cascade:
             return
         block = _DOC_DEFAULTS_RE.search(styles_xml)
         self._default = block.group(0) if block else ""
+        # The PARAGRAPH half of the document defaults, kept apart from
+        # the whole block: `w:rPrDefault` holds a `w:spacing` too — the
+        # letter spacing of a run — and a paragraph asking the block for
+        # "spacing" would be answered by that one.
+        pdef = _PPR_DEFAULT_RE.search(self._default)
+        self._pdefault = pdef.group(0) if pdef else ""
         if (m := _DEFAULT_PSTYLE_RE.search(styles_xml)):
             self._default_pstyle = m.group(1)
         for sid, body in _STYLE_ID_RE.findall(styles_xml):
@@ -273,6 +331,87 @@ class Cascade:
             if (found := _val(self._own[sid], prop)) is not None:
                 return found
             sid = self._based.get(sid)
+        return None
+
+    def _chain_el(self, sid: str | None, tag: str) -> str | None:
+        seen: set[str] = set()
+        while sid and sid in self._own and sid not in seen:
+            seen.add(sid)
+            if (found := _element(self._own[sid], tag)) is not None:
+                return found
+            sid = self._based.get(sid)
+        return None
+
+    def _para_sources(self, ppr: str | None,
+                      pstyle: str | None) -> Iterator[str]:
+        """The property blobs a paragraph resolves through, nearest first.
+
+        Its own properties, then its style's ``basedOn`` chain, then the
+        ``w:default="1"`` paragraph style for a paragraph that names
+        none, then the document's ``pPrDefault``. Word's order, and the
+        same one :meth:`resolve` walks for a run.
+        """
+        if ppr:
+            yield ppr
+        sid = pstyle or self._default_pstyle
+        seen: set[str] = set()
+        while sid and sid in self._own and sid not in seen:
+            seen.add(sid)               # a basedOn cycle is a real file
+            yield self._own[sid]
+            sid = self._based.get(sid)
+        if self._pdefault:
+            yield self._pdefault
+
+    def para_element(self, tag: str, *, ppr: str | None = None,
+                     pstyle: str | None = None) -> str | None:
+        """The ``w:<tag>`` element in force for a PARAGRAPH, styles applied.
+
+        For the properties whose PRESENCE is the whole value —
+        `keepNext`, `keepLines`, `pageBreakBefore`. Ask
+        :meth:`para_attr` for the ones that carry numbers.
+
+        Resolved rather than read off the paragraph, for the reason
+        :data:`_compare_read._VALUED` gives about size and colour: Word
+        deletes a direct property equal to the inherited one, so
+        comparing what is STATED reports a difference between documents
+        that render identically. A reference list whose entries carry
+        the hanging indent through their style and one that states it on
+        every paragraph are the same page.
+
+        Pass the paragraph's OWN ``w:pPr`` inner, with any
+        ``w:pPrChange`` already cut off (:func:`docxkit._xml.
+        live_properties`): that snapshot is the formatting a tracked
+        change REPLACED, and reading it answers about the past.
+        """
+        for blob in self._para_sources(ppr, pstyle):
+            if (found := _element(blob, tag)) is not None:
+                return found
+        return None
+
+    def para_attr(self, tag: str, attr: str, *, ppr: str | None = None,
+                  pstyle: str | None = None) -> str | None:
+        """One ATTRIBUTE of a paragraph property, styles applied.
+
+        Per attribute and not per element, because that is how Word
+        merges these: a paragraph that states ``<w:spacing w:before="0"/>``
+        directly keeps its style's `after` and `line`. Resolving the
+        element as a unit makes such a paragraph read as having lost
+        them, and the pair it is compared against — one that states
+        nothing and inherits all three — comes back as a difference
+        between two identical pages. Measured writing the layer that
+        needed this, which is the whole hazard it exists to avoid.
+
+        Every ``w:<tag>`` in a blob is examined, not just the first: a
+        paragraph's ``w:pPr`` nests the paragraph mark's ``w:rPr``, and
+        that carries a ``w:spacing`` of its own — the letter spacing of
+        a run, which states none of these attributes and must not stop
+        the walk.
+        """
+        pattern = _element_re(tag)
+        for blob in self._para_sources(ppr, pstyle):
+            for m in pattern.finditer(blob):
+                if (value := _attr_of(m.group(0), attr)) is not None:
+                    return value
         return None
 
     def resolve(self, prop: str, *, rpr: str | None = None,

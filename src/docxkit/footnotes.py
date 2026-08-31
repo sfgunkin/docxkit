@@ -22,6 +22,7 @@ from typing import NamedTuple
 
 from ._xml import (
     DOCUMENT,
+    ENDNOTES,
     FOOTNOTES,
     NOTE_REF_RE,
     PARA_RE,
@@ -44,6 +45,7 @@ __all__ = [
     "AnchorError",
     "FontReport",
     "Footnote",
+    "Orphan",
     "SizeOutlier",
     "SizeReport",
     "add",
@@ -51,7 +53,9 @@ __all__ = [
     "find",
     "find_all",
     "fonts",
+    "orphans",
     "out_of_order",
+    "prune_orphans",
     "remap",
     "renumber_map",
     "set_font",
@@ -139,6 +143,97 @@ def out_of_order(document_xml: str, notes_xml: str, *,
     wanted = [i for i in seen if i in set(defined)]
     have = [i for i in defined if i in set(wanted)]
     return [i for i, j in zip(have, wanted, strict=True) if i != j]
+
+
+#: What makes a definition worth keeping when nothing references it.
+#: Text is the obvious one; the rest are carriers with no text of their
+#: own, and dropping a definition that holds one silently loses an
+#: anchor a link still points at. `w:footnoteRef` is deliberately not
+#: here — it is the mark Word puts at the head of EVERY definition, so
+#: counting it would make every note look occupied.
+_NOTE_CONTENT_RE = re.compile(
+    r"<(?:w:bookmarkStart|w:hyperlink|w:drawing|w:tbl|m:oMath)\b")
+
+
+@dataclass(frozen=True)
+class Orphan:
+    """A note DEFINITION nothing in the package references."""
+
+    kind: str               # "footnote" or "endnote"
+    id: str
+    text: str               # what the definition says, "" for a shell
+    carriers: int           # bookmarks, links, drawings, tables, equations
+
+    @property
+    def empty(self) -> bool:
+        """A shell: nothing a reader could see, and nothing to lose."""
+        return not self.text and not self.carriers
+
+    def __str__(self) -> str:
+        what = "empty" if self.empty else f"holds {self.text[:50]!r}"
+        return f"{self.kind} {self.id} ({what})"
+
+
+def orphans(parts: dict[str, bytes], *,
+            kind: str | None = None) -> list[Orphan]:
+    """Note definitions no reference in the package points at.
+
+    Word represents a DELETED footnote the only way it can: the
+    reference run goes inside a ``w:del`` and the definition's text
+    becomes ``w:delText``. Accepting that in Word removes the definition
+    too — Word knows the two are one object. An XML accept does not:
+    :func:`docxkit.revisions.accept` works one part at a time, empties
+    the note, and leaves the shell behind, so the accepted view has one
+    footnote more than the document it is meant to reproduce and the
+    paragraph gate reports ``'' vs ''`` — two empty strings that look
+    identical (Aging_Well, 2026-08-31).
+
+    Every part is searched for references, not just the body: a header
+    can carry one, and a definition pruned because the body had gone
+    quiet about it would take a note the page still shows.
+
+    Ids 0 and -1 are Word's separator and continuation notes. Nothing
+    ever references those and they are not orphans.
+    """
+    out: list[Orphan] = []
+    for k in ((kind,) if kind else ("footnote", "endnote")):
+        part = FOOTNOTES if k == "footnote" else ENDNOTES
+        blob = parts.get(part)
+        if not blob:
+            continue
+        referenced = {
+            i for name, xml in parts.items()
+            if name != part and name.endswith(".xml")
+            for i in _REFERENCE_OF[k].findall(xml.decode("utf-8"))}
+        out += [Orphan(k, note.id, note.text,
+                       len(_NOTE_CONTENT_RE.findall(note.xml)))
+                for note in find_all(blob.decode("utf-8"), kind=k)
+                if note.id not in referenced]
+    return out
+
+
+def prune_orphans(parts: dict[str, bytes]) -> list[Orphan]:
+    """Drop the EMPTY orphan definitions, in place. Returns what went.
+
+    Only the shells. An unreferenced definition with words in it is a
+    footnote that lost its marker — a real loss, and the caller's to
+    report — while a shell is an artifact of accepting or rejecting part
+    by part and says nothing about the manuscript. Read the ones left
+    behind with :func:`orphans`.
+    """
+    gone: list[Orphan] = []
+    for orphan in orphans(parts):
+        if not orphan.empty:
+            continue
+        part = FOOTNOTES if orphan.kind == "footnote" else ENDNOTES
+        xml = parts[part].decode("utf-8")
+        for note in find_all(xml, kind=orphan.kind):
+            if note.id == orphan.id:
+                xml = xml[:note.start] + xml[note.end:]
+                parts[part] = xml.encode("utf-8")
+                gone.append(orphan)
+                break
+    return gone
 
 
 #: The reference run Word writes, and the definition's opening run.

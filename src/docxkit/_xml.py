@@ -190,10 +190,21 @@ XML_WS = " \t\r\n"
 # caption with a spacer between.
 #
 # Measured 2026-08-11 over 399 manuscripts: 28 hold a self-closing
-# paragraph, 87 blocks in all. `_compare_read.P_RE` had the guard by
-# accident of spelling (`<w:p[ >]`) and was the only walk that was
-# right; the shared definition was the one with the defect, which is
-# why consolidating onto it had to be measured rather than assumed.
+# paragraph, 87 blocks in all. `_compare_read.P_RE` was then said to
+# have the guard by accident of spelling (`<w:p[ >]`) and to be the
+# only walk that was right.
+#
+# **It did not, and it was not** — corrected 2026-08-31. `[ >]` excludes
+# `<w:pPr` and the BARE `<w:p/>`, which is the form that measurement
+# looked for; it does not exclude `<w:p w14:paraId="…" …/>`, which is
+# the form Word actually writes for an empty paragraph. That begins
+# `<w:p ` and passes the class, so the compare's walk swallowed the
+# empty paragraph and the real one after it as one match. Live instance:
+# LI5.docx's "References" heading, whose `w:pPr` is byte-identical to
+# LI6's and which the PARAGRAPH layer then reported as differing,
+# because the merged element's first child is another `w:p` and it
+# therefore has no properties of its own. `_compare_read.P_RE` is this
+# pattern now.
 #
 # An empty paragraph is now invisible to the walk rather than reported
 # as its own: that keeps the paragraph NUMBERING every report prints

@@ -40,6 +40,10 @@ Layers reported
              walks <w:t> runs and an equation has none
   FORMAT     character-level run formatting (italic/bold/super/sub/strike/
              smallCaps) on text-matched paragraphs, ignoring Hyperlink styling
+  PARAGRAPH  indent, spacing, alignment, keep-with-next — resolved through
+             the style cascade. Nothing read w:pPr until 2026-08-31, so a
+             reference list that lost its hanging indent passed
+             --expect-clean in silence
   INTEGRITY  bookmark start/end balance, dangling hyperlink anchors, cite_/ref_
              pairing, and citation/footnote fields STRIPPED by Word's edit
              (a paragraph that had a field in A but is plain text in B)
@@ -71,6 +75,7 @@ import argparse
 import sys
 from collections import Counter
 
+from ._compare_diff import BUCKETS as BUCKETS
 from ._compare_diff import GATED as GATED
 from ._compare_diff import FormulaChange as FormulaChange
 from ._compare_diff import Report as Report
@@ -102,6 +107,7 @@ from ._compare_read import pair_parts as pair_parts
 from ._compare_render import render as render
 
 __all__ = [
+    "BUCKETS",
     "COMMENTS_PART",
     "GATED",
     "MEDIA_PART_RE",
@@ -142,10 +148,7 @@ def compare(path_a: str, path_b: str) -> Report:
 
 
 def compare_docs(a: Doc, b: Doc) -> Report:
-    report: Report = {"structure": [], "text": [], "glyph": [], "formula": [],
-                      "formula_glyph": [], "formula_format": [], "format": [],
-                      "hyperlinks": [], "integrity": [],
-                      "stripped_fields": [], "comments": [], "media": []}
+    report: Report = {bucket: [] for bucket in BUCKETS}
 
     # Every field name side B still carries, PACKAGE-wide. A target the
     # author moved is not a target the author lost, and it can move

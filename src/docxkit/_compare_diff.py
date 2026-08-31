@@ -43,8 +43,20 @@ Report = dict[str, list[Any]]
 #: edit, and a rebuild that drops it has lost one. It is a separate
 #: bucket from `formula` because "the equation now says something else"
 #: and "the equation is set differently" want different responses.
+#: Every bucket a report carries. Stated once because it was stated
+#: twice — `compare_docs` built the dict and `tests/test_compare.py`
+#: built its own copy for the renderer, so the PARAGRAPH layer passed
+#: its unit tests and raised KeyError on every real report.
+BUCKETS = ("structure", "text", "glyph", "formula", "formula_glyph",
+           "formula_format", "format", "paragraph", "hyperlinks",
+           "integrity", "stripped_fields", "comments", "media")
+
+#: `paragraph` gates too, and that is the whole point of it: the layer
+#: was added because `--expect-clean` printed OK over 7 reference
+#: entries that had lost their hanging indent. A layer that reports and
+#: does not gate would have printed the same OK.
 GATED = ("structure", "text", "formula", "formula_format", "format",
-         "media")
+         "paragraph", "media")
 
 _norm_glyph = normalize_glyphs
 
@@ -469,6 +481,13 @@ class _Alignment:
         for seg, old, new in fmt_diff(pa, pb):
             self.add("format", {"text": seg, "from": sorted(old),
                                 "to": sorted(new)}, pa)
+        # The SYMMETRIC difference, not both sets: a paragraph states
+        # half a dozen of these and one of them moved, and printing the
+        # five that did not is how a layer becomes unreadable.
+        if pa.ppr != pb.ppr:
+            self.add("paragraph", {"context": pa.text[:60],
+                                   "from": sorted(pa.ppr - pb.ppr),
+                                   "to": sorted(pb.ppr - pa.ppr)}, pa)
         for change in formula_diff(pa, pb):
             self.add(change.bucket, change.entry(), pa)
         if pa.text != pb.text:          # equal under glyph-norm only

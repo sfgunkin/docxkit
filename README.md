@@ -49,7 +49,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints, run `face` |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
 | `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
-| `compare` | the authoritative multi-layer diff (structure/text/formula/formula-typography/format/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments — with each entry addressed to its part and table cell. FORMAT covers emphasis **and size and colour**, resolved through `styles.Cascade` rather than read off the run |
+| `compare` | the authoritative multi-layer diff (structure/text/formula/formula-typography/format/paragraph/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments — with each entry addressed to its part and table cell. FORMAT covers emphasis **and size and colour**, and PARAGRAPH covers **indent, spacing, alignment and keep-with-next** — both resolved through `styles.Cascade` rather than read off the markup |
 | `styles` | named styles: read, remap, apply a journal template — and `Cascade`, what a run's properties RESOLVE to once the style chain and docDefaults are applied |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
 | `hygiene` | drop part-trees a manuscript should not carry; `smarten` straight quotes safely |
@@ -160,6 +160,17 @@ they do.
   `Accept()` applies its whole span. Hence `build(..., resolve_math=
   False)` / `revision build --keep-math`: every accepted revision is one
   the author can no longer refuse, so measure before paying that.
+- **Word's move detection can truncate the paragraph it moved.**
+  `CompareMoves` is a heuristic, and it is the only comparison flag that
+  changes what the redline SAYS rather than what it looks at. On
+  Aging_Well (2026-08-31) a batch relocating ~200 characters and five
+  inline equations from a section into an appendix accepted to a
+  paragraph that stopped mid-sentence — a clause, a hyperlink and the
+  sentence after it simply gone — and the same pair with
+  `moves=False` reproduced it exactly. The accept-side gate catches it;
+  `build(..., moves=False)` / `revision build --no-moves` is the answer,
+  at the cost of a deletion-plus-insertion where Word would have drawn
+  one move.
 - **Reject-all is the gate, not the count.** `tracked.build` refuses to
   publish a redline whose reject-all does not reproduce the original
   (`tracked.untracked` names the paragraphs). Nothing else sees that

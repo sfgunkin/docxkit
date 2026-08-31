@@ -231,6 +231,11 @@ def test_the_compare_options_DEFAULT_to_on(monkeypatch, sources):
     _, fake = _build(monkeypatch, _clean_document(), sources)
     assert fake.compared["formatting"] is True
     assert fake.compared["whitespace"] is True
+    # and `moves`, for a different reason: move detection off by default
+    # would turn every relocation into a deletion and an insertion,
+    # which is a longer redline for every paper to read. It is the
+    # ANSWER to a refusal, not the setting to start from.
+    assert fake.compared["moves"] is True
 
 
 def test_the_build_carries_the_customXml_store_across_the_compare(
@@ -440,11 +445,15 @@ def test_a_part_with_no_revisions_is_not_named_at_all():
 
 
 def test_build_passes_the_compare_options_through(monkeypatch, sources):
+    """`moves` among them since 2026-08-31: a scored move truncated the
+    moved paragraph in the accepted view on Aging_Well, and the switch
+    that fixed it stopped at `word.compare_documents` — so the gate
+    refused the round and the build had no way to answer it."""
     _, fake = _build(monkeypatch, _clean_document(), sources,
                      author="Revision R2", whitespace=False,
-                     formatting=False)
-    assert fake.compared == {"author": "Revision R2",
-                             "whitespace": False, "formatting": False}
+                     formatting=False, moves=False)
+    assert fake.compared == {"author": "Revision R2", "whitespace": False,
+                             "formatting": False, "moves": False}
 
 
 # ----------------------------------------------- the safety property -----
@@ -2919,6 +2928,40 @@ def test_accepted_losses_does_not_report_an_anchor_the_accept_GAINED():
     assert tracked.accepted_losses(was, now) == []
 
 
+def test_the_ANCHOR_refusal_carries_the_paragraphs_when_there_are_any():
+    """An anchor does not go missing on its own. On Aging_Well a scored
+    move truncated a paragraph in the accepted view — a clause, a link
+    and the sentence after it — and the build refused with `link LOST on
+    accept: -> Ravallion2011`, the smallest visible symptom of it. The
+    round was spent on the link. The refusal now hands over the
+    paragraphs and names the switch that fixed that case."""
+    report = tracked.BuildReport()
+    report.accepted_losses = ["link LOST on accept: -> Ravallion2011"]
+    report.unaccepted = [tracked.Unaccepted(
+        "body", 5, "The floor itself is set weakly relatively to income.",
+        "The floor itself is set weakly relatively")]
+
+    with pytest.raises(PackageError) as caught:
+        tracked._refuse_accept_side(report, "v12.docx")
+
+    said = str(caught.value)
+    assert "1 paragraph(s) also differ" in said
+    assert "set weakly relatively to income" in said, "quote BOTH sides"
+    assert "--no-moves" in said
+
+
+def test_the_anchor_refusal_is_silent_about_paragraphs_when_there_are_none():
+    """The common case is an anchor loss alone, and a sentence about
+    paragraphs that do not differ sends the reader looking for them."""
+    report = tracked.BuildReport()
+    report.accepted_losses = ["bookmark LOST on accept: Table1"]
+
+    with pytest.raises(PackageError) as caught:
+        tracked._refuse_accept_side(report, "v12.docx")
+
+    assert "also differ" not in str(caught.value)
+
+
 def test_the_MATH_ONLY_refusal_speaks_only_about_the_maths():
     """It runs after the glyph restore, when the other two have already
     been asked and answered. Letting it re-raise the anchor loss reports
@@ -3042,12 +3085,18 @@ def test_the_accept_refusal_does_not_name_a_flag_the_CLI_LACKS():
 
 def test_every_accept_side_refusal_carries_the_same_escape():
     """One sentence, not two that can drift. Both refusals used to spell
-    it out separately and both were wrong the same way."""
+    it out separately and both were wrong the same way.
+
+    Counted against the RAISES rather than pinned at a number: it was
+    pinned, and a third refusal — the orphan note — then failed this
+    test for carrying the escape correctly, which is the opposite of
+    what it is for. The math refusal is the one exception and names
+    itself, because its repair is a math edit rather than a switch."""
     import re as _re
 
     src = Path(tracked.__file__).read_text(encoding="utf-8")
     body = src.split("def _refuse_accept_side")[1].split("\ndef ")[0]
 
     assert "accept_check=False to build" not in body
-    assert body.count("_ACCEPT_ESCAPE") == 2
+    assert body.count("_ACCEPT_ESCAPE") == body.count("raise PackageError") - 1
     assert not _re.search(r"Pass accept_check", body)

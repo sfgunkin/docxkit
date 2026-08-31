@@ -27,7 +27,7 @@ from conftest import (
     write,
 )
 
-from docxkit.compare import GATED, Report, compare, render
+from docxkit.compare import BUCKETS, GATED, Report, compare, render
 
 
 def docs(tmp_path, body_a: str, body_b: str, **kw):
@@ -1326,7 +1326,7 @@ def test_the_facade_still_exports_what_callers_import():
     import docxkit.compare as facade
     for name in ("compare", "compare_docs", "render", "load", "load_parts",
                  "word_diff", "integrity", "hyperlink_labels", "Doc",
-                 "Para", "Part", "GATED", "VOLATILE_FIELDS",
+                 "Para", "Part", "GATED", "BUCKETS", "VOLATILE_FIELDS",
                  "mask_volatile_fields"):
         assert hasattr(facade, name), f"compare.{name} is gone"
 
@@ -1476,10 +1476,13 @@ def test_neither_door_loses_a_report_json_cannot_encode(
 # integrate".
 
 def _empty_report() -> Report:
-    return {k: [] for k in ("structure", "text", "glyph", "formula",
-                            "formula_glyph", "formula_format", "format",
-                            "hyperlinks", "integrity", "stripped_fields",
-                            "comments", "media")}
+    """Every bucket, from the package's own list.
+
+    It used to spell them out here, which made this fixture a second
+    answer to "what buckets are there" — and the PARAGRAPH layer then
+    passed every renderer test in this file while raising KeyError on
+    the first real report."""
+    return {k: [] for k in BUCKETS}
 
 
 def _entry(bucket: str) -> object:
@@ -1510,6 +1513,7 @@ def _entry(bucket: str) -> object:
         # about the entry. A mutation blanking this side survived under
         # exactly that vacuous assertion.
         "format": {"text": mark, "from": [f"{mark}-from"], "to": []},
+        "paragraph": {"context": mark, "from": [f"{mark}-from"], "to": []},
         "glyph": {"from": f"{mark}-from", "to": f"{mark}-to"},
         # from/to are TUPLES here and the renderer prints element [1] —
         # element 0 is the equation id, so an off-by-one prints the
@@ -1580,17 +1584,18 @@ def test_an_integrity_flag_alone_fails_the_gate():
 
 
 @pytest.mark.parametrize("sizes", [
-    (1, 1, 1, 1, 1, 1), (1, 3, 1, 1, 2, 0), (3, 1, 4, 1, 1, 2),
-    (0, 2, 0, 1, 0, 0), (2, 0, 1, 0, 3, 1), (0, 0, 0, 0, 1, 0),
-    (0, 0, 0, 0, 0, 4),
+    (1, 1, 1, 1, 1, 1, 1), (1, 3, 1, 1, 2, 0, 1), (3, 1, 4, 1, 1, 2, 0),
+    (0, 2, 0, 1, 0, 0, 0), (2, 0, 1, 0, 3, 1, 2), (0, 0, 0, 0, 1, 0, 0),
+    (0, 0, 0, 0, 0, 4, 0), (0, 0, 0, 0, 0, 0, 3),
 ])
 def test_the_headline_total_is_every_gated_layer_summed(sizes):
-    """The number a reader acts on is the sum of all five, not of the
+    """The number a reader acts on is the sum of all of them, not of the
     ones a fixture happened to fill. Asserted as the relationship over
     several shapes rather than one magic constant — a single shape lets
     an arithmetic slip land on the right answer by luck."""
-    # strict=True is load-bearing: a sixth gated layer must fail this
-    # test rather than silently go uncounted here.
+    # strict=True is load-bearing: a further gated layer must fail this
+    # test rather than silently go uncounted here. PARAGRAPH did, on the
+    # day it was added — which is what the flag is for.
     report = _filled(**dict(zip(GATED, sizes, strict=True)))
     _, out = _out(report)
     assert f"REAL change locations (excl. glyph): {sum(sizes)}" in out, out

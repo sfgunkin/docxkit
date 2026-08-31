@@ -94,6 +94,24 @@ def _format(report: Report) -> int:
     return len(report["format"])
 
 
+def _paragraph(report: Report) -> int:
+    _head("PARAGRAPH  (indent, spacing, alignment, keep-with-next — "
+          "text-matched paras)")
+    print("  Resolved through the style cascade, so a value stated "
+          "directly on one side and inherited on the other is not a "
+          "difference. Read a deliberate typesetting pass here and "
+          "dismiss it; what this exists for is the pass nobody meant — "
+          "7 reference entries lost their hanging indent on "
+          "Life_Expectancy and every other layer said the documents "
+          "matched.")
+    for f in report["paragraph"]:
+        print(f"  '{f['context']}'{_in(f)}: {f['from'] or '∅'} -> "
+              f"{f['to'] or '∅'}")
+    if not report["paragraph"]:
+        print("  (none)")
+    return len(report["paragraph"])
+
+
 def _media(report: Report) -> int:
     _head("MEDIA  (figures and embedded objects — added / removed / "
           "changed)")
@@ -175,7 +193,7 @@ def render(report: Report, expect_clean: bool) -> int:
     """Print every layer; return the exit code."""
     real = _structure(report) + _text(report)
     real += _formula(report) + _formula_format(report) + _format(report)
-    real += _media(report)
+    real += _paragraph(report) + _media(report)
     _review(report)
 
     print("\n" + "-" * 72)

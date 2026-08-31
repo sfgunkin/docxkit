@@ -330,18 +330,30 @@ def draft_view(doc: Any) -> None:
 def compare_documents(word: Any, original: Any, revised: Any, *,
                       author: str = "Revision",
                       whitespace: bool = True,
-                      formatting: bool = True) -> Any:
+                      formatting: bool = True,
+                      moves: bool = True) -> Any:
     """``CompareDocuments`` into a new tracked-changes document.
 
     Fast (a few seconds even on a book-length manuscript) — if a redline
     build is slow, the cost is in what you do with the revisions, not here.
 
-    `whitespace` and `formatting` are exposed because they change the
-    deliverable, not just its speed, and papers disagree: the Life
-    Expectancy recipe compares with whitespace OFF, so that respacing at
-    an edit boundary is not shown to an editor as a revision. Two routes
-    built with different settings produce different redlines from the
-    same pair of documents.
+    `whitespace`, `formatting` and `moves` are exposed because they
+    change the deliverable, not just its speed, and papers disagree: the
+    Life Expectancy recipe compares with whitespace OFF, so that
+    respacing at an edit boundary is not shown to an editor as a
+    revision. Two routes built with different settings produce different
+    redlines from the same pair of documents.
+
+    `moves` is the one that can produce a WRONG one. A move is nicer to
+    read — one "moved from" mark instead of a deletion and an unrelated
+    insertion — but Word's move detection is a heuristic, and on
+    Aging_Well (2026-08-31) a batch that relocated ~200 characters and
+    five inline equations from a section into an appendix produced an
+    ACCEPTED view whose paragraph stopped mid-sentence: the rest of the
+    clause, a hyperlink and a following sentence were simply gone. The
+    same pair with ``moves=False`` reproduced the paragraph exactly. So
+    a compression round — which is mostly moves — is the case to try
+    this on, and the accept-side gate is what catches the need for it.
     """
     return word.CompareDocuments(
         original, revised,
@@ -351,7 +363,7 @@ def compare_documents(word: Any, original: Any, revised: Any, *,
         CompareWhitespace=whitespace, CompareTables=True,
         CompareHeaders=True,
         CompareFootnotes=True, CompareTextboxes=True, CompareFields=True,
-        CompareComments=True, CompareMoves=True,
+        CompareComments=True, CompareMoves=moves,
         RevisedAuthor=author, IgnoreAllComparisonWarnings=True)
 
 

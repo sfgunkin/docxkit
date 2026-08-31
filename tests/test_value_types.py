@@ -52,6 +52,7 @@ VALUES = [
     "figures.Figure",
     "find.Site",                # a survey a caller keeps and compares
     "refstyle.Fix",             # one span and what it should say
+    "footnotes.Orphan",
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "placement.FitFinding",     # one exhibit breaking the fit rule

@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from . import comments as _comments
+from . import footnotes as _footnotes
 from . import guard as _guard
 from . import hygiene as _hygiene
 from . import word as _word
@@ -329,6 +330,31 @@ _ACCEPT_ESCAPE = (
     "in the manuscript rather than in the switch.")
 
 
+def _also_unaccepted(report: BuildReport) -> str:
+    """The paragraphs, when the ANCHOR refusal fires ahead of them.
+
+    An anchor does not go missing on its own: it goes with the words
+    that carried it. On Aging_Well (2026-08-31) a scored move truncated
+    a paragraph in the accepted view — a clause, a link and the sentence
+    after it — and the build refused with `link LOST on accept: ->
+    Ravallion2011`, which names the smallest visible symptom of it. The
+    reader spends the round on the link.
+
+    So when both findings are present, the anchor refusal carries the
+    paragraphs too, and names the switch that fixed that case.
+    """
+    if not report.unaccepted:
+        return ""
+    listed = "\n  ".join(str(u) for u in report.unaccepted)
+    return (f"\n{len(report.unaccepted)} paragraph(s) also differ, and they "
+            f"are the finding to read first — an anchor goes missing with "
+            f"the words that carried it:\n  {listed}\n"
+            f"Word's move detection can truncate a paragraph it scored as "
+            f"moved. If this round relocated a passage, rebuild with "
+            f"moves=False (`revision build --no-moves`) before looking "
+            f"anywhere else. ")
+
+
 def _refuse_accept_side(report: BuildReport, revised: str, *,
                         math_only: bool = False) -> None:
     """Raise for whatever the ACCEPTED view does not reproduce.
@@ -351,7 +377,19 @@ def _refuse_accept_side(report: BuildReport, revised: str, *,
             f"A bookmark and a hyperlink carry no text, so the paragraph "
             f"comparison beside this one cannot see them go, and they "
             f"are present in the redline as built — inside a deletion, "
-            f"until the author accepts it. " + _ACCEPT_ESCAPE)
+            f"until the author accepts it. " + _also_unaccepted(report)
+            + _ACCEPT_ESCAPE)
+    if not math_only and report.orphan_notes:
+        listed = "\n  ".join(str(o) for o in report.orphan_notes)
+        raise PackageError(
+            f"accepting every revision leaves {len(report.orphan_notes)} "
+            f"note definition(s) with nothing referencing them:\n  "
+            f"{listed}\n"
+            f"The marker was deleted and the words were not, so the note "
+            f"is in the file and on no page. Delete the note in the CLEAN "
+            f"copy — reference and definition together, which is what "
+            f"Word does when you delete the marker — and rebuild. "
+            + _ACCEPT_ESCAPE)
     if not math_only and report.unaccepted:
         listed = "\n  ".join(str(u) for u in report.unaccepted)
         raise PackageError(
@@ -399,11 +437,24 @@ def _paras(root: Any | None) -> list[str]:
 
 
 def _simulate(parts: dict[str, bytes], how: Any) -> dict[str, bytes]:
-    """XML-level accept/reject of every text-bearing part."""
+    """XML-level accept/reject of every text-bearing part.
+
+    Then the one thing a part-by-part walk cannot do: a note's reference
+    and its definition are one object to Word and two parts to us. A
+    revision that deletes a footnote empties the definition here and
+    removes the reference there, and Word's own accept removes both — so
+    the shell left behind is an artifact of simulating, not a difference
+    between the documents. Prune it, or every such revision reads as a
+    paragraph the accept failed to reproduce, quoted as `'' vs ''`
+    (Aging_Well, 2026-08-31; the same shape on the reject side for a
+    note the batch ADDS). Shells only: an unreferenced definition with
+    words in it is a lost footnote, and it stays here to be reported.
+    """
     out = dict(parts)
     for name in TEXT_PARTS:
         if name in out:
             out[name] = how(out[name].decode("utf-8")).encode("utf-8")
+    _footnotes.prune_orphans(out)
     return out
 
 
@@ -736,6 +787,13 @@ class BuildReport:
         #: the accepted view is the deliverable. See
         #: :func:`accepted_losses`.
         self.accepted_losses: list[str] = []
+        #: Note definitions the ACCEPTED view keeps with nothing left
+        #: pointing at them, and words still in them: a footnote whose
+        #: marker went and whose text stayed, which renders nowhere and
+        #: reads as lost. The empty shells accepting leaves behind are
+        #: pruned instead — see :func:`_simulate` and
+        #: :func:`docxkit.footnotes.orphans`.
+        self.orphan_notes: list[_footnotes.Orphan] = []
         #: Part-trees Compare dropped and the build put BACK — the
         #: customXml data store, by default. See
         #: :func:`docxkit.hygiene.restore_parts`.
@@ -1089,6 +1147,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
           tables: str = _comments.COALESCE,
           whitespace: bool = True, formatting: bool = True,
+          moves: bool = True,
           resolve_math: bool = True, reject_check: bool = True,
           accept_check: bool = True,
           verify_in_word: bool = True, force: bool = False,
@@ -1109,6 +1168,16 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     hundreds of them. The default coalesces those to one balloon per
     distinct comment per table. Pass ``tables=comments.ALL`` only to
     reproduce a deliverable built before that existed.
+
+    `moves` is Word's move detection, and it is a heuristic that can
+    produce a wrong deliverable rather than merely a differently-shaped
+    one: on Aging_Well a scored move truncated the moved paragraph in
+    the ACCEPTED view, taking a clause, a hyperlink and the sentence
+    after it, and the same pair with ``moves=False`` reproduced the
+    paragraph exactly. The accept-side gate below is what catches it —
+    if this build refuses with a lost anchor or an unreproduced
+    paragraph and the round moved a passage, try ``moves=False`` before
+    anything else.
 
     `resolve_math` accepts the revisions inside an equation, because
     Word's save path may refuse to serialize them. Pass ``False`` where
@@ -1182,7 +1251,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 _word.open_doc(word, revised) as rev:
             cmp_ = _word.compare_documents(
                 word, orig, rev, author=author,
-                whitespace=whitespace, formatting=formatting)
+                whitespace=whitespace, formatting=formatting, moves=moves)
             report.body_revisions = int(cmp_.Revisions.Count)
             report.mark("compared")
             _word.draft_view(cmp_)
@@ -1310,6 +1379,15 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # blind to which form carries them.
         report.accepted_losses = accepted_losses(revised_parts,
                                                  accepted_view)
+        # And the carrier neither of those reads: a definition whose
+        # only reference the accept removed. `_simulate` has already
+        # dropped the empty shells, so what is left here has words in
+        # it — a footnote that will render nowhere. Measured against
+        # the CLEAN copy rather than reported outright, because a
+        # manuscript that already carries one is not this build's doing.
+        report.orphan_notes = [
+            o for o in _footnotes.orphans(accepted_view)
+            if o not in set(_footnotes.orphans(revised_parts))]
         # And the same question of the OTHER view. `revised_parts` is
         # the clean document this redline claims to reproduce; what an
         # accept leaves has to be it, word for word.
@@ -1328,9 +1406,12 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"A move is the usual cause: Word's Compare answers a "
                 f"moved block by writing the table twice and marking "
                 f"neither copy, so neither accepting nor rejecting "
-                f"removes the duplicate. Move the block in the CLEAN "
-                f"copy in a separate round, or pass reject_check=False "
-                f"to build the file anyway and inspect it.")
+                f"removes the duplicate. Build with moves=False "
+                f"(`revision build --no-moves`), which takes Word's move "
+                f"detection out of it and shows the block as a deletion "
+                f"and an insertion; move it in the CLEAN copy in a "
+                f"separate round; or pass reject_check=False to build "
+                f"the file anyway and inspect it.")
         if report.unrejectable and reject_check:
             listed = "\n  ".join(str(u) for u in report.unrejectable)
             raise PackageError(

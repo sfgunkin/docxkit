@@ -99,6 +99,25 @@ class Paper:
         """
         return self.build_dir / "redlines"
 
+    def redlines(self) -> list[Path]:
+        """Every redline `promote` kept, oldest first.
+
+        The listing lives on `Paper` rather than beside `promote`
+        because it is not only promote's question. `verdict` asks it to
+        find out whether a staged batch ever REACHED the manuscript —
+        it sits below `_promote` in the subpackage order and cannot
+        import it, and a second glob written there would be a second
+        answer to where the redlines are. :func:`docxkit.revision.
+        redlines` is this, under the name callers already use.
+
+        Stamped rather than numbered, so sorting the names as strings
+        sorts them chronologically. See :data:`_RESCUE_STAMP`.
+        """
+        if not self.redline_dir.is_dir():
+            return []
+        return sorted(self.redline_dir.glob(
+            f"{self.working.stem}_redline_*{self.working.suffix}"))
+
     @property
     def rescue_dir(self) -> Path:
         """Where `promote` puts the file it is about to overwrite.

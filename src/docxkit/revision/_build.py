@@ -22,7 +22,7 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
           allow_pending_baseline: bool = False,
           allow_stale_baseline: bool = False, resolve_math: bool = True,
-          force: bool = False,
+          moves: bool = True, force: bool = False,
           progress: Any = None) -> tracked.BuildReport:
     """Clean-build plus Word Compare: a redline from an edited copy.
 
@@ -65,6 +65,17 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     they are two names for one unusual state, and refusing the second
     after being told about the first is a gate arguing with its own
     override.
+
+    `moves=False` takes Word's move detection out of the comparison.
+    A round that RELOCATES a passage is the case for it: move detection
+    is a heuristic, and on Aging_Well (2026-08-31) a batch moving ~200
+    characters and five inline equations out of a section and into an
+    appendix accepted to a paragraph that stopped mid-sentence, losing a
+    clause, a hyperlink and the sentence after it. The same pair with
+    moves off reproduced it exactly. The cost is a longer redline — a
+    deletion and an insertion where Word would have drawn one move — and
+    that is the trade to make, because a compression round is mostly
+    moves and there was no way to build one through the CLI at all.
 
     `force` overrides the fourth refusal — the one
     :func:`docxkit.guard.check` raises when ``build/batch.docx`` has
@@ -175,7 +186,8 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # is why the default there is to refuse.
     report = tracked.build(paper.prev, revised, out, None,
                            author=paper.author, verify_in_word=True,
-                           resolve_math=resolve_math, reject_check=False,
+                           resolve_math=resolve_math, moves=moves,
+                           reject_check=False,
                            force=force, progress=_say,
                            carry=tracked.CARRIED_PARTS + paper.carry)
 

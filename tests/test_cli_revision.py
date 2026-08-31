@@ -556,6 +556,46 @@ def test_the_math_is_resolved_when_nobody_says_otherwise(monkeypatch,
     assert seen["resolve_math"] is True
 
 
+def test_no_moves_REACHES_the_build(monkeypatch, project):
+    """The other flag whose absence cost a whole round. A compression
+    round is mostly moves, Word's move detection truncated one of them
+    in the accepted view, and the accept gate refused the batch — with
+    no way through the CLI to compare without it."""
+    from docxkit import revision
+    seen: dict[str, object] = {}
+    inner = _fake_build()
+
+    def build(*a, **kw):
+        seen.update(kw)
+        return inner(*a, **kw)
+
+    monkeypatch.setattr(revision.tracked, "build", build)
+    code, _ = run_cli(monkeypatch, "revision", "build",
+                      str(project.working), "--no-moves",
+                      "--paper", str(project.root))
+    assert code == 0
+    assert seen["moves"] is False
+
+
+def test_the_moves_are_compared_when_nobody_says_otherwise(monkeypatch,
+                                                           project):
+    """Off by default would make every relocation a deletion plus an
+    insertion, for every paper, to spare the one that measured a bad
+    move. It is the answer to a refusal, not the starting setting."""
+    from docxkit import revision
+    seen: dict[str, object] = {}
+    inner = _fake_build()
+
+    def build(*a, **kw):
+        seen.update(kw)
+        return inner(*a, **kw)
+
+    monkeypatch.setattr(revision.tracked, "build", build)
+    run_cli(monkeypatch, "revision", "build", str(project.working),
+            "--paper", str(project.root))
+    assert seen["moves"] is True
+
+
 def test_build_refuses_resolved_math_with_exit_2(monkeypatch, project):
     """Word cannot serialize tracked math: those edits would ship with
     nothing to accept or reject."""
@@ -828,6 +868,53 @@ def test_status_and_ingest_SAY_when_they_read_a_snapshot(
                 str(project.root))
         out = capsys.readouterr().out
         assert "read from a SNAPSHOT" in out, command
+
+
+def test_status_under_a_LOCK_names_the_check_it_could_not_run(
+        monkeypatch, project, capsys):
+    """Measured on Aging_Well, 2026-08-30, on one pair of files minutes
+    apart. Locked, `status` printed
+
+        working   0 pending -> TRUTH
+        prev      0 pending -> TRUTH
+
+    and stopped. Closed, the same two files printed the same counts and
+    then `** baseline STALE: word/ (8 parts) differ(s) **`, exit 4. The
+    counts come from the snapshot and are right; the DRIFT check reads
+    the saved bytes and never ran, and its absence was not stated — so
+    the locked output has the exact shape of a healthy, current
+    baseline. After an author has just accepted a batch, that is the
+    wrong impression to leave."""
+    from docxkit import package
+
+    # a baseline that really has drifted: the live file says something
+    # else, and a closed run would exit 4 on it
+    write(project.prev, make_parts(para(run("the previous truth"))))
+    write(project.working, make_parts(para(run("what the author has now"))))
+    monkeypatch.setattr(package, "is_locked",
+                        lambda p: Path(p) == project.working)
+
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert "drift" in out and "NOT CHECKED" in out
+    assert "Close the file" in out
+    assert code == 1, "not 0: a run that could not ask is not a clean one"
+
+
+def test_status_with_the_file_CLOSED_still_reports_the_stale_baseline(
+        monkeypatch, project, capsys):
+    """The other half of the pair above, so the lock branch cannot buy
+    its silence by disabling the check for everyone."""
+    write(project.prev, make_parts(para(run("the previous truth"))))
+    write(project.working, make_parts(para(run("what the author has now"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+
+    assert code == 4
+    assert "baseline STALE" in capsys.readouterr().out
 
 
 def test_validate_aborts_on_a_batch_built_on_ANOTHER_baseline(

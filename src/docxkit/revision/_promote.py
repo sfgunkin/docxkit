@@ -95,11 +95,11 @@ def redlines(paper: Paper) -> list[Path]:
     ``[batch] rescue_keep``. A redline is the RECORD, it is what a batch
     actually proposed, and nothing prunes it: see :attr:`Paper.redline_dir`
     for what it cost to learn that.
+
+    The listing itself is :meth:`Paper.redlines`, because `verdict` asks
+    the same question from below this module in the layering.
     """
-    if not paper.redline_dir.is_dir():
-        return []
-    return sorted(paper.redline_dir.glob(
-        f"{paper.working.stem}_redline_*{paper.working.suffix}"))
+    return paper.redlines()
 
 
 def prune_rescues(paper: Paper, keep: int | None = None) -> list[Path]:

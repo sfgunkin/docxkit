@@ -433,27 +433,36 @@ class RecordingWord:
 
 
 def test_the_comparison_flags_that_change_the_deliverable_are_threaded():
-    """`whitespace` and `formatting` are exposed because two routes built
-    with different settings produce different redlines from the same
-    pair — the Life Expectancy recipe compares with whitespace OFF so
-    respacing at an edit boundary is not shown to an editor."""
+    """`whitespace`, `formatting` and `moves` are exposed because two
+    routes built with different settings produce different redlines from
+    the same pair — the Life Expectancy recipe compares with whitespace
+    OFF so respacing at an edit boundary is not shown to an editor."""
     word = RecordingWord()
     W.compare_documents(word, "a.docx", "b.docx",
                         author="Revision R2",
-                        whitespace=False, formatting=False)
+                        whitespace=False, formatting=False, moves=False)
     assert word.compare_kw["CompareWhitespace"] is False
     assert word.compare_kw["CompareFormatting"] is False
+    assert word.compare_kw["CompareMoves"] is False
     assert word.compare_kw["RevisedAuthor"] == "Revision R2"
     assert word.compare_args == ("a.docx", "b.docx")
 
 
 def test_the_comparison_flags_that_must_not_vary_do_not():
-    """Moves, tables, footnotes, headers and comments are always
-    compared: a redline that silently omits one of them is a redline the
-    author cannot rule on."""
+    """Tables, footnotes, headers and comments are always compared: a
+    redline that silently omits one of them is a redline the author
+    cannot rule on.
+
+    `CompareMoves` was in this list and came out on 2026-08-31. It is
+    not the same kind of flag: the others decide what Word LOOKS at,
+    and move detection decides how it EXPLAINS what it found — a
+    heuristic, and one measured getting it wrong, truncating the
+    paragraph it scored as moved. Pinning it here read as "a move is
+    always shown" and meant "a round that moves a passage cannot be
+    built"."""
     word = RecordingWord()
     W.compare_documents(word, "a.docx", "b.docx")
-    for flag in ("CompareMoves", "CompareTables", "CompareFootnotes",
+    for flag in ("CompareTables", "CompareFootnotes",
                  "CompareHeaders", "CompareComments", "CompareTextboxes",
                  "CompareFields", "CompareCaseChanges"):
         assert word.compare_kw[flag] is True, flag
@@ -478,6 +487,7 @@ def test_the_comparison_DEFAULTS_are_the_thorough_ones():
 
     assert word.compare_kw["CompareWhitespace"] is True
     assert word.compare_kw["CompareFormatting"] is True
+    assert word.compare_kw["CompareMoves"] is True
     assert word.compare_kw["RevisedAuthor"] == "Revision"
 
 

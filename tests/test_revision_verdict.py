@@ -54,7 +54,25 @@ def cycle(tmp_path):
     # the stamp is what ties a batch to the baseline it was built on
     from docxkit import guard
     guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    _promote(paper)
     return paper
+
+
+def _promote(paper):
+    """Record the promote the way `promote` does: a copy of the batch in
+    `build/redlines/`.
+
+    A batch is only the round's proposal once it has been PUT ON the
+    paper, and that copy is the only record of it — see
+    `_verdict._proposal`. This fixture staged one and never promoted it,
+    which is the state the whole entry is about: the verdict machinery
+    read the unpromoted batch's absence from the manuscript as the
+    author having rejected it."""
+    import shutil
+    paper.redline_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(paper.batch,
+                 paper.redline_dir / f"{paper.working.stem}_redline_"
+                 f"20260831-120000-000000{paper.working.suffix}")
 
 
 def _adjudicated(paper, body):
@@ -110,6 +128,7 @@ def test_a_SPLIT_verdict_is_counted_both_ways(tmp_path):
         + para(dele("second old"), ins("second new"))))
     from docxkit import guard
     guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    _promote(paper)
     _adjudicated(paper, para(run("first new")) + para(run("second old")))
 
     result = verdict(paper)
@@ -135,6 +154,79 @@ def test_a_STALE_batch_is_not_counted_as_this_rounds_proposal(cycle):
 
     assert result.batch is None
     assert result.outcome == "adjudicated (no batch to compare against)"
+
+
+def test_a_batch_that_was_never_PROMOTED_is_not_this_rounds_proposal(cycle):
+    """The measured case, and the one the hash cannot catch.
+
+    Aging_Well, 2026-08-28. `build/batch.docx` held a build made on the
+    current baseline and deliberately NOT promoted — held back because
+    it named a symbol the paper already used. The author's own Word
+    round was ingested, two untracked repairs ran, and `revision
+    baseline` printed
+
+        | 2026-08-28 | batch | 1 ¶ changed, from 304 revisions (197 ins,
+          107 del) | — | rejected in full, +2 authored → truth |
+
+    Nothing had been rejected and there had been no batch to reject.
+    The revisions are absent from the manuscript for the obvious reason,
+    and absence reads as rejection — a batch REJECTED in full leaves
+    exactly the same file. Content cannot tell them apart, so the record
+    has to: `promote` copies the batch into `build/redlines/` and that
+    copy is the only evidence it was ever put on.
+
+    It is worth refusing rather than guessing because the row is
+    pre-formatted for `revision/log.md` — the paper's permanent record,
+    and the first thing the next session reads. It was hand-corrected
+    three times."""
+    for redline in cycle.redlines():              # un-promote it
+        redline.unlink()
+    _adjudicated(cycle, para(run("the old sentence"))
+                 + para(run("an untouched paragraph")))
+
+    result = verdict(cycle)
+
+    assert result.batch is None
+    assert result.outcome == "adjudicated (no batch to compare against)"
+    assert "rejected" not in result.outcome
+
+
+def test_another_ROUNDS_redline_does_not_certify_this_batch(cycle):
+    """The folder is never pruned, so by round five it holds five
+    redlines and none of them need be this one. Identity is the batch's
+    own bytes: a redline of a different length is skipped on the size,
+    and one that happens to match on length is still refused on the
+    hash."""
+    (promoted,) = cycle.redlines()
+    stem, suffix = cycle.working.stem, cycle.working.suffix
+    blob = promoted.read_bytes()
+    def kept(stamp: str):
+        return cycle.redline_dir / f"{stem}_redline_{stamp}{suffix}"
+
+    kept("20260101-000000-000000").write_bytes(blob[:-64])   # another size
+    kept("20260102-000000-000000").write_bytes(            # the same size
+        blob[:-1] + bytes([blob[-1] ^ 0xFF]))
+    promoted.unlink()
+    _adjudicated(cycle, para(run("the old sentence"))
+                 + para(run("an untouched paragraph")))
+
+    result = verdict(cycle)
+
+    assert result.batch is None
+    assert result.outcome == "adjudicated (no batch to compare against)"
+
+
+def test_a_batch_promoted_under_ANOTHER_name_still_counts(cycle):
+    """The redline is stamped with the time it was promoted, so the
+    check is on its CONTENT — a name comparison would answer no for
+    every real round."""
+    (only,) = cycle.redlines()
+    only.rename(only.with_name(only.name.replace("120000", "235959")))
+
+    _adjudicated(cycle, para(run("the new sentence"))
+                 + para(run("an untouched paragraph")))
+
+    assert verdict(cycle).outcome == "accepted in full"
 
 
 def test_an_UNSTAMPED_batch_answers_cannot_tell(cycle):
@@ -172,6 +264,7 @@ def test_text_that_ALREADY_EXISTS_elsewhere_does_not_fake_a_verdict(
         para(dele("old"), ins(dup)) + para(run(dup))))
     from docxkit import guard
     guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    _promote(paper)
     # the author rejected: the manuscript still reads "old"
     write(paper.working, make_parts(para(run("old")) + para(run(dup))))
 

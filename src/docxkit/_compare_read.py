@@ -26,10 +26,13 @@ from ._xml import (
     INSTR_RE,
     MT_RE,
     OMML_STRUCT_RE,
+    PARA_RE,
     SEPARATE_RE,
     T_PARTS_RE,
     WT_RE,
     field_spans,
+    live_properties,
+    own_properties,
     printed_text,
 )
 from .comments import read_all as _read_comments
@@ -37,7 +40,22 @@ from .equations import tokens
 from .styles import Cascade
 
 # ------------------------------------------------------------- extraction
-P_RE = re.compile(r"<w:p[ >].*?</w:p>", re.DOTALL)
+#: The paragraph walk, and it is `_xml.PARA_RE` — not a spelling of its
+#: own. It was `<w:p[ >].*?</w:p>`, which `_xml` records as having "the
+#: guard by accident of spelling ... the only walk that was right". That
+#: was measured on the BARE `<w:p/>`, and it is wrong for the form Word
+#: actually writes: `<w:p w14:paraId="…" …/>` begins `<w:p ` and passes
+#: the character class, so the walk swallowed the empty paragraph AND
+#: the real one after it as a single match.
+#:
+#: Live instance: LI5.docx's "References" heading, 2026-08-31. Its
+#: `w:pPr` is byte-identical to LI6's and the merged element's first
+#: child is another `w:p`, so the paragraph read as having no properties
+#: of its own — a PARAGRAPH-layer difference between two identical
+#: pages. Before that layer existed the same merge silently mis-assigned
+#: the table-cell address and the run walk, which is why it survived: an
+#: empty paragraph contributes no text, so every text assertion passed.
+P_RE = PARA_RE
 OMATH_RE = re.compile(r"<m:oMath>.*?</m:oMath>", re.DOTALL)
 # `(?<!/)>`: a self-closing `<w:r/>` is an EMPTY run, and pairing it
 # with the next close merged it with the real run after it, so this
@@ -182,6 +200,110 @@ def _valued(cascade: Cascade, rpr: str | None,
         if value in (None, "auto"):
             continue
         out.add(f"{label} {value}")
+    return frozenset(out)
+
+
+#: The paragraph properties compared, as ``(tag, label, attributes)``.
+#: An attribute list of ``("val",)`` reads a stated value, an empty one
+#: means the element's PRESENCE is the whole property, and the rest name
+#: the numbers that element carries.
+#:
+#: Blind to all of these until 2026-08-31, which is the same hole run
+#: size and colour were in until 2026-08-10 and the same fix: nothing
+#: here read ``w:pPr`` at all, so indentation, spacing, alignment and
+#: keep-with-next passed every layer in silence. Measured on
+#: Life_Expectancy's round-1 letter — a classifier bug gave 7 reference
+#: entries body spacing instead of a hanging indent, and
+#: ``--expect-clean`` printed OK over it.
+#:
+#: `start`/`end` are the strict-OOXML spellings of `left`/`right` and
+#: normalise onto them: a document saved in one dialect and rebuilt in
+#: the other renders identically, and reporting `indent start 360` ->
+#: `indent left 360` would be this layer crying wolf on the day it
+#: arrived.
+_PARA_PROPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("jc", "align", ("val",)),
+    ("ind", "indent", ("left", "start", "right", "end", "firstLine",
+                       "hanging")),
+    ("spacing", "spacing", ("before", "after", "line", "lineRule")),
+    ("keepNext", "keepNext", ()),
+    ("keepLines", "keepLines", ()),
+    ("pageBreakBefore", "pageBreakBefore", ()),
+    ("contextualSpacing", "contextualSpacing", ()),
+)
+
+#: Deliberately NOT here: `w:numPr`. A list's `w:numId` is an index into
+#: `numbering.xml`, and Word mints fresh ones whenever it rebuilds a
+#: document — so the same list, unchanged on the page, compares as
+#: `numbering 3` -> `numbering 7` on any pair that went through Compare.
+#: The indent a numbered paragraph gets from its list is invisible here
+#: for the same reason it is invisible to Word's own style pane: it
+#: lives in another part. Both are the "measure a check before writing
+#: it" rule (CONTRIBUTING) — a layer that cries wolf on every rebuild
+#: would be turned off within a round.
+#:
+#: Where an attribute is REPORTED, when the file may spell it two ways.
+_ATTR_ALIAS = {"start": "left", "end": "right"}
+
+#: What OOXML writes for "off" in a toggle's `w:val`; everything else,
+#: the absent attribute included, is on.
+_OFF = frozenset({"0", "false", "off", "none"})
+
+_ATTR_RE: dict[str, re.Pattern[str]] = {}
+
+
+def _attr(element: str, name: str) -> str | None:
+    pattern = _ATTR_RE.get(name)
+    if pattern is None:
+        pattern = _ATTR_RE[name] = re.compile(rf'\bw:{name}="([^"]*)"')
+    m = pattern.search(element)
+    return m.group(1) if m else None
+
+
+def _para_props(p_xml: str, cascade: Cascade) -> frozenset[str]:
+    """The paragraph properties in force here, STYLES APPLIED.
+
+    A set of short claims — ``indent hanging 360``, ``spacing after
+    60``, ``keepNext`` — so two paragraphs diff into the properties that
+    moved rather than into two blobs of XML a reader has to align by
+    eye.
+
+    Returns nothing at all without a styles part. That is the same
+    answer :func:`_valued` gives and for the same reason: a direct
+    property equal to an inherited one is deleted by Word on save, so
+    with no cascade to resolve through, half of these would be reported
+    as differences between documents that render identically. Silence
+    is the honest answer; a wrong one teaches the reader to skim.
+    """
+    if not cascade.known:
+        return frozenset()
+    own = own_properties(p_xml, "pPr")
+    ppr = live_properties(own[2]) if own else None
+    pstyle = Cascade.paragraph_style(p_xml)
+    out: set[str] = set()
+    for tag, label, attrs in _PARA_PROPS:
+        if not attrs:
+            # Presence is the property — but `<w:keepNext w:val="0"/>`
+            # is Word turning an inherited one OFF, and reading it as
+            # "on" reports the paragraph that switched it off as the one
+            # that switched it on.
+            element = cascade.para_element(tag, ppr=ppr, pstyle=pstyle)
+            if element is not None and _attr(element, "val") not in _OFF:
+                out.add(label)
+            continue
+        for attr in attrs:
+            # Per ATTRIBUTE, because that is how Word merges these: a
+            # paragraph stating `<w:spacing w:before="0"/>` keeps its
+            # style's `after` and `line`. See `Cascade.para_attr`.
+            value = cascade.para_attr(tag, attr, ppr=ppr, pstyle=pstyle)
+            if value is None or value in ("0", "auto"):
+                # A property stated as zero and one not stated at all
+                # are the same page. Reporting the difference would fire
+                # on every pair where Word wrote `w:before="0"` on one
+                # side of an edit and dropped it on the other.
+                continue
+            out.add(f"{label} {value}" if attr == "val"
+                    else f"{label} {_ATTR_ALIAS.get(attr, attr)} {value}")
     return frozenset(out)
 
 
@@ -348,6 +470,7 @@ class Para:
         "omml",
         "omml_fmt",
         "pid",
+        "ppr",
         "text",
         "wtext",
         "wtext_f",
@@ -363,6 +486,7 @@ class Para:
     omml: list[tuple[str, str]]
     omml_fmt: list[list[str]]
     fields: Fields
+    ppr: frozenset[str]     # paragraph properties, styles applied
     pid: str | None
     at: str                 # "table 3 r2c1", or "" outside a table
 
@@ -379,6 +503,8 @@ class Para:
         self.mtext = html.unescape("".join(MT_RE.findall(xml)))
         self.text = (self.wtext + self.mtext).strip()
         self.wtext_f, self.fmt = _char_fmt(xml, cascade)
+        self.ppr = _para_props(
+            xml, cascade if cascade is not None else Cascade())
         # The equation's identity and its typography are kept apart: a
         # report entry carries the (skeleton, tokens) pair it always
         # did, so the JSON shape papers read is unchanged.
