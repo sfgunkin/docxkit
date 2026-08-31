@@ -73,41 +73,6 @@ gone. Those three would each have caught this alone.
 Left open as a note because the rule is not implemented anywhere — it is a
 thing to ask when writing the next gate, not a check that exists.
 
-
-### S2 — `compare` has NO view of paragraph properties: an indent or a spacing change is invisible at every layer, and `--expect-clean` prints OK
-<!-- status: open -->
-
-`_flags` reads run properties and `_VALUED` resolves size and colour, both
-per RUN. Nothing reads `w:pPr`. So a whole class of edit — indentation,
-spacing, alignment, keep-with-next — passes every layer silently.
-
-Measured 2026-08-29 on Life_Expectancy's round-1 response letter. A
-classifier bug in the paper's typesetting script gave **7 reference entries
-body spacing instead of a hanging indent**:
-
-    A (shipped)   spacing=(0, 60, 240)   ind=(left 360, hanging 360)
-    B (rebuilt)   spacing=(0, 120, 240)  ind=None
-
-and on that pair:
-
-    docxkit compare A B --expect-clean
-    REAL change locations (excl. glyph): 0
-    EXPECT-CLEAN OK: build matches the user's content
-
-Seven paragraphs of a reference list lost their hanging indent and the gate
-said the documents match. Not S1 only because compare does not CLAIM to
-compare paragraph properties — but `--expect-clean` is used as "nothing
-changed", and for any formatting pass it is the only gate there is, which is
-how the same class of blindness in run size and colour got fixed on
-2026-08-10 (see the `_VALUED` note in `_compare_read`).
-
-Fix shape: a PARAGRAPH layer beside FORMAT, resolved through the style
-cascade the way size and colour are — Word deletes a pPr value equal to the
-inherited one, so comparing what is STATED reports differences on documents
-that render identically. Report it under its own heading so a deliberate
-typesetting pass can be read and dismissed. Worth pairing with the render
-gate the note below asks for: an indent is a thing you can see.
-
 ### Not three defects — one missing gate: nothing renders by default
 <!-- status: note -->
 
@@ -220,7 +185,6 @@ the object, "is each entry in the section that says what it is."
 
 ---
 
-
 **One open, filed 2026-08-23** (above). Before it the section was empty: the three that were open — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry
 raised by HCW closed the same day it was filed; **NOTHING WAS OPEN on
 2026-08-21** either, the first time since this file was started that the
@@ -326,7 +290,6 @@ cannot verify. **A moved block containing a table, or a bookmarked paragraph,
 still cannot go through Compare and come back cleanly** — what changed is that
 nothing ships silently now.
 
-
 ### ~~S2 `link_all` makes no back-link for a newly-cited entry~~ — RETRACTED 19.08
 <!-- status: withdrawn -->
 
@@ -349,7 +312,6 @@ Kept rather than deleted because the shape recurs: a report of "nothing to do"
 is indistinguishable from a report of "nothing was done", and the way to tell
 them apart is to look for the artefact in every part of the package, not in the
 one the work happened to touch.
-
 
 ### Not a defect — recorded so it is not chased twice
 <!-- status: not-a-defect -->
@@ -439,7 +401,6 @@ and target views** of the same redline, which is a check no gate was making.
 The fourth was found the same way and was wrong anyway, because the artefact it
 looked for was in a part of the package it never opened.
 
-
 ### Mutation analysis — the equivalent mutants, by module
 <!-- status: note -->
 
@@ -501,7 +462,6 @@ reach it:
   earlier branch, so only "DOUBLED LINK" arrives.
 * `check_citations(docx_path, *, ...)` → the keyword-only marker
   mutated as a binary operator. Equivalent by construction.
-
 
 **`_compare_diff.py` — 743 mutants, 653 real, 617 killed (94.5%).** Of
 the 36 that remain, 34 cannot change a report and 2 are cosmetic. The
@@ -568,7 +528,6 @@ The 34 equivalents fall into five classes, none worth a sixth look:
   a future `wtext_f` that normalizes where `fmt` does not would make
   them live again.
 
-
 **`guard.py` — 178 mutants, 88 real, 84 killed (95.5%).** The four
 survivors are `indent=1` in the two `json.dumps` calls, mutated to 0 and
 to 2. The stamp is machine-read and nothing branches on its whitespace:
@@ -600,7 +559,6 @@ it, and this entry does not invent one. What is certain: the figure
 quoted in the table was three days old, `base_of` was untested for all
 of them, and the number a reader would have acted on was wrong by an
 order of magnitude in the direction that wastes an afternoon.
-
 
 **`styles.py` — 604 mutants, 259 real, 252 killed (97.3%).** The seven
 survivors are the `_own_rpr` set, argued equivalent one by one in a
@@ -635,7 +593,6 @@ measures 3.9% before any work at all. Both were the top of the table.
 Pick a target by replaying or re-sweeping, never by the recorded number
 — which is what `stale_figures` has been saying about QUOTING a figure,
 now also true of choosing one.
-
 
 **`batch.py` — 222 mutants, 166 real, 148 killed (89.2%).** Its FIRST
 measurement: the module had no entry in the harness map, so no round had
@@ -680,7 +637,6 @@ gives — wrong advice rather than wrong behaviour, costing a reader a
 cycle and nothing else. Left, and named here so the next round does not
 re-derive them.
 
-
 **`placement.py` — recorded 8.6% (21/245), replayed 6.5% (16/245).** No
 tests written: five of the twenty-one were already dead against the
 harness as it stands. Listed here because the module was INVISIBLE until
@@ -691,7 +647,6 @@ mutant: `==` -> `>=`/`<=` over closed domains, `==` -> `is not` on
 interned values, one `True` -> `False` and one number. Not mined
 further, and the figure quoted here is the replayed one — the session
 file still records the run it actually made.
-
 
 **`pages.py` — 480 mutants, 333 real, 314 killed (94.3%), and the 19
 that remain are equivalent to a mutant.** Recorded at 42.8%, the top of
@@ -740,68 +695,6 @@ text metrics cannot produce: `(x0 + x1) / 2` -> `// 2` moves a midpoint
 by less than a point, `<` -> `<=` needs one EXACTLY on a threshold, and
 `width / 3` -> `width // 3` — the sharpest — needs a number whose centre
 falls in a 0.4-point window.
-
----
-
-
-### S2 — `revision baseline` computes its log verdict against whatever `build/batch.docx` happens to be, including a batch that was never promoted, and writes the wrong sentence into the paper's permanent log
-
-<!-- status: open -->
-
-`RevisionOutcome.outcome` (`src/docxkit/revision.py`) turns kept/reverted/
-offered into "the words a log row wants", and `revision baseline` prints that
-row ready to paste. The counts come from comparing the live file against
-`self.batch` — and nothing establishes that `self.batch` is the batch the
-manuscript actually grew out of.
-
-**Measured on `Aging_Well`, twice on 28–29 August.**
-
-*Case 1, the clear one.* `build/batch.docx` held the Major 2 build that had
-been **deliberately NOT promoted** — held back because it named a symbol the
-paper already used. The author's own Word round was then ingested, two
-untracked repairs ran (r22 for the flattened glyphs, r60 for a symbol typed as
-text), and `revision baseline` logged:
-
-    | 2026-08-28 | batch | 1 ¶ changed, from 304 revisions (197 ins, 107 del) | — | rejected in full, +2 authored → truth |
-
-Nothing had been rejected, and there had been no batch to reject: the round was
-an author handback plus repairs. The verdict is an artifact of measuring
-against a batch that never reached the manuscript. Its revisions are absent
-from the file for the obvious reason, and absence reads as rejection.
-
-*Case 2, same shape, opposite error.* The next round WAS adjudicated, and the
-author rejected a whole block of it (a display in the wrong section). The row
-read `accepted in full, +1 authored`. I did not isolate the mechanism there, so
-this one is reported as an observation rather than a diagnosis — but the two
-together are the reason this is worth fixing rather than remembering.
-
-**Why S2 and not S4.** The row is not a screen message. It is pre-formatted for
-`revision/log.md`, which is the paper's permanent record and the first thing
-the next session reads — this project's own convention is "read `log.md`
-first". A confident, wrong outcome sentence there is a wrong answer no gate
-sees, and it has to be hand-corrected by whoever notices. On this paper it has
-been hand-corrected three times.
-
-**Fix shape, in order of preference.**
-
-1. **Refuse to render a verdict when the batch cannot be shown to be the
-   file's parent.** `revision build` already writes `batch.docx.buildinfo.json`
-   and `promote` already checks a hash; `baseline` can ask the same question.
-   If the batch was never promoted, or its baseline hash does not match
-   `prev.docx`, emit `adjudicated (no batch to compare against)` — the string
-   the code already has for exactly this case — instead of inferring.
-2. Failing that, name the uncertainty in the row rather than resolving it:
-   `verdict not established (batch.docx was not promoted from this baseline)`.
-
-A test that fails without the fix: baseline a file whose `build/batch.docx`
-carries revisions that were never promoted, and assert the outcome is not
-`rejected in full`.
-
-**Related, and the reason this was noticed at all:** a protocol on this paper
-now instructs its agent to rename an unpromoted batch to
-`batch_x-collision_DISCARDED.docx` "so it cannot be promoted by accident". It
-also cannot poison the verdict once renamed — which is a per-paper workaround
-for a toolkit behaviour, and the kind this file exists to retire.
 
 ---
 
@@ -879,58 +772,6 @@ the empty link husk and the symbol typed as text in the same two days.
 Recorded as a note rather than a defect: nothing here is wrong, and the two
 gates are a proposal the author should weigh against everything else on this
 list.
-
----
-
-### S4 — `revision status` silently drops the drift check on a locked file, so a STALE baseline reads as a current one
-
-<!-- status: open -->
-
-Measured on `Aging_Well`, 30 August, on one pair of files minutes apart.
-
-**Locked** (the author had `working.docx` open in Word):
-
-    docxkit: working.docx is locked (open in Word). Close it and retry.
-      read from a SNAPSHOT: … describes the moment the copy was taken …
-      working   0 pending -> TRUTH
-      prev      0 pending -> TRUTH
-    exit 1
-
-**The same two files, after the file was closed, nothing else changed:**
-
-    working   0 pending -> TRUTH
-    prev      0 pending -> TRUTH
-
-      ** baseline STALE: word/ (8 parts) differ(s) **
-    exit 4
-
-The pending counts are answered from the snapshot and are right. The DRIFT
-check — `revision.drift`, the thing exit 4 exists for — is skipped, and its
-absence is not stated. What the locked output says is "both sides settled",
-which is exactly the shape of a healthy, current baseline.
-
-**Why S4 and not S2.** The damage is bounded: `revision build` re-checks the
-baseline and refuses with *prev.docx is no longer what working.docx grew out
-of*, which is where this actually surfaced during a round. So nothing wrong
-gets built. The cost is that `status` is the command people run to ask "where
-am I", and under a lock it answers a narrower question than it appears to —
-after an author has just accepted a batch, "TRUTH / TRUTH" with no warning is
-the wrong impression to leave.
-
-**Fix shape.** Say what was not checked. The snapshot banner already exists and
-already explains that the read is of the last save; one more line in the same
-register would do it:
-
-    drift    not checked — the file is open; close it and re-run for the
-             baseline comparison
-
-The counts stay useful, and the reader is not left to infer a clean baseline
-from a missing warning. Same family as the `citations`-on-a-lock entry fixed in
-`95024d9`: a command answering from a snapshot has to say which of its answers
-the snapshot could not supply.
-
-A test that fails without it: lock a file whose `prev.docx` differs, run
-`status`, and assert the output names the unchecked comparison.
 
 ---
 

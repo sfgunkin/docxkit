@@ -14,6 +14,281 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — the XML accept leaves a DELETED footnote's definition in the part, so `tracked.build` refuses a redline that is actually correct~~ — FIXED 31.08, `39fe472`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31.** `tracked._simulate` prunes the shells, on BOTH views — a note the batch ADDS leaves the same shell on the reject side, where `untracked` is the gate that decides whether the author's veto is real. The reader is `footnotes.orphans`, and it looks in every part for references rather than the body alone: a running head can carry one, and a definition pruned because `document.xml` went quiet about it takes a note the page still shows.
+
+"Empty" means no text AND no carriers. A definition holding a bookmark, a link, a drawing, a table or an equation is not litter — dropping it loses an anchor no text comparison can see go — so `Orphan.empty` counts those too, and `prune_orphans` leaves it.
+
+The other half of the entry is kept: an unreferenced definition WITH words in it is a footnote that lost its marker, and `_refuse_accept_side` now refuses on it separately, saying the note is in the file and on no page. Measured against the clean copy rather than reported outright, because a manuscript that already carries one is not this build's doing.
+
+Eleven tests in `tests/test_note_orphans.py`; the two that matter reproduce the entry's `'' vs ''` exactly against the old code.
+
+The paper's workaround is retired: `Aging_Well/revision/scripts/accept.py` was 40 lines of its own and now calls `footnotes.prune_orphans`, keeping its report of a non-empty orphan.
+
+Measured on `Aging_Well`, 31 August, with a two-revision repro: take the
+truth, delete footnote 4's reference run and its definition, change
+nothing else, build.
+
+    docxkit revision build revision/build/edited.docx --keep-math
+      revisions: 2
+      accepting every revision does NOT reproduce edited.docx -
+        1 paragraph(s) differ
+        footnotes P6: intended ''
+                    accepted ''
+      exit 1
+
+**Word's redline is right.** The reference sits inside a `w:del` and the
+definition holds its text as `w:delText`, which is exactly how Word itself
+represents a deleted footnote, and Word's own accept then removes the
+definition. `revisions.accept` works part by part: it empties the note and
+cannot see that the reference is gone, so the accepted view keeps an empty
+definition and has one footnote more than the document the redline was
+built from. `_refuse_accept_side` reads that as Word having rewritten
+content and refuses.
+
+The refusal is S1 rather than S4 because of what it says: "Word rewriting
+content while it derives the redline is the usual cause", and the printed
+evidence is `'' vs ''` — two empty strings, which look identical. A reader
+following that sentence looks for a Compare defect in the body and finds
+nothing.
+
+On the full compression round it produced four shells, one per footnote
+whose marker the batch deletes or moves (the deleted note, and the markers
+of three notes whose surrounding sentences were rewritten). Everything a
+reader sees is correct on both sides: accepted 14 markers, exactly the
+clean copy's; rejected 12, exactly the baseline's; no paragraph carries two.
+
+**The fix is in `revisions.accept`'s caller, not in `accept` itself** —
+`accept(xml)` takes one part and cannot know about references in another.
+Either `tracked`/`revision` prune footnote and endnote definitions left
+unreferenced after a whole-package accept, or `_refuse_accept_side`
+discounts an unreferenced empty definition before it compares. Prune only
+EMPTY orphans: an unreferenced definition WITH words in it is a lost
+footnote and should be reported.
+
+Workaround in the paper: `Aging_Well/revision/scripts/accept.py` grew
+`prune_orphan_notes`, which does exactly that and prints any non-empty
+orphan rather than removing it.
+
+---
+
+### ~~S2 — `word.compare_documents` hard-codes `CompareMoves=True`, and Word's move detection can silently truncate a paragraph in the accepted view~~ — FIXED 31.08, `39fe472`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31.** `moves` is threaded through `word.compare_documents`, `tracked.build`, `revision.build` and `docxkit revision build --no-moves`. Default ON: off by default would turn every relocation into a deletion plus an insertion for every paper, to spare the one that measured a bad move. It is the answer to a refusal, not the setting to start from — which is why the STRUCTURE refusal and the accept-side one both name it now.
+
+`CompareMoves` came out of `test_the_comparison_flags_that_must_not_vary_do_not`. It is not that kind of flag: the others decide what Word LOOKS at, and move detection decides how it EXPLAINS what it found. Pinning it there read as "a move is always shown" and meant "a round that moves a passage cannot be built".
+
+The entry's other half — that the refusal points at the link rather than at the missing sentence — is fixed with it. `_also_unaccepted` puts the paragraphs into the anchor refusal when there are any, says they are the finding to read first, and names `--no-moves`. An anchor does not go missing on its own; it goes with the words that carried it.
+
+Measured on `Aging_Well`, 31 August. The batch relocates about 200
+characters of prose and five inline `m:oMath` objects out of Section 5.1
+and into Appendix A.2 — a genuine move, and Word scores it as one.
+
+With `CompareMoves=True` the redline's ACCEPTED view reads
+
+    ... measured in units of that floor: z_ij=... . The floor itself is
+    set weakly relatively -
+
+and stops. The rest of the sentence is gone: the `(Appendix A.2;` clause,
+the `Ravallion and Chen 2011` hyperlink, and `One setting is taken as
+given throughout what follows, and s is suppressed.` The build refuses,
+correctly, but it refuses with `link LOST on accept: -> Ravallion2011`,
+which points at the link rather than at the missing sentence.
+
+With `CompareMoves=False` and nothing else changed, the same pair produces
+the paragraph exactly. `compare_documents` already exposes `whitespace`
+and `formatting` "because they change the deliverable, not just its
+speed"; `moves` belongs beside them, and `revision build` should have a
+flag. A round that MOVES a passage — which is most of what a compression
+round is — cannot currently be built through the CLI at all.
+
+---
+
+### ~~S2 — `compare` has NO view of paragraph properties: an indent or a spacing change is invisible at every layer, and `--expect-clean` prints OK~~ — FIXED 31.08, `39fe472`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31.** A PARAGRAPH layer beside FORMAT, in `GATED` — a layer that reported and did not gate would have printed the same `EXPECT-CLEAN OK` over the seven reference entries. Resolved through the style cascade, which needed a resolver the `Cascade` did not have: `_val` reads `w:val`, and an indent states four numbers while `keepNext` states none and means yes. `Cascade.para_element` answers for presence and `Cascade.para_attr` for the numbers.
+
+**Per ATTRIBUTE, not per element**, and that was measured rather than reasoned: Word merges `w:ind` and `w:spacing` attribute by attribute, so a paragraph stating only `w:before` keeps its style's `after` and `line`. Element-level resolution reported a difference between two identical pages on the first pair that tried it.
+
+`numPr` is deliberately out. Word mints fresh `numId`s on a rebuild, so the same list would compare as `numbering 3 -> 7` on any pair that went through Compare — the "measure a check before writing it" rule, applied before the layer shipped rather than after.
+
+**Measured over 40 real version pairs** from the corpus: 328 paragraph entries against 6,888 structure and 4,112 text, and **zero pairs whose only gated difference is this layer**. It never reddens a comparison on its own, and every entry spot-checked was real.
+
+That measurement found a reading defect underneath it, now fixed with it. `_compare_read.P_RE` was `<w:p[ >].*?</w:p>`, which `_xml` recorded as having the self-closing guard "by accident of spelling" and being "the only walk that was right". **It did not and it was not**: `[ >]` excludes the bare `<w:p/>` that the 2026-08-11 measurement looked for, and not `<w:p w14:paraId="…"/>`, which is the form Word writes. The walk swallowed the empty paragraph together with the real one after it, so the real paragraph read as stating no properties of its own — a false difference on LI5 against LI6, whose "References" headings carry byte-identical `w:pPr`. `P_RE` is `_xml.PARA_RE` now and the comment there is corrected. Before the layer existed the same merge silently mis-assigned the table-cell address and the run walk, which is why it survived: an empty paragraph contributes no text, so every text assertion passed.
+
+Sixteen tests in `tests/test_compare_paragraph.py`, over half of them about NOT crying wolf. The report's bucket list is stated once now (`compare.BUCKETS`) — it was stated twice, and the new layer passed every renderer test in `test_compare.py` while raising `KeyError` on the first real report.
+
+`_flags` reads run properties and `_VALUED` resolves size and colour, both
+per RUN. Nothing reads `w:pPr`. So a whole class of edit — indentation,
+spacing, alignment, keep-with-next — passes every layer silently.
+
+Measured 2026-08-29 on Life_Expectancy's round-1 response letter. A
+classifier bug in the paper's typesetting script gave **7 reference entries
+body spacing instead of a hanging indent**:
+
+    A (shipped)   spacing=(0, 60, 240)   ind=(left 360, hanging 360)
+    B (rebuilt)   spacing=(0, 120, 240)  ind=None
+
+and on that pair:
+
+    docxkit compare A B --expect-clean
+    REAL change locations (excl. glyph): 0
+    EXPECT-CLEAN OK: build matches the user's content
+
+Seven paragraphs of a reference list lost their hanging indent and the gate
+said the documents match. Not S1 only because compare does not CLAIM to
+compare paragraph properties — but `--expect-clean` is used as "nothing
+changed", and for any formatting pass it is the only gate there is, which is
+how the same class of blindness in run size and colour got fixed on
+2026-08-10 (see the `_VALUED` note in `_compare_read`).
+
+Fix shape: a PARAGRAPH layer beside FORMAT, resolved through the style
+cascade the way size and colour are — Word deletes a pPr value equal to the
+inherited one, so comparing what is STATED reports differences on documents
+that render identically. Report it under its own heading so a deliberate
+typesetting pass can be read and dismissed. Worth pairing with the render
+gate the note below asks for: an indent is a thing you can see.
+
+---
+
+### ~~S2 — `revision baseline` computes its log verdict against whatever `build/batch.docx` happens to be, including a batch that was never promoted, and writes the wrong sentence into the paper's permanent log~~ — FIXED 31.08, `39fe472`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31**, fix shape 1 of the two the entry asked for. `_verdict._proposal` already established that the batch was built on the current baseline; what it could not ask is whether the batch ever REACHED the manuscript. The two are invisible in the files — a batch rejected in full and a batch never promoted leave the manuscript in exactly the same state — so the record has to answer it.
+
+`promote` copies the batch into `build/redlines/` and verifies the hash before it overwrites the paper, and that copy is the only evidence a batch was put on. `_promoted` looks for a redline with the batch's bytes (size first, hash only for a file that could match); without one, `_proposal` returns None and the outcome is `adjudicated (no batch to compare against)` — the string the code already had for exactly this case.
+
+The listing moved onto `Paper.redlines`, because `_verdict` sits below `_promote` in the subpackage order and a second glob would be a second answer to where the redlines are. `redlines()` is unchanged for its callers.
+
+`Verdict.apparatus_only` gets its caveat retired with it: a linking pass run in place while a valid batch sat unpromoted used to be reported as an adjudication of a batch nobody acted on.
+
+Three tests, one of which is the entry's own: baseline a file whose `build/batch.docx` was never promoted and assert the outcome is not `rejected in full`. Another covers the case the folder makes ordinary — it is never pruned, so by round five it holds five redlines and none of them need be this one.
+
+The per-paper workaround the entry names — renaming an unpromoted batch to `batch_x-collision_DISCARDED.docx` — is not deleted, because it sits in a COMPLETED protocol note (`Aging_Well/revision/notes/protocol_major2_082826.md`, P3, ticked 28 August) and that is a record of a round already run. Rewriting it would falsify the record. Nothing standing instructs the rename any more.
+
+`RevisionOutcome.outcome` (`src/docxkit/revision.py`) turns kept/reverted/
+offered into "the words a log row wants", and `revision baseline` prints that
+row ready to paste. The counts come from comparing the live file against
+`self.batch` — and nothing establishes that `self.batch` is the batch the
+manuscript actually grew out of.
+
+**Measured on `Aging_Well`, twice on 28–29 August.**
+
+*Case 1, the clear one.* `build/batch.docx` held the Major 2 build that had
+been **deliberately NOT promoted** — held back because it named a symbol the
+paper already used. The author's own Word round was then ingested, two
+untracked repairs ran (r22 for the flattened glyphs, r60 for a symbol typed as
+text), and `revision baseline` logged:
+
+    | 2026-08-28 | batch | 1 ¶ changed, from 304 revisions (197 ins, 107 del) | — | rejected in full, +2 authored → truth |
+
+Nothing had been rejected, and there had been no batch to reject: the round was
+an author handback plus repairs. The verdict is an artifact of measuring
+against a batch that never reached the manuscript. Its revisions are absent
+from the file for the obvious reason, and absence reads as rejection.
+
+*Case 2, same shape, opposite error.* The next round WAS adjudicated, and the
+author rejected a whole block of it (a display in the wrong section). The row
+read `accepted in full, +1 authored`. I did not isolate the mechanism there, so
+this one is reported as an observation rather than a diagnosis — but the two
+together are the reason this is worth fixing rather than remembering.
+
+**Why S2 and not S4.** The row is not a screen message. It is pre-formatted for
+`revision/log.md`, which is the paper's permanent record and the first thing
+the next session reads — this project's own convention is "read `log.md`
+first". A confident, wrong outcome sentence there is a wrong answer no gate
+sees, and it has to be hand-corrected by whoever notices. On this paper it has
+been hand-corrected three times.
+
+**Fix shape, in order of preference.**
+
+1. **Refuse to render a verdict when the batch cannot be shown to be the
+   file's parent.** `revision build` already writes `batch.docx.buildinfo.json`
+   and `promote` already checks a hash; `baseline` can ask the same question.
+   If the batch was never promoted, or its baseline hash does not match
+   `prev.docx`, emit `adjudicated (no batch to compare against)` — the string
+   the code already has for exactly this case — instead of inferring.
+2. Failing that, name the uncertainty in the row rather than resolving it:
+   `verdict not established (batch.docx was not promoted from this baseline)`.
+
+A test that fails without the fix: baseline a file whose `build/batch.docx`
+carries revisions that were never promoted, and assert the outcome is not
+`rejected in full`.
+
+**Related, and the reason this was noticed at all:** a protocol on this paper
+now instructs its agent to rename an unpromoted batch to
+`batch_x-collision_DISCARDED.docx` "so it cannot be promoted by accident". It
+also cannot poison the verdict once renamed — which is a per-paper workaround
+for a toolkit behaviour, and the kind this file exists to retire.
+
+---
+
+### ~~S4 — `revision status` silently drops the drift check on a locked file, so a STALE baseline reads as a current one~~ — FIXED 31.08, `39fe472`
+<!-- status: fixed -->
+
+**Fixed 2026-08-31**, in the words the entry proposed. `cmd_revision_status` asks whether the working state came from a snapshot and, when it did, prints what was not checked instead of calling `drift` at all:
+
+    drift     NOT CHECKED - the file is open in Word and this comparison
+              needs its saved bytes. The counts above are the snapshot's and
+              are right; whether prev.docx is still the baseline this paper
+              grew out of is unknown. Close the file and re-run.
+
+Exit 1 — what the lock produced before, since `DocumentLocked` is a plain `DocxKitError` and `main` exits 1 on one — so nothing gating on this command changes its mind. What changed is that the reader is told which question went unanswered instead of inferring a clean baseline from a warning that did not appear. The `--help` line says `exit 1 pending or unchecked`.
+
+Two tests: the locked run names the unchecked comparison, and the same two files with the file closed still exit 4 on the stale baseline, so the lock branch cannot buy its silence by disabling the check for everyone.
+
+Measured on `Aging_Well`, 30 August, on one pair of files minutes apart.
+
+**Locked** (the author had `working.docx` open in Word):
+
+    docxkit: working.docx is locked (open in Word). Close it and retry.
+      read from a SNAPSHOT: … describes the moment the copy was taken …
+      working   0 pending -> TRUTH
+      prev      0 pending -> TRUTH
+    exit 1
+
+**The same two files, after the file was closed, nothing else changed:**
+
+    working   0 pending -> TRUTH
+    prev      0 pending -> TRUTH
+
+      ** baseline STALE: word/ (8 parts) differ(s) **
+    exit 4
+
+The pending counts are answered from the snapshot and are right. The DRIFT
+check — `revision.drift`, the thing exit 4 exists for — is skipped, and its
+absence is not stated. What the locked output says is "both sides settled",
+which is exactly the shape of a healthy, current baseline.
+
+**Why S4 and not S2.** The damage is bounded: `revision build` re-checks the
+baseline and refuses with *prev.docx is no longer what working.docx grew out
+of*, which is where this actually surfaced during a round. So nothing wrong
+gets built. The cost is that `status` is the command people run to ask "where
+am I", and under a lock it answers a narrower question than it appears to —
+after an author has just accepted a batch, "TRUTH / TRUTH" with no warning is
+the wrong impression to leave.
+
+**Fix shape.** Say what was not checked. The snapshot banner already exists and
+already explains that the read is of the last save; one more line in the same
+register would do it:
+
+    drift    not checked — the file is open; close it and re-run for the
+             baseline comparison
+
+The counts stay useful, and the reader is not left to infer a clean baseline
+from a missing warning. Same family as the `citations`-on-a-lock entry fixed in
+`95024d9`: a command answering from a snapshot has to say which of its answers
+the snapshot could not supply.
+
+A test that fails without it: lock a file whose `prev.docx` differs, run
+`status`, and assert the output names the unchecked comparison.
+
+---
+
 ### ~~S1 — `[batch] carry` restored a footer beside the one Compare RE-TYPED, so the section got two `default` footers and the promoted manuscript printed its page number twice~~ — FIXED 30.08, `d83444b`
 <!-- status: fixed -->
 
@@ -353,7 +628,6 @@ real module with a real `__all__` and neither raises. `test_layering` gained
 `SUBPACKAGE_HALVES`: the internal order, declared bottom-first and enforced,
 which cannot live in `__init__.py` because ruff's isort sorts that block.
 
-
 ### ~~S4 — nothing checks that an entry sits in the SECTION that describes it, and the cheap check cannot~~ — FIXED 27.08, `9f851d0`
 <!-- status: fixed -->
 
@@ -465,7 +739,6 @@ reproducible directly — the table as the caller read it against the
 result re-read as `final` gives `2 row(s) LOST, 2 GAINED`, and against
 the result re-read in its own view it passes.
 
-
 Found 2026-08-27 by review, while looking at a batch that touches this
 function for another reason. Filed rather than fixed: it is pre-existing,
 it needs `Table` to remember its view, and folding a second behaviour
@@ -530,7 +803,6 @@ convention, and the restore is byte-for-byte from the original bytes.
 most of why this and the entry below both survived. Nine of them, and the
 two that matter here are the byte-exact restore and a CRLF file still
 being mutated correctly.
-
 
 Found 2026-08-27, in this repo, by nearly committing one.
 
@@ -623,7 +895,6 @@ rather than a step in the three-version matrix: it is 42 suite runs, and
 the answer does not depend on the interpreter.
 
 The run that closed this: **42/42 caught, no drifted anchors, exit 0.**
-
 
 Found 2026-08-27, alongside the entry above, by running the tool with its
 exit code visible for the first time in a while.
@@ -906,7 +1177,6 @@ refuses on multi-`oMath` paragraphs.
 table and reports the gate red with that reason attached
 (`r37_equation_vehicle.py`), rather than contorting the cells.
 
-
 **REGRESSED and re-fixed the same day, `9e68cf7`.** The first cut skipped
 every maths-only paragraph inside a `w:tbl`, and a NUMBERED display
 equation is one: the house vehicle is a full-width table with the maths
@@ -1169,9 +1439,6 @@ nothing asked".
 
 ---
 
-
-
-
 ### ~~S1 — `place(render=…)` cannot find a multi-COLUMN table on the page, so its fit is never measured and `own_page` can never fire~~ — FIXED 26.08, `67459c9`
 <!-- status: fixed -->
 
@@ -1371,9 +1638,6 @@ order`) about exactly that having happened once.
 
 ---
 
----
-
-
 ### S4 — `_drop_comment_anchors` re-reads every text part once per COMMENT
 <!-- status: fixed -->
 
@@ -1398,9 +1662,6 @@ the reason to write it down is that the shape invites being copied, not
 that anyone is waiting on it.
 
 ---
-
----
-
 
 ### S3 — three Relationship parsers, and they have already drifted
 <!-- status: fixed -->
@@ -1438,9 +1699,6 @@ already real: the three were written to do the same job and two of them
 have since learned something the third has not.
 
 ---
-
----
-
 
 ### S2 — `carry` restores from the CLEAN COPY, which is the file that lost the part
 <!-- status: fixed -->
@@ -1521,9 +1779,6 @@ saved both.
 
 ---
 
----
-
-
 ### S2 — `repkit` and `safekit` carry a FORK of `coverage_floor.py`, without the guard this one paid for
 <!-- status: withdrawn -->
 
@@ -1589,9 +1844,6 @@ decision about coupling three toolkits, which is why this is filed
 rather than done.
 
 ---
-
----
-
 
 ### ~~S1 `hygiene.dedupe_comments` drops the comment BODY and leaves its anchors~~ — FIXED 24.08
 <!-- status: fixed -->
@@ -1705,7 +1957,6 @@ refused build and says where it is; the unlink now happens only on the
 success path, where the file has already been renamed to `out`.
 
 *(This fix narrative had been appended to the `--sample` entry below rather than to the entry it describes; moved here 2026-08-27.)*
-
 
 ### ~~S3 — a `--sample` run OVERWRITES a complete one, and the figure regresses with nothing to say so~~ — FIXED 27.08, `b8fcb69`
 <!-- status: fixed -->
@@ -2692,7 +2943,6 @@ built on `export_pdf` as it stands, it will be **blind on every redline** — th
 file the author is actually handed — so this needs fixing first or the new gate
 inherits the false negative.
 
-
 ### ~~S4 a `Table` handle is invalidated by editing ANY table, so the natural "fetch the batch, style each" loop always raises on its second pass~~ — FIXED 27.08, `1115816`
 <!-- status: fixed -->
 
@@ -3207,7 +3457,6 @@ All three printed `REAL change locations: 0` before. Ten tests in
 `A1_t112_figures.py`'s hash check is what `compare --expect-clean` now does
 for every paper.
 
-
 ### ~~Twelve from a code review of the round just committed~~ — FIXED 24.08
 <!-- status: fixed -->
 
@@ -3374,7 +3623,6 @@ That refactor landed as `00dd491`; the two were then committed separately, split
 R15 and R16.
 
 ---
-
 
 ### ~~S2 an untracked apparatus pass changed the manuscript and left no record of what it did~~ — FIXED 23.08
 <!-- status: fixed -->
@@ -3733,7 +3981,6 @@ refuse.
 
 ---
 
-
 ### ~~S3 `crossrefs` still calls an exhibit "linked" when NOTHING links to it~~ — FIXED 23.08
 <!-- status: fixed -->
 
@@ -3823,7 +4070,6 @@ details paid for themselves immediately:
   would go looking for, and it was the first version of this fix that
   wrote it.
 
-
 ### ~~S4 `refstyle` has no fixer, so every paper writes the sort itself~~ — FIXED 23.08
 <!-- status: fixed -->
 
@@ -3861,7 +4107,6 @@ finding(s) left`, `compare` clean of STRUCTURE and TEXT, `citations` 79/79.
 rules by DEFAULT** — a paper that sets its list differently passes
 `page_layout=None`.
 
-
 ### ~~S4 four ergonomics findings from the same review~~ — FIXED 22.08
 <!-- status: fixed -->
 
@@ -3897,7 +4142,6 @@ which this same round made public. `promote` compared a `built_on`
 produced by one against a `base_hash` produced by the other, across a
 gate. One spelling now.
 
-
 ### ~~S2 three wrong answers nothing was watching~~ — FIXED 22.08
 <!-- status: fixed -->
 
@@ -3926,7 +4170,6 @@ said True — two flags on one report disagreeing about the same fact.
 `_state(parts, path, snapshot)` builds the state from parts already
 read, so the report names the author's file and nothing is read twice.
 
-
 ### ~~S3 `docxkit lint` exited 1 on advisory findings, which is the gate the library split apart to avoid~~ — FIXED 22.08
 <!-- status: fixed -->
 
@@ -3944,7 +4187,6 @@ Advisory findings are printed and do not fail. `--strict` is there for
 a caller who has cleared them and wants them kept clear, and the
 default run says so in one line rather than leaving the reader to
 wonder why a printed finding did not fail.
-
 
 ### ~~S3 Word's own anchors reached the loss gates, and one of them REFUSES the build~~ — FIXED 22.08
 <!-- status: fixed -->
@@ -3978,7 +4220,6 @@ The same reserved prefix reads the other way in `_cite_audit._reached`,
 where it is what says two names are one destination — worth knowing
 before someone "simplifies" one of the two.
 
-
 ### ~~S1 two gaps shared one key, so a link at the top cleared a bookmark at the bottom~~ — FIXED 22.08
 <!-- status: fixed -->
 
@@ -3997,7 +4238,6 @@ the arithmetic instead of through the rule.
 
 `len(paras)` is the honest index for "after everything", and the gap
 key is then `-1 - i` in every case, with no special one to fold.
-
 
 ### ~~S1 a four-digit page number was read as a second work~~ — FIXED 22.08
 <!-- status: fixed -->
@@ -4020,7 +4260,6 @@ year closes the list and is a page. A backstop at 2100 catches the
 other direction, where a locator sorts after the year it follows. The
 citation's SPAN still covers the locator, because that is what the
 sentence says and what the linker must wrap.
-
 
 ### ~~S1 a horizontal rule after a caption took its table away~~ — FIXED 22.08
 <!-- status: fixed -->
@@ -4047,7 +4286,6 @@ for all match.
 The HCW behaviour it was built for is unchanged: `[Table 8][cap Figure
 1][image]` still gives Figure 1 no table, and Figure 8's 2x2 grid of
 panel images is still a table.
-
 
 ### ~~S1 `crossrefs` could not see a Word cross-reference, so `unlink` removed the bookmarks and left the fields dangling~~ — FIXED 22.08
 <!-- status: fixed -->
@@ -4081,7 +4319,6 @@ a nested field (`IF 1 = 1 "REF Table1" ""`) and produced the anchor
 `Table1"` — a name no bookmark has, reported as a BROKEN LINK and
 carried into `tracked`'s loss gates as a target that vanishes on the
 next rebuild.
-
 
 ### ~~S2 neither audit reads a Word CROSS-REFERENCE, so a working link reports as "the mention reaches nothing"~~ — FIXED 22.08
 <!-- status: fixed -->
@@ -4242,7 +4479,6 @@ what the paper's gate was reading.
 was twelve numeric assertions failing on a manuscript nobody had
 touched. A paper's suite going red the day after a shared toolkit ships
 is a question about the toolkit first.
-
 
 ### ~~S2 a DUPLICATE bookmark name is invisible to every gate~~ — FIXED 21.08
 <!-- status: fixed -->
@@ -6242,7 +6478,6 @@ usually the NEXT table's hoisted `bookmarkStart` rather than its caption, so
 the rule that zeroes the resuming paragraph's spacing silently did nothing.
 `_next_content` looks past bookmarks. Eleven tests, 3825 passing.
 
-
 ### S4 `revision validate` had no `--render`, so the eye gate stayed per-paper — `render_accepted`
 <!-- status: fixed -->
 
@@ -6358,7 +6593,6 @@ now. A ghost is not a link to wrap, so `wrap_link_in_bookmark` refuses
 with "no link to X", which is the honest answer: what the caller wanted
 to wrap is not there.
 
-
 ### S1 a write into an EMPTY run landed nowhere and reported success
 <!-- status: fixed -->
 
@@ -6381,7 +6615,6 @@ self-closing form before it writes, so the run keeps its properties and
 its attributes — `<w:t xml:space="preserve"/>` is what Word leaves when
 it empties a run that had edge whitespace, and that attribute is the one
 thing on the tag that must survive being filled.
-
 
 ### S2 setting a core property Word left EMPTY wrote it twice
 <!-- status: fixed -->
@@ -6406,7 +6639,6 @@ group 1 is None for the empty one, so an empty property now reads as `""`
 rather than as absent — which is the distinction `core_property`'s
 docstring already drew and could not honour.
 
-
 ### S4 `repair_plan` promised three issues and printed two
 <!-- status: fixed -->
 
@@ -6429,7 +6661,6 @@ surfaced the hole.
 INVARIANT — printed lines == the header count — over four fixtures, so any later
 branch that forgets its `else` fails on the arithmetic whatever its damage class
 turns out to be.
-
 
 ### S1 Word Compare duplicates a table when a block containing it is MOVED
 <!-- status: fixed -->
@@ -6462,7 +6693,6 @@ original, accepted against the revised copy) and refuses, naming what moved:
 Caught at build time now rather than by counting tables by hand afterwards —
 but a moved block containing a table still cannot be delivered, and that part
 is Word's.
-
 
 ### S1 a moved paragraph carrying BOOKMARKS loses them on reject
 <!-- status: fixed -->
@@ -7146,7 +7376,6 @@ this, or the three hazards recorded in `REVIEW_2026-08-15.md` if the
 harness is rebuilt from scratch. The numbers are only comparable against
 the same test set, so quote the coverage beside any future figure.
 
-
 **Partly paid, 2026-08-16** (`36a569f`).
 `tests/test_cite_build_paths.py` runs the never-run column: a work cited
 ONLY in a footnote, a work cited in both (the body mention wins), the
@@ -7175,7 +7404,6 @@ name-minting loop. The three defects this entry's rounds turned up — a
 sentence in the back matter parsing as a reference entry, two entries
 sharing one bookmark, and a dead lead-token branch in `_entry_keys` —
 are fixed and held by tests.
-
 
 ### S2 `_xml.py` had never been mutation-tested, and 27 of its 45 survivors are the FIELD WALK
 <!-- status: fixed -->
@@ -7296,7 +7524,6 @@ terminated run leaving its mutation in the tree, which produced a
 1383/1385 "kill rate" on a red baseline; and the same termination
 leaving null-outcome rows that make the session unresumable.
 
-
 **Partly paid, 2026-08-16** (`36a569f`). `tests/test_edit_boundaries.py`
 states the boundaries as VALUES: where a field-form label ends, in both
 link forms and anchored from a middle run; `_outside`'s three answers;
@@ -7321,7 +7548,6 @@ of `_outside` are the stronger evidence.
 `replace_in_para` 10, `_locate` 10, `_restyle` 5, `_split_run` 5. The
 `_locate` cluster is the next worth doing — it computes the run spans
 every other function here consumes.
-
 
 **Second pass, 2026-08-16** (`e5c23cb`). `_locate` pinned:
 `tests/test_locate_spans.py` states the spans as literal values — that
@@ -7351,7 +7577,6 @@ re-deriving it by hand is what made these three not quite comparable.
 **Still open:** `replace_in_para` 10, `label_end` 8, `insert_in_para` 6,
 `_locate` 6, `_between_runs` 4. `replace_in_para` is now the largest,
 and it is the function every paper calls most.
-
 
 **Third pass, 2026-08-16.** `replace_in_para` pinned:
 `tests/test_replace_spans.py`. Nine survivors show in the sample: four
@@ -7429,7 +7654,6 @@ report used to attribute a survivor to the last `def` ABOVE its line,
 which hands a function's own body to whichever nested helper was
 defined last. It now attributes by AST span.)
 
-
 **Fourth pass, 2026-08-16.** `insert_in_para` and `_between_runs`
 pinned by `tests/test_insert_spans.py`, `_locate`'s residue by three
 more tests in `tests/test_locate_spans.py`. **Ten of ten targeted
@@ -7483,7 +7707,6 @@ four times over: the walk that lives in four places is the walk that
 will disagree with itself, which is the argument `field_spans`'s own
 docstring already makes about its three predecessors.
 
-
 **Seventh pass, 2026-08-16.** All four sites, in one file —
 `tests/test_span_membership.py`. **11 of 17 mutants die and the other
 6 are confirmed EQUIVALENT**, each with the reason recorded. Paired
@@ -7521,7 +7744,6 @@ since the replace then succeeds and edits a sentence nobody looked at —
 and `preserve_space`'s three attribute cases were one test wide, so a
 run that already carried the real `xml:space` and a run carrying only
 the junk one were indistinguishable to the suite.
-
 
 ### S1 WORD downgrades U+2212 to an ASCII hyphen inside OMML — on Compare AND on the author's own accept-and-save — and `validate` reports it as an unattributed `glyphs: False`
 <!-- status: fixed -->
@@ -7631,7 +7853,6 @@ decides where in its pipeline it belongs.
 in a post-build pass before promote. Per-paper workaround to delete when
 the build does it.
 
-
 ### S2 no way to assert a table REORDER preserved its rows, which is exactly where a hand reorder loses a cell
 <!-- status: fixed -->
 
@@ -7688,7 +7909,6 @@ answered by addressing tables through a caption at all.
 Held by `tests/test_rows_preserved.py` (17 tests), including the
 failure this exists for: a row that moved with one value left behind,
 which every other layer reads as "rows moved".
-
 
 ### S1 `build_overrides` put a newly INSERTED paragraph wherever the author's last other edit was — and refused the edit outright when there was no other edit
 <!-- status: fixed -->
@@ -7810,7 +8030,6 @@ their own, and `doctor` is not yet wired into any gate. Worth settling
 before it is: a `[verify]` line that prints 134 lines of noise gets
 switched off rather than fixed.
 
-
 **Fixed 2026-08-17**, the same day, on the first two of the three
 suggestions.
 
@@ -7856,7 +8075,6 @@ and point at `footnote_audit`. Keep the refusal.
 `test_an_UNREFERENCED_note_makes_the_whole_renumber_REFUSE`, which
 holds the BEHAVIOUR so that a fix to the message cannot quietly become
 a change to the answer.
-
 
 **Fixed 2026-08-17.** The refusal is unchanged, which is the point: a
 spare note may hold an id the renumber wants, and two notes on one id is
@@ -7908,7 +8126,6 @@ importable from M. That closes the class rather than the instance, as the
 
 **Workaround in use** import from `docxkit.errors` and accept that the
 `except` clause names a module the code otherwise never touches.
-
 
 **Fixed 2026-08-17.** Every public module now exports the exceptions it
 raises — 18 modules, 23 names — and the class is closed rather than the
@@ -7988,7 +8205,6 @@ as table drift (mutation-verified against the pre-fix resolver). Per-paper
 workaround to delete when a repo-wide check exists — and note that the
 guard is per-paper by nature, so each migrated paper currently owes its
 own copy.
-
 
 **Fixed 2026-08-17.** `revision.doctor` and `docxkit revision doctor`.
 It reads only text, opens no document, and reports rather than refuses —
@@ -8158,7 +8374,6 @@ Three findings, in descending order of what they cost:
    `conftest.notes`/`note` already provided — all three written the same
    day, which is how that happens.
 
-
 ### S4 `_HEAD_RE` and `_REF_YEAR_RE` disagree about a space, and the entry silently loses its back-link — `0f12e2a`
 <!-- status: fixed -->
 
@@ -8217,7 +8432,6 @@ happens once.
 **Workaround in use:** none. `tests/test_cite_rebuild_paths.py` uses
 this entry shape deliberately, to pin that the case is REPORTED; that
 test will need its fixture changed when this is fixed, and it says so.
-
 
 **Fixed 2026-08-16** (`0f12e2a`). By removing the second definition, not
 by adding the missing token to it: `reference_head` sits beside
@@ -8297,7 +8511,6 @@ on the symptom:
 **Workaround in use:** none. This came from a fixture, not from a paper,
 and the fixture now carries the table caption that a real exhibit would
 have — which is what ends the block properly.
-
 
 **Fixed 2026-08-16** (`1f4f7e9`). Both layers, and neither gate that fired
 was relaxed: `_DEFAULT_STOPS` gained the journal back matter with stops
@@ -8647,7 +8860,6 @@ package. **0 of 899 manuscripts** carry an attribute on `m:oMath`,
 `w:rPr`, `w:tc`, `w:sz`, `w:pStyle` or `w:rStyle`, so consolidating
 those spellings would buy nothing. Recorded so the next reader does not
 re-derive it.
-
 
 ### S1 `replace_in_para` guards hyperlinks but NOT footnote references, and a match hops over one invisibly — `865faa8`
 <!-- status: fixed -->
@@ -10065,7 +10277,6 @@ letter without re-running the suite, so it passes no check count, and the
 template interpolated it anyway. Fixed with a fallback and a regression
 test verified to fail against the old template. (Lives in repkit; listed
 once here as the worked example of the format.)
-
 
 ### S1 — `citations` refused on a Word lock under a printed snapshot banner — FIXED 29.08, `95024d9`
 <!-- status: fixed -->
