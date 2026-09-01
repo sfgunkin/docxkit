@@ -1267,18 +1267,24 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     """
     if getattr(args, "all", False) or getattr(args, "scan", None):
         return cmd_revision_survey(args)
-    from .revision import drift, state
+    from .revision import status
     paper = _paper(args)
     print(f"{paper.name}\n  {paper.working}")
-    st = state(paper.working)
+    # Every DECISION here is `revision.status`; this renders it. The
+    # locked-file defect below was fixed inside this function on
+    # 2026-08-31 and could only be tested through `argv`, with the exit
+    # code as the one contract a script could read — which is what the
+    # structural review of 2026-09-01 asked to move, command by command.
+    report = status(paper)
+    st = report.working
     if st.from_snapshot:
         print(_SNAPSHOT_NOTE)
     _show_state("working", st)
-    if not paper.prev.exists():
+    if report.prev is None:
         print("  prev      MISSING - no baseline to compare or reject "
               "against; run `docxkit revision baseline`")
-        return 0 if st.is_truth else 1
-    _show_state("prev", state(paper.prev))
+        return report.exit_code
+    _show_state("prev", report.prev)
     # The drift check needs the file's SAVED bytes and `drift` reads
     # them directly, so under a lock it raised and the command died —
     # after printing two "0 pending -> TRUTH" lines, which is exactly
@@ -1292,18 +1298,15 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
     # Exit 1, which is what the lock produced before, so nothing
     # gating on this command changes its mind: what changed is that the
     # reader is told which question went unanswered.
-    if st.from_snapshot:
+    if not report.drift_checked:
         print("\n  drift     NOT CHECKED - the file is open in Word and "
               "this comparison\n            needs its saved bytes. The "
               "counts above are the snapshot's and\n            are right; "
               "whether prev.docx is still the baseline this paper\n"
               "            grew out of is unknown. Close the file and "
               "re-run.")
-        return 1
-    # Only worth asking of a settled file: while a proposal is pending
-    # the two are SUPPOSED to differ, and saying so every time is how a
-    # warning stops being read.
-    stale = drift(paper.working, paper.prev) if st.is_truth else []
+        return report.exit_code
+    stale = list(report.stale)
     if stale:
         print(f"\n  ** baseline STALE: {_summarize(stale)} differ(s) **")
         print(f"     Both files count 0 pending, and they are not the same "
@@ -1313,8 +1316,7 @@ def cmd_revision_status(args: argparse.Namespace) -> int:
               "       docxkit revision ingest     (what changed, read-only)"
               "\n       docxkit revision baseline   (record it as the new "
               "truth)")
-        return 4
-    return 0 if st.is_truth else 1
+    return report.exit_code
 
 
 def cmd_revision_doctor(args: argparse.Namespace) -> int:

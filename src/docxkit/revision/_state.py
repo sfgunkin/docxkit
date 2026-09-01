@@ -12,6 +12,7 @@ from pathlib import Path
 from .. import footnotes, package, revisions
 from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
 from ._common import SAVE_NOISE, TEXT_PARTS
+from ._config import Paper
 
 # ---------------------------------------------------------------- state
 
@@ -154,3 +155,61 @@ def drift(working: str | Path, prev: str | Path) -> list[str]:
     """
     return _drifted(package.read_parts(Path(prev)),
                     package.read_parts(Path(working)))
+
+
+@dataclass(frozen=True)
+class StatusReport:
+    """Where a paper is — the answer `docxkit revision status` renders.
+
+    The DECISIONS live here and the CLI prints them. They lived in
+    `cli.cmd_revision_status` until 2026-09-01, which is where the
+    locked-file drift defect (BACKLOG, S4, `39fe472`) was fixed — in a
+    command function, tested through `argv`, with the exit code as the
+    only contract a script could read. The first command moved out of
+    `cli.py` under the structural review of the same day; the shape is
+    the template for the rest.
+    """
+
+    working: State
+    prev: State | None
+    """None when there is no baseline yet."""
+    drift_checked: bool
+    """False when the file was open in Word: the counts above came from
+    a snapshot and `drift` needs the saved bytes, so the second question
+    was not asked. Named rather than inferred — the locked output used
+    to have the exact shape of a healthy, current baseline."""
+    stale: tuple[str, ...] = ()
+    """Parts the baseline no longer matches, when the check ran."""
+
+    @property
+    def exit_code(self) -> int:
+        """0 settled AND current; 1 pending, or unchecked; 4 stale.
+
+        The contract scripts read. A run that could not ask the drift
+        question does not exit 0 — 1 is what the lock produced before
+        the check was named, so nothing gating on the command changes
+        its mind.
+        """
+        if self.stale:
+            return 4
+        if not self.drift_checked or not self.working.is_truth:
+            return 1
+        return 0
+
+
+def status(paper: Paper) -> StatusReport:
+    """Truth or proposal, and is the baseline still the file it grew from?
+
+    Two questions, and the second is only asked of a settled file: while
+    a proposal is pending the two files are SUPPOSED to differ, and
+    saying so every time is how a warning stops being read.
+    """
+    working = state(paper.working)
+    if not paper.prev.exists():
+        return StatusReport(working=working, prev=None, drift_checked=True)
+    prev = state(paper.prev)
+    if working.from_snapshot:
+        return StatusReport(working=working, prev=prev, drift_checked=False)
+    stale = drift(paper.working, paper.prev) if working.is_truth else []
+    return StatusReport(working=working, prev=prev, drift_checked=True,
+                        stale=tuple(stale))

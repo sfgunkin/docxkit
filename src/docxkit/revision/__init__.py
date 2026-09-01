@@ -192,10 +192,12 @@ from ._registry import scan as scan
 from ._registry import survey as survey
 from ._state import _AUTHOR_RE as _AUTHOR_RE
 from ._state import State as State
+from ._state import StatusReport as StatusReport
 from ._state import _drifted as _drifted
 from ._state import _state as _state
 from ._state import drift as drift
 from ._state import state as state
+from ._state import status as status
 from ._validate import ValidateReport as ValidateReport
 from ._validate import render_accepted as render_accepted
 from ._validate import validate as validate
@@ -226,6 +228,7 @@ __all__ = [
     "Relabelled",
     "StaleBatch",
     "State",
+    "StatusReport",
     "Survey",
     "ValidateReport",
     "Verdict",
@@ -263,6 +266,7 @@ __all__ = [
     "run_gates",
     "scan",
     "state",
+    "status",
     "survey",
     "validate",
     "verdict",

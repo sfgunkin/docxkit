@@ -132,6 +132,7 @@ def routines(blob: bytes) -> dict[str, Routine]:
 
 def sweep(paths: list[Path], slow_ms: float) -> int:
     failures: list[tuple[Path, str, str]] = []
+    skipped: list[Path] = []
     anomalies: list[tuple[Path, str]] = []
     timings: dict[str, list[float]] = defaultdict(list)
     results: dict[Path, dict[str, object]] = {}
@@ -141,6 +142,18 @@ def sweep(paths: list[Path], slow_ms: float) -> int:
         try:
             blob = read_bytes(path, skip_if_locked=False)
             calls = routines(blob)
+        except zipfile.BadZipFile as exc:
+            # Not a manuscript: a `.docx` with a zip header and no
+            # central directory (`SPI_Case-Ezhik-PC.docx`, 2021) made
+            # this gate exit 1 on every run that reached it — the
+            # permanently-red shape BACKLOG ranks above a wrong answer.
+            # Skipped, COUNTED and named, and only this exception: a
+            # PermissionError or a raise inside docxkit is still a
+            # failure. Skipping `OSError` too would have swallowed the
+            # locked-file case the sweep exists to exercise.
+            print(f"  NOT A DOCUMENT ({exc})")
+            skipped.append(path)
+            continue
         except Exception as exc:
             print(f"  UNREADABLE ({type(exc).__name__})")
             failures.append((path, "open", f"{type(exc).__name__}: {exc}"))
@@ -163,7 +176,7 @@ def sweep(paths: list[Path], slow_ms: float) -> int:
               f" cite={row.get('citations.find')}")
         anomalies.extend((path, a) for a in check(row))
 
-    report(failures, anomalies, timings, results, slow_ms)
+    report(failures, skipped, anomalies, timings, results, slow_ms=slow_ms)
     return 1 if failures else 0
 
 
@@ -188,8 +201,17 @@ def check(row: dict[str, object]) -> list[str]:
     return out
 
 
-def report(failures, anomalies, timings, results, slow_ms) -> None:
-    print(f"\n{'=' * 72}\nSWEPT {len(results)} documents")
+def report(failures, skipped, anomalies, timings, results, *,
+           slow_ms) -> None:
+    # The skip count is on the SAME line as the sweep count, so "swept
+    # 300, skipped 1" and "swept 1, skipped 300" cannot read alike — a
+    # skip path in a gate is the S3 shape, and the count is what keeps
+    # it honest.
+    print(f"\n{'=' * 72}\nSWEPT {len(results)} documents"
+          + (f", SKIPPED {len(skipped)} not a document" if skipped else ""))
+    for path in skipped:
+        print(f"  skipped: {path.name} (not a zip — a .docx with no "
+              f"central directory)")
 
     print(f"\nFAILED ({len(failures)})")
     seen = set()

@@ -42,9 +42,13 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tools"))
+import consumers as _consumers  # noqa: E402  # pyright: ignore[reportMissingImports]
+
 from docxkit.console import utf8_stdout  # noqa: E402
 
 PACKAGE = "docxkit"
@@ -63,6 +67,58 @@ SKIPPED = 3
 #: affected — but a caller's code still runs, and this package edits
 #: such tables as ordinary work.
 ADVISORY = {"ATTRIBUTE_CHANGED_VALUE"}
+
+#: What the papers actually import, from `tools/consumers.txt` — 128
+#: names of the 626 `__all__` declares (2026-09-01).
+#:
+#: **The tier the 2026-09-01 review asked for.** Guarding all 626
+#: equally makes an internal rename cost a release, and the gate is then
+#: something to be got past rather than read; guarding none is what let
+#: `test_api_surface` pass while a signature moved under a name a paper
+#: calls. So a breakage in a CONSUMED name fails, and one elsewhere in
+#: the public surface is reported — the same split this file already
+#: makes for a constant's value, along the other axis.
+#:
+#: The list is derived from the papers rather than chosen, so nothing a
+#: paper uses can be classed advisory by an oversight, and it is
+#: refreshed by `tools/consumers.py` when the papers move.
+def consumed(pkg: Any) -> set[str]:
+    """Definition paths of every name a paper imports.
+
+    Resolved through the aliases, because the two ends are spelled
+    differently: a paper imports `docxkit.tables.house` and griffe
+    reports a breakage at `docxkit._table_core.house`, where the
+    function is DEFINED. Matching the strings as written would put
+    every facade name in the advisory tier — which is most of the
+    package, and exactly the names a paper calls.
+
+    A wholesale `from docxkit import body` contributes the module's own
+    path and not every name in it: removing the module is breaking, and
+    the names inside it are guarded when a paper is measured importing
+    them. Widening that would return the whole surface to the strict
+    tier by another route.
+    """
+    try:
+        pairs = _consumers.load()
+    except (OSError, ValueError):
+        # No snapshot: guard EVERYTHING. The gate falling back to
+        # strict is the safe direction — a missing consumer list must
+        # not quietly turn a breakage into a note.
+        return set()
+    out: set[str] = set()
+    for module, name in pairs:
+        key = f"{module}.{name}".removeprefix("docxkit.")
+        try:
+            obj = pkg[key]
+        except (KeyError, AttributeError):
+            continue                        # a name test_consumers reports
+        out.add(obj.path)
+        try:
+            if obj.is_alias:
+                out.add(obj.final_target.path)
+        except Exception:
+            pass                            # alias: its own path is enough
+    return out
 
 
 def baseline(explicit: str | None = None) -> tuple[str, str] | None:
@@ -92,8 +148,8 @@ def _git(*args: str) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def compare(ref: str) -> list[tuple[str, str]]:
-    """`(kind, one-line explanation)` for every difference griffe finds.
+def compare(ref: str) -> list[tuple[str, str, bool]]:
+    """`(kind, explanation, is-consumed)` for every difference griffe finds.
 
     The two search paths are spelled differently on purpose and it is
     load-bearing. `load_git` checks the ref out into a temp worktree and
@@ -108,7 +164,8 @@ def compare(ref: str) -> list[tuple[str, str]]:
 
     old = load_git(PACKAGE, ref=ref, repo=ROOT, search_paths=[SRC_REL])
     new = load(PACKAGE, search_paths=[SEARCH])
-    return [(b.kind.name, _plain(b.explain()))
+    strict = consumed(new)
+    return [(b.kind.name, _plain(b.explain()), b.obj.path in strict)
             for b in find_breaking_changes(old, new)]
 
 
@@ -139,22 +196,31 @@ def main() -> int:
     ref, why = chosen
 
     found = compare(ref)
-    breaking = [(k, text) for k, text in found if k not in ADVISORY]
-    advisory = [(k, text) for k, text in found if k in ADVISORY]
+    # Two axes, and a finding fails only when both say so: the KIND has
+    # to break a call, and the NAME has to be one a paper imports.
+    breaking = [f for f in found if f[0] not in ADVISORY and f[2]]
+    unused = [f for f in found if f[0] not in ADVISORY and not f[2]]
+    advisory = [f for f in found if f[0] in ADVISORY]
 
     print(f"compared the working tree against {ref} ({why})")
-    for _kind, text in breaking:
+    for _kind, text, _consumed in breaking:
         print(f"  BREAKING  {text}")
-    for _kind, text in advisory:
+    for _kind, text, _consumed in unused:
+        print(f"  unused    {text}")
+    for _kind, text, _consumed in advisory:
         print(f"  value     {text}")
     if not found:
         print("  no API differences at all")
-    print(f"{len(breaking)} breaking, {len(advisory)} value change(s) "
-          f"against {ref}")
+    print(f"{len(breaking)} breaking, {len(unused)} in names no paper "
+          f"imports, {len(advisory)} value change(s) against {ref}")
     if breaking:
         print("A caller written against the baseline would stop working. "
               "Nine papers import this package from an editable install, "
               "so they are that caller.")
+    if unused:
+        print("The `unused` lines break a call too — in a name "
+              "tools/consumers.txt says no paper imports. Refresh that "
+              "snapshot if a paper started using one.")
     return 1 if breaking else 0
 
 

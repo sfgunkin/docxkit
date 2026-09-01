@@ -17,10 +17,18 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import api_check  # pyright: ignore[reportMissingImports]
 
+#: `(kind, explanation, is-consumed)` — the third is the tier added on
+#: 2026-09-01: a breakage in a name `tools/consumers.txt` says a paper
+#: imports fails the gate; the same breakage elsewhere in the 626-name
+#: public surface is reported so an internal rename does not cost a
+#: release. Both axes have to say "break" before the exit code does.
 BREAKING = ("PARAMETER_REMOVED", "src/docxkit/x.py:1: f(a): Parameter "
-                                 "was removed: a")
+                                 "was removed: a", True)
+UNUSED = ("PARAMETER_REMOVED", "src/docxkit/y.py:1: g(a): Parameter "
+                               "was removed: a", False)
 VALUE = ("ATTRIBUTE_CHANGED_VALUE", "src/docxkit/x.py:1: GATED: Attribute "
-                                    "value was changed: (1,) -> (1, 2)")
+                                    "value was changed: (1,) -> (1, 2)",
+         True)
 
 
 @pytest.fixture
@@ -43,7 +51,7 @@ def test_a_removed_parameter_FAILS_the_gate(found, capsys):
     out = capsys.readouterr().out
     assert code == 1
     assert "BREAKING" in out and "Parameter was removed" in out
-    assert "1 breaking, 0 value" in out
+    assert "1 breaking, 0 in names no paper imports, 0 value" in out
 
 
 def test_a_changed_CONSTANT_is_reported_and_does_not_fail(found, capsys):
@@ -59,14 +67,33 @@ def test_a_changed_CONSTANT_is_reported_and_does_not_fail(found, capsys):
     out = capsys.readouterr().out
     assert code == 0, "a data table gaining a member is not a break"
     assert "value" in out and "GATED" in out, "and it is still SHOWN"
-    assert "0 breaking, 1 value" in out
+    assert "0 breaking, 0 in names no paper imports, 1 value" in out
 
 
-def test_the_two_are_counted_apart_when_both_are_present(found, capsys):
-    found(BREAKING, VALUE)
+def test_the_kinds_are_counted_apart_when_all_are_present(found, capsys):
+    found(BREAKING, UNUSED, VALUE)
 
     assert api_check.main() == 1
-    assert "1 breaking, 1 value" in capsys.readouterr().out
+    assert ("1 breaking, 1 in names no paper imports, 1 value"
+            in capsys.readouterr().out)
+
+
+def test_the_same_breakage_in_an_UNCONSUMED_name_does_not_fail(found,
+                                                               capsys):
+    """The tier, and the reason it is derived from the papers rather
+    than chosen: `edit.replace_in_para` losing a parameter exits 1 and
+    `footnotes.orphans` losing one exits 0 — measured by breaking both
+    on 2026-09-01. Guarding all 626 names equally makes an internal
+    rename cost a release, and a gate that costs that is one people
+    learn to push past."""
+    found(UNUSED)
+
+    code = api_check.main()
+
+    out = capsys.readouterr().out
+    assert code == 0, "no paper imports it; the break reaches nobody"
+    assert "unused" in out and "was removed" in out, "and it is still SHOWN"
+    assert "Refresh that snapshot" in out
 
 
 def test_a_clean_comparison_says_so_and_names_the_baseline(found, capsys):

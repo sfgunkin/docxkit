@@ -13,6 +13,7 @@ from pathlib import Path
 from .. import guard as _guard
 from .. import package
 from ..errors import DocumentLocked, ProtocolError, StaleBatch
+from . import _ledger
 from ._common import _RESCUE_GLOB, _RESCUE_STAMP
 from ._config import Paper
 
@@ -239,6 +240,20 @@ def promote(paper: Paper, batch: str | Path | None = None,
     shutil.copyfile(batch, live)
     if _guard.sha256(live) != _guard.sha256(batch):
         raise ProtocolError(f"the copy did not land: {live}")
+
+    # The round's record, written and not yet read — see `_ledger`. The
+    # question it exists for is this event: a batch REJECTED in full and
+    # one that was never promoted leave the manuscript identical, so
+    # `verdict` had to infer from the redline copy that this line makes
+    # explicit. Written after the copy has landed and been verified,
+    # because a ledger entry for a promote that did not happen is the
+    # failure mode of recording one at all.
+    _ledger.record(paper, _ledger.PROMOTED,
+                   batch=batch.name,
+                   batch_sha256=_guard.sha256(batch),
+                   replaced_sha256=live_hash,
+                   onto=live.name, base_sha256=base_hash,
+                   redline=redline.name, rescue=rescue.name)
 
     # only after the promote has landed: a prune that ran first could
     # delete the one copy this promote was about to need. Redlines are

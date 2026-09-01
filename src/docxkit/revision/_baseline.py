@@ -11,6 +11,7 @@ from pathlib import Path
 from .. import package
 from ..errors import BaselinePending, DocumentLocked, HandbackLoss
 from ..hygiene import restore_math_glyphs
+from . import _ledger
 from ._config import Paper
 from ._losses import _names, _unmet, losses
 from ._state import state
@@ -143,4 +144,18 @@ def baseline(paper: Paper, *, force: bool = False,
     shutil.copyfile(paper.working, paper.prev)
     if recorded is not None:
         log_batch(paper, recorded, note)
+    # The round's record, written and not yet read — see `_ledger`. This
+    # is the event that closes a round, and the verdict it carries is
+    # the one `log_batch` just wrote into the paper's permanent log:
+    # recording the INPUTS beside it is what would let a later reader
+    # tell a wrong verdict from a wrong record of one.
+    _ledger.record(paper, _ledger.BASELINED,
+                   truth_sha256=_ledger.sha256_of(paper.prev),
+                   batch=recorded.batch.name if recorded and recorded.batch
+                   else None,
+                   outcome=recorded.outcome if recorded else None,
+                   kept=recorded.kept if recorded else None,
+                   reverted=recorded.reverted if recorded else None,
+                   authored=recorded.authored if recorded else None,
+                   note=note or None)
     return paper.prev

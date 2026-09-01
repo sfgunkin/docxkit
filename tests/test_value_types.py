@@ -72,6 +72,7 @@ VALUES = [
     "revision._promote.PromoteReport",
     "revision._losses.Relabelled",
     "revision._state.State",
+    "revision._state.StatusReport",
     "revision._registry.Survey",   # one paper's row in the all-papers view
     "revision._verdict.Verdict",   # what one cycle did, and what was decided
     "revision._gates.GateResult",  # one of the paper's checks, and its exit

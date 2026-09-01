@@ -12,6 +12,7 @@ from .. import footnotes, package, tracked
 from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
 from ..errors import BaselinePending, MathResolved, ProtocolError, StaleBatch
 from ..tracked import untracked
+from . import _ledger
 from ._config import Paper
 from ._losses import links_in_deletions, moved_footnotes, restored_bookmarks
 from ._state import drift
@@ -252,4 +253,15 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
             f"the Flat OPC route measured on LI7 supports; ship the batch "
             f"clean and record that in the log; or make the edit by "
             f"hand-authored markup on working.docx (the DSI vehicle).")
+    # The round's record, written and not yet read — see `_ledger`. It
+    # goes AFTER the refusals: a batch that was refused is not a batch
+    # that was built, and a ledger that says otherwise would be worse
+    # than none. `revisions` is what the author will be offered.
+    _ledger.record(paper, _ledger.BUILT,
+                   batch=out.name,
+                   batch_sha256=_ledger.sha256_of(out),
+                   base_sha256=_ledger.sha256_of(paper.prev),
+                   revised=Path(revised).name,
+                   revisions=report.revisions,
+                   moves=moves, resolve_math=resolve_math)
     return report
