@@ -114,6 +114,49 @@ def _is_alias_target(module: str, name: str) -> bool:
     return False
 
 
+#: What marks a script as SPENT — `revision._doctor`'s own word for it,
+#: widened to the archive folders the papers use. A spent builder is the
+#: RECORD of a round that ran, not a script anybody will run again.
+#:
+#: This matters for the private-path list. Measured 2026-09-02: of the
+#: names the papers reach into `_xml` and the citation halves for, SIX
+#: are imported only by spent builders — `set_run_text`,
+#: `own_properties`, `RUN_RE`, `_cite_repair.field_spans` and both
+#: `_table_layout` entries. Reading them as work to do sends somebody to
+#: migrate a file that will never run, and under the forward-only rule
+#: editing one falsifies the record. What is actionable is the LIVE
+#: half, and it was seven files.
+SPENT_MARKERS = ("applied", "archive", "_archive", "Archive", "Arichive",
+                 "attic", "replication")
+
+
+def live_private(folders: list[Path]) -> set[tuple[str, str]]:
+    """Private imports made by a script that can still be run.
+
+    The other half of `scan`'s answer. A name is live here if ANY
+    non-spent script imports it; one spent copy does not retire a name
+    another script still reaches for.
+    """
+    live: set[tuple[str, str]] = set()
+    for folder in folders:
+        for script in folder.rglob("*.py"):
+            if "__pycache__" in script.parts:
+                continue
+            if any(part in SPENT_MARKERS for part in script.parts):
+                continue
+            try:
+                text = script.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for module, names in _IMPORT_RE.findall(text):
+                if not module.split(".")[-1].startswith("_"):
+                    continue
+                for name in _NAME_RE.findall(names.strip("()")):
+                    if name != "as":
+                        live.add((module, name))
+    return live
+
+
 def render(pairs: set[tuple[str, str]]) -> str:
     return HEADER + "".join(f"{m}\t{n}\n" for m, n in sorted(pairs))
 
@@ -151,11 +194,15 @@ def main() -> int:
     pairs = scan(folders)
     text = render(pairs)
     modules = {m for m, _ in pairs}
-    private = sorted({(m, n) for m, n in pairs if m.split(".")[-1].startswith("_")})
+    private = sorted({(m, n) for m, n in pairs
+                      if m.split(".")[-1].startswith("_")})
+    live = live_private(folders)
     print(f"{len(pairs)} distinct imports across {len(modules)} modules, "
-          f"{len(private)} through a private path")
+          f"{len(private)} through a private path "
+          f"({len(live)} of them from a script that can still run)")
     for m, n in private:
-        print(f"  private: from {m} import {n}")
+        where = "LIVE   " if (m, n) in live else "spent  "
+        print(f"  {where} private: from {m} import {n}")
 
     if args.check:
         current = SNAPSHOT.read_text(encoding="utf-8") if SNAPSHOT.is_file() else ""

@@ -31,13 +31,28 @@ import consumers  # pyright: ignore[reportMissingImports]
 PAIRS = sorted(consumers.load())
 
 #: Imports the papers make through a module whose name says private.
-#: **This set may shrink and may not grow.** Each entry is one of two
-#: things: a name worth promoting to a public module (the four `_xml`
-#: names below were, on 2026-09-01 — `docxkit.visible_text` and friends
-#: now exist, and these lines stay until the papers are next touched),
-#: or a paper reaching past the API for something it should ask for
-#: differently. A new entry means a paper was written against private
-#: machinery while nobody was looking.
+#: **This set may shrink and may not grow.** A new entry means a paper
+#: was written against private machinery while nobody was looking.
+#:
+#: **Six of these are imported only by SPENT builders** — measured
+#: 2026-09-02, and it is the difference between a to-do list and a
+#: record. `set_run_text`, `own_properties`, `RUN_RE`,
+#: `_cite_repair.field_spans` and both `_table_layout` entries appear
+#: only under `scripts/applied/` or an archive folder: scripts that ran
+#: once and are the record of a round. Under the forward-only rule that
+#: `revision.doctor` applies, editing one falsifies the record, so they
+#: stay here and are not work. `tools/consumers.py` prints which is
+#: which.
+#:
+#: What is actionable is the LIVE half, and it is three files rather
+#: than fourteen names. `Aging_Well/revision/scripts/r2_link_apparatus.py`
+#: alone accounts for eight of them in one parenthesised import — the
+#: field regexes, the hyperlink pattern, the run walk and the citation
+#: grammar — which is a script building the citation apparatus out of
+#: primitives while `citations.link_all` exists. That is the same shape
+#: as the `_citation_audit` port CONTRIBUTING describes, and the
+#: question it raises is not "promote these eight" but "can `citations`
+#: do what this script does". If it can, eight entries leave at once.
 PRIVATE = {
     ("docxkit._cite_grammar", "masked_visible_text"),
     ("docxkit._cite_grammar", "reference_head"),
@@ -54,12 +69,12 @@ PRIVATE = {
     ("docxkit._xml", "RUN_RE"),
     ("docxkit._xml", "_FIELD_RE"),
     ("docxkit._xml", "_HYPERLINK_EL_RE"),
+    ("docxkit._xml", "field_spans"),
     ("docxkit._xml", "internal_links"),
     ("docxkit._xml", "own_properties"),
     ("docxkit._xml", "run_open_before"),
     ("docxkit._xml", "set_run_text"),
     ("docxkit._xml", "visible_text"),
-    ("docxkit._xml", "_xml"),
 }
 
 #: The four promoted on 2026-09-01, with the public path they now have.

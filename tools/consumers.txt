@@ -42,13 +42,13 @@ docxkit._cite_repair	next_bookmark_id
 docxkit._cite_repair	wrap_link_in_bookmark
 docxkit._table_layout	booktabs
 docxkit._table_layout	plan_booktabs
-docxkit._xml	DOCUMENT
 docxkit._xml	INSTR_ANCHOR_RE
 docxkit._xml	INSTR_RE
 docxkit._xml	PARA_RE
 docxkit._xml	RUN_RE
 docxkit._xml	_FIELD_RE
 docxkit._xml	_HYPERLINK_EL_RE
+docxkit._xml	field_spans
 docxkit._xml	internal_links
 docxkit._xml	own_properties
 docxkit._xml	run_open_before
@@ -60,6 +60,7 @@ docxkit.batch	Step
 docxkit.body	insert_after
 docxkit.body	insert_before
 docxkit.body	para
+docxkit.body	prose_props
 docxkit.body	run
 docxkit.body	table
 docxkit.body	visible_text
@@ -92,6 +93,7 @@ docxkit.errors	PackageError
 docxkit.find	body_elements
 docxkit.find	edit_para
 docxkit.find	heading_level
+docxkit.find	internal_links
 docxkit.find	page_break_before
 docxkit.find	para_slice
 docxkit.find	paragraphs
