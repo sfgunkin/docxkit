@@ -1,7 +1,11 @@
 # What the papers import from docxkit: one `module<TAB>name` per line.
 # Written by tools/consumers.py; read by tests/test_consumers.py and
 # tools/api_check.py. Refresh it when the papers move, never by hand.
+docxkit	DOCUMENT
+docxkit	PARA_RE
+docxkit	RUN_RE
 docxkit	backup
+docxkit	batch
 docxkit	body
 docxkit	citations
 docxkit	crossrefs
@@ -9,21 +13,25 @@ docxkit	edit
 docxkit	edit_in_place
 docxkit	edit_para
 docxkit	equations
+docxkit	figures
 docxkit	find
 docxkit	footnotes
 docxkit	guard
 docxkit	package
 docxkit	para_slice
 docxkit	paragraphs
+docxkit	placement
 docxkit	preserve_space
 docxkit	read_parts
 docxkit	refstyle
+docxkit	renumber
 docxkit	revision
 docxkit	revisions
 docxkit	tables
 docxkit	text_of
 docxkit	tracked
 docxkit	utf8_stdout
+docxkit	visible_text
 docxkit	word
 docxkit	write_docx
 docxkit._cite_grammar	masked_visible_text
