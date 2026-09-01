@@ -81,6 +81,25 @@ jobs:
       - name: Coverage floors
         if: ${{ !cancelled() && steps.pytest.outcome == 'success' }}
         run: python tools/coverage_floor.py
+      # The public surface, against the last release. It needs the whole
+      # history — the checkout above already fetches it for the two gates
+      # that read commits, and this one checks a TAG out into a worktree —
+      # and it needs the `dev` extra, which carries griffe.
+      #
+      # Only the breakage kinds that break a CALL fail it; a constant
+      # whose value changed is reported. That split was measured before
+      # this step existed: over fourteen commits griffe reported 21
+      # findings, all of them a constant's value and none of them
+      # breaking, so the unsplit gate would have been red on half of
+      # them. See `tools/api_check.py`.
+      #
+      # Gated on the INSTALL rather than on pytest: a signature that moved
+      # is worth reporting even on a red suite, because it is about a
+      # consumer this repository cannot run — the nine papers that import
+      # docxkit from an editable install.
+      - name: API surface
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python tools/api_check.py
 
   mutations:
     # The CURATED mutations. Every one re-introduces a defect this package
