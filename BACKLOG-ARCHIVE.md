@@ -14,6 +14,71 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `tools/sweep.py` exits 1 forever on one corrupt corpus file, and a gate that cannot go green is one people stop running~~ — FIXED 01.09, `c2d1b1a`
+<!-- status: fixed -->
+
+**Fixed 2026-09-01.** `SPI_Case-Ezhik-PC.docx` — a 2021 file with a zip
+header and no central directory — raised `BadZipFile` on open, and the sweep
+counted that as a FAILED routine. Every run that reached the file exited 1,
+whatever the other 299 documents said. By this file's own scale that outranks
+a wrong answer nobody sees: a gate that cannot go green is one people stop
+reading.
+
+`BadZipFile` on open is now SKIPPED, and only that exception. A
+`PermissionError` or a raise from inside docxkit is still a failure — skipping
+`OSError` wholesale would have swallowed the locked-file case the sweep exists
+to exercise, which is the trap in every skip path.
+
+Counted and named, on the SAME line as the sweep count: `SWEPT 29 documents,
+SKIPPED 1 not a document`. A skip that does not say how many it skipped is the
+S3 shape arriving by the other door — "swept 300, skipped 1" and "swept 1,
+skipped 300" must not read alike.
+
+Measured over the folder that holds the file: 29 swept, 1 skipped, exit 0; and
+over 80 documents of the wider corpus, 0 failures.
+
+Found by the 2026-09-01 structural review rather than by a round, which is why
+there was never an open entry.
+
+---
+
+### ~~S4 — the public API promised 626 names and the papers used 86, so an internal rename cost a release~~ — FIXED 01.09, `c2d1b1a`
+<!-- status: fixed -->
+
+**Fixed 2026-09-01**, and it is the `api` gate's second calibration rather
+than a defect in the package.
+
+`api_check` (`eac1053`, 31.08) guards the public surface against the last
+release. It guarded all of it: 626 names across 35 modules, every one strict.
+The papers — 274 scripts across nine manuscripts — import **128** of them
+(2026-09-01). So renaming a parameter in a name nothing calls failed the gate
+exactly as hard as breaking `read_parts`, and a gate that costs a release for
+an internal rename is one people learn to push past. That is the same failure
+the ADVISORY split was introduced to avoid, along the other axis.
+
+`tools/consumers.py` walks the papers for every `from docxkit… import …` and
+writes a COMMITTED snapshot; `api_check` reads it as the strict tier. A
+breakage in a consumed name fails, the same breakage elsewhere prints
+`unused`. Derived from the papers rather than chosen, so nothing a paper uses
+can be classed advisory by an oversight.
+
+**Resolved through griffe's aliases**, which was the part that had to be got
+right: a paper imports `docxkit.tables.house` and griffe reports the breakage
+at `docxkit._table_core.house`, where the function is defined. Matching the
+strings as written would have put every facade name in the advisory tier —
+which is most of the package, and exactly the names a paper calls.
+
+Proved by breaking both ends: `edit.replace_in_para` losing a parameter exits
+1, `footnotes.orphans` losing one exits 0.
+
+The snapshot's second reader is `tests/test_consumers.py`: every recorded
+import must still resolve, and the 20 that reach through a private path are
+pinned as a set that may only SHRINK. Four `_xml` names were promoted to
+`docxkit` in the same commit for that reason — `visible_text`, `DOCUMENT`,
+`PARA_RE`, `RUN_RE`, which the papers import 103 times between them.
+
+---
+
 ### ~~S4 — `import docxkit` paid ~9 ms for lxml against a docstring saying it must not, and nothing checked~~ — FIXED 31.08, `817e2f7`
 <!-- status: fixed -->
 
