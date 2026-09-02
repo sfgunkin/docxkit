@@ -14,6 +14,80 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — no public way to unwrap a link by ANCHOR in both forms; `crossrefs.unlink` refuses field form and `unlink` by name does not exist~~ — FIXED 02.09, `66b58dc`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02**, in two halves, and the second is the one the entry
+asked for.
+
+`edit.remove_link(para, anchor)` is the unit: one link, by anchor, in whichever
+form the last save left, keeping the words and returning the label they showed.
+`edit.remove_links(xml, keep=…)` is the sweep this entry describes — unwrap
+every internal link whose anchor is not in a set of names, in document order,
+reporting what went.
+
+**Built on `edit._label_spans`, which had been reading both forms all along.**
+That is the finding worth keeping: the two-form scan the entry says "does the
+reading" was not only in `_xml.field_spans` + `INSTR_ANCHOR_RE`, it was already
+assembled, behind an underscore, and `relabel_link` had used it since it was
+written. What it did not expose is the OUTER span, and a field needs one — a
+field is four runs and `_FIELD_RE` matches between the first and last fldChar,
+INSIDE the runs holding them, so cutting at the match leaves two empty `w:r`
+shells around the words. `_links_to` returns label and outer together now and
+`_label_spans` is three lines over it, so relabelling and removing cannot
+disagree about what a link IS. Disagreeing is how two papers came to re-derive
+the scan privately — `_unwrap_wide` in Aging_Well (38 lines) and
+`unlink_absent` in Parental_style (~30).
+
+MEASURED over 120 manuscripts before the sweep was added, and the number
+settles the design: **9,728 internal links, 7,317 of them FIELD form** — three
+quarters are the shape `crossrefs.unlink` raises `ConversionGap` on rather than
+touch. 9,595 removed cleanly against three invariants (the words survive, the
+anchor stops resolving, nothing else moves), 133 refused as ambiguous, zero
+problems. Re-measured after: 6,780 links over 80 documents, same result.
+
+Two decisions inside it, both from the entry's own evidence:
+
+* the sweep touches NO bookmark, unlike `remove_link`'s default. The anchors it
+  unwraps are ones being kept somewhere else, so deleting their in-text twins
+  would take the targets with the links;
+* the `keep` set is the CALLER's to build, and the docstring says why in the
+  entry's words: eleven `<key>txt` markers live in `footnotes.xml`, and a name
+  set read from `document.xml` alone declared those eleven back-links dangling.
+  `package.text_parts` is the iteration that gets it right.
+
+What is NOT done: `crossrefs.unlink` still refuses field form. It can be built
+on `_links_to` now, and its refusal names the reason it should be —
+"24 removed" over a document whose caption links were all still live.
+
+Per-paper workarounds left in place deliberately: both are in scripts that have
+run, and the papers are mid-round. Retiring them is a paper-side change for
+when each is next touched.
+
+
+Splitting a manuscript into a main file and a supplemental file
+(Parental_style, 2026-09-01) leaves links whose bookmark is now in the
+OTHER file: main-text mentions pointing at appendix captions, caption
+back-links pointing at their first mentions, a citation link inside a
+table note. What was needed: "for every internal link whose target is
+not among these bookmark names, keep the words, remove the link and its
+Hyperlink style / underline / colour" — both element and field form,
+across document AND footnotes (eleven `<key>txt` markers live in
+footnotes here, and a name set read from the body alone declared their
+back-links dangling).
+
+`crossrefs.unlink` is the nearest thing and raises `ConversionGap` on
+field form by design; `_xml.field_spans` + `INSTR_ANCHOR_RE` do the
+reading but nothing does the unwrapping. Hand-rolled as
+`unlink_absent(xml, names)` (~30 lines) in
+`Parental_style/revision/scripts/split_supplement.py`; the same need
+will recur for every journal that wants appendices as a separate
+supplemental file. Suggested: `links.unwrap(xml, anchors=…)` or
+`unlink_absent(parts)` next to `_xml.dead_links`, with the freed runs'
+link styling stripped.
+
+---
+
 ### ~~S3 — `tools/sweep.py` exits 1 forever on one corrupt corpus file, and a gate that cannot go green is one people stop running~~ — FIXED 01.09, `c2d1b1a`
 <!-- status: fixed -->
 

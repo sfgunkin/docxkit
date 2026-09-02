@@ -46,6 +46,163 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — `body.prose_props` returns a pPr's INNER content while `body.para(ppr=...)` splices its argument in verbatim, so the obvious composition writes stray children Word silently drops
+
+<!-- status: open -->
+
+**Measured**, Parental_style, 2026-09-01, building the supplemental-material
+file for a submission. `prose_props(title_xml)` returned
+
+    ('<w:spacing w:line="240" w:lineRule="auto"/><w:jc w:val="center"/><w:rPr>…</w:rPr>',
+     '<w:rPr><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>')
+
+— the rPr WITH its wrapper, the pPr WITHOUT. `para(run(text, rpr), ppr)`
+then wrote `<w:p><w:spacing …/><w:jc w:val="center"/>…<w:r>` — a
+paragraph whose "properties" are bare children of `w:p`. `lint` passed
+it, Word opened it, and the four title-block paragraphs rendered
+LEFT-aligned at 16pt: Word keeps the run properties and discards the
+schema-invalid children without a word. Found only by rasterising the
+PDF and looking; a grep for `<w:p>(?!<w:pPr>)<w:(spacing|jc|ind)` on the
+built file then counted 4.
+
+The two functions are documented as a pair (the skill's own example is
+`para(run(...), ppr=caption_ppr)` with the ppr "ideally cloned off an
+existing paragraph") and their shapes disagree. Either `prose_props`
+should return the wrapped `<w:pPr>…</w:pPr>` (symmetry with its rPr),
+or `para` should wrap an unwrapped `ppr` — and `lint` should refuse a
+`w:p` whose first child is a pPr-only element.
+
+Workaround in use: `_wrapped_ppr()` in
+`Parental_style/revision/scripts/split_supplement.py`.
+
+### S2 — `refstyle` does not audit the separator between a reference's issue number and its page range
+
+<!-- status: open -->
+
+**Measured**, Parental_style, 2026-09-01. An author edit changed one entry's
+`6(1):` to `6(1);`:
+
+    Barcellos, S., Carvalho, L., and A. Lleras-Muney. (2014). "Child gender
+    and parental investments in India…" American Economic Journal: Applied
+    Economics, 6(1); 157-189.
+
+`docxkit refstyle` reports the file clean of everything but a pre-existing
+alphabetisation finding: **74 entries, 74 cited, one finding, and that one is
+about Doepke's position in the list.** Counting the paper's own practice, 41
+of its 42 `volume(issue)` entries use a colon and exactly this one uses a
+semicolon, so the convention is unambiguous and the outlier is a slip.
+
+`refstyle` already audits the pieces around it — initials, `(2020).`, "and"
+not "&", en-dashes in the page range, alphabetical order, cited-vs-listed —
+which is why its silence here reads as approval.
+
+**Suggested fix:** audit the locator as a shape, `vol(issue): first–last`,
+and report a separator that disagrees with the file's own majority rather
+than with a hard-coded character — journals differ, and a paper that
+consistently uses something else is not making an error. Same majority rule
+the citation grammar already uses to learn the `txt`-suffix convention.
+
+**Workaround in use:** none; found by reading the ingest's word-diff and
+counting the entries by hand.
+
+### S1 — `promote` prunes the rescue copy it has just written, whenever the rescue folder also holds a hand-named rescue
+
+<!-- status: open -->
+
+**Measured**, Aging_Well, 2026-08-31 23:57. `revision promote` reported
+
+    rescue copy of the previous live file: revision\build\rescue\working_rescue_20260831-235728-542622.docx
+    pruned 3 older rescue(s), keeping 5
+
+and the file it names in the first line **was not there afterwards**. The undo
+for that promote had to come from another session's `working_rescue_20260901_pre_POL.docx`
+instead. Three further rescues went with it; they are not recoverable from the
+working tree.
+
+**Diagnosis.** `_promote.rescues()` globs `*_rescue_*` and returns
+`sorted(...)`, and its docstring states the assumption out loud: *"the copies
+are stamped rather than numbered, so sorting them as strings sorts them
+chronologically."* True of names this module writes — `_RESCUE_STAMP` is
+`%Y%m%d-%H%M%S-%f`, uniform width. But the glob is `*_rescue_*`, which also
+catches the hand-named rescues the papers' own scripts and sessions write, and
+then the sort is wrong at the separator: `-` is 0x2D and `_` is 0x5F, so
+
+    working_rescue_20260831-235728-542622.docx   <- 23:57, the newest
+    working_rescue_20260831_pre_COMP.docx        <- 18:44
+    working_rescue_20260831_pre_REF2.docx        <- 21:51
+
+sorts the newest file FIRST, i.e. as the oldest, and `prune_rescues`'
+`rescues(paper)[:-limit]` puts it in the doomed slice. The count printed is
+right and the files deleted are the wrong ones, which is why nothing looks
+amiss.
+
+Same family as the `-2` collision suffix that inverted this order once before
+(fixed by making the stamps uniform width); what is new is that uniform width
+is not enough while the folder is shared with names the tool did not write.
+
+**Suggested fix**, cheapest first:
+
+* **never delete the rescue this promote just wrote** — pass it to
+  `prune_rescues` as protected. That is the invariant that actually matters: a
+  promote must not destroy its own undo, whatever else the folder holds;
+* prune only names matching `_RESCUE_STAMP`, and leave anything else alone — a
+  file the tool did not write is not the tool's to delete;
+* sort by the parsed stamp rather than by the string, so a mixed folder still
+  lists chronologically for `revision rescues`.
+
+**Workaround in use:** none available at the time — the copy was already gone.
+Recovery came from a differently-named rescue that happened to exist.
+
+**Measured again**, Aging_Well R78, 2026-09-01 21:01. `promote` reported
+`working_rescue_20260901-210134-674000.docx` and *pruned 4 older rescue(s), keeping
+5*; the five kept were all hand-named (`working_rescue_20260901_pre_DF1/pre_POL/
+post_POL_accept/pre_R77/pre_S1.docx`) and the stamped file it had just written was
+among the four deleted. Undo existed only because the session had copied
+`working_rescue_20260901_pre_S1.docx` by hand first (same bytes as `prev.docx`).
+**Workaround from that paper:** hand-named copies take a `working_keep_` prefix,
+which the `*_rescue_*` glob does not match; the stamped rescue's presence is
+checked after every promote.
+
+### S2 — nothing in docxkit can see prose that renders superscript, and a footnote sat wrong for 20 days because of it
+
+<!-- status: open -->
+
+**Measured**, Parental_style, 2026-09-01. The author read the page and found
+footnote 5 rendered entirely in superscript. Its prose run carried
+`<w:rStyle w:val="FootnoteReference"/>` and **no `w:vertAlign` of its own**;
+`styles.xml` gives that style `vertAlign=superscript`, so the raising was
+inherited. Present since a batch of 2026-08-12/13 — every attic generation
+through 08-07 is clean — and passed by every gate in the paper's list on every
+round since:
+
+| gate | why it passed |
+|---|---|
+| `footnotes --check` | reads SIZE only; reported "9 footnote(s), house size 10pt, 0 disagreeing" |
+| `lint`, `citations`, `refstyle`, `math` | content-blind to run properties |
+| `compare` FORMAT | the footnote's text was REPLACED wholesale in the same batch, so there was no text-matched pair to compare formatting on |
+
+A first-pass grep for `w:vertAlign` also reported the file clean, which is the
+trap worth recording: **the check has to resolve the character style through
+`styles.xml` before the question can even be asked.**
+
+The same file carried a second instance of the class — one table note stating
+its significance stars inline while the paper's other six give each star its
+own `vertAlign=superscript` run (426 star runs inside the tables and 18 of 19
+outside them already obeyed the rule).
+
+**Suggested fix.** A run-typography check, either as `footnotes --check` gaining
+a "no prose wears a raising character style" test or as its own command over
+body, footnotes and endnotes. The general rule needs no per-paper knowledge:
+outside a note MARK, a run of words inheriting `vertAlign` from its style is a
+defect. The star rule is house style and belongs in the paper.
+
+**Workaround in use:** `Parental_style/revision/scripts/verify_run_styles.py`,
+now in that paper's `[verify]` list — proved to fail before it was trusted
+(2 findings on the truth of 2026-09-01, 0 after the repair, no false positives
+across 426 star runs and 9 footnotes). It reads the accepted view so it answers
+the same whether `working.docx` is a clean master or a redline. Fit to be
+lifted upstream, minus the star rule.
+
 ### S2 — `revision build` refuses on a pending BASELINE but is silent on a pending WORKING file, which is the commoner way to the same harm
 
 <!-- status: open -->
@@ -869,6 +1026,74 @@ of the second gate is a proposal the author should weigh against everything
 else on this list.
 
 ---
+
+### S4 — `math --check` reports a redline's DELETED maths as a stranded display
+
+<!-- status: open -->
+
+**Measured**, Aging_Well R78, 2026-09-01. A batch built with `--keep-math` deletes a
+body paragraph carrying two inline equations (c_ij, f_j). On the accepted view
+`math --check` exits 0 with 15 displays; on the promoted PROPOSAL it exits 1:
+
+    16 display equation(s), 1 still in INLINE mode
+       ¶64    'cijfj'
+       -> equations.display(para) wraps them in m:oMathPara (one m:oMath per paragraph; it refuses more)
+
+¶64 is the deleted paragraph: 10 `w:del`, no live `w:t`, its prose all
+`w:delText`, the equations' runs inside tracked deletions. `visible_text` drops
+the `w:delText` but keeps the `m:t`, so the paragraph reads as maths-only — the
+exact signature of a stranded display — and the gate cannot tell a paragraph with
+nothing live from one that IS an equation. `m:oMath` counts 266 on the proposal
+against 264 on either clean side for the same reason.
+
+**Diagnosis.** The check classifies each paragraph on `visible_text`, which is
+the accepted side for prose and BOTH sides for maths. Six proposals on this paper
+passed the gate only because none of them deleted an equation.
+
+**Suggested fix:** resolve a tracked paragraph to its accepted side before
+classifying — or skip a paragraph whose every `m:oMath` sits inside a `w:del` —
+and say in the report that a tracked file was read on its accepted side. `lint`,
+`citations` and `crossrefs` read the same redline without tripping.
+
+**Workaround in use:** run the gate on `build/edited.docx` (the accepted view)
+while the proposal is pending, and on the truth after the accept.
+
+### S2 — `revisions.accept` cannot remove a `w:cellDel` cell, so a tracked COLUMN deletion never passes the accept gate
+
+<!-- status: open -->
+
+**Measured**, Aging_Well R79, 2026-09-02. A batch drops Table 1's third column.
+Word's Compare serializes it correctly and cell-wise: every row keeps its third
+`w:tc`, marked `w:cellDel` with its content in `w:del` — the author sees a
+struck column. But `revisions.accept` removes only the `w:del` content and
+leaves the emptied CELL (and its empty `<w:p>`) in place, so "accept every
+revision" has four paragraphs the clean copy does not, and `tracked.build`'s
+accept gate refuses:
+
+    UNACCEPTED body ¶44: intended ''  accepted ''   (and ¶47, ¶50, ¶53 — one per row)
+
+Word's OWN accept is right: AcceptAllRevisions on the same batch, extracted via
+Flat OPC, compares CLEAN against the clean edit on every content layer
+(STRUCTURE/TEXT/FORMULA/FORMAT/PARAGRAPH/HYPERLINK all none; only the standard
+accept-glyph flattening). So the deliverable is unharmed — the gap is the XML
+approximation's, same family as the footnote-deletion shells (fixed via
+`footnotes.prune_orphans`).
+
+**Diagnosis.** `revisions.accept` walks revision elements; a `cellDel` is a
+`w:tcPr` property (`<w:cellDel>` inside `w:tcPr`), not a `w:del` wrapper, and
+nothing in the accept path deletes table geometry.
+
+**Suggested fix:** on accept, remove any `w:tc` whose `tcPr` carries
+`w:cellDel` (and its `gridCol` accounting where the whole column goes); on
+reject, strip the `cellDel` mark. A minimal repro is two rows × two columns
+with one column deleted through Word Compare.
+
+**Workaround in use:** `Aging_Well/revision/scripts/r79c_build.py` — build with
+`accept_check=False` (patching `tracked.build` the way the compression round
+patched `CompareMoves`) and prove the accept side through Word itself:
+AcceptAllRevisions on a probe copy, Flat OPC out, `docxkit compare` against the
+clean edit. The paper's `accept.py` must not be used on such a round's residue
+without pruning emptied cells; the author's Word accept needs nothing.
 
 ## Where the fixed entries are
 
