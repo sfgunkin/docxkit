@@ -227,3 +227,35 @@ def _no_real_word(request, monkeypatch):
     monkeypatch.setitem(sys.modules, "pythoncom", None)
     monkeypatch.setitem(sys.modules, "win32com", None)
     monkeypatch.setitem(sys.modules, "win32com.client", None)
+
+
+def clean_document() -> str:
+    """A minimal `w:document` with no XML prolog.
+
+    The part is embedded inside `<pkg:xmlData>` in the Flat OPC fixture
+    the tracked-build tests unpack, and a prolog there is not legal.
+    """
+    xml = document(para(run("The revised sentence.")))
+    return xml[xml.index("<w:document"):]
+
+
+@pytest.fixture
+def sources(tmp_path):
+    """(original, revised, out) for a `tracked.build` run.
+
+    Here rather than in a test module because TWO now need it —
+    `test_tracked_build` and `test_tracked_gates`, split on 2026-09-02 —
+    and a fixture shared by importing it reads as unused to a linter
+    while every test that takes it by name reads as REDEFINING it. That
+    is ruff F401 and five F811s for code pytest resolves correctly;
+    conftest is where a shared fixture stops being an argument with the
+    tooling.
+
+    The two inputs are never read by the fake Word module, but `build`
+    opens them, so they have to exist.
+    """
+    for name in ("original.docx", "revised.docx"):
+        with zipfile.ZipFile(tmp_path / name, "w") as z:
+            z.writestr("word/document.xml", clean_document())
+    return (tmp_path / "original.docx", tmp_path / "revised.docx",
+            tmp_path / "redline.docx")
