@@ -262,7 +262,10 @@ def test_prose_props_on_an_ordinary_paragraph():
 
     p = ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
          '<w:r><w:rPr><w:b/></w:rPr><w:t>Table A4</w:t></w:r></w:p>')
-    assert prose_props(p) == ('<w:jc w:val="center"/>',
+    # BOTH wrapped: the pair goes straight to `para(run(t, rpr), ppr)`,
+    # and a bare pPr made that write `<w:p><w:jc/>…`, which Word drops
+    # silently (BACKLOG S2, 2026-09-01).
+    assert prose_props(p) == ('<w:pPr><w:jc w:val="center"/></w:pPr>',
                               "<w:rPr><w:b/></w:rPr>")
 
 
@@ -393,7 +396,8 @@ def test_prose_props_walks_PAST_a_styled_link_run_to_the_prose():
          "<w:t>Bhalotra (2020)</w:t></w:r>"
          '<w:r><w:rPr><w:i/></w:rPr><w:t> shows that</w:t></w:r></w:p>')
 
-    assert prose_props(p) == ('<w:jc w:val="both"/>', "<w:rPr><w:i/></w:rPr>")
+    assert prose_props(p) == ('<w:pPr><w:jc w:val="both"/></w:pPr>',
+                              "<w:rPr><w:i/></w:rPr>")
 
 
 def test_an_ALL_LINK_paragraph_still_answers_with_its_pPr():
@@ -407,7 +411,7 @@ def test_an_ALL_LINK_paragraph_still_answers_with_its_pPr():
          '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>only</w:t></w:r>'
          "</w:hyperlink></w:p>")
 
-    assert prose_props(p) == ('<w:jc w:val="center"/>', "")
+    assert prose_props(p) == ('<w:pPr><w:jc w:val="center"/></w:pPr>', "")
 
 
 # --- the run of 2026-08-20: 2.4 %, and the one that was real ------------

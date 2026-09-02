@@ -84,7 +84,21 @@ def para(content: str = "", ppr: str = "") -> str:
 
     `content` is XML, not text — compose it with :func:`run`, or pass an
     ``<m:oMath>`` from :mod:`docxkit.equations` to place an equation.
+
+    `ppr` may arrive wrapped or bare and is normalised either way. It
+    was spliced in VERBATIM, and the pair this function is documented
+    with — `para(run(text, rpr), ppr)` over :func:`prose_props` — handed
+    back a bare pPr, so the obvious composition wrote
+    ``<w:p><w:spacing/><w:jc/>…<w:r>``: a paragraph whose properties are
+    bare children of ``w:p``. Word keeps the runs and DISCARDS the
+    schema-invalid children silently, so Parental_style's supplement
+    shipped a title block rendered left-aligned at 16pt (2026-09-01),
+    found by rasterising the PDF. `lint` refuses that shape now and
+    `prose_props` returns the wrapper; this accepts both spellings so a
+    caller that already wraps is not punished for it.
     """
+    if ppr and not ppr.lstrip().startswith("<w:pPr"):
+        ppr = f"<w:pPr>{ppr}</w:pPr>"
     return f"<w:p>{ppr}{content}</w:p>"
 
 
@@ -209,6 +223,11 @@ def insert_before(xml: str, sig: str, content: str, *,
 def prose_props(para_xml: str) -> tuple[str, str]:
     """``(pPr, rPr)`` to clone from a paragraph — from its PROSE runs.
 
+    **Both come WRAPPED**, and that symmetry is the fix for a defect the
+    asymmetry caused. The rPr always carried its wrapper and the pPr
+    never did, while the two are documented as a pair to hand straight
+    to :func:`para` — which spliced them in verbatim. See `para`.
+
     The obvious version lifts the FIRST ``w:rPr`` in the paragraph, and
     a paragraph that opens on a citation is ordinary: its first run
     properties belong to the LINK. The new paragraph then renders blue
@@ -232,6 +251,6 @@ def prose_props(para_xml: str) -> tuple[str, str]:
         if _HYPERLINK_STYLE in run_xml:
             continue
         own = own_properties(run_xml, "rPr")
-        return (ppr[2] if ppr else "",
+        return (f"<w:pPr>{ppr[2]}</w:pPr>" if ppr else "",
                 f"<w:rPr>{own[2]}</w:rPr>" if own else "")
-    return (ppr[2] if ppr else ""), ""
+    return (f"<w:pPr>{ppr[2]}</w:pPr>" if ppr else ""), ""

@@ -62,6 +62,38 @@ _RUN_LEVEL_TAGS = frozenset({W + t for t in _RUN_LEVEL}
                             | {M + t for t in _RUN_LEVEL_MATH})
 _BLOCK_CHILDREN = frozenset({W + "p", W + "tbl", W + "tr", W + "tc"})
 _MARKER_PARENTS = frozenset({W + "rPr", W + "trPr"})
+#: Paragraph properties that are only ever legal INSIDE `w:pPr`. Named
+#: from `_PPR_BEFORE_RPR` plus the rest of CT_PPr a builder reaches for,
+#: and deliberately NOT the whole schema: `w:rPr` is legal directly in a
+#: `w:p` (it is the paragraph mark's own run properties, which every
+#: tracked paragraph-mark revision carries), and listing it here would
+#: fail every redline in the corpus.
+_PPR_STRAYS = frozenset(W + t for t in _PPR_BEFORE_RPR | {
+    "pageBreakBefore", "widowControl", "pBdr", "shd", "tabs",
+    "suppressLineNumbers", "textAlignment", "mirrorIndents",
+    "adjustRightInd", "snapToGrid", "bidi",
+})
+
+
+def _stray_para_props(root: Any) -> list[str]:
+    """Check 1b — a paragraph PROPERTY sitting directly in the paragraph.
+
+    Word keeps the runs and DISCARDS a schema-invalid child of ``w:p``
+    without a word, so the paragraph renders with the default style and
+    nothing anywhere says why: Parental_style's supplement shipped a
+    title block left-aligned at 16pt (2026-09-01), found by rasterising
+    the PDF. It came from ``body.para(ppr=…)`` splicing in a bare pPr,
+    which is fixed — this is the check that catches the shape whatever
+    wrote the paragraph, and it is check 1's shape one level down: a
+    child in a container whose schema has no place for it.
+
+    Its own function because inline it took `lint` from 31 to 34 and
+    `test_complexity_debt` refused the commit.
+    """
+    return [f"w:{_local(child.tag)} sits directly in w:p, outside its "
+            f"w:pPr — Word drops it silently"
+            for paragraph in root.iter(W + "p") for child in paragraph
+            if child.tag in _PPR_STRAYS]
 
 
 def lint(*roots: Any) -> list[str]:
@@ -92,6 +124,8 @@ def lint(*roots: Any) -> list[str]:
                     problems.append(
                         f"w:{_local(parent.tag)} has run-level child "
                         f"{_local(child.tag)} (must be inside w:p)")
+
+        problems.extend(_stray_para_props(root))   # 1b, below
 
         # 2/3/4 + id collection, one multi-tag C-filtered walk.
         c2: list[str] = []
