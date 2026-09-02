@@ -848,6 +848,16 @@ def cmd_math(args: argparse.Namespace) -> int:
     at = {m.start(): i for i, m in enumerate(P_RE.finditer(doc), 1)}
     print(f"  {len(displays)} display equation(s), "
           f"{len(stranded)} still in INLINE mode")
+    # A redline is classified on its ACCEPTED side — a paragraph on its
+    # way out reads as maths-only once `visible_text` drops its
+    # `w:delText`, and used to be reported as a stranded display with a
+    # remedy that would have wrapped an equation being deleted. Say so:
+    # a count that silently answers about a different view of the file
+    # than the one named on the command line is the shape this file's
+    # backlog keeps finding.
+    if "<w:del " in doc:
+        print("  (tracked file — read on its ACCEPTED side, so a "
+              "paragraph being deleted is not a finding)")
     # Say what was left out. A notation table is the ordinary reason a
     # paper has maths-only cells, and excluding them silently reads as
     # "there are none" — the shape this file's backlog keeps finding.

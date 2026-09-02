@@ -1034,11 +1034,51 @@ def is_display(para_xml: str) -> bool:
     """
     if "<m:oMath" not in para_xml:
         return False
+    para_xml = _accepted_side(para_xml)
+    if "<m:oMath" not in para_xml:
+        return False               # the maths itself is being deleted
     # strip the maths first: visible_text includes m:t, so leaving it in
     # would make every display equation look like a paragraph of prose
     prose = visible_text(OMATH_RE.sub("", para_xml))
     without_number = EQ_NUMBER_RE.sub("", prose)
     return not without_number.strip(" \t\r\n.,;:")
+
+
+def _accepted_side(para_xml: str) -> str:
+    r"""`para_xml` with its tracked DELETIONS removed.
+
+    The classification above reads :func:`visible_text`, which drops
+    ``w:delText`` and keeps ``m:t``. So a paragraph being DELETED — its
+    prose all in deletions, its equations' runs inside them — reads as
+    maths and nothing else, which is the exact signature of a stranded
+    display. `math --check` exited 0 on the accepted view of a batch and
+    1 on the promoted proposal, naming the deleted paragraph
+    (Aging_Well R78, 2026-09-01):
+
+        16 display equation(s), 1 still in INLINE mode
+           ¶64    'cijfj'
+
+    The remedy printed with it — ``equations.display(para)`` — would
+    have wrapped an equation on its way out of the document.
+
+    Resolving to the accepted side is the general answer rather than
+    "skip a paragraph whose every ``m:oMath`` is deleted", and it costs
+    nothing extra: the same pass also drops the DELETED PROSE that made
+    a paragraph look maths-only in the first place. A paragraph keeping
+    live maths and losing its words IS a stranded display in the
+    accepted view, and still reports.
+
+    Independently reproduced before the fix: over 600 manuscripts,
+    exactly one other document carries the shape (`Missing Market
+    12082019.docx` ¶78 — 17 ``w:delText`` runs and one ``m:oMath``
+    inside a deletion, with a stray "G. " live), and it was reported as
+    a stranded display too.
+    """
+    if "<w:del " not in para_xml:
+        return para_xml
+    for lo, hi in reversed(element_spans(para_xml, "del")):
+        para_xml = para_xml[:lo] + para_xml[hi:]
+    return para_xml
 
 
 def display_equations(xml: str, *,
