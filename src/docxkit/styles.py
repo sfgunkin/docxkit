@@ -17,7 +17,16 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES
+from ._xml import (
+    COMMENTS,
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    PARA_RE,
+    RUN_RE,
+    own_properties,
+    visible_text,
+)
 from .errors import AnchorError, PackageError
 
 __all__ = [
@@ -28,12 +37,14 @@ __all__ = [
     "AnchorError",
     "Cascade",
     "PackageError",
+    "Raised",
     "Resolved",
     "Style",
     "StyleReport",
     "apply_template",
     "ensure",
     "paragraph_property",
+    "raised_prose",
     "read",
     "used",
 ]
@@ -707,3 +718,146 @@ def paragraph_property(styles_xml: str | None, pstyle: str | None,
         return None
     ppr = _PPR_RE.search(block.group(0))
     return _ppr_attr(ppr.group(0), tag, attr) if ppr else None
+
+
+@dataclass(frozen=True)
+class Raised:
+    """One run of prose that renders raised or lowered, and why."""
+
+    part: str            # word/footnotes.xml
+    where: str           # "fn 5", "¶12" — the note or paragraph
+    style: str           # the character style supplying it
+    value: str           # superscript | subscript
+    text: str            # what a reader sees raised
+
+
+#: The elements that ARE a note mark. A run holding one is the mark
+#: itself, whose whole job is to be raised.
+_NOTE_MARK_RE = re.compile(
+    r"<w:(?:footnoteRef|endnoteRef|footnoteReference|endnoteReference"
+    r"|commentReference|annotationRef)\b")
+#: The AUTO mark specifically. A note definition opens with its mark
+#: either as this element or, for a note marked `*` rather than
+#: numbered, as literal text in the first run — and that text run wears
+#: `FootnoteReference` legitimately. See :func:`raised_prose`.
+_AUTO_MARK_RE = re.compile(r"<w:(?:footnoteRef|endnoteRef)\b")
+#: A body reference that says the mark is the text after it, rather than
+#: an auto number. Spec-derived: no manuscript in the corpus exercised
+#: it, and the suppression can only ever REMOVE a finding.
+_CUSTOM_MARK_RE = re.compile(
+    r"<w:(?:footnote|endnote)Reference\b[^>]*"
+    r'w:customMarkFollows="(?:1|true|on)"')
+_RPRCHANGE_RE = re.compile(r"<w:rPrChange\b.*?</w:rPrChange>", re.DOTALL)
+_RAISING = ("superscript", "subscript")
+#: A deleted run is going away; its typography is not a defect.
+_DEL_RE = re.compile(r"<w:del\b[^>]*(?<!/)>.*?</w:del>", re.DOTALL)
+
+
+def raised_prose(parts: dict[str, bytes]) -> list[Raised]:
+    r"""Prose that renders raised because its CHARACTER STYLE says so.
+
+    A footnote's whole sentence rendered in superscript for 20 days and
+    every gate passed it: `footnotes --check` reads SIZE only, `lint`,
+    `citations`, `refstyle` and `math` are content-blind to run
+    properties, and `compare`'s FORMAT layer had no text-matched pair
+    because the note had been replaced wholesale in the same batch. The
+    author found it by reading the page (Parental_style, 2026-09-01).
+
+    **A grep for ``w:vertAlign`` reports such a file clean**, which is
+    the trap worth recording. The run carried
+    ``<w:rStyle w:val="FootnoteReference"/>`` and no ``vertAlign`` of
+    its own; ``styles.xml`` gives that style ``vertAlign=superscript``,
+    so the raising was inherited and the character style has to be
+    resolved before the question can even be asked. That is what
+    :class:`Cascade` is for, and why this lives here.
+
+    So: a run of visible text whose ``vertAlign`` resolves through a
+    STYLE rather than the run itself. A run stating its own
+    ``vertAlign`` — including ``baseline`` — is deliberate and passes.
+
+    **What is exempt, and why it is position rather than length.** A
+    note definition OPENS with its mark. Usually that is
+    ``<w:footnoteRef/>``, which this skips as a mark like any other; but
+    a footnote marked ``*`` rather than numbered carries the asterisk as
+    literal TEXT in the first run, wearing ``FootnoteReference`` on
+    purpose. Measured over 300 manuscripts, that one case is 22 of 26
+    findings. The discriminator is exact and needs no heuristic — run 0
+    of a note paragraph holding no auto mark IS the mark — where a
+    length rule would have been a guess, and would have missed the
+    raised full stop this found at the end of an unrelated footnote.
+
+    With it: **4 findings over 300 manuscripts, every one real** — the
+    Parental_style sentence in three generations of that paper, and that
+    stray full stop.
+    """
+    blob = parts.get(_STYLES_PART)
+    cascade = Cascade(blob.decode("utf-8") if blob else None)
+    if not cascade.known:
+        return []          # no styles part: nothing to inherit FROM
+    found: list[Raised] = []
+    for part in (DOCUMENT, FOOTNOTES, ENDNOTES):
+        raw = parts.get(part)
+        if raw:
+            found.extend(_raised_in(raw.decode("utf-8"), part, cascade))
+    return found
+
+
+#: A note DEFINITION and its id, for naming the finding. A paragraph
+#: index into `footnotes.xml` is not the note a reader can look up:
+#: Word's separator and continuation notes sit at the head of the part
+#: and a long note runs to several paragraphs, so "note 7" was footnote
+#: 5. The id is what every other message in the package names a note by.
+_NOTE_EL_RE = re.compile(r'<w:(footnote|endnote)\b[^>]*w:id="(-?\d+)"'
+                         r"[^>]*>.*?</w:\1>", re.DOTALL)
+
+
+def _note_at(spans: list[tuple[int, int, str]], at: int) -> str | None:
+    """The id of the note containing `at`."""
+    return next((nid for lo, hi, nid in spans if lo <= at < hi), None)
+
+
+def _raised_in(xml: str, part: str, cascade: Cascade) -> list[Raised]:
+    """:func:`raised_prose` over one part."""
+    notes = part in (FOOTNOTES, ENDNOTES)
+    spans = ([(m.start(), m.end(), m.group(2))
+              for m in _NOTE_EL_RE.finditer(xml)] if notes else [])
+    label = "fn" if part == FOOTNOTES else "en"
+    gone = [(m.start(), m.end()) for m in _DEL_RE.finditer(xml)]
+    found: list[Raised] = []
+    for i, pm in enumerate(PARA_RE.finditer(xml)):
+        para = pm.group(0)
+        pstyle = Cascade.paragraph_style(para)
+        runs = list(RUN_RE.finditer(para))
+        custom = notes and not _AUTO_MARK_RE.search(para)
+        for j, rm in enumerate(runs):
+            if custom and j == 0:
+                continue                       # the note's own mark
+            run = rm.group(0)
+            if (j and _CUSTOM_MARK_RE.search(runs[j - 1].group(0))):
+                continue                       # a body custom mark
+            text = visible_text(run)
+            if not text.strip() or _NOTE_MARK_RE.search(run):
+                continue
+            at = pm.start() + rm.start()
+            if any(lo <= at < hi for lo, hi in gone):
+                continue
+            # The run's OWN properties, its rPrChange cut. A tracked
+            # FORMATTING change stores the SUPERSEDED properties as a
+            # complete `w:rPr` NESTED inside the live one, so both a
+            # non-greedy `<w:rPr>.*?</w:rPr>` and a `w:rPrChange` cut
+            # applied after it are wrong: the first closes on the
+            # snapshot and returns the element cut in half, leaving the
+            # historical `w:rStyle` in and the cut with nothing to
+            # match. `own_properties` finds the close by depth, which is
+            # what it was written for; the snapshot then comes out.
+            own = own_properties(run, "rPr")
+            rpr = _RPRCHANGE_RE.sub("", own[2]) if own else ""
+            got = cascade.resolve("vertAlign", rpr=rpr,
+                                  rstyle=cascade.style_of(rpr),
+                                  pstyle=pstyle)
+            if got.kind == STYLE and got.value in _RAISING:
+                nid = _note_at(spans, at) if notes else None
+                where = f"{label} {nid}" if nid else f"¶{i + 1}"
+                found.append(Raised(part, where, got.style or "?",
+                                    got.value, text.strip()))
+    return found

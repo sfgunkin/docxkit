@@ -1002,13 +1002,34 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _raised_prose(parts: dict[str, bytes]) -> list[str]:
+    """Advisory findings from :func:`styles.raised_prose`, for `lint`.
+
+    Joined HERE rather than inside `lint.audit_parts`, which is where it
+    reads: `lint` and `styles` are siblings in the layering, so `lint`
+    may not import it, and the answer is unreachable without
+    ``word/styles.xml`` — a run that carries no ``w:vertAlign`` of its
+    own reads as clean in every lxml root `audit` is handed. The command
+    is the layer that may see both.
+
+    Advisory, and firmly so. Word opens the file, and the toolkit has no
+    command that clears this: it is a formatting mistake for a person to
+    fix, which is the shape `lint.audit` was split out of `lint` for.
+    """
+    from .styles import raised_prose
+    return [f"{r.where}: prose renders {r.value} — it wears the "
+            f"{r.style} character style, which supplies it, and states "
+            f"no w:vertAlign of its own: {r.text[:60]!r}"
+            for r in raised_prose(parts)]
+
+
 def cmd_lint(args: argparse.Namespace) -> int:
     """Structural checks for the markup Word refuses to open, and the
     findings it opens fine and reads wrongly."""
     from .lint import audit_parts, lint_parts
     parts = _package(args.docx, read_only=True)
     problems = lint_parts(parts)
-    advisory = audit_parts(parts)
+    advisory = audit_parts(parts) + _raised_prose(parts)
     print(f"{Path(args.docx).name}")
     if not problems and not advisory:
         print("  clean - no structural problems found")

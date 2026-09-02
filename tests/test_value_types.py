@@ -77,6 +77,7 @@ VALUES = [
     "revision._verdict.Verdict",   # what one cycle did, and what was decided
     "revision._gates.GateResult",  # one of the paper's checks, and its exit
     "revisions.Revision",
+    "styles.Raised",
     "styles.Resolved",
     "styles.Style",
     "tracked.Unaccepted",
