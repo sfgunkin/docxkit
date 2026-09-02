@@ -46,46 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — nothing in docxkit can see prose that renders superscript, and a footnote sat wrong for 20 days because of it
-
-<!-- status: open -->
-
-**Measured**, Parental_style, 2026-09-01. The author read the page and found
-footnote 5 rendered entirely in superscript. Its prose run carried
-`<w:rStyle w:val="FootnoteReference"/>` and **no `w:vertAlign` of its own**;
-`styles.xml` gives that style `vertAlign=superscript`, so the raising was
-inherited. Present since a batch of 2026-08-12/13 — every attic generation
-through 08-07 is clean — and passed by every gate in the paper's list on every
-round since:
-
-| gate | why it passed |
-|---|---|
-| `footnotes --check` | reads SIZE only; reported "9 footnote(s), house size 10pt, 0 disagreeing" |
-| `lint`, `citations`, `refstyle`, `math` | content-blind to run properties |
-| `compare` FORMAT | the footnote's text was REPLACED wholesale in the same batch, so there was no text-matched pair to compare formatting on |
-
-A first-pass grep for `w:vertAlign` also reported the file clean, which is the
-trap worth recording: **the check has to resolve the character style through
-`styles.xml` before the question can even be asked.**
-
-The same file carried a second instance of the class — one table note stating
-its significance stars inline while the paper's other six give each star its
-own `vertAlign=superscript` run (426 star runs inside the tables and 18 of 19
-outside them already obeyed the rule).
-
-**Suggested fix.** A run-typography check, either as `footnotes --check` gaining
-a "no prose wears a raising character style" test or as its own command over
-body, footnotes and endnotes. The general rule needs no per-paper knowledge:
-outside a note MARK, a run of words inheriting `vertAlign` from its style is a
-defect. The star rule is house style and belongs in the paper.
-
-**Workaround in use:** `Parental_style/revision/scripts/verify_run_styles.py`,
-now in that paper's `[verify]` list — proved to fail before it was trusted
-(2 findings on the truth of 2026-09-01, 0 after the repair, no false positives
-across 426 star runs and 9 footnotes). It reads the accepted view so it answers
-the same whether `working.docx` is a clean master or a redline. Fit to be
-lifted upstream, minus the star rule.
-
 ### S2 — `revision build` refuses on a pending BASELINE but is silent on a pending WORKING file, which is the commoner way to the same harm
 
 <!-- status: open -->

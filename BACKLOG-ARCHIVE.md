@@ -14,6 +14,90 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — nothing in docxkit can see prose that renders superscript, and a footnote sat wrong for 20 days because of it~~ — FIXED 02.09, `25e8c67`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02.** `styles.raised_prose`, joined to `docxkit lint`'s
+ADVISORY tier.
+
+**It lives in `styles` because that is where the question can be asked.** The
+entry's own trap — a grep for `w:vertAlign` reports the file clean — is the
+argument: the run carries no `vertAlign`, the character style supplies it, and
+the cascade has to be resolved before the question exists. `Cascade.resolve`
+already answers it and reports the KIND of source, so the rule is one line of
+judgement: a run of visible text whose `vertAlign` resolves through a STYLE
+rather than the run itself. A run stating its own — `baseline` included — is
+deliberate and passes.
+
+**MEASURED over 300 manuscripts, and the measurement set the one exemption.**
+Raw, the rule gives 26 findings in 24 documents, and 22 of them are a footnote
+marked `*` rather than numbered: it carries the asterisk as literal TEXT in its
+first run, wearing `FootnoteReference` on purpose. The discriminator is
+POSITION and it is exact — a note definition OPENS with its mark, either
+`<w:footnoteRef/>` or that custom text, so run 0 of a note holding no auto mark
+IS the mark. A length rule would have been a guess, and would have thrown away
+the raised full stop this found at the end of an unrelated footnote.
+
+With it: **4 findings over 300 manuscripts, every one real** — this paper's
+sentence in three of its generations, and that stray full stop. Re-measured
+through the shipped function rather than the probe; same four.
+
+**Not in `lint.audit_parts`, where it reads.** `lint` and `styles` are siblings
+in the layering and may not import each other; `test_layering` said so the
+first time this was wired the obvious way. The COMMAND is the layer that may
+see both. Advisory and firmly so — Word opens the file, and the toolkit has no
+command that clears this.
+
+Fourteen tests in `tests/test_raised_prose.py`, one of which found a real
+defect in the first draft: a tracked FORMATTING change nests the superseded
+`w:rPr` inside the live one, so a non-greedy `<w:rPr>.*?</w:rPr>` closes on the
+snapshot and a `w:rPrChange` cut applied afterwards has nothing left to match —
+the historical `rStyle` leaked through and scored. `own_properties` finds the
+close by depth, which is what it was written for.
+
+Lifted from the paper's `verify_run_styles.py` minus its two STAR rules, as the
+entry asked: a significance star being superscript in its own run is that
+paper's house style. The workaround script stays in that paper's `[verify]`
+list for them.
+
+**Measured**, Parental_style, 2026-09-01. The author read the page and found
+footnote 5 rendered entirely in superscript. Its prose run carried
+`<w:rStyle w:val="FootnoteReference"/>` and **no `w:vertAlign` of its own**;
+`styles.xml` gives that style `vertAlign=superscript`, so the raising was
+inherited. Present since a batch of 2026-08-12/13 — every attic generation
+through 08-07 is clean — and passed by every gate in the paper's list on every
+round since:
+
+| gate | why it passed |
+|---|---|
+| `footnotes --check` | reads SIZE only; reported "9 footnote(s), house size 10pt, 0 disagreeing" |
+| `lint`, `citations`, `refstyle`, `math` | content-blind to run properties |
+| `compare` FORMAT | the footnote's text was REPLACED wholesale in the same batch, so there was no text-matched pair to compare formatting on |
+
+A first-pass grep for `w:vertAlign` also reported the file clean, which is the
+trap worth recording: **the check has to resolve the character style through
+`styles.xml` before the question can even be asked.**
+
+The same file carried a second instance of the class — one table note stating
+its significance stars inline while the paper's other six give each star its
+own `vertAlign=superscript` run (426 star runs inside the tables and 18 of 19
+outside them already obeyed the rule).
+
+**Suggested fix.** A run-typography check, either as `footnotes --check` gaining
+a "no prose wears a raising character style" test or as its own command over
+body, footnotes and endnotes. The general rule needs no per-paper knowledge:
+outside a note MARK, a run of words inheriting `vertAlign` from its style is a
+defect. The star rule is house style and belongs in the paper.
+
+**Workaround in use:** `Parental_style/revision/scripts/verify_run_styles.py`,
+now in that paper's `[verify]` list — proved to fail before it was trusted
+(2 findings on the truth of 2026-09-01, 0 after the repair, no false positives
+across 426 star runs and 9 footnotes). It reads the accepted view so it answers
+the same whether `working.docx` is a clean master or a redline. Fit to be
+lifted upstream, minus the star rule.
+
+---
+
 ### ~~S2 — `refstyle` does not audit the separator between a reference's issue number and its page range~~ — FIXED 02.09, `f08cc3b`
 <!-- status: fixed -->
 
