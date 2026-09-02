@@ -795,37 +795,6 @@ else on this list.
 
 ---
 
-### S4 — `math --check` reports a redline's DELETED maths as a stranded display
-
-<!-- status: open -->
-
-**Measured**, Aging_Well R78, 2026-09-01. A batch built with `--keep-math` deletes a
-body paragraph carrying two inline equations (c_ij, f_j). On the accepted view
-`math --check` exits 0 with 15 displays; on the promoted PROPOSAL it exits 1:
-
-    16 display equation(s), 1 still in INLINE mode
-       ¶64    'cijfj'
-       -> equations.display(para) wraps them in m:oMathPara (one m:oMath per paragraph; it refuses more)
-
-¶64 is the deleted paragraph: 10 `w:del`, no live `w:t`, its prose all
-`w:delText`, the equations' runs inside tracked deletions. `visible_text` drops
-the `w:delText` but keeps the `m:t`, so the paragraph reads as maths-only — the
-exact signature of a stranded display — and the gate cannot tell a paragraph with
-nothing live from one that IS an equation. `m:oMath` counts 266 on the proposal
-against 264 on either clean side for the same reason.
-
-**Diagnosis.** The check classifies each paragraph on `visible_text`, which is
-the accepted side for prose and BOTH sides for maths. Six proposals on this paper
-passed the gate only because none of them deleted an equation.
-
-**Suggested fix:** resolve a tracked paragraph to its accepted side before
-classifying — or skip a paragraph whose every `m:oMath` sits inside a `w:del` —
-and say in the report that a tracked file was read on its accepted side. `lint`,
-`citations` and `crossrefs` read the same redline without tripping.
-
-**Workaround in use:** run the gate on `build/edited.docx` (the accepted view)
-while the proposal is pending, and on the truth after the accept.
-
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
