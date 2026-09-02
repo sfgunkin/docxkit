@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
@@ -938,6 +939,84 @@ def _order_findings(entries: list[Reference]) -> list[Issue]:
     return found
 
 
+#: `12(3): 45–67` — a volume, a parenthesised issue, the separator, the
+#: first page. The separator is the punctuation between them, and the
+#: whole point of the rule is that this module does not know which one
+#: is right: journals differ, and a paper that consistently writes
+#: `40(2), 355` is not making an error.
+_LOCATOR_RE = re.compile(r"\b\d{1,4}\s*\(\s*[\w–—/-]{1,12}\s*\)\s*"
+                         r"([^\s\w]{1,2})\s*\d")
+#: Enough entries to constitute a PRACTICE. Measured: half the mixed
+#: lists in the corpus have a "majority" of one or two entries — a
+#: convention of one entry is not a convention, and the honest answer
+#: below this floor is silence rather than a guess.
+_LOCATOR_FLOOR = 8
+#: A slip is one or two entries. A list running 31 one way and 8 the
+#: other holds two conventions at once — a literature review assembled
+#: from several sources — and reporting the 8 tells the author their
+#: document has variety, which they know. That is a description, not a
+#: finding.
+_LOCATOR_ODD = 2
+
+
+def _locator_findings(entries: list[Reference]) -> list[Issue]:
+    """Entries whose issue-to-pages separator departs from the list's own.
+
+    An author edit turned one entry's ``6(1):`` into ``6(1);`` and the
+    whole audit reported the file clean — 74 entries, 74 cited, one
+    finding, and that one about a different entry's position in the
+    list. `refstyle` audits everything around this separator (initials,
+    ``(2020).``, "and" not "&", en-dashes in the page range,
+    alphabetical order, cited-vs-listed), which is exactly why its
+    silence read as approval (backlog S2, Parental_style 2026-09-01).
+
+    Judged against the paper's own MAJORITY, not a hard-coded character
+    — the same rule the citation grammar learns the ``txt``-suffix
+    convention by, and the one the back-link audit asks of a reference
+    list. Journals differ; a paper consistently writing ``40(2), 355``
+    is following its journal, and a module that preferred the colon
+    would report a house style as an error in every such paper.
+
+    MEASURED over 300 manuscripts before it shipped: 195 carry a
+    ``vol(issue)`` locator, and at this threshold **24 documents report
+    25 findings**, every one of which is a real slip on reading. Loosen
+    either bound and it starts reporting lists that simply hold two
+    conventions: without the floor, "1 of 2 agree"; without the cap, the
+    eight BibTeX-shaped entries in a hand-assembled review.
+
+    Several of the 25 are the SAME entry across four and five
+    generations of one paper — Weber & Luzzi, Singer (2016), Leopold &
+    Leopold — which is the argument for the rule. Nobody caught them by
+    reading, round after round.
+    """
+    seen = [(m.group(1), r) for r in entries
+            for m in _LOCATOR_RE.finditer(r.text)]
+    counts = Counter(sep for sep, _ in seen)
+    if len(counts) < 2:
+        return []
+    top, n_top = counts.most_common(1)[0]
+    if (n_top < _LOCATOR_FLOOR or len(seen) - n_top > _LOCATOR_ODD
+            or n_top < 0.9 * len(seen)):
+        return []
+    return [Issue(
+        "locator-sep",
+        f'the issue takes "{top}" before the pages here — this entry has '
+        f'"{sep}", and {n_top} of {len(seen)} agree on "{top}"',
+        where=f"¶{r.index + 1}", snippet=_snippet_locator(r.text))
+        for sep, r in seen if sep != top]
+
+
+def _snippet_locator(text: str) -> str:
+    """The locator itself, not the head of the entry.
+
+    Every other snippet in this module shows the entry's first 60
+    characters, which for this finding is the authors and the year — the
+    part that is right. A reader has to see the separator.
+    """
+    m = _LOCATOR_RE.search(text)
+    return _snippet(text, m.start(), m.end()) if m else text[:60]
+
+
 def _misfiled(keys: list[tuple[str, str]]) -> list[int]:
     """Indices of the entries that have to MOVE, and no others.
 
@@ -1416,6 +1495,7 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
                 or any(v in istyles for v in _RSTYLE_RE.findall(xml)))
 
     report.issues.extend(_order_findings(entries))
+    report.issues.extend(_locator_findings(entries))
     if page_layout is not None:
         report.issues.extend(_layout_findings(
             parts, matches, texts, entries, page_layout))
