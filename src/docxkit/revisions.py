@@ -396,6 +396,122 @@ def _drop_row(row: Any) -> None:
             parent.remove(table)
 
 
+#: A CELL's own revision flag, inside `w:tcPr`. Same shape as the row's
+#: in `trPr` and named differently, so `_row_flag` cannot answer for it:
+#: an accepted `w:cellDel` takes the whole `w:tc` with it.
+#:
+#: `w:cellMerge` is deliberately absent. It records a merge or a split,
+#: not an appearance or a disappearance, and applying it means
+#: recomputing `gridSpan` and `vMerge` across the row — a different
+#: operation with a different failure mode, and no manuscript in the
+#: corpus carries one to measure against.
+_CELL_FLAG = {"del": "cellDel", "ins": "cellIns"}
+
+
+def _cell_flags(cell: Any, tags: tuple[str, ...]) -> list[Any]:
+    """EVERY cell-level revision element inside ``tcPr``, for these tags.
+
+    A list rather than the first, because a rejected ``w:tcPrChange``
+    can leave two: the snapshot brings its own ``w:cellDel`` and
+    :data:`_OUTSIDE_SNAPSHOT` carries the live one across beside it.
+    Removing one of a pair leaves the view still reporting a revision.
+    """
+    tcpr = cell.find(W + "tcPr")
+    if tcpr is None:
+        return []
+    return [el for t in tags if (name := _CELL_FLAG.get(t))
+            for el in tcpr.findall(W + name)]
+
+
+def _grid_span(cell: Any) -> int:
+    """How many grid columns this cell occupies."""
+    span = cell.find(f"{W}tcPr/{W}gridSpan")
+    if span is None:
+        return 1
+    try:
+        return max(1, int(span.get(W + "val", "1")))
+    except ValueError:
+        return 1
+
+
+def _apply_cell_changes(root: Any, vanish: tuple[str, ...],
+                        keep: tuple[str, ...],
+                        wants: Callable[[Any, str], bool]) -> None:
+    """:func:`_apply_cell_revisions` over every table in the tree.
+
+    Its own function for the reason the other extractions here are:
+    inline, the two lines took `_simulate_where` from 24 to 25 and
+    `test_complexity_debt` refused the commit.
+    """
+    for table in list(root.iter(W + "tbl")):
+        _apply_cell_revisions(table, vanish, keep, wants)
+
+
+def _apply_cell_revisions(table: Any, vanish: tuple[str, ...],
+                          keep: tuple[str, ...],
+                          wants: Callable[[Any, str], bool]) -> None:
+    """Apply the CELL-level revisions in one table.
+
+    Word serializes a deleted COLUMN cell-wise: every row keeps its
+    ``w:tc``, marked ``w:cellDel`` in its ``w:tcPr`` with the content
+    inside ``w:del``. Nothing here walked that. Accepting removed the
+    content and left the emptied cell and its empty ``w:p`` standing, so
+    "accept every revision" had four paragraphs the clean copy did not
+    and `tracked.build`'s accept gate refused a batch Word itself
+    accepts correctly (Aging_Well R79, 2026-09-02):
+
+        UNACCEPTED body ¶44: intended ''  accepted ''
+
+    Same family as the footnote-deletion shells `prune_orphans` cleans
+    up: the deliverable is fine and the XML approximation of Word's
+    accept is what was short.
+
+    **The grid is corrected only when the deletion IS a column.** A
+    table's ``w:tblGrid`` declares the columns the rows lay out against,
+    so dropping a cell per row without dropping a ``w:gridCol`` leaves a
+    phantom column. But cells can be deleted raggedly — different grid
+    positions in different rows — and there is no column to remove then.
+    Guessing one would corrupt the geometry of a table that is merely
+    edited, so a ragged deletion takes its cells and leaves the grid
+    alone.
+    """
+    rows = table.findall(W + "tr")
+    if not rows:
+        return
+    doomed: list[frozenset[int]] = []
+    for row in rows:
+        at = 0
+        gone: set[int] = set()
+        for cell in row.findall(W + "tc"):
+            span = _grid_span(cell)
+            doomed_here = [f for f in _cell_flags(cell, vanish)
+                           if wants(f, "cell")]
+            if doomed_here:
+                gone.update(range(at, at + span))
+                row.remove(cell)
+            else:
+                # The SURVIVING side's mark is not content, so nothing
+                # above reaches it: an accepted table kept one
+                # `w:cellIns` per inserted cell and still reported it as
+                # a revision. Applying one means removing its markup on
+                # both sides — the same rule the row and paragraph-mark
+                # handlers follow.
+                for kept in _cell_flags(cell, keep):
+                    if wants(kept, "cell"):
+                        kept.getparent().remove(kept)
+            at += span
+        doomed.append(frozenset(gone))
+
+    if not doomed[0] or len(set(doomed)) != 1:
+        return                       # nothing went, or it went raggedly
+    grid = table.find(W + "tblGrid")
+    if grid is None:
+        return
+    for i, col in reversed(list(enumerate(grid.findall(W + "gridCol")))):
+        if i in doomed[0]:
+            grid.remove(col)
+
+
 def _merge_into_next(para: Any) -> None:
     """Word: losing a paragraph mark joins this paragraph to the next."""
     parent = para.getparent()
@@ -425,9 +541,13 @@ _CONTENT_MARKERS = ("<w:ins ", "<w:del ", "<w:ins/", "<w:del/",
 #: whole `w:tcPr`. A cell whose only revision is one of these carries no
 #: content marker at all, so a guard that looked for insertions alone
 #: called the table clean and let a writer edit the historical snapshot.
+#: A CELL's own flag belongs here rather than among the content markers:
+#: it sits in `w:tcPr` like the other property revisions, and a cell
+#: whose content was already empty carries nothing else at all.
 _PROPERTY_MARKERS = ("<w:tcPrChange", "<w:trPrChange", "<w:tblPrChange",
                      "<w:pPrChange", "<w:rPrChange", "<w:sectPrChange",
-                     "<w:tblGridChange")
+                     "<w:tblGridChange",
+                     "<w:cellIns", "<w:cellDel", "<w:cellMerge")
 
 
 #: Every element whose presence means a tracked change is PENDING, as one
@@ -446,9 +566,18 @@ _PROPERTY_MARKERS = ("<w:tcPrChange", "<w:trPrChange", "<w:tblPrChange",
 #:
 #: The lookahead is load-bearing: without it `w:moveFrom` also matches
 #: `w:moveFromRangeStart`, and a move would be counted twice.
+#:
+#: The cell trio was the EIGHTH way, found while teaching accept/reject
+#: to apply them (2026-09-02). A `w:cellDel` is the whole record of a
+#: deleted cell — Word writes no content marker for one that was already
+#: empty, and none at all for a `w:cellMerge` — so a table whose column
+#: deletion had nothing in it read as 0 pending, which is the number the
+#: protocol decides everything on. Same defect as the move, one more
+#: spelling.
 _REVISION_NAMES = ("ins", "del", "moveFrom", "moveTo", "tcPrChange",
                    "trPrChange", "tblPrChange", "pPrChange", "rPrChange",
-                   "sectPrChange", "tblGridChange")
+                   "sectPrChange", "tblGridChange",
+                   "cellIns", "cellDel", "cellMerge")
 REVISION_RE = re.compile(
     r"<w:(?:" + "|".join(_REVISION_NAMES) + r")(?=[ />])[^>]*>")
 
@@ -647,6 +776,17 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     # `w:ins`/`w:del` flags a rejected `trPrChange`/`pPrChange` restore
     # would otherwise have moved out from under them.
     _apply_property_changes(root, mode, wants)
+
+    # CELLS after it, which is the opposite placement and measured
+    # rather than chosen. A `w:tcPrChange`'s SNAPSHOT carries its own
+    # `w:cellDel` — Word records the cell's pre-change properties
+    # including the delete mark — so a reject that runs the restore
+    # afterwards puts back a flag stripped before it, and the rejected
+    # view still reported a revision (Aging_Well R79). The vanish side
+    # survives the restore either way: `_OUTSIDE_SNAPSHOT` carries the
+    # live `cellIns`/`cellDel` across on purpose, which is what makes
+    # this order safe where it is not for the row.
+    _apply_cell_changes(root, vanish, keep, wants)
     return _serialize(root, wrapped)
 
 
