@@ -437,6 +437,81 @@ def _span_findings(links: dict[str, list[tuple[int, str]]],
     return out
 
 
+def _mention_scan(parts: dict[str, bytes], texts: list[str],
+                  paras: list[re.Match[str]],
+                  head_idx: int) -> list[tuple[int, str, str]]:
+    """Every paragraph a citation can be MENTIONED in: `(where, text, xml)`.
+
+    The body before the reference list, and then both note stores.
+
+    Notes were missing here and nowhere else. `_read_notes` folds their
+    bookmarks and links in, so a work cited only in a footnote resolved
+    and reported correctly — but its MENTION was never in the
+    denominator. Aging_Well, 2026-08-31: a round added "(World Bank
+    2026)" to footnote 2 as plain text and `citations` printed
+    `Mentions: 103 of 103 linked` before the link was made AND after.
+    Six of that paper's works are cited only in footnotes.
+
+    The first five paragraphs are skipped as the title block, which is
+    the rule this inherits from the loop it was lifted out of.
+    `_NOTE_AT`'s sentinel stands in for the index, so `where()` says
+    "fn" or "en" rather than a paragraph number a reader would go
+    hunting for in the body.
+    """
+    scan = [(i, text, paras[i].group(0))
+            for i, text in enumerate(texts[:head_idx]) if i >= 5]
+    for part, at in _NOTE_AT.items():
+        blob = parts.get(part)
+        if blob:
+            scan += [(at, visible_text(m.group(0)), m.group(0))
+                     for m in PARA_RE.finditer(blob.decode("utf-8"))]
+    return scan
+
+
+def _no_backlink(ref_marks: dict[str, int],
+                 links: dict[str, list[tuple[int, str]]],
+                 where: Callable[[int], str],
+                 *, skip: Callable[[str], bool]) -> list[_Finding]:
+    """Entries with NO link home, where the rest of the list has one.
+
+    The convention is bidirectional — the mention links to the entry and
+    the entry links home to the first mention — and the only half
+    anything checked was a link pointing at a name that is not there
+    (BROKEN LINK). Aging_Well, 2026-09-01: one entry of 87 lost its
+    `Lokshin2022txt` bookmark, so its back-link WAS broken, and the
+    paper's repair removed the dead link rather than restoring the
+    target. That leaves an entry with nothing pointing home, which
+    nothing could see — and the state is self-perpetuating, because
+    `link_all` skips a mention that already carries a forward link, so
+    the marker is never re-minted. The same warning printed at three
+    consecutive close-outs while the gate exited 0.
+
+    **Judged by the list's own MAJORITY rather than by a rule**, because
+    whether entries link home at all is the paper's house style: one
+    entry differing from 86 others is a finding, and 87 entries agreeing
+    that they do not is a convention. `skip` drops the keys already
+    reported more usefully elsewhere — an entry nobody cites has a
+    reason to have no back-link.
+
+    Measured over 100 manuscripts before it shipped: 2 findings in 1
+    document, both real (two FLOPS entries whose `txt` markers exist
+    nowhere in the file). The sibling rule this is closest to fired
+    5,378 times across 718 of 1,873 manuscripts before it was narrowed,
+    which is why an audit rule gets measured and not just argued.
+    """
+    home = {key: any(i == at for i, _ in links.get(key + "txt", ()))
+            for key, at in ref_marks.items() if not skip(key)}
+    linked = sum(home.values())
+    if linked < max(3, (len(home) + 1) // 2):
+        return []
+    return [_Finding(
+        "REF WITHOUT BACKLINK", key,
+        f"REF WITHOUT BACKLINK: '{key}' ({where(ref_marks[key])}) is "
+        f"cited, and its entry links to no '{key}txt' — the other "
+        f"{linked} entries link home")
+        for key in sorted(k for k, has in home.items() if not has)]
+
+
 def _audit_findings(parts: dict[str, bytes], *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
@@ -623,10 +698,8 @@ def _audit_findings(parts: dict[str, bytes], *,
     # name.
     surnames = tuple({r.surname for r in entries})
     unlinked = later = mentions = 0
-    for i, text in enumerate(texts[:head_idx]):
-        if i < 5:
-            continue
-        masked = masked_visible_text(paras[i].group(0))
+    for i, text, para_xml in _mention_scan(parts, texts, paras, head_idx):
+        masked = masked_visible_text(para_xml)
         for found in find_citations(text, surnames):
             c = resolve_lead(found, known=entry_keys, ignore=ignored)
             if c.surname.casefold() in ignored:
@@ -662,13 +735,13 @@ def _audit_findings(parts: dict[str, bytes], *,
                 if later_mentions:
                     issues.append(_Finding(
                         "LATER-MENTION UNLINKED", cite,
-                        f'LATER-MENTION UNLINKED: "{cite}" (¶{i + 1}) '
+                        f'LATER-MENTION UNLINKED: "{cite}" ({where(i)}) '
                         "— the work is linked elsewhere but this "
                         "mention is plain text"))
                 continue
             issues.append(_Finding(
                 "UNLINKED", cite,
-                f'UNLINKED: "{cite}" (¶{i + 1}) — looks like a '
+                f'UNLINKED: "{cite}" ({where(i)}) — looks like a '
                 "citation but is not hyperlinked"))
             unlinked += 1
 
@@ -703,6 +776,31 @@ def _audit_findings(parts: dict[str, bytes], *,
             f"REF WITHOUT CITE: '{key}' "
             f"({where(ref_marks[key])}) in references and nothing points "
             f"at it — no in-text hyperlink and no '{key}txt' marker"))
+
+    # An entry with NO link home, where the rest of the list has one.
+    #
+    # The convention is bidirectional — the mention links to the entry
+    # and the entry links home to the first mention — and the only half
+    # anything checked was a link pointing at a name that is not there
+    # (BROKEN LINK above). Aging_Well, 2026-09-01: one entry of 87 lost
+    # its `Lokshin2022txt` bookmark, so the back-link WAS broken, and
+    # the paper's repair removed the dead link rather than the target's
+    # absence. That leaves an entry with nothing pointing home, which
+    # nothing could see, and the state is self-perpetuating: `link_all`
+    # skips a mention that already carries a forward link, so the marker
+    # is never re-minted. The same warning printed at three consecutive
+    # close-outs and the gate exited 0 each time.
+    #
+    # Judged by the list's own MAJORITY rather than by a rule, because
+    # whether entries link home at all is the paper's house style: a
+    # single entry differing from 86 others is a finding, and 87 entries
+    # agreeing that they do not is a convention. Keys already reported
+    # as uncited are left alone — an entry nobody cites has a reason to
+    # have no back-link, and saying it twice is noise.
+    uncited = ref_marks.keys() - cited_keys - reached
+    issues += _no_backlink(
+        ref_marks, links, where,
+        skip=lambda k: k in uncited or names_a_missing_entry(k))
 
     stats = {"paragraphs": len(paras), "bookmarks": len(bookmarks),
              "cite_bookmarks": len(cite_marks),
