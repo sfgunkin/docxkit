@@ -46,36 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `refstyle` does not audit the separator between a reference's issue number and its page range
-
-<!-- status: open -->
-
-**Measured**, Parental_style, 2026-09-01. An author edit changed one entry's
-`6(1):` to `6(1);`:
-
-    Barcellos, S., Carvalho, L., and A. Lleras-Muney. (2014). "Child gender
-    and parental investments in India…" American Economic Journal: Applied
-    Economics, 6(1); 157-189.
-
-`docxkit refstyle` reports the file clean of everything but a pre-existing
-alphabetisation finding: **74 entries, 74 cited, one finding, and that one is
-about Doepke's position in the list.** Counting the paper's own practice, 41
-of its 42 `volume(issue)` entries use a colon and exactly this one uses a
-semicolon, so the convention is unambiguous and the outlier is a slip.
-
-`refstyle` already audits the pieces around it — initials, `(2020).`, "and"
-not "&", en-dashes in the page range, alphabetical order, cited-vs-listed —
-which is why its silence here reads as approval.
-
-**Suggested fix:** audit the locator as a shape, `vol(issue): first–last`,
-and report a separator that disagrees with the file's own majority rather
-than with a hard-coded character — journals differ, and a paper that
-consistently uses something else is not making an error. Same majority rule
-the citation grammar already uses to learn the `txt`-suffix convention.
-
-**Workaround in use:** none; found by reading the ingest's word-diff and
-counting the entries by hand.
-
 ### S2 — nothing in docxkit can see prose that renders superscript, and a footnote sat wrong for 20 days because of it
 
 <!-- status: open -->

@@ -14,6 +14,72 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `refstyle` does not audit the separator between a reference's issue number and its page range~~ — FIXED 02.09, `f08cc3b`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02.** `_locator_findings`, a sibling of `_order_findings`
+and wired into `audit` beside it.
+
+**The rule is the paper's own majority**, as the entry suggested and for the
+reason it gave: journals differ, and a paper consistently writing `40(2), 355`
+is following its journal, not making an error. A module preferring the colon
+would report a house style as a defect in every such paper. Same rule the
+citation grammar learns the `txt`-suffix convention by.
+
+**Both bounds on that majority were MEASURED before anything was written**, and
+both had to be there. Over 300 manuscripts: 195 carry a `vol(issue)` locator
+and 59 of those lists are mixed — but the mix is two different things. Half
+have a "majority" of one or two entries (`ACC1.docx`, "1 of 2 agree"), and a
+convention of one entry is not a convention; hence the floor of **8**. A few
+run 31 one way and 8 the other — a hand-assembled review holding two
+conventions at once — where naming the 8 tells the author their document has
+variety, which they know; hence the cap of **2** dissenters.
+
+At the shipped threshold: **24 documents, 25 findings**, and every one is a
+real slip on reading. Several are the SAME entry across four and five
+generations of one paper — Weber & Luzzi, Singer (2016), Leopold & Leopold —
+which is the argument for the rule. Nobody caught them by reading, round after
+round. Re-measured THROUGH `audit` rather than through the probe's own copy of
+the rule, and the numbers match; on the manuscript this entry is about, it now
+prints
+
+    ¶129  locator-sep  the issue takes ":" before the pages here — this
+                       entry has ";", and 41 of 42 agree on ":"
+
+Fourteen tests in `tests/test_locator_separator.py`. Five are locator shapes
+taken from the corpus (a space before the issue, no space after, a four-digit
+issue, a single page, a spaced en-dash), because a locator the pattern cannot
+see is not merely a dissenter it cannot report — it silently shrinks the
+majority it is judging the others against.
+
+**Measured**, Parental_style, 2026-09-01. An author edit changed one entry's
+`6(1):` to `6(1);`:
+
+    Barcellos, S., Carvalho, L., and A. Lleras-Muney. (2014). "Child gender
+    and parental investments in India…" American Economic Journal: Applied
+    Economics, 6(1); 157-189.
+
+`docxkit refstyle` reports the file clean of everything but a pre-existing
+alphabetisation finding: **74 entries, 74 cited, one finding, and that one is
+about Doepke's position in the list.** Counting the paper's own practice, 41
+of its 42 `volume(issue)` entries use a colon and exactly this one uses a
+semicolon, so the convention is unambiguous and the outlier is a slip.
+
+`refstyle` already audits the pieces around it — initials, `(2020).`, "and"
+not "&", en-dashes in the page range, alphabetical order, cited-vs-listed —
+which is why its silence here reads as approval.
+
+**Suggested fix:** audit the locator as a shape, `vol(issue): first–last`,
+and report a separator that disagrees with the file's own majority rather
+than with a hard-coded character — journals differ, and a paper that
+consistently uses something else is not making an error. Same majority rule
+the citation grammar already uses to learn the `txt`-suffix convention.
+
+**Workaround in use:** none; found by reading the ingest's word-diff and
+counting the entries by hand.
+
+---
+
 ### ~~S2 — `body.prose_props` returns a pPr's INNER content while `body.para(ppr=...)` splices its argument in verbatim, so the obvious composition writes stray children Word silently drops~~ — FIXED 02.09, `37a8496`
 <!-- status: fixed -->
 
