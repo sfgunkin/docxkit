@@ -826,43 +826,6 @@ and say in the report that a tracked file was read on its accepted side. `lint`,
 **Workaround in use:** run the gate on `build/edited.docx` (the accepted view)
 while the proposal is pending, and on the truth after the accept.
 
-### S2 — `revisions.accept` cannot remove a `w:cellDel` cell, so a tracked COLUMN deletion never passes the accept gate
-
-<!-- status: open -->
-
-**Measured**, Aging_Well R79, 2026-09-02. A batch drops Table 1's third column.
-Word's Compare serializes it correctly and cell-wise: every row keeps its third
-`w:tc`, marked `w:cellDel` with its content in `w:del` — the author sees a
-struck column. But `revisions.accept` removes only the `w:del` content and
-leaves the emptied CELL (and its empty `<w:p>`) in place, so "accept every
-revision" has four paragraphs the clean copy does not, and `tracked.build`'s
-accept gate refuses:
-
-    UNACCEPTED body ¶44: intended ''  accepted ''   (and ¶47, ¶50, ¶53 — one per row)
-
-Word's OWN accept is right: AcceptAllRevisions on the same batch, extracted via
-Flat OPC, compares CLEAN against the clean edit on every content layer
-(STRUCTURE/TEXT/FORMULA/FORMAT/PARAGRAPH/HYPERLINK all none; only the standard
-accept-glyph flattening). So the deliverable is unharmed — the gap is the XML
-approximation's, same family as the footnote-deletion shells (fixed via
-`footnotes.prune_orphans`).
-
-**Diagnosis.** `revisions.accept` walks revision elements; a `cellDel` is a
-`w:tcPr` property (`<w:cellDel>` inside `w:tcPr`), not a `w:del` wrapper, and
-nothing in the accept path deletes table geometry.
-
-**Suggested fix:** on accept, remove any `w:tc` whose `tcPr` carries
-`w:cellDel` (and its `gridCol` accounting where the whole column goes); on
-reject, strip the `cellDel` mark. A minimal repro is two rows × two columns
-with one column deleted through Word Compare.
-
-**Workaround in use:** `Aging_Well/revision/scripts/r79c_build.py` — build with
-`accept_check=False` (patching `tracked.build` the way the compression round
-patched `CompareMoves`) and prove the accept side through Word itself:
-AcceptAllRevisions on a probe copy, Flat OPC out, `docxkit compare` against the
-clean edit. The paper's `accept.py` must not be used on such a round's residue
-without pruning emptied cells; the author's Word accept needs nothing.
-
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213

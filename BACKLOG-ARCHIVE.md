@@ -14,6 +14,90 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `revisions.accept` cannot remove a `w:cellDel` cell, so a tracked COLUMN deletion never passes the accept gate~~ — FIXED 02.09, `99b32a0`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02.** `_apply_cell_revisions`, and the entry's diagnosis was
+right: a `cellDel` is a `w:tcPr` property, not a `w:del` wrapper, and nothing
+in the accept path walked it.
+
+On the real R79 redline, accept now gives **4 rows x 2 cells, 2 gridCol, 8
+w:p** against 4 x 3, 3, 12 before — exactly the four paragraphs the gate named.
+Reject keeps the cells and drops the mark.
+
+**Where the pass runs had to be measured.** Rows go before paragraphs, and
+property changes go LAST so the row handler still sees flags a rejected
+`trPrChange` would move out from under it. Cells go AFTER the property changes,
+which is the opposite placement, because a `w:tcPrChange`'s SNAPSHOT carries
+its own `w:cellDel` — Word records the cell's pre-change properties including
+the delete mark. A strip that ran before the restore put the flag straight
+back, and the rejected view still reported a revision. `_OUTSIDE_SNAPSHOT`
+carries the live flag across on purpose, which is what makes this order safe
+here where it is not for the row — and means there can be TWO, so the strip
+takes every one rather than the first.
+
+**The grid, only when the deletion IS a column.** A `tblGrid` declaring three
+columns for rows that lay out two is a phantom column, so a deleted column
+takes its `gridCol` with it, `gridSpan` honoured. Cells deleted at different
+grid positions in different rows are an edit, not a column; guessing one would
+corrupt a table that is merely edited, so a ragged deletion takes its cells and
+leaves the grid alone.
+
+**A third defect found on the way, and it is the more serious one.**
+`_REVISION_NAMES` was blind to `cellIns`/`cellDel`/`cellMerge`, so a table
+whose column deletion had nothing IN it — Word writes no content marker for an
+already-empty cell, and none at all for a `cellMerge` — read as **0 pending ->
+TRUTH**, which is the number the protocol decides everything on. That is the
+same defect that list's own comment records for moves and formatting changes,
+in an eighth spelling.
+
+MEASURED over 500 manuscripts: one carries a cell revision, its accepted view
+loses exactly the four cells of the one deleted column, **no document goes from
+clean to pending**, and no other table changes shape.
+
+`w:cellMerge` is deliberately not APPLIED — it records a merge or a split, not
+an appearance, so applying it means recomputing `gridSpan` and `vMerge` across
+the row, a different operation with a different failure mode and no corpus
+example to measure against. It is COUNTED as pending, which is the honest half.
+
+Twelve tests in `tests/test_cell_revisions.py`; reverting `revisions.py` fails
+ten. The paper's `accept_check=False` workaround can go.
+
+**Measured**, Aging_Well R79, 2026-09-02. A batch drops Table 1's third column.
+Word's Compare serializes it correctly and cell-wise: every row keeps its third
+`w:tc`, marked `w:cellDel` with its content in `w:del` — the author sees a
+struck column. But `revisions.accept` removes only the `w:del` content and
+leaves the emptied CELL (and its empty `<w:p>`) in place, so "accept every
+revision" has four paragraphs the clean copy does not, and `tracked.build`'s
+accept gate refuses:
+
+    UNACCEPTED body ¶44: intended ''  accepted ''   (and ¶47, ¶50, ¶53 — one per row)
+
+Word's OWN accept is right: AcceptAllRevisions on the same batch, extracted via
+Flat OPC, compares CLEAN against the clean edit on every content layer
+(STRUCTURE/TEXT/FORMULA/FORMAT/PARAGRAPH/HYPERLINK all none; only the standard
+accept-glyph flattening). So the deliverable is unharmed — the gap is the XML
+approximation's, same family as the footnote-deletion shells (fixed via
+`footnotes.prune_orphans`).
+
+**Diagnosis.** `revisions.accept` walks revision elements; a `cellDel` is a
+`w:tcPr` property (`<w:cellDel>` inside `w:tcPr`), not a `w:del` wrapper, and
+nothing in the accept path deletes table geometry.
+
+**Suggested fix:** on accept, remove any `w:tc` whose `tcPr` carries
+`w:cellDel` (and its `gridCol` accounting where the whole column goes); on
+reject, strip the `cellDel` mark. A minimal repro is two rows × two columns
+with one column deleted through Word Compare.
+
+**Workaround in use:** `Aging_Well/revision/scripts/r79c_build.py` — build with
+`accept_check=False` (patching `tracked.build` the way the compression round
+patched `CompareMoves`) and prove the accept side through Word itself:
+AcceptAllRevisions on a probe copy, Flat OPC out, `docxkit compare` against the
+clean edit. The paper's `accept.py` must not be used on such a round's residue
+without pruning emptied cells; the author's Word accept needs nothing.
+
+---
+
 ### ~~S2 — `revision build` refuses on a pending BASELINE but is silent on a pending WORKING file, which is the commoner way to the same harm~~ — FIXED 02.09, `a8a0239`
 <!-- status: fixed -->
 
