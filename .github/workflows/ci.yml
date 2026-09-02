@@ -100,6 +100,19 @@ jobs:
       - name: API surface
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python tools/api_check.py
+      # Does the SHIPPED package import anything it does not declare?
+      # `pyproject.toml` has been wrong about that three times —
+      # latex2mathml, pymupdf, pandas — and every time a clean checkout
+      # is what found out, days later. This is the gate that asks while
+      # the answer is still cheap, and CI is where it matters most: a
+      # runner installs `.[dev,pdf]` and nothing else, which is the
+      # environment the failure shows up in.
+      #
+      # Scoped and configured in `[tool.deptry]`, where the reasoning
+      # for `src`-only and the DEP002 exclusion is written down.
+      - name: Dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m deptry src
 
   mutations:
     # The CURATED mutations. Every one re-introduces a defect this package

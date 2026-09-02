@@ -77,10 +77,10 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Eight gates, all of which must pass:
+Nine gates, all of which must pass:
 
 ```
-python tools/gates.py   # all eight, in order, first failure stops
+python tools/gates.py   # all nine, in order, first failure stops
 ```
 
 Two of them can SKIP rather than pass: `sweep` needs a corpus of real
@@ -98,6 +98,7 @@ python -m mypy
 python -m pyright       # what Pylance shows in the editor
 python tools/coverage_floor.py
 python tools/api_check.py          # did this break the API the papers call?
+python -m deptry src               # does the SHIPPED package declare what it imports?
 python tools/sweep.py              # needs DOCXKIT_CORPUS; skips without
 python tools/verify_committed.py   # HEAD, not the working copy
 ```

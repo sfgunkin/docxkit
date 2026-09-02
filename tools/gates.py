@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the eight gates in order and say which one stopped.
+"""Run the nine gates in order and say which one stopped.
 
     python tools/gates.py
 
@@ -21,7 +21,7 @@ that the answer cannot be lost between them. Exit status is 0 only when
 all of them pass, and the first failure stops the run — a gate after a
 red one tells you nothing you can act on yet.
 
-Two of the eight can SKIP. `sweep` needs a corpus of real manuscripts,
+Two of the nine can SKIP. `sweep` needs a corpus of real manuscripts,
 which no CI runner has and most machines do not either, so it exits 3
 and prints what to set. That is a third state on purpose: `ok` over
 zero documents and `ok` over 347 are the same line, and the corpus gate
@@ -101,6 +101,14 @@ GATES: list[Gate] = [
     # eleven breakage kinds that break a CALL fail it — the twelfth,
     # a constant's value, is reported. See the tool for the measurement.
     ("api", [sys.executable, "tools/api_check.py"], False),
+    # Does the SHIPPED package import anything it does not declare? The
+    # one question `pyproject.toml` has been wrong about three times —
+    # latex2mathml, pymupdf and pandas — and every time it was a clean
+    # checkout that found out, days later. It cannot be noticed locally
+    # by running the code, because the package is installed HERE; that
+    # is the whole reason this needs a tool. Scoped and configured in
+    # `[tool.deptry]`, where the reasoning is.
+    ("deps", [sys.executable, "-m", "deptry", "src"], False),
     # The corpus. It SKIPS without `DOCXKIT_CORPUS` (exit 3, printed as
     # `skip`), which is why it can sit in the chain at all — CI has no
     # manuscripts and never will. Named here even when it cannot run,
@@ -164,12 +172,22 @@ def _failed(gate: Gate, out: str, code: int) -> bool:
 #: instead of "4430 passed". A passing gate prints one line here, so
 #: the one line has to be the answer.
 _SUMMARY = re.compile(r"\b(passed|failed|error|no issues|All checks|"
-                      r"0 errors|at or above|SKIPPED|swept|breaking)\b")
+                      r"0 errors|at or above|SKIPPED|swept|breaking|"
+                      r"dependency issues)\b")
+
+
+#: A gate is free to colour its own output — `deptry` does, and so does
+#: griffe underneath `api`. Captured through a pipe those escapes are
+#: literal noise around the one line this runner prints, and they reach
+#: a CI log verbatim. Stripped HERE rather than argued with each gate:
+#: the runner is what decides how a summary looks.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _summary(out: str) -> str:
     """The line a reader wants from a gate that PASSED."""
-    lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip()]
+    lines = [_ANSI.sub("", ln).strip()
+             for ln in out.strip().splitlines() if ln.strip()]
     said = [ln for ln in lines if _SUMMARY.search(ln)]
     return (said or lines or [""])[-1]
 

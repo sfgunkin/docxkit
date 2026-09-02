@@ -53,7 +53,12 @@ dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pyright>=1.1",
        # git ref and from the tree, and reports what a CALLER would
        # notice. Not optional — a missing griffe fails that gate rather
        # than skipping it, which is the right way round.
-       "griffe>=1.0"]
+       "griffe>=1.0",
+       # The `deps` gate. It answers the one question this file has been
+       # wrong about three times — latex2mathml, pymupdf and pandas each
+       # imported before they were declared, each found by CI on a clean
+       # checkout after the fact.
+       "deptry>=0.20"]
 
 [project.scripts]
 docxkit = "docxkit.cli:main"
@@ -67,6 +72,32 @@ where = ["src"]
 # scripts got no checking of the API they lean on hardest.
 [tool.setuptools.package-data]
 docxkit = ["py.typed"]
+
+# What the SHIPPED package imports, against what it declares. Scoped to
+# `src` and nothing else, which is the whole of the useful
+# configuration: over the full tree deptry reports 41 issues and not one
+# is real — 16 are `tools/` siblings imported by bare name after a
+# `sys.path.insert`, 17 are `docxkit` itself imported by a tool, and 8
+# are the DEP002 below. Neither `tools/` nor `tests/` is distributed, so
+# an undeclared import there breaks nobody's install.
+#
+# DEP002 ("declared but not imported") is off because every dev
+# dependency here is either a COMMAND (ruff, mypy, pyright, deptry), a
+# pytest PLUGIN loaded by entry point (cov, timeout, xdist), or type
+# stubs (lxml-stubs). None is imported by name and none should be.
+# Leaving it on makes the gate red for eight reasons that will never be
+# fixed, which is the shape people learn to skip past.
+#
+# What is left is the rule that matters, and it was proved against the
+# three failures this file records: with the extra removed from the
+# lists above and the import still in the code, deptry exits 1 naming
+# `equations.py:411`, `pages.py:96` and `_table_core.py:1000`. It
+# reports them as DEP003 rather than DEP001 because the package IS
+# installed on the machine running it — which is exactly why those three
+# shipped undeclared and only a clean checkout ever noticed.
+[tool.deptry]
+extend_exclude = ["tools", "tests"]
+ignore = ["DEP002"]
 
 [tool.ruff]
 line-length = 79
