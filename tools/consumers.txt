@@ -44,7 +44,6 @@ docxkit._table_layout	booktabs
 docxkit._table_layout	plan_booktabs
 docxkit._xml	INSTR_ANCHOR_RE
 docxkit._xml	INSTR_RE
-docxkit._xml	PARA_RE
 docxkit._xml	RUN_RE
 docxkit._xml	_FIELD_RE
 docxkit._xml	_HYPERLINK_EL_RE
@@ -114,6 +113,8 @@ docxkit.refstyle	_fold
 docxkit.refstyle	audit
 docxkit.refstyle	layout
 docxkit.refstyle	refile
+docxkit.renumber	footnotes
+docxkit.revision	_build
 docxkit.revision	load_paper
 docxkit.revision	rescue_path
 docxkit.revision	state
@@ -139,3 +140,7 @@ docxkit.tracked	build
 docxkit.tracked	compare_collateral
 docxkit.tracked	package_counts
 docxkit.tracked	verify
+docxkit.word	extract_flat_opc
+docxkit.word	flat_opc_to_docx
+docxkit.word	open_doc
+docxkit.word	session
