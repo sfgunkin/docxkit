@@ -5,6 +5,7 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -75,11 +76,53 @@ def _stamped(paper: Paper, folder: Path, kind: str,
         f"no free {kind} name near {moment:%Y-%m-%d %H:%M:%S} in {folder}")
 
 
+#: The stamp `_stamped` writes, read back. `%Y%m%d-%H%M%S-%f` is
+#: uniform width, so these sort chronologically as strings — but only
+#: among THEMSELVES, which is the whole of the S1 below.
+_STAMPED_RE = re.compile(r"_rescue_(\d{8}-\d{6}-\d{6})(?=\.|$)")
+
+
+def _stamp_of(path: Path) -> str | None:
+    """The moment this rescue was written, or None if we did not write it."""
+    m = _STAMPED_RE.search(path.stem + ".")
+    return m.group(1) if m else None
+
+
 def rescues(paper: Paper) -> list[Path]:
-    """Every rescue copy, oldest first."""
+    """Every rescue copy in the folder, oldest first.
+
+    **Ordered by the parsed stamp, not by the string**, and the ones
+    this tool did not write sort last rather than wrongly.
+
+    Sorting the names was true of names `_stamped` writes and false the
+    moment the folder holds anything else — which it does, because a
+    session copying a file by hand puts it here too. `-` is 0x2D and `_`
+    is 0x5F, so `working_rescue_20260831-235728-542622.docx` (23:57)
+    sorts BEFORE `working_rescue_20260831_pre_COMP.docx` (18:44): the
+    newest file read as the oldest, and `prune_rescues` deleted it.
+    Twice on Aging_Well, 2026-08-31 and 2026-09-01, each time taking the
+    undo for the promote that had just run.
+    """
     if not paper.rescue_dir.is_dir():
         return []
-    return sorted(paper.rescue_dir.glob(_RESCUE_GLOB + paper.working.suffix))
+    return sorted(paper.rescue_dir.glob(
+        _RESCUE_GLOB + paper.working.suffix), key=_written_at)
+
+
+def _written_at(path: Path) -> datetime:
+    """When a rescue was made: its stamp, or failing that its mtime.
+
+    The stamp is preferred wherever there is one, and that is the whole
+    reason `_stamped` writes one — an mtime is rewritten by a copy, and
+    these folders live on a sync-on-demand drive. For a copy the tool
+    did not write there is no stamp and the mtime is the best available
+    answer; it is only used to ORDER the listing, never to decide a
+    deletion.
+    """
+    stamp = _stamp_of(path)
+    if stamp is not None:
+        return datetime.strptime(stamp, _RESCUE_STAMP)
+    return datetime.fromtimestamp(path.stat().st_mtime)
 
 
 def redlines(paper: Paper) -> list[Path]:
@@ -103,7 +146,8 @@ def redlines(paper: Paper) -> list[Path]:
     return paper.redlines()
 
 
-def prune_rescues(paper: Paper, keep: int | None = None) -> list[Path]:
+def prune_rescues(paper: Paper, keep: int | None = None, *,
+                  protect: Path | None = None) -> list[Path]:
     """Delete all but the newest `keep` rescue copies; return what went.
 
     A rescue exists to undo the promote that just happened, or one of
@@ -115,10 +159,27 @@ def prune_rescues(paper: Paper, keep: int | None = None) -> list[Path]:
     `keep=0` is honoured — someone may want none — but a NEGATIVE keep
     is treated as zero rather than slicing from the wrong end, which
     would delete the newest instead of the oldest.
+
+    **Only copies this tool wrote are ever deleted**, and `protect` is
+    never deleted at all. Both halves are the S1 of 2026-08-31: the glob
+    is `*_rescue_*`, which catches the hand-named copies a session makes
+    — those are somebody's deliberate undo and not this function's to
+    remove — and the newest stamped file sorted as the oldest beside
+    them, so `promote` twice deleted the rescue it had just written.
+    `promote` passes the copy it just made as `protect`, because a
+    promote destroying its own undo is the invariant that matters
+    whatever else the folder holds.
+
+    The hand-named copies still COUNT toward `keep`: a folder holding
+    five of them is a folder with five undos in it, and thinning the
+    stamped ones to make room would be this function deciding which of
+    the author's copies matter.
     """
     limit = paper.rescue_keep if keep is None else keep
     limit = max(0, limit)
-    doomed = rescues(paper)[:-limit] if limit else rescues(paper)
+    ours = [p for p in rescues(paper) if _stamp_of(p) is not None]
+    surplus = len(rescues(paper)) - limit
+    doomed = [p for p in ours[:max(0, surplus)] if p != protect]
     for path in doomed:
         path.unlink()
     return doomed
@@ -260,4 +321,5 @@ def promote(paper: Paper, batch: str | Path | None = None,
     # not pruned at all — see `Paper.redline_dir`.
     return PromoteReport(promoted=batch, onto=live, rescue=rescue,
                          redline=redline,
-                         pruned=tuple(prune_rescues(paper)))
+                         pruned=tuple(prune_rescues(paper,
+                                                    protect=rescue)))
