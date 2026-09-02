@@ -14,6 +14,63 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `body.prose_props` returns a pPr's INNER content while `body.para(ppr=...)` splices its argument in verbatim, so the obvious composition writes stray children Word silently drops~~ — FIXED 02.09, `37a8496`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02.** Three changes, because the shape can arrive from more
+than one place, and the entry named all three.
+
+**The pair is symmetric.** `prose_props` returns the pPr WRAPPED, as it always
+returned the rPr. The asymmetry was the whole defect: two values documented as
+a pair to hand straight to `para`, one carrying its wrapper and one not.
+
+**`para` normalises either spelling.** A caller that already wraps — the paper's
+own workaround did — is not punished for it, and every caller written against
+the old bare shape now emits valid XML instead of children Word discards.
+
+**`lint` refuses the shape.** That is the check that catches it whatever built
+the paragraph, and it is check 1's shape one level down: a child in a container
+whose schema has no place for it.
+
+The rule is deliberately NOT the whole schema. `w:rPr` IS legal directly in a
+`w:p` — it is the paragraph mark's own run properties, which every tracked
+paragraph-mark revision carries — and listing it would fail every redline in
+the corpus. MEASURED before shipping: **0 findings over 400 manuscripts**,
+which is what a rule about a shape only a builder emits should say about files
+Word wrote.
+
+Eight tests in `tests/test_para_props_pairing.py`, and each half fails alone:
+reverting `body.py` fails three, reverting `lint.py` fails the fourth. Inline
+the check took `lint` from 31 to 34 and `test_complexity_debt` refused the
+commit, so it is `_stray_para_props`.
+
+**Measured**, Parental_style, 2026-09-01, building the supplemental-material
+file for a submission. `prose_props(title_xml)` returned
+
+    ('<w:spacing w:line="240" w:lineRule="auto"/><w:jc w:val="center"/><w:rPr>…</w:rPr>',
+     '<w:rPr><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>')
+
+— the rPr WITH its wrapper, the pPr WITHOUT. `para(run(text, rpr), ppr)`
+then wrote `<w:p><w:spacing …/><w:jc w:val="center"/>…<w:r>` — a
+paragraph whose "properties" are bare children of `w:p`. `lint` passed
+it, Word opened it, and the four title-block paragraphs rendered
+LEFT-aligned at 16pt: Word keeps the run properties and discards the
+schema-invalid children without a word. Found only by rasterising the
+PDF and looking; a grep for `<w:p>(?!<w:pPr>)<w:(spacing|jc|ind)` on the
+built file then counted 4.
+
+The two functions are documented as a pair (the skill's own example is
+`para(run(...), ppr=caption_ppr)` with the ppr "ideally cloned off an
+existing paragraph") and their shapes disagree. Either `prose_props`
+should return the wrapped `<w:pPr>…</w:pPr>` (symmetry with its rPr),
+or `para` should wrap an unwrapped `ppr` — and `lint` should refuse a
+`w:p` whose first child is a pPr-only element.
+
+Workaround in use: `_wrapped_ppr()` in
+`Parental_style/revision/scripts/split_supplement.py`.
+
+---
+
 ### ~~S1 — `citations` reports neither an unlinked mention inside a FOOTNOTE nor a reference entry with no back-link, and both were live in the same manuscript~~ — FIXED 02.09, `5f95d77`
 <!-- status: fixed -->
 

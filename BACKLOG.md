@@ -46,35 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `body.prose_props` returns a pPr's INNER content while `body.para(ppr=...)` splices its argument in verbatim, so the obvious composition writes stray children Word silently drops
-
-<!-- status: open -->
-
-**Measured**, Parental_style, 2026-09-01, building the supplemental-material
-file for a submission. `prose_props(title_xml)` returned
-
-    ('<w:spacing w:line="240" w:lineRule="auto"/><w:jc w:val="center"/><w:rPr>…</w:rPr>',
-     '<w:rPr><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>')
-
-— the rPr WITH its wrapper, the pPr WITHOUT. `para(run(text, rpr), ppr)`
-then wrote `<w:p><w:spacing …/><w:jc w:val="center"/>…<w:r>` — a
-paragraph whose "properties" are bare children of `w:p`. `lint` passed
-it, Word opened it, and the four title-block paragraphs rendered
-LEFT-aligned at 16pt: Word keeps the run properties and discards the
-schema-invalid children without a word. Found only by rasterising the
-PDF and looking; a grep for `<w:p>(?!<w:pPr>)<w:(spacing|jc|ind)` on the
-built file then counted 4.
-
-The two functions are documented as a pair (the skill's own example is
-`para(run(...), ppr=caption_ppr)` with the ppr "ideally cloned off an
-existing paragraph") and their shapes disagree. Either `prose_props`
-should return the wrapped `<w:pPr>…</w:pPr>` (symmetry with its rPr),
-or `para` should wrap an unwrapped `ppr` — and `lint` should refuse a
-`w:p` whose first child is a pPr-only element.
-
-Workaround in use: `_wrapped_ppr()` in
-`Parental_style/revision/scripts/split_supplement.py`.
-
 ### S2 — `refstyle` does not audit the separator between a reference's issue number and its page range
 
 <!-- status: open -->
