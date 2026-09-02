@@ -105,64 +105,6 @@ the citation grammar already uses to learn the `txt`-suffix convention.
 **Workaround in use:** none; found by reading the ingest's word-diff and
 counting the entries by hand.
 
-### S1 — `promote` prunes the rescue copy it has just written, whenever the rescue folder also holds a hand-named rescue
-
-<!-- status: open -->
-
-**Measured**, Aging_Well, 2026-08-31 23:57. `revision promote` reported
-
-    rescue copy of the previous live file: revision\build\rescue\working_rescue_20260831-235728-542622.docx
-    pruned 3 older rescue(s), keeping 5
-
-and the file it names in the first line **was not there afterwards**. The undo
-for that promote had to come from another session's `working_rescue_20260901_pre_POL.docx`
-instead. Three further rescues went with it; they are not recoverable from the
-working tree.
-
-**Diagnosis.** `_promote.rescues()` globs `*_rescue_*` and returns
-`sorted(...)`, and its docstring states the assumption out loud: *"the copies
-are stamped rather than numbered, so sorting them as strings sorts them
-chronologically."* True of names this module writes — `_RESCUE_STAMP` is
-`%Y%m%d-%H%M%S-%f`, uniform width. But the glob is `*_rescue_*`, which also
-catches the hand-named rescues the papers' own scripts and sessions write, and
-then the sort is wrong at the separator: `-` is 0x2D and `_` is 0x5F, so
-
-    working_rescue_20260831-235728-542622.docx   <- 23:57, the newest
-    working_rescue_20260831_pre_COMP.docx        <- 18:44
-    working_rescue_20260831_pre_REF2.docx        <- 21:51
-
-sorts the newest file FIRST, i.e. as the oldest, and `prune_rescues`'
-`rescues(paper)[:-limit]` puts it in the doomed slice. The count printed is
-right and the files deleted are the wrong ones, which is why nothing looks
-amiss.
-
-Same family as the `-2` collision suffix that inverted this order once before
-(fixed by making the stamps uniform width); what is new is that uniform width
-is not enough while the folder is shared with names the tool did not write.
-
-**Suggested fix**, cheapest first:
-
-* **never delete the rescue this promote just wrote** — pass it to
-  `prune_rescues` as protected. That is the invariant that actually matters: a
-  promote must not destroy its own undo, whatever else the folder holds;
-* prune only names matching `_RESCUE_STAMP`, and leave anything else alone — a
-  file the tool did not write is not the tool's to delete;
-* sort by the parsed stamp rather than by the string, so a mixed folder still
-  lists chronologically for `revision rescues`.
-
-**Workaround in use:** none available at the time — the copy was already gone.
-Recovery came from a differently-named rescue that happened to exist.
-
-**Measured again**, Aging_Well R78, 2026-09-01 21:01. `promote` reported
-`working_rescue_20260901-210134-674000.docx` and *pruned 4 older rescue(s), keeping
-5*; the five kept were all hand-named (`working_rescue_20260901_pre_DF1/pre_POL/
-post_POL_accept/pre_R77/pre_S1.docx`) and the stamped file it had just written was
-among the four deleted. Undo existed only because the session had copied
-`working_rescue_20260901_pre_S1.docx` by hand first (same bytes as `prev.docx`).
-**Workaround from that paper:** hand-named copies take a `working_keep_` prefix,
-which the `*_rescue_*` glob does not match; the stamped rescue's presence is
-checked after every promote.
-
 ### S2 — nothing in docxkit can see prose that renders superscript, and a footnote sat wrong for 20 days because of it
 
 <!-- status: open -->
@@ -234,49 +176,6 @@ The check `build` already performs on `prev` belongs on `paper.working` too,
 with its own message and its own escape. The two-lane rule elsewhere in this
 toolkit is stated as "a file with revision marks is never the clean master,
 whatever its mtime"; `build` is where that rule should first bite.
-
-### S1 — `citations` reports neither an unlinked mention inside a FOOTNOTE nor a reference entry with no back-link, and both were live in the same manuscript
-
-<!-- status: open -->
-
-Two blind spots in the same gate, both measured on `Aging_Well` on 31 August
-and 1 September. Each leaves the gate exiting 0 with a clean-looking count
-while the house convention it exists to protect is broken.
-
-**1. An unlinked mention in a footnote is not reported.** A round added
-`(World Bank 2026)` to footnote 2 as plain text — verified: no hyperlink in
-the paragraph, no `WorldBank2026` bookmark anywhere. `citations` exited 0 and
-printed `Mentions: 103 of 103 linked`. After `r2` linked it, the count was
-still `103 of 103`. So the counter reads the BODY only: the mention was never
-in the denominator, which is why its being unlinked could not be reported.
-The same round's three new BODY mentions were reported correctly, so the gap
-is the part, not the case. On this manuscript six works are cited only in
-footnotes.
-
-**2. A reference entry with no back-link is not reported.** The `<key>txt`
-convention is bidirectional — the mention links to the entry, the entry links
-home to the first mention. One entry of 87 had lost its `Lokshin2022txt`
-bookmark; the entry pointed at a name that did not exist, `remint_backlinks`
-removed the dead link, and the entry sat with nothing pointing home. `citations`
-exited 0 every time.
-
-The second is worse than a missed report because it is SELF-PERPETUATING and
-silent. `link_all` skips a mention that already carries a forward link, so the
-`<key>txt` bookmark is never re-minted; `remint_backlinks` then finds the
-target missing and removes the back-link again. The paper printed the same
-warning at three consecutive close-outs and passed its gates every time. The
-warning is `r2`'s, not the gate's, and it reads like a note rather than a
-finding.
-
-Both belong in `citations`'s audit: count mentions in footnotes and endnotes as
-well as the body, and report an entry whose back-link target does not resolve —
-or which has no back-link at all where the rest of the list does. The second
-check is cheap: the convention is visible in the list's own consistency, and a
-single entry differing from 86 others is exactly what a gate should notice.
-
-Per-paper workaround while this is open:
-`Aging_Well/revision/scripts/r77_lokshin_backlink.py`, which rebuilds the
-bookmark with `_cite_repair.wrap_link_in_bookmark` and is idempotent.
 
 ### Not seven defects — one habit: a `*.py` glob is a claim that the package is flat
 <!-- status: note -->

@@ -14,6 +14,171 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `citations` reports neither an unlinked mention inside a FOOTNOTE nor a reference entry with no back-link, and both were live in the same manuscript~~ — FIXED 02.09, `5f95d77`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02**, both halves.
+
+**The mention scan reads the notes.** `_read_notes` had folded their bookmarks
+and links in since 2026-08-20, so a work cited only in a footnote resolved and
+reported correctly — the MENTION was the one thing still stopping at
+`document.xml`, which is why `Mentions: 103 of 103 linked` printed identically
+before and after the link was made. `_mention_scan` now yields the body before
+the reference list and then both note stores, with `_NOTE_AT`'s sentinel as the
+index so a finding says "fn" rather than a paragraph number a reader would hunt
+for in the body.
+
+**An entry with no link home is reported.** `_no_backlink` asks it of the
+list's own MAJORITY rather than by a rule, because whether entries link home at
+all is the paper's house style: one entry differing from 86 others is a
+finding, and 87 agreeing that they do not is a convention. Keys already
+reported as uncited are skipped — an entry nobody cites has a reason to have no
+back-link, and saying it twice is the noise this module's own comments warn
+about.
+
+MEASURED over 100 manuscripts before it shipped: **2 findings in 1 document**,
+and both are real — two FLOPS entries (`BenzJaax2020`, `NVIDIA2024`) whose
+`txt` markers exist nowhere in the file. The sibling rule this is closest to
+fired 5,378 times across 718 of 1,873 manuscripts before it was narrowed, which
+is why an audit rule is measured rather than argued.
+
+Both new checks were lifted OUT of `_audit_findings` rather than added to it.
+Inline they took the worst function in the package from 31 to 35, and
+`test_complexity_debt` refused the commit; `_mention_scan` and `_no_backlink`
+are their own functions and it is back under its pin.
+
+Seven tests in `tests/test_cite_notes_and_backlinks.py`, including the one that
+keeps the majority rule honest: a list where NO entry links home reports
+nothing.
+
+Two blind spots in the same gate, both measured on `Aging_Well` on 31 August
+and 1 September. Each leaves the gate exiting 0 with a clean-looking count
+while the house convention it exists to protect is broken.
+
+**1. An unlinked mention in a footnote is not reported.** A round added
+`(World Bank 2026)` to footnote 2 as plain text — verified: no hyperlink in
+the paragraph, no `WorldBank2026` bookmark anywhere. `citations` exited 0 and
+printed `Mentions: 103 of 103 linked`. After `r2` linked it, the count was
+still `103 of 103`. So the counter reads the BODY only: the mention was never
+in the denominator, which is why its being unlinked could not be reported.
+The same round's three new BODY mentions were reported correctly, so the gap
+is the part, not the case. On this manuscript six works are cited only in
+footnotes.
+
+**2. A reference entry with no back-link is not reported.** The `<key>txt`
+convention is bidirectional — the mention links to the entry, the entry links
+home to the first mention. One entry of 87 had lost its `Lokshin2022txt`
+bookmark; the entry pointed at a name that did not exist, `remint_backlinks`
+removed the dead link, and the entry sat with nothing pointing home. `citations`
+exited 0 every time.
+
+The second is worse than a missed report because it is SELF-PERPETUATING and
+silent. `link_all` skips a mention that already carries a forward link, so the
+`<key>txt` bookmark is never re-minted; `remint_backlinks` then finds the
+target missing and removes the back-link again. The paper printed the same
+warning at three consecutive close-outs and passed its gates every time. The
+warning is `r2`'s, not the gate's, and it reads like a note rather than a
+finding.
+
+Both belong in `citations`'s audit: count mentions in footnotes and endnotes as
+well as the body, and report an entry whose back-link target does not resolve —
+or which has no back-link at all where the rest of the list does. The second
+check is cheap: the convention is visible in the list's own consistency, and a
+single entry differing from 86 others is exactly what a gate should notice.
+
+Per-paper workaround while this is open:
+`Aging_Well/revision/scripts/r77_lokshin_backlink.py`, which rebuilds the
+bookmark with `_cite_repair.wrap_link_in_bookmark` and is idempotent.
+
+---
+
+### ~~S1 — `promote` prunes the rescue copy it has just written, whenever the rescue folder also holds a hand-named rescue~~ — FIXED 02.09, `70e1868`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02.** Three causes, all three fixed, and the entry named
+all three.
+
+**The sort.** `_written_at` orders by the parsed stamp where there is one and
+by mtime where there is not. The stamp is preferred because an mtime is
+rewritten by a copy and these folders sit on a sync drive; the mtime only ever
+orders a LISTING and never decides a deletion.
+
+**The scope.** Only copies matching the stamp are deletable. A hand-named
+rescue is somebody's deliberate undo, and the papers had been working around
+this by renaming theirs `working_keep_` so the glob would miss them — a rename
+to dodge a deletion.
+
+**The invariant.** `promote` passes the rescue it has just written as
+`protect`, and it is never deleted whatever else the folder holds. That one
+would have prevented both incidents alone.
+
+The hand-named copies still COUNT toward `keep`: five undos in a folder is five
+undos whoever wrote them, and thinning the stamped ones to make room would be
+this function deciding which of the author's copies matter.
+
+Six tests in `tests/test_rescue_pruning.py`, and the revert check is the part
+worth reading. Reverting the sort alone left all six GREEN, because the first
+version of the sort test asserted `order[0] == STAMPED` — which is the DEFECT:
+`rescues` answers oldest-first and the stamped copy in that fixture is the
+newest. A test written against the bug it was meant to catch. It now pins the
+newest copy sorting last, and each half of the fix fails it alone.
+
+**Measured**, Aging_Well, 2026-08-31 23:57. `revision promote` reported
+
+    rescue copy of the previous live file: revision\build\rescue\working_rescue_20260831-235728-542622.docx
+    pruned 3 older rescue(s), keeping 5
+
+and the file it names in the first line **was not there afterwards**. The undo
+for that promote had to come from another session's `working_rescue_20260901_pre_POL.docx`
+instead. Three further rescues went with it; they are not recoverable from the
+working tree.
+
+**Diagnosis.** `_promote.rescues()` globs `*_rescue_*` and returns
+`sorted(...)`, and its docstring states the assumption out loud: *"the copies
+are stamped rather than numbered, so sorting them as strings sorts them
+chronologically."* True of names this module writes — `_RESCUE_STAMP` is
+`%Y%m%d-%H%M%S-%f`, uniform width. But the glob is `*_rescue_*`, which also
+catches the hand-named rescues the papers' own scripts and sessions write, and
+then the sort is wrong at the separator: `-` is 0x2D and `_` is 0x5F, so
+
+    working_rescue_20260831-235728-542622.docx   <- 23:57, the newest
+    working_rescue_20260831_pre_COMP.docx        <- 18:44
+    working_rescue_20260831_pre_REF2.docx        <- 21:51
+
+sorts the newest file FIRST, i.e. as the oldest, and `prune_rescues`'
+`rescues(paper)[:-limit]` puts it in the doomed slice. The count printed is
+right and the files deleted are the wrong ones, which is why nothing looks
+amiss.
+
+Same family as the `-2` collision suffix that inverted this order once before
+(fixed by making the stamps uniform width); what is new is that uniform width
+is not enough while the folder is shared with names the tool did not write.
+
+**Suggested fix**, cheapest first:
+
+* **never delete the rescue this promote just wrote** — pass it to
+  `prune_rescues` as protected. That is the invariant that actually matters: a
+  promote must not destroy its own undo, whatever else the folder holds;
+* prune only names matching `_RESCUE_STAMP`, and leave anything else alone — a
+  file the tool did not write is not the tool's to delete;
+* sort by the parsed stamp rather than by the string, so a mixed folder still
+  lists chronologically for `revision rescues`.
+
+**Workaround in use:** none available at the time — the copy was already gone.
+Recovery came from a differently-named rescue that happened to exist.
+
+**Measured again**, Aging_Well R78, 2026-09-01 21:01. `promote` reported
+`working_rescue_20260901-210134-674000.docx` and *pruned 4 older rescue(s), keeping
+5*; the five kept were all hand-named (`working_rescue_20260901_pre_DF1/pre_POL/
+post_POL_accept/pre_R77/pre_S1.docx`) and the stamped file it had just written was
+among the four deleted. Undo existed only because the session had copied
+`working_rescue_20260901_pre_S1.docx` by hand first (same bytes as `prev.docx`).
+**Workaround from that paper:** hand-named copies take a `working_keep_` prefix,
+which the `*_rescue_*` glob does not match; the stamped rescue's presence is
+checked after every promote.
+
+---
+
 ### ~~S4 — no public way to unwrap a link by ANCHOR in both forms; `crossrefs.unlink` refuses field form and `unlink` by name does not exist~~ — FIXED 02.09, `66b58dc`
 <!-- status: fixed -->
 
