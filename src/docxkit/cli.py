@@ -1473,6 +1473,7 @@ def cmd_revision_build(args: argparse.Namespace) -> int:
     report = build(paper, args.revised, args.out,
                    allow_math_resolve=args.allow_math_resolve,
                    allow_pending_baseline=args.allow_pending_baseline,
+                   allow_pending_working=args.allow_pending_working,
                    allow_stale_baseline=args.allow_stale_baseline,
                    resolve_math=not args.keep_math,
                    moves=not args.no_moves,
@@ -1933,6 +1934,13 @@ def _build_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--allow-pending-baseline", action="store_true",
                         help="absorb the baseline's pending revisions "
                              "deliberately")
+    # Its own switch rather than a widening of the one above: the two
+    # states want opposite advice, and a flag that turned off both would
+    # be reached for over the commoner one and silence the rarer.
+    parser.add_argument("--allow-pending-working", action="store_true",
+                        help="build over a promoted batch the author has "
+                             "not adjudicated (their open verdict is "
+                             "decided for them either way)")
     # The staleness refusal has named this flag since it was written,
     # and `build --help` did not list it: the one way out the reader was
     # told about was `error: unrecognized arguments: --force`. The backup

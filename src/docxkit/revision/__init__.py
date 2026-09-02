@@ -113,6 +113,7 @@ from ..errors import HandbackLoss as HandbackLoss
 from ..errors import MathResolved as MathResolved
 from ..errors import ProtocolError as ProtocolError
 from ..errors import StaleBatch as StaleBatch
+from ..errors import WorkingPending as WorkingPending
 from ._baseline import baseline as baseline
 from ._build import build as build
 from ._common import _CONFIG as _CONFIG
@@ -232,6 +233,7 @@ __all__ = [
     "Survey",
     "ValidateReport",
     "Verdict",
+    "WorkingPending",
     "baseline",
     "build",
     "doctor",

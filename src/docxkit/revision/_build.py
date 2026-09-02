@@ -10,7 +10,13 @@ from typing import Any
 
 from .. import footnotes, package, tracked
 from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
-from ..errors import BaselinePending, MathResolved, ProtocolError, StaleBatch
+from ..errors import (
+    BaselinePending,
+    MathResolved,
+    ProtocolError,
+    StaleBatch,
+    WorkingPending,
+)
 from ..tracked import untracked
 from . import _ledger
 from ._config import Paper
@@ -22,6 +28,7 @@ from ._state import drift
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
           allow_pending_baseline: bool = False,
+          allow_pending_working: bool = False,
           allow_stale_baseline: bool = False, resolve_math: bool = True,
           moves: bool = True, force: bool = False,
           progress: Any = None) -> tracked.BuildReport:
@@ -112,6 +119,37 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
             f"those would be flattened into plain text and could never "
             f"be rejected — the author's open verdicts decided for them. "
             f"Have them accept or reject first.")
+
+    # The same question of the LIVE file, and it is the commoner way to
+    # the same harm. Promote a batch, have the author not adjudicate it
+    # yet, pick up the next protocol: `prev` is clean, `working` carries
+    # the proposal, and what happens depends on which file the caller
+    # stages as the clean edit. From `prev`, the new round is built on
+    # the PREVIOUS truth and the pending batch drops out of the redline
+    # entirely; from `working`, Compare is handed revision marks and
+    # flattens the batch in as accepted, unreviewable text. Either way
+    # an author's open verdict is decided for them.
+    #
+    # It has to come BEFORE the drift check, which fires on this state
+    # too — a pending working file cannot match a clean baseline — and
+    # says the wrong thing about it. Measured 2026-09-02: `StaleBatch`
+    # sends the reader to `revision baseline`, and `baseline` REFUSES a
+    # file carrying a proposal. The advice was a loop.
+    live = tracked.package_counts(package.read_parts(paper.working)) \
+        if paper.working.exists() else {"insertions": 0, "deletions": 0}
+    if (live["insertions"] or live["deletions"]) and not allow_pending_working:
+        raise WorkingPending(
+            f"{paper.working.name} still carries {live['insertions']} "
+            f"insertion(s) and {live['deletions']} deletion(s) — a batch "
+            f"the author has not adjudicated. Building the next round now "
+            f"either drops it from the redline (if the clean edit came "
+            f"from {paper.prev.name}) or flattens it in as accepted, "
+            f"unreviewable text (if it came from {paper.working.name}). "
+            f"Either way their open verdict is decided for them.\n"
+            f"    docxkit revision status     (where this round stands)\n"
+            f"then have the author accept or reject, and\n"
+            f"    docxkit revision baseline   (adopt the result)\n"
+            f"before building again.")
 
     # Is the baseline still the file the manuscript grew out of? The
     # check above asks whether `prev` carries a proposal; this asks

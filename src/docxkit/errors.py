@@ -28,6 +28,7 @@ __all__ = [
     "ProtocolError",
     "ScaffoldMissing",
     "StaleBatch",
+    "WorkingPending",
 ]
 
 
@@ -152,6 +153,24 @@ class BaselinePending(ProtocolError):
     """
 
     exit_code = 3
+
+
+class WorkingPending(ProtocolError):
+    """The LIVE file still carries a batch nobody has adjudicated.
+
+    :class:`BaselinePending`'s question asked of the other file, and the
+    commoner way to the same harm. A promoted batch awaiting the
+    author's verdict sits in ``working.docx``; the next round built over
+    it either drops that batch from the redline or flattens it in as
+    accepted text, depending on which file was staged as the clean edit.
+
+    Its own class, and its own exit code, because the two states want
+    opposite advice: a pending BASELINE is cleared by adjudicating and
+    re-baselining, and a pending WORKING file must not be baselined at
+    all until the author has decided — `baseline` refuses it.
+    """
+
+    exit_code = 6
 
 
 class MathResolved(ProtocolError):
