@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from html import unescape
+from typing import NamedTuple
 
 from ._xml import (
     _FIELD_RE,
@@ -30,6 +31,7 @@ from ._xml import (
     normalize_glyphs,
     overlaps,
     own_properties,
+    run_open_before,
     run_spans,
     set_run_property,
     set_run_text,
@@ -49,6 +51,7 @@ __all__ = [
     "italicize",
     "preserve_space",
     "relabel_link",
+    "remove_link",
     "rep",
     "replace_in_para",
     "set_run_properties",
@@ -590,6 +593,57 @@ def replace_in_para(para_xml: str, old: str, new: str,
     return out
 
 
+class _Link(NamedTuple):
+    """One link to an anchor: the words it shows, and the whole of it.
+
+    Two spans because a caller wants one or the other and never both by
+    accident. `relabel_link` rewrites the LABEL and must leave the
+    machinery standing; `remove_link` takes the machinery away and must
+    keep the label. Reading either span off the wrong one produces a
+    paragraph Word opens and a reader cannot use.
+    """
+
+    label: tuple[int, int]      # the words on the page
+    outer: tuple[int, int]      # the construct that makes them a link
+    field: bool                 # a Word FIELD rather than an element
+
+
+def _links_to(para_xml: str, anchor: str) -> list[_Link]:
+    """Every link to `anchor` in this paragraph, in BOTH forms.
+
+    Which form a paragraph holds depends on who saved the file last, so
+    a routine that reads one of them works until the author opens the
+    document. `crossrefs.unlink` is what that costs: it refuses a
+    field-form exhibit link outright rather than remove half of one,
+    because "24 removed" over a document whose caption links were all
+    still live was found much later and by hand (Parental_style).
+
+    The OUTER span is run-aligned for a field, and it has to be: a field
+    is four runs — begin, instruction, separate, end — and `_FIELD_RE`
+    matches from the `begin` fldChar to the `end` one, INSIDE the runs
+    that hold them. Cutting at the match leaves two empty `w:r` shells
+    around the words.
+    """
+    out: list[_Link] = []
+    for m in _HYPERLINK_EL_RE.finditer(para_xml):
+        if unescape(m.group(1)) == anchor:
+            out.append(_Link((m.start(2), m.end(2)),
+                             (m.start(), m.end()), field=False))
+    for m in _FIELD_RE.finditer(para_xml):
+        instr = unescape("".join(INSTR_RE.findall(m.group(1))))
+        am = INSTR_ANCHOR_RE.search(instr)
+        sep = SEPARATE_RE.search(m.group(1))
+        if am is None or am.group(1) != anchor or sep is None:
+            continue
+        start = run_open_before(para_xml, m.start())
+        end = para_xml.find("</w:r>", m.end())
+        if start < 0 or end < 0:            # pragma: no cover - defensive
+            continue
+        out.append(_Link((m.start(1) + sep.end(), m.end(1)),
+                         (start, end + len("</w:r>")), field=True))
+    return sorted(out, key=lambda link: link.label)
+
+
 def _label_spans(para_xml: str, anchor: str) -> list[tuple[int, int]]:
     """Where each link to `anchor` keeps the words it SHOWS.
 
@@ -597,16 +651,92 @@ def _label_spans(para_xml: str, anchor: str) -> list[tuple[int, int]]:
     the file last: the element's content, and everything a field puts
     after its `separate` marker.
     """
-    spans = [(m.start(2), m.end(2))
-             for m in _HYPERLINK_EL_RE.finditer(para_xml)
-             if unescape(m.group(1)) == anchor]
-    for m in _FIELD_RE.finditer(para_xml):
-        instr = unescape("".join(INSTR_RE.findall(m.group(1))))
-        am = INSTR_ANCHOR_RE.search(instr)
-        sep = SEPARATE_RE.search(m.group(1))
-        if am is not None and am.group(1) == anchor and sep is not None:
-            spans.append((m.start(1) + sep.end(), m.end(1)))
-    return sorted(spans)
+    return [link.label for link in _links_to(para_xml, anchor)]
+
+
+#: The run property that makes a link LOOK like one. Attribute-order
+#: tolerant, per CONTRIBUTING's second trap: `<w:rStyle w:val="Hyperlink"/>`
+#: written the other way round is the same element, and a pattern that
+#: spells one order leaves the blue underline on words that no longer
+#: link anywhere.
+_HYPERLINK_STYLE_RE = re.compile(
+    r'<w:rStyle\b[^>]*\bw:val="Hyperlink"[^>]*/>')
+
+
+def _plain_runs(span_xml: str) -> str:
+    """The label's runs, with the link styling taken off them.
+
+    Runs carrying VISIBLE text only: a field's label span can still hold
+    the run that closes the field, and carrying that over would rebuild
+    the thing being removed.
+    """
+    kept = [r.group(0) for r in RUN_RE.finditer(span_xml)
+            if "<w:t" in r.group(0) and "<w:instrText" not in r.group(0)
+            and "<w:fldChar" not in r.group(0)]
+    return _HYPERLINK_STYLE_RE.sub("", "".join(kept))
+
+
+def _drop_bookmark(para_xml: str, name: str) -> str:
+    """Remove one named bookmark and the ``bookmarkEnd`` that closes it."""
+    for m in _BOOKMARK_RE.finditer(para_xml):
+        if m.group(1) != "Start" or f'w:name="{name}"' not in m.group(0):
+            continue
+        bid = _ID_ATTR_RE.search(m.group(0))
+        out = para_xml[:m.start()] + para_xml[m.end():]
+        if bid is None:                     # pragma: no cover - defensive
+            return out
+        closing = re.search(
+            rf'<w:bookmarkEnd\b[^>]*\bw:id="{bid.group(1)}"[^>]*/>', out)
+        return out[:closing.start()] + out[closing.end():] if closing else out
+    return para_xml
+
+
+def remove_link(para_xml: str, anchor: str, *,
+                drop_twin: bool = True) -> tuple[str, str]:
+    """Undo the link to `anchor`, keeping the words it showed.
+
+    Returns the paragraph and the label that was on the page, because a
+    caller removing a link is usually about to put a different one on
+    the same words and would otherwise have to read them twice.
+
+    The inverse of :func:`docxkit.citations.link_in_para`, and the
+    operation this package could not do: `crossrefs.unlink` is
+    document-wide, finds its targets through the exhibit captions, and
+    REFUSES a field-form link rather than remove half of one. Aging_Well
+    wrote its own for citations — 38 lines re-deriving the two-form scan
+    that `_links_to` beside this already does — because the house wants
+    one link per YEAR in "Rowe and Kahn (1987, 1997)" where `link_all`
+    tiles the group, and re-narrowing has to happen on every pass: a
+    tiled link is a CORRECT link, so no gate has an opinion about it.
+
+    `drop_twin` also removes the ``<anchor>txt`` bookmark, which is this
+    package's own convention for the in-text end of a link (see
+    CONTRIBUTING). Left behind, `wrap_link_in_bookmark` adds a second on
+    the next re-wire. Pass False when the bookmark is wanted without the
+    link — an anchor a REF field still reaches.
+
+    Refuses the two silent cases :func:`relabel_link` refuses, for the
+    same reason: an anchor this paragraph does not link to (a removal
+    that quietly does nothing is how a batch reports success and ships
+    the link), and an anchor it links to twice, where nothing in the
+    arguments says which.
+    """
+    links = _links_to(para_xml, anchor)
+    if not links:
+        have = sorted({a for a, _ in internal_links(para_xml)})
+        raise AnchorError(
+            f"remove_link: this paragraph has no link to {anchor!r}"
+            + (f" — it links to {have}" if have else " — it has no links"))
+    if len(links) > 1:
+        raise AnchorError(
+            f"remove_link: this paragraph links to {anchor!r} "
+            f"{len(links)} times and nothing here says which to remove. "
+            f"Split the paragraph's edits, or narrow the span first.")
+    link = links[0]
+    label = visible_text(para_xml[link.label[0]:link.label[1]])
+    lo, hi = link.outer
+    out = para_xml[:lo] + _plain_runs(para_xml[lo:hi]) + para_xml[hi:]
+    return (_drop_bookmark(out, anchor + "txt") if drop_twin else out), label
 
 
 def relabel_link(para_xml: str, anchor: str, new_label: str) -> str:

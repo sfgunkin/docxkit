@@ -222,7 +222,11 @@ they do.
   the refusal names `allow_hyperlink=True` — retitling a link is a real
   operation, and `edit.relabel_link(para, anchor, new_label)` is its verb:
   same anchor, new words, addressed by ANCHOR so a paragraph that also says
-  those words in prose is not the one rewritten.
+  those words in prose is not the one rewritten. `edit.remove_link` is the
+  inverse — the link goes, the words stay — and it reads BOTH forms, which
+  matters more than it sounds: measured over 120 manuscripts, **7,317 of
+  9,728 internal links are Word FIELD form**, and `crossrefs.unlink`
+  refuses those rather than remove half of one.
 - **Word renumbers footnote ids on save**, so an author's paragraph XML
   cannot be spliced raw — `ingest` remaps ids by definition text.
 - **A self-closing `<w:ins/>` is a property-level mark** (paragraph mark,
