@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 from conftest import field, para, run
 
-from docxkit.edit import relabel_link, remove_link
+from docxkit.edit import relabel_link, remove_link, remove_links
 from docxkit.errors import AnchorError
 
 LINKED = ('<w:hyperlink w:anchor="Sen1985"><w:r><w:rPr>'
@@ -143,6 +143,73 @@ def test_TWO_links_to_one_anchor_are_refused():
 
     with pytest.raises(AnchorError, match="2 times"):
         remove_link(twice, "Sen1985")
+
+
+# ------------------------------------------------------------- the sweep
+
+
+def _mixed() -> str:
+    """Two links to unwrap and one to keep, one of each form."""
+    keep = ('<w:hyperlink w:anchor="Keep"><w:r><w:rPr>'
+            '<w:rStyle w:val="Hyperlink"/></w:rPr>'
+            "<w:t>Table 2</w:t></w:r></w:hyperlink>")
+    return para(run("See "), MARK + LINKED + MARK_END, run(", "),
+                field('HYPERLINK \\l "Fig2"', "Figure 2"),
+                run(" and "), keep, run("."))
+
+
+def test_the_sweep_unwraps_what_is_not_KEPT_and_leaves_the_rest():
+    """Splitting a manuscript into a main file and a supplement leaves
+    links whose bookmark is now in the OTHER file. Every one has to lose
+    the link and keep the words; the ones still reachable must not."""
+    out, gone = remove_links(_mixed(), keep={"Keep"})
+
+    assert gone == ["Sen1985", "Fig2"], "document order, both forms"
+    assert 'w:anchor="Keep"' in out and "Table 2" in out
+    assert 'w:anchor="Sen1985"' not in out and "instrText" not in out
+
+
+def test_the_sweep_keeps_every_word_on_the_page():
+    from docxkit._xml import visible_text
+
+    before = _mixed()
+    out, _ = remove_links(before, keep={"Keep"})
+
+    assert visible_text(out) == visible_text(before)
+
+
+def test_the_sweep_leaves_no_orphan_link_STYLING():
+    """The words are prose now and must stop looking clickable — and the
+    `w:rPr` shell the style leaves behind goes with it."""
+    out, _ = remove_links(_mixed(), keep={"Keep"})
+
+    assert out.count('w:val="Hyperlink"') == 1, "only the kept link's"
+    assert "<w:rPr></w:rPr>" not in out
+
+
+def test_the_sweep_keeps_bookmarks_ALONE():
+    """The inverse of `remove_link`'s default, and deliberate: the
+    anchors a sweep unwraps are ones being kept somewhere else, so
+    deleting their in-text twins would take the targets with the
+    links."""
+    out, _ = remove_links(_mixed(), keep={"Keep"})
+
+    assert 'w:name="Sen1985txt"' in out
+
+
+def test_keeping_everything_changes_nothing():
+    same = _mixed()
+
+    out, gone = remove_links(same, keep={"Sen1985", "Fig2", "Keep"})
+
+    assert gone == [] and out == same
+
+
+def test_keeping_NOTHING_unwraps_them_all():
+    out, gone = remove_links(_mixed(), keep=())
+
+    assert gone == ["Sen1985", "Fig2", "Keep"]
+    assert "w:hyperlink" not in out and "instrText" not in out
 
 
 # ----------------------------------------------------- the shared reader

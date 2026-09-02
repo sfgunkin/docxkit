@@ -7,7 +7,7 @@ loudly instead of producing a subtly wrong manuscript.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from html import unescape
 from typing import NamedTuple
 
@@ -52,6 +52,7 @@ __all__ = [
     "preserve_space",
     "relabel_link",
     "remove_link",
+    "remove_links",
     "rep",
     "replace_in_para",
     "set_run_properties",
@@ -603,13 +604,19 @@ class _Link(NamedTuple):
     paragraph Word opens and a reader cannot use.
     """
 
+    anchor: str                 # the bookmark it points at
     label: tuple[int, int]      # the words on the page
     outer: tuple[int, int]      # the construct that makes them a link
     field: bool                 # a Word FIELD rather than an element
 
 
-def _links_to(para_xml: str, anchor: str) -> list[_Link]:
+def _links_to(para_xml: str, anchor: str | None = None) -> list[_Link]:
     """Every link to `anchor` in this paragraph, in BOTH forms.
+
+    `anchor=None` answers for EVERY internal link, which is what a sweep
+    over a whole part needs — and it is the same scan, because a sweep
+    that read links its own single-link sibling cannot see would unwrap
+    a different set from the one `remove_link` reports.
 
     Which form a paragraph holds depends on who saved the file last, so
     a routine that reads one of them works until the author opens the
@@ -626,20 +633,23 @@ def _links_to(para_xml: str, anchor: str) -> list[_Link]:
     """
     out: list[_Link] = []
     for m in _HYPERLINK_EL_RE.finditer(para_xml):
-        if unescape(m.group(1)) == anchor:
-            out.append(_Link((m.start(2), m.end(2)),
+        found = unescape(m.group(1))
+        if anchor is None or found == anchor:
+            out.append(_Link(found, (m.start(2), m.end(2)),
                              (m.start(), m.end()), field=False))
     for m in _FIELD_RE.finditer(para_xml):
         instr = unescape("".join(INSTR_RE.findall(m.group(1))))
         am = INSTR_ANCHOR_RE.search(instr)
         sep = SEPARATE_RE.search(m.group(1))
-        if am is None or am.group(1) != anchor or sep is None:
+        if am is None or sep is None:
+            continue
+        if anchor is not None and am.group(1) != anchor:
             continue
         start = run_open_before(para_xml, m.start())
         end = para_xml.find("</w:r>", m.end())
         if start < 0 or end < 0:            # pragma: no cover - defensive
             continue
-        out.append(_Link((m.start(1) + sep.end(), m.end(1)),
+        out.append(_Link(am.group(1), (m.start(1) + sep.end(), m.end(1)),
                          (start, end + len("</w:r>")), field=True))
     return sorted(out, key=lambda link: link.label)
 
@@ -673,7 +683,14 @@ def _plain_runs(span_xml: str) -> str:
     kept = [r.group(0) for r in RUN_RE.finditer(span_xml)
             if "<w:t" in r.group(0) and "<w:instrText" not in r.group(0)
             and "<w:fldChar" not in r.group(0)]
-    return _HYPERLINK_STYLE_RE.sub("", "".join(kept))
+    # …and the shell the style left behind. A run whose only property
+    # WAS the link style now carries `<w:rPr></w:rPr>`, which Word opens
+    # and a diff reports; an rPr that was empty before this is empty
+    # after it, so removing the shell says nothing new either way.
+    return _EMPTY_RPR_RE.sub("", _HYPERLINK_STYLE_RE.sub("", "".join(kept)))
+
+
+_EMPTY_RPR_RE = re.compile(r"<w:rPr\s*/>|<w:rPr>\s*</w:rPr>")
 
 
 def _drop_bookmark(para_xml: str, name: str) -> str:
@@ -737,6 +754,44 @@ def remove_link(para_xml: str, anchor: str, *,
     lo, hi = link.outer
     out = para_xml[:lo] + _plain_runs(para_xml[lo:hi]) + para_xml[hi:]
     return (_drop_bookmark(out, anchor + "txt") if drop_twin else out), label
+
+
+def remove_links(xml: str, *, keep: Collection[str]) -> tuple[str, list[str]]:
+    """Unwrap every internal link whose anchor is NOT in `keep`.
+
+    The sweep :func:`remove_link` is the unit of. Splitting a manuscript
+    into a main file and a supplement leaves links whose bookmark is now
+    in the OTHER file — main-text mentions pointing at appendix
+    captions, caption back-links pointing at their first mentions, a
+    citation link inside a table note — and every one of them has to
+    lose the link and keep the words. Parental_style hand-rolled this as
+    `unlink_absent` on 2026-09-01 and it will recur for every journal
+    that wants its appendices as a separate supplemental file.
+
+    Returns the part and the anchors it unwrapped, in document order, so
+    a caller can report and a dry run can print.
+
+    **Build `keep` from every part a link may legitimately reach, not
+    from the body.** Eleven of Parental_style's ``<key>txt`` markers
+    live in ``footnotes.xml``: a name set read from ``document.xml``
+    alone declared those eleven back-links dangling and would have
+    unwrapped all of them, caught in a dry run. `docxkit.package.
+    text_parts` is the iteration that gets this right.
+
+    Unlike :func:`remove_link` this touches no bookmark: the anchors
+    here are the ones being KEPT somewhere, and a sweep that also
+    deleted their in-text twins would take the targets with the links.
+    """
+    gone: list[str] = []
+    # Last first, so an earlier link's offsets are still good after a
+    # later one is spliced out.
+    for link in sorted(_links_to(xml), key=lambda lk: -lk.outer[0]):
+        if link.anchor in keep:
+            continue
+        lo, hi = link.outer
+        xml = xml[:lo] + _plain_runs(xml[lo:hi]) + xml[hi:]
+        gone.append(link.anchor)
+    return xml, gone[::-1]
 
 
 def relabel_link(para_xml: str, anchor: str, new_label: str) -> str:
