@@ -46,38 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `revision build` refuses on a pending BASELINE but is silent on a pending WORKING file, which is the commoner way to the same harm
-
-<!-- status: open -->
-
-`_build.build` reads `tracked.package_counts(package.read_parts(paper.prev))`
-and raises `BaselinePending` when the BASELINE still carries revisions. Its
-reason is exactly right: "Word Compare rebuilds the redline from ACCEPTED
-content, so those would be flattened into plain text and could never be
-rejected."
-
-The same harm arrives far more often from the other side. Promote a batch,
-have the author not adjudicate it yet, and pick up the next protocol: `prev`
-is clean, `working` carries the proposal, and the build runs without a word.
-What happens next depends on which file the caller stages as the clean edit:
-
-* from `prev` — the new round is built on the PREVIOUS truth and the pending
-  batch is dropped from the redline entirely;
-* from `working` — Compare is handed a file with revision marks and flattens
-  the pending batch in as accepted, unreviewable text.
-
-Met on `Aging_Well`, 31 August: R75 promoted and awaiting a verdict, the next
-protocol picked up in the same session. Nothing in `build` would have stopped
-it. `promote`'s `StaleBatch` does catch it afterwards — live and base differ —
-but only after a full Word Compare round-trip, and it reports a stale batch
-rather than the actual problem, which is an author's open verdict about to be
-decided for them.
-
-The check `build` already performs on `prev` belongs on `paper.working` too,
-with its own message and its own escape. The two-lane rule elsewhere in this
-toolkit is stated as "a file with revision marks is never the clean master,
-whatever its mtime"; `build` is where that rule should first bite.
-
 ### Not seven defects — one habit: a `*.py` glob is a claim that the package is flat
 <!-- status: note -->
 

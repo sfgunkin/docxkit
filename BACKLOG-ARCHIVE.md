@@ -14,6 +14,69 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `revision build` refuses on a pending BASELINE but is silent on a pending WORKING file, which is the commoner way to the same harm~~ — FIXED 02.09, `a8a0239`
+<!-- status: fixed -->
+
+**Fixed 2026-09-02.** `WorkingPending`, raised by `_build.build` before the
+staleness check.
+
+**The entry was wrong about one thing, and the truth is worse.** It said nothing
+in `build` would have stopped it. Measured before writing the fix: the `drift`
+check fires on this state too — a pending working file cannot match a clean
+baseline — and raised `StaleBatch`, whose advice is to run `revision baseline`.
+`baseline` REFUSES a file carrying a proposal (`test_baseline_refuses_a_
+proposal`). The reader was sent into a loop between two gates, each telling
+them to do what the other forbids.
+
+That is why the check goes BEFORE the drift check, and why one test pins the
+ORDER rather than the behaviour: moving the block after `drift` makes
+`StaleBatch` fire again and `test_it_comes_BEFORE_the_staleness_check` fails.
+Verified by actually moving it, not assumed.
+
+**Its own class, its own exit code (6), its own switch.** The two states want
+opposite advice — a pending BASELINE is cleared by adjudicating and
+re-baselining, a pending WORKING file must not be baselined at all until the
+author has decided — so `--allow-pending-working` is not a widening of
+`--allow-pending-baseline`. One flag for both would be reached for over the
+commoner refusal and would silence the rarer one.
+
+The message names BOTH harms, because which one you get depends on which file
+was staged as the clean edit and a reader cannot tell that from a message
+naming one.
+
+Nine tests in `tests/test_pending_working.py`; reverting `_build.py` fails
+five.
+
+`_build.build` reads `tracked.package_counts(package.read_parts(paper.prev))`
+and raises `BaselinePending` when the BASELINE still carries revisions. Its
+reason is exactly right: "Word Compare rebuilds the redline from ACCEPTED
+content, so those would be flattened into plain text and could never be
+rejected."
+
+The same harm arrives far more often from the other side. Promote a batch,
+have the author not adjudicate it yet, and pick up the next protocol: `prev`
+is clean, `working` carries the proposal, and the build runs without a word.
+What happens next depends on which file the caller stages as the clean edit:
+
+* from `prev` — the new round is built on the PREVIOUS truth and the pending
+  batch is dropped from the redline entirely;
+* from `working` — Compare is handed a file with revision marks and flattens
+  the pending batch in as accepted, unreviewable text.
+
+Met on `Aging_Well`, 31 August: R75 promoted and awaiting a verdict, the next
+protocol picked up in the same session. Nothing in `build` would have stopped
+it. `promote`'s `StaleBatch` does catch it afterwards — live and base differ —
+but only after a full Word Compare round-trip, and it reports a stale batch
+rather than the actual problem, which is an author's open verdict about to be
+decided for them.
+
+The check `build` already performs on `prev` belongs on `paper.working` too,
+with its own message and its own escape. The two-lane rule elsewhere in this
+toolkit is stated as "a file with revision marks is never the clean master,
+whatever its mtime"; `build` is where that rule should first bite.
+
+---
+
 ### ~~S2 — nothing in docxkit can see prose that renders superscript, and a footnote sat wrong for 20 days because of it~~ — FIXED 02.09, `25e8c67`
 <!-- status: fixed -->
 
