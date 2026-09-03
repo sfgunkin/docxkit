@@ -117,28 +117,53 @@ ignore = [
 # with mccabe unselected as well, NOTHING watched size at all, and that
 # is how `cli.main` reached 289 lines and `_audit_findings` a complexity
 # of 38. A threshold rather than a rule: 20 leaves the branchy passes
-# alone and catches the next function that grows past them. The six
-# already above it are listed under per-file-ignores, which is the debt
+# alone and catches the next function that grows past them. The six that
+# were already above it were listed under per-file-ignores — the debt
 # stated in one place instead of a gate nobody can turn on — and PINNED
 # by tests/test_complexity_debt.py, because a per-file ignore cannot say
 # "this function only" and started covering NEW code within hours of
-# being written.
+# being written. All six are paid now (see the C901 note below), so no
+# file carries the exemption and the pin holds the whole package.
 [tool.ruff.lint.mccabe]
 max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
-# ---- C901: five functions are over the threshold TODAY, and each file
-# is pinned here so the rest of the package is gated rather than the
-# rule being left off. Every one is a single pass over one document with
-# many cases, not a function doing several jobs, so splitting one is a
-# batch of its own — with the number to beat recorded here:
-#   _cite_audit._audit_findings  31     lint.lint                 31
-#   edit.replace_in_para         26     refstyle.audit            26
-#   revisions._simulate_where    24
-# `_cite_build.link_all` was the sixth, at 29. Its mention scan is a
-# method on `_Mentions` now and the function is under the threshold, so
-# the file's exemption is gone — which is the shape a paid debt takes.
-"src/docxkit/edit.py" = ["C901"]
+# ---- C901: NOTHING is over the threshold, and no file carries the
+# exemption any more. `tests/test_complexity_debt.py` walks the package
+# with `--isolated`, so with its DEBT list empty it now reads "no
+# function in docxkit exceeds 20" rather than "no NEW one does".
+#
+# The six paid, and what each became. Five took the same shape: the pass
+# was one loop per KIND of finding already, so each loop became a
+# function and the caller kept the emission order, which is the report
+# itself and not an implementation detail.
+#   `_cite_build.link_all`        29 -> its mention scan is a method on
+#                                       `_Mentions`
+#   `lint.lint`                   31 -> eight numbered checks, eight
+#                                       functions; nothing in that file
+#                                       now reaches 10
+#   `_cite_audit._audit_findings` 30 -> `_marker_findings`,
+#                                       `_link_findings`,
+#                                       `_doubled_findings` and
+#                                       `_mention_findings`, the last
+#                                       taking the five bindings that
+#                                       were only ever its own
+#   `refstyle.audit`              25 -> `_ambiguous_findings` and
+#                                       `_crosscheck_findings`, beside
+#                                       the `_order_/_locator_/_layout_`
+#                                       passes already there
+#   `revisions._simulate_where`   24 -> `_apply_content` / `_apply_rows`
+#                                       / `_apply_marks`, beside the
+#                                       `_apply_property_changes` and
+#                                       `_apply_cell_changes` already
+#                                       there. The CALL ORDER is the
+#                                       subject of three comments in
+#                                       that function and is unchanged
+# The sixth is not a report. `edit.replace_in_para` 24 -> the two things
+# it did BEFORE the write are functions now — `_locate_anchor` (find the
+# span, or say why it is not addressable) and `_refuse_crossed_note` —
+# with `_label_end` lifted out of the closure it was hiding in. What is
+# left in the function is the run walk and its three refusals.
 # compare.py IS a facade now (see citations.py): `from x import y as y`
 # is the PEP 484 signal for a deliberate re-export, and every line of
 # its import block is one. It also parses the glyphs Word emits and
@@ -186,7 +211,7 @@ max-complexity = 20
 # the others defer imports to keep the layering acyclic.
 "src/docxkit/_cite_grammar.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/_cite_repair.py" = ["RUF001", "PLC0415"]
-"src/docxkit/_cite_audit.py" = ["C901", "RUF001", "PLC0415"]
+"src/docxkit/_cite_audit.py" = ["RUF001", "PLC0415"]
 "src/docxkit/_cite_build.py" = ["RUF001", "PLC0415"]
 "src/docxkit/crossrefs.py" = ["RUF001", "RUF002", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
@@ -198,11 +223,11 @@ max-complexity = 20
 # refstyle's whole subject is the en dash and the curly apostrophe: its
 # messages must SHOW the wanted glyph ("pp. 45–48"), not describe it —
 # and so must the comment explaining which way a range is written.
-"src/docxkit/refstyle.py" = ["C901", "RUF001", "RUF002", "RUF003"]
+"src/docxkit/refstyle.py" = ["RUF001", "RUF002", "RUF003"]
 "src/docxkit/wordcount.py" = ["RUF001"]
 "src/docxkit/hygiene.py" = ["RUF001", "RUF002"]
-"src/docxkit/lint.py" = ["C901", "PLC0415"]
-"src/docxkit/revisions.py" = ["C901", "PLC0415"]
+"src/docxkit/lint.py" = ["PLC0415"]
+"src/docxkit/revisions.py" = ["PLC0415"]
 # same lazy lxml: the reject-all gate parses, `package_counts` does not,
 # and `import docxkit` must not pay for the parser.
 "src/docxkit/tracked.py" = ["PLC0415"]

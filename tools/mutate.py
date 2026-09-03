@@ -258,10 +258,13 @@ MUTATIONS = [
              "    return any(t.text for t in el.iter(MATH + \"t\"))",
              "    return any((t.text or '').strip() "
              "for t in el.iter(MATH + \"t\"))"),
+    # Re-pointed: check 7 is `lint._empty_math` now rather than a block
+    # inside `lint`'s per-root loop, so the anchor lost four spaces of
+    # indentation. The mutation is unchanged.
     Mutation("lint.py",
              "an empty object inside a surviving equation goes unreported",
-             "            orphaned += sum(",
-             "            orphaned += 0 * sum("),
+             "        orphaned += sum(",
+             "        orphaned += 0 * sum("),
     # --- new-content guards ----------------------------------------------
     Mutation("body.py",
              "an unstyled template silently builds an unstyled table",

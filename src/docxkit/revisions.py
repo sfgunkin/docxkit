@@ -693,6 +693,86 @@ def _simulate_clean(xml: str, mode: str) -> str:
     return _simulate_where(xml, mode, None)
 
 
+def _apply_content(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
+                   wants: Callable[[Any, str], bool], *,
+                   mode: str, selective: bool) -> list[Any]:
+    """Remove the side that goes and untrack the side that stays.
+
+    Returns the equations a removal reached into, collected BEFORE the
+    element leaves the tree so the caller's prune can be confined to
+    them — which is the whole reason this hands something back.
+
+    `selective` is "a predicate is in force". Under one MOVES are never
+    touched: a ``moveFrom`` and its ``moveTo`` are one revision in two
+    places, and applying one side alone rewrites the document into
+    something neither version says. See :func:`accept`.
+    """
+    touched: list[Any] = []
+    for tag in vanish:
+        for el in _content_elements(root, tag):
+            if selective and tag in ("moveFrom", "moveTo"):
+                continue               # moves are a pair; see accept()
+            if wants(el, tag):
+                om = _enclosing_math(el)
+                if om is not None and not any(om is seen for seen in touched):
+                    touched.append(om)
+                _lift_anchors(el)
+                el.getparent().remove(el)
+    for tag in keep:
+        for el in _content_elements(root, tag):
+            if selective and tag in ("moveFrom", "moveTo"):
+                continue
+            if not wants(el, tag):
+                continue
+            if mode == ORIGINAL:
+                # restore this deletion's text to ordinary runs; global
+                # conversion would also de-track the deletions a
+                # predicate chose to LEAVE
+                for dt in list(el.iter(W + "delText")):
+                    dt.tag = W + "t"
+            _unwrap(el)
+    return touched
+
+
+def _apply_rows(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
+                wants: Callable[[Any, str], bool]) -> None:
+    """Table ROWS carry their own revision flag, in `trPr`, and it is the
+    whole row that appears or disappears — an inserted table is encoded
+    as nothing but flagged rows, so a simulation blind to them leaves
+    the entire table standing (emptied of text) where Word removes it.
+
+    Called BEFORE :func:`_apply_marks`: a row that goes takes its
+    paragraphs with it.
+    """
+    for row in list(root.iter(W + "tr")):
+        flag = _row_flag(row, vanish)
+        if flag is not None and wants(flag, "row"):
+            _drop_row(row)
+            continue
+        kept = _row_flag(row, keep)
+        if kept is not None and wants(kept, "row"):
+            kept.getparent().remove(kept)
+
+
+def _apply_marks(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
+                 wants: Callable[[Any, str], bool]) -> None:
+    """Paragraph-MARK revisions, which are not content.
+
+    The surviving side's flag is not content either, so unwrapping runs
+    never reaches it: an accepted document kept one `w:ins` per inserted
+    paragraph mark and still reported those as revisions. Applying a
+    revision means removing its markup on both sides.
+    """
+    for para in list(root.iter(W + "p")):
+        flag = _mark_flag(para, vanish)
+        if flag is not None and wants(flag, "paragraph-mark"):
+            _merge_into_next(para)
+            continue
+        kept = _mark_flag(para, keep)
+        if kept is not None and wants(kept, "paragraph-mark"):
+            kept.getparent().remove(kept)
+
+
 def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     # A document with no revisions is its own accepted AND rejected view,
     # so there is nothing to simulate. Worth checking first: most
@@ -713,64 +793,16 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     def wants(el: Any, kind: str) -> bool:
         return where is None or where(_info(el, kind))
 
-    # equations a removal reaches into, so the prune below can be
-    # confined to them; collected BEFORE the element leaves the tree
-    touched: list[Any] = []
-    for tag in vanish:
-        for el in _content_elements(root, tag):
-            if where is not None and tag in ("moveFrom", "moveTo"):
-                continue               # moves are a pair; see accept()
-            if wants(el, tag):
-                om = _enclosing_math(el)
-                if om is not None and not any(om is seen for seen in touched):
-                    touched.append(om)
-                _lift_anchors(el)
-                el.getparent().remove(el)
-    for tag in keep:
-        for el in _content_elements(root, tag):
-            if where is not None and tag in ("moveFrom", "moveTo"):
-                continue
-            if not wants(el, tag):
-                continue
-            if mode == ORIGINAL:
-                # restore this deletion's text to ordinary runs; global
-                # conversion would also de-track the deletions a
-                # predicate chose to LEAVE
-                for dt in list(el.iter(W + "delText")):
-                    dt.tag = W + "t"
-            _unwrap(el)
+    touched = _apply_content(root, vanish, keep, wants,
+                             mode=mode, selective=where is not None)
     if where is None:
         for tag in _RANGE_MARKERS:
             for el in list(root.iter(W + tag)):
                 el.getparent().remove(el)
     if touched:
         _prune_math(touched)
-    # Table ROWS carry their own revision flag, in `trPr`, and it is the whole
-    # row that appears or disappears — an inserted table is encoded as nothing
-    # but flagged rows, so a simulation blind to them leaves the entire table
-    # standing (emptied of text) where Word removes it. Rows first: a row that
-    # goes takes its paragraphs with it.
-    for row in list(root.iter(W + "tr")):
-        flag = _row_flag(row, vanish)
-        if flag is not None and wants(flag, "row"):
-            _drop_row(row)
-            continue
-        kept = _row_flag(row, keep)
-        if kept is not None and wants(kept, "row"):
-            kept.getparent().remove(kept)
-
-    for para in list(root.iter(W + "p")):
-        flag = _mark_flag(para, vanish)
-        if flag is not None and wants(flag, "paragraph-mark"):
-            _merge_into_next(para)
-            continue
-        # The SURVIVING side's flag is not content, so unwrapping runs never
-        # reaches it: an accepted document kept one `w:ins` per inserted
-        # paragraph mark and still reported those as revisions. Applying a
-        # revision means removing its markup on both sides.
-        kept = _mark_flag(para, keep)
-        if kept is not None and wants(kept, "paragraph-mark"):
-            kept.getparent().remove(kept)
+    _apply_rows(root, vanish, keep, wants)
+    _apply_marks(root, vanish, keep, wants)
 
     # LAST, so the row and paragraph-mark handlers above still see the
     # `w:ins`/`w:del` flags a rejected `trPrChange`/`pPrChange` restore

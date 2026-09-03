@@ -1399,6 +1399,55 @@ def _read_label(label: str) -> list[Citation]:
             for f in find_citations(f"({label})") if f.start >= 1]
 
 
+def _ambiguous_findings(entries: list[Reference]) -> list[Issue]:
+    """Two entries that render to the SAME in-text citation.
+
+    Author-date has one answer — 2013a, 2013b — and nothing here asked
+    for it: applying "et al. from three authors" to DSI collapsed
+    Foster, McGillivray, and Seth (2013) and Foster, Seth, Lokshin, and
+    Sajaia (2013) into one «Foster et al. 2013», the linker could then
+    resolve only one of the three mentions, and the audit still reported
+    no issues. Keyed on surname+year, so a suffixed pair is distinct and
+    never flagged.
+    """
+    same: dict[str, list[Reference]] = {}
+    for r in entries:
+        same.setdefault(key_for(r.surname, r.year), []).append(r)
+    issues = []
+    for group in same.values():
+        if len(group) < 2:
+            continue
+        letters = ", ".join(f"{group[0].year}{chr(ord('a') + i)}"
+                            for i in range(len(group)))
+        issues += [Issue(
+            "ambiguous-cite",
+            f"{len(group)} entries cite as "
+            f'"{r.surname} {r.year}" — distinguish them as {letters}',
+            where=f"¶{r.index + 1}", snippet=r.text[:60]) for r in group]
+    return issues
+
+
+def _crosscheck_findings(entries: list[Reference],
+                         answers_to: list[set[str]],
+                         cited: dict[str, tuple[str, str]],
+                         listed: set[str]) -> list[Issue]:
+    """The two sides against each other: every citation should have an
+    entry and every entry a citation.
+    """
+    if not entries:
+        return [Issue("no-list", f"{len(cited)} works cited but no "
+                      "reference list found")] if cited else []
+    issues = [Issue("missing-ref", "cited but not in the reference list",
+                    where=where, snippet=snip)
+              for key, (where, snip) in cited.items() if key not in listed]
+    issues += [Issue("uncited-ref",
+                     "in the reference list but never cited",
+                     where=f"¶{r.index + 1}", snippet=r.text[:60])
+               for r, keys in zip(entries, answers_to, strict=True)
+               if not (keys & cited.keys())]
+    return issues
+
+
 def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
           heading: str | tuple[str, ...] = REF_HEADINGS,
           stop: tuple[str, ...] = REF_STOPS,
@@ -1528,43 +1577,9 @@ def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
                 snippet=r.text[:50]))
         prev = r
 
-    # Two entries that render to the SAME in-text citation. Author-date has one
-    # answer — 2013a, 2013b — and nothing here asked for it: applying "et al.
-    # from three authors" to DSI collapsed Foster, McGillivray, and Seth (2013)
-    # and Foster, Seth, Lokshin, and Sajaia (2013) into one «Foster et al.
-    # 2013», the linker could then resolve only one of the three mentions, and
-    # the audit still reported no issues. Keyed on surname+year, so a suffixed
-    # pair is distinct and never flagged.
-    same: dict[str, list[Reference]] = {}
-    for r in entries:
-        same.setdefault(key_for(r.surname, r.year), []).append(r)
-    for group in same.values():
-        if len(group) < 2:
-            continue
-        letters = ", ".join(f"{group[0].year}{chr(ord('a') + i)}"
-                            for i in range(len(group)))
-        for r in group:
-            report.issues.append(Issue(
-                "ambiguous-cite",
-                f"{len(group)} entries cite as "
-                f'"{r.surname} {r.year}" — distinguish them as {letters}',
-                where=f"¶{r.index + 1}", snippet=r.text[:60]))
-
+    report.issues.extend(_ambiguous_findings(entries))
     report.entries = entries
     report.cited = cited
-    if entries:
-        for key, (where, snip) in cited.items():
-            if key not in listed:
-                report.issues.append(Issue(
-                    "missing-ref", "cited but not in the reference list",
-                    where=where, snippet=snip))
-        for r, keys in zip(entries, answers_to, strict=True):
-            if not (keys & cited.keys()):
-                report.issues.append(Issue(
-                    "uncited-ref", "in the reference list but never cited",
-                    where=f"¶{r.index + 1}", snippet=r.text[:60]))
-    elif cited:
-        report.issues.append(Issue(
-            "no-list",
-            f"{len(cited)} works cited but no reference list found"))
+    report.issues.extend(_crosscheck_findings(entries, answers_to, cited,
+                                              listed))
     return report

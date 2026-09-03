@@ -96,6 +96,172 @@ def _stray_para_props(root: Any) -> list[str]:
             if child.tag in _PPR_STRAYS]
 
 
+def _run_level_in_block(root: Any) -> list[str]:
+    """Check 1 — a run-level element directly in a block-only container.
+
+    Word rejects the part outright.
+    """
+    return [f"w:{_local(parent.tag)} has run-level child "
+            f"{_local(child.tag)} (must be inside w:p)"
+            for parent in root.iter(*(W + t for t in _BLOCK_CONTAINERS))
+            for child in parent if child.tag in _RUN_LEVEL_TAGS]
+
+
+def _revision_findings(
+        root: Any, revision_ids: dict[str | None, int],
+) -> tuple[list[str], list[str], list[str]]:
+    """Checks 2, 3 and 4, and the revision-id tally check 8 reads.
+
+    ONE multi-tag C-filtered walk, which is the whole point of taking
+    them together: what made the original slow was a full un-filtered
+    ``root.iter()`` for the ids plus a pass per check. Returns the three
+    check's findings separately because they are not emitted together —
+    check 2 goes out before check 3b's walk and checks 3 and 4 after it,
+    and that order is the report a reader has been reading for a year.
+
+    ``revision_ids`` is accumulated ACROSS roots, so it is passed in and
+    mutated rather than returned: check 8 asks whether an id repeats
+    anywhere in the package, and a per-part tally cannot answer that.
+    """
+    c2: list[str] = []
+    c3: list[str] = []
+    c4: list[str] = []
+    for element in root.iter(W + "ins", W + "del", W + "rPrChange",
+                             W + "pPrChange"):
+        rid = element.get(W + "id")
+        revision_ids[rid] = revision_ids.get(rid, 0) + 1
+        tag = element.tag
+        if tag not in (W + "ins", W + "del"):
+            continue
+        parent = element.getparent()
+        parent_tag = parent.tag if parent is not None else None
+        if parent_tag in _MARKER_PARENTS:
+            continue                           # a marker, not a range
+        # 2. An empty w:ins / w:del that is not a marker.
+        if len(element) == 0:
+            c2.append(f"empty w:{_local(tag)} (not a marker)")
+        # 3. Deleted text must be w:delText; a w:t inside w:del
+        #    renders as live text that cannot be rejected.
+        if tag == W + "del" and \
+                element.find(".//" + W + "t") is not None:
+            c3.append("w:del contains w:t (should be w:delText)")
+        # 4. A block element inside a run-level revision.
+        for child in element:
+            if child.tag in _BLOCK_CHILDREN:
+                c4.append(f"block w:{_local(child.tag)} inside "
+                          f"run-level w:{_local(tag)}")
+    return c2, c3, c4
+
+
+def _edge_whitespace(root: Any) -> list[str]:
+    """Check 3b — a ``w:t`` with edge whitespace and no ``xml:space``.
+
+    OOXML trims it, so the space survives in the tooling that wrote it
+    but is dropped by every conforming reader — Word on open, on save,
+    and inside CompareDocuments. On the LE paper this masqueraded as
+    recurring "Word damage" for seven author rounds and shipped four
+    typos into the journal's copy.
+
+    Only real XML whitespace is trimmed: a leading NBSP is safe, and
+    Word puts one in every empty table cell.
+    """
+    problems = []
+    for element in root.iter(W + "t"):
+        text = element.text or ""          # read ONCE: w:t is the most
+        if (text != text.strip(XML_WS)     # numerous element in a paper
+                and element.get(XML_SPACE) != "preserve"):
+            problems.append(
+                'w:t has edge whitespace without '
+                'xml:space="preserve" '
+                f"({text[:30]!r}) - run "
+                "docxkit.edit.preserve_space as the last build step")
+    return problems
+
+
+def _child_order(root: Any) -> list[str]:
+    """Checks 5 and 6 — schema-fixed child order inside a properties
+    element: nothing in ``_PPR_BEFORE_RPR`` may follow ``w:pPr``'s
+    ``w:rPr``, and ``w:rPrChange`` must be the last child of its
+    ``w:rPr``.
+    """
+    problems = []
+    for ppr in root.iter(W + "pPr"):
+        kids = [_local(c.tag) for c in ppr]
+        if "rPr" in kids:
+            after = set(kids[kids.index("rPr") + 1:])
+            if bad := sorted(after & _PPR_BEFORE_RPR):
+                problems.append(f"w:pPr: {bad} after w:rPr (CT_PPr order)")
+
+    for rpr in root.iter(W + "rPr"):
+        kids = [_local(c.tag) for c in rpr]
+        if "rPrChange" in kids and kids[-1] != "rPrChange":
+            problems.append("w:rPr: w:rPrChange is not the last child")
+    return problems
+
+
+def _empty_math(root: Any) -> list[str]:
+    """Check 7 — an empty oMath shell renders as garbage, or loses the math.
+
+    Two counts, because asking only whether a WHOLE equation has gone
+    textless misses the commoner and more visible case: a surviving
+    equation carrying an emptied fraction, which Word draws as an empty
+    box beside the real content. On the DSI paper the split was 53
+    wholly-empty against 121 empty children, so the whole-equation test
+    passed the large majority of the damage — and that document shipped.
+    """
+    problems = []
+    empty = orphaned = 0
+    for om in root.iter(M + "oMath"):
+        if not _math_has_glyph(om):
+            empty += 1
+            continue
+        orphaned += sum(
+            1 for el in om.iter()
+            if el is not om and _local(el.tag) in MATH_OBJECTS
+            and not _math_has_glyph(el))
+    if empty:
+        problems.append(f"{empty} empty m:oMath shell(s)")
+    if orphaned:
+        problems.append(
+            f"{orphaned} empty math object(s) inside a surviving "
+            f"m:oMath (renders as a blank box)")
+    return problems
+
+
+def _repeated_props(root: Any) -> list[str]:
+    """Checks 7b and 7c — a properties element, and each of its children,
+    may appear ONCE.
+
+    7b: two ``w:tcBorders`` in one ``w:tcPr`` is schema-invalid and
+    reads as "unreadable content", and neither the write gate (a
+    duplicate is still well-formed) nor anything else here saw it — a
+    border writer that matched only the expanded ``<w:tcBorders>`` and
+    not the empty ``<w:tcBorders/>`` inserted a second one beside it.
+
+    7c: ...and the properties element itself appears once in its parent.
+    A self-closing ``<w:tcPr/>`` read as "absent" got a second one
+    prepended beside it, which 7b cannot see because it inspects a
+    properties element's CHILDREN.
+    """
+    problems = []
+    for props in root.iter(*(W + t for t in _PROPS)):
+        seen: set[str] = set()
+        for child in props:
+            tag = _local(child.tag)
+            if tag in seen:
+                problems.append(f"w:{_local(props.tag)} carries two w:{tag} "
+                                "children (each may appear once)")
+            seen.add(tag)
+
+    for parent, prop in _OWNER.items():
+        for owner in root.iter(W + parent):
+            n = sum(1 for c in owner if c.tag == W + prop)
+            if n > 1:
+                problems.append(f"w:{parent} carries {n} w:{prop} elements "
+                                "(it may carry one)")
+    return problems
+
+
 def lint(*roots: Any) -> list[str]:
     """Problems found across the given lxml roots. Empty means clean.
 
@@ -108,6 +274,12 @@ def lint(*roots: Any) -> list[str]:
     share one multi-tag walk. Findings are collected per check and
     emitted in the original check order, so the report reads exactly as
     before.
+
+    The checks are the functions above, one per numbered rule, and this
+    is the order they are emitted in — which is the report itself, not
+    an implementation detail: check 2 lands before check 3b and checks 3
+    and 4 after it. Splitting them out is what took this function off
+    `test_complexity_debt`'s list; the walk count is unchanged.
     """
     problems: list[str] = []
     revision_ids: dict[str | None, int] = {}
@@ -115,136 +287,14 @@ def lint(*roots: Any) -> list[str]:
     for root in roots:
         if root is None:
             continue
-
-        # 1. A run-level element sitting directly in a block-only
-        #    container. Word rejects the part outright.
-        for parent in root.iter(*(W + t for t in _BLOCK_CONTAINERS)):
-            for child in parent:
-                if child.tag in _RUN_LEVEL_TAGS:
-                    problems.append(
-                        f"w:{_local(parent.tag)} has run-level child "
-                        f"{_local(child.tag)} (must be inside w:p)")
-
-        problems.extend(_stray_para_props(root))   # 1b, below
-
-        # 2/3/4 + id collection, one multi-tag C-filtered walk.
-        c2: list[str] = []
-        c3: list[str] = []
-        c4: list[str] = []
-        for element in root.iter(W + "ins", W + "del", W + "rPrChange",
-                                 W + "pPrChange"):
-            rid = element.get(W + "id")
-            revision_ids[rid] = revision_ids.get(rid, 0) + 1
-            tag = element.tag
-            if tag not in (W + "ins", W + "del"):
-                continue
-            parent = element.getparent()
-            parent_tag = parent.tag if parent is not None else None
-            if parent_tag in _MARKER_PARENTS:
-                continue                       # a marker, not a range
-            # 2. An empty w:ins / w:del that is not a marker.
-            if len(element) == 0:
-                c2.append(f"empty w:{_local(tag)} (not a marker)")
-            # 3. Deleted text must be w:delText; a w:t inside w:del
-            #    renders as live text that cannot be rejected.
-            if tag == W + "del" and \
-                    element.find(".//" + W + "t") is not None:
-                c3.append("w:del contains w:t (should be w:delText)")
-            # 4. A block element inside a run-level revision.
-            for child in element:
-                if child.tag in _BLOCK_CHILDREN:
-                    c4.append(f"block w:{_local(child.tag)} inside "
-                              f"run-level w:{_local(tag)}")
-        problems += c2
-
-        # 3b. A w:t carrying edge whitespace without xml:space="preserve".
-        #     OOXML trims it, so the space survives in the tooling that
-        #     wrote it but is dropped by every conforming reader — Word on
-        #     open, on save, and inside CompareDocuments. On the LE paper
-        #     this masqueraded as recurring "Word damage" for seven author
-        #     rounds and shipped four typos into the journal's copy.
-        #     Only real XML whitespace is trimmed: a leading NBSP is safe,
-        #     and Word puts one in every empty table cell.
-        c3b: list[str] = []
-        for element in root.iter(W + "t"):
-            text = element.text or ""
-            if (text != text.strip(XML_WS)
-                    and element.get(XML_SPACE) != "preserve"):
-                c3b.append(
-                    'w:t has edge whitespace without '
-                    'xml:space="preserve" '
-                    f"({text[:30]!r}) - run "
-                    "docxkit.edit.preserve_space as the last build step")
-        problems += c3 + c3b + c4
-
-        # 5. CT_PPr child order: nothing in _PPR_BEFORE_RPR follows w:rPr.
-        for ppr in root.iter(W + "pPr"):
-            kids = [_local(c.tag) for c in ppr]
-            if "rPr" in kids:
-                after = set(kids[kids.index("rPr") + 1:])
-                if bad := sorted(after & _PPR_BEFORE_RPR):
-                    problems.append(
-                        f"w:pPr: {bad} after w:rPr (CT_PPr order)")
-
-        # 6. w:rPrChange must be the last child of its w:rPr.
-        for rpr in root.iter(W + "rPr"):
-            kids = [_local(c.tag) for c in rpr]
-            if "rPrChange" in kids and kids[-1] != "rPrChange":
-                problems.append("w:rPr: w:rPrChange is not the last child")
-
-        # 7. An empty oMath shell renders as garbage, or loses the math.
-        #
-        #    Two counts, because asking only whether a WHOLE equation
-        #    has gone textless misses the commoner and more visible
-        #    case: a surviving equation carrying an emptied fraction,
-        #    which Word draws as an empty box beside the real content.
-        #    On the DSI paper the split was 53 wholly-empty against 121
-        #    empty children, so the whole-equation test passed the large
-        #    majority of the damage — and that document shipped.
-        empty = orphaned = 0
-        for om in root.iter(M + "oMath"):
-            if not _math_has_glyph(om):
-                empty += 1
-                continue
-            orphaned += sum(
-                1 for el in om.iter()
-                if el is not om and _local(el.tag) in MATH_OBJECTS
-                and not _math_has_glyph(el))
-        if empty:
-            problems.append(f"{empty} empty m:oMath shell(s)")
-        if orphaned:
-            problems.append(
-                f"{orphaned} empty math object(s) inside a surviving "
-                f"m:oMath (renders as a blank box)")
-
-        # 7b. A properties element may carry each child ONCE. Two
-        #     w:tcBorders in one w:tcPr is schema-invalid and reads as
-        #     "unreadable content", and neither the write gate (a
-        #     duplicate is still well-formed) nor anything else here
-        #     saw it — a border writer that matched only the expanded
-        #     <w:tcBorders> and not the empty <w:tcBorders/> inserted a
-        #     second one beside it.
-        for props in root.iter(*(W + t for t in _PROPS)):
-            seen: set[str] = set()
-            for child in props:
-                tag = _local(child.tag)
-                if tag in seen:
-                    problems.append(
-                        f"w:{_local(props.tag)} carries two w:{tag} "
-                        "children (each may appear once)")
-                seen.add(tag)
-
-        # 7c. ...and the properties element itself appears once in its
-        #     parent. A self-closing <w:tcPr/> read as "absent" got a
-        #     second one prepended beside it, which 7b cannot see
-        #     because it inspects a properties element's CHILDREN.
-        for parent, prop in _OWNER.items():
-            for owner in root.iter(W + parent):
-                n = sum(1 for c in owner if c.tag == W + prop)
-                if n > 1:
-                    problems.append(
-                        f"w:{parent} carries {n} w:{prop} elements "
-                        "(it may carry one)")
+        c2, c3, c4 = _revision_findings(root, revision_ids)
+        problems += (_run_level_in_block(root)      # 1
+                     + _stray_para_props(root)      # 1b
+                     + c2                           # 2
+                     + c3 + _edge_whitespace(root) + c4   # 3, 3b, 4
+                     + _child_order(root)           # 5, 6
+                     + _empty_math(root)            # 7
+                     + _repeated_props(root))       # 7b, 7c
 
     # 8. Revision ids must be unique across the whole package; Word merges
     #    or drops revisions that share one.

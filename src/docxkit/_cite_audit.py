@@ -512,6 +512,219 @@ def _no_backlink(ref_marks: dict[str, int],
         for key in sorted(k for k, has in home.items() if not has)]
 
 
+def _link_findings(links: dict[str, list[tuple[int, str]]],
+                   bookmarks: dict[str, int], empty: list[tuple[str, int]],
+                   where: Callable[[int], str],
+                   ) -> tuple[list[_Finding], int]:
+    """What the LINKS say: one that shows nothing, and one that arrives
+    nowhere. Returns the findings and the BROKEN count, which the report
+    quotes separately from the number of findings.
+
+    A link showing no text is reported here rather than in `lint`
+    because the file is not malformed — Word opens it happily — and
+    `write_docx` must not start refusing documents over it.
+    """
+    issues = [_Finding(
+        "EMPTY LINK", anchor,
+        f"EMPTY LINK: hyperlink to '{anchor}' ({where(spot)}) shows no "
+        "text — nothing on the page carries this link; the mention it "
+        "wrapped is plain text now, or gone") for anchor, spot in empty]
+    broken = 0
+    for anchor, sites in sorted(links.items()):
+        if anchor not in bookmarks:
+            for i, label in sites:
+                issues.append(_Finding(
+                    "BROKEN LINK", anchor,
+                    f"BROKEN LINK: hyperlink to '{anchor}' "
+                    f'({where(i)}, "{label[:40]}") '
+                    "— no such bookmark"))
+                broken += 1
+    return issues, broken
+
+
+def _doubled_findings(paras: list[re.Match[str]]) -> list[_Finding]:
+    """A link nested inside another: the click goes to the outer one."""
+    return [_Finding("DOUBLED LINK", inner, extra=outer,
+                     message=f"DOUBLED LINK: '{inner}' is nested inside a "
+                     f"link to '{outer}' (¶{i + 1}) — the click goes "
+                     "to the outer one")
+            for i, m in enumerate(paras)
+            for outer, inner in _doubled_links(m.group(0))]
+
+
+def _marker_findings(ref_marks: dict[str, int], cite_marks: dict[str, int],
+                     links: dict[str, list[tuple[int, str]]],
+                     where: Callable[[int], str], *,
+                     unreached: set[str],
+                     missing: Callable[[str], bool]) -> list[_Finding]:
+    """What the BOOKMARKS say, walked in document order: a reference
+    marker whose entry has gone, a cited work whose entry link is gone,
+    and an in-text marker with no back-link or no entry at all.
+    """
+    issues: list[_Finding] = []
+    for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
+        if missing(key):
+            issues.append(_Finding(
+                "STALE BOOKMARK", key,
+                f"STALE BOOKMARK: '{key}' ({where(idx)}) names a work that is "
+                "no longer in the reference list — the entry was deleted and "
+                "the marker stayed; remove the bookmark"))
+            continue
+        # ORPHAN REF and REF WITHOUT CITE were ONE FACT said twice, and
+        # the redundancy is a theorem rather than a coincidence: a work
+        # nothing links to is not in `cited_keys`, so every REF WITHOUT
+        # CITE came with an ORPHAN REF beside it. Measured over five
+        # manuscripts, `uncited-only` is 0 every time, and after a
+        # `link_all` run li7 carried 20 such pairs, le14 16 and AFI's
+        # baseline 5 — 41 lines saying nothing the line under them did
+        # not (2026-08-21).
+        #
+        # So the pair collapses into the finding a reader can act on —
+        # REF WITHOUT CITE, raised by the caller — and what is left here
+        # is the case that is NOT the same fact: the work IS cited (its
+        # `<key>txt` marker is in the prose) and the hyperlink to the
+        # entry is gone, so the reader clicking that citation arrives
+        # nowhere.
+        if not links.get(key) and key in unreached:
+            at = cite_marks.get(f"{key}txt")
+            issues.append(_Finding(
+                "ORPHAN REF", key,
+                f"ORPHAN REF: bookmark '{key}' ({where(idx)}) has no in-text "
+                f"hyperlink pointing to it, and the work IS cited"
+                + (f" — '{key}txt' is at {where(at)}" if at is not None
+                   else "") + ": the mention reaches nothing"))
+    for name, idx in sorted(cite_marks.items(), key=lambda kv: kv[1]):
+        if not links.get(name):
+            issues.append(_Finding(
+                "NO BACK-LINK", name,
+                f"NO BACK-LINK: in-text bookmark '{name}' "
+                f"({where(idx)}) has no reference back-link"))
+        if name[:-3] not in ref_marks:
+            issues.append(_Finding(
+                "MISSING REF", name,
+                f"MISSING REF: in-text citation '{name}' "
+                f"({where(idx)}) links to '{name[:-3]}' but no "
+                "reference bookmark exists"))
+    return issues
+
+
+def _mention_findings(parts: dict[str, bytes], texts: list[str],
+                      paras: list[re.Match[str]], *,
+                      entries: list[Reference],
+                      ref_marks: dict[str, int],
+                      links: dict[str, list[tuple[int, str]]],
+                      where: Callable[[int], str],
+                      heading: str | tuple[str, ...],
+                      ignore: frozenset[str] | set[str],
+                      later_mentions: bool,
+                      ) -> tuple[list[_Finding], dict[str, int]]:
+    """Unlinked citation-like text, on the shared grammar, and the
+    mention counts the report quotes ("53 of 73 linked").
+
+    Only body prose before the reference list; the first five paragraphs
+    are the title block, where author names read as citations.
+
+    Everything this needs beyond the document is derived here, because
+    nothing else in the audit uses it — the five bindings below were
+    local to this pass when it was a block inside `_audit_findings`, and
+    lifting them out with it is what took that function off
+    `test_complexity_debt`'s list.
+    """
+    wanted = {h.casefold()
+              for h in ((heading,) if isinstance(heading, str) else heading)}
+    head_idx = next((i for i, t in enumerate(texts)
+                     if t.strip().rstrip(":").casefold() in wanted),
+                    len(texts))
+    ignored = {s.casefold() for s in ignore}
+    # What the bibliography files, for resolve_lead's evidence test. The
+    # alias keys _entry_keys mints live one layer up, in _cite_build; the
+    # canonical keys are what this decision needs.
+    entry_keys = {r.key for r in entries}
+    labels = {lb.strip() for sites in links.values() for _, lb in sites}
+    # The convention links a work's FIRST mention only, so the question
+    # UNLINKED asks is "is this WORK linked anywhere", and it must be
+    # asked of the work — not of the wording. Pairing on the label text
+    # alone read "Doepke and Zilibotti's (2017)" as unlinked while the
+    # entry was linked from two other paragraphs, because no label
+    # carries the possessive (Parental Style ¶92, 2026-08-10): a false
+    # positive that cost a hand-written link_in_para in the paper's
+    # repair script. Measured over 397 real manuscripts, 38 of the 44
+    # findings this quiets are one shape — a link whose label stops a
+    # character short of the citation, "Davletov et al. (2016" and
+    # "Angrist and Evans (1998", because the closing parenthesis sits in
+    # a run outside the hyperlink. Those mentions ARE linked.
+    #
+    # The evidence must be visible in the FINAL document: a link inside
+    # deleted text is not a link. Its label comes back empty (a deleted
+    # run holds `w:delText`, which no visible-text reader returns), and
+    # requiring a non-empty one is what keeps le12's finding — the
+    # author retyped the sentence, which dropped the hyperlink, while
+    # the tracked deletion beside it still carried the old one.
+    #
+    # The label test stays as the fallback for a document whose
+    # bookmarks are not key-shaped — anchor_names' cite_/ref_ naming, or
+    # a work cited with no entry to resolve against.
+    linked_works = {owner.key for name in ref_marks
+                    if any(lb.strip() for _, lb in links.get(name, ()))
+                    for owner in (_marker_owner(name, entries),)
+                    if owner is not None}
+    # The entries' own surnames, so the audit reads the same spans the
+    # builder writes. Without them the audit counts a clipped mention as
+    # a linked one — "82 of 82, 0 broken" over a link covering half a
+    # name.
+    surnames = tuple({r.surname for r in entries})
+    issues: list[_Finding] = []
+    unlinked = later = mentions = 0
+    for i, text, para_xml in _mention_scan(parts, texts, paras, head_idx):
+        masked = masked_visible_text(para_xml)
+        for found in find_citations(text, surnames):
+            c = resolve_lead(found, known=entry_keys, ignore=ignored)
+            if c.surname.casefold() in ignored:
+                continue
+            mentions += 1
+            # Is THIS MENTION linked — the question the work-level tests
+            # elsewhere cannot ask. A character inside a hyperlink comes
+            # back masked, which is the test `link_rest` uses to decide
+            # what is left to wire, and it settles two shapes the label
+            # tests were written for: a link whose label stops a character
+            # short of the citation ("Davletov et al. (2016", the
+            # closing parenthesis outside the hyperlink), and a LABEL
+            # sitting inside the span of a match the two-author pattern
+            # over-read ("…national Labor Force Surveys and ILOSTAT
+            # (2024) data…", where the link is "ILOSTAT (2024)").
+            if "\x00" in masked[c.start:c.end]:
+                continue
+            cite = text[c.start:c.end].strip()
+            cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
+            if c.key in linked_works or any(
+                    cite in lb or cores[0] in lb or cores[1] in lb
+                    for lb in labels):
+                # The WORK is linked somewhere and this mention is not.
+                # `link_all` wires each work's first mention only, so a
+                # paper whose style links the later ones too sat at "ALL
+                # CHECKS PASSED" with 20 of its 73 mentions plain text
+                # (Aging_Well, 2026-08-21) — the count could not tell the
+                # middle state from the finished one. The count now does,
+                # always; the FINDING is opt-in, because whether later
+                # mentions link at all is the paper's house style and a
+                # gate nobody can satisfy stops being read.
+                later += 1
+                if later_mentions:
+                    issues.append(_Finding(
+                        "LATER-MENTION UNLINKED", cite,
+                        f'LATER-MENTION UNLINKED: "{cite}" ({where(i)}) '
+                        "— the work is linked elsewhere but this "
+                        "mention is plain text"))
+                continue
+            issues.append(_Finding(
+                "UNLINKED", cite,
+                f'UNLINKED: "{cite}" ({where(i)}) — looks like a '
+                "citation but is not hyperlinked"))
+            unlinked += 1
+    return issues, {"unlinked": unlinked, "later": later,
+                    "mentions": mentions}
+
+
 def _audit_findings(parts: dict[str, bytes], *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
@@ -577,173 +790,24 @@ def _audit_findings(parts: dict[str, bytes], *,
     reached = _reached(doc, paras, links)
     unreached = cited_keys - reached
 
-    issues: list[_Finding] = []
-    for key, idx in sorted(ref_marks.items(), key=lambda kv: kv[1]):
-        if names_a_missing_entry(key):
-            issues.append(_Finding(
-                "STALE BOOKMARK", key,
-                f"STALE BOOKMARK: '{key}' ({where(idx)}) names a work that is "
-                "no longer in the reference list — the entry was deleted and "
-                "the marker stayed; remove the bookmark"))
-            continue
-        # ORPHAN REF and REF WITHOUT CITE were ONE FACT said twice, and
-        # the redundancy is a theorem rather than a coincidence: a work
-        # nothing links to is not in `cited_keys`, so every REF WITHOUT
-        # CITE came with an ORPHAN REF beside it. Measured over five
-        # manuscripts, `uncited-only` is 0 every time, and after a
-        # `link_all` run li7 carried 20 such pairs, le14 16 and AFI's
-        # baseline 5 — 41 lines saying nothing the line under them did
-        # not (2026-08-21).
-        #
-        # So the pair collapses into the finding a reader can act on,
-        # below, and what is left here is the case that is NOT the same
-        # fact: the work IS cited — its `<key>txt` marker is in the
-        # prose — and the hyperlink to the entry is gone, so the reader
-        # clicking that citation arrives nowhere.
-        if not links.get(key) and key in unreached:
-            at = cite_marks.get(f"{key}txt")
-            issues.append(_Finding(
-                "ORPHAN REF", key,
-                f"ORPHAN REF: bookmark '{key}' ({where(idx)}) has no in-text "
-                f"hyperlink pointing to it, and the work IS cited"
-                + (f" — '{key}txt' is at {where(at)}" if at is not None
-                   else "") + ": the mention reaches nothing"))
-    for name, idx in sorted(cite_marks.items(), key=lambda kv: kv[1]):
-        if not links.get(name):
-            issues.append(_Finding(
-                "NO BACK-LINK", name,
-                f"NO BACK-LINK: in-text bookmark '{name}' "
-                f"({where(idx)}) has no reference back-link"))
-        if name[:-3] not in ref_marks:
-            issues.append(_Finding(
-                "MISSING REF", name,
-                f"MISSING REF: in-text citation '{name}' "
-                f"({where(idx)}) links to '{name[:-3]}' but no "
-                "reference bookmark exists"))
-    # A link that shows nothing. Reported here rather than in `lint`
-    # because the file is not malformed — Word opens it happily — and
-    # `write_docx` must not start refusing documents over it.
-    for anchor, spot in empty:
-        issues.append(_Finding(
-            "EMPTY LINK", anchor,
-            f"EMPTY LINK: hyperlink to '{anchor}' ({where(spot)}) shows no "
-            "text — nothing on the page carries this link; the mention it "
-            "wrapped is plain text now, or gone"))
-    broken = 0
-    for anchor, sites in sorted(links.items()):
-        if anchor not in bookmarks:
-            for i, label in sites:
-                issues.append(_Finding(
-                    "BROKEN LINK", anchor,
-                    f"BROKEN LINK: hyperlink to '{anchor}' "
-                    f'({where(i)}, "{label[:40]}") '
-                    "— no such bookmark"))
-                broken += 1
+    issues: list[_Finding] = _marker_findings(
+        ref_marks, cite_marks, links, where,
+        unreached=unreached, missing=names_a_missing_entry)
+    link_issues, broken = _link_findings(links, bookmarks, empty, where)
+    issues += link_issues
     issues += _span_findings(links, bookmarks, where)
-    for i, m in enumerate(paras):
-        for outer, inner in _doubled_links(m.group(0)):
-            issues.append(_Finding(
-                "DOUBLED LINK", inner, extra=outer,
-                message=f"DOUBLED LINK: '{inner}' is nested inside a "
-                f"link to '{outer}' (¶{i + 1}) — the click goes "
-                "to the outer one"))
+    issues += _doubled_findings(paras)
 
     entries = references(texts, heading=heading)
     issues += _misplaced_markers(doc, paras, entries, ref_marks)
 
-    # Unlinked citation-like text, on the shared grammar. Only body
-    # prose before the reference list; the first five paragraphs are the
-    # title block, where author names read as citations.
-    wanted = {h.casefold()
-              for h in ((heading,) if isinstance(heading, str) else heading)}
-    head_idx = next((i for i, t in enumerate(texts)
-                     if t.strip().rstrip(":").casefold() in wanted),
-                    len(texts))
-    ignored = {s.casefold() for s in ignore}
-    # What the bibliography files, for resolve_lead's evidence test. The
-    # alias keys _entry_keys mints live one layer up, in _cite_build; the
-    # canonical keys are what this decision needs.
-    entry_keys = {r.key for r in entries}
-    labels = {lb.strip() for sites in links.values() for _, lb in sites}
-    # The convention links a work's FIRST mention only, so the question
-    # UNLINKED asks is "is this WORK linked anywhere", and it must be
-    # asked of the work — not of the wording. Pairing on the label text
-    # alone read "Doepke and Zilibotti's (2017)" as unlinked while the
-    # entry was linked from two other paragraphs, because no label
-    # carries the possessive (Parental Style ¶92, 2026-08-10): a false
-    # positive that cost a hand-written link_in_para in the paper's
-    # repair script. Measured over 397 real manuscripts, 38 of the 44
-    # findings this quiets are one shape — a link whose label stops a
-    # character short of the citation, "Davletov et al. (2016" and
-    # "Angrist and Evans (1998", because the closing parenthesis sits in
-    # a run outside the hyperlink. Those mentions ARE linked.
-    #
-    # The evidence must be visible in the FINAL document: a link inside
-    # deleted text is not a link. Its label comes back empty (a deleted
-    # run holds `w:delText`, which no visible-text reader returns), and
-    # requiring a non-empty one is what keeps le12's finding — the
-    # author retyped the sentence, which dropped the hyperlink, while
-    # the tracked deletion beside it still carried the old one.
-    #
-    # The label test stays as the fallback for a document whose
-    # bookmarks are not key-shaped — anchor_names' cite_/ref_ naming, or
-    # a work cited with no entry to resolve against.
-    linked_works = {owner.key for name in ref_marks
-                    if any(lb.strip() for _, lb in links.get(name, ()))
-                    for owner in (_marker_owner(name, entries),)
-                    if owner is not None}
-    # The entries' own surnames, so the audit reads the same spans the
-    # builder writes. Without them the audit counts a clipped mention as
-    # a linked one — "82 of 82, 0 broken" over a link covering half a
-    # name.
-    surnames = tuple({r.surname for r in entries})
-    unlinked = later = mentions = 0
-    for i, text, para_xml in _mention_scan(parts, texts, paras, head_idx):
-        masked = masked_visible_text(para_xml)
-        for found in find_citations(text, surnames):
-            c = resolve_lead(found, known=entry_keys, ignore=ignored)
-            if c.surname.casefold() in ignored:
-                continue
-            mentions += 1
-            # Is THIS MENTION linked — the question the work-level tests
-            # below cannot ask. A character inside a hyperlink comes back
-            # masked, which is the test `link_rest` uses to decide what
-            # is left to wire, and it settles two shapes the label tests
-            # were written for: a link whose label stops a character
-            # short of the citation ("Davletov et al. (2016", the
-            # closing parenthesis outside the hyperlink), and a LABEL
-            # sitting inside the span of a match the two-author pattern
-            # over-read ("…national Labor Force Surveys and ILOSTAT
-            # (2024) data…", where the link is "ILOSTAT (2024)").
-            if "\x00" in masked[c.start:c.end]:
-                continue
-            cite = text[c.start:c.end].strip()
-            cores = (f"{c.authors} {c.year}", f"{c.authors} ({c.year})")
-            if c.key in linked_works or any(
-                    cite in lb or cores[0] in lb or cores[1] in lb
-                    for lb in labels):
-                # The WORK is linked somewhere and this mention is not.
-                # `link_all` wires each work's first mention only, so a
-                # paper whose style links the later ones too sat at "ALL
-                # CHECKS PASSED" with 20 of its 73 mentions plain text
-                # (Aging_Well, 2026-08-21) — the count could not tell the
-                # middle state from the finished one. The count now does,
-                # always; the FINDING is opt-in, because whether later
-                # mentions link at all is the paper's house style and a
-                # gate nobody can satisfy stops being read.
-                later += 1
-                if later_mentions:
-                    issues.append(_Finding(
-                        "LATER-MENTION UNLINKED", cite,
-                        f'LATER-MENTION UNLINKED: "{cite}" ({where(i)}) '
-                        "— the work is linked elsewhere but this "
-                        "mention is plain text"))
-                continue
-            issues.append(_Finding(
-                "UNLINKED", cite,
-                f'UNLINKED: "{cite}" ({where(i)}) — looks like a '
-                "citation but is not hyperlinked"))
-            unlinked += 1
+    mention_issues, counts = _mention_findings(
+        parts, texts, paras, entries=entries, ref_marks=ref_marks,
+        links=links, where=where, heading=heading, ignore=ignore,
+        later_mentions=later_mentions)
+    issues += mention_issues
+    unlinked, later, mentions = (counts["unlinked"], counts["later"],
+                                 counts["mentions"])
 
     for key in sorted(cited_keys - ref_marks.keys()):
         issues.append(_Finding(

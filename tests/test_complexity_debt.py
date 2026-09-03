@@ -1,8 +1,8 @@
 """The functions over the complexity threshold, named — and only those.
 
-`C901` is selected at 20, and five functions already exceed it. They are
-exempted per FILE in `pyproject.toml`, because that is the only scope
-ruff offers — and a per-file exemption cannot say "this function only".
+`C901` is selected at 20. Five functions exceeded it, exempted per FILE
+in `pyproject.toml`, because that is the only scope ruff offers — and a
+per-file exemption cannot say "this function only".
 
 Which failed within hours of being written: `insert_in_para` was added
 to `edit.py` the same afternoon, came out at 25, and was invisible
@@ -13,6 +13,14 @@ So the debt is pinned as a SET here rather than described in a comment.
 A new function over the threshold fails this test wherever it lives, and
 paying one down fails it too — which is the right way round: the list
 should only ever shrink, and shrinking it should be deliberate.
+
+**It is empty now**, and that is a stronger gate than a short list, not
+a reason to delete this file: `_over_threshold` walks the package with
+`--isolated`, so with nothing pinned the assertion below reads "no
+function in docxkit exceeds 20", exemptions and all. The last five were
+paid down on 2026-09-03 (see the C901 note in `pyproject.toml` for what
+each became). The next function to cross the line fails here, and adding
+it back to DEBT is then a deliberate act with a number attached.
 """
 from __future__ import annotations
 
@@ -30,18 +38,9 @@ ROOT = pathlib.Path(docxkit.__file__).parent.parent.parent
 MAX_COMPLEXITY = 20
 
 #: function -> its complexity when it was pinned. Everything over
-#: :data:`MAX_COMPLEXITY`, package-wide, exemptions ignored.
-DEBT = {
-    "_cite_audit._audit_findings": 31,
-    "lint.lint": 31,
-    # 25 -> 26 on 2026-08-23, deliberately: the layout rules (new page,
-    # hanging indent, spacing) are one call to `_layout_findings` rather
-    # than a branch per rule, and what is left here is the single guard
-    # that lets a paper setting its list differently opt out.
-    "refstyle.audit": 26,
-    "edit.replace_in_para": 26,
-    "revisions._simulate_where": 24,
-}
+#: :data:`MAX_COMPLEXITY`, package-wide, exemptions ignored. Empty: see
+#: the module docstring.
+DEBT: dict[str, int] = {}
 
 _LINE = re.compile(r"^(?P<file>.+?):\d+:\d+: C901 `(?P<fn>[^`]+)` "
                    r"is too complex \((?P<n>\d+) > \d+\)$")

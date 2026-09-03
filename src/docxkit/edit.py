@@ -368,6 +368,100 @@ def superscript(para_xml: str, text: str, *, normalize: bool = False,
                     normalize=normalize, within=within)
 
 
+def _locate_anchor(para_xml: str, visible: str, old: str, *,
+                   normalize: bool) -> tuple[int, int]:
+    """Where `old` sits in the paragraph's EDITABLE text.
+
+    Raises rather than returning a sentinel, and names the confusing
+    case when it is the reason: the phrase IS in the paragraph as a
+    reader (and `docxkit text`, and `para_slice`) sees it, and is not
+    addressable by a run walk because it spans an equation.
+    """
+    def missing(reason: str) -> AnchorError:
+        if old in visible_text(para_xml):
+            return AnchorError(
+                f"replace_in_para: {old[:60]!r} {reason} — it IS in the "
+                f"paragraph a reader sees, but it spans an equation "
+                f"(m:oMath), which this pass rewrites nothing inside. "
+                f"Anchor on prose either side of the maths.")
+        return AnchorError(f"replace_in_para: {old[:60]!r} {reason}")
+
+    if normalize:
+        hits = find_normalized(visible, old)
+        if not hits:
+            raise missing("not in paragraph")
+        if len(hits) > 1:
+            raise AnchorError(
+                f"replace_in_para: {old[:60]!r} occurs twice")
+        return hits[0]
+    at = visible.find(old)
+    if at < 0:
+        raise missing("not in paragraph")
+    if visible.find(old, at + 1) >= 0:
+        raise AnchorError(f"replace_in_para: {old[:60]!r} occurs twice")
+    return at, at + len(old)
+
+
+def _label_end(idx: int, runs: list[re.Match[str]],
+               spans: list[tuple[int, int]],
+               link_spans: list[tuple[int, int]]) -> int:
+    """Where the VISIBLE label the idx-th run belongs to ENDS.
+
+    Element form first: every run inside the ``w:hyperlink`` is part of
+    one label, and Word fragments a label across runs as freely as it
+    fragments prose. Field form has no element to ask, so the label is
+    the run's styled neighbours — the same answer for the same reason.
+
+    The END alone, not the span. This returned a ``(start, end)`` pair
+    and walked LEFT to find the start, which no caller ever read — the
+    one question asked of it is "does the match run on past the label",
+    and a match reaching this guard already starts inside one. Mutation
+    testing found it: 58 survivors sat in `replace_in_para` on
+    2026-08-15, and hand-mutating the leftward walk changed nothing
+    observable, because nothing observed it.
+    """
+    run = runs[idx]
+    if (element := span_holding(run.start(), link_spans)) is not None:
+        inside = [i for i, r in enumerate(runs)
+                  if in_span(r.start(), element)]
+        return spans[inside[-1]][1]
+
+    def styled(i: int) -> bool:
+        return 0 <= i < len(runs) and _HYPERLINK_RUN in runs[i].group(0)
+
+    hi_i = idx
+    while styled(hi_i + 1):
+        hi_i += 1
+    return spans[hi_i][1]
+
+
+def _refuse_crossed_note(runs: list[re.Match[str]],
+                         spans: list[tuple[int, int]],
+                         match: tuple[int, int], new: str) -> None:
+    """Refuse a match that CROSSES a footnote/endnote/comment reference.
+
+    A note reference is a run of ZERO visible width, so overlapping the
+    match is exactly "the marker sits strictly inside it" — a match that
+    merely ABUTS one does not touch it and is not refused. A single
+    touched run cannot move a marker either: the text is rewritten where
+    it stands and nothing is emptied after it, which is why this asks
+    for more than one touched run before it looks.
+    """
+    touched = [i for i, span in enumerate(spans) if overlaps(span, match)]
+    if len(touched) <= 1:
+        return
+    for i in touched:
+        if (note := _note_in(runs[i].group(0))) is not None:
+            raise AnchorError(
+                f"replace_in_para: the match crosses {note} — the "
+                f"replacement goes into the run holding the start of "
+                f"the match and the text after the marker is emptied, "
+                f"so the marker MOVES to the end of {new[:30]!r}. "
+                f"Nothing downstream shows that: the words read in "
+                f"the same order and the note still resolves. Anchor "
+                f"on one side of the marker, or pass allow_notes=True.")
+
+
 def replace_in_para(para_xml: str, old: str, new: str,
                     *, allow_hyperlink: bool = False,
                     grow_link_label: bool = False,
@@ -457,33 +551,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
     # is the worse failure — see the note in `_xml.editable_text`.
     visible = editable_text(para_xml)
 
-    def missing(reason: str) -> AnchorError:
-        # The confusing case, named: the phrase IS in the paragraph as a
-        # reader (and `docxkit text`, and `para_slice`) sees it, and is
-        # not addressable by a run walk.
-        if old in visible_text(para_xml):
-            return AnchorError(
-                f"replace_in_para: {old[:60]!r} {reason} — it IS in the "
-                f"paragraph a reader sees, but it spans an equation "
-                f"(m:oMath), which this pass rewrites nothing inside. "
-                f"Anchor on prose either side of the maths.")
-        return AnchorError(f"replace_in_para: {old[:60]!r} {reason}")
-
-    if normalize:
-        hits = find_normalized(visible, old)
-        if not hits:
-            raise missing("not in paragraph")
-        if len(hits) > 1:
-            raise AnchorError(
-                f"replace_in_para: {old[:60]!r} occurs twice")
-        at, end = hits[0]
-    else:
-        at = visible.find(old)
-        if at < 0:
-            raise missing("not in paragraph")
-        if visible.find(old, at + 1) >= 0:
-            raise AnchorError(f"replace_in_para: {old[:60]!r} occurs twice")
-        end = at + len(old)
+    at, end = _locate_anchor(para_xml, visible, old, normalize=normalize)
 
     link_spans = [(m.start(), m.end())
                   for m in HYPERLINK_ANY_RE.finditer(para_xml)]
@@ -493,54 +561,10 @@ def replace_in_para(para_xml: str, old: str, new: str,
                 or span_holding(run.start(), link_spans) is not None)
 
     def label_end(idx: int) -> int:
-        """Where the VISIBLE label the idx-th run belongs to ENDS.
+        return _label_end(idx, runs, spans, link_spans)
 
-        Element form first: every run inside the ``w:hyperlink`` is part
-        of one label, and Word fragments a label across runs as freely
-        as it fragments prose. Field form has no element to ask, so the
-        label is the run's styled neighbours — the same answer for the
-        same reason.
-
-        The END alone, not the span. This returned a ``(start, end)``
-        pair and walked LEFT to find the start, which no caller ever
-        read — the one question asked of it is "does the match run on
-        past the label", and a match reaching this guard already starts
-        inside one. Mutation testing found it: 58 survivors sat in this
-        function on 2026-08-15, and hand-mutating the leftward walk
-        changed nothing observable, because nothing observed it.
-        """
-        run = runs[idx]
-        if (element := span_holding(run.start(), link_spans)) is not None:
-            inside = [i for i, r in enumerate(runs)
-                      if in_span(r.start(), element)]
-            return spans[inside[-1]][1]
-
-        def styled(i: int) -> bool:
-            return 0 <= i < len(runs) and _HYPERLINK_RUN in runs[i].group(0)
-
-        hi_i = idx
-        while styled(hi_i + 1):
-            hi_i += 1
-        return spans[hi_i][1]
-
-    # A note reference is a run of ZERO visible width, so `at < p < end`
-    # below is exactly "the marker sits strictly inside the match" — a
-    # match that merely ABUTS one does not touch it and is not refused.
-    # A single touched run cannot move a marker either: the text is
-    # rewritten where it stands and nothing is emptied after it.
-    touched = [i for i, span in enumerate(spans)
-               if overlaps(span, (at, end))]
-    if not allow_notes and len(touched) > 1:
-        for i in touched:
-            if (note := _note_in(runs[i].group(0))) is not None:
-                raise AnchorError(
-                    f"replace_in_para: the match crosses {note} — the "
-                    f"replacement goes into the run holding the start of "
-                    f"the match and the text after the marker is emptied, "
-                    f"so the marker MOVES to the end of {new[:30]!r}. "
-                    f"Nothing downstream shows that: the words read in "
-                    f"the same order and the note still resolves. Anchor "
-                    f"on one side of the marker, or pass allow_notes=True.")
+    if not allow_notes:
+        _refuse_crossed_note(runs, spans, (at, end), new)
 
     edits, first = [], True
     for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
