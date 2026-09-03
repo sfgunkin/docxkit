@@ -14,6 +14,77 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `edit_in_place` writes the manuscript back with a COPY, which is the interruptible write `write_docx` exists to avoid~~ — FIXED 03.09, `b934730`
+<!-- status: fixed -->
+
+**Fixed 2026-09-03** — `b934730`. It is `read_parts` → transform →
+`write_docx(path, parts, order=order)` now, five lines shorter than
+what was there: the manuscript is only ever the DESTINATION of a rename
+from a sibling `.tmp`, and the read carries `read_parts`' retry. Two
+tests pin it — the manuscript is the sole destination `os.replace` sees
+and no `.tmp` is left beside it; a transient read denial is ridden out —
+and both failed on the unfixed source.
+
+Filed from the 2026-09-03 structural review (`REVIEW_2026-09-03.md`).
+
+`package.py:494–505`, by reading: the source was copied to TEMP with
+`shutil.copy2` (unretried), read with a bare `zipfile.ZipFile`, written
+by `write_docx` to a second TEMP file (atomically — into TEMP, where
+atomicity buys nothing), and then `shutil.copy2(out, path)` over the
+manuscript. A copy opens the destination for writing and streams into
+it; the process dying or the mains failing mid-copy leaves a truncated
+file where the manuscript was. `write_docx`'s own docstring says why
+that matters here — "the machine this runs on has unreliable mains
+power, which is the whole reason it matters" — and `_replace_atomically`'s
+calls a copy "exactly the interruptible write being avoided". The one
+function documented as the paper scripts' entry point (README, the
+`docxkit` skill, `tools/consumers.txt` lines 13 and 108) was the one
+that did not get it.
+
+Two hardenings missed, not one: `read_parts` was given a six-attempt
+retry on 2026-08-20 for the OneDrive `[Errno 13]` race two suites hit;
+the `copy2` of the source at line 496 was the same read on the same
+drive, unretried. Zero callers in `src/`, so no in-repo path exercised
+either. `tests/test_package.py:83` covered a transform that raises — the
+file IS intact, because the write never started — and nothing covered a
+write-back that stops. No workaround was in use; most paper scripts call
+`read_parts`/`write_docx` directly (126 of 237 files, per `batch.py`'s
+docstring), which was the safe path by accident.
+
+### ~~S2 — `is_locked` calls a read-only file "open in Word"~~ — FIXED 03.09, `b934730`
+<!-- status: fixed -->
+
+**Fixed 2026-09-03** — `b934730`. On `PermissionError` the mode
+decides: a file whose `st_mode` lacks `S_IWRITE` is read-only, not
+locked. The entry below proposed a read-only REFUSAL in
+`assert_unlocked`; settled on measurement the other way — `write_docx`
+clears that bit one call later (`_clear_readonly`, for the OneDrive flip
+its docstring names), so refusing would be the two-verdicts defect in
+another costume. A read-only manuscript now goes through
+`edit_in_place` and comes out written. Two synthetic tests, both red on
+the unfixed source; the read-only-AND-held case reaches the write
+path's own retry, which already reports it.
+
+Filed from the 2026-09-03 structural review (`REVIEW_2026-09-03.md`).
+
+**Measured 2026-09-03**, this machine: a file with only `S_IREAD` set
+and nothing holding it — `open(p, "r+b")` raises `PermissionError
+errno=13 winerror=None`; `is_locked(p)` → `True`; clear the bit →
+`False`. A sharing violation arrives through the same CRT path with the
+same errno, so the `except PermissionError` at `package.py:168` could
+not tell the two apart, and did not try.
+
+What it cost. `assert_unlocked` refused with "is locked (open in Word).
+Close it and retry" — the author closes a Word that is not open, retries,
+and gets the same line, with nothing in the message that leads anywhere.
+`readable()` took a snapshot of a file nobody held and yielded
+`copied=True`, so `revision status` and `ingest` reported reading a
+snapshot when they read the file. And the WRITE side already knew this
+state: `_replace_atomically` calls `_clear_readonly` on exactly this
+error, and its docstring says the OneDrive sync engine "flips it
+read-only mid-write" — the package's own account of the drive these
+manuscripts live on said the lock check would meet it.
+
 ### ~~S1 — `_set_tc_w` cannot see a `w:tcW` written `w:type` first, and writes a second one beside it~~ — FIXED 03.09, `6c94bd8`
 <!-- status: fixed -->
 
