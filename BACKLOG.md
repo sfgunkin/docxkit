@@ -793,6 +793,42 @@ Kept as a note rather than a defect: nothing here is wrong, and what remains
 of the second gate is a proposal the author should weigh against everything
 else on this list.
 
+### A pinned complexity number rots downward in silence
+<!-- status: note -->
+
+`tests/test_complexity_debt.py` gates the DEBT list in three directions and
+not the fourth. It fails when a function JOINS the list, when a pinned one
+GROWS, and when one drops below the threshold and the entry is left behind.
+It says nothing when a pinned number simply gets SMALLER while staying over
+the threshold — and the file describes that number as "what a later reader
+measures against".
+
+Measured on 2026-09-03, walking the package with the same `--isolated` ruff
+call the test uses, three of the five entries were wrong:
+
+    _cite_audit._audit_findings   pinned 31   actually 30
+    refstyle.audit                pinned 26   actually 25
+    edit.replace_in_para          pinned 26   actually 24
+
+Not a ruff version artifact: the numbers were last touched on 2026-08-23
+(`79cbad8`) and all three modules were edited through 2026-09-02, so the
+functions were simplified under the pin. `edit.replace_in_para` had been
+carrying a number 2 too high for ten days, which is the one that matters —
+a reader deciding whether a split is worth it starts from the recorded
+figure, and here it overstated the job.
+
+**Not a defect, and deliberately not filed as one.** The one-directional
+gate is the design: the file argues that shrinking the list should be a
+deliberate act, and a test demanding exact equality would turn every
+incidental simplification red. The note exists because the cost of that
+choice is invisible — the numbers were corrected only because somebody
+happened to re-measure before paying the debt down.
+
+DEBT is empty as of 2026-09-03, so nothing is rotting today. This is for
+whoever adds the next entry: re-measure before trusting the number beside
+a function, and consider recording the DATE with it, which is the cheap
+half of the fix and needs no new gate.
+
 ---
 
 ## Where the fixed entries are
