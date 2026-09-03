@@ -45,6 +45,15 @@ all the way down**, and a gate added to the chain has to be watched
 through its first green run somewhere other than the machine it was
 written on.
 
+**And a fourth, `0206149`, behind the three.** With the XSL skip in
+place the run reached `test_equations.py`, where one test guarded
+itself with `if find_mml2omml_xsl() is None` — and the finder never
+returns None, it raises. A guard that cannot fire, passing on every
+machine with Office and failing on the one without, reachable only
+once the `latex` extra existed on the runner. It uses the file's own
+`_needs_word_and_latex()` now, like its siblings. Four layers, one
+afternoon, none of them a defect in the package.
+
 ### ~~S3 — every CI run since 2026-08-24 was red, on 22 tests that need an extra CI does not install~~ — FIXED 03.09, `46a8254`
 <!-- status: fixed -->
 
