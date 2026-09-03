@@ -404,6 +404,28 @@ def test_an_existing_width_is_REPLACED_and_the_inner_one_left_alone():
     assert _tcw(500) not in out
 
 
+def test_a_width_Word_wrote_TYPE_FIRST_is_replaced_not_doubled():
+    """XML attribute order carries no meaning, and Word does not keep
+    one: of 150 manuscripts sampled on 2026-09-03, 5 spell
+    `<w:tcW w:type="dxa" w:w="1701"/>` — the order `_TBLW_RE` was
+    rewritten for on the sibling element, twelve lines below this
+    pattern. A pattern bound to the other order sees NO width in such a
+    cell, and the writer then inserts one beside the width it could not
+    see: two `w:tcW` in one `w:tcPr`, of which Word honours the first,
+    which is the old one. `fit_columns` reports its plan and the cell
+    keeps the width it had."""
+    from docxkit._table_layout import _set_tc_w
+
+    cell = ('<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="1701"/>'
+            '<w:vAlign w:val="top"/></w:tcPr><w:p/></w:tc>')
+
+    out = _set_tc_w(cell, _tcw(900))
+
+    assert out.count("<w:tcW ") == 1
+    assert out == ("<w:tc><w:tcPr>" + _tcw(900)
+                   + '<w:vAlign w:val="top"/></w:tcPr><w:p/></w:tc>')
+
+
 def test_a_table_with_a_GRID_and_no_rows_still_owns_its_grid():
     """`first_row != -1`, the sentinel `str.find` returns. The clause
     exists to reject a grid that starts AFTER the first row — which can

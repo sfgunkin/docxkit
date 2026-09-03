@@ -22,6 +22,7 @@ Both were found by hand, twice, years apart. This finds the third.
 from __future__ import annotations
 
 import ast
+import itertools
 import pathlib
 import re
 
@@ -62,8 +63,11 @@ def _patterns(path: pathlib.Path) -> list[tuple[str, str, int]]:
     return out
 
 
-ALL_PATTERNS = [(p.name, name, src, line)
-                for p in sorted(SRC.glob("*.py"))
+#: Every module, the subpackage's halves included: a `*.py` glob is a
+#: claim that the package is flat, and `revision/` has not been since
+#: 2026-08-30 (BACKLOG, "Not seven defects — one habit").
+ALL_PATTERNS = [(str(p.relative_to(SRC)), name, src, line)
+                for p in sorted(SRC.rglob("*.py"))
                 for name, src, line in _patterns(p)]
 
 
@@ -100,3 +104,59 @@ def test_no_pattern_reads_an_EMPTY_container_as_an_opening_tag(
                 f"swallowing the {prefix}:{tag} after it. An empty "
                 f"element opens nothing: add the `(?<!/)>` guard that "
                 f"_xml.PARA_RE and _xml.RUN_RE carry.")
+
+
+# --- attribute ORDER, the second divergence that bit -------------------
+#
+# An element written in another attribute order is the same element.
+# `<w:tblW w:type="auto" w:w="0"/>` is what one accepted manuscript
+# holds, and a pattern spelling `w:w` before `w:type` matched nothing
+# there — so the table kept an auto width while its columns were divided
+# in fixed dxa (CONTRIBUTING, "Four traps"). `_TBLW_RE` was rewritten;
+# `_TCW_RE`, twelve lines above it in the same file, was not, and on a
+# type-first cell it inserted a SECOND width beside the one it could not
+# see. Measured 2026-09-03: 5 of 150 manuscripts spell `w:tcW` that way.
+
+#: An attribute spelling: prefix, local name, `=`.
+_ATTR = re.compile(r"\b(?:w|m|r|a|wp|w14|w15|mc|v|o|pic|xml):\w+=")
+
+#: The ways this package writes "other attributes may sit here". Between
+#: two attribute spellings of ONE element, any of these makes the
+#: pattern order-free; a literal space or `\s+` makes it order-bound.
+_ANY_ATTRS = ("[^>]", ".*", "(?=")
+
+
+def _order_bound(source: str) -> list[tuple[str, str]]:
+    """The attribute pairs `source` insists on in sequence."""
+    out = []
+    for a, b in itertools.pairwise(_ATTR.finditer(source)):
+        between = source[a.end():b.start()]
+        if "<" in between:              # the next element's, not this one's
+            continue
+        if any(free in between for free in _ANY_ATTRS):
+            continue
+        out.append((a.group(0), b.group(0)))
+    return out
+
+
+def test_the_detector_sees_an_order_bound_pair_and_not_a_free_one():
+    """The gate's own instrument: every assertion below is a NEGATIVE."""
+    assert _order_bound(r'<w:tcW w:w="[^"]*" w:type="\w+"/>') == [
+        ("w:w=", "w:type=")]
+    assert _order_bound(r'<w:tblW\b[^>]*/>') == []
+    assert _order_bound(r'<w:style\b(?=[^>]*\bw:type="p")'
+                        r'(?=[^>]*\bw:default="1")[^>]*\bw:styleId=') == []
+    assert _order_bound(r'<w:fldChar\b[^>]*w:fldCharType="begin"[^>]*/>'
+                        r'(.*?)<w:fldChar\b[^>]*w:fldCharType="end"') == []
+
+
+def test_no_pattern_binds_two_attributes_of_one_element_to_an_ORDER():
+    bound = [f"{module}:{line} {name} insists on {pairs}"
+             for module, name, source, line in ALL_PATTERNS
+             if (pairs := _order_bound(source))]
+    assert bound == [], (
+        "an element written in another attribute order is the same "
+        "element, and Word writes both orders (5 of 150 manuscripts for "
+        "w:tcW). Spell the attribute you want as `\\b[^>]*\\bw:name=`, or "
+        "match the whole tag with `<w:tag\\b[^>]*/>` and read it after:\n  "
+        + "\n  ".join(bound))

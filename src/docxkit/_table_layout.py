@@ -78,7 +78,11 @@ _ASCII_RE = re.compile(r'<w:rFonts[^>]*w:ascii="([^"]+)"')
 # table's fallback face. Theme fonts and style inheritance are still not
 # resolved here; see the module docstring on what this model is.
 _HANSI_RE = re.compile(r'<w:rFonts[^>]*w:hAnsi="([^"]+)"')
-_TCW_RE = re.compile(r'<w:tcW w:w="[^"]*" w:type="\w+"/>')
+# Order-free, like `_TBLW_RE` below and for the same reason: 5 of 150
+# manuscripts sampled on 2026-09-03 spell `w:type` first, and the
+# order-bound spelling saw no width in those cells — so `_set_tc_w`
+# wrote a second one beside the one it could not see.
+_TCW_RE = re.compile(r"<w:tcW\b[^>]*/>")
 _BOLD_RE = re.compile(r'<w:b(?: w:val="(?:1|true|on)")?/>')
 _VERT_RE = re.compile(r'<w:vertAlign w:val="(?:superscript|subscript)"/>')
 
