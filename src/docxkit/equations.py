@@ -27,7 +27,13 @@ import html
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # lxml is imported lazily below so `import docxkit` does not pay for
+    # it; the types are still named, so the stubs see every call here
+    # rather than `Any` (which they were until 2026-09-03 — review, row 7).
+    from lxml.etree import XSLT, _Element
 
 from ._xml import (
     MT_RE,
@@ -175,10 +181,10 @@ def find_mml2omml_xsl(explicit: str | Path | None = None) -> Path:
 #: for every equation in the paper — and a build converts dozens. Keyed
 #: on the file's stamp rather than its name so editing it during a test
 #: is picked up rather than cached over.
-_XSLT_CACHE: dict[tuple[str, int, int], Any] = {}
+_XSLT_CACHE: dict[tuple[str, int, int], XSLT] = {}
 
 
-def _transform(xsl: str | Path | None) -> Any:
+def _transform(xsl: str | Path | None) -> XSLT:
     from lxml import etree
 
     path = find_mml2omml_xsl(xsl)
@@ -202,7 +208,7 @@ _ACCENT_CHR = {"―": "̅"}
 _M = f"{{{M_NS}}}"
 
 
-def _rejoin_at_separator(d: Any) -> None:
+def _rejoin_at_separator(d: _Element) -> None:
     """Undo a fence the converter split at its separator.
 
     Word's ``MML2OMML.XSL`` turns the operator inside a fence into the
@@ -246,9 +252,10 @@ def _rejoin_at_separator(d: Any) -> None:
     els = [e for e in d if e.tag == _M + "e"]
     if len(els) < 2:
         return
-    sep_el = d.find(f"{_M}dPr/{_M}sepChr")
+    dpr = d.find(f"{_M}dPr")
+    sep_el = None if dpr is None else dpr.find(f"{_M}sepChr")
     sep = sep_el.get(_M + "val") if sep_el is not None else None
-    if sep_el is None or not sep:
+    if dpr is None or sep_el is None or not sep:
         return                              # `(1,-2)`: nothing to rejoin
     first = els[0]
     for other in els[1:]:
@@ -260,7 +267,7 @@ def _rejoin_at_separator(d: Any) -> None:
     # The now-childless `m:dPr` stays. Every child of it is optional, and
     # an empty one renders with Word's defaults — parentheses — which is
     # the form the render probe proved. Tidier is not better here.
-    sep_el.getparent().remove(sep_el)
+    dpr.remove(sep_el)
 
 
 #: MathML's namespace, for the one pass that runs BEFORE Word's XSL.
@@ -297,7 +304,7 @@ def _space_text(width: str) -> str:
     return out
 
 
-def _carry_spacing(root: Any) -> int:
+def _carry_spacing(root: _Element) -> int:
     r"""`<mspace>` -> `<mtext>`, because the XSL drops the first.
 
     Word's ``MML2OMML.XSL`` has no template for ``mspace``, so every
@@ -338,7 +345,7 @@ def _carry_spacing(root: Any) -> int:
 _MULTILETTER_RE = re.compile(r"^[A-Za-z]{2,}$")
 
 
-def _name_operators_as_identifiers(root: Any) -> int:
+def _name_operators_as_identifiers(root: _Element) -> int:
     r"""Retag a multi-letter ``<mo>`` as ``<mi>``, so Word sets it upright.
 
     Word's XSL marks a multi-character ``<mi>`` upright and leaves
@@ -374,7 +381,7 @@ def _name_operators_as_identifiers(root: Any) -> int:
     return changed
 
 
-def _normalize(root: Any) -> None:
+def _normalize(root: _Element) -> None:
     """Repair what the converter emits and Word cannot draw.
 
     Every defect fixed here produces VALID markup, so lint, the formula
@@ -789,12 +796,12 @@ def _text(raw: str) -> str:
     return "".join(_char(c) for c in raw)
 
 
-def _local(el: Any) -> str:
+def _local(el: _Element) -> str:
     tag = str(el.tag)
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
-def _mval(el: Any, path: str) -> str | None:
+def _mval(el: _Element, path: str) -> str | None:
     """The ``m:val`` of a property child, or None if absent."""
     hit = el.find("/".join(f"{{{M_NS}}}{p}" for p in path.split("/")))
     return None if hit is None else hit.get(f"{{{M_NS}}}val")
@@ -804,18 +811,18 @@ class _Walker:
     def __init__(self) -> None:
         self.gaps: list[str] = []
 
-    def children(self, el: Any) -> str:
+    def children(self, el: _Element) -> str:
         return "".join(self.walk(child) for child in el)
 
-    def arg(self, el: Any, name: str) -> str:
+    def arg(self, el: _Element, name: str) -> str:
         hit = el.find(f"{{{M_NS}}}{name}")
         return "{" + (self.children(hit) if hit is not None else "") + "}"
 
-    def bare(self, el: Any, name: str) -> str:
+    def bare(self, el: _Element, name: str) -> str:
         hit = el.find(f"{{{M_NS}}}{name}")
         return self.children(hit) if hit is not None else ""
 
-    def walk(self, el: Any) -> str:
+    def walk(self, el: _Element) -> str:
         name = _local(el)
         ns = el.tag.rsplit("}", 1)[0].lstrip("{") if "}" in el.tag else ""
         if ns == _W_NS:
@@ -836,10 +843,10 @@ class _Walker:
         return rf"\text{{[?m:{name}]}}" + self.children(el)
 
     # --- leaves ------------------------------------------------------------
-    def e_t(self, el: Any) -> str:
+    def e_t(self, el: _Element) -> str:
         return _text(el.text or "")
 
-    def e_r(self, el: Any) -> str:
+    def e_r(self, el: _Element) -> str:
         # Through the walker, not `findall("m:t")`: an edited equation
         # wraps a run's OWN text in w:ins/w:del, so the text sits one
         # level below and a direct-children scan silently dropped it.
@@ -858,13 +865,13 @@ class _Walker:
         return body
 
     # --- structures --------------------------------------------------------
-    def e_oMath(self, el: Any) -> str:
+    def e_oMath(self, el: _Element) -> str:
         return self.children(el)
 
-    def e_oMathPara(self, el: Any) -> str:
+    def e_oMathPara(self, el: _Element) -> str:
         return self.children(el)
 
-    def e_f(self, el: Any) -> str:
+    def e_f(self, el: _Element) -> str:
         kind = _mval(el, "fPr/type")
         num, den = self.arg(el, "num"), self.arg(el, "den")
         if kind in ("lin", "skw"):
@@ -873,21 +880,21 @@ class _Walker:
             return f"{{{num[1:-1]} \\atop {den[1:-1]}}}"
         return rf"\frac{num}{den}"
 
-    def e_sSup(self, el: Any) -> str:
+    def e_sSup(self, el: _Element) -> str:
         return self.arg(el, "e") + "^" + self.arg(el, "sup")
 
-    def e_sSub(self, el: Any) -> str:
+    def e_sSub(self, el: _Element) -> str:
         return self.arg(el, "e") + "_" + self.arg(el, "sub")
 
-    def e_sSubSup(self, el: Any) -> str:
+    def e_sSubSup(self, el: _Element) -> str:
         return (self.arg(el, "e") + "_" + self.arg(el, "sub")
                 + "^" + self.arg(el, "sup"))
 
-    def e_sPre(self, el: Any) -> str:
+    def e_sPre(self, el: _Element) -> str:
         return ("{}_" + self.arg(el, "sub") + "^" + self.arg(el, "sup")
                 + self.arg(el, "e"))
 
-    def e_rad(self, el: Any) -> str:
+    def e_rad(self, el: _Element) -> str:
         hide = _mval(el, "radPr/degHide")
         deg = self.bare(el, "deg")
         e = self.arg(el, "e")
@@ -895,7 +902,7 @@ class _Walker:
             return rf"\sqrt{e}"
         return rf"\sqrt[{deg}]{e}"
 
-    def e_nary(self, el: Any) -> str:
+    def e_nary(self, el: _Element) -> str:
         op = _NARY.get(_mval(el, "naryPr/chr") or "∫", r"\int")
         sub, sup = self.bare(el, "sub"), self.bare(el, "sup")
         out = op
@@ -905,7 +912,7 @@ class _Walker:
             out += f"^{{{sup}}}"
         return out + " " + self.arg(el, "e")
 
-    def e_d(self, el: Any) -> str:
+    def e_d(self, el: _Element) -> str:
         # an unmapped fence renders as itself: possibly odd TeX, but
         # visibly odd, where a silent "(" would claim a bracket the
         # equation never had
@@ -920,7 +927,7 @@ class _Walker:
             else self.bare(el, "e")
         return rf"\left{beg} {inner} \right{end}"
 
-    def e_func(self, el: Any) -> str:
+    def e_func(self, el: _Element) -> str:
         fname = self.bare(el, "fName").strip()
         if fname in _KNOWN_FUNCS:
             fname = "\\" + fname
@@ -928,16 +935,16 @@ class _Walker:
             fname = rf"\operatorname{{{fname}}}"
         return fname + " " + self.arg(el, "e")
 
-    def e_acc(self, el: Any) -> str:
+    def e_acc(self, el: _Element) -> str:
         mark = _ACCENTS.get(_mval(el, "accPr/chr") or "̂", r"\hat")
         return mark + self.arg(el, "e")
 
-    def e_bar(self, el: Any) -> str:
+    def e_bar(self, el: _Element) -> str:
         pos = _mval(el, "barPr/pos")
         cmd = r"\overline" if pos == "top" else r"\underline"
         return cmd + self.arg(el, "e")
 
-    def e_groupChr(self, el: Any) -> str:
+    def e_groupChr(self, el: _Element) -> str:
         chr_ = _mval(el, "groupChrPr/chr") or "⏟"
         if chr_ == "⏟":
             return r"\underbrace" + self.arg(el, "e")
@@ -947,7 +954,7 @@ class _Walker:
         cmd = r"\overset" if pos == "top" else r"\underset"
         return f"{cmd}{{{_text(chr_)}}}" + self.arg(el, "e")
 
-    def e_limLow(self, el: Any) -> str:
+    def e_limLow(self, el: _Element) -> str:
         base = self.bare(el, "e").strip()
         low = self.bare(el, "lim")
         # "lim" under "n -> inf" is the operator taking its limit, which
@@ -959,11 +966,11 @@ class _Walker:
             return rf"\{base.lstrip('\\')}_{{{low}}}"
         return rf"\underset{{{low}}}{{{base}}}"
 
-    def e_limUpp(self, el: Any) -> str:
+    def e_limUpp(self, el: _Element) -> str:
         return (rf"\overset{{{self.bare(el, 'lim')}}}"
                 f"{{{self.bare(el, 'e')}}}")
 
-    def e_m(self, el: Any) -> str:
+    def e_m(self, el: _Element) -> str:
         rows = []
         for mr in el.findall(f"{{{M_NS}}}mr"):
             rows.append(" & ".join(self.children(e)
@@ -971,21 +978,21 @@ class _Walker:
         body = r" \\ ".join(rows)
         return rf"\begin{{matrix}} {body} \end{{matrix}}"
 
-    def e_eqArr(self, el: Any) -> str:
+    def e_eqArr(self, el: _Element) -> str:
         lines = [self.children(e) for e in el.findall(f"{{{M_NS}}}e")]
         body = r" \\ ".join(lines)
         return rf"\begin{{aligned}} {body} \end{{aligned}}"
 
-    def e_box(self, el: Any) -> str:
+    def e_box(self, el: _Element) -> str:
         return self.bare(el, "e")
 
-    def e_borderBox(self, el: Any) -> str:
+    def e_borderBox(self, el: _Element) -> str:
         return r"\boxed" + self.arg(el, "e")
 
-    def e_phant(self, el: Any) -> str:
+    def e_phant(self, el: _Element) -> str:
         return r"\phantom" + self.arg(el, "e")
 
-    def e_e(self, el: Any) -> str:
+    def e_e(self, el: _Element) -> str:
         return self.children(el)
 
 

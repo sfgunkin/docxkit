@@ -32,7 +32,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
+
+if TYPE_CHECKING:
+    # lxml is imported lazily in the functions below so `import docxkit`
+    # does not pay for the parser; the ELEMENT type is still named, so
+    # the stubs the dev extra installs see every call in this file. It
+    # was `Any` throughout until 2026-09-03, which switched them off at
+    # the one seam — accept/reject under the reject-all gate — where
+    # they were meant to look (review, row 7).
+    from lxml.etree import _Element
 
 from ._xml import (
     MATH_OBJECTS,
@@ -124,7 +133,7 @@ def _fragment_declarations(xml: str) -> str:
     return _NS + extra
 
 
-def _parse(xml: str) -> tuple[Any, bool]:
+def _parse(xml: str) -> tuple[_Element, bool]:
     """Parse a document or a bare fragment; True if it was wrapped.
 
     The BOM matters: ``str.lstrip()`` does not remove U+FEFF, so a
@@ -143,7 +152,7 @@ def _parse(xml: str) -> tuple[Any, bool]:
     return etree.fromstring(wrapped.encode("utf-8")), True
 
 
-def _serialize(root: Any, was_wrapped: bool) -> str:
+def _serialize(root: _Element, was_wrapped: bool) -> str:
     from lxml import etree
 
     if not was_wrapped:
@@ -173,7 +182,7 @@ _ANCHOR_TAGS = ("bookmarkStart", "bookmarkEnd", "commentRangeStart",
                 "commentRangeEnd", "commentReference")
 
 
-def _lift_anchors(el: Any) -> None:
+def _lift_anchors(el: _Element) -> None:
     """Move `el`'s position markers out to where `el` stands.
 
     Called before a revision element is REMOVED. The markers keep their
@@ -196,15 +205,34 @@ def _lift_anchors(el: Any) -> None:
         return
     at = list(parent).index(el)
     for offset, marker in enumerate(markers):
-        marker.getparent().remove(marker)
+        _parent(marker).remove(marker)
         parent.insert(at + offset, marker)
 
 
-def _content_elements(root: Any, tag: str) -> list[Any]:
+def _parent(el: _Element) -> _Element:
+    """The parent of an element this engine found UNDER a root.
+
+    Every element a revision pass removes or unwraps was reached by
+    iterating a root, so it has one — and `_parse` wraps a bare
+    fragment in a root for exactly that reason. Said here rather than
+    assumed at fifteen call sites: `getparent()` is ``_Element | None``,
+    and while the annotations were `Any` the checkers could not see the
+    fourteen sites that used the value unchecked, or the one that
+    checked it AFTER (`_drop_row`, 2026-09-03).
+    """
+    parent = el.getparent()
+    if parent is None:
+        raise DocxKitError(
+            f"revisions: {_local(str(el.tag))} has no parent — a revision "
+            f"element cannot be the root")
+    return parent
+
+
+def _content_elements(root: _Element, tag: str) -> list[_Element]:
     """Elements of `tag` that wrap CONTENT, not a property-level flag."""
     return [el for el in root.iter(W + tag)
-            if el.getparent() is not None
-            and el.getparent().tag not in _FLAG_PARENTS]
+            if (parent := el.getparent()) is not None
+            and parent.tag not in _FLAG_PARENTS]
 
 
 @dataclass(frozen=True)
@@ -222,7 +250,7 @@ Where = Callable[[Revision], bool]
 _M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 
 
-def _info(el: Any, kind: str) -> Revision:
+def _info(el: _Element, kind: str) -> Revision:
     text = "".join(t.text or "" for t in el.iter(
         W + "t", W + "delText", _M + "t"))
     return Revision(kind=kind,
@@ -248,8 +276,8 @@ def whitespace_only(r: Revision) -> bool:
     return r.kind in ("ins", "del") and r.text != "" and r.text.strip() == ""
 
 
-def _unwrap(el: Any) -> None:
-    parent = el.getparent()
+def _unwrap(el: _Element) -> None:
+    parent = _parent(el)
     at = list(parent).index(el)
     for child in list(el):
         parent.insert(at, child)
@@ -300,7 +328,7 @@ def changed_paragraphs(before: str, after: str) -> list[ParagraphChange]:
     return out
 
 
-def _enclosing_math(el: Any) -> Any | None:
+def _enclosing_math(el: _Element) -> _Element | None:
     """The ``m:oMath`` this element sits in, if any."""
     node = el.getparent()
     while node is not None:
@@ -310,12 +338,12 @@ def _enclosing_math(el: Any) -> Any | None:
     return None
 
 
-def _glyphs(root: Any) -> str:
+def _glyphs(root: _Element) -> str:
     """Every math glyph in document order — the pruning invariant."""
     return "\x00".join(t.text or "" for t in root.iter(MATH + "t"))
 
 
-def _has_glyph(el: Any) -> bool:
+def _has_glyph(el: _Element) -> bool:
     """Any descendant ``m:t`` carrying text.
 
     Plain truthiness, so U+00A0 counts: a non-breaking space in an
@@ -324,7 +352,7 @@ def _has_glyph(el: Any) -> bool:
     return any(t.text for t in el.iter(MATH + "t"))
 
 
-def _prune_math(maths: list[Any]) -> None:
+def _prune_math(maths: list[_Element]) -> None:
     """Drop the empty skeletons a removed revision leaves behind.
 
     Deleting the runs inside a fraction leaves ``<m:f><m:num/><m:den/>
@@ -349,20 +377,20 @@ def _prune_math(maths: list[Any]) -> None:
             if el is om or el.getparent() is None:
                 continue
             if _local(el.tag) in MATH_OBJECTS and not _has_glyph(el):
-                el.getparent().remove(el)
+                _parent(el).remove(el)
         if _glyphs(om) != before:          # never possible; never silent
             raise DocxKitError(
                 "revisions: pruning an empty equation shell changed the "
                 f"glyphs {before!r} -> {_glyphs(om)!r}")
         if not _has_glyph(om):
-            om.getparent().remove(om)
+            _parent(om).remove(om)
 
 
 def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _mark_flag(para: Any, tags: tuple[str, ...]) -> Any | None:
+def _mark_flag(para: _Element, tags: tuple[str, ...]) -> _Element | None:
     """The paragraph-mark revision element inside ``pPr/rPr``, if any."""
     ppr = para.find(W + "pPr")
     rpr = None if ppr is None else ppr.find(W + "rPr")
@@ -372,7 +400,7 @@ def _mark_flag(para: Any, tags: tuple[str, ...]) -> Any | None:
                  if (el := rpr.find(W + t)) is not None), None)
 
 
-def _row_flag(row: Any, tags: tuple[str, ...]) -> Any | None:
+def _row_flag(row: _Element, tags: tuple[str, ...]) -> _Element | None:
     """The row-level revision element inside ``trPr``, if any."""
     trpr = row.find(W + "trPr")
     if trpr is None:
@@ -381,16 +409,16 @@ def _row_flag(row: Any, tags: tuple[str, ...]) -> Any | None:
                  if (el := trpr.find(W + t)) is not None), None)
 
 
-def _drop_row(row: Any) -> None:
+def _drop_row(row: _Element) -> None:
     """Remove a row, and the table with it if nothing is left.
 
     Word deletes a table whose every row goes; leaving an empty ``w:tbl``
     behind would report one more table than the document has and, on the
     reject side, would not restore the baseline.
     """
-    table = row.getparent()
+    table = _parent(row)
     table.remove(row)
-    if table is not None and not table.findall(W + "tr"):
+    if not table.findall(W + "tr"):
         parent = table.getparent()
         if parent is not None:
             parent.remove(table)
@@ -408,7 +436,7 @@ def _drop_row(row: Any) -> None:
 _CELL_FLAG = {"del": "cellDel", "ins": "cellIns"}
 
 
-def _cell_flags(cell: Any, tags: tuple[str, ...]) -> list[Any]:
+def _cell_flags(cell: _Element, tags: tuple[str, ...]) -> list[_Element]:
     """EVERY cell-level revision element inside ``tcPr``, for these tags.
 
     A list rather than the first, because a rejected ``w:tcPrChange``
@@ -423,7 +451,7 @@ def _cell_flags(cell: Any, tags: tuple[str, ...]) -> list[Any]:
             for el in tcpr.findall(W + name)]
 
 
-def _grid_span(cell: Any) -> int:
+def _grid_span(cell: _Element) -> int:
     """How many grid columns this cell occupies."""
     span = cell.find(f"{W}tcPr/{W}gridSpan")
     if span is None:
@@ -434,9 +462,9 @@ def _grid_span(cell: Any) -> int:
         return 1
 
 
-def _apply_cell_changes(root: Any, vanish: tuple[str, ...],
+def _apply_cell_changes(root: _Element, vanish: tuple[str, ...],
                         keep: tuple[str, ...],
-                        wants: Callable[[Any, str], bool]) -> None:
+                        wants: Callable[[_Element, str], bool]) -> None:
     """:func:`_apply_cell_revisions` over every table in the tree.
 
     Its own function for the reason the other extractions here are:
@@ -447,9 +475,9 @@ def _apply_cell_changes(root: Any, vanish: tuple[str, ...],
         _apply_cell_revisions(table, vanish, keep, wants)
 
 
-def _apply_cell_revisions(table: Any, vanish: tuple[str, ...],
+def _apply_cell_revisions(table: _Element, vanish: tuple[str, ...],
                           keep: tuple[str, ...],
-                          wants: Callable[[Any, str], bool]) -> None:
+                          wants: Callable[[_Element, str], bool]) -> None:
     """Apply the CELL-level revisions in one table.
 
     Word serializes a deleted COLUMN cell-wise: every row keeps its
@@ -498,7 +526,7 @@ def _apply_cell_revisions(table: Any, vanish: tuple[str, ...],
                 # handlers follow.
                 for kept in _cell_flags(cell, keep):
                     if wants(kept, "cell"):
-                        kept.getparent().remove(kept)
+                        _parent(kept).remove(kept)
             at += span
         doomed.append(frozenset(gone))
 
@@ -512,9 +540,9 @@ def _apply_cell_revisions(table: Any, vanish: tuple[str, ...],
             grid.remove(col)
 
 
-def _merge_into_next(para: Any) -> None:
+def _merge_into_next(para: _Element) -> None:
     """Word: losing a paragraph mark joins this paragraph to the next."""
-    parent = para.getparent()
+    parent = _parent(para)
     nxt = para.getnext()
     while nxt is not None and nxt.tag not in (W + "p", W + "tbl"):
         nxt = nxt.getnext()
@@ -646,8 +674,8 @@ _OUTSIDE_SNAPSHOT: dict[str, tuple[tuple[str, ...], str]] = {
 }
 
 
-def _apply_property_changes(root: Any, mode: str,
-                            wants: Callable[[Any, str], bool]) -> None:
+def _apply_property_changes(root: _Element, mode: str,
+                            wants: Callable[[_Element, str], bool]) -> None:
     """Accept or reject every formatting revision in the tree."""
     for tag in _PROPERTY_CHANGES:
         for change in list(root.iter(W + tag)):
@@ -693,9 +721,10 @@ def _simulate_clean(xml: str, mode: str) -> str:
     return _simulate_where(xml, mode, None)
 
 
-def _apply_content(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
-                   wants: Callable[[Any, str], bool], *,
-                   mode: str, selective: bool) -> list[Any]:
+def _apply_content(root: _Element, vanish: tuple[str, ...],
+                   keep: tuple[str, ...],
+                   wants: Callable[[_Element, str], bool], *,
+                   mode: str, selective: bool) -> list[_Element]:
     """Remove the side that goes and untrack the side that stays.
 
     Returns the equations a removal reached into, collected BEFORE the
@@ -707,7 +736,7 @@ def _apply_content(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
     places, and applying one side alone rewrites the document into
     something neither version says. See :func:`accept`.
     """
-    touched: list[Any] = []
+    touched: list[_Element] = []
     for tag in vanish:
         for el in _content_elements(root, tag):
             if selective and tag in ("moveFrom", "moveTo"):
@@ -717,7 +746,7 @@ def _apply_content(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
                 if om is not None and not any(om is seen for seen in touched):
                     touched.append(om)
                 _lift_anchors(el)
-                el.getparent().remove(el)
+                _parent(el).remove(el)
     for tag in keep:
         for el in _content_elements(root, tag):
             if selective and tag in ("moveFrom", "moveTo"):
@@ -734,8 +763,8 @@ def _apply_content(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
     return touched
 
 
-def _apply_rows(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
-                wants: Callable[[Any, str], bool]) -> None:
+def _apply_rows(root: _Element, vanish: tuple[str, ...], keep: tuple[str, ...],
+                wants: Callable[[_Element, str], bool]) -> None:
     """Table ROWS carry their own revision flag, in `trPr`, and it is the
     whole row that appears or disappears — an inserted table is encoded
     as nothing but flagged rows, so a simulation blind to them leaves
@@ -751,11 +780,12 @@ def _apply_rows(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
             continue
         kept = _row_flag(row, keep)
         if kept is not None and wants(kept, "row"):
-            kept.getparent().remove(kept)
+            _parent(kept).remove(kept)
 
 
-def _apply_marks(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
-                 wants: Callable[[Any, str], bool]) -> None:
+def _apply_marks(root: _Element, vanish: tuple[str, ...],
+                 keep: tuple[str, ...],
+                 wants: Callable[[_Element, str], bool]) -> None:
     """Paragraph-MARK revisions, which are not content.
 
     The surviving side's flag is not content either, so unwrapping runs
@@ -770,7 +800,7 @@ def _apply_marks(root: Any, vanish: tuple[str, ...], keep: tuple[str, ...],
             continue
         kept = _mark_flag(para, keep)
         if kept is not None and wants(kept, "paragraph-mark"):
-            kept.getparent().remove(kept)
+            _parent(kept).remove(kept)
 
 
 def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
@@ -790,7 +820,7 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \
         if mode == FINAL else (("ins", "moveTo"), ("del", "moveFrom"))
 
-    def wants(el: Any, kind: str) -> bool:
+    def wants(el: _Element, kind: str) -> bool:
         return where is None or where(_info(el, kind))
 
     touched = _apply_content(root, vanish, keep, wants,
@@ -798,7 +828,7 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     if where is None:
         for tag in _RANGE_MARKERS:
             for el in list(root.iter(W + tag)):
-                el.getparent().remove(el)
+                _parent(el).remove(el)
     if touched:
         _prune_math(touched)
     _apply_rows(root, vanish, keep, wants)

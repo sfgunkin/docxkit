@@ -12,7 +12,13 @@ an existing file.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # lxml is imported lazily in `_roots` so `import docxkit` does not
+    # pay for it; the element type is still named, so the stubs see
+    # every walk here rather than `Any` (until 2026-09-03 — review, row 7).
+    from lxml.etree import _Element
 
 from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES, MATH_OBJECTS, XML_WS
 
@@ -43,11 +49,13 @@ _PARTS = (DOCUMENT, FOOTNOTES, ENDNOTES,
           COMMENTS)
 
 
-def _local(tag: Any) -> str:
+def _local(tag: object) -> str:
+    # `object`, not `str`: a comment node's tag is the Comment factory,
+    # and `str()` of it is what the split below expects.
     return str(tag).rsplit("}", 1)[-1]
 
 
-def _math_has_glyph(el: Any) -> bool:
+def _math_has_glyph(el: _Element) -> bool:
     """Any descendant ``m:t`` carrying text; U+00A0 is a deliberate spacer."""
     return any(t.text for t in el.iter(M + "t"))
 
@@ -75,7 +83,7 @@ _PPR_STRAYS = frozenset(W + t for t in _PPR_BEFORE_RPR | {
 })
 
 
-def _stray_para_props(root: Any) -> list[str]:
+def _stray_para_props(root: _Element) -> list[str]:
     """Check 1b — a paragraph PROPERTY sitting directly in the paragraph.
 
     Word keeps the runs and DISCARDS a schema-invalid child of ``w:p``
@@ -96,7 +104,7 @@ def _stray_para_props(root: Any) -> list[str]:
             if child.tag in _PPR_STRAYS]
 
 
-def _run_level_in_block(root: Any) -> list[str]:
+def _run_level_in_block(root: _Element) -> list[str]:
     """Check 1 — a run-level element directly in a block-only container.
 
     Word rejects the part outright.
@@ -108,7 +116,7 @@ def _run_level_in_block(root: Any) -> list[str]:
 
 
 def _revision_findings(
-        root: Any, revision_ids: dict[str | None, int],
+        root: _Element, revision_ids: dict[str | None, int],
 ) -> tuple[list[str], list[str], list[str]]:
     """Checks 2, 3 and 4, and the revision-id tally check 8 reads.
 
@@ -153,7 +161,7 @@ def _revision_findings(
     return c2, c3, c4
 
 
-def _edge_whitespace(root: Any) -> list[str]:
+def _edge_whitespace(root: _Element) -> list[str]:
     """Check 3b — a ``w:t`` with edge whitespace and no ``xml:space``.
 
     OOXML trims it, so the space survives in the tooling that wrote it
@@ -178,7 +186,7 @@ def _edge_whitespace(root: Any) -> list[str]:
     return problems
 
 
-def _child_order(root: Any) -> list[str]:
+def _child_order(root: _Element) -> list[str]:
     """Checks 5 and 6 — schema-fixed child order inside a properties
     element: nothing in ``_PPR_BEFORE_RPR`` may follow ``w:pPr``'s
     ``w:rPr``, and ``w:rPrChange`` must be the last child of its
@@ -199,7 +207,7 @@ def _child_order(root: Any) -> list[str]:
     return problems
 
 
-def _empty_math(root: Any) -> list[str]:
+def _empty_math(root: _Element) -> list[str]:
     """Check 7 — an empty oMath shell renders as garbage, or loses the math.
 
     Two counts, because asking only whether a WHOLE equation has gone
@@ -228,7 +236,7 @@ def _empty_math(root: Any) -> list[str]:
     return problems
 
 
-def _repeated_props(root: Any) -> list[str]:
+def _repeated_props(root: _Element) -> list[str]:
     """Checks 7b and 7c — a properties element, and each of its children,
     may appear ONCE.
 
@@ -262,7 +270,7 @@ def _repeated_props(root: Any) -> list[str]:
     return problems
 
 
-def lint(*roots: Any) -> list[str]:
+def lint(*roots: _Element | None) -> list[str]:
     """Problems found across the given lxml roots. Empty means clean.
 
     Iteration stays C-filtered: ``root.iter(tag, tag, ...)`` walks in
@@ -306,7 +314,7 @@ def lint(*roots: Any) -> list[str]:
     return problems
 
 
-def audit(*roots: Any) -> list[str]:
+def audit(*roots: _Element | None) -> list[str]:
     """Findings Word opens FINE. Reported, never refused.
 
     :func:`lint` answers one question — will Word refuse to open this —
@@ -337,7 +345,7 @@ def audit_parts(parts: dict[str, bytes]) -> list[str]:
     return malformed or audit(*roots)
 
 
-def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
+def _repeated_bookmarks(roots: tuple[_Element | None, ...]) -> list[str]:
     """Bookmark names defined more than once across the package.
 
     A name may be defined once. Word keeps whichever definition it meets
@@ -382,7 +390,7 @@ def _repeated_bookmarks(roots: tuple[Any, ...]) -> list[str]:
              f"first and every link to the name is a coin flip")]
 
 
-def _field_where(fld: Any) -> str:
+def _field_where(fld: _Element) -> str:
     """Name the paragraph an orphaned field half sits in.
 
     Its visible text is what a person searches for, and the field's
@@ -390,7 +398,7 @@ def _field_where(fld: Any) -> str:
     usual case, because the half that survives a deleted sentence is
     the half with no display runs left.
     """
-    para = fld
+    para: _Element | None = fld
     while para is not None and para.tag != W + "p":
         para = para.getparent()
     if para is None:
@@ -401,7 +409,7 @@ def _field_where(fld: Any) -> str:
     return f"{where} [{instr[:40]}]" if instr else where
 
 
-def _unbalanced_fields(roots: tuple[Any, ...]) -> list[str]:
+def _unbalanced_fields(roots: tuple[_Element | None, ...]) -> list[str]:
     """``w:fldChar`` begins with no end, and ends with no begin.
 
     A field is three runs — ``begin``, the ``instrText``, ``end`` — and
@@ -435,7 +443,7 @@ def _unbalanced_fields(roots: tuple[Any, ...]) -> list[str]:
         # Nested fields are ordinary — a HYPERLINK inside a
         # cross-reference — so this is a depth walk and not two counts.
         # Two counts agree on `end begin`, which is two orphans.
-        open_fields: list[Any] = []
+        open_fields: list[_Element] = []
         for fld in root.iter(W + "fldChar"):
             kind = fld.get(W + "fldCharType")
             if kind == "begin":
@@ -465,7 +473,7 @@ def lint_parts(parts: dict[str, bytes]) -> list[str]:
     return malformed or lint(*roots)
 
 
-def _roots(parts: dict[str, bytes]) -> tuple[list[Any], list[str]]:
+def _roots(parts: dict[str, bytes]) -> tuple[list[_Element], list[str]]:
     """(parsed text-bearing parts, the message if one will not parse).
 
     A part that does not parse short-circuits: nothing below can read a
@@ -474,7 +482,7 @@ def _roots(parts: dict[str, bytes]) -> tuple[list[Any], list[str]]:
     """
     from lxml import etree
 
-    roots: list[Any] = []
+    roots: list[_Element] = []
     for name in _PARTS:
         if name in parts:
             try:

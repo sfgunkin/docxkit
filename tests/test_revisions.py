@@ -1007,6 +1007,23 @@ def test_a_row_that_GOES_does_not_end_the_walk_over_the_others():
     assert counts(out) == (0, 0), "the surviving row keeps no flag"
 
 
+def test_the_parent_helper_names_a_ROOT_instead_of_crashing_on_None():
+    """`getparent()` is `_Element | None`, and fifteen sites in this
+    module used the value unchecked while the annotations were `Any`
+    — one of them (`_drop_row`) checked it AFTER. They go through
+    `_parent` now, which says what happened rather than raising
+    AttributeError on None a line later."""
+    from lxml import etree
+
+    from docxkit.errors import DocxKitError
+    from docxkit.revisions import _parent
+
+    child = etree.fromstring("<a><b/></a>")[0]
+    assert _parent(child).tag == "a"
+    with pytest.raises(DocxKitError, match="b has no parent"):
+        _parent(etree.fromstring("<b/>"))
+
+
 # --- what the run of 2026-08-20 left in `revisions` --------------------
 #
 # 28 real survivors, five of them the tests above. The rest are argued,
