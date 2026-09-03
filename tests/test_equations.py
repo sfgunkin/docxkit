@@ -715,9 +715,11 @@ def test_clone_composes_with_harvest():
 def test_clone_still_accepts_a_freshly_built_equation():
     """latex_to_omml already declared its namespaces; that path must not
     regress while the harvest one is fixed."""
-    pytest.importorskip("latex2mathml")
-    if find_mml2omml_xsl() is None:
-        pytest.skip("MML2OMML.XSL not installed")
+    # `_needs_word_and_latex`, not `if find_mml2omml_xsl() is None`: the
+    # finder RAISES when the XSL is absent and never returns None, so
+    # that guard could not fire — the fourth layer of the red CI of
+    # 2026-09-03, reached once the `latex` extra was installed there.
+    _needs_word_and_latex()
     built = latex_to_omml(r"\lambda")
     assert "<m:oMath" in clone(built)
 
