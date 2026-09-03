@@ -829,6 +829,121 @@ whoever adds the next entry: re-measure before trusting the number beside
 a function, and consider recording the DATE with it, which is the cheap
 half of the fix and needs no new gate.
 
+### S1 — `_set_tc_w` cannot see a `w:tcW` written `w:type` first, and writes a second one beside it
+<!-- status: open -->
+
+Filed from the 2026-09-03 structural review (`REVIEW_2026-09-03.md`).
+
+`_table_layout.py:81` reads `_TCW_RE = <w:tcW w:w="[^"]*" w:type="\w+"/>`
+— attribute order bound. Its one caller, `_set_tc_w` (line 481), takes
+an empty match as "this cell has no width" and INSERTS one at the schema
+slot (lines 489–493). A cell whose width Word wrote as
+`<w:tcW w:type="dxa" w:w="1701"/>` therefore ends with two `w:tcW` in one
+`w:tcPr` — the shape the 2026-08-20 round fixed in eight writers under
+the contract "leave exactly one, and it is mine". Word takes the first,
+which is the OLD width, so `fit_columns` returns its plan and the cell
+keeps the width it had. Nothing is red: Word opens the file, so `lint`
+passes; `compare`'s FORMAT layer does not read cell widths; and
+`FitReport` is the plan, not a read-back.
+
+**Measured 2026-09-03**, a strided sample of 150 of the 2,854 `.docx`
+under `F:\OneDrive\__Documents`, `word/document.xml` only: 84 spell
+`w:w` first, **5 spell `w:type` first**, and 3 carry BOTH orders in one
+document — so the failure is per cell, inside a table that is otherwise
+fitted. The same 5 spell `w:tblW` type-first, which is the Corruption
+and Wages case CONTRIBUTING already records.
+
+The diagnosis is six lines of the same file. `_TBLW_RE` at line 93 was
+rewritten to `<w:tblW\b[^>]*/>` with a comment naming that manuscript
+and saying "the bookmark patterns in `_xml` carry the same warning" —
+and the sibling pattern at line 81, same family, same afternoon, kept
+the order-bound spelling. Of 231 literal `re.compile` patterns in the
+package (AST count, 2026-09-03) four spell two namespaced attributes in
+sequence; the other three (`_cite_audit.py:64`, `_xml.py:532`,
+`styles.py:176`) are one-attribute-per-alternative or lookaheads and are
+not order-bound. **This is the last one.**
+
+Fix: `_TCW_RE = re.compile(r"<w:tcW\b[^>]*/>")`, a test that fits a
+type-first cell and asserts ONE `w:tcW` after, and a line in
+`tests/test_regex_registry.py` holding the count of order-bound
+attribute patterns at zero — the check that would have found this the
+day `_TBLW_RE` was fixed. No workaround is in use; nobody knew.
+
+### S2 — `edit_in_place` writes the manuscript back with a COPY, which is the interruptible write `write_docx` exists to avoid
+<!-- status: open -->
+
+Filed from the 2026-09-03 structural review (`REVIEW_2026-09-03.md`).
+
+`package.py:494–505`, by reading: the source is copied to TEMP with
+`shutil.copy2` (unretried), read with a bare `zipfile.ZipFile`, written
+by `write_docx` to a second TEMP file (atomically — into TEMP, where
+atomicity buys nothing), and then `shutil.copy2(out, path)` over the
+manuscript. A copy opens the destination for writing and streams into
+it; the process dying or the mains failing mid-copy leaves a truncated
+file where the manuscript was. `write_docx`'s own docstring says why
+that matters here — "the machine this runs on has unreliable mains
+power, which is the whole reason it matters" — and `_replace_atomically`'s
+calls a copy "exactly the interruptible write being avoided". The one
+function documented as the paper scripts' entry point (README, the
+`docxkit` skill, `tools/consumers.txt` lines 13 and 108) is the one
+that does not get it.
+
+Two hardenings missed, not one: `read_parts` was given a six-attempt
+retry on 2026-08-20 for the OneDrive `[Errno 13]` race two suites hit;
+the `copy2` of the source at line 496 is the same read on the same
+drive, unretried. Zero callers in `src/`, so no in-repo path exercises
+either. `tests/test_package.py:83` covers a transform that raises — the
+file IS intact, because the write never started — and nothing covers a
+write-back that stops.
+
+Fix, and it is shorter than what is there:
+
+    parts = read_parts(path)
+    order = list(parts)
+    report = transform(parts)
+    if dry:
+        return report
+    write_docx(path, parts, order=order)
+
+`write_docx` stages a sibling `.tmp` and renames, so the cross-volume
+reason for the TEMP dance disappears with the dance. Test: patch
+`os.replace` to raise after staging and assert the manuscript's bytes
+are unchanged and the `.tmp` discarded — the shape `test_package.py:186`
+already uses for `write_docx`. No workaround is in use; most paper
+scripts call `read_parts`/`write_docx` directly (126 of 237 files, per
+`batch.py`'s docstring), which is the safe path by accident.
+
+### S2 — `is_locked` calls a read-only file "open in Word"
+<!-- status: open -->
+
+Filed from the 2026-09-03 structural review (`REVIEW_2026-09-03.md`).
+
+**Measured 2026-09-03**, this machine: a file with only `S_IREAD` set
+and nothing holding it — `open(p, "r+b")` raises `PermissionError
+errno=13 winerror=None`; `is_locked(p)` → `True`; clear the bit →
+`False`. A sharing violation arrives through the same CRT path with the
+same errno, so the `except PermissionError` at `package.py:168` cannot
+tell the two apart, and does not try.
+
+What it costs. `assert_unlocked` refuses with "is locked (open in Word).
+Close it and retry" — the author closes a Word that is not open, retries,
+and gets the same line, with nothing in the message that leads anywhere.
+`readable()` takes a snapshot of a file nobody holds and yields
+`copied=True`, so `revision status` and `ingest` report reading a
+snapshot when they read the file. And the WRITE side already knows this
+state: `_replace_atomically` calls `_clear_readonly` on exactly this
+error, and its docstring says the OneDrive sync engine "flips it
+read-only mid-write" — the package's own account of the drive these
+manuscripts live on says the lock check will meet it.
+
+Fix: on `PermissionError`, consult the mode — a file whose
+`st_mode` lacks `S_IWRITE` is read-only, not locked. `is_locked` stays a
+predicate about locks; `assert_unlocked` gains the read-only branch with
+its own sentence (and what clears it). A file that is BOTH read-only and
+held by Word then reaches the write path, whose retry loop already
+reports that case. Two tests: the read-only file (synthetic, no Word),
+and one marked `word` for a file Word holds. No workaround is in use.
+
 ---
 
 ## Where the fixed entries are
