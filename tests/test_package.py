@@ -35,6 +35,17 @@ def test_round_trip_preserves_every_part(simple_docx, tmp_path):
     assert read_parts(out) == parts
 
 
+def test_the_package_representation_has_a_NAME():
+    """`dict[str, bytes]` was spelt 179 times across the package with
+    no name for the thing every module passes around (review
+    2026-09-03, row 8). `Parts` is that name, reachable from the top."""
+    from docxkit import Parts
+    from docxkit.package import Parts as same
+
+    assert Parts is same
+    assert Parts.__value__ == dict[str, bytes]
+
+
 def test_write_preserves_member_order(simple_docx, tmp_path):
     with zipfile.ZipFile(simple_docx) as z:
         order = z.namelist()

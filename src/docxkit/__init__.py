@@ -35,6 +35,7 @@ from .find import (
     text_of,
 )
 from .package import (
+    Parts,
     assert_unlocked,
     backup,
     edit_in_place,
@@ -49,6 +50,7 @@ __all__ = [
     "DOCUMENT",
     "PARA_RE",
     "RUN_RE",
+    "Parts",
     "assert_unlocked",
     "backup",
     "edit_in_place",

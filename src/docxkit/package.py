@@ -30,6 +30,13 @@ from typing import Any
 from ._xml import escape, text_parts, zip_entry
 from .errors import DocumentLocked, PackageError
 
+#: The package as this toolkit works on it: every member of the .docx
+#: zip, name -> bytes, in stored order. What `read_parts` returns and
+#: every editing path is handed. Spelt out 179 times across the
+#: package before it had a name (2026-09-03); the name is the same
+#: type, so an annotation written either way is one annotation.
+type Parts = dict[str, bytes]
+
 __all__ = [
     "CORE_ORDER",
     "CORE_PART",
@@ -37,6 +44,7 @@ __all__ = [
     "USER_PROPERTIES",
     "DocumentLocked",
     "PackageError",
+    "Parts",
     "assert_unlocked",
     "backup",
     "changed_parts",
@@ -111,7 +119,7 @@ def _core_re(tag: str) -> re.Pattern[str]:
     return re.compile(rf"<{tag}\b[^>]*?(?:/>|>([^<]*)</{tag}>)")
 
 
-def core_property(parts: dict[str, bytes], tag: str) -> str | None:
+def core_property(parts: Parts, tag: str) -> str | None:
     """A ``docProps/core.xml`` value — ``dc:title``, ``dc:creator``, …
 
     None when the part or the element is absent, which are different
@@ -126,7 +134,7 @@ def core_property(parts: dict[str, bytes], tag: str) -> str | None:
     return (m.group(1) or "") if m else None
 
 
-def set_core_property(parts: dict[str, bytes], tag: str, value: str) -> bool:
+def set_core_property(parts: Parts, tag: str, value: str) -> bool:
     """Set a core property, CREATING it if absent. True if `parts` moved.
 
     Absent is the case that matters. A rewrite that only substitutes
@@ -192,7 +200,7 @@ def assert_unlocked(path: str | Path) -> None:
 
 
 def read_parts(path: str | Path, *, retries: int = 6,
-               delay: float = 0.2) -> dict[str, bytes]:
+               delay: float = 0.2) -> Parts:
     """Every member of the package, in stored order.
 
     A missing path or a non-zip file raises :class:`PackageError` — the
@@ -319,8 +327,8 @@ def same_part(a: bytes, b: bytes) -> bool:
     return part_fingerprint(a) == part_fingerprint(b)
 
 
-def changed_parts(before: dict[str, bytes],
-                  after: dict[str, bytes]) -> dict[str, list[str]]:
+def changed_parts(before: Parts,
+                  after: Parts) -> dict[str, list[str]]:
     """Which parts really changed, added or vanished between two packages.
 
     Returns ``{"changed": [...], "added": [...], "removed": [...],
@@ -341,7 +349,7 @@ def changed_parts(before: dict[str, bytes],
             "removed": removed, "resaved": resaved}
 
 
-def malformed_parts(parts: dict[str, bytes]) -> list[str]:
+def malformed_parts(parts: Parts) -> list[str]:
     """Which XML parts do not parse, and why.
 
     Well-formedness only — not the structural rules :mod:`docxkit.lint`
@@ -363,8 +371,8 @@ def malformed_parts(parts: dict[str, bytes]) -> list[str]:
     return bad
 
 
-def missing_parts(parts: dict[str, bytes],
-                  baseline: dict[str, bytes]) -> list[str]:
+def missing_parts(parts: Parts,
+                  baseline: Parts) -> list[str]:
     """Parts the baseline has and `parts` does not, Word's own aside.
 
     "Did the package survive?" — the question nothing asked. The
@@ -383,7 +391,7 @@ def missing_parts(parts: dict[str, bytes],
                   if n not in parts and not regenerated_by_word(n))
 
 
-def write_docx(path: str | Path, parts: dict[str, bytes],
+def write_docx(path: str | Path, parts: Parts,
                *, order: list[str] | None = None) -> None:
     """Repack `parts` as a .docx, atomically (temp file, then move).
 
@@ -485,7 +493,7 @@ def _discard(path: Path) -> None:
 
 
 def edit_in_place(path: str | Path,
-                  transform: Callable[[dict[str, bytes]], object],
+                  transform: Callable[[Parts], object],
                   *, dry: bool = False) -> object:
     """Hand `path`'s parts to `transform` and rewrite the file in place.
 
