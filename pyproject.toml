@@ -306,11 +306,12 @@ disallow_untyped_defs = true
 # ruff by then, and mypy on all three versions had been failing on a
 # clean checkout unseen ever since.
 #
-# CI installs `.[dev,pdf]` NOW, so pymupdf is present there; what this
-# entry and the `pyright: ignore` beside it answer is the environment
-# that installs `.[dev]` alone, which is every contributor who does not
-# want a 20 MB wheel to run the tests. An optional extra is absent
-# SOMEWHERE by definition, and both checkers have to be told so.
+# CI installs `.[dev,pdf,latex]` NOW, so pymupdf and latex2mathml are
+# present there; what this entry and the `pyright: ignore` beside it
+# answer is the environment that installs `.[dev]` alone, which is every
+# contributor who does not want a 20 MB wheel to run the tests. An
+# optional extra is absent SOMEWHERE by definition, and both checkers
+# have to be told so.
 module = ["win32com.*", "pythoncom", "latex2mathml.*", "pymupdf.*"]
 ignore_missing_imports = true
 

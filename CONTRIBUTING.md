@@ -115,14 +115,19 @@ Install what they need with `pip install -e .[dev]` — hypothesis is in
 there because the property suite imports it at module level, so a clone
 without it does not lose those tests quietly, it fails at collection.
 
-**What CI installs is `.[dev,pdf]`, and the difference is a gate.**
+**What CI installs is `.[dev,pdf,latex]`, and the difference is a gate.**
 pymupdf is not Windows-only and `tests/test_pages.py` builds its PDFs
 with pymupdf itself, so those 15 tests run anywhere — and `pages.py`'s
-85 % floor assumes they did. The other extras stay out, which makes
-their imports ABSENT rather than untyped on a clean checkout: that needs
-an entry in the mypy override list AND a `pyright: ignore` on the import
-line. latex2mathml taught this in August and pymupdf repeated it three
-days later.
+85 % floor assumes they did. latex2mathml joined it on 2026-09-03 for
+the same reason: `test_equations_typography.py` calls `latex_to_omml`
+in 22 tests, and from the day it landed (08-24) until then every CI run
+was red on a checkout that did not have the extra — twelve in a row,
+unread. The `word` extra stays out, which makes its import ABSENT
+rather than untyped on a clean checkout: that needs an entry in the mypy
+override list AND a `pyright: ignore` on the import line, and a test
+that needs an optional extra says so with `pytest.importorskip` —
+latex2mathml taught this in August, pymupdf repeated it three days
+later, and the typography file repeated it for ten days.
 
 **The gates run in SERIES, and a red step hides every step behind it.**
 From 2026-08-14 to 08-18 an unused variable and an unsorted import block

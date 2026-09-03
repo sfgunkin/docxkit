@@ -23,6 +23,13 @@ import pytest
 
 from docxkit.equations import latex_to_omml
 
+# Every test here builds its maths from LaTeX, which needs the `latex`
+# extra. Without this line the file FAILED 22 tests on a checkout that
+# lacked it — which CI was, from the day this file landed (2026-08-24)
+# until 2026-09-03: twelve red runs, unread. CI installs the extra now,
+# so there they run; here they skip and say why.
+pytest.importorskip("latex2mathml", reason="needs docxkit[latex]")
+
 UPRIGHT = '<m:sty m:val="p"/>'
 #: Word draws a variable from the Mathematical Alphanumeric block; an
 #: upright operator name stays ASCII. The render can therefore be read

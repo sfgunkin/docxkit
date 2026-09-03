@@ -45,8 +45,15 @@ jobs:
         # here — and without it `pages.py` covers 53 % against a floor of
         # 85 %, which is what stopped this workflow the first time ruff
         # let it reach the last step.
+        #
+        # `latex` too, since 2026-09-03. `tests/test_equations_typography.py`
+        # landed on 08-24 calling `latex_to_omml` in 22 tests with no
+        # `importorskip`, and every run from then on was red — twelve in a
+        # row unread, the 08-14 lesson four lines up repeated. The tests now
+        # skip where the extra is absent; installing it HERE is what keeps
+        # them tests rather than skips.
         id: install
-        run: pip install -e ".[dev,pdf]"
+        run: pip install -e ".[dev,pdf,latex]"
       # Every gate runs even when an earlier GATE is red — `!cancelled()`
       # rather than `always()`, so a cancelled run still stops. The job
       # still FAILS on any red step; what changes is that the report is
@@ -136,7 +143,7 @@ jobs:
         with:
           python-version: "3.14"
       - id: install
-        run: pip install -e ".[dev,pdf]"
+        run: pip install -e ".[dev,pdf,latex]"
       - name: Curated mutations
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python tools/mutate.py
