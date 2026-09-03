@@ -54,6 +54,21 @@ once the `latex` extra existed on the runner. It uses the file's own
 `_needs_word_and_latex()` now, like its siblings. Four layers, one
 afternoon, none of them a defect in the package.
 
+**And a fifth, `f2590d1`, the first time pytest itself was green
+there.** The chain reached Coverage floors and read
+`revision/_gates.py` at 97.3 % against a floor of 100 % — a floor
+measured on this machine, where the module's POSIX halves are
+pragma-excluded and its Windows halves run; on Linux the Windows halves
+(`taskkill /T`, `CREATE_NEW_PROCESS_GROUP`) never execute and nothing
+excluded them. Two tests fake the platform and the `subprocess` seam
+both functions already take, and execute those lines anywhere; a pragma
+would have hidden the `taskkill` argv from the mutation lists. Run
+`33793652630` on `f2590d1`, 2026-09-04 00:0x local, is the first green
+CI run since `7f979cc` on 2026-08-24: five layers, each measured on
+this machine and true nowhere else. **A floor is a claim about a
+platform** — a module that branches on `sys.platform` needs its
+platform-only lines either excluded on both sides or executed on both.
+
 ### ~~S3 — every CI run since 2026-08-24 was red, on 22 tests that need an extra CI does not install~~ — FIXED 03.09, `46a8254`
 <!-- status: fixed -->
 
