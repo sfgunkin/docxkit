@@ -22,13 +22,14 @@ promises the module makes about HOW:
 from __future__ import annotations
 
 import sys
+import time
 import types
 from pathlib import Path
 
 import pytest
 
 from docxkit import word as W
-from docxkit.errors import AnchorError, FontMissing
+from docxkit.errors import AnchorError, DocxKitError, FontMissing, WordTimeout
 
 # ------------------------------------------------------------ fakes ----
 
@@ -768,3 +769,181 @@ def test_a_page_RANGE_can_also_carry_markup(faked_word, tmp_path):
     assert args[4] == W.WD_EXPORT_FROM_TO
     assert args[5:7] == (2, 5)
     assert args[-1] == {"Item": W.WD_EXPORT_WITH_MARKUP}, args
+
+
+# ------------------------------------------------------------ deadline ----
+#
+# Row 6 of the 2026-09-03 review. Word's save path can hang indefinitely
+# and a Compare can too; a COM call blocks the thread with no way to
+# give up, and the only ceiling anywhere was pytest's. The mechanism:
+# the session's own pid, found by the WINWORD list before and after
+# `DispatchEx` (`Application.Hwnd` does not exist on this Word — both
+# bindings say "unknown name"), a timer that kills THAT process, and
+# the blocked call's failure renamed `WordTimeout`.
+
+
+@pytest.fixture
+def bounded(monkeypatch):
+    """A process list that shows one WINWORD appearing, and a kill that
+    records rather than kills."""
+    lists = iter([frozenset({11}), frozenset({11, 42})])
+    monkeypatch.setattr(W, "_winword_pids", lambda: next(lists))
+    killed: list[int] = []
+    monkeypatch.setattr(W, "_kill", killed.append)
+    return killed
+
+
+def test_a_deadline_records_the_new_pid_and_is_cancelled_on_exit(
+        com, bounded):
+    word = com(FakeWord())
+
+    with W.session(deadline=5, doing="a probe") as app:
+        assert app is word
+        assert W._WATCHDOG[0].pid == 42
+        assert W._WATCHDOG[0].fired is False
+
+    assert bounded == []
+    assert W._WATCHDOG == []
+    assert word.quits == 1
+
+
+def test_a_call_still_blocked_when_the_deadline_fires_is_a_WordTimeout(
+        com, bounded):
+    word = com(FakeWord())
+
+    with pytest.raises(WordTimeout,
+                       match=r"while comparing X; its process \(42\) was "
+                             r"killed") as info, \
+            W.session(deadline=0.05, doing="comparing X"):
+        time.sleep(0.3)                            # the blocked COM call
+        raise RuntimeError("RPC server is unavailable")  # what COM says
+
+    assert bounded == [42]
+    assert isinstance(info.value.__cause__, RuntimeError)
+    assert "word_deadline" in str(info.value), "the remedy is in the message"
+    assert word.quits == 1                         # tried, harmlessly
+    assert W._WATCHDOG == []
+
+
+def test_a_failure_BEFORE_the_deadline_keeps_its_own_name(com, bounded):
+    com(FakeWord())
+
+    with pytest.raises(RuntimeError, match="genuine"), \
+            W.session(deadline=5, doing="x"):
+        raise RuntimeError("a genuine failure")
+
+    assert bounded == []
+
+
+def test_no_deadline_never_reads_the_process_list(com, monkeypatch):
+    """The library default — and `0`, which the config spells "no
+    ceiling" as — must cost nothing: no `tasklist`, no timer."""
+    com(FakeWord())
+
+    def never():
+        raise AssertionError("the process list was read")
+
+    monkeypatch.setattr(W, "_winword_pids", never)
+    with W.session():
+        pass
+    with W.session(deadline=0):
+        pass
+    assert W._WATCHDOG == []
+
+
+def test_an_ambiguous_process_list_REFUSES_and_still_quits(com, monkeypatch):
+    """Two Words started in the same second: the pid cannot be told, and
+    a ceiling that might kill the wrong one is no ceiling. The instance
+    already started is still quit — a refusal must not orphan it."""
+    word = com(FakeWord())
+    lists = iter([frozenset({11}), frozenset({11, 42, 43})])
+    monkeypatch.setattr(W, "_winword_pids", lambda: next(lists))
+
+    with pytest.raises(DocxKitError, match=r"cannot bound x: .*\[42, 43\]"), \
+            W.session(deadline=5, doing="x"):
+        pass                                         # pragma: no cover
+
+    assert word.quits == 1
+    assert W._WATCHDOG == []
+
+
+def test_a_shared_session_renames_the_timeout_TOO(com, bounded):
+    """`shared_session` exits the inner session with no exception, so the
+    body's failure never reaches the generator that armed the watchdog;
+    the rename has to happen where the exception passes."""
+    word = com(FakeWord())
+
+    with pytest.raises(WordTimeout, match="a ladder"), \
+            W.shared_session(deadline=0.05, doing="a ladder"), \
+            W.session() as inner:
+        assert inner is word
+        time.sleep(0.3)
+        raise RuntimeError("RPC server is unavailable")
+
+    assert bounded == [42]
+    assert W._SHARED == []
+    assert W._WATCHDOG == []
+
+
+def test_a_shared_session_that_cannot_be_bounded_RAISES_not_None(
+        com, monkeypatch):
+    """"No Word here" yields None and every session inside carries on
+    unbounded; a ceiling that cannot be honoured is not that, and
+    turning it into None would be the silent downgrade."""
+    com(FakeWord())
+    lists = iter([frozenset(), frozenset({1, 2})])
+    monkeypatch.setattr(W, "_winword_pids", lambda: next(lists))
+
+    with pytest.raises(DocxKitError, match="cannot bound a ladder"), \
+            W.shared_session(deadline=5, doing="a ladder"):
+        pass                                         # pragma: no cover
+
+
+def test_the_process_list_is_parsed_from_tasklist_CSV(monkeypatch):
+    csv = ('"WINWORD.EXE","31952","Console","1","123,456 K"\n'
+           '"WINWORD.EXE","11564","Console","1","98,304 K"\n')
+
+    def listing(text: str):
+        return lambda *_a, **_k: types.SimpleNamespace(stdout=text)
+
+    monkeypatch.setattr(W.subprocess, "run", listing(csv))
+    assert W._winword_pids() == frozenset({31952, 11564})
+
+    none = "INFO: No tasks are running which match the specified criteria.\n"
+    monkeypatch.setattr(W.subprocess, "run", listing(none))
+    assert W._winword_pids() == frozenset()
+
+
+def test_kill_asks_taskkill_for_the_TREE_by_pid(monkeypatch):
+    calls: list[list[str]] = []
+
+    def run(argv, **_k):
+        calls.append(argv)
+        return types.SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(W.subprocess, "run", run)
+
+    W._kill(42)
+
+    assert calls == [["taskkill", "/PID", "42", "/T", "/F"]]
+
+
+@pytest.mark.word
+def test_a_REAL_hidden_Word_is_killed_by_pid_on_expiry():
+    """The mechanism against the real thing: the session's own process
+    goes, no other Word does, and the next COM call fails into
+    WordTimeout. Measured 2026-09-03: `Quit()` is asynchronous, so a
+    process outliving the call by a moment is normal; a killed one is
+    gone at once."""
+    others = W._winword_pids()
+    pid = -1
+
+    with pytest.raises(WordTimeout, match="a probe"), \
+            W.session(deadline=1.0, doing="a probe") as word:
+        pid = W._WATCHDOG[0].pid
+        assert pid not in others
+        time.sleep(2.5)
+        _ = word.Visible                 # the blocked call, once Word is gone
+
+    assert pid > 0 and pid not in W._winword_pids()
+    assert W._WATCHDOG == []

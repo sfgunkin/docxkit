@@ -27,7 +27,9 @@ import contextlib
 import logging
 import re
 import shutil
+import subprocess
 import tempfile
+import threading
 import zipfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
@@ -36,7 +38,13 @@ from typing import Any, NamedTuple, cast
 from lxml import etree
 
 from ._xml import zip_entry
-from .errors import AnchorError, FontMissing, PackageError
+from .errors import (
+    AnchorError,
+    DocxKitError,
+    FontMissing,
+    PackageError,
+    WordTimeout,
+)
 
 __all__ = [
     "CT_NS",
@@ -60,10 +68,12 @@ __all__ = [
     "WD_STATISTIC_PAGES",
     "WD_WITHIN_TABLE",
     "AnchorError",
+    "DocxKitError",
     "FontMissing",
     "Location",
     "PackageError",
     "RevisionLocation",
+    "WordTimeout",
     "compare_documents",
     "draft_view",
     "export_pdf",
@@ -161,8 +171,96 @@ _FAST_OPTIONS = {
 _SHARED: list[Any] = []
 
 
+def _winword_pids() -> frozenset[int]:
+    """Every WINWORD.EXE on the machine, by pid — Windows' own list.
+
+    The only route to a hidden instance's process: `Application.Hwnd`
+    does not exist on this Word's `_Application` (measured 2026-09-03,
+    early- and late-bound alike: "unknown name"), so the pid is the one
+    that APPEARS between the list before `DispatchEx` and the list
+    after it. Measured: one new pid, 1.1 s including the start.
+    """
+    done = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq WINWORD.EXE", "/FO", "CSV", "/NH"],
+        capture_output=True, text=True, check=False)
+    pids: set[int] = set()
+    for line in done.stdout.splitlines():
+        cells = [c.strip().strip('"') for c in line.split('","')]
+        if len(cells) > 1 and cells[0].upper() == "WINWORD.EXE":
+            pids.add(int(cells[1]))
+    return frozenset(pids)
+
+
+def _kill(pid: int) -> None:
+    """End one process and its children, without asking."""
+    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                   capture_output=True, text=True, check=False)
+
+
+class _Watchdog:
+    """The ceiling on one hidden Word: its pid, a timer, and whether the
+    timer fired.
+
+    `session` arms it once the instance is up and cancels it on the way
+    out. A COM call still blocked when it fires loses its process — THAT
+    process, found by pid, never an interactive Word and never another
+    session's — and fails; whichever context manager sees the failure
+    first renames it :class:`WordTimeout`, with the message below.
+    """
+
+    def __init__(self, deadline: float, before: frozenset[int],
+                 doing: str) -> None:
+        appeared = _winword_pids() - before
+        if len(appeared) != 1:
+            raise DocxKitError(
+                f"cannot bound {doing}: expected exactly one new WINWORD "
+                f"process after starting Word, found {sorted(appeared)} — "
+                f"another Word started in the same second, or the process "
+                f"list could not be read. Retry, or run with no deadline.")
+        self.pid = next(iter(appeared))
+        self.deadline = deadline
+        self.doing = doing
+        self.fired = False
+        self._timer = threading.Timer(deadline, self._fire)
+        self._timer.daemon = True
+
+    def arm(self) -> None:
+        self._timer.start()
+
+    def cancel(self) -> None:
+        self._timer.cancel()
+
+    def _fire(self) -> None:
+        self.fired = True
+        _kill(self.pid)
+
+    @property
+    def message(self) -> str:
+        return (f"Word did not answer within {self.deadline:.0f} s while "
+                f"{self.doing}; its process ({self.pid}) was killed. The "
+                f"step failed and nothing was written — rerun, or raise "
+                f"`[batch] word_deadline` if the document is simply large.")
+
+
+#: The watchdog of the session that owns the current instance: empty,
+#: or holding one — the same shape as `_SHARED`, and for the same
+#: reason. `shared_session` exits the inner session with NO exception
+#: (`__exit__(None, None, None)`), so the body's failure never reaches
+#: the generator that armed the watchdog; the renaming has to happen
+#: wherever the exception passes, and both places read it from here.
+_WATCHDOG: list[_Watchdog] = []
+
+
+def _fired() -> _Watchdog | None:
+    """The watchdog that killed the current instance, if one did."""
+    if _WATCHDOG and _WATCHDOG[0].fired:
+        return _WATCHDOG[0]
+    return None
+
+
 @contextlib.contextmanager
-def shared_session(*, fast: bool = True) -> Iterator[Any]:
+def shared_session(*, fast: bool = True, deadline: float | None = None,
+                   doing: str = "Word automation") -> Iterator[Any]:
     """One Word instance for every :func:`session` inside this block.
 
     Word's cold start is the largest fixed cost a revision batch pays:
@@ -183,27 +281,41 @@ def shared_session(*, fast: bool = True) -> Iterator[Any]:
     `fast` is applied once, by whichever block opens the instance. A
     nested `session(fast=False)` therefore does NOT restore the options
     — it is sharing somebody else's Word, and turning spell-check back
-    on underneath them is not its call.
+    on underneath them is not its call. The same goes for `deadline`:
+    the block that OPENS the instance owns the ceiling, over everything
+    inside it, and a nested request is ignored.
+
+    A deadline that cannot be honoured (see :class:`_Watchdog`) is
+    raised, not turned into ``None``: "no Word here" and "a Word with
+    no ceiling" are different answers, and the caller asked for the
+    ceiling.
     """
     if _SHARED:
         yield _SHARED[0]
         return
     try:
-        opened = session(fast=fast)
+        opened = session(fast=fast, deadline=deadline, doing=doing)
         word = opened.__enter__()
+    except DocxKitError:
+        raise
     except Exception:
         yield None
         return
     _SHARED.append(word)
     try:
         yield word
+    except Exception as exc:
+        if (dog := _fired()) is not None:
+            raise WordTimeout(dog.message) from exc
+        raise
     finally:
         _SHARED.clear()
         opened.__exit__(None, None, None)
 
 
 @contextlib.contextmanager
-def session(*, fast: bool = True) -> Iterator[Any]:
+def session(*, fast: bool = True, deadline: float | None = None,
+            doing: str = "Word automation") -> Iterator[Any]:
     """A private, invisible Word instance, always quit on the way out.
 
     Uses DispatchEx so an interactive Word the user has open is neither
@@ -212,6 +324,16 @@ def session(*, fast: bool = True) -> Iterator[Any]:
     Inside a :func:`shared_session` this yields THAT instance and quits
     nothing: a batch runs `build` and `validate` back to back and each
     was paying its own cold start — about 52 s of a 95 s batch on AFI.
+
+    `deadline`, in seconds, is the ceiling on the whole block. Word's
+    save path can hang indefinitely and a Compare can too, and a COM
+    call blocks the thread with no way to give up — until 2026-09-03
+    the only ceiling anywhere was pytest's, which a paper script never
+    runs under. On expiry the instance THIS call started is killed (by
+    pid; see :class:`_Watchdog`) and the blocked call fails as
+    :class:`WordTimeout`, naming `doing`. ``None`` or ``0`` is no
+    ceiling, which is the library default; the revision protocol sets
+    one from ``[batch] word_deadline``.
     """
     if _SHARED:
         yield _SHARED[0]
@@ -224,6 +346,7 @@ def session(*, fast: bool = True) -> Iterator[Any]:
     import pythoncom
     import win32com.client as com
 
+    before = _winword_pids() if deadline else frozenset()
     with _suppress_com("CoInitialize"):
         pythoncom.CoInitialize()
     word = com.DispatchEx("Word.Application")
@@ -237,9 +360,21 @@ def session(*, fast: bool = True) -> Iterator[Any]:
                 setattr(word.Options, name, value)
         with _suppress_com("disable ScreenUpdating"):
             word.ScreenUpdating = False
+    dog: _Watchdog | None = None
     try:
+        if deadline:
+            dog = _Watchdog(deadline, before, doing)
+            _WATCHDOG.append(dog)
+            dog.arm()
         yield word
+    except Exception as exc:
+        if dog is not None and dog.fired:
+            raise WordTimeout(dog.message) from exc
+        raise
     finally:
+        if dog is not None:
+            dog.cancel()
+            _WATCHDOG.clear()
         for name, value in saved.items():
             with _suppress_com(f"restore Word option {name}"):
                 setattr(word.Options, name, value)

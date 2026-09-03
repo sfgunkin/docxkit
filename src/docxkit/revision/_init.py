@@ -12,7 +12,14 @@ from pathlib import Path
 from .. import guard as _guard
 from .. import package
 from ..errors import ProtocolError
-from ._common import _CONFIG, _DIR, _SECTION_RE, RESCUE_KEEP, _today
+from ._common import (
+    _CONFIG,
+    _DIR,
+    _SECTION_RE,
+    RESCUE_KEEP,
+    WORD_DEADLINE,
+    _today,
+)
 from ._config import Paper, load_paper
 from ._registry import register
 
@@ -92,6 +99,11 @@ author = "{author}"
 # undoes the promote that just happened; older history is in the vault,
 # the attic and git, none of which sit in the working folder.
 rescue_keep = {rescue_keep}
+# Seconds one Word session may take for a build or a validate. Word's
+# save path can hang indefinitely and a Compare can too; on expiry the
+# hidden instance this step started is killed and the step fails,
+# naming the batch. 0 means no ceiling.
+word_deadline = {word_deadline}
 
 [verify]
 # The paper's OWN gates. Not part of the shared ladder — what this
@@ -334,6 +346,7 @@ def init(root: str | Path, source: str | Path, *,
             language=language or "en", author=author or "Revision",
             gates="", working=_toml_str(declared),
             rescue_keep=RESCUE_KEEP,
+            word_deadline=int(WORD_DEADLINE),
             # No attic given: the key stays out, and the header stays
             # in for the day one is named. It used to default to
             # `D:\PaperAttic\<name>` — one machine's drive letter,

@@ -371,9 +371,22 @@ def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
     assert _read({"batch": {}}, "batch", "carry", ()) == ()
     with pytest.raises(KeyError, match="KNOWN"):
         _read({"batch": {"rescue_kep": 3}}, "batch", "rescue_kep", 5)
-    # the ten keys the protocol reads, measured 2026-09-03 against the
-    # 29 the nine registered papers carry
-    assert sum(len(keys) for keys in KNOWN.values()) == 10
+    # the eleven keys the protocol reads — ten measured 2026-09-03
+    # against the 29 the nine registered papers carry, plus
+    # `word_deadline`, added the same evening
+    assert sum(len(keys) for keys in KNOWN.values()) == 11
+
+
+def test_word_deadline_is_read_from_batch_and_defaults_to_TEN_MINUTES(
+        tmp_path, project):
+    assert project.word_deadline == 600.0
+    text = project.config.read_text(encoding="utf-8")
+    assert "word_deadline = 600" in text, "the template documents the key"
+    folder = tmp_path / "bare" / "revision"
+    folder.mkdir(parents=True)
+    (folder / "paper.toml").write_text("[batch]\nword_deadline = 0\n",
+                                       encoding="utf-8")
+    assert revision.load_paper(tmp_path / "bare").word_deadline == 0.0
 
 
 def test_init_without_an_attic_declares_NONE_not_a_drive_letter(tmp_path):
@@ -1687,7 +1700,8 @@ class _FakeWord:
         self.doc, self.explode = doc or _FakeDoc(), explode
 
     @contextlib.contextmanager
-    def session(self, **_kw):
+    def session(self, **kw):
+        self.session_kwargs = kw
         yield "app"
 
     @contextlib.contextmanager
@@ -1722,6 +1736,36 @@ def test_validate_reports_a_file_word_refuses(tmp_path, monkeypatch):
     assert report.word_opened is False
     assert report.word_error
     assert not report.ok
+
+
+def test_the_protocol_puts_a_CEILING_on_its_Word_sessions(
+        tmp_path, monkeypatch, project):
+    """Row 6 of the 2026-09-03 review: Word's save path can hang
+    indefinitely, and until then the only ceiling anywhere was
+    pytest's. `[batch] word_deadline` (default 600 s) reaches
+    `validate`'s one session and `build`'s Compare, each named; 0 is
+    no ceiling, and the library default stays None."""
+    path = write(tmp_path / "x.docx", make_parts(para(run("x"))))
+    fake = _FakeWord()
+    monkeypatch.setattr(revision._validate, "_word", fake)
+
+    revision.validate(path, word_deadline=45)
+    assert fake.session_kwargs == {"deadline": 45,
+                                   "doing": "validating x.docx"}
+    revision.validate(path)
+    assert fake.session_kwargs == {}
+
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    built = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", built)
+    revision.build(project, clean)
+    assert built.kwargs["word_deadline"] == 600.0
+
+    unbounded = revision.load_paper(project.root)
+    object.__setattr__(unbounded, "word_deadline", 0.0)
+    revision.build(unbounded, clean)
+    assert built.kwargs["word_deadline"] is None
 
 
 def test_validate_ABORTS_on_a_batch_built_on_another_baseline(tmp_path):

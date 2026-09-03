@@ -65,6 +65,15 @@ _DOCTOR_SPENT = ("scripts/applied",)
 RESCUE_KEEP = 5
 
 
+#: Seconds one Word session may take for a build or a validate before
+#: its hidden instance is killed and the step fails (``[batch]
+#: word_deadline``; 0 means no ceiling). Word's save path can hang
+#: indefinitely and a Compare can too; a batch that waits forever is a
+#: batch nobody notices. Ten minutes is generous: a one-edit AFI batch
+#: measured 95 s for build and validate together, cold starts included.
+WORD_DEADLINE = 600.0
+
+
 #: Rescue copies are named by TIME, not by a counter, and that is not a
 #: cosmetic choice. The counter form takes the first FREE number, so the
 #: moment pruning removes 1 to 3 the next promote writes a *new* file

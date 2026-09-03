@@ -160,7 +160,8 @@ def render_accepted(batch: str | Path, anchors: Sequence[str], *,
 
 
 def validate(path: str | Path, baseline: str | Path | None = None,
-             *, use_word: bool = True) -> ValidateReport:
+             *, use_word: bool = True,
+             word_deadline: float | None = None) -> ValidateReport:
     """Run the gate ladder over a batch, fast to slow, failing early.
 
     1. offline OOXML lint — cheap, and aborts before Word is opened;
@@ -186,6 +187,10 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     :func:`run_gates` and `validate --run-gates` — which is a different
     thing from running them by default, and the difference is the whole
     of the promise.
+
+    `word_deadline` bounds the one Word session (gate 3), in seconds —
+    ``[batch] word_deadline`` when the CLI runs this; see
+    :func:`docxkit.word.session`.
     """
     path = Path(path)
     parts = package.read_parts(path)
@@ -218,7 +223,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     word_accept_glyph: str | None = None
     if use_word:
         try:
-            with _word.session() as app, \
+            with _word.session(**tracked._bounded(
+                    word_deadline, f"validating {path.name}")) as app, \
                     _word.open_doc(app, path) as doc:
                 report.word_opened = True
                 report.word_revisions = int(doc.Revisions.Count)

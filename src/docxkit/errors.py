@@ -28,6 +28,7 @@ __all__ = [
     "ProtocolError",
     "ScaffoldMissing",
     "StaleBatch",
+    "WordTimeout",
     "WorkingPending",
 ]
 
@@ -52,6 +53,20 @@ class FontMissing(DocxKitError):
     calibration run SKIPS the face (Word would substitute another and
     the measurement would describe that one), while a build that needs
     the manuscript's font should stop.
+    """
+
+
+class WordTimeout(DocxKitError):
+    """Word did not answer within the session's deadline, and was killed.
+
+    Word's save path can hang indefinitely, and so can a Compare on a
+    document it cannot digest; a COM call blocks the calling thread with
+    no way to give up. Until 2026-09-03 the only ceiling anywhere was
+    pytest's, which a paper script and `revision build` never run under.
+    A bounded session records its own hidden instance's pid at start,
+    kills THAT process on expiry — never an interactive Word, never
+    another session's — and the call that was blocked fails into this,
+    naming what it was doing.
     """
 
 

@@ -1517,7 +1517,12 @@ def cmd_revision_ship(args: argparse.Namespace) -> int:
     defaults to and the reason this is one command and not a shell `&&`.
     """
     from .word import shared_session
-    with shared_session():
+    paper = _paper(args)
+    # The block that OPENS the instance owns the ceiling — the deadlines
+    # `build` and `validate` would each set are nested requests here and
+    # ignored, so it is passed once, over both.
+    with shared_session(deadline=paper.word_deadline or None,
+                        doing=f"{paper.name}: build and validate"):
         if (code := cmd_revision_build(args)) != 0:
             # Third abort path, and the reason `_skipped_gates` is
             # called from each return rather than from one exit: every
@@ -1664,7 +1669,8 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
               "rounds; `revision build` is what makes a batch.")
         return 3
     report = validate(target, base if base.exists() else None,
-                      use_word=not args.no_word)
+                      use_word=not args.no_word,
+                      word_deadline=paper.word_deadline or None)
 
     print(f"{target.name}")
     if report.built_on_this_baseline is False:

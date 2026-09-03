@@ -228,7 +228,9 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
                            resolve_math=resolve_math, moves=moves,
                            reject_check=False,
                            force=force, progress=_say,
-                           carry=tracked.CARRIED_PARTS + paper.carry)
+                           carry=tracked.CARRIED_PARTS + paper.carry,
+                           # `[batch] word_deadline`; 0 is no ceiling
+                           word_deadline=paper.word_deadline or None)
 
     for name in restored_bookmarks(package.read_parts(paper.prev),
                                    package.read_parts(revised),

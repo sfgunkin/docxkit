@@ -1433,9 +1433,12 @@ def test_ship_opens_ONE_Word_session_for_the_pair(monkeypatch, project):
     from docxkit import revision, word
     opened: list[int] = []
 
+    kwargs: list[dict[str, object]] = []
+
     @contextlib.contextmanager
-    def counting(*, fast: bool = True):
+    def counting(*, fast: bool = True, **kw):
         opened.append(1)
+        kwargs.append(kw)
         yield object()
 
     monkeypatch.setattr(word, "session", counting)
@@ -1445,6 +1448,9 @@ def test_ship_opens_ONE_Word_session_for_the_pair(monkeypatch, project):
             "--paper", str(project.root), "--no-word")
 
     assert opened == [1], f"{len(opened)} Word session(s) for one batch"
+    # and the ONE session carries the paper's ceiling over both halves
+    assert kwargs == [{"deadline": 600.0,
+                       "doing": f"{project.name}: build and validate"}]
 
 
 def test_ship_does_NOT_validate_after_a_failed_build(monkeypatch, project,

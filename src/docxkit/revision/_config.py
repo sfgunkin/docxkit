@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import ProtocolError
-from ._common import _CONFIG, _DIR, _DOCTOR_SPENT, RESCUE_KEEP
+from ._common import _CONFIG, _DIR, _DOCTOR_SPENT, RESCUE_KEEP, WORD_DEADLINE
 
 # --------------------------------------------------------------- config
 
@@ -40,6 +40,10 @@ class Paper:
     :func:`validate`."""
     attic: Path | None
     rescue_keep: int = RESCUE_KEEP
+    word_deadline: float = WORD_DEADLINE
+    """Seconds a Word session may take in `build` or `validate` before
+    it is killed and the step fails; ``0`` is no ceiling. See
+    :data:`docxkit.revision._common.WORD_DEADLINE`."""
     doctor_skip: tuple[str, ...] = ()
     """Directories `doctor` should not survey, from ``[doctor] skip``.
 
@@ -147,7 +151,7 @@ class Paper:
 #: key read here and not listed raises, so the list cannot fall behind.
 KNOWN: dict[str, frozenset[str]] = {
     "paper": frozenset({"name", "language", "working", "prev"}),
-    "batch": frozenset({"author", "rescue_keep", "carry"}),
+    "batch": frozenset({"author", "rescue_keep", "carry", "word_deadline"}),
     "verify": frozenset({"commands"}),
     "attic": frozenset({"path"}),
     "doctor": frozenset({"skip"}),
@@ -218,6 +222,8 @@ def load_paper(start: str | Path | None = None) -> Paper:
         gates=tuple(_read(data, "verify", "commands", ())),
         attic=Path(attic) if attic else None,
         rescue_keep=int(_read(data, "batch", "rescue_keep", RESCUE_KEEP)),
+        word_deadline=float(_read(data, "batch", "word_deadline",
+                                  WORD_DEADLINE)),
         doctor_skip=tuple(_read(data, "doctor", "skip", _DOCTOR_SPENT)),
         carry=tuple(_read(data, "batch", "carry", ())),
     )

@@ -130,7 +130,8 @@ class _FakeWordModule:
         self.compared: dict[str, object] = {}
 
     @contextlib.contextmanager
-    def session(self):
+    def session(self, **kw):
+        self.session_kwargs = kw
         yield object()
 
     @contextlib.contextmanager
@@ -193,6 +194,25 @@ def _build(monkeypatch, body: str, sources, **kw):
 
 
 # ------------------------------------------------------------ the build ---
+
+
+def test_a_word_deadline_reaches_the_Compare_session_and_names_it(
+        monkeypatch, sources):
+    """`word_deadline` is handed to `_word.session` as the ceiling on
+    the Compare, with what it is doing in the message — and ONLY when
+    one is asked for, so a caller (and every fake in this file) that
+    knows no `deadline` keyword is untouched."""
+    _report, fake = _build(monkeypatch, clean_document(), sources,
+                           word_deadline=30)
+    original, revised, _out = sources
+
+    assert fake.session_kwargs == {
+        "deadline": 30,
+        "doing": f"comparing {Path(revised).name} against "
+                 f"{Path(original).name}"}
+
+    _report, bare = _build(monkeypatch, clean_document(), sources)
+    assert bare.session_kwargs == {}
 
 
 def test_build_writes_the_deliverable_and_stamps_it(monkeypatch, sources):

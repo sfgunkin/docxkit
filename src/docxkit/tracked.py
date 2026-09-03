@@ -703,7 +703,14 @@ def structure_diff(was: dict[str, int], now: dict[str, int]) -> list[str]:
             for tag in STRUCTURE_TAGS if was.get(tag, 0) != now.get(tag, 0)]
 
 
-def verify(path: str | Path) -> dict[str, Any]:
+def _bounded(deadline: float | None, doing: str) -> dict[str, Any]:
+    """The keywords for `_word.session` — only when a ceiling is asked
+    for, so a caller (or a fake) that knows no `deadline` is untouched."""
+    return {"deadline": deadline, "doing": doing} if deadline else {}
+
+
+def verify(path: str | Path, *,
+           word_deadline: float | None = None) -> dict[str, Any]:
     """Open a document in Word and report what Word actually reads back.
 
     The check that matters for any tracked-changes file, however it was
@@ -712,11 +719,13 @@ def verify(path: str | Path) -> dict[str, Any]:
 
     Returns the counts Word reports alongside the counts the package
     contains; when they disagree, Word altered the file on open.
+    `word_deadline` bounds the session (see :func:`docxkit.word.session`).
     """
     path = Path(path)
     parts = read_parts(path)
     in_package = package_counts(parts)
-    with _word.session() as word, _word.open_doc(word, path) as opened:
+    with _word.session(**_bounded(word_deadline, f"verifying {path.name}")) \
+            as word, _word.open_doc(word, path) as opened:
         in_word = {
             "revisions": int(opened.Revisions.Count),
             "comments": int(opened.Comments.Count),
@@ -1153,6 +1162,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           verify_in_word: bool = True, force: bool = False,
           carry: tuple[str, ...] = CARRIED_PARTS,
           progress: Callable[[str], None] | None = None,
+          word_deadline: float | None = None,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
 
@@ -1246,7 +1256,10 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     try:
         flat = staging / "flat.xml"
 
-        with _word.session() as word, \
+        with _word.session(**_bounded(
+                word_deadline,
+                f"comparing {Path(revised).name} against "
+                f"{Path(original).name}")) as word, \
                 _word.open_doc(word, original) as orig, \
                 _word.open_doc(word, revised) as rev:
             cmp_ = _word.compare_documents(
@@ -1451,7 +1464,10 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         report.comments_total = package_counts(parts)["comments"]
 
         if verify_in_word:
-            checked = verify(building)
+            # the keyword only when a ceiling is asked for — `_bounded`'s
+            # rule, so a fake `verify` that knows no keyword is untouched
+            checked = verify(building, **({"word_deadline": word_deadline}
+                                          if word_deadline else {}))
             report.verified_comments = checked["word"]["comments"]
             report.verified_revisions = checked["word"]["revisions"]
             if not checked["comments_match"]:
