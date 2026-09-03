@@ -5,11 +5,13 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._config import Paper, load_paper
+from ._common import _SECTION_RE
+from ._config import KNOWN, Paper, load_paper
 
 # ------------------------------------------------ who else knows the paper --
 
@@ -45,7 +47,8 @@ class Doubt:
     text: str
     """The literal or pattern as written."""
     kind: str
-    """``"literal"`` or ``"pattern"``."""
+    """``"literal"``, ``"pattern"``, or ``"key"`` — a config key within
+    a typo of one docxkit reads, which took its default in silence."""
 
     def __str__(self) -> str:
         # forward slashes whatever the platform, like every other path
@@ -78,10 +81,51 @@ def _selects_declared(text: str, paper: Paper) -> bool:
     return False
 
 
+#: A bare `key =` at the start of a line. Quoted and dotted keys are not
+#: matched and not reported: docxkit never writes either.
+_KEY_RE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
+
+
+def _key_doubts(paper: Paper) -> list[Doubt]:
+    """Keys in the sections docxkit reads that are within a typo of a
+    key it reads — and NOT every key it does not read.
+
+    `load_paper` takes every key through `.get` with a default, so
+    `rescue_kep = 3` is a rescue ladder five deep that nobody set, and
+    nothing says so. The broad rule — report any key not in
+    :data:`KNOWN` — was measured before it was written, against the nine
+    registered papers (2026-09-03): 29 distinct keys, 10 of them
+    docxkit's. `[deliverable]`, `[git]`, `[analysis]`, `[verify] audits`,
+    `[batch] text_only` are the papers' own, kept beside the protocol's
+    on purpose, and a report that named them all would be AFI's 134
+    lines again. A near-miss is a typo; a stranger is a neighbour.
+    """
+    out: list[Doubt] = []
+    section: str | None = None
+    for n, line in enumerate(
+            paper.config.read_text(encoding="utf-8").splitlines(), 1):
+        if header := _SECTION_RE.match(line):
+            section = header.group(1).strip()
+            continue
+        known = KNOWN.get(section or "")
+        if not known or not (m := _KEY_RE.match(line)):
+            continue
+        key = m.group(1)
+        if key in known:
+            continue
+        close = difflib.get_close_matches(key, sorted(known), n=1,
+                                          cutoff=0.8)
+        if close:
+            out.append(Doubt(paper.config.relative_to(paper.root), n,
+                             f"[{section}] {key} — {close[0]}?", "key"))
+    return out
+
+
 def doctor(paper: Paper | None = None, *,
            start: str | Path | None = None) -> list[Doubt]:
     """Every place in the project that selects a manuscript OTHER than
-    the declared one.
+    the declared one — and, first, every key in ``paper.toml`` that is
+    a typo of one the protocol reads (see :func:`_key_doubts`).
 
     The survey a migration needs and a grep cannot do. Retiring the old
     filename is left to the migrator, who searches for it — and the
@@ -113,7 +157,7 @@ def doctor(paper: Paper | None = None, *,
     for spent in paper.doctor_skip:
         skip.add((paper.root / spent).resolve())
 
-    out: list[Doubt] = []
+    out = _key_doubts(paper)
     for path in sorted(paper.root.rglob("*")):
         if path.suffix not in _DOCTOR_SUFFIXES or not path.is_file():
             continue
@@ -138,8 +182,10 @@ def doctor(paper: Paper | None = None, *,
                     seen.add(text)
                     out.append(Doubt(path.relative_to(paper.root), n,
                                      text, kind))
-    # PATTERNS first. The docstring argues a pattern is the dangerous
-    # kind and the first report buried three of them among 131 literals
-    # on AFI — an unreadable gate is one people stop running, which is
-    # the failure this whole file reserves an S3 for.
-    return sorted(out, key=lambda d: (d.kind != "pattern", d.path, d.line))
+    # KEYS first, then PATTERNS. A typo'd key changes what the protocol
+    # DOES; a pattern is the dangerous kind of selection, and the first
+    # report buried three of them among 131 literals on AFI — an
+    # unreadable gate is one people stop running, which is the failure
+    # this whole file reserves an S3 for.
+    return sorted(out, key=lambda d: (d.kind != "key", d.kind != "pattern",
+                                      d.path, d.line))

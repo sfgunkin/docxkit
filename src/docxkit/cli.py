@@ -1368,14 +1368,22 @@ def cmd_revision_doctor(args: argparse.Namespace) -> int:
         print("  nothing else in the project selects a manuscript")
         return 0
 
+    keys = [d for d in found if d.kind == "key"]
     patterns = [d for d in found if d.kind == "pattern"]
     literals = [d for d in found if d.kind == "literal"]
 
-    # PATTERNS in full, literals counted. The first version printed all
-    # of them and AFI answered with 134 lines, three of which mattered;
-    # about 130 were spent builders and a shipped replication package,
-    # which under the forward-only rule are the record rather than a
-    # defect. An unreadable gate is one people switch off.
+    # KEYS and PATTERNS in full, literals counted. The first version
+    # printed all of them and AFI answered with 134 lines, three of which
+    # mattered; about 130 were spent builders and a shipped replication
+    # package, which under the forward-only rule are the record rather
+    # than a defect. An unreadable gate is one people switch off.
+    if keys:
+        print(f"\n{len(keys)} config key(s) within a typo of one the "
+              f"protocol reads — a misspelt key takes its\ndefault in "
+              f"silence, so the value written here is not the one in "
+              f"force.")
+        for doubt in keys:
+            print(f"  {doubt}")
     if patterns:
         print(f"\n{len(patterns)} PATTERN selection(s) — these name no "
               f"file, so a rename does\nnot break them: they quietly "

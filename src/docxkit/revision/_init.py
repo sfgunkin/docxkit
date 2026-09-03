@@ -12,7 +12,7 @@ from pathlib import Path
 from .. import guard as _guard
 from .. import package
 from ..errors import ProtocolError
-from ._common import _CONFIG, _DIR, RESCUE_KEEP, _today
+from ._common import _CONFIG, _DIR, _SECTION_RE, RESCUE_KEEP, _today
 from ._config import Paper, load_paper
 from ._registry import register
 
@@ -101,7 +101,10 @@ rescue_keep = {rescue_keep}
 commands = [{gates}]
 
 [attic]
-path = '{attic}'
+# Where retired generations of the manuscript go — older than the
+# rescue ladder keeps — and what `doctor` should not survey. The
+# paper's to name; left unset, nothing is skipped.
+{attic}
 """
 
 
@@ -116,16 +119,6 @@ def _toml_str(value: str) -> str:
     the escaping matters only for the rare name carrying a quote.
     """
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-#: A `[section]` header on a line of its own, which is how every config
-#: this package writes spells one. A key written in dotted form
-#: (`paper.working = …`) or an inline table would not be seen — and is
-#: not silently ignored either: :func:`_set_key` inserts the key it was
-#: asked for, and `load_paper` then reads the LAST definition, so the
-#: intended value wins rather than a duplicate being written into a file
-#: that already said something else.
-_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 
 
 def _set_key(text: str, section: str, key: str, value: str) -> str:
@@ -341,7 +334,12 @@ def init(root: str | Path, source: str | Path, *,
             language=language or "en", author=author or "Revision",
             gates="", working=_toml_str(declared),
             rescue_keep=RESCUE_KEEP,
-            attic=str(attic) if attic else f"D:\\PaperAttic\\{root.name}",
+            # No attic given: the key stays out, and the header stays
+            # in for the day one is named. It used to default to
+            # `D:\PaperAttic\<name>` — one machine's drive letter,
+            # written into every paper's config (review 2026-09-03).
+            attic=(f"path = {_toml_str(str(attic))}" if attic
+                   else '# path = ""'),
         ), encoding="utf-8")
 
     # A paper the protocol scaffolded is a paper `status --all` should

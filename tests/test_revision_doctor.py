@@ -50,6 +50,67 @@ def test_a_clean_project_reports_nothing(paper):
     assert doctor(paper) == []
 
 
+# --- the config's own keys ----------------------------------------------
+#
+# `load_paper` reads every key with `.get` and a default, so
+# `rescue_kep = 3` takes the default in silence. What CAN be asked is
+# narrower than "is every key known": measured over the nine registered
+# papers on 2026-09-03, their configs carry 29 distinct keys and docxkit
+# reads 10 — `[deliverable]`, `[git]`, `[analysis]`, `[verify] audits`,
+# `[batch] text_only` are the papers' own, kept beside the protocol's on
+# purpose (`_set_key`'s docstring says why). So a key docxkit does not
+# read is not a finding; a key that is a NEAR-MISS of one it does read
+# is a typo, and that is what is reported.
+
+
+def _reconfigure(paper, old: str, new: str) -> int:
+    """Rewrite one line of paper.toml; return the line's number."""
+    text = paper.config.read_text(encoding="utf-8")
+    assert old in text, old
+    paper.config.write_text(text.replace(old, new), encoding="utf-8")
+    lines = paper.config.read_text(encoding="utf-8").splitlines()
+    return next(n for n, ln in enumerate(lines, 1) if new in ln)
+
+
+def test_a_MISSPELT_key_in_a_section_docxkit_reads_is_a_doubt(paper):
+    line = _reconfigure(paper, "rescue_keep = 5", "rescue_kep = 3")
+
+    found = doctor(paper)
+
+    assert len(found) == 1, found
+    d = found[0]
+    assert d.kind == "key"
+    assert d.path.as_posix() == "revision/paper.toml"
+    assert d.line == line
+    assert "rescue_kep" in d.text and "rescue_keep" in d.text
+
+
+def test_a_papers_OWN_key_beside_the_protocols_is_not_a_doubt(paper):
+    """The shapes the nine real configs hold today, and a whole section
+    docxkit never reads."""
+    from docxkit.revision import _set_key
+
+    text = paper.config.read_text(encoding="utf-8")
+    text = _set_key(text, "verify", "audits", '["refstyle"]')
+    text = _set_key(text, "batch", "text_only", "true")
+    text = _set_key(text, "paper", "record", '"log.md"')
+    text += "\n[deliverable]\ncumulative = true\n"
+    paper.config.write_text(text, encoding="utf-8")
+
+    assert doctor(paper) == []
+
+
+def test_a_KEY_doubt_comes_before_every_other_kind(paper):
+    """A typo'd key changes what the protocol DOES — the rescue ladder's
+    depth, which file is the paper — where a stale literal changes what
+    one script reads. It goes first, and prints in full."""
+    _reconfigure(paper, 'language = "en"', 'langauge = "en"')
+    _write(paper, "scripts/old.py", "OLD = 'Report/afi_v11.docx'\n")
+    _write(paper, "scripts/glob.py", "P = glob('Report/le_v*.docx')\n")
+
+    assert [d.kind for d in doctor(paper)] == ["key", "pattern", "literal"]
+
+
 def test_a_stale_LITERAL_is_reported_with_its_line(paper):
     """The Parental_style and API/HPPA shape: a script pinned to the
     name the paper used to have."""

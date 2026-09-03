@@ -5,9 +5,20 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
+
+#: A `[section]` header on a line of its own, which is how every config
+#: this package writes spells one. A key written in dotted form
+#: (`paper.working = …`) or an inline table would not be seen — and is
+#: not silently ignored either: `_set_key` inserts the key it was asked
+#: for, and `load_paper` then reads the LAST definition, so the intended
+#: value wins rather than a duplicate being written into a file that
+#: already said something else. Here rather than in `_init` because
+#: `doctor` reads the config by line too, and sits below `_init`.
+_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 

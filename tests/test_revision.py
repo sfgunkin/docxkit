@@ -358,6 +358,46 @@ def test_paper_falls_back_when_the_config_is_bare(tmp_path):
     assert paper.attic is None
 
 
+def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
+    """The gate's own instrument. `doctor` measures a config key against
+    `KNOWN`; if `load_paper` could read a key the table does not list,
+    a typo of THAT key would be invisible. So every read goes through
+    `_read`, which raises on an undeclared one — the table cannot fall
+    behind the code, because the suite loads a paper on every run."""
+    from docxkit.revision._config import KNOWN, _read
+
+    assert _read({"batch": {"author": "A"}}, "batch", "author", "x") == "A"
+    assert _read({}, "batch", "author", "x") == "x"
+    assert _read({"batch": {}}, "batch", "carry", ()) == ()
+    with pytest.raises(KeyError, match="KNOWN"):
+        _read({"batch": {"rescue_kep": 3}}, "batch", "rescue_kep", 5)
+    # the ten keys the protocol reads, measured 2026-09-03 against the
+    # 29 the nine registered papers carry
+    assert sum(len(keys) for keys in KNOWN.values()) == 10
+
+
+def test_init_without_an_attic_declares_NONE_not_a_drive_letter(tmp_path):
+    """The template wrote `D:\\PaperAttic\\<name>` for a paper given no
+    attic — one machine's drive letter, shipped as everyone's default
+    (review 2026-09-03, row 9). An attic is the paper's to name; left
+    unnamed, `doctor` skips nothing extra, and the section stays in the
+    file so naming it later is a one-line edit under a header that is
+    already there."""
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "m.docx", make_parts(para(run("x"))))
+
+    paper = revision.init(tmp_path / "proj", src)
+
+    assert paper.attic is None
+    text = paper.config.read_text(encoding="utf-8")
+    assert "D:" not in text
+    assert "[attic]" in text
+    later = revision._set_key(text, "attic", "path", '"E:/attic"')
+    assert '[attic]\npath = "E:/attic"' in later
+    paper.config.write_text(later, encoding="utf-8")
+    assert revision.load_paper(paper.root).attic == Path("E:/attic")
+
+
 # ------------------------------------------------------------- state
 
 def test_state_reads_truth_and_proposal(tmp_path):

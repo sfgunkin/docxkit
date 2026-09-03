@@ -134,6 +134,36 @@ class Paper:
         return self.build_dir / "rescue"
 
 
+#: Every key `load_paper` reads, by section — the protocol's end of the
+#: file. The rest of ``paper.toml`` is the paper's: measured over the
+#: nine registered papers on 2026-09-03, their configs carry 29 distinct
+#: keys and these are the 10 docxkit reads; `[deliverable]`, `[git]`,
+#: `[analysis]`, `[verify] audits`, `[batch] text_only` are all real and
+#: all theirs, kept beside the protocol's on purpose (see `_set_key`).
+#: So this is not a schema to refuse on. It is what `doctor` measures a
+#: key AGAINST: one within a typo of a name here is a typo, and a typo
+#: takes its default in silence — `rescue_kep = 3` is a rescue ladder
+#: five deep that nobody set. `_read` holds the table to the code: a
+#: key read here and not listed raises, so the list cannot fall behind.
+KNOWN: dict[str, frozenset[str]] = {
+    "paper": frozenset({"name", "language", "working", "prev"}),
+    "batch": frozenset({"author", "rescue_keep", "carry"}),
+    "verify": frozenset({"commands"}),
+    "attic": frozenset({"path"}),
+    "doctor": frozenset({"skip"}),
+}
+
+
+def _read(data: dict[str, Any], section: str, key: str,
+          default: Any) -> Any:
+    """``[section] key``, or `default` — through :data:`KNOWN`, always."""
+    if key not in KNOWN.get(section, frozenset()):
+        raise KeyError(f"[{section}] {key} is read but not declared in "
+                       f"KNOWN — add it there, so `doctor` can see a typo "
+                       f"of it")
+    return data.get(section, {}).get(key, default)
+
+
 def find_config(start: str | Path | None = None) -> Path:
     """Locate ``revision/paper.toml`` from `start`, walking upwards.
 
@@ -164,10 +194,6 @@ def load_paper(start: str | Path | None = None) -> Paper:
     with config.open("rb") as fh:
         data: dict[str, Any] = tomllib.load(fh)
 
-    paper = data.get("paper", {})
-    batch_cfg = data.get("batch", {})
-    verify = data.get("verify", {})
-
     def _abs(value: str, fallback: str) -> Path:
         return (root / (value or fallback)).resolve()
 
@@ -176,21 +202,22 @@ def load_paper(start: str | Path | None = None) -> Paper:
     # should rely on: `init` now adopts the author's file where it is,
     # and writes the path it adopted. A config that says nothing is an
     # old config, and it still resolves.
-    working = _abs(paper.get("working", ""), f"{_DIR}/working.docx")
-    prev = _abs(paper.get("prev", ""), f"{_DIR}/build/prev.docx")
-    attic = data.get("attic", {}).get("path")
+    working = _abs(_read(data, "paper", "working", ""),
+                   f"{_DIR}/working.docx")
+    prev = _abs(_read(data, "paper", "prev", ""), f"{_DIR}/build/prev.docx")
+    attic = _read(data, "attic", "path", None)
     return Paper(
         root=root,
         config=config,
         working=working,
         prev=prev,
         build_dir=prev.parent,
-        name=paper.get("name", root.name),
-        author=batch_cfg.get("author", "Revision"),
-        language=paper.get("language", "en"),
-        gates=tuple(verify.get("commands", ())),
+        name=_read(data, "paper", "name", root.name),
+        author=_read(data, "batch", "author", "Revision"),
+        language=_read(data, "paper", "language", "en"),
+        gates=tuple(_read(data, "verify", "commands", ())),
         attic=Path(attic) if attic else None,
-        rescue_keep=int(batch_cfg.get("rescue_keep", RESCUE_KEEP)),
-        doctor_skip=tuple(data.get("doctor", {}).get("skip", _DOCTOR_SPENT)),
-        carry=tuple(batch_cfg.get("carry", ())),
+        rescue_keep=int(_read(data, "batch", "rescue_keep", RESCUE_KEEP)),
+        doctor_skip=tuple(_read(data, "doctor", "skip", _DOCTOR_SPENT)),
+        carry=tuple(_read(data, "batch", "carry", ())),
     )

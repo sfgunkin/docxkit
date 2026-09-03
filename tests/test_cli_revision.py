@@ -1204,6 +1204,29 @@ def test_doctor_lists_the_literals_when_asked(monkeypatch, project, capsys):
     assert "s2.py:1" in out
 
 
+def test_doctor_prints_a_MISSPELT_config_key_in_full_and_FIRST(
+        monkeypatch, project, capsys):
+    """`rescue_kep = 3` takes the default in silence, and the rescue
+    ladder is then a depth nobody set. A key doubt names the line, the
+    key and the one it is within a typo of; it prints before the
+    patterns and is never counted away like a literal."""
+    cfg = project.config
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        "rescue_keep = 5", "rescue_kep = 3"), encoding="utf-8")
+    (project.root / "s2.py").write_text('P = "Report/le_v3.docx"\n',
+                                        encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "doctor",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "1 config key(s)" in out, out
+    assert "revision/paper.toml:" in out
+    assert "rescue_kep" in out and "rescue_keep" in out
+    assert out.index("rescue_kep") < out.index("literal selection")
+
+
 # --- what the cli run of 2026-08-18 found here ---------------------------
 #
 # `cmd_revision_ingest` was cli.py's largest cluster with 13, and twelve
