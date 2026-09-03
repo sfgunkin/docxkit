@@ -14,6 +14,48 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `_set_tc_w` cannot see a `w:tcW` written `w:type` first, and writes a second one beside it~~ — FIXED 03.09, `6c94bd8`
+<!-- status: fixed -->
+
+**Fixed 2026-09-03** — `6c94bd8`. `_TCW_RE` is `<w:tcW\b[^>]*/>` now,
+like `_TBLW_RE` twelve lines below it. A type-first cell is REPLACED,
+not doubled (`test_tables_nested`), and `test_regex_registry` holds the
+count of order-bound attribute patterns at zero across every module,
+the `revision/` halves included — the check that would have found this
+the day the sibling was fixed. Two tests; reverting the module fails
+both. Nine gates green, 80 manuscripts swept.
+
+Filed from the 2026-09-03 structural review (`REVIEW_2026-09-03.md`).
+
+`_table_layout.py:81` read `_TCW_RE = <w:tcW w:w="[^"]*" w:type="\w+"/>`
+— attribute order bound. Its one caller, `_set_tc_w` (line 481), takes
+an empty match as "this cell has no width" and INSERTS one at the schema
+slot (lines 489–493). A cell whose width Word wrote as
+`<w:tcW w:type="dxa" w:w="1701"/>` therefore ended with two `w:tcW` in one
+`w:tcPr` — the shape the 2026-08-20 round fixed in eight writers under
+the contract "leave exactly one, and it is mine". Word takes the first,
+which is the OLD width, so `fit_columns` returned its plan and the cell
+kept the width it had. Nothing was red: Word opens the file, so `lint`
+passes; `compare`'s FORMAT layer does not read cell widths; and
+`FitReport` is the plan, not a read-back.
+
+**Measured 2026-09-03**, a strided sample of 150 of the 2,854 `.docx`
+under `F:\OneDrive\__Documents`, `word/document.xml` only: 84 spell
+`w:w` first, **5 spell `w:type` first**, and 3 carry BOTH orders in one
+document — so the failure was per cell, inside a table that is otherwise
+fitted. The same 5 spell `w:tblW` type-first, which is the Corruption
+and Wages case CONTRIBUTING already records.
+
+The diagnosis is six lines of the same file. `_TBLW_RE` at line 93 was
+rewritten to `<w:tblW\b[^>]*/>` with a comment naming that manuscript
+and saying "the bookmark patterns in `_xml` carry the same warning" —
+and the sibling pattern at line 81, same family, same afternoon, kept
+the order-bound spelling. Of 231 literal `re.compile` patterns in the
+package (AST count, 2026-09-03) four spell two namespaced attributes in
+sequence; the other three (`_cite_audit.py:64`, `_xml.py:532`,
+`styles.py:176`) are one-attribute-per-alternative or lookaheads and are
+not order-bound. It was the last one.
+
 ### ~~S4 — `math --check` reports a redline's DELETED maths as a stranded display~~ — FIXED 02.09, `fc6c1b3`
 <!-- status: fixed -->
 
