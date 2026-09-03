@@ -51,28 +51,33 @@ def test_roots_on_the_command_line_win(monkeypatch):
 
 
 def test_roots_come_from_the_environment_when_argv_is_empty(monkeypatch):
-    monkeypatch.setenv(SWEEP.CORPUS_ENV, "D:/papers")
+    monkeypatch.setenv(SWEEP.CORPUS_ENV, "/srv/papers")
 
-    assert SWEEP.corpus_roots([]) == ["D:/papers"]
+    assert SWEEP.corpus_roots([]) == ["/srv/papers"]
 
 
 def test_several_roots_split_on_the_PLATFORM_separator(monkeypatch):
     """`os.pathsep`, not a comma: a Windows root contains a colon and a
     POSIX one contains neither, so the separator has to be the one the
-    platform already uses for exactly this."""
-    monkeypatch.setenv(SWEEP.CORPUS_ENV,
-                       os.pathsep.join(["D:/papers", "D:/redlines"]))
+    platform already uses for exactly this.
 
-    assert SWEEP.corpus_roots([]) == ["D:/papers", "D:/redlines"]
+    Which is also why these three tests spell their roots WITHOUT a
+    drive letter: `D:/papers` is one root on Windows and two on Linux,
+    and written that way they failed on every CI run until 2026-09-03
+    — behind a red step nobody read."""
+    monkeypatch.setenv(SWEEP.CORPUS_ENV,
+                       os.pathsep.join(["/srv/papers", "/srv/redlines"]))
+
+    assert SWEEP.corpus_roots([]) == ["/srv/papers", "/srv/redlines"]
 
 
 def test_an_EMPTY_entry_is_not_a_root(monkeypatch):
     """A trailing separator is the ordinary way to write one of these,
     and `"".split(os.pathsep)` yields `['']` — a root that resolves to
     the working directory and sweeps whatever happens to be under it."""
-    monkeypatch.setenv(SWEEP.CORPUS_ENV, f"D:/papers{os.pathsep}")
+    monkeypatch.setenv(SWEEP.CORPUS_ENV, f"/srv/papers{os.pathsep}")
 
-    assert SWEEP.corpus_roots([]) == ["D:/papers"]
+    assert SWEEP.corpus_roots([]) == ["/srv/papers"]
 
 
 def test_an_UNSET_corpus_is_no_roots_at_all(monkeypatch):

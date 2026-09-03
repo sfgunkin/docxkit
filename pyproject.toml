@@ -99,6 +99,17 @@ docxkit = ["py.typed"]
 extend_exclude = ["tools", "tests"]
 ignore = ["DEP002"]
 
+# `pywin32` is the DISTRIBUTION; what `word.py` imports is `win32com`
+# and `pythoncom`, and deptry learns that mapping from the installed
+# package's metadata — which is exactly what a Linux runner does not
+# have, the extra being Windows-only. So on CI both imports read as
+# "missing from the dependency definitions" (DEP001) and the gate was
+# red on every interpreter from the day it was added (2026-09-02) —
+# unseen, behind the typography failures. Stated here, the mapping
+# holds wherever the extra is absent.
+[tool.deptry.package_module_name_map]
+pywin32 = ["win32com", "pythoncom"]
+
 [tool.ruff]
 line-length = 79
 target-version = "py312"

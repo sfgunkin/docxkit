@@ -21,14 +21,22 @@ import re
 
 import pytest
 
-from docxkit.equations import latex_to_omml
+from docxkit.equations import find_mml2omml_xsl, latex_to_omml
+from docxkit.errors import PackageError
 
 # Every test here builds its maths from LaTeX, which needs the `latex`
-# extra. Without this line the file FAILED 22 tests on a checkout that
-# lacked it — which CI was, from the day this file landed (2026-08-24)
-# until 2026-09-03: twelve red runs, unread. CI installs the extra now,
-# so there they run; here they skip and say why.
+# extra AND Word's own MML2OMML.XSL. Without the first line the file
+# FAILED 22 tests on a checkout that lacked the extra — which CI was,
+# from the day this file landed (2026-08-24) until 2026-09-03: twelve
+# red runs, unread. Installing the extra there exposed the second half
+# the same hour: the XSL ships with Office, which a Linux runner does
+# not have, so the 22 failed again with a different message. Here they
+# run; on a machine without either, they skip and say which.
 pytest.importorskip("latex2mathml", reason="needs docxkit[latex]")
+try:
+    find_mml2omml_xsl()
+except PackageError as exc:
+    pytest.skip(f"needs Word's MML2OMML.XSL: {exc}", allow_module_level=True)
 
 UPRIGHT = '<m:sty m:val="p"/>'
 #: Word draws a variable from the Mathematical Alphanumeric block; an
