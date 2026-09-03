@@ -14,6 +14,39 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — every CI run since 2026-08-24 was red, on 22 tests that need an extra CI does not install~~ — FIXED 03.09, `46a8254`
+<!-- status: fixed -->
+
+**Fixed 2026-09-03** — `46a8254`. `tests/test_equations_typography.py`
+`importorskip`s `latex2mathml` at module level with the reason, and CI
+installs `.[dev,pdf,latex]` so the 22 tests run there rather than
+skip. CONTRIBUTING and the pyproject comment that said `.[dev,pdf]`
+say the new thing.
+
+Found by the 2026-09-03 review's push, whose author looked at the
+Actions tab because the review had just written "CI has not seen the
+last two days" — and found it had not seen a GREEN run in ten. Twelve
+consecutive failures, from `4032e04` (08-31) to `cc9eeec` (09-03), and
+by the file's own history from `7f979cc` on 08-24, when
+`test_equations_typography.py` landed calling `latex_to_omml` in 22
+tests with no guard. CI installs `.[dev,pdf]`; the `latex` extra was
+absent; every run raised `ModuleNotFoundError` 22 times and stopped.
+
+**Measured before touching anything**: the whole suite, serially, with
+`latex2mathml` hidden from `sys.modules`, fails exactly those 22 tests
+and nothing else — the other gates had been green the whole time,
+behind a red one nobody read. That is the 08-14 shape CONTRIBUTING
+records (57 runs) in its third instance, and an S3 by this file's
+scale: a gate that is always red is a gate people stop reading, and
+the 09-01 review's "api runs in CI against a real tag" was written
+over a red run.
+
+The lesson it adds to the two before it: **a test that needs an
+optional extra says so with `importorskip`, and CI installs every
+extra a test can use.** Skipping alone would have made the red quiet
+on the one machine that exists to run those tests; installing alone
+leaves the next clean checkout where this one was.
+
 ### ~~S2 — `edit_in_place` writes the manuscript back with a COPY, which is the interruptible write `write_docx` exists to avoid~~ — FIXED 03.09, `b934730`
 <!-- status: fixed -->
 
