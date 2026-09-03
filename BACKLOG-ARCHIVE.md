@@ -14,6 +14,37 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — three more layers of red CI behind the first: Word's XSL, the sweep roots, the `deps` gate~~ — FIXED 03.09, `d1b2964`
+<!-- status: fixed -->
+
+**Fixed 2026-09-03** — `d1b2964`. `test_equations_typography.py` skips
+at module level, with the reason, when `find_mml2omml_xsl` finds no
+XSL (measured by pointing `DOCXKIT_MML2OMML_XSL` at nowhere: 1
+skipped, saying which); the three sweep roots are `/srv/papers`, one
+root on both platforms; `[tool.deptry.package_module_name_map]` says
+`pywin32` provides `win32com` and `pythoncom`. Nothing in the package
+changed.
+
+Found the same evening as the entry below, by fixing it. Installing
+`latex2mathml` on the runner turned the 22 red tests into 22
+DIFFERENT red tests: they also need Word's own `MML2OMML.XSL`, which
+ships with Office and not with Ubuntu. And behind those sat two more
+failures that had never once been seen off this machine: three
+`test_sweep.py` roots spelt `D:/papers`, which `os.pathsep` splits
+into two on Linux — the test's own docstring explains exactly why, and
+the test itself did not follow it — and the `deps` gate, added 09-02
+and red on every interpreter since, because deptry learns that
+`pywin32` provides `win32com` and `pythoncom` from the installed
+distribution, which a Linux runner cannot have.
+
+Three layers of red, each visible only once the one in front was
+fixed: the 08-14 shape exactly, and the reason CI runs every step even
+when an earlier one is red — which it did, and the second step went
+unread because the first was already red. **A red gate has to be read
+all the way down**, and a gate added to the chain has to be watched
+through its first green run somewhere other than the machine it was
+written on.
+
 ### ~~S3 — every CI run since 2026-08-24 was red, on 22 tests that need an extra CI does not install~~ — FIXED 03.09, `46a8254`
 <!-- status: fixed -->
 
@@ -45,7 +76,8 @@ The lesson it adds to the two before it: **a test that needs an
 optional extra says so with `importorskip`, and CI installs every
 extra a test can use.** Skipping alone would have made the red quiet
 on the one machine that exists to run those tests; installing alone
-leaves the next clean checkout where this one was.
+leaves the next clean checkout where this one was. What the first
+green step then exposed is the entry above this one.
 
 ### ~~S2 — `edit_in_place` writes the manuscript back with a COPY, which is the interruptible write `write_docx` exists to avoid~~ — FIXED 03.09, `b934730`
 <!-- status: fixed -->
