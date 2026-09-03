@@ -16,7 +16,9 @@ failure that a script can tell apart from a bad redline.
 from __future__ import annotations
 
 import sys
+import threading
 import time
+import types
 
 import pytest
 from conftest import make_parts, para, run, write
@@ -322,3 +324,81 @@ def test_an_ABORTED_ladder_says_the_gates_did_not_run(monkeypatch, tmp_path,
     assert code == 2, out
     assert not marker.exists(), "a gate ran on a batch that did not lint"
     assert "NOT run: the ladder aborted above" in out
+
+
+# --- the Windows halves, on any platform --------------------------------
+#
+# `_kill_tree` and `_run_one` branch on `sys.platform`. The POSIX halves
+# carry `pragma: no cover`; the Windows halves did not, so a Linux runner
+# measured this module at 97.3 % against a floor set from a Windows run —
+# the Coverage floors step, the fifth layer of the red CI of 2026-09-03,
+# reached only once pytest itself was green there. Faking the platform
+# and the module executes the Windows lines anywhere. A pragma would
+# have done it in one line and hidden the `taskkill` argv — a constant
+# that belongs to another program — from the mutation lists.
+
+
+class _FakeProc:
+    pid = 4242
+    returncode = 0
+
+    def __init__(self) -> None:
+        self.stdout = iter(["hello\n"])
+        self.killed = False
+
+    def wait(self, timeout: float) -> int:
+        return 0
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+class _FakeSubprocess:
+    """Only what the two functions call."""
+
+    PIPE, STDOUT = object(), object()
+    CREATE_NEW_PROCESS_GROUP = 0x200
+
+    class TimeoutExpired(Exception):
+        pass
+
+    def __init__(self) -> None:
+        self.runs: list[list[str]] = []
+        self.popen_kwargs: dict[str, object] = {}
+
+    def run(self, argv, **_kw):
+        self.runs.append(argv)
+        return types.SimpleNamespace(returncode=0)
+
+    def Popen(self, _command, **kw):
+        self.popen_kwargs = kw
+        return _FakeProc()
+
+
+def test_kill_tree_on_WINDOWS_walks_the_tree_with_taskkill(monkeypatch):
+    from docxkit.revision._gates import _kill_tree
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    sub, proc = _FakeSubprocess(), _FakeProc()
+
+    _kill_tree(proc, sub)
+
+    assert sub.runs == [["taskkill", "/F", "/T", "/PID", "4242"]]
+    assert proc.killed, "the shell itself is killed too, after the tree"
+
+
+def test_run_one_on_WINDOWS_starts_the_gate_in_its_own_PROCESS_GROUP(
+        monkeypatch, tmp_path):
+    """`CREATE_NEW_PROCESS_GROUP` is what makes `taskkill /T` able to
+    reach the grandchild; on POSIX the same job is `start_new_session`,
+    and a Windows gate must not be started with that."""
+    from docxkit.revision._gates import _run_one
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    sub = _FakeSubprocess()
+
+    code, out = _run_one("echo hi", tmp_path, 5, sub, threading)
+
+    assert (code, out) == (0, "hello\n")
+    assert sub.popen_kwargs["creationflags"] == sub.CREATE_NEW_PROCESS_GROUP
+    assert "start_new_session" not in sub.popen_kwargs
