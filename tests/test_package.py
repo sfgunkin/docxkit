@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import time
 import zipfile
 from pathlib import Path
@@ -93,6 +94,73 @@ def test_edit_in_place_leaves_file_intact_when_transform_raises(simple_docx):
     assert read_parts(simple_docx) == before
 
 
+def _romania(parts):
+    parts["word/document.xml"] = (
+        parts["word/document.xml"].replace(b"Poland", b"Romania"))
+
+
+def test_edit_in_place_writes_the_manuscript_by_the_same_staged_RENAME(
+        simple_docx, monkeypatch):
+    """`write_docx` stages a sibling `.tmp` and renames it over the
+    target, and its docstring calls that load-bearing — the machine
+    this runs on has unreliable mains power. `edit_in_place` used to do
+    exactly that into TEMP and then COPY the result over the manuscript,
+    which is the interruptible write the rename exists to avoid: a
+    destination opened for writing and streamed into, truncated if the
+    process dies half way. The property is that the manuscript is only
+    ever the DESTINATION of a rename, from a sibling."""
+    import os as os_module
+
+    real = os_module.replace
+    renames: list[tuple[Path, Path]] = []
+
+    def recording(src, dst, **kw):
+        renames.append((Path(src), Path(dst)))
+        return real(src, dst, **kw)
+
+    monkeypatch.setattr("docxkit.package.os.replace", recording)
+    manuscript = Path(simple_docx)
+
+    edit_in_place(manuscript, _romania)
+
+    assert [dst for _src, dst in renames] == [manuscript]
+    assert renames[0][0].parent == manuscript.parent
+    assert list(manuscript.parent.glob("*.tmp")) == []
+    assert b"Romania" in read_parts(manuscript)["word/document.xml"]
+
+
+def test_edit_in_place_rides_out_a_transient_read_denial(
+        simple_docx, monkeypatch):
+    """The OneDrive race `read_parts` was hardened against on
+    2026-08-20 — [Errno 13] with nothing holding the file, gone a moment
+    later. The entry point the papers are told to use read through its
+    own unretried copy of the file and never met that retry."""
+    from docxkit import package as pkg
+
+    calls: list[int] = []
+    monkeypatch.setattr(pkg.zipfile, "ZipFile", _flaky_zip(2, calls))
+    monkeypatch.setattr(pkg.time, "sleep", lambda _s: None)
+
+    edit_in_place(simple_docx, _romania)
+
+    assert len(calls) > 2                     # two refusals, then through
+    assert b"Romania" in read_parts(simple_docx)["word/document.xml"]
+
+
+def test_edit_in_place_writes_a_READ_ONLY_manuscript(simple_docx):
+    """What `is_locked`'s wrong answer cost: `assert_unlocked` refused a
+    read-only file as "open in Word", while `write_docx` one call later
+    clears that bit and writes — the same file, two verdicts. OneDrive
+    flips the bit mid-write (see `_replace_atomically`), so this is a
+    state the manuscripts' own drive produces."""
+    os.chmod(simple_docx, stat.S_IREAD)
+    try:
+        edit_in_place(simple_docx, _romania)
+        assert b"Romania" in read_parts(simple_docx)["word/document.xml"]
+    finally:
+        os.chmod(simple_docx, stat.S_IREAD | stat.S_IWRITE)
+
+
 def test_backup_numbers_sequentially(tmp_path):
     src = tmp_path / "paper.docx"
     write(src, make_parts(para(run("x"))))
@@ -110,6 +178,21 @@ def test_is_locked_false_for_closed_file(simple_docx):
 
 def test_is_locked_false_for_missing_file(tmp_path):
     assert is_locked(tmp_path / "nope.docx") is False
+
+
+def test_is_locked_false_for_a_READ_ONLY_file(simple_docx):
+    """Measured 2026-09-03: a file with only S_IREAD set and nothing
+    holding it raises PermissionError errno 13 from `open(.., "r+b")` —
+    the errno a sharing violation arrives with too — and `is_locked`
+    said True. So `assert_unlocked` sent the author to close a Word that
+    was not open, and `readable()` snapshotted a file nobody held and
+    reported reading a snapshot. The mode can tell the two apart, and
+    the write path already reads it (`_clear_readonly`)."""
+    os.chmod(simple_docx, stat.S_IREAD)
+    try:
+        assert is_locked(simple_docx) is False
+    finally:
+        os.chmod(simple_docx, stat.S_IREAD | stat.S_IWRITE)
 
 
 # --- did the author change this part, or did Word just re-save it? ---

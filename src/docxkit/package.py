@@ -161,12 +161,20 @@ def set_core_property(parts: dict[str, bytes], tag: str, value: str) -> bool:
 
 
 def is_locked(path: str | Path) -> bool:
-    """True if `path` is held open by another process (usually Word)."""
+    """True if `path` is held open by another process (usually Word).
+
+    A READ-ONLY file is not locked. Opening it for writing raises the
+    same ``PermissionError`` (errno 13) a sharing violation does — the
+    CRT folds both into ``EACCES`` — so the mode is what tells them
+    apart, and it has to: OneDrive flips the bit mid-write (see
+    :func:`_replace_atomically`, which clears it), and "close Word and
+    retry" is no advice about a Word that is not open.
+    """
     try:
         with open(path, "r+b"):
             return False
     except PermissionError:
-        return True
+        return bool(os.stat(path).st_mode & stat.S_IWRITE)
     except FileNotFoundError:
         return False
 
@@ -483,27 +491,25 @@ def edit_in_place(path: str | Path,
 
     The transform mutates the dict and returns whatever report it likes.
     Every part it does not touch survives byte-for-byte, and parts it adds
-    are written. Work happens on a copy in TEMP, so a crash mid-transform
-    cannot damage the original — and `dry=True` returns the report without
-    writing at all.
+    are written. The file is not touched until :func:`write_docx` stages
+    the result beside it and renames, so a crash anywhere — in the
+    transform or in the write — leaves the original where it was. Until
+    2026-09-03 this staged into TEMP and then COPIED the result over the
+    manuscript, which is the interruptible write the rename exists to
+    avoid, and read through its own unretried copy rather than
+    :func:`read_parts`. `dry=True` returns the report without writing.
     """
     path = Path(path)
     if not path.exists():
         raise PackageError(f"Target docx missing: {path}")
     assert_unlocked(path)
-    with tempfile.TemporaryDirectory(prefix="docxkit_") as td:
-        work = Path(td) / "in.docx"
-        shutil.copy2(path, work)
-        with zipfile.ZipFile(work) as z:
-            order = z.namelist()
-            parts = {n: z.read(n) for n in order}
-        report = transform(parts)
-        if dry:
-            return report
-        out = Path(td) / "out.docx"
-        write_docx(out, parts, order=order)
-        shutil.copy2(out, path)
+    parts = read_parts(path)
+    order = list(parts)
+    report = transform(parts)
+    if dry:
         return report
+    write_docx(path, parts, order=order)
+    return report
 
 
 def next_backup_path(path: str | Path, tag: str = "backup", *,
