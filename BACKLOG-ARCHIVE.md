@@ -14,10 +14,10 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — `revision promote` leaves the PREVIOUS stamp beside the manuscript, so `guard.check` refuses the file promote just wrote~~ — FIXED 04.09
+### ~~S3 — `revision promote` leaves the PREVIOUS stamp beside the manuscript, so `guard.check` refuses the file promote just wrote~~ — FIXED 04.09, `ef7883d`
 <!-- status: fixed -->
 
-**Fixed 2026-09-04.** `guard.carry(src, dst)` writes `src`'s stamp
+**Fixed 2026-09-04** — `ef7883d`. `guard.carry(src, dst)` writes `src`'s stamp
 beside `dst` once `dst` holds `src`'s bytes — verbatim, repairs
 included, and refusing (`DeliverableModified`) when the recorded hash
 is not `dst`'s. `promote` calls it after the hash-verified copy and
