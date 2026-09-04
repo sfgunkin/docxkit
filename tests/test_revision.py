@@ -16,6 +16,7 @@ Word to be wrong.
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -1422,6 +1423,72 @@ def test_promote_lands_and_leaves_a_rescue_copy(project):
     assert report.rescue.exists()
     assert report.rescue.read_bytes() == original, \
         "the rescue copy does not hold the file that was replaced"
+
+
+def test_promote_carries_the_batch_stamp_beside_the_manuscript(project):
+    """The manuscript now IS the batch, and `guard.check` on it must say
+    "untouched" rather than "someone edited it in Word". A paper that
+    builds with `out=working.docx` (HCW's lane script) reads exactly
+    that, and was passing `force=True` every round to get past a stamp
+    promote had never refreshed — which retires the guard for the
+    author's real edits as well."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    guard.stamp(project.batch, original="prev.docx", revised="clean.docx",
+                base_sha256=guard.sha256(project.prev))
+
+    report = revision.promote(project)
+
+    stamp = guard.stamp_path(project.working)
+    assert report.stamp == stamp and stamp.exists()
+    assert guard.check(project.working) is None, \
+        "the guard called the file promote just wrote an author edit"
+    assert not list(project.working.parent.glob("*user_edited*"))
+    assert guard.base_of(project.working) == guard.sha256(project.prev)
+    # the batch keeps its own: verdict/validate still ask base_of(batch)
+    assert guard.base_of(project.batch) == guard.sha256(project.prev)
+
+
+def test_promote_replaces_the_stamp_a_PRIOR_round_left_beside_it(project):
+    """The incident's shape: a stamp beside working.docx naming an
+    earlier batch's inputs, still there after a later promote. Without
+    the carry, `check` refuses the freshly promoted file and `base_of`
+    names a baseline it was never built on."""
+    from docxkit import guard
+
+    guard.stamp(project.working, original="prev.docx",
+                revised="OLD_clean.docx", base_sha256="0" * 64)
+    write(project.batch, make_parts(para(run("the new batch"))))
+    guard.stamp(project.batch, original="prev.docx",
+                revised="NEW_clean.docx",
+                base_sha256=guard.sha256(project.prev))
+
+    revision.promote(project)
+
+    recorded = json.loads(
+        guard.stamp_path(project.working).read_text(encoding="utf-8"))
+    assert recorded["revised"] == "NEW_clean.docx"
+    assert recorded["sha256"] == guard.sha256(project.working)
+    assert guard.check(project.working) is None
+
+
+def test_promote_of_an_UNSTAMPED_batch_removes_the_stale_stamp(project):
+    """A hand-authored vehicle has no stamp to carry. What must not
+    survive is the previous one: it would describe a file that is gone,
+    and `check` reading "no stamp" (cannot verify — cautious) is the
+    truthful answer where a stale hash is another file's provenance."""
+    from docxkit import guard
+
+    guard.stamp(project.working, original="prev.docx",
+                revised="OLD_clean.docx", base_sha256="0" * 64)
+    write(project.batch, make_parts(para(run("hand-authored"))))
+
+    report = revision.promote(project)
+
+    assert report.stamp is None
+    assert not guard.stamp_path(project.working).exists()
+    assert guard.base_of(project.working) is None
 
 
 def test_promote_keeps_the_REDLINE_the_rescue_ladder_does_not(project):

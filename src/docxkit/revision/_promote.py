@@ -34,6 +34,10 @@ class PromoteReport:
     #: `cmd_revision_*` in one afternoon. An Optional the constructor
     #: cannot produce is a claim about the code that is not true.
     redline: Path
+    #: The batch's stamp, now beside the manuscript too — or None for an
+    #: unstamped batch, in which case a stale stamp beside the manuscript
+    #: was removed. See `guard.carry` for what a stale one cost.
+    stamp: Path | None = None
     pruned: tuple[Path, ...] = ()
 
 
@@ -223,6 +227,20 @@ def promote(paper: Paper, batch: str | Path | None = None,
     file is deleted.** A truncated copy left in the one folder nothing
     prunes, stamped and named exactly like a good one, would be an audit
     trail that lies — worse than a gap, because a gap is visible.
+
+    **What lands is the batch, byte for byte** — copied, then hashed
+    against it, and the redline kept in ``build/redlines/`` is a third
+    copy of the same bytes. Nothing here re-derives, re-compares or
+    rewrites the redline. That is worth stating because it was once
+    filed as doing so: a paragraph found without its revision marks in
+    ``working.docx`` after a promote (Health_Capacity_to_Work,
+    2026-09-04) turned out to be intact in the batch, in the kept
+    redline and therefore in the file this wrote — the three hashes
+    agreed, and reject-all on the batch reproduced the baseline in every
+    paragraph. A file that differs from the batch after a promote was
+    written by something else afterwards; look there. The batch's stamp
+    is carried beside the manuscript so that :func:`docxkit.guard.check`
+    can say so (``PromoteReport.stamp``).
     """
     batch = Path(batch) if batch else paper.batch
     base = Path(base) if base else paper.prev
@@ -302,6 +320,15 @@ def promote(paper: Paper, batch: str | Path | None = None,
     if _guard.sha256(live) != _guard.sha256(batch):
         raise ProtocolError(f"the copy did not land: {live}")
 
+    # The stamp goes with the bytes. The manuscript now IS the batch, and
+    # the batch's stamp describes it exactly; the one it was carrying —
+    # from whatever last wrote it — describes a file that is gone. A
+    # paper that builds with `out=working.docx` reads that stamp through
+    # `guard.check`, and a stale one makes it refuse every round
+    # (Health_Capacity_to_Work, 2026-09-04). `carry` also re-verifies the
+    # hash against the stamp, a second reading of the check above.
+    stamp = _guard.carry(batch, live)
+
     # The round's record, written and not yet read — see `_ledger`. The
     # question it exists for is this event: a batch REJECTED in full and
     # one that was never promoted leave the manuscript identical, so
@@ -320,6 +347,6 @@ def promote(paper: Paper, batch: str | Path | None = None,
     # delete the one copy this promote was about to need. Redlines are
     # not pruned at all — see `Paper.redline_dir`.
     return PromoteReport(promoted=batch, onto=live, rescue=rescue,
-                         redline=redline,
+                         redline=redline, stamp=stamp,
                          pruned=tuple(prune_rescues(paper,
                                                     protect=rescue)))

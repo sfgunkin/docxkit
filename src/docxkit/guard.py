@@ -22,6 +22,7 @@ from .package import backup as _backup
 __all__ = [
     "DeliverableModified",
     "base_of",
+    "carry",
     "check",
     "restamp",
     "sha256",
@@ -127,6 +128,61 @@ def stamp(out: str | Path, **provenance: str) -> Path:
         json.dumps({"sha256": sha256(out), **provenance}, indent=1),
         encoding="utf-8")
     return path
+
+
+def carry(src: str | Path, dst: str | Path) -> Path | None:
+    """Give `dst`, which now holds `src`'s bytes, `src`'s stamp as well.
+
+    `promote` copies a batch onto the manuscript byte for byte, and from
+    that moment the stamp beside the batch — hash, inputs,
+    `base_sha256`, any repairs — describes the manuscript exactly as
+    well. Left beside the batch alone, the manuscript keeps whatever
+    stamp the LAST thing that wrote it left there. Health_Capacity_to_
+    Work, 2026-09-04: after a promote, `working.docx.buildinfo.json`
+    still named a batch from an earlier round, and the paper's own lane
+    script — which builds with `out=working.docx` — had to pass
+    `force=True` to get past :func:`check`'s refusal. A guard that
+    refuses every time is a guard everybody forces, and forcing it
+    retires it for the author's real edits too.
+
+    The batch KEEPS its stamp: `verdict` and `validate` still ask
+    `base_of(batch)` after the promote. What is written beside `dst` is
+    the same bytes, so the two stamps cannot disagree.
+
+    Returns the stamp written beside `dst`. When `src` has no stamp, or
+    one that does not parse, there is nothing to carry — and a stamp
+    already beside `dst` describes a file that is no longer there, so it
+    is REMOVED. :func:`check` then answers "cannot verify", which is the
+    cautious reading and the truthful one; a stale stamp would answer
+    with another file's provenance, and `base_of` would name a baseline
+    this file was never built on.
+
+    Refuses when the stamp's hash is not `dst`'s. A stamp is a claim
+    about a hash, and carrying it onto other content would make the
+    guard certify a file nobody built. The caller has already verified
+    the copy; this is the check on the caller.
+    """
+    src, dst = Path(src), Path(dst)
+    source, target = stamp_path(src), stamp_path(dst)
+    if not source.exists():
+        target.unlink(missing_ok=True)
+        return None
+    try:
+        recorded = json.loads(source.read_text(encoding="utf-8"))
+    except ValueError:
+        target.unlink(missing_ok=True)
+        return None
+    if not isinstance(recorded, dict) or "sha256" not in recorded:
+        target.unlink(missing_ok=True)
+        return None
+    if recorded["sha256"] != sha256(dst):
+        raise DeliverableModified(
+            f"{source.name} does not describe {dst.name}: the stamp "
+            f"records {str(recorded['sha256'])[:16]} and the file hashes "
+            f"to {sha256(dst)[:16]}. A stamp is carried only onto the "
+            f"bytes it was written for.")
+    target.write_bytes(source.read_bytes())
+    return target
 
 
 def base_of(out: str | Path) -> str | None:

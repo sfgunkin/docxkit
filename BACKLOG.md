@@ -46,6 +46,68 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
+<!-- status: withdrawn -->
+
+**Not a defect. `promote` wrote the batch byte for byte, and the batch
+was intact.** Filed the same day from Health_Capacity_to_Work: after
+`promote(T8_4_batch.docx)`, Table 9's shared Note was reported in
+`working.docx` with the NEW text and **zero** `<w:ins>`/`<w:del>` —
+2078 raw chars against the batch's 3259 — and `reject()` on it left
+the new text in place, while `revision status` still counted 48
+pending. The entry asked whether promote re-derives the redline
+internally.
+
+It does not, and the files say so. Measured 2026-09-04, evening:
+
+* **three hashes agree.** `T8_4_batch.docx`, the redline `promote`
+  kept in `build/redlines/` at 17:36:24, and the ledger's
+  `batch_sha256` are all `333eefd53337d1c2…`; `promote` copies with
+  `shutil.copyfile` and then REFUSES unless `sha256(live) ==
+  sha256(batch)`, so `working.docx` at 17:36 was the same bytes;
+* **the paragraph in those bytes is tracked.** Paragraph 1662 of the
+  batch's `document.xml`: 3259 raw chars, 2 `w:ins`, 2 `w:del`, 7
+  runs — the "pre-promote" figure the entry quoted, in the file
+  promote wrote;
+* **reject reproduces the baseline, accept the clean edit**, paragraph
+  by paragraph, 0 mismatches of 2740 in the body, 15 in footnotes, 3
+  in endnotes — against the rescue copy of the replaced file
+  (`fb825d6f…`, the batch stamp's own `base_sha256`) and against
+  `T8_4_table9_repair.docx`;
+* **2078 matches nothing on disk.** That paragraph is 1777 chars in the
+  clean edit, 1631 in the baseline, 1475/2522 in T8.5's clean/batch and
+  1657 in T9's — no version of the file has the paragraph the entry
+  measured, and the 48 it quotes could not survive a paragraph losing
+  four marks. Whatever was read was not `working.docx` as promote left
+  it — this paper runs a two-lane layout in which task scripts write
+  the CLEAN edit onto `working.docx` (`T8_4_table9_repair.py --write`
+  rebuilds exactly this Note as one untracked run), and the lane can
+  be told apart only by counting marks.
+
+**What it cost:** every batch since (T8.5 → T13) was installed by
+hand-copying the batch onto `working.docx` "rather than trusting
+promote" — which is what promote does, minus the rescue copy, the kept
+redline, the ledger line, the lock and the two staleness refusals. The
+ledger for this paper shows one promote and three baselines: the
+protocol's record of four rounds is missing.
+
+**What was real in it — the second, "unconfirmed" observation.**
+`working.docx.buildinfo.json` DID name a prior batch after the promote,
+because promote never touched the stamp beside the manuscript. Filed
+and fixed as its own entry (archive, S3, 04.09). And the gate the entry
+asked for — promote re-verifying accept/reject on its own output — is
+`validate`'s gate 5 run twice on the same bytes; what promote reports
+now is the hash of what it wrote, so the next "this differs from the
+batch" is settled by re-hashing in a second rather than by reading
+paragraphs for an afternoon.
+
+Kept, like the `link_all` retraction below, for the shape: **a file
+that differs from a byte copy was written by something else
+afterwards.** The tool's first question about a promoted file is
+`sha256`, not "does this paragraph carry marks" — and the entry's own
+"measured, not inferred" was a measurement of a file whose identity was
+inferred.
+
 ### Not seven defects — one habit: a `*.py` glob is a claim that the package is flat
 <!-- status: note -->
 

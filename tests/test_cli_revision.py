@@ -1038,6 +1038,10 @@ def test_promote_lands_and_leaves_a_rescue(monkeypatch, project, capsys):
     assert project.working.read_bytes() == project.batch.read_bytes()
     assert "rescue copy" in out
     assert "never accepts on their behalf" in out
+    # the hash of what landed, so a later "this differs from the batch"
+    # is settled by re-hashing rather than by reading paragraphs
+    from docxkit.guard import sha256
+    assert sha256(project.working)[:16] in out
     # in build/rescue/, NOT beside the manuscript: one file to open is
     # the whole point of this layout
     assert not list(project.working.parent.glob("*rescue*"))

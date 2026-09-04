@@ -14,7 +14,42 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — three more layers of red CI behind the first: Word's XSL, the sweep roots, the `deps` gate~~ — FIXED 03.09, `d1b2964`
+### ~~S3 — `revision promote` leaves the PREVIOUS stamp beside the manuscript, so `guard.check` refuses the file promote just wrote~~ — FIXED 04.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-04.** `guard.carry(src, dst)` writes `src`'s stamp
+beside `dst` once `dst` holds `src`'s bytes — verbatim, repairs
+included, and refusing (`DeliverableModified`) when the recorded hash
+is not `dst`'s. `promote` calls it after the hash-verified copy and
+reports the path as `PromoteReport.stamp`; for an unstamped batch it
+returns None and REMOVES a stale stamp beside the manuscript, because
+"no stamp" reads as cannot-verify where a stale one reads as another
+file's provenance. The CLI prints the sha256 of what landed. Tests:
+four on `carry` (`test_tracked_guard.py`), three on the promote
+(`test_revision.py`), one line on the CLI output.
+
+**Measured.** Health_Capacity_to_Work, 2026-09-04: after
+`promote(T8_4_batch.docx)` at 17:36, `revision/working.docx.buildinfo.json`
+still named an earlier round's `original`/`revised` pair and hash.
+`promote` copies the batch onto `working.docx` and stamps nothing
+there; whatever last wrote the stamp — the paper's own lane script,
+which builds with `out=working.docx` — is what it kept saying.
+
+**Why it is an S3 and not tidiness.** That lane script reads the stamp
+through `tracked.build` → `guard.check(working.docx)`, and a stamp that
+never matches is a refusal on every round. The script's answer is in
+its own comment: `force=True`, "the guard cannot tell a task script's
+write from a Word session, and refuses to overwrite working.docx". A
+guard forced on every call is a guard retired — including for the
+author's real edits, which is the one case it exists for. The stale
+stamp was noticed only inside the S1 retracted in `BACKLOG.md` the same
+day, as its "unconfirmed" second observation; the S1 was wrong and this
+was the defect underneath it.
+
+**The narrower thing deliberately not done:** `baseline` leaves the
+stamp alone. After the author's accept the file is theirs, and
+`check` on it must refuse — which a stamp recording the promoted hash
+does correctly, and the next promote carries a fresh one over it.
 <!-- status: fixed -->
 
 **Fixed 2026-09-03** — `d1b2964`. `test_equations_typography.py` skips

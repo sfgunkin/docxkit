@@ -229,6 +229,82 @@ def test_base_of_says_CANNOT_TELL_for_a_field_that_is_not_A_HASH(built, value):
     assert base_of(built) is None
 
 
+def test_carry_gives_the_copy_the_stamp_its_bytes_deserve(built, tmp_path):
+    """`promote` copies the batch onto the manuscript byte for byte; the
+    stamp beside the batch describes the manuscript just as well from
+    then on, repairs included. Verbatim, and the source keeps its own —
+    `verdict` still asks `base_of(batch)` after the promote."""
+    from docxkit.guard import carry, restamp
+
+    restamp(built, why="the repair the stamp must carry")
+    copy = tmp_path / "manuscript.docx"
+    copy.write_bytes(built.read_bytes())
+
+    stamp = carry(built, copy)
+
+    assert stamp == _stamp_path(copy) and stamp is not None
+    assert stamp.read_bytes() == _stamp_path(built).read_bytes()
+    assert _stamp_path(built).exists()
+    assert guard_deliverable(copy) is None
+    assert not list(tmp_path.glob("*user_edited*"))
+
+
+def test_carry_refuses_a_stamp_that_does_not_describe_the_target(
+        built, tmp_path):
+    """A stamp is a claim about a hash. Carried onto other bytes it
+    would make the guard certify a file nobody built — and it would do
+    so from then on, every time `check` was asked."""
+    from docxkit.guard import carry
+
+    other = write(tmp_path / "other.docx",
+                  make_parts(para(run("not the batch"))))
+
+    with pytest.raises(DeliverableModified, match="does not describe"):
+        carry(built, other)
+
+    assert not _stamp_path(other).exists()
+
+
+def test_carry_from_an_UNSTAMPED_source_removes_the_stale_stamp(tmp_path):
+    """The incident's shape (HCW, 2026-09-04): a stamp beside the
+    manuscript naming an earlier round's inputs, still there after a
+    later promote. With nothing to carry, the stale one has to go —
+    `check` reading "no stamp" is the cautious answer; a stale hash is
+    another file's provenance presented as this one's."""
+    from docxkit.guard import base_of, carry
+
+    live, hand_authored = tmp_path / "manuscript.docx", tmp_path / "v.docx"
+    write(live, make_parts(para(run("the last promote"))))
+    _write_stamp(live, original="prev.docx", base_sha256="0" * 64)
+    write(hand_authored, make_parts(para(run("hand-authored"))))
+    live.write_bytes(hand_authored.read_bytes())
+
+    assert carry(hand_authored, live) is None
+
+    assert not _stamp_path(live).exists()
+    assert base_of(live) is None
+
+
+@pytest.mark.parametrize("stamp_text", ['{"sha256": "a", "base_sha',
+                                        '{"original": "prev.docx"}',
+                                        '["not", "a", "stamp"]'])
+def test_carry_treats_a_stamp_that_certifies_nothing_as_none(
+        built, tmp_path, stamp_text):
+    """Unparseable, no hash, not an object: none of these can say what
+    file they describe, so each is the unstamped case — nothing carried,
+    the stale stamp beside the target removed, and no refusal, because
+    a refusal here would stop a promote over a side-file."""
+    from docxkit.guard import carry
+
+    _stamp_path(built).write_text(stamp_text, encoding="utf-8")
+    copy = tmp_path / "manuscript.docx"
+    copy.write_bytes(built.read_bytes())
+    _write_stamp(copy, original="prev.docx", base_sha256="0" * 64)
+
+    assert carry(built, copy) is None
+    assert not _stamp_path(copy).exists()
+
+
 def test_restamp_records_a_repair_on_a_deliverable_with_NO_stamp(tmp_path):
     """The branch where there is nothing to carry forward. `was` is
     empty because there is no previous hash — not omitted, because the

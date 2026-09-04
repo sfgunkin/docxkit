@@ -1785,7 +1785,14 @@ def cmd_revision_promote(args: argparse.Namespace) -> int:
     from .revision import promote
     paper = _paper(args)
     report = promote(paper, args.batch, args.base)
-    print(f"promoted {report.promoted.name} -> {report.onto.name}")
+    # The hash, so that "the promoted file differs from the batch" can
+    # be settled by re-hashing rather than by reading paragraphs — which
+    # is how a promote was once filed as rewriting one (see `promote`).
+    from .guard import sha256
+    print(f"promoted {report.promoted.name} -> {report.onto.name} "
+          f"(sha256 {sha256(report.onto)[:16]}, the batch's own bytes)")
+    if report.stamp is not None:
+        print(f"stamp carried beside it: {report.stamp.name}")
     print(f"rescue copy of the previous live file: "
           f"{report.rescue.relative_to(paper.root)}")
     print(f"redline kept (never pruned): "
