@@ -14,6 +14,98 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `batch.run` prints the glyphs it repairs, and only the CLI makes stdout safe~~ — FIXED 06.09, `0a31b71`
+<!-- status: fixed -->
+
+**Fixed 2026-09-06** — `0a31b71`. `batch.run` and `batch.apply_steps` call
+`utf8_stdout()`, and so does `_compare_render.render`.
+
+**It was two sites, not one.** The entry named `batch.run`; measuring the
+other library printers found `compare.render` with the same hole — public,
+imported directly by paper scripts, and every line it prints quotes the
+manuscript, so a report holding U+2212 ended with a `UnicodeEncodeError`
+partway through, after the header and before the layer a reader was waiting
+for. `citations.check_citations` was measured too and did NOT reproduce: its
+output never quoted the entry text, so nothing outside cp1252 reached stdout.
+Left alone rather than fixed on suspicion.
+
+**The call is at the TOP of `run`, not only beside `apply_steps`**, and the
+first reason written for that was wrong. A preflight refusal returns before
+`apply_steps`, so the placement needs a refusal that echoes the DOCUMENT
+back — and probing all four refusal paths showed three of them are the
+toolkit's own English (`signature matches NO paragraph`, `` `old` is not in
+that paragraph ``). The one that qualifies is `diagnose` quoting the
+hyperlink label it met, verbatim: on DSI that label is Cyrillic
+(`'Таблица 3'`), which cp1252 cannot encode either, and
+`print(report.text())` is the documented way to read a Report.
+
+**The fixture is its own finding.** `conftest.cp1252_console` is a context
+manager, not a pytest fixture, because pytest re-assigns `sys.stdout` to its
+own capture file at the start of every phase: a patch installed during
+fixture SETUP is gone by the time the test body runs. The first version
+passed the stream to nothing, the prints landed in pytest's capture where
+they encode fine, and all four tests passed against unfixed code. It must
+also be a real `TextIOWrapper` — the guard in `console` refuses anything
+else, so a `StringIO` would test nothing.
+
+Verified by removing the three calls: all four new tests fail with
+`UnicodeEncodeError` out of `cp1252.py`.
+
+**The per-paper workaround is NOT deleted**, against this file's own rule.
+`Aging_Well/revision/scripts/r22_math_typography.py:176` still calls
+`utf8_stdout()` under a comment saying to delete it with the fix. That tree
+is not under git and the file was edited 36 minutes before the fix landed,
+by a session working in it. The call is redundant now, not wrong. Delete
+line 176 with its four-line comment, and `utf8_stdout` from the import on
+line 67.
+
+A repair that restores the typographic minus **aborts on a Windows console**,
+because the step prints each restoration and cp1252 cannot encode `−`. The
+write is then skipped and the run reports FAILED with a `UnicodeEncodeError`
+where a manuscript problem would be reported.
+
+Measured 2026-09-05 on Aging_Well, closing out R96 (`revision/scripts/r22_math_typography.py`,
+which drives `docxkit.batch.run` directly):
+
+    ** maths glyphs the accept flattened  UnicodeEncodeError: 'charmap' codec
+       can't encode character '−' in position 31: character maps to <undefined>
+      wrote None
+
+`working.docx` was byte-identical before and after, so nothing was corrupted —
+the step raised while printing, `batch.run` recorded a step failure, and the
+repair did not happen. Re-run in the same shell with `PYTHONIOENCODING=utf-8`:
+`maths glyphs restored: 20`, exit 0. **Same file, same code, opposite verdict,
+and the variable is the terminal's code page.**
+
+**`console.py` already says this is the toolkit's job** — *"Windows consoles
+default to cp1252, which cannot encode the glyphs these documents and reports
+are full of … Every paper script therefore opens with a call to reconfigure
+stdout, and every one of them wrote it unguarded."* The guarded version now
+exists, and `utf8_stdout` / `utf8_console` are called in exactly two places:
+`cli.py:2405` and `compare.py:228`. **Both are entry points.** A caller that
+imports the library and drives it — which is what every per-paper batch script
+in every one of these projects does — inherits a strict cp1252 stdout, and
+`batch.run` prints document glyphs on the way past.
+
+So the safety sits at the CLI boundary while the printing sits in the library.
+The asymmetry is invisible until a step prints a character outside cp1252,
+which is precisely the steps that repair mathematics.
+
+**Fix belongs in `batch.run`** (or in whatever the library uses to print step
+progress): call `utf8_stdout()` once, the same way `compare.py` does. A test
+that fails without it can wrap `sys.stdout` in a `TextIOWrapper` at cp1252 with
+`errors="strict"` and assert the step still writes.
+
+**Per-paper workaround now in place, to be deleted with the fix:**
+`Aging_Well/revision/scripts/r22_math_typography.py` calls `utf8_stdout()` at
+the top of `main`, with a comment pointing here. Any other paper script that
+drives `batch.run` over mathematics has the same hole.
+
+Severity is S4 rather than S3 because the run does report failure rather than
+claiming success. The cost is that the failure reads like a defect in the
+manuscript, at the exact moment — a close-out after an author's Word accept —
+when a real glyph problem is what you are looking for.
+
 ### ~~S3 — `revision promote` leaves the PREVIOUS stamp beside the manuscript, so `guard.check` refuses the file promote just wrote~~ — FIXED 04.09, `ef7883d`
 <!-- status: fixed -->
 
