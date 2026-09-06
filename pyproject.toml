@@ -360,7 +360,24 @@ filterwarnings = ["ignore::DeprecationWarning"]
 # suite stays synthetic and fast; run it with `pytest -m word` before a
 # release and after any edit to the width model.
 markers = ["word: needs a real Word installation (run with -m word)"]
-addopts = ["-m", "not word"]
+# `-p no:benchmark` because this suite has NO benchmarks — not one
+# `benchmark` fixture in 5,872 tests — and pytest-benchmark is not in
+# `[dev]` either. It is an ambient install from another project on this
+# machine, and under xdist it warns ONCE PER WORKER that benchmarks are
+# disabled: sixteen lines at `-n 8`, at the very END of the gate's
+# output.
+#
+# Which is not cosmetic, because that is the failure path. `gates.py`
+# prints `out[-3000:]` when a gate fails, so on 2026-09-06 a red pytest
+# gate showed nothing but PytestBenchmarkWarning and the actual failure
+# — a missing README row — had been pushed out of the window entirely.
+# The chain had to be re-run under grep to find out what broke.
+#
+# Blocking the plugin rather than filtering the warning: the warning is
+# TRUE, and the honest answer to "benchmarks are disabled" is that this
+# repo does not have any. `-p no:` on an absent plugin is a no-op, so a
+# clean checkout without it is unaffected.
+addopts = ["-m", "not word", "-p", "no:benchmark"]
 # Word's save path can hang indefinitely, on any drive — the reason
 # extract_flat_opc exists — and `pytest -m word` drives a real Word. A
 # release gate that hangs is worse than one that fails, so every test
