@@ -52,6 +52,7 @@ draws too. Callers pass the bytes and the destination.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
@@ -138,6 +139,16 @@ class Report:
     after: dict[str, int] = field(default_factory=dict)
     spaces_fixed: int = 0
     written: Path | None = None
+    #: `(label, seconds)` per step, in the order they ran. Recorded and
+    #: never written anywhere: this module is path-agnostic and shells
+    #: out to nothing, so where a paper KEEPS its timings is the paper's
+    #: business (`docxkit.timings.record` is the one-liner for it).
+    durations: list[tuple[str, float]] = field(default_factory=list)
+
+    def slowest(self, limit: int = 3) -> list[tuple[str, float]]:
+        """The costliest steps first. Empty for a batch of pure Edits,
+        which are one regex each and never the reason a round is slow."""
+        return sorted(self.durations, key=lambda d: -d[1])[:limit]
 
     def text(self) -> str:
         out = [f"{self.name}:"]
@@ -152,6 +163,12 @@ class Report:
                      if self.before[k] != self.after.get(k)}
             out.append(f"  invariants {moved or 'unchanged'}"
                        f"; preserve_space fixed {self.spaces_fixed}")
+        # Only when a step actually cost something. A batch of Edits
+        # runs in milliseconds and a "slowest" line under it would be
+        # noise in every report this paper prints.
+        if (slow := [d for d in self.slowest() if d[1] >= 0.5]):
+            out.append("  slowest  " + ", ".join(f"{label} {secs:.1f}s"
+                                                 for label, secs in slow))
         if self.written:
             out.append(f"  wrote {self.written}")
         return "\n".join(out)
@@ -238,6 +255,7 @@ def preflight(edits: Sequence[Edit], xml: str) -> list[Verdict]:
 
 def apply_steps(
     xml: str, parts: dict[str, bytes], steps: Sequence[Edit | Step],
+    durations: list[tuple[str, float]] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Run every step, keeping going so one failure does not hide the rest."""
     # `run` has already done this, but this is public and papers call it
@@ -248,6 +266,7 @@ def apply_steps(
     failures: list[str] = []
     for s in steps:
         was = xml
+        began = time.perf_counter()
         try:
             if isinstance(s, Edit):
                 xml = edit_para(
@@ -261,7 +280,17 @@ def apply_steps(
             failures.append(f"{getattr(s, 'task', getattr(s, 'label', '?'))}  "
                             f"{type(exc).__name__}: {exc}")
             xml = was
+            # Timed even though it failed. A step that raises after
+            # thirty seconds is the interesting one — the round is slow
+            # AND broken — and dropping it here would leave the report
+            # blaming whichever step ran next.
+            if durations is not None:
+                durations.append(
+                    (getattr(s, "task", getattr(s, "label", "?")),
+                     round(time.perf_counter() - began, 2)))
             continue
+        if durations is not None:
+            durations.append((label, round(time.perf_counter() - began, 2)))
         if xml == was and isinstance(s, Edit):
             failures.append(f"{s.task}  matched but changed nothing")
             continue
@@ -326,7 +355,8 @@ def run(name: str, steps: Sequence[Edit | Step], *,
         return report
 
     report.before = invariants(xml)
-    xml, report.applied, report.failures = apply_steps(xml, parts, steps)
+    xml, report.applied, report.failures = apply_steps(
+        xml, parts, steps, report.durations)
     xml, report.spaces_fixed = preserve_space(xml)
     report.after = invariants(xml)
 

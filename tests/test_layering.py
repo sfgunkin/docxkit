@@ -41,7 +41,7 @@ LAYERS: tuple[tuple[str, ...], ...] = (
     ("citations",),
     ("comments", "body", "guard", "hygiene", "authors", "batch"),
     ("edit", "find", "revisions", "styles", "package", "lint", "word"),
-    ("_xml", "errors", "console"),
+    ("_xml", "errors", "console", "timings"),
 )
 
 #: The one place the layering is genuinely circular, and it is

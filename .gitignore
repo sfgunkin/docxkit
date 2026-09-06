@@ -20,3 +20,7 @@ tests/corpus/*.docx
 # killed and a source file is carrying a deliberate defect: `mutate.py
 # --restore`.
 .mutate-in-flight/
+# what tools/gates.py timed, one file per run (tools/timings.py reads
+# them). Derived, machine-specific, and a record of an afternoon rather
+# than of the code.
+.timings/

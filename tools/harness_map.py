@@ -175,6 +175,7 @@ HARNESS: dict[str, list[str]] = {
                    "tests/test_compare_paragraph.py",
                    "tests/test_cli.py"],
     "console.py": ["tests/test_console.py", "tests/test_cli_guards.py"],
+    "timings.py": ["tests/test_timings.py"],
     "edit.py": ["tests/test_find_edit.py", "tests/test_edit_boundaries.py",
                 "tests/test_edit_branches.py",
                 "tests/test_normalize_anchors.py",

@@ -37,10 +37,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from docxkit import timings as timings_mod
 from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +66,20 @@ Gate = tuple[str, list[str], bool]
 #: lock, hours later, in a different costume.
 COVERAGE_JSON = (Path(tempfile.gettempdir())
                  / f"docxkit-gates-coverage-{os.getpid()}.json")
+
+#: Where a run's timings land. ONE FILE PER RUN, for the reason the
+#: comment above gives about the coverage report: two sessions on this
+#: repo is the ordinary case, and a shared append is a shared file. A
+#: JSONL line is usually written atomically and "usually" is the whole
+#: problem — a torn line is an unparseable history, discovered by the
+#: reader weeks later with no way to tell which run was lost.
+#:
+#: Timing is recorded and never GATED. A slow gate is a fact about this
+#: machine's afternoon — a laptop on battery, a sweep in the next
+#: window, Defender reading the tree — and a threshold over that would
+#: fail builds for the weather. `tools/timings.py` reads these; nothing
+#: fails on them.
+TIMINGS = ROOT / ".timings"
 
 
 def _workers() -> str:
@@ -89,7 +105,14 @@ GATES: list[Gate] = [
     # same tests over the same code. `floors` reads the report this
     # writes. Coverage under `-n 8` was checked against serial and is
     # identical: 98.102 % both, not one file lower.
+    # `--durations` costs nothing and is the only per-TEST cost anybody
+    # gets: this gate is most of the chain, and "pytest took 30s" cannot
+    # be acted on while "these six tests took 9s of it" can. The block
+    # prints ABOVE the summary line, so `_summary` still finds the
+    # count — checked, because that function takes the LAST matching
+    # line and a durations line says "call".
     ("pytest", [sys.executable, "-m", "pytest", "-q", "-n", _workers(),
+                "--durations=25", "--durations-min=0.05",
                 "--cov=docxkit", f"--cov-report=json:{COVERAGE_JSON}"],
      False),
     ("floors", [sys.executable, "tools/coverage_floor.py",
@@ -192,28 +215,86 @@ def _summary(out: str) -> str:
     return (said or lines or [""])[-1]
 
 
+#: pytest's own `--durations` block, which the pytest gate asks for. The
+#: per-TEST costs are the actionable half: that gate is most of the
+#: chain, and "pytest took 30s" cannot be acted on while "these six
+#: tests took 9s of it" can.
+_DURATION = re.compile(r"^([\d.]+)s\s+(call|setup|teardown)\s+(\S+)",
+                       re.MULTILINE)
+
+
+def _durations(out: str, limit: int = 25) -> list[dict[str, object]]:
+    """The slowest tests pytest named, as data."""
+    found = [{"seconds": float(secs), "phase": phase, "test": test}
+             for secs, phase, test in _DURATION.findall(out)]
+    return found[:limit]
+
+
+def _record(entries: list[dict[str, object]], outcome: str,
+            into: Path) -> Path | None:
+    """Write one chain run's timings, in the shape a paper's batch uses.
+
+    `docxkit.timings` owns the format so that ONE reader serves both
+    producers: this chain and any paper that keeps its `batch.run`
+    durations. Two shapes would mean two readers, and the analyst on top
+    of them would have to know which was which.
+    """
+    return timings_mod.record("gates", "chain", entries, into,
+                              outcome=outcome)
+
+
 def run(gates: Sequence[Gate] = tuple(GATES),
-        say: Callable[[str], None] = print) -> int:
-    """Run each gate until one fails; return the number that failed."""
+        say: Callable[[str], None] = print,
+        timings: Path | None = None) -> int:
+    """Run each gate until one fails; return the number that failed.
+
+    `timings` defaults to None — writing is opt-in, and only `__main__`
+    opts in. It defaulted to the real folder for about ten minutes, and
+    the first report off it read "3 chain runs recorded" after ONE:
+    `tests/test_gates.py` drives this function with synthetic gates
+    named `first`, `second`, `mypy`, and every one of those runs filed
+    a record. The medians were then computed over a real chain and two
+    suites of fakes, so the whole chain read as 0.0s and the real
+    `mypy` gate — which takes seconds over 221 files — sorted into
+    "under 0.5s and not worth optimising".
+
+    A history is only worth keeping if everything in it is the same
+    kind of event. The default is the guard on that, because the test
+    suite is a caller like any other and should not have to know.
+    """
+    entries: list[dict[str, object]] = []
+    outcome = "green"
     try:
         for gate in gates:
             name, argv, _reads = gate
+            began = time.perf_counter()
             done = subprocess.run(argv, cwd=ROOT, capture_output=True,
                                   text=True, encoding="utf-8",
                                   errors="replace", check=False)
+            seconds = round(time.perf_counter() - began, 2)
             out = done.stdout + done.stderr
+            entry: dict[str, object] = {"name": name, "seconds": seconds}
+            entries.append(entry)
             if _failed(gate, out, done.returncode):
+                entry["status"] = "failed"
+                outcome = f"failed:{name}"
                 say(f"FAILED  {name}")
                 say(out.strip()[-3000:])
                 return 1
             if done.returncode == SKIPPED:
+                entry["status"] = "skipped"
                 # The reason, not a summary line: a skip is only useful
                 # if it says what to set to un-skip it.
                 say(f"skip    {name}  {_summary(out)[:90]}")
                 continue
+            entry["status"] = "ok"
+            if (slowest := _durations(out)):
+                entry["slowest_tests"] = slowest
             say(f"ok      {name}  {_summary(out)[:90]}")
         return 0
     finally:
+        if timings is not None and entries:
+            _record(entries, outcome, timings)
         # The report is scratch between two gates, and a chain that
         # stops early still wrote it. `missing_ok` because most runs of
         # this function in the tests never reach the pytest gate at all.
@@ -227,4 +308,4 @@ if __name__ == "__main__":                  # pragma: no cover
     # runner ever reported crashed here instead of showing itself, and
     # the pipe it was invoked through swallowed the crash as well.
     utf8_stdout()
-    raise SystemExit(run())
+    raise SystemExit(run(timings=TIMINGS))
