@@ -342,6 +342,37 @@ module = ["win32com.*", "pythoncom", "latex2mathml.*", "pymupdf.*"]
 ignore_missing_imports = true
 
 [tool.pyright]
+# WHY A SECOND TYPE CHECKER, at 28% of every gate run.
+#
+# Measured 2026-09-06 over six chain runs: pyright 13.1s of a 47.6s
+# median chain, against mypy's 0.36s over the same 223 files (mypy has a
+# warm `.mypy_cache`; pyright has no equivalent and pays full price every
+# time). It is the second most expensive gate in the repository, and the
+# question "is it earning that" has now been asked and answered, so it
+# does not have to be asked again.
+#
+# It is earning it, because it asks a question mypy CANNOT ask.
+# `reportPrivateImportUsage`: with `py.typed` in force, importing a name
+# a module does not declare in `__all__` is an error. That caught sixteen
+# modules exporting public names they had never declared — including
+# `revision.validate`, the protocol's whole gate ladder, and
+# `crossrefs.link_more`, which five scripts were already importing. Ruff
+# and mypy were clean on every one of them.
+#
+# And that is the CONSUMER's view rather than a stylistic one. Nine
+# papers import this package from an editable install, and their editors
+# are pyright — Pylance IS pyright. This gate is the only one that sees
+# what a paper author sees when they type `from docxkit.edit import
+# RUN_RE`. It also caught `assert para_slice(...)`, which asserts nothing
+# because a non-empty tuple is always truthy (35fd07b); mypy has no such
+# check.
+#
+# **Do not move it earlier in the chain to "fail faster".** It is
+# cold-start expensive — 20.2s cold, 14.7s straight after mypy, 12.7s
+# warm — and running third means ruff and mypy have already read all 223
+# files, so it lands on a warm cache every time. Ordering the cheap gates
+# first for fast feedback happens to buy pyright ~7s as well.
+#
 # Pinned so the CLI and Pylance in the editor agree with each other.
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
