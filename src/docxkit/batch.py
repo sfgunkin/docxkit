@@ -58,6 +58,7 @@ from functools import partial
 from pathlib import Path
 
 from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, internal_links
+from .console import utf8_stdout
 from .edit import preserve_space, replace_in_para, visible_text
 from .find import edit_para
 from .package import write_docx
@@ -239,6 +240,10 @@ def apply_steps(
     xml: str, parts: dict[str, bytes], steps: Sequence[Edit | Step],
 ) -> tuple[str, list[str], list[str]]:
     """Run every step, keeping going so one failure does not hide the rest."""
+    # `run` has already done this, but this is public and papers call it
+    # directly — and it is the one place the library hands control to
+    # caller code that prints.
+    utf8_stdout()
     applied: list[str] = []
     failures: list[str] = []
     for s in steps:
@@ -281,6 +286,27 @@ def run(name: str, steps: Sequence[Edit | Step], *,
     revisions pending: Word's Compare treats a pending revision as ACCEPTED, so
     stacking a second batch decides the author's open verdicts for them.
     """
+    # Before anything can print. `console` calls making stdout safe the
+    # toolkit's job, and they sat only at the CLI boundary — `cli.main`
+    # and `compare.main` — while the printing sits here, in the library
+    # every per-paper batch script drives directly. On a cp1252 console
+    # a step that printed the typographic minus it was restoring raised
+    # inside `apply_steps`, which caught it, rolled the step back and
+    # reported a step failure: same file, same code, `ok=False` against
+    # `ok=True`, and the only variable the terminal's code page. It
+    # reads as a fault in the manuscript at exactly the moment — a
+    # close-out after the author's accept — when a glyph problem is what
+    # you are looking for (Aging_Well R96, 2026-09-05).
+    #
+    # At the TOP, not beside `apply_steps`, because a preflight refusal
+    # returns before that — and one refusal echoes the DOCUMENT back:
+    # `diagnose` quotes the hyperlink label it met, verbatim. On the DSI
+    # manuscript that label is Cyrillic ('Таблица 3'), which cp1252
+    # cannot encode either, and `print(report.text())` is the documented
+    # way to read a Report. The other refusals are the toolkit's own
+    # English and would survive; this one would not.
+    utf8_stdout()
+
     xml = parts[DOCUMENT].decode("utf-8")
     report = Report(name=name)
 

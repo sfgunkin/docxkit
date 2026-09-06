@@ -7,7 +7,7 @@ while every word on the page stays the same.
 from __future__ import annotations
 
 import pytest
-from conftest import document, para, run
+from conftest import cp1252_console, document, para, run
 
 from docxkit import batch
 
@@ -532,3 +532,79 @@ def test_diagnose_names_a_label_that_is_only_PART_of_the_match():
     said = batch.diagnose(xml, "for the split", "see Table 3 for")
 
     assert "hyperlink label 'Table 3'" in said, said
+
+
+# --- the console a paper script actually gets -----------------------------
+
+MINUS = "−"        # U+2212, and NOT in cp1252 — unlike the em dash
+
+
+def test_a_step_that_PRINTS_a_maths_glyph_still_applies():
+    """The failure this guards, measured on Aging_Well R96: the step
+    printed the typographic minus it was restoring, `print` raised on a
+    cp1252 console, `apply_steps` caught it, ROLLED THE STEP BACK and
+    reported a step failure. Same file, same code, `ok=False` where a
+    UTF-8 terminal gave `ok=True` — and the only variable is the
+    terminal's code page.
+
+    That it reports failure rather than claiming success is why this is
+    not an S1. The cost is that the failure reads as a fault in the
+    manuscript at exactly the moment — a close-out after the author's
+    accept — when a glyph problem is what you are looking for.
+    """
+    def repair(xml: str, _parts: dict[str, bytes]) -> str:
+        print(f"  restored {MINUS} in run 3")
+        return xml.replace("country averages", "country AFIs")
+
+    with cp1252_console() as printed:
+        report = batch.run("maths glyphs", [batch.Step("glyphs", repair)],
+                           parts=parts_of())
+
+    assert report.ok, report.failures
+    assert report.applied == ["glyphs"]
+    assert MINUS in printed(), \
+        "the step ran but its report of what it restored was lost"
+
+
+def test_a_REFUSED_batch_can_still_have_its_report_printed():
+    """Why the call is at the top of `run` and not beside `apply_steps`.
+
+    A preflight refusal returns before any step executes, and ONE
+    refusal echoes the document back: `diagnose` quotes the hyperlink
+    label it met, verbatim. The others are the toolkit's own English and
+    would survive cp1252 — this one carries whatever the manuscript
+    calls its exhibits, which on DSI is Cyrillic. `print(report.text())`
+    is the documented way to read a Report, so the reconfigure has to
+    have happened before that early return.
+    """
+    label = "Таблица 3"
+    link = ('<w:hyperlink w:anchor="t3"><w:r><w:rPr><w:rStyle '
+            f'w:val="Hyperlink"/></w:rPr><w:t>{label}</w:t></w:r>'
+            "</w:hyperlink>")
+    body = para(run("see "), link, run(" for the split."), pid="A1")
+    edits = [batch.Edit("R22", "for the split", f"see {label} for", "x")]
+
+    with cp1252_console() as printed:
+        report = batch.run(
+            "relabel", edits,
+            parts={batch.DOCUMENT: document(body).encode("utf-8")})
+        assert not report.ok
+        print(report.text())                # the failure was raised HERE
+
+    assert f"hyperlink label '{label}'" in printed()
+
+
+def test_apply_steps_makes_the_console_safe_for_a_DIRECT_caller():
+    """`apply_steps` is in `__all__` and papers call it directly; it is
+    also the one place the library hands control to caller code that
+    prints, so it carries the call as well as `run` does."""
+    def repair(xml: str, _parts: dict[str, bytes]) -> str:
+        print(f"  restored {MINUS}")
+        return xml.replace("country averages", "country AFIs")
+
+    with cp1252_console() as printed:
+        _xml, applied, failures = batch.apply_steps(
+            xml_of(parts_of()), {}, [batch.Step("glyphs", repair)])
+
+    assert applied == ["glyphs"] and not failures
+    assert MINUS in printed()

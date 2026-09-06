@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from ._compare_diff import Report
+from .console import utf8_stdout
 
 
 def _in(entry: dict[str, Any]) -> str:
@@ -191,6 +192,14 @@ def _review(report: Report) -> None:
 
 def render(report: Report, expect_clean: bool) -> int:
     """Print every layer; return the exit code."""
+    # `compare.main` and `cli.main` already do this, and for four months
+    # that was taken to cover it. It does not: `compare.render` is
+    # public and `docxkit.compare` is imported directly by paper
+    # scripts, which reach a cp1252 console with no reconfigure. Every
+    # line below quotes the manuscript, so the first paragraph carrying
+    # a typographic minus — the character a maths round is FULL of —
+    # ends the report with a UnicodeEncodeError partway through.
+    utf8_stdout()
     real = _structure(report) + _text(report)
     real += _formula(report) + _formula_format(report) + _format(report)
     real += _paragraph(report) + _media(report)

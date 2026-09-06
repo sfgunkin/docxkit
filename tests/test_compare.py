@@ -14,6 +14,7 @@ import pytest
 from conftest import (
     NS,
     comment,
+    cp1252_console,
     document,
     field,
     hdr,
@@ -4170,3 +4171,30 @@ def test_with_NO_styles_part_the_flags_are_read_off_the_run(tmp_path):
     report = compare(*docs(tmp_path, before, after))
 
     assert any("italic" in str(e) for e in report["format"]), report["format"]
+
+
+def test_render_survives_the_cp1252_console_a_LIBRARY_caller_gets(tmp_path):
+    """`compare.render` is public and `docxkit.compare` is imported
+    directly by paper scripts, which reach a Windows console with no
+    reconfigure — `compare.main` and `cli.main` were the only two places
+    that made stdout safe, and neither is on this path.
+
+    Every line render prints quotes the manuscript, so one paragraph
+    carrying a typographic minus (U+2212, and NOT in cp1252, unlike the
+    em dash) ended the report with a UnicodeEncodeError partway through
+    — after the header, before the layer a reader was waiting for.
+    """
+    minus = "−"
+    a, b = docs(tmp_path,
+                para(run("The coefficient is 0.15 in every specification.")),
+                para(run(f"The coefficient is {minus}0.15 in every "
+                         f"specification.")))
+    report = compare(a, b)
+
+    with cp1252_console() as printed:
+        code = render(report, expect_clean=True)
+
+    assert code == 1
+    out = printed()
+    assert minus in out, "the report stopped at the glyph it was reporting"
+    assert "REAL change locations" in out, "it did not reach its own summary"

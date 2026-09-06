@@ -6,6 +6,8 @@ in tests/corpus/ (gitignored) for the optional round-trip tests.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import zipfile
 
@@ -152,6 +154,46 @@ def write(path, parts: dict[str, bytes]) -> str:
         for name, blob in parts.items():
             z.writestr(name, blob)
     return str(path)
+
+
+@contextlib.contextmanager
+def cp1252_console():
+    """stdout as a Windows console gives it: cp1252, `errors="strict"`.
+
+    The default console code page on every machine these manuscripts are
+    written on, and the one thing the everyday suite cannot see —
+    pytest's captured stdout is not a `TextIOWrapper` at all, so
+    `console.utf8_stdout` is a no-op under it and a library that never
+    reconfigures looks identical to one that does.
+
+    It must be a real `TextIOWrapper` for that reason: the guard in
+    `console` refuses anything else, so a `StringIO` would test nothing.
+
+    **A context manager rather than a fixture, and that is not a style
+    choice.** pytest re-assigns `sys.stdout` to its own capture file at
+    the start of every phase, so a patch installed during fixture SETUP
+    is gone by the time the test body runs — the first version of this
+    passed the stream to nothing and the prints landed in pytest's
+    capture, where they encode fine and prove nothing.
+
+    Yields a callable returning what was printed, decoded by whatever
+    encoding the stream ENDED UP with: a library that made the console
+    safe leaves UTF-8 behind, and that is the assertion.
+    """
+    buf = io.BytesIO()
+    stream = io.TextIOWrapper(buf, encoding="cp1252", errors="strict",
+                              newline="\n")
+    was = sys.stdout
+    sys.stdout = stream
+
+    def printed() -> str:
+        stream.flush()
+        return buf.getvalue().decode(stream.encoding, errors="replace")
+
+    try:
+        yield printed
+    finally:
+        sys.stdout = was
 
 
 @pytest.fixture
