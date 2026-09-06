@@ -1049,6 +1049,56 @@ def test_promote_lands_and_leaves_a_rescue(monkeypatch, project, capsys):
     assert kept and kept[0].read_bytes() == original
 
 
+def test_promote_SAYS_where_the_carried_stamp_landed(monkeypatch, project,
+                                                     capsys):
+    """`promote` carries a stamped batch's provenance onto the
+    manuscript, and the CLI is the only place the author learns it
+    happened — `revision.promote` returns the path, but nobody at a
+    terminal reads a dataclass.
+
+    It matters because the stamp is what `guard.check` reads next round:
+    a paper building with `out=working.docx` (HCW's lane script) was
+    passing `force=True` every round to get past a stamp promote had
+    never refreshed. The line below is how the author sees that the
+    round left the guard in a state that will not need forcing.
+    """
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    guard.stamp(project.batch, original="prev.docx", revised="clean.docx",
+                base_sha256=guard.sha256(project.prev))
+
+    code, _ = run_cli(monkeypatch, "revision", "promote",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "stamp carried beside it" in out
+    # the NAME it prints is the file that is actually there, not a
+    # cheerful line about a path the report happened to hold
+    landed = guard.stamp_path(project.working)
+    assert landed.exists() and landed.name in out
+    assert guard.check(project.working) is None, \
+        "it announced a stamp that still calls the file an author edit"
+
+
+def test_promote_says_NOTHING_about_a_stamp_when_the_batch_had_none(
+        monkeypatch, project, capsys):
+    """The other direction, and the reason the line is conditional: an
+    unstamped batch (the hand-authored vehicle) leaves nothing to carry,
+    and announcing one would name a file that is not there."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("unstamped"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "promote",
+                      "--paper", str(project.root))
+
+    assert code == 0
+    assert "stamp carried" not in capsys.readouterr().out
+    assert not guard.stamp_path(project.working).exists()
+
+
 def test_promote_refuses_a_stale_batch_with_exit_4(monkeypatch, project):
     """The author edited working.docx while the batch was being built."""
     write(project.batch, make_parts(para(run("the batch"))))
