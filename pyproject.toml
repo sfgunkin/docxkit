@@ -144,6 +144,21 @@ max-complexity = 20
 # with `--isolated`, so with its DEBT list empty it now reads "no
 # function in docxkit exceeds 20" rather than "no NEW one does".
 #
+# When something crosses the line again, record it here as
+#
+#   `edit.replace_in_para` 24 (measured 2026-09-03)
+#
+# — one line, number then date, backticks optional.
+#
+# and in DEBT as `Pin(24, "2026-09-03")`. The test cross-checks BOTH
+# halves against this comment, because a number without its age is what
+# rotted last time: on 2026-09-03 three of the five entries then pinned
+# overstated their functions, each simplified under the pin and none of
+# them moved, `edit.replace_in_para` for ten days. The gate is
+# one-directional on purpose — it fires when a pin GROWS, never when one
+# shrinks — so the date is what tells a reader to re-measure.
+# `python tools/complexity_pins.py` re-measures and prints both.
+#
 # The six paid, and what each became. Five took the same shape: the pass
 # was one loop per KIND of finding already, so each loop became a
 # function and the caller kept the emission order, which is the report

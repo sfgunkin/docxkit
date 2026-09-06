@@ -891,6 +891,79 @@ whoever adds the next entry: re-measure before trusting the number beside
 a function, and consider recording the DATE with it, which is the cheap
 half of the fix and needs no new gate.
 
+**Built 2026-09-05, and the one-directional gate deliberately kept.** A
+pin is now `Pin(<complexity>, "<YYYY-MM-DD>")`, so it states when it was
+true; `test_every_pin_says_WHEN_it_was_measured` refuses a bare int, a
+non-ISO date and a date that has not happened yet, and the pyproject
+cross-check now wants the number AND the date on one line. Re-measured
+first: DEBT is still empty and nothing in the package exceeds 20, so all
+three figures above are historical — `cmd_revision_validate` at 20 is the
+closest anything comes. `python tools/complexity_pins.py` walks the
+package (importing the measurement from the gate, so the two cannot
+disagree) and prints the dict to paste back, naming each pin GREW /
+SHRANK / PAID / NEW. **SHRANK is the state nothing else reports**, and
+the tool exits 0 whatever it finds — a non-zero exit is one line in
+`tools/gates.py` away from becoming the exact-equality gate this entry
+rejects, and `test_it_exits_0_on_STALE_pins_because_it_is_not_a_gate`
+holds it to that.
+
+One thing the build found, worth knowing before the next entry: the
+pyproject cross-check anchored on `<name>\s+<number>`, while the comment
+around it wraps names in backticks — so an entry written in the file's
+own style would have been refused with a message about drift. The
+backtick is optional now.
+
+### S4 — `batch.run` prints the glyphs it repairs, and only the CLI makes stdout safe
+
+<!-- status: open -->
+
+A repair that restores the typographic minus **aborts on a Windows console**,
+because the step prints each restoration and cp1252 cannot encode `−`. The
+write is then skipped and the run reports FAILED with a `UnicodeEncodeError`
+where a manuscript problem would be reported.
+
+Measured 2026-09-05 on Aging_Well, closing out R96 (`revision/scripts/r22_math_typography.py`,
+which drives `docxkit.batch.run` directly):
+
+    ** maths glyphs the accept flattened  UnicodeEncodeError: 'charmap' codec
+       can't encode character '−' in position 31: character maps to <undefined>
+      wrote None
+
+`working.docx` was byte-identical before and after, so nothing was corrupted —
+the step raised while printing, `batch.run` recorded a step failure, and the
+repair did not happen. Re-run in the same shell with `PYTHONIOENCODING=utf-8`:
+`maths glyphs restored: 20`, exit 0. **Same file, same code, opposite verdict,
+and the variable is the terminal's code page.**
+
+**`console.py` already says this is the toolkit's job** — *"Windows consoles
+default to cp1252, which cannot encode the glyphs these documents and reports
+are full of … Every paper script therefore opens with a call to reconfigure
+stdout, and every one of them wrote it unguarded."* The guarded version now
+exists, and `utf8_stdout` / `utf8_console` are called in exactly two places:
+`cli.py:2405` and `compare.py:228`. **Both are entry points.** A caller that
+imports the library and drives it — which is what every per-paper batch script
+in every one of these projects does — inherits a strict cp1252 stdout, and
+`batch.run` prints document glyphs on the way past.
+
+So the safety sits at the CLI boundary while the printing sits in the library.
+The asymmetry is invisible until a step prints a character outside cp1252,
+which is precisely the steps that repair mathematics.
+
+**Fix belongs in `batch.run`** (or in whatever the library uses to print step
+progress): call `utf8_stdout()` once, the same way `compare.py` does. A test
+that fails without it can wrap `sys.stdout` in a `TextIOWrapper` at cp1252 with
+`errors="strict"` and assert the step still writes.
+
+**Per-paper workaround now in place, to be deleted with the fix:**
+`Aging_Well/revision/scripts/r22_math_typography.py` calls `utf8_stdout()` at
+the top of `main`, with a comment pointing here. Any other paper script that
+drives `batch.run` over mathematics has the same hole.
+
+Severity is S4 rather than S3 because the run does report failure rather than
+claiming success. The cost is that the failure reads like a defect in the
+manuscript, at the exact moment — a close-out after an author's Word accept —
+when a real glyph problem is what you are looking for.
+
 ---
 
 ## Where the fixed entries are
