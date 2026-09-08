@@ -215,6 +215,54 @@ def _summary(out: str) -> str:
     return (said or lines or [""])[-1]
 
 
+#: What a gate's own summary looks like when it FAILED. The mirror of
+#: `_SUMMARY`, and it did not exist: the failing path printed a fixed
+#: window anchored to the END of the output and hoped the reason was in
+#: it. Measured 2026-09-06 — a red `pytest` under `-n 8` emitted sixteen
+#: `PytestBenchmarkWarning` lines AFTER its summary, which is 3000
+#: characters of nothing, and the assertion that had actually failed was
+#: outside the window entirely. The plugin was the instance; a chatty
+#: tail is the defect, and any gate may grow one.
+_FAILURE = re.compile(r"^(FAILED|ERROR)\b"          # pytest's summary rows
+                      r"|^E\s{3}"                    # its assertion detail
+                      r"|^\s*File \""                # a traceback's frames
+                      r"|\bFound \d+ error"          # ruff
+                      r"|: error:"                   # mypy, pyright
+                      r"|^=+ .*(failed|error).*=+$"  # pytest's last banner
+                      r"|^\s*(assert|raise)\b",      # the line itself
+                      re.IGNORECASE)
+
+
+def _failure(out: str, limit: int = 3000) -> str:
+    """What a reader needs from a gate that FAILED, within `limit`.
+
+    The tail is kept — a gate's last words are usually its verdict — but
+    never at the cost of the lines that say what broke. Those are
+    selected the way `_summary` selects for the passing case, and any
+    that the tail would have cut are printed above it under a marker
+    saying how much was dropped between the two.
+    """
+    text = _ANSI.sub("", out.strip())
+    if len(text) <= limit:
+        return text
+    tail = text[-limit:]
+    named = [ln.rstrip() for ln in text.splitlines()
+             if ln.strip() and _FAILURE.search(ln)]
+    missed = [ln for ln in named if ln not in tail]
+    if not missed:
+        return tail
+    # The failure first, then as much of the tail as the budget leaves.
+    # Both halves are bounded: a suite failing 300 tests would otherwise
+    # push its own verdict out of the window a second way.
+    head = "\n".join(missed[-25:])[:limit // 2]
+    room = max(limit - len(head) - 80, 200)
+    dropped = len(text) - room
+    return (f"{head}\n"
+            f"... [{dropped} characters omitted; the lines above are "
+            f"outside the last {room}] ...\n"
+            f"{text[-room:]}")
+
+
 #: pytest's own `--durations` block, which the pytest gate asks for. The
 #: per-TEST costs are the actionable half: that gate is most of the
 #: chain, and "pytest took 30s" cannot be acted on while "these six
@@ -241,6 +289,33 @@ def _record(entries: list[dict[str, object]], outcome: str,
     """
     return timings_mod.record("gates", "chain", entries, into,
                               outcome=outcome)
+
+
+def _say_regressions(folder: Path, say: Callable[[str], None]) -> None:
+    """Name any gate that has genuinely got slower, right here.
+
+    **This is the monitor, and it is deliberately not an agent.** The
+    history only changes when somebody runs this chain, so polling it on
+    a clock watches unchanged data almost every time it wakes; and every
+    scheduler available on the agent side — cron jobs, Monitor watches,
+    cloud routines — lives only as long as one session, while this
+    outlives every session and needs nothing switched on.
+
+    The moment the data appears is the moment to read it, and the reader
+    is already written. Silent when there is nothing, because a line
+    that says "no regressions" after every green chain is a line people
+    stop seeing.
+
+    Never raises and never changes the exit code: the chain's verdict is
+    about the code, and this is about the afternoon.
+    """
+    try:
+        moved = timings_mod.regressions(timings_mod.read(folder))
+    except Exception:
+        return
+    for delta, name, was, now, n in moved:
+        say(f"slower  {name}  {was:.1f}s -> {now:.1f}s (+{delta:.1f}s) "
+            f"over {n} runs — python tools/timings.py")
 
 
 def run(gates: Sequence[Gate] = tuple(GATES),
@@ -279,7 +354,7 @@ def run(gates: Sequence[Gate] = tuple(GATES),
                 entry["status"] = "failed"
                 outcome = f"failed:{name}"
                 say(f"FAILED  {name}")
-                say(out.strip()[-3000:])
+                say(_failure(out))
                 return 1
             if done.returncode == SKIPPED:
                 entry["status"] = "skipped"
@@ -295,6 +370,7 @@ def run(gates: Sequence[Gate] = tuple(GATES),
     finally:
         if timings is not None and entries:
             _record(entries, outcome, timings)
+            _say_regressions(timings, say)
         # The report is scratch between two gates, and a chain that
         # stops early still wrote it. `missing_ok` because most runs of
         # this function in the tests never reach the pytest gate at all.

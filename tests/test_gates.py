@@ -258,3 +258,40 @@ def test_mypy_NOTES_on_a_non_zero_exit_are_still_not_a_failure():
            "Success: no issues found in 1 source file")
 
     assert not gates._failed(mypy, out, 1)
+
+
+def test_a_chatty_TAIL_does_not_push_the_failure_out_of_the_window():
+    """The window used to be `out[-3000:]`, anchored to the END, so a
+    gate that says anything after its verdict buries it.
+
+    Measured 2026-09-06: a red pytest under `-n 8` printed sixteen
+    `PytestBenchmarkWarning` lines after the summary, and the assertion
+    that had failed was outside the window entirely — the chain had to
+    be re-run piped through `grep` to find out what broke. That plugin
+    is fixed at source; this holds the RUNNER to it, for the next gate
+    that grows a tail."""
+    noise = "\n".join(f"  PytestBenchmarkWarning: line {i}"
+                      for i in range(400))
+    out = ("FAILED tests/test_readme.py::test_every_module_has_a_row\n"
+           "E   assert 'timings' in rows\n" + noise)
+    assert len(out) > 3000, "the fixture has to overflow the window"
+
+    shown = gates._failure(out)
+
+    assert "FAILED tests/test_readme.py::test_every_module_has_a_row" in shown
+    assert "E   assert 'timings' in rows" in shown
+    assert len(shown) <= 3400
+
+
+def test_the_failure_window_keeps_the_TAIL_when_nothing_is_cut():
+    """The tail is the default and stays it: a gate whose last words
+    ARE its verdict must not be rearranged, and short output passes
+    through whole."""
+    short = "boom\n1 failed in 0.4s"
+    assert gates._failure(short) == short
+
+    quiet = "prelude\n" * 2000 + "FAILED tests/test_z.py::test_end"
+    shown = gates._failure(quiet)
+
+    assert shown.endswith("FAILED tests/test_z.py::test_end")
+    assert "characters omitted" not in shown

@@ -35,7 +35,7 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision validate [BATCH.docx] [--no-word] [--render ANCHOR...]
     docxkit revision ship REVISED.docx   # both, one Word session
     docxkit revision promote [BATCH.docx]
-    docxkit revision baseline [--force] [--accept-loss A,...]
+    docxkit revision baseline [--force] [--accept-loss A,... ]...
     docxkit revision rescues [--prune KEEP]
     docxkit revision redlines
     docxkit revision init PAPER.docx [--root DIR] [--name NAME] [--working P]
@@ -47,7 +47,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
@@ -1402,6 +1402,48 @@ def cmd_revision_doctor(args: argparse.Namespace) -> int:
     return 2
 
 
+#: The two things a lost link can BE, and they need opposite actions.
+#: Reported as one list under the first of these, which is false of the
+#: second in every clause — the words did not survive, no script can
+#: restore them, and the content layers above did show it: the deletion
+#: is in the same report's `text` section a few lines up.
+_LOST_EATEN = ("Word does this silently when it collapses a paragraph to "
+               "make an edit;\n   the words all survive, so no content "
+               "layer above shows it — which is\n   also what lets the "
+               "link be rebuilt (`citations.link_all`).")
+_LOST_CUT = ("The WORDS are gone too, so this is not Word's doing: the "
+             "passage itself\n   was deleted, and that deletion is in the "
+             "text section above. Nothing to\n   put back — check each was "
+             "meant, then name it with --accept-loss.")
+
+
+def _say_lost(lost: Sequence[object]) -> None:
+    """The LOST block, grouped by whether the words survived."""
+    def words(loss: object) -> bool | None:
+        return getattr(loss, "words", None)
+
+    print(f"\n== LOST ({len(lost)}) ==")
+    groups = [(_LOST_EATEN, [x for x in lost if words(x) is True]),
+              (_LOST_CUT, [x for x in lost if words(x) is False]),
+              ("", [x for x in lost if words(x) is None])]
+    filled = [(why, items) for why, items in groups if items]
+    for why, items in filled:
+        # Headed only when the list is MIXED, which is the case the one
+        # explanation got wrong: a report of 4 links Word ate and 5 the
+        # author cut, described as though all 9 kept their words. A list
+        # that is all one kind reads better flat.
+        if len(filled) > 1:
+            kind = ("the words SURVIVE" if why is _LOST_EATEN else
+                    "the words are GONE" if why is _LOST_CUT else "structure")
+            print(f"   -- {kind} ({len(items)})")
+        for loss in items:
+            print("   ", loss)
+        if why:
+            print(f"   {why}")
+    print("   `revision baseline` will refuse until these are restored or "
+          "named with\n   --accept-loss.")
+
+
 def cmd_revision_ingest(args: argparse.Namespace) -> int:
     """What did the author change while I was away? (read-only)"""
     from .revision import ingest
@@ -1436,13 +1478,7 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
         print("   ** a STYLE-level edit, not just content **")
 
     if report.lost:
-        print(f"\n== LOST ({len(report.lost)}) ==")
-        for loss in report.lost:
-            print("   ", loss)
-        print("   Word does this silently when it collapses a paragraph "
-              "to make an edit;\n   the words all survive, so no content "
-              "layer above shows it. `revision baseline`\n   will refuse "
-              "until these are restored or named with --accept-loss.")
+        _say_lost(report.lost)
 
     if report.relabelled:
         print(f"\n== RE-LABELLED ({len(report.relabelled)}) ==")
@@ -1532,6 +1568,30 @@ def cmd_revision_ship(args: argparse.Namespace) -> int:
         args.batch = str(Path(args.out) if args.out else _paper(args).batch)
         args.baseline = None
         return cmd_revision_validate(args)
+
+
+def _say_footnotes(report: object) -> None:
+    """The footnote half of gate 5, keyed on what was MEASURED.
+
+    `moved_footnotes` finds a shape — a definition Compare emitted as
+    one insertion with no matching deletion — and the warning claimed
+    the outcome: *"rejecting empties the note, so gate 5 will fail on
+    it."* The shape is necessary and not sufficient, and this report's
+    own reject-all layer already holds the answer, so the two could
+    contradict each other two lines apart. Twice on Aging_Well they did,
+    beside a genuine LINKS mismatch, where it reads as a second blocking
+    finding and the batch gets thrown away.
+    """
+    emptied = getattr(report, "emptied_footnotes", [])
+    for note in emptied:
+        print(f"   footnote {note}: the whole note is one insertion with "
+              f"no deletion — its REFERENCE moved, so rejecting empties it")
+    benign = [n for n in getattr(report, "moved_footnotes", [])
+              if n not in emptied]
+    if benign:
+        ids = ", ".join(str(n) for n in benign)
+        print(f"   (footnote {ids}: re-emitted as an insertion, and "
+              f"reject-all restores it — not part of this mismatch)")
 
 
 def _say_glyphs(report: object) -> None:
@@ -1668,9 +1728,15 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
         print("`docxkit revision status` is the check for a paper between "
               "rounds; `revision build` is what makes a batch.")
         return 3
-    report = validate(target, base if base.exists() else None,
-                      use_word=not args.no_word,
-                      word_deadline=paper.word_deadline or None)
+    # Timed HERE rather than in `revision.validate`, which takes two
+    # paths and never sees a Paper — so it has neither a root to record
+    # into nor the paper's opt-out. This is the layer that resolved
+    # both. Same for `ingest`, and for the same reason.
+    from .revision import _timing
+    with _timing.session("validate", paper):
+        report = validate(target, base if base.exists() else None,
+                          use_word=not args.no_word,
+                          word_deadline=paper.word_deadline or None)
 
     print(f"{target.name}")
     if report.built_on_this_baseline is False:
@@ -1738,10 +1804,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
             # Three booleans do not say whether the batch is salvageable
             # or has to ship clean, which is the decision waiting on
             # them — and finding out cost a bespoke difflib script.
-            for note in report.moved_footnotes:
-                print(f"   footnote {note}: the whole note is one "
-                      f"insertion with no deletion — its REFERENCE moved, "
-                      f"so rejecting empties it")
+            _say_footnotes(report)
             for u in report.reject_diff:
                 print(f"   {u}")
             _say_glyphs(report)
@@ -1848,8 +1911,12 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
     """The author accepted: record the manuscript as the new truth."""
     from .revision import baseline
     paper = _paper(args)
-    accepted = tuple(t.strip() for t in args.accept_loss.split(",")
-                     if t.strip())
+    # Both forms, and mixtures of them: one flag per loss (what the
+    # refusal prints, one line each) and one comma-separated list (what
+    # the help has always documented).
+    accepted = tuple(t.strip()
+                     for chunk in (args.accept_loss or [])
+                     for t in chunk.split(",") if t.strip())
     from .revision import log_batch, verdict
     recorded = verdict(paper) if not args.no_log else None
     written = baseline(paper, force=args.force, accept_loss=accepted,
@@ -2361,9 +2428,19 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--force", action="store_true",
                    help="adopt a file that still carries revisions "
                         "(migration only)")
-    r.add_argument("--accept-loss", metavar="ANCHOR,...", default="",
+    # `action="append"` AND the comma split, because the tool prints one
+    # suggested flag per loss, each on its own line, and the form a
+    # reader copies out of that list is one flag per loss. Argparse kept
+    # only the last, so the command refused again with the list one
+    # shorter and nothing said why — the natural reading of "I named
+    # four, it now says three" is that the anchors failed to match.
+    # `default=None`, not `[]`: `append` mutates the default in place
+    # and it would accumulate across parses in one process.
+    r.add_argument("--accept-loss", metavar="ANCHOR,...", action="append",
+                   default=None,
                    help="the hand-back lost these DELIBERATELY (anchor, "
-                        "note text, or kind:what); naming one that is "
+                        "note text, or kind:what); repeatable, or one "
+                        "comma-separated list; naming one that is "
                         "still present is itself refused")
     r.add_argument("--repair-math", action="store_true",
                    help="put back the equation glyphs Word downgraded on "

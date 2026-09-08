@@ -80,7 +80,8 @@ FACADE_HALVES = {
 #: BOTTOM FIRST, like FACADE_HALVES.
 SUBPACKAGE_HALVES = {
     "revision": ("_common", "_config", "_ledger", "_losses", "_state",
-                 "_verdict", "_baseline", "_build", "_doctor", "_gates",
+                 "_verdict", "_timing", "_baseline", "_build", "_doctor",
+                 "_gates",
                  "_ingest", "_registry", "_init", "_promote", "_validate"),
 }
 

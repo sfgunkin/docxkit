@@ -45,11 +45,6 @@ from docxkit.console import utf8_stdout  # noqa: E402
 
 TIMINGS = ROOT / timings_mod.FOLDER
 
-#: A regression must clear BOTH. The ratio alone reports a 0.4s gate
-#: doubling; the floor alone reports the pytest gate drifting 2s on a
-#: busy machine. Together they name the thing a reader would act on.
-SLOWER = 1.25
-FLOOR_SECONDS = 2.0
 
 #: Below this a gate is not worth a line in the report. Measured: five
 #: of the nine gates are under a second and always will be.
@@ -68,14 +63,14 @@ def records(folder: Path = TIMINGS, runs: int | None = None,
     return timings_mod.read(folder, kind=kind, last=runs)
 
 
-def by_gate(runs: list[Run]) -> dict[str, list[float]]:
-    """Step name -> its seconds across the runs, in order."""
-    seen: dict[str, list[float]] = defaultdict(list)
-    for run in runs:
-        for gate in run.get("steps", []):
-            if gate.get("status") == "ok":
-                seen[str(gate["name"])].append(float(gate["seconds"]))
-    return dict(seen)
+#: The analysis lives in `docxkit.timings` beside the format it reads,
+#: because `gates.py` reports regressions inline at the end of a chain
+#: and a second copy here would be free to disagree with it. Re-exported
+#: under this module's older names, which the tests and the CLI use.
+by_gate = timings_mod.by_step
+regressions = timings_mod.regressions
+SLOWER = timings_mod.SLOWER
+FLOOR_SECONDS = timings_mod.FLOOR_SECONDS
 
 
 def slowest_tests(
@@ -97,26 +92,6 @@ def slowest_tests(
                      for k, v in seen.items()), reverse=True)
     return ranked[:limit]
 
-
-def regressions(
-        runs: list[Run]) -> list[tuple[float, str, float, float, int]]:
-    """Gates whose recent median stands clear of their earlier one."""
-    found = []
-    for name, seconds in by_gate(runs).items():
-        if len(seconds) < 6:            # too few to call a median a fact
-            continue
-        # At least THREE in the recent window, whatever the third works
-        # out to. A median over two values is their mean, so at six runs
-        # a window of two let one slow afternoon carry the verdict — 30,
-        # 30, 30, 30, 30, 60 reported as 30s -> 45s, which is the exact
-        # coin-toss-as-a-finding this function exists to avoid. Caught
-        # by `test_ONE_slow_afternoon_is_not_a_regression`.
-        cut = max(3, len(seconds) // 3)
-        recent, before = seconds[-cut:], seconds[:-cut]
-        now, was = statistics.median(recent), statistics.median(before)
-        if now >= was * SLOWER and now - was >= FLOOR_SECONDS:
-            found.append((now - was, name, was, now, len(seconds)))
-    return sorted(found, reverse=True)
 
 
 def report(runs: list[Run],

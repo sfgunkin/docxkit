@@ -46,43 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — a failed gate reports its last 3000 characters, so trailing noise hides the failure
-<!-- status: open -->
-
-`gates.run` prints `out.strip()[-3000:]` when a gate fails. The window is
-fixed and anchored to the END, so anything a gate emits *after* its failure
-pushes the failure out of it. The gate's verdict is still right — the chain
-stops, the exit code is 1 — and the printed reason is unusable.
-
-Measured 2026-09-06. A red `pytest` gate printed 3000 characters of
-`PytestBenchmarkWarning` (pytest-benchmark warns once per xdist worker;
-sixteen lines at `-n 8`, all after the summary) and the actual failure —
-`test_every_module_has_a_row_in_the_README_table`, a missing row for the new
-`timings` module — was outside the window entirely. The chain had to be re-run
-piped through `grep` to find out what had broken. Reproduced deliberately: a
-one-line failing test under `-n 8`, `out[-3000:]`, failure not present.
-
-**The plugin was the instance, not the defect.** It is fixed at source —
-`-p no:benchmark` in `addopts`, because the suite has no benchmarks and
-pytest-benchmark is not even in `[dev]` — and with that the same window shows
-the assertion, its file and line, and the short summary. But the next gate
-with a chatty tail does this again, and nothing is watching for it: a warning
-burst from any plugin, a teardown that logs, a tool that prints a banner after
-its result.
-
-**Suggested fix:** make the window content-aware rather than positional. Keep
-the tail, but ensure the lines a reader needs are in it — pytest's
-`=== short test summary info ===` block, ruff's `Found N errors`, mypy's
-`: error` lines. `_summary` already does exactly this kind of selection for
-the PASSING case (`_SUMMARY`, and it takes the LAST matching line because a
-run once ended with an interpreter note about the C stack). The failing case
-never got the same treatment, which is the asymmetry: the path that matters
-most is the one printing raw bytes and hoping.
-
-**Not filed as S3** because the gate does fail, and does say which gate. The
-cost is the reader's next twenty minutes, in the state — a red chain — where
-they can least afford it.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

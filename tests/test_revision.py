@@ -372,10 +372,12 @@ def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
     assert _read({"batch": {}}, "batch", "carry", ()) == ()
     with pytest.raises(KeyError, match="KNOWN"):
         _read({"batch": {"rescue_kep": 3}}, "batch", "rescue_kep", 5)
-    # the eleven keys the protocol reads — ten measured 2026-09-03
+    # the twelve keys the protocol reads — ten measured 2026-09-03
     # against the 29 the nine registered papers carry, plus
-    # `word_deadline`, added the same evening
-    assert sum(len(keys) for keys in KNOWN.values()) == 11
+    # `word_deadline` the same evening and `[paper] timings` on
+    # 2026-09-07, which turns protocol step recording off for a tree
+    # that must stay exactly as declared (a replication package)
+    assert sum(len(keys) for keys in KNOWN.values()) == 12
 
 
 def test_word_deadline_is_read_from_batch_and_defaults_to_TEN_MINUTES(
@@ -1064,6 +1066,38 @@ def test_build_names_a_footnote_whose_REFERENCE_moved(project, monkeypatch):
     assert "footnote 2" in line
     assert "Accepting is right" in line
     assert "gate 5" in line, "and what it costs if they do not"
+    assert "MEASURABLY empties it" in line, "measured, not predicted"
+
+
+def test_build_does_not_predict_gate_5_for_a_note_reject_all_RESTORES(
+        project, monkeypatch):
+    """The same shape — an insertion with no matching deletion — over a
+    note the batch merely ADDED to, whose words rejecting puts back.
+
+    Warning here said "rejecting empties the note, so gate 5 will fail
+    on it" about notes gate 5 then passed, and `validate` printed
+    `'footnotes': True` about the same note in the same run. A build
+    warning that the ladder goes on to contradict is one an author
+    learns to skip, including the time it is real."""
+    with_note = make_parts(para(run("body") + _ref(2)),
+                           footnotes=notes("footnotes", note("the note")))
+    write(project.prev, with_note)
+    write(project.working, with_note)     # else `drift` fires first
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    added_to = notes("footnotes",
+                     f'<w:footnote w:id="2"><w:p>{run("the note")}'
+                     f'{ins("and more")}</w:p></w:footnote>')
+    monkeypatch.setattr(revision.tracked, "build",
+                        _FakeBuild(notes_xml=added_to))
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+
+    (line,) = [ln for ln in said if "REFERENCE moved" in ln]
+    assert "gate 5 is not at risk" in line, line
+    assert "nothing to do" in line, line
+    assert "MEASURABLY" not in line
 
 
 def test_the_stale_baseline_refusal_can_be_overridden(project, monkeypatch):
@@ -2063,6 +2097,63 @@ def test_a_moved_footnote_anchor_is_named(tmp_path):
         write(tmp_path / "prev.docx", base), use_word=False)
     assert report.reject_detail["footnotes"] is False
     assert report.moved_footnotes == [2], report.moved_footnotes
+    # and it is the MEASURED one too, which is what gets warned about
+    assert report.emptied_footnotes == [2], report.emptied_footnotes
+
+
+def test_a_note_reject_all_RESTORES_is_not_warned_about(tmp_path):
+    """The shape is necessary and not sufficient. `moved_footnotes`
+    flags any definition carrying an insertion and no deletion — which
+    includes a note the batch merely ADDED to, whose words rejecting
+    puts back exactly.
+
+    Warning on the shape printed "rejecting empties the note, so gate 5
+    will fail on it" beside `'footnotes': True` in the same report, two
+    lines apart. Measured twice on Aging_Well: 2026-09-03 footnote 2,
+    when a batch added a note and pushed the later definitions down,
+    and 2026-09-07 (R108) footnote 12, where no note was added at all —
+    reference order `2..13` before and after, the note byte-identical,
+    reject-all restoring it. Printed next to a genuine LINKS mismatch it
+    reads as a second blocking finding, and the batch gets thrown away.
+
+    The body edit here is untracked ON PURPOSE: gate 5 has to be red for
+    a DIFFERENT reason, or the footnote lines are never reached."""
+    batch, base = _notes(para(run("the note text"), ins("See also Kok.")),
+                         para(run("the note text")))
+    batch["word/document.xml"] = make_parts(
+        para(run("body edited")))["word/document.xml"]
+
+    report = revision.validate(write(tmp_path / "batch.docx", batch),
+                               write(tmp_path / "prev.docx", base),
+                               use_word=False)
+
+    assert report.reject_matches_baseline is False, "gate 5 must be red"
+    assert report.reject_detail["footnotes"] is True
+    assert report.moved_footnotes == [2], "the shape is still reported"
+    # the warning is raised from THIS, and the two cannot disagree
+    assert report.emptied_footnotes == []
+
+
+def test_the_footnote_warning_never_contradicts_the_footnotes_LAYER(tmp_path):
+    """The invariant behind the entry, stated once: a report may not say
+    a note will be emptied while its own reject-all measurement says
+    every note came back."""
+    for note_body, baseline_body in (
+            (para(run("the note text"), ins("See also Kok.")),
+             para(run("the note text"))),          # added to  -> restored
+            (para(ins("the note text")),
+             para(run("the note text")))):         # re-emitted -> emptied
+        batch, base = _notes(note_body, baseline_body)
+        batch["word/document.xml"] = make_parts(
+            para(run("body edited")))["word/document.xml"]
+        report = revision.validate(write(tmp_path / "b.docx", batch),
+                                   write(tmp_path / "p.docx", base),
+                                   use_word=False)
+
+        if report.reject_detail["footnotes"]:
+            assert report.emptied_footnotes == [], report.reject_detail
+        else:
+            assert report.emptied_footnotes, report.reject_detail
 
 
 def test_a_moved_footnote_numbered_ONE_is_named_too():
@@ -2944,6 +3035,35 @@ def test_a_link_whose_ANCHOR_stopped_being_linked_is_still_a_loss(tmp_path):
     assert "UnitedNations2026" in lost[0].what
     assert revision.relabelled_links(package.read_parts(after),
                                      package.read_parts(before)) == []
+    # and the words ARE still there, which is what makes it repairable
+    assert lost[0].words is True
+
+
+def test_a_link_whose_WORDS_went_too_is_marked_apart_from_one_Word_ate(
+        tmp_path):
+    """The two causes a lost link has, and they need opposite actions.
+    Word collapsing a paragraph strips the hyperlink and keeps the
+    words, so the link can be rebuilt. An author deleting the sentence
+    takes the words with it, and there is nothing to put back.
+
+    Reported as one list under one explanation — "the words all survive,
+    so no content layer above shows it" — every clause of which is false
+    of the second kind, while the deletion sits in the same report's own
+    text section a few lines up. Measured 2026-09-08 on Aging_Well: 4 of
+    each kind and 5 of the other in one ingest, indistinguishable."""
+    before = write(tmp_path / "prev.docx", make_parts(
+        para(run("As "), _linked("UnitedNations2026", "UN 2026"),
+             run(" reports, and "), _linked("Cox1987", "Cox (1987)"),
+             run(" agrees."))))
+    after = write(tmp_path / "working.docx", make_parts(
+        para(run("As UN 2026 reports."))))
+
+    lost = revision.losses(package.read_parts(after),
+                           package.read_parts(before))
+    words = {loss.what.split(" (")[0]: loss.words for loss in lost}
+
+    assert words["UnitedNations2026"] is True    # link eaten, words kept
+    assert words["Cox1987"] is False             # the clause was cut
 
 
 def test_a_link_LOST_beside_one_re_labelled_is_still_counted(tmp_path):
@@ -3843,3 +3963,100 @@ def test_a_deletion_in_a_FOOTNOTE_counts_too():
                            _linked_run("ref_Note", "Note")))))
 
     assert [a for a, _ in links_in_deletions(parts)] == ["ref_Note"]
+
+
+# ------------------------------------------ the protocol times itself
+
+def test_a_promote_RECORDS_how_long_it_took(project):
+    """Every paper, with no per-paper line to add.
+
+    The alternative was measured on Aging_Well on 2026-09-07 by
+    watching file mtimes from outside: two rounds, ±20s per step,
+    unable to tell a rewrite from a touch or name the command that
+    caused either. From inside it is exact and costs a `perf_counter`.
+    """
+    import dataclasses
+
+    from docxkit import timings
+    write(project.batch, make_parts(para(run("the batch"))))
+
+    revision.promote(project)
+
+    runs = timings.read(project.root / timings.FOLDER, kind="promote")
+    assert len(runs) == 1
+    assert runs[0]["outcome"] == "ok"
+    assert [s["name"] for s in runs[0]["steps"]][-1] == "total"
+    assert runs[0]["steps"][-1]["seconds"] >= 0
+    assert dataclasses.is_dataclass(project)
+
+
+def test_a_REFUSED_command_records_the_refusal_as_its_outcome(project):
+    """A build that refused still took time, and the refusal is the
+    interesting row — a history of only the happy path would say the
+    protocol never fails."""
+    from docxkit import timings
+    write(project.batch, make_parts(para(run("the batch"))))
+    write(project.working, make_parts(para(run("the author moved on"))))
+
+    with pytest.raises(StaleBatch):
+        revision.promote(project)
+
+    runs = timings.read(project.root / timings.FOLDER, kind="promote")
+    assert [r["outcome"] for r in runs] == ["StaleBatch"]
+
+
+def test_a_paper_can_turn_the_recording_OFF(project):
+    """`repkit` ships a replication package out of a paper tree, and a
+    folder of JSON nobody declared is what rides along into one."""
+    import dataclasses
+
+    from docxkit import timings
+    write(project.batch, make_parts(para(run("the batch"))))
+
+    revision.promote(dataclasses.replace(project, timings=False))
+
+    assert not (project.root / timings.FOLDER).exists()
+
+
+def test_the_ENV_switch_silences_a_whole_MACHINE(project, monkeypatch):
+    from docxkit import timings
+    from docxkit.revision import _timing
+    write(project.batch, make_parts(para(run("the batch"))))
+    monkeypatch.setenv(_timing.ENV, "0")
+
+    revision.promote(project)
+
+    assert not (project.root / timings.FOLDER).exists()
+
+
+def test_mark_is_a_NO_OP_outside_a_session():
+    """`mark` reaches its session through a ContextVar, so a direct
+    library caller — and every test that never opted in — needs no
+    special case."""
+    from docxkit.revision import _timing
+
+    _timing.mark("nothing is timing")            # must not raise
+
+
+def test_a_mark_names_a_PHASE_within_the_command(tmp_path):
+    from docxkit import timings
+    from docxkit.revision import _timing
+
+    with _timing.session("probe", None, root=tmp_path):
+        _timing.mark("first")
+        _timing.mark("second")
+
+    got = timings.read(tmp_path / timings.FOLDER)
+    assert [s["name"] for s in got[0]["steps"]] == ["first", "second",
+                                                    "total"]
+
+
+def test_an_unwritable_root_does_not_break_the_ROUND(tmp_path):
+    """A round that fell over because it could not write a performance
+    note would be the tail wagging the dog."""
+    from docxkit.revision import _timing
+    wall = tmp_path / "a-file"
+    wall.write_text("not a directory", encoding="utf-8")
+
+    with _timing.session("probe", None, root=wall / "under"):
+        pass                                     # must not raise

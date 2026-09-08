@@ -39,6 +39,7 @@ from ._losses import (
     _glyph,
     _links,
     _norm,
+    emptied_footnotes,
     glyph_runs,
     moved_footnotes,
 )
@@ -63,7 +64,15 @@ class ValidateReport:
     #: there is one. Three booleans do not say whether the batch is
     #: salvageable, which is the decision their reader has to make.
     reject_diff: list[Untracked] = field(default_factory=list)
+    #: Notes Compare re-emitted as one insertion — a SHAPE, and the one
+    #: this report used to warn on. Kept, because it is what a reader
+    #: chasing "why is this note an insertion" is looking for.
     moved_footnotes: list[int] = field(default_factory=list)
+    #: Of those, the ones rejecting really empties — the CONDITION the
+    #: warning describes. The shape is necessary and not sufficient, and
+    #: warning on it contradicted `reject_detail["footnotes"]` two lines
+    #: later, twice on Aging_Well.
+    emptied_footnotes: list[int] = field(default_factory=list)
     #: Links the rejected view does not have and the baseline does. See
     #: :func:`_links` for why rejecting a batch can lose one.
     lost_links: list[str] = field(default_factory=list)
@@ -281,6 +290,12 @@ def validate(path: str | Path, baseline: str | Path | None = None,
                 _downgraded(body_was) == _downgraded(body_now)
                 and _downgraded(notes_was) == _downgraded(notes_now))
             report.moved_footnotes = moved_footnotes(parts, base)
+            # Measured against the REJECTED parts already computed
+            # above, not predicted from the shape: `detail["footnotes"]`
+            # is the same measurement taken whole, and the two must not
+            # be able to disagree in one report.
+            report.emptied_footnotes = emptied_footnotes(
+                rejected, base, report.moved_footnotes)
             report.lost_links = [
                 f"-> {a} ({label[:40]!r})"
                 for a, label in sorted((was - now).elements())]

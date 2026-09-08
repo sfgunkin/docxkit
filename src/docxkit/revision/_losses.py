@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
@@ -181,6 +182,13 @@ class Loss:
     kind: str        # link | footnote | endnote | bookmark |
                      # comment | glyph
     what: str        # the anchor, the note's text, the bookmark's name
+    #: Do the WORDS this thing carried survive in the hand-back? The
+    #: report's whole explanation turns on it — "the words all survive,
+    #: so no content layer above shows it" is the signature of Word
+    #: collapsing a paragraph, and is false of a passage the author
+    #: deleted. `None` where the question does not apply (a glyph, a
+    #: comment count) and the explanation must not claim either.
+    words: bool | None = None
 
     @property
     def key(self) -> str:
@@ -246,6 +254,10 @@ def _link_changes(working: dict[str, bytes], prev: dict[str, bytes],
     was, now = _links(prev), _links(working)
     gained = Counter(now - was)
     still_linked = {anchor for anchor, _label in now}
+    # Do the link's WORDS survive somewhere in the hand-back? That is
+    # what separates the two causes a lost link has, and the report
+    # asserted one of them for both. See `losses` for the measurement.
+    surviving = _visible(working)
     lost: list[Loss] = []
     relabelled: list[Relabelled] = []
     for anchor, label in sorted((was - now).elements()):
@@ -255,8 +267,21 @@ def _link_changes(working: dict[str, bytes], prev: dict[str, bytes],
             gained[(anchor, fresh[0])] -= 1
             relabelled.append(Relabelled(anchor, label, fresh[0]))
         else:
-            lost.append(Loss("link", f"{anchor} ({label[:40]})"))
+            lost.append(Loss("link", f"{anchor} ({label[:40]})",
+                             words=bool(label.strip())
+                             and label.strip() in surviving))
     return lost, relabelled
+
+
+def _visible(parts: dict[str, bytes]) -> str:
+    """Every word a reader can see, all text parts, one stream.
+
+    Read once per hand-back and searched per loss: a manuscript has one
+    or two dozen losses at most and re-reading the body for each was
+    measurable on nothing, but the stream is the honest object — a
+    citation moved from the body into a footnote has not been deleted.
+    """
+    return "\n".join(visible_text(xml) for _name, xml in text_parts(parts))
 
 
 def relabelled_links(working: dict[str, bytes],
@@ -306,6 +331,25 @@ def losses(working: dict[str, bytes],
     author who edits prose loses none of this — and, since 2026-08-19,
     an author who RE-LABELS a link keeps it: see
     :func:`relabelled_links`, which is reported rather than refused.
+
+    **A lost link has two causes, and they need opposite actions.** Word
+    collapsing a paragraph strips the hyperlink and keeps the words, and
+    `r2`/`r11` put such a link back. An author DELETING the sentence
+    takes the words with it, and there is nothing to put back — the cut
+    is the edit. `Loss.words` measures which: is the link's own label
+    still visible anywhere in the hand-back? Measured 2026-09-08 on
+    Aging_Well, one report holding both kinds — 4 links whose mentions
+    were intact (`Robeyns2005`, `North1990`, `Box2` twice; r2/r11
+    restored all four) and 5 whose mentions were gone (`Cox1987`,
+    `WorldBank1994`, `Holzmann2005`, `Barr2010`, `OECD2006`, each cited
+    in one place and that place cut). Reported as one list under one
+    explanation, the reader either runs the repair lane hoping it covers
+    everything or reads five deliberate cuts as damage.
+
+    Notes, bookmarks, comments and glyphs leave `words` at `None`: Word
+    eating a footnote takes the definition and its text together (LI7's
+    note 15 above), so the question does not separate anything there and
+    the report must not answer it.
     """
     out: list[Loss] = []
     out += _link_changes(working, prev)[0]
@@ -532,6 +576,41 @@ def moved_footnotes(parts: dict[str, bytes],
         if "<w:ins " in body and "<w:del " not in body:
             out.append(nid)
     return out
+
+
+def emptied_footnotes(rejected: dict[str, bytes],
+                      baseline: dict[str, bytes],
+                      candidates: Sequence[int]) -> list[int]:
+    """Of `candidates`, the notes reject-all REALLY empties.
+
+    :func:`moved_footnotes` finds a shape — a definition Compare emitted
+    as one insertion with no matching deletion — and that shape was
+    reported as though it were the outcome: *"rejecting empties the
+    note, so gate 5 will fail on it."* It is not the outcome. The shape
+    is necessary and not sufficient, and the reject-all layer beside it
+    already holds the answer.
+
+    Measured twice on Aging_Well, both times contradicted two lines
+    later by ``'footnotes': True`` in the same run. 2026-09-03,
+    footnote 2, when a batch ADDED a note and pushed the later
+    definitions down; 2026-09-07 (R108), footnote 12, when no note was
+    added at all — a task deleted a sentence from the paragraph
+    carrying reference 12, Compare re-emitted the definition, reference
+    order was ``2..13`` before and after, and reject-all restored the
+    note byte for byte. Printed beside a genuine LINKS mismatch, the
+    warning reads as a second blocking finding.
+
+    So: reject, and compare the note's own words against the baseline's.
+    What comes back is the condition the message describes — a
+    definition rejecting would empty — and nothing else.
+    """
+    def words(parts: dict[str, bytes]) -> dict[int, str]:
+        return {int(m.group(1)): visible_text(m.group(2)).strip()
+                for m in _MOVED_NOTE_RE.finditer(
+                    parts.get(FOOTNOTES, b"").decode("utf-8"))}
+
+    was, now = words(baseline), words(rejected)
+    return [nid for nid in candidates if now.get(nid, "") != was.get(nid, "")]
 
 
 def _shown(text: str, *, limit: int = 12) -> str:

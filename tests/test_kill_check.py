@@ -21,6 +21,7 @@ the wrong thing about the tests is worse than no tool.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -120,6 +121,49 @@ def test_the_checkout_holds_TODAYS_tools_scripts(tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "STALE" not in done.stdout, done.stdout
     assert "SAME kill_check.py" in done.stdout, done.stdout
+
+
+def test_sync_REBUILDS_a_checkout_whose_directory_was_deleted(tmp_path,
+                                                              monkeypatch):
+    """The checkout is a cache, created once and reused for weeks
+    precisely so it can be thrown away. It could not rebuild from the
+    one state a person puts it in by hand.
+
+    `sync` guarded on `ROOT.exists()` — the DIRECTORY — while git also
+    keeps a REGISTRATION. Delete the folder and the two disagree: `git
+    worktree add` refuses with *"missing but already registered
+    worktree"*, exit 128, surfacing as `CalledProcessError` three frames
+    down a traceback, and the chain stops at `pytest` on every run until
+    somebody who knows what a worktree is runs `git worktree prune`.
+
+    Met 2026-09-08 removing stray `docxkit-*` folders from `D:`, which
+    is how anyone meets it: nothing in the tree names the checkout
+    (`ROOT` is built from the repo's own name), so it looks exactly like
+    the abandoned scratch directories beside it.
+
+    ROOT and LOCK go into `tmp_path`, as the lock tests do — this file's
+    rule is that a test may import `kill_check` only when it touches
+    nothing outside its own directory, and a real `sync()` here would
+    mutate the live checkout."""
+    import kill_check  # pyright: ignore[reportMissingImports]
+
+    root = tmp_path / "wt"
+    monkeypatch.setattr(kill_check, "ROOT", root)
+    monkeypatch.setattr(kill_check, "LOCK", tmp_path / "wt.lock")
+    try:
+        # the state that was fatal: registered, and then deleted
+        subprocess.run(["git", "worktree", "add", "-q", str(root),
+                        "HEAD", "--detach"], cwd=TOOLS.parent, check=True)
+        shutil.rmtree(root)
+
+        kill_check.sync()           # used to raise CalledProcessError
+
+        assert (root / "src" / "docxkit").is_dir()
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(root)],
+                       cwd=TOOLS.parent, check=False)
+        subprocess.run(["git", "worktree", "prune"], cwd=TOOLS.parent,
+                       check=False)
 
 
 def test_an_anchor_that_occurs_TWICE_says_how_to_pick_one(tmp_path):

@@ -14,7 +14,7 @@ from pathlib import Path
 from .. import guard as _guard
 from .. import package
 from ..errors import DocumentLocked, ProtocolError, StaleBatch
-from . import _ledger
+from . import _ledger, _timing
 from ._common import _RESCUE_GLOB, _RESCUE_STAMP
 from ._config import Paper
 
@@ -189,6 +189,7 @@ def prune_rescues(paper: Paper, keep: int | None = None, *,
     return doomed
 
 
+@_timing.timed("promote")
 def promote(paper: Paper, batch: str | Path | None = None,
             base: str | Path | None = None) -> PromoteReport:
     """Put a validated batch onto ``working.docx`` — safely.

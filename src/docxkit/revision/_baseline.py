@@ -11,13 +11,14 @@ from pathlib import Path
 from .. import package
 from ..errors import BaselinePending, DocumentLocked, HandbackLoss
 from ..hygiene import restore_math_glyphs
-from . import _ledger
+from . import _ledger, _timing
 from ._config import Paper
 from ._losses import _names, _unmet, losses
 from ._state import state
 from ._verdict import log_batch, verdict
 
 
+@_timing.timed("baseline")
 def baseline(paper: Paper, *, force: bool = False,
              accept_loss: tuple[str, ...] = (),
              repair_math: bool = False, note: str = "",
@@ -111,17 +112,30 @@ def baseline(paper: Paper, *, force: bool = False,
             # first version printed a 70-character truncation and the
             # hatch then rejected the words it had just shown.
             listed = "\n  - ".join(
-                f"{loss}\n      --accept-loss {loss.key[:60]!r}"
+                f"{loss}{' [words survive]' if loss.words else ''}"
+                f"\n      --accept-loss {loss.key[:60]!r}"
                 for loss in unacknowledged)
+            # Only claim the collapse where the words are actually still
+            # there. Asserting it over a passage the author deleted told
+            # the reader to look for damage to repair, five times in one
+            # report, and every clause of it was false of those five.
+            eaten = sum(1 for loss in unacknowledged if loss.words)
+            cause = (
+                f"{eaten} of these keep their words, marked above: that "
+                f"is Word collapsing a paragraph to make an edit, and the "
+                f"link can be rebuilt. Put those back"
+                if eaten else
+                "Put back anything Word ate — it collapses a paragraph to "
+                "make an edit and takes the links in it, keeping the words")
             raise HandbackLoss(
                 f"{paper.working.name} lost {len(unacknowledged)} thing(s) "
                 f"since {paper.prev.name}, and baselining makes that "
                 f"permanent — the compare chain measures against prev.docx, "
                 f"so a link Word ate becomes a link that was never there:"
                 f"\n  - {listed}\n"
-                f"Word does this silently when it collapses a paragraph to "
-                f"make an edit. Put them back, or name the deliberate ones "
-                f"with the flag shown above (a prefix is enough).")
+                f"{cause}, or name the deliberate ones with the flag shown "
+                f"above (a prefix is enough); a loss whose WORDS are gone "
+                f"is usually an editorial cut, and nothing to repair.")
     current = state(paper.working)
     if not current.is_truth and not force:
         where = ", ".join(f"{n} in {p.split('/')[-1]}"

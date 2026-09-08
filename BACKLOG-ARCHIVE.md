@@ -14,6 +14,221 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `kill_check.sync` cannot rebuild its checkout after the DIRECTORY is deleted, and the gate stays red until somebody runs `git worktree prune`~~ — FIXED 08.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-08.** `sync` runs `git worktree prune` before `add` when
+`ROOT` is missing. Harmless when nothing is stale — prune only removes
+registrations whose directory is gone — and the checkout can now rebuild
+from the one state a person can put it in by hand.
+
+`sync` guarded on `ROOT.exists()`, the DIRECTORY, while git also keeps a
+REGISTRATION. Delete the folder and the two disagree:
+
+    fatal: 'D:/docxkit-kc' is a missing but already registered worktree;
+    use 'add -f' to override, or 'prune' or 'remove' to clear
+
+exit 128, raised as `CalledProcessError` inside
+`test_the_checkout_holds_TODAYS_tools_scripts`, so the chain stops at
+`pytest` on every run until a person who knows what a worktree is
+intervenes. Git names the fix in its own message and the message is
+three frames deep in a traceback.
+
+**Met by deleting folders, which is how anyone meets it.** `docxkit-kc`
+and four `docxkit-mut*` copies sat on `D:` looking like abandoned
+scratch directories — they are worktrees of the live repo, nothing in
+the tree names them (`ROOT` is built from the repo's own name, so a grep
+for the literal string finds nothing), and the one that is a live cache
+is indistinguishable from the four that were not. Removing them is the
+right call; git's administrative half is what made it a failure instead
+of a rebuild.
+
+**The checkout is a CACHE.** It is created once, detached, and reused
+for weeks precisely so it can be thrown away — that a throwaway could
+not be thrown away is the defect, not the deletion.
+
+### ~~S2 — `ingest` explains every LOST link as a silent Word paragraph collapse, including the ones whose text the author deleted on purpose~~ — FIXED 08.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-08.** `Loss` carries `words`: is the lost thing's own label
+still visible anywhere in the hand-back? `_link_changes` measures it against
+every text part, so a citation that moved into a footnote is not read as
+deleted. `ingest` groups the LOST block by it and explains each group
+separately — the collapse story only over the links whose words survive, and
+*"the WORDS are gone too, so this is not Word's doing"* over the ones the
+author cut. The single explanation is gone.
+
+**Headed only when the list is MIXED.** That is the case it got wrong; a
+hand-back losing one kind reads better flat, and the existing gate on naming
+every element stays exactly as it was.
+
+`baseline`'s refusal marks the same split — `[words survive]` against the
+repairable ones, and it no longer asserts the collapse over a list where it is
+false. Notes, bookmarks, comments and glyphs leave `words` at `None` and are
+described without the claim: Word eating a footnote takes the definition and
+its text together (LI7's note 15), so the question separates nothing there.
+
+Filed as **S5**, a severity this file's scale does not define — S1/S2/S3/S4 —
+and the token appears nowhere else in either file. Recorded as S2, which is
+what it is: wrong output no gate sees.
+
+`revision ingest` closes its LOST block with one explanation for the whole
+list:
+
+    Word does this silently when it collapses a paragraph to make an edit;
+    the words all survive, so no content layer above shows it.
+
+For a link eaten by a rewrite that is exactly right, and `r2`/`r11` put it
+back. For a citation the author DELETED, every clause of it is false: the
+words did not survive, no script can restore it, and the content layers above
+did show it — the deletion is sitting in the `text` section of the same
+report, a few lines up.
+
+Measured 2026-09-08 on Aging_Well, ingesting a hand copy-edit that mixed both
+kinds in one report: 19 LOST, of which 4 glyphs, 4 links whose mentions were
+intact (`Robeyns2005`, `North1990`, `Box2` ×2 — r2/r11 restored all four) and
+5 whose mentions were gone (`Cox1987`, `WorldBank1994`, `Holzmann2005`,
+`Barr2010`, `OECD2006`, each cited in exactly one place, and that place cut).
+The report gives no way to tell the two kinds apart, so the reader either runs
+the repair lane hoping it covers everything, or reads five deliberate
+editorial cuts as damage Word did.
+
+`ingest` already extracts the visible text of both sides. Counting the
+citation's own mentions on the working side separates the two kinds exactly:
+mentions > 0 is the collapse case (repair lane), mentions == 0 is a deliberate
+deletion (`--accept-loss`, and the reference entry is now orphaned — which is
+what `citations` and `refstyle` report next, and is worth saying here first).
+
+### ~~S4 — repeating `--accept-loss` silently keeps only the last one, and the refusal it produces reads like a different failure~~ — FIXED 08.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-08.** `action="append"` beside the existing comma split, so
+both forms work and mixtures of them do too — the printed suggestion is
+copy-pasteable as printed, which was the point. `default=None`, not `[]`:
+`append` mutates a mutable default in place and it would accumulate across
+parses in one process, which is every test in a session.
+
+`revision baseline --accept-loss` is documented as `ANCHOR,...` and takes a
+comma-separated list, which works. Passing the flag once per loss —
+`--accept-loss link:A --accept-loss link:B --accept-loss link:C` — is the
+form a user reaches for when the tool has just printed one suggested flag per
+loss, each on its own line:
+
+      - link 'Kok2015 (Kok et al. 2015)'
+          --accept-loss 'link:Kok2015 (Kok et al. 2015)'
+      - link 'Makai2015 (Makai et al. 2015)'
+          --accept-loss 'link:Makai2015 (Makai et al. 2015)'
+
+Argparse keeps only the last, so the command refuses again with the list one
+shorter. Nothing says why. The natural reading of "4 losses, I named 4, now
+it says 3" is that three of the anchors failed to match — a spelling or
+prefix problem — not that three of the flags were discarded before the gate
+ran.
+
+Measured 2026-09-07 baselining Aging_Well R108, four deliberate citation-link
+deletions; cost one cycle. `action="append"` with the existing comma split
+applied to each occurrence would make both forms work, and the printed
+suggestion would then be copy-pasteable as printed, which today it is not.
+
+### ~~S3 — `validate` says a re-emitted footnote will be emptied by reject-all when its own footnotes layer says otherwise~~ — FIXED 08.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-08.** The warning is raised from the measurement instead of
+the shape. `emptied_footnotes(rejected, baseline, candidates)` rejects and
+compares each candidate note's own words against the baseline's; `validate`
+fills it from the rejected parts it already computes, and `build` pays one
+in-memory XML pass beside a Word Compare costing 40-141s.
+
+`moved_footnotes` keeps its meaning and its name — the SHAPE is what a reader
+chasing *"why is this note an insertion"* is looking for — and
+`ValidateReport` now carries both, so the report cannot contradict its own
+footnotes layer. A note the layer restores is reported as not part of the
+mismatch rather than as a blocking finding; the strong wording survives where
+rejecting measurably empties the note.
+
+**The shape is necessary and not sufficient**, and the test fixture says why:
+`moved_footnotes` flags any definition carrying an insertion and no deletion,
+which includes a note the batch merely ADDED to — rejecting puts those words
+back exactly.
+
+`revision build` and `revision validate` both print, for a note whose
+paragraph changed enough that Compare re-emitted the whole definition as one
+insertion:
+
+    footnote N: the whole note is one insertion with no matching deletion —
+    its REFERENCE moved. Accepting is right; rejecting empties the note, so
+    gate 5 will fail on it.
+
+In the same run, `validate`'s reject-all layer reports `'footnotes': True` —
+the note IS restored — and the footnotes gate passes on the rejected state.
+The warning is a prediction the tool's own measurement contradicts two lines
+later, and it reads as a blocking finding beside the genuine LINKS mismatch
+it is printed next to.
+
+Measured twice on Aging_Well. 2026-09-03, footnote 2, when a batch ADDED a
+note and pushed the later definitions down: logged then as "one thing Compare
+warned about that did not happen". 2026-09-07 (R108), footnote 12, when no
+note was added at all — a task deleted a sentence from the paragraph that
+carries reference 12, Compare re-emitted the definition, and the same text
+printed. Reference order was `2..13` before and after, identical; the note's
+own text was byte-identical; reject-all restored it.
+
+The condition the message describes — a definition that reject-all would
+empty — is real and worth warning about. What it currently keys on, a
+definition emitted as an insertion with no matching deletion, is not that
+condition. The reject-all footnotes layer already knows the answer; the
+warning should be raised from that measurement, or downgraded to
+informational when the layer disagrees with it.
+
+### ~~S2 — a failed gate reports its last 3000 characters, so trailing noise hides the failure~~ — FIXED 08.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-08.** `gates._failure` replaces `out.strip()[-3000:]`. The
+tail is still the default and short output passes through whole, but the lines
+a reader needs are selected first — pytest's `FAILED`/`ERROR` rows and `E   `
+detail, ruff's `Found N errors`, mypy and pyright's `: error:`, traceback
+frames — and any the tail would have cut are printed above it under a marker
+saying how much was dropped between the two.
+
+This is the treatment `_summary` already gave the PASSING case, which was the
+asymmetry: the path that matters most was the one printing raw bytes and
+hoping. Both halves are bounded, so a suite failing 300 tests cannot push its
+own verdict out of the window a second way.
+
+`gates.run` prints `out.strip()[-3000:]` when a gate fails. The window is
+fixed and anchored to the END, so anything a gate emits *after* its failure
+pushes the failure out of it. The gate's verdict is still right — the chain
+stops, the exit code is 1 — and the printed reason is unusable.
+
+Measured 2026-09-06. A red `pytest` gate printed 3000 characters of
+`PytestBenchmarkWarning` (pytest-benchmark warns once per xdist worker;
+sixteen lines at `-n 8`, all after the summary) and the actual failure —
+`test_every_module_has_a_row_in_the_README_table`, a missing row for the new
+`timings` module — was outside the window entirely. The chain had to be re-run
+piped through `grep` to find out what had broken. Reproduced deliberately: a
+one-line failing test under `-n 8`, `out[-3000:]`, failure not present.
+
+**The plugin was the instance, not the defect.** It is fixed at source —
+`-p no:benchmark` in `addopts`, because the suite has no benchmarks and
+pytest-benchmark is not even in `[dev]` — and with that the same window shows
+the assertion, its file and line, and the short summary. But the next gate
+with a chatty tail does this again, and nothing is watching for it: a warning
+burst from any plugin, a teardown that logs, a tool that prints a banner after
+its result.
+
+**Suggested fix:** make the window content-aware rather than positional. Keep
+the tail, but ensure the lines a reader needs are in it — pytest's
+`=== short test summary info ===` block, ruff's `Found N errors`, mypy's
+`: error` lines. `_summary` already does exactly this kind of selection for
+the PASSING case (`_SUMMARY`, and it takes the LAST matching line because a
+run once ended with an interpreter note about the C stack). The failing case
+never got the same treatment, which is the asymmetry: the path that matters
+most is the one printing raw bytes and hoping.
+
+**Not filed as S3** because the gate does fail, and does say which gate. The
+cost is the reader's next twenty minutes, in the state — a red chain — where
+they can least afford it.
+
 ### ~~S4 — `batch.run` prints the glyphs it repairs, and only the CLI makes stdout safe~~ — FIXED 06.09, `0a31b71`
 <!-- status: fixed -->
 

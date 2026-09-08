@@ -170,6 +170,7 @@ from ._losses import _norm as _norm
 from ._losses import _notes as _notes
 from ._losses import _shown as _shown
 from ._losses import _unmet as _unmet
+from ._losses import emptied_footnotes as emptied_footnotes
 from ._losses import glyph_runs as glyph_runs
 from ._losses import links_in_deletions as links_in_deletions
 from ._losses import losses as losses
@@ -238,6 +239,7 @@ __all__ = [
     "build",
     "doctor",
     "drift",
+    "emptied_footnotes",
     "find_config",
     "glyph_runs",
     "ingest",

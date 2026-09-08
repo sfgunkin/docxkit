@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .. import footnotes, package, tracked
+from .. import footnotes, package, revisions, tracked
 from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
 from ..errors import (
     BaselinePending,
@@ -17,14 +17,20 @@ from ..errors import (
     StaleBatch,
     WorkingPending,
 )
-from ..tracked import untracked
-from . import _ledger
+from ..tracked import _simulate, untracked
+from . import _ledger, _timing
 from ._config import Paper
-from ._losses import links_in_deletions, moved_footnotes, restored_bookmarks
+from ._losses import (
+    emptied_footnotes,
+    links_in_deletions,
+    moved_footnotes,
+    restored_bookmarks,
+)
 from ._state import drift
 
 # ---------------------------------------------------------------- build
 
+@_timing.timed("build")
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
           allow_pending_baseline: bool = False,
@@ -223,6 +229,7 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # would leave the author with the paragraph names and no file to look
     # at. A paper calling `tracked.build` directly has no gate 5, which
     # is why the default there is to refuse.
+    _timing.mark("preflight")
     report = tracked.build(paper.prev, revised, out, None,
                            author=paper.author, verify_in_word=True,
                            resolve_math=resolve_math, moves=moves,
@@ -231,6 +238,12 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
                            carry=tracked.CARRIED_PARTS + paper.carry,
                            # `[batch] word_deadline`; 0 is no ceiling
                            word_deadline=paper.word_deadline or None)
+    # The one mark that has already earned its place. Measured from
+    # outside on Aging_Well, 2026-09-07: this call was 141s on the first
+    # build of a session and 40s on the second, same manuscript — the
+    # difference being Word's cold start, which nothing downstream can
+    # see and no other step pays.
+    _timing.mark("compare")
 
     for name in restored_bookmarks(package.read_parts(paper.prev),
                                    package.read_parts(revised),
@@ -265,11 +278,25 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     base_parts = package.read_parts(paper.prev)
     built = package.read_parts(out)
     lost = untracked(built, base_parts)
-    for note in moved_footnotes(built, base_parts):
-        _say(f"footnote {note}: Compare emitted the whole note as an "
-             f"insertion with no matching deletion — its REFERENCE moved. "
-             f"Accepting is right; rejecting empties the note, so gate 5 "
-             f"will fail on it.")
+    # The shape Compare leaves, and then whether it MATTERS. Warning on
+    # the shape alone said "gate 5 will fail on it" about notes gate 5
+    # went on to pass, twice on Aging_Well — a prediction the toolkit's
+    # own reject-all layer contradicts, printed where it reads as
+    # blocking. Rejecting here costs an in-memory XML pass beside a
+    # Word Compare that costs 40-141s.
+    if (shaped := moved_footnotes(built, base_parts)):
+        emptied = emptied_footnotes(_simulate(built, revisions.reject),
+                                    base_parts, shaped)
+        for note in emptied:
+            _say(f"footnote {note}: Compare emitted the whole note as an "
+                 f"insertion with no matching deletion — its REFERENCE "
+                 f"moved, and rejecting MEASURABLY empties it, so gate 5 "
+                 f"will fail on it. Accepting is right.")
+        for note in (n for n in shaped if n not in emptied):
+            _say(f"footnote {note}: Compare emitted the whole note as an "
+                 f"insertion with no matching deletion — its REFERENCE "
+                 f"moved. Reject-all restores it here, so gate 5 is not "
+                 f"at risk from this one; nothing to do.")
     for u in lost:
         _say(f"UNTRACKED {u}")
     if lost:

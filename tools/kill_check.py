@@ -101,6 +101,17 @@ def sync() -> None:
     """Refresh the private checkout from the live tree, and CLAIM it."""
     _take_lock()
     if not ROOT.exists():
+        # PRUNE first. The guard above asks whether the directory is
+        # there; git also keeps a REGISTRATION, and deleting the folder
+        # leaves the two disagreeing — `add` then refuses with "missing
+        # but already registered worktree" and the gate is red on every
+        # run until somebody who knows about worktrees intervenes. The
+        # checkout is a cache and is meant to rebuild itself; that it
+        # could not rebuild from the one state a person can put it in by
+        # hand — deleting a stray `docxkit-kc` folder — is the defect.
+        # Harmless when nothing is stale: prune removes registrations
+        # whose directory is gone, and there is no such thing here.
+        subprocess.run(["git", "worktree", "prune"], cwd=LIVE, check=True)
         subprocess.run(["git", "worktree", "add", "-q", str(ROOT),
                         "HEAD", "--detach"], cwd=LIVE, check=True)
     # `tools` as well as the package: the sweep scripts have harnesses

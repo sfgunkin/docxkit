@@ -30,14 +30,23 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import statistics
+from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-__all__ = ["FOLDER", "read", "record"]
+__all__ = ["FLOOR_SECONDS", "FOLDER", "SLOWER", "by_step", "read", "record",
+           "regressions"]
 
 #: The folder, relative to whatever root the caller names.
 FOLDER = ".timings"
+
+#: A regression must clear BOTH. The ratio alone reports a 0.4s step
+#: doubling; the floor alone reports a 30s one drifting 2s on a busy
+#: machine. Together they name the thing a reader would act on.
+SLOWER = 1.25
+FLOOR_SECONDS = 2.0
 
 #: One recorded run, as it comes back off disk.
 Run = dict[str, Any]
@@ -107,3 +116,47 @@ def read(folder: Path | str, kind: str | None = None,
         if isinstance(got, dict) and "steps" in got:
             out.append(got)
     return out[-last:] if last else out
+
+
+def by_step(runs: list[Run]) -> dict[str, list[float]]:
+    """Step name -> its seconds across the runs, in order.
+
+    Only steps that finished OK. A step that failed fast is not a step
+    that got faster, and a skipped one was never run at all.
+    """
+    seen: dict[str, list[float]] = defaultdict(list)
+    for run in runs:
+        for step in run.get("steps", []):
+            if step.get("status") == "ok":
+                seen[str(step["name"])].append(float(step["seconds"]))
+    return dict(seen)
+
+
+def regressions(
+        runs: list[Run]) -> list[tuple[float, str, float, float, int]]:
+    """Steps whose recent median stands clear of their earlier one.
+
+    `(delta, name, was, now, samples)`, biggest first.
+
+    **A median, never a mean, and never the newest run alone.** The
+    spread is real: on 2026-09-06 the same green `pytest` gate measured
+    30.5s and 40.3s ten minutes apart on one unchanged tree, purely
+    because two other sessions were busy. A tool that called that a
+    regression would be reporting the weather, and a reader told that
+    once stops reading the section.
+    """
+    found = []
+    for name, seconds in by_step(runs).items():
+        if len(seconds) < 6:            # too few to call a median a fact
+            continue
+        # At least THREE in the recent window, whatever the third works
+        # out to. A median over two values is their mean, so at six runs
+        # a window of two let one slow afternoon carry the verdict — 30,
+        # 30, 30, 30, 30, 60 reported as 30s -> 45s, which is the exact
+        # coin-toss-as-a-finding this function exists to avoid.
+        cut = max(3, len(seconds) // 3)
+        recent, before = seconds[-cut:], seconds[:-cut]
+        now, was = statistics.median(recent), statistics.median(before)
+        if now >= was * SLOWER and now - was >= FLOOR_SECONDS:
+            found.append((now - was, name, was, now, len(seconds)))
+    return sorted(found, reverse=True)

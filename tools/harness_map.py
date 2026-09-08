@@ -88,7 +88,8 @@ HARNESS: dict[str, list[str]] = {
                                "tests/test_cli_revision.py",
                                "tests/test_value_types.py"]
        for half in ("_common", "_config", "_ledger", "_losses", "_state",
-                    "_verdict", "_baseline", "_build", "_doctor", "_gates",
+                    "_verdict", "_timing", "_baseline", "_build", "_doctor",
+                    "_gates",
                     "_ingest", "_registry", "_init", "_promote",
                     "_validate")},
     "revisions.py": ["tests/test_revisions.py",

@@ -66,6 +66,21 @@ class Paper:
     ``word/footer3.xml`` — the first-page footer — on every rebuild, and
     the paper carried a 130-line script to put it back.
     """
+    timings: bool = True
+    """Record how long each protocol step took, in ``<root>/.timings/``.
+
+    On by default, from ``[paper] timings``. The measurement is worth
+    having by default because the alternative is what happened on
+    Aging_Well on 2026-09-07: an afternoon spent inferring step
+    durations from file mtimes at ±20s, unable to tell a rewrite from a
+    touch or name the command that caused either.
+
+    Off is a real need rather than a courtesy. `repkit` ships a
+    replication package out of a paper tree, and a folder of JSON
+    nobody declared is exactly what rides along into one; a paper whose
+    tree must stay exactly as declared turns this off and loses nothing
+    but the history.
+    """
 
     @property
     def batch(self) -> Path:
@@ -150,7 +165,7 @@ class Paper:
 #: five deep that nobody set. `_read` holds the table to the code: a
 #: key read here and not listed raises, so the list cannot fall behind.
 KNOWN: dict[str, frozenset[str]] = {
-    "paper": frozenset({"name", "language", "working", "prev"}),
+    "paper": frozenset({"name", "language", "working", "prev", "timings"}),
     "batch": frozenset({"author", "rescue_keep", "carry", "word_deadline"}),
     "verify": frozenset({"commands"}),
     "attic": frozenset({"path"}),
@@ -226,4 +241,5 @@ def load_paper(start: str | Path | None = None) -> Paper:
                                   WORD_DEADLINE)),
         doctor_skip=tuple(_read(data, "doctor", "skip", _DOCTOR_SPENT)),
         carry=tuple(_read(data, "batch", "carry", ())),
+        timings=bool(_read(data, "paper", "timings", True)),
     )

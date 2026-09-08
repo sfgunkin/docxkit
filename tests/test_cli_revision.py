@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import make_parts, para, run, write
+from conftest import ins, make_parts, para, run, write
 from test_cli import run_cli
 
 
@@ -402,6 +402,143 @@ def test_baseline_refuses_the_loss_and_accept_loss_lets_it_through(
     assert project.prev.read_bytes() == project.working.read_bytes()
 
 
+def test_ingest_tells_a_link_WORD_ATE_from_a_passage_the_author_CUT(
+        monkeypatch, project, capsys):
+    """One report, both kinds, and they need opposite actions.
+
+    The LOST block closed with a single explanation for the whole list:
+    "Word does this silently when it collapses a paragraph to make an
+    edit; the words all survive, so no content layer above shows it."
+    For a link eaten by a rewrite that is exactly right. For a citation
+    the author DELETED every clause of it is false — the words did not
+    survive, no script can restore it, and the content layers above did
+    show it: the deletion is in the `text` section a few lines up.
+
+    Measured 2026-09-08 on Aging_Well, a hand copy-edit mixing both: 19
+    LOST, 4 links whose mentions were intact and 5 whose mentions were
+    gone, with no way to tell them apart. The reader either runs the
+    repair lane hoping it covers everything, or reads five deliberate
+    editorial cuts as damage Word did."""
+    cut = ('<w:hyperlink w:anchor="ref_Cox1987">'
+           "<w:r><w:t>Cox (1987)</w:t></w:r></w:hyperlink>")
+    write(project.prev,
+          make_parts(para(run("see "), _LINKED, run(" and "), cut)))
+    # the first paragraph collapsed (link gone, words kept); the second
+    # citation was deleted outright, words and all
+    write(project.working, make_parts(
+        para(run("see "), "<w:r><w:t>Ritchie (2023b)</w:t></w:r>")))
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 0, out
+
+    block = out[out.index("== LOST"):]
+    survive, gone = (block.index("the words SURVIVE"),
+                     block.index("the words are GONE"))
+    assert survive < gone, block
+    # each anchor under the heading that describes what happened to it
+    assert survive < block.index("ref_Ritchie2023b") < gone, block
+    assert block.index("ref_Cox1987") > gone, block
+    # the claim that was false of the deleted half is not made about it
+    assert "the words all survive" in block[survive:gone], block
+    assert "not Word's doing" in block[gone:], block
+
+
+def test_a_loss_that_is_not_a_link_is_listed_without_the_words_claim(
+        monkeypatch, project, capsys):
+    """A bookmark, a note, a comment, a glyph: Word eating one takes its
+    text with it, so "the words all survive" separates nothing there and
+    the report must not answer the question. They group on their own,
+    under a plain heading and no explanation."""
+    write(project.prev, make_parts(para(
+        run("see "), _LINKED,
+        '<w:bookmarkStart w:id="4" w:name="tbl_growth"/>'
+        '<w:bookmarkEnd w:id="4"/>', run(" Table 1."))))
+    write(project.working, make_parts(para(
+        run("see "), "<w:r><w:t>Ritchie (2023b)</w:t></w:r>",
+        run(" Table 1."))))
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    block = capsys.readouterr().out
+    block = block[block.index("== LOST"):]
+
+    assert "-- structure (1)" in block, block
+    at = block.index("-- structure (1)")
+    assert "tbl_growth" in block[at:], block
+    # the claim is made about the link above it, and not about this
+    assert "the words all survive" in block[:at], block
+    assert "the words all survive" not in block[at:], block
+
+
+def test_ingest_does_not_HEAD_a_list_that_is_all_one_kind(monkeypatch,
+                                                          project, capsys):
+    """The split is for a MIXED list, which is what the one explanation
+    got wrong. A report of a single kind reads better flat, and the
+    heading would be noise on the ordinary hand-back."""
+    _ate_a_link(project)
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert "the words SURVIVE" not in out
+    assert "the words all survive" in out, out
+
+
+def _ate_two_links(project) -> None:
+    """Two collapsed links, so "the flags were discarded" and "the
+    anchors did not match" cannot look alike."""
+    second = ('<w:hyperlink w:anchor="ref_Kok2015">'
+              "<w:r><w:t>Kok et al. (2015)</w:t></w:r></w:hyperlink>")
+    write(project.prev,
+          make_parts(para(run("see "), _LINKED, run(" and "), second)))
+    write(project.working, make_parts(para(
+        run("see "), "<w:r><w:t>Ritchie (2023b)</w:t></w:r>",
+        run(" and "), "<w:r><w:t>Kok et al. (2015)</w:t></w:r>")))
+
+
+def test_accept_loss_takes_one_flag_PER_LOSS_as_the_refusal_prints_them(
+        monkeypatch, project, capsys):
+    """The refusal prints one suggested flag per loss, each on its own
+    line, so the form a reader copies out of it is one flag per loss.
+    Argparse kept only the LAST, and the command then refused again
+    with the list one shorter and nothing saying why: "I named four, it
+    says three" reads as anchors that failed to match — a spelling or
+    prefix problem — not as flags discarded before the gate ran.
+
+    Measured 2026-09-07 baselining Aging_Well R108, four deliberate
+    citation-link deletions; cost one cycle."""
+    from docxkit.errors import HandbackLoss
+
+    _ate_two_links(project)
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--paper", str(project.root))
+    assert code == HandbackLoss.exit_code
+    printed = capsys.readouterr().out + capsys.readouterr().err
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--accept-loss", "link:ref_Ritchie2023b",
+                      "--accept-loss", "link:ref_Kok2015",
+                      "--paper", str(project.root))
+
+    assert code == 0, printed
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
+def test_accept_loss_still_takes_ONE_comma_separated_list(monkeypatch,
+                                                          project):
+    """The documented form, which the repeatable one must not cost."""
+    _ate_two_links(project)
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--accept-loss",
+                      "link:ref_Ritchie2023b,link:ref_Kok2015",
+                      "--paper", str(project.root))
+
+    assert code == 0
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
 def test_ingest_flags_a_style_edit_and_the_parts_that_moved(monkeypatch,
                                                             project,
                                                             capsys):
@@ -727,6 +864,36 @@ def test_validate_fails_an_unreviewable_batch(monkeypatch, project,
     # and WHICH paragraph, which is the half that cost a bespoke difflib
     # script to work out
     assert "quietly rewritten" in out, out
+
+
+def test_validate_does_not_call_a_RESTORED_note_part_of_the_mismatch(
+        monkeypatch, project, capsys):
+    """Gate 5 is red for a different reason — an untracked body edit —
+    and a footnote the batch merely ADDED to carries an insertion with
+    no deletion, which is the shape the warning used to key on. Its
+    words come back on reject, so it is not part of this mismatch and
+    must not be printed as though it were: the report's own footnotes
+    layer says `True` two lines above."""
+    from test_revision import footnotes_part
+
+    settled = make_parts(
+        para(run("body")),
+        footnotes=footnotes_part(para(run("the note text"))))
+    write(project.prev, settled)
+    write(project.working, settled)          # else `drift` fires first
+    write(project.batch, make_parts(
+        para(run("quietly rewritten")),
+        footnotes=footnotes_part(para(run("the note text"),
+                                      ins("See also Kok.")))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 1 and "NOT fully reviewable" in out, out
+    assert "'footnotes': True" in out, out
+    assert "not part of this mismatch" in out, out
+    assert "rejecting empties it" not in out, out
 
 
 def test_validate_names_the_GLYPH_that_changed(monkeypatch, project,

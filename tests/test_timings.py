@@ -214,6 +214,64 @@ def test_the_report_names_the_slowest_tests_from_the_pytest_gate(tmp_path):
     assert "tests/t.py::slow" in out and "6.19" in out
 
 
+# --- the monitor: the chain reports a regression where the data lands ----
+
+def test_a_chain_run_NAMES_a_gate_that_has_got_slower(tmp_path):
+    """The monitor, and why it is not an agent: the history only changes
+    when this chain runs, so the moment the data appears is the moment
+    to read it. Every scheduler on the agent side is session-scoped;
+    this outlives the session and needs nothing switched on."""
+    for i in range(6):
+        _run(tmp_path, f"2026090{i + 1}-100000",
+             first=30.0 if i < 4 else 45.0)
+    said: list[str] = []
+
+    GATES.run([("first", OK, False)], say=said.append, timings=tmp_path)
+
+    slower = [ln for ln in said if ln.startswith("slower")]
+    assert slower, said
+    assert "first" in slower[0]
+    assert "30.0s -> 45.0s" in slower[0]
+
+
+def test_a_chain_that_is_FINE_says_nothing_about_timing(tmp_path):
+    """A line saying "no regressions" after every green chain is a line
+    people stop seeing, and the chain's own output is the one place
+    that must stay readable."""
+    for i in range(6):
+        _run(tmp_path, f"2026090{i + 1}-100000", first=30.0)
+    said: list[str] = []
+
+    GATES.run([("first", OK, False)], say=said.append, timings=tmp_path)
+
+    assert not [ln for ln in said if ln.startswith("slower")]
+
+
+def test_the_timing_note_never_changes_the_chain_VERDICT(tmp_path):
+    """The chain's verdict is about the code; this is about the
+    afternoon. A green chain stays exit 0 with a regression on it."""
+    for i in range(6):
+        _run(tmp_path, f"2026090{i + 1}-100000",
+             first=30.0 if i < 4 else 45.0)
+
+    code = GATES.run([("first", OK, False)], say=lambda _s: None,
+                     timings=tmp_path)
+
+    assert code == 0
+
+
+def test_an_unreadable_history_does_not_break_the_CHAIN(tmp_path):
+    """Same rule as the writing half: the gate runner must not fall over
+    because of a performance note."""
+    (tmp_path / "gates-20260901-100000-1.json").write_text(
+        "{torn", encoding="utf-8")
+
+    code = GATES.run([("first", OK, False)], say=lambda _s: None,
+                     timings=tmp_path)
+
+    assert code == 0
+
+
 # --- docxkit.timings, the format both producers write -------------------
 
 def test_record_takes_the_PAIRS_a_batch_Report_hands_back(tmp_path):
