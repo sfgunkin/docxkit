@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — `kill_check.sync` cannot rebuild its checkout after the DIRECTORY is deleted, and the gate stays red until somebody runs `git worktree prune`~~ — FIXED 08.09
+### ~~S3 — `kill_check.sync` cannot rebuild its checkout after the DIRECTORY is deleted, and the gate stays red until somebody runs `git worktree prune`~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
 
 **Fixed 2026-09-08.** `sync` runs `git worktree prune` before `add` when
@@ -47,7 +47,7 @@ of a rebuild.
 for weeks precisely so it can be thrown away — that a throwaway could
 not be thrown away is the defect, not the deletion.
 
-### ~~S2 — `ingest` explains every LOST link as a silent Word paragraph collapse, including the ones whose text the author deleted on purpose~~ — FIXED 08.09
+### ~~S2 — `ingest` explains every LOST link as a silent Word paragraph collapse, including the ones whose text the author deleted on purpose~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
 
 **Fixed 2026-09-08.** `Loss` carries `words`: is the lost thing's own label
@@ -99,7 +99,7 @@ mentions > 0 is the collapse case (repair lane), mentions == 0 is a deliberate
 deletion (`--accept-loss`, and the reference entry is now orphaned — which is
 what `citations` and `refstyle` report next, and is worth saying here first).
 
-### ~~S4 — repeating `--accept-loss` silently keeps only the last one, and the refusal it produces reads like a different failure~~ — FIXED 08.09
+### ~~S4 — repeating `--accept-loss` silently keeps only the last one, and the refusal it produces reads like a different failure~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
 
 **Fixed 2026-09-08.** `action="append"` beside the existing comma split, so
@@ -130,7 +130,7 @@ deletions; cost one cycle. `action="append"` with the existing comma split
 applied to each occurrence would make both forms work, and the printed
 suggestion would then be copy-pasteable as printed, which today it is not.
 
-### ~~S3 — `validate` says a re-emitted footnote will be emptied by reject-all when its own footnotes layer says otherwise~~ — FIXED 08.09
+### ~~S3 — `validate` says a re-emitted footnote will be emptied by reject-all when its own footnotes layer says otherwise~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
 
 **Fixed 2026-09-08.** The warning is raised from the measurement instead of
@@ -180,7 +180,7 @@ condition. The reject-all footnotes layer already knows the answer; the
 warning should be raised from that measurement, or downgraded to
 informational when the layer disagrees with it.
 
-### ~~S2 — a failed gate reports its last 3000 characters, so trailing noise hides the failure~~ — FIXED 08.09
+### ~~S2 — a failed gate reports its last 3000 characters, so trailing noise hides the failure~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
 
 **Fixed 2026-09-08.** `gates._failure` replaces `out.strip()[-3000:]`. The
