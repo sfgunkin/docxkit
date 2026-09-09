@@ -169,30 +169,38 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
     guard below holds it to that. What changes is which characters are
     blue.
 
-    Element form only. A field-form link is five runs and Word rewrites
-    it to an element on the author's next save anyway, which is why
-    :func:`docxkit.citations.link_in_para` writes elements too; a field
-    is refused by name rather than half-repaired.
+    BOTH link forms, and the field form is the one that matters: on the
+    manuscript this was written for, links are **173 field to 33
+    element**, and the defect that prompted it was on a field. The first
+    version refused fields, reasoning from
+    :func:`docxkit.citations.link_in_para` that "Word converts a field to
+    an element on the next save anyway" — true, and no use to a repair
+    that has to run before that save. It would have covered 16% of that
+    paper's links.
+
+    A field is five runs (begin, instruction, separate, the LABEL, end)
+    and is rebuilt as an ELEMENT, which is what `link_in_para` writes and
+    what Word's own save would have made of it. So the repair leaves one
+    form behind, deliberately, rather than splicing runs into a field
+    whose instruction it would then have to keep in step.
     """
     from ._cite_grammar import wrap_visible_span
     from ._xml import PARA_RE, visible_text
 
     el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*(?<!/)>'
                     r".*?</w:hyperlink>", re.DOTALL)
-    hits = [(pm.start(), pm.end(), m.start(), m.end())
+    hits = [(pm.start(), pm.end(), m.start(), m.end(), "element")
             for pm in PARA_RE.finditer(xml)
             for m in el.finditer(pm.group(0))]
-    fields = [1 for s, e, body in field_spans(xml) if f'"{anchor}"' in body]
-    if len(hits) + len(fields) != 1:
+    hits += [(pm.start(), pm.end(), fs, fe, "field")
+             for pm in PARA_RE.finditer(xml)
+             for fs, fe, body in field_spans(pm.group(0))
+             if f'"{anchor}"' in body]
+    if len(hits) != 1:
         raise AnchorError(
-            f"respan_link: {anchor} matched {len(hits) + len(fields)} "
-            f"link(s), need exactly 1")
-    if not hits:
-        raise AnchorError(
-            f"respan_link: the link to {anchor} is in FIELD form, which "
-            f"this does not rewrite. Word converts it to an element on "
-            f"the next save; re-run then, or relink the mention.")
-    p0, p1, s, e = hits[0]
+            f"respan_link: {anchor} matched {len(hits)} link(s), need "
+            f"exactly 1")
+    p0, p1, s, e, form = hits[0]
     para = original = xml[p0:p1]
     text = visible_text(para)
     at = len(visible_text(para[:s]))
@@ -243,7 +251,15 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
     # still underlined, linking nowhere, and no layer that reads anchors
     # would see it.
     inner = para[s:e]
-    inner = inner[inner.index(">") + 1:-len("</w:hyperlink>")]
+    if form == "element":
+        inner = inner[inner.index(">") + 1:-len("</w:hyperlink>")]
+    else:
+        # The LABEL runs of a field: everything after the `separate`
+        # fldChar, less the `end` one. The instruction run goes with the
+        # field — it carries no visible text, so no offset moves.
+        cut = inner.rindex("<w:r", 0, inner.rindex("fldCharType=\"end\""))
+        sep = inner.index("fldCharType=\"separate\"")
+        inner = inner[inner.index("</w:r>", sep) + len("</w:r>"):cut]
     inner = re.sub(r'<w:rStyle w:val="Hyperlink"/>', "", inner)
     bare = para[:s] + inner + para[e:]
     fixed = wrap_visible_span(bare, new_at, new_end, anchor)

@@ -4455,6 +4455,31 @@ def test_respan_link_CARRIES_the_back_link_bookmark_over_the_new_edge():
     assert out.count("bookmarkStart") == 1 and out.count("bookmarkEnd") == 1
 
 
+def test_respan_link_moves_the_edge_of_a_FIELD_form_link_too():
+    """The form that matters, and the one the first version refused.
+
+    Measured on Aging_Well 2026-09-09: **173 field-form links to 33
+    element-form**, and the live defect was on a field. The refusal
+    reasoned from `link_in_para` — "Word converts a field to an element
+    on the next save anyway" — which is true and no use to a repair that
+    runs BEFORE that save. It would have covered 16% of that paper's
+    links, including none of the one it was written for.
+
+    Rebuilt as an element, which is what `link_in_para` writes and what
+    Word's own save would have made of it."""
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import respan_link
+
+    xml = _one_para(R("following ") + hfield("Mod1986", "Modigliani (1986")
+                    + R("). Labor"))
+    was = visible_text(xml)
+
+    out = respan_link(xml, "Mod1986", "Modigliani (1986)")
+
+    assert internal_links(out) == [("Mod1986", "Modigliani (1986)")]
+    assert visible_text(out) == was
+
+
 def test_respan_link_REFUSES_rather_than_retype_a_label():
     """It widens or narrows a span. A `want` that is not the label with
     an edge moved is a different repair, and doing it here would rewrite

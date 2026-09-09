@@ -60,9 +60,20 @@ mention. Balanced, named, counted, and no longer wrapping what it names.
 It now carries the bookmark over the new edge, and a test pins the
 containment rather than the count.
 
-Element form only, by the same reasoning as `link_in_para`: a field-form
-link is five runs and Word rewrites it to an element on the next save. A
-field is refused by name rather than half-repaired.
+**And the refusal that would have made it useless.** The first version
+handled the ELEMENT form only, reasoning from `link_in_para` that "Word
+rewrites a field into an element on the next save anyway" — true, and no
+use to a repair that has to run BEFORE that save. Measured on the
+manuscript it was written for: **173 field-form links to 33
+element-form**, and the live defect was on a field. It would have covered
+16% of that paper's links and none of the case that prompted it. Both
+forms now; a field is rebuilt as an element, which is what `link_in_para`
+writes and what Word's own save would have made of it.
+
+Verified against the real document rather than a fixture: the Modigliani
+field link broken exactly the way the author's save broke it, `audit_links`
+reporting 1 issue, the repair run, and the audit clean — 1 -> 0 with the
+visible text and the bookmark count unmoved.
 
 ### ~~S3 — `kill_check.sync` cannot rebuild its checkout after the DIRECTORY is deleted, and the gate stays red until somebody runs `git worktree prune`~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
