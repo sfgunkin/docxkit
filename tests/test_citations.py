@@ -4333,6 +4333,173 @@ def test_every_house_form_closes_what_it_opens(label):
     assert not [i for i in issues if "UNBALANCED SPAN" in i], issues
 
 
+# --- what right LOOKS like, and moving the edge to it (2026-09-09) -------
+#
+# The audit has named this defect since 2026-08-25 and nothing could fix
+# it, so the papers did: Aging_Well is on its THIRD in-paper span repair.
+# Its `_balanced` computes the desired label from the LABEL ALONE, which
+# can only ever trim — and the case below cannot be trimmed.
+
+def test_balanced_span_TRIMS_a_bracket_the_sentence_owns():
+    """The parenthetical form. The author moved "Klimaviciute and
+    Pestieau (2023)" to "(Klimaviciute and Pestieau 2023)" and Word kept
+    the old right-hand boundary. The brackets belong to the SENTENCE
+    here, so the link gives the stray one up."""
+    from docxkit.citations import balanced_span
+
+    text = "As shown (Klimaviciute and Pestieau 2023) the effect holds."
+    at = text.index("Klimaviciute")
+
+    assert balanced_span(text, at, at + len("Klimaviciute and Pestieau 2023)")
+                         ) == "Klimaviciute and Pestieau 2023"
+
+
+def test_balanced_span_EXTENDS_over_a_bracket_the_citation_owns():
+    """The narrative form, and the case that proves trimming is not the
+    whole rule. `Modigliani 1986` became `Modigliani (1986)`; Word kept
+    the old boundary, so the blue stops one character short. The year's
+    brackets ARE the house form — "Grossman (1972)" — so the span
+    extends rather than gives anything up.
+
+    Measured on Aging_Well 2026-09-09. The paper's own `_balanced` found
+    no trailing ')' to trim and no leading '(' to drop, returned the
+    label unchanged, and the repair skipped it; `linkfix` then filed it
+    under "no mechanical reading — investigate"."""
+    from docxkit.citations import balanced_span
+
+    text = "following Modigliani (1986). Labor market policy"
+    at = text.index("Modigliani")
+
+    assert balanced_span(text, at, at + len("Modigliani (1986")
+                         ) == "Modigliani (1986)"
+
+
+def test_balanced_span_says_NOTHING_when_neither_reading_applies():
+    """An unmatched bracket with no matching one adjacent is damage this
+    cannot name, and a repair nobody measured is worse than a finding."""
+    from docxkit.citations import balanced_span
+
+    text = "a stray ( sits mid sentence with no partner anywhere near"
+    at = text.index("stray")
+
+    assert balanced_span(text, at, at + len("stray (")) is None
+    # and a balanced span is returned unchanged, not flagged
+    assert balanced_span("see Grossman (1972) here", 4, 19) == (
+        "Grossman (1972)")
+
+
+def _one_para(inner: str) -> str:
+    return "<w:document><w:body>" + P(inner) + "</w:body></w:document>"
+
+
+def test_respan_link_EXTENDS_the_blue_over_the_bracket_it_was_missing():
+    """The repair the audit could describe and not perform."""
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import respan_link
+
+    xml = _one_para(R("following ") + _linked("Modigliani1986",
+                                              "Modigliani (1986")
+                    + R("). Labor market policy"))
+    was = visible_text(xml)
+
+    fixed = respan_link(xml, "Modigliani1986", "Modigliani (1986)")
+
+    assert internal_links(fixed) == [("Modigliani1986", "Modigliani (1986)")]
+    assert visible_text(fixed) == was, "a markup repair moves no words"
+
+
+def test_respan_link_TRIMS_and_leaves_no_blue_behind():
+    """The character the span gives up must lose the Hyperlink character
+    style with it. Kept, it is still blue and still underlined, linking
+    nowhere — and no layer that reads ANCHORS would see it, which is the
+    same blind spot the span defect itself lives in."""
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import respan_link
+
+    inner = ('<w:hyperlink w:anchor="Klim2023"><w:r><w:rPr>'
+             '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>'
+             "Klimaviciute and Pestieau 2023)</w:t></w:r></w:hyperlink>")
+    xml = _one_para(R("As shown (") + inner + R(" the effect holds."))
+    was = visible_text(xml)
+
+    fixed = respan_link(xml, "Klim2023", "Klimaviciute and Pestieau 2023")
+
+    assert internal_links(fixed) == [("Klim2023",
+                                      "Klimaviciute and Pestieau 2023")]
+    assert visible_text(fixed) == was
+    assert fixed.count('w:val="Hyperlink"') == 1, (
+        "the surrendered ')' must not stay styled as a link")
+
+
+def test_respan_link_CARRIES_the_back_link_bookmark_over_the_new_edge():
+    """The `<key>txt` bookmark is the reference entry's back-link target
+    and the house convention puts it around the first mention — this
+    link. Move the link's edge without it and the link reaches PAST the
+    bookmark, which every count still passes: a bookmark that no longer
+    wraps its mention is still a bookmark, still balanced, still named.
+
+    Measured while writing this, and it is why the guard counts were not
+    enough — the first version shipped exactly that."""
+    from docxkit.citations import respan_link
+
+    xml = _one_para(
+        R("following ")
+        + '<w:bookmarkStart w:id="7" w:name="Mod1986txt"/>'
+        + _linked("Mod1986", "Modigliani (1986")
+        + '<w:bookmarkEnd w:id="7"/>' + R("). Labor"))
+
+    out = respan_link(xml, "Mod1986", "Modigliani (1986)")
+
+    assert out.index("bookmarkStart") < out.index("<w:hyperlink")
+    assert out.index("bookmarkEnd") > out.index("</w:hyperlink>")
+    assert out.count("bookmarkStart") == 1 and out.count("bookmarkEnd") == 1
+
+
+def test_respan_link_REFUSES_rather_than_retype_a_label():
+    """It widens or narrows a span. A `want` that is not the label with
+    an edge moved is a different repair, and doing it here would rewrite
+    the manuscript's words under a markup-repair's name."""
+    import pytest
+
+    from docxkit.citations import respan_link
+    from docxkit.errors import AnchorError
+
+    xml = _one_para(R("see ") + _linked("A1", "Smith (2020") + R(")."))
+
+    with pytest.raises(AnchorError, match="edge moved"):
+        respan_link(xml, "A1", "Jones (2021)")
+
+
+def test_the_plan_now_PROPOSES_the_span_repair_instead_of_shrugging():
+    """Every one of these fell through to "no mechanical reading —
+    investigate" while the papers wrote the repair themselves."""
+    from docxkit.citations import repair_plan
+
+    plan = repair_plan(_spanned("Klimaviciute and Pestieau 2023)"))
+
+    assert "respan_link" in plan, plan
+    assert '"Klimaviciute and Pestieau 2023"' in plan, plan
+    assert "investigate" not in plan.split("respan_link")[0][-200:], plan
+
+
+def test_the_message_says_WHICH_WAY_the_boundary_went_wrong():
+    """One sentence for two opposite defects. "reached past its mention"
+    was printed over a span that stopped SHORT of it — the same shape as
+    the LOST-link explanation fixed upstream on 2026-09-08, and wrong in
+    the same way: the reader is told to look for the wrong damage."""
+    from docxkit.citations import audit_links
+
+    body = (P(R("following ") + _linked("Mod1986", "Modigliani (1986")
+              + R("). Labor market policy."))
+            + P(R("References"))
+            + P(bookmark("Mod1986", 71)
+                + R("Modigliani, F. (1986). A title.")))
+    issues, _ = audit_links(xml_parts(body))
+
+    (found,) = [i for i in issues if "UNBALANCED SPAN" in i]
+    assert "stopped short of its mention" in found, found
+
+
 def test_RE_LABELLED_says_when_a_re_label_left_the_span_unbalanced():
     """That section exists to say "the anchor is intact, nothing is
     lost, do not block the baseline" — right about the anchor and silent

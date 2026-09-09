@@ -14,6 +14,56 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the UNBALANCED SPAN finding has no repair, so every paper writes its own and each one goes stale~~ — FIXED 09.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-09.** `citations.balanced_span` says what the span SHOULD
+be and `citations.respan_link` moves the edge to it; `repair_plan` proposes
+the call instead of filing the finding under "no mechanical reading —
+investigate", where every one of them landed.
+
+**The audit could name this defect and never fix it, since 2026-08-25.**
+So the papers did. Aging_Well is on its THIRD in-paper span repair, and
+that script's own docstring records how the first two died — *"tables of
+hard-coded signatures, and both went stale and killed the script"* — one of
+them crashing `r2` with `0 hits, need 1` after `link_all` and before
+`write_docx`, so the whole apparatus pass reported its work and wrote
+nothing. Twice on that paper.
+
+**Trimming is not the whole rule, which is what the third one could not
+see.** Its `_balanced` computes the desired label from the LABEL ALONE, so
+it only ever trims at the ends:
+
+    (Klimaviciute and Pestieau 2023)   span kept the old right edge
+        -> label "Klimaviciute and Pestieau 2023)"   TRIM, and it does
+
+    following Modigliani (1986).       span kept the old right edge
+        -> label "Modigliani (1986"    EXTEND, and it cannot
+
+Measured on Aging_Well 2026-09-09: no trailing `)` to trim and no leading
+`(` to drop, so it returned the label unchanged and the repair skipped it.
+The house form decides which way — the brackets of a parenthetical
+citation belong to the SENTENCE and the year's brackets in a narrative one
+belong to the CITATION — so `balanced_span` reads the paragraph, not just
+the label, and answers `None` rather than guess when neither reading fits.
+
+**The message asserted one direction for both.** *"the span has reached
+past its mention"* was printed over a span that stopped SHORT of it. Same
+shape as the LOST-link explanation fixed the day before in `43c57bd`, and
+wrong the same way: the reader is sent to look for the wrong damage.
+
+**The guard that counts is not the guard that holds.** The first version
+of `respan_link` checked that bookmark counts did not move and shipped a
+link reaching PAST its `<key>txt` bookmark — the reference entry's
+back-link target, which the house convention puts around the first
+mention. Balanced, named, counted, and no longer wrapping what it names.
+It now carries the bookmark over the new edge, and a test pins the
+containment rather than the count.
+
+Element form only, by the same reasoning as `link_in_para`: a field-form
+link is five runs and Word rewrites it to an element on the next save. A
+field is refused by name rather than half-repaired.
+
 ### ~~S3 — `kill_check.sync` cannot rebuild its checkout after the DIRECTORY is deleted, and the gate stays red until somebody runs `git worktree prune`~~ — FIXED 08.09, `43c57bd`
 <!-- status: fixed -->
 

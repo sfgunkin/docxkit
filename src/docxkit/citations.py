@@ -33,6 +33,7 @@ from ._cite_audit import _audit_findings as _audit_findings
 from ._cite_audit import _doubled_links as _doubled_links
 from ._cite_audit import _Finding as _Finding
 from ._cite_audit import audit_links as audit_links
+from ._cite_audit import balanced_span as balanced_span
 from ._cite_audit import unbalanced_span as unbalanced_span
 from ._cite_build import _ACRONYM_RE as _ACRONYM_RE
 
@@ -106,6 +107,7 @@ from ._cite_repair import delete_bookmark as delete_bookmark
 from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
+from ._cite_repair import respan_link as respan_link
 from ._cite_repair import wrap_link_in_bookmark as wrap_link_in_bookmark
 from ._xml import (
     DOCUMENT,
@@ -129,6 +131,7 @@ __all__ = [
     "Reference",
     "anchor_names",
     "audit_links",
+    "balanced_span",
     "bookmark",
     "check_citations",
     "citations_clear_of",
@@ -147,6 +150,7 @@ __all__ = [
     "references",
     "remove_outer_field",
     "repair_plan",
+    "respan_link",
     "unbalanced_span",
     "unlink_by_anchor",
     "wrap_link_in_bookmark",
@@ -209,7 +213,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
 
     buckets: dict[str, list[str]] = {
         "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],
-        "investigate": []}
+        "span": [], "investigate": []}
     for f in findings:
         issue, name = f.message, f.subject
         if f.kind == "BROKEN LINK":
@@ -259,6 +263,17 @@ def repair_plan(parts: dict[str, bytes]) -> str:
             buckets["moved"].append(
                 f'delete_bookmark(doc, "{name}") then '
                 f'marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}')
+        elif f.kind == "UNBALANCED SPAN":
+            # `extra` is the span the audit read as right, empty when it
+            # could not read one. Before `respan_link` existed there was
+            # nothing to propose and every one of these fell through to
+            # "investigate" — while the papers wrote the repair
+            # themselves, three times on one manuscript.
+            if f.extra:
+                buckets["span"].append(
+                    f'respan_link(doc, "{name}", "{f.extra}")   # {issue}')
+            else:
+                buckets["investigate"].append(issue)
         elif f.kind == "DOUBLED LINK":
             buckets["nested"].append(
                 f'remove_outer_field(doc, "{f.extra}", "{name}")   '
@@ -274,6 +289,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
               "debris": "debris of a deleted entry — remove",
               "moved": "marker stranded by a paragraph move — re-place",
               "nested": "doubled link — untangle by hand",
+              "span": "the link covers the wrong characters — move the edge",
               "investigate": "no mechanical reading — investigate"}
     for key, title in titles.items():
         if buckets[key]:

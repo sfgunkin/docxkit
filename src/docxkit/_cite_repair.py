@@ -148,3 +148,125 @@ def remove_outer_field(xml: str, outer: str, inner: str) -> str:
     return xml[:s] + m.group(0) + xml[e:]
 
 
+def respan_link(xml: str, anchor: str, want: str) -> str:
+    """Move the boundary of the ONE link on `anchor` so it covers `want`.
+
+    The UNBALANCED SPAN repair. The audit has named this defect since
+    2026-08-25 and nothing could fix it, so the papers did: Aging_Well
+    is on its THIRD in-paper span repair, and that script's own
+    docstring records why the first two died — "tables of hard-coded
+    signatures, and both went stale and killed the script". The third
+    reads the links instead, and still cannot see this case, because it
+    can only TRIM: it computes the balanced label from the label alone,
+    which cannot know that the ``)`` the span is missing sits one
+    character to its right.
+
+    So the desired span comes from :func:`docxkit.citations.balanced_span`,
+    which reads the paragraph, and this MOVES the boundary to it —
+    trimming or extending, whichever the span needs.
+
+    The visible text is not touched: this is a markup repair, and the
+    guard below holds it to that. What changes is which characters are
+    blue.
+
+    Element form only. A field-form link is five runs and Word rewrites
+    it to an element on the author's next save anyway, which is why
+    :func:`docxkit.citations.link_in_para` writes elements too; a field
+    is refused by name rather than half-repaired.
+    """
+    from ._cite_grammar import wrap_visible_span
+    from ._xml import PARA_RE, visible_text
+
+    el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*(?<!/)>'
+                    r".*?</w:hyperlink>", re.DOTALL)
+    hits = [(pm.start(), pm.end(), m.start(), m.end())
+            for pm in PARA_RE.finditer(xml)
+            for m in el.finditer(pm.group(0))]
+    fields = [1 for s, e, body in field_spans(xml) if f'"{anchor}"' in body]
+    if len(hits) + len(fields) != 1:
+        raise AnchorError(
+            f"respan_link: {anchor} matched {len(hits) + len(fields)} "
+            f"link(s), need exactly 1")
+    if not hits:
+        raise AnchorError(
+            f"respan_link: the link to {anchor} is in FIELD form, which "
+            f"this does not rewrite. Word converts it to an element on "
+            f"the next save; re-run then, or relink the mention.")
+    p0, p1, s, e = hits[0]
+    para = original = xml[p0:p1]
+    text = visible_text(para)
+    at = len(visible_text(para[:s]))
+    label = visible_text(para[s:e])
+    end = at + len(label)
+    if want == label:
+        return xml
+
+    # Which EDGE moved. Derived from the two strings rather than searched
+    # for, because a label can repeat in one paragraph — "(2019)" twice —
+    # and a locate would then wrap whichever came first.
+    if want.startswith(label) or label.startswith(want):
+        new_at, new_end = at, at + len(want)
+    elif want.endswith(label) or label.endswith(want):
+        new_at, new_end = end - len(want), end
+    else:
+        raise AnchorError(
+            f"respan_link: {want[:40]!r} is not {label[:40]!r} with an edge "
+            f"moved — this repair widens or narrows a span, it does not "
+            f"retype one")
+    if text[new_at:new_end] != want:
+        raise AnchorError(
+            f"respan_link: {anchor}: the paragraph does not read "
+            f"{want[:40]!r} at the moved boundary")
+
+    # CARRY the bookmark that wraps this link, if one does. The house
+    # convention puts `<key>txt` — the reference entry's back-link
+    # target — around the first mention, which is this hyperlink. Moving
+    # the link's edge without it leaves the link reaching PAST the
+    # bookmark: measured, and every count stays right, because a
+    # bookmark that no longer wraps its mention is still a bookmark. The
+    # per-paper repair this replaces dropped and re-added it for the
+    # same reason.
+    carried = ""
+    bm = re.search(r'<w:bookmarkStart w:id="(\d+)" w:name="[^"]+"/>\s*$',
+                   para[:s])
+    if bm is not None:
+        shut = f'<w:bookmarkEnd w:id="{bm.group(1)}"/>'
+        if para[e:].startswith(shut):
+            carried = bm.group(0)
+            para = para[:bm.start()] + para[bm.end():s] + para[s:]
+            s -= len(carried)
+            e -= len(carried)
+            para = para[:e] + para[e + len(shut):]
+
+    # Unwrap, then re-wrap at the new edges. The character the span gives
+    # up keeps the Hyperlink CHARACTER STYLE otherwise — still blue,
+    # still underlined, linking nowhere, and no layer that reads anchors
+    # would see it.
+    inner = para[s:e]
+    inner = inner[inner.index(">") + 1:-len("</w:hyperlink>")]
+    inner = re.sub(r'<w:rStyle w:val="Hyperlink"/>', "", inner)
+    bare = para[:s] + inner + para[e:]
+    fixed = wrap_visible_span(bare, new_at, new_end, anchor)
+
+    if carried:
+        shut = f'<w:bookmarkEnd w:id="{bm.group(1)}"/>'  # type: ignore[union-attr]
+        link = re.search(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"'
+                         r'[^>]*(?<!/)>.*?</w:hyperlink>', fixed, re.DOTALL)
+        if link is None:                     # pragma: no cover - defensive
+            raise AnchorError(f"respan_link: {anchor}: lost the link")
+        fixed = (fixed[:link.start()] + carried + link.group(0) + shut
+                 + fixed[link.end():])
+
+    if visible_text(fixed) != text:
+        raise AnchorError(
+            f"respan_link: {anchor}: the paragraph's visible text moved — "
+            f"this repair changes which characters are LINKED, never what "
+            f"the page says")
+    for tag in ("<w:bookmarkStart", "<w:bookmarkEnd"):
+        if fixed.count(tag) != original.count(tag):
+            raise AnchorError(
+                f"respan_link: {anchor}: {tag} count moved — the txt "
+                f"bookmark rides inside the link and must survive it")
+    return xml[:p0] + fixed + xml[p1:]
+
+

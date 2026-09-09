@@ -410,9 +410,52 @@ def unbalanced_span(label: str) -> str:
     return "(" if depth else ""
 
 
+def balanced_span(text: str, at: int, end: int) -> str | None:
+    """The span an unbalanced link SHOULD cover, or `None` if unreadable.
+
+    :func:`unbalanced_span` says a span is wrong; this says what right
+    would be, and the two are not the same question. The bracket can be
+    unmatched because the span reached PAST its mention or because it
+    stopped SHORT of it, and those need opposite repairs — one trims,
+    one extends. The audit's message asserted the first for both.
+
+    The rule is the house form, which is what decides it:
+
+    * ``Klimaviciute and Pestieau 2023)`` — a parenthetical citation
+      whose span kept the old narrative boundary. The brackets belong to
+      the SENTENCE, not the citation, so the repair TRIMS. (Aging_Well
+      2026-08-25, and what that paper's own `_balanced` has shipped
+      since.)
+    * ``Modigliani (1986`` — a narrative citation the author moved the
+      other way, `Modigliani 1986` to `Modigliani (1986)`, where Word
+      kept the old right-hand boundary. Here the year's brackets ARE the
+      house form — "Grossman (1972)", "de São José et al. (2019)" — so
+      the repair EXTENDS over the ``)`` sitting just outside.
+      (Aging_Well 2026-09-09, the case that showed the first rule alone
+      cannot answer: `_balanced` only trims at the ends, found nothing
+      to trim, and returned the label unchanged.)
+
+    `None` is the honest answer when neither reading applies — a span
+    with an unmatched bracket and no matching one adjacent to it is
+    damage this cannot name, and :func:`repair_plan` keeps it under
+    "investigate" rather than proposing a repair nobody measured.
+    """
+    label = text[at:end]
+    if not (bracket := unbalanced_span(label)):
+        return label
+    if bracket == ")" and label.endswith(")"):
+        return label[:-1]
+    if bracket == "(" and label.startswith("("):
+        return label[1:]
+    if bracket == "(" and text[end:end + 1] == ")":
+        return label + ")"
+    return None
+
+
 def _span_findings(links: dict[str, list[tuple[int, str]]],
                    bookmarks: dict[str, int],
-                   where: Callable[[int], str]) -> list[_Finding]:
+                   where: Callable[[int], str],
+                   texts: list[str] | None = None) -> list[_Finding]:
     """Links whose label does not close what it opens.
 
     A BROKEN one is reported elsewhere and reported first: an anchor
@@ -428,12 +471,27 @@ def _span_findings(links: dict[str, list[tuple[int, str]]],
         for i, label in sites:
             if not (bracket := unbalanced_span(label)):
                 continue
+            # WHERE the boundary went wrong, which the message used to
+            # assert one way for both. An unmatched bracket means the
+            # span reached PAST the mention or stopped SHORT of it, and
+            # "reached past" was printed over a span that was one
+            # character too NARROW (Aging_Well, 2026-09-09).
+            want = None
+            text = (texts[i] if texts is not None and 0 <= i < len(texts)
+                    else None)
+            if text is not None and text.count(label) == 1:
+                at = text.index(label)
+                want = balanced_span(text, at, at + len(label))
+            how = ("stopped short of its mention"
+                   if want and len(want) > len(label)
+                   else "reached past its mention")
             out.append(_Finding(
                 "UNBALANCED SPAN", anchor,
                 f"UNBALANCED SPAN: the link to '{anchor}' "
                 f'({where(i)}) covers "{label[:48]}" — an unmatched '
-                f"'{bracket}', so the span has reached past its "
-                f"mention; the anchor is fine and the blue is wrong"))
+                f"'{bracket}', so the span has {how}; "
+                f"the anchor is fine and the blue is wrong",
+                want or ""))
     return out
 
 
@@ -795,7 +853,7 @@ def _audit_findings(parts: dict[str, bytes], *,
         unreached=unreached, missing=names_a_missing_entry)
     link_issues, broken = _link_findings(links, bookmarks, empty, where)
     issues += link_issues
-    issues += _span_findings(links, bookmarks, where)
+    issues += _span_findings(links, bookmarks, where, texts)
     issues += _doubled_findings(paras)
 
     entries = references(texts, heading=heading)
