@@ -51,7 +51,7 @@ FLOORS = {
     # function. The one statement left is `_Finder.find`'s early return,
     # which needs the fuller document fake `test_locate.py` already
     # carries — worth folding in when something else touches that class.
-    "word.py": 99,
+    "word.py": 100,
     # ---- the revision protocol, held above DEFAULT deliberately: every
     # refusal in here is a thing that failed SILENTLY in a real paper,
     # and an uncovered refusal is one nobody would notice had stopped
@@ -88,8 +88,8 @@ FLOORS = {
     "revision/_promote.py": 100,
     "revision/_registry.py": 100,
     "revision/_validate.py": 100,
-    "revision/_doctor.py": 98,
-    "revision/_state.py": 98,
+    "revision/_doctor.py": 100,
+    "revision/_state.py": 99,
     "revision/_losses.py": 97,
     "revision/_verdict.py": 97,
     "revision/_init.py": 94,
@@ -110,8 +110,8 @@ FLOORS = {
     # statement short of 100 is `_caption_of`'s empty return, which no
     # block can reach — a block always holds the caption that found it.
     "placement.py": 97,
-    "_cite_build.py": 85,
-    "_compare_diff.py": 92,
+    "_cite_build.py": 98,
+    "_compare_diff.py": 98,
 }
 
 
@@ -229,20 +229,100 @@ def check(actual: dict[str, float]) -> list[str]:
     return below
 
 
+#: How far a floor may sit below what the suite actually covers before
+#: it has stopped being "the CURRENT number" this file says it is. Slack
+#: is not a defect in itself — coverage moves a little between runs, and
+#: an afternoon that adds tests SHOULD be able to land without a red
+#: chain, which is the reasoning the complexity pins settled on for the
+#: same tension. Ten points is past that argument: it is the ratchet not
+#: being tightened for weeks, and every point of it is protection the
+#: module has silently lost.
+SLACK = 10.0
+
+#: Reported from here, so looseness is visible long before it is a
+#: failure. The floors rotted precisely because nothing ever mentioned
+#: them while they were passing.
+SLACK_NOTE = 2.0
+
+
+def slack(actual: dict[str, float]) -> list[tuple[str, float, float]]:
+    """Floors the suite has outgrown: `(module, floor, actual)`.
+
+    `check` only ever looks DOWN — it asks whether a module fell below
+    its floor, which is the regression the ratchet exists to stop. It
+    cannot see the other way, and the other way is how a ratchet fails:
+    coverage rises, nobody re-runs `--update`, and the floor stays where
+    it was while the module it guards moves away from it.
+
+    Measured 2026-09-09, and this file's own docstring is what makes it
+    a defect rather than a preference — *"The floors are the CURRENT
+    numbers, not aspirations"*:
+
+        _cite_build.py     floor 85   actual 98.8   13.8 points
+        _compare_diff.py   floor 92   actual 98.6    6.6 points
+
+    `_cite_build` builds every paper's citation apparatus. At a floor of
+    85 it could lose about sixty statements of coverage — `link_all`'s
+    whole mention-wiring pass, say — and the gate would print "every
+    module is at or above its floor" over it.
+
+    Same shape as the complexity pins rotting downward in silence, and
+    the same answer: not a hard gate on every point of improvement, but
+    it must not be possible for the number to go stale unremarked.
+
+    Only modules with an EXPLICIT floor are asked. `DEFAULT` is the bar a
+    module clears before anyone has ratcheted it — "a NEW module starts
+    held to the same standard as the rest" — so a module sitting well
+    above it is that policy working, not a floor going stale. Reading
+    slack against `DEFAULT` too was the first version of this, and it
+    reported eighteen modules, every one of them fine.
+    """
+    out = []
+    for module, pct in sorted(actual.items()):
+        if module not in FLOORS:
+            continue
+        floor = float(FLOORS[module])
+        if pct - floor >= SLACK_NOTE:
+            out.append((module, floor, pct))
+    return out
+
+
 def update(actual: dict[str, float]) -> None:
-    """Rewrite FLOORS from a fresh run, keeping the comments."""
+    """Rewrite FLOORS from a fresh run, keeping the comments.
+
+    Raises only — `max(floor, …)` — so a run against a suite that is
+    temporarily worse cannot ratchet the guard DOWN. Lowering a floor is
+    the deliberate act the module docstring asks for, made by hand and
+    with a reason beside it.
+
+    **The key pattern has to allow a `/`.** It was `[\\w.]+`, which
+    matches `tracked.py` and not `revision/_build.py`, so `--update`
+    reached 8 of the 24 floors and silently skipped 16 — every module of
+    the revision package, which is the half that touches manuscripts.
+    It printed "floors updated from this run" over that, so the one
+    mechanism this file offers for recording that the debt shrank did
+    not work for two thirds of the debt, and said it had. Measured
+    2026-09-09.
+    """
     src = Path(__file__).read_text(encoding="utf-8")
+    raised: list[str] = []
 
     def one(m: re.Match[str]) -> str:
         module, floor = m.group(1), int(m.group(2))
         now = actual.get(module)
         if now is None:
             return m.group(0)
+        if int(now) > floor:
+            raised.append(f"{module}: {floor} -> {int(now)}")
         return f'    "{module}": {max(floor, int(now))},'
 
-    src = re.sub(r'    "([\w.]+)": (\d+),', one, src)
+    src = re.sub(r'    "([\w./]+)": (\d+),', one, src)
     Path(__file__).write_text(src, encoding="utf-8")
-    print("floors updated from this run")
+    # Say WHICH, not just that something happened: the silent version is
+    # what let the skipped sixteen go unnoticed.
+    for line in raised:
+        print(f"  raised {line}")
+    print(f"floors updated from this run — {len(raised)} raised")
 
 
 def main() -> int:
@@ -269,7 +349,21 @@ def main() -> int:
         if args.report or room < 5:
             print(f"  {pct:6.1f}%  (floor {floor:3}%)  {module}{flag}")
 
+    loose = slack(actual)
+    if loose:
+        print("\nfloors the suite has OUTGROWN — run --update to re-ratchet:")
+        for name, was, now in loose:
+            gap = now - was
+            mark = "  <-- STALE" if gap >= SLACK else ""
+            print(f"  {name}: floor {was:.0f}%, actual {now:.1f}% "
+                  f"({gap:.1f} points of slack){mark}")
+
     below = check(actual)
+    below += [f"{name}: floor {was:.0f}% is {now - was:.1f} points below "
+              f"the {now:.1f}% the suite actually reaches — the ratchet "
+              f"has not been tightened, and that much of the module is "
+              f"unguarded"
+              for name, was, now in loose if now - was >= SLACK]
     if below:
         # Printed on `--report` too, and the exit code is what differs.
         # The all-clear used to be unconditional, so a `--report` run

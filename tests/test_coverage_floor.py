@@ -220,3 +220,87 @@ def test_REPORT_does_not_end_with_an_all_clear_under_its_own_failures(
     assert code == 0, "a report still reports"
     assert "BELOW FLOOR" in said
     assert "every module is at or above its floor" not in said, said
+
+
+# --- the ratchet failing UPWARD (2026-09-09) -----------------------------
+
+@pytest.fixture
+def floors(monkeypatch):
+    """A FLOORS of this test's own. Asserting against the live one would
+    pin today's numbers into the suite, and re-ratcheting — which is the
+    act this whole section exists to encourage — would then turn it red."""
+    monkeypatch.setattr(coverage_floor, "FLOORS", {"a.py": 85, "b.py": 97})
+    return coverage_floor.FLOORS
+
+
+def test_a_floor_the_suite_has_OUTGROWN_is_reported(floors):
+    """`check` only ever looks DOWN. Coverage rises, nobody re-runs
+    `--update`, and the floor stays where it was while the module moves
+    away from it — so the guard protects a band the code left behind.
+
+    Measured 2026-09-09: `_cite_build.py` sat at a floor of 85 while the
+    suite covered it at 98.8. That module builds every paper's citation
+    apparatus, and at 85 it could have lost about sixty statements of
+    coverage with this tool printing "every module is at or above its
+    floor" over it."""
+    assert coverage_floor.slack({"a.py": 98.8}) == [("a.py", 85.0, 98.8)]
+
+
+def test_slack_is_measured_against_an_EXPLICIT_floor_only(floors):
+    """`DEFAULT` is the bar a module clears before anyone has ratcheted
+    it — "a NEW module starts held to the same standard as the rest" —
+    so a module well above it is that policy working, not a floor going
+    stale. Reading slack against DEFAULT too was the first version of
+    this and it reported eighteen modules, every one of them fine."""
+    assert coverage_floor.slack({"not_floored.py": 100.0}) == []
+
+
+def test_a_STALE_floor_is_a_failure_and_a_small_one_is_only_a_note(floors):
+    """Not a hard gate on every point of improvement — an afternoon that
+    adds tests must be able to land without a red chain, which is what
+    the complexity pins settled on for the same tension. Ten points is
+    past that argument."""
+    def stale(actual):
+        return [x for x in coverage_floor.slack(actual)
+                if x[2] - x[1] >= coverage_floor.SLACK]
+
+    assert coverage_floor.slack({"b.py": 100.0}) != [], "3 points is a note"
+    assert stale({"b.py": 100.0}) == [], "…and only a note"
+    assert stale({"a.py": 98.8}), "13.8 points is the ratchet not tightened"
+
+
+def test_update_reaches_a_floor_whose_key_has_a_FOLDER_in_it(tmp_path,
+                                                             monkeypatch):
+    """`--update` is the one mechanism this file offers for recording
+    that the debt shrank, and its key pattern was `[\\w.]+` — which
+    matches `tracked.py` and not `revision/_build.py`.
+
+    Measured 2026-09-09: it reached 8 of the 24 floors and silently
+    skipped 16, every module of the revision package — the half that
+    touches manuscripts — while printing "floors updated from this run"
+    over the skip. Re-ratcheting after the split could never have
+    worked."""
+    src = tmp_path / "coverage_floor.py"
+    src.write_text('FLOORS = {\n    "tracked.py": 90,\n'
+                   '    "revision/_build.py": 90,\n}\n', encoding="utf-8")
+    monkeypatch.setattr(coverage_floor, "__file__", str(src))
+
+    coverage_floor.update({"tracked.py": 96.0, "revision/_build.py": 99.0})
+
+    now = src.read_text(encoding="utf-8")
+    assert '"tracked.py": 96,' in now
+    assert '"revision/_build.py": 99,' in now, now
+
+
+def test_update_never_ratchets_a_floor_DOWN(tmp_path, monkeypatch):
+    """A run against a suite that is temporarily worse must not hand
+    back the guard. Lowering is the deliberate act the module docstring
+    asks for, made by hand with a reason beside it."""
+    src = tmp_path / "coverage_floor.py"
+    src.write_text('FLOORS = {\n    "revision/_build.py": 100,\n}\n',
+                   encoding="utf-8")
+    monkeypatch.setattr(coverage_floor, "__file__", str(src))
+
+    coverage_floor.update({"revision/_build.py": 41.0})
+
+    assert '"revision/_build.py": 100,' in src.read_text(encoding="utf-8")

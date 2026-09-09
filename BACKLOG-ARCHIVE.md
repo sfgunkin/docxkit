@@ -14,6 +14,66 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `coverage_floor --update` reaches 8 of the 24 floors, skips every `revision/` module, and prints that it updated them~~ — FIXED 09.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-09.** The key pattern is `[\w./]+`. It was `[\w.]+`, which
+matches `tracked.py` and not `revision/_build.py`, so `--update` rewrote **8
+of the 24 floors and silently skipped 16** — every module of the revision
+package, the half that touches manuscripts — and closed with *"floors
+updated from this run"* over the skip.
+
+This file offers exactly one mechanism for recording that the debt shrank
+(*"`--update` rewrites them all from a fresh run, which is the honest way"*),
+and for two thirds of the debt it did nothing and said otherwise. It has
+been that way since `revision.py` became `revision/` on 2026-08-30 — the
+same split whose own comment in this file says restating fourteen floors
+"is not bookkeeping", because a floor keyed on a file that no longer exists
+cannot be met. The keys were restated; the tool that maintains them was not.
+
+Proved by the fix: the first real `--update` afterwards raised
+`revision/_doctor.py` 98 → 100 and `revision/_state.py` 98 → 99, neither of
+which the old pattern could match. It now also NAMES each floor it raised
+instead of printing a bare success — the silent version is what let the
+sixteen go unnoticed.
+
+### ~~S2 — a coverage floor can only fail DOWNWARD, so a ratchet nobody tightens guards a band the code left behind~~ — FIXED 09.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-09.** `coverage_floor.slack` reads the other direction and
+`main` reports it; a floor more than **10 points** below what the suite
+actually reaches is a failure, and more than 2 a printed note.
+
+`check` asks only whether a module fell below its floor. Coverage rises,
+nobody re-runs `--update`, and the floor stays where it was — so the guard
+protects a band the code has moved away from, while printing *"every module
+is at or above its floor"*. This file's own docstring is what makes that a
+defect rather than a preference: **"The floors are the CURRENT numbers, not
+aspirations."**
+
+Measured 2026-09-09, against the explicit floors only:
+
+    _cite_build.py     floor 85   actual 98.8   13.8 points
+    _compare_diff.py   floor 92   actual 98.6    6.6 points
+    revision/_doctor.py  floor 98   actual 100.0  2.0 points
+
+`_cite_build` builds every paper's citation apparatus. At a floor of 85 it
+could have lost about sixty statements of coverage — `link_all`'s whole
+mention-wiring pass, say — with the gate green over it. Two of the three
+were unreachable by `--update` in any case; see the S1 above, which is why
+they had rotted for as long as they had.
+
+**Not a hard gate on every point of improvement**, which is the tension the
+complexity pins settled first: an afternoon that adds tests must be able to
+land without a red chain. Ten points is past that argument.
+
+**Slack is read against an EXPLICIT floor only.** The first version read it
+against `DEFAULT` too and reported eighteen modules, every one of them fine
+— `DEFAULT` is the bar a module clears before anyone has ratcheted it, so
+sitting well above it is that policy working.
+
 ### ~~S2 — the UNBALANCED SPAN finding has no repair, so every paper writes its own and each one goes stale~~ — FIXED 09.09, `9a2c9ce` and `11e4f58`
 <!-- status: fixed -->
 
