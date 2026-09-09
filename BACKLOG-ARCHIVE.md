@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — the UNBALANCED SPAN finding has no repair, so every paper writes its own and each one goes stale~~ — FIXED 09.09
+### ~~S2 — the UNBALANCED SPAN finding has no repair, so every paper writes its own and each one goes stale~~ — FIXED 09.09, `9a2c9ce`
 <!-- status: fixed -->
 
 **Fixed 2026-09-09.** `citations.balanced_span` says what the span SHOULD
