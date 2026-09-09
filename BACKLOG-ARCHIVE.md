@@ -67,8 +67,8 @@ use to a repair that has to run BEFORE that save. Measured on the
 manuscript it was written for: **173 field-form links to 33
 element-form**, and the live defect was on a field. It would have covered
 16% of that paper's links and none of the case that prompted it. Both
-forms now; a field is rebuilt as an element, which is what `link_in_para`
-writes and what Word's own save would have made of it.
+forms now (`11e4f58`); a field is rebuilt as an element, which is what
+`link_in_para` writes and what Word's own save would have made of it.
 
 Verified against the real document rather than a fixture: the Modigliani
 field link broken exactly the way the author's save broke it, `audit_links`
