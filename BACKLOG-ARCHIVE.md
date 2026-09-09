@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — the UNBALANCED SPAN finding has no repair, so every paper writes its own and each one goes stale~~ — FIXED 09.09, `9a2c9ce`
+### ~~S2 — the UNBALANCED SPAN finding has no repair, so every paper writes its own and each one goes stale~~ — FIXED 09.09, `9a2c9ce` and `11e4f58`
 <!-- status: fixed -->
 
 **Fixed 2026-09-09.** `citations.balanced_span` says what the span SHOULD
@@ -67,8 +67,8 @@ use to a repair that has to run BEFORE that save. Measured on the
 manuscript it was written for: **173 field-form links to 33
 element-form**, and the live defect was on a field. It would have covered
 16% of that paper's links and none of the case that prompted it. Both
-forms now (`11e4f58`); a field is rebuilt as an element, which is what
-`link_in_para` writes and what Word's own save would have made of it.
+forms now; a field is rebuilt as an element, which is what `link_in_para`
+writes and what Word's own save would have made of it.
 
 Verified against the real document rather than a fixture: the Modigliani
 field link broken exactly the way the author's save broke it, `audit_links`
