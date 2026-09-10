@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — `fit --render` cannot report a straddle: it hands `audit` formatted rows, not page text~~ — FIXED 10.09
+### ~~S3 — `fit --render` cannot report a straddle: it hands `audit` formatted rows, not page text~~ — FIXED 10.09, `a90be3a`
 <!-- status: fixed -->
 
 **Fixed 2026-09-10.** `cmd_fit`'s renderer returns `pages.page_texts(docx)`:
