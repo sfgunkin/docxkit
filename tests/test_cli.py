@@ -2637,19 +2637,120 @@ def test_fit_check_is_QUIET_on_a_manuscript_that_obeys_the_rule(monkeypatch,
     assert "0 fit finding(s)" in out
 
 
-def test_fit_RENDER_asks_what_landed_on_the_sheets(monkeypatch, tmp_path,
-                                                   capsys):
-    """`--render` is the half that needs Word. The renderer is stubbed
-    here: what this holds is that the flag reaches `audit` and the
-    report says it rendered, not what Word does with a page."""
-    monkeypatch.setattr("docxkit.pages.sheets",
-                        lambda *_a, **_k: ["See table 1. Table 1. Head "
-                                           "Capability Source",
-                                           "Health Nussbaum"])
+def _stub_render(monkeypatch, texts):
+    """Stub BOTH renderers, each with what it really returns.
+
+    `sheets` carries no document text — number, orientation, printed
+    number, corner. The stub this replaced handed it page TEXT, which it
+    never returns, so the test passed while `--render` could not find a
+    caption on any sheet of any real document: the stub agreed with the
+    wiring it was there to check."""
+    from docxkit.pages import Sheet
+
+    monkeypatch.setattr("docxkit.pages.page_texts", lambda *_a, **_k: texts)
+    monkeypatch.setattr("docxkit.pages.sheets", lambda *_a, **_k: [
+        Sheet(n, "portrait", n, False) for n in range(1, len(texts) + 1)])
+
+
+def test_fit_RENDER_is_QUIET_on_a_table_whole_on_one_sheet(monkeypatch,
+                                                            tmp_path,
+                                                            capsys):
+    """`--render` is the half that needs Word, so the renderer is stubbed.
+    What this holds is that the flag reaches `audit`, the report says it
+    rendered, and a table that fits its sheet is not a finding."""
+    _stub_render(monkeypatch, ["See table 1. Table 1. Head Capability "
+                               "Source Health Nussbaum"])
 
     code, _ = run_cli(monkeypatch, "fit", str(_fit_docx(tmp_path, True)),
                       "--render", "--check")
 
     out = capsys.readouterr().out
-    assert "straddle" in out.lower() or "markup only" not in out, out
-    assert code in (0, 2), out
+    assert code == 0, out
+    assert "0 fit finding(s)" in out
+    assert "markup only" not in out
+
+
+def test_fit_RENDER_reports_a_table_that_STRADDLES_two_sheets(monkeypatch,
+                                                               tmp_path,
+                                                               capsys):
+    """The case the flag exists for, and the one it could never report.
+    `cmd_fit` handed `audit` the formatted rows of `pages.sheets`, in
+    which no caption can be found, so every table read as unlocated and
+    the run came back clean. Caption on sheet 2, last row on sheet 3."""
+    _stub_render(monkeypatch, ["See table 1.",
+                               "Table 1. Head Capability Source",
+                               "Health Nussbaum"])
+
+    code, _ = run_cli(monkeypatch, "fit", str(_fit_docx(tmp_path, True)),
+                      "--render", "--check")
+
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "starts on sheet 2 and ends on sheet 3" in out
+
+
+# --- `docxkit repack` --------------------------------------------------
+
+#: a sheet's worth of prose, so a short sheet has something to be short of
+_FULL = "word " * 400
+
+
+def _repack_docx(tmp_path):
+    from docxkit.package import write_docx
+
+    path = tmp_path / "paper.docx"
+    write_docx(path, make_parts(
+        para(run("Figure 1 shows it.")) + "<w:p><w:r><w:drawing/></w:r></w:p>"
+        + para(run("Figure 1. Cap")) + para(run("Box text"))))
+    return path
+
+
+def test_repack_renders_every_TRIAL_from_its_own_bytes(monkeypatch, tmp_path,
+                                                       capsys):
+    """Each candidate is a different document, so a renderer that read the
+    manuscript on disk would measure the same layout every time and offer
+    nothing. The stub paginates by what the FILE it is handed says: the
+    figure ahead of "Box text" leaves sheet 2 short, and behind it fills
+    the sheet."""
+    from docxkit.package import read_parts
+
+    seen = []
+
+    def page_texts(path):
+        seen.append(pathlib.Path(path))
+        xml = read_parts(str(path))["word/document.xml"].decode("utf-8")
+        if xml.index("Figure 1. Cap") < xml.index("Box text"):
+            return [_FULL, "Figure 1 shows it.", "Figure 1. Cap", _FULL,
+                    _FULL]
+        return [_FULL, "Figure 1 shows it. " + _FULL, "Figure 1. Cap", _FULL]
+
+    monkeypatch.setattr("docxkit.pages.page_texts", page_texts)
+    paper = _repack_docx(tmp_path)
+    before = paper.read_bytes()
+
+    code, _ = run_cli(monkeypatch, "repack", str(paper))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "sheet 2:" in out
+    assert "1 fewer under-filled sheet(s)" in out
+    assert "Nothing was changed" in out and "exhibit 1" in out
+    assert len(seen) >= 2 and paper not in seen, seen
+    assert not any(p.exists() for p in seen), "the trials must be cleaned up"
+    assert paper.read_bytes() == before, "repack reports; it never edits"
+
+
+def test_repack_on_a_full_document_offers_no_move(monkeypatch, tmp_path,
+                                                  capsys):
+    """No short sheet, no search and no advice — a command that told the
+    author to move an exhibit on a document with nothing wrong would be
+    advice nobody could follow."""
+    monkeypatch.setattr("docxkit.pages.page_texts",
+                        lambda *_a, **_k: [_FULL, _FULL, _FULL])
+
+    code, _ = run_cli(monkeypatch, "repack", str(_repack_docx(tmp_path)))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "nothing to repack" in out
+    assert "Nothing was changed" not in out

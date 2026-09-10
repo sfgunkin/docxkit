@@ -56,6 +56,8 @@ VALUES = [
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "placement.FitFinding",     # one exhibit breaking the fit rule
+    "repack.Move",              # one placement, and what the render said
+    "repack.Sheet",             # one rendered sheet's fill
     "refstyle.Issue",
     "refstyle.Layout",          # the house rule itself, passed in and read
     "refstyle.Style",
@@ -102,6 +104,7 @@ ACCUMULATORS = {
     "placement.FitReport",
     "placement.Placement",
     "placement.PlacementReport",
+    "repack.RepackReport",
     "probe.Probe",
     "refstyle.ConvertReport",
     "refstyle.LayoutReport",

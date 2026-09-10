@@ -35,7 +35,7 @@ SRC = pathlib.Path(docxkit.__file__).parent
 LAYERS: tuple[tuple[str, ...], ...] = (
     ("cli", "compare", "revision"),
     ("tracked", "export", "wordcount", "renumber", "pages", "probe",
-     "refstyle", "testing"),
+     "refstyle", "testing", "repack"),
     ("tables", "crossrefs", "equations", "footnotes", "figures", "ingest",
      "placement"),
     ("citations",),

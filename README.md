@@ -74,6 +74,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 | `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
 | `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included |
+| `repack` | which sheet is mostly EMPTY and which exhibit's placement caused it — renders each alternative placement and ranks what it would save; reports, never edits |
 | `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |
 | `revision` | the single-file protocol: one manuscript — the author's own file, named in `paper.toml` — two states read off the file itself, and the gate ladder between a proposal and the truth. A subpackage since 2026-08-30, fourteen layers behind one facade; import from `docxkit.revision` as before |
 | `cli` | the `docxkit` command line — the one-off jobs, without a throwaway script |
@@ -107,6 +108,7 @@ docxkit smarten PAPER.docx [--write]
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx [--sheets] [--check]
 docxkit fit PAPER.docx [--render] [--check]
+docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
 docxkit verify PAPER.docx                  # does Word read this back unchanged?
 ```
 

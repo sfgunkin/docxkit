@@ -446,6 +446,10 @@ LOCK_EXEMPT = {
     "pdf": "renders through Word; a snapshot would answer about a "
            "generation the author cannot see on their screen",
     "pages": "renders through Word, same as `pdf`",
+    "repack": "renders through Word, and every number it prints is about "
+              "the page layout — a snapshot would report which sheets are "
+              "empty in a generation the author cannot see, which is worse "
+              "than refusing",
     "locate": "drives Word to lay the document out — the page a phrase "
               "lands on is Word's answer, not the package's",
     "api": "prints the package's own API surface and never opens a "

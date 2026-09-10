@@ -14,6 +14,60 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `fit --render` cannot report a straddle: it hands `audit` formatted rows, not page text~~ — FIXED 10.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-10.** `cmd_fit`'s renderer returns `pages.page_texts(docx)`:
+the text of each sheet, which is where `audit` looks for a caption. It
+returned `[str(row) for row in sheets(docx)]`, the display rows, and no
+caption is ever in those.
+
+**The test for `--render` was holding the defect in place.**
+`test_fit_RENDER_asks_what_landed_on_the_sheets` stubbed `pages.sheets` with
+page TEXT, which the real `sheets` never returns, so the stub agreed with the
+wiring it was there to check — and its assertion accepted either answer, a
+straddle or none. It is replaced by `_stub_render`, which stubs both
+renderers with what each really returns, and two tests: a table whole on one
+sheet exits 0, and a caption on sheet 2 with its last row on sheet 3 exits 2
+with `starts on sheet 2 and ends on sheet 3`. Run against the old wiring, the
+second fails with the defect itself: `1 table(s): 0 fit finding(s)`, exit 0.
+
+No paper script or `paper.toml` under `F:\OneDrive\__Documents` calls
+`fit --render`, so there was no workaround to delete.
+
+`cmd_fit` builds its renderer as
+
+    return [str(row) for row in sheets(args.docx)]
+
+and `pages.Sheet.__str__` is the DISPLAY row — `   1  portrait  prints    1
+lower right`. It carries no document text at all, by design: number,
+orientation, printed number, blank, corner, and nothing else.
+
+`placement.audit` then does `_sheet_of(sheets, _caption_of(block)[:40])`, a
+substring search for the caption. Against those rows it matches nothing, ever,
+so `first` is None for every exhibit and the straddle branch cannot fire.
+
+Measured 2026-09-09, constructing the exact strings:
+
+    what cmd_fit hands placement.audit as a "sheet":
+           1  portrait  prints    1  lower right
+           2  portrait  prints    2  lower right
+    searching for 'Table 1. A caption the audit will look f'
+       sheets containing it: NONE
+
+So the flag whose help reads *"the only way to catch a table too tall to fit
+at all, which no property can save"* reports nothing it was added to report,
+and reports it as a clean run. This is this file's own S3: a gate that cannot
+fail buys false confidence, and the markup half of `fit` passing makes the
+render half look answered.
+
+**The renderer it needs now exists.** `pages.page_texts(docx)` returns the text
+of each sheet — the contract `placement` and `repack` are written against —
+added the same day for `repack`, which cannot work without it. The fix is
+`cmd_fit` calling it, plus a test that fails on the old wiring: a fixture whose
+caption is on sheet 2 and whose last row is on sheet 3 must report a straddle,
+and does not today.
+
 ### ~~S1 — `coverage_floor --update` reaches 8 of the 24 floors, skips every `revision/` module, and prints that it updated them~~ — FIXED 09.09
 
 <!-- status: fixed -->

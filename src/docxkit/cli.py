@@ -23,6 +23,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit verify PAPER.docx
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
     docxkit fit PAPER.docx [--render] [--check]
+    docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
     docxkit pages PAPER.docx [--sheets] [--check]
 
 and the single-file revision protocol, which finds its own paths in
@@ -1099,18 +1100,67 @@ def cmd_pdf(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_repack(args: argparse.Namespace) -> int:
+    """Which sheet is mostly empty, and what placement would fill it."""
+    import re
+    import shutil
+    import tempfile
+    from pathlib import Path as _Path
+
+    from .package import write_docx
+    from .pages import page_texts
+    from .repack import repack
+
+    words = "|".join(re.escape(w.strip()) for w in args.labels.split(",")
+                     if w.strip())
+    caption = re.compile(rf"^\s*(?:{words})\s*(\d+)\s*\.", re.IGNORECASE)
+    mention = re.compile(rf"(?:{words})\s*(\d+)", re.IGNORECASE)
+
+    staging = _Path(tempfile.mkdtemp(prefix="docxkit_repack_"))
+    trials = [0]
+
+    def render(parts: dict[str, bytes]) -> list[str]:
+        # Each candidate is a DIFFERENT document, so the render has to go
+        # through the trial's own bytes: `fit` renders the file on disk
+        # because its parts never change, and that shortcut is wrong here.
+        trials[0] += 1
+        path = staging / f"trial{trials[0]}.docx"
+        write_docx(path, parts)
+        return page_texts(path)
+
+    try:
+        report = repack(_package(args.docx, read_only=True), render=render,
+                        caption=caption, mention=mention,
+                        threshold=args.threshold, max_drift=args.max_drift,
+                        max_candidates=args.max_candidates)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    print(_Path(args.docx).name)
+    print("  " + report.format().replace("\n", "\n  "))
+    if report.moves:
+        best = report.moves[0]
+        print("\n  Nothing was changed. To apply the first of these, move "
+              f"exhibit {best.number}\n  to just after the paragraph naming "
+              "it and re-render — the placement\n  is an editorial call, so "
+              "it is yours to make.")
+    return 0
+
+
 def cmd_fit(args: argparse.Namespace) -> int:
     """Does every exhibit obey the house fit rule? --check to gate on it."""
     from .placement import audit
 
     render: Callable[[dict[str, bytes]], list[str]] | None = None
     if args.render:
-        from .pages import sheets
+        from .pages import page_texts
 
         def _render(_parts: dict[str, bytes]) -> list[str]:
-            # The parts are the file's own; `sheets` renders the FILE,
-            # which is the same document and one conversion cheaper.
-            return [str(row) for row in sheets(args.docx)]
+            # The parts are the file's own; render the FILE, which is the
+            # same document and one conversion cheaper. It must be the
+            # sheets' TEXT: `audit` looks for each caption in it, and
+            # `sheets` rows (number, orientation, corner) hold none.
+            return page_texts(args.docx)
 
         render = _render
 
@@ -2322,6 +2372,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-pdf", metavar="PATH",
                    help="keep the render instead of using a temp file")
     p.set_defaults(fn=cmd_pages)
+
+    # imported here rather than at module scope: `repack` pulls lxml, and the
+    # CLI's startup is 0.139 s of which the import graph is most
+    from .repack import DEFAULT_MAX_CANDIDATES, DEFAULT_THRESHOLD
+
+    p = sub.add_parser(
+        "repack",
+        help="which sheet is mostly empty, and which exhibit's placement "
+             "would fill it (renders; reports, changes nothing)")
+    p.add_argument("docx")
+    p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
+                   help="a sheet under this share of the fullest TEXT sheet "
+                        "is reported (default %(default)s)")
+    p.add_argument("--max-drift", type=int, default=1,
+                   help="how many sheets an exhibit may sit from the text "
+                        "that first mentions it (default %(default)s)")
+    p.add_argument("--max-candidates", type=int,
+                   default=DEFAULT_MAX_CANDIDATES,
+                   help="placements to try per under-filled sheet; each one "
+                        "is a full render (default %(default)s)")
+    p.add_argument("--labels", default="Figure,Table,Box",
+                   help="exhibit words to recognise (default %(default)s)")
+    p.set_defaults(fn=cmd_repack)
 
     p = sub.add_parser(
         "fit",

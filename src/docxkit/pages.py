@@ -43,7 +43,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, NamedTuple
 
-__all__ = ["Sheet", "problems", "read_pdf", "render_anchors", "sheets"]
+__all__ = ["Sheet", "page_texts", "problems", "read_pdf", "render_anchors",
+           "sheets"]
 
 #: How much of a sheet is footer, and how much is header. A page number
 #: printed by Word sits inside the margin band; 12 % of the height is
@@ -195,6 +196,30 @@ def _outermost_line(words: list[Any], edge: str) -> list[Any]:
     # depending on ascenders and descenders.
     return [w for w in words
             if abs((w[3] if edge == "lower" else w[1]) - key) <= 3.0]
+
+
+def page_texts(docx: str | Path) -> list[str]:
+    """The TEXT of each rendered sheet, in order.
+
+    :func:`sheets` answers "what does this sheet look like" — orientation,
+    printed number, blank — and carries no text at all, by design. A caller
+    that needs to know WHICH sheet a caption or a paragraph landed on needs
+    the words, and had no way to get them: `cmd_fit` reached for
+    ``[str(row) for row in sheets(...)]`` and handed `placement.audit` a list
+    of formatted rows — ``1  portrait  prints  1  lower right`` — in which no
+    caption can ever be found. That is the renderer contract
+    `placement`/`repack` expect, so this is it.
+    """
+    from .word import export_pdf
+
+    pymupdf = _import_pymupdf()
+    staging = Path(tempfile.mkdtemp(prefix="docxkit_text_"))
+    try:
+        pdf = export_pdf(docx, staging / "render.pdf")
+        with pymupdf.open(str(pdf)) as doc:
+            return [page.get_text() for page in doc]
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def read_pdf(pdf: str | Path, *, band: float = _BAND) -> list[Sheet]:
