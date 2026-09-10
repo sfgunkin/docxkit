@@ -46,6 +46,83 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S6 — nothing in the toolkit checks a SECTION number, so a merged heading dangles every reference under it
+
+<!-- status: open -->
+
+Measured on Aging_Well, 2026-09-10. The author merged Section 3 and Section 4
+in Word — one deleted heading paragraph — and the paper was ingested, gated
+and BASELINED with its headings running `1 2 3 5 6 7 8 9` and seven sentences
+pointing at a Section 4 that no longer existed. That state survived a full
+nine-command sweep because **not one command in this toolkit knows what a
+section number is**:
+
+    citations   the reference apparatus
+    refstyle    the entry list
+    crossrefs   Figure / Table / Box CAPTIONS — see below
+    math        the equations
+    footnotes   the notes
+    lint        the markup
+    pages       sheet geometry
+    compare     revisions
+    revision    pending counts and parts
+
+`crossrefs` is the near miss and the reason this is worth an entry rather than
+a shrug. It already does exactly the right job — caption found, mention
+linked, dangling reported — and `--labels` looks like the extension point. It
+is not. `find.caption_re` builds `^<Label>\s+<number>` against a CAPTION
+PARAGRAPH; a section is a `Heading1`/`Heading2` whose number is a prefix on the
+title (`4.2 Model implications`), with no label word at all. `--labels Section`
+finds nothing and reports it cleanly, which is the all-zero-audit shape this
+backlog has already closed once: a count that cannot tell *nothing to find*
+from *not looking for it*.
+
+**What the check is**, written as a paper-local gate first
+(`Aging_Well/revision/scripts/r122_section_integrity.py`, 200 lines) because
+one paper needed it that afternoon:
+
+  * headings — top-level numbers run `1..N`, no gap, no repeat, in document
+    order; a `K.M` subhead sits under heading `K` and the minors run `1..M`;
+    appendix `A.N` likewise;
+  * mentions — every `Section N`, `Section N.M`, `Sections X and/to/through
+    Y`, `Appendix A.N` and bare `A.N` in body AND footnotes resolves to a
+    heading that exists, and a range runs upward.
+
+It found all 8 breaches on the live truth, 0 on 69 of 69 redlines, 0 on three
+older truths, and 8 on the two files after the merge — which is also how the
+merge got DATED, to a hand pass six hours before anyone looked. That
+discrimination is the argument for hoisting it: the check is cheap, it is
+generic over any numbered-heading paper, and every paper on this protocol is
+exposed to the same one-keystroke edit.
+
+**The renumber is the second half and is NOT generic yet.** `r123` moved 41
+mentions, 2 ranges and 12 headings in one simultaneous pass, and the trap it
+documents belongs upstream with the check: sequential rules cannot renumber
+sections, because `5->4` then `6->5` cannot tell its own output from its
+input, and descending order does not save you either the moment the map is not
+monotone — this one had `4->3` (a merge) alongside `5->4`. Whatever ships
+must take the whole map and apply it once.
+
+**Two things the paper-local gate got right that a port should keep.** Ranges
+are REWRITTEN, not mapped: `Sections 2 through 4` spanned three sections and
+now spans two, so it becomes `Sections 2 and 3` — mapping the endpoints
+gives `Sections 2 through 3`, which is how nobody writes a two-item range, and
+no checker will ever complain about it. And a mention that straddles two runs
+is refused up front rather than silently missed, because `xml.replace` cannot
+see one. All 43 on this paper sat whole inside a single `<w:t>`; the next
+paper's will not.
+
+**The sting, and the real lesson for this file.** The paper's own seventh gate,
+`r64_equation_homes.py`, enforces *every equation lives in Section 5 or the
+Appendix* and held the literal `5`. After the renumber it reported all five of
+the paper's own displays as breaches — the paper right, the gate wrong, which
+is the worst way for a gate to fail, because the obvious response is to
+"fix" the paper. It now reads the number off the heading titled *A model of
+capability allocation*. Any section-aware feature that ships here should
+assume section numbers MOVE.
+
+---
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
