@@ -14,6 +14,76 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — when Word strips an exhibit's FIRST mention, the apparatus passes re-mint `<key>txt` on a LATER mention, and `link_more` then links the first without moving the marker~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-11**, the way the entry suggested. `link_more` now ends
+with a re-home pass: for each caption whose `<key>txt` marker exists, if
+any link to the caption sits in an earlier PARAGRAPH than the marker —
+the test `audit`'s `misplaced_anchor` makes — the marker is deleted and
+rebuilt around the first link with `wrap_link_in_bookmark(...,
+which="first")`, both link forms counted. A rebuild that would land
+where it began (the earlier mention is a REF the helper cannot wrap) is
+not made, so the audit still reports that case rather than the pass
+churning on it. `link_more` takes `other_parts` now, so the rebuilt
+bookmark's id is free document-wide, and its counts carry a
+`"<key>txt moved"` entry per marker re-homed; a second run reports
+nothing and changes no byte.
+
+**Measured on a snapshot of the manuscript**, R125's own sequence
+reproduced: Figure 2's first mention is a FIELD link at ¶106 on this
+paper, so the first attempt — stripping the first element link — struck
+¶107 and moved nothing, which is worth recording because the fix has to
+be right for both forms. Stripping the ¶106 field to plain text and the
+marker with it, then re-minting with `which="first"` as `link_all` does,
+put the marker on ¶107 — the state the paper met. `link_more` on that:
+`{'Figure2': 1, 'Figure2txt moved': 1}`, the marker back at ¶106, the
+audit clean, the visible text byte-identical, one marker, and the second
+run `{}` on the same bytes. The paper's `r125_rehome_exhibit_markers.py`
+is spent.
+
+Tests: the R125 shape (moved, counted, audit clean, words unchanged,
+idempotent); a marker already on the first mention left alone; a REF
+ahead of the marker left, counted as not moved, and still audited.
+
+The entry as filed, by the session on that paper:
+
+Measured on Aging_Well, 2026-09-11, on the author's hand pass of 13:37. It
+is the second time on this paper (R87, 2026-09-03). The pass rewrote the
+paragraphs holding the first mentions of Figure 2 and Box 2, and Word
+stripped their links along with the `Figure2txt` and `Box2txt` bookmarks. The
+paper's lane runs the citation pass before the exhibit pass, and together
+they produced a state that the second pass's own audit rejects:
+
+    r2  citations.link_all    "back-link bookmark re-minted: Figure2txt" / "…: Box2txt"
+                              — on the mention that still carried a link, the LATER one
+    r11 crossrefs.link        linked 0, already 5 — both bookmarks exist, so it skips
+    r11 crossrefs.link_more   "2 later mention(s) Figure2 x1, Box2 x1" — the two
+                              EARLIER plain mentions, linked forward-only
+    r11 crossrefs.audit       misplaced_anchor: Box2txt at ¶106, first mention ¶88;
+                              Figure2txt at ¶105, first mention ¶104
+
+`link_more`'s docstring says it wraps "each remaining plain mention" once
+`link` has bookmarked the first. It assumes the marker already sits on the
+first mention and never checks. The failure is not silent, because
+`crossrefs --audit` exits 1. The cost is a hand re-home whenever a hand pass
+rewrites a first-mention paragraph.
+
+**Suggested fix:** in `link_more`, when a plain mention it is about to link
+precedes the existing `<key>txt` marker in document order, move the marker
+onto it after linking (delete, then `wrap_link_in_bookmark(...,
+which="first")`). Alternatively, `link` could treat "marker exists but a plain
+mention precedes it" as not yet linked. On the citation side, `link_all`'s
+re-mint could decline to place an exhibit's `<key>txt` when an unlinked
+mention of that exhibit precedes the only linked one.
+
+**Workaround in use:** `Aging_Well/revision/scripts/r125_rehome_exhibit_markers.py`,
+and R87 before it: delete the marker, `wrap_link_in_bookmark(xml, anchor,
+name, id, which="first")`, and assert the visible text is unchanged. Running
+the exhibit pass before the citation pass might avoid the trap; that was not
+tried.
+
 ### ~~S4 — a broken pywin32 cache fails every Word command with `no attribute 'CLSIDToClassMap'`, and the failed start leaves an invisible Word running~~ — FIXED 11.09, `1c53b60`
 
 <!-- status: fixed -->

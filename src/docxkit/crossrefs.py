@@ -61,7 +61,7 @@ from ._xml import (
     own_properties,
     visible_text,
 )
-from .citations import next_bookmark_id, wrap_link_in_bookmark
+from .citations import delete_bookmark, next_bookmark_id, wrap_link_in_bookmark
 from .errors import AnchorError, ConversionGap
 
 # The caption DEFINITION lives in `find`, one layer down, because
@@ -894,6 +894,7 @@ def _mention_offsets(xml: str) -> dict[str, list[int]]:
 
 
 def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
+              other_parts: Sequence[str] = (),
               ) -> tuple[str, dict[str, int]]:
     """Forward-link every exhibit mention :func:`link` left plain.
 
@@ -905,7 +906,26 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     skipped, already-linked spans are masked out, and a second run is a
     no-op. Run it AFTER :func:`link`.
 
-    Returns ``(xml, {caption name: mentions linked})``.
+    **And it keeps the marker on the first mention.** The docstring
+    above assumed `<key>txt` already sat there, and it need not: when a
+    hand pass rewrites the paragraph holding the first mention, Word
+    strips its link and bookmark, `citations.link_all` re-mints the
+    marker on the first mention that still carries a LINK — the later
+    one — and `link` then sees both bookmarks and skips. This pass used
+    to link the earlier, now-plain mention forward-only and leave the
+    marker where it was, so `audit` reported `misplaced_anchor` and a
+    paper re-homed it by hand every time it happened (Aging_Well R87 on
+    3 Sep and R125 on 11 Sep 2026; backlog S4). Now, after the linking,
+    a marker with any mention linking past it from an earlier PARAGRAPH
+    is deleted and rebuilt around the first link to the caption, the
+    way :func:`docxkit.citations.wrap_link_in_bookmark` with
+    ``which="first"`` defines it. A move that would land where it began
+    — the earlier mention is a REF the helper cannot wrap — is not made.
+    Pass `other_parts` (footnotes, endnotes) so the rebuilt bookmark's
+    id is free document-wide.
+
+    Returns ``(xml, {caption name: mentions linked})``, with a
+    ``"<key>txt moved"`` entry for each marker re-homed.
     """
     from .citations import masked_visible_text, wrap_visible_span
 
@@ -955,7 +975,39 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
             para = wrap_visible_span(para, at, end, anchor)
             counts[anchor] = counts.get(anchor, 0) + 1
         xml = xml[:pm.start()] + para + xml[pm.end():]
-    return xml, counts
+    return _rehome_markers(xml, captions, other_parts, counts), counts
+
+
+def _rehome_markers(xml: str, captions: Sequence[Caption],
+                    other_parts: Sequence[str],
+                    counts: dict[str, int]) -> str:
+    """Each `<key>txt` marker that sits past an earlier mention, rebuilt
+    around the first link to its caption. See :func:`link_more`."""
+    for cap in captions:
+        at = _bookmark_offsets(xml).get(cap.mention_name)
+        if at is None:
+            continue
+        paras = [m.start() for m in PARA_RE.finditer(xml)]
+        home = _where(paras, at)
+        if not any(pos < at and _where(paras, pos) != home
+                   for pos in _mention_offsets(xml).get(cap.name, ())):
+            continue
+        try:
+            trial = delete_bookmark(xml, cap.mention_name)
+            trial = wrap_link_in_bookmark(
+                trial, cap.name, cap.mention_name,
+                _next_bookmark_id(trial, other_parts), which="first")
+        except AnchorError:
+            counts[f"{cap.mention_name} not moved"] = 1
+            continue
+        landed = _where([m.start() for m in PARA_RE.finditer(trial)],
+                        _bookmark_offsets(trial)[cap.mention_name])
+        if landed == home:
+            continue
+        xml = trial
+        key = f"{cap.mention_name} moved"
+        counts[key] = counts.get(key, 0) + 1
+    return xml
 
 
 def reaching(*parts: str) -> set[str]:

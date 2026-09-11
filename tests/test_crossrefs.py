@@ -794,6 +794,79 @@ def test_link_more_does_not_link_prose_ranges():
     assert counts.get("Table5", 0) == 0
 
 
+# --- link_more keeps the marker on the FIRST mention ---------------------
+#
+# Aging_Well, 2026-09-11 (backlog S4; R87 on 3 Sep was the first time): a
+# hand pass rewrote the paragraph holding Figure 2's first mention, Word
+# stripped its link and bookmark, `citations.link_all` re-minted
+# `Figure2txt` on the LATER mention that still carried a link, `link` saw
+# both bookmarks and skipped, and `link_more` linked the earlier mention
+# forward-only. `audit` said `misplaced_anchor`; a script re-homed it.
+
+CAPTION2 = para('<w:bookmarkStart w:id="1" w:name="Figure2"/>'
+                '<w:bookmarkEnd w:id="1"/>' + run("Figure 2. The framework"))
+
+
+def test_link_more_moves_the_marker_onto_the_earlier_mention_it_links():
+    # The audit cannot see the misplacement YET — the earlier mention is
+    # plain, and `misplaced_anchor` counts links. It appeared the moment
+    # link_more linked it, which is how the paper found it.
+    xml = doc(
+        para(run("Figure 2 shows the framework.")),        # plain: stripped
+        para(run("Intervening prose.")),
+        _mention("Figure2", "Figure 2", mark="Figure2txt"),  # re-minted here
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Figure2": 1, "Figure2txt moved": 1}
+    first = paragraph_holding(out, "shows the framework")
+    assert 'w:anchor="Figure2"' in first and 'w:name="Figure2txt"' in first
+    assert out.count('w:name="Figure2txt"') == 1, "one marker, moved"
+    assert crossrefs.audit(out)["misplaced_anchor"] == []
+    assert _visible(out) == _visible(xml), "the apparatus lane changes no word"
+    again, counts2 = crossrefs.link_more(out)
+    assert counts2 == {} and again == out, "a second run does nothing"
+
+
+def test_a_marker_already_on_the_first_mention_is_not_touched():
+    xml = doc(
+        _mention("Figure2", "Figure 2", mark="Figure2txt"),
+        para(run("Figure 2 again, plain.")),
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Figure2": 1}
+    assert out.count('w:name="Figure2txt"') == 1
+    assert out.index('w:name="Figure2txt"') < out.index("again, plain"), \
+        "the marker stays on the first mention"
+
+
+def test_a_marker_the_helper_cannot_move_ahead_is_left_and_said_so():
+    """The earlier mention is a REF field, which counts as a mention and
+    is not a link `wrap_link_in_bookmark` can wrap: the rebuilt marker
+    would land where it began, so it is not moved, and the audit still
+    reports the misplacement."""
+    ref = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText xml:space="preserve"> REF Figure2 </w:instrText>'
+           '</w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           + run("2") + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    xml = doc(
+        para(run("See ") + ref + run(" for the framework.")),
+        _mention("Figure2", "Figure 2", mark="Figure2txt"),
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert "Figure2txt moved" not in counts
+    assert out.count('w:name="Figure2txt"') == 1
+    assert crossrefs.audit(out)["misplaced_anchor"]
+
+
 def test_new_bookmark_ids_clear_the_other_parts():
     """Bookmark ids are unique document-wide, not part-wide.
 
