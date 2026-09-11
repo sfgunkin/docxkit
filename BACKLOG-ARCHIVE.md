@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — no helper turns a citation from the parenthetical form into the narrative one (or back), so a paper hand-edits the field~~ — FIXED 11.09
+### ~~S4 — no helper turns a citation from the parenthetical form into the narrative one (or back), so a paper hand-edits the field~~ — FIXED 11.09, `366f2c0`
 
 <!-- status: fixed -->
 
@@ -102,7 +102,7 @@ not touched here: `fix_f7` in
 `Aging_Well/revision/scripts/r129_hand_pass_2151_repairs.py` becomes
 `to_narrative(para, "Behrman1982")` on the footnote's paragraph.
 
-### ~~S2 — a parenthetical citation's link that swallows BOTH brackets passes every gate, and `respan_link` refuses to narrow both edges at once~~ — FIXED 11.09
+### ~~S2 — a parenthetical citation's link that swallows BOTH brackets passes every gate, and `respan_link` refuses to narrow both edges at once~~ — FIXED 11.09, `366f2c0`
 
 <!-- status: fixed -->
 
