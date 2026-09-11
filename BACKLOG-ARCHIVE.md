@@ -14,6 +14,175 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — no helper turns a citation from the parenthetical form into the narrative one (or back), so a paper hand-edits the field~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+Measured on Aging_Well, 2026-09-11, on the author's hand pass of 21:51. The
+author wrote `…relative to the returns to investment, as in (Behrman et al.
+1982).`, a parenthetical citation used as the object of "as in". The ruling
+was the narrative form, `as in Behrman et al. (1982).` The citation is a FIELD
+link wrapped in its `Behrman1982txt` back-link bookmark, and the change moves
+the brackets onto the label:
+
+    before   ( [bookmark][field: Behrman et al. 1982][/bookmark] ).
+    after      [bookmark][field: Behrman et al. (1982)][/bookmark] .
+
+`respan_link` cannot do it. It moves an edge and "does not retype one"
+(measured the same day on the Robeyns link), and here the label's own text
+changes. So the paper edits three runs by structure, under a visible-text
+guard:
+* remove the `(` run before the bookmark;
+* rewrite the label run between `separate` and `end`;
+* trim the trailing `).` run to `.`.
+
+Hand passes make this conversion often: the same day it happened once in each
+direction. It has one right answer per house convention: narrative
+`Name (Year)` with both brackets inside the link, parenthetical `Name Year`
+with the brackets outside (Aging_Well R115, R127).
+
+**Suggested fix:** `citations.to_narrative(xml, anchor)` and
+`to_parenthetical(xml, anchor)`. Each should rewrite the label and the
+adjacent bracket runs together, keep the link's form (field or element) and
+its `<key>txt` bookmark, and assert that the visible text changes by exactly
+the bracket move.
+
+**Workaround in use:** `fix_f7` in
+`Aging_Well/revision/scripts/r129_hand_pass_2151_repairs.py`.
+
+**Fixed:** `citations.to_narrative(xml, anchor)` and
+`citations.to_parenthetical(xml, anchor)`, with one `_convert` behind both
+in `_cite_repair.py`, and `citations.citation_shape(label)` to read the
+three house spellings of one work and a year: narrative `Name (Year)`,
+bracketed `(Name Year)`, bare `Name Year`. A conversion EDITS the label it
+finds instead of rebuilding one from its parts, so every space in it stays
+the author's. The link keeps its form (a field stays a field), its
+`<key>txt` bookmark and every anchor in the paragraph. The visible text
+must change by exactly the bracket move, or the call raises and returns
+nothing. It refuses a label that is not one work and a year, an anchor
+with other than one link in what it was handed, and brackets holding more
+than this citation, `(Hood 1983; Hood and Margetts 2007)`: moving those
+onto one label rewrites the other's sentence. A link already in the
+asked-for form comes back as the same string.
+
+**Measured on the eight real snapshots before it landed.** Every
+convertible citation went there and back, compared on visible text,
+links, fields and bookmarks, and each paper was linted with every
+conversion applied. LEtrends links no citations.
+
+    round trips identical                 878 of 878, seven papers
+    refused: no bracket pair of its own   107
+    lint, before -> after                 0 -> 0 on all eight
+
+That run found three defects the fixtures did not hold. The guards
+refused each one, so nothing was ever written wrongly:
+
+* **a ` (` run.** Taking the bracket left the run holding one space. The
+  first version counted that run as empty and removed it, so
+  `countries (WHO 2025).` would have read `countriesWHO (2025).` —
+  26 citations over five papers;
+* **a label rebuilt from its parts.** LI's back-link label
+  `…Schluter.  (2018)` came back with one space where the author has two,
+  and the text guard passed it, because the guard was built from the same
+  rebuilt string;
+* **a bookmark that starts before its link and ends with it.**
+  `cite_riekhoff_2024` starts 29 characters early on AFI, `Cosco2015txt`
+  46 on HPPA, and a reference entry's bookmark one space early on LI; no
+  audit reports any of them. The opening bracket has no outside to go to
+  short of moving the bookmark, so it now lands inside instead of being
+  refused. The closing bracket still lands outside.
+
+Tests: the `to_narrative` / `to_parenthetical` block in
+`test_citations.py`. It covers both directions on a field link, the
+swallowed pair each way, the two as inverses, the refusals, and one
+regression test for each defect above.
+
+**Workaround to retire.** The Aging_Well session owns the file, and it was
+not touched here: `fix_f7` in
+`Aging_Well/revision/scripts/r129_hand_pass_2151_repairs.py` becomes
+`to_narrative(para, "Behrman1982")` on the footnote's paragraph.
+
+### ~~S2 — a parenthetical citation's link that swallows BOTH brackets passes every gate, and `respan_link` refuses to narrow both edges at once~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+Measured on Aging_Well, 2026-09-11, on the author's hand pass of 20:15. The
+pass moved a narrative citation to the parenthetical form, `Section 2 follows
+Robeyns (2005) in sorting…` becoming `Conversion factors are personal,
+social, and environmental (Robeyns 2005).`, and Word kept the link on the
+whole new label:
+
+    link label        '(Robeyns 2005)'    — both brackets blue
+    citations         ALL CHECKS PASSED   — the span is balanced
+    revision ingest   RE-LABELLED Robeyns2005: 'Robeyns (2005)' -> '(Robeyns 2005)'
+                      — "an ordinary edit, not damage"
+
+The paper's own convention says otherwise. Its other parenthetical Robeyns
+link reads `Robeyns 2005`, and the rendered `(Hood 1983; Hood and Margetts
+2007)` leaves its brackets black. The defect was found by probing link labels
+after the lane, not by any command.
+
+Then the repair:
+
+    respan_link(para, "Robeyns2005", "Robeyns 2005")
+    AnchorError: respan_link: 'Robeyns 2005' is not '(Robeyns 2005)' with an edge
+    moved — this repair widens or narrows a span, it does not retype one
+
+`want` must share a start or an end with the label (`_cite_repair.py`, the
+`startswith`/`endswith` test before the "does not retype one" raise). A
+narrowing on BOTH sides is therefore refused as a retype, although it changes
+no character of the visible text. Two calls work, `"Robeyns 2005)"` and then
+`"Robeyns 2005"`, and the text guard holds on each.
+
+One entry, because both halves meet on the same link:
+
+* **`citations` (S2):** a parenthetical citation whose link covers its own
+  brackets could be reported the way UNBALANCED SPAN is, judged against the
+  document's majority form. The pair rule `link_all` already learns by
+  majority is the precedent. Balanced is not the same as right.
+* **`respan_link` (S4):** accept a `want` that occurs exactly once inside
+  `label` (or `label` inside `want`) and move both edges. The "retype" refusal
+  is right only when neither string contains the other.
+
+**Workaround in use:** `Aging_Well/revision/scripts/r127_robeyns_paren_span.py`.
+It makes two `respan_link` calls, scoped to the paragraph because the anchor
+has three links, and prints the single-call refusal on each run as the
+measurement.
+
+**Fixed, both halves.**
+
+* **`citations`:** a new finding, BRACKETED SPAN, in `_cite_audit.py`. A
+  link reading `(Name Year)` is reported when the same document links more
+  of its parenthetical citations as `Name Year` with the brackets outside —
+  the majority rule the entry asked for, after `link_all`'s pairs. A paper
+  whose convention keeps the brackets inside the link says nothing.
+  `repair_plan` proposes `to_parenthetical(doc, "<anchor>")` (S4 above)
+  rather than `respan_link`, which would rebuild a field link as an
+  element.
+* **`respan_link`:** where the label and `want` share neither edge, it now
+  accepts a `want` found exactly once inside the label, or a label found
+  exactly once inside `want`, and moves both edges in one call. Neither
+  string holding the other is still the "does not retype one" refusal.
+
+**Measured on the eight real snapshots, healthy and broken:**
+
+    healthy, all eight                         BRACKETED SPAN 0
+    AFI: 8 bracketed, 5 bare, 59 narrative     0 — bracketed is its majority
+    Aging_Well, WHO2015 relinked "(WHO 2015)"  reported, by that anchor
+    the same, after to_parenthetical           no finding; page unchanged;
+                                               label 'WHO 2015'
+
+Tests: in `test_citations.py`, the swallowed pair reported against three
+bare links, a paper that keeps its brackets inside left alone, the plan
+proposing `to_parenthetical`, and `respan_link` narrowing and widening
+both edges in one call.
+
+**Workaround to retire.** The Aging_Well session owns the file, and it was
+not touched here: `Aging_Well/revision/scripts/r127_robeyns_paren_span.py`
+makes two `respan_link` calls where one now does. `to_parenthetical` is
+the repair `citations` now proposes, and unlike `respan_link` it keeps a
+field link a field.
+
 ### ~~S2 — a mutation run wrote 160 throwaway papers into the author's REAL registry~~ — FIXED 11.09, `cabfcaf`
 
 <!-- status: fixed -->

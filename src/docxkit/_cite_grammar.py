@@ -893,3 +893,51 @@ def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:
             f'{inner}<w:bookmarkEnd w:id="{bookmark_id}"/>')
 
 
+#: What a citation LINK's label says, in each house form: names, then the
+#: year or years — "Rowe and Kahn 1987, 1997". Written against `_YEAR`,
+#: the one definition of a year this grammar has. The names are read
+#: loosely (any text holding a letter and no bracket) because the label is
+#: already a link to an entry: whether it names someone is settled, and
+#: `_AUTHORS` would refuse an acronym like "WHO" that the papers cite.
+_LABEL_YEARS = rf"{_YEAR}(?:,\s*{_YEAR})*"
+_LABEL_NAMES = r"[^()]*?[^\W\d_][^()]*?"
+_LABEL_SHAPES = (
+    ("narrative", re.compile(
+        rf"(?P<names>{_LABEL_NAMES})\s+\((?P<years>{_LABEL_YEARS})\)")),
+    ("bracketed", re.compile(
+        rf"\((?P<names>{_LABEL_NAMES})\s+(?P<years>{_LABEL_YEARS})\)")),
+    ("bare", re.compile(
+        rf"(?P<names>{_LABEL_NAMES})\s+(?P<years>{_LABEL_YEARS})")),
+)
+
+
+def citation_shape(label: str) -> tuple[str, str, str] | None:
+    """Which house FORM a citation link's label is in:
+    ``(form, names, years)``, or None.
+
+    The forms are the ones the house convention tells apart:
+
+    * ``"narrative"`` — ``Name (Year)``, the year's brackets inside the
+      link;
+    * ``"bare"`` — ``Name Year``, a parenthetical citation whose brackets
+      belong to the sentence and stay outside the link;
+    * ``"bracketed"`` — ``(Name Year)``, a parenthetical citation whose
+      link swallowed both brackets. A convention in some papers and a
+      defect in others, which is why the audit judges it against the
+      document rather than here.
+
+    None for anything that is not one work and a year — an exhibit link
+    ("Table 5"), a year alone ("(2019)"), a span with an unmatched bracket
+    (:func:`unbalanced_span`'s business), a reference entry's back-link —
+    so a caller converting or judging a citation refuses rather than
+    guesses. Read by `to_narrative` and `to_parenthetical`, which move the
+    brackets between the forms, and by the audit's BRACKETED SPAN, which
+    counts the forms a document uses.
+    """
+    text = label.strip()
+    for form, pattern in _LABEL_SHAPES:
+        if (m := pattern.fullmatch(text)) is not None:
+            return form, m.group("names").strip(), m.group("years")
+    return None
+
+

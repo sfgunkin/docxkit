@@ -17,6 +17,7 @@ from ._cite_grammar import (
     _DEFAULT_HEADINGS,
     IGNORED_LEADS,
     Reference,
+    citation_shape,
     find_citations,
     masked_visible_text,
     references,
@@ -495,6 +496,49 @@ def _span_findings(links: dict[str, list[tuple[int, str]]],
     return out
 
 
+def _bracketed_findings(links: dict[str, list[tuple[int, str]]],
+                        bookmarks: dict[str, int],
+                        where: Callable[[int], str]) -> list[_Finding]:
+    """Parenthetical citations whose link swallowed BOTH brackets, in a
+    document that keeps them outside.
+
+    Balanced is not the same as right. An author moves a narrative
+    citation to the parenthetical form — "Robeyns (2005)" becomes
+    "(Robeyns 2005)" — and Word keeps the link on the whole new label, so
+    the brackets render blue. :func:`unbalanced_span` has nothing to say
+    about it, since the span closes what it opens; `revision ingest`
+    files it as RE-LABELLED; and every gate passed (Aging_Well,
+    2026-09-11).
+
+    Judged against the DOCUMENT rather than a rule, the way `link_all`
+    learns a paper's bookmark pairing by majority. A paper whose
+    parenthetical citations mostly link ``Name Year`` is shown its
+    minority; a paper that links ``(Name Year)`` as its own convention is
+    not. Measured the same day over eight manuscripts: AFI links 8
+    citations the second way and 5 the first, and a rule calling every
+    swallowed pair wrong would have raised 8 findings on a paper following
+    its own style. This raises none on any of the eight.
+    """
+    shapes = [(anchor, i, label, shape)
+              for anchor, sites in sorted(links.items())
+              if anchor in bookmarks
+              for i, label in sites
+              if (shape := citation_shape(label)) is not None]
+    outside = sum(1 for *_, shape in shapes if shape[0] == "bare")
+    inside = [site for site in shapes if site[3][0] == "bracketed"]
+    if outside <= len(inside):
+        return []
+    return [_Finding(
+        "BRACKETED SPAN", anchor,
+        f"BRACKETED SPAN: the link to '{anchor}' ({where(i)}) covers "
+        f'"{label[:48]}" — both brackets inside the blue, where this '
+        f"document links {outside} parenthetical citation(s) as Name Year "
+        f"with the brackets outside; the anchor is fine and the blue is "
+        f"wrong",
+        f"{shape[1]} {shape[2]}")
+        for anchor, i, label, shape in inside]
+
+
 def _mention_scan(parts: dict[str, bytes], texts: list[str],
                   paras: list[re.Match[str]],
                   head_idx: int) -> list[tuple[int, str, str]]:
@@ -854,6 +898,7 @@ def _audit_findings(parts: dict[str, bytes], *,
     link_issues, broken = _link_findings(links, bookmarks, empty, where)
     issues += link_issues
     issues += _span_findings(links, bookmarks, where, texts)
+    issues += _bracketed_findings(links, bookmarks, where)
     issues += _doubled_findings(paras)
 
     entries = references(texts, heading=heading)

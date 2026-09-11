@@ -9,12 +9,20 @@ from __future__ import annotations
 
 import re
 
-from ._cite_grammar import bookmark
+from ._cite_grammar import bookmark, citation_shape
 from ._xml import (
     BOOKMARK_ID_RE,
+    HYPERLINK_ANY_RE,
+    PARA_RE,
     field_spans,
+    internal_links,
     own_properties,
+    run_spans,
+    set_run_text,
+    span_holding,
+    visible_text,
 )
+from .edit import _links_to, insert_in_para, relabel_link
 from .errors import AnchorError
 from .find import para_slice
 
@@ -163,7 +171,8 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
 
     So the desired span comes from :func:`docxkit.citations.balanced_span`,
     which reads the paragraph, and this MOVES the boundary to it —
-    trimming or extending, whichever the span needs.
+    trimming or extending, at one edge or at both, whichever the span
+    needs.
 
     The visible text is not touched: this is a markup repair, and the
     guard below holds it to that. What changes is which characters are
@@ -185,7 +194,6 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
     whose instruction it would then have to keep in step.
     """
     from ._cite_grammar import wrap_visible_span
-    from ._xml import PARA_RE, visible_text
 
     el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*(?<!/)>'
                     r".*?</w:hyperlink>", re.DOTALL)
@@ -216,11 +224,23 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
         new_at, new_end = at, at + len(want)
     elif want.endswith(label) or label.endswith(want):
         new_at, new_end = end - len(want), end
+    # …or BOTH, when one string sits exactly once inside the other. A link
+    # that swallowed both brackets — `(Robeyns 2005)`, Aging_Well
+    # 2026-09-11 — shares neither a start nor an end with `Robeyns 2005`,
+    # and this used to refuse it as a RETYPE: the paper made two calls,
+    # one edge each, and the text guard held on both. Neither moves a
+    # character of the page, and the guard below still has to agree.
+    elif label.count(want) == 1:
+        new_at = at + label.index(want)
+        new_end = new_at + len(want)
+    elif want.count(label) == 1:
+        new_at = at - want.index(label)
+        new_end = new_at + len(want)
     else:
         raise AnchorError(
             f"respan_link: {want[:40]!r} is not {label[:40]!r} with an edge "
-            f"moved — this repair widens or narrows a span, it does not "
-            f"retype one")
+            f"moved, nor with both — this repair widens or narrows a span, "
+            f"it does not retype one")
     if text[new_at:new_end] != want:
         raise AnchorError(
             f"respan_link: {anchor}: the paragraph does not read "
@@ -284,5 +304,179 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
                 f"respan_link: {anchor}: {tag} count moved — the txt "
                 f"bookmark rides inside the link and must survive it")
     return xml[:p0] + fixed + xml[p1:]
+
+
+# ------------------------------------------------ the two citation forms ---
+
+
+def to_narrative(xml: str, anchor: str) -> str:
+    """``… (Name Year) …`` becomes ``… Name (Year) …``, on the ONE link to
+    `anchor`: the brackets move onto the label, and the link keeps its form.
+
+    A hand pass turns a parenthetical citation into the object of a
+    sentence — "as in (Behrman et al. 1982)." — and the ruling is the
+    narrative form, "as in Behrman et al. (1982).". Nothing did it:
+    :func:`respan_link` moves an edge and does not retype one, and here
+    the label's own words change. So the paper edited three runs by
+    structure under a visible-text guard (Aging_Well R129, 2026-09-11),
+    and hand passes make the conversion often — that day, once each way.
+
+    The house convention has one right answer per form, and
+    :func:`docxkit.citations.citation_shape` reads them: a NARRATIVE
+    citation keeps its year brackets inside the link, ``Name (Year)``; a
+    PARENTHETICAL one links ``Name Year`` and leaves the brackets black.
+    This accepts either parenthetical spelling — brackets outside the
+    link, or both swallowed inside it — and hands back `xml` itself when
+    the link is narrative already.
+
+    What it keeps is the point: the link's FORM — a field stays a field,
+    where `respan_link` rebuilds one as an element — its ``<key>txt``
+    bookmark around the label, and every other character. What it
+    refuses: a link that is not one work and a year, and brackets that
+    hold more than this citation, ``(Hood 1983; Hood and Margetts 2007)``,
+    where moving them onto one label rewrites the other's sentence. The
+    page is asserted to change by exactly the bracket move.
+    """
+    return _convert(xml, anchor, narrative=True)
+
+
+def to_parenthetical(xml: str, anchor: str) -> str:
+    """``… Name (Year) …`` becomes ``… (Name Year) …``, on the ONE link to
+    `anchor`: the label loses its brackets, and a pair goes round the link
+    OUTSIDE it and outside its ``<key>txt`` bookmark. Where that bookmark
+    already starts earlier in the sentence, the opening bracket lands
+    inside it: a conversion does not move a bookmark.
+
+    The other direction of :func:`to_narrative`, for the same measured
+    need, and the repair for the shape that passed every gate on
+    2026-09-11: a link that swallowed both brackets, ``(Robeyns 2005)``,
+    reads the same on the page afterwards and links ``Robeyns 2005``, the
+    form the rest of that paper uses. Hands back `xml` itself when the
+    link is parenthetical already, brackets outside.
+    """
+    return _convert(xml, anchor, narrative=False)
+
+
+def _convert(xml: str, anchor: str, *, narrative: bool) -> str:
+    """Both conversions: find the one link, read its shape, move the
+    brackets, and prove the page changed by exactly that."""
+    caller = "to_narrative" if narrative else "to_parenthetical"
+    found = [(pm, link) for pm in PARA_RE.finditer(xml)
+             for link in _links_to(pm.group(0), anchor)]
+    if len(found) != 1:
+        raise AnchorError(
+            f"{caller}: {anchor} matched {len(found)} link(s), need exactly "
+            f"1 — hand it the paragraph the citation is in")
+    pm, link = found[0]
+    para = original = pm.group(0)
+    text = visible_text(para)
+    at = len(visible_text(para[:link.label[0]]))
+    label = visible_text(para[link.label[0]:link.label[1]])
+    end = at + len(label)
+    shape = citation_shape(label)
+    if shape is None:
+        raise AnchorError(
+            f"{caller}: the link to {anchor} reads {label[:48]!r}, which is "
+            f"not one work and a year")
+    form, _names, years = shape
+    if form == ("narrative" if narrative else "bare"):
+        return xml
+    # Both labels are made by EDITING this one, never rebuilt from its
+    # parts, so every space in them is the author's. Rebuilt from `names`
+    # and `years`, a real label ending "Schluter.  (2018)" came back with
+    # one space — and passed the guard below, which was built from the same
+    # rebuilt string (LI, 2026-09-11).
+    bare = label if form == "bare" else _without_brackets(label)
+    ends = len(bare.rstrip())
+    told = bare[:ends - len(years)] + "(" + years + ")" + bare[ends:]
+
+    if form == "bare":                      # (Name Year) -> Name (Year)
+        if text[at - 1:at] != "(" or text[end:end + 1] != ")":
+            raise AnchorError(
+                f"{caller}: {label!r} is not inside a bracket pair of its "
+                f"own — brackets holding several citations belong to all "
+                f"of them, and moving them onto one label rewrites the rest")
+        want = text[:at - 1] + told + text[end + 1:]
+        para = _delete_char(para, end, ")", caller)     # the later one first
+        para = _delete_char(para, at - 1, "(", caller)
+        para = relabel_link(para, anchor, told)
+    elif narrative:                         # swallowed pair -> Name (Year)
+        want = text[:at] + told + text[end:]
+        para = relabel_link(para, anchor, told)
+    else:                                   # Name (Year), swallowed -> bare
+        want = text[:at] + "(" + bare + ")" + text[end:]
+        para = relabel_link(para, anchor, bare)
+        # `allow_bookmark`: a citation's bookmark can START before its link
+        # and end with it — `cite_riekhoff_2024` 29 characters early on
+        # AFI, `Cosco2015txt` 46 on HPPA, a reference entry's own bookmark
+        # one space early on LI, and no audit reports any of them. The
+        # opening bracket then falls strictly inside it, with no outside to
+        # go to short of moving the bookmark, which a conversion does not
+        # do; refusing cost those three (2026-09-11). The closing bracket
+        # still lands outside: at an EDGE `insert_in_para` goes outside
+        # whatever the flag says.
+        para = insert_in_para(para, at + len(bare), ")", allow_bookmark=True)
+        para = insert_in_para(para, at, "(", allow_bookmark=True)
+
+    if (got := visible_text(para)) != want:
+        raise AnchorError(
+            f"{caller}: {anchor}: the paragraph would read "
+            f"{got[max(0, at - 24):end + 24]!r}, which is not the bracket "
+            f"move asked for")
+    for tag in ("<w:hyperlink", "<w:instrText", "<w:bookmarkStart",
+                "<w:bookmarkEnd"):
+        if para.count(tag) != original.count(tag):
+            raise AnchorError(
+                f"{caller}: {anchor}: the {tag} count moved — the link keeps "
+                f"its form and its bookmark")
+    if ([a for a, _ in internal_links(para)]
+            != [a for a, _ in internal_links(original)]):
+        raise AnchorError(f"{caller}: {anchor}: the paragraph's links moved")
+    return xml[:pm.start()] + para + xml[pm.end():]
+
+
+#: A run holding nothing once its text is gone: properties at most, and one
+#: EMPTY ``w:t``. Kept, it is an empty run Word opens and every diff reports.
+#: Empty, not blank: ` (` is a run Word leaves after a hand edit, and a
+#: pattern allowing whitespace here removed the space with the bracket —
+#: `countriesWHO (2025)`, 26 real citations over five papers, each refused
+#: by the text guard before anything was written (2026-09-11).
+_EMPTIED_RUN_RE = re.compile(
+    r"<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
+    r"<w:t\b[^>]*></w:t></w:r>", re.DOTALL)
+
+
+def _without_brackets(label: str) -> str:
+    """`label` less its one opening and one closing bracket — the two a
+    narrative or a swallowed citation carries, and nothing else moved."""
+    opens, shuts = label.index("("), label.rindex(")")
+    return label[:opens] + label[opens + 1:shuts] + label[shuts + 1:]
+
+
+def _delete_char(para: str, pos: int, char: str, caller: str) -> str:
+    """`para` without the ONE visible `char` at offset `pos`.
+
+    From a run of prose only. A character inside a link's label or a
+    field is not a bracket beside the citation, and removing it would
+    rewrite the thing being kept; the bracket a conversion moves sits
+    OUTSIDE the link and its bookmark, by the convention being enforced.
+    """
+    guarded = ([(m.start(), m.end()) for m in HYPERLINK_ANY_RE.finditer(para)]
+               + [(lo, hi) for lo, hi, _ in field_spans(para)])
+    runs, spans, _cursor = run_spans(para)
+    for run, (lo, hi) in zip(runs, spans, strict=True):
+        if not lo <= pos < hi:
+            continue
+        body = visible_text(run.group(0))
+        if body[pos - lo] != char or span_holding(run.start(), guarded):
+            break
+        rebuilt = set_run_text(run.group(0),
+                               body[:pos - lo] + body[pos - lo + 1:])
+        if _EMPTIED_RUN_RE.fullmatch(rebuilt):
+            rebuilt = ""
+        return para[:run.start()] + rebuilt + para[run.end():]
+    raise AnchorError(
+        f"{caller}: no plain {char!r} at offset {pos} beside the link — "
+        f"the brackets are not where a citation of that form keeps them")
 
 

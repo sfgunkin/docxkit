@@ -83,6 +83,7 @@ from ._cite_grammar import _add_style as _add_style
 from ._cite_grammar import _styled_run as _styled_run
 from ._cite_grammar import anchor_names as anchor_names
 from ._cite_grammar import bookmark as bookmark
+from ._cite_grammar import citation_shape as citation_shape
 from ._cite_grammar import (
     citations_clear_of as citations_clear_of,
 )
@@ -108,6 +109,8 @@ from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
 from ._cite_repair import respan_link as respan_link
+from ._cite_repair import to_narrative as to_narrative
+from ._cite_repair import to_parenthetical as to_parenthetical
 from ._cite_repair import wrap_link_in_bookmark as wrap_link_in_bookmark
 from ._xml import (
     DOCUMENT,
@@ -134,6 +137,7 @@ __all__ = [
     "balanced_span",
     "bookmark",
     "check_citations",
+    "citation_shape",
     "citations_clear_of",
     "delete_bookmark",
     "extend_to_name",
@@ -151,6 +155,8 @@ __all__ = [
     "remove_outer_field",
     "repair_plan",
     "respan_link",
+    "to_narrative",
+    "to_parenthetical",
     "unbalanced_span",
     "unlink_by_anchor",
     "wrap_link_in_bookmark",
@@ -274,6 +280,13 @@ def repair_plan(parts: dict[str, bytes]) -> str:
                     f'respan_link(doc, "{name}", "{f.extra}")   # {issue}')
             else:
                 buckets["investigate"].append(issue)
+        elif f.kind == "BRACKETED SPAN":
+            # Not `respan_link`, though it can narrow both edges now: that
+            # rebuilds a FIELD as an element, and this paper's links are
+            # mostly fields. `to_parenthetical` moves the same two
+            # brackets and keeps the form.
+            buckets["span"].append(
+                f'to_parenthetical(doc, "{name}")   # {issue}')
         elif f.kind == "DOUBLED LINK":
             buckets["nested"].append(
                 f'remove_outer_field(doc, "{f.extra}", "{name}")   '
