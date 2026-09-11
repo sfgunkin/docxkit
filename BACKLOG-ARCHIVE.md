@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S1 — `compare` and `revision ingest` cannot see a paragraph's LEADING space, so an edit that prints as an indent passes `--expect-clean`~~ — FIXED 11.09
+### ~~S1 — `compare` and `revision ingest` cannot see a paragraph's LEADING space, so an edit that prints as an indent passes `--expect-clean`~~ — FIXED 11.09, `d411fe9`
 
 <!-- status: fixed -->
 
