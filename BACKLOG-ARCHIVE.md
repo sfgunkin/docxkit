@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — when Word strips an exhibit's FIRST mention, the apparatus passes re-mint `<key>txt` on a LATER mention, and `link_more` then links the first without moving the marker~~ — FIXED 11.09
+### ~~S4 — when Word strips an exhibit's FIRST mention, the apparatus passes re-mint `<key>txt` on a LATER mention, and `link_more` then links the first without moving the marker~~ — FIXED 11.09, `8d62856`
 
 <!-- status: fixed -->
 
