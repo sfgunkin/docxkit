@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — a broken pywin32 cache fails every Word command with `no attribute 'CLSIDToClassMap'`, and the failed start leaves an invisible Word running~~ — FIXED 11.09
+### ~~S4 — a broken pywin32 cache fails every Word command with `no attribute 'CLSIDToClassMap'`, and the failed start leaves an invisible Word running~~ — FIXED 11.09, `1c53b60`
 
 <!-- status: fixed -->
 
