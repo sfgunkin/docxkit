@@ -130,7 +130,7 @@ docxkit revision status --all --scan DIR   # find papers under DIR and add them
 docxkit revision doctor                    # who else in the repo selects a manuscript
 docxkit revision ingest [--check] [--json R.json]   # what the author changed
 docxkit revision build                     # clean edit -> redline, via Word Compare
-docxkit revision validate [BATCH] [--no-word] [--render ANCHOR...]
+docxkit revision validate [BATCH] [--no-word] [--render ANCHOR...]   # equation pages rendered by default
 docxkit revision ship REVISED.docx          # both, in one Word session
 docxkit revision promote                   # put a validated batch on the paper
 docxkit revision baseline                  # the author accepted: record the truth

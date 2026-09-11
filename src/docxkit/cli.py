@@ -1781,6 +1781,47 @@ def _paper_gates(args: argparse.Namespace, report: object) -> None:
               f"failed.")
 
 
+def _render(args: argparse.Namespace, paper: object, report: object,
+            target: Path) -> None:
+    """The eye gate: the anchors asked for, and the equation pages.
+
+    Two sources, one section. `--render ANCHOR` names pages by hand;
+    `report.math_anchors` names the pages of the equations the batch
+    adds or changes, and a paper renders those by DEFAULT (`[verify]
+    render_math`) — the opt-in stayed unused while four defects only a
+    page can show went through a green ladder. Never the exit code:
+    what a render finds is for a person to read.
+
+    Said aloud when it does NOT run, as `_skipped_gates` says its gates
+    did not: under `--no-word` there is no Word to render with, and a
+    silence there reads as "no equations changed".
+    """
+    from .revision import Paper, ValidateReport, render_accepted
+    assert isinstance(paper, Paper) and isinstance(report, ValidateReport)
+    anchors = list(args.render)
+    auto = [a for a in report.math_anchors if a not in anchors]
+    if auto and paper.render_math and args.no_word:
+        print(f"\n== render ==  {len(auto)} equation page(s) NOT rendered "
+              f"(--no-word)")
+    elif auto and paper.render_math:
+        anchors += auto
+    if not anchors:
+        return
+    why = (f" — {len(auto)} for equations the batch adds or changes"
+           if auto and paper.render_math and not args.no_word else "")
+    print(f"\n== render ==  {len(anchors)} anchor(s), accepted view{why}")
+    try:
+        made = render_accepted(target, anchors)
+    except ImportError as exc:
+        # The reader is an optional extra. Not a failure of the batch —
+        # the ladder above has spoken — but not silence either.
+        print(f"   not rendered: {exc}")
+        return
+    for anchor, png in made.items():
+        print(f"   {anchor!r} -> {png.name}" if png
+              else f"   {anchor!r}: on no page — check the wording")
+
+
 def cmd_revision_validate(args: argparse.Namespace) -> int:
     """The gate ladder. Gate 5 is the one that proves reviewability.
 
@@ -1906,13 +1947,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
     if report.accept_paths_agree is not None:
         print("== XML accept == Word accept ?",
               "OK" if report.accept_paths_agree else "MISMATCH")
-    if args.render:
-        from .revision import render_accepted
-
-        print(f"\n== render ==  {len(args.render)} anchor(s), accepted view")
-        for anchor, png in render_accepted(target, args.render).items():
-            print(f"   {anchor!r} -> {png.name}" if png
-                  else f"   {anchor!r}: on no page — check the wording")
+    _render(args, paper, report, target)
     # The paper's own gates are listed (or run) by `_paper_gates` below,
     # in ONE section rather than two: this used to print its own "run
     # these too" list, so with --run-gates the reader got the commands
@@ -2504,7 +2539,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--render", metavar="ANCHOR", nargs="+", default=[],
                    help="rasterise the ACCEPTED page each anchor falls on "
                         "(needs Word and PyMuPDF): the eye gate no markup "
-                        "check can make")
+                        "check can make. The pages of the equations the "
+                        "batch adds or changes are rendered without asking "
+                        "([verify] render_math)")
     r.add_argument("--run-gates", action="store_true",
                    help="also run [verify] commands from paper.toml, as\n"
                         "spelled, from the project root (exit 5 if one fails)")

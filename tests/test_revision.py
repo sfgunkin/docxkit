@@ -357,6 +357,21 @@ def test_paper_falls_back_when_the_config_is_bare(tmp_path):
     assert paper.author == "Revision"
     assert paper.gates == ()
     assert paper.attic is None
+    assert paper.render_math is True, "a paper that says nothing renders"
+
+
+def test_a_paper_can_turn_the_equation_render_OFF(project):
+    """`[verify] render_math = false` — the scaffold writes the key
+    with its default, so the switch is in front of whoever reads the
+    config, and a config from before the key existed still renders."""
+    text = project.config.read_text(encoding="utf-8")
+    assert "render_math = true" in text, "the scaffold names the default"
+
+    project.config.write_text(
+        text.replace("render_math = true", "render_math = false"),
+        encoding="utf-8")
+
+    assert revision.load_paper(project.root).render_math is False
 
 
 def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
@@ -372,12 +387,14 @@ def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
     assert _read({"batch": {}}, "batch", "carry", ()) == ()
     with pytest.raises(KeyError, match="KNOWN"):
         _read({"batch": {"rescue_kep": 3}}, "batch", "rescue_kep", 5)
-    # the twelve keys the protocol reads — ten measured 2026-09-03
+    # the thirteen keys the protocol reads — ten measured 2026-09-03
     # against the 29 the nine registered papers carry, plus
-    # `word_deadline` the same evening and `[paper] timings` on
+    # `word_deadline` the same evening, `[paper] timings` on
     # 2026-09-07, which turns protocol step recording off for a tree
-    # that must stay exactly as declared (a replication package)
-    assert sum(len(keys) for keys in KNOWN.values()) == 12
+    # that must stay exactly as declared (a replication package), and
+    # `[verify] render_math` on 2026-09-11, the opt-out from rendering
+    # the pages of the equations a batch adds or changes
+    assert sum(len(keys) for keys in KNOWN.values()) == 13
 
 
 def test_word_deadline_is_read_from_batch_and_defaults_to_TEN_MINUTES(
@@ -3315,6 +3332,107 @@ def test_render_accepted_cleans_up_after_itself(tmp_path, monkeypatch):
     assert [n for n in left if n.endswith(".pdf")] == []
     assert [n for n in left if "accepted" in n] == []
     assert any(n.endswith(".png") for n in left), left
+
+
+# --- the pages the batch's equations land on, rendered by DEFAULT --------
+#
+# BACKLOG, "nothing renders by default": four defects only a page can
+# show went through a green ladder, every one in an equation the batch
+# had just written. `math_anchors` names the pages of exactly those.
+
+def _eq(text: str) -> str:
+    return f"<m:oMath {NS_M}><m:r><m:t>{text}</m:t></m:r></m:oMath>"
+
+
+def test_every_equation_is_new_when_there_is_no_baseline():
+    accepted = make_parts(para(run("Let the model be "), _eq("y=a+bx"))
+                          + para(run("and the error "), _eq("e~N(0,1)")))
+
+    assert revision.math_anchors(accepted, None) == [
+        "Let the model be", "and the error"]
+
+
+def test_an_equation_the_baseline_carries_is_NOT_rendered_again():
+    """Tokens, not markup: Word re-serialises every equation through
+    Compare, so the OMML differs on every round and the symbol stream
+    does not. A changed stream is a changed equation."""
+    base = make_parts(para(run("Let the model be "), _eq("y=a+bx"))
+                      + para(run("and the error "), _eq("e~N(0,1)")))
+    accepted = make_parts(
+        para(run("Let the model be "), _eq("y=a+bx"))          # unchanged
+        + para(run("and the error "), _eq("e~N(0,s)")))        # changed
+
+    assert revision.math_anchors(accepted, base) == ["and the error"]
+
+
+def test_a_DISPLAY_equation_is_found_by_its_lead_in():
+    """A paragraph holding nothing but maths has no prose to search
+    for, and the page draws its characters from the Mathematical
+    Alphanumeric block — so the nearest prose above it is the anchor,
+    which is the lead-in a reader finds it by."""
+    accepted = make_parts(para(run("The first-order condition is:"))
+                          + para(_eq("dU/dc=0"))
+                          + para(run("(3)"))                    # a label
+                          + para(_eq("dU/dl=w")))
+
+    assert revision.math_anchors(accepted, None) == [
+        "The first-order condition is"]        # edge punctuation dropped
+
+
+def test_the_anchor_is_the_paragraphs_FIRST_LINE_cut_at_a_word():
+    """`render_anchors` matches the phrase inside one extracted line,
+    and a paragraph starts a line: forty characters, whole words."""
+    long = ("Consider the household that maximises utility over "
+            "consumption and leisure subject to ")
+    accepted = make_parts(para(run(long), _eq("c+wl=wT")))
+
+    (anchor,) = revision.math_anchors(accepted, None)
+
+    assert anchor == "Consider the household that maximises"
+    assert len(anchor) <= 40 and long.startswith(anchor)
+
+
+def test_no_equation_means_nothing_to_render():
+    accepted = make_parts(para(run("Prose only, as it stands.")))
+
+    assert revision.math_anchors(accepted, None) == []
+
+
+def test_the_anchor_never_reaches_ACROSS_an_inline_equation():
+    """Joining the runs gives "where is employment of workers", which
+    is on no page: the symbol sits in that hole. A third of the
+    equation paragraphs on AFI, HCW and LE open on "where <symbol>"
+    (measured 2026-09-11), so the phrase is the first prose SEGMENT
+    between equations that is a phrase and not a label."""
+    accepted = make_parts(
+        para(run("where "), _eq("E"), run(" is employment of workers "
+                                          "aged 50 and over, and "),
+             _eq("N"), run(" the workforce."))
+        + para(run("(3)"), _eq("y=1")))                  # a label only
+
+    assert revision.math_anchors(accepted, None) == [
+        "is employment of workers aged 50 and",
+        # the labelled display falls back to the phrase above it
+    ]
+
+
+def test_validate_names_the_equation_pages_the_batch_adds(tmp_path):
+    """On the report, so the CLI renders them without being asked."""
+    base = write(tmp_path / "prev.docx",
+                 make_parts(para(run("The paper as it stands."))))
+    # `preserve`: an unpreserved edge space is what `lint` refuses, and
+    # the ladder would abort before any anchor was named
+    batch = write(tmp_path / "batch.docx", make_parts(
+        para(run("The paper as it stands."))
+        + para(f'<w:ins w:id="92" w:author="R" w:date="2026-08-07T00:00:00Z">'
+               f'{run("We assume throughout that ", preserve=True)}</w:ins>',
+               f'<w:ins w:id="93" w:author="R" w:date="2026-08-07T00:00:00Z">'
+               f'{_eq("a>0")}</w:ins>')))
+
+    report = revision.validate(batch, base, use_word=False)
+
+    assert report.lint == [], report.lint
+    assert report.math_anchors == ["We assume throughout that"]
 
 
 def test_render_accepted_asks_WORD_for_nothing_when_no_anchor_is_given(

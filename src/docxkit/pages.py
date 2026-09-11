@@ -114,6 +114,13 @@ def render_anchors(pdf: str | Path, anchors: Sequence[str], *,
     is dropped instead: it is a shell artifact, and it would match the
     first page and render it for nothing.
 
+    Matched with whitespace FOLDED on both sides: the extracted text
+    carries a newline at every line end, so a phrase that wraps — the
+    ordinary fate of a sentence's first line on a narrow measure — was
+    on no page at all. The anchors `revision validate` names by itself
+    are a paragraph's first words, and a paragraph starts a line, but
+    forty characters still wrap in a two-column journal.
+
     Pages are walked by INDEX rather than `enumerate(doc)`: PyMuPDF's
     Document is iterable at run time and its stubs do not say so, and
     this package is type-checked twice.
@@ -125,11 +132,14 @@ def render_anchors(pdf: str | Path, anchors: Sequence[str], *,
     name = stem or pdf.stem
     out: dict[str, Path | None] = {}
     with pymupdf.open(str(pdf)) as doc:
+        texts = [" ".join(doc[i].get_text().split())
+                 for i in range(doc.page_count)]
         for anchor in dict.fromkeys(a for a in anchors if a.strip()):
             out[anchor] = None
+            wanted = " ".join(anchor.split())
             for i in range(doc.page_count):
                 page = doc[i]
-                if anchor not in page.get_text():
+                if wanted not in texts[i]:
                     continue
                 png = where / f"{name}__p{i + 1}.png"
                 page.get_pixmap(dpi=dpi).save(str(png))

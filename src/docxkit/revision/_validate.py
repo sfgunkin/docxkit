@@ -5,6 +5,7 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import html
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -15,7 +16,8 @@ from .. import guard as _guard
 from .. import lint as _lint
 from .. import package, revisions, tracked
 from .. import word as _word
-from .._xml import FOOTNOTES
+from .._xml import FOOTNOTES, PARA_RE, WT_RE, text_parts
+from ..equations import OMATH_RE, tokens
 from ..hygiene import _downgraded
 
 # The reject-all comparison and its three helpers live in `tracked`, with
@@ -111,6 +113,11 @@ class ValidateReport:
     #: says why). Appended as each finishes, so `ok` and `exit_code`
     #: read them; empty means "not run", which is not "passed".
     gates: list[GateResult] = field(default_factory=list)
+    #: The phrases that find the pages of the equations this batch ADDS
+    #: or CHANGES, in the accepted view — what `revision validate`
+    #: renders by default for a paper carrying maths. Empty when the
+    #: batch touches no equation. See :func:`math_anchors`.
+    math_anchors: list[str] = field(default_factory=list)
 
     @property
     def empty_shells(self) -> int:
@@ -215,6 +222,10 @@ def render_accepted(batch: str | Path, anchors: Sequence[str], *,
     wanted = [a for a in anchors if a.strip()]
     if not wanted:
         return {}
+    # BEFORE Word is asked for anything: the reader is an optional extra,
+    # and the render it would read costs a session and a PDF export. A
+    # plain install used to pay for both and then fail on the import.
+    _pages._import_pymupdf()
     parts = _simulate(package.read_parts(batch), revisions.accept)
     staging = Path(tempfile.mkdtemp(prefix="docxkit_render_"))
     try:
@@ -227,6 +238,95 @@ def render_accepted(batch: str | Path, anchors: Sequence[str], *,
             stem=batch.stem)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+#: How much of a paragraph's prose an anchor takes. A paragraph starts a
+#: line on the page, and `render_anchors` looks for the phrase in the
+#: page's extracted text, where a line ends in a newline — so the phrase
+#: has to sit inside the paragraph's FIRST line, and forty characters do
+#: at any body size these papers use.
+_ANCHOR_CHARS = 40
+#: Prose shorter than this is a label, a number or a caption stub, and
+#: matches the first page that mentions it rather than the one wanted.
+_ANCHOR_MIN = 12
+
+
+def _anchor_phrase(prose: str) -> str:
+    """The first line's worth of `prose`, cut at a word boundary."""
+    text = " ".join(prose.split()).strip(" ,;:.")
+    if len(text) <= _ANCHOR_CHARS:
+        return text
+    cut = text.rfind(" ", 0, _ANCHOR_CHARS + 1)
+    return text[:cut] if cut >= _ANCHOR_MIN else text[:_ANCHOR_CHARS]
+
+
+def _paragraph_phrase(para_xml: str) -> str:
+    """The first prose SEGMENT of a paragraph long enough to be found.
+
+    Between the equations, never across one: joining a paragraph's
+    ``w:t`` runs gives "where is employment of workers aged 50" for a
+    sentence that reads "where *E* is employment …" on the page — the
+    equation's characters sit in that hole, and the phrase is on no
+    page at all. Measured on AFI, HCW and LE (2026-09-11): a third of
+    the equation paragraphs open on "where <symbol>". So the paragraph
+    is split at its ``m:oMath`` elements and the first segment that is
+    a phrase rather than a label ("where", "(3)") is the anchor.
+    """
+    for chunk in OMATH_RE.split(para_xml):
+        phrase = _anchor_phrase(html.unescape("".join(WT_RE.findall(chunk))))
+        if len(phrase) >= _ANCHOR_MIN:
+            return phrase
+    return ""
+
+
+def math_anchors(accepted: dict[str, bytes],
+                 baseline: dict[str, bytes] | None) -> list[str]:
+    """Phrases that find the pages of the equations `accepted` ADDS or
+    CHANGES against `baseline` — every equation, when there is none.
+
+    The eye gate `render_accepted` performs was opt-in and it stayed
+    unused: three defects that only a rendered page can show — spacing
+    dropped in conversion, operator names set italic, an expression
+    authored half as maths and half as prose — shipped through a green
+    ladder on the round that gave Aging_Well its first mathematics, and
+    a fourth was found after a promote by a different agent (BACKLOG,
+    "nothing renders by default"). Every one was in an equation the
+    batch had just written. So the default is the pages of exactly
+    those: an equation whose symbol stream (:func:`docxkit.equations.
+    tokens`) the baseline does not carry.
+
+    Tokens rather than the OMML itself, because Word re-serialises
+    every equation on the way through Compare — run splits, rsids — so
+    raw markup would name every equation in the paper, every round,
+    and a render nobody looks at is the state this replaces. The cost
+    is stated: an edit that changes only the SETTING of an equation —
+    an operator name gone italic in place — has the same tokens and is
+    not caught here; `--render` still names its page by hand.
+
+    The phrase is the paragraph's own prose — a segment of its ``w:t``
+    runs between the equations, never the maths, whose characters the
+    page draws from the Mathematical Alphanumeric block
+    (:func:`_paragraph_phrase`) — and, for a display equation standing
+    alone, the phrase of the nearest paragraph above it: the lead-in,
+    which is on the same page or the one before, and is what a reader
+    finds it by. Deduplicated in document order.
+    """
+    known: set[str] = set()
+    if baseline is not None:
+        known = {tokens(m.group(0))
+                 for _name, xml in text_parts(baseline)
+                 for m in OMATH_RE.finditer(xml)}
+    out: dict[str, None] = {}
+    for _name, xml in text_parts(accepted):
+        lead = ""                       # the last phrase seen, for a display
+        for para in PARA_RE.finditer(xml):
+            body = para.group(0)
+            phrase = _paragraph_phrase(body)
+            if any(tokens(m.group(0)) not in known
+                   for m in OMATH_RE.finditer(body)) and (phrase or lead):
+                out.setdefault(phrase or lead)
+            lead = phrase or lead
+    return list(out)
 
 
 def validate(path: str | Path, baseline: str | Path | None = None,
@@ -311,10 +411,12 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     accepted = _simulate(parts, revisions.accept)
     acc_root = _root(accepted)
     report.accepted = _counts(acc_root)
+    base = (package.read_parts(report.baseline)
+            if report.baseline is not None else None)
+    report.math_anchors = math_anchors(accepted, base)
 
-    if report.baseline is not None:
+    if base is not None:
         rejected = _simulate(parts, revisions.reject)
-        base = package.read_parts(report.baseline)
         # The PACKAGE, before its text: the reject-all gate below proves
         # the words round-trip, and a part that is not there has no words
         # for it to read.

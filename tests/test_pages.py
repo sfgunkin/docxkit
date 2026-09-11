@@ -380,6 +380,22 @@ def test_an_anchor_is_rendered_from_the_page_it_falls_on(tmp_path):
     assert png.read_bytes()[:4] == b"\x89PNG"
 
 
+def test_an_anchor_that_WRAPS_across_a_line_is_still_on_the_page(tmp_path):
+    """The extracted text carries a newline at every line end, and a
+    phrase of forty characters wraps on a narrow measure — so the
+    anchors `revision validate` names by itself, a paragraph's first
+    words, were on no page whenever the line broke inside them.
+    Whitespace is folded on both sides."""
+    pdf = _pdf(tmp_path, "the opening page",
+               "Employment by age\nrises sharply after fifty")
+
+    made = render_anchors(pdf, ["Employment by age rises sharply",
+                                "Employment  by\nage"], dpi=40)
+
+    assert all(png is not None and png.name.endswith("__p2.png")
+               for png in made.values()), made
+
+
 def test_an_anchor_on_NO_page_is_named_rather_than_raised(tmp_path):
     """Half a render is worth more than none: the caller asked to LOOK
     at several things, and the one that could not be found is named in

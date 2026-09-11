@@ -835,8 +835,9 @@ def test_validate_RENDERS_the_anchors_it_is_given(monkeypatch, project,
 
 
 def test_validate_renders_NOTHING_unless_asked(monkeypatch, project, capsys):
-    """The step costs a Word session, a render and a PDF. It runs when
-    a person asks for it and not otherwise."""
+    """The step costs a Word session, a render and a PDF. For a batch
+    that touches no EQUATION it runs when a person asks for it and not
+    otherwise — the default render below is for the maths."""
     def refuse(*a, **kw):                        # pragma: no cover
         raise AssertionError("rendered without --render")
 
@@ -848,6 +849,139 @@ def test_validate_renders_NOTHING_unless_asked(monkeypatch, project, capsys):
             str(project.root), "--no-word")
 
     assert "== render ==" not in capsys.readouterr().out
+
+
+# --- the equation pages, rendered by DEFAULT --------------------------
+#
+# BACKLOG, "nothing renders by default": the opt-in above stayed unused
+# while four defects only a page can show — spacing dropped, an operator
+# set italic, an expression half maths and half prose — went through a
+# green ladder, every one in an equation the batch had just written.
+
+#: The prose the equation's page is found by — the paragraph's own
+#: first line. Long enough to be a phrase and not a label.
+_LEAD = "We assume throughout that"
+
+
+def _math_batch(project, text: str = "a>0") -> None:
+    """A batch that adds one sentence carrying one equation.
+
+    `preserve`, because an unpreserved edge space is exactly what `lint`
+    refuses, and the ladder aborts there before any page is named."""
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."))
+        + para(f'<w:ins w:id="92" w:author="Revision" '
+               f'w:date="2026-08-07T00:00:00Z">'
+               f'{run(_LEAD + " ", preserve=True)}</w:ins>',
+               f'<w:ins w:id="93" w:author="Revision" '
+               f'w:date="2026-08-07T00:00:00Z"><m:oMath {NS_M}><m:r>'
+               f"<m:t>{text}</m:t></m:r></m:oMath></w:ins>")))
+
+
+def _fake_render(monkeypatch, tmp_path):
+    asked: dict[str, object] = {}
+
+    def fake(batch, anchors, **kw):
+        asked.update(batch=Path(batch), anchors=list(anchors))
+        return {a: tmp_path / f"batch__p{i + 2}.png"
+                for i, a in enumerate(anchors)}
+
+    monkeypatch.setattr("docxkit.revision.render_accepted", fake)
+    return asked
+
+
+def test_validate_renders_the_pages_of_the_equations_a_batch_ADDS(
+        monkeypatch, project, capsys, tmp_path):
+    """Without being asked, and saying which pages and why."""
+    from docxkit import revision
+    asked = _fake_render(monkeypatch, tmp_path)
+    monkeypatch.setattr(revision._validate, "_word", _Word(_Doc()))
+    _math_batch(project)
+
+    run_cli(monkeypatch, "revision", "validate", "--paper",
+            str(project.root))
+    out = capsys.readouterr().out
+
+    assert asked["anchors"] == [_LEAD], asked
+    assert asked["batch"] == project.batch
+    assert ("== render ==  1 anchor(s), accepted view — 1 for equations "
+            "the batch adds or changes") in out, out
+    assert f"{_LEAD!r} -> batch__p2.png" in out
+
+
+def test_the_default_render_says_so_when_NO_WORD_stops_it(
+        monkeypatch, project, capsys, tmp_path):
+    """Offline means offline — and silence there would read as "no
+    equation changed", which is the one thing it must not read as."""
+    asked = _fake_render(monkeypatch, tmp_path)
+    _math_batch(project)
+
+    run_cli(monkeypatch, "revision", "validate", "--paper",
+            str(project.root), "--no-word")
+    out = capsys.readouterr().out
+
+    assert not asked, "rendered under --no-word"
+    assert "== render ==  1 equation page(s) NOT rendered (--no-word)" in out
+
+
+def test_a_paper_that_opted_out_renders_only_what_it_NAMES(
+        monkeypatch, project, capsys, tmp_path):
+    from docxkit import revision
+    asked = _fake_render(monkeypatch, tmp_path)
+    monkeypatch.setattr(revision._validate, "_word", _Word(_Doc()))
+    project.config.write_text(
+        project.config.read_text(encoding="utf-8").replace(
+            "render_math = true", "render_math = false"),
+        encoding="utf-8")
+    _math_batch(project)
+
+    run_cli(monkeypatch, "revision", "validate", "--paper",
+            str(project.root))
+    assert not asked and "== render ==" not in capsys.readouterr().out
+
+    run_cli(monkeypatch, "revision", "validate", "--paper",
+            str(project.root), "--render", "Table 3")
+    out = capsys.readouterr().out
+    assert asked["anchors"] == ["Table 3"]
+    assert "== render ==  1 anchor(s), accepted view\n" in out, out
+
+
+def test_named_anchors_and_the_equation_pages_render_in_ONE_section(
+        monkeypatch, project, capsys, tmp_path):
+    from docxkit import revision
+    asked = _fake_render(monkeypatch, tmp_path)
+    monkeypatch.setattr(revision._validate, "_word", _Word(_Doc()))
+    _math_batch(project)
+
+    run_cli(monkeypatch, "revision", "validate", "--paper",
+            str(project.root), "--render", "Table 3", _LEAD)
+    out = capsys.readouterr().out
+
+    assert asked["anchors"] == ["Table 3", _LEAD], (
+        "the page named by hand is not rendered twice")
+    assert "== render ==  2 anchor(s), accepted view\n" in out, (
+        "nothing was ADDED to what was named, so nothing is claimed")
+
+
+def test_a_missing_reader_is_said_and_does_not_fail_the_batch(
+        monkeypatch, project, capsys):
+    """PyMuPDF is an optional extra. The ladder has spoken above; the
+    render is a person's check, and its absence is a line, not an exit."""
+    def no_reader(batch, anchors, **kw):
+        raise ImportError("reading the render needs PyMuPDF: pip install "
+                          "'docxkit[pdf]'")
+
+    monkeypatch.setattr("docxkit.revision.render_accepted", no_reader)
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--paper",
+                      str(project.root), "--no-word", "--render", "Table 3")
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "not rendered: reading the render needs PyMuPDF" in out
+    assert "VERDICT: PASS" in out
 
 
 def test_validate_fails_an_unreviewable_batch(monkeypatch, project,

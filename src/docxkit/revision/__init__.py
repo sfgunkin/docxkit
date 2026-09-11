@@ -203,6 +203,7 @@ from ._state import drift as drift
 from ._state import state as state
 from ._state import status as status
 from ._validate import ValidateReport as ValidateReport
+from ._validate import math_anchors as math_anchors
 from ._validate import render_accepted as render_accepted
 from ._validate import validate as validate
 from ._verdict import _BATCH_HEADING as _BATCH_HEADING
@@ -257,6 +258,7 @@ __all__ = [
     "load_paper",
     "log_batch",
     "losses",
+    "math_anchors",
     "moved_footnotes",
     "promote",
     "prune_rescues",

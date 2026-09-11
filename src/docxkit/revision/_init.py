@@ -111,6 +111,11 @@ word_deadline = {word_deadline}
 # validate --run-gates` runs them, exactly as spelled here, from the
 # project root.
 commands = [{gates}]
+# `validate` renders the page of every equation a batch ADDS or
+# CHANGES, in the accepted view, and leaves the PNGs beside the batch:
+# the one check no markup gate can make. Set false to render only what
+# `--render ANCHOR` names.
+render_math = true
 
 [attic]
 # Where retired generations of the manuscript go — older than the

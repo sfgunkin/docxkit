@@ -14,6 +14,129 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~Not three defects — one missing gate: nothing renders by default~~ — BUILT 11.09
+<!-- status: note -->
+
+Framing, not a defect of its own. Recorded because three entries in this file
+now share a shape, and the shape is the finding:
+
+* **spacing dropped** — `\qquad`, `\hspace`, `\;` vanish in conversion (S1);
+* **operator names italic** — `\max`, `\min`, `\lim` (S1);
+* **the prime downgraded** — U+2032 to an apostrophe on the accept path (S4,
+  and that one at least REFUSES rather than shipping).
+
+Every one of them produces valid OMML. `equations()` counts them correctly,
+`math --check` reports clean, `lint` is clean, `to_latex` round-trips the
+structure, the `m:oMath` totals are right, and `compare`'s text layer sees
+nothing because no character moved. **The only instrument that detects any of
+them is a person looking at a rendered page**, and nothing in the ladder
+renders.
+
+**A fourth, 2026-08-24, and the first found by a DIFFERENT agent on a
+different manuscript** — which is what turns a shape into a claim. An
+expression was authored half as OMML and half as body text: `α` in
+maths, `= 0.5` in prose. One expression, two fonts, and on the page it
+reads as a typesetting mistake. Valid markup, clean redline, all six
+gates exit 0, the whole ladder green — and the paper's own `math
+--check` then reported four SPLIT EXPRESSIONs after the promote.
+
+Two things it adds to the three above. The defect is not in the
+CONVERSION this time: nothing was downgraded or lost in transit, the
+document simply says something different from what the author meant, so
+a gate comparing input to output could never have seen it. And it was
+found AFTER a promote, by the paper's own list rather than by the
+package's — the ladder cannot see it and is not supposed to, which is
+the note's argument arriving from the outside rather than from more
+examples of its own.
+
+The method exists and is written down — export the PDF through Word, which
+keeps maths where LibreOffice does not, then rasterise and read it. It is in
+the house notes as `verify_omml_word_pdf`. It is in nobody's gate list.
+
+So the useful fix here is probably not three patches. It is a render step
+cheap enough to sit in `revision validate`, or in a paper's `[verify]` block,
+for any manuscript that carries maths — something that renders the pages an
+equation lands on and puts them where a human will actually look. Each of the
+three would have been caught on the first run.
+
+**And it has to render the MARKUP view, not just the page** — ezhik-82's
+point, from the `word.export_pdf` entry below. `export_pdf` calls
+`ExportAsFixedFormat` without `Item`, so it renders the DOCUMENT: a redline
+comes out clean and looks like a batch that marked nothing. A gate built on
+it would therefore inherit the very failure this note is about, one level up.
+A PDF of a redline showing no markup and a `math --check` passing an italic
+operator are the same defect in different clothes: **the check watches an
+observable proxy rather than the object it is supposed to be about.** That
+sentence covers every entry named here, the two ezhik-82 found in the
+comparison layers, and the `_kill_tree` mutant that survived because the
+elapsed-time assertion could not see an orphan.
+
+Found across Aging_Well's R20 and R21, 2026-08-23/24, which gave that paper
+its first mathematics: all three defects, all three found by reading the page,
+none by any command.
+
+**Partly answered, 24.08.** The two S1s above are fixed, and the render
+gate has a first instance:
+`tests/test_equations_typography.py::test_the_RENDER_shows_upright_operators_and_italic_variables`,
+marked `-m word`, builds the equations into a real package, exports a PDF
+through Word and reads the text layer BY CODEPOINT — Word draws a
+variable from the Mathematical Alphanumeric block and an upright operator
+name in ASCII, so "is the operator upright and the operand not" is a
+machine-readable question about the page rather than about the markup
+that was supposed to produce it. No eyes required, which is what makes it
+a gate rather than a habit.
+
+It is one test, not the ladder. But the shape is now proven cheap — nine
+seconds, and it caught a real regression in the fix that landed beside
+it.
+
+**Corrected 27.08: every "still open" this paragraph used to name has
+since closed, and the sentence stood stale for three days.** It said
+`revision validate` still rendered nothing, and that the prime and
+`export_pdf`'s markup blindness were open. All three are in `## Fixed`:
+`revision validate --render ANCHOR...` renders the accepted view;
+`MATH_DOWNGRADES` carries the prime (`′`); and `export_pdf(markup=True)`
+renders a redline WITH its markup, so a gate built on it no longer
+inherits the failure this note is about. What survives of the claim is
+the part that was never about a particular defect — **the ladder still
+renders nothing by DEFAULT for a manuscript carrying maths.**
+
+**The sharpest instance of it is not in a manuscript at all — it is in
+this file, 2026-08-24.** A close-helper that cut an entry "to the next
+`### `" took the `## Fixed` heading with it, because the entry it was
+cutting was the last one before that heading. Every closed entry then
+sat inside `## Open`, struck through and misfiled, for three commits.
+
+Read the shape rather than the mistake:
+
+* **the anchor was correct on every input except one** — the case where
+  the section ends, which is exactly the case a helper that closes
+  entries walks into eventually;
+* **the damage was invisible in the rendered view.** The entries were
+  all present, in order, correctly struck through. Nothing looked
+  wrong;
+* **what caught it was a NUMBER that had no business agreeing.** A
+  count of open sections came back 187 when six were open. Not a
+  reading — a count, of the kind nobody runs on a markdown file.
+
+That is this note's own claim about maths, about `compare`'s media
+layer, and about the `_kill_tree` mutant, applied to a record: the check
+watched an observable proxy — "do the entries look right" — rather than
+the object, "is each entry in the section that says what it is."
+
+**Closed 11.09.** What survived of the claim — *the ladder still renders nothing by
+DEFAULT for a manuscript carrying maths* — is answered: `revision validate`
+renders the page of every equation the batch ADDS or CHANGES, in the accepted
+view, without being asked (`revision.math_anchors`; `[verify] render_math = false`
+to stop, `--render ANCHOR` for a page it does not name). New or changed by
+SYMBOL STREAM, because Word re-serialises every equation through Compare and
+the markup would name them all; an equation re-set in place with the same
+tokens is the stated gap, and `--render` still covers it. The ladder says
+when it did not render — under `--no-word`, or with no PyMuPDF — rather than
+reading as "no equation changed". Every one of the four defects above was in
+an equation its batch had just written, and each would now be a PNG beside
+the batch on the first run.
+
 ### ~~Not four defects — one missing class of test: nothing exercises the toolkit AS A WORKFLOW~~ — BUILT 11.09, `396b048`
 
 <!-- status: note -->

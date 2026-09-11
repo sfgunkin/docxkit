@@ -66,6 +66,16 @@ class Paper:
     ``word/footer3.xml`` — the first-page footer — on every rebuild, and
     the paper carried a 130-line script to put it back.
     """
+    render_math: bool = True
+    """Render the pages of the equations a batch adds or changes, on
+    every `validate`, from ``[verify] render_math``.
+
+    On by default, because the opt-in render stayed unused while four
+    defects only a page can show went through a green ladder (see
+    :func:`docxkit.revision.math_anchors`). Off is for a paper whose
+    batches rewrite whole equation sets every round and whose author
+    reads the PDF anyway; `--render ANCHOR` still works with it off.
+    """
     timings: bool = True
     """Record how long each protocol step took, in ``<root>/.timings/``.
 
@@ -167,7 +177,7 @@ class Paper:
 KNOWN: dict[str, frozenset[str]] = {
     "paper": frozenset({"name", "language", "working", "prev", "timings"}),
     "batch": frozenset({"author", "rescue_keep", "carry", "word_deadline"}),
-    "verify": frozenset({"commands"}),
+    "verify": frozenset({"commands", "render_math"}),
     "attic": frozenset({"path"}),
     "doctor": frozenset({"skip"}),
 }
@@ -241,5 +251,6 @@ def load_paper(start: str | Path | None = None) -> Paper:
                                   WORD_DEADLINE)),
         doctor_skip=tuple(_read(data, "doctor", "skip", _DOCTOR_SPENT)),
         carry=tuple(_read(data, "batch", "carry", ())),
+        render_math=bool(_read(data, "verify", "render_math", True)),
         timings=bool(_read(data, "paper", "timings", True)),
     )
