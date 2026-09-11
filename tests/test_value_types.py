@@ -63,6 +63,7 @@ VALUES = [
     "refstyle.Issue",
     "refstyle.Layout",          # the house rule itself, passed in and read
     "sections.Heading",         # a heading's number, as the reader sees it
+    "sections._Level",          # one level of a Word list definition
     "refstyle.Style",
     # `revision` is a subpackage since 2026-08-30, so these name the
     # private half each type belongs to rather than one 3,118-line
@@ -111,6 +112,7 @@ ACCUMULATORS = {
     "placement.PlacementReport",
     "repack.RepackReport",
     "sections.SectionReport",
+    "sections.Renumbering",
     "probe.Probe",
     "refstyle.ConvertReport",
     "refstyle.LayoutReport",

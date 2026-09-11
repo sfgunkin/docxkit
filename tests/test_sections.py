@@ -49,6 +49,130 @@ def test_a_healthy_numbering_reports_every_mention_and_no_breach():
     assert "ok - the headings run 1..N" in report.format()
 
 
+# --- Word's own list numbers ----------------------------------------------
+#
+# Six of eight real manuscripts number their headings through numbering.xml
+# and type no digit, so the audit read none of their sections and reported
+# every "Section N" as a breach (2026-09-12). The reader was held to Word's
+# own ListString on those papers: 246 headings and list items, 0 differing.
+
+
+def LVL(ilvl: int, text: str, *, fmt: str = "decimal", start: int = 1,
+        style: str = "", legal: bool = False) -> str:
+    return (f'<w:lvl w:ilvl="{ilvl}"><w:start w:val="{start}"/>'
+            f'<w:numFmt w:val="{fmt}"/>'
+            + (f'<w:pStyle w:val="{style}"/>' if style else "")
+            + ("<w:isLgl/>" if legal else "")
+            + f'<w:lvlText w:val="{text}"/></w:lvl>')
+
+
+def NUMBERING(levels: str, *, override: str = "") -> str:
+    return ('<w:numbering><w:abstractNum w:abstractNumId="7">'
+            f"{levels}</w:abstractNum>"
+            '<w:num w:numId="4"><w:abstractNumId w:val="7"/>'
+            f"{override}</w:num></w:numbering>")
+
+
+def STYLE(sid: str, *, numpr: str = "", based: str = "") -> str:
+    return (f'<w:style w:type="paragraph" w:styleId="{sid}">'
+            + (f'<w:basedOn w:val="{based}"/>' if based else "")
+            + (f"<w:pPr><w:numPr>{numpr}</w:numPr></w:pPr>" if numpr else "")
+            + "</w:style>")
+
+
+#: HCW's shape: Heading2 states only `ilvl` 1 and takes numId 4 from the
+#: Heading1 it is based on.
+HCW = {
+    "word/styles.xml": "<w:styles>"
+    + STYLE("Heading1", numpr='<w:numId w:val="4"/>')
+    + STYLE("Heading2", numpr='<w:ilvl w:val="1"/>', based="Heading1")
+    + "</w:styles>",
+    "word/numbering.xml": NUMBERING(LVL(0, "%1.", style="Heading1")
+                                    + LVL(1, "%1.%2.", style="Heading2")),
+}
+
+
+def NUM(text: str, ilvl: int, num: int = 4) -> str:
+    return para(f'<w:pPr><w:pStyle w:val="Heading{ilvl + 1}"/><w:numPr>'
+                f'<w:ilvl w:val="{ilvl}"/><w:numId w:val="{num}"/>'
+                f"</w:numPr></w:pPr>" + run(text))
+
+
+def test_word_numbers_a_heading_through_its_STYLE_and_the_basedOn_chain():
+    parts = make_parts(H("Introduction") + H("Data") + H("Sources", 2)
+                       + H("Coverage", 2) + H("Countries", 2) + H("Results")
+                       + P("Section 2.3 and Sections 1 to 3 hold."),
+                       extra=HCW)
+
+    report = sections.audit(parts)
+
+    assert [(h.number, h.listed) for h in report.headings] == [
+        ("1", True), ("2", True), ("2.1", True), ("2.2", True),
+        ("2.3", True), ("3", True)]
+    assert report.ok and report.checked
+    assert report.mentions == 2
+
+
+def test_list_numbers_prints_what_Word_prints_and_RESTARTS_the_deeper_level():
+    body = (H("A") + H("B", 2) + H("C", 2) + H("D", 2) + H("E") + H("F", 2)
+            + P("plain"))
+
+    nums = sections.list_numbers(make_parts(body, extra=HCW))
+
+    assert nums == {0: "1.", 1: "1.1.", 2: "1.2.", 3: "1.3.", 4: "2.",
+                    5: "2.1."}
+
+
+def test_the_paragraphs_own_numPr_its_REMOVAL_a_start_override_and_formats():
+    """A paragraph's own `numPr` over its style's, `numId` 0 as no
+    number at all, `startOverride` over `start`, a roman top level, and
+    `isLgl` printing the level beneath it in decimals."""
+    numbering = NUMBERING(
+        LVL(0, "%1.", fmt="upperRoman", start=3)
+        + LVL(1, "%1.%2", legal=True),
+        override='<w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/>'
+                 "</w:lvlOverride>")
+    body = (NUM("First", 0) + NUM("Sub", 1) + NUM("Unnumbered", 0, num=0)
+            + NUM("Second", 0))
+
+    nums = sections.list_numbers(make_parts(
+        body, extra={"word/numbering.xml": numbering,
+                     "word/styles.xml": "<w:styles/>"}))
+
+    assert nums == {0: "V.", 1: "5.1", 3: "VI."}
+
+
+def test_a_bullet_is_not_a_number_and_letters_run_on_past_z():
+    numbering = NUMBERING(LVL(0, "%1)", fmt="lowerLetter", start=26)
+                          + LVL(1, "•", fmt="bullet"))
+    body = NUM("z", 0) + NUM("aa", 0) + NUM("dot", 1)
+
+    nums = sections.list_numbers(make_parts(
+        body, extra={"word/numbering.xml": numbering}))
+
+    assert nums == {0: "z)", 1: "aa)"}
+
+
+def test_a_paper_with_no_numbered_heading_is_NOT_CHECKED_not_all_breaches():
+    """LEtrends marks no heading at all and cites Section 4 three times."""
+    report = sections.audit(doc(
+        P("The model in Section 4 corrects for it."),
+        P("Sections 2 and 4 agree; Section 4 again.")))
+
+    assert report.ok and report.breaches == []
+    assert not report.checked
+    assert report.mentions == 3
+    assert "not checked - no heading carries a number" in report.format()
+
+
+def test_a_listed_paper_still_reports_a_section_it_does_not_have():
+    parts = make_parts(H("Introduction") + H("Results") + H("Conclusion")
+                       + P("As Section 5 shows."), extra=HCW)
+
+    assert sections.audit(parts).breaches == [
+        "Section 5: no such section  …As Section 5 shows.…"]
+
+
 def test_the_MERGE_is_found_in_the_headings_and_in_every_mention():
     """The one-keystroke edit: Section 4's heading deleted. The hole,
     the dangling mentions, and the range that ends on it."""
@@ -190,3 +314,109 @@ def test_the_report_names_the_breaches_and_the_run():
     assert "2 heading(s), 2 section(s), 0 appendix subsection(s)" in text
     assert "sections : 1 3" in text
     assert "** 1 breach(es)" in text and "run 1 3 — expected 1 2" in text
+
+
+# --- renumber: the second half ----------------------------------------------
+#
+# Ported from Aging_Well's R123 and held to it: run on the file R123 started
+# from, the result is byte-identical to R123's in all three text parts.
+
+MERGED = (H("1. Introduction") + H("2. Data") + H("3. Model")
+          + P("Sections 2 through 4 set this up (Section 4).")
+          + H("5. Results") + H("5.1 Main", 2) + H("5.2 Robustness", 2)
+          + P("Section 5.2 and Section 6 check Section 5.")
+          + H("6. Conclusion") + P("Sections 3, 4 and 5 hold; see §5.1."))
+
+
+def _body(parts: dict[str, bytes]) -> str:
+    from docxkit._xml import visible_text
+    return visible_text(parts["word/document.xml"].decode("utf-8"))
+
+
+def test_renumber_closes_a_MERGE_in_one_pass_with_the_ranges_rewritten():
+    """4 went into 3 while 5 went down to 4: a map no sequential 5->4,
+    6->5 can apply, and ranges that must be REWRITTEN, not mapped."""
+    done = sections.renumber(doc(MERGED), merged_into={"4": "3"})
+
+    after = sections.audit(done.parts)
+    assert after.ok, after.breaches
+    assert after.sections == ["1", "2", "3", "4", "4.1", "4.2", "5"]
+    body = _body(done.parts)
+    assert "Sections 2 and 3 set this up (Section 3)." in body
+    assert "Section 4.2 and Section 5 check Section 4." in body
+    assert "Sections 3 and 4 hold; see §4.1." in body
+    assert done.numbers == {"5": "4", "5.1": "4.1", "5.2": "4.2", "6": "5",
+                            "4": "3"}
+    assert ("5", "4", "Results") in done.headings
+    assert done.paragraphs == 7
+
+
+def test_renumber_REFUSES_a_mention_it_cannot_place():
+    import pytest
+
+    from docxkit.errors import AnchorError
+
+    with pytest.raises(AnchorError, match="Section 4 is mentioned and no "
+                                          "heading carries it"):
+        sections.renumber(doc(MERGED))
+
+
+def test_renumber_refuses_what_it_cannot_do_SAFELY():
+    import pytest
+
+    from docxkit.errors import AnchorError
+
+    gap = H("1. One") + H("2. Two") + H("4. Four")
+    tabbed = para('<w:r><w:t xml:space="preserve">see Section </w:t>'
+                  "<w:tab/><w:t>4</w:t></w:r>")
+    tracked = para('<w:ins w:id="1" w:author="A"><w:r><w:t>See Section 4.'
+                   "</w:t></w:r></w:ins>")
+    cases = [
+        (make_parts(H("Introduction") + H("Results"), extra=HCW),
+         "Word numbers these headings itself"),
+        (doc(gap + tabbed), "inside one plain run"),
+        (doc(gap + tracked), "tracked changes"),
+        (doc(H("1. One") + H("2. Two") + H("2. Again") + H("4. Four")),
+         "used twice"),
+        (doc(H("1. One") + H("2.1 Stray", 2) + H("3. Three")),
+         "does not sit under Section 2"),
+        (doc(P("Section 4 of nothing.")), "no heading carries a typed"),
+    ]
+    for parts, message in cases:
+        with pytest.raises(AnchorError, match=message):
+            sections.renumber(parts)
+
+
+def test_renumber_checks_what_merged_into_SAYS():
+    import pytest
+
+    from docxkit.errors import AnchorError
+
+    gap = doc(H("1. One") + H("2. Two") + H("4. Four") + P("See Section 3."))
+
+    with pytest.raises(AnchorError, match="a heading still carries it"):
+        sections.renumber(gap, merged_into={"2": "1"})
+    with pytest.raises(AnchorError, match="to Section 7, and no heading"):
+        sections.renumber(gap, merged_into={"3": "7"})
+
+
+def test_a_healthy_numbering_comes_back_UNTOUCHED_and_a_rerun_is_a_no_op():
+    healthy = doc(HEALTHY)
+    assert sections.renumber(healthy).parts is healthy
+
+    once = sections.renumber(doc(MERGED), merged_into={"4": "3"})
+    twice = sections.renumber(once.parts, merged_into={"4": "3"})
+
+    assert not twice.changed and twice.parts is once.parts
+    assert "nothing to renumber" in twice.format()
+
+
+def test_renumber_closes_an_APPENDIX_gap_under_its_own_letter():
+    body = (H("1. One") + P("Appendix B.3 and B.2 hold.") + H("Appendix B")
+            + H("B.1 First", 2) + H("B.3 Third", 2))
+
+    done = sections.renumber(doc(body), merged_into={"B.2": "B.1"})
+
+    assert "Appendix B.2 and B.1 hold." in _body(done.parts)
+    assert sections.audit(done.parts).sections == ["1", "B.1", "B.2"]
+    assert "heading B.3 -> B.2  Third" in done.format()

@@ -14,6 +14,96 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `sections` read typed numbers only, so every mention was a breach on the six papers whose headings Word numbers~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+Found 2026-09-12 while porting the renumber half of the S6 check. Run over
+the eight real snapshots, `docxkit sections` passed Aging_Well and failed
+six of the other seven, every "Section N" in their prose reported as "no
+such section". None of them was wrong. AFI, HCW, HPPA, LE and LI number
+their headings through the heading STYLE's `w:numPr`, Parental through each
+paragraph's own, and Word prints "2.1." from `numbering.xml`. The audit
+read the number typed at the start of a heading's text, found none, and
+judged every mention against an empty list. LEtrends marks no heading at
+all and cites Section 4 three times. That is the S3 class exactly: a gate
+red on six papers of eight, which a reader learns to stop reading.
+
+**Fixed:** `sections.list_numbers(parts)` resolves the number Word prints
+before each body paragraph: the paragraph's own `numPr` over its style's,
+a style read up its `basedOn` chain (HCW's Heading2 states only `ilvl` 1
+and takes its `numId` from Heading1), `numId` 0 as no number, a
+`startOverride`, the level linked to a style, counters per abstract
+definition with the deeper levels restarting, `isLgl`, and the decimal,
+letter and roman formats. `headings` takes those numbers. A paper with no
+numbered heading at all is `checked=False` and prints "not checked": its
+mentions are counted and none is judged.
+
+**Measured against Word itself.** Every outline or list paragraph of the
+eight papers, read through COM as `Range.ListFormat.ListString`:
+
+    rows compared with Word's own number    246
+    agree                                   246
+    papers now ok, every mention resolved     6 of 6 (AFI 7, HCW 9,
+                                              HPPA 12, LE 10, LI 2,
+                                              Parental 15)
+    not checked                               1 (LEtrends, 3 mentions)
+    Aging_Well, typed numbers                 ok, unchanged
+    the merged pre-R123 file                  8 breaches, unchanged
+
+Tests: `test_sections.py`, the list-number block: the style chain, a
+restart, a paragraph's own `numPr` with its removal, an override and the
+formats, a bullet, letters past z, "not checked", and a dangling mention on
+a list-numbered paper still reported.
+
+### ~~S4 — nothing renumbered the sections after a merge, so Aging_Well hand-wrote R123 with a literal map~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+The second half the S6 closure (`59223e7`) named and left out: "the
+renumbering that follows a merge is the second half and is not in it". The
+paper did it by hand in `r123_renumber_sections.py`: a literal map, a
+literal table of range rewrites, and a literal table of heading titles.
+
+**Fixed:** `sections.renumber(parts, merged_into=None)` returns a
+`Renumbering`, whose `parts` is the new package. Typed headings are
+renumbered by POSITION, and every mention in the body, footnotes and
+endnotes moves with them in ONE pass. The grammar is the audit's own:
+`Section N`, `§ N.M`, lists, ranges, `Appendix A.N` and a bare `A.N`. What a
+merge did to the gone number is an editorial fact the file does not hold,
+so it is given: `merged_into={"4": "3"}`. A range is rewritten rather than
+mapped, so "Sections 2 through 4" becomes "Sections 2 and 3". Each change
+is the smallest edit inside ONE run. Refused: Word-numbered headings (a
+merge renumbers those on the spot and leaves no gap to read), a number
+used twice, a subsection under the wrong parent, a mention no heading and
+no `merged_into` entry can place, tracked changes, a number split across
+runs or sharing one with a tab or a field, and any paragraph whose text
+would change by more than its section numbers. The result must pass
+`audit`.
+
+**Measured on the real files:**
+
+    pre-R123 Aging_Well, merged_into {"4": "3"},
+      against R123's own output          349 paragraphs, 0 differ;
+                                         3 of 3 parts byte-identical
+    run again on its own output          nothing to renumber
+    the eight snapshots                  AgingWell unchanged; six refused
+                                         as Word-numbered; LEtrends
+                                         refused, no typed number
+    Aging_Well with "6. What policy can
+      do" deleted, merged_into {"6": "5"} 4 headings and 9 mentions
+                                         renumbered; audit ok; only
+                                         digits moved
+
+Tests: `test_sections.py`, the renumber block: the merge with its ranges,
+list and `§` form, a mention it cannot place, six refusals, `merged_into`
+checked against the headings, identity and a second run, and an appendix
+gap under its own letter.
+
+**Workaround to retire:** `Aging_Well/revision/scripts/r123_renumber_sections.py`
+has already run and is a record now. The next merge on any typed-numbered
+paper calls `renumber` instead.
+
 ### ~~S4 — no helper turns a citation from the parenthetical form into the narrative one (or back), so a paper hand-edits the field~~ — FIXED 11.09, `366f2c0`
 
 <!-- status: fixed -->

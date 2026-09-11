@@ -377,9 +377,8 @@ def cmd_sections(args: argparse.Namespace) -> int:
     if not report.ok:
         print("\n  A merged or deleted heading renumbers the sections in the "
               "reader's head and\n  nowhere in the file. Restore the heading, "
-              "or renumber the headings AND every\n  mention together, in "
-              "one pass: a sequential 5->4, 6->5 cannot tell its own\n  "
-              "output from its input.")
+              "or renumber the headings AND every\n  mention in one pass: "
+              "docxkit.sections.renumber(parts, merged_into={...}).")
     return 0 if report.ok else 1
 
 
