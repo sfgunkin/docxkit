@@ -66,6 +66,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
 | `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
 | `tracked` | build a tracked-changes deliverable end to end |
+| `_tracked_gates` / `_tracked_report` | internal: what a redline must reproduce (the XML gates — reject-all, accept-all, collateral, counts; no Word) and what a build did (the report and the refusals that read it). `tracked` is the facade and keeps the Word pipeline |
 | `guard` | stop a rebuild discarding a review someone made in Word; `restamp` records a repair the TOOL made, which is not a review; `carry` moves a stamp with the bytes it describes, as `promote` does onto the manuscript |
 | `ingest` | fold the author's Word edits back into the build source, part by part — a footnote the author retyped is an override too |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |

@@ -65,6 +65,10 @@ FACADE_HALVES = {
                   "_cite_build"),
     "tables": ("_table_core", "_table_layout"),
     "compare": ("_compare_read", "_compare_diff", "_compare_render"),
+    # 2026-09-11: the XML gates and the report behind the Word pipeline,
+    # which stays in the facade — the suite's fake seam is `tracked._word`
+    # and the names `build` reads beside it, rebound on that module.
+    "tracked": ("_tracked_gates", "_tracked_report"),
 }
 
 #: A facade whose halves are a SUBPACKAGE rather than files beside it.

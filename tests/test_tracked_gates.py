@@ -498,7 +498,10 @@ def test_a_phase_is_timed_from_the_one_BEFORE_it(monkeypatch):
     # which is what the first version of this test did, and four
     # mutants lived behind it.
     ticks = itertools.chain([1.0, 3.0, 8.0], itertools.repeat(10.0))
-    monkeypatch.setattr(tracked, "time", type("T", (), {
+    # The one seam the 2026-09-11 split moved: `BuildReport` reads the
+    # clock from its OWN module, which is the report half now.
+    from docxkit import _tracked_report
+    monkeypatch.setattr(_tracked_report, "time", type("T", (), {
         "perf_counter": staticmethod(lambda: next(ticks))}))
 
     report = tracked.BuildReport()       # 1.0
@@ -1577,7 +1580,9 @@ def test_every_accept_side_refusal_carries_the_same_escape():
     itself, because its repair is a math edit rather than a switch."""
     import re as _re
 
-    src = Path(tracked.__file__).read_text(encoding="utf-8")
+    from docxkit import _tracked_report  # the refusal's home since 09-11
+
+    src = Path(_tracked_report.__file__).read_text(encoding="utf-8")
     body = src.split("def _refuse_accept_side")[1].split("\ndef ")[0]
 
     assert "accept_check=False to build" not in body

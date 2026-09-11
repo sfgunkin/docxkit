@@ -101,6 +101,14 @@ FLOORS = {
     "console.py": 100,
     # The facade. Its main() is the CLI's job and is covered there.
     "compare.py": 98,
+    # `tracked.py` had no entry and sat on DEFAULT until it split on
+    # 2026-09-11; these are what the three files MEASURED that day, held
+    # so the split cannot hand back points in silence — the reason the
+    # `revision/` block above restates fourteen floors. The Word pipeline
+    # stayed in the facade; the halves are the XML gates and the report.
+    "tracked.py": 97,
+    "_tracked_gates.py": 94,
+    "_tracked_report.py": 97,
     # Report renderers: every branch prints, and pinning the exact
     # wording of 11 sections would test the prose, not the logic.
     "_compare_render.py": 97,

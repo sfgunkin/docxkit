@@ -114,6 +114,17 @@ HARNESS: dict[str, list[str]] = {
                    "tests/test_tracked_guard.py",
                    "tests/test_cli_revision.py", "tests/test_parts_gaps.py",
                    "tests/test_value_types.py"],
+    # `tracked.py` grew two halves on 2026-09-11, and each gets the
+    # harness the whole module had — a SUPERSET, for the reason the
+    # `revision/` entry below gives. Narrow once a run says which files
+    # reach which half.
+    **{f"{half}.py": ["tests/test_tracked_build.py",
+                      "tests/test_tracked_gates.py",
+                      "tests/test_tracked_guard.py",
+                      "tests/test_cli_revision.py",
+                      "tests/test_parts_gaps.py",
+                      "tests/test_value_types.py"]
+       for half in ("_tracked_gates", "_tracked_report")},
     "_cite_audit.py": ["tests/test_citations.py", "tests/test_crossrefs.py",
                        "tests/test_link_convention.py"],
     # the five CONTRIBUTING records for the paired runs, plus the four
@@ -263,7 +274,8 @@ HARNESS: dict[str, list[str]] = {
 #: joined that run.
 FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
           "_compare_diff.py": "compare", "_compare_render.py": "compare",
-          "_compare_read.py": "compare"}
+          "_compare_read.py": "compare",
+          "_tracked_gates.py": "tracked", "_tracked_report.py": "tracked"}
 EXCLUDED: dict[str, tuple[str, ...]] = {
     "_table_core.py": ("tests/test_tables_fit.py",
                        "tests/test_tables_fit_edges.py",

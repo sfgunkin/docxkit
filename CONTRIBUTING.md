@@ -425,6 +425,17 @@ of differences, `_compare_diff` (paragraphs to a report) knows nothing
 of files or printing, `_compare_render` (a report to a page and an exit
 code) knows nothing of XML. A test asserts that stays acyclic.
 
+`tracked.py` followed on 2026-09-11, by the same recipe and with one
+difference worth knowing: the Word pipeline — `build`, `verify`, the
+math pass — STAYED in the facade, and only the XML gates
+(`_tracked_gates`) and the report with its refusals (`_tracked_report`)
+moved out. The suite fakes Word by rebinding `tracked._word`,
+`tracked.verify`, `tracked.package_counts` and the rest on the facade
+module, and `build` reads every one of those names from its own module's
+globals at call time; a split that moved `build` into a half would have
+moved that seam with it, test by test. One seam did move — `BuildReport`
+reads the clock from `_tracked_report.time` — and one test names it.
+
 Two things made the split safe to take, and both are worth reusing:
 
 * **Characterization tests first.** The eleven that existed are what

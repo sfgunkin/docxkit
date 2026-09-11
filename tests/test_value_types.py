@@ -86,8 +86,9 @@ VALUES = [
     "styles.Raised",
     "styles.Resolved",
     "styles.Style",
-    "tracked.Unaccepted",
-    "tracked.Untracked",
+    # in the XML half since 2026-09-11; reachable as `tracked.<Name>`
+    "_tracked_gates.Unaccepted",
+    "_tracked_gates.Untracked",
     "wordcount.Counts",
 ]
 

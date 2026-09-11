@@ -260,8 +260,11 @@ max-complexity = 20
 "src/docxkit/lint.py" = ["PLC0415"]
 "src/docxkit/revisions.py" = ["PLC0415"]
 # same lazy lxml: the reject-all gate parses, `package_counts` does not,
-# and `import docxkit` must not pay for the parser.
-"src/docxkit/tracked.py" = ["PLC0415"]
+# and `import docxkit` must not pay for the parser. The gates are the
+# `_tracked_gates` half since 2026-09-11; `tracked.py` is the facade over
+# them and re-exports every name with the `x as x` PEP 484 signal.
+"src/docxkit/_tracked_gates.py" = ["PLC0415"]
+"src/docxkit/tracked.py" = ["PLC0414"]
 # pymupdf is an optional extra and `word` is Windows-only: `import
 # docxkit` must not need either.
 "src/docxkit/pages.py" = ["PLC0415"]

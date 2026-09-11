@@ -97,7 +97,8 @@ MUTATIONS = [
              "        notes.append(f'comment not added to "
              '"{text[:30]}": {exc}\')',
              "        pass  # mutation"),
-    Mutation("tracked.py", "package_counts stops counting comments",
+    # Re-anchored 2026-09-11: the XML gates moved to `_tracked_gates.py`.
+    Mutation("_tracked_gates.py", "package_counts stops counting comments",
              '        "comments": len(COMMENT_ID_RE.findall(com_xml)),',
              '        "comments": 0,'),
     # --- the write gate -------------------------------------------------
