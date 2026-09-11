@@ -25,7 +25,7 @@ class, and why the test below pins the ORDER.
 from __future__ import annotations
 
 import pytest
-from conftest import dele, ins, make_parts, para, run, write
+from conftest import dele, make_parts, para, run, write
 
 from docxkit import revision
 from docxkit.errors import BaselinePending, StaleBatch, WorkingPending
@@ -41,13 +41,6 @@ def paper(tmp_path):
                          attic=tmp_path / "attic")
 
 
-def promoted_batch(paper) -> None:
-    """The state after `promote`: `working` is the redline, `prev` the
-    clean pre-batch truth."""
-    write(paper.working, make_parts(
-        para(run("The paper "), ins("as improved "), run("as it stands."))))
-
-
 def clean_edit(paper):
     edit = paper.build_dir / "clean.docx"
     write(edit, make_parts(para(run("A new proposal."))))
@@ -55,24 +48,30 @@ def clean_edit(paper):
 
 
 # ------------------------------------------------------------ the refusal
+#
+# The state after `promote` — `working` is the redline, `prev` the clean
+# pre-batch truth — is `promoted_round` (conftest), reached through the
+# real `promote` rather than by writing an `ins` into the manuscript, as
+# this file did until 2026-09-11.
 
 
-def test_a_promoted_batch_awaiting_a_verdict_stops_the_next_build(paper):
-    promoted_batch(paper)
+def test_a_promoted_batch_awaiting_a_verdict_stops_the_next_build(
+        promoted_round):
+    paper = promoted_round.paper
 
     with pytest.raises(WorkingPending) as exc:
         revision.build(paper, clean_edit(paper))
 
     said = str(exc.value)
-    assert "1 insertion(s)" in said
+    assert "2 insertion(s)" in said
     assert paper.working.name in said
     assert "not adjudicated" in said
 
 
-def test_the_message_names_BOTH_ways_it_goes_wrong(paper):
+def test_the_message_names_BOTH_ways_it_goes_wrong(promoted_round):
     """Which harm you get depends on which file was staged as the clean
     edit, and a reader cannot tell from a message that names one."""
-    promoted_batch(paper)
+    paper = promoted_round.paper
 
     with pytest.raises(WorkingPending) as exc:
         revision.build(paper, clean_edit(paper))
@@ -91,12 +90,12 @@ def test_a_DELETION_pending_counts_too(paper):
         revision.build(paper, clean_edit(paper))
 
 
-def test_it_comes_BEFORE_the_staleness_check(paper):
+def test_it_comes_BEFORE_the_staleness_check(promoted_round):
     """The order is the fix. `drift` fires on this state too — a pending
     working file cannot match a clean baseline — and its advice is to
     re-baseline, which `baseline` then refuses for carrying a proposal.
     Reverting the order puts the reader back in that loop."""
-    promoted_batch(paper)
+    paper = promoted_round.paper
 
     with pytest.raises(WorkingPending):
         revision.build(paper, clean_edit(paper))
@@ -107,11 +106,11 @@ def test_it_comes_BEFORE_the_staleness_check(paper):
         revision.baseline(paper)
 
 
-def test_the_escape_is_its_OWN_switch(paper):
+def test_the_escape_is_its_OWN_switch(promoted_round):
     """Not a widening of `allow_pending_baseline`. The two states want
     opposite advice, and one flag for both would be reached for over the
     commoner refusal and silence the rarer one."""
-    promoted_batch(paper)
+    paper = promoted_round.paper
 
     # Past the working check, into the staleness one — which is the next
     # thing that is true about this pair, and says so.

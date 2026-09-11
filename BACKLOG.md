@@ -830,11 +830,27 @@ per-paper config.
    or in `LOCK_EXEMPT` with a reason, and the WRITE forms are swept the same
    way against the other half of the contract: refuse, and leave the file
    alone. Six of those, where one hand-written case had stood for all of them.
-2. **A workflow-state fixture set.** Batch built-and-promoted, built-and-held,
-   promoted-and-rejected, promoted-and-partly-adjudicated. The verdict code
-   already distinguishes several outcomes; only some of those states are
-   reachable from the current fixtures. Building the four states once makes
-   every future verdict question answerable.
+2. ~~**A workflow-state fixture set.**~~ **Built 11.09.** Batch
+   built-and-promoted, built-and-held, promoted-and-rejected,
+   promoted-and-partly-adjudicated. The verdict code already distinguishes
+   several outcomes; only some of those states were reachable from the
+   fixtures. Building the four states once makes every future verdict
+   question answerable.
+
+   **Built as one round in `conftest.py`** — two edits with an untouched
+   paragraph between them, so "partly" is expressible — and five fixtures
+   on it: `held_round`, `promoted_round`, `accepted_round`,
+   `rejected_round`, `partly_round`. Reached through the protocol's own
+   verbs where a verb exists (`init`, the stamp `build` writes, the REAL
+   `promote`); only the author's Word session is written by hand, because
+   the tool never adjudicates for them. `tests/test_workflow_states.py`
+   pins what each state IS — `state`, `status`, the promote's record,
+   `verdict`, and what `build` and `baseline` refuse — including the two
+   facts the entry above is about: HELD and REJECTED leave the same
+   manuscript, and only the record tells them apart. The private ways of
+   reaching "promoted" — a redline copied by hand in
+   `test_revision_verdict`, an `ins` written into the manuscript in
+   `test_pending_working` — start from the set now.
 
 Neither is a rewrite. Both are the kind of test that could only be written
 after a real manuscript walked the toolkit through states its own fixtures do
@@ -849,7 +865,7 @@ and never promoted — so `test_revision_verdict.py` now builds and promotes in
 its fixture and has a test for the held case. Promoted-and-rejected and
 promoted-and-partly-adjudicated are already reachable there; what is still
 missing is the set built ONCE and shared, rather than four fixtures that each
-happen to reach a state.
+happen to reach a state. **The set arrived 11.09** — item 2 above.
 
 Kept as a note rather than a defect: nothing here is wrong, and what remains
 of the second gate is a proposal the author should weigh against everything

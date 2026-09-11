@@ -7,11 +7,16 @@ in tests/corpus/ (gitignored) for the optional round-trip tests.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 import sys
 import zipfile
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from docxkit.revision import Paper
 
 NS = (
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -301,3 +306,123 @@ def sources(tmp_path):
             z.writestr("word/document.xml", clean_document())
     return (tmp_path / "original.docx", tmp_path / "revised.docx",
             tmp_path / "redline.docx")
+
+
+# --- the revision protocol's workflow states ----------------------------
+#
+# Built ONCE and shared, because the test files each reached one of these
+# states by hand — a redline copied into `build/redlines/` to stand in for
+# a promote, an `ins` written into the manuscript to stand in for one, a
+# stamp minted three times — and the state none of them produced, a
+# batch built on the current baseline and deliberately HELD, was the one
+# `revision baseline` read as the author rejecting the batch: a wrong
+# verdict, pre-formatted for the paper's permanent log (Aging_Well,
+# 2026-08-28; BACKLOG, "one missing class of test"). Every state here is
+# reached through the protocol's own verbs where a verb exists — `init`
+# scaffolds, the stamp is the one `build` writes, `promote` is the real
+# one. The hand-back is the author's Word session, which this tool never
+# performs on their behalf, so it is the one state written as prose.
+# `tests/test_workflow_states.py` pins what each state IS.
+
+#: The round every fixture below is about: two edits with an untouched
+#: paragraph between them, so that "partly adjudicated" is expressible —
+#: one edit kept as proposed, the other reverted.
+ROUND_BASELINE = ("first old", "an untouched paragraph", "second old")
+ROUND_PROPOSED = ("first new", "an untouched paragraph", "second new")
+
+
+@dataclasses.dataclass(frozen=True)
+class Round:
+    """One revision round on a scaffolded paper, and the texts it is of."""
+
+    paper: Paper
+    baseline: tuple[str, ...]
+    """The paragraphs of the truth the batch was built on."""
+    proposed: tuple[str, ...]
+    """What accepting every revision says, paragraph by paragraph."""
+
+    def hand_back(self, *paragraphs: str) -> None:
+        """The author's Word session: the markup gone, these left.
+
+        Not a verb of the protocol — the author accepts and rejects in
+        Word, and the tool never does — so this is the one transition
+        a fixture writes by hand.
+        """
+        write(self.paper.working,
+              make_parts("".join(para(run(t)) for t in paragraphs)))
+
+    @property
+    def partly(self) -> tuple[str, ...]:
+        """The first edit kept as proposed, everything else as it was."""
+        return (self.proposed[0], *self.baseline[1:])
+
+
+def revision_round(tmp_path, *, baseline: tuple[str, ...] = ROUND_BASELINE,
+                   proposed: tuple[str, ...] = ROUND_PROPOSED,
+                   name: str = "HCW") -> Round:
+    """A paper at the HELD state: baselined, with a batch built on that
+    baseline — stamped as `build` stamps it — and NOT promoted.
+
+    The batch proposes `proposed` over `baseline` paragraph by
+    paragraph: one whose text differs is a deletion and an insertion,
+    one that does not is left alone. Compare's own shape, in miniature.
+    """
+    from docxkit import guard, revision
+
+    root = tmp_path / name
+    root.mkdir()
+    src = write(root / f"{name}.docx",
+                make_parts("".join(para(run(t)) for t in baseline)))
+    paper = revision.init(root, src, name=name)
+    redline = "".join(
+        para(run(was)) if was == now
+        else para(dele(was, rid=91 + 2 * i), ins(now, rid=90 + 2 * i))
+        for i, (was, now) in enumerate(zip(baseline, proposed, strict=True)))
+    paper.batch.parent.mkdir(parents=True, exist_ok=True)
+    write(paper.batch, make_parts(redline))
+    # the stamp is what ties a batch to the baseline it was built on
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    return Round(paper=paper, baseline=tuple(baseline),
+                 proposed=tuple(proposed))
+
+
+@pytest.fixture
+def held_round(tmp_path) -> Round:
+    """Built and HELD: the batch is staged and stamped, the manuscript
+    is the truth, and nothing was promoted."""
+    return revision_round(tmp_path)
+
+
+@pytest.fixture
+def promoted_round(held_round: Round) -> Round:
+    """Built and PROMOTED, awaiting the author: the manuscript IS the
+    redline, and `build/redlines/` holds the record of it."""
+    from docxkit import revision
+
+    revision.promote(held_round.paper)
+    return held_round
+
+
+@pytest.fixture
+def accepted_round(promoted_round: Round) -> Round:
+    """Promoted and ACCEPTED in full: every proposed paragraph, no
+    markup, and a baseline the paper has outgrown."""
+    promoted_round.hand_back(*promoted_round.proposed)
+    return promoted_round
+
+
+@pytest.fixture
+def rejected_round(promoted_round: Round) -> Round:
+    """Promoted and REJECTED in full: the baseline's paragraphs, no
+    markup — the same file a batch that was never promoted leaves,
+    which is why the promote's redline copy is the record."""
+    promoted_round.hand_back(*promoted_round.baseline)
+    return promoted_round
+
+
+@pytest.fixture
+def partly_round(promoted_round: Round) -> Round:
+    """Promoted and PARTLY adjudicated: the first edit kept as proposed,
+    the second reverted."""
+    promoted_round.hand_back(*promoted_round.partly)
+    return promoted_round

@@ -15,7 +15,7 @@ of the paragraph it proposed does.
 from __future__ import annotations
 
 import pytest
-from conftest import make_parts, para, run, write
+from conftest import make_parts, para, revision_round, run, write
 
 from docxkit import package, revision
 from docxkit.revision import verdict
@@ -34,45 +34,28 @@ def dele(text: str, rid: int = 91) -> str:
 
 @pytest.fixture
 def cycle(tmp_path):
-    """A paper mid-cycle: a baseline, and a batch built ON that baseline.
+    """A paper mid-cycle: a baseline, a batch built ON that baseline,
+    and the batch PROMOTED — `conftest.revision_round` with this file's
+    one-edit round, and the real `promote`.
 
     The batch proposes replacing "the old sentence" with "the new
     sentence" and leaves a second paragraph alone.
-    """
-    root = tmp_path / "HCW"
-    root.mkdir()
-    base = make_parts(para(run("the old sentence"))
-                      + para(run("an untouched paragraph")))
-    src = write(root / "HCW.docx", base)
-    paper = revision.init(root, src, name="HCW")
-
-    redline = make_parts(
-        para(dele("the old sentence"), ins("the new sentence"))
-        + para(run("an untouched paragraph")))
-    paper.batch.parent.mkdir(parents=True, exist_ok=True)
-    write(paper.batch, redline)
-    # the stamp is what ties a batch to the baseline it was built on
-    from docxkit import guard
-    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
-    _promote(paper)
-    return paper
-
-
-def _promote(paper):
-    """Record the promote the way `promote` does: a copy of the batch in
-    `build/redlines/`.
 
     A batch is only the round's proposal once it has been PUT ON the
-    paper, and that copy is the only record of it — see
-    `_verdict._proposal`. This fixture staged one and never promoted it,
-    which is the state the whole entry is about: the verdict machinery
-    read the unpromoted batch's absence from the manuscript as the
-    author having rejected it."""
-    import shutil
-    paper.redline_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(paper.batch,
-                 paper.redline_dir / f"{paper.working.stem}_redline_"
-                 f"20260831-120000-000000{paper.working.suffix}")
+    paper, and the redline copy `promote` keeps is the only record of
+    it — see `_verdict._proposal`. Until 2026-08-31 this fixture staged
+    a batch and never promoted it, which is the state the whole entry
+    is about: the verdict machinery read the unpromoted batch's absence
+    from the manuscript as the author having rejected it. It then faked
+    the promote by copying a redline by hand; since 2026-09-11 it is
+    the shared workflow-state machinery and the promote is real.
+    """
+    made = revision_round(
+        tmp_path, name="HCW",
+        baseline=("the old sentence", "an untouched paragraph"),
+        proposed=("the new sentence", "an untouched paragraph"))
+    revision.promote(made.paper)
+    return made.paper
 
 
 def _adjudicated(paper, body):
@@ -116,22 +99,8 @@ def test_accepting_AND_editing_is_still_accepted_in_full(cycle):
     assert result.outcome == "accepted in full, +1 authored"
 
 
-def test_a_SPLIT_verdict_is_counted_both_ways(tmp_path):
-    root = tmp_path / "P"
-    root.mkdir()
-    base = make_parts(para(run("first old")) + para(run("second old")))
-    src = write(root / "P.docx", base)
-    paper = revision.init(root, src)
-    paper.batch.parent.mkdir(parents=True, exist_ok=True)
-    write(paper.batch, make_parts(
-        para(dele("first old"), ins("first new"))
-        + para(dele("second old"), ins("second new"))))
-    from docxkit import guard
-    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
-    _promote(paper)
-    _adjudicated(paper, para(run("first new")) + para(run("second old")))
-
-    result = verdict(paper)
+def test_a_SPLIT_verdict_is_counted_both_ways(partly_round):
+    result = verdict(partly_round.paper)
 
     assert (result.kept, result.reverted) == (1, 1)
     assert result.outcome == "1 of 2 kept as proposed"
@@ -221,7 +190,8 @@ def test_a_batch_promoted_under_ANOTHER_name_still_counts(cycle):
     check is on its CONTENT — a name comparison would answer no for
     every real round."""
     (only,) = cycle.redlines()
-    only.rename(only.with_name(only.name.replace("120000", "235959")))
+    only.rename(only.with_name(f"{cycle.working.stem}_redline_"
+                               f"20261231-235959-000000{only.suffix}"))
 
     _adjudicated(cycle, para(run("the new sentence"))
                  + para(run("an untouched paragraph")))
@@ -254,21 +224,12 @@ def test_text_that_ALREADY_EXISTS_elsewhere_does_not_fake_a_verdict(
     a repeated country name are paragraphs too.
     """
     dup = "a sentence that appears twice"
-    root = tmp_path / "P"
-    root.mkdir()
-    src = write(root / "P.docx",
-                make_parts(para(run("old")) + para(run(dup))))
-    paper = revision.init(root, src)
-    paper.batch.parent.mkdir(parents=True, exist_ok=True)
-    write(paper.batch, make_parts(
-        para(dele("old"), ins(dup)) + para(run(dup))))
-    from docxkit import guard
-    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
-    _promote(paper)
-    # the author rejected: the manuscript still reads "old"
-    write(paper.working, make_parts(para(run("old")) + para(run(dup))))
+    made = revision_round(tmp_path, name="P", baseline=("old", dup),
+                          proposed=(dup, dup))
+    revision.promote(made.paper)
+    made.hand_back("old", dup)     # rejected: the manuscript still reads "old"
 
-    result = verdict(paper)
+    result = verdict(made.paper)
 
     assert (result.kept, result.reverted) == (0, 1), result
     assert result.outcome == "rejected in full"
