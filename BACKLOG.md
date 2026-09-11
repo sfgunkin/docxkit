@@ -46,6 +46,45 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — a back-link marker that has left its link passes every gate
+
+<!-- status: open -->
+
+Measured 2026-09-12 over the eight real snapshots, while testing the S4
+citation-form conversions. A link's own bookmark (`<key>txt`, or `cite_x`
+for a link to `ref_x`) is where the back-link from the reference entry or
+the caption lands, and its text is what Word selects on arrival. The audits
+check that a marker exists, that something links to it, and which paragraph
+holds it. None checks where in that paragraph it sits.
+
+    link bookmarks in the same paragraph as their link, eight papers
+    exactly on the label                                         400
+    off by real text                                              17
+      collapsed to nothing, parked elsewhere in the paragraph      10
+      starting early, over the prose before the link                4
+      running on over the next citation                             2
+      on a later mention of the same work                           1
+    off by a bracket, punctuation, or part of its own label       13
+    reported by any audit                                          0
+
+HPPA holds 12 of the 17. The worst shape is the collapsed marker. Seven of
+HPPA's sit empty and stacked at the END of their paragraph, the trace of a
+paragraph retyped in Word, so `WHO2002txt` lands a reader 496 characters
+past its citation; two more sit empty 88 and 97 characters before theirs.
+`Cosco2015txt` starts 46 characters early and selects two other citations.
+`Finsel2023txt` and `Kose2021txt` run on over the citation after them. LI's
+`Table1txt` starts at "differences in LBI across countries (see", and
+HCW's `OECD2017txt` sits on a later mention whose own link points at the
+bookmark it is inside.
+
+**Suggested fix:** a citations-audit finding for a marker whose span differs
+from its link's by a letter or a digit, and a repair that rebuilds the
+marker around its link (`wrap_link_in_bookmark` already does the rebuild).
+A bracket, a space or punctuation is not a finding, and neither is a marker
+covering part of its own label, because the back-link still lands on the
+citation. Measure it on the eight snapshots before it lands: 17 found, and
+none of the 13 harmless shapes.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
