@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S1 — `repack` measured broken trial documents and advised the author on them: it read captions, bodies, mentions and the page all its own way, and each way was wrong~~ — FIXED 11.09
+### ~~S1 — `repack` measured broken trial documents and advised the author on them: it read captions, bodies, mentions and the page all its own way, and each way was wrong~~ — FIXED 11.09, `3a4b1d1`
 
 <!-- status: fixed -->
 
