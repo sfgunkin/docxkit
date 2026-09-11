@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~Not three defects — one missing gate: nothing renders by default~~ — BUILT 11.09
+### ~~Not three defects — one missing gate: nothing renders by default~~ — BUILT 11.09, `bac86c5`
 <!-- status: note -->
 
 Framing, not a defect of its own. Recorded because three entries in this file
