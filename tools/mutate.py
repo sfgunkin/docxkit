@@ -200,12 +200,14 @@ MUTATIONS = [
              "    return inner if m is None else inner[:m.start()]",
              "    return inner"),
     # --- exhibit mentions -----------------------------------------------
-    Mutation("crossrefs.py",
+    # in `find` since 2026-09-11, beside the caption grammar; `crossrefs`
+    # re-exports and is where the tests that kill these two live
+    Mutation("find.py",
              "a mention boundary rejects digits only, so Table 1 "
              "matches inside Table 1.1",
              r'NUMBER_END = r"(?!\w)(?!\.\w)(?!-[^\W\d_])"',
              r'NUMBER_END = r"(?!\d)"'),
-    Mutation("crossrefs.py",
+    Mutation("find.py",
              "a hyphen-suffixed exhibit is matched by its prefix",
              r'NUMBER_END = r"(?!\w)(?!\.\w)(?!-[^\W\d_])"',
              r'NUMBER_END = r"(?!\w)(?!\.\w)"'),

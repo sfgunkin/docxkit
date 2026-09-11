@@ -190,6 +190,7 @@ HARNESS: dict[str, list[str]] = {
                   "tests/test_cli_guards.py",
                   "tests/test_revision.py",
                   "tests/test_cli_revision.py"],
+    "exhibits.py": ["tests/test_exhibits.py", "tests/test_placement.py"],
     "export.py": ["tests/test_export_md.py"],
     "figures.py": ["tests/test_figures.py", "tests/test_alt_text.py",
                    "tests/test_value_types.py"],

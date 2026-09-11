@@ -69,8 +69,17 @@ from .errors import AnchorError, ConversionGap
 # module's siblings — a sibling import is the edge the layering gate
 # refuses, and a second spelling of the regex is the drift this file's
 # own docstring records having had three times. Re-exported here: every
-# caller spells it `crossrefs.caption_re`.
-from .find import DEFAULT_LABELS, caption_re
+# caller spells it `crossrefs.caption_re`. The MENTION grammar followed
+# it there on 2026-09-11 (`exhibits` anchors by it, a layer below), and
+# `LABEL_FORMS` / `NUMBER_END` are re-exported the same way.
+from .find import (
+    DEFAULT_LABELS,
+    LABEL_FORMS,
+    NUMBER_END,
+    caption_re,
+    continuation_re,
+    mention_re,
+)
 
 __all__ = [
     "DEFAULT_LABELS",
@@ -91,18 +100,6 @@ __all__ = [
     "reaching",
     "unlink",
 ]
-
-#: How each label may appear in PROSE, which is not how it appears in the
-#: caption. English merely pluralises; Russian inflects, so the DSI
-#: manuscript writes «Таблица 4» over the table and «в таблице 4» in the
-#: text. Matching only the caption form linked nothing at all there.
-#: A label with no entry falls back to itself plus an optional "s".
-LABEL_FORMS = {
-    "Figure": r"Figures?",
-    "Table": r"Tables?",
-    "Рисунок": r"рисун\w{0,3}",     # рисунок / рисунка / рисунке / рисунком
-    "Таблица": r"таблиц\w{0,2}",    # таблица / таблице / таблицы / таблиц
-}
 
 _SUFFIX = "txt"
 _BOOKMARK_RE = BOOKMARK_ID_RE          # the shared definition
@@ -207,30 +204,6 @@ class LinkReport:
         return "\n".join(lines)
 
 
-#: What may not follow an exhibit number. THE boundary — :mod:`renumber`
-#: matches mentions too, and a rule that lives in two modules is a rule
-#: that will disagree with itself.
-#:
-#: Rejecting a following DIGIT is what keeps "Table 1" out of "Table 10",
-#: but digits alone are not enough: papers number exhibits "Table 1.1"
-#: and "Table 1A", and against those the digit test passes and the match
-#: lands on a DIFFERENT exhibit. It linked the "Table 1" inside "Table
-#: 1.1", left ".1" as plain text, and then reported Table 1.1 as never
-#: mentioned — and in :mod:`renumber`, which rewrites text, a shift of
-#: Table 1 silently renumbered Table 1.1 along with it.
-#:
-#: The dot is refused only when a word character follows, because the
-#: overwhelmingly common thing after a mention is a full stop: "the
-#: estimates appear in Table 1." must still match.
-#:
-#: The hyphen splits the same way and for the same reason. "Table 1-A"
-#: is another exhibit, so matching Table 1 inside it linked the wrong
-#: one and orphaned "-A" as plain text; but "Tables 1-3" is a RANGE, and
-#: refusing every hyphen would stop the 1 there being linked at all. A
-#: digit after the hyphen continues a range, a letter starts a suffix.
-NUMBER_END = r"(?!\w)(?!\.\w)(?!-[^\W\d_])"
-
-
 @lru_cache(maxsize=256)
 def _named_bookmark(name: str) -> re.Pattern[str]:
     """``<w:bookmarkStart ... w:name="NAME">`` — the element, not the text.
@@ -238,17 +211,6 @@ def _named_bookmark(name: str) -> re.Pattern[str]:
     Attribute order is not meaningful, so w:name may precede w:id.
     """
     return re.compile(rf'<w:bookmarkStart\b[^>]*w:name="{re.escape(name)}"')
-
-
-def _mention_re(label: str, number: str) -> re.Pattern[str]:
-    """``Figure 1`` but never ``Figure 10``, ``Figure 1.1`` or ``Figure 1A``.
-
-    Case-insensitive: prose writes "table 1" and «таблице 1» as readily
-    as the capitalised form.
-    """
-    form = LABEL_FORMS.get(label, re.escape(label) + "s?")
-    return re.compile(rf"\b{form}\s+{re.escape(number)}{NUMBER_END}",
-                      re.IGNORECASE)
 
 
 def _next_bookmark_id(xml: str, others: Sequence[str] = ()) -> int:
@@ -421,7 +383,7 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
     (Word keeps bookmarks and drops run-level hyperlinks), and a second
     one under the same name is a duplicate no gate would enjoy.
     """
-    pattern = _mention_re(cap.label, cap.number)
+    pattern = mention_re(cap.label, cap.number)
     anchor, name = cap.name, cap.mention_name
 
     # The label may already be a hyperlink — a manual cross-reference, or
@@ -480,7 +442,7 @@ def _find_mention(xml: str, cap: Caption,
     Without the exclusion an object links to its own caption, since the
     caption contains the label too.
     """
-    pattern = _mention_re(cap.label, cap.number)
+    pattern = mention_re(cap.label, cap.number)
     caption_spans = {(c.start, c.end) for c in captions}
     for p in PARA_RE.finditer(xml):
         if (p.start(), p.end()) in caption_spans:
@@ -931,21 +893,6 @@ def _mention_offsets(xml: str) -> dict[str, list[int]]:
     return {k: sorted(v) for k, v in out.items()}
 
 
-def _continuation_re(label: str, number: str) -> re.Pattern[str]:
-    """The bare number of a range or list mention: the "5" of "Tables 3
-    to 5", "Tables 3–5" or "Tables 3, 4 and 5".
-
-    Anchored to a nearby plural-capable label so "age 3 to 5" cannot
-    match; the window between the label's own number and the target is
-    kept short and clause-bound for the same reason.
-    """
-    form = LABEL_FORMS.get(label, re.escape(label) + "s?")
-    return re.compile(
-        rf"\b{form}\s+[\wА-я.]+[^.;:()]{{0,30}}?"
-        rf"(?:\band\b|\bto\b|[–—,-])\s*({re.escape(number)}){NUMBER_END}",
-        re.IGNORECASE)
-
-
 def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
               ) -> tuple[str, dict[str, int]]:
     """Forward-link every exhibit mention :func:`link` left plain.
@@ -965,8 +912,8 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     captions = find_captions(xml, labels=labels)
     counts: dict[str, int] = {}
     caption_spans = {(c.start, c.end) for c in captions}
-    patterns = [(cap, _mention_re(cap.label, cap.number),
-                 _continuation_re(cap.label, cap.number))
+    patterns = [(cap, mention_re(cap.label, cap.number),
+                 continuation_re(cap.label, cap.number))
                 for cap in captions]
 
     paras = list(PARA_RE.finditer(xml))

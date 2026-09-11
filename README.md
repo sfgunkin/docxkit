@@ -73,6 +73,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 | `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
+| `exhibits` | what the exhibits ARE: every caption, which table or image is its body — on either side, read off the document — and the span each one owns, hoisted bookmarks and notes included. `placement`, `repack` and `exhibit_block` sit on it |
 | `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included |
 | `repack` | which sheet is mostly EMPTY and which exhibit's placement caused it — renders each alternative placement and ranks what it would save; reports, never edits |
 | `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |

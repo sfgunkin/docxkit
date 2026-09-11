@@ -26,16 +26,21 @@ from .errors import AnchorError
 
 __all__ = [
     "DEFAULT_LABELS",
+    "LABEL_FORMS",
+    "NUMBER_END",
     "P_RE",
     "TABLE_LABELS",
     "AnchorError",
     "Site",
     "body_elements",
     "caption_re",
+    "continuation_re",
     "edit_para",
     "find_para",
     "heading_level",
     "internal_links",
+    "label_form",
+    "mention_re",
     "page_break_before",
     "para_slice",
     "para_text_at",
@@ -84,6 +89,79 @@ def caption_re(labels: tuple[str, ...] = DEFAULT_LABELS) -> re.Pattern[str]:
     # number 3.2 rather than as 3 followed by a stray "2".
     alt = "|".join(re.escape(w) for w in labels)
     return re.compile(rf"^\s*({alt})\s+([\w.-]+?)\s*[.:](?:\s|$)")
+
+
+#: How each label may appear in PROSE, which is not how it appears in the
+#: caption. English merely pluralises; Russian inflects, so the DSI
+#: manuscript writes «Таблица 4» over the table and «в таблице 4» in the
+#: text. Matching only the caption form linked nothing at all there.
+#: A label with no entry falls back to itself plus an optional "s".
+#:
+#: Beside `caption_re` since 2026-09-11, because it is the other half of
+#: the same grammar: `crossrefs` links by it, `renumber` rewrites by it
+#: and `exhibits` anchors by it, and the first two each had a copy.
+LABEL_FORMS = {
+    "Figure": r"Figures?",
+    "Table": r"Tables?",
+    "Box": r"Box(?:es)?",
+    "Рисунок": r"рисун\w{0,3}",     # рисунок / рисунка / рисунке / рисунком
+    "Таблица": r"таблиц\w{0,2}",    # таблица / таблице / таблицы / таблиц
+}
+
+#: What may not follow an exhibit number. THE boundary — a rule that
+#: lives in two modules is a rule that will disagree with itself.
+#:
+#: Rejecting a following DIGIT is what keeps "Table 1" out of "Table 10",
+#: but digits alone are not enough: papers number exhibits "Table 1.1"
+#: and "Table 1A", and against those the digit test passes and the match
+#: lands on a DIFFERENT exhibit. It linked the "Table 1" inside "Table
+#: 1.1", left ".1" as plain text, and then reported Table 1.1 as never
+#: mentioned — and in :mod:`renumber`, which rewrites text, a shift of
+#: Table 1 silently renumbered Table 1.1 along with it.
+#:
+#: The dot is refused only when a word character follows, because the
+#: overwhelmingly common thing after a mention is a full stop: "the
+#: estimates appear in Table 1." must still match.
+#:
+#: The hyphen splits the same way and for the same reason. "Table 1-A"
+#: is another exhibit, so matching Table 1 inside it linked the wrong
+#: one and orphaned "-A" as plain text; but "Tables 1-3" is a RANGE, and
+#: refusing every hyphen would stop the 1 there being linked at all. A
+#: digit after the hyphen continues a range, a letter starts a suffix.
+NUMBER_END = r"(?!\w)(?!\.\w)(?!-[^\W\d_])"
+
+
+def label_form(label: str) -> str:
+    """The prose spelling of a caption label, as a regex fragment."""
+    return LABEL_FORMS.get(label, re.escape(label) + "s?")
+
+
+@lru_cache(maxsize=256)
+def mention_re(label: str, number: str) -> re.Pattern[str]:
+    """``Figure 1`` but never ``Figure 10``, ``Figure 1.1`` or ``Figure 1A``.
+
+    Case-insensitive: prose writes "table 1" and «таблице 5» as readily
+    as the capitalised form. Bounded on the left, so "configure 2" is
+    not a mention of Figure 2 and "stable 1" not one of Table 1.
+    """
+    return re.compile(
+        rf"\b{label_form(label)}\s+{re.escape(number)}{NUMBER_END}",
+        re.IGNORECASE)
+
+
+@lru_cache(maxsize=256)
+def continuation_re(label: str, number: str) -> re.Pattern[str]:
+    """The bare number of a range or list mention: the "5" of "Tables 3
+    to 5", "Tables 3–5" or "Tables 3, 4 and 5".
+
+    Anchored to a nearby plural-capable label so "age 3 to 5" cannot
+    match; the window between the label's own number and the target is
+    kept short and clause-bound for the same reason.
+    """
+    return re.compile(
+        rf"\b{label_form(label)}\s+[\wА-я.]+[^.;:()]{{0,30}}?"
+        rf"(?:\band\b|\bto\b|[–—,-])\s*({re.escape(number)}){NUMBER_END}",
+        re.IGNORECASE)
 
 
 # kept as aliases: several paper scripts import these from here. There

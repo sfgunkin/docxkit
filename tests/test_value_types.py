@@ -48,6 +48,7 @@ VALUES = [
     "crossrefs.Caption",
     "equations.Equation",
     "equations.ProseMath",
+    "exhibits.Exhibit",         # one caption and the span it owns
     "figures.AltText",
     "figures.Figure",
     "find.Site",                # a survey a caller keeps and compares
@@ -56,6 +57,7 @@ VALUES = [
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "placement.FitFinding",     # one exhibit breaking the fit rule
+    "repack.Landing",           # where one exhibit sits in a render
     "repack.Move",              # one placement, and what the render said
     "repack.Sheet",             # one rendered sheet's fill
     "refstyle.Issue",

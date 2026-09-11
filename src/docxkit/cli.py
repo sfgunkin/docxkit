@@ -1102,48 +1102,68 @@ def cmd_pdf(args: argparse.Namespace) -> int:
 
 def cmd_repack(args: argparse.Namespace) -> int:
     """Which sheet is mostly empty, and what placement would fill it."""
-    import re
     import shutil
     import tempfile
     from pathlib import Path as _Path
 
-    from .package import write_docx
+    from .package import is_locked, write_docx
     from .pages import page_texts
     from .repack import repack
+    from .word import shared_session
 
-    words = "|".join(re.escape(w.strip()) for w in args.labels.split(",")
-                     if w.strip())
-    caption = re.compile(rf"^\s*(?:{words})\s*(\d+)\s*\.", re.IGNORECASE)
-    mention = re.compile(rf"(?:{words})\s*(\d+)", re.IGNORECASE)
-
+    name = _Path(args.docx).name
+    if is_locked(args.docx):
+        # The one read-only command that does NOT fall back to a
+        # snapshot: every number it prints is about the page layout, and
+        # a report on sheets the author cannot see is worse than none.
+        raise PackageError(
+            f"{name} is open in Word. Close it and retry: `repack` measures "
+            f"the layout, and a snapshot would describe sheets the author "
+            f"cannot see")
+    parts = _package(args.docx)
+    labels = tuple(w.strip() for w in args.labels.split(",") if w.strip())
     staging = _Path(tempfile.mkdtemp(prefix="docxkit_repack_"))
     trials = [0]
 
-    def render(parts: dict[str, bytes]) -> list[str]:
+    def render(trial: dict[str, bytes]) -> list[str]:
         # Each candidate is a DIFFERENT document, so the render has to go
         # through the trial's own bytes: `fit` renders the file on disk
         # because its parts never change, and that shortcut is wrong here.
         trials[0] += 1
         path = staging / f"trial{trials[0]}.docx"
-        write_docx(path, parts)
-        return page_texts(path)
+        write_docx(path, trial)
+        try:
+            return page_texts(path)
+        except DocxKitError:
+            raise
+        except Exception as exc:        # a COM error is not docxkit's
+            raise DocxKitError(
+                f"Word could not render {path.name}: {exc}") from exc
 
     try:
-        report = repack(_package(args.docx, read_only=True), render=render,
-                        caption=caption, mention=mention,
-                        threshold=args.threshold, max_drift=args.max_drift,
-                        max_candidates=args.max_candidates)
+        # ONE Word for the whole search. A trial is a render, and each
+        # render used to start and quit its own Word: nine cold starts
+        # for one short sheet with the default eight candidates.
+        with shared_session(doing=f"{name}: repack"):
+            report = repack(parts, render=render, labels=labels,
+                            threshold=args.threshold,
+                            max_drift=args.max_drift,
+                            max_candidates=args.max_candidates)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
-    print(_Path(args.docx).name)
+    print(name)
     print("  " + report.format().replace("\n", "\n  "))
-    if report.moves:
-        best = report.moves[0]
-        print("\n  Nothing was changed. To apply the first of these, move "
-              f"exhibit {best.number}\n  to just after the paragraph naming "
-              "it and re-render — the placement\n  is an editorial call, so "
-              "it is yours to make.")
+    best = report.best
+    if best is not None:
+        print(f"\n  Nothing was changed. The best of these moves {best.name} "
+              f"to just after the paragraph\n  {best.after!r}. Apply it by "
+              "hand — `placement.exhibit_block` is the span — and\n  "
+              "re-render; the placement is an editorial call, so it is "
+              "yours to make.")
+    elif report.moves:
+        print("\n  Nothing was changed, and none of these helps: the layout "
+              "stays as it is.")
     return 0
 
 
@@ -2373,27 +2393,26 @@ def build_parser() -> argparse.ArgumentParser:
                    help="keep the render instead of using a temp file")
     p.set_defaults(fn=cmd_pages)
 
-    # imported here rather than at module scope: `repack` pulls lxml, and the
-    # CLI's startup is 0.139 s of which the import graph is most
-    from .repack import DEFAULT_MAX_CANDIDATES, DEFAULT_THRESHOLD
-
+    # The defaults are `repack.DEFAULT_THRESHOLD` and
+    # `repack.DEFAULT_MAX_CANDIDATES`, restated: importing them here
+    # pulled lxml into every CLI start, and a test pins the two pairs.
     p = sub.add_parser(
         "repack",
         help="which sheet is mostly empty, and which exhibit's placement "
              "would fill it (renders; reports, changes nothing)")
     p.add_argument("docx")
-    p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
+    p.add_argument("--threshold", type=float, default=0.6,
                    help="a sheet under this share of the fullest TEXT sheet "
                         "is reported (default %(default)s)")
     p.add_argument("--max-drift", type=int, default=1,
                    help="how many sheets an exhibit may sit from the text "
                         "that first mentions it (default %(default)s)")
-    p.add_argument("--max-candidates", type=int,
-                   default=DEFAULT_MAX_CANDIDATES,
+    p.add_argument("--max-candidates", type=int, default=8,
                    help="placements to try per under-filled sheet; each one "
                         "is a full render (default %(default)s)")
     p.add_argument("--labels", default="Figure,Table,Box",
-                   help="exhibit words to recognise (default %(default)s)")
+                   help="caption words to recognise; a Box is an exhibit "
+                        "only when named (default %(default)s)")
     p.set_defaults(fn=cmd_repack)
 
     p = sub.add_parser(

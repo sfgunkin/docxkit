@@ -2798,9 +2798,10 @@ def test_repack_renders_every_TRIAL_from_its_own_bytes(monkeypatch, tmp_path,
 
     out = capsys.readouterr().out
     assert code == 0, out
-    assert "sheet 2:" in out
+    assert "sheet 2:" in out and "Figure 1 starts on sheet 3" in out
     assert "1 fewer under-filled sheet(s)" in out
-    assert "Nothing was changed" in out and "exhibit 1" in out
+    assert "Nothing was changed. The best of these moves Figure 1" in out
+    assert "'Box text'" in out
     assert len(seen) >= 2 and paper not in seen, seen
     assert not any(p.exists() for p in seen), "the trials must be cleaned up"
     assert paper.read_bytes() == before, "repack reports; it never edits"
@@ -2820,3 +2821,107 @@ def test_repack_on_a_full_document_offers_no_move(monkeypatch, tmp_path,
     assert code == 0, out
     assert "nothing to repack" in out
     assert "Nothing was changed" not in out
+
+
+def test_repack_does_not_ADVISE_a_move_that_measured_no_gain(monkeypatch,
+                                                              tmp_path,
+                                                              capsys):
+    """The review's case 14: the first wording told the author to apply
+    "the first of these" whenever anything was tried, including a move
+    that had just measured "no change". A renderer that answers the same
+    for every trial produces only such moves."""
+    monkeypatch.setattr("docxkit.pages.page_texts", lambda *_a, **_k: [
+        _FULL, "Figure 1 shows it.", "Figure 1. Cap", _FULL, _FULL])
+
+    code, _ = run_cli(monkeypatch, "repack", str(_repack_docx(tmp_path)))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "no change" in out
+    assert "none of these helps" in out
+    assert "The best of these" not in out
+
+
+def test_repack_REFUSES_the_file_the_author_has_open(monkeypatch, tmp_path,
+                                                     capsys):
+    """Not a snapshot, deliberately: every number the report carries is
+    about the page layout, and sheets the author cannot see are worse
+    than no report. The refusal names Word and renders nothing."""
+    calls = []
+
+    def page_texts(*_a, **_k):
+        calls.append(1)
+        return [_FULL]
+
+    monkeypatch.setattr("docxkit.package.is_locked", lambda _p: True)
+    monkeypatch.setattr("docxkit.pages.page_texts", page_texts)
+
+    code, _ = run_cli(monkeypatch, "repack", str(_repack_docx(tmp_path)))
+
+    captured = capsys.readouterr()
+    assert isinstance(code, str) and "open in Word" in code, code
+    assert calls == [], "nothing may be rendered from a held file"
+    assert "sheet(s)" not in captured.out
+
+
+def test_repack_reports_a_trial_whose_render_FAILED_and_finishes(
+        monkeypatch, tmp_path, capsys):
+    """A COM error in trial five used to escape `main` as a traceback and
+    take the four finished measurements with it. The wrapper turns it
+    into docxkit's own error, `repack` records it, and the report is
+    still printed."""
+    from docxkit.package import write_docx
+
+    paper = tmp_path / "paper.docx"
+    write_docx(paper, make_parts(
+        para(run("Figure 1 shows it.")) + "<w:p><w:r><w:drawing/></w:r></w:p>"
+        + para(run("Figure 1. Cap")) + para(run("Box text"))
+        + para(run("More text"))))
+    calls = []
+
+    def page_texts(_path):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("(-2147352567, 'Exception occurred.')")
+        return [_FULL, "Figure 1 shows it.", "Figure 1. Cap", _FULL, _FULL]
+
+    monkeypatch.setattr("docxkit.pages.page_texts", page_texts)
+
+    code, _ = run_cli(monkeypatch, "repack", str(paper))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "the render failed" in out and "Exception occurred" in out
+    assert len(calls) == 3, "the search went on after the failure"
+
+
+def test_a_Word_failure_on_the_FIRST_render_is_the_commands_failure(
+        monkeypatch, tmp_path, capsys):
+    """docxkit's own errors pass through the wrapper untouched: with no
+    first render there is no report to print, and `main` turns the
+    error into one line and a non-zero exit."""
+    from docxkit.errors import WordTimeout
+
+    def page_texts(*_a, **_k):
+        raise WordTimeout("Word did not answer within 120 s and was killed")
+
+    monkeypatch.setattr("docxkit.pages.page_texts", page_texts)
+
+    code, _ = run_cli(monkeypatch, "repack", str(_repack_docx(tmp_path)))
+
+    assert isinstance(code, str) and "did not answer" in code, code
+    assert "sheet(s)" not in capsys.readouterr().out
+
+
+def test_the_CLI_defaults_are_repacks_own(monkeypatch):
+    """Restated in the parser so the CLI does not import lxml at every
+    start; this is what keeps the two from drifting."""
+    from docxkit import repack
+    from docxkit.cli import build_parser
+
+    args = build_parser().parse_args(["repack", "x.docx"])
+
+    assert args.threshold == repack.DEFAULT_THRESHOLD
+    assert args.max_candidates == repack.DEFAULT_MAX_CANDIDATES
+    assert tuple(args.labels.split(",")) == tuple(
+        w for w in repack.LABELS if w.isascii())

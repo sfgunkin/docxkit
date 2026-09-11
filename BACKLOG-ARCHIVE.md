@@ -14,6 +14,127 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `repack` measured broken trial documents and advised the author on them: it read captions, bodies, mentions and the page all its own way, and each way was wrong~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-11**, by a rebuild rather than fourteen patches. The
+code review of `a90be3a` (the module's first commit, `/code-review max`)
+confirmed 14 findings, and running the module on eight manuscripts'
+saved renders confirmed 8 of them there and added three. Filed and closed
+together because nothing of the first version's detection survived.
+
+**What was wrong, in the order the rebuild took it.**
+
+*Detection.* `repack` carried its own caption regex, block walk and
+mention stem, and `placement` had two more walks of its own:
+
+* its caption regex saw no colon caption and no appendix number, so it
+  found 0 of Loneliness Index's 10 exhibits, 0 of Life_Expectancy's 16,
+  2 of Parental_style's 13 and 5 of HPPA's 7;
+* it looked BACKWARDS first for a caption's body, so LE_trends' Tables 1
+  and 3 each took the uncaptioned chart image above their caption and
+  left the real table out, and a caption-above table following another
+  claimed the previous table;
+* a blank paragraph was absorbed as a spacer whether or not it carried a
+  picture, so Aging_Well's Box 1 took Figure 1's image into its block —
+  and `placement._blocks` and `exhibit_block` had the same clause, so
+  `place` would have moved it;
+* the mention stem compared four characters of a three-letter label, so
+  no Box ever found its mention; the CLI's mention pattern had no word
+  boundary and matched "configure 2" as Figure 2;
+* `commentRangeStart` / `moveToRangeStart` at body level stopped the
+  walk, so Aging_Well's own redline lost Figure 2;
+* a panel exhibit — caption, `Panel A.`, table, `Panel B.`, table — had
+  no body at all (HCW Table 9, AFI Table A3).
+
+*The page.* An exhibit was placed on the FIRST sheet carrying its
+caption's text, which for HCW's Tables 6 and 7 is the prose on sheet 13
+that quotes them; any sheet carrying a caption was dropped from the fill
+verdict, even one 15 % full; a long table's continuation sheets read as
+short prose (LE_trends 9–11, blamed on Table 3 on sheet 13); a box's
+"last row" was the whole box, so its end probe was its own caption again;
+a row set in OMML was on no sheet (LE Table 9); and drift subtracted the
+mention's sheet in the ORIGINAL render from the caption's in the trial,
+falling back to 0 — which passes every limit — when either was missing.
+
+*The moves.* A candidate was resolved by TEXT to the first paragraph
+reading it; other exhibits' captions and notes were candidates, and a
+trial that put Figure 1 between Table 1's caption and its table ranked
+first; a block's section breaks travelled or stayed without regard to
+who owned the section; and for the exhibits grouped at the back of a
+paper — every one 15 to 38 sheets from its mention on HCW and AFI — the
+absolute drift limit forbade every move while the candidate limit,
+counted from the mention through the body's prose, never reached the
+other exhibit blocks, which are the only places there are. The nearest
+prose to Parental_style's Table 1 was its reference list, and it was
+offered eight entries to follow.
+
+*The CLI.* Advice to apply "the first of these" whenever anything was
+tried, including a move that had just measured "no change"; a cold Word
+per render, nine for one short sheet; a COM error in trial five escaping
+as a traceback with the four finished measurements; a snapshot read under
+a lock while `LOCK_EXEMPT` said it refused; `build_parser` importing lxml
+at every CLI start.
+
+**What was built.**
+
+* `exhibits.py`, a layer below `placement`, is THE exhibit definition:
+  every caption `find.caption_re` matches (or a table whose first cell
+  opens with one — a Box, or a one-cell frame), which table or image is
+  its body, on EITHER side, read off the document per caption by
+  constraint propagation and the document's own majority, with the
+  hoisted bookmarks and the notes that travel with it, up to the next
+  body. Panels, range markers and framed captions included.
+  `placement.exhibit_block` is rebuilt on it and now reads a figure
+  captioned underneath its image; `placement._blocks` keeps its fast
+  path with the image clause fixed.
+* The mention grammar (`LABEL_FORMS`, `NUMBER_END`, `mention_re`,
+  `continuation_re`) moved from `crossrefs` to `find`, beside the caption
+  grammar; `crossrefs` re-exports, `renumber` is unchanged, and "Box"
+  has a form.
+* `repack` locates each exhibit in document order from where the
+  previous one ended and after the prose in front of its block; counts
+  every sheet from a table's caption to its last row with text (or the
+  last one the page shows) as the table's; blames a short sheet on the
+  exhibit that STARTS on the next sheet and says so when none does;
+  offers prose paragraphs and other blocks' ENDS, nearest first, never a
+  heading, a reference entry, a section break or another block's
+  inside; moves an owning exhibit with both its breaks, leaves a shared
+  break behind, refuses one alone in the final section; measures drift
+  and gain in the trial render, and lets a far exhibit move as long as
+  it comes no further; reports a failed render and stops after two.
+* The CLI runs the search in one `shared_session`, refuses a held file
+  (its `LOCK_EXEMPT` reason says so now and `test_cli.py` holds it),
+  advises only a move with a measured gain, names it and the paragraph,
+  and restates the two defaults instead of importing the module.
+
+**Measured.** Detection, eight manuscripts against a caption census:
+105 of 105 exhibits found (the first version found 47), every one with
+a body, no two spans sharing an element. Sheets called short across the
+eight, on the same saved renders: 68 before, 30 after — HCW 4 → 1, AFI
+8 → 1, Parental 11 → 3, LI 16 → 9, LE 15 → 6, LE_trends 4 → 1. Through
+Word, LE_trends: 6 trials in 21 s, every one measured, none helps —
+which is right, because its short sheet 3 is an uncaptioned chart page.
+Life_Expectancy: 18 trials in 102 s, one Word; the back-of-paper tables
+were tried after each other's blocks ("Table 5 after 'Table 2 and its
+notes': no change, drift +21 (was +24)"), two moves cost a sheet and
+said so, and the command advised leaving the layout as it is.
+
+**Limits, kept.** A sheet whose content is a picture with no caption
+reads as short (LE_trends' charts are captioned in prose, "Chart 3
+plots…"), and the trials spent on it come back "no change"; the render
+would have to report images for this to see them. A stubbed renderer
+that returns the same pages for every trial cannot locate a moved
+exhibit — that is the stub, not the locator, and the Word run is the
+measurement. The `-m word` gate for this command is the manual run above,
+not a test; `test_cli.py` stubs `page_texts`.
+
+Tests: `tests/test_exhibits.py` (30), `tests/test_repack.py` rewritten
+(26), six in `test_cli.py`, two in `test_placement.py`; every real-paper
+shape above has one, and the four written wrong at first were wrong in
+the fixture, which the module's own report said.
+
 ### ~~S1 — `fit --render` placed a table by the FIRST sheet carrying its caption's text: false straddles on whole tables, and a tab-set caption's real straddle never reported~~ — FIXED 11.09, `4c75554`
 <!-- status: fixed -->
 

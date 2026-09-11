@@ -45,6 +45,12 @@ from lxml import etree
 from ._xml import DOCUMENT, PPR_ORDER
 from .errors import PackageError
 
+# THE exhibit definition, from one layer down: which caption owns which
+# body, on either side, with the notes and hoisted bookmarks that travel
+# with it. `NOTE` lived here and is re-exported; `exhibit_block` is that
+# engine asked about one caption.
+from .exhibits import NOTE, exhibits, is_body
+
 # THE caption definition, from one layer down: `crossrefs` classifies by
 # the same regex and is this module's SIBLING, which the layering gate
 # refuses — and rightly, since a second spelling here is the drift that
@@ -78,28 +84,6 @@ CAPTION = re.compile(
     r"^\s*(?:Таблица|Табл\.|Table|Tab\.)\s*(\d+)\s*\.", re.IGNORECASE)
 #: a mention appears anywhere in prose, in any case — «в таблице 5», "Table 5"
 MENTION = re.compile(r"(?:таблиц\w*|table)\s*(\d+)", re.IGNORECASE)
-#: A note BELONGS to the table above it and travels with it.
-#:
-#: The keywords are not enough, and a manuscript proved it: DSI's таблица 4
-#: carries «Примечание. Ориентация…» AND, under it, «* Высокая доля
-#: самостоятельной занятости…» — the gloss on the `*` marking one of its rows.
-#: The keyword-only pattern ended the block at the first note, so the second
-#: was left behind when the table moved, and nothing reported it: an orphaned
-#: note is still a paragraph, so no count changes.
-#:
-#: A LEADING FOOTNOTE MARKER is therefore a note too. The set is deliberately
-#: small — `*`, `†`, `‡` and the `a)` / `1)` forms — because this pattern
-#: decides where a block ENDS, and anything looser starts swallowing prose:
-#: the paragraph after таблица 2 opens «Геометрическая форма не является…»
-#: and must stay behind.
-NOTE = re.compile(
-    r"^\s*(?:(?:Примечание|Источник|Note|Source)\b"
-    r"|[*†‡]"
-    r"|[0-9]{1,2}\)"
-    # the class spans BOTH alphabets on purpose: a Russian manuscript
-    # letters its notes with Cyrillic, an English one with Latin
-    r"|[a-zа-яё]\))", re.IGNORECASE)  # noqa: RUF001
-
 #: the gap below a table block, in points — after the last note, or before the
 #: paragraph that resumes when the table has no note
 GAP_PT = 8.0
@@ -259,7 +243,11 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
             head -= 1
         block = kids[head:j + 1]
         k = j + 1
-        while k < len(kids) and kids[k].tag == W + "p":
+        # A BODY is never absorbed, whatever it looks like: an image is a
+        # paragraph with no text, and without this clause the next
+        # figure's picture travelled with the table's notes.
+        while (k < len(kids) and kids[k].tag == W + "p"
+               and not is_body(kids[k])):
             txt = _text(kids[k]).strip()
             if txt and not note.match(txt):
                 break
@@ -313,21 +301,6 @@ def _caption_re() -> re.Pattern[str]:
     return caption_re()
 
 
-def _is_exhibit_body(el: etree._Element) -> bool:
-    """A table, or a paragraph carrying a drawing rather than words."""
-    if el.tag == W + "tbl":
-        return True
-    # `.find`, not `any(el.iter(...))`: `iter` hands back a GENERATOR,
-    # which is truthy whether or not it will yield anything, so the
-    # `any` form answers True for every paragraph in the document — and
-    # then every caption is its own exhibit body and the table under it
-    # is left behind. Caught by hand before this had a test, which is
-    # the argument for having one.
-    return (el.tag == W + "p"
-            and any(el.find(f".//{W}{t}") is not None
-                    for t in ("drawing", "pict", "object")))
-
-
 def _ends_section(el: etree._Element) -> bool:
     return el.tag == W + "p" and el.find(f"{W}pPr/{W}sectPr") is not None
 
@@ -349,6 +322,11 @@ def exhibit_block(parts: dict[str, bytes], caption: str, *,
     block — which is what makes the section-break paragraph part of it
     rather than a spacer to leave behind.
 
+    The walk itself is `exhibits.exhibits`, since 2026-09-11, which is
+    what lets a figure captioned UNDERNEATH its image (Aging_Well,
+    Parental_style) have a span at all; this asks it about one caption
+    and keeps the refusals a caller can act on.
+
     Read-only. It answers what the span IS and what moving it would
     cost; the caller moves it, because where an exhibit belongs is not
     a question this can be asked.
@@ -368,33 +346,18 @@ def exhibit_block(parts: dict[str, bytes], caption: str, *,
             f"which by passing more of it")
     i = heads[0]
 
-    j = i if _is_exhibit_body(kids[i]) else i + 1
-    while (j < len(kids) and kids[j].tag == W + "p"
-           and not _text(kids[j]).strip() and not _is_exhibit_body(kids[j])):
-        j += 1
-    if j >= len(kids) or not _is_exhibit_body(kids[j]):
+    found = next((x for x in exhibits(body, note=note) if x.caption_at == i),
+                 None)
+    if found is None or found.body_at is None:
         raise PackageError(
-            f"caption {caption!r} has no table or image under it — this "
+            f"caption {caption!r} has no table or image beside it — this "
             f"returns an exhibit's span, and there is no exhibit here")
-
-    # the hoisted bookmarks in front: Word puts a table's bookmarkStart
-    # at BODY level, before the caption. See `_blocks`.
-    head = i
-    while head > 0 and kids[head - 1].tag in (W + "bookmarkStart",
-                                              W + "bookmarkEnd"):
-        head -= 1
-    k = j + 1
-    while k < len(kids) and kids[k].tag == W + "p":
-        txt = _text(kids[k]).strip()
-        if txt and not note.match(txt):
-            break
-        k += 1
-    block = kids[head:k]
+    head, block = found.start, list(found.elements)
 
     content = [el for el in kids if el.tag in (W + "p", W + "tbl")]
     before = kids[head - 1] if head else None
     return Block(
-        caption=_caption_of(block),
+        caption=found.caption[:70],
         elements=block,
         ends_a_section=any(_ends_section(el) for el in block),
         shares_a_page=(before is not None and _ends_section(before)

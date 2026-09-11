@@ -1426,6 +1426,42 @@ def test_a_blank_paragraph_before_a_FIGURE_is_stepped_over_too():
     assert len(block.elements) == 3, [e.tag for e in block.elements]
 
 
+def test_a_block_never_absorbs_the_NEXT_exhibits_image():
+    """An image is a paragraph with no text, and both walks here read
+    "no text" as "a spacer": the table's block took the next figure's
+    picture with its notes, and `place` then moved it. Aging_Well's Box 1
+    and Figure 1, found by the code review of repack's copy of the walk.
+    """
+    doc = parts(P("См. таблицу 1.") + P("Прочая проза.")
+                + P("Таблица 1. Заголовок") + TBL("шапка")
+                + P("Примечание. Что-то.") + DRAW + P("Figure 1. Cap")
+                + P("After."))
+
+    out, _ = placement.place(dict(doc))
+    block = placement.exhibit_block(doc, "Таблица 1.")
+
+    assert order(out) == ["p:См. таблицу 1.", "p:Таблица 1. Заголовок",
+                          "tbl:шапка", "p:Примечание. Что-то.",
+                          "p:Прочая проза.", "p:", "p:Figure 1. Cap",
+                          "p:After."]
+    assert [e.tag.split("}")[1] for e in block.elements] == ["p", "tbl", "p"]
+
+
+def test_exhibit_block_reads_a_figure_captioned_UNDER_its_image():
+    """Aging_Well's and Parental_style's figures: image, hoisted
+    bookmark, caption. The forward-only walk refused every one of them
+    ("no table or image under it"), and each paper hand-rolled the span.
+    """
+    block = placement.exhibit_block(
+        parts(P("Prose.") + DRAW + '<w:bookmarkStart w:id="1" w:name="F1"/>'
+              + P("Figure 1. From resources") + P("") + P("After.")),
+        "Figure 1.")
+
+    assert [e.tag.split("}")[1] for e in block.elements] == [
+        "p", "bookmarkStart", "p", "p"]
+    assert block.caption == "Figure 1. From resources"
+
+
 # `exhibit_block`'s remaining survivors from the 2026-08-21 round,
 # argued rather than pinned:
 #
