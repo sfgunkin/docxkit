@@ -427,6 +427,7 @@ READ_ONLY_COMMANDS = {
     "citations": (), "lint": (), "refstyle": (), "inspect": (),
     "text": (), "probe": (), "count": (), "tasks": (), "smarten": (),
     "figures": (), "fit": (), "authors": (), "linkfix": (), "link": (),
+    "sections": (),
     "crossrefs": ("--audit",), "math": ("--check",),
     "footnotes": ("--check",), "sites": ("Intro paragraph",),
 }

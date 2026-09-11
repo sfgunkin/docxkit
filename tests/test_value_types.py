@@ -62,6 +62,7 @@ VALUES = [
     "repack.Sheet",             # one rendered sheet's fill
     "refstyle.Issue",
     "refstyle.Layout",          # the house rule itself, passed in and read
+    "sections.Heading",         # a heading's number, as the reader sees it
     "refstyle.Style",
     # `revision` is a subpackage since 2026-08-30, so these name the
     # private half each type belongs to rather than one 3,118-line
@@ -107,6 +108,7 @@ ACCUMULATORS = {
     "placement.Placement",
     "placement.PlacementReport",
     "repack.RepackReport",
+    "sections.SectionReport",
     "probe.Probe",
     "refstyle.ConvertReport",
     "refstyle.LayoutReport",

@@ -2755,6 +2755,47 @@ def test_fit_RENDER_through_WORD_reports_the_straddle_and_nothing_else(
     assert code == 2, out
 
 
+# --- `docxkit sections` ------------------------------------------------
+
+def _heading(text: str) -> str:
+    return para('<w:pPr><w:pStyle w:val="Heading1"/></w:pPr>' + run(text))
+
+
+def test_sections_exits_1_on_a_merged_heading_and_names_the_mention(
+        monkeypatch, tmp_path, capsys):
+    """Aging_Well's merge: nine commands exited 0 on it."""
+    from docxkit.package import write_docx
+
+    paper = tmp_path / "merged.docx"
+    write_docx(paper, make_parts(
+        _heading("1. Introduction") + _heading("2. Data")
+        + para(run("Section 3 tests it.")) + _heading("4. Results")))
+
+    code, _ = run_cli(monkeypatch, "sections", str(paper))
+
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "run 1 2 4 — expected 1 2 3" in out
+    assert "Section 3 tests it" in out, "the dangling mention is named"
+    assert "in one pass" in out
+
+
+def test_sections_is_quiet_and_exits_0_on_a_sound_paper(monkeypatch,
+                                                         tmp_path, capsys):
+    from docxkit.package import write_docx
+
+    paper = tmp_path / "sound.docx"
+    write_docx(paper, make_parts(_heading("1. Introduction")
+                                 + para(run("Section 2 follows."))
+                                 + _heading("2. Data")))
+
+    code, _ = run_cli(monkeypatch, "sections", str(paper))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "2 section(s)" in out and "every mention resolves" in out
+
+
 # --- `docxkit repack` --------------------------------------------------
 
 #: a sheet's worth of prose, so a short sheet has something to be short of

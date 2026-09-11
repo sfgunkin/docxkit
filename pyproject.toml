@@ -243,6 +243,8 @@ max-complexity = 20
 # the mention grammar moved here from crossrefs on 2026-09-11, Cyrillic
 # range and en dash included
 "src/docxkit/find.py" = ["RUF001", "RUF002"]
+# a range of sections is written with an en dash, and the grammar says so
+"src/docxkit/sections.py" = ["RUF001", "RUF002"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 # equations maps the Unicode math glyphs themselves to LaTeX commands,
 # and renumber/hygiene document en dashes and curly quotes by showing

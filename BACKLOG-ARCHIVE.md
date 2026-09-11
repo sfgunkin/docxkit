@@ -14,6 +14,46 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S6 — nothing in the toolkit checks a SECTION number, so a merged heading dangles every reference under it~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-11** — the CHECK, which the entry asked to ship first;
+the renumbering that follows a merge is the second half and is not in
+it. `docxkit sections PAPER.docx` and `sections.audit(parts)` read two
+things and cross-check them: the headings (every paragraph
+`find.heading_level` calls one whose text opens on a number — top-level
+1..N in document order, a `K.M` under `K` with the minors 1..M, an
+appendix's `A.N` under its `Appendix A`, whatever the letter, any
+depth), and every mention in the body, footnotes and endnotes (`Section
+N`, `§ N.M`, `Sections X and Y`, `Sections X, Y and Z`, `Sections X to Y`
+/ `through` / `X–Y`, `Appendix A.N`, a bare `A.N` where the paper has
+that appendix). Exit 1 on a breach. Not `crossrefs --labels Section`,
+for the reason the entry gave.
+
+Generalised from `r122` in five places, each a shape it would have
+missed: a list of three (`Sections 2, 3 and 4` — r122 read the first
+two), a dashed range, the `§` form, any appendix letter, headings by
+`outlineLvl` with no Heading style. And a heading's own number is not a
+mention of itself, which the first version counted.
+
+**Measured against the files r122 was proved on**, the same afternoon:
+the merged truth `pre_r121.docx` — **8 breaches**, the hole
+`1 2 3 5 6 7 8 9`, five dangling `Section 4`s and the two ranges ending
+on it, the list r122 printed; the current truth (`c36e0130`, after R123),
+`pre_r117`, `pre_r110` and `_truth` — 0; all **69 redlines** — 0.
+
+**The two lessons kept.** `SectionReport.number_of("A model of
+capability allocation")` reads a section's number off its title, for a
+gate that needs one: the paper's `r64` held the literal 5 and reported
+every display as a breach after the renumbering, the paper right and the
+gate wrong. And the renumber's traps are written into the module's
+docstring where the next port will read them — one pass over the whole
+map, ranges rewritten rather than mapped, a split-run mention refused.
+
+Tests: `tests/test_sections.py` (14), two in `test_cli.py`; the command
+is in the lock sweep.
+
 ### ~~S4 — when Word strips an exhibit's FIRST mention, the apparatus passes re-mint `<key>txt` on a LATER mention, and `link_more` then links the first without moving the marker~~ — FIXED 11.09, `8d62856`
 
 <!-- status: fixed -->

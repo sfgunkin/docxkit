@@ -24,6 +24,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
     docxkit fit PAPER.docx [--render] [--check]
     docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
+    docxkit sections PAPER.docx
     docxkit pages PAPER.docx [--sheets] [--check]
 
 and the single-file revision protocol, which finds its own paths in
@@ -364,6 +365,22 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
     if not _write_document(args.docx, parts, linked, "pre_crossrefs"):
         return 1
     return 0 if report.complete else 1
+
+
+def cmd_sections(args: argparse.Namespace) -> int:
+    """The section numbering and every mention of it; exit 1 on a breach."""
+    from .sections import audit
+
+    report = audit(_package(args.docx, read_only=True))
+    print(Path(args.docx).name)
+    print("  " + report.format().replace("\n", "\n  "))
+    if not report.ok:
+        print("\n  A merged or deleted heading renumbers the sections in the "
+              "reader's head and\n  nowhere in the file. Restore the heading, "
+              "or renumber the headings AND every\n  mention together, in "
+              "one pass: a sequential 5->4, 6->5 cannot tell its own\n  "
+              "output from its input.")
+    return 0 if report.ok else 1
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -2214,6 +2231,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "\"Figure,Table,Box\". Default: "
                         "Figure,Table and the Russian pair")
     p.set_defaults(fn=cmd_crossrefs)
+
+    p = sub.add_parser(
+        "sections",
+        help="the section numbering, and every mention of it: headings "
+             "run 1..N, every 'Section N' resolves (exit 1 on a breach)")
+    p.add_argument("docx")
+    p.set_defaults(fn=cmd_sections)
 
     p = sub.add_parser("inspect", help="structural summary")
     p.add_argument("docx")

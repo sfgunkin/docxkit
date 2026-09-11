@@ -56,6 +56,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `citations` | the grammar, the link audit, and `link_all` — build the whole citation<->entry apparatus document-wide |
 | `refstyle` | reference/citation FORMAT audit against the house author-date style (initials, "(2020).", en-dashes, order, cited↔listed); `HOUSE` and `CHICAGO` presets; `convert` writes the mechanical half back, proving the entry unchanged |
 | `crossrefs` | bidirectional figure/table links, the bookmark convention |
+| `sections` | the section NUMBERING and every mention of it: headings run 1..N, subsections under their parent, `Section N` / `Sections X to Y` / `Appendix A.N` all resolve — the gate a merged heading passed nine commands without; `number_of(title)` for a gate that needs a section, since the number moves and the title stays |
 | `renumber` | shift exhibit numbers: captions, mentions, bookmarks, REF fields, single-pass; and footnote ids back into reference order |
 | `wordcount` | words per bucket (prose/tables/captions/footnotes/references/appendix) for journal caps |
 | `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes and endnotes |
@@ -110,6 +111,7 @@ docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx [--sheets] [--check]
 docxkit fit PAPER.docx [--render] [--check]
 docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
+docxkit sections PAPER.docx               # headings 1..N, every mention resolves; exit 1 on a breach
 docxkit verify PAPER.docx                  # does Word read this back unchanged?
 ```
 

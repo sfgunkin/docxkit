@@ -38,7 +38,7 @@ LAYERS: tuple[tuple[str, ...], ...] = (
      "refstyle", "testing", "repack"),
     ("tables", "crossrefs", "equations", "footnotes", "figures", "ingest",
      "placement"),
-    ("citations", "exhibits"),
+    ("citations", "exhibits", "sections"),
     ("comments", "body", "guard", "hygiene", "authors", "batch"),
     ("edit", "find", "revisions", "styles", "package", "lint", "word"),
     ("_xml", "errors", "console", "timings"),
