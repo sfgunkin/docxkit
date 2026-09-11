@@ -46,47 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — a broken pywin32 cache fails every Word command with `no attribute 'CLSIDToClassMap'`, and the failed start leaves an invisible Word running
-
-<!-- status: open -->
-
-Measured 2026-09-11. `word.session()` raised inside `DispatchEx`:
-
-    AttributeError: module 'win32com.gen_py.00020905-0000-0000-C000-000000000046x0x8x7'
-    has no attribute 'CLSIDToClassMap'
-
-pywin32 keeps its wrapper for Word's type library in
-`%TEMP%\gen_py\3.14\00020905-0000-0000-C000-000000000046x0x8x7`. That
-folder held `Find.py`, `OMath.py`, `OMaths.py` and `Revision.py` but no
-`__init__.py`, which is where `CLSIDToClassMap` is defined. Its newest
-file was from 2026-09-07; how it lost the rest is not established. Until
-the folder goes, every command that drives Word fails the same way —
-`pdf`, `pages`, `locate`, `fit --render`, `revision validate --render` and
-every `-m word` test. Moving it aside fixed it: the next start rebuilt the
-wrapper and eight renders ran.
-
-Two things here are docxkit's:
-
-* **the message names a pywin32 module and nothing else.** The fix is one
-  folder, and nothing in the traceback says which folder, or that removing
-  it is safe;
-* **the failed start leaks a Word.** `DispatchEx` had launched Word before
-  the wrapper failed, so `session()` never held anything to `Quit()`. A
-  `WINWORD.EXE /Automation -Embedding` created at 12:27:19, the second the
-  failed run began, stayed alive with no document until it was ended by
-  PID. Every retry adds another.
-
-Suggested fix, not tried: catch that `AttributeError` in `session()` and
-retry with late binding, which never touches the cache; failing that,
-raise a `DocxKitError` naming `win32com.__gen_path__` and the folder.
-Either way, end the automation Word that a failed dispatch started. No
-handle exists, so it has to be matched by command line and by a start
-time after the call began.
-
-Workaround in use: move the folder aside, and end the orphan by PID after
-checking both. Never end a Word started with `/restore` (the author's) or
-with `-Embedding` alone (another program's).
-
 ### S6 — nothing in the toolkit checks a SECTION number, so a merged heading dangles every reference under it
 
 <!-- status: open -->

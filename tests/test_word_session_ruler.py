@@ -947,3 +947,138 @@ def test_a_REAL_hidden_Word_is_killed_by_pid_on_expiry():
 
     assert pid > 0 and pid not in W._winword_pids()
     assert W._WATCHDOG == []
+
+
+# --------------------------------------- a broken pywin32 wrapper cache ---
+#
+# 2026-09-11 (backlog S4): pywin32's generated wrapper for Word's type
+# library, under `win32com.__gen_path__`, had lost its `__init__.py`, so
+# every `DispatchEx` raised `AttributeError: module 'win32com.gen_py.…'
+# has no attribute 'CLSIDToClassMap'` and every Word command with it.
+# COM had started Word before the wrapper failed, and `session` held
+# nothing to quit: a `WINWORD.EXE /Automation -Embedding` with no
+# document survived each attempt.
+
+_BROKEN = ("module 'win32com.gen_py.00020905-0000-0000-C000-000000000046"
+           "x0x8x7' has no attribute 'CLSIDToClassMap'")
+
+
+def _broken_cache(monkeypatch, tmp_path, word: FakeWord, failures: int):
+    """DispatchEx fails `failures` times with the cache message; the
+    cache folder is on disk; the orphan query and the kill are faked."""
+    gen = tmp_path / "gen_py" / "3.14"
+    folder = gen / "00020905-0000-0000-C000-000000000046x0x8x7"
+    folder.mkdir(parents=True)
+    (folder / "Find.py").write_text("# half a wrapper\n")
+    sys.modules["win32com"].__gen_path__ = str(gen)   # type: ignore[attr-defined]
+    attempts: list[str] = []
+
+    def DispatchEx(prog_id: str) -> FakeWord:
+        attempts.append(prog_id)
+        if len(attempts) <= failures:
+            raise AttributeError(_BROKEN)
+        return word
+
+    monkeypatch.setattr(sys.modules["win32com.client"], "DispatchEx",
+                        DispatchEx)
+    rebuilt: list[int] = []
+    gencache = types.SimpleNamespace(
+        Rebuild=lambda verbose=0: rebuilt.append(verbose))
+    monkeypatch.setitem(sys.modules, "win32com.client.gencache", gencache)
+    killed: list[int] = []
+    monkeypatch.setattr(W, "_automation_words_since", lambda since: [4242])
+    monkeypatch.setattr(W, "_kill", killed.append)
+    return types.SimpleNamespace(attempts=attempts, rebuilt=rebuilt,
+                                 killed=killed, folder=folder, gen=gen)
+
+
+def test_a_broken_wrapper_cache_is_rebuilt_and_the_leaked_Word_is_ended(
+        com, monkeypatch, tmp_path):
+    word = com(FakeWord())
+    state = _broken_cache(monkeypatch, tmp_path, word, failures=1)
+
+    with W.session() as got:
+        assert got is word
+
+    assert state.attempts == ["Word.Application"] * 2, "retried once"
+    assert not state.folder.exists() and state.gen.exists(), \
+        "the broken folder goes; the cache root stays"
+    assert state.rebuilt == [0]
+    assert state.killed == [4242], "the Word the failed start left"
+    assert word.quits == 1
+
+
+def test_a_cache_that_stays_broken_is_a_DocxKitError_naming_the_folder(
+        com, monkeypatch, tmp_path):
+    """The traceback named a pywin32 module and nothing else; the fix is
+    one folder, and the refusal has to say which."""
+    word = com(FakeWord())
+    state = _broken_cache(monkeypatch, tmp_path, word, failures=2)
+
+    with pytest.raises(DocxKitError, match=r"Move .*gen_py") as info, \
+            W.session():
+        pass
+
+    assert str(state.gen) in str(info.value)
+    assert state.killed == [4242, 4242], "one leaked Word per attempt"
+    assert word.quits == 0, "nothing was ever handed out"
+
+
+def test_an_AttributeError_that_is_not_the_cache_passes_through(
+        com, monkeypatch):
+    com(FakeWord())
+
+    def DispatchEx(prog_id: str) -> FakeWord:
+        raise AttributeError("'NoneType' object has no attribute 'Visible'")
+
+    monkeypatch.setattr(sys.modules["win32com.client"], "DispatchEx",
+                        DispatchEx)
+
+    with pytest.raises(AttributeError, match="NoneType"), W.session():
+        pass
+
+
+def test_the_orphan_query_keeps_automation_servers_started_SINCE(monkeypatch):
+    """By start time AND command line: an interactive Word carries
+    `/restore` or nothing, and a server another program started before
+    the call is not this call's."""
+    listing = "\n".join([
+        r"100|1700000010|C:\Office\WINWORD.EXE /Automation -Embedding",
+        r"200|1700000010|C:\Office\WINWORD.EXE /restore",
+        r"300|1600000000|C:\Office\WINWORD.EXE /Automation -Embedding",
+        r"400|1700000010|C:\Office\WINWORD.EXE -Embedding",
+        "not a process line",
+    ])
+    monkeypatch.setattr(W.subprocess, "run",
+                        lambda *_a, **_k: types.SimpleNamespace(
+                            stdout=listing))
+
+    assert W._automation_words_since(1700000000.7) == [100]
+
+
+def test_the_folder_is_read_out_of_the_message(monkeypatch):
+    parent = types.ModuleType("win32com")
+    parent.__gen_path__ = r"C:\Temp\gen_py\3.14"     # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "win32com", parent)
+
+    named = W._broken_wrapper(AttributeError(_BROKEN))
+    whole = W._broken_wrapper(AttributeError("win32com.gen_py is broken"))
+
+    assert named is not None and named.name.startswith("00020905-")
+    assert whole == Path(r"C:\Temp\gen_py\3.14")
+    assert W._broken_wrapper(AttributeError("no attribute 'Visible'")) is None
+
+
+@pytest.mark.word
+def test_a_REAL_automation_Word_is_seen_by_the_orphan_query():
+    """The query against the real thing: the session's own hidden
+    instance, started after `since`, is in the list, and nothing older
+    is. The kill is `_kill`, already proven on expiry above."""
+    since = time.time()
+
+    with W.session(deadline=60.0, doing="the orphan query") as _word:
+        pid = W._WATCHDOG[0].pid
+        found = W._automation_words_since(since)
+
+    assert pid in found, (pid, found)
+    assert not W._automation_words_since(time.time() + 3600)

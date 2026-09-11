@@ -14,6 +14,46 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — a broken pywin32 cache fails every Word command with `no attribute 'CLSIDToClassMap'`, and the failed start leaves an invisible Word running~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-11.** `session()` catches the `AttributeError` out of
+`DispatchEx`, and only that one: `_broken_wrapper` reads the folder out
+of the message (`win32com.gen_py.<typelib>x<lcid>x<major>x<minor>`)
+under `win32com.__gen_path__`, and an `AttributeError` that does not
+name `gen_py` is re-raised untouched. Then, in order:
+
+1. **the leaked Word is ended.** `_automation_words_since(since)` lists
+   `WINWORD.EXE` through CIM with its start time and command line —
+   `tasklist` has neither — and keeps the ones started at or after the
+   `time.time()` taken before `DispatchEx` whose command line carries
+   `/Automation`; an interactive Word has `/restore` or nothing, and
+   another program's server was started before the call. Proven against
+   the real thing (`-m word`): the session's own hidden instance is in
+   the list, nothing older is;
+2. **the broken folder goes and the cache is rebuilt** — `rmtree`, the
+   `win32com.gen_py.*` entries dropped from `sys.modules`,
+   `gencache.Rebuild()` — which is the remedy that worked by hand;
+3. **`DispatchEx` once more.** If that fails too, the second leak is
+   ended the same way and the refusal is a `DocxKitError` that names
+   `win32com.__gen_path__` and says the folder is a cache the next start
+   regenerates. The traceback had named a pywin32 module and nothing
+   else.
+
+Not late binding. A dynamically dispatched Word would never read the
+cache, but whether pywin32's `dynamic` wrapper takes the keyword
+arguments `open_doc` and `compare_documents` pass was not measured, and
+a session that starts and then fails on `ReadOnly=` is worse than one
+that says the cache is broken.
+
+Tests: the cache message with `DispatchEx` failing once (folder removed,
+cache rebuilt, one kill, the session works) and twice (two kills, the
+error names the folder), an `AttributeError` of another kind passing
+through, the orphan query's time-and-command-line filter on a canned
+listing, the folder read out of the message, and the query against a
+real hidden Word.
+
 ### ~~S1 — `compare` and `revision ingest` cannot see a paragraph's LEADING space, so an edit that prints as an indent passes `--expect-clean`~~ — FIXED 11.09, `d411fe9`
 
 <!-- status: fixed -->

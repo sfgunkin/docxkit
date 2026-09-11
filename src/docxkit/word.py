@@ -28,8 +28,10 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 import zipfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
@@ -197,6 +199,95 @@ def _kill(pid: int) -> None:
                    capture_output=True, text=True, check=False)
 
 
+_GEN_PY_RE = re.compile(r"win32com\.gen_py\.([0-9A-Fa-f-]+x\d+x\d+x\d+)")
+
+
+def _broken_wrapper(exc: BaseException) -> Path | None:
+    """The `gen_py` folder an `AttributeError` out of `DispatchEx` names,
+    or None when the error is not that one.
+
+    pywin32 keeps a generated wrapper for Word's type library under
+    `win32com.__gen_path__`, one folder per library. That folder was
+    found holding `Find.py`, `OMath.py`, `OMaths.py` and `Revision.py`
+    and no `__init__.py` — where `CLSIDToClassMap` is defined — so every
+    `DispatchEx` raised
+
+        AttributeError: module 'win32com.gen_py.00020905-…x0x8x7' has no
+        attribute 'CLSIDToClassMap'
+
+    and every Word command with it: `pdf`, `pages`, `locate`, `fit
+    --render`, `revision validate --render`, the `-m word` tests
+    (2026-09-11, backlog S4). How it lost the rest was not established;
+    moving the folder aside fixed it, and the next start regenerated it.
+    The message names the module and nothing else, so the folder is
+    read out of it here. A `gen_py` failure that does not name a folder
+    is the whole cache's.
+    """
+    text = str(exc)
+    if "gen_py" not in text:
+        return None
+    import win32com
+
+    root = Path(win32com.__gen_path__)
+    m = _GEN_PY_RE.search(text)
+    return root / m.group(1) if m else root
+
+
+def _automation_words_since(since: float) -> list[int]:
+    """WINWORD processes started as automation servers at or after
+    `since` (a `time.time()`), by pid.
+
+    The one a failed `DispatchEx` leaves behind: COM had launched Word
+    before pywin32's wrapper failed, so `session` held nothing to
+    `Quit()`, and a `WINWORD.EXE /Automation -Embedding` with no
+    document sat there until it was ended by hand — one more on every
+    retry. The command line tells it apart: an interactive Word carries
+    `/restore` or nothing, and another program's server was started
+    before `since`. Read through CIM, because `tasklist` reports neither
+    a start time nor a command line.
+    """
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name='WINWORD.EXE'\" | "
+        "ForEach-Object { $t = [DateTimeOffset]::new((Get-Date "
+        "$_.CreationDate)).ToUnixTimeSeconds(); "
+        "\"$($_.ProcessId)|$t|$($_.CommandLine)\" }")
+    done = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                          capture_output=True, text=True, check=False)
+    out: list[int] = []
+    for line in done.stdout.splitlines():
+        pid, _, rest = line.partition("|")
+        started, _, cmd = rest.partition("|")
+        if (pid.isdigit() and started.isdigit()
+                and int(started) >= int(since) and "/Automation" in cmd):
+            out.append(int(pid))
+    return out
+
+
+def _restart_after_broken_cache(com: Any, folder: Path, since: float) -> Any:
+    """`DispatchEx` again, with the broken wrapper gone and the Word the
+    failed start leaked ended — or a :class:`DocxKitError` that names
+    the cache, which the traceback never did."""
+    for pid in _automation_words_since(since):
+        _kill(pid)
+    shutil.rmtree(folder, ignore_errors=True)
+    for name in [m for m in sys.modules if m.startswith("win32com.gen_py")]:
+        del sys.modules[name]
+    with contextlib.suppress(Exception):
+        from win32com.client import gencache
+        gencache.Rebuild(verbose=0)
+    again = time.time()
+    try:
+        return com.DispatchEx("Word.Application")
+    except AttributeError as still:
+        for pid in _automation_words_since(again):
+            _kill(pid)
+        raise DocxKitError(
+            f"Word could not be started: pywin32's generated wrapper for "
+            f"its type library is broken, and rebuilding it did not help "
+            f"({still}). Move {folder.parent} aside — it is a cache, and "
+            f"the next start regenerates it — and retry.") from still
+
+
 class _Watchdog:
     """The ceiling on one hidden Word: its pid, a timer, and whether the
     timer fired.
@@ -349,7 +440,17 @@ def session(*, fast: bool = True, deadline: float | None = None,
     before = _winword_pids() if deadline else frozenset()
     with _suppress_com("CoInitialize"):
         pythoncom.CoInitialize()
-    word = com.DispatchEx("Word.Application")
+    since = time.time()
+    try:
+        word = com.DispatchEx("Word.Application")
+    except AttributeError as exc:
+        # pywin32's wrapper cache, not Word: COM has already started an
+        # instance by the time the wrapper fails, and nothing here held
+        # it. See `_broken_wrapper`.
+        folder = _broken_wrapper(exc)
+        if folder is None:
+            raise
+        word = _restart_after_broken_cache(com, folder, since)
     word.Visible = False
     word.DisplayAlerts = 0
     saved = {}
