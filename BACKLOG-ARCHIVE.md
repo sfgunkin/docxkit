@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — a back-link marker that has left its link passes every gate~~ — FIXED 12.09
+### ~~S2 — a back-link marker that has left its link passes every gate~~ — FIXED 12.09, `ef5364a`
 
 <!-- status: fixed -->
 
