@@ -2689,6 +2689,72 @@ def test_fit_RENDER_reports_a_table_that_STRADDLES_two_sheets(monkeypatch,
     assert "starts on sheet 2 and ends on sheet 3" in out
 
 
+@pytest.mark.word
+def test_fit_RENDER_through_WORD_reports_the_straddle_and_nothing_else(
+        monkeypatch, tmp_path, capsys):
+    """The one `--render` test that reads a page Word laid out. Every
+    other one stubs `page_texts`, and a stub is a claim about what a
+    render says — three of those claims were wrong, and the manuscripts
+    are what showed it.
+
+    * Table 1 is whole, and its last row is BLANK: a probe of nothing,
+      found on no sheet, read as UNMEASURED.
+    * Table 2 is too tall for any sheet, and its caption is set with a
+      TAB, which the caption's `w:t` text does not carry.
+    * Table 3 is whole, opens on Table 1's header row, and its full
+      caption is quoted in the prose on sheet 1 — HCW's Tables 6 and 7,
+      which the first match read as starting there.
+
+    Table 2's straddle is the only true finding."""
+    pytest.importorskip("pymupdf", reason="needs docxkit[pdf]")
+    from docxkit.body import table
+    from docxkit.package import read_parts, write_docx
+    from docxkit.placement import place
+
+    shell = next((p for p in pathlib.Path(r"F:\OneDrive\__Documents")
+                  .glob("*.docx") if not p.name.startswith("~$")), None)
+    if shell is None:
+        pytest.skip("no real .docx available as a package shell")
+
+    page_break = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+    quoted = "Table 3. Estimates by group and year"
+    body = (para(run(f"Section 5 returns to {quoted}.")) + page_break
+            + para(run("Table 1 reports the estimates."))
+            + para(run("Table 1. Estimates by group"))
+            + table(["Group", "Estimate"],
+                    [["Men", "0.123"], ["Women", "0.456"], ["", ""]],
+                    require_style=False)
+            + para(run("Table 2 lists every group."))
+            + para(run("Table 2.") + "<w:r><w:tab/></w:r>"
+                   + run("Every group"))
+            + table(["Group", "Value"],
+                    [[f"Group {k}", f"{k}.0"] for k in range(1, 121)],
+                    require_style=False)
+            + page_break
+            + para(run("Table 3 closes the section."))
+            + para(run(quoted))
+            + table(["Group", "Estimate"],
+                    [["Men", "0.789"], ["Women", "0.321"]],
+                    require_style=False))
+    parts = read_parts(shell)
+    doc = parts["word/document.xml"].decode("utf-8")
+    at = doc.index("<w:body>") + len("<w:body>")
+    parts["word/document.xml"] = (doc[:at] + body
+                                  + doc[doc.rindex("</w:body>"):]).encode()
+    parts, _ = place(parts, move=False)
+    paper = tmp_path / "three_tables.docx"
+    write_docx(paper, parts)
+
+    code, _ = run_cli(monkeypatch, "fit", str(paper), "--render", "--check")
+
+    out = capsys.readouterr().out
+    found = [line.strip() for line in out.splitlines()
+             if line.strip().startswith("! ")]
+    assert len(found) == 1 and found[0].startswith("! table 2 ("), out
+    assert "ends on sheet" in found[0], out
+    assert code == 2, out
+
+
 # --- `docxkit repack` --------------------------------------------------
 
 #: a sheet's worth of prose, so a short sheet has something to be short of

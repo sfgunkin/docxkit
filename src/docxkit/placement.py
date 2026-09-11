@@ -36,6 +36,7 @@ language it is reading.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
@@ -215,6 +216,10 @@ def _row_text(row: etree._Element) -> str:
     A single-column table has no cell boundary to lose, which is why the
     render path looked like it worked: boxes measured, and every real
     paper table skipped the measurement in silence.
+
+    Matching has been whitespace-free since `_flat`, so the separator no
+    longer decides whether a row is found. It still decides where the
+    forty-character probe is cut.
     """
     return " ".join(_text(tc) for tc in row.findall(W + "tc"))
 
@@ -719,13 +724,11 @@ def audit(parts: dict[str, bytes], *,
 
     if render is not None:
         report.rendered = True
-        sheets = render(parts)
+        found = _locate_tables(render(parts), blocks)
         for number, block in sorted(blocks.items()):
             tbl = next((e for e in block if e.tag == W + "tbl"), None)
             rows = tbl.findall(W + "tr") if tbl is not None else []
-            first = _sheet_of(sheets, _caption_of(block)[:40])
-            last = (_sheet_of(sheets, _row_text(rows[-1]).strip()[:40],
-                              (first or 1) - 1) if rows and first else None)
+            first, last = found[number]
             if first and last and last != first:
                 report.findings.append(FitFinding(
                     number, _caption_of(block), "straddles",
@@ -838,12 +841,128 @@ def place(parts: dict[str, bytes], *,
     return parts, report
 
 
+#: How much of a caption, a row or a mention is looked for on a sheet: its
+#: first forty characters as the MARKUP spells them, cut before whitespace
+#: is removed. The tail is where a renderer's line break or hyphenation lands.
+_PROBE = 40
+
+
+def _flat(text: str) -> str:
+    """`text` with no whitespace at all: the only spelling the markup and
+    the rendered page share.
+
+    A render puts whitespace where the markup has none. LE_trends' Table 1
+    ends on a narrow cell holding `Japan 1966-2000 (34y)`; Word wrapped it
+    after the hyphen, and the page text reads `Japan 1966-` then
+    `2000 (34y)`. Collapsing runs of whitespace, which this module did,
+    keeps that break as a space the markup does not have, so the row was
+    found on no sheet, and a table whole on sheet 4 was reported
+    UNMEASURED: exit 2 from `fit --render --check`.
+
+    The markup also lacks whitespace the page has. A caption set with a
+    tab is `Table 2.` and `Every group` in `w:t`, the tab an element of
+    its own; Word's page puts a gap there, the caption was found on no
+    sheet, and a table straddling two sheets produced no finding at all
+    (measured through Word by
+    `test_fit_RENDER_through_WORD_reports_the_straddle_and_nothing_else`).
+    """
+    return "".join(text.split())
+
+
 def _sheet_of(sheets: list[str], needle: str, start: int = 0) -> int | None:
-    needle = " ".join(needle.split())
+    needle = _flat(needle)
     for i in range(start, len(sheets)):
-        if needle and needle in " ".join(sheets[i].split()):
+        if needle and needle in _flat(sheets[i]):
             return i + 1
     return None
+
+
+def _flow(sheets: list[str]) -> tuple[str, list[int]]:
+    """Every sheet flattened into one string, and where each one starts."""
+    flats = [_flat(sheet) for sheet in sheets]
+    starts: list[int] = []
+    at = 0
+    for flat in flats:
+        starts.append(at)
+        at += len(flat)
+    return "".join(flats), starts
+
+
+def _sheet_at(starts: list[int], pos: int) -> int:
+    """The 1-based sheet that position `pos` of the flowed text is on."""
+    return bisect_right(starts, pos)
+
+
+def _position(block: list[etree._Element]) -> int:
+    parent = block[0].getparent()
+    return parent.index(block[0]) if parent is not None else 0
+
+
+def _locate(text: str, starts: list[int], block: list[etree._Element],
+            cursor: int) -> tuple[int | None, int | None, int]:
+    """One table in the flowed render: (caption sheet, last sheet, cursor).
+
+    **The caption is the occurrence the table's rows follow most
+    closely**, not the first one. HCW's prose on sheet 13 quotes the full
+    captions of Tables 6 and 7; the first sheet carrying that text was
+    taken as each table's, and both read "starts on sheet 13 and ends on
+    sheet 29" (and 30) — whole tables, exit 2. A List of Tables would do
+    the same to every table. Nor can the first row say which table it
+    is: five of HCW's tables open on the same header row. So each
+    occurrence is measured against the distance to the table's first row
+    with text, or to its last where the first is not on the page.
+
+    **The end is the last row WITH text.** A blank last row is a probe of
+    nothing, found on no sheet, and was read as UNMEASURED.
+
+    A caption whose text is on no sheet answers (None, None), as before.
+    The next table's search starts at the returned cursor.
+    """
+    caption = _flat(_caption_of(block)[:_PROBE])
+    tbl = next((e for e in block if e.tag == W + "tbl"), None)
+    rows = [t for t in (_row_text(r).strip() for r in
+                        (tbl.findall(W + "tr") if tbl is not None else []))
+            if t]
+    first = _flat(rows[0][:_PROBE]) if rows else ""
+    last = _flat(rows[-1][:_PROBE]) if rows else ""
+
+    best: tuple[int, int, int] | None = None        # (gap, caption, body)
+    at = text.find(caption, cursor) if caption else -1
+    while at >= 0:
+        after = at + len(caption)
+        body = text.find(first, after) if first else -1
+        if body < 0 and last:
+            body = text.find(last, after)
+        gap = body - after if body >= 0 else len(text)
+        if best is None or gap < best[0]:
+            best = (gap, at, body)
+        at = text.find(caption, after)
+    if best is None:
+        return None, None, cursor
+
+    _, at, body = best
+    start = body if body >= 0 else at + len(caption)
+    end = text.find(last, start) if last else -1
+    if end < 0:
+        return _sheet_at(starts, at), None, start
+    stop = end + len(last)
+    return _sheet_at(starts, at), _sheet_at(starts, stop - 1), stop
+
+
+def _locate_tables(sheets: list[str],
+                   blocks: dict[int, list[etree._Element]],
+                   ) -> dict[int, tuple[int | None, int | None]]:
+    """`_locate` for every table, in the order the document now holds
+    them. Each search starts where the table before it ended, so text
+    quoted before that point is never a candidate."""
+    text, starts = _flow(sheets)
+    found: dict[int, tuple[int | None, int | None]] = {}
+    cursor = 0
+    for number, block in sorted(blocks.items(),
+                                key=lambda item: _position(item[1])):
+        first, last, cursor = _locate(text, starts, block, cursor)
+        found[number] = (first, last)
+    return found
 
 
 def _measure_and_fix(report: PlacementReport,
@@ -865,34 +984,21 @@ def _measure_and_fix(report: PlacementReport,
     """
     sheets = render(parts)
     fixed = False
+    found = _locate_tables(sheets, blocks)
     for pl in report.placements:
         block = blocks[pl.number]
-        pl.caption_sheet = _sheet_of(sheets, _caption_of(block)[:40])
-        tbl = next((e for e in block if e.tag == W + "tbl"), None)
-        if tbl is not None and pl.caption_sheet:
-            rows = tbl.findall(W + "tr")
-            if rows:
-                pl.last_sheet = _sheet_of(
-                    sheets, _row_text(rows[-1]).strip()[:40],
-                    pl.caption_sheet - 1)
+        pl.caption_sheet, pl.last_sheet = found[pl.number]
         if pl.anchor_text:
-            pl.mention_sheet = _sheet_of(sheets, pl.anchor_text[:40])
+            pl.mention_sheet = _sheet_of(sheets, pl.anchor_text[:_PROBE])
         if pl.split:
             own_page(block)
             pl.own_page, fixed = True, True
 
     if fixed:
         freeze()
-        sheets = render(parts)
+        found = _locate_tables(render(parts), blocks)
         for pl in report.placements:
-            block = blocks[pl.number]
-            pl.caption_sheet = _sheet_of(sheets, _caption_of(block)[:40])
-            tbl = next((e for e in block if e.tag == W + "tbl"), None)
-            rows = tbl.findall(W + "tr") if tbl is not None else []
-            if rows and pl.caption_sheet:
-                pl.last_sheet = _sheet_of(
-                    sheets, _row_text(rows[-1]).strip()[:40],
-                    pl.caption_sheet - 1)
+            pl.caption_sheet, pl.last_sheet = found[pl.number]
 
     for pl in report.placements:
         if pl.unmeasured:

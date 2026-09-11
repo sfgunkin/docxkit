@@ -1052,13 +1052,14 @@ def test_a_body_of_THREE_HUNDRED_children_walks_off_neither_end():
 
 
 def test_a_table_OWN_PAGE_fixed_is_not_reported_as_still_splitting():
-    """The second measurement, after the fix — `_sheet_of(..., start=
-    pl.caption_sheet - 1)`. The start is the caption's own sheet, in
-    0-based terms, and all three arithmetic readings of that expression
-    put it somewhere else: `% 1` and `& 1` start at the top of the
-    document, where a row's value quoted in the prose matches first,
-    and `* 1` starts one sheet LATE, where the row on the caption's own
-    sheet is no longer visible and the answer is None.
+    """The second measurement, after the fix. The table's end is searched
+    from the table's own first row, never from the top of the document,
+    where a row's value quoted in the prose matches first. That was
+    `_sheet_of(..., start=pl.caption_sheet - 1)` until `_locate` replaced
+    it, and the arithmetic readings of that expression each put the start
+    somewhere else: `% 1` and `& 1` at the top of the document, `* 1` one
+    sheet LATE, where the row on the caption's own sheet is no longer
+    visible and the answer is None.
 
     Every one of them turns a table that own_page FIXED into a problem
     line — "still splits across sheets 2-1", or 2-None. The paper then
@@ -1190,8 +1191,9 @@ def test_a_TABLE_that_mentions_the_table_is_not_the_anchor():
 
 
 def test_the_row_and_the_MENTION_are_matched_on_forty_characters_too():
-    """The caption's cut has a test; the other two keys handed to
-    `_sheet_of` did not. All three are cut for the same reason — a
+    """The caption's cut has a test; the other two keys — the last row,
+    found now by `_locate`, and the mention, by `_sheet_of` — did not.
+    All three are cut for the same reason — a
     renderer lays text out its own way, and the tail is where a line
     break or a hyphenation lands — and cutting longer turns "found on
     sheet 2" into "not found", which reads as a table that split
@@ -1618,3 +1620,103 @@ def test_a_table_the_render_cannot_LOCATE_is_said_so_not_passed():
 
     assert any(f.kind == "end not found" for f in report.findings), \
         report.format()
+
+
+def rendered(report):
+    """The findings only a render can make."""
+    return [f for f in report.findings
+            if f.kind in ("straddles", "end not found")]
+
+
+#: HCW's shape: two tables opening on the SAME header row
+HEAD = ("Country", "Year", "Rate")
+QUOTED = "Table 2. Trends in mortality rates"
+QUOTING = parts(P(f"As {QUOTED} shows, rates fell.")
+                + P("Table 1. Levels") + WIDE(HEAD, ("Serbia", "2017", "0.03"))
+                + P(QUOTED) + WIDE(HEAD, ("Sweden", "2017", "0.02")))
+
+
+def test_a_caption_QUOTED_in_earlier_prose_is_not_where_its_table_starts():
+    """HCW, measured on a render: the prose on sheet 13 quotes the full
+    captions of Tables 6 and 7, and the first sheet carrying a caption's
+    text was taken as its table's. Both tables sat whole on their own
+    sheets and read "starts on sheet 13 and ends on sheet 29" — exit 2
+    from `fit --render --check`, and `place` giving each a page break.
+    Both tables here open on one header row, as five of HCW's do, so the
+    row alone cannot say which table it is."""
+    def render(_parts):
+        return [f"As {QUOTED} shows, rates fell.",
+                "Table 1. Levels Country Year Rate Serbia 2017 0.03",
+                "prose", "prose",
+                f"{QUOTED} Country Year Rate Sweden 2017 0.02"]
+
+    assert rendered(placement.audit(QUOTING, render=render)) == []
+
+    _out, rep = placement.place(QUOTING, render=render, move=False)
+    table2 = next(p for p in rep.placements if p.number == 2)
+    assert (table2.caption_sheet, table2.last_sheet) == (5, 5)
+    assert not table2.own_page, "a whole table must not be given a page"
+
+
+def test_a_QUOTED_caption_does_not_hide_the_straddle_of_the_real_one():
+    """The other half, so the fix cannot pass by reporting less:
+    LE_trends' real straddles have to survive it."""
+    def render(_parts):
+        return [f"As {QUOTED} shows, rates fell.",
+                "Table 1. Levels Country Year Rate Serbia 2017 0.03",
+                "prose",
+                f"{QUOTED} Country Year Rate",
+                "Sweden 2017 0.02"]
+
+    (straddle,) = rendered(placement.audit(QUOTING, render=render))
+    assert straddle.number == 2
+    assert straddle.detail == "it starts on sheet 4 and ends on sheet 5"
+
+
+def test_a_row_Word_WRAPPED_inside_its_cell_is_found_on_its_sheet():
+    """LE_trends, measured: Table 1 ends on a narrow cell holding
+    `Japan 1966-2000 (34y)`, and the page text reads `Japan 1966-` then
+    `2000 (34y)`. Collapsing whitespace kept that break as a space the
+    markup does not have; the table sat whole on sheet 4 and was reported
+    UNMEASURED."""
+    doc = parts(P("Table 1. Duration")
+                + WIDE(("Start", "N", "Longest"),
+                       ("70-75", "8", "Japan 1966-2000 (34y)")))
+
+    def render(_parts):
+        return ["prose", "prose", "prose",
+                "Table 1. Duration\nStart \nN \nLongest \n70-75 \n8 \n"
+                "Japan 1966-\n2000 (34y) \n"]
+
+    assert rendered(placement.audit(doc, render=render)) == []
+
+
+def test_a_BLANK_last_row_is_not_an_end_the_render_cannot_find():
+    """A probe of nothing is found on no sheet, so a whole table whose
+    last row is empty was reported UNMEASURED: exit 2 on a healthy
+    document."""
+    doc = parts(P("Table 1. Heading")
+                + WIDE(("Capability", "Source"), ("Health", "Nussbaum"),
+                       ("", "")))
+
+    def render(_parts):
+        return ["prose", "prose",
+                "Table 1. Heading Capability Source Health Nussbaum"]
+
+    assert rendered(placement.audit(doc, render=render)) == []
+
+
+def test_a_caption_set_with_a_TAB_is_found_and_its_straddle_reported():
+    """`w:t` carries no tab, so the caption reads `Table 1.Heading` in the
+    markup and `Table 1. Heading` on the page, and was found on no sheet:
+    no finding at all for a table that straddles."""
+    doc = parts("<w:p><w:r><w:t>Table 1.</w:t><w:tab/><w:t>Heading</w:t>"
+                "</w:r></w:p>"
+                + WIDE(("Capability", "Source"), ("Health", "Nussbaum")))
+
+    def render(_parts):
+        return ["prose", "Table 1. Heading Capability Source",
+                "Health Nussbaum"]
+
+    (straddle,) = rendered(placement.audit(doc, render=render))
+    assert straddle.detail == "it starts on sheet 2 and ends on sheet 3"

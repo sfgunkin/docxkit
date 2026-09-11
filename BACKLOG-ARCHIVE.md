@@ -14,6 +14,63 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `fit --render` placed a table by the FIRST sheet carrying its caption's text: false straddles on whole tables, and a tab-set caption's real straddle never reported~~ — FIXED 11.09
+<!-- status: fixed -->
+
+**Fixed 2026-09-11.** `placement` locates every table through one
+function, `_locate`, which `audit` (`fit --render`) and `place(render=…)`
+now share. Three changes, each measured before it was made:
+
+* **the caption is the occurrence its table's rows follow most closely**,
+  not the first sheet carrying its text. HCW's prose on sheet 13 quotes
+  the full captions of Tables 6 and 7; both tables sat whole on sheets 29
+  and 30 and read "starts on sheet 13 and ends on sheet 29" (and 30). Five
+  of HCW's tables open on one header row, so the first row cannot name its
+  table either. Tables are located in document order, each search starting
+  where the previous table ended;
+* **matching removes all whitespace from both sides.** LE_trends' Table 1
+  ends on a narrow cell, `Japan 1966-2000 (34y)`, which Word wrapped after
+  the hyphen: the page text reads `Japan 1966-` then `2000 (34y)`. The
+  collapsed space was never in the markup, so a table whole on sheet 4
+  read UNMEASURED. The same change finds a caption set with a tab, which
+  `w:t` does not carry;
+* **the end is the last row with text.** A blank last row was a probe of
+  nothing, found on no sheet, and read as UNMEASURED.
+
+Found by the code review of `a90be3a`. Wiring `page_texts` into `fit
+--render` made the render branch of `placement.audit` live for the first
+time, and that branch had never read a real page. The entry below fixed
+the wiring and shipped the gate in this state.
+
+**Measured on real renders, not only fixtures.** Eight manuscripts were
+rendered through Word once, and the audit ran on the saved page text
+before and after, so both runs read the same sheets:
+
+    HCW         9 findings -> 7   both false straddles gone
+    LE_trends  23 findings -> 22  Table 1's UNMEASURED gone; the four real
+                                  straddles (Tables 2, 4, 5, 6) unchanged,
+                                  on the same sheets
+    AFI 5, HPPA 0, Aging_Well 0   unchanged
+    Parental, LI, LE              no table matches the default caption
+
+What remains on HCW and LE_trends is true: rows without `cantSplit` or
+`keepNext`, and LE_trends' four straddles.
+
+`test_fit_RENDER_through_WORD_reports_the_straddle_and_nothing_else`
+(`tests/test_cli.py`, `-m word`) builds all three shapes into one package
+and runs `fit --render --check` through the real `page_texts`. Before the
+fix it reported Table 1 UNMEASURED and Table 3 as starting on sheet 1, and
+said nothing about Table 2: the tab-set caption was found on no sheet, so
+its straddle went unreported. After the fix it reports Table 2's straddle
+and nothing else. Five unit tests in `test_placement.py` hold the same
+shapes without Word, and all five failed first.
+
+**Limit, kept:** a last row whose first forty characters repeat an
+earlier row of the same table ends the search at the earlier one, which
+can miss a straddle. Taking the last occurrence instead would reach into
+later tables that end on the same row, and a false straddle is the
+failure this entry closes.
+
 ### ~~S3 — `fit --render` cannot report a straddle: it hands `audit` formatted rows, not page text~~ — FIXED 10.09, `a90be3a`
 <!-- status: fixed -->
 
