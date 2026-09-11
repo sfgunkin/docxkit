@@ -601,3 +601,70 @@ def test_reading_the_session_does_not_BLOCK_deleting_it(tmp_path):
     session.unlink()               # raises WinError 32 with a handle open
 
     assert not session.exists()
+
+
+# --- a MUTANT of the isolation cannot reach the author's profile --------
+
+
+def test_a_mutant_that_IGNORES_the_registry_override_stays_in_the_sandbox(
+        monkeypatch):
+    """Measured 2026-09-11: a mutant of `revision/_registry.registry_path`
+    that skipped the `DOCXKIT_PAPERS` override fell through to
+    ``%LOCALAPPDATA%``, and the harness it ran appended 160 throwaway
+    papers to the author's real registry. The mutant was KILLED — the
+    right verdict — and nothing said a word about the file.
+
+    Asserted as that mutant's own computation, under the environment a
+    session hands every child it starts: with the override gone, the
+    registry still lands beside the worktree and nowhere in the real
+    profile. Not as a list of keys — a key list passes the day a new
+    fallback root is added to `registry_path` and left out here."""
+    import os
+
+    from docxkit.revision import registry_path
+
+    real = Path(os.environ.get("LOCALAPPDATA") or Path.home())
+    env = ms._env()
+    sandbox = ms.WORKTREE.parent / f"{ms.WORKTREE.name}.appdata"
+    for key in ("LOCALAPPDATA", "XDG_DATA_HOME"):
+        monkeypatch.setenv(key, env[key])
+    monkeypatch.delenv("DOCXKIT_PAPERS", raising=False)   # what the mutant did
+
+    escaped = registry_path()
+
+    assert escaped.is_relative_to(sandbox), escaped
+    assert not escaped.is_relative_to(real), escaped
+    assert Path(env["DOCXKIT_PAPERS"]).is_relative_to(sandbox), (
+        "an UNMUTATED registry lands in the same place")
+
+
+def test_mirror_src_copies_EVERY_depth_and_deletes_what_is_gone(tmp_path):
+    """The package made the same in a checkout: a module at any depth
+    copied in, a module the live tree no longer has deleted, and nothing
+    outside `src/docxkit` touched. Three depths, because `glob("*.py")`
+    passes a one-level fixture — which is how `kill_check.sync` copied the
+    top level for a fortnight and left `revision/`'s halves behind."""
+    live, tree = tmp_path / "live", tmp_path / "tree"
+    for rel, text in (("src/docxkit/top.py", "A = 1\n"),
+                      ("src/docxkit/revision/_half.py", "B = 2\n"),
+                      ("src/docxkit/revision/deeper/_leaf.py", "C = 3\n")):
+        (live / rel).parent.mkdir(parents=True, exist_ok=True)
+        (live / rel).write_text(text, encoding="utf-8")
+    behind = tree / "src" / "docxkit" / "revision" / "_half.py"
+    behind.parent.mkdir(parents=True)
+    behind.write_text("B = 0\n", encoding="utf-8")
+    gone = behind.parent / "_gone.py"
+    gone.write_text("D = 4\n", encoding="utf-8")
+    kept = tree / "tests" / "test_x.py"
+    kept.parent.mkdir(parents=True)
+    kept.write_text("", encoding="utf-8")
+
+    ms.mirror_src(live, tree)
+
+    assert sorted(p.relative_to(tree).as_posix()
+                  for p in (tree / "src").rglob("*.py")) == [
+        "src/docxkit/revision/_half.py",
+        "src/docxkit/revision/deeper/_leaf.py",
+        "src/docxkit/top.py"]
+    assert behind.read_text(encoding="utf-8") == "B = 2\n", "not refreshed"
+    assert kept.exists(), "only the package is mirrored"

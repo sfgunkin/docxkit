@@ -84,6 +84,13 @@ def _take_lock() -> None:
         fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         holder = LOCK.read_text(encoding="utf-8").strip() or "unknown"
+        if holder == str(os.getpid()):
+            # THIS process holds it already. `check` syncs, and so takes
+            # the lock, on every call — and `verify_equivalents` calls it
+            # once per module, one after another. Refusing its own lock
+            # ended every multi-module run after the first module, with
+            # the message for a second caller (2026-09-11).
+            return None
         if holder.isdigit() and not _alive(int(holder)):
             LOCK.unlink(missing_ok=True)
             return _take_lock()
@@ -120,7 +127,18 @@ def sync() -> None:
     # against the version committed the day the worktree was made,
     # which reports "anchor occurs 0 times" for a line that is in the
     # file.
-    for sub in ("src/docxkit", "tests", "tools"):
+    # The PACKAGE at every depth, and modules the live tree no longer has
+    # deleted — `mutation_session.mirror_src`, the two things its session
+    # tool learned when `revision.py` became `revision/` (2026-08-30). This
+    # copy was `glob("*.py")` over `src/docxkit` and never learned them:
+    # the halves stayed at whatever commit the checkout was made at, every
+    # harness that imports `docxkit.revision` failed to COLLECT, and a
+    # collection error exits non-zero like a kill. Measured 2026-09-11 —
+    # six argued equivalences in the halves, all six "killed", `by: ?`.
+    # `tests` and `tools` are flat, and stay a flat copy.
+    from mutation_session import mirror_src  # noqa: PLC0415
+    mirror_src(LIVE, ROOT)
+    for sub in ("tests", "tools"):
         for src in sorted((LIVE / sub).glob("*.py")):
             shutil.copy2(src, ROOT / sub / src.name)
     # and the documents the SUITE reads — see REPO_FILES
@@ -137,8 +155,15 @@ def sync() -> None:
 
 
 def _env() -> dict[str, str]:
+    # The per-user state a MUTANT may write goes beside this checkout —
+    # `mutation_session.sandboxed_appdata` says why. It is imported, not
+    # restated: this module applies mutations to the same code, and a
+    # case aimed at the registry's own isolation is exactly the one that
+    # escapes it. The lesson was learned in the session tool; a checker
+    # beside it without the guard is the shape the lock took twice.
+    from mutation_session import sandboxed_appdata  # noqa: PLC0415
     return {**os.environ, "PYTHONPATH": str(ROOT / "src"),
-            "PYTHONIOENCODING": "utf-8"}
+            "PYTHONIOENCODING": "utf-8", **sandboxed_appdata(ROOT)}
 
 
 def _places(text: str, old: str) -> list[int]:
@@ -223,6 +248,21 @@ def _vet(original: str, path: Path, label: str, *,
     return mutated, None
 
 
+#: Harnesses already seen to pass UNMUTATED in this process — see `check`.
+_HARNESS_PASSED: set[tuple[str, ...]] = set()
+
+
+def _run_tests(tests: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-x", "-q",
+         "-p", "no:cacheprovider", *tests],
+        cwd=ROOT, capture_output=True, text=True,
+        # utf-8 explicitly: `text=True` decodes with the PARENT's locale,
+        # and this package's messages are full of em-dashes — one in a
+        # failing test's output crashed the reader thread mid-run
+        encoding="utf-8", errors="replace", env=_env())
+
+
 def check(module: str, tests: list[str],
           cases: Sequence[tuple[str, str, str, bool]
                           | tuple[str, str, str, bool, int]]) -> int:
@@ -258,18 +298,27 @@ def check(module: str, tests: list[str],
 
     sync()
     path = ROOT / module
+    # The UNMUTATED harness first, once per harness per process. A kill is
+    # read off a non-zero exit, and a checkout that cannot even collect
+    # the tests exits non-zero for every case: without this, a broken
+    # worktree reports every mutation KILLED and every argued equivalence
+    # WRONG, with `by: ?` on each — the non-recursive sync above did
+    # exactly that six times running before anything said so. Once per
+    # process because `replay_survivors` calls this once per survivor.
+    if tuple(tests) not in _HARNESS_PASSED:
+        unmutated = _run_tests(tests)
+        if unmutated.returncode != 0:
+            print(f"  ?? the UNMUTATED harness fails in {ROOT} (exit "
+                  f"{unmutated.returncode}) — every case would read as a "
+                  f"kill, so none was run:")
+            for line in unmutated.stdout.strip().splitlines()[-6:]:
+                print(f"       {line[:100]}")
+            return bad + len(runnable)
+        _HARNESS_PASSED.add(tuple(tests))
     try:
         for label, mutated, expect_kill in runnable:
             path.write_text(mutated, encoding="utf-8")
-            proc = subprocess.run(
-                [sys.executable, "-m", "pytest", "-x", "-q",
-                 "-p", "no:cacheprovider", *tests],
-                cwd=ROOT, capture_output=True, text=True,
-                # utf-8 explicitly: `text=True` decodes with the PARENT's
-                # locale, and this package's messages are full of
-                # em-dashes — one in a failing test's output crashed the
-                # reader thread mid-run
-                encoding="utf-8", errors="replace", env=_env())
+            proc = _run_tests(tests)
             killed = proc.returncode != 0
             mark = "OK " if killed == expect_kill else "!! "
             verb = "killed" if killed else "SURVIVED"

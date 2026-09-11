@@ -630,6 +630,34 @@ def test_a_claim_for_ANOTHER_module_does_not_reach_this_one(tmp_path,
     assert len(counts.real) == 1
 
 
+def test_a_SUBPACKAGE_halfs_claim_is_keyed_by_its_path_not_its_name(
+        tmp_path, monkeypatch):
+    """The key `verify_equivalents.py` resolves as ``src/docxkit/<key>``,
+    read the same way here. Keyed by file name, a claim for
+    `revision/_validate.py` was either discounted here and MODULE GONE
+    there, or verified there and never discounted here — and a bare name
+    is ambiguous the moment two halves share one."""
+    tool = _tool_module()
+    src = tmp_path / "src" / "docxkit" / "revision" / "widen.py"
+    src.parent.mkdir(parents=True)
+    src.write_text(CLAIMED_SRC, encoding="utf-8")
+    row = (3, "SURVIVED", 0, "+    " + MUTANT)
+
+    monkeypatch.setattr(tool, "CLAIMS",
+                        _claims_file(tmp_path, "revision/widen.py", MUTANT))
+    by_path = tool.classify(str(_database(tmp_path / "a.sqlite", row)),
+                            str(src))
+    monkeypatch.setattr(tool, "CLAIMS",
+                        _claims_file(tmp_path, "widen.py", MUTANT))
+    by_name = tool.classify(str(_database(tmp_path / "b.sqlite", row)),
+                            str(src))
+
+    assert by_path.claimed == 1
+    assert by_name.claimed == 0, "the bare name no longer reaches a half"
+    assert tool.claims_key(str(src)) == "revision/widen.py"
+    assert tool.claims_key(str(tmp_path / "widen.py")) == "widen.py"
+
+
 def test_a_claimed_mutant_inside_an_ANNOTATION_is_discounted_ONCE(tmp_path,
                                                                   monkeypatch):
     """Both discounts come out of the denominator, so counting a mutant
@@ -683,6 +711,10 @@ def test_the_SHIPPED_claims_file_parses_and_every_claim_is_complete():
     assert doc, "the claims file is empty"
     for module, entry in doc.items():
         assert module.endswith(".py"), module
+        # the key as `verify_equivalents` resolves it — a half keyed by its
+        # bare name would pass every other line here and verify nothing
+        assert (verify_equivalents.ROOT / "src" / "docxkit" / module
+                ).is_file(), f"{module} is not a path under src/docxkit"
         assert entry.get("claims"), f"{module} has no claims"
         for claim in entry["claims"]:
             assert set(claim) <= {"was", "line", "why", "kind"}, claim

@@ -298,6 +298,31 @@ def staleness(src_path: str) -> list[str]:
 CLAIMS = ROOT / "tools" / "equivalents.toml"
 
 
+def claims_key(src_path: str) -> str:
+    """A module's key in the claims file: its path under ``src/docxkit``.
+
+    NOT its file name, which is what this read until 2026-09-11 — and not
+    what `verify_equivalents.py` ever read: it resolves a key as
+    ``src/docxkit/<key>``. For a top-level module the two are the same
+    string, so every claim written before then still matches. For a
+    subpackage half they are not, and the two readers disagreed in both
+    directions: keyed ``_validate.py``, a claim was discounted here and
+    reported MODULE GONE there; keyed ``revision/_validate.py``, it
+    verified there and was never discounted here. No half carried a claim
+    until the first sweep of `revision/`'s halves wanted three — the
+    basename shape `harness_map.session_stem` was fixed for, one reader
+    over.
+
+    The snapshot a session reads (``.mutation-<stem>.pristine/src/
+    docxkit/...``) ends in the same path, so the live file and the
+    snapshot give one key. A file outside the package — every scratch
+    module the tests build — keeps its bare name.
+    """
+    posix = Path(src_path).as_posix()
+    marker = "src/docxkit/"
+    return posix.rsplit(marker, 1)[1] if marker in posix else Path(posix).name
+
+
 def claimed_equivalents(src_path: str,
                         kind: str = "equivalent") -> dict[str, str]:
     """Settled mutants of one KIND for this module -> the argument.
@@ -321,7 +346,7 @@ def claimed_equivalents(src_path: str,
         return {}
     with CLAIMS.open("rb") as fh:
         doc = tomllib.load(fh)
-    entry = doc.get(Path(src_path).name, {})
+    entry = doc.get(claims_key(src_path), {})
     return {c["line"].strip(): c["why"] for c in entry.get("claims", ())
             if c.get("kind", "equivalent") == kind}
 

@@ -89,6 +89,25 @@ def test_a_case_that_does_not_COMPILE_is_refused(tmp_path):
     assert "killed" not in out
 
 
+def test_a_harness_that_fails_UNMUTATED_is_refused_not_read_as_a_kill(
+        tmp_path):
+    """A kill is read off a non-zero exit, and a checkout that cannot even
+    collect its tests exits non-zero for every case. On 2026-09-11 the
+    sync had left `revision/`'s halves a fortnight stale, every harness
+    importing them failed to collect, and six argued equivalences came
+    back "killed", `by: ?` — each a confident wrong verdict. A harness
+    path that does not exist is the same failure, made on purpose: before
+    the check, this case read "killed (wanted kill)" and counted as good."""
+    out = _run(tmp_path, "src/docxkit/console.py",
+               ["tests/test_no_such_harness.py"],
+               [("a real mutation", "def utf8_stdout", "def utf8_stdout_",
+                 True)])
+
+    assert "UNMUTATED harness fails" in out, out
+    assert "killed" not in out, out
+    assert "BAD 1" in out, out
+
+
 _SYNC = '''
 import sys
 sys.path.insert(0, {tools!r})
@@ -121,6 +140,46 @@ def test_the_checkout_holds_TODAYS_tools_scripts(tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "STALE" not in done.stdout, done.stdout
     assert "SAME kill_check.py" in done.stdout, done.stdout
+
+
+_SYNC_SRC = '''
+import sys
+sys.path.insert(0, {tools!r})
+import kill_check
+kill_check.sync()
+live, root = kill_check.LIVE, kill_check.ROOT
+want = {{p.relative_to(live).as_posix()
+         for p in (live / "src" / "docxkit").rglob("*.py")}}
+have = {{p.relative_to(root).as_posix()
+         for p in (root / "src" / "docxkit").rglob("*.py")}}
+for rel in sorted(want):
+    same = (root / rel).exists() and \
+        (live / rel).read_bytes() == (root / rel).read_bytes()
+    print(("SAME" if same else "STALE") + " " + rel)
+for rel in sorted(have - want):
+    print("EXTRA " + rel)
+'''
+
+
+def test_the_checkout_holds_TODAYS_subpackage_halves(tmp_path):
+    """`revision.py` became `revision/` on 2026-08-30, and this sync went
+    on copying `src/docxkit/*.py` — the top level. The halves stayed at
+    the commit the checkout was made at, every harness that imports
+    `docxkit.revision` failed to collect there, and a collection error
+    exits non-zero like a kill: six argued equivalences in the halves
+    came back "killed", `by: ?`, on 2026-09-11. Every depth, and nothing
+    the live tree has since deleted."""
+    script = tmp_path / "sync_src.py"
+    script.write_text(_SYNC_SRC.format(tools=str(TOOLS)), encoding="utf-8")
+
+    done = subprocess.run([sys.executable, str(script)],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=TOOLS.parent, check=False)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "STALE" not in done.stdout, done.stdout
+    assert "EXTRA" not in done.stdout, done.stdout
+    assert "SAME src/docxkit/revision/_validate.py" in done.stdout, done.stdout
 
 
 def test_sync_REBUILDS_a_checkout_whose_directory_was_deleted(tmp_path,
@@ -216,13 +275,33 @@ def test_a_SECOND_caller_is_refused_rather_than_sharing_the_checkout(
 
     monkeypatch.setattr(kill_check, "ROOT", tmp_path / "wt")
     monkeypatch.setattr(kill_check, "LOCK", tmp_path / "wt.lock")
-    (tmp_path / "wt.lock").write_text(str(os.getpid()), encoding="utf-8")
+    # ANOTHER live process: the parent. Its own pid used to stand in for
+    # one, and is now — correctly — a lock this process already holds.
+    (tmp_path / "wt.lock").write_text(str(os.getppid()), encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
         kill_check._take_lock()
 
     assert "one checkout" in str(exc.value)
     assert str(tmp_path / "wt.lock") in str(exc.value), "say how to clear it"
+
+
+def test_a_lock_this_process_ALREADY_holds_is_not_a_second_caller(
+        tmp_path, monkeypatch):
+    """`check` syncs, and so takes the lock, on every call, and
+    `verify_equivalents` calls it once per module in one process. Read as
+    a second caller, its own lock ended the run after the first module —
+    met on 2026-09-11 with three modules of claims to check."""
+    import kill_check  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(kill_check, "ROOT", tmp_path / "wt")
+    monkeypatch.setattr(kill_check, "LOCK", tmp_path / "wt.lock")
+    (tmp_path / "wt.lock").write_text(str(os.getpid()), encoding="utf-8")
+
+    kill_check._take_lock()                    # used to raise SystemExit
+
+    assert (tmp_path / "wt.lock").read_text(encoding="utf-8") == str(
+        os.getpid())
 
 
 def test_a_lock_whose_HOLDER_IS_GONE_is_taken_over(tmp_path, monkeypatch):
@@ -309,3 +388,18 @@ def test_the_nth_replacement_uses_the_same_counting_as_the_refusal():
     assert out.splitlines()[10].strip() == "break"
     assert out.splitlines()[3].strip() == "continue", "the first is untouched"
     assert len(_places(INDENTS, anchor)) == 2
+
+
+def test_a_checked_mutant_gets_the_SAME_sandbox_as_a_session():
+    """A case aimed at the registry's own isolation escapes it exactly as
+    a session's mutant did (`mutation_session.sandboxed_appdata`, which
+    says how). The guard was learned in the session tool; a checker
+    beside it without one is the shape the lock took twice."""
+    import kill_check  # pyright: ignore[reportMissingImports]
+    import mutation_session  # pyright: ignore[reportMissingImports]
+
+    env = kill_check._env()
+
+    sandbox = mutation_session.sandboxed_appdata(kill_check.ROOT)
+    assert sandbox.items() <= env.items(), env
+    assert Path(env["LOCALAPPDATA"]).parent == kill_check.ROOT.parent

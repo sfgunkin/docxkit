@@ -14,6 +14,116 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — a mutation run wrote 160 throwaway papers into the author's REAL registry~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+Found by looking, not by any gate: after the first sweep of `revision/`'s
+halves, `%LOCALAPPDATA%\docxkit\papers.txt` — the machine-wide list
+`revision status --all` surveys — had grown from 21 lines to 181. Every
+added line named a paper under `pytest-of-Ezhik\pytest-106956\…`, one per
+`revision.init` in the harness, ending at `test_init_registers_the_paper`.
+
+**One mutant did it, and it was KILLED.** The suite isolates the registry
+through `DOCXKIT_PAPERS` (conftest's `_isolated_paper_registry`), and that
+holds for the code as written. The `_registry` lane mutates
+`registry_path` itself: a mutant that skips the override falls through to
+``%LOCALAPPDATA%``, and every test before the one that noticed wrote the
+author's file. The verdict was right; the side effect had no reader.
+`status --all` would have listed 160 papers gone missing.
+
+**The shape is one this toolkit has met twice already** — a guard learned
+in one tool and not carried to the one beside it (the lock). A mutation
+run mutates exactly the code that guards against it, so the guard cannot
+live in that code. `mutation_session.sandboxed_appdata(tree)` points
+every root the registry can fall back to — ``LOCALAPPDATA``,
+``XDG_DATA_HOME`` and the override itself — beside the worktree, and both
+`mutation_session._env()` and `kill_check._env()` hand it to every child.
+
+The 160 lines were removed by asserting each came from that one pytest
+session and keeping the first 21 byte for byte; the 9 real papers and 9
+older temp entries from other sessions are untouched.
+
+Tests: `test_mutation_session.py` runs the mutant's own computation —
+`registry_path()` with the override gone, under a session's child
+environment — and asserts it lands in the sandbox and outside the real
+profile; `test_kill_check.py` asserts the checker hands the same sandbox.
+Both proved by `kill_check` removing the sandbox from each `_env`.
+
+### ~~S1 — `kill_check` read every mutant of a `revision/` half as KILLED, `by: ?`~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+Six equivalences argued for the halves of `revision/` were put through
+`verify_equivalents.py`, which applies each one and expects it to
+SURVIVE. All six came back "killed (wanted equivalent)", and on every one
+the line naming the test that killed it read `by: ?`.
+
+Nothing had killed them. `kill_check.sync` refreshed its checkout with
+`glob("*.py")` over `src/docxkit` — the TOP level — so the halves stayed
+at the commit the checkout was created at (`e43a195`): eight of fourteen
+differed from the live tree, and collecting any revision test there died
+on a circular import in the stale `revision/__init__.py`. A collection
+error exits non-zero, and a kill is read off a non-zero exit. The tool
+never ran the harness unmutated first, so a checkout that could not
+collect anything reported every mutation killed.
+
+**This is the "a `*.py` glob is a claim that the package is flat" note,
+arriving through a tool it never reached.** `mutation_session` learned
+"recursive, and delete what is gone" on 2026-08-30; the checker beside it
+did not. The exposure is every `kill_check`, `verify_equivalents` and
+`replay_survivors` run whose harness imports `docxkit.revision` since
+then: a claim declared wrong, a new test declared proven, a survivor
+declared already dead — each confidently, and each wrong.
+
+Two fixes. `mutation_session.mirror_src(live, tree)` is the recursive
+mirror, now shared: `ensure_worktree` and `kill_check.sync` both call it.
+And `check` runs the harness UNMUTATED before any case — once per
+harness per process, since `replay_survivors` calls it per survivor — and
+refuses, counting every case bad, when that fails.
+
+Tests: `mirror_src` against three depths, a stale module and a deleted
+one (proved by flattening the glob); a real `sync()` leaves every
+`src/docxkit/**/*.py` byte-identical and nothing extra; a harness that
+fails unmutated is refused rather than read as a kill. One earlier proof
+that ran through the stale checkout — the sandbox test, whose test imports
+`docxkit.revision` — was re-run on the fixed tool.
+
+### ~~S3 — `kill_check` refused its OWN lock, so a multi-module check stopped after the first module~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+`check` syncs its checkout, and so takes the checkout's lock, on every
+call. The lock guard read the holder's pid and exited for any live one —
+this process's own included. So a second `check` in one process printed
+the message meant for a second CALLER and ended the run: measured
+2026-09-11, a script proving the tests of three modules stopped after the
+first, and `verify_equivalents.py` with no argument — one `check` per
+module of claims — could only ever check one module.
+
+`_take_lock` now returns when the lock already names this process. The
+test that stood in for "another live caller" with its own pid uses the
+parent's, which is what it meant; a new one takes the lock twice.
+
+### ~~S3 — the two readers of `equivalents.toml` keyed a subpackage half differently~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+`mutation_survivors.claimed_equivalents` looked a module up by FILE NAME;
+`verify_equivalents.py` resolves a key as ``src/docxkit/<key>``. For a
+top-level module those are one string. For a half of `revision/` they
+are not: keyed ``_validate.py`` a claim was discounted in the figure and
+reported MODULE GONE by the verifier; keyed ``revision/_validate.py`` it
+verified and was never discounted. No half had a claim until the first
+sweep of the halves wanted six, so it had never fired — the basename
+shape `harness_map.session_stem` was fixed for, one reader over.
+
+`claims_key` now reads the path under ``src/docxkit`` (the pristine
+snapshot ends in the same path), and a scratch module outside the package
+keeps its bare name. The shipped-claims test asserts every key resolves
+to a real module the way the verifier resolves it, so a bare-name key for
+a half cannot be committed.
+
 ### ~~Not three defects — one missing gate: nothing renders by default~~ — BUILT 11.09, `bac86c5`
 <!-- status: note -->
 

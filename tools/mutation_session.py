@@ -166,7 +166,36 @@ def _env() -> dict[str, str]:
     # Verified equal, not assumed: the harness that uses hypothesis
     # reports the same 373 passed, 14 skipped either way.
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env.update(sandboxed_appdata(WORKTREE))
     return env
+
+
+def sandboxed_appdata(tree: Path) -> dict[str, str]:
+    """Where a MUTANT may keep per-user state: beside `tree`, never in the
+    author's own profile.
+
+    The suite isolates the machine-wide paper registry through
+    ``DOCXKIT_PAPERS`` (conftest's `_isolated_paper_registry`), and for an
+    unmutated tree that is enough. It is not enough for a mutant OF the
+    isolation. Measured 2026-09-11: one mutant of
+    `revision/_registry.registry_path` ignored the variable, fell through
+    to ``%LOCALAPPDATA%``, and the harness it went on to run appended 160
+    throwaway papers to the author's real registry — every
+    `revision.init` in the run, one line each, until
+    `test_init_registers_the_paper` failed at the end — and `status --all`
+    then listed every one of them as a paper gone missing. Nothing in the
+    run said so: the mutant was KILLED, which is the right verdict.
+
+    A mutation run mutates exactly the code that guards against it, so the
+    guard has to sit outside that code. Every root the registry can fall
+    back to is pointed here — the override itself too, so an UNMUTATED
+    registry lands in the same place — and the one it cannot reach this
+    way, the POSIX ``~/.local/share`` behind both, is a path the Windows
+    registry never reads.
+    """
+    home = tree.parent / f"{tree.name}.appdata"
+    return {"LOCALAPPDATA": str(home), "XDG_DATA_HOME": str(home),
+            "DOCXKIT_PAPERS": str(home / "docxkit" / "papers.txt")}
 
 
 def snapshot_dir(stem: str) -> Path:
@@ -198,6 +227,26 @@ def moved_since(snapshot: Path, module: Path, tests: list[str]) -> list[str]:
     return out
 
 
+def mirror_src(live: Path, tree: Path) -> None:
+    """`tree`'s ``src/docxkit`` made the same as `live`'s: every module
+    at every depth copied in, and every module `live` no longer has
+    deleted. The reasons for both halves are at the call in
+    :func:`ensure_worktree`.
+
+    A function, because there are two checkouts and the second copied
+    the package with `glob("*.py")` long after the first stopped — see
+    `kill_check.sync`, where that cost six false verdicts in a row.
+    """
+    package = {p.relative_to(live) for p in live.rglob("src/docxkit/**/*.py")}
+    for path in sorted(package):
+        target = tree / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(live / path, target)
+    for stale in sorted((tree / "src" / "docxkit").rglob("*.py")):
+        if stale.relative_to(tree) not in package:
+            stale.unlink()
+
+
 def ensure_worktree(module: Path, tests: list[str]) -> None:
     """A private checkout that imports ITSELF, with the live files in it."""
     if not WORKTREE.exists():
@@ -224,14 +273,7 @@ def ensure_worktree(module: Path, tests: list[str]) -> None:
     # the session's plan does not describe — and produced a number for
     # it. That is this file's own opening hazard, arriving through the
     # one path it did not guard: not a stale MODULE, a stale LAYOUT.
-    live = {p.relative_to(ROOT) for p in ROOT.rglob("src/docxkit/**/*.py")}
-    for path in sorted(live):
-        target = WORKTREE / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / path, target)
-    for stale in sorted((WORKTREE / "src" / "docxkit").rglob("*.py")):
-        if stale.relative_to(WORKTREE) not in live:
-            stale.unlink()
+    mirror_src(ROOT, WORKTREE)
     # `tests/conftest.py` is in no module's harness — nothing names it —
     # and every test file copied here imports it. Without it the
     # worktree runs TODAY's tests against whatever conftest was in the
