@@ -94,3 +94,35 @@ claims = [
   { was = 'if shut == -1:                      # malformed; not ours to repair', line = 'if shut <= -1:                      # malformed; not ours to repair', why = '`shut` is `str.find`, whose whole range is -1 and the non-negative indices — there is no value below -1 for the two comparisons to disagree about. Its siblings that compare against a DIFFERENT number are killed: those select real spans as malformed, or malformed ones as real.' },
   { was = 'if shut == -1:                      # malformed; not ours to repair', line = 'if shut is -1:                      # malformed; not ours to repair', why = "Identity against -1, which is inside CPython's cached-int range, so `is` is true wherever `==` is. Python warns about the shape and is right to; it works here and is not a thing to rely on. The same case as the interned literals recorded for refstyle." },
 ]
+
+# The halves of `revision/` are keyed by their path under src/docxkit, the
+# way `verify_equivalents.py` resolves a key — see
+# `mutation_survivors.claims_key` for the day the report read file names.
+
+["revision/_baseline.py"]
+claims = [
+  { was = "where = \", \".join(f\"{n} in {p.split('/')[-1]}\"", line = "where = \", \".join(f\"{n} in {p.split('/')[1]}\"", why = "`by_part` is keyed on TEXT_PARTS names — word/document.xml, word/footnotes.xml, word/endnotes.xml — and every one is exactly two segments, so the last segment and the second are the same element. A text part nested a directory deeper would break the claim, and `verify_equivalents.py` would say so by killing it." },
+  { was = "where = \", \".join(f\"{n} in {p.split('/')[-1]}\"", line = "where = \", \".join(f\"{n} in {p.split('/')[+1]}\"", why = "`[+1]` is `[1]`, and every TEXT_PARTS name is two segments, so the second and the last are the same element — the argument of the claim above, for the unary-plus spelling of the same index." },
+]
+
+["revision/_registry.py"]
+claims = [
+  { was = 'entry = line.split("#", 1)[0].strip()', line = 'entry = line.split("#", 2)[0].strip()', why = "Element 0 is the text before the FIRST `#`, whatever the maxsplit: a second split only divides what comes after it, and that is the comment being thrown away." },
+  { was = 'if path.stat().st_size == 0:', line = 'if path.stat().st_size <= 0:', why = "A file size is never negative, so `<= 0` and `== 0` hold for exactly the same files. The spellings that CAN differ — `!= 0`, `>= 0`, `== 1` — are killed by the test that registers three papers and counts the header." },
+]
+
+["revision/_validate.py"]
+claims = [
+  { was = "and self.reject_matches_baseline is not False", line = "and self.reject_matches_baseline != False", why = "The field is `bool | None` and `validate` assigns it nothing else: None when there is no baseline, else `all(...)`. On those three values `is not False` and `!= False` agree — None and True differ from False both ways, False is and equals itself. They part company only on 0 or 0.0, which nothing puts there; test_revision.py records the same argument for `word_opened is not False`." },
+  { was = 'if aborted == "word":', line = 'if aborted >= "word":', why = "`aborted` takes exactly four values — the empty string, `baseline`, `lint` and `word` — and only `word` sorts at or after `word`, so both comparisons pick the same branch. A new abort name that sorts after it would break the claim, and `verify_equivalents.py` would say so by killing it." },
+  { was = 'if aborted == "word":', line = 'if aborted is "word":', why = "Identity against a short literal. `aborted` returns one of four literals written in this module, and CPython interns them, so `is` holds exactly where `==` does. Python warns about the shape and is right to; the refstyle claims record the same case." },
+  { was = "if self.built_on_this_baseline is False:", line = "if self.built_on_this_baseline == False:", why = "The field is `bool | None` — None when the batch carries no stamp, otherwise the comparison of two hashes. On those values `is False` and `== False` agree; they part only on 0 or 0.0, which nothing assigns. The argument recorded for `reject_matches_baseline` below it." },
+  { was = "if self.word_opened is False:", line = "if self.word_opened == False:", why = "The field is `bool | None` — None when Word was not asked, True or False from the one session. On those values `is False` and `== False` agree; they part only on 0 or 0.0, which nothing assigns." },
+  { was = "and self.accept_paths_agree is not False)", line = "and self.accept_paths_agree != False)", why = "The field is `bool | None` — None when Word gave no accepted text, else a string comparison. On those values `is not False` and `!= False` agree; they part only on 0 or 0.0, which nothing assigns." },
+  { was = "glyph_math_only: bool = False", line = "glyph_math_only: bool = True", why = "A dataclass default nothing observes. `validate` assigns the field in the one branch that computes it — reject-all disagreeing with the baseline — and the CLI reads it only inside that same branch. Everywhere the default is still in place, nothing asks. The argument batch.py records for its report defaults." },
+  { was = 'cut = text.rfind(" ", 0, _ANCHOR_CHARS + 1)', line = 'cut = text.rfind(" ", 0, _ANCHOR_CHARS ^ 1)', why = "`_ANCHOR_CHARS` is 40, and 40 XOR 1 is 41 — the same bound. An odd constant would part them, and `verify_equivalents.py` would say so by killing this claim; the spellings that give a different bound at 40 are killed by the tests of a space at index 40 and at 41." },
+  { was = 'cut = text.rfind(" ", 0, _ANCHOR_CHARS + 1)', line = 'cut = text.rfind(" ", 0, _ANCHOR_CHARS | 1)', why = "`_ANCHOR_CHARS` is 40, and 40 OR 1 is 41 — the same bound. An odd constant would part them, and `verify_equivalents.py` would say so by killing this claim; the spellings that give a different bound at 40 are killed by the tests of a space at index 40 and at 41." },
+  { was = 'cut = text.rfind(" ", 0, _ANCHOR_CHARS + 1)', line = 'cut = text.rfind(" ", 1, _ANCHOR_CHARS + 1)', why = "Starting the search at 1 instead of 0 differs only when the one space in range is the FIRST character, and the text has just been through `split()` and a strip of edge spaces and punctuation, so it never begins with one." },
+  { was = "dpi: int = 150,", line = "dpi: int = 149,", kind = "cosmetic", why = "The resolution a PNG is rasterised at when the caller names none. A person reads the page; 149 and 151 draw the same glyphs at a width nobody chose to the pixel, and a test pinning it would pin the number rather than the property." },
+  { was = "dpi: int = 150,", line = "dpi: int = 151,", kind = "cosmetic", why = "The resolution a PNG is rasterised at when the caller names none. A person reads the page; 149 and 151 draw the same glyphs at a width nobody chose to the pixel, and a test pinning it would pin the number rather than the property." },
+]

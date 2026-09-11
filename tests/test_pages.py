@@ -344,6 +344,77 @@ def test_an_unnamed_render_goes_to_a_staging_file_that_is_REMOVED(
     assert seen["existed"], "the render is read before it is swept up"
     assert not staged.exists() and not staged.parent.exists()
 
+
+# `page_texts` — what `fit --render` and `repack` read a render through.
+# Every test of those two stubs it, and they live in test_cli.py, which
+# is not in this module's mutation harness: its own body ran in no test
+# at all. Found by the mutation run of 2026-09-11, twelve survivors.
+
+
+def test_page_texts_reads_EACH_sheet_of_a_staged_render_and_sweeps_it(
+        tmp_path, monkeypatch):
+    """The renderer contract `placement` and `repack` expect: one string
+    per sheet, in order, from a PDF written to a staging directory that
+    is gone afterwards. Three sheets with three different texts, so an
+    off-by-one, a reversed walk or a single-page read cannot pass."""
+    from docxkit import word as word_mod
+    from docxkit.pages import page_texts
+
+    seen: dict[str, Any] = {}
+    texts = ("the first sheet", "Table 3 on the second", "and the last")
+
+    def export_pdf(docx, out_pdf, **kw):
+        seen.update(docx=Path(docx), pdf=Path(out_pdf))
+        doc = pymupdf.open()
+        for text in texts:
+            doc.new_page(width=A4[0], height=A4[1]).insert_text(
+                (72, 200), text, fontsize=11)
+        doc.save(str(out_pdf))
+        doc.close()
+        return Path(out_pdf)
+
+    monkeypatch.setattr(word_mod, "export_pdf", export_pdf)
+
+    got = page_texts(tmp_path / "paper.docx")
+
+    assert [t.strip() for t in got] == list(texts), got
+    assert seen["docx"] == tmp_path / "paper.docx"
+    assert seen["pdf"].name == "render.pdf"
+    assert seen["pdf"].parent != tmp_path, "staged, not beside the document"
+    assert not seen["pdf"].parent.exists(), "and the staging swept up"
+
+
+def test_page_texts_survives_a_render_still_held_open(tmp_path, monkeypatch):
+    """`ignore_errors=True`, the flag `sheets` holds for the same reason:
+    on Windows a file with a handle on it cannot be removed, and a sweep
+    that raised would throw away the texts already read."""
+    from docxkit import word as word_mod
+    from docxkit.pages import page_texts
+
+    held: list[IO[bytes]] = []
+    made: list[Path] = []
+
+    def export_pdf(docx, out_pdf, **kw):
+        doc = pymupdf.open()
+        doc.new_page(width=A4[0], height=A4[1]).insert_text(
+            (72, 200), "held open", fontsize=11)
+        doc.save(str(out_pdf))
+        doc.close()
+        held.append(open(out_pdf, "rb"))    # noqa: SIM115 — held on purpose
+        made.append(Path(out_pdf))
+        return Path(out_pdf)
+
+    monkeypatch.setattr(word_mod, "export_pdf", export_pdf)
+    try:
+        got = page_texts(tmp_path / "paper.docx")
+        assert [t.strip() for t in got] == ["held open"], got
+    finally:
+        for handle in held:
+            handle.close()
+        # finish the sweep this test defeats on purpose
+        for pdf in made:
+            shutil.rmtree(pdf.parent, ignore_errors=True)
+
 # --- the eye gate: render the page an anchor falls on -------------------
 #
 # BACKLOG S4. The one check no gate in the ladder can make — a glyph that

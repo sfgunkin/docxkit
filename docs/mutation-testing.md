@@ -2013,3 +2013,49 @@ rounds of evidence and a 348-case replay all had to be redone.
   paths could satisfy. If the answer is "several things", the check is
   decoration.
 
+### The ninth sweep: `revision/`'s halves measured, and three instruments that could not see them
+
+The first measurement of three of `revision/`'s halves, and `pages.py`
+again, on 2026-09-11 — four modules in four worktrees at once, each
+against the harness `harness_map` names. **cosmic-ray 8.7.0**, which
+plans more mutants than the 8.4.6 behind every figure above (503 for
+`pages.py` against 180), so these are not a continuation of those rows.
+
+| module | mutants | real survival | worked | left |
+|---|---|---|---|---|
+| `pages.py` | 503 | 9.0 % (31/345) | `page_texts`, which every caller stubs and no test called: 12 survivors, 2 tests | 19, in `_printed_number`, `_outermost_line` and `problems` — known since 24.08, not this round's |
+| `revision/_baseline.py` | 54 | 13.2 % (7/53) | the refusal that tells a Word-eaten link from a cut clause, and the verb's timing | none: 5 killed, 2 argued |
+| `revision/_registry.py` | 211 | 18.1 % (30/166) | the registry's header, `..` spellings, the scan depth, a `continue` that dropped every paper after a bad one | none: 28 killed, 2 argued |
+| `revision/_validate.py` | 398 | 11.2 % (33/295) | the anchor phrase's two bounds, a stamp that sorts high, `glyph_math_only` beside a footnote | none: 23 killed, 8 argued, 2 cosmetic |
+
+**`left` is counted from `kill_check`, not from a second sweep**: every
+survivor above was applied in the checkout and watched die against the
+test written for it, or argued in `tools/equivalents.toml` and checked
+by `verify_equivalents.py`. The code added that day — `ValidateReport.
+exit_code`, `survey_exit_code`, `BaselineReport`, `math_anchors`,
+`render_anchors`' folding — survived nothing but the two bounds, which
+the planned tree's tests read through the constants.
+
+**The run's own findings were in the instruments, and all three are in
+BACKLOG-ARCHIVE.md under 11.09.**
+
+* **A mutant of the isolation escapes it.** One mutant of
+  `registry_path` skipped the `DOCXKIT_PAPERS` override, and its harness
+  appended 160 throwaway papers to the author's real registry. Correctly
+  KILLED; nothing reports side effects. `sandboxed_appdata` puts every
+  per-user root a mutant can reach beside the worktree.
+* **`by: ?` is a broken checkout, not a verdict.** `kill_check.sync`
+  copied the package with a flat glob and left the halves a fortnight
+  stale; every harness importing them failed to collect, and six correct
+  claims read "killed". The note on `*.py` globs, one tool further on.
+  It also refused its own lock, so a multi-module check ended after the
+  first module.
+* **The two readers of the claims file keyed a half differently** — by
+  file name and by path — so no claim about a half could both count and
+  be checked. Keyed by path now.
+
+A kill with no named test, a verdict that arrives faster than the
+harness could have run, a figure no second reader can reproduce: each of
+those was an instrument talking about itself, and each read at first as
+a finding about the code.
+

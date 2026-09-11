@@ -680,6 +680,65 @@ def test_a_DECLARED_loss_that_did_not_happen_is_itself_refused(project):
         revision.baseline(project, accept_loss=("link:ref_Gone2024 (x)",))
 
 
+#: Seven linked citations, one per paragraph. The hand-back below
+#: flattens THREE of them keeping the words — Word collapsing a
+#: paragraph — and cuts the other FOUR clauses outright. Counts only
+#: addition separates: 3 against 4, never 1 against 2.
+_CITED = [("Adams2020", "Adams (2020)"), ("Brown2021", "Brown (2021)"),
+          ("Clark2022", "Clark (2022)"), ("Davis2023", "Davis (2023)"),
+          ("Evans2024", "Evans (2024)"), ("Ford2025", "Ford (2025)"),
+          ("Gray2026", "Gray (2026)")]
+
+
+def _cited(kept_words: int):
+    """(prev, working) with every link lost; the first `kept_words` keep
+    their words, the rest are cut with their clause."""
+    prev = "".join(para(run("As "), _linked(anchor, label), run(" shows."))
+                   for anchor, label in _CITED)
+    working = "".join(
+        para(run(f"As {label} shows.")) if i < kept_words
+        else para(run("A sentence about something else."))
+        for i, (_anchor, label) in enumerate(_CITED))
+    return make_parts(prev), make_parts(working)
+
+
+def test_the_refusal_marks_EACH_loss_whose_words_survive(project):
+    """"Word collapsed a paragraph, the link can be rebuilt" is true of
+    a loss that kept its words and false of one the author cut, and
+    asserting it over a cut passage sent a reader to look for damage to
+    repair, five times in one report. So each loss is marked, and the
+    count is of the marked ones. Found by mutation, 2026-09-11: the
+    marker, the count and the choice of sentence were none of them
+    asserted."""
+    prev, working = _cited(kept_words=3)
+    write(project.prev, prev)
+    write(project.working, working)
+
+    with pytest.raises(HandbackLoss) as refused:
+        revision.baseline(project)
+
+    said = str(refused.value)
+    assert "lost 7 thing(s)" in said, said
+    assert said.count("[words survive]") == 3, said
+    assert "3 of these keep their words, marked above" in said, said
+    assert "Put back anything Word ate" not in said
+
+
+def test_with_NO_words_surviving_the_refusal_does_not_claim_a_collapse(
+        project):
+    prev, working = _cited(kept_words=0)
+    write(project.prev, prev)
+    write(project.working, working)
+
+    with pytest.raises(HandbackLoss) as refused:
+        revision.baseline(project)
+
+    said = str(refused.value)
+    assert "[words survive]" not in said, said
+    assert "keep their words" not in said, said
+    assert "Put back anything Word ate" in said, said
+
+
 def test_a_first_baseline_with_no_prev_is_not_blocked(tmp_path):
     """`init` seeds prev from working, but a paper that has lost its
     build/ directory must still be able to record a truth."""
@@ -3416,6 +3475,176 @@ def test_the_anchor_never_reaches_ACROSS_an_inline_equation():
     ]
 
 
+# The two length boundaries of the anchor phrase, found by the mutation
+# run of 2026-09-11. LITERAL lengths, not the constants: a boundary test
+# that reads the constant it pins moves with it, and stays green when
+# forty becomes thirty-nine.
+
+
+def test_a_first_line_of_EXACTLY_forty_characters_is_kept_whole():
+    """At forty the phrase is the whole first line; past it, cut at a
+    word. `<=` read as `<` cut a forty-character line back to its last
+    space — a shorter phrase, and on a narrow page a different page."""
+    forty = "x" * 19 + " " + "y" * 20
+    forty_one = "x" * 20 + " " + "y" * 20
+    assert (len(forty), len(forty_one)) == (40, 41)
+
+    assert revision.math_anchors(
+        make_parts(para(run(forty), _eq("a"))), None) == [forty]
+    assert revision.math_anchors(
+        make_parts(para(run(forty_one), _eq("a"))), None) == ["x" * 20]
+
+
+def test_a_segment_of_EXACTLY_twelve_characters_is_a_phrase_not_a_label():
+    """Twelve is a phrase; eleven is a label, and the equation is found
+    by the lead-in above it instead. `>=` read as `>` sent a twelve-
+    character segment to the lead-in too."""
+    lead = "The model is set out below"
+    twelve = "a" * 5 + " " + "b" * 6
+    eleven = "a" * 5 + " " + "b" * 5
+    assert (len(twelve), len(eleven)) == (12, 11)
+
+    assert revision.math_anchors(make_parts(
+        para(run(lead)) + para(run(twelve), _eq("a"))), None) == [twelve]
+    assert revision.math_anchors(make_parts(
+        para(run(lead)) + para(run(eleven), _eq("a"))), None) == [lead]
+
+
+def test_the_phrase_is_cut_at_the_LAST_space_within_forty_one_characters():
+    """`rfind(" ", 0, 41)`: a space AT index 40 still ends the phrase at
+    forty — the whole first line — and a space at 41 does not. Read as a
+    bound of 40 or 42, the cut moved a word one way or the other, and the
+    forty/forty-one test above passes both, since its only space sits at
+    twenty."""
+    at_forty = "x" * 19 + " " + "y" * 20 + " " + "z" * 5
+    at_forty_one = "x" * 19 + " " + "y" * 21 + " " + "z" * 5
+    assert (at_forty.index(" ", 20), at_forty_one.index(" ", 20)) == (40, 41)
+
+    assert revision.math_anchors(make_parts(
+        para(run(at_forty), _eq("a"))), None) == ["x" * 19 + " " + "y" * 20]
+    assert revision.math_anchors(make_parts(
+        para(run(at_forty_one), _eq("a"))), None) == ["x" * 19]
+
+
+def test_a_cut_that_would_leave_a_LABEL_takes_the_first_forty_instead():
+    """A word boundary is worth cutting at only if what it leaves is a
+    phrase: a space at twelve is, a space at five is not, and the phrase
+    is then the first forty characters as they come."""
+    at_twelve = "a" * 12 + " " + "b" * 40
+    at_five = "a" * 5 + " " + "b" * 45
+
+    assert revision.math_anchors(make_parts(
+        para(run(at_twelve), _eq("a"))), None) == ["a" * 12]
+    assert revision.math_anchors(make_parts(
+        para(run(at_five), _eq("a"))), None) == [at_five[:40]]
+
+
+@pytest.mark.parametrize("stamped", ["0" * 64, "f" * 64])
+def test_validate_aborts_on_a_stamp_for_ANY_other_baseline(tmp_path,
+                                                          stamped):
+    """High and low. The stale-stamp test used a hash of zeros, which
+    sorts below every real one, and `==` read as `>=` passed it — a batch
+    stamped with a hash that sorts HIGH would have run the whole ladder
+    against a baseline it was not built on."""
+    from docxkit import guard
+    base = write(tmp_path / "prev.docx", make_parts(para(run("the truth"))))
+    batch = write(tmp_path / "batch.docx",
+                  make_parts(para(run("the truth"))))
+    guard.stamp(batch, base_sha256=stamped)
+
+    report = revision.validate(batch, base, use_word=False)
+
+    assert report.aborted == "baseline"
+    assert report.built_on == stamped
+
+
+def test_the_error_Word_gave_is_quoted_at_200_characters(tmp_path,
+                                                         monkeypatch):
+    """The width `revision validate` prints on its one `== Word ==` line.
+    Found by mutation, 2026-09-11: 199 and 201 both passed."""
+    long = "Word could not open the file. " * 20
+
+    class _Refusing:
+        def session(self, **_kw):
+            raise OSError(long)
+
+    monkeypatch.setattr(revision._validate, "_word", _Refusing())
+    base = write(tmp_path / "prev.docx", make_parts(para(run("the truth"))))
+    batch = write(tmp_path / "batch.docx",
+                  make_parts(para(run("the truth"))))
+
+    report = revision.validate(batch, base)
+
+    assert report.aborted == "word"
+    assert report.word_error == long[:200]
+
+
+def test_render_accepted_survives_a_render_still_held_open(tmp_path,
+                                                          monkeypatch):
+    """`ignore_errors=True` on the staging sweep — the flag `pages.sheets`
+    and `page_texts` hold, for the same reason: on Windows a file with a
+    handle on it cannot be removed, and a sweep that raised would throw
+    away the PNGs already made."""
+    import shutil
+    batch = write(tmp_path / "batch.docx", make_parts(
+        para(run("Employment rises "), ins("sharply"))))
+    held: list[Any] = []
+
+    def fake_export(path, out_pdf, **kw):
+        made = _pdf_of("Employment rises sharply", Path(out_pdf))
+        held.append(open(made, "rb"))      # noqa: SIM115 — held on purpose
+        return made
+
+    monkeypatch.setattr("docxkit.word.export_pdf", fake_export)
+    try:
+        (png,) = revision.render_accepted(batch, ["Employment rises"],
+                                          dpi=40).values()
+        assert png is not None and png.exists()
+    finally:
+        for handle in held:
+            handle.close()
+            shutil.rmtree(Path(handle.name).parent, ignore_errors=True)
+
+
+_FOOTNOTE_REF = '<w:r><w:footnoteReference w:id="2"/></w:r>'
+
+
+@pytest.mark.parametrize(("was", "now", "note_was", "note_now", "math_only"), [
+    # the substitution and nothing else, beside a note that did not move:
+    # equal notes that are not the same OBJECT — `is` read as `==`
+    ("gap − 0.15", "gap - 0.15", "a note that stays", "a note that stays",
+     True),
+    # a real edit whose downgraded text sorts BELOW the baseline's — `>=`
+    ("gap − 0.19", "gap - 0.15", None, None, False),
+    # the body is only the substitution and the NOTE really changed, in
+    # both orders — `>=` and `<=` on the notes
+    ("gap − 0.15", "gap - 0.15", "note b", "note a", False),
+    ("gap − 0.15", "gap - 0.15", "note a", "note b", False),
+])
+def test_a_glyph_mismatch_is_MATH_ONLY_only_when_both_views_agree(
+        tmp_path, was, now, note_was, note_now, math_only):
+    """`glyph_math_only` tells the reader every glyph difference is Word
+    downgrading an equation — nothing to fix. Wrongly True, it excuses a
+    real edit. The existing tests held it with no footnotes (both note
+    streams empty, so `<=`, `>=` and `is` all agree with `==`) and with a
+    real edit that happened to sort upward. Found by mutation, 2026-09-11."""
+    def parts(body: str, note_text: str | None) -> dict[str, bytes]:
+        if note_text is None:
+            return make_parts(para(run(body)))
+        return make_parts(para(run(body), _FOOTNOTE_REF),
+                          footnotes=notes("footnotes",
+                                          note(note_text, nid=2)))
+
+    base = write(tmp_path / "prev.docx", parts(was, note_was))
+    batch = write(tmp_path / "batch.docx", parts(now, note_now))
+
+    report = revision.validate(batch, base, use_word=False)
+
+    assert report.lint == [], report.lint
+    assert report.reject_matches_baseline is False
+    assert report.glyph_math_only is math_only, report.glyph_diff
+
+
 def test_validate_names_the_equation_pages_the_batch_adds(tmp_path):
     """On the report, so the CLI renders them without being asked."""
     base = write(tmp_path / "prev.docx",
@@ -4178,3 +4407,18 @@ def test_an_unwritable_root_does_not_break_the_ROUND(tmp_path):
 
     with _timing.session("probe", None, root=wall / "under"):
         pass                                     # must not raise
+
+
+def test_baseline_is_TIMED_like_the_other_verbs(project):
+    """`build` and `promote` record how long they took, and so does the
+    step that closes a round. Found by mutation, 2026-09-11: the
+    decorator could be deleted and nothing noticed, because every timing
+    test drove `promote` or `_timing` directly."""
+    from docxkit import timings
+    write(project.working, make_parts(para(run("Accepted and settled."))))
+
+    revision.baseline(project)
+
+    got = timings.read(project.root / timings.FOLDER)
+    assert [(r["kind"], r["name"], r["outcome"]) for r in got] == [
+        ("baseline", project.name, "ok")]

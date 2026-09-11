@@ -358,6 +358,10 @@ def test_one_UNREADABLE_paper_does_not_end_the_survey(tmp_path, monkeypatch):
     sweep hides exactly those."""
     good = paper_at(tmp_path / "good")
     bad = paper_at(tmp_path / "bad")
+    # registered AFTER the bad one: the papers its docstring is about, and
+    # the ones `continue` read as `break` silently dropped (mutation run,
+    # 2026-09-11 — with the bad paper last, nothing came after it to lose)
+    after = paper_at(tmp_path / "after")
     real = revision.state
 
     def explode(path, *args, **kw):
@@ -369,12 +373,14 @@ def test_one_UNREADABLE_paper_does_not_end_the_survey(tmp_path, monkeypatch):
 
     rows = survey()
 
-    assert len(rows) == 2, "the good paper is still reported"
+    assert [r.config for r in rows] == [good.config, bad.config,
+                                        after.config], (
+        "the papers registered AFTER the bad one are still reported")
     (broken,) = [r for r in rows if r.config == bad.config]
-    (fine,) = [r for r in rows if r.config == good.config]
     assert broken.state is None
     assert "OSError" in broken.error and "drive went away" in broken.error
-    assert fine.state is not None, "the healthy row is unaffected"
+    assert all(r.state is not None for r in rows if r is not broken), (
+        "the healthy rows are unaffected")
 
 
 # --- the exit code is the ROWS' ---------------------------------------
@@ -430,3 +436,163 @@ def test_the_survey_exits_with_its_WORST_row_not_its_largest_code(tmp_path):
 
 def test_an_empty_survey_is_nothing_waiting():
     assert revision.survey_exit_code([]) == 0
+
+
+# --- the gaps the mutation run of 2026-09-11 found ---------------------
+#
+# `revision/_registry.py` measured as a half for the first time: 211
+# mutants, 30 real survivors. None in the exit-code code above; all in
+# the registry and the survey around it. Two more are argued in
+# tools/equivalents.toml.
+
+
+def test_the_registry_header_is_written_ONCE_at_the_top(tmp_path):
+    """Into a file that is empty, and never again: a list a person edits
+    says what it is on its first line, and a header written again after
+    every paper is noise between the entries. Three papers, so a header
+    before every entry and one before all but the first both miscount."""
+    first = paper_at(tmp_path / "AFI")
+    second = paper_at(tmp_path / "HCW")
+    third = paper_at(tmp_path / "LI7")
+
+    text = registry_path().read_text(encoding="utf-8")
+
+    header = "# Papers on the single-file revision protocol.\n"
+    assert text.startswith(header), text
+    assert text.count(header) == 1, text
+    assert registered() == [first.config, second.config, third.config]
+
+
+def test_register_says_whether_the_paper_was_NEW(tmp_path):
+    paper = paper_at(tmp_path / "HCW")
+    registry_path().unlink()
+
+    assert register(paper.config) is True
+    assert register(paper.config) is False
+    assert registered() == [paper.config]
+
+
+def test_an_entry_spelled_DIFFERENTLY_is_still_the_same_paper(tmp_path):
+    """Entries are compared resolved. A line with `..` in it — a hand
+    edit, or a scan started from another folder — names the same file,
+    and a second line for it would survey the paper twice."""
+    paper = paper_at(tmp_path / "HCW")
+    roundabout = paper.config.parent / ".." / "revision" / paper.config.name
+    registry_path().write_text(f"{roundabout}\n", encoding="utf-8")
+
+    assert register(paper.config) is False
+    assert registered() == [roundabout], "no second line was added"
+
+
+def test_the_registry_folder_is_CREATED_however_deep(tmp_path, monkeypatch):
+    deep = tmp_path / "not" / "there" / "yet" / "papers.txt"
+    monkeypatch.setenv("DOCXKIT_PAPERS", str(deep))
+
+    paper = paper_at(tmp_path / "HCW")
+
+    assert registered() == [paper.config]
+
+
+def test_scan_stops_at_its_DEPTH(tmp_path):
+    """Four levels reach `<root>/<area>/<project>/revision/paper.toml` and
+    no further, on purpose: the roots are cloud folders. A config one
+    level deeper is not found by default — and IS found when the depth
+    is raised, so this is the bound and not a fixture nothing could find."""
+    deeper = paper_at(tmp_path / "Papers" / "_Submitted" / "2025" / "LI7")
+    registry_path().unlink()
+
+    assert revision.scan(tmp_path) == []
+    assert [p.resolve() for p in revision.scan(tmp_path, depth=5)] == [
+        deeper.config]
+
+
+def test_a_row_is_NAMED_by_its_project_folder_whatever_that_is_called():
+    """`revision/` is skipped because it is the protocol's folder and says
+    nothing about the paper; any other folder IS the name — including one
+    that sorts before "revision" and one that sorts after it, which is
+    where `==` read as `<=` or `>=` went wrong."""
+    from pathlib import Path
+
+    def named(*parts: str) -> str:
+        return revision.Survey(config=Path(*parts), paper=None, state=None,
+                               error="unreadable").name
+
+    assert named("Projects", "HCW", "revision", "paper.toml") == "HCW"
+    assert named("Projects", "Aging_Well", "paper.toml") == "Aging_Well"
+    assert named("Projects", "zeta", "paper.toml") == "zeta"
+
+
+def test_an_unreadable_row_claims_NOTHING_about_the_file():
+    """No lock, no staged batch, not missing: nothing was read, so
+    nothing is reported — a row defaulting to "open in Word" would send
+    the author to close a file that is not open."""
+    from pathlib import Path
+
+    row = revision.Survey(config=Path("x/revision/paper.toml"), paper=None,
+                          state=None, error="OSError: the drive went away")
+
+    assert (row.locked, row.staged, row.missing) == (False, False, False)
+
+
+def test_an_error_OR_a_missing_state_is_unreadable_on_its_own(tmp_path):
+    """Two ways a paper goes unread, and each is enough alone: an error
+    with a state still in hand, and a paper whose state was never read.
+    Read as needing both, the first came back "truth" and the second
+    raised on the state it does not have."""
+    paper = paper_at(tmp_path / "HCW")
+    here = revision.state(paper.working)
+
+    with_error = revision.Survey(config=paper.config, paper=paper,
+                                 state=here,
+                                 error="OSError: the drive went away")
+    no_state = revision.Survey(config=paper.config, paper=paper, state=None)
+
+    assert with_error.verdict == "unreadable"
+    assert no_state.verdict == "unreadable"
+
+
+def test_a_MISSING_manuscript_does_not_end_the_survey(tmp_path):
+    """The row is appended and the walk goes ON. `continue` read as
+    `break` stopped at the first missing file and dropped every paper
+    registered after it, silently — the good rows this exists for."""
+    gone = paper_at(tmp_path / "Aaa_unplugged")
+    gone.working.unlink()
+    paper_at(tmp_path / "Bbb_fine")
+    paper_at(tmp_path / "Ccc_fine")
+
+    assert [r.verdict for r in survey()] == ["missing", "truth", "truth"]
+
+
+def test_a_survey_row_quotes_120_characters_of_an_ERROR_on_both_branches(
+        tmp_path, monkeypatch):
+    """One line per paper in a table of every paper: a config that will
+    not load and a manuscript that will not read both quote their error,
+    cut at the same width, so a traceback-sized message cannot push the
+    row past a screen. Pinned rather than argued because the line that
+    cuts it appears twice, and an argued equivalence has to be anchored
+    at exactly one line."""
+    from pathlib import Path
+
+    long = "the drive went away " * 20
+    unloadable = paper_at(tmp_path / "Aaa_unloadable")
+    unreadable = paper_at(tmp_path / "Bbb_unreadable")
+    real_load, real_state = revision.load_paper, revision.state
+
+    def load(config, *a, **kw):
+        if Path(config) == unloadable.config:
+            raise OSError(long)
+        return real_load(config, *a, **kw)
+
+    def state(path, *a, **kw):
+        if str(path) == str(unreadable.working):
+            raise OSError(long)
+        return real_state(path, *a, **kw)
+
+    monkeypatch.setattr(revision._registry, "load_paper", load)
+    monkeypatch.setattr(revision._registry, "state", state)
+
+    rows = survey()
+
+    assert [len(r.error) for r in rows] == [120, 120], rows
+    assert all(r.error.startswith("OSError: the drive went away")
+               for r in rows)
