@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S6 — nothing in the toolkit checks a SECTION number, so a merged heading dangles every reference under it~~ — FIXED 11.09
+### ~~S6 — nothing in the toolkit checks a SECTION number, so a merged heading dangles every reference under it~~ — FIXED 11.09, `59223e7`
 
 <!-- status: fixed -->
 
