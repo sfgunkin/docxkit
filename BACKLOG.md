@@ -454,6 +454,42 @@ reach it:
 * `check_citations(docx_path, *, ...)` → the keyword-only marker
   mutated as a binary operator. Equivalent by construction.
 
+**Re-swept 2026-09-12, after the S4/S2 citation-form fix: 131 real, none
+alive (replayed).** The `DOUBLED LINK` bullet above was wrong by then, if
+not from the start. `CITE WITHOUT REF` sorts before `DOUBLED LINK` and
+reaches that branch, so `<=` filed it as a doubled link to untangle;
+`test_the_plan_files_CITE_WITHOUT_REF_under_investigate_not_DOUBLED` kills
+it. The four comparisons that ARE equivalent, the new `BRACKETED SPAN`
+branch among them, carry claims in `tools/equivalents.toml` now.
+
+**The S4/S2 lines in `_cite_repair.py`, `_cite_audit.py` and
+`citations.py`, 2026-09-12.** The modules were swept whole; this entry is
+about the lines that fix wrote. `_cite_grammar.py`'s share of it,
+`citation_shape`, left no survivor.
+
+    module            survivors on the fix's lines   killed   equivalent
+    _cite_repair.py   66                             52       14
+    _cite_audit.py     7                              4        3
+    citations.py       1                              0        1
+
+Fifteen tests in `test_citations.py` did the killing. **37 of the 52 in
+`_cite_repair.py` were the three guards in `_convert` and the excerpt the
+text guard quotes.** No test had ever tripped a guard, so each could be
+weakened to `<` or deleted with the suite green. The tests now trip each one
+by sabotaging the helper it checks: `insert_in_para` doubling or swapping a
+bracket, and `relabel_link` dropping a bookmark or renaming a link. Two
+older comparisons, the start-edge and end-edge tests in `respan_link`,
+became equivalent when the both-edges fallback landed, and are claimed as
+such.
+
+Replayed against the new tests, `_cite_repair.py` has **67 of 1070 real
+mutants alive (6.3%)**, every one on older lines: `respan_link`'s rebuild
+internals, `wrap_link_in_bookmark` and `remove_outer_field`. They were not
+mined. `replay_survivors` reported four of the 52 as SKIPPED rather than
+killed: a mutant of a statement that spans lines does not compile when
+applied to one line. `kill_check` applied those four with the whole
+statement as the anchor, and all four died.
+
 **`_compare_diff.py` — 743 mutants, 653 real, 617 killed (94.5%).** Of
 the 36 that remain, 34 cannot change a report and 2 are cosmetic. The
 sweep also puts a NUMBER on the staleness rule `tools/stale_figures.py`

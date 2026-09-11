@@ -4619,6 +4619,66 @@ def test_the_plan_proposes_to_parenthetical_for_a_swallowed_pair():
     assert 'to_parenthetical(doc, "Robeyns2005")' in plan, plan
 
 
+def test_the_plan_files_CITE_WITHOUT_REF_under_investigate_not_DOUBLED():
+    """"CITE WITHOUT REF" sorts before "DOUBLED LINK" and reaches that
+    branch, so a `<=` there filed it as a doubled link to untangle — a
+    survivor of the 2026-09-12 sweep, where the recorded argument said
+    only DOUBLED LINK could arrive."""
+    from docxkit.citations import repair_plan
+
+    parts = _cited(P(R("as ") + bookmark("Ghost2020txt", 60, R("Ghost (2020)"))
+                     + R(" shows.")), keys=("Adams2001",))
+
+    plan = repair_plan(parts)
+
+    assert "CITE WITHOUT REF: 'Ghost2020'" in plan, plan
+    assert "remove_outer_field" not in plan, plan
+
+
+def test_a_NARRATIVE_link_is_neither_side_of_the_majority():
+    """`Dewey (2004)` carries its brackets inside the blue by the house
+    rule; counted as a swallowed pair it would be reported beside the
+    real one (a `>=` survived the 2026-09-12 sweep)."""
+    parts = _cited(
+        _paren("Adams2001", "Adams 2001"), _paren("Brown2002", "Brown 2002"),
+        _paren("Clark2003", "Clark 2003"),
+        P(R("as ") + _linked("Dewey2004", "Dewey (2004)") + R(" argues.")),
+        P(R("Conversion factors matter ")
+          + _linked("Robeyns2005", "(Robeyns 2005)") + R(".")),
+        keys=("Adams2001", "Brown2002", "Clark2003", "Dewey2004",
+              "Robeyns2005"))
+
+    assert _bracketed(parts) == [("Robeyns2005", "Robeyns 2005")]
+
+
+def test_a_TIE_between_the_two_forms_is_not_a_majority():
+    parts = _cited(
+        _paren("Adams2001", "Adams 2001"), _paren("Brown2002", "Brown 2002"),
+        _paren("Clark2003", "Clark 2003"),
+        P(R("d ") + _linked("Dewey2004", "(Dewey 2004)") + R(".")),
+        P(R("e ") + _linked("Evans2005", "(Evans 2005)") + R(".")),
+        P(R("f ") + _linked("Frank2006", "(Frank 2006)") + R(".")),
+        keys=("Adams2001", "Brown2002", "Clark2003", "Dewey2004",
+              "Evans2005", "Frank2006"))
+
+    assert _bracketed(parts) == []
+
+
+def test_a_BRACKETED_SPAN_quotes_the_first_48_characters_of_the_label():
+    from docxkit._cite_audit import _audit_findings
+
+    label = "(Organisation for Economic Co-operation and Development 2019)"
+    parts = _cited(
+        _paren("Adams2001", "Adams 2001"), _paren("Brown2002", "Brown 2002"),
+        _paren("Clark2003", "Clark 2003"),
+        P(R("see ") + _linked("OECD2019", label) + R(".")),
+        keys=("Adams2001", "Brown2002", "Clark2003", "OECD2019"))
+
+    (message,) = [f.message for f in _audit_findings(parts)[0]
+                  if f.kind == "BRACKETED SPAN"]
+    assert f'"{label[:48]}"' in message, message
+
+
 def _footnote_f7(label: str = "Behrman et al. 1982") -> str:
     """Aging_Well's footnote 7 as R129 measured it: a `(` run, the
     `<key>txt` bookmark round a FIELD link, and a `).` run after it."""
@@ -4815,6 +4875,176 @@ def test_to_parenthetical_under_a_bookmark_that_STARTS_EARLY():
     assert internal_links(out) == [("Mod1986", "Modigliani 1986")]
     assert (_inside_bookmark(out, "Mod1986txt")
             == "As argued by (Modigliani 1986")
+
+
+# The mutation sweep of 2026-09-12 over the lines the S4/S2 fix wrote. The
+# guards in `_convert` had never tripped in a test, so each could be
+# weakened to `<`, or deleted, with the whole suite green.
+
+
+def test_a_conversion_REFUSAL_names_its_helper_and_the_label_it_read():
+    from docxkit.citations import to_narrative, to_parenthetical
+
+    with pytest.raises(AnchorError, match=r"^to_parenthetical: X matched 0 "):
+        to_parenthetical(_one_para(R("No link at all.")), "X")
+
+    title = "The Encyclopedia of Ageing and the Life Course, Volume Two"
+    with pytest.raises(AnchorError) as caught:
+        to_narrative(_one_para(R("see ") + _linked("Enc", title) + R(".")),
+                     "Enc")
+
+    assert str(caught.value).startswith("to_narrative: the link to Enc reads ")
+    assert repr(title[:48]) in str(caught.value)
+
+
+@pytest.mark.parametrize(("before", "after"), [
+    ("see [", ")."),          # the character before sorts ABOVE "("
+    ("see ", ")."),           # …and below it
+    ("see (", " etc.)."),     # the character after sorts below ")"
+])
+def test_to_narrative_wants_the_bracket_pair_to_HUG_the_label(before, after):
+    from docxkit.citations import to_narrative
+
+    xml = _one_para(R(before) + _linked("Adams2001", "Adams 2001") + R(after))
+
+    with pytest.raises(AnchorError, match="bracket pair of its own"):
+        to_narrative(xml, "Adams2001")
+
+
+def test_to_narrative_will_not_take_a_bracket_out_of_ANOTHER_link():
+    from docxkit.citations import to_narrative
+
+    xml = _one_para(R("see ") + _linked("Other", "Part (")
+                    + _linked("Adams2001", "Adams 2001") + R(")."))
+
+    with pytest.raises(AnchorError, match=r"no plain '\(' at offset 9"):
+        to_narrative(xml, "Adams2001")
+
+
+def test_to_parenthetical_inside_a_bookmark_round_the_WHOLE_sentence():
+    """Both brackets fall strictly inside it, the closing one too."""
+    from docxkit._xml import visible_text
+    from docxkit.citations import to_parenthetical
+
+    xml = _one_para(bookmark("_Hlk5", 3, R("As argued by ")
+                             + hfield("Mod1986", "Modigliani (1986)")
+                             + R(", it rises.")))
+
+    out = to_parenthetical(xml, "Mod1986")
+
+    assert visible_text(out) == "As argued by (Modigliani 1986), it rises."
+    assert (_inside_bookmark(out, "_Hlk5")
+            == "As argued by (Modigliani 1986), it rises.")
+
+
+def test_to_parenthetical_keeps_a_space_the_author_left_INSIDE_the_link():
+    from docxkit._xml import internal_links
+    from docxkit.citations import to_parenthetical
+
+    xml = _one_para(R("as ") + _linked("J2018", "Jamieson (2018) ")
+                    + R("argues."))
+
+    out = to_parenthetical(xml, "J2018")
+
+    assert internal_links(out) == [("J2018", "Jamieson 2018 ")]
+
+
+def _sabotage(monkeypatch, name, change):
+    """Make `_cite_repair.<name>` hand back `change(result)`."""
+    import docxkit._cite_repair as repair
+    real = getattr(repair, name)
+    monkeypatch.setattr(repair, name,
+                        lambda *a, **k: change(real(*a, **k)))
+
+
+@pytest.mark.parametrize(("content", "got"), [
+    # doubled brackets sort BELOW the page asked for, swapped ones ABOVE
+    ({"(": "((", ")": "))"}, "((Abramovitz 1986))"),
+    ({"(": "[", ")": "]"}, "[Abramovitz 1986]"),
+])
+def test_the_TEXT_guard_refuses_and_quotes_24_characters_either_side(
+        monkeypatch, content, got):
+    import docxkit._cite_repair as repair
+    from docxkit.citations import to_parenthetical
+
+    real = repair.insert_in_para
+    monkeypatch.setattr(repair, "insert_in_para",
+                        lambda para, at, text, **kw: real(para, at,
+                                                          content[text], **kw))
+    far = "word " * 14                                  # the link at 70
+    for prefix, start, stop in ((far, 46, 111), ("word ", 0, 46)):
+        page = prefix + got + "tail " * 10
+        xml = _one_para(R(prefix) + _linked("Abr1986", "Abramovitz (1986)")
+                        + R("tail " * 10))
+        with pytest.raises(AnchorError,
+                           match="not the bracket move") as caught:
+            to_parenthetical(xml, "Abr1986")
+        assert repr(page[start:stop]) in str(caught.value)
+
+
+@pytest.mark.parametrize(("change", "tag"), [
+    (lambda p: p.replace('<w:bookmarkEnd w:id="7"/>', "", 1), "bookmarkEnd"),
+    (lambda p: p.replace("</w:p>",
+                         '<w:bookmarkStart w:id="99" w:name="x"/></w:p>'),
+     "bookmarkStart"),
+])
+def test_the_COUNT_guard_refuses_a_bookmark_lost_or_gained(
+        monkeypatch, change, tag):
+    from docxkit.citations import to_parenthetical
+
+    _sabotage(monkeypatch, "relabel_link", change)
+    xml = _one_para(R("following ") + bookmark("Mod1986txt", 7, hfield(
+        "Mod1986", "Modigliani (1986)")) + R(". Labor"))
+
+    with pytest.raises(AnchorError, match=f"the <w:{tag} count moved"):
+        to_parenthetical(xml, "Mod1986")
+
+
+@pytest.mark.parametrize("renamed", ["Aaa", "Zzz"])
+def test_the_LINKS_guard_refuses_a_link_that_now_points_elsewhere(
+        monkeypatch, renamed):
+    from docxkit.citations import to_narrative
+
+    _sabotage(monkeypatch, "relabel_link", lambda p: p.replace(
+        'w:anchor="Robeyns2005"', f'w:anchor="{renamed}"'))
+    xml = _one_para(R("see ") + _linked("Robeyns2005", "(Robeyns 2005)")
+                    + R("."))
+
+    with pytest.raises(AnchorError, match="the paragraph's links moved"):
+        to_narrative(xml, "Robeyns2005")
+
+
+def test_respan_link_REFUSES_a_want_found_TWICE_inside_the_label():
+    from docxkit.citations import respan_link
+
+    xml = _one_para(R("as ") + _linked("Lee2001", "(Lee and Lee 2001)")
+                    + R("."))
+
+    with pytest.raises(AnchorError, match="does not retype one"):
+        respan_link(xml, "Lee2001", "Lee")
+
+
+def test_respan_link_REFUSES_a_label_found_TWICE_inside_want():
+    from docxkit.citations import respan_link
+
+    xml = _one_para(R("in (") + _linked("Y2001", "2001") + R(" 2001) it"))
+
+    with pytest.raises(AnchorError, match="does not retype one"):
+        respan_link(xml, "Y2001", "(2001 2001)")
+
+
+def test_respan_link_narrows_both_edges_from_an_ODD_offset():
+    """At 7, `7 ^ 1` and `7 | 1` both miss the 8 the label moves to."""
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import respan_link
+
+    xml = _one_para(R("As in: ") + _linked("Robeyns2005", "(Robeyns 2005)")
+                    + R("."))
+
+    out = respan_link(xml, "Robeyns2005", "Robeyns 2005")
+
+    assert internal_links(out) == [("Robeyns2005", "Robeyns 2005")]
+    assert visible_text(out) == visible_text(xml)
 
 
 def test_the_plan_now_PROPOSES_the_span_repair_instead_of_shrugging():

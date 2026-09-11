@@ -126,3 +126,41 @@ claims = [
   { was = "dpi: int = 150,", line = "dpi: int = 149,", kind = "cosmetic", why = "The resolution a PNG is rasterised at when the caller names none. A person reads the page; 149 and 151 draw the same glyphs at a width nobody chose to the pixel, and a test pinning it would pin the number rather than the property." },
   { was = "dpi: int = 150,", line = "dpi: int = 151,", kind = "cosmetic", why = "The resolution a PNG is rasterised at when the caller names none. A person reads the page; 149 and 151 draw the same glyphs at a width nobody chose to the pixel, and a test pinning it would pin the number rather than the property." },
 ]
+
+# The S4/S2 citation-form conversions, swept 2026-09-12. Every claim below
+# was applied by `kill_check` the same day and survived the harness.
+
+["_cite_repair.py"]
+claims = [
+  { was = 'pm, link = found[0]', line = 'pm, link = found[ -1]', why = "The line above refuses unless `found` holds exactly one link, so its first and last element are the same object." },
+  { was = 'if form == ("narrative" if narrative else "bare"):', line = 'if form is ("narrative" if narrative else "bare"):', why = "`form` is one of three literals `citation_shape` returns from this package, and CPython interns them, so identity holds exactly where equality does. Python warns about the shape and is right to." },
+  { was = 'bare = label if form == "bare" else _without_brackets(label)', line = 'bare = label if form <= "bare" else _without_brackets(label)', why = "`form` takes three values, `bare`, `bracketed` and `narrative`, and only `bare` sorts at or before `bare`. A fourth form would break the claim, and verify_equivalents.py would say so." },
+  { was = 'bare = label if form == "bare" else _without_brackets(label)', line = 'bare = label if form is "bare" else _without_brackets(label)', why = "Identity against an interned literal from the same closed set of three; true exactly where equality is." },
+  { was = 'if form == "bare":                      # (Name Year) -> Name (Year)', line = 'if form <= "bare":                      # (Name Year) -> Name (Year)', why = "The same closed set of three forms: only `bare` sorts at or before `bare`." },
+  { was = 'if form == "bare":                      # (Name Year) -> Name (Year)', line = 'if form is "bare":                      # (Name Year) -> Name (Year)', why = "Identity against an interned literal from the same closed set of three." },
+  { was = 'if text[at - 1:at] != "(" or text[end:end + 1] != ")":', line = 'if text[at - 1:at] != "(" or text[end:end + 1] is not ")":', why = "A one-character slice of a str is CPython's cached single-character string, the same object as the literal, so `is not` agrees with `!=`; an empty slice differs from both." },
+  { was = 'if text[at - 1:at] != "(" or text[end:end + 1] != ")":', line = 'if text[at - 1:at] is not "(" or text[end:end + 1] != ")":', why = "The single-character cache again, on the character before the label." },
+  { was = 'if para.count(tag) != original.count(tag):', line = 'if para.count(tag) is not original.count(tag):', why = "Counts of links, fields and bookmarks in ONE paragraph, and CPython caches ints up to 256, so identity and equality agree on every count a paragraph holds." },
+  { was = 'for run, (lo, hi) in zip(runs, spans, strict=True):', line = 'for run, (lo, hi) in zip(runs, spans, strict=False):', why = "`run_spans` returns one span per run it returns, so the two lists are always the same length and `strict` never has anything to check." },
+  { was = 'if body[pos - lo] != char or span_holding(run.start(), guarded):', line = 'if body[pos - lo] < char or span_holding(run.start(), guarded):', why = "The caller has already read `char` at that offset in the visible text, and `run_spans` indexes the same text, so the character always matches and the first operand is False under every comparison." },
+  { was = 'if body[pos - lo] != char or span_holding(run.start(), guarded):', line = 'if body[pos - lo] > char or span_holding(run.start(), guarded):', why = "As for `<`: the caller guarantees the character matches, so the first operand is False either way." },
+  { was = 'if body[pos - lo] != char or span_holding(run.start(), guarded):', line = 'if body[pos - lo] is not char or span_holding(run.start(), guarded):', why = "The caller guarantees the character matches, and single-character strings are cached, so `is not` is False exactly where `!=` is." },
+  { was = 'break', line = 'continue', why = "Only one run holds a given offset, because the spans of non-empty runs are disjoint. After it, no later run can match, the loop ends, and the same refusal is raised." },
+  { was = 'if want.startswith(label) or label.startswith(want):', line = 'if want.startswith(label) and label.startswith(want):', why = "Equivalent since the both-edges branch landed. A want that shares only the START with the label falls through to `label.count(want)` or `want.count(label)`, which finds it at index 0 and computes the same span." },
+  { was = 'elif want.endswith(label) or label.endswith(want):', line = 'elif want.endswith(label) and label.endswith(want):', why = "The same fall-through, at the END edge: the both-edges branch finds the shorter string at the end of the longer one and computes the same span." },
+]
+
+["_cite_audit.py"]
+claims = [
+  { was = 'outside = sum(1 for *_, shape in shapes if shape[0] == "bare")', line = 'outside = sum(1 for *_, shape in shapes if shape[0] <= "bare")', why = "`citation_shape` returns one of three forms, and only `bare` sorts at or before `bare`." },
+  { was = 'outside = sum(1 for *_, shape in shapes if shape[0] == "bare")', line = 'outside = sum(1 for *_, shape in shapes if shape[0] is "bare")', why = "Identity against an interned literal from the same closed set of three forms." },
+  { was = 'inside = [site for site in shapes if site[3][0] == "bracketed"]', line = 'inside = [site for site in shapes if site[3][0] is "bracketed"]', why = "Identity against an interned literal from the same closed set. The `>=` spelling is NOT equivalent, because `narrative` sorts after `bracketed`, and a test kills it." },
+]
+
+["citations.py"]
+claims = [
+  { was = 'elif name in live and f.kind == "REF WITHOUT CITE":', line = 'elif name in live and f.kind >= "REF WITHOUT CITE":', why = "Inside the `ORPHAN REF` / `REF WITHOUT CITE` branch, so only those two kinds reach it, and `ORPHAN REF` sorts before `REF WITHOUT CITE`." },
+  { was = 'elif f.kind == "ORPHAN REF":', line = 'elif f.kind <= "ORPHAN REF":', why = "The same two kinds reach it, and `REF WITHOUT CITE` sorts after `ORPHAN REF`." },
+  { was = 'elif f.kind == "UNBALANCED SPAN":', line = 'elif f.kind >= "UNBALANCED SPAN":', why = "Of the fourteen kinds `_audit_findings` raises, none sorts after `UNBALANCED SPAN`. A new kind starting with U or later would break the claim." },
+  { was = 'elif f.kind == "BRACKETED SPAN":', line = 'elif f.kind <= "BRACKETED SPAN":', why = "Of the kinds that reach this branch, none sorts before `BRACKETED SPAN`: `BROKEN LINK` is matched earlier, and every other kind starts with C or later. The `<=` on `DOUBLED LINK` below is NOT equivalent, because `CITE WITHOUT REF` reaches it, and a test kills it." },
+]
