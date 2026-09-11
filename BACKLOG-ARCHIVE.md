@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S1 — `fit --render` placed a table by the FIRST sheet carrying its caption's text: false straddles on whole tables, and a tab-set caption's real straddle never reported~~ — FIXED 11.09
+### ~~S1 — `fit --render` placed a table by the FIRST sheet carrying its caption's text: false straddles on whole tables, and a tab-set caption's real straddle never reported~~ — FIXED 11.09, `4c75554`
 <!-- status: fixed -->
 
 **Fixed 2026-09-11.** `placement` locates every table through one
