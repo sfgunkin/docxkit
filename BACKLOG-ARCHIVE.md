@@ -14,6 +14,47 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `compare` and `revision ingest` cannot see a paragraph's LEADING space, so an edit that prints as an indent passes `--expect-clean`~~ — FIXED 11.09
+
+<!-- status: fixed -->
+
+**Fixed 2026-09-11.** The cause was where the entry guessed, one level
+deeper: not the word tokeniser alone but `Para.text` itself, built as
+`(wtext + mtext).strip()` for every matcher, so the whole-paragraph
+matcher called the two paragraphs equal and the word-level diff never
+ran on them; `ingest._norm` stripped the same way, so the paragraph
+aligned as unchanged and produced no override for the fold-back to keep.
+
+* `Para` keeps its stripped `text` — every matcher wants it — and
+  carries `edges` beside it, the whitespace the paragraph opens and
+  closes on. `_Alignment.matched` compares them and reports a
+  difference as a TEXT entry, `EDGE leading: '' -> ' '`, which counts
+  as a real change location and fails `--expect-clean`; a paragraph in
+  a replace block carries the same line beside its word diff. A blank
+  paragraph has no edges: a lone space prints as an empty line either
+  way, and Word puts them in and takes them out of spacers as it
+  pleases.
+* `ingest._norm` no longer strips (a whitespace-only paragraph still
+  reads as blank), so the space is an edit the override keeps.
+* `lint.audit_parts` gains the audit the entry proposed: a BODY paragraph
+  whose text opens on a space or a tab, advisory, body only — a
+  footnote opens on the space after its note mark by construction.
+
+**Measured on a snapshot of the manuscript it was found in**, repeating
+the entry's own experiment with the fix in place: one leading space added
+to the first `w:t` of a body paragraph, everything else byte-identical.
+
+    compare --expect-clean   exit 1   REAL change locations 1   (was exit 0, 0)
+    ingest                   1 override in word/document.xml (was none)
+    lint audit, patched      "body paragraph opens on whitespace (' The paper is organized…')"
+    lint audit, manuscript   0 findings — the house state the paper-local probe measured
+
+Tests: four in `test_compare.py` (leading, trailing, an edge inside a
+rewrite named beside the words, a blank paragraph gaining a space is not
+a change), two in `test_ingest.py`, three in `test_lint.py` (body, tab,
+and a footnote opening on a space NOT reported). The paper-local probe in
+Aging_Well's lane can go; `docxkit lint` reports the same thing.
+
 ### ~~S1 — `repack` measured broken trial documents and advised the author on them: it read captions, bodies, mentions and the page all its own way, and each way was wrong~~ — FIXED 11.09, `3a4b1d1`
 
 <!-- status: fixed -->

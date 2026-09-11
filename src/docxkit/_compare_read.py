@@ -464,6 +464,7 @@ class Para:
 
     __slots__ = (
         "at",
+        "edges",
         "fields",
         "fmt",
         "mtext",
@@ -482,6 +483,7 @@ class Para:
     wtext_f: str
     mtext: str
     text: str
+    edges: tuple[str, str]  # whitespace the paragraph OPENS and CLOSES on
     fmt: list[frozenset[str]]
     omml: list[tuple[str, str]]
     omml_fmt: list[list[str]]
@@ -501,7 +503,18 @@ class Para:
         # as no change at all (backlog S1).
         self.wtext = printed_text(xml)
         self.mtext = html.unescape("".join(MT_RE.findall(xml)))
-        self.text = (self.wtext + self.mtext).strip()
+        raw = self.wtext + self.mtext
+        self.text = raw.strip()
+        # The strip is what every matcher wants — and what hid a
+        # LEADING SPACE for as long as this class existed: Word prints
+        # it as an indent, the word tokeniser yields no token for it,
+        # and `--expect-clean` exited 0 on two files that differ by it
+        # (Aging_Well A.4, 2026-09-11, backlog S1). So the edges are
+        # kept beside the text, and `matched` compares them. A blank
+        # paragraph has none: a lone space prints as an empty line
+        # either way.
+        self.edges = ((raw[:len(raw) - len(raw.lstrip())],
+                       raw[len(raw.rstrip()):]) if self.text else ("", ""))
         self.wtext_f, self.fmt = _char_fmt(xml, cascade)
         self.ppr = _para_props(
             xml, cascade if cascade is not None else Cascade())

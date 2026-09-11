@@ -83,6 +83,7 @@ from ._compare_diff import bookmark_names as bookmark_names
 from ._compare_diff import compare_comments as compare_comments
 from ._compare_diff import compare_media as compare_media
 from ._compare_diff import compare_paras as compare_paras
+from ._compare_diff import edge_diff as edge_diff
 from ._compare_diff import fmt_diff as fmt_diff
 from ._compare_diff import formula_diff as formula_diff
 from ._compare_diff import hyperlink_labels as hyperlink_labels
@@ -126,6 +127,7 @@ __all__ = [
     "compare_docs",
     "compare_media",
     "compare_paras",
+    "edge_diff",
     "fmt_diff",
     "formula_diff",
     "hyperlink_labels",

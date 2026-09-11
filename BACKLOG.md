@@ -87,56 +87,6 @@ Workaround in use: move the folder aside, and end the orphan by PID after
 checking both. Never end a Word started with `/restore` (the author's) or
 with `-Embedding` alone (another program's).
 
-### S1 — `compare` and `revision ingest` cannot see a paragraph's LEADING space, so an edit that prints as an indent passes `--expect-clean`
-
-<!-- status: open -->
-
-Measured on Aging_Well, 2026-09-11. An author hand pass rewrote A.4's opening
-`The parameter values below are illustrative` as ` The following parameter
-values are illustrative`. That is a leading space in the first `<w:t>`, and
-Word prints it as a visible indent. Nothing in the toolkit reported it:
-
-    revision ingest   word_diff for that paragraph: INS "following", DEL "below",
-                      "illustrative," -> "illustrative and are", "show" -> "indicate"
-                      — no whitespace entry
-    compare           TEXT layer (word-level) — nothing
-    lint              clean
-    pages --check     0 (geometry, not text)
-
-It was found by reading p. 32 of the render.
-
-**Measured on scratch copies of the manuscript**, one change each against an
-unmodified copy (the paper itself was only read):
-
-    leading space added     compare --expect-clean  exit 0   REAL change locations 0   TEXT (none)
-    interior double space   compare --expect-clean  exit 1   REAL change locations 1
-
-So the gap is at the paragraph EDGE, not whitespace in general. Probable
-cause, NOT read in the source: the word tokeniser splits on whitespace, so a
-leading space produces no token and no gap between tokens changes. A trailing
-space was not measured.
-
-**Why S1:** `compare --expect-clean` is the gate this toolkit tells callers to
-trust over the eye, and here it reports two documents that print differently
-as identical. It is `preserve_space`'s problem seen from the other side.
-`preserve_space` exists because Word TRIMS edge spaces in a bare `<w:t>`;
-nothing flags an edge space that is preserved and wrong.
-
-**Suggested fix:** in the TEXT layer, compare each paragraph's leading and
-trailing whitespace after the existing masking, and report it as a real
-location (`[edge] ' The following…' <- 'The following…'`). Surface the same in
-`ingest`'s word_diff. A cheap audit could sit alongside: a BODY paragraph whose
-visible text opens on whitespace is almost always a slip. Footnotes
-legitimately open on the space after the note mark (11 of 12 on this paper),
-so the audit must exempt that position or run on the body only.
-
-**Workaround in use:** a paper-local probe after the lane (body paragraphs
-opening on whitespace; the house state on Aging_Well is 0), plus reading the
-render. Paper side: `Aging_Well/revision/log.md`, the 2026-09-11 row, and A4 of
-`revision/scripts/r124_hand_pass_repairs.py`.
-
----
-
 ### S6 — nothing in the toolkit checks a SECTION number, so a merged heading dangles every reference under it
 
 <!-- status: open -->

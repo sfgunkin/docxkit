@@ -342,7 +342,35 @@ def audit_parts(parts: dict[str, bytes]) -> list[str]:
     this is the half a caller can reach on its own.
     """
     roots, malformed = _roots(parts)
-    return malformed or audit(*roots)
+    if malformed:
+        return malformed
+    body = next((r for r in roots if r.tag == W + "document"), None)
+    return audit(*roots) + _opens_on_whitespace(body)
+
+
+def _opens_on_whitespace(body: _Element | None) -> list[str]:
+    """Advisory — a BODY paragraph whose text opens on a space or a tab.
+
+    Word prints it as an indent, and no text gate sees it: `compare`
+    reports an edge that MOVED between two files (backlog S1), while a
+    paper whose truth already carries one has nothing to compare
+    against. An author hand pass opened Aging_Well's A.4 with ` The
+    following…` and it was found on page 32 of the render.
+
+    The BODY only. A footnote legitimately opens on the space after its
+    note mark — 11 of 12 on that paper — so the other parts are not
+    read, and a paragraph that is nothing but whitespace is a spacer,
+    not a slip.
+    """
+    if body is None:
+        return []
+    out = []
+    for p in body.iter(W + "p"):
+        text = "".join(t.text or "" for t in p.iter(W + "t"))
+        if text.strip() and text[0] in " \t":
+            out.append(f"body paragraph opens on whitespace ({text[:40]!r}) "
+                       "- Word prints it as an indent")
+    return out
 
 
 def _repeated_bookmarks(roots: tuple[_Element | None, ...]) -> list[str]:

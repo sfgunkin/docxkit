@@ -75,8 +75,16 @@ def _norm(p: str) -> str:
     Shares one glyph table with `docxkit.compare`: when they diverged,
     `--expect-clean` called a non-breaking-space change an artifact while
     this function called it an author edit and wrote it into the source.
+
+    NOT stripped. It was, and a leading space the author typed — which
+    Word prints as an indent — then aligned as "equal", produced no
+    override, and was dropped by the fold-back while `revision ingest`
+    reported nothing either (Aging_Well A.4, 2026-09-11, backlog S1).
+    A paragraph that is nothing but whitespace still compares as blank:
+    a lone space prints as an empty line either way.
     """
-    return normalize_glyphs(_cat(p)).strip()
+    text = normalize_glyphs(_cat(p))
+    return text if text.strip() else ""
 
 
 def _ratio(a: str, b: str) -> float:

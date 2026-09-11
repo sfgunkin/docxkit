@@ -86,6 +86,26 @@ def word_diff(a: str, b: str) -> list[str]:
     return out
 
 
+def edge_diff(pa: Para, pb: Para) -> list[str]:
+    """The whitespace a paragraph opens or closes on, when it moved.
+
+    Word prints a leading space as an INDENT, and nothing else in this
+    layer can see one: `Para.text` is stripped for the matchers, and
+    `word_diff` tokenises on whitespace, so a space added in front of
+    the first word changes no token and no gap between tokens. An
+    author hand pass that opened A.4 with ` The following…` passed
+    `--expect-clean` with `TEXT (none)` and was found on page 32 of the
+    render (Aging_Well, 2026-09-11, backlog S1). Interior double spaces
+    already failed; the gap was at the paragraph's edge.
+    """
+    out = []
+    for side, a, b in zip(("leading", "trailing"), pa.edges, pb.edges,
+                          strict=True):
+        if a != b:
+            out.append(f"EDGE {side}: {a!r} -> {b!r}")
+    return out
+
+
 def fmt_diff(pa: Para,
              pb: Para) -> list[tuple[str, frozenset[str], frozenset[str]]]:
     """(segment, old flags, new flags) where char formatting differs.
@@ -490,6 +510,12 @@ class _Alignment:
                                    "to": sorted(pb.ppr - pa.ppr)}, pa)
         for change in formula_diff(pa, pb):
             self.add(change.bucket, change.entry(), pa)
+        # A REAL text change, in the TEXT bucket, on a pair the matcher
+        # called equal: the matcher reads stripped text, and an edge
+        # space is exactly what stripping removes.
+        if edges := edge_diff(pa, pb):
+            self.add("text", {"context": pa.text[:60], "word_diff": edges},
+                     pa)
         if pa.text != pb.text:          # equal under glyph-norm only
             self.add("glyph", {"from": pa.text[:120], "to": pb.text[:120]},
                      pa)
@@ -541,7 +567,8 @@ class _Alignment:
             # this same invariant has produced: it could not be killed
             # by any input, and removing it changes no report.
             entry = self.place({"context": pa.text[:60],
-                                "word_diff": word_diff(pa.text, pb.text)},
+                                "word_diff": word_diff(pa.text, pb.text)
+                                + edge_diff(pa, pb)},
                                pa)
             # attributed to the paragraph that HELD the target, so the
             # report still says where to look

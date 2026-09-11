@@ -692,3 +692,35 @@ def test_an_unterminated_field_does_NOT_refuse_the_write():
 
     assert lint_parts(_parts(body)) == []
     assert audit_parts(_parts(body)) != []
+
+
+def test_a_BODY_paragraph_opening_on_whitespace_is_an_advisory_finding():
+    """Word prints it as an indent, and a paper whose truth already
+    carries one has nothing for `compare` to report it against
+    (Aging_Well A.4, 2026-09-11). Advisory: Word opens the file."""
+    body = para(run("Clean.")) + para(run(" The following values",
+                                          preserve=True))
+
+    (finding,) = audit_parts(_parts(body))
+
+    assert "opens on whitespace" in finding and "The following" in finding
+    assert lint_parts(_parts(body)) == []
+
+
+def test_a_TAB_counts_and_a_paragraph_of_nothing_but_space_does_not():
+    tabbed = para("<w:r><w:tab/></w:r>" + run("Indented by hand."))
+    blank = para(run("   ", preserve=True))
+
+    assert audit_parts(_parts(tabbed)) == [], "a w:tab is not a w:t"
+    assert audit_parts(_parts(blank)) == []
+    assert audit_parts(_parts(para(run("\tText", preserve=True)))) != []
+
+
+def test_a_FOOTNOTE_opening_on_a_space_is_NOT_reported():
+    """Eleven of twelve on that paper open on the space after the note
+    mark, which is how a footnote is typed. The body only."""
+    foot = (f'<w:footnotes {NS}><w:footnote w:id="2"><w:p>'
+            + run(" A note, as typed.", preserve=True)
+            + "</w:p></w:footnote></w:footnotes>")
+
+    assert audit_parts(make_parts(para(run("body")), footnotes=foot)) == []

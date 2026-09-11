@@ -765,3 +765,27 @@ def test_a_BODY_entry_keeps_the_two_key_shape_it_always_had(tmp_path):
 
     (entry,) = json.loads(store.read_text(encoding="utf-8"))
     assert set(entry) == {"old", "new"}, entry
+
+
+def test_a_LEADING_space_the_author_typed_is_an_edit_the_fold_back_keeps(
+        tmp_path):
+    """Word prints it as an indent. The alignment read STRIPPED text, so
+    the paragraph paired as equal, no override was written, and the next
+    clean build dropped the author's space while `revision ingest`
+    reported nothing (Aging_Well A.4, 2026-09-11, backlog S1)."""
+    a = write(tmp_path / "a.docx",
+              make_parts(para(run("keep")) + para(run("The values below"))))
+    b = write(tmp_path / "b.docx",
+              make_parts(para(run("keep"))
+                         + para(run(" The values below", preserve=True))))
+
+    assert _texts(build_overrides(a, b)) == [("The values below",
+                                             " The values below")]
+
+
+def test_a_paragraph_that_is_ONLY_whitespace_is_still_blank(tmp_path):
+    a = write(tmp_path / "a.docx", make_parts(para(run("keep")) + para()))
+    b = write(tmp_path / "b.docx",
+              make_parts(para(run("keep")) + para(run(" ", preserve=True))))
+
+    assert build_overrides(a, b) == []

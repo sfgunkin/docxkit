@@ -4198,3 +4198,61 @@ def test_render_survives_the_cp1252_console_a_LIBRARY_caller_gets(tmp_path):
     out = printed()
     assert minus in out, "the report stopped at the glyph it was reporting"
     assert "REAL change locations" in out, "it did not reach its own summary"
+
+
+# --- the paragraph's EDGES ---------------------------------------------
+#
+# Aging_Well, 2026-09-11 (backlog S1): an author hand pass rewrote A.4's
+# opening as ` The following parameter values…`, a leading space in the
+# first w:t that Word prints as an INDENT. `--expect-clean` exited 0 on
+# it with `TEXT (none)`: the matchers read stripped text, and the word
+# tokeniser yields no token for a space in front of the first word. An
+# interior double space already failed. The gap was at the edge.
+
+def test_a_LEADING_space_is_a_TEXT_change_that_gates(tmp_path):
+    edited = BASE.replace(run("The index rose to 0.35 in 2024."),
+                          run(" The index rose to 0.35 in 2024.",
+                              preserve=True))
+    a, b = docs(tmp_path, BASE, edited)
+    report = compare(a, b)
+
+    assert [t["word_diff"] for t in report["text"]] == [
+        ["EDGE leading: '' -> ' '"]]
+    assert report["glyph"] == [], "an indent is not a glyph artifact"
+    assert render(report, expect_clean=True) == 1
+    assert "EDGE leading" in _rendered(report)
+
+
+def test_a_TRAILING_space_is_reported_the_same_way(tmp_path):
+    edited = BASE.replace(run("Conclusions are unchanged."),
+                          run("Conclusions are unchanged. ", preserve=True))
+    a, b = docs(tmp_path, BASE, edited)
+
+    assert [t["word_diff"] for t in compare(a, b)["text"]] == [
+        ["EDGE trailing: '' -> ' '"]]
+
+
+def test_an_edge_that_moved_inside_a_REWRITE_is_named_beside_the_words(
+        tmp_path):
+    """A rewritten paragraph lands in a replace block, where the words
+    are diffed; the edge goes on the same entry, so the one line a
+    reader checks carries both."""
+    edited = BASE.replace(run("The index rose to 0.35 in 2024."),
+                          run(" The index rose to 0.37 in 2024.",
+                              preserve=True))
+    a, b = docs(tmp_path, BASE, edited)
+
+    (entry,) = compare(a, b)["text"]
+    assert entry["word_diff"] == ['"0.35" -> "0.37"',
+                                  "EDGE leading: '' -> ' '"]
+
+
+def test_a_BLANK_paragraph_gaining_a_space_is_not_a_change(tmp_path):
+    """A lone space prints as an empty line either way, and Word puts
+    one in and takes one out of spacer paragraphs as it pleases."""
+    a, b = docs(tmp_path, BASE + para(),
+                BASE + para(run(" ", preserve=True)))
+
+    report = compare(a, b)
+
+    assert report["text"] == [] and report["structure"] == [], report
