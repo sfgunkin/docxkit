@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — `sections` read typed numbers only, so every mention was a breach on the six papers whose headings Word numbers~~ — FIXED 12.09
+### ~~S3 — `sections` read typed numbers only, so every mention was a breach on the six papers whose headings Word numbers~~ — FIXED 12.09, `b23aa68`
 
 <!-- status: fixed -->
 
@@ -56,7 +56,7 @@ restart, a paragraph's own `numPr` with its removal, an override and the
 formats, a bullet, letters past z, "not checked", and a dangling mention on
 a list-numbered paper still reported.
 
-### ~~S4 — nothing renumbered the sections after a merge, so Aging_Well hand-wrote R123 with a literal map~~ — FIXED 12.09
+### ~~S4 — nothing renumbered the sections after a merge, so Aging_Well hand-wrote R123 with a literal map~~ — FIXED 12.09, `b23aa68`
 
 <!-- status: fixed -->
 
