@@ -114,6 +114,7 @@ from ..errors import MathResolved as MathResolved
 from ..errors import ProtocolError as ProtocolError
 from ..errors import StaleBatch as StaleBatch
 from ..errors import WorkingPending as WorkingPending
+from ._baseline import BaselineReport as BaselineReport
 from ._baseline import baseline as baseline
 from ._build import build as build
 from ._common import _CONFIG as _CONFIG
@@ -192,6 +193,7 @@ from ._registry import registered as registered
 from ._registry import registry_path as registry_path
 from ._registry import scan as scan
 from ._registry import survey as survey
+from ._registry import survey_exit_code as survey_exit_code
 from ._state import _AUTHOR_RE as _AUTHOR_RE
 from ._state import State as State
 from ._state import StatusReport as StatusReport
@@ -217,6 +219,7 @@ __all__ = [
     "SAVE_NOISE",
     "TEXT_PARTS",
     "BaselinePending",
+    "BaselineReport",
     "DocumentLocked",
     "Doubt",
     "GateResult",
@@ -272,6 +275,7 @@ __all__ = [
     "state",
     "status",
     "survey",
+    "survey_exit_code",
     "validate",
     "verdict",
 ]

@@ -528,7 +528,7 @@ def test_ingest_does_not_cry_wolf_over_save_noise(project):
 def test_baseline_records_the_new_truth(project):
     write(project.working, make_parts(para(run("Accepted and settled."))))
     written = revision.baseline(project)
-    assert written == project.prev
+    assert written.prev == project.prev
     assert project.prev.read_bytes() == project.working.read_bytes()
 
 
@@ -670,7 +670,7 @@ def test_a_first_baseline_with_no_prev_is_not_blocked(tmp_path):
     src = write(tmp_path / "p2" / "m.docx", make_parts(para(run("body"))))
     paper = revision.init(tmp_path / "p2", src)
     paper.prev.unlink()
-    assert revision.baseline(paper) == paper.prev
+    assert revision.baseline(paper).prev == paper.prev
 
 
 # -------------------------------------------------------------- build
@@ -3098,7 +3098,7 @@ def test_baseline_does_not_refuse_a_re_labelled_link(project):
              _linked("UnitedNations2026", "United Nations 2026"),
              run(" reports."))))
 
-    assert revision.baseline(project) == project.prev
+    assert revision.baseline(project).prev == project.prev
 
 
 def test_notes_ADDED_while_others_are_reworded_are_not_losses(project):
@@ -3774,7 +3774,7 @@ def test_baseline_REPAIRS_the_glyph_when_told_to(tmp_path):
 
     written = revision.baseline(paper, repair_math=True)
 
-    assert written.exists()
+    assert written.prev.exists()
     after = package.read_parts(
         paper.working)["word/document.xml"].decode("utf-8")
     assert "\u22120.398" in after and ">-0.398<" not in after

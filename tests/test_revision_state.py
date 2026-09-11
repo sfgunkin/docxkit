@@ -204,7 +204,7 @@ def test_force_does_not_override_the_lock(tmp_path, monkeypatch):
 
 def test_an_unlocked_settled_file_still_baselines(tmp_path):
     paper = _scaffold(tmp_path, para(run("settled prose")))
-    written = revision.baseline(paper)
+    written = revision.baseline(paper).prev
     assert written.exists()
     assert written.read_bytes() == paper.working.read_bytes()
 

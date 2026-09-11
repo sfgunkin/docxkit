@@ -375,3 +375,58 @@ def test_one_UNREADABLE_paper_does_not_end_the_survey(tmp_path, monkeypatch):
     assert broken.state is None
     assert "OSError" in broken.error and "drive went away" in broken.error
     assert fine.state is not None, "the healthy row is unaffected"
+
+
+# --- the exit code is the ROWS' ---------------------------------------
+#
+# The rank table and the worst-row arithmetic were `cli._VERDICT_RANK`
+# and the tail of `cli.cmd_revision_survey` until 2026-09-11, testable
+# only through `argv`. They are `Survey.rank`, `Survey.exit_code` and
+# `revision.survey_exit_code` now; the `_cli` tests above still pin
+# that the command hands the number on unchanged.
+
+def _row(verdict: str, root) -> revision.Survey:
+    """A row carrying `verdict`, built the way `survey` builds it."""
+    from pathlib import Path
+    if verdict == "unreadable":
+        return revision.Survey(config=Path("x/revision/paper.toml"),
+                               paper=None, state=None, error="TOMLDecodeError")
+    paper = paper_at(root / verdict)
+    if verdict == "missing":
+        return revision.Survey(config=paper.config, paper=paper, state=None,
+                               missing=True, error="no manuscript")
+    if verdict == "PROPOSAL":
+        write(paper.working, make_parts(para(run("x "), ins("proposed"))))
+    elif verdict == "stale":
+        write(paper.working, make_parts(para(run("accepted, moved on"))))
+    (found,) = survey([paper.config])
+    return found
+
+
+def test_every_verdict_has_a_rank_and_the_order_is_worst_first(tmp_path):
+    rows = [_row(v, tmp_path) for v in revision._registry.VERDICTS]
+    assert [r.verdict for r in rows] == list(revision._registry.VERDICTS), (
+        "the fixture does not produce the verdict it names")
+    assert [r.rank for r in rows] == [0, 1, 2, 3, 4]
+
+
+def test_each_row_exits_on_the_scale_ONE_paper_uses(tmp_path):
+    codes = {v: _row(v, tmp_path).exit_code
+             for v in revision._registry.VERDICTS}
+    assert codes == {"unreadable": 2, "missing": 2, "PROPOSAL": 1,
+                     "stale": 4, "truth": 0}
+
+
+def test_the_survey_exits_with_its_WORST_row_not_its_largest_code(tmp_path):
+    """A stale baseline is 4 and an unreadable row is 2, and the
+    unreadable one is worse: it is neither of the states the protocol
+    has. The worst by RANK wins, not the biggest number."""
+    stale, broken, truth = (_row(v, tmp_path)
+                            for v in ("stale", "unreadable", "truth"))
+    assert revision.survey_exit_code([stale, truth]) == 4
+    assert revision.survey_exit_code([stale, broken, truth]) == 2
+    assert revision.survey_exit_code([truth]) == 0
+
+
+def test_an_empty_survey_is_nothing_waiting():
+    assert revision.survey_exit_code([]) == 0

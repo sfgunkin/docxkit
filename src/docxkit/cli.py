@@ -1299,15 +1299,6 @@ def _summarize(parts: list[str], *, keep: int = 4) -> str:
     return f"{', '.join(out[:keep])}, and {len(out) - keep} more"
 
 
-#: what the two read-only commands print when Word held the file
-
-
-#: The verdict column, widest first so the rows line up, and ordered by
-#: what it costs to ignore: a proposal is somebody waiting on the author.
-_VERDICT_RANK = {"unreadable": 0, "missing": 1, "PROPOSAL": 2, "stale": 3,
-                 "truth": 4}
-
-
 def _survey_row(item: object) -> str:
     from .revision import Survey
     assert isinstance(item, Survey)
@@ -1340,13 +1331,16 @@ def cmd_revision_survey(args: argparse.Namespace) -> int:
     the question an author actually has is which of them is waiting.
     Nine `status` invocations was the previous answer.
 
-    Exit code is the worst state found, on the same scale one paper
-    uses: 1 if anything is a proposal, 4 if a settled paper's baseline
-    has drifted, 0 when every paper is truth on a current baseline. A
-    row that could not be read exits 2 — it is neither of the states
-    the protocol has, and reporting it as truth would be a lie.
+    Rows worst first, and the exit code is the worst row's — both are
+    `revision.survey_exit_code`'s; this prints.
     """
-    from .revision import registered, registry_path, scan, survey
+    from .revision import (
+        registered,
+        registry_path,
+        scan,
+        survey,
+        survey_exit_code,
+    )
     for root in args.scan or []:
         found = scan(root)
         print(f"scanned {root}: {len(found)} paper(s)")
@@ -1358,14 +1352,11 @@ def cmd_revision_survey(args: argparse.Namespace) -> int:
               f"a new paper by itself.")
         return 0
     rows = survey(configs)
-    rows.sort(key=lambda r: (_VERDICT_RANK.get(r.verdict, 9), r.name.lower()))
+    rows.sort(key=lambda r: (r.rank, r.name.lower()))
     for row in rows:
         print(_survey_row(row))
-    worst = min((_VERDICT_RANK.get(r.verdict, 9) for r in rows), default=4)
     print(f"\n  {len(rows)} paper(s) · {registry_path()}")
-    if worst <= 1:
-        return 2
-    return {2: 1, 3: 4}.get(worst, 0)
+    return survey_exit_code(rows)
 
 
 def cmd_revision_status(args: argparse.Namespace) -> int:
@@ -1744,7 +1735,7 @@ def _skipped_gates(args: argparse.Namespace, code: int) -> int:
     return code
 
 
-def _paper_gates(args: argparse.Namespace, code: int) -> int:
+def _paper_gates(args: argparse.Namespace, report: object) -> None:
     """The paper's OWN gates, after the ladder — listed, or run.
 
     Separate from the ladder in the output as well as in the code,
@@ -1752,23 +1743,27 @@ def _paper_gates(args: argparse.Namespace, code: int) -> int:
     the BATCH, and these are about the paper. Listing them when they
     were not run is deliberate — a list of unrun checks is a reminder,
     and silence reads as "nothing to run".
+
+    What ran lands on `report.gates`, and the verdict is the report's
+    (`ValidateReport.exit_code`); this prints as each gate finishes.
     """
+    from .revision import ValidateReport
+    assert isinstance(report, ValidateReport)
     paper = _paper(args)
     if not paper.gates:
         if getattr(args, "run_gates", False):
             print("\n== the paper's own gates ==  none listed in paper.toml")
-        return code
+        return
     if not getattr(args, "run_gates", False):
         print(f"\n== the paper's own gates ==  {len(paper.gates)} listed, "
               f"NOT run (--run-gates)")
         for command in paper.gates:
             print(f"   · {command}")
-        return code
+        return
 
     from .revision import run_gates
     print(f"\n== the paper's own gates ==  {len(paper.gates)}, from the "
           f"project root")
-    failed = 0
     # A heartbeat, because `capture_output` swallows everything the gate
     # prints: a 12-minute pytest suite under a 900s timeout showed an
     # empty terminal, indistinguishable from a hang.
@@ -1776,23 +1771,25 @@ def _paper_gates(args: argparse.Namespace, code: int) -> int:
         print(f"   · {line.removeprefix('gate: ')}", flush=True)
 
     for gate in run_gates(paper, timeout=args.gate_timeout, progress=say):
+        report.gates.append(gate)
         print(f"     [{gate.verdict}] {gate.seconds}s")
-        if gate.ok:
-            continue
-        failed += 1
-        for line in gate.output.splitlines():
+        for line in ([] if gate.ok else gate.output.splitlines()):
             print(f"        {line}")
-    if not failed:
-        return code
-    print(f"\n{failed} of {len(paper.gates)} of the paper's gates failed.")
-    # 5, not 1: "the redline is unshippable" and "the manuscript is
-    # wrong" want different responses, and a script that only knows
-    # non-zero cannot tell them apart.
-    return code or 5
+    failed = sum(1 for gate in report.gates if not gate.ok)
+    if failed:
+        print(f"\n{failed} of {len(paper.gates)} of the paper's gates "
+              f"failed.")
 
 
 def cmd_revision_validate(args: argparse.Namespace) -> int:
-    """The gate ladder. Gate 5 is the one that proves reviewability."""
+    """The gate ladder. Gate 5 is the one that proves reviewability.
+
+    Every DECISION here is `revision.validate`'s — which gate stopped
+    the ladder (`ValidateReport.aborted`) and what a script is told
+    (`ValidateReport.exit_code`); this prints. One precondition stays:
+    a batch that is not there is not a batch the ladder can be asked
+    about.
+    """
     from . import guard as _g
     from .revision import state, validate
     paper = _paper(args)
@@ -1826,7 +1823,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                           word_deadline=paper.word_deadline or None)
 
     print(f"{target.name}")
-    if report.built_on_this_baseline is False:
+    if report.aborted == "baseline":
         print(f"== baseline ==  {target.name} was NOT built on {base.name}")
         print(f"   it says it was built on {report.built_on[:16]}, and "
               f"{base.name} is {_g.sha256(base)[:16]}")
@@ -1834,20 +1831,20 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
               "would describe a batch nobody is working on. Rebuild on "
               "this baseline — or, if the last build was REFUSED, delete "
               "the stale batch first.")
-        code = _skipped_gates(args, 2)
+        code = _skipped_gates(args, report.exit_code)
         print("\nVERDICT: FAIL")
         return code
     print("== lint ==", "clean" if not report.lint
           else f"{len(report.lint)} problem(s)")
     for problem in report.lint:
         print("   FAIL:", problem)
-    if report.lint:
+    if report.aborted == "lint":
         print("\nABORT before Word - fix lint first.")
-        return _skipped_gates(args, 2)
+        return _skipped_gates(args, report.exit_code)
     print("== counts ==", report.counts)
-    if report.word_opened is False:
+    if report.aborted == "word":
         print("== Word ==  FAILED (corrupted):", report.word_error)
-        return _skipped_gates(args, 3)
+        return _skipped_gates(args, report.exit_code)
     if report.word_opened:
         # "in the body" is not a hedge: Word's Revisions collection walks
         # the main story, so a footnote-only batch reads 0 here while the
@@ -1925,9 +1922,9 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
     # paper gates failed said "VERDICT: PASS" and then exited 5 — and
     # both the log template and the README treat that line as the
     # answer.
-    code = _paper_gates(args, 0 if report.ok else 1)
-    print("\nVERDICT:", "PASS" if code == 0 else "FAIL")
-    return code
+    _paper_gates(args, report)
+    print("\nVERDICT:", "PASS" if report.exit_code == 0 else "FAIL")
+    return report.exit_code
 
 
 def cmd_revision_promote(args: argparse.Namespace) -> int:
@@ -2004,20 +2001,18 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
     accepted = tuple(t.strip()
                      for chunk in (args.accept_loss or [])
                      for t in chunk.split(",") if t.strip())
-    from .revision import log_batch, verdict
-    recorded = verdict(paper) if not args.no_log else None
-    written = baseline(paper, force=args.force, accept_loss=accepted,
-                       repair_math=args.repair_math, log=False)
-    row = log_batch(paper, recorded, args.note) if recorded else None
+    report = baseline(paper, force=args.force, accept_loss=accepted,
+                      repair_math=args.repair_math, note=args.note,
+                      log=not args.no_log)
     for token in accepted:
         print(f"  accepted loss: {token}")
-    print(f"baseline updated: {written}")
-    if recorded is not None and row:
-        print(f"\nlogged: {row.strip()}")
-    elif recorded is not None:
+    print(f"baseline updated: {report.prev}")
+    if report.verdict is not None and report.row:
+        print(f"\nlogged: {report.row.strip()}")
+    elif report.verdict is not None:
         print("\nlog.md has no batch table to append to — record this "
               "round by hand:\n"
-              f"  {recorded.summary()} · {recorded.outcome}")
+              f"  {report.verdict.summary()} · {report.verdict.outcome}")
     return 0
 
 

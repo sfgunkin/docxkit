@@ -93,6 +93,22 @@ def scan(root: str | Path, *, depth: int = 4) -> list[Path]:
     return sorted(found)
 
 
+#: The verdicts a row can carry, WORST first: the order a survey lists
+#: them in, and the scale its exit code is read off. Ordered by what it
+#: costs to ignore — a proposal is somebody waiting on the author.
+VERDICTS = ("unreadable", "missing", "PROPOSAL", "stale", "truth")
+
+#: What each verdict exits with, on the scale one paper's `status`
+#: uses: 1 a proposal, 4 a settled paper whose baseline has drifted, 0
+#: truth on a current baseline. A row that could not be read, or whose
+#: manuscript is not where the paper says, exits 2 — it is neither of
+#: the states the protocol has, and reporting it as truth would be a
+#: lie. Not monotone in `VERDICTS`, which is why the survey takes the
+#: worst ROW rather than the largest number.
+_EXIT = {"unreadable": 2, "missing": 2, "PROPOSAL": 1, "stale": 4,
+         "truth": 0}
+
+
 @dataclass(frozen=True)
 class Survey:
     """One paper's answer to "is anything waiting for me?"."""
@@ -140,6 +156,28 @@ class Survey:
         if not self.state.is_truth:
             return "PROPOSAL"
         return "stale" if self.stale else "truth"
+
+    @property
+    def rank(self) -> int:
+        """Where the verdict sits in :data:`VERDICTS`; 0 is the worst."""
+        return VERDICTS.index(self.verdict)
+
+    @property
+    def exit_code(self) -> int:
+        """This row alone, on the scale one paper's `status` uses."""
+        return _EXIT[self.verdict]
+
+
+def survey_exit_code(rows: Sequence[Survey]) -> int:
+    """The worst state found — what `revision status --all` exits with.
+
+    The worst row's own code (see :attr:`Survey.exit_code`), and 0 for
+    an empty survey: nothing registered is nothing waiting. It lived in
+    `cli.cmd_revision_survey` until 2026-09-11, beside the rank table
+    the rows are sorted by, tested only through `argv`.
+    """
+    worst = min(rows, key=lambda row: row.rank, default=None)
+    return worst.exit_code if worst is not None else 0
 
 
 def survey(configs: Sequence[str | Path] | None = None) -> list[Survey]:

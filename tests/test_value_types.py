@@ -71,6 +71,7 @@ VALUES = [
     # `revision.validate` and `revision.build` are FUNCTIONS on the
     # facade, so a submodule spelled the same way is unreachable by
     # attribute.
+    "revision._baseline.BaselineReport",   # the new truth, and its log row
     "revision._ingest.IngestReport",
     "revision._losses.Loss",
     "revision._config.Paper",

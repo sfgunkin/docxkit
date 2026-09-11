@@ -34,6 +34,7 @@ from ..tracked import (
     structure_diff,
     untracked,
 )
+from ._gates import GateResult
 from ._losses import (
     _counts,
     _glyph,
@@ -105,21 +106,81 @@ class ValidateReport:
     #: The baseline hash the batch says it was built on, when that is
     #: not the one it was handed.
     built_on: str = ""
+    #: The paper's OWN gates, when the caller ran them — `validate
+    #: --run-gates` does, and the ladder never does (:func:`run_gates`
+    #: says why). Appended as each finishes, so `ok` and `exit_code`
+    #: read them; empty means "not run", which is not "passed".
+    gates: list[GateResult] = field(default_factory=list)
 
     @property
     def empty_shells(self) -> int:
         return self.accepted.get("empty_shells", 0)
 
     @property
-    def ok(self) -> bool:
-        """Every gate that ran said yes."""
-        return (not self.lint
-                and self.built_on_this_baseline is not False
-                and self.word_opened is not False
+    def aborted(self) -> str:
+        """Which gate STOPPED the ladder before its end, or "".
+
+        ``"baseline"`` — gate 0, built on another baseline; ``"lint"``
+        — gate 1; ``"word"`` — gate 3, Word could not open the batch.
+        Nothing below the stop ran, so an abort is not a failure of
+        the gates beneath it and not a pass either: the paper's own
+        gates are skipped after one, and the reader is told so.
+        """
+        if self.built_on_this_baseline is False:
+            return "baseline"
+        if self.lint:
+            return "lint"
+        if self.word_opened is False:
+            return "word"
+        return ""
+
+    @property
+    def _ladder_ok(self) -> bool:
+        """The ladder alone — the paper's own gates aside."""
+        return (not self.aborted
                 and not self.empty_shells
                 and not self.lost_parts
                 and self.reject_matches_baseline is not False
                 and self.accept_paths_agree is not False)
+
+    @property
+    def ok(self) -> bool:
+        """Every gate that ran said yes — the ladder's, and the paper's
+        own when they were run (`gates`)."""
+        return self._ladder_ok and all(gate.ok for gate in self.gates)
+
+    @property
+    def exit_code(self) -> int:
+        """The contract a script reads: what `revision validate` exits.
+
+        ======  ======================================================
+        ``0``   every gate that ran said yes
+        ``1``   the ladder said no — the batch is not fully reviewable
+        ``2``   aborted before Word: built on another baseline, or lint
+        ``3``   Word could not open the batch
+        ``5``   the ladder passed and one of the paper's OWN gates
+                failed
+        ======  ======================================================
+
+        5 and not 1 for the last: "the redline is unshippable" and
+        "the manuscript is wrong" want different responses, and a
+        script that only knows non-zero cannot tell them apart. A
+        ladder failure outranks a gate failure — when the redline is
+        the problem, that is the answer a caller needs.
+
+        The numbers lived in `cli.cmd_revision_validate` and
+        `cli._paper_gates` until 2026-09-11, as a chain of returns
+        tested only through `argv` — the shape
+        :class:`~docxkit.revision.StatusReport` moved out of first.
+        """
+        aborted = self.aborted
+        if aborted == "word":
+            return 3
+        if aborted:
+            return 2
+        if not self._ladder_ok:
+            return 1
+        return 0 if self.ok else 5
 
 
 def render_accepted(batch: str | Path, anchors: Sequence[str], *,

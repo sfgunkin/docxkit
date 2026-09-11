@@ -6,6 +6,7 @@ is part of :mod:`docxkit.revision`; import from there.
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import package
@@ -15,14 +16,40 @@ from . import _ledger, _timing
 from ._config import Paper
 from ._losses import _names, _unmet, losses
 from ._state import state
-from ._verdict import log_batch, verdict
+from ._verdict import Verdict, log_batch, verdict
+
+
+@dataclass(frozen=True)
+class BaselineReport:
+    """What :func:`baseline` recorded: the new truth, and the round's row.
+
+    `baseline` returned the path alone until 2026-09-11, and the CLI
+    re-composed the rest around it — `verdict` before the call,
+    `log_batch` after, `log=False` in between — to have a row to print.
+    That is the function's own body written a second time, with one
+    difference: the CLI's verdict was taken BEFORE the gates and the
+    math repair, so a refused baseline paid for a compare it never
+    used, and a repaired one recorded the unrepaired text. The record
+    is made once, here, and handed back.
+    """
+
+    prev: Path
+    """``build/prev.docx``, now the manuscript's bytes."""
+    verdict: Verdict | None
+    """What the round changed and what the author decided — None when
+    the caller asked for no record (`log=False`)."""
+    row: str | None
+    """The row appended to `log.md`'s batch table. None when there was
+    no verdict to write, or when the log has no table to take it — the
+    caller says so, rather than this writing a table nobody asked for
+    (see :func:`log_batch`)."""
 
 
 @_timing.timed("baseline")
 def baseline(paper: Paper, *, force: bool = False,
              accept_loss: tuple[str, ...] = (),
              repair_math: bool = False, note: str = "",
-             log: bool = True) -> Path:
+             log: bool = True) -> BaselineReport:
     """Record the current ``working.docx`` as the new accepted truth.
 
     Run this after the author has accepted (or rejected) everything: it
@@ -156,8 +183,7 @@ def baseline(paper: Paper, *, force: bool = False,
     recorded = verdict(paper) if log else None
     paper.build_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(paper.working, paper.prev)
-    if recorded is not None:
-        log_batch(paper, recorded, note)
+    row = log_batch(paper, recorded, note) if recorded is not None else None
     # The round's record, written and not yet read — see `_ledger`. This
     # is the event that closes a round, and the verdict it carries is
     # the one `log_batch` just wrote into the paper's permanent log:
@@ -172,4 +198,4 @@ def baseline(paper: Paper, *, force: bool = False,
                    reverted=recorded.reverted if recorded else None,
                    authored=recorded.authored if recorded else None,
                    note=note or None)
-    return paper.prev
+    return BaselineReport(prev=paper.prev, verdict=recorded, row=row)

@@ -402,3 +402,69 @@ def test_run_one_on_WINDOWS_starts_the_gate_in_its_own_PROCESS_GROUP(
     assert (code, out) == (0, "hello\n")
     assert sub.popen_kwargs["creationflags"] == sub.CREATE_NEW_PROCESS_GROUP
     assert "start_new_session" not in sub.popen_kwargs
+
+
+# --- the verdict is the REPORT's -------------------------------------
+#
+# The exit codes above were a chain of returns in `cli.cmd_revision_
+# validate` and `cli._paper_gates` until 2026-09-11, testable only
+# through `argv`. They are `ValidateReport.exit_code` now, and the CLI
+# prints. These pin the numbers where they live; the `_cli` tests above
+# still pin that the command hands them on unchanged.
+
+def _report(**fields):
+    from pathlib import Path
+    return revision.ValidateReport(path=Path("batch.docx"), baseline=None,
+                                   **fields)
+
+
+def _gate(code: int) -> revision.GateResult:
+    return revision.GateResult(command="x", code=code, seconds=0.1,
+                               output="nope" if code else "")
+
+
+def test_a_clean_ladder_with_no_gates_run_is_0():
+    report = _report()
+    assert report.aborted == "" and report.ok
+    assert report.exit_code == 0
+
+
+def test_a_ladder_that_said_no_is_1():
+    report = _report(reject_matches_baseline=False)
+    assert report.exit_code == 1 and not report.ok
+    assert report.aborted == "", "a failed gate is not an abort"
+
+
+def test_the_two_aborts_before_word_are_2_and_say_WHICH():
+    assert _report(built_on_this_baseline=False).aborted == "baseline"
+    assert _report(built_on_this_baseline=False).exit_code == 2
+    assert _report(lint=["orphan bookmark 3"]).aborted == "lint"
+    assert _report(lint=["orphan bookmark 3"]).exit_code == 2
+
+
+def test_a_batch_word_cannot_open_is_3():
+    report = _report(word_opened=False, word_error="corrupted")
+    assert report.aborted == "word"
+    assert report.exit_code == 3
+
+
+def test_a_failed_PAPER_gate_is_5_only_when_the_ladder_passed():
+    """"The redline is unshippable" and "the manuscript is wrong" want
+    different responses; when the redline is the problem, that is the
+    answer — a ladder failure outranks a gate failure."""
+    report = _report(gates=[_gate(0), _gate(2)])
+    assert report.exit_code == 5 and not report.ok
+
+    report = _report(reject_matches_baseline=False, gates=[_gate(2)])
+    assert report.exit_code == 1
+
+    report = _report(gates=[_gate(0), _gate(0)])
+    assert report.exit_code == 0 and report.ok
+
+
+def test_the_abort_outranks_everything_beneath_it():
+    """Nothing below the stop ran, so a report that also carries a
+    reject-all mismatch is still an abort — and still 2, not 1."""
+    report = _report(lint=["bad"], reject_matches_baseline=False,
+                     gates=[_gate(2)])
+    assert report.exit_code == 2

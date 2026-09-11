@@ -504,8 +504,10 @@ def test_baseline_still_records_the_truth_when_the_log_cannot_take_a_row(
 
     written = revision.baseline(cycle)
 
-    assert written == cycle.prev
+    assert written.prev == cycle.prev
     assert package.read_parts(cycle.prev) == package.read_parts(cycle.working)
+    assert written.verdict is not None, "the verdict was still taken"
+    assert written.row is None, "and there was no table to write it into"
 
 
 def test_the_CLI_prints_the_row_it_wrote(monkeypatch, cycle, capsys):
