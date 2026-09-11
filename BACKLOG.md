@@ -830,7 +830,7 @@ per-paper config.
    or in `LOCK_EXEMPT` with a reason, and the WRITE forms are swept the same
    way against the other half of the contract: refuse, and leave the file
    alone. Six of those, where one hand-written case had stood for all of them.
-2. ~~**A workflow-state fixture set.**~~ **Built 11.09.** Batch
+2. ~~**A workflow-state fixture set.**~~ **Built 11.09, `396b048`.** Batch
    built-and-promoted, built-and-held, promoted-and-rejected,
    promoted-and-partly-adjudicated. The verdict code already distinguishes
    several outcomes; only some of those states were reachable from the
@@ -865,7 +865,8 @@ and never promoted — so `test_revision_verdict.py` now builds and promotes in
 its fixture and has a test for the held case. Promoted-and-rejected and
 promoted-and-partly-adjudicated are already reachable there; what is still
 missing is the set built ONCE and shared, rather than four fixtures that each
-happen to reach a state. **The set arrived 11.09** — item 2 above.
+happen to reach a state. **The set arrived 11.09, `396b048`** — item 2
+above.
 
 Kept as a note rather than a defect: nothing here is wrong, and what remains
 of the second gate is a proposal the author should weigh against everything
