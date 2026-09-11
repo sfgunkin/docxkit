@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — a mutation run wrote 160 throwaway papers into the author's REAL registry~~ — FIXED 11.09
+### ~~S2 — a mutation run wrote 160 throwaway papers into the author's REAL registry~~ — FIXED 11.09, `cabfcaf`
 
 <!-- status: fixed -->
 
@@ -50,7 +50,7 @@ environment — and asserts it lands in the sandbox and outside the real
 profile; `test_kill_check.py` asserts the checker hands the same sandbox.
 Both proved by `kill_check` removing the sandbox from each `_env`.
 
-### ~~S1 — `kill_check` read every mutant of a `revision/` half as KILLED, `by: ?`~~ — FIXED 11.09
+### ~~S1 — `kill_check` read every mutant of a `revision/` half as KILLED, `by: ?`~~ — FIXED 11.09, `cabfcaf`
 
 <!-- status: fixed -->
 
@@ -89,7 +89,7 @@ fails unmutated is refused rather than read as a kill. One earlier proof
 that ran through the stale checkout — the sandbox test, whose test imports
 `docxkit.revision` — was re-run on the fixed tool.
 
-### ~~S3 — `kill_check` refused its OWN lock, so a multi-module check stopped after the first module~~ — FIXED 11.09
+### ~~S3 — `kill_check` refused its OWN lock, so a multi-module check stopped after the first module~~ — FIXED 11.09, `cabfcaf`
 
 <!-- status: fixed -->
 
@@ -105,7 +105,7 @@ module of claims — could only ever check one module.
 test that stood in for "another live caller" with its own pid uses the
 parent's, which is what it meant; a new one takes the lock twice.
 
-### ~~S3 — the two readers of `equivalents.toml` keyed a subpackage half differently~~ — FIXED 11.09
+### ~~S3 — the two readers of `equivalents.toml` keyed a subpackage half differently~~ — FIXED 11.09, `cabfcaf`
 
 <!-- status: fixed -->
 
