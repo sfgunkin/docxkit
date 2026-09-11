@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -23,6 +23,7 @@ from ._cite_grammar import (
     references,
     resolve_lead,
 )
+from ._cite_repair import _marker_spans, _own_marker
 from ._xml import (
     BOOKMARK_NAME_RE,
     DOCUMENT,
@@ -33,6 +34,7 @@ from ._xml import (
     internal_links,
     visible_text,
 )
+from .edit import _links_to
 
 # ------------------------------------------------------ the link audit ---
 
@@ -539,6 +541,79 @@ def _bracketed_findings(links: dict[str, list[tuple[int, str]]],
         for anchor, i, label, shape in inside]
 
 
+#: A letter or a digit: the line between a marker that is off its link and
+#: one that took a bracket, a space or punctuation with it.
+_ALNUM_RE = re.compile(r"[^\W_]")
+
+
+def _off_link(text: str, lo: int, hi: int, at: int, end: int) -> str | None:
+    """How a marker at `[lo, hi)` is off its link's label at `[at, end)`,
+    or None when a reader following the back-link still lands on it.
+
+    A marker inside its own label, one that took a bracket or a space
+    with it, and an empty one right beside the link all land on the
+    citation: over eight papers those were 13 shapes, none wrong. What is
+    wrong covers words or another citation, or sits apart with words
+    between it and the link.
+    """
+    if at <= lo and hi <= end:
+        return None
+    if hi < at or lo > end:
+        gap = text[hi:at] if hi < at else text[end:lo]
+        if not _ALNUM_RE.search(gap):
+            return None
+        return (f"sits {len(gap)} characters "
+                f"{'before' if hi < at else 'after'} its link")
+    before, after = text[lo:at], text[end:hi]
+    if _ALNUM_RE.search(before):
+        return f"starts {len(before)} characters early, over {before[:40]!r}"
+    if _ALNUM_RE.search(after):
+        return (f"runs {len(after)} characters past its link, over "
+                f"{after[:40]!r}")
+    return None
+
+
+def _off_link_findings(parts: dict[str, bytes],
+                       where: Callable[[int], str]) -> list[_Finding]:
+    """Back-link markers that have left their link (BACKLOG S2, 2026-09-12).
+
+    The audits checked that a marker exists, that something links to it
+    and which paragraph holds it, and none checked where in the paragraph
+    it sits. Over the eight real snapshots 17 were off their link by real
+    text, 12 of them on HPPA, and every gate passed. Only a marker in its
+    link's own paragraph is judged: one elsewhere is the misplaced-marker
+    checks' question, and a link repeated in its paragraph cannot say
+    which copy the marker belongs to.
+    """
+    out: list[_Finding] = []
+    for part in (DOCUMENT, *_NOTE_AT):
+        xml = parts.get(part, b"").decode("utf-8")
+        for i, pm in enumerate(PARA_RE.finditer(xml)):
+            para = pm.group(0)
+            if not (links := internal_links(para)):
+                continue
+            counts = Counter(anchor for anchor, _ in links)
+            marks, text = _marker_spans(para), visible_text(para)
+            for anchor, label in links:
+                name = _own_marker(anchor)
+                if name is None or name not in marks or counts[anchor] != 1:
+                    continue
+                at = len(visible_text(
+                    para[:_links_to(para, anchor)[0].label[0]]))
+                lo, hi, _bid = marks[name]
+                how = _off_link(text, lo, hi, at, at + len(label))
+                if how is None:
+                    continue
+                spot = where(i if part == DOCUMENT else _NOTE_AT[part])
+                out.append(_Finding(
+                    "MARKER OFF LINK", name,
+                    f"MARKER OFF LINK: '{name}' ({spot}), the marker of the "
+                    f"link to '{anchor}', {how}; the back-link lands off "
+                    f"the citation, so rebuild the marker round its link",
+                    anchor))
+    return out
+
+
 def _mention_scan(parts: dict[str, bytes], texts: list[str],
                   paras: list[re.Match[str]],
                   head_idx: int) -> list[tuple[int, str, str]]:
@@ -899,6 +974,7 @@ def _audit_findings(parts: dict[str, bytes], *,
     issues += link_issues
     issues += _span_findings(links, bookmarks, where, texts)
     issues += _bracketed_findings(links, bookmarks, where)
+    issues += _off_link_findings(parts, where)
     issues += _doubled_findings(paras)
 
     entries = references(texts, heading=heading)

@@ -14,6 +14,80 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — a back-link marker that has left its link passes every gate~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-12 over the eight real snapshots, while testing the S4
+citation-form conversions. A link's own bookmark (`<key>txt`, or `cite_x`
+for a link to `ref_x`) is where the back-link from the reference entry or
+the caption lands, and its text is what Word selects on arrival. The audits
+check that a marker exists, that something links to it, and which paragraph
+holds it. None checks where in that paragraph it sits.
+
+    link bookmarks in the same paragraph as their link, eight papers
+    exactly on the label                                         400
+    off by real text                                              17
+      collapsed to nothing, parked elsewhere in the paragraph      10
+      starting early, over the prose before the link                4
+      running on over the next citation                             2
+      on a later mention of the same work                           1
+    off by a bracket, punctuation, or part of its own label       13
+    reported by any audit                                          0
+
+HPPA holds 12 of the 17. The worst shape is the collapsed marker. Seven of
+HPPA's sit empty and stacked at the END of their paragraph, the trace of a
+paragraph retyped in Word, so `WHO2002txt` lands a reader 496 characters
+past its citation; two more sit empty 88 and 97 characters before theirs.
+`Cosco2015txt` starts 46 characters early and selects two other citations.
+`Finsel2023txt` and `Kose2021txt` run on over the citation after them. LI's
+`Table1txt` starts at "differences in LBI across countries (see", and
+HCW's `OECD2017txt` sits on a later mention whose own link points at the
+bookmark it is inside.
+
+**Suggested fix:** a citations-audit finding for a marker whose span differs
+from its link's by a letter or a digit, and a repair that rebuilds the
+marker around its link (`wrap_link_in_bookmark` already does the rebuild).
+A bracket, a space or punctuation is not a finding, and neither is a marker
+covering part of its own label, because the back-link still lands on the
+citation. Measure it on the eight snapshots before it lands: 17 found, and
+none of the 13 harmless shapes.
+
+**Fixed:** a new audit finding, MARKER OFF LINK, in `_cite_audit.py`, and
+its repair, `citations.rewrap_marker(xml, name)`, which `repair_plan`
+proposes under a bucket of its own. A link's own marker in the link's own
+paragraph is a finding when it is off the label by a letter or a digit:
+it covers words or another citation beside the link, or it sits apart with
+words between. A marker inside its own label is not a finding, and neither
+is one that took a bracket, a space or punctuation with it, or an empty
+one right beside the link: in all of those the back-link still lands on
+the citation. `rewrap_marker` deletes the marker and rebuilds it round the
+link with `wrap_link_in_bookmark`, keeping its name and id. It refuses a
+name that is not a link's own marker, a marker that does not end in the
+paragraph it starts in, and a paragraph with other than one link to its
+anchor. Text and links must come out unchanged.
+
+**Measured on the eight real snapshots, through the real audit and the
+real repair:**
+
+    found, per paper          AFI 1, HCW 2, HPPA 12, LE 1, LI 1, others 0
+    against the hand count    17 of 17, and none of the 13 harmless shapes
+    repaired                  text and links unchanged, lint 0 -> 0,
+                              no finding left, no refusal
+
+HCW's `OECD2017txt` sat on a later mention whose own field link points at
+the marker itself. Rebuilt, the marker is round the first mention, and
+that later link now lands there. A prose link to its own back-link target
+is a separate oddity and is not addressed here.
+
+`repair_plan` now takes the three kinds whose repair is one call from a
+table. The new kind had taken the function past the complexity limit.
+
+Tests: in `test_citations.py`, the four shapes found (collapsed away,
+starting early, running on over the next citation, and the `cite_`/`ref_`
+naming), four harmless shapes not found, the rebuild on an element and a
+field link, four refusals, and the plan's proposal.
+
 ### ~~S3 — `sections` read typed numbers only, so every mention was a breach on the six papers whose headings Word numbers~~ — FIXED 12.09, `b23aa68`
 
 <!-- status: fixed -->

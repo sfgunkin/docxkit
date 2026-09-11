@@ -109,6 +109,7 @@ from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
 from ._cite_repair import respan_link as respan_link
+from ._cite_repair import rewrap_marker as rewrap_marker
 from ._cite_repair import to_narrative as to_narrative
 from ._cite_repair import to_parenthetical as to_parenthetical
 from ._cite_repair import wrap_link_in_bookmark as wrap_link_in_bookmark
@@ -155,6 +156,7 @@ __all__ = [
     "remove_outer_field",
     "repair_plan",
     "respan_link",
+    "rewrap_marker",
     "to_narrative",
     "to_parenthetical",
     "unbalanced_span",
@@ -165,6 +167,27 @@ __all__ = [
 
 
 # --------------------------------------------- the repair-plan writer ---
+
+def _one_call(kind: str, name: str, issue: str,
+              extra: str) -> tuple[str, str] | None:
+    """The bucket and the proposal for a kind whose repair is ONE call.
+
+    A table rather than three branches in `repair_plan`, which the
+    MARKER OFF LINK kind took past the complexity limit (2026-09-12).
+    """
+    calls = {
+        "MISPLACED MARKER": (
+            "moved", (f'delete_bookmark(doc, "{name}") then '
+                      f"marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}")),
+        "MARKER OFF LINK": (
+            "marker", f'rewrap_marker(doc, "{name}")   # {issue}'),
+        "DOUBLED LINK": (
+            "nested", (f'remove_outer_field(doc, "{extra}", "{name}")   '
+                       f"# VERIFY which target is the stale one first; "
+                       f"{issue}")),
+    }
+    return calls.get(kind)
+
 
 def repair_plan(parts: dict[str, bytes]) -> str:
     """Classify the audit's findings into PROPOSED repairs, for a human.
@@ -219,10 +242,12 @@ def repair_plan(parts: dict[str, bytes]) -> str:
 
     buckets: dict[str, list[str]] = {
         "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],
-        "span": [], "investigate": []}
+        "span": [], "marker": [], "investigate": []}
     for f in findings:
         issue, name = f.message, f.subject
-        if f.kind == "BROKEN LINK":
+        if (call := _one_call(f.kind, name, issue, f.extra)):
+            buckets[call[0]].append(call[1])
+        elif f.kind == "BROKEN LINK":
             base = name.removesuffix("txt")
             if name.endswith("txt") and base in anchors:
                 buckets["wrap"].append(
@@ -265,10 +290,6 @@ def repair_plan(parts: dict[str, bytes]) -> str:
                 # which one it had swallowed was left to the reader
                 # (2026-08-19).
                 buckets["investigate"].append(issue)
-        elif f.kind == "MISPLACED MARKER":
-            buckets["moved"].append(
-                f'delete_bookmark(doc, "{name}") then '
-                f'marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}')
         elif f.kind == "UNBALANCED SPAN":
             # `extra` is the span the audit read as right, empty when it
             # could not read one. Before `respan_link` existed there was
@@ -287,10 +308,6 @@ def repair_plan(parts: dict[str, bytes]) -> str:
             # brackets and keeps the form.
             buckets["span"].append(
                 f'to_parenthetical(doc, "{name}")   # {issue}')
-        elif f.kind == "DOUBLED LINK":
-            buckets["nested"].append(
-                f'remove_outer_field(doc, "{f.extra}", "{name}")   '
-                f"# VERIFY which target is the stale one first; {issue}")
         else:
             buckets["investigate"].append(issue)
 
@@ -303,6 +320,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
               "moved": "marker stranded by a paragraph move — re-place",
               "nested": "doubled link — untangle by hand",
               "span": "the link covers the wrong characters — move the edge",
+             "marker": "back-link marker off its link — rebuild it",
               "investigate": "no mechanical reading — investigate"}
     for key, title in titles.items():
         if buckets[key]:

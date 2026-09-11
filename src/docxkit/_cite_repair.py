@@ -11,7 +11,10 @@ import re
 
 from ._cite_grammar import bookmark, citation_shape
 from ._xml import (
+    BOOKMARK_END_ID_RE,
     BOOKMARK_ID_RE,
+    BOOKMARK_NAME_RE,
+    BOOKMARK_START_ID_RE,
     HYPERLINK_ANY_RE,
     PARA_RE,
     field_spans,
@@ -478,5 +481,93 @@ def _delete_char(para: str, pos: int, char: str, caller: str) -> str:
     raise AnchorError(
         f"{caller}: no plain {char!r} at offset {pos} beside the link — "
         f"the brackets are not where a citation of that form keeps them")
+
+
+# ------------------------------------------------- the back-link marker ---
+
+
+def _own_marker(anchor: str) -> str | None:
+    """The bookmark a link to `anchor` carries round itself, or None.
+
+    `<key>txt` for a link to `<key>`, this package's naming, or `cite_x`
+    for a link to `ref_x`, a paper's. A link that is itself a back-link,
+    to `<key>txt` or `cite_x`, carries none of its own: the entry's
+    bookmark round it is wide by design.
+    """
+    if anchor.endswith("txt") or anchor.startswith("cite_"):
+        return None
+    if anchor.startswith("ref_"):
+        return "cite_" + anchor[4:]
+    return anchor + "txt"
+
+
+_BOOKMARK_TAG_RE = re.compile(r"<w:bookmark(?:Start|End)\b[^>]*/>")
+
+
+def _marker_spans(para: str) -> dict[str, tuple[int, int, str]]:
+    """Each bookmark that starts AND ends in this paragraph, by name:
+    (visible start, visible end, id)."""
+    opened: dict[str, tuple[str, int]] = {}
+    out: dict[str, tuple[int, int, str]] = {}
+    for m in _BOOKMARK_TAG_RE.finditer(para):
+        at = len(visible_text(para[:m.start()]))
+        if (start := BOOKMARK_START_ID_RE.match(m.group(0))) is not None:
+            named = BOOKMARK_NAME_RE.match(m.group(0))
+            opened[start.group(1)] = (named.group(1) if named else "", at)
+        elif ((end := BOOKMARK_END_ID_RE.match(m.group(0))) is not None
+              and end.group(1) in opened):
+            mark, lo = opened.pop(end.group(1))
+            out[mark] = (lo, at, end.group(1))
+    return out
+
+
+def rewrap_marker(xml: str, name: str) -> str:
+    """Rebuild the back-link marker `name` round its own link.
+
+    The reference entry's back-link lands on this bookmark, and Word
+    selects what it covers, so a marker that has left its link sends the
+    reader somewhere else. Over the eight real snapshots (2026-09-12) 17
+    markers were off their link by real text, 12 of them on HPPA, where
+    seven had collapsed to nothing at the END of their paragraph — the
+    trace of a paragraph retyped in Word — one 496 characters past its
+    citation. No audit said so. The audit's MARKER OFF LINK names them,
+    and this is the repair it proposes.
+
+    Same name, same id, now round exactly its link: the marker is deleted
+    and rebuilt by :func:`wrap_link_in_bookmark`. Refused: a name that is
+    not a link's own marker, one that does not start and end in a single
+    paragraph, and a paragraph holding other than one link to its anchor.
+    Nothing a reader sees moves, and no link changes.
+    """
+    anchor = (name[:-3] if name.endswith("txt")
+              else "ref_" + name[5:] if name.startswith("cite_") else None)
+    if anchor is None or _own_marker(anchor) != name:
+        raise AnchorError(
+            f"rewrap_marker: {name} is not a link's own marker — "
+            f"`<key>txt`, or `cite_x` for a link to `ref_x`")
+    homes = [pm for pm in PARA_RE.finditer(xml)
+             if f'w:name="{name}"' in pm.group(0)]
+    if len(homes) != 1:
+        raise AnchorError(f"rewrap_marker: {name} starts in {len(homes)} "
+                          f"paragraph(s), need exactly 1")
+    pm = homes[0]
+    para = pm.group(0)
+    if name not in (spans := _marker_spans(para)):
+        raise AnchorError(f"rewrap_marker: {name} does not end in the "
+                          f"paragraph it starts in")
+    if (n := len(_links_to(para, anchor))) != 1:
+        raise AnchorError(f"rewrap_marker: {anchor} has {n} link(s) beside "
+                          f"{name}, need exactly 1")
+    bid = spans[name][2]
+    bare = re.sub(rf'<w:bookmarkStart\b[^>]*w:id="{bid}"[^>]*/>', "", para,
+                  count=1)
+    bare = re.sub(rf'<w:bookmarkEnd\b[^>]*w:id="{bid}"[^>]*/>', "", bare,
+                  count=1)
+    fixed = wrap_link_in_bookmark(bare, anchor, name, int(bid))
+    if (visible_text(fixed) != visible_text(para)
+            or internal_links(fixed) != internal_links(para)):
+        raise AnchorError(f"rewrap_marker: {name}: the paragraph's text or "
+                          f"links would move")
+    return xml[:pm.start()] + fixed + xml[pm.end():]
 
 

@@ -161,6 +161,6 @@ claims = [
 claims = [
   { was = 'elif name in live and f.kind == "REF WITHOUT CITE":', line = 'elif name in live and f.kind >= "REF WITHOUT CITE":', why = "Inside the `ORPHAN REF` / `REF WITHOUT CITE` branch, so only those two kinds reach it, and `ORPHAN REF` sorts before `REF WITHOUT CITE`." },
   { was = 'elif f.kind == "ORPHAN REF":', line = 'elif f.kind <= "ORPHAN REF":', why = "The same two kinds reach it, and `REF WITHOUT CITE` sorts after `ORPHAN REF`." },
-  { was = 'elif f.kind == "UNBALANCED SPAN":', line = 'elif f.kind >= "UNBALANCED SPAN":', why = "Of the fourteen kinds `_audit_findings` raises, none sorts after `UNBALANCED SPAN`. A new kind starting with U or later would break the claim." },
-  { was = 'elif f.kind == "BRACKETED SPAN":', line = 'elif f.kind <= "BRACKETED SPAN":', why = "Of the kinds that reach this branch, none sorts before `BRACKETED SPAN`: `BROKEN LINK` is matched earlier, and every other kind starts with C or later. The `<=` on `DOUBLED LINK` below is NOT equivalent, because `CITE WITHOUT REF` reaches it, and a test kills it." },
+  { was = 'elif f.kind == "UNBALANCED SPAN":', line = 'elif f.kind >= "UNBALANCED SPAN":', why = "Of the fifteen kinds `_audit_findings` raises, none sorts after `UNBALANCED SPAN`. A new kind starting with U or later would break the claim." },
+  { was = 'elif f.kind == "BRACKETED SPAN":', line = 'elif f.kind <= "BRACKETED SPAN":', why = "Of the kinds that reach this branch, none sorts before `BRACKETED SPAN`: `BROKEN LINK` is matched earlier, and every other kind starts with C or later. The `DOUBLED LINK` branch that `CITE WITHOUT REF` used to reach, where `<=` was NOT equivalent, is a table lookup now, and the test that killed it still holds the behaviour." },
 ]

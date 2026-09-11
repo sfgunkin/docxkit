@@ -4635,6 +4635,128 @@ def test_the_plan_files_CITE_WITHOUT_REF_under_investigate_not_DOUBLED():
     assert "remove_outer_field" not in plan, plan
 
 
+# --- BACKLOG S2: a back-link marker that has left its link ------------------
+#
+# The reference entry's back-link lands on the marker and Word selects what
+# it covers. Over eight real snapshots 17 markers were off their link by
+# real text, 12 of them on HPPA, and no audit said so (2026-09-12).
+
+_RUNS_ON = " shows, and the paragraph runs on."        # 34 characters
+
+
+def _marker_findings(parts: dict[str, bytes]) -> list[tuple[str, str]]:
+    from docxkit._cite_audit import _audit_findings
+    return [(f.subject, f.message) for f in _audit_findings(parts)[0]
+            if f.kind == "MARKER OFF LINK"]
+
+
+@pytest.mark.parametrize(("inner", "name", "how"), [
+    # collapsed to nothing at the END of its paragraph: HPPA's seven
+    (R("As ") + _linked("Adams2001", "Adams (2001)") + R(_RUNS_ON)
+     + bookmark("Adams2001txt", 60, ""),
+     "Adams2001txt", "sits 34 characters after its link"),
+    # starting early, over the words before the link: AFI, HCW, LI
+    (bookmark("Adams2001txt", 60, R("As argued by ")
+              + _linked("Adams2001", "Adams (2001)")) + R(", growth."),
+     "Adams2001txt", "starts 13 characters early, over 'As argued by '"),
+    # running on over the next citation: HPPA's Finsel and Kose
+    (R("(") + bookmark("Adams2001txt", 60, _linked("Adams2001", "Adams 2001")
+                        + R("; ") + _linked("Brown2002", "Brown 2002"))
+     + R(")."),
+     "Adams2001txt",
+     "runs 12 characters past its link, over '; Brown 2002'"),
+    # a paper's own cite_/ref_ naming: AFI
+    (bookmark("cite_adams_2001", 60, R("in the older workforce ")
+              + _linked("ref_adams_2001", "(Adams 2001)")) + R("."),
+     "cite_adams_2001", "starts 23 characters early"),
+])
+def test_a_MARKER_that_left_its_link_is_a_finding(inner, name, how):
+    parts = _cited(P(inner),
+                   keys=("Adams2001", "Brown2002", "ref_adams_2001"))
+
+    ((subject, message),) = _marker_findings(parts)
+
+    assert subject == name
+    assert how in message and "(¶6)" in message, message
+
+
+@pytest.mark.parametrize("inner", [
+    # exactly round its link
+    R("see ")
+    + bookmark("Adams2001txt", 60, _linked("Adams2001", "Adams 2001"))
+    + R("."),
+    # took the opening bracket with it: LI's Vedder and Yang
+    R("see ") + bookmark("Adams2001txt", 60, R("(")
+                         + _linked("Adams2001", "Adams 2001")) + R(")."),
+    # empty, but right beside the link: HPPA's UN2024txt
+    R("see") + bookmark("Adams2001txt", 60, "") + R(" (")
+    + _linked("Adams2001", "Adams 2001") + R(")."),
+    # inside its own label: LE's French2005txt
+    R("see ") + '<w:hyperlink w:anchor="Adams2001"><w:r><w:t>Ad</w:t></w:r>'
+    + bookmark("Adams2001txt", 60, R("ams 2001")) + "</w:hyperlink>" + R("."),
+])
+def test_a_marker_that_still_lands_on_its_citation_is_NOT_a_finding(inner):
+    parts = _cited(P(inner), keys=("Adams2001",))
+
+    assert _marker_findings(parts) == []
+
+
+def test_rewrap_marker_puts_the_marker_back_ROUND_its_link():
+    """Same name, same id; nothing a reader sees moves, no link changes."""
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import rewrap_marker
+
+    for inner, label in (
+            (R("As ") + _linked("Adams2001", "Adams (2001)") + R(_RUNS_ON)
+             + bookmark("Adams2001txt", 60, ""), "Adams (2001)"),
+            (bookmark("Adams2001txt", 60, R("As argued by ")
+                      + hfield("Adams2001", "Adams (2001)")) + R("."),
+             "Adams (2001)")):
+        xml = _one_para(inner)
+
+        out = rewrap_marker(xml, "Adams2001txt")
+
+        assert visible_text(out) == visible_text(xml)
+        assert internal_links(out) == internal_links(xml)
+        assert _inside_bookmark(out, "Adams2001txt") == label
+        assert out.count('w:id="60"') == 2
+
+
+def test_rewrap_marker_REFUSES_what_it_cannot_place():
+    from docxkit.citations import rewrap_marker
+
+    link = _linked("Adams2001", "Adams 2001")
+    split = ("<w:document><w:body>"
+             + P(R("a ") + '<w:bookmarkStart w:id="60" w:name="Adams2001txt"/>'
+                 + link)
+             + P('<w:bookmarkEnd w:id="60"/>' + R("b"))
+             + "</w:body></w:document>")
+    cases = [
+        (_one_para(R("see ") + link), "Adams2001", "not a link's own marker"),
+        (_one_para(R("no marker here")), "Adams2001txt",
+         "starts in 0 paragraph"),
+        (_one_para(bookmark("Adams2001txt", 60, R("x ")) + link + R(" and ")
+                   + link), "Adams2001txt", "has 2 link"),
+        (split, "Adams2001txt", "does not end in the paragraph it starts"),
+    ]
+    for xml, name, message in cases:
+        with pytest.raises(AnchorError, match=message):
+            rewrap_marker(xml, name)
+
+
+def test_the_plan_proposes_rewrap_marker_for_a_marker_off_its_link():
+    from docxkit.citations import repair_plan
+
+    parts = _cited(P(R("As ") + _linked("Adams2001", "Adams (2001)")
+                     + R(_RUNS_ON) + bookmark("Adams2001txt", 60, "")),
+                   keys=("Adams2001",))
+
+    plan = repair_plan(parts)
+
+    assert 'rewrap_marker(doc, "Adams2001txt")' in plan, plan
+    assert "== back-link marker off its link — rebuild it (1)" in plan, plan
+
+
 def test_a_NARRATIVE_link_is_neither_side_of_the_majority():
     """`Dewey (2004)` carries its brackets inside the blue by the house
     rule; counted as a swallowed pair it would be reported beside the
