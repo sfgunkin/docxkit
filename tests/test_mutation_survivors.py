@@ -331,6 +331,37 @@ def _tool_module():
     return mutation_survivors
 
 
+def test_a_MISSING_session_is_refused_and_NOT_created(tmp_path):
+    """A session's file drops the module's leading underscore, so the
+    obvious name for `_cite_repair.py` is the wrong one. Handed it, the
+    report CREATED an empty database and died on "no such table"
+    (BACKLOG S4, 2026-09-12)."""
+    wrong = tmp_path / ".mutation-_cite_repair.sqlite"
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), str(wrong),
+         "src/docxkit/_cite_repair.py"],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+    assert done.returncode == 2, done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+    assert ".mutation-cite_repair.sqlite" in done.stdout, done.stdout
+    assert not wrong.exists(), "a refusal must not leave the file behind"
+
+
+def test_classify_REFUSES_a_session_that_is_not_there(tmp_path):
+    tool = _tool_module()
+    src = tmp_path / "widths.py"
+    src.write_text(MODULE, encoding="utf-8")
+    missing = tmp_path / "nope.sqlite"
+
+    with pytest.raises(FileNotFoundError, match="no session at"):
+        tool.classify(str(missing), str(src))
+
+    assert not missing.exists()
+
+
 def test_a_STALE_run_says_so_above_its_survivors(monkeypatch):
     """The rule is old — a figure is void when the source or the harness
     has moved — and the tool that PROPOSES the work is where it has to

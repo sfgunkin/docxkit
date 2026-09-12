@@ -4757,6 +4757,120 @@ def test_the_plan_proposes_rewrap_marker_for_a_marker_off_its_link():
     assert "== back-link marker off its link — rebuild it (1)" in plan, plan
 
 
+# --- a link to itself --------------------------------------------------------
+#
+# HCW, 2026-09-12: a prose citation inside its own `OECD2017txt` marker, and
+# two reference entries whose back-link pointed at the entry itself, the
+# only link to either work. The anchor resolved, the work read as cited,
+# and nothing reported any of the three.
+
+
+def _self_links(parts: dict[str, bytes]) -> list[tuple[str, str]]:
+    from docxkit._cite_audit import _audit_findings
+    return sorted((f.subject, f.extra) for f in _audit_findings(parts)[0]
+                  if f.kind == "SELF LINK")
+
+
+def _split_field(anchor: str, label: str, name: str, bid: int) -> str:
+    """HCW's shape: the field STARTS inside bookmark `name` and ends after
+    it, so no whole link lies inside the bookmark."""
+    field = hfield(anchor, label)
+    cut = field.rindex("<w:r")
+    return bookmark(name, bid, R("x ") + field[:cut]) + field[cut:]
+
+
+def _doc(*paras: str) -> str:
+    return "<w:document><w:body>" + "".join(paras) + "</w:body></w:document>"
+
+
+def test_a_link_INSIDE_the_bookmark_it_points_at_is_a_finding():
+    from docxkit._cite_audit import _audit_findings
+
+    parts = xml_parts(
+        P(R("as ") + _linked("Adams2001", "Adams (2001)") + R(" and ")
+          + _split_field("Adams2001txt", "Adams 2001", "Adams2001txt", 60))
+        + P(R("References"))
+        + P(bookmark("Adams2001", 61, R("Adams, A. (2001). A title.")))
+        + P(bookmark("Brown2002", 62, R("Brown, B. (2002). ")
+                     + hfield("Brown2002", "Back"))))
+
+    assert _self_links(parts) == [("Adams2001txt", "Adams2001"),
+                                  ("Brown2002", "")]
+    messages = [f.message for f in _audit_findings(parts)[0]
+                if f.kind == "SELF LINK"]
+    assert any("no bookmark carries yet" in m for m in messages), messages
+
+
+def test_the_back_links_the_convention_WANTS_are_not_self_links():
+    parts = xml_parts(
+        P(bookmark("Adams2001txt", 60, _linked("Adams2001", "Adams (2001)")))
+        + P(R("References"))
+        + P(bookmark("Adams2001", 61, R("Adams, A. (2001). "))
+            + hfield("Adams2001txt", "Back")))
+
+    assert _self_links(parts) == []
+
+
+def test_retarget_self_link_points_the_link_at_its_PAIR():
+    from docxkit._xml import internal_links, visible_text
+    from docxkit.citations import retarget_self_link
+
+    field = _doc(
+        P(R("as ") + _linked("Adams2001", "Adams (2001)") + R(" and ")
+          + _split_field("Adams2001txt", "Adams 2001", "Adams2001txt", 60)),
+        P(bookmark("Adams2001", 61, R("Adams, A. (2001)."))))
+    element = _doc(
+        P(bookmark("Brown2002txt", 62, _linked("Brown2002", "Brown (2002)"))),
+        P(bookmark("Brown2002", 63, R("Brown, B. (2002). ")
+                   + _linked("Brown2002", "Back"))))
+
+    for xml, name, to in ((field, "Adams2001txt", "Adams2001"),
+                          (element, "Brown2002", "Brown2002txt")):
+        out = retarget_self_link(xml, name)
+
+        assert visible_text(out) == visible_text(xml)
+        assert [a for a, _ in internal_links(out)].count(to) == (
+            [a for a, _ in internal_links(xml)].count(to) + 1)
+
+
+def test_retarget_self_link_REFUSES_what_it_cannot_do():
+    from docxkit.citations import retarget_self_link
+
+    none = _doc(P(bookmark("Adams2001", 61, R("Adams, A. (2001)."))))
+    missing = _doc(P(bookmark("Brown2002", 62, R("Brown. ")
+                              + _linked("Brown2002", "Back"))))
+    twice = _doc(P(bookmark("Brown2002", 62, _linked("Brown2002", "a")
+                            + _linked("Brown2002", "b"))),
+                 P(bookmark("Brown2002txt", 63, R("x"))))
+    for xml, name, message in ((none, "Adams2001", "holds 0 link"),
+                               (missing, "Brown2002", "no bookmark "
+                                "Brown2002txt to point at"),
+                               (twice, "Brown2002", "holds 2 link")):
+        with pytest.raises(AnchorError, match=message):
+            retarget_self_link(xml, name)
+
+
+def test_the_plan_RETARGETS_a_self_link_or_sends_it_to_investigate():
+    from docxkit.citations import repair_plan
+
+    known = xml_parts(
+        P(R("as ") + _linked("Adams2001", "Adams (2001)") + R(" and ")
+          + _split_field("Adams2001txt", "Adams 2001", "Adams2001txt", 60))
+        + P(R("References"))
+        + P(bookmark("Adams2001", 61, R("Adams, A. (2001). A title."))))
+    unknown = xml_parts(
+        P(R("References"))
+        + P(bookmark("Brown2002", 62, R("Brown, B. (2002). ")
+                     + hfield("Brown2002", "Back"))))
+
+    plan = repair_plan(known)
+    assert 'retarget_self_link(doc, "Adams2001txt", "Adams2001")' in plan
+    assert "== a link to itself — point it at its pair (1)" in plan, plan
+    plan = repair_plan(unknown)
+    assert "retarget_self_link" not in plan, plan
+    assert "SELF LINK: the link inside 'Brown2002'" in plan, plan
+
+
 def test_a_NARRATIVE_link_is_neither_side_of_the_majority():
     """`Dewey (2004)` carries its brackets inside the blue by the house
     rule; counted as a swallowed pair it would be reported beside the

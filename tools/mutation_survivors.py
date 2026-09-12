@@ -458,6 +458,9 @@ def classify(db_path: str, src_path: str) -> Counts | None:
     :func:`pristine_source` stays public for the banner the report
     prints; what it returns is no longer the caller's responsibility.
     """
+    if not Path(db_path).is_file():
+        # `sqlite3.connect` would CREATE it (BACKLOG S4): see `main`.
+        raise FileNotFoundError(f"no session at {db_path}")
     src_path, _ = pristine_source(db_path, src_path)
     text = Path(src_path).read_text(encoding="utf-8")
     tree = ast.parse(text)
@@ -525,6 +528,18 @@ def main() -> int:
         print(__doc__)
         return 2
     db_path, src_path = sys.argv[1], sys.argv[2]
+    if not Path(db_path).is_file():
+        # Refused BEFORE anything opens it. `sqlite3.connect` CREATES a
+        # missing file, and the report then died on "no such table": a
+        # traceback where this sentence belongs, and a 0-byte session
+        # left in the repo root (BACKLOG S4, three on 2026-09-12). The
+        # obvious name is the wrong one for a module with a leading
+        # underscore, which is what the stem below is for.
+        from harness_map import session_stem  # noqa: PLC0415
+        print(f"no session at {db_path}: nothing was read, and nothing was "
+              f"created. The session for {src_path} is "
+              f".mutation-{session_stem(src_path)}.sqlite")
+        return 2
     for banner in staleness(src_path):
         print(banner)
     src_path, note = pristine_source(db_path, src_path)

@@ -8,6 +8,7 @@ nothing is how a manuscript ships half-linked.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from ._cite_grammar import bookmark, citation_shape
 from ._xml import (
@@ -569,5 +570,95 @@ def rewrap_marker(xml: str, name: str) -> str:
         raise AnchorError(f"rewrap_marker: {name}: the paragraph's text or "
                           f"links would move")
     return xml[:pm.start()] + fixed + xml[pm.end():]
+
+
+# ---------------------------------------------------- a link to itself ---
+
+
+def _pair_of(name: str) -> str:
+    """The other end of a back-link pair: `<key>` for `<key>txt` and back,
+    `ref_x` for `cite_x` and back."""
+    if name.endswith("txt"):
+        return name[:-3]
+    if name.startswith("cite_"):
+        return "ref_" + name[5:]
+    if name.startswith("ref_"):
+        return "cite_" + name[4:]
+    return name + "txt"
+
+
+def _link_openings(name: str) -> re.Pattern[str]:
+    """Where a link to `name` STARTS: an element's opening tag, or the
+    instruction of a HYPERLINK field. Group 1 or 2 is what precedes the
+    name, so a rewrite keeps it."""
+    n = re.escape(name)
+    return re.compile(
+        rf'(<w:hyperlink\b[^>]*w:anchor="){n}(?=")'
+        rf'|(<w:instrText\b[^>]*>[^<]*HYPERLINK[^<]*\\l\s+"){n}(?=")')
+
+
+def _self_link_spans(xml: str) -> list[tuple[str, int, int]]:
+    """(name, inside start, inside end) for each bookmark that a link to
+    ITSELF starts inside.
+
+    By the link's opening, not by a whole parsed link: on HCW the fields
+    start inside the bookmark and end outside it, and a reader of complete
+    links found none of the three. Word's own `_Toc`, `_Ref` and `_Hlk`
+    bookmarks are left out.
+    """
+    out: list[tuple[str, int, int]] = []
+    for m in _BOOKMARK_TAG_RE.finditer(xml):
+        start = BOOKMARK_START_ID_RE.match(m.group(0))
+        named = BOOKMARK_NAME_RE.match(m.group(0))
+        if start is None or named is None or named.group(1).startswith("_"):
+            continue
+        shut = re.compile(rf'<w:bookmarkEnd\b[^>]*w:id="{start.group(1)}"'
+                          ).search(xml, m.end())
+        if shut is not None and _link_openings(named.group(1)).search(
+                xml, m.end(), shut.start()):
+            out.append((named.group(1), m.end(), shut.start()))
+    return out
+
+
+def retarget_self_link(xml: str, name: str, to: str | None = None) -> str:
+    """Point the link inside bookmark `name` at `to`, the other end of its
+    pair by default, instead of at `name` itself.
+
+    A link that starts inside the bookmark it targets lands the reader
+    where they already are, and nothing reported it: the anchor resolves,
+    and the link even counts its work as cited. HCW held three
+    (2026-09-12): a prose citation inside its own `OECD2017txt` marker,
+    and two reference entries whose back-link targets the entry. The
+    audit's SELF LINK names them, and this is the repair it proposes.
+
+    Only the anchor in the link's OPENING changes, the element's attribute
+    or the field's instruction; the label and the field's result stay.
+    Refused: a bookmark holding other than one link to itself, and a
+    target no bookmark in `xml` carries — an entry whose in-text marker
+    was never made needs its first mention linked and the marker minted
+    before its back-link has anywhere to go.
+    """
+    to = to or _pair_of(name)
+    spans = [(lo, hi) for n, lo, hi in _self_link_spans(xml) if n == name]
+    hits = [h for lo, hi in spans
+            for h in _link_openings(name).finditer(xml, lo, hi)]
+    if len(hits) != 1:
+        raise AnchorError(f"retarget_self_link: {name} holds {len(hits)} "
+                          f"link(s) to itself, need exactly 1")
+    if to not in BOOKMARK_NAME_RE.findall(xml):
+        raise AnchorError(
+            f"retarget_self_link: no bookmark {to} to point at — link the "
+            f"first mention and mint {to} first")
+    hit = hits[0]
+    fixed = (xml[:hit.start()] + (hit.group(1) or hit.group(2)) + to
+             + xml[hit.end():])
+    before = Counter(anchor for anchor, _ in internal_links(xml))
+    after = Counter(anchor for anchor, _ in internal_links(fixed))
+    if (visible_text(fixed) != visible_text(xml)
+            or before - after != Counter({name: 1})
+            or after - before != Counter({to: 1})):
+        raise AnchorError(f"retarget_self_link: {name}: more would move "
+                          f"than the one link's target")
+    return fixed
 
 

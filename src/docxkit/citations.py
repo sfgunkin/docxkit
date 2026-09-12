@@ -109,6 +109,7 @@ from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
 from ._cite_repair import remove_outer_field as remove_outer_field
 from ._cite_repair import respan_link as respan_link
+from ._cite_repair import retarget_self_link as retarget_self_link
 from ._cite_repair import rewrap_marker as rewrap_marker
 from ._cite_repair import to_narrative as to_narrative
 from ._cite_repair import to_parenthetical as to_parenthetical
@@ -156,6 +157,7 @@ __all__ = [
     "remove_outer_field",
     "repair_plan",
     "respan_link",
+    "retarget_self_link",
     "rewrap_marker",
     "to_narrative",
     "to_parenthetical",
@@ -181,6 +183,10 @@ def _one_call(kind: str, name: str, issue: str,
                       f"marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}")),
         "MARKER OFF LINK": (
             "marker", f'rewrap_marker(doc, "{name}")   # {issue}'),
+        "SELF LINK": (
+            ("self", (f'retarget_self_link(doc, "{name}", "{extra}")   '
+                      f"# {issue}")) if extra
+            else ("investigate", issue)),
         "DOUBLED LINK": (
             "nested", (f'remove_outer_field(doc, "{extra}", "{name}")   '
                        f"# VERIFY which target is the stale one first; "
@@ -242,7 +248,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
 
     buckets: dict[str, list[str]] = {
         "wrap": [], "relink": [], "debris": [], "moved": [], "nested": [],
-        "span": [], "marker": [], "investigate": []}
+        "span": [], "marker": [], "self": [], "investigate": []}
     for f in findings:
         issue, name = f.message, f.subject
         if (call := _one_call(f.kind, name, issue, f.extra)):
@@ -321,6 +327,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
               "nested": "doubled link — untangle by hand",
               "span": "the link covers the wrong characters — move the edge",
              "marker": "back-link marker off its link — rebuild it",
+             "self": "a link to itself — point it at its pair",
               "investigate": "no mechanical reading — investigate"}
     for key, title in titles.items():
         if buckets[key]:

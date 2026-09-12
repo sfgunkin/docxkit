@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import re
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import NamedTuple
@@ -23,7 +24,12 @@ from ._cite_grammar import (
     references,
     resolve_lead,
 )
-from ._cite_repair import _marker_spans, _own_marker
+from ._cite_repair import (
+    _marker_spans,
+    _own_marker,
+    _pair_of,
+    _self_link_spans,
+)
 from ._xml import (
     BOOKMARK_NAME_RE,
     DOCUMENT,
@@ -614,6 +620,38 @@ def _off_link_findings(parts: dict[str, bytes],
     return out
 
 
+def _self_link_findings(parts: dict[str, bytes], bookmarks: dict[str, int],
+                        where: Callable[[int], str]) -> list[_Finding]:
+    """Links that start inside the very bookmark they point at.
+
+    Such a link lands the reader where they already are, and nothing
+    reported it: the anchor resolves, and the link even counts its work as
+    cited. HCW held three (2026-09-12): a prose citation inside its own
+    `OECD2017txt` marker, and two reference entries whose back-link targets
+    the entry, where that self-link was the only link to each work and its
+    mentions were plain text. `extra` is the other end of the pair when a
+    bookmark carries it, and empty when none does.
+    """
+    out: list[_Finding] = []
+    for part in (DOCUMENT, *_NOTE_AT):
+        xml = parts.get(part, b"").decode("utf-8")
+        heads = [m.start() for m in PARA_RE.finditer(xml)]
+        for name, lo, _hi in _self_link_spans(xml):
+            spot = where(bisect_right(heads, lo) - 1 if part == DOCUMENT
+                         else _NOTE_AT[part])
+            pair = _pair_of(name)
+            known = pair in bookmarks
+            out.append(_Finding(
+                "SELF LINK", name,
+                f"SELF LINK: the link inside '{name}' ({spot}) points at "
+                f"'{name}' itself and lands the reader where they already "
+                f"are; it belongs on '{pair}'"
+                + ("" if known else ", which no bookmark carries yet: link "
+                   "the first mention and mint it first"),
+                pair if known else ""))
+    return out
+
+
 def _mention_scan(parts: dict[str, bytes], texts: list[str],
                   paras: list[re.Match[str]],
                   head_idx: int) -> list[tuple[int, str, str]]:
@@ -975,6 +1013,7 @@ def _audit_findings(parts: dict[str, bytes], *,
     issues += _span_findings(links, bookmarks, where, texts)
     issues += _bracketed_findings(links, bookmarks, where)
     issues += _off_link_findings(parts, where)
+    issues += _self_link_findings(parts, bookmarks, where)
     issues += _doubled_findings(paras)
 
     entries = references(texts, heading=heading)

@@ -46,22 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — `mutation_survivors.py` given a session file that does not exist creates an empty one, then dies on "no such table"
-
-<!-- status: open -->
-
-Met 2026-09-12 during the tenth sweep. A session's file drops the module's
-leading underscore, so `_cite_repair.py` has `.mutation-cite_repair.sqlite`
-(`harness_map.session_stem`), and the obvious spelling
-`.mutation-_cite_repair.sqlite` is wrong. Given the wrong path,
-`sqlite3.connect` CREATES the file, and the tool dies on `no such table:
-mutation_specs`. That is a traceback where a sentence belongs, and a
-0-byte file left in the repo root. Three were created that day and removed
-by hand.
-
-**Suggested fix:** refuse a path that does not exist before connecting,
-and name the file `session_stem` gives for the module passed beside it.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

@@ -14,6 +14,75 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — a link inside the very bookmark it points at passes every gate, and hides an unlinked citation~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+Found 2026-09-12 while closing the back-link marker entry: HCW's
+`OECD2017txt` marker sat on a later mention whose own field link pointed at
+the marker it was inside. Measured over the eight snapshots by the link's
+OPENING, the element's tag or the field's instruction, not by whole parsed
+links. HCW's fields start inside the bookmark and end outside it, and a
+reader of complete links found none of them.
+
+    self-links, eight papers                3, all on HCW
+      prose citation in its own marker      OECD2017txt; OECD2017 exists
+      entry back-link to its own entry      Hermaes2013, Pilipiec2021;
+                                            no marker to point at
+    reported by any audit                   0
+
+The two entries are the worse half. The self-link was the only link to each
+work: their in-text mentions are plain text, and the audit counted both
+works as cited because a link pointed at their entries.
+
+**Fixed:** the SELF LINK audit finding and
+`citations.retarget_self_link(xml, name, to=None)`. The repair rewrites only
+the anchor in the link's opening, the element's attribute or the field's
+instruction, to the other end of its pair. It refuses a bookmark holding
+other than one link to itself, and a target no bookmark carries.
+`repair_plan` proposes it when the pair exists, and files the finding under
+investigate when it does not.
+
+**Measured through the real audit and the real repair:** HCW 3 found, the
+other seven papers 0. `OECD2017txt` retargeted with text and lint unchanged
+and exactly one link moved, from `OECD2017txt` to `OECD2017`. `Hermaes2013`
+and `Pilipiec2021` go to investigate, and their message says to link the
+first mention and mint the marker first.
+
+Tests: in `test_citations.py`, the HCW field shape, an entry back-link to
+itself with no marker, the back-links the convention wants left alone, the
+retarget on an element and a split field, three refusals, and the plan both
+ways.
+
+**Left for HCW's session:** `Hermaes2013` and `Pilipiec2021` need their first
+mentions linked, by `link_all` or by hand, before their back-links have
+anywhere to go.
+
+### ~~S4 — `mutation_survivors.py` given a session file that does not exist creates an empty one, then dies on "no such table"~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+Met 2026-09-12 during the tenth sweep. A session's file drops the module's
+leading underscore, so `_cite_repair.py` has `.mutation-cite_repair.sqlite`
+(`harness_map.session_stem`), and the obvious spelling
+`.mutation-_cite_repair.sqlite` is wrong. Given the wrong path,
+`sqlite3.connect` CREATES the file, and the tool dies on `no such table:
+mutation_specs`. That is a traceback where a sentence belongs, and a
+0-byte file left in the repo root. Three were created that day and removed
+by hand.
+
+**Suggested fix:** refuse a path that does not exist before connecting,
+and name the file `session_stem` gives for the module passed beside it.
+
+**Fixed:** `main` refuses a session path that does not exist before anything
+opens it, prints the file `session_stem` gives for the module, and exits 2.
+`classify` raises `FileNotFoundError` for the same reason, so no caller can
+create one either, `replay_survivors` and `measure_all` included.
+
+Tests: `test_a_MISSING_session_is_refused_and_NOT_created` (exit 2, the right
+name printed, no traceback, no file left behind) and
+`test_classify_REFUSES_a_session_that_is_not_there`.
+
 ### ~~S2 — a back-link marker that has left its link passes every gate~~ — FIXED 12.09, `ef5364a`
 
 <!-- status: fixed -->
