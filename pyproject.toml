@@ -12,7 +12,9 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Michael Lokshin" }]
-requires-python = ">=3.12"
+# 3.14 and nothing older since 2026-09-12: the only interpreter CI
+# tests (.github/workflows/ci.yml), so the only one claimed.
+requires-python = ">=3.14"
 dependencies = [
     "lxml>=5.0",
 ]
@@ -112,7 +114,7 @@ pywin32 = ["win32com", "pythoncom"]
 
 [tool.ruff]
 line-length = 79
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "C90", "PL",
@@ -300,7 +302,7 @@ max-complexity = 20
 
 [tool.mypy]
 files = ["src/docxkit", "tests", "tools"]
-python_version = "3.12"
+python_version = "3.14"
 # Stricter than the defaults where it catches real mistakes, but short of
 # --strict: the XML passes hand back plain str/dict, and demanding full
 # annotations on them would add noise without finding bugs.
@@ -382,7 +384,7 @@ ignore_missing_imports = true
 # first for fast feedback happens to buy pyright ~7s as well.
 #
 # Pinned so the CLI and Pylance in the editor agree with each other.
-pythonVersion = "3.12"
+pythonVersion = "3.14"
 typeCheckingMode = "standard"
 # Nothing is exempt any more. compare.py was, as a verbatim port from
 # C:\Users\Ezhik\tools — "working, well-exercised code carried over

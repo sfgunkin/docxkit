@@ -9,15 +9,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
-      # Report every version's result: with fail-fast a 3.12 break would
-      # cancel the 3.14 job and hide whether the problem is the code or
-      # the version floor.
-      fail-fast: false
       matrix:
-        # 3.12 is the requires-python floor, 3.14 is what the toolkit is
-        # developed and used on. Testing only the middle would leave both
-        # ends of the contract unchecked.
-        python-version: ["3.12", "3.13", "3.14"]
+        # 3.14 only, since 2026-09-12: the one interpreter the toolkit is
+        # developed and used on. 3.12 and 3.13 left the matrix together
+        # with requires-python's floor, so the package claims no version
+        # this job does not run. Kept a matrix so the job is still named
+        # `test (3.14)`.
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v4
         with:

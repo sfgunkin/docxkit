@@ -3,7 +3,7 @@
 
     python tools/gates.py
 
-CI runs them on 3.12, 3.13 and 3.14 with every step reporting
+CI runs them on 3.14 with every step reporting
 independently. Locally they are a chain, and the chain is where they go
 wrong:
 

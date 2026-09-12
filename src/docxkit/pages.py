@@ -230,7 +230,7 @@ def _outermost_line(words: list[Any], edge: str) -> list[Any]:
 
 @contextmanager
 def _rendered(docx: str | Path,
-              keep_pdf: str | Path | None) -> Generator[Path, None, None]:
+              keep_pdf: str | Path | None) -> Generator[Path]:
     """A render of `docx` through Word, for as long as the block runs.
 
     A named PDF is written where the caller asked and KEPT; an unnamed one
