@@ -25,7 +25,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit fit PAPER.docx [--render] [--check]
     docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
     docxkit sections PAPER.docx
-    docxkit pages PAPER.docx [--sheets] [--check]
+    docxkit pages PAPER.docx [--sheets] [--check] [--expect-sheets N]
 
 and the single-file revision protocol, which finds its own paths in
 ``revision/paper.toml`` and so takes almost no arguments::
@@ -1221,13 +1221,18 @@ def cmd_pages(args: argparse.Namespace) -> int:
         print(page_count(args.docx))
         return 0
 
-    from .pages import problems, sheets
-    rows = sheets(args.docx, keep_pdf=args.keep_pdf)
+    from .package import read_parts
+    from .pages import caption_problems, problems, sheets_and_texts
+    # ONE render for both: the rows say what each sheet looks like and the
+    # texts say where each caption landed, and Word takes seconds a paper.
+    rows, texts = sheets_and_texts(args.docx, keep_pdf=args.keep_pdf)
     print(f"{len(rows)} sheet(s)")
     for row in rows:
         print(f"  {row}")
     corner = getattr(args, "corner", "lower right")
-    found = problems(rows, corner=None if corner == "any" else corner)
+    found = problems(rows, corner=None if corner == "any" else corner,
+                     expect_sheets=getattr(args, "expect_sheets", None))
+    found += caption_problems(read_parts(args.docx), rows, texts)
     for note in found:
         print(f"  ** {note}")
     if not args.check:
@@ -2435,8 +2440,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "BLANK (renders through Word)")
     p.add_argument("--check", action="store_true",
                    help="exit 2 on a blank sheet, a numbering restart, a "
-                        "gap in the printed sequence, or a number printed "
-                        "in the wrong corner")
+                        "gap in the printed sequence, a number printed "
+                        "in the wrong corner, or a figure caption a sheet "
+                        "break parted from its figure")
+    p.add_argument("--expect-sheets", type=int, metavar="N",
+                   help="a problem when the render has any other number "
+                        "of sheets, for a paper whose length is known")
     p.add_argument("--corner", default="lower right",
                    metavar='"lower right"|any',
                    help="where the page number belongs, checked against "

@@ -14,6 +14,76 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `pages --check` passes when a figure's caption spills onto a new landscape page~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+Measured on Aging_Well, 2026-09-12 (R131). One sentence added to Figure 2's
+caption made it six lines, on a landscape page that holds the figure plus
+four. Word laid the last two lines on a sheet of their own:
+
+    pages --check   exit 0; 41 sheets; landscape 6, 23, 24; every sheet
+                    numbered, none blank
+    render          p. 23: the figure and four caption lines
+                    p. 24: "authority). … Author's construction." and nothing else
+
+`--check` looks for blank sheets, numbering restarts and gaps in the printed
+sequence. A sheet carrying the end of a caption is none of those, so the gate
+stays green over a figure separated from its own caption, which is the first
+thing a reader sees on that spread. The only number that moved was the sheet
+count, 40 → 41, and nothing compares it against anything.
+
+**Suggested fix:**
+* Flag a sheet whose only text continues a caption paragraph begun on the
+  previous sheet. `figures` already locates each drawing's caption ("captions
+  read as sitting below their figures").
+* More simply, flag a landscape section that renders to more sheets than it
+  holds drawings.
+* Separately, add `--expect-sheets N`, so a paper whose page count is a known
+  invariant can pin it.
+
+**Workaround in use:** after `docxkit pdf`, count with PyMuPDF: total pages 40,
+landscape pages exactly [6, 23], and the caption's last words on page 23.
+Recorded in `Aging_Well/revision/log.md`, 2026-09-12. The fix itself was a
+caption cut chosen by the author from five variants rendered on scratch copies.
+
+**Fixed:** `pages.caption_problems(parts, rows, texts)`, which `--check` now
+exits on beside the other verdicts, and `--expect-sheets N`
+(`problems(rows, expect_sheets=N)`). A caption is found by its opening words
+on the last sheet carrying them, followed as far as the render spells it, and
+reported two ways: SPLIT when its remainder opens the next sheet, and as a
+caption on a sheet that draws no image when its figure is a raster one. The
+second is what widow control does to a short caption left a line of room,
+and the first suggestion above would not see it. `--check` renders once and
+reads the rows and the words off that one render (`sheets_and_texts`), and a
+`Sheet` now counts the images it draws.
+
+The landscape-section rule was not built. A landscape table that runs to two
+sheets is not a defect, and the caption rules already cover the figure.
+
+**Measured through Word** over the eight papers' renders: 36 figure captions
+located (AFI 14, HCW 8, LI 6, and 2 each on HPPA, LE, Parental and
+Aging_Well; LEtrends names none) and none reported. The first run reported
+one, Parental's Figure 1, which sat on its sheet with its caption. Both of
+that paper's figures are SVGs, stored as a PNG with the SVG nested in its
+blip, and Word draws the SVG as paths; the PNG is now read as the fallback it
+is. Aging_Well today with R131's sentence put back reads `Figure 2's caption
+is SPLIT: it opens on sheet 23 and ends on sheet 24`. The same caption held
+together by `keepLines` reads as a caption on sheet 24, which draws no image.
+Both render to 41 sheets.
+
+Tests: in `test_pages.py`, a caption whole, split, and moved whole off its
+figure; the sheet a split caption shares with a figure above it and below
+it; raster, metafile, SVG and missing relationships; a list of figures
+before the caption; three captions the render does not show whole; a label
+without its colon; the count first; image placements counted; and one
+render read for both answers. In `test_cli.py`, `--expect-sheets` and a
+caption finding gating the exit.
+
+**Left for Aging_Well's session:** the PyMuPDF count recorded in
+`revision/log.md`. `docxkit pages working.docx --check --expect-sheets 40`
+covers it: the count, and a caption parted from its figure.
+
 ### ~~S2 — a link inside the very bookmark it points at passes every gate, and hides an unlinked citation~~ — FIXED 12.09, `e1c78d2`
 
 <!-- status: fixed -->

@@ -415,6 +415,260 @@ def test_page_texts_survives_a_render_still_held_open(tmp_path, monkeypatch):
         for pdf in made:
             shutil.rmtree(pdf.parent, ignore_errors=True)
 
+def test_sheets_and_texts_read_ONE_render_and_sweep_it(tmp_path,
+                                                        monkeypatch):
+    """`--check` asks what each sheet looks like AND where each caption
+    landed, and asks it of one render: Word is called once, the band
+    reaches the reader, the staging is swept, and a named PDF is kept."""
+    from docxkit import pages as pages_mod
+    from docxkit import word as word_mod
+    from docxkit.pages import sheets_and_texts
+
+    calls: list[Path] = []
+    bands: list[float] = []
+    texts = ("the first sheet", "Figure 2 on the second", "and the last")
+    real_read = pages_mod.read_pdf
+
+    def export_pdf(docx, out_pdf, **kw):
+        calls.append(Path(out_pdf))
+        doc = pymupdf.open()
+        for text in texts:
+            doc.new_page(width=A4[0], height=A4[1]).insert_text(
+                (72, 200), text, fontsize=11)
+        doc.save(str(out_pdf))
+        doc.close()
+        return Path(out_pdf)
+
+    def read_pdf(pdf, *, band):
+        bands.append(band)
+        return real_read(pdf, band=band)
+
+    monkeypatch.setattr(word_mod, "export_pdf", export_pdf)
+    monkeypatch.setattr(pages_mod, "read_pdf", read_pdf)
+
+    rows, got = sheets_and_texts(tmp_path / "paper.docx", band=0.2)
+    kept = tmp_path / "kept.pdf"
+    sheets_and_texts(tmp_path / "paper.docx", keep_pdf=kept)
+
+    assert [row.number for row in rows] == [1, 2, 3]
+    assert [t.strip() for t in got] == list(texts)
+    assert calls[1:] == [kept] and kept.exists()
+    assert calls[0].parent != tmp_path and not calls[0].parent.exists()
+    assert bands == [0.2, 0.12]
+
+
+# --- a caption a sheet break parted from its figure ----------------------
+#
+# BACKLOG S2, Aging_Well R131 (2026-09-12): one sentence too many set the
+# last lines of Figure 2's caption on a sheet of their own. That sheet was
+# not blank, printed its number and broke no sequence, so every verdict
+# above stayed green over it.
+
+_CAPTION_LINES = (
+    "Figure 2. The framework as a matrix. Health and economic",
+    "security each have one policy area to expand the capability",
+    "and one to protect it. The four Rs apply within each area.",
+    "The resource margin admits one strategy. Author construction.",
+)
+_PROSE = ("Prose about something else entirely, running on.",)
+_PNG = "media/image1.png"
+
+
+def _figure_parts(*, below: bool = True,
+                  targets: tuple[str | None, ...] = (_PNG,),
+                  caption: str = " ".join(_CAPTION_LINES),
+                  ) -> dict[str, bytes]:
+    """A document of one figure: a paragraph drawing one image per target,
+    and the caption below it when `below`. A None target has no
+    relationship at all."""
+    blips = "".join(f'<a:blip r:embed="rId{7 + k}"/>'
+                    for k in range(len(targets)))
+    drawing = f"<w:p><w:r><w:drawing>{blips}</w:drawing></w:r></w:p>"
+    text = f'<w:p><w:r><w:t xml:space="preserve">{caption}</w:t></w:r></w:p>'
+    body = drawing + text if below else text + drawing
+    rels = "".join(f'<Relationship Id="rId{7 + k}" Type="image" '
+                   f'Target="{target}"/>'
+                   for k, target in enumerate(targets) if target)
+    return {"word/document.xml":
+            f"<w:document><w:body>{body}</w:body></w:document>".encode(),
+            "word/_rels/document.xml.rels":
+            f"<Relationships>{rels}</Relationships>".encode()}
+
+
+def _captioned(tmp_path, *sheets: tuple[tuple[str, ...], int]):
+    """A render of `sheets`, each (lines, images): `images` placements of
+    one picture, the lines set one under another, and the sheet's number in
+    its footer. Returns what `caption_problems` reads, rows and texts."""
+    from docxkit.pages import read_texts
+
+    png = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8),
+                         0).tobytes("png")
+    doc = pymupdf.open()
+    for number, (lines, images) in enumerate(sheets, 1):
+        page = doc.new_page(width=A4_LANDSCAPE[0], height=A4_LANDSCAPE[1])
+        for k in range(images):
+            page.insert_image(pymupdf.Rect(72 + 110 * k, 40, 172 + 110 * k,
+                                           120), stream=png)
+        for n, line in enumerate(lines):
+            page.insert_text((72, 170 + 16 * n), line, fontsize=11)
+        page.insert_text((A4_LANDSCAPE[0] - 90, A4_LANDSCAPE[1] - 40),
+                         str(number), fontsize=11)
+    pdf = tmp_path / "captioned.pdf"
+    doc.save(str(pdf))
+    doc.close()
+    return read_pdf(pdf), read_texts(pdf)
+
+
+_MOVED = ("Figure 2's caption is on sheet 3, which draws no image: its "
+          "figure is on another sheet")
+_SPLIT = "Figure 2's caption is SPLIT: it opens on sheet 3 and ends on sheet 4"
+
+
+def test_a_sheet_counts_every_IMAGE_it_places(tmp_path):
+    """Placements, not pictures: one picture placed three times is one
+    reference and three images on the page."""
+    rows, _ = _captioned(tmp_path, (_PROSE, 3), (_PROSE, 0), (_PROSE, 5))
+
+    assert [row.images for row in rows] == [3, 0, 5]
+
+
+def test_a_caption_WHOLE_on_its_figures_sheet_is_sound(tmp_path):
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0),
+                             (_CAPTION_LINES, 1), (_PROSE, 0))
+
+    assert caption_problems(_figure_parts(), rows, texts) == []
+
+
+def test_a_caption_SPLIT_across_two_sheets_is_found(tmp_path):
+    """R131's shape: the figure and three lines, then the last line on a
+    sheet of its own. The figure shares the sheet the caption OPENS on, so
+    it is one finding and not two."""
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0),
+                             (_CAPTION_LINES[:3], 1),
+                             (_CAPTION_LINES[3:], 0), (_PROSE, 0))
+
+    assert caption_problems(_figure_parts(), rows, texts) == [_SPLIT]
+
+
+def test_a_caption_moved_WHOLE_off_its_figure_is_found(tmp_path):
+    """What widow control does with one line of room: the figure stays and
+    the whole caption goes over, so nothing is split and the caption's
+    sheet draws no image."""
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), ((), 1),
+                             (_CAPTION_LINES, 0), (_PROSE, 0), (_PROSE, 0))
+
+    assert caption_problems(_figure_parts(), rows, texts) == [_MOVED]
+
+
+@pytest.mark.parametrize(("below", "images"), [(True, (1, 0)),
+                                               (False, (0, 1))])
+def test_a_split_caption_asks_for_its_figure_on_the_sheet_it_SHARES(
+        tmp_path, below, images):
+    """A figure above its caption shares the sheet the caption opens on,
+    and one below it the sheet the caption ends on."""
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0),
+                             (_CAPTION_LINES[:3], images[0]),
+                             (_CAPTION_LINES[3:], images[1]))
+
+    assert caption_problems(_figure_parts(below=below), rows,
+                            texts) == [_SPLIT]
+
+
+def test_a_caption_ABOVE_its_figure_on_a_sheet_without_it_is_found(tmp_path):
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0),
+                             (_CAPTION_LINES, 0), ((), 1))
+
+    assert caption_problems(_figure_parts(below=False), rows,
+                            texts) == [_MOVED]
+
+
+@pytest.mark.parametrize(("targets", "asked"), [
+    (("media/image1.emf",), False),     # a metafile renders as paths
+    (("media/image1.wmf",), False),
+    ((None,), False),                   # no relationship: not judged
+    (("media/IMAGE1.PNG",), True),      # the extension in any case
+    (("media/image1.emf", "media/image2.jpeg"), True),   # one is enough
+    ((None, _PNG), True),               # a missing one skips to the next
+    (("media/image1.svg",), False),     # an SVG renders as paths too
+    ((_PNG, "media/image2.svg"), False),     # ...and its PNG is a fallback
+    ((_PNG, "media/image2.svg", "media/image3.jpeg"), True),  # not this one
+    (("media/image2.jpeg", _PNG, "media/image3.svg"), True),  # nor this
+])
+def test_only_a_figure_that_draws_a_RASTER_image_is_asked_for_one(
+        tmp_path, targets, asked):
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0),
+                             (_CAPTION_LINES, 0))
+
+    found = caption_problems(_figure_parts(targets=targets), rows, texts)
+
+    assert found == ([_MOVED] if asked else [])
+
+
+def test_a_LIST_OF_FIGURES_before_the_caption_is_not_the_caption(tmp_path):
+    """Found on the LAST sheet carrying its opening words, because a list
+    of figures repeats them earlier. Read from the first, the list's sheet
+    would be the caption's, and it draws no image."""
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(
+        tmp_path, (("List of figures", _CAPTION_LINES[0]), 0), (_PROSE, 0),
+        (_CAPTION_LINES, 1))
+
+    assert caption_problems(_figure_parts(), rows, texts) == []
+
+
+@pytest.mark.parametrize("sheets", [
+    ((_PROSE, 0), (_PROSE, 0), (_PROSE, 0)),               # on no sheet
+    ((_PROSE, 0), (_PROSE, 0), (_CAPTION_LINES[:3], 1)),   # ends past them
+    ((_PROSE, 0), (_PROSE, 0),                             # a note mark
+     ((_CAPTION_LINES[0] + "1", *_CAPTION_LINES[1:]), 1), (_PROSE, 0)),
+])
+def test_a_caption_the_render_does_not_show_whole_is_NOT_judged(
+        tmp_path, sheets):
+    """Silence, not a verdict: a caption found on no sheet, one whose end
+    would lie past the last sheet, and one holding a note mark the markup
+    keeps no text for, where the words stop agreeing mid-caption."""
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, *sheets)
+
+    assert caption_problems(_figure_parts(), rows, texts) == []
+
+
+def test_a_caption_is_NAMED_by_its_label_and_number(tmp_path):
+    from docxkit.pages import caption_problems
+
+    lines = ("Figure 12: " + _CAPTION_LINES[0].removeprefix("Figure 2. "),
+             *_CAPTION_LINES[1:])
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), ((), 1), (lines, 0))
+
+    found = caption_problems(_figure_parts(caption=" ".join(lines)), rows,
+                             texts)
+
+    assert found == [_MOVED.replace("Figure 2's", "Figure 12's")]
+
+
+def test_the_sheet_COUNT_is_checked_when_one_is_expected_and_comes_FIRST():
+    rows = [Sheet(n, "portrait", n, n == 4) for n in (1, 2, 3, 4, 5)]
+
+    assert problems(rows, expect_sheets=3) == [
+        "the render has 5 sheet(s), not the 3 expected", "sheet 4 is BLANK"]
+    assert problems(rows, expect_sheets=5) == ["sheet 4 is BLANK"]
+    assert problems(rows) == ["sheet 4 is BLANK"]
+
+
 # --- the eye gate: render the page an anchor falls on -------------------
 #
 # BACKLOG S4. The one check no gate in the ladder can make — a glyph that

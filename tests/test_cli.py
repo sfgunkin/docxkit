@@ -1492,8 +1492,8 @@ def test_pages_check_prints_the_RENDER_and_exits_on_a_defect(
     rows = [Sheet(1, "portrait", 1, False),
             Sheet(2, "landscape", None, True),
             Sheet(3, "portrait", 3, False)]
-    monkeypatch.setattr(pages_mod, "sheets",
-                        lambda docx, keep_pdf=None: rows)
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: (rows, [""] * 3))
 
     code, _ = run_cli(monkeypatch, "pages", str(paper), "--check")
 
@@ -1510,10 +1510,10 @@ def test_pages_check_on_a_SOUND_render_passes_quietly(monkeypatch, paper,
     from docxkit import pages as pages_mod
     from docxkit.pages import Sheet
 
-    monkeypatch.setattr(pages_mod, "sheets",
-                        lambda docx, keep_pdf=None: [
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: ([
                             Sheet(1, "portrait", 1, False),
-                            Sheet(2, "portrait", 2, False)])
+                            Sheet(2, "portrait", 2, False)], ["", ""]))
 
     code, _ = run_cli(monkeypatch, "pages", str(paper), "--check")
 
@@ -1529,10 +1529,10 @@ def test_pages_sheets_prints_the_table_without_gating(
     from docxkit import pages as pages_mod
     from docxkit.pages import Sheet
 
-    monkeypatch.setattr(pages_mod, "sheets",
-                        lambda docx, keep_pdf=None: [
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: ([
                             Sheet(1, "portrait", None, False),
-                            Sheet(2, "portrait", 2, False)])
+                            Sheet(2, "portrait", 2, False)], ["", ""]))
 
     code, _ = run_cli(monkeypatch, "pages", str(paper), "--sheets")
 
@@ -1541,6 +1541,57 @@ def test_pages_sheets_prints_the_table_without_gating(
     assert "2 sheet(s)" in out
     assert "prints    -" in out
     assert "**" not in out
+
+
+def test_pages_check_gates_on_the_sheet_COUNT_it_is_given(
+        monkeypatch, paper, capsys):
+    """--expect-sheets, for a paper whose length is known: a sheet holding
+    the end of a caption changes the count and nothing else a gate reads
+    (BACKLOG S2, Aging_Well R131)."""
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    rows = [Sheet(n, "portrait", n, False) for n in (1, 2, 3)]
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: (rows, [""] * 3))
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--check",
+                      "--expect-sheets", "5")
+    assert code == 2
+    assert ("the render has 3 sheet(s), not the 5 expected"
+            in capsys.readouterr().out)
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--check",
+                      "--expect-sheets", "3")
+    assert code == 0
+
+
+def test_pages_check_gates_on_a_CAPTION_parted_from_its_figure(
+        monkeypatch, paper, capsys):
+    """The caption verdict reads the texts of the SAME render as the rows,
+    and the document's own parts, and gates like every other verdict."""
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    rows = [Sheet(n, "portrait", n, False) for n in (1, 2, 3)]
+    texts = ["one", "two", "three"]
+    seen: dict[str, object] = {}
+
+    def caption_problems(parts, got_rows, got_texts):
+        seen.update(parts=parts, rows=got_rows, texts=got_texts)
+        return ["Figure 2's caption is SPLIT: it opens on sheet 2 and "
+                "ends on sheet 3"]
+
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: (rows, texts))
+    monkeypatch.setattr(pages_mod, "caption_problems", caption_problems)
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--check")
+
+    assert code == 2
+    assert "** Figure 2's caption is SPLIT" in capsys.readouterr().out
+    assert seen["rows"] is rows and seen["texts"] is texts
+    assert "word/document.xml" in seen["parts"]  # type: ignore[operator]
 
 
 # --- what the cli mutation run of 2026-08-18 found ------------------------

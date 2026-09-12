@@ -28,6 +28,10 @@ that only the first step needs Word at all:
     read_pdf(pdf) -> one Sheet per physical sheet           (PyMuPDF)
     problems(...) -> the verdicts --check exits on          (pure)
 
+`caption_problems` is the verdict that needs the words as well — which
+sheet each figure caption landed on — and `sheets_and_texts` reads both
+off one render.
+
 `render_anchors` is the other thing a render is for: not the table, but
 the PAGE — the one check that catches a glyph that went the wrong way,
 an equation that renders wrong, a table that split. It rasterises the
@@ -38,13 +42,18 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from itertools import pairwise
+from os.path import commonprefix
 from pathlib import Path
 from typing import Any, NamedTuple
 
-__all__ = ["Sheet", "page_texts", "problems", "read_pdf", "render_anchors",
-           "sheets"]
+from .errors import PackageError
+
+__all__ = ["Sheet", "caption_problems", "page_texts", "problems",
+           "read_pdf", "read_texts", "render_anchors", "sheets",
+           "sheets_and_texts"]
 
 #: How much of a sheet is footer, and how much is header. A page number
 #: printed by Word sits inside the margin band; 12 % of the height is
@@ -52,6 +61,13 @@ __all__ = ["Sheet", "page_texts", "problems", "read_pdf", "render_anchors",
 #: in one session, and it read every number correctly there.
 _BAND = 0.12
 _NUMBER_RE = re.compile(r"^\d{1,4}$")
+#: How much of a caption finds it on a sheet, whitespace removed: the
+#: probe `placement` reads a table's caption with.
+_PROBE = 40
+#: Image parts a render draws as an IMAGE. A metafile is drawn as paths,
+#: and a sheet of plain text has paths too — an underline, a table rule,
+#: the footnote separator — so its absence cannot be told from a sheet.
+_RASTER = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff")
 
 
 class Sheet(NamedTuple):
@@ -83,6 +99,10 @@ class Sheet(NamedTuple):
     for these papers is a right-aligned footer (see the paper-formatting
     conventions), and a numbering position that drifts mid-document is
     the shape a section break with its own footer leaves behind."""
+    images: int = 0
+    """How many images the sheet DRAWS, counted where they are placed, so
+    one inside a form object counts too. A caption on a sheet that draws
+    none has been parted from its raster figure: :func:`caption_problems`."""
 
     def __str__(self) -> str:
         printed = "-" if self.printed is None else str(self.printed)
@@ -208,6 +228,28 @@ def _outermost_line(words: list[Any], edge: str) -> list[Any]:
             if abs((w[3] if edge == "lower" else w[1]) - key) <= 3.0]
 
 
+@contextmanager
+def _rendered(docx: str | Path,
+              keep_pdf: str | Path | None) -> Generator[Path, None, None]:
+    """A render of `docx` through Word, for as long as the block runs.
+
+    A named PDF is written where the caller asked and KEPT; an unnamed one
+    goes to a staging directory that is removed afterwards. The removal
+    ignores errors because on Windows a reader that has not released the
+    file makes it raise, AFTER the answer is in hand.
+    """
+    from .word import export_pdf
+
+    if keep_pdf is not None:
+        yield export_pdf(docx, keep_pdf)
+        return
+    staging = Path(tempfile.mkdtemp(prefix="docxkit_pages_"))
+    try:
+        yield export_pdf(docx, staging / "render.pdf")
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def page_texts(docx: str | Path) -> list[str]:
     """The TEXT of each rendered sheet, in order.
 
@@ -220,16 +262,15 @@ def page_texts(docx: str | Path) -> list[str]:
     caption can ever be found. That is the renderer contract
     `placement`/`repack` expect, so this is it.
     """
-    from .word import export_pdf
+    with _rendered(docx, None) as pdf:
+        return read_texts(pdf)
 
+
+def read_texts(pdf: str | Path) -> list[str]:
+    """The text of each sheet of a rendered PDF, in order."""
     pymupdf = _import_pymupdf()
-    staging = Path(tempfile.mkdtemp(prefix="docxkit_text_"))
-    try:
-        pdf = export_pdf(docx, staging / "render.pdf")
-        with pymupdf.open(str(pdf)) as doc:
-            return [page.get_text() for page in doc]
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+    with pymupdf.open(str(pdf)) as doc:
+        return [page.get_text() for page in doc]
 
 
 def read_pdf(pdf: str | Path, *, band: float = _BAND) -> list[Sheet]:
@@ -248,7 +289,8 @@ def read_pdf(pdf: str | Path, *, band: float = _BAND) -> list[Sheet]:
                             else "portrait",
                 printed=printed,
                 blank=blank,
-                corner=corner))
+                corner=corner,
+                images=len(page.get_image_info())))
     return out
 
 
@@ -260,19 +302,26 @@ def sheets(docx: str | Path, *, keep_pdf: str | Path | None = None,
     the PDF is a temporary file, because the answer wanted here is the
     table, not the artifact.
     """
-    from .word import export_pdf
+    with _rendered(docx, keep_pdf) as pdf:
+        return read_pdf(pdf, band=band)
 
-    if keep_pdf is not None:
-        return read_pdf(export_pdf(docx, keep_pdf), band=band)
-    staging = Path(tempfile.mkdtemp(prefix="docxkit_pages_"))
-    try:
-        return read_pdf(export_pdf(docx, staging / "render.pdf"), band=band)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+
+def sheets_and_texts(docx: str | Path, *,
+                     keep_pdf: str | Path | None = None,
+                     band: float = _BAND) -> tuple[list[Sheet], list[str]]:
+    """:func:`sheets` and :func:`page_texts` off ONE render.
+
+    ``--check`` asks both of every paper: what each sheet looks like, and
+    where each figure caption landed. Two renders would take twice as long
+    and could lay the document out twice, differently.
+    """
+    with _rendered(docx, keep_pdf) as pdf:
+        return read_pdf(pdf, band=band), read_texts(pdf)
 
 
 def problems(rows: list[Sheet], *,
-             corner: str | None = "lower right") -> list[str]:
+             corner: str | None = "lower right",
+             expect_sheets: int | None = None) -> list[str]:
     """What ``--check`` exits on, in the order a reader meets them.
 
     Four verdicts, and each is a defect this package could not see
@@ -288,8 +337,19 @@ def problems(rows: list[Sheet], *,
     the middle of the page and its XML still says "right". A paper that
     numbers elsewhere on purpose passes ``corner=None``, which is what
     ``--corner any`` does.
+
+    `expect_sheets` pins the COUNT, for a paper whose length is known,
+    and it comes first because it is about the whole render. Nothing
+    else compares the count with anything: on Aging_Well (2026-09-12,
+    R131) one caption sentence took the render from 40 sheets to 41, with
+    every sheet numbered and none blank, and the count was the only
+    figure that moved.
     """
-    out = [f"sheet {row.number} is BLANK" for row in rows if row.blank]
+    out: list[str] = []
+    if expect_sheets is not None and len(rows) != expect_sheets:
+        out.append(f"the render has {len(rows)} sheet(s), not the "
+                   f"{expect_sheets} expected")
+    out += [f"sheet {row.number} is BLANK" for row in rows if row.blank]
     numbered = [(row.number, row.printed) for row in rows
                 if row.printed is not None]
     for (_, was), (sheet, now) in pairwise(numbered):
@@ -303,3 +363,109 @@ def problems(rows: list[Sheet], *,
             f"{corner}" for row in rows
             if corner is not None and row.corner not in (None, corner)]
     return out
+
+
+def caption_problems(parts: Mapping[str, bytes], rows: Sequence[Sheet],
+                     texts: Sequence[str]) -> list[str]:
+    """Figure captions a sheet break parted from their figures.
+
+    Measured on Aging_Well (2026-09-12, R131). One sentence added to
+    Figure 2's caption made it six lines, on a landscape sheet that holds
+    the figure and four, and Word set the last two on a sheet of their
+    own. :func:`problems` stayed green, correctly: that sheet is not blank,
+    it prints its number, and the sequence does not jump. What a reader
+    turning to the figure meets is a figure without the end of its
+    caption.
+
+    Two ways a sheet break parts them, both read off the words:
+
+    * the caption is SPLIT, opening on one sheet and ending on the next —
+      the shape above, and what widow control does to a caption of four
+      lines or more;
+    * the caption is whole on a sheet that draws NO image, which is where
+      widow control moves a short caption left a line of room. Asked only
+      of a figure that draws a raster image, since a metafile or an SVG
+      renders as paths and a sheet of text has paths too; and of the sheet
+      the figure should share — the one the caption opens on when the
+      figure stands above it, and the one it ends on when it stands below.
+
+    Measured before it shipped, over the renders of eight papers: all 36
+    figure captions located and none reported, once an SVG's fallback PNG
+    stopped counting as an image (:func:`_raster`). Aging_Well with R131's
+    sentence put back reads SPLIT, and the same caption held together reads
+    as a caption on a sheet that draws no image.
+
+    A caption is found by its opening words on the LAST sheet carrying
+    them, since a list of figures repeats every caption and comes first.
+    It is followed only as far as the render spells it the way the markup
+    does, so a caption holding a note mark or a field the markup keeps no
+    text for reads as whole where it stops matching: that is silence, not
+    a verdict, and a verdict needs the words.
+    """
+    from ._xml import DOCUMENT
+    from .figures import caption_side
+
+    doc = parts[DOCUMENT].decode("utf-8")
+    rels = parts.get("word/_rels/document.xml.rels", b"").decode("utf-8")
+    below = caption_side(doc) == "before"
+    out: list[str] = []
+    for name, first, last, raster in _placed_captions(doc, rels, texts):
+        if last != first:
+            out.append(f"{name}'s caption is SPLIT: it opens on sheet "
+                       f"{first + 1} and ends on sheet {last + 1}")
+        shared = first if below else last
+        if raster and shared < len(rows) and not rows[shared].images:
+            out.append(f"{name}'s caption is on sheet {shared + 1}, which "
+                       f"draws no image: its figure is on another sheet")
+    return out
+
+
+def _placed_captions(doc: str, rels: str, texts: Sequence[str],
+                     ) -> list[tuple[str, int, int, bool]]:
+    """Each figure caption the render shows: its name, the sheets it opens
+    and ends on (0-based), and whether its figure draws a raster image."""
+    from .figures import find_all
+    from .placement import _flat
+
+    flats = [_flat(text) for text in texts]
+    out: list[tuple[str, int, int, bool]] = []
+    for figure in find_all(doc):
+        caption = _flat(figure.caption)
+        probe = caption[:_PROBE]
+        homes = [i for i, flat in enumerate(flats) if probe in flat]
+        if not homes:
+            continue
+        first = last = homes[-1]
+        at = flats[first].rindex(probe)
+        rest = caption[len(commonprefix((caption, flats[first][at:]))):]
+        after = flats[first + 1] if first + 1 < len(flats) else ""
+        if rest and rest[:_PROBE] in after:
+            last = first + 1
+        name = " ".join(figure.caption.split()[:2]).rstrip(".:")
+        out.append((name, first, last, _raster(figure.embeds, rels)))
+    return out
+
+
+def _raster(embeds: Sequence[str], rels: str) -> bool:
+    """Whether a figure draws a raster image — what a render counts as an
+    image, where a metafile renders as paths.
+
+    **An SVG picture is stored as a PNG with the SVG nested inside its
+    blip**, and Word draws the SVG, as paths. The PNG is a fallback for
+    readers that cannot draw SVG, and it comes right before the SVG among
+    the embeds. Counting it read both of Parental_style's figures as raster
+    and its Figure 1 — on sheet 48 with its caption, drawn as 48 paths and
+    no image — as a figure on another sheet (measured 2026-09-12).
+    """
+    from .figures import _relationship_target
+
+    targets: list[str] = []
+    for rid in embeds:
+        try:
+            targets.append(_relationship_target(rels, rid).lower())
+        except PackageError:
+            targets.append("")
+    fallbacks = {k - 1 for k, target in enumerate(targets)
+                 if target.endswith(".svg")}
+    return any(target.endswith(_RASTER) for k, target in enumerate(targets)
+               if k not in fallbacks)
