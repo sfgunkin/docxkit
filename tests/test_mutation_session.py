@@ -668,3 +668,32 @@ def test_mirror_src_copies_EVERY_depth_and_deletes_what_is_gone(tmp_path):
         "src/docxkit/top.py"]
     assert behind.read_text(encoding="utf-8") == "B = 2\n", "not refreshed"
     assert kept.exists(), "only the package is mirrored"
+
+
+def test_mirror_src_walks_the_PACKAGE_not_a_snapshot_beside_it(tmp_path,
+                                                               monkeypatch):
+    """`rglob` puts `**/` in front of its pattern, so walking `live` for
+    `src/docxkit/**/*.py` also found every session's snapshot,
+    `.mutation-<stem>.pristine/src/docxkit/<module>.py`. Copied, it was
+    junk in the checkout. Deleted by another stream's `--fresh` between
+    the listing and the copy, it was a fan-out losing a stream at startup
+    (BACKLOG S4) — so here the snapshot goes at the first copy, the way it
+    went then."""
+    live, tree = tmp_path / "live", tmp_path / "tree"
+    snapshot = live / ".mutation-top.pristine"
+    for rel in ("src/docxkit/top.py",
+                ".mutation-top.pristine/src/docxkit/top.py"):
+        (live / rel).parent.mkdir(parents=True, exist_ok=True)
+        (live / rel).write_text("A = 1\n", encoding="utf-8")
+    real_copy = ms.shutil.copy2
+
+    def copy_while_a_stream_starts_fresh(src, dst, *args, **kwargs):
+        ms.shutil.rmtree(snapshot, ignore_errors=True)
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(ms.shutil, "copy2", copy_while_a_stream_starts_fresh)
+
+    ms.mirror_src(live, tree)
+
+    assert (tree / "src" / "docxkit" / "top.py").exists()
+    assert not (tree / ".mutation-top.pristine").exists()

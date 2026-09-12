@@ -46,35 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — `measure_all --in` loses its first stream at startup, and cuts the reason to 300 characters
-
-<!-- status: open -->
-
-Met in both fan-outs of 2026-09-12, one of four streams and one of two. Each
-time the stream on the FIRST worktree refused before planning anything:
-
-    _cite_audit.py  ath, target) | ... _winapi.CopyFile2(src_, dst_, flags)
-                    | FileNotFoundError: [WinError 3] The system cannot find
-                    the path specified
-    _cite_audit.py  REFUSED (exit 1) — no measurement taken, and the
-                    existing session is untouched.
-
-"ath, target)" is the end of `shutil.copy2(live / path, target)` in
-`mutation_session.mirror_src`. Both times the same session, started alone a
-few minutes later on the same worktree with the other stream still running,
-planned and ran to the end. So something about two sessions STARTING
-together takes a path out from under the first one's mirror. Which path is
-not in the report: `measure_all.run` keeps the last six lines of a refusal
-and prints their last 300 characters.
-
-Nothing is measured wrongly, and the refusal says so, which is why this is
-an S4. The cost is a module missing from a fan-out until someone reruns it
-by hand.
-
-**Suggested fix:** print the whole traceback when a session refuses, then
-find the path; or start the streams one after another, each once the one
-before has finished mirroring.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

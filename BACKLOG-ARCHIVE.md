@@ -14,6 +14,68 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `measure_all --in` loses its first stream at startup, and cuts the reason to 300 characters~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+Met in both fan-outs of 2026-09-12, one of four streams and one of two. Each
+time the stream on the FIRST worktree refused before planning anything:
+
+    _cite_audit.py  ath, target) | ... _winapi.CopyFile2(src_, dst_, flags)
+                    | FileNotFoundError: [WinError 3] The system cannot find
+                    the path specified
+    _cite_audit.py  REFUSED (exit 1) — no measurement taken, and the
+                    existing session is untouched.
+
+"ath, target)" is the end of `shutil.copy2(live / path, target)` in
+`mutation_session.mirror_src`. Both times the same session, started alone a
+few minutes later on the same worktree with the other stream still running,
+planned and ran to the end. So something about two sessions STARTING
+together takes a path out from under the first one's mirror. Which path is
+not in the report: `measure_all.run` keeps the last six lines of a refusal
+and prints their last 300 characters.
+
+Nothing is measured wrongly, and the refusal says so, which is why this is
+an S4. The cost is a module missing from a fan-out until someone reruns it
+by hand.
+
+**Suggested fix:** print the whole traceback when a session refuses, then
+find the path; or start the streams one after another, each once the one
+before has finished mirroring.
+
+**Fixed, at the cause the report could not name.** `mutation_session.mirror_src`
+listed the package with `live.rglob("src/docxkit/**/*.py")`. `rglob` puts
+`**/` in front of its pattern, so that matched a `src/docxkit` at any depth
+under the repository, including every session's snapshot,
+`.mutation-<stem>.pristine/src/docxkit/<module>.py`:
+
+    files mirrored, 2026-09-12      119
+      the package                    67
+      sessions' snapshots            52
+
+Every stream of a fan-out starts `--fresh`, which deletes its own snapshot. A
+stream mirroring at that moment listed a snapshot the other stream then
+deleted, and copied from a directory that had gone: `[WinError 3]`. Started
+alone, it found every snapshot stable, which is why the same session then ran.
+The walk starts at `src/docxkit` now, and `kill_check.sync`, which calls the
+same function, no longer copies the snapshots either.
+
+`measure_all.run` keeps the last forty lines of a session that graded nothing
+and prints each one whole, where it kept six and printed their last 300
+characters.
+
+Neither suggested fix would have settled it on its own. The report's own tail
+ends at "the path specified", so the error names no file, and the whole
+traceback names `copy2` and not the path. Starting the streams one after
+another would only have narrowed the race: a stream runs its modules in turn,
+and every module starts `--fresh` and mirrors again.
+
+Tests: in `test_mutation_session.py`, a snapshot beside the package deleted at
+the first copy, the way the other stream deleted it; in `test_measure_all.py`,
+a refusal of 46 lines printed from its seventh line on, a 352-character line
+whole. `kill_check` undid each fix in its own checkout, the walk from `live`,
+six lines kept and the 300-character cut, and the tests killed all three.
+
 ### ~~S2 — `pages --check` passes when a figure's caption spills onto a new landscape page~~ — FIXED 12.09, `c69a729`
 
 <!-- status: fixed -->

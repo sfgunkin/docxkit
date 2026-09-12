@@ -236,8 +236,19 @@ def mirror_src(live: Path, tree: Path) -> None:
     A function, because there are two checkouts and the second copied
     the package with `glob("*.py")` long after the first stopped — see
     `kill_check.sync`, where that cost six false verdicts in a row.
+
+    **Walked from the package, not from `live`.** `rglob` puts `**/` in
+    front of its pattern, so `live.rglob("src/docxkit/**/*.py")` matched a
+    `src/docxkit` at ANY depth, and every session's snapshot keeps one:
+    `.mutation-<stem>.pristine/src/docxkit/<module>.py`. On 2026-09-12 that
+    was 52 of the 119 files mirrored, into a worktree that has no use for
+    them. It is also why a fan-out lost a stream at startup (BACKLOG S4):
+    every stream starts `--fresh`, which deletes its OWN snapshot, and a
+    stream mirroring at that moment listed the snapshot and then copied from
+    a directory that had gone, `[WinError 3]`.
     """
-    package = {p.relative_to(live) for p in live.rglob("src/docxkit/**/*.py")}
+    package = {p.relative_to(live)
+               for p in (live / "src" / "docxkit").rglob("*.py")}
     for path in sorted(package):
         target = tree / path
         target.parent.mkdir(parents=True, exist_ok=True)

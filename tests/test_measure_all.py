@@ -123,6 +123,21 @@ def test_a_session_that_says_NOTHING_still_reports(sweep):
     assert "no output" in _said(sweep([]))
 
 
+def test_a_REFUSAL_is_printed_WHOLE_not_its_last_300_characters(sweep):
+    """A traceback is the diagnosis. Six lines cut to their last 300
+    characters reported a lost stream as `ath, target) | ... CopyFile2(...)`,
+    the end of one call with nothing to say whose (BACKLOG S4). Every line
+    kept is printed whole, and the last forty are kept."""
+    lines = [f"frame {n:02d} " + "x" * 90 for n in range(45)]
+    lines.append("FileNotFoundError: [WinError 3] " + "p" * 320)
+
+    said = _said(sweep(lines))
+
+    assert lines[-1] in said
+    assert all(line in said for line in lines[6:-1])
+    assert "frame 05" not in said
+
+
 def test_a_graded_run_does_NOT_repeat_the_diagnosis_line(sweep):
     """The fallback is for the case with no progress at all. Printed
     beside a real chunk line it would put "verifying the unmutated

@@ -113,7 +113,7 @@ def run(module: str, minutes: float, sample: int = 0, *,
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1, env=child)
     assert proc.stdout is not None
-    last, moved, others = "", "", deque[str](maxlen=6)
+    last, moved, others = "", "", deque[str](maxlen=40)
     for raw in proc.stdout:
         line = raw.strip()
         if " run — " in line:
@@ -136,7 +136,13 @@ def run(module: str, minutes: float, sample: int = 0, *,
             others.append(line)
     code = proc.wait()
     if not last:                 # no chunk ever graded: say why, not "0%"
-        say("    " + (" | ".join(others)[-300:] or "no output"))
+        # Every line kept, each one WHOLE. The last six cut to their final
+        # 300 characters reported a lost stream as `ath, target) | ...
+        # CopyFile2(src_, dst_, flags)`: the end of one call, and no
+        # traceback to say whose (BACKLOG S4, 2026-09-12). A refusal is
+        # a few lines and its traceback a score, so forty keeps both.
+        for line in others or ["no output"]:
+            say(f"    {line}")
 
     if code:
         # A session that REFUSED is not a measurement, and returning here
