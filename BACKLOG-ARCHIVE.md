@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — `measure_all --in` loses its first stream at startup, and cuts the reason to 300 characters~~ — FIXED 12.09
+### ~~S4 — `measure_all --in` loses its first stream at startup, and cuts the reason to 300 characters~~ — FIXED 12.09, `2fa894a`
 
 <!-- status: fixed -->
 
