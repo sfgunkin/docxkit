@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — a link inside the very bookmark it points at passes every gate, and hides an unlinked citation~~ — FIXED 12.09
+### ~~S2 — a link inside the very bookmark it points at passes every gate, and hides an unlinked citation~~ — FIXED 12.09, `e1c78d2`
 
 <!-- status: fixed -->
 
@@ -58,7 +58,7 @@ ways.
 mentions linked, by `link_all` or by hand, before their back-links have
 anywhere to go.
 
-### ~~S4 — `mutation_survivors.py` given a session file that does not exist creates an empty one, then dies on "no such table"~~ — FIXED 12.09
+### ~~S4 — `mutation_survivors.py` given a session file that does not exist creates an empty one, then dies on "no such table"~~ — FIXED 12.09, `e1c78d2`
 
 <!-- status: fixed -->
 
