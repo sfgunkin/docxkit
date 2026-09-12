@@ -196,3 +196,16 @@ def test_the_span_is_measured_in_visible_text_including_the_maths():
     out = _wrap(para, "Smith 2020")
 
     assert _linked(out) == "Smith 2020"
+
+
+def test_a_span_on_a_run_edge_past_256_leaves_no_EMPTY_run():
+    """`at <= fs` is what keeps the run before the span whole and puts no
+    empty run in front of the link. Past offset 256 two equal offsets are
+    two int objects, so an identity test there left `<w:r></w:r>` behind
+    (a survivor of the 2026-09-12 replay)."""
+    para = _p("x" * 300, "Smith 2020", " tail")
+
+    out = _wrap(para, "Smith 2020")
+
+    assert _linked(out) == "Smith 2020"
+    assert "<w:r></w:r>" not in out, out[:400]

@@ -164,3 +164,43 @@ claims = [
   { was = 'elif f.kind == "UNBALANCED SPAN":', line = 'elif f.kind >= "UNBALANCED SPAN":', why = "Of the fifteen kinds `_audit_findings` raises, none sorts after `UNBALANCED SPAN`. A new kind starting with U or later would break the claim." },
   { was = 'elif f.kind == "BRACKETED SPAN":', line = 'elif f.kind <= "BRACKETED SPAN":', why = "Of the kinds that reach this branch, none sorts before `BRACKETED SPAN`: `BROKEN LINK` is matched earlier, and every other kind starts with C or later. The `DOUBLED LINK` branch that `CITE WITHOUT REF` used to reach, where `<=` was NOT equivalent, is a table lookup now, and the test that killed it still holds the behaviour." },
 ]
+
+# The older lines of `_cite_grammar.py`, replayed 2026-09-12: 67 survivors,
+# 34 killed by tests and these 33 argued. Each was applied by `kill_check`.
+
+["_cite_grammar.py"]
+claims = [
+  { was = 'if authors == c.authors:', line = 'if authors is c.authors:', why = "Two equal strings that are different objects take the second branch, which builds a Citation equal to `c`: `start` moves by `len(c.authors) - len(authors)`, which is zero. The caller gets an equal answer either way." },
+  { was = 'if len(_CHAIN_SPLIT_RE.split(c.authors)) > 1:', line = 'if len(_CHAIN_SPLIT_RE.split(c.authors)) != 1:', why = "`re.split` returns at least one element, so a count that is not one is a count above one." },
+  { was = 'if len(words) < 2 or _bare(c.authors.split()[0]) not in words:', line = 'if len(words) < 2 or _bare(c.authors.split()[ -1]) not in words:', why = "Past the chain test above, `c.authors` is one word, or a known surname read whole from the entry this name was filed from, every word of which is in `words`. The first word and the last are then both in it or both not." },
+  { was = 'at = m.start(1)', line = 'at = m.start( 0)', why = "`_PREV_WORD_RE` opens with group 1, so the match and the group start at the same offset." },
+  { was = 'start=at if i == 0 else years_at + m.start(),', line = 'start=at if i <= 0 else years_at + m.start(),', why = "`i` comes from `enumerate`, so it is never below zero." },
+  { was = 'end=end if i == len(found) - 1 else years_at + m.end(),', line = 'end=end if i >= len(found) - 1 else years_at + m.end(),', why = "`i` runs up to `len(found) - 1` and no further." },
+  { was = 'end=end if i == len(found) - 1 else years_at + m.end(),', line = 'end=end if i is len(found) - 1 else years_at + m.end(),', why = "CPython caches small ints, and a group holding more than 256 years is not a citation." },
+  { was = '@lru_cache(maxsize=8)', line = '@lru_cache(maxsize= 7)', kind = "cosmetic", why = "How many name lists stay compiled. It changes how often a pattern is rebuilt, never the pattern." },
+  { was = '@lru_cache(maxsize=8)', line = '@lru_cache(maxsize= 9)', kind = "cosmetic", why = "How many name lists stay compiled. It changes how often a pattern is rebuilt, never the pattern." },
+  { was = 'sorted({n for n in names if n}, key=len, reverse=True))', line = 'sorted({n for n in names if n}, key=len, reverse=False))', why = "The order the alternation TRIES names in, not what it can match. At the leftmost position a shorter known name either fails and the engine backtracks to the longer one, or it succeeds by reading the longer name's remaining words as a chain or `et al.`, which captures the same characters." },
+  { was = 'if n.year == wide.year', line = 'if n.year <= wide.year', why = "A narrow piece inside a wide piece always carries the wide piece's year. Both scans tile the same group of years at the same offsets, and only a span's START differs between them." },
+  { was = 'if n.year == wide.year', line = 'if n.year >= wide.year', why = "As for `<=`: a narrow piece inside a wide one always shares its year." },
+  { was = 'if n.year == wide.year', line = 'if n.year is not wide.year', why = "The two years come from separate matches, so they are different objects and `is not` is true; a narrow piece inside a wide one always shares its year, so `!=` would be false only there, and the containment test decides." },
+  { was = 'and wide.start <= n.start and n.end <= wide.end', line = 'and wide.start != n.start and n.end <= wide.end', why = "The wide span differs from the narrow one only at its START. A narrow piece that starts where the wide one does is the same span, masked the same way, and excluded by the test after this one." },
+  { was = 'and wide.start <= n.start and n.end <= wide.end', line = 'and wide.start < n.start and n.end <= wide.end', why = "Equal starts mean the same span, excluded by the mask test that follows; every other kept piece starts strictly later." },
+  { was = 'and wide.start <= n.start and n.end <= wide.end', line = 'and wide.start is not n.start and n.end <= wide.end', why = "A kept narrow piece starts strictly after the wide one, so the offsets differ and the identity test is true wherever `<=` is." },
+  { was = 'and wide.start <= n.start and n.end <= wide.end', line = 'and wide.start <= n.start and n.end == wide.end', why = "Both scans close a span at the same character, the year's bracket or its segment's end, so a narrow piece inside a wide one ends exactly where it ends." },
+  { was = 'and wide.start <= n.start and n.end <= wide.end', line = 'and wide.start <= n.start and n.end >= wide.end', why = "Both scans close a span at the same character, so a kept narrow piece ends exactly where the wide one does, and `>=` holds wherever `<=` does." },
+  { was = 'surname = lead.split(",", 1)[0]', line = 'surname = lead.split(",", 2)[0]', why = "Element 0 is the text before the FIRST comma, whatever the maxsplit." },
+  { was = 'and (len(flat) == len(stop) or not flat[len(stop)].isalnum())', line = 'and (len(flat) < len(stop) or not flat[len(stop)].isalnum())', why = "Reached only when `flat` starts with `stop` and is not itself in `stops`, so it is strictly longer than `stop`: the length test is false under every comparison here." },
+  { was = 'and (len(flat) == len(stop) or not flat[len(stop)].isalnum())', line = 'and (len(flat) <= len(stop) or not flat[len(stop)].isalnum())', why = "`flat` is strictly longer than `stop` wherever this runs, as for `<`." },
+  { was = 'and (len(flat) == len(stop) or not flat[len(stop)].isalnum())', line = 'and (len(flat) is len(stop) or not flat[len(stop)].isalnum())', why = "The lengths always differ here, as for `<`, so identity is false where equality is." },
+  { was = 'for i in range(start + 1, len(paragraphs)):', line = 'for i in range(start * 1, len(paragraphs)):', why = "Scanning the heading paragraph as well. Its text is one of the heading names: no stop word, no caption, and no year, so `parse_reference` returns None and the loop continues." },
+  { was = 'for i in range(start + 1, len(paragraphs)):', line = 'for i in range(start ** 1, len(paragraphs)):', why = "Scans the heading too, which cannot parse as an entry, as for `start * 1`." },
+  { was = 'for i in range(start + 1, len(paragraphs)):', line = 'for i in range(start + 0, len(paragraphs)):', why = "Scans the heading too, which cannot parse as an entry, as for `start * 1`." },
+  { was = 'for i in range(start + 1, len(paragraphs)):', line = 'for i in range(start // 1, len(paragraphs)):', why = "Scans the heading too, which cannot parse as an entry, as for `start * 1`." },
+  { was = 'for i in range(start + 1, len(paragraphs)):', line = 'for i in range(start | 1, len(paragraphs)):', why = "`start | 1` is `start + 1` for an even start and the heading itself for an odd one, which cannot parse as an entry." },
+  { was = 'covered = [(sp, r) for sp, r in zip(spans, runs, strict=True)', line = 'covered = [(sp, r) for sp, r in zip(spans, runs, strict=False)', why = "`run_spans` returns one span per run, so the lists are always the same length." },
+  { was = 'if first is last:', line = 'if first == last:', why = "`re.Match` defines no equality of its own, so `==` is identity." },
+  { was = 'if at <= fs:', line = 'if at == fs:', why = "A span starting before its first covered run never reaches this line: the `split_run` above it refuses the negative offset. Here `at` is at least `fs`, and equal is the only case `<=` adds." },
+  { was = 'if end >= le:', line = 'if end == le:', why = "When the span reaches past its last run, `split_run` already returned an empty right half, so `after` is empty either way." },
+  { was = 'if end >= le:', line = 'if end > le:', why = "At `end == le` the split falls at the run's end and the right half comes back empty, so `after` is empty either way." },
+  { was = 'if end >= le:', line = 'if end is le:', why = "`after` is empty whenever the span reaches the run's end, whichever way this test answers." },
+]

@@ -249,3 +249,84 @@ def test_a_document_whose_bookmark_IDS_are_already_high_still_links():
 # residue as the `keep < 1` guard above: it would take 98 names of one
 # shape already in the document to reach the last turn, and the
 # `_dedup_name` fallback answers the case beyond it either way.
+
+
+# --- the grammar's edges: the 2026-09-12 replay of `_cite_grammar` --------
+#
+# 67 mutants survived a six-file harness. Each test below puts a number on
+# a boundary nothing had measured; the rest are argued in equivalents.toml.
+
+
+@pytest.mark.parametrize(("text", "years"), [
+    ("Sen (2000, 2100).", ["2000", "2100"]),       # the last plausible year
+    ("Sen (2000, 2101).", ["2000"]),               # ...and a page after it
+    ("Acemoglu and Robinson (2012, 1215, 2019).", ["2012"]),   # a page ENDS
+    ("Sen (1985, 1992, 1215).", ["1985", "1992"]),  # two works, then a page
+])
+def test_a_four_digit_LOCATOR_closes_a_list_of_years(text, years):
+    from docxkit._cite_grammar import find_citations
+
+    assert [c.year for c in find_citations(text)] == years
+
+
+def test_three_years_under_one_author_TILE_the_group():
+    from docxkit._cite_grammar import find_citations
+
+    text = "Sen (1985, 1992, 1999) argues."
+
+    assert ([text[c.start:c.end] for c in find_citations(text)]
+            == ["Sen (1985", "1992", "1999)"])
+
+
+def test_a_parenthetical_group_of_years_is_cut_at_its_OWN_offsets():
+    """The group opens at 12 and its years at 16: offsets where `+`, `^`,
+    `|` and the other operators all give different answers."""
+    from docxkit._cite_grammar import find_citations
+
+    text = "As argued, (Sen 1985, 1992)."
+
+    assert ([(c.start, c.end) for c in find_citations(text)]
+            == [(12, 20), (22, 26)])
+
+
+def test_a_ONE_word_name_never_widens_even_over_an_echo_of_itself():
+    from docxkit._cite_grammar import Citation, extend_to_name
+
+    text = "by UNICEF UNICEF (2020)."
+    c = Citation(authors="UNICEF", year="2020", start=10, end=23,
+                 narrative=True)
+
+    assert extend_to_name(text, c, "UNICEF") is c
+
+
+@pytest.mark.parametrize("pad", [0, 300])
+def test_a_BLOCKED_wide_span_falls_back_to_the_grammars_own(pad):
+    """The wide span a known surname gives is taken when clear; when its
+    first words are already linked, the narrower one is, if that is clear.
+    Padded past 256 too, where two equal offsets are two int objects."""
+    from docxkit._cite_grammar import citations_clear_of
+
+    lead = "x" * pad + "see "
+    text = lead + "de São José et al. (2019) today."
+    at = len(lead)
+    masked = text[:at] + "\x00" * len("de São ") + text[at + 7:]
+
+    found = citations_clear_of(text, masked, ("de São José",))
+
+    assert ([(c.start - pad, c.end - pad, c.year) for c in found]
+            == [(11, 29, "2019")])
+
+
+def test_add_style_styles_ONCE_a_run_carrying_a_format_change():
+    """A tracked formatting change keeps the OLD properties in a second
+    `<w:rPr>`, inside `w:rPrChange`. Styling that one as well would write
+    the Hyperlink style into Word's record of what the run used to be."""
+    from docxkit._cite_grammar import _add_style
+
+    run = ('<w:r><w:rPr><w:b/><w:rPrChange w:id="1" w:author="A">'
+           "<w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>x</w:t></w:r>")
+
+    out = _add_style(run, "Hyperlink")
+
+    assert out.count('<w:rStyle w:val="Hyperlink"/>') == 1
+    assert out.startswith('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/><w:b/>')
