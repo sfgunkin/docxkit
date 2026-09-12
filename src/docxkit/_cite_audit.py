@@ -199,7 +199,7 @@ def _marker_owner(name: str, entries: list[Reference]) -> Reference | None:
         owners = [r for r in entries
                   if re.sub(r"[^\w]", "", r.surname).casefold()
                   .startswith(alpha) and r.year == year]
-        return owners[0] if len(owners) == 1 else None
+        return _sole(owners)
     return _foreign_owner(name, entries)
 
 
@@ -265,6 +265,13 @@ def _foreign_owner(name: str, entries: list[Reference]) -> Reference | None:
         stem = re.sub(r"[^\w]", "", r.surname).casefold()
         if stem and stem in runs:
             owners.append(r)
+    return _sole(owners)
+
+
+def _sole(owners: list[Reference]) -> Reference | None:
+    """The entry a name belongs to when exactly ONE answers, and nobody's
+    when several do: silence beats a guess. One rule for both readers of a
+    bookmark name, :func:`_marker_owner` and :func:`_foreign_owner`."""
     return owners[0] if len(owners) == 1 else None
 
 
@@ -562,8 +569,6 @@ def _off_link(text: str, lo: int, hi: int, at: int, end: int) -> str | None:
     wrong covers words or another citation, or sits apart with words
     between it and the link.
     """
-    if at <= lo and hi <= end:
-        return None
     if hi < at or lo > end:
         gap = text[hi:at] if hi < at else text[end:lo]
         if not _ALNUM_RE.search(gap):

@@ -560,10 +560,8 @@ def rewrap_marker(xml: str, name: str) -> str:
         raise AnchorError(f"rewrap_marker: {anchor} has {n} link(s) beside "
                           f"{name}, need exactly 1")
     bid = spans[name][2]
-    bare = re.sub(rf'<w:bookmarkStart\b[^>]*w:id="{bid}"[^>]*/>', "", para,
-                  count=1)
-    bare = re.sub(rf'<w:bookmarkEnd\b[^>]*w:id="{bid}"[^>]*/>', "", bare,
-                  count=1)
+    bare = re.sub(rf'<w:bookmark(?:Start|End)\b[^>]*w:id="{bid}"[^>]*/>',
+                  "", para, count=2)
     fixed = wrap_link_in_bookmark(bare, anchor, name, int(bid))
     if (visible_text(fixed) != visible_text(para)
             or internal_links(fixed) != internal_links(para)):

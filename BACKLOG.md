@@ -480,6 +480,37 @@ killed: a mutant of a statement that spans lines does not compile when
 applied to one line. `kill_check` applied those four with the whole
 statement as the anchor, and all four died.
 
+**Mined the same day: every survivor in the three modules is killed or
+argued.** `_cite_repair.py` and `_cite_audit.py` were swept whole again
+after the day's two repairs, `rewrap_marker` and `retarget_self_link`.
+`_cite_grammar.py`'s older survivors were replayed.
+
+    module            survivors   killed   argued
+    _cite_grammar.py   67          34       33
+    _cite_repair.py   144         119       23
+    _cite_audit.py    199         147       46
+
+Two rows fall short of their survivors, and both gaps are refactors. A
+claim anchors on a unique line, so two identical one-line removals in
+`rewrap_marker` became one statement, and its 144 survivors ran as 142
+cases. For the same reason `_cite_audit.py`'s two owner readers now end on
+one helper, `_sole`, and its 46 argued survivors take 45 claims. The six
+that row is short went with a check in `_off_link` that the branch below
+it already answered.
+
+**Eleven `_cite_repair.py` kills were rebuild slices in `respan_link`
+whose wrong answer still read right.** Every test compared visible text,
+and a stray `>` or half a closing tag between runs is legal character
+data, so even parsing the result passed them. `test_cite_repair_edges.py`
+now rejects text outside a `w:t`. In `_cite_audit.py` the survivors sat on
+thresholds and places: 45 on the majority REF WITHOUT BACKLINK waits for,
+and 27 on the paragraph or gap `_reached` files a bookmark under.
+
+Some claims rest on CPython, not on the language. `ch is "("` holds
+because iterating a str yields the interpreter's cached one-character
+strings; another interpreter would expire the claim, and
+`verify_equivalents.py` would say so.
+
 **`_compare_diff.py` — 743 mutants, 653 real, 617 killed (94.5%).** Of
 the 36 that remain, 34 cannot change a report and 2 are cosmetic. The
 sweep also puts a NUMBER on the staleness rule `tools/stale_figures.py`

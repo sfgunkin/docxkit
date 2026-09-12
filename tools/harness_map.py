@@ -127,7 +127,8 @@ HARNESS: dict[str, list[str]] = {
                       "tests/test_value_types.py"]
        for half in ("_tracked_gates", "_tracked_report")},
     "_cite_audit.py": ["tests/test_citations.py", "tests/test_crossrefs.py",
-                       "tests/test_link_convention.py"],
+                       "tests/test_link_convention.py",
+                       "tests/test_cite_audit_edges.py"],
     # the five CONTRIBUTING records for the paired runs, plus the four
     # files written since to pin what those runs found
     "_cite_build.py": ["tests/test_citations.py",
@@ -145,7 +146,8 @@ HARNESS: dict[str, list[str]] = {
                          "tests/test_xml_primitives.py",
                          "tests/test_value_types.py"],
     "_cite_repair.py": ["tests/test_citations.py", "tests/test_pathological.py",
-                        "tests/test_cite_anchor_reuse.py"],
+                        "tests/test_cite_anchor_reuse.py",
+                        "tests/test_cite_repair_edges.py"],
     "_compare_diff.py": ["tests/test_compare.py",
                          "tests/test_compare_paragraph.py"],
     "_compare_render.py": ["tests/test_compare.py",
