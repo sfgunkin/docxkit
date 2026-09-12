@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — `pages --check` passes when a figure's caption spills onto a new landscape page~~ — FIXED 12.09
+### ~~S2 — `pages --check` passes when a figure's caption spills onto a new landscape page~~ — FIXED 12.09, `c69a729`
 
 <!-- status: fixed -->
 
