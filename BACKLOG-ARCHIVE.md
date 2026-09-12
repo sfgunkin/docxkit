@@ -14,6 +14,54 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `word.py` under its coverage floor on every CI run since 2026-09-11: its newest line runs only where pywin32 is installed~~ — FIXED 12.09
+
+<!-- status: fixed -->
+
+**Nineteen pushes red**, `b44efce` (09-11) to `6ee8400` (09-12). Every run
+failed; the first and the latest both on this line, on 3.12, 3.13 and 3.14,
+and in the latest it was the only red step:
+
+    word.py: 99.6% is below its floor of 100%
+
+A day of pushes landed on it — the 08-24 → 09-03 shape again, a red floor
+behind a green suite.
+
+**The line is `_restart_after_broken_cache`'s drop**, `del sys.modules[name]`
+for each `win32com.gen_py*`, added by `1c53b60`. `word.py` is 412 statements
+and 104 branches; missing that statement and the loop's branch into it is
+514/516 = 99.6 %, CI's figure to the decimal. Measured here by running
+`word.py`'s session tests under branch coverage twice — as installed, and
+with `win32com`, `pythoncom` and `pywintypes` made unimportable by stub
+modules first on `PYTHONPATH` — and both runs miss line 274 and one branch.
+
+**Why Windows was green:** only a real `import win32com` puts
+`win32com.gen_py` in `sys.modules`, and `tests/test_width_model.py` makes one
+at collection (a module-level `pytest.importorskip("win32com.client")`). So in
+this machine's full suite the drop had a module to drop — the REAL one, left
+deleted for the rest of the session, since nothing had registered it to come
+back. On CI the importorskip skips, the test's own fakes held no `gen_py`
+entry, and the loop ran zero times. `1c53b60`'s "floors ok" was true of
+Windows.
+
+**Fixed in the test, not with a pragma or a lower floor.** `_broken_cache`
+plants `win32com.gen_py.<folder>` itself, after registering any real entry
+with `monkeypatch`, and the first test asserts none is left once the rebuild
+has run. The line runs on every platform, and the drop is ASSERTED for the
+first time — on Windows it had run with nothing checking it.
+
+Measured after, with pywin32 hidden the same way: the full suite, 6339
+passed, and `coverage_floor --from-json` on its report puts `word.py` at
+100.0 % with every module at or above its floor; `tools/gates.py` green as
+installed. The leak, measured by importing the real wrapper and running the
+two tests in-process: the test as `1c53b60` left it leaves `sys.modules` with
+no `win32com.gen_py` at all; the fixed one puts the same module object back.
+
+**Suggested for the class:** measure the floors locally with pywin32 hidden.
+CI is the only place a floor has to hold, and every Windows-only import in the
+suite is a line this machine covers and CI does not; the 09-03 `_gates.py`
+floor was the same gap.
+
 ### ~~S4 — `measure_all --in` loses its first stream at startup, and cuts the reason to 300 characters~~ — FIXED 12.09, `2fa894a`
 
 <!-- status: fixed -->

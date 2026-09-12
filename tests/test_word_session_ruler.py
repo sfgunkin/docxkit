@@ -971,6 +971,18 @@ def _broken_cache(monkeypatch, tmp_path, word: FakeWord, failures: int):
     folder.mkdir(parents=True)
     (folder / "Find.py").write_text("# half a wrapper\n")
     sys.modules["win32com"].__gen_path__ = str(gen)   # type: ignore[attr-defined]
+    # The half-built wrapper as already IMPORTED, which the rebuild must
+    # drop or the retry is handed the broken module again. Planted,
+    # because only a real `import win32com` puts a `win32com.gen_py` in
+    # `sys.modules`: on Windows `test_width_model`'s importorskip did it
+    # at collection, and on CI, with no pywin32, the drop never ran —
+    # word.py at 99.6 % against its floor of 100, red for nineteen
+    # pushes. A real entry is registered first so the drop does not
+    # outlive the test.
+    for name in [m for m in sys.modules if m.startswith("win32com.gen_py")]:
+        monkeypatch.setitem(sys.modules, name, sys.modules[name])
+    stale = f"win32com.gen_py.{folder.name}"
+    monkeypatch.setitem(sys.modules, stale, types.ModuleType(stale))
     attempts: list[str] = []
 
     def DispatchEx(prog_id: str) -> FakeWord:
@@ -1004,6 +1016,8 @@ def test_a_broken_wrapper_cache_is_rebuilt_and_the_leaked_Word_is_ended(
     assert not state.folder.exists() and state.gen.exists(), \
         "the broken folder goes; the cache root stays"
     assert state.rebuilt == [0]
+    assert not [m for m in sys.modules if m.startswith("win32com.gen_py")], \
+        "the imported wrapper is dropped, not handed to the retry"
     assert state.killed == [4242], "the Word the failed start left"
     assert word.quits == 1
 
