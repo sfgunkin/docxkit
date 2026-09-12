@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — `word.py` under its coverage floor on every CI run since 2026-09-11: its newest line runs only where pywin32 is installed~~ — FIXED 12.09
+### ~~S3 — `word.py` under its coverage floor on every CI run since 2026-09-11: its newest line runs only where pywin32 is installed~~ — FIXED 12.09, `c01a588`
 
 <!-- status: fixed -->
 
