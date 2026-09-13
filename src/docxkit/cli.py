@@ -1216,7 +1216,13 @@ def cmd_fit(args: argparse.Namespace) -> int:
 
 def cmd_pages(args: argparse.Namespace) -> int:
     """The page COUNT, or -- with --check -- what the render looks like."""
-    if not (args.check or args.sheets):
+    expect = getattr(args, "expect_sheets", None)
+    # A sheet count to hold the render to IS a check. Without --check the
+    # command printed the page count and returned before reading it, so
+    # `pages PAPER --expect-sheets 34` passed whatever the render (code
+    # review, 2026-09-13).
+    check = args.check or expect is not None
+    if not (check or args.sheets):
         from .word import page_count
         print(page_count(args.docx))
         return 0
@@ -1231,11 +1237,11 @@ def cmd_pages(args: argparse.Namespace) -> int:
         print(f"  {row}")
     corner = getattr(args, "corner", "lower right")
     found = problems(rows, corner=None if corner == "any" else corner,
-                     expect_sheets=getattr(args, "expect_sheets", None))
+                     expect_sheets=expect)
     found += caption_problems(read_parts(args.docx), rows, texts)
     for note in found:
         print(f"  ** {note}")
-    if not args.check:
+    if not check:
         return 0
     if found:
         print("\nPagination cannot be inferred from the markup: two "
@@ -2445,7 +2451,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "break parted from its figure")
     p.add_argument("--expect-sheets", type=int, metavar="N",
                    help="a problem when the render has any other number "
-                        "of sheets, for a paper whose length is known")
+                        "of sheets, for a paper whose length is known; "
+                        "implies --check")
     p.add_argument("--corner", default="lower right",
                    metavar='"lower right"|any',
                    help="where the page number belongs, checked against "

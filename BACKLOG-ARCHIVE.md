@@ -14,6 +14,20 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `docxkit pages --expect-sheets N` without `--check` could not fail~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; read in the code, then held red by a test. Without
+`--check` or `--sheets`, `cmd_pages` printed the page count and returned 0
+before `--expect-sheets` was read; with `--sheets` alone it printed the
+mismatch and still returned 0. A gate written as `docxkit pages PAPER
+--expect-sheets 34` passed whatever the render.
+
+**Fixed:** a sheet count to hold the render to is a check — `--expect-sheets`
+implies `--check`, and its help says so. Test, seen red first:
+`test_cli.test_pages_expect_sheets_ALONE_gates_too`.
+
 ### ~~S2 — `repack` moves an exhibit that owns its section without either break when a blank paragraph follows the closing one~~ — FIXED 13.09
 
 <!-- status: fixed -->

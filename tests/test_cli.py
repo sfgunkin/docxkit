@@ -1566,6 +1566,29 @@ def test_pages_check_gates_on_the_sheet_COUNT_it_is_given(
     assert code == 0
 
 
+def test_pages_expect_sheets_ALONE_gates_too(monkeypatch, paper, capsys):
+    """Without --check the command printed the page count and returned 0
+    before --expect-sheets was read, so a gate written as `pages PAPER
+    --expect-sheets 34` passed whatever the render (code review,
+    2026-09-13)."""
+    from docxkit import pages as pages_mod
+    from docxkit import word
+    from docxkit.pages import Sheet
+
+    rows = [Sheet(n, "portrait", n, False) for n in (1, 2, 3)]
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: (rows, [""] * 3))
+    monkeypatch.setattr(word, "page_count", lambda path: 41)
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--expect-sheets", "5")
+    assert code == 2
+    assert ("the render has 3 sheet(s), not the 5 expected"
+            in capsys.readouterr().out)
+
+    code, _ = run_cli(monkeypatch, "pages", str(paper), "--expect-sheets", "3")
+    assert code == 0
+
+
 def test_pages_check_gates_on_a_CAPTION_parted_from_its_figure(
         monkeypatch, paper, capsys):
     """The caption verdict reads the texts of the SAME render as the rows,
