@@ -287,6 +287,41 @@ def test_REF_WITHOUT_BACKLINK_skips_the_UNCITED_and_counts_the_REACHED():
     assert [f.subject for f in found] == ["Dean2004"]
 
 
+# --- code review, 2026-09-13 -------------------------------------------------
+
+
+def test_an_entry_whose_marker_Word_HOISTED_still_links_home():
+    """Word moves a marker at a paragraph's head out to body level, where
+    the audit files it at -1, and no link sits in paragraph -1: every such
+    entry read as REF WITHOUT BACKLINK with its link home right there. The
+    marker is the paragraph BELOW it, as `_reached` and MISPLACED MARKER
+    already read it."""
+    cites = "".join(P(R("see ") + _mark(f"{k}txt", 10 + n, _link(k, k)))
+                    for n, k in enumerate(("Adams2001", "Brown2002",
+                                           "Cole2003", "Dean2004")))
+    hoisted = _mark("Dean2004", 23) + P(R("Dean, A. (2004). A title.")
+                                        + _field("Dean2004txt", " back"))
+    body = (FILLER + cites + P(R("References"))
+            + _entry("Adams2001", 20, _field("Adams2001txt", " back"))
+            + _entry("Brown2002", 21, _field("Brown2002txt", " back"))
+            + _entry("Cole2003", 22, _field("Cole2003txt", " back"))
+            + hoisted)
+
+    assert _kinds(_parts(body), "REF WITHOUT BACKLINK") == []
+
+
+def test_off_link_reads_what_a_marker_APART_from_its_link_covers():
+    """One space from the link and over another citation: only the gap was
+    read, and a space is no words."""
+    text = "Jones (2019) Smith (2020) argue"
+
+    assert (_off_link(text, 0, 12, 13, 25)
+            == "covers 'Jones (2019)', 1 characters before its link")
+    assert (_off_link(text, 26, 31, 13, 25)
+            == "covers 'argue', 1 characters after its link")
+    assert _off_link(text, 12, 12, 13, 25) is None, "empty, beside it"
+
+
 def test_an_entry_REACHED_through_a_Word_anchor_is_not_an_orphan():
     body = (FILLER + P(R("see ") + _mark("Adams2001txt", 10,
                                          _link("Adams2001", "Adams")))

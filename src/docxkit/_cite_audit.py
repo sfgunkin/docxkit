@@ -183,6 +183,15 @@ def _reached(doc: str, paras: list[re.Match[str]],
             for name in names}
 
 
+def _para_below(doc: str, paras: list[re.Match[str]], name: str) -> int:
+    """The paragraph a body-level marker belongs to: the next one down, or
+    `len(paras)` past the last. Its first `w:name` IS the body-level one,
+    since a marker inside a paragraph is filed under that paragraph."""
+    pos = doc.find(f'w:name="{name}"')
+    return next((n for n, p in enumerate(paras) if p.start() > pos),
+                len(paras))
+
+
 def _marker_owner(name: str, entries: list[Reference]) -> Reference | None:
     """The entry a key-shaped bookmark names, when exactly one answers.
 
@@ -570,11 +579,17 @@ def _off_link(text: str, lo: int, hi: int, at: int, end: int) -> str | None:
     between it and the link.
     """
     if hi < at or lo > end:
+        side = "before" if hi < at else "after"
         gap = text[hi:at] if hi < at else text[end:lo]
+        # What it COVERS as well as what lies between: one space from its
+        # link and over "Jones (2019)", the gap alone read as nothing
+        # (code review, 2026-09-13).
+        if _ALNUM_RE.search(covered := text[lo:hi]):
+            return (f"covers {covered[:40]!r}, {len(gap)} characters "
+                    f"{side} its link")
         if not _ALNUM_RE.search(gap):
             return None
-        return (f"sits {len(gap)} characters "
-                f"{'before' if hi < at else 'after'} its link")
+        return f"sits {len(gap)} characters {side} its link"
     before, after = text[lo:at], text[end:hi]
     if _ALNUM_RE.search(before):
         return f"starts {len(before)} characters early, over {before[:40]!r}"
@@ -1085,8 +1100,15 @@ def _audit_findings(parts: dict[str, bytes], *,
     # as uncited are left alone — an entry nobody cites has a reason to
     # have no back-link, and saying it twice is noise.
     uncited = ref_marks.keys() - cited_keys - reached
+    # A marker Word HOISTED to body level is filed at -1, where no link
+    # sits; its entry is the paragraph below it, as `_reached` and
+    # `_misplaced_markers` read it. Judged at -1, every such entry was a
+    # REF WITHOUT BACKLINK with its link home in place (code review,
+    # 2026-09-13).
     issues += _no_backlink(
-        ref_marks, links, where,
+        {k: _para_below(doc, paras, k) if i == -1 else i
+         for k, i in ref_marks.items()},
+        links, where,
         skip=lambda k: k in uncited or names_a_missing_entry(k))
 
     stats = {"paragraphs": len(paras), "bookmarks": len(bookmarks),

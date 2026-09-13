@@ -14,6 +14,39 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — MARKER OFF LINK clears a marker that sits apart from its link over another citation~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; reproduced. `_off_link` judged a marker lying
+wholly before or after its link by the GAP between them alone: a marker over
+"Jones (2019)", one space from the link on "Smith (2020)", returned None —
+a space is no words. Widened by one character so it touched the link, the
+same marker was reported ("starts 13 characters early"). The docstring said
+what is wrong "covers words or another citation"; only the touching branch
+read what a marker covers.
+
+**Fixed:** a marker apart from its link is read for what it covers first —
+"covers 'Jones (2019)', 1 characters before its link" — and only then for
+its gap. Test, seen red first:
+`test_cite_audit_edges.test_off_link_reads_what_a_marker_APART_from_its_link_covers`.
+
+### ~~S3 — REF WITHOUT BACKLINK on every entry whose marker Word hoisted to body level~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; reproduced. The audit files a bookmark it finds
+between paragraphs at -1, and `_no_backlink` counts an entry as linking
+home only when a link to `<key>txt` sits in the entry marker's paragraph —
+and no link sits in paragraph -1. So an entry whose marker Word had hoisted
+out of the paragraph head was reported with its link home right there.
+`_reached` and `_misplaced_markers` already give a hoisted marker to the
+paragraph below it; this check did not.
+
+**Fixed:** `_audit_findings` resolves a -1 marker to the paragraph below it
+(`_para_below`) before `_no_backlink` judges it. Test, seen red first:
+`test_cite_audit_edges.test_an_entry_whose_marker_Word_HOISTED_still_links_home`.
+
 ### ~~S1 — `sections` reads an equation number or an exhibit list as an appendix section, and `renumber` rewrites them~~ — FIXED 13.09
 
 <!-- status: fixed -->
