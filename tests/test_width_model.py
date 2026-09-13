@@ -45,6 +45,7 @@ real defects on their first run.
 """
 from __future__ import annotations
 
+import importlib.util
 import statistics
 
 import pytest
@@ -59,7 +60,14 @@ from docxkit._table_layout import (
 
 pytestmark = pytest.mark.word
 
-pytest.importorskip("win32com.client", reason="needs pywin32 and Word")
+# FOUND, not imported. `importorskip("win32com.client")` ran at collection
+# on every run, every test here deselected or not, and on a machine with
+# pywin32 it left `win32com.gen_py` in `sys.modules` for the session — so
+# a line of `word.py` that drops it was covered on Windows and never on
+# CI: nineteen pushes red, 2026-09-11/12. `find_spec` of a top-level
+# package runs none of it.
+if importlib.util.find_spec("win32com") is None:
+    pytest.skip("needs pywin32 and Word", allow_module_level=True)
 
 SIZE_PT = 10.0
 DXA_PER_EM = SIZE_PT * 20                      # 1 em at SIZE_PT, in dxa

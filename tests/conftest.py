@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from docxkit.revision import Paper
 
 NS = (
@@ -274,6 +276,30 @@ def _no_real_word(request, monkeypatch):
     monkeypatch.setitem(sys.modules, "pythoncom", None)
     monkeypatch.setitem(sys.modules, "win32com", None)
     monkeypatch.setitem(sys.modules, "win32com.client", None)
+
+
+#: The top-level pywin32 modules a collection could leave imported.
+PYWIN32 = frozenset({"win32com", "pythoncom", "pywintypes"})
+
+#: What collecting the suite imported from pywin32: recorded by
+#: `pytest_collection_finish` before any test runs, and held to none by
+#: `test_import_cost`.
+PYWIN32_AT_COLLECTION = pytest.StashKey[list[str]]()
+
+
+def pywin32_loaded(modules: Iterable[str]) -> list[str]:
+    """The pywin32 modules among `modules`, sorted."""
+    return sorted(m for m in modules if m.split(".")[0] in PYWIN32)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Record what collection imported from pywin32.
+
+    `_no_real_word` stops a TEST importing it. Collection comes first and
+    runs every module's top level, its tests selected or not — which is
+    where `test_width_model` imported it on every run until 2026-09-13.
+    """
+    session.config.stash[PYWIN32_AT_COLLECTION] = pywin32_loaded(sys.modules)
 
 
 def clean_document() -> str:

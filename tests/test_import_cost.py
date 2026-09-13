@@ -116,3 +116,38 @@ def test_the_probe_would_notice_a_module_that_IS_imported():
         "tracked parses XML and imports lxml; a probe that cannot see "
         "that cannot see the imports the tests above are about")
     assert "docxkit.tracked" in loaded["docxkit"]
+
+
+# ------------------------------------------ what COLLECTING costs, too ---
+
+
+def test_collecting_the_suite_imports_no_pywin32(request):
+    """Collection runs every test module's top level, its tests selected
+    or not. `test_width_model` called `importorskip("win32com.client")`
+    there, so on a machine with pywin32 every run imported it and left
+    `win32com.gen_py` in `sys.modules` for the session: a line of
+    `word.py` that drops those modules was covered on Windows and never
+    on CI, whose runner has no pywin32 — `word.py` at 99.6 % against its
+    floor of 100, nineteen pushes red (2026-09-11/12).
+
+    In-process, against this file's own rule, because the question is
+    about THIS run's collection and `conftest` records the answer in
+    `pytest_collection_finish`, before any test can import anything. CI
+    passes it whatever the suite does; it guards the machine with
+    pywin32."""
+    from conftest import PYWIN32_AT_COLLECTION
+
+    assert request.config.stash[PYWIN32_AT_COLLECTION] == [], (
+        "collecting the suite imported pywin32 — find the package without "
+        "importing it (`importlib.util.find_spec`), as test_width_model "
+        "does")
+
+
+def test_the_collection_record_would_notice_pywin32():
+    """The guard above is a negative, and a filter that matched nothing
+    would report the same empty list for every run."""
+    from conftest import pywin32_loaded
+
+    assert pywin32_loaded(["win32com.gen_py", "lxml.etree", "pythoncom",
+                           "pywintypes", "docxkit.word"]) == [
+        "pythoncom", "pywintypes", "win32com.gen_py"]

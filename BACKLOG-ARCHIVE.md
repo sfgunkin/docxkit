@@ -62,6 +62,20 @@ CI is the only place a floor has to hold, and every Windows-only import in the
 suite is a line this machine covers and CI does not; the 09-03 `_gates.py`
 floor was the same gap.
 
+**Closed for the class, 2026-09-13 — at the import, not by hiding
+pywin32.** There was ONE Windows-only import in the suite that a test
+could not be stopped from making, and it ran at collection:
+`test_width_model`'s `importorskip("win32com.client")`, executed on every
+run with all twelve of its tests deselected. Collecting the suite loaded
+nine pywin32 modules, `win32com.gen_py` among them. Asked through
+`importlib.util.find_spec("win32com")`, which runs none of the package,
+it loads none; a TEST was already kept from importing pywin32 by
+`conftest._no_real_word`. `conftest.pytest_collection_finish` records what
+collection imported before any test runs, and
+`test_import_cost.test_collecting_the_suite_imports_no_pywin32` fails on
+anything but none — on this machine, where the gap is; CI passes it
+either way.
+
 ### ~~S4 — `measure_all --in` loses its first stream at startup, and cuts the reason to 300 characters~~ — FIXED 12.09, `2fa894a`
 
 <!-- status: fixed -->
