@@ -14,6 +14,44 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — a mutant that ALLOCATES without bound takes the machine down inside its deadline, and the host ends the sweep~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-13, re-sweeping `sections.py` after 86 tests were written
+for its survivors. The sweep stopped at 1,840 of 1,915 mutants on the
+host's own verdict, "stopped because the system is running low on
+memory", and the mutant left live in `D:/docxkit-mut` was
+
+    letter = chr(ord("a") + (n - 1) % 26) * ((n - 1) // 26 + 1)
+    letter = chr(ord("a") + (n - 1) % 26) * ((n - 1) << 26 + 1)
+
+`+` binds tighter than `<<`, so the letter is repeated `(n - 1) << 27`
+times: for the 26th letter, which `test_sections.py` counts to,
+3,355,443,200 characters (3.1 GiB), and then `.upper()`'s copy of them.
+Computed, not measured. It does not hang. The allocation is one call, so
+the 30-second deadline `1aceac9` gave the stall never gets a say, and
+resuming the session would have run it again.
+
+**Fixed:** `mutant_tests.run` holds its pytest in a Windows job object
+(`_job`) in which no process may commit more than `MEMORY_LIMIT`, 4 GiB,
+so the allocation raises MemoryError inside the test and the mutant reads
+KILLED. The job ends its processes when it is closed, so a run ended at
+its deadline now takes what it started with it; the tree kill in `chunk()`
+reached those only while cosmic-ray was still alive. Tests in
+`test_mutation_session.py`, seen red first: a real 2 GiB allocation under a
+1 GiB cap fails while a 16 MiB one passes, a grandchild the harness
+started dies with a run ended at its deadline, and a run with no job, off
+Windows or when none can be made, still reports. Found on the way, under
+the gate chain's `-n 8`: those tests start pytest from the repo on a test
+file in `%TEMP%`, on another drive, so the child's rootdir is `D:\docxkit`
+(measured) and its collection walks down from `C:\` through `%TEMP%`'s
+6,783 entries while other workers delete theirs. One went between listing
+and `lstat`, the child failed collecting, and the harmless run read 2. The
+wrapper's tests now start their pytest beside its test file. Not reached: `kill_check`
+and a session run without `--fast` start pytest themselves and stay
+uncapped; `measure_all` always passes `--fast`.
+
 ### ~~S4 — `sections.audit` says "no top-level heading above it" of a subsection that skips a level under one~~ — FIXED 13.09, `bc6f866`
 
 <!-- status: fixed -->

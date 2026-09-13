@@ -69,6 +69,17 @@ in C, where pytest-timeout's thread cannot interrupt it) held a sweep at
 (BACKLOG, 2026-09-13). A run still going at the deadline is ended here and
 reads as KILLED, cosmic-ray's own verdict for a timeout; the session sets
 cosmic-ray's limit above the deadline, so this one always acts first.
+
+**And on Windows it caps what that pytest may commit.** `(n - 1) // 26 + 1`
+-> `(n - 1) << 26 + 1` in `sections._format` repeats a letter `(n - 1) << 27`
+times: for the harness's 26th letter a 3.1 GiB string, then `.upper()`'s
+copy of it, inside a second. No deadline reaches an allocation, and the
+host ended the whole sweep 1,840 mutants in because the machine ran low on
+memory (BACKLOG, 2026-09-13). So the pytest runs in a job object in which
+no process may commit more than `MEMORY_LIMIT`: the allocation raises
+MemoryError inside the test, and the mutant reads KILLED. The job also ends
+every process in it when it is closed, so a run ended at its deadline takes
+what it started with it. Off Windows the run goes uncapped, as before.
 """
 from __future__ import annotations
 
@@ -185,18 +196,90 @@ def covering_tests(stem: str, lines: list[int]) -> list[str]:
     return sorted(found)
 
 
+_WINDOWS = sys.platform == "win32"
+
+#: What any one process under a mutant may commit (module docstring).
+MEMORY_LIMIT = 4 << 30
+
+_PROCESS_MEMORY, _KILL_ON_CLOSE = 0x100, 0x2000   # JOB_OBJECT_LIMIT_*
+_EXTENDED_LIMITS = 9          # JobObjectExtendedLimitInformation
+_SET_QUOTA, _TERMINATE = 0x100, 0x1               # PROCESS_* rights
+
+
+def _job(pid: int, limit: int) -> int | None:
+    """A job object holding process `pid`: no process in it may commit
+    more than `limit` bytes, and every one ends when its handle is closed.
+    None when Windows will not make one, and the run then goes uncapped."""
+    import ctypes  # noqa: PLC0415  (Windows only)
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("per_process_user_time", ctypes.c_int64),
+                    ("per_job_user_time", ctypes.c_int64),
+                    ("flags", ctypes.c_uint32),
+                    ("min_working_set", ctypes.c_size_t),
+                    ("max_working_set", ctypes.c_size_t),
+                    ("active_processes", ctypes.c_uint32),
+                    ("affinity", ctypes.c_size_t),
+                    ("priority_class", ctypes.c_uint32),
+                    ("scheduling_class", ctypes.c_uint32)]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("basic", Basic),
+                    ("io", ctypes.c_uint64 * 6),
+                    ("process_memory", ctypes.c_size_t),
+                    ("job_memory", ctypes.c_size_t),
+                    ("peak_process_memory", ctypes.c_size_t),
+                    ("peak_job_memory", ctypes.c_size_t)]
+
+    kernel32 = ctypes.CDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+    info = Extended()
+    info.basic.flags = _PROCESS_MEMORY | _KILL_ON_CLOSE
+    info.process_memory = limit
+    process = kernel32.OpenProcess(_SET_QUOTA | _TERMINATE, False, pid)
+    held = bool(process
+                and kernel32.SetInformationJobObject(
+                    ctypes.c_void_p(job), _EXTENDED_LIMITS,
+                    ctypes.byref(info), ctypes.sizeof(info))
+                and kernel32.AssignProcessToJobObject(
+                    ctypes.c_void_p(job), ctypes.c_void_p(process)))
+    if process:
+        kernel32.CloseHandle(ctypes.c_void_p(process))
+    if not held:
+        _close(job)
+        return None
+    return int(job)
+
+
+def _close(job: int) -> None:
+    import ctypes  # noqa: PLC0415  (Windows only)
+
+    ctypes.CDLL("kernel32").CloseHandle(ctypes.c_void_p(job))
+
+
 def run(args: list[str], deadline: float | None = None) -> int:
-    """pytest over `args`. One still running at `deadline` (a
-    `time.monotonic()`) is ended, and reads as a failure — see the module
-    docstring for why that cannot be left to cosmic-ray."""
+    """pytest over `args`, held in a job under `MEMORY_LIMIT` on Windows.
+    One still running at `deadline` (a `time.monotonic()`) is ended with
+    everything it started, and reads as a failure — see the module
+    docstring for why neither can be left to cosmic-ray."""
     left = None if deadline is None else max(0.0, deadline - time.monotonic())
+    proc = subprocess.Popen([sys.executable, "-m", "pytest", *args])
+    job = _job(proc.pid, MEMORY_LIMIT) if _WINDOWS else None
     try:
-        return subprocess.run([sys.executable, "-m", "pytest", *args],
-                              check=False, timeout=left).returncode
+        return proc.wait(timeout=left)
     except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
         print("mutant_tests: the harness ran past its deadline and was "
               "ended — a mutant that hangs the tests is killed", flush=True)
         return 1
+    finally:
+        if job is not None:
+            _close(job)
 
 
 def _is_test(arg: str) -> bool:

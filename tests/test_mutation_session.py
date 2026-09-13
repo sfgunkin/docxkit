@@ -560,8 +560,14 @@ def test_a_sample_handed_to_a_RESUME_says_it_is_doing_nothing(
 
 
 @pytest.fixture
-def mt():
+def mt(tmp_path, monkeypatch):
     import mutant_tests  # pyright: ignore[reportMissingImports]
+    # A child pytest started in the repo on a test file in %TEMP%, another
+    # drive, collects down from that drive's root through the thousands of
+    # entries other workers are making and deleting; one went between its
+    # listing and its lstat, and the child failed collecting (2026-09-13).
+    # It starts beside its test file instead.
+    monkeypatch.chdir(tmp_path)
     return mutant_tests
 
 
@@ -628,6 +634,73 @@ def test_under_FAST_cosmic_rays_limit_sits_ABOVE_the_wrappers_deadline(
     assert f"timeout = {float(ms.MUTANT_SECONDS + ms.BACKSTOP)}" in fast_text
     assert "--deadline" not in plain_text
     assert f"timeout = {float(ms.MUTANT_SECONDS)}" in plain_text
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="the cap is a Windows job object's")
+def test_a_mutant_that_ALLOCATES_past_the_cap_reads_as_a_failure(
+        mt, tmp_path, monkeypatch):
+    """`(n - 1) // 26 + 1` -> `(n - 1) << 26 + 1` in `sections._format`
+    asks for a 3.1 GiB string and then a copy of it, inside a second: no
+    deadline reaches that, and the host ended the whole sweep for memory
+    (BACKLOG, 2026-09-13). Under the cap the allocation fails inside the
+    test, while a harness that stays under it runs as it always did."""
+    # The 2 GiB that fails is refused at commit, before a page is touched.
+    monkeypatch.setattr(mt, "MEMORY_LIMIT", 1 << 30)
+    big, small = tmp_path / "test_big.py", tmp_path / "test_small.py"
+    big.write_text("def test_allocates():\n"
+                   "    assert len(bytearray(2 << 30)) == 2 << 30\n",
+                   encoding="utf-8")
+    small.write_text("def test_allocates():\n"
+                     "    assert len(bytearray(16 << 20)) == 16 << 20\n",
+                     encoding="utf-8")
+    args = ["-q", "-p", "no:cacheprovider"]
+
+    assert mt.run([*args, str(big)]) == 1
+    assert mt.run([*args, str(small)]) == 0
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="the job object is Windows's")
+def test_what_the_harness_STARTED_ends_with_a_run_past_its_deadline(
+        mt, tmp_path):
+    """Ending the pytest at the deadline left whatever it had started
+    running on. Everything the run starts is in its job, and the job ends
+    with the run."""
+    import time
+
+    pid_file = tmp_path / "grandchild.pid"
+    spawns = tmp_path / "test_spawns.py"
+    spawns.write_text(
+        "import pathlib, subprocess, sys, time\n\n\n"
+        "def test_spawns():\n"
+        "    p = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(120)'])\n"
+        f"    pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))\n"
+        "    time.sleep(120)\n", encoding="utf-8")
+
+    assert mt.run(["-q", "-p", "no:cacheprovider", str(spawns)],
+                  deadline=time.monotonic() + 8) == 1
+    assert not ms._alive(int(pid_file.read_text(encoding="utf-8")))
+
+
+def test_a_run_with_NO_job_to_hold_it_goes_uncapped_and_still_reports(
+        mt, tmp_path, monkeypatch):
+    """Off Windows no job is asked for at all, and on Windows a job that
+    cannot be made leaves the harness running as it did before the cap."""
+    ok = tmp_path / "test_ok.py"
+    ok.write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    args = ["-q", "-p", "no:cacheprovider", str(ok)]
+
+    monkeypatch.setattr(mt, "_job", lambda pid, limit: None)
+    assert mt.run(args) == 0
+
+    def refuse(pid: int, limit: int) -> None:
+        raise AssertionError("a job was asked for off Windows")
+
+    monkeypatch.setattr(mt, "_WINDOWS", False)
+    monkeypatch.setattr(mt, "_job", refuse)
+    assert mt.run(args) == 0
 
 
 class _Hangs:
