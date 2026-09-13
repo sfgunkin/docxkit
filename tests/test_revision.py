@@ -4409,6 +4409,67 @@ def test_an_unwritable_root_does_not_break_the_ROUND(tmp_path):
         pass                                     # must not raise
 
 
+def test_a_mark_and_the_total_are_ELAPSED_seconds_to_the_hundredth(
+        monkeypatch):
+    """Found by the first mutation sweep, 2026-09-13: every timing test
+    read the names of the steps and none of them their seconds."""
+    import types
+
+    from docxkit.revision import _timing
+    clock = iter([1.0, 3.25678, 5.51234])
+    monkeypatch.setattr(_timing, "time", types.SimpleNamespace(
+        perf_counter=lambda: next(clock)))
+
+    live = _timing.Session()
+
+    assert live.mark("first") == 2.26
+    assert live.finish() == [("first", 2.26), ("total", 4.51)]
+
+
+def test_nothing_is_TIMED_without_a_root_or_with_the_switch_off(
+        tmp_path, monkeypatch):
+    """Both, not either: a session with nowhere to write, or on a machine
+    that said no, hands `mark` nothing to record into."""
+    from docxkit.revision import _timing
+
+    with _timing.session("probe", None) as nowhere:
+        _timing.mark("unrecorded")
+    monkeypatch.setenv(_timing.ENV, "0")
+    with _timing.session("probe", None, root=tmp_path) as switched_off:
+        _timing.mark("unrecorded")
+
+    assert nowhere.steps == [] and switched_off.steps == []
+
+
+def test_timed_keeps_the_VERBs_name_and_docstring():
+    """`revision.build` and the others are what `help()` and the CLI's
+    own docs are read off."""
+    from docxkit.revision import _timing
+
+    def build(paper):
+        """Build it."""
+
+    wrapped = _timing.timed("build")(build)
+
+    assert wrapped.__name__ == "build" and wrapped.__doc__ == "Build it."
+    assert wrapped.__wrapped__ is build  # type: ignore[attr-defined]
+
+
+def test_timed_takes_the_paper_from_the_FIRST_argument_only(project):
+    """The paper beside a second argument is still recorded; a first
+    argument that is not a paper is no paper, and no crash."""
+    from docxkit import timings
+    from docxkit.revision import _timing
+
+    @_timing.timed("probe")
+    def verb(*args):
+        return "done"
+
+    assert verb(project, "a second argument") == "done"
+    assert timings.read(project.root / timings.FOLDER, kind="probe")
+    assert verb("not a paper") == "done"
+
+
 def test_baseline_is_TIMED_like_the_other_verbs(project):
     """`build` and `promote` record how long they took, and so does the
     step that closes a round. Found by mutation, 2026-09-11: the
