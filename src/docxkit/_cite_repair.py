@@ -21,6 +21,7 @@ from ._xml import (
     field_spans,
     internal_links,
     own_properties,
+    run_open_before,
     run_spans,
     set_run_text,
     span_holding,
@@ -280,8 +281,12 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
     else:
         # The LABEL runs of a field: everything after the `separate`
         # fldChar, less the `end` one. The instruction run goes with the
-        # field — it carries no visible text, so no offset moves.
-        cut = inner.rindex("<w:r", 0, inner.rindex("fldCharType=\"end\""))
+        # field — it carries no visible text, so no offset moves. The end
+        # run is found by its OPEN tag: Word styles it like the label, and
+        # `rindex("<w:r")` stopped on its `<w:rStyle`, leaving `<w:r><w:rPr>`
+        # in the paragraph (code review, 2026-09-13; the note above
+        # `wrap_link_in_bookmark` is the same trap).
+        cut = run_open_before(inner, inner.rindex("fldCharType=\"end\""))
         sep = inner.index("fldCharType=\"separate\"")
         inner = inner[inner.index("</w:r>", sep) + len("</w:r>"):cut]
     inner = re.sub(r'<w:rStyle w:val="Hyperlink"/>', "", inner)

@@ -14,6 +14,30 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `respan_link` on a field-form link whose `end` run carries properties returns XML Word refuses, and reports success~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Raised by the code review of 2026-09-13 — the nine modules most changed
+since `REVIEW_2026-09-03.md` — and reproduced before it was believed. A
+`HYPERLINK` field whose `end` fldChar sits in a run styled like its label,
+`<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:fldChar
+w:fldCharType="end"/></w:r>`, respanned from `(Robeyns 2005)` to `Robeyns
+2005`, came back with `<w:r><w:rPr>` stranded before the full stop: lxml
+refuses it ("Opening and ending tag mismatch"). The visible-text guard and
+the bookmark-count guard both passed, so the function returned it. A CLI
+write is caught by `lint_parts`; a paper script calling the API writes a
+file Word will not open.
+
+**Cause:** the unwrap found the end run with `inner.rindex("<w:r", …)`,
+which stops on `<w:rStyle` — the trap the note above
+`wrap_link_in_bookmark` already records, and the reason
+`_xml.run_open_before` exists.
+
+**Fixed:** `run_open_before(inner, …)`. Test, seen red first:
+`test_cite_repair_edges.test_respan_link_unwraps_a_FIELD_whose_end_run_carries_properties`
+— it parses the result and reads the link's label.
+
 ### ~~S3 — `word.py` under its coverage floor on every CI run since 2026-09-11: its newest line runs only where pywin32 is installed~~ — FIXED 12.09, `c01a588`
 
 <!-- status: fixed -->

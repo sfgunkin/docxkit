@@ -179,6 +179,28 @@ def test_retarget_self_link_takes_only_the_bookmark_it_is_NAMED_for():
 _LEAD = "Conversion factors: "                     # 20 characters
 
 
+def test_respan_link_unwraps_a_FIELD_whose_end_run_carries_properties():
+    """Word styles the run holding the `end` fldChar like the label it
+    closes. The cut took the last `<w:r` before `fldCharType="end"` — that
+    run's `<w:rStyle` — and left `<w:r><w:rPr>` behind: XML Word refuses,
+    with the text and bookmark guards both passing (code review,
+    2026-09-13)."""
+    style = '<w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             r'<w:r><w:instrText xml:space="preserve"> HYPERLINK \l '
+             '"Robeyns2005" </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             f"<w:r>{style}<w:t>(Robeyns 2005)</w:t></w:r>"
+             f'<w:r>{style}<w:fldChar w:fldCharType="end"/></w:r>')
+    xml = _doc(P(R("as in ") + field + R(".")))
+
+    out = respan_link(xml, "Robeyns2005", "Robeyns 2005")
+
+    _parses(out)
+    assert visible_text(out) == "as in (Robeyns 2005)."
+    assert [label for _a, label in internal_links(out)] == ["Robeyns 2005"]
+
+
 def test_respan_link_wants_EXACTLY_one_link():
     one = _link("Robeyns2005", "Robeyns 2005")
     for xml, count in ((_doc(P(R("no link"))), 0),
