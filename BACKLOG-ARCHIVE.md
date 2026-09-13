@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — a mutant that ALLOCATES without bound takes the machine down inside its deadline, and the host ends the sweep~~ — FIXED 13.09
+### ~~S3 — a mutant that ALLOCATES without bound takes the machine down inside its deadline, and the host ends the sweep~~ — FIXED 13.09, `82e3007`
 
 <!-- status: fixed -->
 
