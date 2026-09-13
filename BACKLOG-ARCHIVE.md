@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — `docxkit pages --expect-sheets N` without `--check` could not fail~~ — FIXED 13.09
+### ~~S3 — `docxkit pages --expect-sheets N` without `--check` could not fail~~ — FIXED 13.09, `afe251f`
 
 <!-- status: fixed -->
 
@@ -28,7 +28,7 @@ mismatch and still returned 0. A gate written as `docxkit pages PAPER
 implies `--check`, and its help says so. Test, seen red first:
 `test_cli.test_pages_expect_sheets_ALONE_gates_too`.
 
-### ~~S2 — `repack` moves an exhibit that owns its section without either break when a blank paragraph follows the closing one~~ — FIXED 13.09
+### ~~S2 — `repack` moves an exhibit that owns its section without either break when a blank paragraph follows the closing one~~ — FIXED 13.09, `38eb536`
 
 <!-- status: fixed -->
 
@@ -45,7 +45,7 @@ reports and changes nothing, so what it got wrong was the advice.
 stay where they stand. Test, seen red first:
 `test_repack.test_a_BLANK_under_the_closing_break_does_not_part_an_owner_from_it`.
 
-### ~~S2 — MARKER OFF LINK clears a marker that sits apart from its link over another citation~~ — FIXED 13.09
+### ~~S2 — MARKER OFF LINK clears a marker that sits apart from its link over another citation~~ — FIXED 13.09, `4f299c2`
 
 <!-- status: fixed -->
 
@@ -62,7 +62,7 @@ read what a marker covers.
 its gap. Test, seen red first:
 `test_cite_audit_edges.test_off_link_reads_what_a_marker_APART_from_its_link_covers`.
 
-### ~~S3 — REF WITHOUT BACKLINK on every entry whose marker Word hoisted to body level~~ — FIXED 13.09
+### ~~S3 — REF WITHOUT BACKLINK on every entry whose marker Word hoisted to body level~~ — FIXED 13.09, `4f299c2`
 
 <!-- status: fixed -->
 
@@ -78,7 +78,7 @@ paragraph below it; this check did not.
 (`_para_below`) before `_no_backlink` judges it. Test, seen red first:
 `test_cite_audit_edges.test_an_entry_whose_marker_Word_HOISTED_still_links_home`.
 
-### ~~S1 — `sections` reads an equation number or an exhibit list as an appendix section, and `renumber` rewrites them~~ — FIXED 13.09
+### ~~S1 — `sections` reads an equation number or an exhibit list as an appendix section, and `renumber` rewrites them~~ — FIXED 13.09, `dc100d1`
 
 <!-- status: fixed -->
 
@@ -102,7 +102,7 @@ bare mentions through it. Test, seen red first:
 A bracketed `(A.3)` standing alone is read as an equation now, never as a
 section; "(Appendix A.3)" is still counted, through `_APX_RE`.
 
-### ~~S1 — `sections.renumber` keeps an appendix mention's old LETTER when `merged_into` sends it to another appendix~~ — FIXED 13.09
+### ~~S1 — `sections.renumber` keeps an appendix mention's old LETTER when `merged_into` sends it to another appendix~~ — FIXED 13.09, `dc100d1`
 
 <!-- status: fixed -->
 
@@ -116,7 +116,7 @@ on its own result passed, and the report listed both mentions as done.
 seen red first: `test_sections.test_renumber_sends_a_mention_ACROSS_letters_with_its_letter`
 ("Appendix A.1 and A.1 moved.").
 
-### ~~S2 — `sections.list_numbers` reads a heading's numbering from the tracked change that removed it~~ — FIXED 13.09
+### ~~S2 — `sections.list_numbers` reads a heading's numbering from the tracked change that removed it~~ — FIXED 13.09, `dc100d1`
 
 <!-- status: fixed -->
 
@@ -135,7 +135,7 @@ change element — exactly the prefix the truncated match holds — and
 the style:
 `test_sections.test_list_numbers_reads_the_LIVE_numbering_not_the_tracked_change`.
 
-### ~~S1 — `respan_link` on a field-form link whose `end` run carries properties returns XML Word refuses, and reports success~~ — FIXED 13.09
+### ~~S1 — `respan_link` on a field-form link whose `end` run carries properties returns XML Word refuses, and reports success~~ — FIXED 13.09, `369ccef`
 
 <!-- status: fixed -->
 
