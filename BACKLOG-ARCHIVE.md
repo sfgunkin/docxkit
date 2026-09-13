@@ -14,6 +14,32 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `sections.audit` says "no top-level heading above it" of a subsection that skips a level under one~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-13, while writing tests for the `sections.py` survivors:
+
+    1. One, then 1.1.1 Deep      Section 1.1.1: no top-level heading above it
+    2.1 Orphan, first of all     Section 2.1: no top-level heading above it
+
+The second is right and the first is not: Section 1 is the heading
+straight above 1.1.1, and what is missing is 1.1. `_check_headings` names
+the heading a misplaced subsection sits under when the chain above it is
+deep enough to hold one, and fell back to "no top-level heading" whenever
+it was not, however much of the chain there was. The breach was right and
+the gate red; the words sent the author looking for a heading that is
+there.
+
+**Fixed:** under a chain too short to hold its parent, the breach names
+the missing parent — "Section 1.1.1: no Section 1.1 above it" — and only
+an empty chain still reads "no top-level heading above it". Test in
+`test_sections.py`, seen red first: 1.1.1 under 1, and 1.1.1.1 under 1.1,
+each naming its missing parent. `kill_check` applied four mutants of the
+change and the lines it reads — the branch reversed, the length test at
+`depth >> 1`, and the chain built one entry too long both ways — and the
+test kills all four.
+
 ### ~~S4 — `sections.renumber` crashes on a range that runs downward, where it should refuse and name it~~ — FIXED 13.09, `d4a2e76`
 
 <!-- status: fixed -->

@@ -212,6 +212,18 @@ def test_a_subsection_with_no_heading_above_it_says_so():
     assert breach == "Section 2.1: no top-level heading above it"
 
 
+def test_a_subsection_that_SKIPS_a_level_names_the_level_it_skips():
+    """"1.1.1" straight under "1." was reported as having no top-level
+    heading above it, with Section 1 right there: what is missing is 1.1
+    (mutation sweep, 2026-09-13)."""
+    skipped = sections.audit(doc(H("1. One") + H("1.1.1 Deep", 3))).breaches
+    deeper = sections.audit(doc(H("1. One") + H("1.1 A", 2)
+                                + H("1.1.1.1 Deep", 4))).breaches
+
+    assert skipped == ["Section 1.1.1: no Section 1.1 above it"]
+    assert deeper == ["Section 1.1.1.1: no Section 1.1.1 above it"]
+
+
 def test_a_number_used_twice_is_named_once():
     report = sections.audit(doc(H("1. One") + H("2. Two") + H("2. Again")
                                 + H("3. Three")))

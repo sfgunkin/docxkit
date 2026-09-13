@@ -463,8 +463,11 @@ def _check_headings(heads: list[Heading], report: SectionReport) -> set[str]:
         depth = len(parts)
         if depth > 1 and parent not in chain[:depth - 1]:
             above = chain[depth - 2] if len(chain) >= depth - 1 else None
+            # a level skipped under a heading that IS there is that level
+            # missing, not the top one (mutation sweep, 2026-09-13)
             bad.append(f"Section {h.number}: "
                        + (f"sits under Section {above}" if above
+                          else f"no Section {parent} above it" if chain
                           else "no top-level heading above it"))
         chain = [".".join(parts[:i]) for i in range(1, depth + 1)]
         children.setdefault(parent, []).append(int(parts[-1]))
