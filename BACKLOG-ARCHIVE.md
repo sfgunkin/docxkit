@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — `sections.renumber` crashes on a range that runs downward, where it should refuse and name it~~ — FIXED 13.09
+### ~~S4 — `sections.renumber` crashes on a range that runs downward, where it should refuse and name it~~ — FIXED 13.09, `d4a2e76`
 
 <!-- status: fixed -->
 
