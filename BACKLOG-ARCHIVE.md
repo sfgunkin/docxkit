@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — `sections.audit` says "no top-level heading above it" of a subsection that skips a level under one~~ — FIXED 13.09
+### ~~S4 — `sections.audit` says "no top-level heading above it" of a subsection that skips a level under one~~ — FIXED 13.09, `bc6f866`
 
 <!-- status: fixed -->
 
