@@ -46,6 +46,29 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S4 — `sections.renumber` crashes on a range that runs downward, where it should refuse and name it
+<!-- status: open -->
+
+Measured 2026-09-13, while scoping the `sections.py` survivors: headings
+1 2 3 5, and "Sections 3 to 1 are cited backwards." in the body. `audit`
+names both faults, the gap and "Sections 3–1: the range does not run
+upward"; `renumber` raises
+
+    IndexError: list index out of range
+
+from `_list_phrase`. It lists the sections a range names as
+`range(int(lo[-1]), int(hi[-1]) + 1)`, which is empty when the range runs
+downward, and then formats `new[0]` of that empty list. Nothing is
+written, so no paper is harmed, but the caller gets an `IndexError` where
+every other refusal is an `AnchorError` naming the part, the paragraph and
+the phrase. Only a paper that needs renumbering reaches it: a settled
+numbering returns before `_edits` runs.
+
+The fix belongs beside the range checks already there ("mixes a range
+with a list", "is not a range of sibling sections"): refuse a range that
+does not run upward — the audit's own rule — as an `AnchorError` naming
+it.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

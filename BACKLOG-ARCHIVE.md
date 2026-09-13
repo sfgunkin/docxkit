@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — `repack` moves an exhibit that owns its section without either break when a NOTE follows the closing one~~ — FIXED 13.09
+### ~~S2 — `repack` moves an exhibit that owns its section without either break when a NOTE follows the closing one~~ — FIXED 13.09, `d44c385`
 
 <!-- status: fixed -->
 
@@ -47,7 +47,7 @@ a panel after the last break leaves it open, and a picture straight after
 the closing break, outside the span, does not reopen it. `kill_check`
 applied eleven mutants of the new lines, and all eleven are killed.
 
-### ~~S3 — `replay_survivors` reads a subpackage module by its bare name, so no `revision/` half can be replayed~~ — FIXED 13.09
+### ~~S3 — `replay_survivors` reads a subpackage module by its bare name, so no `revision/` half can be replayed~~ — FIXED 13.09, `d50f33f`
 
 <!-- status: fixed -->
 
