@@ -20,6 +20,12 @@
 # killed is not a victory: it means the code or the harness moved and
 # the argument no longer describes them. Delete it and look again.
 
+["timings.py"]
+claims = [
+  { was = '}, indent=1), encoding="utf-8")', line = '}, indent= 0), encoding="utf-8")', kind = "cosmetic", why = "How a record file is laid out, not what it holds. Its readers parse JSON — `read` here and `tools/timings.py` — and `json.loads` does not see indentation, so a record written flat or two deep reads back identical. The same class as the stamp `guard.py` writes (BACKLOG, 2026-08-24)." },
+  { was = '}, indent=1), encoding="utf-8")', line = '}, indent= 2), encoding="utf-8")', kind = "cosmetic", why = "How a record file is laid out, not what it holds. See the `indent= 0` claim." },
+]
+
 ["refstyle.py"]
 claims = [
   { was = 'or low.count("-") >= 3)', line = 'or low.count("-") >= 2)', why = 'Two hyphens is not a boundary anything crosses here. A page range carries one, and every token in these papers with two that the range pattern reaches is already an identifier by one of the other three tests — a DOI, a URL, or a string starting 10. Its neighbours ARE killed: an ISBN-10 has exactly three, and both > 3 and >= 4 convert the hyphens inside it into en-dashes.' },

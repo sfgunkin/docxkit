@@ -19,6 +19,7 @@ import importlib.util
 import json
 import pathlib
 
+import pytest
 from conftest import document, para, run
 
 import docxkit
@@ -377,3 +378,110 @@ def test_prune_keeps_the_NEWEST(tmp_path):
     assert gone == 3
     assert kept == ["gates-20260904-100000-1.json",
                     "gates-20260905-100000-1.json"]
+
+
+# --- what the first mutation sweep found unpinned (2026-09-13) -----------
+#
+# 43 of 157 real mutants survived: every fixture above stood clear of both
+# thresholds, used six runs (where the window is three whatever the
+# arithmetic), and read the whole history back in one go.
+
+
+def _write(folder, i, steps):
+    """Run `i` of a `docxkit.timings` history, holding `steps` as given."""
+    (folder / f"batch-202609{i + 1:02d}-100000-1.json").write_text(
+        json.dumps({"kind": "batch", "name": f"run {i}", "when": "x",
+                    "steps": steps}), encoding="utf-8")
+
+
+def _history(folder, seconds, step="compare"):
+    """One run per value, oldest first, each timing ONE step."""
+    for i, s in enumerate(seconds):
+        _write(folder, i, [{"name": step, "seconds": s, "status": "ok"}])
+    return timings.read(folder)
+
+
+@pytest.mark.parametrize(("was", "now", "named"), [
+    (8.0, 10.0, True),      # exactly 1.25x AND exactly 2.0s: both at the edge
+    (10.0, 12.0, False),    # 2.0s slower, but only 1.2x
+    (10.0, 20.0, True),     # clear of both
+    (4.0, 5.0, False),      # 1.25x, but one second
+])
+def test_a_regression_clears_BOTH_thresholds_and_the_edge_counts(
+        tmp_path, was, now, named):
+    """`SLOWER` and `FLOOR_SECONDS`, each where `>=` and `>` part company,
+    and the tuple the report is built from, delta first."""
+    runs = _history(tmp_path, [was] * 3 + [now] * 3)
+
+    assert timings.regressions(runs) == (
+        [(now - was, "compare", was, now, 6)] if named else [])
+
+
+def test_the_window_is_a_THIRD_of_the_history_once_that_passes_three(
+        tmp_path):
+    """Twelve runs, so the last FOUR. Three would make the two fast runs
+    at the end the median; six would take in enough old ones to hide the
+    slow pair; and a float third is not a slice index."""
+    runs = _history(tmp_path, [10.0] * 8 + [30.0, 30.0, 10.0, 10.0])
+
+    assert timings.regressions(runs) == [(10.0, "compare", 10.0, 20.0, 12)]
+
+
+def test_the_earlier_median_is_over_EVERYTHING_before_the_window(tmp_path):
+    runs = _history(tmp_path, [10.0] * 4 + [20.0] * 4 + [40.0] * 4)
+
+    assert timings.regressions(runs) == [(25.0, "compare", 15.0, 40.0, 12)]
+
+
+def test_FIVE_runs_are_too_few_and_a_short_step_does_not_END_the_scan(
+        tmp_path):
+    """`young` would read as a regression on its five runs and is not
+    judged; `slow`, after it in the history, still is."""
+    for i in range(6):
+        steps = ([{"name": "young", "seconds": 1.0 if i < 3 else 9.0,
+                   "status": "ok"}] if i < 5 else [])
+        steps.append({"name": "slow", "seconds": 10.0 if i < 3 else 30.0,
+                      "status": "ok"})
+        _write(tmp_path, i, steps)
+
+    assert timings.regressions(timings.read(tmp_path)) == [
+        (20.0, "slow", 10.0, 30.0, 6)]
+
+
+def test_regressions_come_BIGGEST_first(tmp_path):
+    for i in range(6):
+        _write(tmp_path, i, [
+            {"name": "small", "seconds": 10.0 if i < 3 else 15.0,
+             "status": "ok"},
+            {"name": "big", "seconds": 10.0 if i < 3 else 40.0,
+             "status": "ok"}])
+
+    assert [m[1] for m in timings.regressions(timings.read(tmp_path))] == [
+        "big", "small"]
+
+
+def test_read_LAST_is_the_newest_n_and_goes_ON_past_a_torn_file(tmp_path):
+    (tmp_path / "batch-20260900-100000-1.json").write_text(
+        "{torn", encoding="utf-8")
+    for i in range(3):
+        _write(tmp_path, i, [])
+
+    assert [r["name"] for r in timings.read(tmp_path)] == [
+        "run 0", "run 1", "run 2"], "one torn file ended the read"
+    assert [r["name"] for r in timings.read(tmp_path, last=2)] == [
+        "run 1", "run 2"]
+    assert [r["name"] for r in timings.read(tmp_path, last=1)] == ["run 2"]
+
+
+def test_record_makes_the_WHOLE_path_and_rounds_the_total_to_hundredths(
+        tmp_path):
+    """A paper's `.timings` is created on its first run, and the paper
+    folder under it may be new too."""
+    folder = tmp_path / "paper" / timings.FOLDER
+
+    path = timings.record("batch", "x", [("a", 0.1234), ("b", 0.1212)],
+                          folder)
+
+    assert path is not None and path.parent == folder
+    assert json.loads(path.read_text(encoding="utf-8"))["total_seconds"] \
+        == 0.24
