@@ -485,3 +485,37 @@ def test_renumber_sends_a_mention_ACROSS_letters_with_its_letter():
     done = sections.renumber(doc(body), merged_into={"A.3": "B.1"})
 
     assert "Appendix B.1 and B.1 moved." in _body(done.parts)
+
+
+# --- mutation sweep, 2026-09-13 ---------------------------------------------
+
+
+def test_renumber_REFUSES_a_range_that_does_not_run_upward():
+    """`_list_phrase` listed "Sections 3 to 1" as an empty range and
+    formatted its first member: an IndexError, where every other refusal
+    names the phrase. The audit's rule decides, and it counts equal ends
+    as not running upward too."""
+    import re
+
+    import pytest
+
+    from docxkit.errors import AnchorError
+
+    for phrase in ("Sections 3 to 1", "Sections 3–3"):
+        gap = doc(H("1. One") + H("2. Two") + H("3. Three") + H("5. Five")
+                  + P(f"{phrase} are cited."))
+        with pytest.raises(AnchorError,
+                           match=re.escape(f"{phrase!r} does not run up")):
+            sections.renumber(gap)
+
+    # judged by the LAST parts: a range of subsections runs upward though
+    # its stem equals the first end's last part, or the final end's (three
+    # members each, since a range of two is rewritten as "X and Y")
+    stems = doc(H("1. One") + H("2. Two") + H("2.1 A", 2) + H("2.2 B", 2)
+                + H("2.3 C", 2) + H("2.4 D", 2) + H("3. Three")
+                + H("3.1 E", 2) + H("3.2 F", 2) + H("3.3 G", 2)
+                + H("5. Five")
+                + P("Sections 2.2 to 2.4, and Sections 3.1 to 3.3."))
+
+    assert "Sections 2.2 to 2.4, and Sections 3.1 to 3.3." in _body(
+        sections.renumber(stems).parts)

@@ -14,6 +14,37 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `sections.renumber` crashes on a range that runs downward, where it should refuse and name it~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-13, while scoping the `sections.py` survivors: headings
+1 2 3 5, and "Sections 3 to 1 are cited backwards." in the body. `audit`
+names both faults, the gap and "Sections 3–1: the range does not run
+upward"; `renumber` raises
+
+    IndexError: list index out of range
+
+from `_list_phrase`. It lists the sections a range names as
+`range(int(lo[-1]), int(hi[-1]) + 1)`, which is empty when the range runs
+downward, and then formats `new[0]` of that empty list. Nothing is
+written, so no paper is harmed, but the caller gets an `IndexError` where
+every other refusal is an `AnchorError` naming the part, the paragraph and
+the phrase. Only a paper that needs renumbering reaches it: a settled
+numbering returns before `_edits` runs.
+
+**Fixed:** `_list_phrase` refuses a range whose last parts do not run
+upward, beside the two range checks already there. It is the audit's own
+rule, so equal ends are refused too, and the `AnchorError` names the part,
+the paragraph and the phrase. Test in `test_sections.py`: "Sections 3 to
+1" and "Sections 3–3" refused by name, both seen red (the first an
+`IndexError`, the second renumbered with no refusal at all); then two
+subsection ranges passing untouched, "Sections 2.2 to 2.4", whose stem
+equals its first end's last part, and "Sections 3.1 to 3.3", whose stem
+equals its final end's. Only such ranges tell a last part from a first,
+and `kill_check` had found both of those mutants of the new check alive
+without them.
+
 ### ~~S2 — `repack` moves an exhibit that owns its section without either break when a NOTE follows the closing one~~ — FIXED 13.09, `d44c385`
 
 <!-- status: fixed -->

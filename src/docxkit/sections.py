@@ -742,6 +742,12 @@ def _list_phrase(m: re.Match[str], full: Mapping[str, str],
         if len(lo) != len(hi) or lo[:-1] != hi[:-1]:
             raise AnchorError(f"renumber: {where}: {m.group(0)!r} is not a "
                               f"range of sibling sections")
+        if int(lo[-1]) >= int(hi[-1]):
+            # the audit's rule: "3 to 1" named no section, and formatting
+            # the first of none raised an IndexError (mutation sweep,
+            # 2026-09-13)
+            raise AnchorError(f"renumber: {where}: {m.group(0)!r} does not "
+                              f"run upward; correct the range by hand")
         stem = ".".join(lo[:-1])
         named = [f"{stem}.{n}" if stem else str(n)
                  for n in range(int(lo[-1]), int(hi[-1]) + 1)]
