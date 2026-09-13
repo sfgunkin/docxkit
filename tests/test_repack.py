@@ -450,6 +450,23 @@ def test_a_BLANK_under_the_closing_break_does_not_part_an_owner_from_it():
                              "Later."]
 
 
+def test_a_NOTE_under_the_closing_break_goes_WITH_its_owner():
+    """The blank's twin, found by the mutation sweep (2026-09-13).
+    `exhibits` gives the block a note under its closing break, and judged
+    by the note the exhibit read as SHARING its section again: the caption
+    and the figure moved alone, and both breaks and the note stayed. No
+    body follows that break, so the section is the exhibit's, and the
+    note it was given travels with it."""
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap") + IMG + SECT(True)
+                + P("Note: drawn from the survey.") + P("After.")
+                + P("Later."))
+
+    assert moved(doc, 7) == ["Figure 1 shows it.", "Before.", "After.",
+                             "SECT", "Figure 1. Cap", "IMG", "SECT",
+                             "Note: drawn from the survey.", "Later."]
+
+
 def test_a_break_SHARED_with_the_prose_above_stays_where_it_stands():
     """The review's case 3a: the main section's closing break travelled
     with the figure, and the paragraph after it was pulled back across
@@ -881,6 +898,39 @@ def test_an_owner_whose_span_ends_on_TWO_breaks_moves_with_all_of_them():
                 + P("After."))
 
     assert _span(doc) == (2, 7)
+
+
+def test_an_owner_in_PANELS_with_a_break_BETWEEN_them_moves_whole():
+    """The section closes on the LAST break: a panel under an earlier one
+    is still the exhibit's own."""
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap") + IMG + SECT(True) + P("Panel B.")
+                + IMG + SECT(True) + P("After."))
+
+    assert _span(doc) == (2, 9)
+
+
+def test_a_PANEL_after_the_last_break_leaves_the_section_OPEN():
+    """The second panel shares its section with the prose after it, so no
+    section closes on the exhibit's last break and the opening break is
+    not the exhibit's to take."""
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap") + IMG + SECT(True) + P("Panel B.")
+                + IMG + P("After."))
+
+    span = _span(doc)
+
+    assert span[0] == 3, span
+
+
+def test_a_picture_straight_after_the_closing_break_does_not_REOPEN_it():
+    """The span ends at the break, and what follows is the next section's
+    even when it is a body: here the next figure, captioned below."""
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap") + IMG + SECT(True) + IMG
+                + P("Figure 2. Below.") + P("After."))
+
+    assert _span(doc) == (2, 6)
 
 
 def test_the_final_section_is_read_PAST_the_bodys_own_sectPr():

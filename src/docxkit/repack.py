@@ -242,9 +242,14 @@ def _is_blank(el: etree._Element) -> bool:
     """A paragraph that puts nothing on the page: no text, no picture and
     no section break."""
     return (el.tag == W + "p" and not text_of(el).strip()
-            and el.find(f"{W}pPr/{W}sectPr") is None
-            and next(el.iter(W + "drawing", W + "pict", W + "object"),
-                     None) is None)
+            and el.find(f"{W}pPr/{W}sectPr") is None and not _shows(el))
+
+
+def _shows(el: etree._Element) -> bool:
+    """A table, or a paragraph holding a picture: what a body puts on the
+    page."""
+    return el.tag == W + "tbl" or next(
+        el.iter(W + "drawing", W + "pict", W + "object"), None) is not None
 
 
 def _covered(found: Iterable[Exhibit]) -> set[int]:
@@ -457,7 +462,11 @@ def _move_span(kids: list[etree._Element], x: Exhibit,
     while last > start and _is_blank(kids[last - 1]):
         last -= 1
     breaks = [i for i in range(start, last) if _is_break(kids[i])]
-    ends = bool(breaks) and breaks[-1] == last - 1
+    # A note under the closing break is absorbed the same way and is NOT
+    # the next section's: asked whether the span ended on a break, an owner
+    # with one read as sharing its section again (mutation sweep,
+    # 2026-09-13). The section is closed when no body follows the break.
+    ends = bool(breaks) and not any(map(_shows, kids[breaks[-1]:last]))
     if opens and ends:
         return start - 1, last
     if breaks:

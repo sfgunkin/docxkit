@@ -14,6 +14,39 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `repack` moves an exhibit that owns its section without either break when a NOTE follows the closing one~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+The blank's twin (`38eb536`, below), and the same failure. The mutation
+sweep of `repack.py` found it: `breaks[-1] == last - 1` in `_move_span`,
+mutated to `<=`, survived every test, and `<=` there reads "any break in
+the span". Measured 2026-09-13 on a landscape table with a break
+paragraph on each side, asking `_move_span` what travels:
+
+    note BEFORE the closing break   BREAK, caption, table, note, BREAK
+    blank AFTER the closing break   BREAK, caption, table, BREAK
+    note AFTER the closing break    caption, table
+
+`exhibits._trailing` absorbs the notes and the breaks under a block
+alike, so a note under the closing break is in the span, and `ends` asked
+whether the span's LAST element was a break. It was the note: the exhibit
+read as sharing its section, and every trial moved the table out of its
+landscape section, leaving that section empty and the note behind. Found
+on a constructed body, not on a manuscript.
+
+**Fixed:** the section is closed when nothing after the last break in the
+span puts a body on the page — a table or a picture, as a further panel
+would — so the note travels with its owner, under the break where it
+stood. A blank there still stays, as `38eb536` decided. Test in
+`test_repack.py`, seen red first: a figure owning its section with a note
+under the closing break moves with both breaks and the note. Three more
+hold the new reading's edges, each written for a mutant of it that the
+rest let live: panels with a break between them still own their section,
+a panel after the last break leaves it open, and a picture straight after
+the closing break, outside the span, does not reopen it. `kill_check`
+applied eleven mutants of the new lines, and all eleven are killed.
+
 ### ~~S3 — `replay_survivors` reads a subpackage module by its bare name, so no `revision/` half can be replayed~~ — FIXED 13.09
 
 <!-- status: fixed -->
