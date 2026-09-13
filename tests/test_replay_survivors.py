@@ -144,3 +144,70 @@ def test_a_moved_SOURCE_file_means_re_sweep_not_replay():
     assert not source_moved(Path("src/docxkit/guard.py"),
                             ["tests/test_guard.py"]), (
         "a test file whose name ENDS with the module's is not the module")
+
+
+# --- a module in a SUBPACKAGE (BACKLOG, 2026-09-13) ---------------------
+#
+# `revision/_timing.py` was read as `_timing.py`: "the run is never
+# measured", then a crash on `.mutation-timing.sqlite`, while
+# `.mutation-revision_timing.sqlite` sat beside it. `revision/_ingest.py`
+# read as `_ingest.py` resolves to the flat `ingest.py`'s session.
+
+
+def test_a_module_is_KEYED_by_its_path_under_the_package():
+    from replay_survivors import (  # pyright: ignore[reportMissingImports]
+        module_key,
+    )
+
+    assert module_key(Path("src/docxkit/revision/_timing.py")) == \
+        "revision/_timing.py"
+    assert module_key(Path("D:/docxkit/src/docxkit/guard.py")) == "guard.py"
+    assert module_key(Path("compare.py")) == "compare.py"
+
+
+def test_the_session_read_for_a_SUBPACKAGE_half_is_its_own(monkeypatch):
+    import replay_survivors as rs  # pyright: ignore[reportMissingImports]
+
+    read: list[str] = []
+
+    def classify(db: str, src: str) -> None:
+        read.append(Path(db).name)
+
+    monkeypatch.setattr(rs, "classify", classify)
+
+    assert rs.cases_for(Path("src/docxkit/revision/_timing.py")) == []
+    assert read == [".mutation-revision_timing.sqlite"]
+
+
+def test_main_asks_the_harness_and_the_run_by_that_same_KEY(monkeypatch,
+                                                             capsys):
+    import replay_survivors as rs  # pyright: ignore[reportMissingImports]
+
+    asked: list[tuple[str, str]] = []
+
+    def harness_for(key: str) -> list[str]:
+        asked.append(("harness", key))
+        return ["tests/test_revision.py"]
+
+    def state(key: str, tests: list[str]) -> tuple[str, list[str]]:
+        asked.append(("state", key))
+        return "fresh", []
+
+    monkeypatch.setattr(rs, "harness_for", harness_for)
+    monkeypatch.setattr(rs, "state", state)
+    monkeypatch.setattr(rs, "cases_for", lambda module: [])
+    monkeypatch.setattr(sys, "argv", ["replay_survivors.py",
+                                      "src/docxkit/revision/_timing.py"])
+
+    assert rs.main() == 0
+    assert asked == [("harness", "revision/_timing.py"),
+                     ("state", "revision/_timing.py")]
+    assert "revision/_timing.py: the run is fresh" in capsys.readouterr().out
+
+
+def test_a_moved_SUBPACKAGE_half_is_known_by_its_folder_too():
+    half = Path("src/docxkit/revision/_ingest.py")
+
+    assert source_moved(half, ["src/docxkit/revision/_ingest.py"])
+    assert not source_moved(half, ["src/docxkit/_ingest.py"]), (
+        "a file of the same name OUTSIDE its folder is another module")

@@ -54,6 +54,20 @@ from docxkit.console import utf8_stdout
 Case = tuple[str, str, str, bool, int]
 
 
+def module_key(module: Path) -> str:
+    """How `harness_map` and the session files name `module`: its path
+    under `src/docxkit`, so a subpackage half keeps its folder.
+
+    `module.name` read `revision/_timing.py` as `_timing.py` — a session
+    that does not exist — and `revision/_ingest.py` as the flat
+    `ingest.py`'s (BACKLOG, 2026-09-13). A path outside the package, as a
+    test hands one over, is its own name.
+    """
+    posix = module.as_posix()
+    marker = "src/docxkit/"
+    return posix.split(marker, 1)[1] if marker in posix else module.name
+
+
 def cases_for(module: Path, db: Path | None = None,
               src: Path | None = None) -> list[Case]:
     """Every real survivor, as a `kill_check` case expecting a KILL.
@@ -67,7 +81,7 @@ def cases_for(module: Path, db: Path | None = None,
     """
     # `session_file` already answers with an absolute path; `db` and
     # `src` are for a test, which cannot use this repo's own session.
-    counts = classify(str(db or session_file(module.name)),
+    counts = classify(str(db or session_file(module_key(module))),
                       str(src or ROOT / module))
     if counts is None:
         return []
@@ -98,8 +112,8 @@ def source_moved(module: Path, moved: list[str]) -> bool:
     on Windows is backslashed, so comparing the two directly is a guard
     that never fires on the platform this package is developed on.
     """
-    name = module.name
-    return any(m == name or m.endswith(f"/{name}") for m in moved)
+    key = module_key(module)
+    return any(m == key or m.endswith(f"/{key}") for m in moved)
 
 
 def main() -> int:
@@ -112,15 +126,16 @@ def main() -> int:
     args = ap.parse_args()
 
     module = Path(args.module)
+    key = module_key(module)
     # `harness_for`, not `HARNESS[...]`: two modules have no entry and
     # are measured through its named-after fallback, and reading the
     # dict directly refused them where `mutation_session` would have
     # run. It raises SystemExit with the remedy when nothing names the
     # module, which is the right answer and not this tool's to reword.
-    tests = args.tests or harness_for(module.name)
+    tests = args.tests or harness_for(key)
 
-    verdict, moved = state(module.name, tests)
-    print(f"{module.name}: the run is {verdict}"
+    verdict, moved = state(key, tests)
+    print(f"{key}: the run is {verdict}"
           + (f" ({', '.join(moved)} moved since)" if moved else ""))
 
     # Replay answers "did the TESTS catch up with this list". It cannot
@@ -132,7 +147,7 @@ def main() -> int:
     # session never ran. That is the wrong-line failure this tool's own
     # test exists for, arriving through the other door.
     if source_moved(module, moved):
-        print(f"\nREFUSING: {module.name} itself has moved since the run.\n"
+        print(f"\nREFUSING: {key} itself has moved since the run.\n"
               f"  A survivor is a line number, and they are line numbers "
               f"into a file that no longer\n  has those lines. Re-sweep "
               f"instead:\n"

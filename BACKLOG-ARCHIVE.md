@@ -14,6 +14,42 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `replay_survivors` reads a subpackage module by its bare name, so no `revision/` half can be replayed~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-13, replaying `src/docxkit/revision/_timing.py` after four
+tests were written for its 18 real survivors:
+
+    _timing.py: the run is never measured
+    FileNotFoundError: no session at D:\docxkit\.mutation-timing.sqlite
+
+The session is there, as `.mutation-revision_timing.sqlite`: `measure_all`
+wrote it that afternoon and `mutation_survivors` had just read it. `main`
+passed `module.name` to `harness_for`, to `state` and, through `cases_for`,
+to `session_file`, and a path's `name` drops the folder that
+`harness_map.session_stem` keys a subpackage half by. So the tool called a
+measured module unmeasured, then crashed on the file it had just called
+absent.
+
+It is not always a crash. `_ingest.py` resolves to `.mutation-ingest.sqlite`,
+which exists — it is the flat `ingest.py`'s session. Without `--tests` the
+run stops first, on `harness_for`'s "no harness for _ingest.py"; given
+`--tests` it would replay ANOTHER module's survivors against this one's
+source. Measured by resolving the four names, not by running that replay.
+
+The same habit as the note in BACKLOG.md on a `*.py` glob: `revision.py`
+became a package on 2026-08-30, and this tool still read the tree as flat.
+
+**Fixed:** `module_key` names a module by its path under `src/docxkit`
+(`revision/_timing.py`); `main` asks `harness_for` and `state` by it,
+`cases_for` finds the session by it, and `source_moved` compares against it.
+The replay it had refused then ran: `revision/_timing.py`, 17 survivors, all
+killed by the tests written for them. Tests in `test_replay_survivors.py`,
+seen red first: the key itself, the session read for a subpackage half,
+`main` asking harness and state by that key, and a same-named file outside
+the folder not counted as the module.
+
 ### ~~S3 — a mutant that blocks inside one C call never finishes, and `--chunks 0` re-runs it for ever~~ — FIXED 13.09, `1aceac9`
 
 <!-- status: fixed -->
