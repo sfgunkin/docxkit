@@ -602,3 +602,448 @@ def test_a_tables_end_is_found_by_an_EARLIER_row_when_the_last_is_not():
     assert [(z.name, z.first, z.last) for z in rep.landings] == [
         ("Table 9", 3, 4), ("Box 1", 5, 7)]
     assert rep.problems == []
+
+
+# --- what the first mutation sweep found unpinned (2026-09-13) -------------
+#
+# 121 of 425 real mutants survived a sample of 460. The report's words were
+# pinned by substring, the verdict's edges were never built, the search loop
+# ran down one path per test, and the lead paragraph that keeps a QUOTED
+# caption from passing for the exhibit was never made to matter.
+
+
+def _move(**kw):
+    """A measured move: `Figure 1` after `z`, one short sheet fewer."""
+    import dataclasses
+
+    base = repack.Move(name="Figure 1", after="z", target=3, drift=1,
+                       drift_before=None, underfull_before=1,
+                       underfull_after=0, sheets_before=3, sheets_after=5)
+    return dataclasses.replace(base, **kw)
+
+
+def _found(doc):
+    from docxkit.exhibits import exhibits
+
+    body = repack._body(doc)
+    return body, list(body), exhibits(body, labels=repack.LABELS,
+                                      note=repack.NOTE)
+
+
+def _span(doc, name="Figure 1"):
+    _body, kids, found = _found(doc)
+    return repack._move_span(kids, next(x for x in found if x.name == name))
+
+
+def _places(doc, name):
+    """The places `_candidates` offers exhibit `name`, nearest first."""
+    from docxkit.exhibits import mention_of
+
+    body, kids, found = _found(doc)
+    x = next(e for e in found if e.name == name)
+    span = repack._move_span(kids, x)
+    assert not isinstance(span, str), span
+    anchor = mention_of(body, x)
+    assert anchor is not None
+    return [label for _j, label in repack._candidates(
+        kids, body, found, x, span=span, anchor=anchor, limit=9)]
+
+
+def test_a_sheet_a_landing_and_a_move_are_FROZEN():
+    """Measurements of one render: the ranking and the report read them
+    after the search has moved on."""
+    import dataclasses
+
+    for value in (repack.Sheet(1, 2), repack.Landing("Figure 1", 1, 2, 1),
+                  _move()):
+        first = dataclasses.fields(value)[0].name
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(value, first, None)
+
+
+@pytest.mark.parametrize(("before", "after", "cost"),
+                         [(3, 5, 2), (5, 3, -2), (4, 4, 0)])
+def test_a_moves_sheet_cost_is_the_DIFFERENCE(before, after, cost):
+    assert _move(sheets_before=before,
+                 sheets_after=after).costs_a_sheet == cost
+
+
+def test_a_move_is_described_WHOLE_and_its_sheets_only_when_they_change():
+    """A substring test for "1 MORE" passes over "-1 MORE" too."""
+    assert repack._describe(_move()) == (
+        "Figure 1 after 'z': 1 fewer under-filled sheet(s), 3 -> 5 sheets, "
+        "drift +1")
+    assert repack._describe(_move(sheets_after=3)) == (
+        "Figure 1 after 'z': 1 fewer under-filled sheet(s), drift +1")
+    assert repack._describe(_move(underfull_after=3, drift_before=-2)) == (
+        "Figure 1 after 'z': 2 MORE under-filled sheet(s), 3 -> 5 sheets, "
+        "drift +1 (was -2)")
+
+
+def test_the_BEST_move_is_the_top_one_and_only_when_it_gains():
+    ranked = repack.RepackReport(moves=[_move(), _move(underfull_after=2)])
+
+    assert ranked.best is ranked.moves[0]
+    assert repack.RepackReport(moves=[_move(underfull_after=1)]).best is None
+
+
+def test_a_short_sheet_is_reported_by_ITS_numbers():
+    """The sheet a line is about, its share of the yardstick and the sheet
+    the blamed exhibit starts on — each read off the right sheet."""
+    rep = repack.RepackReport(
+        sheets=[repack.Sheet(n, lines=n, chars=10 * n) for n in range(1, 6)],
+        underfull=[3], blamed={3: "Figure 1"}, full_chars=100)
+
+    assert ("  sheet 3: 3 line(s), 30 characters, 30% full — Figure 1 "
+            "starts on sheet 4") in rep.format()
+    rep.full_chars = 0
+    assert "30 characters, 0% full" in rep.format()
+
+
+def test_an_EMPTY_report_measures_against_zero_characters():
+    assert ("the fullest text sheet carries 0 characters"
+            in repack.RepackReport().format())
+
+
+def test_a_sheet_at_EXACTLY_the_threshold_is_not_short():
+    rep = repack.repack(parts(P("prose")), render=lambda _p: [
+        FULL, FULL, "x" * 1200, FULL, FULL])
+
+    assert (rep.full_chars, rep.underfull) == (2000, [])
+
+
+def test_a_render_with_NO_text_sheet_has_a_yardstick_of_zero():
+    rep = repack.repack(parts(P("Figure 1. Cap") + IMG),
+                        render=lambda _p: ["Figure 1. Cap"])
+
+    assert (rep.full_chars, rep.underfull) == (0, [])
+
+
+def test_an_exhibit_on_NO_sheet_does_not_hide_the_ones_after_it():
+    doc = parts(P("Figure 9. Elsewhere") + IMG + P("Figure 1 shows it.")
+                + P("Figure 1. Cap") + IMG + P("End."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Figure 1 shows it. " + FULL, "Figure 1. Cap", FULL])
+
+    assert rep.sheets[2].exhibits == ("Figure 1",)
+
+
+def test_a_mention_at_the_very_START_of_the_render_is_on_sheet_one():
+    rep = repack.repack(parts(FIGURE + P("tail")), render=lambda _p: [
+        "Figure 1 shows it. " + FULL, "Figure 1. Cap", FULL])
+
+    (landing,) = rep.landings
+    assert (landing.mention, landing.first, landing.drift) == (1, 2, 1)
+
+
+@pytest.mark.parametrize(("head", "pages", "said"), [
+    (P("Prose.") + P("6. Caveats"),
+     [FULL, "Prose.", "6. Caveats " + FULL], ""),
+    (P("Figure 2 shows it.") + P("Figure 2. Cap") + P("Just prose under it."),
+     [FULL, "Figure 2 shows it.",
+      "Figure 2. Cap Just prose under it. " + FULL],
+     "Figure 2 has no table or image of its own"),
+    (P("prose") + P("Figure 2. Cap") + IMG,
+     [FULL, "short", "Figure 2. Cap"], "Figure 2 is mentioned nowhere"),
+])
+def test_a_short_sheet_nothing_can_help_does_not_END_the_search(
+        head, pages, said):
+    """One with no exhibit after it, one whose exhibit cannot move and one
+    whose exhibit has no mention: each is reported, and the next short
+    sheet is still tried."""
+    doc = parts(head + P("Figure 1 shows it.") + P("Figure 1. Cap") + IMG
+                + P("End.") + P("tail"))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        *pages, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL])
+
+    assert rep.underfull == [2, 4] and rep.trials == 2
+    assert not said or any(said in p for p in rep.problems)
+
+
+def test_a_place_too_FAR_does_not_END_the_search_for_a_nearer_drift():
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        if len(calls) == 1:
+            return [FULL, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL]
+        if len(calls) == 2:                          # after "z": drift 3
+            return [FULL, "Figure 1 shows it. " + FULL, FULL, FULL,
+                    "Figure 1. Cap"]
+        return [FULL, "Figure 1 shows it. " + FULL, "Figure 1. Cap", FULL]
+
+    rep = repack.repack(parts(FIGURE + P("z") + P("w")), render=render)
+
+    assert [m.after for m in rep.moves] == ["w"]
+
+
+def test_failed_renders_are_COUNTED_and_only_two_IN_A_ROW_end_the_search():
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        if len(calls) in (2, 4):
+            raise DocxKitError(f"render {len(calls)} failed")
+        return [FULL, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL]
+
+    rep = repack.repack(parts(FIGURE + P("a") + P("b") + P("c") + P("d")),
+                        render=render, max_drift=9)
+
+    assert (rep.trials, rep.renders) == (4, 3)
+    assert not any("in a row" in p for p in rep.problems)
+
+
+def test_the_search_renders_at_most_EIGHT_places_by_default():
+    render, _seen = recording(lambda _o: [
+        FULL, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL])
+
+    rep = repack.repack(
+        parts(FIGURE + "".join(P(f"place {k}") for k in range(10))),
+        render=render, max_drift=9)
+
+    assert rep.trials == 8
+
+
+def test_a_BOX_whose_end_is_on_no_sheet_is_said_so_too():
+    box = table(row("Box 1. Terms"), row("Capability: a thing."))
+
+    rep = repack.repack(parts(P("Box 1 says so.") + box + P("After.")),
+                        render=lambda _p: [FULL, "Box 1 says so.",
+                                           "Box 1. Terms", FULL, FULL])
+
+    assert any("Box 1: its last row was found on no sheet" in p
+               for p in rep.problems)
+
+
+def test_moving_an_exhibit_that_is_not_there_NAMES_it():
+    with pytest.raises(PackageError,
+                       match="no exhibit Figure 7 with a caption"):
+        repack._moved(parts(FIGURE), ("Figure", "7"), 0,
+                      labels=repack.LABELS, note=repack.NOTE)
+
+
+def test_a_moved_document_keeps_its_XML_DECLARATION():
+    out = repack._moved(parts(FIGURE + P("z")), ("Figure", "1"), 3,
+                        labels=repack.LABELS, note=repack.NOTE)
+
+    assert out["word/document.xml"].startswith(b"<?xml")
+
+
+def test_a_place_is_named_by_its_first_SIXTY_characters():
+    long = ("A long paragraph of prose that goes on well past sixty "
+            "characters.")
+
+    assert _places(parts(FIGURE + P(long)), "Figure 1") == [long[:60]]
+
+
+def test_a_table_with_NO_caption_is_not_a_place():
+    doc = parts(FIGURE + table(row("stray cell")) + P("prose"))
+
+    assert _places(doc, "Figure 1") == ["prose"]
+
+
+def test_the_end_of_an_exhibit_that_SORTS_before_this_one_is_a_place_too():
+    doc = parts(P("Table 1 and Figure 1 show it.") + P("Body prose.")
+                + P("Table 1. T") + table(row("cell")) + P("Figure 1. Cap")
+                + IMG + P("Source: f."))
+
+    assert "Figure 1 and its notes" in _places(doc, "Table 1")
+
+
+def test_a_figure_owning_NO_section_stays_in_its_own_beside_the_same_page():
+    doc = parts(P("Figure 1 shows it.") + P("Figure 1. Cap") + IMG
+                + P("same") + SECT() + P("next section, same page")
+                + BODY_SECT)
+
+    assert _places(doc, "Figure 1") == ["same"]
+
+
+@pytest.mark.parametrize("lead", ["", P("More body.")])
+def test_after_an_owners_closing_break_is_the_section_the_break_OPENS(lead):
+    """Built at an even and an odd index, where `j ^ 1` and `j | 1` part
+    company with `j + 1`."""
+    doc = parts(P("Table 1 and Figure 1 show it.") + lead + SECT()
+                + P("Table 1. T") + table(row("cell")) + SECT(True)
+                + P("Portrait prose.") + P("Figure 1. Cap") + IMG
+                + P("After.") + BODY_SECT)
+
+    assert _places(doc, "Figure 1") == ["Table 1 and its notes", "After."]
+
+
+BOOKMARK = '<w:bookmarkStart w:id="9" w:name="_Toc1"/>'
+
+
+def test_an_owner_whose_span_ends_on_TWO_breaks_moves_with_all_of_them():
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap") + IMG + SECT(True) + SECT()
+                + P("After."))
+
+    assert _span(doc) == (2, 7)
+
+
+def test_the_final_section_is_read_PAST_the_bodys_own_sectPr():
+    doc = parts(P("Figure 1 shows it.") + P("a") + SECT()
+                + P("Figure 1. Cap") + IMG + BODY_SECT)
+
+    assert _span(doc) == ("is alone in the final section, whose geometry "
+                          "is the body's")
+
+
+def test_after_a_final_figure_a_BLANK_is_nothing_and_an_empty_TABLE_is_not():
+    head = P("Figure 1 shows it.") + SECT() + P("Figure 1. Cap") + IMG
+
+    assert _span(parts(head + BOOKMARK + P("") + BODY_SECT)) == (
+        "is alone in the final section, whose geometry is the body's")
+    assert _span(parts(head + table(row("")) + BODY_SECT)) == (2, 4)
+
+
+QUOTED = "As Table 1. Levels shows, rates fell."
+
+
+@pytest.mark.parametrize("before", [P("Filler prose."),
+                                    P("Figure 1. A") + IMG])
+def test_a_QUOTED_caption_is_passed_over_from_the_prose_in_FRONT(before):
+    """HCW's case, made to depend on the lead: the quote sits after the
+    cursor, so only starting from the paragraph in front of the block
+    reaches the table. At an even and an odd start, where `x.start & 1`
+    and `x.start ^ 1` part company with `x.start - 1`."""
+    doc = parts(before + P("More filler.") + P(QUOTED)
+                + P("Lead para before table.") + P("Table 1. Levels")
+                + table(row("Country", "Rate"), row("Serbia", "0.03"))
+                + P("End."))
+    top = "Figure 1. A" if "Figure 1. A" in before else "Filler prose."
+
+    rep = repack.repack(doc, render=lambda _p: [
+        top, "More filler. " + QUOTED + " " + FULL,
+        "Lead para before table. Table 1. Levels Country Rate Serbia 0.03",
+        FULL])
+
+    (table_1,) = [z for z in rep.landings if z.name == "Table 1"]
+    assert (table_1.first, table_1.last) == (3, 3)
+
+
+def test_a_BLANK_in_front_of_the_block_is_no_lead_to_start_from():
+    doc = parts(P("As Figure 2. Two shows.") + P("Figure 1. One") + IMG
+                + P("Prose between.") + P("") + P("Figure 2. Two") + IMG
+                + P("End."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        "As Figure 2. Two shows. " + FULL, "Figure 1. One",
+        "Prose between. " + FULL, "Figure 2. Two", FULL])
+
+    assert [(z.name, z.first) for z in rep.landings] == [("Figure 1", 2),
+                                                         ("Figure 2", 4)]
+
+
+def test_a_tables_END_is_looked_for_AFTER_its_caption_not_before_it():
+    """The last row's text is in the paragraph in front of the table too.
+    Thirteen characters on the second sheet, so that `at ^ len(probe)`
+    lands on that earlier copy as well."""
+    doc = parts(P("Serbia 0.03 abc") + P("Table 1. Levels")
+                + table(row("Country", "Rate"), row("Serbia", "0.03"))
+                + P("End."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Serbia 0.03 abc", "Table 1. Levels Country Rate",
+        "Serbia 0.03 End.", FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, 4)
+
+
+def test_a_tables_end_is_its_last_ROW_with_a_NOTE_under_it():
+    rows = [row(f"Country {k}", f"{k}.0") for k in range(1, 30)]
+    doc = parts(P("Table 6 reports it. " + FULL) + P("Table 6. Quantile")
+                + table(row("Country", "Value"), *rows, row("N", "202"))
+                + P("Source: survey.") + P("Prose after."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 6 reports it. " + FULL,
+        "Table 6. Quantile Country Value Country 1 1.0",
+        "Country 2 2.0 Country 3 3.0", "Country 4 4.0",
+        "Country 29 29.0 N 202 Source: survey. Prose after. " + FULL, FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, 6)
+
+
+def test_a_tables_end_is_read_by_ROW_and_not_by_its_last_cell():
+    doc = parts(P("Table 1 shows it. " + FULL) + P("Table 1. X")
+                + table(row("Country", "Value"), row("A", "1.0"),
+                        row("Total", "1.0"))
+                + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 1 shows it. " + FULL, "Table 1. X Country Value A 1.0",
+        "Total 1.0 After. " + FULL, FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, 4)
+
+
+def test_a_tables_end_is_looked_for_in_its_last_FIVE_rows():
+    doc = parts(P("Table 1 shows it. " + FULL) + P("Table 1. X")
+                + table(row("Head", "H"), row("Row two", "2"),
+                        *[row(f"r{k}", "σ") for k in range(3, 7)])
+                + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 1 shows it. " + FULL, "Table 1. X Head H",
+        "Row two 2 After. " + FULL, FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, 4)
+
+
+def test_a_table_in_PANELS_ends_where_its_LAST_panel_does():
+    doc = parts(P("Table 1 shows it. " + FULL) + P("Table 1. X")
+                + table(row("Panel A row", "1")) + P("Panel B.")
+                + table(row("Panel B row", "2")) + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 1 shows it. " + FULL, "Table 1. X Panel A row 1",
+        "Panel B. Panel B row 2 After. " + FULL, FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, 4)
+
+
+def test_a_HEADING_STYLED_cell_does_not_end_the_reference_list():
+    """`heading_level` reads the string it is handed, so a table whose
+    cell is styled Heading1 reads as a heading — the zone walks
+    paragraphs, and a table inside the list is neither."""
+    styled = ('<w:tbl><w:tr><w:tc><w:p><w:pPr><w:pStyle w:val="Heading1"/>'
+              "</w:pPr><w:r><w:t>Not a references heading</w:t></w:r></w:p>"
+              "</w:tc></w:tr></w:tbl>")
+    doc = parts(FIGURE + P("Body prose.") + P("References", HEADING)
+                + P("Aaron, H. (2001). A paper.") + styled
+                + P("Zed, Q. (1999). Another.")
+                + P("Appendix A", HEADING) + P("Appendix prose."))
+
+    assert _places(doc, "Figure 1") == ["Body prose.", "Appendix prose."]
+
+
+def test_back_to_back_OWNERS_the_second_is_not_offered_where_it_is():
+    """Two landscape tables share a break: Table 1's closing one is Table
+    2's opening one, which is where Table 2's span starts. Past index 256,
+    so that `ms is j` is not `ms == j` by accident of CPython's cache."""
+    filler = "".join(P(f"filler {k}") for k in range(300))
+    doc = parts(filler + P("Table 1 and Table 2 show it.") + SECT()
+                + P("Table 1. A") + table(row("a")) + SECT(True)
+                + P("Table 2. B") + table(row("b")) + SECT(True)
+                + P("After.") + SECT() + P("Landscape text.") + SECT(True)
+                + P("End.") + BODY_SECT)
+
+    assert _places(doc, "Table 2") == ["Landscape text."]
+
+
+def test_a_place_after_a_break_that_ENDS_the_document_is_looked_up_there():
+    """At an odd index, so that `j | 1 < len(kids)` parts company with
+    `j + 1 < len(kids)`: one past the last child is no section at all."""
+    doc = parts(P("Figure 1 and Table 1 show it.") + P("Figure 1. Cap") + IMG
+                + P("Portrait prose.") + SECT() + P("Table 1. T")
+                + table(row("cell")) + SECT(True))
+
+    assert _places(doc, "Figure 1") == ["Portrait prose."]
