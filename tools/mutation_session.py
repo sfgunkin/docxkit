@@ -102,6 +102,17 @@ LOCK = WORKTREE.parent / f"{WORKTREE.name}.lock"
 # A `bool` is opaque to both, so each arm is type-checked on both.
 _WINDOWS = sys.platform == "win32"
 
+#: A mutant whose harness runs longer than this is KILLED — cosmic-ray's
+#: own verdict for a timeout. Under `--fast` the wrapper enforces it
+#: (`mutant_tests.py --deadline`) with cosmic-ray's limit `BACKSTOP` above;
+#: otherwise cosmic-ray does, with pytest as the immediate child its kill
+#: reaches.
+MUTANT_SECONDS = 30
+BACKSTOP = 10
+#: A chunk this long has room to end any mutant twice over, so one that
+#: ends none is stuck, not slow.
+_STUCK_AFTER = 2 * (MUTANT_SECONDS + BACKSTOP)
+
 
 def _alive(pid: int) -> bool:
     """Is that process still running? NOT `os.kill(pid, 0)` on Windows,
@@ -316,20 +327,26 @@ def write_config(module: Path, tests: list[str], config: Path,
     # `--timeout` is that plugin's flag; `-p no:cacheprovider`
     # so a mutant run writes nothing into the worktree.
     pytest_args = ("-q -x -p no:cacheprovider -p pytest_timeout "
-                   "--timeout=30 " + " ".join(tests))
+                   f"--timeout={MUTANT_SECONDS} " + " ".join(tests))
     command = "python -m pytest " + pytest_args
+    timeout = float(MUTANT_SECONDS)
     if fast:
         # The covering tests first, the whole harness behind them — see
         # tools/mutant_tests.py. POSIX separators on purpose: cosmic-ray
         # splits this string with `shlex`, which eats backslashes.
         wrapper = (Path(__file__).resolve().parent
                    / "mutant_tests.py").as_posix()
-        command = (f"python {wrapper} {stem} {module.as_posix()} -- "
-                   + pytest_args)
+        command = (f"python {wrapper} --deadline {MUTANT_SECONDS} {stem} "
+                   f"{module.as_posix()} -- " + pytest_args)
+        # The wrapper ends its pytest at the deadline, so cosmic-ray's own
+        # limit sits ABOVE it: on Windows cosmic-ray can end only the
+        # wrapper, and then waits for ever on the pytest still holding its
+        # pipe (BACKLOG, 2026-09-13).
+        timeout += BACKSTOP
     config.write_text(
         "[cosmic-ray]\n"
         f'module-path = "{(WORKTREE / module).as_posix()}"\n'
-        "timeout = 30.0\n"
+        f"timeout = {timeout}\n"
         f'test-command = "{command}"\n'
         "excluded-modules = []\n\n"
         "[cosmic-ray.distributor]\nname = \"local\"\n", encoding="utf-8")
@@ -449,6 +466,30 @@ def would_lose(session: Path, keep: int) -> Discard:
                    planned if planned > keep and graded <= keep else 0)
 
 
+def _bounded(cmd: list[str], seconds: int) -> None:
+    """Run `cmd` in the worktree for at most `seconds`, then end it — on
+    Windows with everything it started.
+
+    `subprocess.run(timeout=)` ends the one process it started, and the
+    test command cosmic-ray was running at that moment ran on
+    unsupervised. `taskkill /T` walks the tree while cosmic-ray is still
+    its root; once cosmic-ray is gone, nothing reaches the children
+    (BACKLOG, 2026-09-13). On Linux cosmic-ray puts each test command in a
+    session of its own, which a kill from here would not reach either; the
+    wrapper's deadline bounds what that leaves.
+    """
+    proc = subprocess.Popen(cmd, cwd=WORKTREE, env=_env(),
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    try:
+        proc.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        if _WINDOWS:
+            _run(["taskkill", "/PID", str(proc.pid), "/T", "/F"])
+        proc.kill()
+        proc.wait()
+
+
 def chunk(module: Path, tests: list[str], config: Path, session: Path,
           seconds: int, *, snapshot: Path | None = None) -> bool:
     """One bounded run. True while there is more to do."""
@@ -480,10 +521,8 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
 
     # bounded on purpose: the timeout IS the chunk, and the next call
     # picks up where this one stopped
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        _run([sys.executable, "-m", "cosmic_ray.cli", "exec",
-              str(config), str(session)], cwd=WORKTREE, env=_env(),
-             timeout=seconds)
+    _bounded([sys.executable, "-m", "cosmic_ray.cli", "exec",
+              str(config), str(session)], seconds)
     killed, survived, done, planned = progress(session)
     graded = killed + survived
     rate = f" ({survived / graded:.1%} survive)" if graded else ""
@@ -495,6 +534,27 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
     print(f"  {done}/{planned} run — killed {killed}, "
           f"survived {survived}{other}{rate}", flush=True)
     return done < planned
+
+
+def _stuck(module: Path, snapshot: Path) -> int:
+    """Stop a session no chunk can advance: name the mutant the worktree
+    was carrying, put the module back, and exit 3."""
+    kept, live = snapshot / module, WORKTREE / module
+    lines = ["  (the module could not be read)"]
+    if kept.is_file() and live.is_file():
+        was = kept.read_text(encoding="utf-8").splitlines()
+        now = live.read_text(encoding="utf-8").splitlines()
+        lines = ([f"  line {i}: {b.strip()}"
+                  for i, (a, b) in enumerate(zip(was, now, strict=True), 1)
+                  if a != b] if len(was) == len(now)
+                 else ["  (the module's length changed)"])
+        shutil.copy2(kept, live)
+    print("\nSTUCK: a whole chunk ended no mutant, so the next would not "
+          "either. The worktree's module when it stopped:\n"
+          + "\n".join(lines or ["  (unmutated — it stopped between mutants)"])
+          + "\nNothing was graded for it, and the module is restored. "
+          "Re-run once the reason is understood.", flush=True)
+    return 3
 
 
 def main() -> int:
@@ -615,10 +675,22 @@ def main() -> int:
               flush=True)
 
     more, n = True, 0
+    seconds = int(args.minutes * 60)
+    last: int | None = None
     while more and (args.chunks == 0 or n < args.chunks):
-        more = chunk(module, args.tests, config, session,
-                     int(args.minutes * 60), snapshot=snapshot)
+        more = chunk(module, args.tests, config, session, seconds,
+                     snapshot=snapshot)
         n += 1
+        # A chunk long enough to end ANY mutant that ended none is stuck,
+        # and `--chunks 0` would ask for it again for ever: 2026-09-13's
+        # sweep printed 459/460 for seventy minutes (BACKLOG). Judged
+        # against the chunk BEFORE, so it reads a session only once a
+        # chunk has said there is more to do.
+        if more and seconds >= _STUCK_AFTER:
+            done = progress(session)[2]
+            if done == last:
+                return _stuck(module, snapshot)
+            last = done
     if more:
         print("\nmore to do — run again, or --chunks 0 to finish. "
               "The tree is clean either way.", flush=True)

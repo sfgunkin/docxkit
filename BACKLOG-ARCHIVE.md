@@ -14,6 +14,72 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — a mutant that blocks inside one C call never finishes, and `--chunks 0` re-runs it for ever~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-13, on the first sweep of the twelve never-measured
+modules (`measure_all.py --sample 460`, HEAD `6dc9815`). Eleven finished.
+`sections.py` reached 459/460 and printed that same line for ten
+seven-minute chunks, from 17:46 until the sweep was stopped by hand at
+18:56 — no figure for the module, and anything queued behind it would never
+have run.
+
+The pending mutant was live in `D:/docxkit-mut`: `sections._format`'s Roman
+numeral loop, `rest - value` -> `rest ** value` under `while rest >= value`.
+It never ends, and each step is one big-integer power computed in C without
+releasing the GIL, so `-p pytest_timeout --timeout=30` — a timer in a
+thread — could not fire.
+
+**Cause, found while fixing it: the `--fast` wrapper, on Windows.**
+cosmic-ray does bound a test command: `testing.run_tests` waits 30 seconds,
+kills the process group and records KILLED "timeout". `os.killpg` does not
+exist on Windows, so it falls back to `proc.kill()` — the ONE process it
+started, which under `--fast` is `tools/mutant_tests.py`, not pytest — and
+then calls `proc.communicate()` with no timeout, on pipes the orphaned
+pytest still held. That wait never returned; the chunk's bound ended
+cosmic-ray, `chunk()` cleared the unfinished row, and `--chunks 0` asked
+for the same mutant again. Without `--fast` pytest is cosmic-ray's
+immediate child and its kill reaches it; on Linux the group kill does.
+
+**Fixed:** `mutant_tests.py --deadline` ends its own pytest when one budget
+for both phases runs out and returns a failure, so the mutant reads KILLED;
+under `--fast` the session sets cosmic-ray's limit `BACKSTOP` (10 s) above
+that deadline, so the wrapper always acts first and the 30-second line
+between a survivor and a kill does not move. And a chunk long enough to end
+any mutant (`_STUCK_AFTER`, 80 s) that ends none, read against the chunk
+before it, now stops the session with exit 3 and names the line the
+worktree carried, instead of asking for it again. Tests in
+`test_mutation_session.py`, seen red first: a real pytest that never
+finishes, ended at a 3-second deadline; one budget for both phases; the
+config's two limits; a stall stopped and named — and a one-minute chunk not
+mistaken for one.
+
+### ~~S2 — a chunk that times out ends cosmic-ray and leaves its pytest running~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Measured on the same stall: at 18:56 eleven pytest processes were computing
+the hanging mutant, one begun at each chunk from 17:46 to 18:52, holding
+5.1 GB between them and from 4 to 69 CPU-minutes each. Nothing reported
+them, and nothing would have stopped them short of the memory running out.
+
+**Cause, corrected while fixing it.** Filed as the CHUNK's bound, and that
+was the smaller half. Each of the eleven was orphaned by cosmic-ray's own
+timeout ending the `--fast` wrapper above it (the S3 above); a process whose
+parent is already gone sits in nobody's tree, which is also why a
+`taskkill /T` on the sweep's root, run by hand, left one behind. The chunk's
+`subprocess.run(timeout=)` does end cosmic-ray alone, though, and whatever
+test command it was running at that moment runs on.
+
+**Fixed:** the wrapper's deadline ends the pytest under it, whoever ends the
+wrapper; and the chunk now starts cosmic-ray with `Popen` and, on Windows,
+ends its tree with `taskkill /T /F` while cosmic-ray is still the root
+(`_bounded`) — a REAL grandchild is tested to die with it. On Linux
+cosmic-ray gives each test command a session of its own, which a kill from
+the chunk would not reach either; the deadline bounds what that leaves.
+Tests in `test_mutation_session.py`, seen red first.
+
 ### ~~S3 — `docxkit pages --expect-sheets N` without `--check` could not fail~~ — FIXED 13.09, `afe251f`
 
 <!-- status: fixed -->

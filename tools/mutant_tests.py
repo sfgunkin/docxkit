@@ -6,7 +6,7 @@
         -- -q tests/test_tracked_build.py tests/test_tracked_guard.py
 
     # per mutant, as cosmic-ray's test-command
-    python tools/mutant_tests.py tracked src/docxkit/tracked.py \
+    python tools/mutant_tests.py --deadline 30 tracked src/docxkit/tracked.py \
         -- -q -x --timeout=30 tests/test_tracked_build.py ...
 
 cosmic-ray runs ONE fixed command for every mutant, and that command is
@@ -57,6 +57,18 @@ every mutant of every module, unconditionally.
 
 The map is keyed to the snapshot, so it ages exactly as the session
 does: `--fresh` rebuilds both.
+
+**It ends its own pytest at `--deadline`, and it has to.** cosmic-ray
+ends a test command that outlives its timeout by killing the process
+group; on Windows `os.killpg` does not exist, so it falls back to killing
+the ONE process it started — this wrapper — and then waits, with no
+timeout, on the pipes the pytest under it still holds. One mutant
+(`rest - value` -> `rest ** value` in `sections._format`, a loop computing
+in C, where pytest-timeout's thread cannot interrupt it) held a sweep at
+459/460 for seventy minutes that way and left eleven such pytests running
+(BACKLOG, 2026-09-13). A run still going at the deadline is ended here and
+reads as KILLED, cosmic-ray's own verdict for a timeout; the session sets
+cosmic-ray's limit above the deadline, so this one always acts first.
 """
 from __future__ import annotations
 
@@ -64,6 +76,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,9 +185,18 @@ def covering_tests(stem: str, lines: list[int]) -> list[str]:
     return sorted(found)
 
 
-def run(args: list[str]) -> int:
-    return subprocess.run([sys.executable, "-m", "pytest", *args],
-                          check=False).returncode
+def run(args: list[str], deadline: float | None = None) -> int:
+    """pytest over `args`. One still running at `deadline` (a
+    `time.monotonic()`) is ended, and reads as a failure — see the module
+    docstring for why that cannot be left to cosmic-ray."""
+    left = None if deadline is None else max(0.0, deadline - time.monotonic())
+    try:
+        return subprocess.run([sys.executable, "-m", "pytest", *args],
+                              check=False, timeout=left).returncode
+    except subprocess.TimeoutExpired:
+        print("mutant_tests: the harness ran past its deadline and was "
+              "ended — a mutant that hangs the tests is killed", flush=True)
+        return 1
 
 
 def _is_test(arg: str) -> bool:
@@ -188,6 +210,10 @@ def main(argv: list[str]) -> int:
     head, pytest_args = argv[:argv.index("--")], argv[argv.index("--") + 1:]
     if head and head[0] == "--build":
         return build_map(head[1], head[2], pytest_args)
+    deadline: float | None = None
+    if head[:1] == ["--deadline"]:
+        deadline = time.monotonic() + float(head[1])    # ONE budget, both runs
+        head = head[2:]
     stem, module = head[0], head[1]
 
     tests = covering_tests(stem, mutated_lines(stem, module))
@@ -203,9 +229,9 @@ def main(argv: list[str]) -> int:
         # error (4), a collection error (2, 3), "no tests collected"
         # (5) — anything that is not a verdict falls through to the
         # whole harness, which is where this file's safety lives.
-        if run(quick) == 1:
+        if run(quick, deadline) == 1:
             return 1
-    return run(pytest_args)
+    return run(pytest_args, deadline)
 
 
 

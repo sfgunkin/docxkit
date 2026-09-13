@@ -142,6 +142,7 @@ def one_chunk(tree, monkeypatch, capsys):
     monkeypatch.setattr(
         ms, "_run",
         lambda *a, **kw: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(ms, "_bounded", lambda *a, **kw: None)  # the exec
     monkeypatch.setattr(ms, "progress", lambda s: (7, 1, 8, 8))
 
     def go(*, snapshot):
@@ -548,6 +549,204 @@ def test_a_sample_handed_to_a_RESUME_says_it_is_doing_nothing(
 
     assert code == 0
     assert "not applied here" in said and "--fresh" in said
+
+
+# --- a mutant that HANGS, 2026-09-13 (BACKLOG) ----------------------------
+#
+# `sections._format`'s `rest - value` -> `rest ** value` computes in C and
+# never ends. cosmic-ray's timeout killed the --fast wrapper alone — on
+# Windows it cannot kill a process group — and then waited for ever on the
+# pytest under it, one chunk after another, each leaving that pytest running.
+
+
+@pytest.fixture
+def mt():
+    import mutant_tests  # pyright: ignore[reportMissingImports]
+    return mutant_tests
+
+
+def test_the_wrapper_ENDS_a_harness_that_runs_past_its_deadline(
+        mt, tmp_path, capsys):
+    """Against a real pytest that never finishes: the wrapper hands back a
+    failure within seconds, so cosmic-ray reads the mutant as KILLED
+    instead of waiting on it."""
+    import time
+
+    hang = tmp_path / "test_hang.py"
+    hang.write_text("import time\n\n\ndef test_hangs():\n"
+                    "    time.sleep(120)\n", encoding="utf-8")
+    start = time.monotonic()
+
+    code = mt.run(["-q", "-p", "no:cacheprovider", str(hang)],
+                  deadline=start + 3)
+
+    assert code == 1
+    assert time.monotonic() - start < 30
+    assert "ran past its deadline" in capsys.readouterr().out
+
+
+def test_the_deadline_is_ONE_budget_for_both_phases(mt, monkeypatch):
+    """Parsed off the front of the command and handed to the covering run
+    AND the whole harness behind it: a fresh allowance each would let the
+    pair outlive cosmic-ray's backstop."""
+    import time
+
+    seen: list[float | None] = []
+    monkeypatch.setattr(mt, "mutated_lines", lambda stem, module: [2])
+    monkeypatch.setattr(mt, "covering_tests", lambda stem, lines: ["t::a"])
+    def run(args: list[str], deadline: float | None = None) -> int:
+        seen.append(deadline)
+        return 0
+
+    monkeypatch.setattr(mt, "run", run)
+    before = time.monotonic()
+
+    assert mt.main(["--deadline", "30", "thing", "src/docxkit/thing.py",
+                    "--", "-q", "tests/t.py"]) == 0
+
+    assert len(seen) == 2 and seen[0] == seen[1]
+    assert seen[0] is not None and before + 29 < seen[0] < before + 31
+    seen.clear()
+    mt.main(["thing", "src/docxkit/thing.py", "--", "-q"])
+    assert seen == [None, None], "no --deadline, no limit"
+
+
+def test_under_FAST_cosmic_rays_limit_sits_ABOVE_the_wrappers_deadline(
+        tmp_path, monkeypatch):
+    """The wrapper has to act first, and the 30-second line between a
+    survivor and a kill must not move: plain runs keep cosmic-ray's 30."""
+    monkeypatch.setattr(ms, "WORKTREE", tmp_path / "wt")
+    fast, plain = tmp_path / "fast.toml", tmp_path / "plain.toml"
+    module, tests = Path("src/docxkit/thing.py"), ["tests/test_thing.py"]
+
+    ms.write_config(module, tests, fast, stem="thing", fast=True)
+    ms.write_config(module, tests, plain)
+
+    fast_text = fast.read_text(encoding="utf-8")
+    plain_text = plain.read_text(encoding="utf-8")
+    assert f"--deadline {ms.MUTANT_SECONDS} thing " in fast_text
+    assert f"timeout = {float(ms.MUTANT_SECONDS + ms.BACKSTOP)}" in fast_text
+    assert "--deadline" not in plain_text
+    assert f"timeout = {float(ms.MUTANT_SECONDS)}" in plain_text
+
+
+class _Hangs:
+    """A `Popen` whose process never exits on its own."""
+
+    pid = 4242
+
+    def __init__(self) -> None:
+        self.waits, self.killed = 0, False
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.waits += 1
+        if timeout is not None:
+            raise ms.subprocess.TimeoutExpired("cosmic-ray", timeout)
+        return -9
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_a_chunk_that_runs_out_ends_cosmic_rays_TREE_on_windows(
+        tmp_path, monkeypatch, windows):
+    """`subprocess.run(timeout=)` ended cosmic-ray and nothing under it."""
+    made: list[_Hangs] = []
+    ran: list[list[str]] = []
+    def popen(*a: object, **kw: object) -> _Hangs:
+        made.append(_Hangs())
+        return made[-1]
+
+    monkeypatch.setattr(ms.subprocess, "Popen", popen)
+    monkeypatch.setattr(ms, "_run", lambda cmd, **kw: ran.append(cmd))
+    monkeypatch.setattr(ms, "_env", dict)
+    monkeypatch.setattr(ms, "WORKTREE", tmp_path)
+    monkeypatch.setattr(ms, "_WINDOWS", windows)
+
+    ms._bounded(["cosmic-ray", "exec"], 1)
+
+    (proc,) = made
+    assert proc.killed and proc.waits == 2
+    assert ran == ([["taskkill", "/PID", "4242", "/T", "/F"]] if windows
+                   else [])
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="the tree walk is taskkill's")
+def test_a_REAL_grandchild_dies_with_the_chunk(tmp_path, monkeypatch):
+    """What the stall needed: the command cosmic-ray was running, one
+    level down, ends with it — not later, and not never."""
+    import os
+
+    pid_file = tmp_path / "grandchild.pid"
+    script = ("import subprocess, sys, time\n"
+              "p = subprocess.Popen([sys.executable, '-c', "
+              "'import time; time.sleep(120)'])\n"
+              f"open({str(pid_file)!r}, 'w').write(str(p.pid))\n"
+              "time.sleep(120)\n")
+    monkeypatch.setattr(ms, "WORKTREE", tmp_path)
+    monkeypatch.setattr(ms, "_env", os.environ.copy)
+
+    ms._bounded([sys.executable, "-c", script], 5)
+
+    assert not ms._alive(int(pid_file.read_text(encoding="utf-8")))
+
+
+def _stuck_run(tree, monkeypatch, capsys, *argv):
+    """`main` over fakes whose chunks never finish a mutant, with the
+    worktree's module carrying one."""
+    root, module, tests = tree
+    ms.take_snapshot(root / ".mutation-thing.pristine", module, tests)
+    live = root / "wt" / module
+    live.parent.mkdir(parents=True)
+    live.write_text("def f(a, b):\n    return a ** b\n", encoding="utf-8")
+    chunks: list[int] = []
+
+    def chunk(*a, **kw):
+        chunks.append(1)
+        if len(chunks) > 4:
+            raise AssertionError("the loop asked for the stuck mutant again")
+        return True
+
+    monkeypatch.setattr(ms, "WORKTREE", root / "wt")
+    monkeypatch.setattr(ms, "_take_lock", lambda: None)
+    monkeypatch.setattr(ms, "ensure_worktree", lambda *a: None)
+    monkeypatch.setattr(ms, "take_snapshot", lambda *a: None)
+    monkeypatch.setattr(ms, "write_config", lambda *a, **kw: None)
+    monkeypatch.setattr(ms, "moved_since", lambda *a: [])
+    monkeypatch.setattr(ms, "_run", lambda *a, **kw: _Ok())
+    monkeypatch.setattr(ms, "progress", lambda s: (1, 1, 2, 3))
+    monkeypatch.setattr(ms, "chunk", chunk)
+    code, said = _sample_run(tree, monkeypatch, capsys, *argv)
+    return code, said, chunks, live
+
+
+def test_a_chunk_that_ends_NO_mutant_stops_the_session_and_names_it(
+        tree, monkeypatch, capsys):
+    """459/460 for seventy minutes: `--chunks 0` asked for the same mutant
+    ten times. A chunk long enough to end any mutant that ends none — read
+    against the chunk before it — is the verdict: stop, say which line,
+    put the module back."""
+    code, said, chunks, live = _stuck_run(tree, monkeypatch, capsys,
+                                          "--chunks", "0")
+
+    assert code == 3
+    assert "STUCK" in said and "line 2: return a ** b" in said
+    assert len(chunks) == 2, "the first sets the mark, the second is judged"
+    assert "return a - b" in live.read_text(encoding="utf-8")
+
+
+def test_a_SHORT_chunk_that_ends_nothing_is_not_called_stuck(
+        tree, monkeypatch, capsys):
+    """A one-minute chunk can spend itself on one slow mutant and
+    cosmic-ray's start-up; only a chunk with room for two is judged."""
+    code, said, chunks, _live = _stuck_run(tree, monkeypatch, capsys,
+                                           "--chunks", "3", "--minutes", "1")
+
+    assert code == 0
+    assert "STUCK" not in said
+    assert len(chunks) == 3
 
 
 def test_a_session_that_cannot_be_READ_is_nothing_to_protect(tmp_path):
