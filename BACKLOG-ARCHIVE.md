@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S3 — a mutant that blocks inside one C call never finishes, and `--chunks 0` re-runs it for ever~~ — FIXED 13.09
+### ~~S3 — a mutant that blocks inside one C call never finishes, and `--chunks 0` re-runs it for ever~~ — FIXED 13.09, `1aceac9`
 
 <!-- status: fixed -->
 
@@ -55,7 +55,7 @@ finishes, ended at a 3-second deadline; one budget for both phases; the
 config's two limits; a stall stopped and named — and a one-minute chunk not
 mistaken for one.
 
-### ~~S2 — a chunk that times out ends cosmic-ray and leaves its pytest running~~ — FIXED 13.09
+### ~~S2 — a chunk that times out ends cosmic-ray and leaves its pytest running~~ — FIXED 13.09, `1aceac9`
 
 <!-- status: fixed -->
 
