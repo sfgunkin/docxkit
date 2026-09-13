@@ -435,6 +435,21 @@ def test_an_exhibit_that_OWNS_its_section_moves_with_both_breaks():
                              "Figure 1. Cap", "IMG", "SECT", "Later."]
 
 
+def test_a_BLANK_under_the_closing_break_does_not_part_an_owner_from_it():
+    """`exhibits` absorbs a blank paragraph under the closing break into
+    the span, and judged with it the exhibit read as SHARING its section:
+    every trial moved the figure without either break, leaving an empty
+    landscape section behind and measuring the figure set in portrait
+    (code review, 2026-09-13). The blank is the next section's, and stays."""
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap") + IMG + SECT(True) + P("") + P("After.")
+                + P("Later."))
+
+    assert moved(doc, 7) == ["Figure 1 shows it.", "Before.", "blank",
+                             "After.", "SECT", "Figure 1. Cap", "IMG", "SECT",
+                             "Later."]
+
+
 def test_a_break_SHARED_with_the_prose_above_stays_where_it_stands():
     """The review's case 3a: the main section's closing break travelled
     with the figure, and the paragraph after it was pulled back across

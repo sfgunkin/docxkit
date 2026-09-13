@@ -14,6 +14,23 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `repack` moves an exhibit that owns its section without either break when a blank paragraph follows the closing one~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; reproduced. `exhibits._trailing` absorbs a blank
+paragraph under the closing section break into the span, so `_move_span`
+found the span's last break one short of its end, read the exhibit as
+sharing its section, and returned `(2, 4)` where `(1, 5)` was meant: every
+trial moved the caption and table without either break, left an empty
+landscape section behind and measured the table set in portrait. `repack`
+reports and changes nothing, so what it got wrong was the advice.
+
+**Fixed:** ownership is judged with the trailing blank paragraphs
+(`_is_blank`: no text, no picture, no break) left off the span, and they
+stay where they stand. Test, seen red first:
+`test_repack.test_a_BLANK_under_the_closing_break_does_not_part_an_owner_from_it`.
+
 ### ~~S2 — MARKER OFF LINK clears a marker that sits apart from its link over another citation~~ — FIXED 13.09
 
 <!-- status: fixed -->

@@ -238,6 +238,15 @@ def _is_break(el: etree._Element) -> bool:
             and not text_of(el).strip())
 
 
+def _is_blank(el: etree._Element) -> bool:
+    """A paragraph that puts nothing on the page: no text, no picture and
+    no section break."""
+    return (el.tag == W + "p" and not text_of(el).strip()
+            and el.find(f"{W}pPr/{W}sectPr") is None
+            and next(el.iter(W + "drawing", W + "pict", W + "object"),
+                     None) is None)
+
+
 def _covered(found: Iterable[Exhibit]) -> set[int]:
     """Every body-child index inside some exhibit's span."""
     return {i for x in found for i in range(x.start, x.stop)}
@@ -440,10 +449,17 @@ def _move_span(kids: list[etree._Element], x: Exhibit,
         return "has no table or image of its own"
     start, stop = x.start, x.stop
     opens = start > 0 and _is_break(kids[start - 1])
-    breaks = [i for i in range(start, stop) if _is_break(kids[i])]
-    ends = bool(breaks) and breaks[-1] == stop - 1
+    # A blank under the closing break is the NEXT section's, and `exhibits`
+    # absorbs it into the span all the same: judged with it, an exhibit
+    # that owns its section read as sharing one and moved without either
+    # break (code review, 2026-09-13).
+    last = stop
+    while last > start and _is_blank(kids[last - 1]):
+        last -= 1
+    breaks = [i for i in range(start, last) if _is_break(kids[i])]
+    ends = bool(breaks) and breaks[-1] == last - 1
     if opens and ends:
-        return start - 1, stop
+        return start - 1, last
     if breaks:
         stop = breaks[0]                     # the break is not the block's
     if opens and all(not (el.tag in (W + "p", W + "tbl")
