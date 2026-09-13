@@ -65,6 +65,7 @@ from ._xml import (
     FOOTNOTES,
     PARA_RE,
     T_RUN_RE,
+    live_properties,
     run_spans,
     set_run_text,
     visible_text,
@@ -107,6 +108,14 @@ _APX_RE = re.compile(r"\bAppendix\s+([A-Z])\.(\d+)")
 _BARE_RE = re.compile(
     r"(?<![\w.])(?<!Appendix )(?<!Table )(?<!Figure )(?<!Box )(?<!Panel )"
     r"(?<!Chart )(?<!Equation )([A-Z])\.(\d+)(?!\d)")
+#: What a bare "A.3" is when it is not a section, and the lookbehinds
+#: above (one label, one space) cannot see: an equation's number, "(A.7)",
+#: and an exhibit's in a plural, in a list or after a no-break space —
+#: "Tables A.3 and A.4", "Figures A.1-A.2". Each read as a dangling
+#: section, and `renumber` rewrote them (code review, 2026-09-13).
+_NOT_A_SECTION_RE = re.compile(
+    r"\b(?:Tables?|Figures?|Box(?:es)?|Panels?|Charts?|Equations?|Eqs?\.)"
+    rf"\s+[A-Z]\.\d+(?:{_JOIN}[A-Z]\.\d+)*|\([A-Z]\.\d+\)")
 
 _TEXT_PARTS = (DOCUMENT, FOOTNOTES, ENDNOTES)
 _STYLES = "word/styles.xml"
@@ -121,8 +130,10 @@ _NUMBERING = "word/numbering.xml"
 # any of them and reported every "Section N" in their prose as a breach — a
 # gate red on six papers of eight, for nothing wrong.
 
+#: Stops at the FIRST `</w:pPr>`, which is the snapshot's inside a
+#: `w:pPrChange` when there is one: read what it holds through
+#: `live_properties`, never as it stands (code review, 2026-09-13).
 _PPR_RE = re.compile(r"<w:pPr>(.*?)</w:pPr>", re.DOTALL)
-_PPR_CHANGE_RE = re.compile(r"<w:pPrChange\b.*?</w:pPrChange>", re.DOTALL)
 _NUMPR_RE = re.compile(r"<w:numPr>(.*?)</w:numPr>", re.DOTALL)
 _NUMID_RE = re.compile(r'<w:numId w:val="(\d+)"')
 _ILVL_RE = re.compile(r'<w:ilvl w:val="(\d+)"')
@@ -159,7 +170,7 @@ class _Level:
 
 def _numbered(ppr: str) -> tuple[str | None, str | None]:
     """(numId, ilvl) a `w:pPr` body states, either possibly None."""
-    m = _NUMPR_RE.search(_PPR_CHANGE_RE.sub("", ppr))
+    m = _NUMPR_RE.search(live_properties(ppr))
     if m is None:
         return None, None
     num, lvl = _NUMID_RE.search(m.group(1)), _ILVL_RE.search(m.group(1))
@@ -279,8 +290,9 @@ def list_numbers(parts: dict[str, bytes]) -> dict[int, str]:
     body = parts[DOCUMENT].decode("utf-8")
     for i, m in enumerate(PARA_RE.finditer(body)):
         ppr = _PPR_RE.search(m.group(0))
-        own_num, own_lvl = _numbered(ppr.group(1)) if ppr else (None, None)
-        style_m = _PSTYLE_RE.search(ppr.group(1)) if ppr else None
+        live = live_properties(ppr.group(1)) if ppr else ""
+        own_num, own_lvl = _numbered(live)
+        style_m = _PSTYLE_RE.search(live)
         style = style_m.group(1) if style_m else default
         style_num, style_lvl = by_style.get(style or "", (None, None))
         num = own_num if own_num is not None else style_num
@@ -476,6 +488,14 @@ def _run(numbers: list[int]) -> str:
     return " ".join(str(n) for n in numbers)
 
 
+def _bare(text: str, pos: int = 0) -> list[re.Match[str]]:
+    """The bare "A.3" mentions in `text` from `pos`: `_BARE_RE`'s matches,
+    less the equation and exhibit numbers `_NOT_A_SECTION_RE` claims."""
+    taken = [m.span() for m in _NOT_A_SECTION_RE.finditer(text)]
+    return [m for m in _BARE_RE.finditer(text, pos)
+            if not any(lo <= m.start() < hi for lo, hi in taken)]
+
+
 def _check_mentions(paras: list[str], exists: set[str],
                     report: SectionReport) -> None:
     bad = report.breaches
@@ -499,7 +519,7 @@ def _check_mentions(paras: list[str], exists: set[str],
             if m.group(1) not in exists:
                 bad.append(f"Section {m.group(1)}: no such section  "
                            f"{_around(text, m)}")
-        for m in (*_APX_RE.finditer(text), *_BARE_RE.finditer(text)):
+        for m in (*_APX_RE.finditer(text), *_bare(text)):
             key = f"{m.group(1)}.{m.group(2)}"
             if not any(s.startswith(m.group(1) + ".") for s in exists):
                 continue                   # this paper has no such appendix
@@ -593,8 +613,10 @@ def _masked(text: str, heading: bool) -> str:
     by one mark, so two readings that differ only there compare equal."""
     if heading:
         text = _NUMBER_RE.sub("§", text, count=1)
-    for pattern in (_LIST_RE, _ONE_RE, _APX_RE, _BARE_RE):
+    for pattern in (_LIST_RE, _ONE_RE, _APX_RE):
         text = pattern.sub("§", text)
+    for m in reversed(_bare(text)):
+        text = text[:m.start()] + "§" + text[m.end():]
     return text
 
 
@@ -763,14 +785,16 @@ def _edits(text: str, heading: bool, full: Mapping[str, str],
         if (num := _look(m.group(1), full, where)) != m.group(1):
             out.append((m.start(), m.end(),
                         m.group(0)[:m.start(1) - m.start()] + num, ""))
-    for m in (*_APX_RE.finditer(text, skip), *_BARE_RE.finditer(text, skip)):
+    for m in (*_APX_RE.finditer(text, skip), *_bare(text, skip)):
         if m.group(1) not in letters:
             continue                        # this paper has no such appendix
         key = f"{m.group(1)}.{m.group(2)}"
         if (num := _look(key, full, where)) != key:
+            # The letter goes too: `merged_into={"A.3": "B.1"}` kept the A
+            # and wrote "Appendix A.1", a section that exists, so the audit
+            # after passed it (code review, 2026-09-13).
             out.append((m.start(), m.end(),
-                        m.group(0)[:m.start(2) - m.start()]
-                        + num.split(".", 1)[1], ""))
+                        m.group(0)[:m.start(1) - m.start()] + num, ""))
     return out
 
 

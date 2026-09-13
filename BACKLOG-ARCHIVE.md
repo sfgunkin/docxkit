@@ -14,6 +14,63 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `sections` reads an equation number or an exhibit list as an appendix section, and `renumber` rewrites them~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; reproduced. `_BARE_RE` excluded a bare `A.3` after
+`Table `, `Figure `, `Equation ` and four other labels — one label, one
+space — and nothing else, so it matched `(A.7)`, both numbers of `Tables
+A.3 and A.4` and of `Figures A.1–A.2`, and `Table A.5` after a no-break
+space. In a paper whose appendix subsections stop at A.2 while its
+appendix equations run to (A.7), each such reference was a breach (`A.7: no
+such appendix section`); and `renumber`, closing a gap A.3 → A.2, rewrote
+`(A.3)` to `(A.2)` in silence — `_masked` masked the same pattern, so the
+"change by more than its section numbers" guard could not see it.
+
+**Fixed:** `_NOT_A_SECTION_RE` claims an equation's `(A.N)` and an exhibit's
+number in a singular, a plural or a list after any whitespace; `_bare` is
+`_BARE_RE` less those spans, and the audit, `_masked` and `_edits` all read
+bare mentions through it. Test, seen red first:
+`test_sections.test_an_EQUATION_or_an_exhibit_list_is_not_an_appendix_section`
+— the audit of that paper, and the rewrite.
+
+A bracketed `(A.3)` standing alone is read as an equation now, never as a
+section; "(Appendix A.3)" is still counted, through `_APX_RE`.
+
+### ~~S1 — `sections.renumber` keeps an appendix mention's old LETTER when `merged_into` sends it to another appendix~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; reproduced. `_edits` rebuilt an appendix mention
+as its text up to the number plus the new number's digits, so
+`merged_into={"A.3": "B.1"}` turned "Appendix A.3" into "Appendix A.1" and
+a bare "A.3" into "A.1" — sections that exist, so the audit `renumber` runs
+on its own result passed, and the report listed both mentions as done.
+
+**Fixed:** the whole new number replaces the old, letter included. Test,
+seen red first: `test_sections.test_renumber_sends_a_mention_ACROSS_letters_with_its_letter`
+("Appendix A.1 and A.1 moved.").
+
+### ~~S2 — `sections.list_numbers` reads a heading's numbering from the tracked change that removed it~~ — FIXED 13.09
+
+<!-- status: fixed -->
+
+Code review, 2026-09-13; reproduced. `_PPR_RE`, `<w:pPr>(.*?)</w:pPr>`,
+stops at the first close tag, and in a paragraph carrying a `w:pPrChange`
+that is the snapshot's own `</w:pPr>`. The strip `_numbered` then applied,
+`<w:pPrChange\b.*?</w:pPrChange>`, found no close inside what it was given,
+so the OLD `numPr` was read as current: a heading whose list numbering the
+author removed in a tracked round went on being numbered, and every heading
+after it moved up by one — `audit` and `renumber` both read their numbers
+from it. A pStyle the change replaced was read the same way.
+
+**Fixed:** both are read through `_xml.live_properties`, which cuts at the
+change element — exactly the prefix the truncated match holds — and
+`_PPR_CHANGE_RE` is gone. Test, seen red first, for the numbering and for
+the style:
+`test_sections.test_list_numbers_reads_the_LIVE_numbering_not_the_tracked_change`.
+
 ### ~~S1 — `respan_link` on a field-form link whose `end` run carries properties returns XML Word refuses, and reports success~~ — FIXED 13.09
 
 <!-- status: fixed -->

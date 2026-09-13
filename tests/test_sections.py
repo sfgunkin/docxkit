@@ -420,3 +420,68 @@ def test_renumber_closes_an_APPENDIX_gap_under_its_own_letter():
     assert "Appendix B.2 and B.1 hold." in _body(done.parts)
     assert sections.audit(done.parts).sections == ["1", "B.1", "B.2"]
     assert "heading B.3 -> B.2  Third" in done.format()
+
+
+# --- code review, 2026-09-13 ------------------------------------------------
+
+
+def _changed(live: str, old: str) -> str:
+    """A `w:pPr` holding `live`, with a tracked change that replaced `old`."""
+    return ("<w:pPr>" + live + '<w:pPrChange w:id="9" w:author="A">'
+            "<w:pPr>" + old + "</w:pPr></w:pPrChange></w:pPr>")
+
+
+def test_list_numbers_reads_the_LIVE_numbering_not_the_tracked_change():
+    """`_PPR_RE` stops at the FIRST `</w:pPr>`, the one inside a
+    `w:pPrChange`, so the strip meant to drop that snapshot found no close
+    to match and the OLD `numPr` was read as current: a heading whose
+    numbering the author removed went on being numbered. The same held for
+    a style the change replaced."""
+    unnumbered = para(_changed(
+        '<w:pStyle w:val="Heading1"/>',
+        '<w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/>'
+        '<w:numId w:val="4"/></w:numPr>') + run("Was numbered"))
+    own = {"word/numbering.xml": NUMBERING(LVL(0, "%1.")),
+           "word/styles.xml": "<w:styles/>"}
+    restyled = para(_changed("", '<w:pStyle w:val="Heading1"/>')
+                    + run("Was a heading"))
+
+    assert sections.list_numbers(make_parts(
+        NUM("First", 0) + unnumbered + NUM("Second", 0), extra=own)
+        ) == {0: "1.", 2: "2."}
+    assert sections.list_numbers(make_parts(
+        H("Intro") + restyled + H("Next"), extra=HCW)) == {0: "1.", 2: "2."}
+
+
+def test_an_EQUATION_or_an_exhibit_list_is_not_an_appendix_section():
+    """"(A.7)" is an equation, and "Tables A.3 and A.4", "Figures A.1–A.2"
+    and "Table A.5" with a no-break space are exhibits. The bare reading
+    took each for a section — a breach per mention in a paper whose
+    appendix equations run past its subsections — and `renumber` rewrote
+    the equation's number with the section's."""
+    paper = doc(H("1. One") + H("Appendix A") + H("A.1 Proofs", 2)
+                + H("A.2 Data", 2)
+                + P("The first-order condition (A.7) gives it; Tables A.3 "
+                    "and A.4, Figures A.1–A.2 and Table A.5 show it, "
+                    "as A.2 says."))
+    gap = doc(H("1. One") + P("By (A.3) and Table A.3, as A.3 shows.")
+              + H("Appendix A") + H("A.1 First", 2) + H("A.3 Third", 2))
+
+    report = sections.audit(paper)
+    done = sections.renumber(gap)
+
+    assert report.ok, report.breaches
+    assert report.mentions == 1, "A.2, and nothing else"
+    assert "By (A.3) and Table A.3, as A.2 shows." in _body(done.parts)
+
+
+def test_renumber_sends_a_mention_ACROSS_letters_with_its_letter():
+    """`merged_into={"A.3": "B.1"}` kept the A and swapped the number:
+    "Appendix A.1", a section that exists, so the audit after passed it."""
+    body = (H("1. One") + P("Appendix A.3 and A.3 moved.") + H("Appendix A")
+            + H("A.1 First", 2) + H("A.2 Second", 2) + H("Appendix B")
+            + H("B.1 Moved here", 2))
+
+    done = sections.renumber(doc(body), merged_into={"A.3": "B.1"})
+
+    assert "Appendix B.1 and B.1 moved." in _body(done.parts)
