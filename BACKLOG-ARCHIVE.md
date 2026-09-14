@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — `set_core_property` puts a new property OUTSIDE a self-closing `cp:coreProperties` root, and the part stops parsing~~ — FIXED 14.09
+### ~~S2 — `set_core_property` puts a new property OUTSIDE a self-closing `cp:coreProperties` root, and the part stops parsing~~ — FIXED 14.09, `36e6397`
 
 <!-- status: fixed -->
 
