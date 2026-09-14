@@ -123,6 +123,7 @@ claims = [
 
 ["revision/_verdict.py"]
 claims = [
+  { was = 'while last + 1 < end and "|" in lines[last + 1]:', line = 'while last + 1 != end and "|" in lines[last + 1]:', why = "`last` starts at `first`, which is below `end`, and grows by one, so `last + 1` reaches `end` and never passes it: `!=` stops the walk exactly where `<` does." },
   { was = '''bits.append(f"+{added} {what}{'' if added == 1 else 's'}")''', line = '''bits.append(f"+{added} {what}{'' if added <= 1 else 's'}")''', why = "`added` counts the links or bookmarks that arrived, a multiset difference's total or a set difference's size, so it is never negative, and this line runs only under `if added:`. At one or more, `<= 1` holds exactly where `== 1` does." },
   { was = '''bits.append(f"-{lost} {what}{'' if lost == 1 else 's'}")''', line = '''bits.append(f"-{lost} {what}{'' if lost <= 1 else 's'}")''', why = "`lost` counts the links or bookmarks that went, a multiset difference's total or a set difference's size, so it is never negative, and this line runs only under `if lost:`. At one or more, `<= 1` holds exactly where `== 1` does." },
 ]

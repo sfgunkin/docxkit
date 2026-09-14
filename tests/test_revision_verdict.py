@@ -814,3 +814,36 @@ def test_a_heading_with_no_table_does_not_borrow_a_LATER_SECTION_s(tmp_path):
 
     assert revision.log_batch(paper, ROUND, note="R15") is None
     assert log.read_text(encoding="utf-8").splitlines() == theirs
+
+
+def test_a_heading_RIGHT_UNDER_the_batch_heading_ends_its_section(tmp_path):
+    """The batch section ends at the next heading, and that can be the
+    very next line, as in a log whose batch section was emptied. The
+    table under it is that section's, so the search for the end starts
+    on the line after `## Batches` and not a line further on."""
+    theirs = ["# Log", "", "## Batches", "## Timings", "",
+              "| step | run | cost | where | note |", RULE,
+              "| build | r1 | 20s | Word | slow |"]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    assert revision.log_batch(paper, ROUND, note="R15") is None
+    assert log.read_text(encoding="utf-8").splitlines() == theirs
+
+
+def test_a_batch_table_that_ENDS_a_long_log_takes_the_row_last(tmp_path):
+    """When the table is the last thing in the file, the section's end is
+    the file's length and the walk stops on the final row. Two ways to
+    miss it: stopping one row short files the new row above the last
+    one, and past 256 lines two equal line numbers compared by identity
+    differ, so the walk reads a line after the last. Aging_Well's
+    `## Batches` is the last heading of a log over 3,000 lines."""
+    theirs = (["# Log", ""]
+              + [f"- note {i} from an earlier round" for i in range(300)]
+              + ["", "## Batches", "", HEADER, RULE, R13, R14])
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    assert row is not None
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        *theirs, row.rstrip("\n")]
