@@ -162,8 +162,17 @@ def set_core_property(parts: Parts, tag: str, value: str) -> bool:
             core = core.replace("</cp:coreProperties>",
                                 element + "</cp:coreProperties>", 1)
         else:
-            core = _CORE_OPEN_RE.sub(lambda mm: mm.group(1) + element,
-                                     core, count=1)
+            # No closing tag: a root holding no properties at all is written
+            # SELF-CLOSING, and its opening tag is then the whole element.
+            # The property goes inside a root opened up around it; after
+            # `<cp:coreProperties .../>` it was a second root, in a part
+            # that no longer parsed (BACKLOG, 2026-09-14).
+            core = _CORE_OPEN_RE.sub(
+                lambda mm: (mm.group(1)[:-2] + ">" + element
+                            + "</cp:coreProperties>"
+                            if mm.group(1).endswith("/>")
+                            else mm.group(1) + element),
+                core, count=1)
     parts[CORE_PART] = core.encode("utf-8")
     return True
 

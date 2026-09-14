@@ -701,10 +701,18 @@ def test_an_UNKNOWN_tag_goes_last_where_it_displaces_nothing():
 
 
 def test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside():
-    """The last resort, for a part that is not a document Word wrote:
-    the element goes just after the root's open tag, which is the only
-    place it can go and still be inside the root."""
-    from docxkit.package import set_core_property
+    """The last resort, for a part that is not a document Word wrote: a
+    root holding no properties at all, written self-closing. The element
+    has to go INSIDE it, which means opening the root up around it.
+
+    Asserted by parsing the part. The first version checked only that
+    `<dc:title>` came after `<cp:coreProperties` in the text, which is
+    true of the part this used to write, where the property sat after the
+    self-closed root as a second root and nothing could parse it
+    (BACKLOG, 2026-09-14)."""
+    import xml.etree.ElementTree as ET
+
+    from docxkit.package import core_property, set_core_property
 
     p = {"docProps/core.xml": (
         b'<?xml version="1.0"?><cp:coreProperties xmlns:cp="x" '
@@ -712,8 +720,9 @@ def test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside():
 
     assert set_core_property(p, "dc:title", "Salvaged") is True
 
-    text = p["docProps/core.xml"].decode("utf-8")
-    assert text.index("<dc:title>") > text.index("<cp:coreProperties")
+    root = ET.fromstring(p["docProps/core.xml"])
+    assert [child.tag for child in root] == ["{y}title"]
+    assert core_property(p, "dc:title") == "Salvaged"
 
 
 def test_an_UNCHANGED_part_does_not_stop_the_walk():

@@ -46,37 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `set_core_property` puts a new property OUTSIDE a self-closing `cp:coreProperties` root, and the part stops parsing
-<!-- status: open -->
-
-Found 2026-09-14 reading the mutation survivors of `package.py`, and
-measured on the fixture that
-`test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside`
-already uses:
-
-    <?xml version="1.0"?><cp:coreProperties xmlns:cp="x" xmlns:dc="y"/>
-    set_core_property(parts, "dc:title", "Salvaged")   ->  True
-    <?xml version="1.0"?><cp:coreProperties xmlns:cp="x" xmlns:dc="y"/><dc:title>Salvaged</dc:title>
-    xml.etree: junk after document element: line 1, column 67
-
-With no `</cp:coreProperties>` to insert before, the last-resort branch
-writes the element after the root's opening tag, and for a self-closing
-root that tag is the whole element: the property lands after it, as a
-second root. The function reports that it moved the part, and the test
-pinning the branch asserts only that `<dc:title>` comes after
-`<cp:coreProperties` in the text, which is true of the broken part. A core
-part that does not parse is what Word calls unreadable content, and
-`hygiene.carry_properties` and `authors.set_author` both write through
-this function.
-
-Exposure, measured the same day: 663 `.docx` files across the nine
-protocol papers' folders, 593 with a core part, and none of those
-self-closing. No paper reaches it; a core part with no properties, written
-by another tool, can.
-
-Direction: open a self-closing root around the element, and have the test
-parse the part it asserts on.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

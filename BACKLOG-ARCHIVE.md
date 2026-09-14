@@ -14,6 +14,43 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `set_core_property` puts a new property OUTSIDE a self-closing `cp:coreProperties` root, and the part stops parsing~~ — FIXED 14.09
+
+<!-- status: fixed -->
+
+Found 2026-09-14 reading the mutation survivors of `package.py`, and
+measured on the fixture that
+`test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside`
+already used:
+
+    <?xml version="1.0"?><cp:coreProperties xmlns:cp="x" xmlns:dc="y"/>
+    set_core_property(parts, "dc:title", "Salvaged")   ->  True
+    <?xml version="1.0"?><cp:coreProperties xmlns:cp="x" xmlns:dc="y"/><dc:title>Salvaged</dc:title>
+    xml.etree: junk after document element: line 1, column 67
+
+With no `</cp:coreProperties>` to insert before, the last-resort branch
+wrote the element after the root's opening tag, and for a self-closing
+root that tag is the whole element: the property landed after it, as a
+second root. The function reported that it moved the part, and the test
+pinning the branch asserted only that `<dc:title>` came after
+`<cp:coreProperties` in the text, which was true of the broken part. A
+core part that does not parse is what Word calls unreadable content, and
+`hygiene.carry_properties` and `authors.set_author` both write through
+this function.
+
+Exposure, measured the same day: 663 `.docx` files across the nine
+protocol papers' folders, 593 with a core part, and none of those
+self-closing. No paper reached it; a core part with no properties, written
+by another tool, could.
+
+**Fixed:** a self-closing root is opened up around the new element; an
+opening tag with no closing tag anywhere still takes the element straight
+after it. The test that pinned the branch now parses the part and reads
+the property back, seen red first (`junk after document element`). The
+change was tried beforehand on four core parts, self-closing, self-closing
+with a space before `/>`, paired and empty, and paired with a later
+property, and each parsed with the title read back.
+
 ### ~~S4 — gates run beside a replay fail three `kill_check` tests, which share its one checkout and its lock~~ — FIXED 14.09, `c8e4a88`
 
 <!-- status: fixed -->
