@@ -608,3 +608,68 @@ def test_apply_steps_makes_the_console_safe_for_a_DIRECT_caller():
 
     assert applied == ["glyphs"] and not failures
     assert MINUS in printed()
+
+
+# --- what a batch says about TIME -----------------------------------------
+#
+# The mutation sweep of 2026-09-14 found every timing line in this module
+# free to say anything. No test in this file gave a step a duration worth
+# printing, so the "slowest" line was never rendered, and none read a
+# duration back against a clock it controlled.
+
+
+def test_slowest_is_the_THREE_costliest_steps_costliest_first():
+    """The order is the answer to "where did the round go", and three is
+    what the report prints. Five steps here, out of order, so neither a
+    reversed sort nor another default can land on the same list."""
+    rep = batch.Report(name="r4", durations=[
+        ("a", 0.1), ("b", 2.0), ("c", 1.0), ("d", 0.7), ("e", 0.3)])
+
+    assert rep.slowest() == [("b", 2.0), ("c", 1.0), ("d", 0.7)]
+
+
+def test_the_report_names_a_step_of_HALF_A_SECOND_and_not_one_under():
+    """The line exists only when a step cost something, and the boundary
+    is on the page: a step of exactly 0.5 s is named, one of 0.2 s is not.
+    Every report in this file ran in milliseconds until now, so the line
+    was never printed and its concatenation could have been any
+    operator."""
+    rep = batch.Report(name="r4", durations=[
+        ("fast", 0.2), ("edge", 0.5), ("slow", 2.0)])
+
+    assert rep.text().splitlines() == [
+        "r4:", "  slowest  slow 2.0s, edge 0.5s"]
+
+    quick = batch.Report(name="r4", durations=[("fast", 0.2)])
+    assert quick.text() == "r4:", "a batch of Edits prints no timing noise"
+
+
+def test_a_duration_is_the_DIFFERENCE_of_two_clock_readings(monkeypatch):
+    """`perf_counter` has no defined zero; only the difference of two
+    readings means anything. A real clock has been running for hours by
+    the time a batch starts, and against it `now % began` IS `now -
+    began`, so a duration a real run records passes an arithmetic that
+    is right by accident. This clock starts at half a second.
+
+    Both paths, since both record: the step that raised is timed too,
+    and it is the one the round is slow AND broken on."""
+    import types
+
+    ticks = iter([0.5, 1.734, 0.5, 1.734])
+    monkeypatch.setattr(batch, "time", types.SimpleNamespace(
+        perf_counter=lambda: next(ticks)))
+
+    def boom(xml: str, _p: dict[str, bytes]) -> str:
+        raise ValueError("the swap could not find its drawing")
+
+    def swap(xml: str, _p: dict[str, bytes]) -> str:
+        return xml.replace("country averages", "country AFIs")
+
+    durations: list[tuple[str, float]] = []
+    _xml, applied, failures = batch.apply_steps(
+        xml_of(parts_of()), {},
+        [batch.Step("boom", boom), batch.Step("swap", swap)], durations)
+
+    assert applied == ["swap"] and len(failures) == 1
+    assert durations == [("boom", 1.23), ("swap", 1.23)], \
+        "1.234 s each, to the hundredth"

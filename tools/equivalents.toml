@@ -250,6 +250,7 @@ claims = [
 
 ["batch.py"]
 claims = [
+  { was = 'para = hits[0].group(0)', line = 'para = hits[ -1].group(0)', why = "Reached only after the checks above have returned for no hit and for more than one, so there is exactly one hit, the first and the last." },
   { was = 'if old[:20] and old[:20] in s]', line = 'if old[: 19] and old[:20] in s]', kind = "cosmetic", why = 'How much of a missing `old` is used to look for the sentence it drifted to. Twenty characters is a judgement about a HINT in an error message, and a test asserting nineteen or twenty-one would pin a number nobody chose carefully. Cosmetic and not equivalent: the code really does search differently.' },
   { was = 'if old[:20] and old[:20] in s]', line = 'if old[:20] and old[: 19] in s]', kind = "cosmetic", why = 'How much of a missing `old` is used to look for the sentence it drifted to. Twenty characters is a judgement about a HINT in an error message, and a test asserting nineteen or twenty-one would pin a number nobody chose carefully. Cosmetic and not equivalent: the code really does search differently.' },
   { was = 'if old[:20] and old[:20] in s]', line = 'if old[: 21] and old[:20] in s]', kind = "cosmetic", why = 'How much of a missing `old` is used to look for the sentence it drifted to. Twenty characters is a judgement about a HINT in an error message, and a test asserting nineteen or twenty-one would pin a number nobody chose carefully. Cosmetic and not equivalent: the code really does search differently.' },
