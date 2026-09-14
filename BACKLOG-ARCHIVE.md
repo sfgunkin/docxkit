@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — gates run beside a replay fail three `kill_check` tests, which share its one checkout and its lock~~ — FIXED 14.09
+### ~~S4 — gates run beside a replay fail three `kill_check` tests, which share its one checkout and its lock~~ — FIXED 14.09, `c8e4a88`
 
 <!-- status: fixed -->
 
