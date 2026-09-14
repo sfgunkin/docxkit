@@ -227,3 +227,40 @@ def test_a_package_with_no_notes_is_not_an_error():
 
     assert report.apostrophes == 1
     assert set(parts) == {"word/document.xml"}
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+
+
+def test_the_BODY_is_the_part_left_UNLABELLED():
+    """The body is unlabelled and every other part is named. The test
+    above could not say which: it split the lines on the footnotes'
+    label, which a body line carrying a `document:` prefix passes too."""
+    from docxkit.hygiene import smarten_parts
+
+    parts = _package(
+        para(run('an odd " in the body')),
+        footnote=para(run('an odd " in a note')),
+        endnote=para(run('and " in an endnote')))
+
+    report = smarten_parts(parts)
+
+    assert report.unbalanced == ['an odd " in the body',
+                                 'footnotes: an odd " in a note',
+                                 'endnotes: and " in an endnote']
+
+
+def test_a_repair_that_SORTS_LOWER_is_still_written_back():
+    """Written back when the text changed, and "changed" is inequality,
+    not order. A literal `>` is legal in XML text and comes back escaped
+    beside the curled apostrophe, and `&` sorts below `>`, so the repaired
+    part sorts below the original and an ordering test keeps the
+    original."""
+    from docxkit.hygiene import smarten_parts
+
+    parts = _package(para(run("x > y, and it's so")))
+
+    smarten_parts(parts)
+
+    assert visible_text(parts["word/document.xml"].decode()) == \
+        "x > y, and it’s so"

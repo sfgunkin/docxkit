@@ -2577,3 +2577,393 @@ def test_restoring_a_footer_the_section_ALREADY_holds_changes_nothing():
     restore_parts(batch, source, prefixes=("word/footer2.xml",))
 
     assert batch["word/document.xml"] == before
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+#
+# The mutation sweep of `hygiene.py` left 127 real survivors, most with
+# one cause. Every settings part above holds its children side by side
+# and closes; every section shape restores ONE reference into ONE
+# section; and the helpers under `_restore_section_references` were only
+# ever asked the question their caller happened to need.
+
+_TRACKED = {SETTINGS: _settings("<w:trackRevisions/>")}
+
+
+@pytest.mark.parametrize("parts", [
+    {SETTINGS: _settings("<w:trackRevisions/>")},
+    {},
+    {SETTINGS: b"<w:document/>"},
+], ids=["already tracked", "no settings part", "no settings element"])
+def test_keep_tracking_says_FALSE_when_it_put_nothing_back(parts):
+    """"True when it had to put the element back." Each of these returns
+    before writing, and a caller that logs the answer must not report a
+    repair on a document it left alone."""
+    from docxkit.hygiene import keep_tracking
+
+    before = dict(parts)
+
+    assert keep_tracking(parts, _TRACKED) is False
+    assert parts == before
+
+
+def test_the_element_follows_its_PREDECESSOR_across_whitespace():
+    """Right after the last element that precedes it, not merely somewhere
+    between that one and the first that follows. Word writes settings
+    with no whitespace, where the two places are one offset; a part
+    written by hand or by another tool is indented, and there the text
+    says which bound the position came from.
+
+    The zoom tag ends on an odd offset, where `+ 1` and `| 1` differ."""
+    from docxkit.hygiene import keep_tracking
+
+    zoom = '<w:zoom w:percent="100"/>'
+    tab = '<w:defaultTabStop w:val="720"/>'
+    xml = _settings("\n  ", zoom, "\n  ", tab, "\n")
+    assert xml.index(b">", xml.index(b"<w:zoom")) % 2 == 1
+    parts = {SETTINGS: xml}
+
+    assert keep_tracking(parts, _TRACKED) is True
+    assert parts[SETTINGS] == _settings(
+        "\n  ", zoom, "<w:trackRevisions/>", "\n  ", tab, "\n")
+
+
+def test_a_settings_part_with_NO_CLOSING_TAG_still_takes_it_inside():
+    """`rfind` answers -1 when `</w:settings>` is missing, and the bound is
+    then the end of the text rather than its last character. A part cut
+    short is malformed, and the element still goes after its predecessor
+    instead of one character before the end."""
+    from docxkit.hygiene import keep_tracking
+
+    xml = _settings('<w:zoom w:percent="100"/>').removesuffix(
+        b"</w:settings>")
+    parts = {SETTINGS: xml}
+
+    assert keep_tracking(parts, _TRACKED) is True
+    assert parts[SETTINGS] == xml + b"<w:trackRevisions/>"
+
+
+def test_a_part_already_OUT_OF_SEQUENCE_takes_it_before_the_follower():
+    """Not this function's to repair, and the follower wins, since
+    inserting after a follower is the arrangement Word refuses. With the
+    follower written first, the element goes in front of it, ahead of the
+    predecessor that comes after."""
+    from docxkit.hygiene import keep_tracking
+
+    zoom = '<w:zoom w:percent="100"/>'
+    tab = '<w:defaultTabStop w:val="720"/>'
+    parts = {SETTINGS: _settings(tab, zoom)}
+
+    assert keep_tracking(parts, _TRACKED) is True
+    assert parts[SETTINGS] == _settings("<w:trackRevisions/>", tab, zoom)
+
+
+def test_a_data_store_restored_WITH_ITS_OWN_RELS_still_gets_the_documents():
+    """Every rels part in the source is walked in name order, and one that
+    came back whole is passed over. `customXml/_rels/...` sorts before
+    `word/_rels/...`, so passing it over must not end the walk before the
+    document's relationships are wired."""
+    source = _with_custom_xml()
+    source["customXml/_rels/item1.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" '
+        b'Target="itemProps1.xml"/></Relationships>')
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+
+    back = restore_parts(rebuilt, source)
+
+    assert "customXml/_rels/item1.xml.rels" in back
+    rels = rebuilt["word/_rels/document.xml.rels"].decode("utf-8")
+    assert 'Target="../customXml/item1.xml"' in rels
+
+
+def test_a_footer_restored_into_a_package_with_NO_RELATIONSHIPS_is_refused():
+    """With no document relationships part there is nothing to wire the
+    footer through, so the restore refuses it by name, as it refuses any
+    footer it cannot put on a page: a PackageError, not a KeyError from
+    looking up an id that was never minted, and not a footer returned as
+    restored with nothing pointing at it."""
+    source = _with_footers()
+    rebuilt = _with_footers(drop="word/footer3.xml")
+    del rebuilt["word/_rels/document.xml.rels"]
+
+    with pytest.raises(PackageError, match=r"word/footer3\.xml"):
+        restore_parts(rebuilt, source, prefixes=("word/footer3.xml",))
+
+
+_REF = '<w:footerReference w:type="default" r:id="rId5"/>'
+
+
+def _sect(w: int, ref: bool) -> str:
+    return f'<w:sectPr>{_REF if ref else ""}<w:pgSz w:w="{w}"/></w:sectPr>'
+
+
+def _shared_footer(first: str, second: str) -> dict[str, bytes]:
+    """Two sections, `first` and `second`, and footer2 for them to show."""
+    parts = make_parts(para(run("front")) + first + para(run("back"))
+                       + second)
+    parts["word/footer2.xml"] = b"<w:ftr>page</w:ftr>"
+    parts["[Content_Types].xml"] = (
+        b'<Types><Override PartName="/word/footer2.xml" '
+        b'ContentType="footer"/></Types>')
+    parts["word/_rels/document.xml.rels"] = (
+        b'<Relationships><Relationship Id="rId1" Target="styles.xml"/>'
+        b'<Relationship Id="rId5" Target="footer2.xml"/></Relationships>')
+    return parts
+
+
+@pytest.mark.parametrize("first, repaired", [
+    (_sect(1, True), _sect(1, True)),
+    ("<w:sectPr/>", f"<w:sectPr>{_REF}</w:sectPr>"),
+], ids=["first section kept it", "first section is empty"])
+def test_a_footer_TWO_sections_share_goes_back_into_EACH_of_them(
+        first, repaired):
+    """One part in two sections, and Compare dropped the part and the
+    second section's reference. The first section is dealt with first,
+    already right and left alone or empty and opened up around the
+    reference, and neither may end the walk before the second, which is
+    the one that lost it."""
+    source = _shared_footer(_sect(1, True), _sect(2, True))
+    batch = _shared_footer(first, _sect(2, False))
+    del batch["word/footer2.xml"]
+
+    back = restore_parts(batch, source, prefixes=("word/footer2.xml",))
+
+    assert back == ["word/footer2.xml"]
+    assert batch["word/document.xml"] == _shared_footer(
+        repaired, _sect(2, True))["word/document.xml"]
+
+
+def test_the_re_typed_footer_is_RE_TYPED_in_place_whichever_name_sorts_first():
+    """The re-typed footer is the one Compare KEPT, and it can sort before
+    or after the one being restored: here footer2 holds the slot and
+    footer1 comes back. Asserted on the whole document, because the stale
+    reference is replaced by offsets, and a splice at the wrong offset
+    still leaves the right references findable."""
+    source = _typed_footers({"1": "default", "2": "even"})
+    batch = _typed_footers({"2": "default"})
+    before = batch["word/document.xml"].decode("utf-8")
+    at = before.index("<w:sectPr")
+    assert at & len("<w:sectPr>"), "an offset where `|` and `^` are not `+`"
+
+    restore_parts(batch, source, prefixes=("word/footer1.xml",))
+
+    assert batch["word/document.xml"].decode("utf-8") == before.replace(
+        '<w:footerReference w:type="default" r:id="rId5"/>',
+        '<w:footerReference w:type="even" r:id="rId5"/>'
+        '<w:footerReference w:type="default" r:id="rId4"/>')
+
+
+def test_a_reference_OUTSIDE_every_section_does_not_stop_the_one_inside():
+    """A footer reference the source holds outside any `sectPr`, before a
+    section or right after its closing tag, is malformed, and no section
+    pairs with it, so it is passed over. The same footer's reference
+    inside the section is still put back, and only that one."""
+    from docxkit.hygiene import _restore_section_references
+
+    src = ('<w:body><w:p/><w:footerReference w:type="even" r:id="rId4"/>'
+           '<w:sectPr><w:footerReference w:type="default" r:id="rId4"/>'
+           '<w:pgSz w:w="1"/></w:sectPr>'
+           '<w:footerReference w:type="first" r:id="rId4"/></w:body>')
+    parts = {"word/document.xml":
+             b'<w:body><w:p/><w:sectPr><w:pgSz w:w="1"/></w:sectPr></w:body>'}
+    source = {
+        "word/document.xml": src.encode("utf-8"),
+        "word/_rels/document.xml.rels": (
+            b'<Relationships><Relationship Id="rId4" '
+            b'Target="footer1.xml"/></Relationships>'),
+    }
+
+    _restore_section_references(parts, source, ["word/footer1.xml"],
+                                {"word/footer1.xml": "rId9"})
+
+    assert parts["word/document.xml"] == (
+        b'<w:body><w:p/><w:sectPr>'
+        b'<w:footerReference w:type="default" r:id="rId9"/>'
+        b'<w:pgSz w:w="1"/></w:sectPr></w:body>')
+
+
+def test_a_footer_the_source_does_not_RELATE_is_passed_over_for_the_next():
+    """The source's document relationships may say nothing about a footer
+    the restore wired. Nothing can be read about that one, and the footer
+    after it is still put back."""
+    from docxkit.hygiene import _restore_section_references
+
+    src = ('<w:body><w:p/><w:sectPr>'
+           '<w:footerReference w:type="default" r:id="rId5"/>'
+           '<w:pgSz w:w="1"/></w:sectPr></w:body>')
+    parts = {"word/document.xml":
+             b'<w:body><w:p/><w:sectPr><w:pgSz w:w="1"/></w:sectPr></w:body>'}
+    source = {
+        "word/document.xml": src.encode("utf-8"),
+        "word/_rels/document.xml.rels": (
+            b'<Relationships><Relationship Id="rId5" '
+            b'Target="footer2.xml"/></Relationships>'),
+    }
+
+    _restore_section_references(
+        parts, source, ["word/footer1.xml", "word/footer2.xml"],
+        {"word/footer1.xml": "rId8", "word/footer2.xml": "rId9"})
+
+    assert parts["word/document.xml"] == (
+        b'<w:body><w:p/><w:sectPr>'
+        b'<w:footerReference w:type="default" r:id="rId9"/>'
+        b'<w:pgSz w:w="1"/></w:sectPr></w:body>')
+
+
+def test_references_maps_each_PART_to_the_rels_part_that_points_at_it():
+    """What the orphan check asks of both packages: every rels part and
+    nothing else, whatever order the package lists them in, a Target read
+    relative to its rels part, and an external URL naming no part."""
+    from docxkit.hygiene import _references
+
+    parts = {
+        "word/document.xml": b"<w:document/>",
+        "word/_rels/document.xml.rels": (
+            b'<Relationships><Relationship Id="rId1" Target="footer1.xml"/>'
+            b'<Relationship Id="rId2" TargetMode="External" '
+            b'Target="https://example.org/x.xml"/>'
+            b'<Relationship Id="rId3" Target="../customXml/item1.xml"/>'
+            b"</Relationships>"),
+        "customXml/_rels/item1.xml.rels": (
+            b'<Relationships><Relationship Id="rId1" '
+            b'Target="itemProps1.xml"/></Relationships>'),
+    }
+
+    assert _references(parts) == {
+        "word/footer1.xml": "word/_rels/document.xml.rels",
+        "customXml/item1.xml": "word/_rels/document.xml.rels",
+        "customXml/itemProps1.xml": "customXml/_rels/item1.xml.rels",
+    }
+
+
+@pytest.mark.parametrize("order", [("default", "even", "first"),
+                                   ("first", "even", "default")])
+def test_typed_ref_finds_the_reference_of_EXACTLY_the_type_asked(order):
+    """Types compared for equality, in either order of the references: an
+    ordering comparison answers with whichever reference it meets first.
+    An untyped request is the schema's `default`."""
+    from docxkit.hygiene import _typed_ref
+
+    block = "".join(f'<w:footerReference w:type="{t}" r:id="rId{i}"/>'
+                    for i, t in enumerate(order))
+    for t in order:
+        found = _typed_ref(block, "footer", f' w:type="{t}"')
+        assert found is not None and f'w:type="{t}"' in found.group(0), t
+    untyped = _typed_ref(block, "footer", "")
+    assert untyped is not None and 'w:type="default"' in untyped.group(0)
+
+
+def test_part_of_rid_matches_the_id_EXACTLY_not_the_first_that_sorts_after():
+    """Ids are compared as text, and `rId9` sorts after `rId2`, so an
+    ordering comparison that meets `rId9` first names footer9 for a
+    reference to rId2."""
+    from docxkit.hygiene import _part_of_rid
+
+    parts = {"word/_rels/document.xml.rels": (
+        b'<Relationships><Relationship Id="rId9" Target="footer9.xml"/>'
+        b'<Relationship Id="rId2" Target="footer2.xml"/></Relationships>')}
+
+    assert _part_of_rid(parts, '<w:footerReference r:id="rId2"/>') == \
+        "word/footer2.xml"
+
+
+@pytest.mark.parametrize("past", [0, 1])
+def test_source_type_of_a_section_the_source_does_NOT_HAVE_is_empty(past):
+    """Asked about a section index at or past the source's last, the
+    answer is that the source does not place the part there, and not an
+    IndexError. Its one caller never asks past the end; the function
+    answers for itself anyway."""
+    from docxkit.hygiene import _section_spans, _source_type
+
+    src = ('<w:body><w:sectPr><w:footerReference w:type="even" '
+           'r:id="rId4"/></w:sectPr></w:body>')
+    rels = ('<Relationships><Relationship Id="rId4" Target="footer1.xml"/>'
+            '</Relationships>')
+    spans = _section_spans(src)
+
+    assert _source_type(src, rels, spans, len(spans) + past,
+                        kind="footer", part="word/footer1.xml") == ""
+    assert _source_type(src, rels, spans, 0, kind="footer",
+                        part="word/footer1.xml") == ' w:type="even"'
+
+
+def test_an_UNCLOSED_sectPr_does_not_hide_the_EMPTY_one_after_it():
+    """A `sectPr` with no closing tag anywhere after it is skipped, and an
+    empty section after it is still found: one element skipped is not a
+    reason to stop reading."""
+    from docxkit.hygiene import _section_spans
+
+    empty = '<w:sectPr w:rsidR="00B"/>'
+    doc = f'<w:body><w:sectPr><w:pgSz w:w="1"/><w:p/>{empty}</w:body>'
+
+    assert [doc[a:b] for a, b in _section_spans(doc)] == [empty]
+
+
+def test_anchors_before_a_BOOKMARK_are_dropped_as_well():
+    """A text part is written back when dropping the anchors CHANGED it,
+    and that is inequality, not order. A comment range that opens right
+    before a bookmark leaves text sorting BELOW the original, `<w:b` where
+    `<w:c` was, and an ordering test takes that for no change and keeps
+    the anchors of a comment that is gone."""
+    from docxkit.hygiene import dedupe_comments
+
+    mark = '<w:bookmarkStart w:id="0" w:name="T3"/><w:bookmarkEnd w:id="0"/>'
+    second = _anchored(2, "b").replace('<w:commentRangeStart w:id="2"/>',
+                                       '<w:commentRangeStart w:id="2"/>'
+                                       + mark)
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "M. Lokshin", "Same note."),
+            _comment(2, "M. Lokshin", "Same note.")),
+        "word/document.xml": _body(_anchored(1, "a") + second),
+    }
+
+    dedupe_comments(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert 'w:id="2"' not in doc, doc
+    assert mark in doc
+
+
+def test_a_part_in_ANOTHER_ENCODING_listed_FIRST_does_not_end_either_walk():
+    """The same store, now ahead of the document in both packages. It is
+    skipped in the scan of the sources and in the repair of the package,
+    and neither walk may stop there: the order of a package's parts is
+    nobody's choice."""
+    store = '<?xml version="1.0" encoding="UTF-16"?><x/>'.encode("utf-16")
+    built = {"customXml/item1.xml": store, **_parts_with("a - b")}
+    source = {"customXml/item1.xml": store, **_parts_with("a − b")}
+
+    restored = restore_math_glyphs(built, source)
+
+    assert restored == ["word/document.xml: 'a - b' -> 'a − b'"]
+    assert built["customXml/item1.xml"] == store
+
+
+def test_an_equation_LONGER_than_256_characters_is_still_repaired():
+    """The lengths are compared as a belt for a mapping that is not one
+    character for one, and they are ints: CPython keeps a single object
+    only for those up to 256, so an identity test between two equal
+    lengths of a long display equation says they differ, and the repair
+    is declined."""
+    tail = "b" * 300
+    built = _runs("a", "-" + tail)
+
+    restored = restore_math_glyphs(built, _runs("a", "−", tail))
+
+    assert restored == [
+        f"word/document.xml: equation 'a-{tail}' -> 'a−{tail}'"]
+
+
+def test_EVERY_run_of_a_fused_equation_keeps_its_own_characters():
+    """The walk lays the characters back run by run, and the run holding
+    the fused glyph is not the only one it writes: each earlier run gets
+    its own slice back. A slice taken from the wrong place empties those
+    runs while the last still comes out right, which is all the tests
+    above look at."""
+    built = _runs("=", "λ", "1", "+ϱ")
+
+    restore_math_glyphs(built, _runs("=", "λ", "1", "+", "𝜚"))
+
+    assert built == _runs("=", "λ", "1", "+𝜚")

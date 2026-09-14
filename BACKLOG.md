@@ -46,6 +46,30 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S4 — gates run beside a replay fail three `kill_check` tests, which share its one checkout and its lock
+<!-- status: open -->
+
+Measured 2026-09-14. `tools/gates.py` started while
+`verify_equivalents.py _cite_audit.py` was running, and pytest failed:
+
+    FAILED tests/test_kill_check.py::test_a_harness_that_fails_UNMUTATED_is_refused_not_read_as_a_kill
+    FAILED tests/test_kill_check.py::test_the_checkout_holds_TODAYS_tools_scripts
+    FAILED tests/test_kill_check.py::test_the_checkout_holds_TODAYS_subpackage_halves
+    AssertionError: another caller holds D:\docxkit-kc (pid 14720). It is one checkout, ...
+
+with 6610 passed. The three drive `check` in a subprocess against the real
+checkout, `D:\docxkit-kc`, whose lock exists so that two callers cannot
+read each other's mutations, and the lock did its job. The defect is what
+that makes of the gate: the suite is not hermetic, so any replay, claim
+check or `kill_check` script on the machine turns `gates.py` red for a
+change that has nothing to do with it, and the failure names a pid rather
+than anything the change did. CI never meets it, since nothing else runs
+there. Worked around by rerunning the gates after the check ended, which
+is a workaround and not a fix.
+
+Direction: give those three a checkout of their own, or have them skip,
+naming the holder's pid, while another live caller holds the lock.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

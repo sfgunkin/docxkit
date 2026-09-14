@@ -654,3 +654,35 @@ def test_a_LONG_FORM_spacing_keeps_the_attributes_beside_the_one_being_set():
     assert 'w:after="0"' in out, out
     assert 'w:line="240"' in out, out
     assert 'w:lineRule="auto"' in out, out
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+
+
+def test_the_MIDDLE_of_three_tables_is_bounded_by_the_one_after_it():
+    """The walk from a table stops at the NEXT table's start. With two
+    tables, the table before the first and the table after it are one
+    and the same, so only a middle table tells the next from any other."""
+    xml = doc(table("A") + para(run("After A."))
+              + table("B") + para(run("After B."))
+              + table("C") + para(run("After C.")))
+
+    out, report = table_spacing(xml)
+
+    assert sorted(report.spaced) == ["After A.", "After B.", "After C."]
+    for text in ("After A", "After B", "After C"):
+        assert before_of(out, text) == "120", text
+
+
+def test_a_document_of_MORE_THAN_256_TABLES_reaches_its_last_one():
+    """`i + 1 < len(spans)` compares ints, and past 256 CPython builds a
+    new object for each: two equal numbers compared by identity differ,
+    and the last table then looks for a table after it that is not
+    there."""
+    body = "".join(table(f"T{i}") + para(run(f"After {i}."))
+                   for i in range(300))
+
+    out, report = table_spacing(doc(body))
+
+    assert len(report.spaced) == 300
+    assert before_of(out, "After 299") == "120"
