@@ -361,7 +361,7 @@ def _land(sheets: list[str], kids: list[etree._Element],
             lead_at = text.find(lead, cursor) if lead else -1
             if lead_at >= 0 and probe:
                 at = text.find(probe, lead_at)
-        if at < 0:
+        if at < 0:                          # else from the cursor
             at = text.find(probe, cursor) if probe else -1
         if at < 0:
             out.append(Landing(x.name, None, None, mention))

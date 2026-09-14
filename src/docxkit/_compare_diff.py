@@ -74,12 +74,12 @@ def word_diff(a: str, b: str) -> list[str]:
     sm = SequenceMatcher(None, aw, bw, autojunk=False)
     out: list[str] = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
+        if tag == "equal":                  # unchanged words: not an edit
             continue
         o, n = " ".join(aw[i1:i2]), " ".join(bw[j1:j2])
         if tag == "replace":
             out.append(f'"{o}" -> "{n}"')
-        elif tag == "delete":
+        elif tag == "delete":               # words only `a` has
             out.append(f'DEL "{o}"')
         else:
             out.append(f'INS "{n}"')
@@ -384,14 +384,14 @@ def hyperlink_labels(xml: str) -> Counter[str]:
     — shows up here as a changed label even though the prose text still
     matches, which is why this layer exists alongside TEXT.
     """
-    labels: list[str] = []
-    for m in re.finditer(r"<w:hyperlink\b[^>]*>(.*?)</w:hyperlink>", xml,
-                         re.DOTALL):
-        labels.append(html.unescape("".join(WT_RE.findall(m.group(1)))))
-    for m in re.finditer(r'<w:fldChar w:fldCharType="separate"/>\s*</w:r>'
-                         r"(.*?)" + _FIELD_END_RE, xml, re.DOTALL):
-        labels.append(html.unescape("".join(WT_RE.findall(m.group(1)))))
-    return Counter(labels)
+    # The element form, then the field form, and ONE reading of a label
+    # for both: a fix to how a label is read lands on both forms at once.
+    forms = (r"<w:hyperlink\b[^>]*>(.*?)</w:hyperlink>",
+             r'<w:fldChar w:fldCharType="separate"/>\s*</w:r>(.*?)'
+             + _FIELD_END_RE)
+    return Counter(html.unescape("".join(WT_RE.findall(m.group(1))))
+                   for form in forms
+                   for m in re.finditer(form, xml, re.DOTALL))
 
 
 #: Below this, containment is a coincidence rather than a survival: a
@@ -435,7 +435,7 @@ def label_moves(gone: Counter[str],
     out: list[dict[str, Any]] = []
     for new in sorted(gained, key=lambda s: (-len(s), s)):
         if len(new) < _LABEL_KEEP:
-            continue
+            continue                        # longest first: so is the rest
         olds = sorted((o for o in gone
                        if len(o) >= _LABEL_KEEP and o != new
                        and (o in new or new in o)),
@@ -448,7 +448,7 @@ def label_moves(gone: Counter[str],
                 out.append({"side": side, "label": old[:90],
                             "to": new[:90], "n": 1})
             if not gained[new]:
-                break
+                break                       # nothing of it left to pair
     # Counter arithmetic leaves zero counts behind, and `for lab, n in
     # gone.items()` would then print a label nothing lost.
     for counter in (gone, gained):

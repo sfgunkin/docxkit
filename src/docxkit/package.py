@@ -235,8 +235,7 @@ def read_parts(path: str | Path, *, retries: int = 6,
                 return {n: z.read(n) for n in z.namelist()}
         except PermissionError as exc:       # sharing violation, or a lock
             last = exc
-            if attempt < retries - 1:
-                time.sleep(delay * (attempt + 1))
+            _back_off(attempt, retries, delay)
         except (OSError, zipfile.BadZipFile) as exc:
             raise PackageError(f"cannot read {path}: {exc}") from exc
     raise PackageError(
@@ -459,6 +458,17 @@ def write_docx(path: str | Path, parts: Parts,
         raise
 
 
+def _back_off(attempt: int, retries: int, delay: float) -> None:
+    """Wait before the next attempt, longer each time, unless none is left.
+
+    The one bounded schedule both directions ride a sharing violation out
+    on: :func:`read_parts` and :func:`_replace_atomically` each carried a
+    copy of these two lines, and a schedule written twice can drift.
+    """
+    if attempt < retries - 1:
+        time.sleep(delay * (attempt + 1))
+
+
 def _replace_atomically(tmp: Path, target: Path,
                         *, retries: int = 6, delay: float = 0.2) -> None:
     """Rename `tmp` over `target`, riding out transient Windows locks.
@@ -476,9 +486,7 @@ def _replace_atomically(tmp: Path, target: Path,
         except PermissionError as exc:      # sharing violation / read-only
             last = exc
             _clear_readonly(target)
-            if attempt < retries - 1:
-                time.sleep(delay * (attempt + 1))
-                continue
+            _back_off(attempt, retries, delay)
         else:
             return
     assert last is not None

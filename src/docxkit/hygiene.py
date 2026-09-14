@@ -155,8 +155,7 @@ def strip_parts(parts: dict[str, bytes],
     for name in [n for n in parts if _is_rels(n)]:
         xml = parts[name].decode("utf-8")
         fixed = re.sub(r"<Relationship\b[^>]*/>", _unwire, xml)
-        if fixed != xml:
-            parts[name] = fixed.encode("utf-8")
+        _put_back(parts, name, xml, fixed)
     return dropped
 
 
@@ -290,6 +289,21 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
               "footer also needs its reference in the section properties, "
               "and its section has to still be there to take it.")
     return missing
+
+
+def _put_back(parts: dict[str, bytes], name: str, xml: str,
+              fixed: str) -> None:
+    """Store a part's repaired text; leave an untouched part's bytes alone.
+
+    Three chores in this module wrote those two lines out for themselves.
+    """
+    if fixed != xml:
+        parts[name] = fixed.encode("utf-8")
+
+
+def _first_opens(xml: str, tags: tuple[str, ...]) -> list[int]:
+    """Where each of `tags` that `xml` holds first opens."""
+    return [at for tag in tags if (at := xml.find(f"<w:{tag}")) != -1]
 
 
 def _is_rels(name: str) -> bool:
@@ -656,10 +670,8 @@ def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
     # predecessors takes it last, and both are what real settings look
     # like.
     after = max([body[0]] + [xml.index(">", at) + 1
-                             for tag in _BEFORE_TRACK
-                             if (at := xml.find(f"<w:{tag}")) != -1])
-    before = min([body[1]] + [at for tag in _AFTER_TRACK
-                              if (at := xml.find(f"<w:{tag}")) != -1])
+                             for at in _first_opens(xml, _BEFORE_TRACK)])
+    before = min([body[1], *_first_opens(xml, _AFTER_TRACK)])
     # A document whose own children are already out of sequence is not
     # this function's to repair; the follower wins, because inserting
     # after one is the arrangement Word refuses.
@@ -777,9 +789,7 @@ def _drop_comment_anchors(parts: dict[str, bytes], ids: list[str]) -> None:
         rf'<w:commentReference w:id="(?:{which})"/>'
         rf"(?:(?!</w:r>).)*?</w:r>", re.DOTALL)
     for name, xml in text_parts(parts):
-        fixed = reference.sub("", anchor.sub("", xml))
-        if fixed != xml:
-            parts[name] = fixed.encode("utf-8")
+        _put_back(parts, name, xml, reference.sub("", anchor.sub("", xml)))
 
 
 def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],
@@ -1160,8 +1170,7 @@ def smarten_parts(parts: dict[str, bytes]) -> SmartenReport:
         total.unbalanced += [snippet if where == "document"
                              else f"{where}: {snippet}"
                              for snippet in report.unbalanced]
-        if fixed != xml:
-            parts[name] = fixed.encode("utf-8")
+        _put_back(parts, name, xml, fixed)
     return total
 
 

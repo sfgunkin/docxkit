@@ -47,6 +47,7 @@ claims = [
   { was = 'xml_declaration=True, encoding="UTF-8",', line = 'xml_declaration=False, encoding="UTF-8",', why = "`standalone=True` makes lxml write the declaration whatever `xml_declaration` says. Measured 2026-09-13: both spellings produce `<?xml version='1.0' encoding='UTF-8' standalone='yes'?>`." },
   { was = 'if failed >= 2:', line = 'if failed == 2:', why = "`failed` counts up by one from zero, is reset on a success, and the search returns when it reaches two — so it is never above two here." },
   { was = 'rep.moves.sort(key=lambda m: (-m.gain, m.costs_a_sheet, abs(m.drift)))', line = 'rep.moves.sort(key=lambda m: (~m.gain, m.costs_a_sheet, abs(m.drift)))', why = "`~g` is `-g - 1`, a monotone shift of `-g`, so the moves sort in the same order." },
+  { was = 'if at < 0:                          # else from the cursor', line = 'if at <= 0:                          # else from the cursor', why = "Differs only at `at == 0`, which the lead branch above reaches only when `lead_at` is 0, so `cursor` is 0 too and the probe is not empty; the search from the cursor then finds that same first place, 0." },
 ]
 
 ["sections.py"]
@@ -143,6 +144,7 @@ claims = [
   { was = 'for name, n in per_part.items() if name != DOCUMENT]', line = 'for name, n in per_part.items() if name > DOCUMENT]', why = "`per_part` is keyed by `TEXT_PARTS` — the body, footnotes and endnotes — and both notes parts sort above word/document.xml, so `>` names exactly the parts `!=` does." },
   { was = 'for name, n in per_part.items() if name != DOCUMENT]', line = 'for name, n in per_part.items() if name is not DOCUMENT]', why = "`per_part` is keyed by the `TEXT_PARTS` constants themselves, so the body's key is the very `DOCUMENT` object and the others are other objects." },
   { was = 'grouped = per_part.get(DOCUMENT, 0) - body', line = 'grouped = per_part.get(DOCUMENT, -1) - body', why = "The default is used only when the body holds no revision elements, and Word's body count is never negative, so both spellings give a remainder of at most 0, and only a positive one is reported." },
+  { was = 'if len(was) != len(now):            # one is a prefix of the other', line = 'if len(was) is not len(now):            # one is a prefix of the other', why = "In `_first_difference`, reached only when every character the two strings share agrees, so one is a prefix of the other; its one caller passes only equations that differ, so the lengths differ here, and two different ints are never one object: `is not` holds exactly where `!=` does. An argument from the CALLER: two equal strings over 256 characters passed in directly would tell them apart." },
 ]
 
 ["exhibits.py"]
@@ -297,6 +299,8 @@ claims = [
   { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) | 1:] \', why = "`index | 1` starts the slice at `tag` or just after it, and the first is harmless: reached only when `_core_re(tag)` found no element, so `<tag` itself is not in a well-formed `core`, and the search finds the same next element." },
   { was = 'element + "</cp:coreProperties>", 1)', line = 'element + "</cp:coreProperties>", 2)', why = "A well-formed part closes its root once, so replacing the first `</cp:coreProperties>` and replacing up to two are the same edit." },
   { was = 'path.unlink(missing_ok=True)', line = 'path.unlink(missing_ok=False)', why = "For a path already gone `missing_ok=False` raises FileNotFoundError, an OSError, which the `except OSError: pass` around the call swallows, so a missing staging file is ignored either way." },
+  { was = 'if attempt < retries - 1:', line = 'if attempt != retries - 1:', why = "`attempt` runs over `range(retries)`, so it never passes `retries - 1`, and `!=` holds exactly where `<` does. One claim for both directions: `read_parts` and `_replace_atomically` share `_back_off`." },
+  { was = 'if attempt < retries - 1:', line = 'if attempt is not retries - 1:', why = "Both sides are small ints on every call: the default is six retries and the most any caller passes is four, and CPython keeps one object for each int up to 256, so identity agrees with equality. From 258 retries up the last attempt would sleep once more before raising; nothing asks for that many. An argument from the CALLERS." },
 ]
 
 ["_compare_diff.py"]
@@ -327,6 +331,15 @@ claims = [
   { was = 'elif tag == "replace":', line = 'elif tag <= "replace":', why = "Reached only by `replace`, the one opcode left once `equal`, `delete` and `insert` are handled, so any comparison `replace` satisfies picks the same branch." },
   { was = 'elif tag == "replace":', line = 'elif tag >= "replace":', why = "Reached only by `replace`, the one opcode left once `equal`, `delete` and `insert` are handled, so any comparison `replace` satisfies picks the same branch." },
   { was = 'elif tag == "replace":', line = 'elif tag is "replace":', why = "difflib's opcode tags are interned literals, the same objects as the literals here, so identity and equality agree." },
+  { was = 'if tag == "equal":                  # unchanged words: not an edit', line = 'if tag is "equal":                  # unchanged words: not an edit', why = "In `word_diff`: difflib's opcode tags are its own string literals, interned identifiers and so the same objects as the literal here, so identity and equality agree." },
+  { was = 'elif tag == "delete":               # words only `a` has', line = 'elif tag <= "delete":               # words only `a` has', why = "In `word_diff`, reached only by `delete` and `insert` once `equal` has gone on and `replace` is handled, and `insert` sorts after `delete`, so only `delete` compares at or before it." },
+  { was = 'elif tag == "delete":               # words only `a` has', line = 'elif tag is "delete":               # words only `a` has', why = "In `word_diff`: difflib's opcode tags are interned literals, the same objects as the literals here, so identity and equality agree." },
+  { was = 'if tag == "equal":', line = 'if tag is "equal":', why = "In `compare_paras`: difflib's opcode tags are its own string literals, interned identifiers and so the same objects as the literal here. Its twin in `word_diff` carries a comment, which is what makes each of the two one anchor." },
+  { was = 'elif tag == "delete":', line = 'elif tag <= "delete":', why = "In `compare_paras`, reached by `delete`, `insert` and `replace` once `equal` is handled, and the other two both sort after `delete`, so only `delete` compares at or before it." },
+  { was = 'elif tag == "delete":', line = 'elif tag is "delete":', why = "In `compare_paras`: difflib's opcode tags are interned literals, the same objects as the literals here, so identity and equality agree." },
+  { was = 'return Counter(html.unescape("".join(WT_RE.findall(m.group(1))))', line = 'return Counter(html.unescape("".join(WT_RE.findall(m.group( 0))))', why = "Group 0 is the label inside its own markup: the `w:hyperlink` tags for the element form, and for the field form the separator's `fldChar` and run close before it and the end run, its properties and its `fldChar` after. None of that markup opens a `<w:t`, and `WT_RE` cannot match across a tag, so both groups give the same text nodes in both forms." },
+  { was = 'continue                        # longest first: so is the rest', line = 'break                        # longest first: so is the rest', why = "`gained` is walked longest label first, so once one is shorter than `_LABEL_KEEP` every label after it is too, and stopping skips exactly the labels `continue` would. The zero-count clean-up below the loop runs either way." },
+  { was = 'break                       # nothing of it left to pair', line = 'continue                       # nothing of it left to pair', why = "Reached only when `gained[new]` is zero, and nothing in the rest of this walk raises it, so every `old` still to come fails the `while` at once: carrying on pairs nothing that stopping would have." },
 ]
 
 ["pages.py"]
@@ -393,6 +406,9 @@ claims = [
   { was = '''re.sub(r'\s*w:type="[^"]*"', "", stale.group(0), count=1)''', line = '''re.sub(r'\s*w:type="[^"]*"', "", stale.group(0), count= 0)''', why = "`stale` is one reference element, and XML forbids an attribute written twice, so it carries at most one `w:type` and removing the first removes them all." },
   { was = '''re.sub(r'\s*w:type="[^"]*"', "", stale.group(0), count=1)''', line = '''re.sub(r'\s*w:type="[^"]*"', "", stale.group(0), count= 2)''', why = "`stale` is one reference element, and XML forbids an attribute written twice, so it carries at most one `w:type` and removing the first removes them all." },
   { was = 'f"<w:{kind}Reference{was}", 1)', line = 'f"<w:{kind}Reference{was}", 2)', why = "The stale reference's text names its own element once, at its start, so replacing the first `<w:…Reference` and replacing two are the same edit." },
+  { was = 'if fixed != xml:', line = 'if fixed is not xml:', why = "Every caller of `_put_back` decoded `xml` from the part's bytes as strict UTF-8 (`text_parts` in `_drop_comment_anchors` and `smarten_parts`, a plain `decode` in `strip_parts`), so an equal string that is another object encodes back to those very bytes, and writing it changes nothing in `parts`." },
+  { was = 'return [at for tag in tags if (at := xml.find(f"<w:{tag}")) != -1]', line = 'return [at for tag in tags if (at := xml.find(f"<w:{tag}")) > -1]', why = "`str.find` answers -1 or an index, so `> -1` holds exactly where `!= -1` does." },
+  { was = 'return [at for tag in tags if (at := xml.find(f"<w:{tag}")) != -1]', line = 'return [at for tag in tags if (at := xml.find(f"<w:{tag}")) is not -1]', why = "-1 is inside CPython's cached small-int range and `str.find` returns that object for a miss, so identity and equality agree here." },
 ]
 
 # The halves of `revision/` are keyed by their path under src/docxkit, the

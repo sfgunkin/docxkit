@@ -194,7 +194,7 @@ def _first_difference(was: str, now: str) -> str:
         return (f" — differs at char {i}: {a!r} U+{ord(a):04X} "
                 f"({unicodedata.name(a, 'unnamed')}) vs {b!r} "
                 f"U+{ord(b):04X} ({unicodedata.name(b, 'unnamed')})")
-    if len(was) != len(now):
+    if len(was) != len(now):            # one is a prefix of the other
         longer, at = (was, len(now)) if len(was) > len(now) else (now,
                                                                  len(was))
         extra = longer[at]
