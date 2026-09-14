@@ -48,6 +48,51 @@ print("BAD", check({module!r}, {tests!r}, {cases!r}))
 Case = tuple[str, str, str, bool] | tuple[str, str, str, bool, int]
 
 
+def _driven(script: Path) -> subprocess.CompletedProcess[str]:
+    """Run a driver script beside a `kill_check` checkout of its OWN.
+
+    `kill_check` holds one checkout at a time, machine-wide, and a replay
+    or a claim check holds it for as long as it runs. The tests that reach
+    `sync()` used that one, and beside any such run they failed with
+    "another caller holds", which turned `gates.py` red for a change they
+    had nothing to do with (BACKLOG, 2026-09-14). A checkout is a worktree
+    of the live repo, made in half a second, so each test makes one in its
+    own directory, beside its own lock, and removes it after.
+    """
+    root = script.parent / f"{script.parent.name}-kc"
+    try:
+        return subprocess.run([sys.executable, str(script)],
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              cwd=TOOLS.parent, check=False,
+                              env={**os.environ,
+                                   "DOCXKIT_KILL_CHECK_WORKTREE": str(root)})
+    finally:
+        if root.exists():
+            subprocess.run(["git", "worktree", "remove", "--force",
+                            str(root)], cwd=TOOLS.parent, check=False)
+
+
+def test_a_driven_test_does_not_take_the_checkout_a_REPLAY_holds(
+        tmp_path, monkeypatch):
+    """Held here by ANOTHER live process, the parent, and named through
+    the variable a caller sets to choose a checkout. A driven test must
+    not take that one: the three tests that reach `sync()` failed this
+    way beside every replay until each made its own."""
+    held = tmp_path / "held"
+    (tmp_path / "held.lock").write_text(str(os.getppid()), encoding="utf-8")
+    monkeypatch.setenv("DOCXKIT_KILL_CHECK_WORKTREE", str(held))
+    script = tmp_path / "sync.py"
+    script.write_text(_SYNC.format(tools=str(TOOLS)), encoding="utf-8")
+
+    done = _driven(script)
+
+    out = done.stdout + done.stderr
+    assert "another caller holds" not in out, out
+    assert done.returncode == 0, out
+    assert not held.exists(), "the held checkout was not touched"
+
+
 def _run(tmp_path: Path, module: str, tests: list[str],
          cases: list[Case]) -> str:
     """Drive `check` in a subprocess, the way a scratch script does."""
@@ -55,9 +100,7 @@ def _run(tmp_path: Path, module: str, tests: list[str],
     script.write_text(_DRIVER.format(tools=str(TOOLS), module=module,
                                      tests=tests, cases=cases),
                       encoding="utf-8")
-    done = subprocess.run([sys.executable, str(script)],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=TOOLS.parent, check=False)
+    done = _driven(script)
     return done.stdout + done.stderr
 
 
@@ -133,9 +176,7 @@ def test_the_checkout_holds_TODAYS_tools_scripts(tmp_path):
     script = tmp_path / "sync.py"
     script.write_text(_SYNC.format(tools=str(TOOLS)), encoding="utf-8")
 
-    done = subprocess.run([sys.executable, str(script)],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=TOOLS.parent, check=False)
+    done = _driven(script)
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert "STALE" not in done.stdout, done.stdout
@@ -172,9 +213,7 @@ def test_the_checkout_holds_TODAYS_subpackage_halves(tmp_path):
     script = tmp_path / "sync_src.py"
     script.write_text(_SYNC_SRC.format(tools=str(TOOLS)), encoding="utf-8")
 
-    done = subprocess.run([sys.executable, str(script)],
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=TOOLS.parent, check=False)
+    done = _driven(script)
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert "STALE" not in done.stdout, done.stdout

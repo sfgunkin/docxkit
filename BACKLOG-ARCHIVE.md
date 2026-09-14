@@ -14,6 +14,37 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — gates run beside a replay fail three `kill_check` tests, which share its one checkout and its lock~~ — FIXED 14.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-14. `tools/gates.py` started while
+`verify_equivalents.py _cite_audit.py` was running, and pytest failed:
+
+    FAILED tests/test_kill_check.py::test_a_harness_that_fails_UNMUTATED_is_refused_not_read_as_a_kill
+    FAILED tests/test_kill_check.py::test_the_checkout_holds_TODAYS_tools_scripts
+    FAILED tests/test_kill_check.py::test_the_checkout_holds_TODAYS_subpackage_halves
+    AssertionError: another caller holds D:\docxkit-kc (pid 14720). It is one checkout, ...
+
+with 6610 passed. The three drove `check` in a subprocess against the real
+checkout, `D:\docxkit-kc`, whose lock exists so that two callers cannot
+read each other's mutations, and the lock did its job. The defect was what
+that made of the gate: the suite was not hermetic, so any replay, claim
+check or `kill_check` script on the machine turned `gates.py` red for a
+change that had nothing to do with it, and the failure named a pid rather
+than anything the change did. CI never met it, since nothing else runs
+there. Reproduced later the same day beside a replay of
+`revision/_baseline.py` (pid 41832): the same three failed, 15 passed.
+
+**Fixed:** every test in `test_kill_check.py` that drives a script goes
+through `_driven`, which points `DOCXKIT_KILL_CHECK_WORKTREE` at a worktree
+in the test's own directory, beside its own lock, and removes it after. A
+fresh checkout measured 0.5 s to make and 0.2 s to refresh. Test, seen red
+first: with the variable naming a checkout whose lock another live process
+holds, a driven sync is not refused and leaves that checkout untouched.
+The file passes serially and on eight workers, and leaves no worktree
+behind.
+
 ### ~~S2 — `revision baseline` can file its row outside the batch table: under the header of a pipe-less rule, or in a LATER section's table~~ — FIXED 14.09, `a9070e3`
 
 <!-- status: fixed -->
