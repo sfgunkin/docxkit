@@ -603,6 +603,9 @@ def test_a_caption_ABOVE_its_figure_on_a_sheet_without_it_is_found(tmp_path):
     ((_PNG, "media/image2.svg"), False),     # ...and its PNG is a fallback
     ((_PNG, "media/image2.svg", "media/image3.jpeg"), True),  # not this one
     (("media/image2.jpeg", _PNG, "media/image3.svg"), True),  # nor this
+    (("media/image1.emf", _PNG, "media/image3.svg"), False),  # the one BEFORE
+    (("media/image1.emf", "media/image2.emf", _PNG,           # ...however far
+      "media/image4.svg"), False),                            # along it sits
 ])
 def test_only_a_figure_that_draws_a_RASTER_image_is_asked_for_one(
         tmp_path, targets, asked):
@@ -614,6 +617,17 @@ def test_only_a_figure_that_draws_a_RASTER_image_is_asked_for_one(
     found = caption_problems(_figure_parts(targets=targets), rows, texts)
 
     assert found == ([_MOVED] if asked else [])
+
+
+def test_a_caption_is_probed_with_the_SAME_length_placement_uses():
+    """"The probe `placement` reads a table's caption with": the two
+    modules find a caption on a sheet by its opening characters, and a
+    render one module places a caption on is the render the other judges
+    it against. Pinned as the relation the comment states, not as a
+    number."""
+    from docxkit import pages, placement
+
+    assert pages._PROBE == placement._PROBE
 
 
 def test_a_LIST_OF_FIGURES_before_the_caption_is_not_the_caption(tmp_path):
@@ -1147,3 +1161,117 @@ def test_two_words_FAR_apart_are_two_lines_and_the_lower_one_answers(
     (row,) = read_pdf(pdf)
 
     assert row.printed == 7, "the footer is the LAST line on the sheet"
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+#
+# The sweep of `pages.py` left 48 real survivors. Every caption above
+# opens on sheet 3, index 2 counted from 0, where `+ 1` and `| 1` agree;
+# every figure document holds one figure; every expected count was larger
+# than the render; and no render ran past 256 sheets.
+
+
+def test_a_sheet_built_WITHOUT_an_image_count_draws_none(tmp_path):
+    """`images` defaults to 0, and a Sheet built by hand, as this file
+    builds them for `problems`, is a sheet that draws no image. A raster
+    caption on it has lost its figure."""
+    from docxkit.pages import caption_problems
+
+    _, texts = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0),
+                          (_CAPTION_LINES, 1))
+    rows = [Sheet(n, "landscape", n, False) for n in (1, 2, 3)]
+
+    assert caption_problems(_figure_parts(), rows, texts) == [_MOVED]
+
+
+@pytest.mark.parametrize(("sheets", "found"), [
+    (((_PROSE, 0),) * 3 + ((_CAPTION_LINES[:3], 1),
+                           (_CAPTION_LINES[3:], 0)),
+     "Figure 2's caption is SPLIT: it opens on sheet 4 and ends on sheet 5"),
+    (((_PROSE, 0),) * 2 + (((), 1), (_CAPTION_LINES, 0)),
+     "Figure 2's caption is on sheet 4, which draws no image: its figure is "
+     "on another sheet"),
+], ids=["split from sheet 4", "moved to sheet 4"])
+def test_a_caption_on_an_ODD_sheet_index_is_named_and_followed(
+        tmp_path, sheets, found):
+    """Sheet 4 is index 3 counted from 0, odd, where `first + 1` and
+    `first | 1` part company. Every caption above opened on sheet 3, so
+    the sheet a finding names, and the sheet a split caption is followed
+    onto, could have been either."""
+    from docxkit.pages import caption_problems
+
+    rows, texts = _captioned(tmp_path, *sheets)
+
+    assert caption_problems(_figure_parts(), rows, texts) == [found]
+
+
+def test_a_caption_on_the_LAST_of_300_sheets_is_not_followed_past_it():
+    """Whether a sheet follows the caption's is a comparison of two ints,
+    and past 256 CPython builds a new object for each, so two equal counts
+    compared by identity differ and the walk reads a sheet after the last.
+    The texts stand in for a render of three hundred sheets, which is all
+    `_placed_captions` reads of one."""
+    from docxkit.pages import _placed_captions
+
+    texts = [_PROSE[0]] * 299 + [" ".join(_CAPTION_LINES)]
+    parts = _figure_parts()
+
+    placed = _placed_captions(
+        parts["word/document.xml"].decode("utf-8"),
+        parts["word/_rels/document.xml.rels"].decode("utf-8"), texts)
+
+    assert placed == [("Figure 2", 299, 299, True)]
+
+
+@pytest.mark.parametrize("past", [0, 1])
+def test_rows_SHORTER_than_the_texts_are_not_read_past_their_end(tmp_path,
+                                                                  past):
+    """`rows` and `texts` are two readings of one render, and a caller can
+    hand over two renders by mistake. A caption placed at or past the last
+    row is not asked for its image rather than raising IndexError; a
+    render of the wrong length is `problems`' count check to report."""
+    from docxkit.pages import caption_problems
+
+    rows, _ = _captioned(tmp_path, (_PROSE, 0), (_PROSE, 0), (_PROSE, 0))
+    texts = [_PROSE[0]] * (3 + past) + [" ".join(_CAPTION_LINES)]
+
+    assert caption_problems(_figure_parts(), rows, texts) == []
+
+
+def test_a_figure_the_render_does_NOT_show_does_not_end_the_walk(tmp_path):
+    """A caption the render does not show is skipped, and a document holds
+    more than one figure, so the figure after it is still followed. Every
+    document above held a single figure."""
+    from docxkit.pages import caption_problems
+
+    hidden = _figure_parts(caption="Figure 1. A figure the render leaves out.")
+    shown = _figure_parts()
+    body = "<w:document><w:body>"
+    doc = (hidden["word/document.xml"].decode("utf-8")
+           .removesuffix("</w:body></w:document>")
+           + shown["word/document.xml"].decode("utf-8").removeprefix(body))
+    parts = {"word/document.xml": doc.encode("utf-8"),
+             "word/_rels/document.xml.rels":
+             shown["word/_rels/document.xml.rels"]}
+    rows, texts = _captioned(tmp_path, (_PROSE, 0), ((), 1),
+                             (_CAPTION_LINES, 0))
+
+    assert caption_problems(parts, rows, texts) == [_MOVED]
+
+
+def test_a_render_SHORTER_than_expected_is_reported_too():
+    """The count case above has more sheets than expected. A render that
+    lost sheets is the same defect the other way round."""
+    rows = [Sheet(n, "portrait", n, False) for n in (1, 2, 3, 4, 5)]
+
+    assert problems(rows, expect_sheets=7) == [
+        "the render has 5 sheet(s), not the 7 expected"]
+
+
+def test_a_render_of_300_sheets_that_MATCHES_the_count_is_not_reported():
+    """Past 256 CPython builds a new object for each int, so a count of
+    300 compared by identity with an expected 300 reads as the wrong
+    length."""
+    rows = [Sheet(n, "portrait", n, False) for n in range(1, 301)]
+
+    assert problems(rows, expect_sheets=300) == []
