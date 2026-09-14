@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — `revision baseline` can file its row outside the batch table: under the header of a pipe-less rule, or in a LATER section's table~~ — FIXED 14.09
+### ~~S2 — `revision baseline` can file its row outside the batch table: under the header of a pipe-less rule, or in a LATER section's table~~ — FIXED 14.09, `a9070e3`
 
 <!-- status: fixed -->
 
