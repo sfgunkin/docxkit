@@ -83,6 +83,19 @@ def spans(xml: str, **kw: object) -> dict[str, list[str]]:
 
 # ------------------------------------------------ which side the body is on
 
+def test_a_figure_set_with_its_caption_in_ONE_CELL_is_its_own_body():
+    """A one-cell table holding the caption and the picture under it is the
+    figure, as a caption paragraph holding its picture is. Read as a frame,
+    it looked beside itself for a body, found none, and the figure had no
+    body to move (mutation sweep, 2026-09-14)."""
+    framed = ("<w:tbl><w:tr><w:tc>" + P("Figure 1. Map") + IMG
+              + "</w:tc></w:tr></w:tbl>")
+
+    (x,) = ex.exhibits(body(P("Figure 1 shows it.") + framed + P("After.")))
+
+    assert (x.kind, x.start, x.stop, x.body_at) == ("figure", 1, 2, 1)
+
+
 def test_a_table_captioned_ABOVE_owns_the_table_below():
     found = spans(P("Prose.") + P("Table 1. Rates") + TBL("a", "b")
                   + P("More."))

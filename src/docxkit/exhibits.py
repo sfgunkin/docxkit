@@ -370,7 +370,10 @@ def exhibits(body: etree._Element, *,
         assert m is not None
         if kinds[i] == _BOX:
             kind_of[i], preset[i] = "box", i
-        elif kinds[i] == _CAPTION and _has_picture(kids[i]):
+        # a frame holding its picture is the figure, as a caption paragraph
+        # holding one is: read as a frame, it found no body beside it
+        # (mutation sweep, 2026-09-14)
+        elif kinds[i] in (_CAPTION, _FRAME) and _has_picture(kids[i]):
             kind_of[i], preset[i] = "figure", i
         else:
             kind_of[i] = "table" if m.group(1) in TABLE_LABELS else "figure"

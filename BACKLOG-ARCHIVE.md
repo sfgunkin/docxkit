@@ -14,6 +14,33 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — a figure set with its caption in ONE table cell reads as a caption with no body~~ — FIXED 14.09
+
+<!-- status: fixed -->
+
+Found by the mutation sweep of `exhibits.py`: `kinds[i] == _CAPTION` in
+`exhibits`, mutated to `>=`, survived every test, and `>=` there lets a
+FRAME through as well. Measured 2026-09-14 on two figures, each after its
+mention:
+
+    a one-cell table holding "Figure 1. Map" and its picture   body_at=None
+    a caption paragraph holding its picture                     body_at=1
+
+`_classify_table` calls a one-cell table whose only words are the caption
+a FRAME, and a frame owns a body like a paragraph does, so `exhibits`
+looked beside it for one. The picture was inside, not beside, and none was
+found: the figure had no body, `repack` could not move it (`_move_span`:
+"has no table or image of its own"), and a check for captions with no body
+would report a numbering defect that is not there. A caption paragraph
+holding its picture was already its own body. Found on a constructed body;
+the corpus was not searched for the layout.
+
+**Fixed:** a frame that holds a picture is preset as the figure, as a
+caption paragraph holding one is. Test in `test_exhibits.py`, seen red
+first: the one-cell figure spans itself, with its body at its own index.
+`kill_check` applied the two mutants of the new line, `not in` and `or`,
+and the suite kills both.
+
 ### ~~S3 — a mutant that ALLOCATES without bound takes the machine down inside its deadline, and the host ends the sweep~~ — FIXED 13.09, `82e3007`
 
 <!-- status: fixed -->
