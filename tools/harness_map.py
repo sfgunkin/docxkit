@@ -87,6 +87,7 @@ HARNESS: dict[str, list[str]] = {
                                "tests/test_revision_status.py",
                                "tests/test_cli_revision.py",
                                "tests/test_workflow_states.py",
+                               "tests/test_rescue_pruning.py",
                                "tests/test_value_types.py"]
        for half in ("_common", "_config", "_ledger", "_losses", "_state",
                     "_verdict", "_timing", "_baseline", "_build", "_doctor",
@@ -112,6 +113,7 @@ HARNESS: dict[str, list[str]] = {
                   "tests/test_value_types.py"],
     "tracked.py": ["tests/test_tracked_build.py",
                    "tests/test_tracked_gates.py",
+                   "tests/test_tracked_edges.py",
                    "tests/test_tracked_guard.py",
                    "tests/test_cli_revision.py", "tests/test_parts_gaps.py",
                    "tests/test_value_types.py"],
@@ -121,6 +123,7 @@ HARNESS: dict[str, list[str]] = {
     # reach which half.
     **{f"{half}.py": ["tests/test_tracked_build.py",
                       "tests/test_tracked_gates.py",
+                      "tests/test_tracked_edges.py",
                       "tests/test_tracked_guard.py",
                       "tests/test_cli_revision.py",
                       "tests/test_parts_gaps.py",
@@ -204,7 +207,8 @@ HARNESS: dict[str, list[str]] = {
                   "tests/test_cli_guards.py",
                   "tests/test_revision.py",
                   "tests/test_cli_revision.py"],
-    "exhibits.py": ["tests/test_exhibits.py", "tests/test_placement.py"],
+    "exhibits.py": ["tests/test_exhibits.py", "tests/test_exhibits_edges.py",
+                    "tests/test_placement.py"],
     "export.py": ["tests/test_export_md.py"],
     "figures.py": ["tests/test_figures.py", "tests/test_alt_text.py",
                    "tests/test_value_types.py"],

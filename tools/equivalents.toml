@@ -121,6 +121,79 @@ claims = [
   { was = '''where = f"{name.split('/')[-1]} {text.strip()[:40]!r}"''', line = '''where = f"{name.split('/')[1]} {text.strip()[:40]!r}"''', why = "Index 1 is the last of word/ and a file name, as the `[+1]` claim says." },
 ]
 
+["_tracked_gates.py"]
+claims = [
+  { was = 'longer, at = (was, len(now)) if len(was) > len(now) else (now,', line = 'longer, at = (was, len(now)) if len(was) >= len(now) else (now,', why = "This line runs only inside `if len(was) != len(now)`, and for lengths that differ `>=` holds exactly where `>` does." },
+  { was = 'for i, (w, n) in enumerate(zip(was, now, strict=True), 1)', line = 'for i, (w, n) in enumerate(zip(was, now, strict=False), 1)', why = "The line above has already returned unless the two lists are the same length, so `strict` has nothing left to catch." },
+  { was = 'if tag == "equal":', line = 'if tag is "equal":', why = "difflib writes its opcode tags as string literals, which CPython interns, so a tag equal to equal is that very object." },
+  { was = 'if len(out) >= limit:', line = 'if len(out) == limit:', why = "`out` grows by one entry and the check follows every append, so it meets any limit of 1 or more exactly; every caller leaves `limit` at its default of 8." },
+  { was = 'if len(out) >= limit:', line = 'if len(out) is limit:', why = "Every caller leaves `limit` at 8, a small int CPython keeps as one object, and `out` meets it exactly, as the `==` claim says." },
+  { was = 'for name, n in per_part.items() if name != DOCUMENT]', line = 'for name, n in per_part.items() if name > DOCUMENT]', why = "`per_part` is keyed by `TEXT_PARTS` — the body, footnotes and endnotes — and both notes parts sort above word/document.xml, so `>` names exactly the parts `!=` does." },
+  { was = 'for name, n in per_part.items() if name != DOCUMENT]', line = 'for name, n in per_part.items() if name is not DOCUMENT]', why = "`per_part` is keyed by the `TEXT_PARTS` constants themselves, so the body's key is the very `DOCUMENT` object and the others are other objects." },
+  { was = 'grouped = per_part.get(DOCUMENT, 0) - body', line = 'grouped = per_part.get(DOCUMENT, -1) - body', why = "The default is used only when the body holds no revision elements, and Word's body count is never negative, so both spellings give a remainder of at most 0, and only a positive one is reported." },
+]
+
+["exhibits.py"]
+claims = [
+  { was = 'return (_FRAME if len(cells) == 1 and len(texts) == 1 else _BOX), m', line = 'return (_FRAME if len(cells) <= 1 and len(texts) == 1 else _BOX), m', why = "The caption matched the first cell's text, so there is at least one cell, and `<= 1` holds for exactly the count `== 1` holds for." },
+  { was = 'return (_FRAME if len(cells) == 1 and len(texts) == 1 else _BOX), m', line = 'return (_FRAME if len(cells) == 1 and len(texts) <= 1 else _BOX), m', why = "The first cell's text matched a caption, so at least one paragraph holds words, and `<= 1` holds for exactly the count `== 1` holds for." },
+  { was = 'if kind == "table":', line = 'if kind >= "table":', why = "`kind` is table, figure or box, and figure and box both sort below table, so `>=` holds for table alone." },
+  { was = 'if kind == "table":', line = 'if kind is "table":', why = "`kind` is always a literal `exhibits` wrote into `kind_of` in this module, and CPython interns identifier-like literals, so a table kind is the very object compared." },
+  { was = 'return el.tag == W + "tbl"', line = 'return el.tag >= W + "tbl"', why = "Only BODY elements reach `_fits`, and a body is a `w:tbl` or a `w:p`; `w:p` sorts below `w:tbl`, so `>=` holds for the table alone." },
+  { was = 'return el.tag == W + "p" or _has_picture(el)', line = 'return el.tag <= W + "p" or _has_picture(el)', why = "Only BODY elements reach `_fits`: a paragraph passes either way, and for a table `<=` is false as `==` is, which leaves `_has_picture` to decide." },
+  { was = 'return el.tag == W + "p" or _has_picture(el)', line = 'return el.tag is W + "p" or _has_picture(el)', why = "Identity is false even for a paragraph, but every paragraph that is a BODY holds a picture, so `_has_picture` passes it, and a table is left to `_has_picture` as before." },
+  { was = 'while 0 <= j < len(kids):', line = 'while 0 <= j != len(kids):', why = "`j` starts beside the caption and moves by one, so going down it meets len(kids) exactly and `!=` stops where `<` does; going up the `0 <=` test stops it." },
+  { was = 'if cat == _BODY and _fits(kids[j], kind):', line = 'if cat is _BODY and _fits(kids[j], kind):', why = "`kinds` holds this module's own category constants, so a category equal to `_BODY` is that very object." },
+  { was = 'assigned[i], moved = free[0], True', line = 'assigned[i], moved = free[ -1], True', why = "Reached only when `free` has exactly one entry, which is both its first and its last." },
+  { was = 'taken.add(free[0])', line = 'taken.add(free[ -1])', why = "Reached only when `free` has exactly one entry, which is both its first and its last." },
+  { was = 'if b is not None and b != i:', line = 'if b is not None and b is not i:', why = "`b` is a candidate found by scanning away from caption `i`, never `i` itself, so `b != i` is always true, and so is `b is not i`." },
+  { was = 'above[kinds_of[i]] = above.get(kinds_of[i], 0) + (1 if b < i', line = 'above[kinds_of[i]] = above.get(kinds_of[i], 0) + (1 if b <= i', why = "`b` is never the caption's own index, as the `is not` claim says, so `<=` and `<` agree." },
+  { was = 'pick = free[-1] if above.get(kinds_of[i], 0) > 0 else free[0]', line = 'pick = free[+1] if above.get(kinds_of[i], 0) > 0 else free[0]', why = "A caption left to the majority has both candidates free: propagation ended with none holding one, and every pick above takes a body above its own caption, which no later caption can reach. With two, index 1 is the last." },
+  { was = 'pick = free[-1] if above.get(kinds_of[i], 0) > 0 else free[0]', line = 'pick = free[1] if above.get(kinds_of[i], 0) > 0 else free[0]', why = "Two free candidates, so index 1 is the last, as the `[+1]` claim argues." },
+  { was = 'while k > 0 and kinds[k - 1] == _MARKER:', line = 'while k != 0 and kinds[k - 1] == _MARKER:', why = "`k` starts at a caption or body index, never below 0, and steps down by one, so it meets 0 exactly and `!= 0` stops where `> 0` does." },
+  { was = 'while k < start and kids[k].tag in _END_TAGS:', line = 'while k <= start and kids[k].tag in _END_TAGS:', why = "At `k == start` the element is the caption or its body, a paragraph or a table and never an end marker, so the loop stops there either way." },
+  { was = 'while j < len(kids):', line = 'while j != len(kids):', why = "`j` starts just past the body, at most len(kids), and steps up by one, so it meets len(kids) exactly and `!=` stops where `<` does." },
+  { was = 'elif cat == _BODY:', line = 'elif cat <= _BODY:', why = "No other category sorts at or below body: box, break, caption and every other name sorts above it, so `<=` holds for body alone." },
+  { was = 'elif cat == _BODY:', line = 'elif cat is _BODY:', why = "`kinds` holds this module's own category constants, so a category equal to `_BODY` is that very object." },
+  { was = 'if kinds[at] != _MARKER or el.tag not in _END_TAGS or bid is None:', line = 'if kinds[at] < _MARKER or el.tag not in _END_TAGS or bid is None:', why = "An end marker is always classified a marker: where the tag test fails the element is refused by it either way, and where it passes the first test is false under both spellings." },
+  { was = 'if kinds[i] == _BOX:', line = 'if kinds[i] <= _BOX:', why = "A head is a caption, a frame or a box, and caption and frame both sort above box, so `<=` holds for the box alone." },
+  { was = 'stop = min(walked, spans[n + 1][0]) if n + 1 < len(spans) else walked', line = 'stop = min(walked, spans[n + 1][0]) if n + 1 != len(spans) else walked', why = "`n` runs over the indices of `spans`, so `n + 1` is at most len(spans), and `!=` is `<`." },
+  { was = 'caption=text_of(kids[i]).strip() if kinds[i] != _BOX', line = 'caption=text_of(kids[i]).strip() if kinds[i] > _BOX', why = "A head is a caption, a frame or a box, and caption and frame both sort above box, so `>` is `!=` here." },
+]
+
+["revision/_doctor.py"]
+claims = [
+  { was = 'if len(candidate.parts) == 1 or target.match(', line = 'if len(candidate.parts) < 1 or target.match(', why = "A path has at least one part, so `< 1` is never true, and a bare name is decided the same way by the tail test beside it: matching the target against a name the line above has already found equal." },
+  { was = 'if len(candidate.parts) == 1 or target.match(', line = 'if len(candidate.parts) <= 1 or target.match(', why = "A path has at least one part, so `<= 1` holds for exactly the paths `== 1` holds for." },
+  { was = 'if len(candidate.parts) == 1 or target.match(', line = 'if len(candidate.parts) == 0 or target.match(', why = "A path is never empty, so this is never true, and the tail test decides a bare name alone, as the `< 1` claim argues." },
+  { was = 'close = difflib.get_close_matches(key, sorted(known), n=1,', line = 'close = difflib.get_close_matches(key, sorted(known), n= 2,', why = "Only `close[0]` is ever read, and `get_close_matches` puts its best match first whatever `n` allows after it." },
+  { was = 'f"[{section}] {key} — {close[0]}?", "key"))', line = 'f"[{section}] {key} — {close[ -1]}?", "key"))', why = "With `n=1` there is at most one match, so the first is also the last." },
+  { was = 'return sorted(out, key=lambda d: (d.kind != "key", d.kind != "pattern",', line = 'return sorted(out, key=lambda d: (d.kind != "key", d.kind < "pattern",', why = "Of key, literal and pattern, the two kinds that sort below pattern are exactly the two that are not pattern, so `<` orders them as `!=` does." },
+  { was = 'return sorted(out, key=lambda d: (d.kind != "key", d.kind != "pattern",', line = 'return sorted(out, key=lambda d: (d.kind != "key", d.kind is not "pattern",', why = "Every kind is one of this module's own literals, which CPython interns, so identity agrees with equality." },
+  { was = 'return sorted(out, key=lambda d: (d.kind != "key", d.kind != "pattern",', line = 'return sorted(out, key=lambda d: (d.kind > "key", d.kind != "pattern",', why = "Of key, literal and pattern, the two kinds that sort above key are exactly the two that are not key, so `>` orders them as `!=` does." },
+  { was = 'return sorted(out, key=lambda d: (d.kind != "key", d.kind != "pattern",', line = 'return sorted(out, key=lambda d: (d.kind is not "key", d.kind != "pattern",', why = "Every kind is one of this module's own literals, which CPython interns, so identity agrees with equality." },
+]
+
+["revision/_ingest.py"]
+claims = [
+  { was = 'from_snapshot: bool = False', line = 'from_snapshot: bool = True', why = "The default is never read: `ingest`, the one place an IngestReport is built, passes `from_snapshot` every time." },
+]
+
+["revision/_promote.py"]
+claims = [
+  { was = 'limit = max(0, limit)', line = 'limit = max( -1, limit)', why = "A limit of -1 only raises the surplus by one, and any surplus at or above the number of stamped copies slices all of them, as a limit of 0 already does." },
+  { was = 'redline.unlink(missing_ok=True)', line = 'redline.unlink(missing_ok=False)', why = "The redline was written by `shutil.copy2` just above, and only a copy that landed has a hash to compare, so the file is there to unlink." },
+  { was = 'paper.redline_dir.mkdir(parents=True, exist_ok=True)', line = 'paper.redline_dir.mkdir(parents=False, exist_ok=True)', why = "The redline folder's parent is `build_dir`, which the rescue folder's own `mkdir(parents=True)` a few lines above has already made." },
+]
+
+["revision/_init.py"]
+claims = [
+  { was = 'comment = f"  {tail[cut:].strip()}" if cut != -1 else ""', line = 'comment = f"  {tail[cut:].strip()}" if cut > -1 else ""', why = "`str.find` answers -1 or an index from 0 up, so `> -1` holds for exactly the answers `!= -1` holds for." },
+  { was = 'comment = f"  {tail[cut:].strip()}" if cut != -1 else ""', line = 'comment = f"  {tail[cut:].strip()}" if cut is not -1 else ""', why = "`str.find` answers -1 or an index, and CPython keeps one object for each small int, so identity agrees with equality." },
+  { was = 'if ch == quote:', line = 'if ch is quote:', why = "Both are one character from the same line, and CPython keeps one object per one-character string below U+0100, which every quote character is." },
+  { was = 'return 0', line = 'return 1', why = "Returned only for a value no quote closes, and a key's value takes at least one character after `=` in a line TOML accepts, so a comment's `#` is never at index 0 and a search from 1 finds it too." },
+]
+
 ["refstyle.py"]
 claims = [
   { was = 'or low.count("-") >= 3)', line = 'or low.count("-") >= 2)', why = 'Two hyphens is not a boundary anything crosses here. A page range carries one, and every token in these papers with two that the range pattern reaches is already an identifier by one of the other three tests — a DOI, a URL, or a string starting 10. Its neighbours ARE killed: an ISBN-10 has exactly three, and both > 3 and >= 4 convert the hyphens inside it into en-dashes.' },

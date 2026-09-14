@@ -309,3 +309,52 @@ def test_a_file_in_a_SKIPPED_directory_does_not_end_the_walk(paper):
     found = doctor(paper)
 
     assert [d.path.as_posix() for d in found] == ["scripts/build.py"]
+
+
+# --- the survey's own survivors (2026-09-14) ---------------------------
+
+
+def test_a_GLOB_that_selects_the_BASELINE_is_not_a_doubt(paper):
+    """`continue` on the glob branch as well: a pattern that misses
+    working.docx has still to be tried against prev.docx before it is
+    reported."""
+    _write(paper, "scripts/check.py",
+           'BASE = next(root.glob("*prev.docx"))\n')
+
+    assert doctor(paper) == []
+
+
+def test_a_file_the_survey_does_not_READ_is_not_reported(paper):
+    """Only source that can select a manuscript is read: a Markdown note
+    that names an old generation selects nothing."""
+    _write(paper, "notes/history.md",
+           'Was "Report/afi_v11.docx" until v12.\n')
+
+    assert doctor(paper) == []
+
+
+def test_a_file_that_cannot_be_DECODED_does_not_end_the_survey(paper):
+    """A stray binary with a source suffix sorts where it sorts. The walk
+    goes past it, or everything after it goes unread and the report says
+    nothing — which reads exactly like a clean project."""
+    (paper.root / "a_blob.py").write_bytes(b"\xff\xfe\x00 not utf-8")
+    _write(paper, "scripts/build.py", 'P = "Report/afi_v11.docx"\n')
+
+    assert [d.path.as_posix() for d in doctor(paper)] == ["scripts/build.py"]
+
+
+def test_the_declared_name_FIRST_on_a_line_does_not_hide_a_stale_one(paper):
+    _write(paper, "scripts/both.py",
+           'PAPERS = ["Report/afi_v14.docx", "Report/afi_v11.docx"]\n')
+
+    assert [d.text for d in doctor(paper)] == ["Report/afi_v11.docx"]
+
+
+def test_a_KEY_doubt_leads_even_where_a_literals_PATH_sorts_first(paper):
+    """The kind decides before the path does. `a_first.py` sorts above
+    `revision/paper.toml`, and the typo still comes first — where the test
+    above had its paths in the same order as its kinds."""
+    _reconfigure(paper, 'language = "en"', 'langauge = "en"')
+    _write(paper, "a_first.py", 'P = "Report/afi_v11.docx"\n')
+
+    assert [d.kind for d in doctor(paper)] == ["key", "literal"]

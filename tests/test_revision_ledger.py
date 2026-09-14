@@ -181,3 +181,30 @@ def test_the_lines_are_json_one_per_line(tmp_path):
     assert text.count("\n") == 2
     for line in text.splitlines():
         assert json.loads(line)["event"] in ("built", "promoted")
+
+
+def test_a_fact_in_ANOTHER_script_is_written_as_it_reads(tmp_path):
+    """The papers are Russian as often as English. A note in Cyrillic is
+    written as itself, where escaped it would be a line of numbers nobody
+    reading the file can check against the log (mutation sweep,
+    2026-09-14)."""
+    paper = _paper(tmp_path)
+
+    _ledger.record(paper, _ledger.BUILT, note="Примечание")
+
+    text = _ledger.ledger_path(paper).read_text(encoding="utf-8")
+    assert "Примечание" in text
+
+
+def test_a_record_under_a_build_folder_NOT_MADE_yet_makes_it(tmp_path):
+    """`build_dir` is the baseline's folder, and a ledger line may be the
+    first thing ever written there, parents and all."""
+    import dataclasses
+
+    paper = dataclasses.replace(_paper(tmp_path),
+                                build_dir=tmp_path / "later" / "build")
+
+    path = _ledger.record(paper, _ledger.BUILT)
+
+    assert path == tmp_path / "later" / "build" / "ledger.jsonl"
+    assert path.is_file()

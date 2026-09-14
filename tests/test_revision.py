@@ -126,6 +126,103 @@ def test_init_adopts_the_manuscript_IN_PLACE(tmp_path):
     assert f"`{full[:8]}`" in log, log
 
 
+# --- init and its config writer: the sweep's survivors (2026-09-14) -----
+
+
+def test_set_key_rewrites_a_value_that_merely_CONTAINS_a_bracket():
+    """Only a value that opens more brackets than it closes spans lines; a
+    name with a closing bracket in it is a scalar like any other."""
+    text = '[paper]\nname = "Draft v2]"\n'
+
+    assert revision._set_key(text, "paper", "name", '"Final"') == (
+        '[paper]\nname = "Final"\n')
+
+
+def test_set_key_appends_a_missing_section_after_exactly_ONE_blank_line():
+    for body in ('[paper]\nname = "x"\n', '[paper]\nname = "x"\n\n',
+                 '[paper]\nname = "x"'):
+        assert revision._set_key(body, "attic", "path", '"D:/a"') == (
+            '[paper]\nname = "x"\n\n[attic]\npath = "D:/a"\n'), repr(body)
+
+
+def test_set_key_keeps_the_COMMENT_after_an_unquoted_value():
+    text = "[batch]\nrescue_keep = 5  # newest first\n"
+
+    assert revision._set_key(text, "batch", "rescue_keep", "7") == (
+        "[batch]\nrescue_keep = 7  # newest first\n")
+
+
+def test_init_naming_the_manuscripts_OWN_path_copies_nothing_even_forced(
+        tmp_path):
+    """Copying a file onto itself raises rather than doing nothing, which is
+    why `init` compares the two paths by value before it copies."""
+    (tmp_path / "proj").mkdir()
+    src = Path(write(tmp_path / "proj" / "manuscript.docx",
+                     make_parts(para(run("The paper.")))))
+
+    paper = revision.init(tmp_path / "proj", src, working="manuscript.docx",
+                          force=True)
+
+    assert paper.working.resolve() == src.resolve()
+
+
+def test_init_copies_to_a_working_path_in_a_NEW_folder_that_sorts_first(
+        tmp_path):
+    """`working=` names where the copy goes, folders and all — here a path
+    that sorts before the source's, which an ordering test would take for
+    the source itself."""
+    (tmp_path / "proj").mkdir()
+    src = Path(write(tmp_path / "proj" / "manuscript.docx",
+                     make_parts(para(run("The paper.")))))
+
+    paper = revision.init(tmp_path / "proj", src, working="a/new/copy.docx")
+
+    assert paper.working.read_bytes() == src.read_bytes()
+
+
+def test_a_FORCED_init_writes_an_attic_it_is_given_and_none_it_is_not(
+        tmp_path):
+    from docxkit.revision._init import _toml_str
+
+    (tmp_path / "proj").mkdir()
+    src = Path(write(tmp_path / "proj" / "manuscript.docx",
+                     make_parts(para(run("The paper.")))))
+    config = revision.init(tmp_path / "proj", src).config
+
+    revision.init(tmp_path / "proj", src, force=True)
+    assert "None" not in config.read_text(encoding="utf-8")
+
+    attic = tmp_path / "attic"
+    revision.init(tmp_path / "proj", src, force=True, attic=attic)
+    assert f"path = {_toml_str(str(attic))}" in config.read_text(
+        encoding="utf-8")
+
+
+def test_the_log_NAMES_the_paper_and_pads_its_path_column_to_26(tmp_path):
+    """A given name, not the folder's, and the folder's when none is given;
+    the path column filled to 26 characters, and one space at the least
+    after a path longer than that."""
+    heads = []
+    for folder, rel, name in (("short_root", "working.docx", "Short Paper"),
+                              ("long", "manuscripts/the_long_manuscript.docx",
+                               "")):
+        source = tmp_path / folder / rel
+        source.parent.mkdir(parents=True)
+        write(source, make_parts(para(run("The paper."))))
+        paper = revision.init(tmp_path / folder, source, name=name)
+        log = (paper.root / "revision" / "log.md").read_text(
+            encoding="utf-8").splitlines()
+        heads += [log[0], next(ln for ln in log if "THE paper" in ln)]
+
+    assert heads == [
+        "# Short Paper — revision log",
+        "    working.docx" + " " * 14
+        + "THE paper — your file, your name, edited in place",
+        "# long — revision log",
+        "    manuscripts/the_long_manuscript.docx "
+        "THE paper — your file, your name, edited in place"]
+
+
 def test_init_refuses_to_overwrite_a_live_configuration(project):
     with pytest.raises(ProtocolError):
         revision.init(project.root, project.working)
@@ -516,6 +613,29 @@ def test_ingest_flags_a_style_level_edit(project):
 
     report = revision.ingest(project.working, project.prev)
     assert report.style_edit
+
+
+def test_a_STYLE_only_edit_is_not_untouched_and_a_TEXT_edit_no_style_edit(
+        project):
+    """`untouched` wants no content change AND no changed part, and a
+    styles.xml edit is the second without the first. `style_edit` is a
+    property: as a plain method it would read true of every report
+    (mutation sweep, 2026-09-14)."""
+    parts = make_parts(para(run("The paper as it stands.")))
+    parts["word/styles.xml"] = b"<w:styles><w:style w:styleId='A'/></w:styles>"
+    write(project.prev, parts)
+    restyled = dict(parts)
+    restyled["word/styles.xml"] = (
+        b"<w:styles><w:style w:styleId='B'/></w:styles>")
+    write(project.working, restyled)
+
+    assert not revision.ingest(project.working, project.prev).untouched
+
+    write(project.prev, make_parts(para(run("The paper as it stands."))))
+    write(project.working, make_parts(
+        para(run("The paper as the author now wants it."))))
+
+    assert not revision.ingest(project.working, project.prev).style_edit
 
 
 def test_ingest_does_not_cry_wolf_over_save_noise(project):

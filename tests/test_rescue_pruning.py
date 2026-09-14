@@ -141,6 +141,83 @@ def test_the_hand_named_copies_still_COUNT_toward_keep(tmp_path):
     assert gone == [], "five copies, keeping five"
 
 
+# ------------------------------- the sweep's survivors (2026-09-14)
+
+
+def test_a_taken_rescue_name_moves_ONE_microsecond_and_gives_up_after_1000(
+        tmp_path):
+    """The next free stamp is the smallest step away, and a thousand taken
+    in a row is a refusal rather than a walk that never ends — with 999
+    taken, the thousandth is still found."""
+    from datetime import timedelta
+
+    import pytest
+
+    from docxkit.errors import ProtocolError
+
+    paper = _paper(tmp_path)
+    paper.rescue_dir.mkdir(parents=True, exist_ok=True)
+    moment = datetime(2026, 9, 14, 12, 0, 0)
+
+    def name(us: int) -> Path:
+        stamp = (moment + timedelta(microseconds=us)).strftime(
+            _promote._RESCUE_STAMP)
+        return Path(paper.rescue_dir, f"working_rescue_{stamp}.docx")
+
+    name(0).touch()
+    assert _promote.rescue_path(paper, moment) == name(1)
+
+    for us in range(1, 999):
+        name(us).touch()
+    assert _promote.rescue_path(paper, moment) == name(999)
+
+    name(999).touch()
+    with pytest.raises(ProtocolError, match="no free rescue name"):
+        _promote.rescue_path(paper, moment)
+
+
+def test_a_batch_stamped_on_a_HIGHER_hash_is_refused_quoting_both(tmp_path):
+    """`!=`, not `<`: a stamp that sorts above the baseline's hash is as
+    stale as one below it. The refusal quotes sixteen characters of each,
+    the width a reader matches against the ledger."""
+    import shutil
+
+    import pytest
+
+    from docxkit import guard
+    from docxkit.errors import StaleBatch
+
+    paper = _paper(tmp_path)
+    write(paper.batch, make_parts(para(run("The index rose to 0.37."))))
+    shutil.copyfile(paper.working, paper.prev)
+    guard.stamp(paper.batch, base_sha256="f" * 64)
+    base = guard.sha256(paper.prev)
+
+    with pytest.raises(StaleBatch) as refused:
+        revision.promote(paper)
+
+    assert (f"built on {'f' * 16} and this baseline is {base[:16]}. It is"
+            in str(refused.value))
+
+
+def test_a_promote_makes_its_rescue_folder_under_a_build_dir_NOT_MADE(
+        tmp_path):
+    """The rescue folder hangs off `build_dir`, and with the batch and the
+    baseline handed in from elsewhere nothing else has made that folder."""
+    import dataclasses
+    import shutil
+
+    paper = _paper(tmp_path)
+    write(paper.batch, make_parts(para(run("The index rose to 0.37."))))
+    shutil.copyfile(paper.working, paper.prev)
+    moved = dataclasses.replace(paper,
+                                build_dir=tmp_path / "elsewhere" / "build")
+
+    revision.promote(moved, paper.batch, paper.prev)
+
+    assert list((tmp_path / "elsewhere" / "build" / "rescue").glob("*.docx"))
+
+
 # --------------------------------------------------- the promote itself
 
 
