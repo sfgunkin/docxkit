@@ -94,6 +94,39 @@ def test_a_line_the_module_REPEATS_names_which_occurrence(tmp_path):
     assert case[4] == 2, "the SECOND one is the one that was mutated"
 
 
+SHADOWED = '''def compare(a, b):
+    if a:
+        if a == b:
+            return 1
+    if a == b:
+        return 2
+    return 0
+'''
+
+
+def test_a_line_repeated_DEEPER_first_is_still_the_first_of_its_kind(
+        tmp_path):
+    """The occurrence is counted the way `kill_check` counts, as WHOLE
+    lines. Counted as a substring, `    if a == b:` also sits inside the
+    deeper `        if a == b:` above it, the case asks for the second
+    of one, and `kill_check` skips it: four of `revision/_gates.py`'s
+    eleven went unanswered that way on 2026-09-14."""
+    from kill_check import _places  # pyright: ignore[reportMissingImports]
+
+    src = tmp_path / "shadowed.py"
+    src.write_text(SHADOWED, encoding="utf-8")
+    db = _session(tmp_path, [(5, "if a is b:")])
+
+    (case,) = cases_for(Path("shadowed.py"), db=db, src=src)
+    old, nth = case[1], case[4]
+
+    assert old == "    if a == b:"
+    assert nth == 1
+    row_5 = SHADOWED.index("\n    if a == b:") + 1
+    assert _places(SHADOWED, old)[nth - 1] == row_5, \
+        "the case lands on the line the mutation was on"
+
+
 def test_a_mutation_that_changes_NOTHING_is_not_replayed(tmp_path):
     """`kill_check` rewrites the file with itself for such a case, the
     suite passes, and it reports SURVIVED — a missing test where there

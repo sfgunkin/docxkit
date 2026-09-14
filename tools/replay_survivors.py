@@ -38,7 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from harness_map import harness_for  # pyright: ignore[reportMissingImports]
-from kill_check import check  # pyright: ignore[reportMissingImports]
+from kill_check import (  # pyright: ignore[reportMissingImports]
+    _places,
+    check,
+)
 from mutation_survivors import (  # pyright: ignore[reportMissingImports]
     became,
     classify,
@@ -98,8 +101,13 @@ def cases_for(module: Path, db: Path | None = None,
             continue
         # `became` gives the line unparsed, so it carries no indentation.
         new = old[:len(old) - len(old.lstrip())] + new.strip()
+        # Counted by the function that then matches the anchor. `count`
+        # also finds an indented line inside a DEEPER copy of it, where
+        # `kill_check` takes an indented anchor only as a whole line, and
+        # four of `revision/_gates.py`'s eleven asked for the second of
+        # one and were skipped (BACKLOG, 2026-09-14).
         offset = sum(len(line) + 1 for line in counts.lines[:row - 1])
-        nth = text.count(old, 0, offset) + 1
+        nth = sum(1 for at in _places(text, old) if at < offset) + 1
         cases.append((f"L{row} {operator.split('.')[-1]}",
                       old, new, True, nth))
     return cases

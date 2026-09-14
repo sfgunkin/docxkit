@@ -14,6 +14,33 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `replay_survivors` asks for an occurrence `kill_check` does not count when a line repeats DEEPER above it~~ — FIXED 14.09
+
+<!-- status: fixed -->
+
+Measured 2026-09-14, replaying the eleven survivors of
+`revision/_gates.py`. Four came back unanswered:
+
+    ?? L143 core/ReplaceComparisonOperator_Eq_GtE: asked for occurrence 2 of 1 — SKIPPED
+
+and the same for L143's `is` and `is not` and for L173's `timeout= 6`.
+`cases_for` numbered the occurrence with `str.count`, which finds
+`    if sys.platform == "win32":` (L143, four spaces) inside
+`        if sys.platform == "win32":` (L116, eight), and
+`    reader.join(timeout=5)` (L173) inside `        reader.join(timeout=5)`
+(L165). `kill_check` counts an indented anchor only as a WHOLE line
+(`_places`, since the `refstyle._header_rows` false negative), found one,
+and refused the second. The refusal is the safe direction, a skip and
+never a verdict about another line, but four of eleven is a round's list
+with holes in it, and the holes are exactly the lines a module repeats.
+
+**Fixed:** `cases_for` counts with `kill_check._places`, the function the
+case is then matched by, so the two cannot disagree. Test in
+`test_replay_survivors.py`, seen red first (`assert 2 == 1`): a line with
+a deeper copy above it is occurrence 1, and `_places` puts that
+occurrence on the mutated row. Asked of the `_gates` session afterwards,
+every one of its cases names occurrence 1.
+
 ### ~~S2 — a figure set with its caption in ONE table cell reads as a caption with no body~~ — FIXED 14.09, `a508984`
 
 <!-- status: fixed -->
