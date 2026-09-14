@@ -275,6 +275,18 @@ claims = [
   { was = "para = hits[0].group(0)", line = "para = hits[-1].group(0)", why = "Reached only when the two returns above it did not fire, which leaves exactly one hit: `hits[0]` and `hits[-1]` are the same match." },
 ]
 
+["ingest.py"]
+claims = [
+  { was = 'notes = {p: len(v) for p, v in by_part.items() if p != DOCUMENT}', line = 'notes = {p: len(v) for p, v in by_part.items() if p > DOCUMENT}', why = "`by_part` is keyed on the three parts `_part_paragraphs` reads, and both note stores, `word/footnotes.xml` and `word/endnotes.xml`, sort after `word/document.xml`." },
+  { was = 'notes = {p: len(v) for p, v in by_part.items() if p != DOCUMENT}', line = 'notes = {p: len(v) for p, v in by_part.items() if p is not DOCUMENT}', why = "The keys are the `DOCUMENT`, `FOOTNOTES` and `ENDNOTES` objects themselves, which `_part_paragraphs` iterates over, so identity agrees with inequality." },
+  { was = 'if tag == "equal":', line = 'if tag is "equal":', why = "difflib's opcode tags are literals in its own module, interned identifiers and so the same objects as the literal here, as this module's tests have argued since 2026-08-20." },
+  { was = 'for b, u in zip(bls, us, strict=True):', line = 'for b, u in zip(bls, us, strict=False):', why = "Inside the branch `if len(bls) == len(us):` has already chosen, so the two lists are the same length and `strict` has nothing to catch." },
+  { was = 'elif len(bls) > len(us):', line = 'elif len(bls) >= len(us):', why = "The `if` above took the equal case, so `>=` is reached only when the counts differ, where it means what `>` means." },
+  { was = 'if part != DOCUMENT:', line = 'if part > DOCUMENT:', why = "`part` is one of the three parts `build_part_overrides` returns, and both note stores sort after `word/document.xml`, so `>` holds exactly where `!=` does." },
+  { was = 'if part != DOCUMENT:', line = 'if part is not DOCUMENT:', why = "`part` is a key of `build_part_overrides`, which is one of the `DOCUMENT`, `FOOTNOTES` and `ENDNOTES` objects themselves, so identity agrees with inequality." },
+  { was = 'if e.get("part", DOCUMENT) != DOCUMENT}', line = 'if e.get("part", DOCUMENT) > DOCUMENT}', why = "A store holds entries for the body, `word/footnotes.xml` and `word/endnotes.xml`, the parts `update_overrides` writes, and both note stores sort after `word/document.xml`." },
+]
+
 ["package.py"]
 claims = [
   { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) * 1:] \', why = "Reached only when `_core_re(tag)` found no element, and every element of a well-formed part matches it in one of its two forms, so `<tag` itself is not in `core`: a slice starting at `tag` rather than after it finds the same next element." },

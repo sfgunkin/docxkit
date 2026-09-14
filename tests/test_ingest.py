@@ -789,3 +789,162 @@ def test_a_paragraph_that_is_ONLY_whitespace_is_still_blank(tmp_path):
               make_parts(para(run("keep")) + para(run(" ", preserve=True))))
 
     assert build_overrides(a, b) == []
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+#
+# The sweep of `ingest.py` left 21 real survivors. `apply_part_overrides`
+# had none of the tests `apply_overrides` has — a miss that does not stop
+# the rest, one copy only, the quote, the default — and nothing read a
+# store back from JSON before comparing its `part` names, or held a note
+# store on one side only.
+
+
+def test_a_note_store_only_the_BASELINE_has_does_not_hide_the_next(tmp_path):
+    """Both readers walk body, footnotes, endnotes in that order, and a
+    part on one side only is skipped. An author copy that lost its
+    footnotes part must still have its retyped endnote read: neither the
+    part missing from the copy nor the one skipped in the baseline may
+    end the walk before the endnotes."""
+    base = _note_paper(tmp_path / "base.docx", "The baseline footnote.",
+                       "The baseline endnote.")
+    edited = write(tmp_path / "edited.docx", make_parts(
+        para(run("The body sentence, identical in both.")),
+        extra={"word/endnotes.xml": notes(
+            "endnotes", note("The endnote, retyped.", 2, "endnote"))}))
+
+    by_part = build_part_overrides(base, edited)
+
+    assert set(by_part) == {"word/endnotes.xml"}, by_part
+    assert "The endnote, retyped." in by_part["word/endnotes.xml"][0][1]
+
+
+def test_a_NOTE_entry_read_back_from_the_store_still_chains(tmp_path):
+    """The store is JSON, so a note entry's `part` comes back as a string
+    of its own: equal to the part's name, not the same object. A footnote
+    retyped in two rounds chains its entry, as a body paragraph does."""
+    store = tmp_path / "overrides.json"
+    first = _note_paper(tmp_path / "b1.docx", "The baseline footnote.",
+                        "The baseline endnote.")
+    second = _note_paper(tmp_path / "e1.docx", "The footnote, retyped.",
+                         "The baseline endnote.")
+    third = _note_paper(tmp_path / "e2.docx", "The footnote, retyped again.",
+                        "The baseline endnote.")
+
+    update_overrides(first, second, store)
+    _, chained, appended, total = update_overrides(second, third, store)
+
+    assert (chained, appended, total) == (1, 0, 1)
+
+
+def test_chaining_stays_inside_its_part_the_OTHER_way_round(tmp_path):
+    """The mirror of the case above it: a FOOTNOTE entry stored first,
+    and then a BODY paragraph reading exactly what that footnote became.
+    The body's edit is appended as an entry of its own; an ordering test
+    on the part names lets it chain onto the footnote's, because the
+    footnotes' name sorts after the body's."""
+    store = tmp_path / "overrides.json"
+
+    # Round 1: a FOOTNOTE becomes the shared sentence.
+    base1 = write(tmp_path / "b1.docx", make_parts(
+        para(run("an unrelated body line")),
+        footnotes=_notes_saying("was something else")))
+    ed1 = write(tmp_path / "e1.docx", make_parts(
+        para(run("an unrelated body line")), footnotes=_notes_saying(_SHARED)))
+    update_overrides(base1, ed1, store)
+
+    # Round 2: a BODY paragraph that reads exactly the same is re-typed.
+    base2 = write(tmp_path / "b2.docx", make_parts(
+        para(run(_SHARED)), footnotes=_notes_saying(_SHARED)))
+    ed2 = write(tmp_path / "e2.docx", make_parts(
+        para(run("re-typed")), footnotes=_notes_saying(_SHARED)))
+
+    _, chained, appended, total = update_overrides(base2, ed2, store)
+
+    assert (chained, appended, total) == (0, 1, 2), "appended, not chained"
+    data = json.loads(store.read_text(encoding="utf-8"))
+    assert data[0]["part"] == "word/footnotes.xml"
+    assert _SHARED in data[0]["new"], "the footnote entry is untouched"
+    assert "part" not in data[1] and "re-typed" in data[1]["new"]
+
+
+def test_apply_overrides_takes_an_entry_that_NAMES_the_body(tmp_path):
+    """A store read from JSON gives each string back as an object of its
+    own, so an entry naming `word/document.xml` outright holds a name
+    equal to the body's and not the same object. It is a body entry, and
+    applies as one rather than being refused as another part's."""
+    base = write(tmp_path / "base.docx",
+                 make_parts(para(run("The settled sentence."))))
+    doc = read_parts(base)[DOCUMENT].decode("utf-8")
+    old = PARA_RE.findall(doc)[0]
+    store = json.loads(json.dumps([{
+        "old": old, "new": old.replace("settled", "revised"),
+        "part": "word/document.xml"}]))
+
+    xml, applied, missed = apply_overrides(doc, store)
+
+    assert (applied, missed) == (1, [])
+    assert "The revised sentence." in xml
+
+
+def test_a_MISSED_part_override_does_not_stop_the_ones_after_it():
+    """`apply_overrides`' case, for the applier that takes the package: a
+    miss is reported and the edits after it are still written."""
+    body = "".join(para(run(t), pid=f"{i:08X}")
+                   for i, t in enumerate(["alpha", "beta"], 1))
+    parts = {DOCUMENT: body.encode("utf-8")}
+    gone = para(run("vanished"), pid="000000FF")
+
+    applied, missed = apply_part_overrides(parts, [
+        {"old": gone, "new": para(run("x"), pid="000000FF")},
+        {"old": para(run("beta"), pid="00000002"),
+         "new": para(run("beta edited"), pid="00000002")}], strict=False)
+
+    assert applied == 1
+    assert missed == ["(word/document.xml) vanished"]
+    assert b"beta edited" in parts[DOCUMENT]
+
+
+def test_a_part_override_applies_to_ONE_paragraph_not_every_copy():
+    """One override means one paragraph, in whichever part it names: a
+    manuscript repeats a bare "Notes:" line under every table."""
+    same = para(run("Notes: standard errors in parentheses."), pid="0000000A")
+    parts = {DOCUMENT: (same + para(run("between"), pid="0000000B")
+                        + same).encode("utf-8")}
+
+    applied, _missed = apply_part_overrides(parts, [
+        {"old": same, "new": para(run("Notes: clustered."), pid="0000000A")}],
+        strict=False)
+
+    out = parts[DOCUMENT].decode("utf-8")
+    assert applied == 1
+    assert out.count("Notes: standard errors in parentheses.") == 1
+    assert out.count("Notes: clustered.") == 1
+
+
+def test_a_part_MISS_quotes_seventy_characters_of_the_paragraph():
+    """The same cut `apply_overrides` makes, after the part's name."""
+    long_text = ("The paragraph the author edited, long enough that the "
+                 "cut is visible in the message.")
+    assert len(long_text) > 71
+
+    _applied, missed = apply_part_overrides(
+        {DOCUMENT: b"<w:body/>"},
+        [{"old": para(run(long_text), pid="0000000A"), "new": ""}],
+        strict=False)
+
+    assert missed == [f"(word/document.xml) {long_text[:70]}"]
+
+
+def test_apply_part_overrides_is_STRICT_by_default_and_names_THREE():
+    """A miss means an author's edit is being dropped, so the default
+    raises, as `apply_overrides`' does, and the message names the first
+    three of however many there are."""
+    overrides = [{"old": para(run(f"gone {i}"), pid=f"{i:08X}"), "new": ""}
+                 for i in range(5)]
+
+    with pytest.raises(AnchorError) as exc:
+        apply_part_overrides({DOCUMENT: b"<w:body/>"}, overrides)
+
+    assert "5 override anchor(s) not found" in str(exc.value)
+    assert str(exc.value).count("gone ") == 3
