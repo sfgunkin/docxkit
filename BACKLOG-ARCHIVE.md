@@ -14,6 +14,48 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — a log or config that does not end in a newline gets the new line glued onto its last one: `log_batch`'s row, `_set_key`'s key~~ — FIXED 14.09
+
+<!-- status: fixed -->
+
+Found 2026-09-14 reading `log_batch` for the mutation survivors of
+`revision/_verdict.py`. Both writers split the file with
+`splitlines(keepends=True)` and insert a line after one that, when it
+ends the file, can carry no newline, and the inserted line joined it.
+Seen red on the tests the fix came with:
+
+    log.md ending on R14's row, with no newline after it
+    log_batch(paper, verdict, note="R15")   ->  the row, as appended
+    | 2026-08-08 | R14 | 1 ¶ changed | — | accepted in full → truth || 2026-09-14 | R15 | 1 ¶ changed | — | adjudicated (no batch to compare against) → truth |
+
+    _set_key('[paper]\nname = "x"\n[attic]', "attic", "path", '"D:/a"')
+    '[paper]\nname = "x"\n[attic]path = "D:/a"\n'
+    tomllib: Expected newline or end of document after a statement
+
+The first leaves one line holding two rows, and GitHub's Markdown drops
+the cells past the header's five, so the rendered table shows R14 and no
+R15, while `log_batch` returned the row as appended. The second is what
+`revision init` writes when it re-runs over a config whose `[attic]` was
+cut back to its header: `load_paper` does not catch the decode error, so
+every later `revision` command fails on the config (`init` backs it up
+first, as `pre_init`). The missing-SECTION branch of `_set_key` already
+allowed for a file with no final newline; the insert-under-header branch
+beside it did not. No third writer has the shape: every other `.insert(`
+in `src` and `tools` is on an XML element or on `sys.path`.
+
+Exposure, measured the same day: all nine protocol papers' `log.md` end
+in a newline, and so do the eight `paper.toml` under their `revision/`
+folders, none ending on a header. But Aging_Well's batch table ends its
+3,463-line log, as does the table of every log `revision init`
+scaffolds, so a row typed in by hand there with no Enter after it is one
+step from the first shape.
+
+**Fixed:** in both, a last line with no newline is given one before the
+new line goes in after it, and nothing else in the file is touched.
+Tests, seen red first:
+`test_a_log_that_does_not_END_in_a_newline_keeps_the_row_on_its_own_line`
+and `test_set_key_under_a_header_that_ENDS_the_file_starts_a_new_line`.
+
 ### ~~S2 — `set_core_property` puts a new property OUTSIDE a self-closing `cp:coreProperties` root, and the part stops parsing~~ — FIXED 14.09, `36e6397`
 
 <!-- status: fixed -->

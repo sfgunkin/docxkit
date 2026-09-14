@@ -145,6 +145,17 @@ def test_set_key_appends_a_missing_section_after_exactly_ONE_blank_line():
             '[paper]\nname = "x"\n\n[attic]\npath = "D:/a"\n'), repr(body)
 
 
+def test_set_key_under_a_header_that_ENDS_the_file_starts_a_new_line():
+    """A section cut back by hand to its header, with no Enter after it,
+    leaves the config ending on `[attic]` with no newline, and a key
+    inserted after that line joined it: `[attic]path = "D:/a"`, which TOML
+    refuses, so every later `revision` command fails to read its config.
+    The missing-SECTION branch above already allowed for such a file."""
+    for body in ('[paper]\nname = "x"\n[attic]', "[attic]"):
+        assert revision._set_key(body, "attic", "path", '"D:/a"') == (
+            body + '\npath = "D:/a"\n'), repr(body)
+
+
 def test_set_key_keeps_the_COMMENT_after_an_unquoted_value():
     text = "[batch]\nrescue_keep = 5  # newest first\n"
 

@@ -333,6 +333,10 @@ def log_batch(paper: Paper, result: Verdict, note: str = "") -> str | None:
     what = note or (result.batch.stem if result.batch else "—")
     row = (f"| {_today()} | {what} "
            f"| {result.summary()} | — | {result.outcome} → truth |\n")
+    # A row typed in by hand at the end of the file can have no newline
+    # after it, and the new row would join it on one line.
+    if not lines[last].endswith("\n"):
+        lines[last] += "\n"
     lines.insert(last + 1, row)
     log.write_text("".join(lines), encoding="utf-8")
     return row

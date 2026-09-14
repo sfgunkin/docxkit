@@ -186,6 +186,10 @@ def _set_key(text: str, section: str, key: str, value: str) -> str:
 
     entry = f"{key} = {value}\n"
     if section_at is not None:
+        # A header that ends the file can have no newline after it, and
+        # the key would join it on one line, which TOML refuses.
+        if not lines[section_at].endswith("\n"):
+            lines[section_at] += "\n"
         lines.insert(section_at + 1, entry)
         return "".join(lines)
     body = "".join(lines)

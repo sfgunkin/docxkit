@@ -847,3 +847,21 @@ def test_a_batch_table_that_ENDS_a_long_log_takes_the_row_last(tmp_path):
     assert row is not None
     assert log.read_text(encoding="utf-8").splitlines() == [
         *theirs, row.rstrip("\n")]
+
+
+def test_a_log_that_does_not_END_in_a_newline_keeps_the_row_on_its_own_line(
+        tmp_path):
+    """A row typed in by hand at the end of the file, with no Enter after
+    it, leaves the log ending on a line with no newline, and a new row
+    inserted after that line as it stood joined it: one line holding two
+    rows, `| ... | accepted in full → truth || 2026-09-14 | R15 | ...`.
+    A log `revision init` scaffolds ends on its batch table, and so does
+    Aging_Well's."""
+    theirs = ["# Log", "", "## Batches", "", HEADER, RULE, R13, R14]
+    paper, log = _paper_with_log(tmp_path, theirs)
+    log.write_text("\n".join(theirs), encoding="utf-8")
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    assert row is not None
+    assert log.read_text(encoding="utf-8") == "\n".join([*theirs, row])
