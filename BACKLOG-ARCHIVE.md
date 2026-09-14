@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — a log or config that does not end in a newline gets the new line glued onto its last one: `log_batch`'s row, `_set_key`'s key~~ — FIXED 14.09
+### ~~S2 — a log or config that does not end in a newline gets the new line glued onto its last one: `log_batch`'s row, `_set_key`'s key~~ — FIXED 14.09, `049847e`
 
 <!-- status: fixed -->
 
