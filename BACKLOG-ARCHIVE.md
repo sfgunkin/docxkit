@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — `replay_survivors` asks for an occurrence `kill_check` does not count when a line repeats DEEPER above it~~ — FIXED 14.09
+### ~~S4 — `replay_survivors` asks for an occurrence `kill_check` does not count when a line repeats DEEPER above it~~ — FIXED 14.09, `7633060`
 
 <!-- status: fixed -->
 
