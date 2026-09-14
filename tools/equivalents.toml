@@ -125,8 +125,6 @@ claims = [
 claims = [
   { was = '''bits.append(f"+{added} {what}{'' if added == 1 else 's'}")''', line = '''bits.append(f"+{added} {what}{'' if added <= 1 else 's'}")''', why = "`added` counts the links or bookmarks that arrived, a multiset difference's total or a set difference's size, so it is never negative, and this line runs only under `if added:`. At one or more, `<= 1` holds exactly where `== 1` does." },
   { was = '''bits.append(f"-{lost} {what}{'' if lost == 1 else 's'}")''', line = '''bits.append(f"-{lost} {what}{'' if lost <= 1 else 's'}")''', why = "`lost` counts the links or bookmarks that went, a multiset difference's total or a set difference's size, so it is never negative, and this line runs only under `if lost:`. At one or more, `<= 1` holds exactly where `== 1` does." },
-  { was = 'if i != last + 1:', line = 'if i > last + 1:', why = "`rows` holds line indices in increasing order and `last` is always a row already passed, so `i` is never below `last + 1`, and `>` holds exactly where `!=` does." },
-  { was = 'break', line = 'continue', why = "After the first gap `last` stops moving, and every later row index is larger than the one that broke the run, so none can equal `last + 1`: `continue` walks the remaining rows to the same `last`." },
 ]
 
 ["revision/_gates.py"]

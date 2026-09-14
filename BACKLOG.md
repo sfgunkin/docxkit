@@ -46,59 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `revision baseline` can file its row outside the batch table: under the header of a pipe-less rule, or in a LATER section's table
-<!-- status: open -->
-
-Found 2026-09-14 writing tests for the mutation survivors of
-`revision/_verdict.py`, and measured on constructed logs. `log_batch` takes
-a table's rows to be the lines below `## Batches` that START with `|`,
-anywhere below it, reads the header from the first, walks the rest while
-they are contiguous, and inserts after the last. Three shapes follow, and
-each is returned as written, so `revision baseline` prints `logged:` over
-it.
-
-**A rule without end pipes.** GitHub-flavoured Markdown makes a row's end
-pipes optional, so
-
-    | date | batch | changes | gates | outcome |
-    --- | --- | --- | --- | ---
-    | 2026-08-08 | R14 | x | - | y |
-
-is a five-column table. The rule does not start with `|`, the walk ends at
-the header, and the row lands between the header and the rule:
-
-    | date | batch | changes | gates | outcome |
-    | 2026-09-14 | R15 | 1 ¶ changed | — | adjudicated (no batch to compare against) → truth |
-    --- | --- | --- | --- | ---
-
-The table stops being a table.
-
-**A body row without end pipes** ends the walk the same way, and the new
-row lands above it, out of date order.
-
-**A heading with no table under it.**
-`test_a_batch_heading_with_NO_TABLE_under_it_is_left_alone` holds that such
-a log is left alone, and it is while nothing else in the file is a table.
-Give a later section a five-column table (`## Timings` over
-`| step | run | cost | where | note |`) and the row is appended to THAT
-table, under another heading. The docstring promises None when there is no
-table to append to.
-
-A table with no end pipes on any row, header included, is left alone and
-reported, as the docstring says.
-
-Exposure, measured the same day: all nine protocol papers' logs have a
-table directly under `## Batches` and write every row of it with both end
-pipes, and the 13 lines in them holding a pipe without a leading one are
-prose (`|coef|`, a regex alternation, a shell pipe). No paper reaches any
-of the three today; a log written or trimmed by hand can, and DSI's holds
-fourteen more five-column tables under later headings.
-
-Direction: look for the header only up to the next heading, and continue
-the table through contiguous lines that hold a `|` rather than lines that
-start with one. That covers pipe-less rules and rows, and keeps today's
-answer for prose written directly under a table.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

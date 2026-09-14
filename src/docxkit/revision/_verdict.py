@@ -288,6 +288,7 @@ _BATCH_HEADING = "## Batches"
 
 
 _ROW_RE = re.compile(r"^\s*\|")
+_HEADING_RE = re.compile(r"^#{1,6}\s")
 
 
 def log_batch(paper: Paper, result: Verdict, note: str = "") -> str | None:
@@ -310,19 +311,25 @@ def log_batch(paper: Paper, result: Verdict, note: str = "") -> str | None:
                   if ln.strip() == _BATCH_HEADING), None)
     if start is None:
         return None
-    rows = [i for i in range(start, len(lines)) if _ROW_RE.match(lines[i])]
-    if not rows:
+    # The table under THIS heading. A five-column table in a later
+    # section is somebody else's, and took the row whenever the batch
+    # table was missing (BACKLOG, 2026-09-14).
+    end = next((i for i in range(start + 1, len(lines))
+                if _HEADING_RE.match(lines[i])), len(lines))
+    first = next((i for i in range(start, end) if _ROW_RE.match(lines[i])),
+                 None)
+    if first is None:
         return None
-    header = [c.strip() for c in lines[rows[0]].strip().strip("|").split("|")]
+    header = [c.strip() for c in lines[first].strip().strip("|").split("|")]
     if len(header) != 5:
         return None                     # not the table this row is shaped for
-    # contiguous from the header: a second table further down the file
-    # is not this one
-    last = rows[0]
-    for i in rows[1:]:
-        if i != last + 1:
-            break
-        last = i
+    # Every contiguous line holding a pipe is a row, not only one that
+    # STARTS with a pipe: GitHub's Markdown makes end pipes optional, and
+    # a rule written `--- | ---` ended the walk at the header. A second
+    # table further down the file is not this one.
+    last = first
+    while last + 1 < end and "|" in lines[last + 1]:
+        last += 1
     what = note or (result.batch.stem if result.batch else "—")
     row = (f"| {_today()} | {what} "
            f"| {result.summary()} | — | {result.outcome} → truth |\n")

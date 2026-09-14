@@ -14,6 +14,65 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `revision baseline` can file its row outside the batch table: under the header of a pipe-less rule, or in a LATER section's table~~ — FIXED 14.09
+
+<!-- status: fixed -->
+
+Found 2026-09-14 writing tests for the mutation survivors of
+`revision/_verdict.py`, and measured on constructed logs. `log_batch` took
+a table's rows to be the lines below `## Batches` that START with `|`,
+anywhere below it, read the header from the first, walked the rest while
+they were contiguous, and inserted after the last. Three shapes followed,
+and each was returned as written, so `revision baseline` printed `logged:`
+over it.
+
+**A rule without end pipes.** GitHub-flavoured Markdown makes a row's end
+pipes optional, so
+
+    | date | batch | changes | gates | outcome |
+    --- | --- | --- | --- | ---
+    | 2026-08-08 | R14 | x | - | y |
+
+is a five-column table. The rule does not start with `|`, the walk ended
+at the header, and the row landed between the header and the rule:
+
+    | date | batch | changes | gates | outcome |
+    | 2026-09-14 | R15 | 1 ¶ changed | — | adjudicated (no batch to compare against) → truth |
+    --- | --- | --- | --- | ---
+
+The table stopped being a table.
+
+**A body row without end pipes** ended the walk the same way, and the new
+row landed above it, out of date order.
+
+**A heading with no table under it.**
+`test_a_batch_heading_with_NO_TABLE_under_it_is_left_alone` held that such
+a log is left alone, and it was while nothing else in the file was a
+table. Given a later section with a five-column table (`## Timings` over
+`| step | run | cost | where | note |`), the row was appended to THAT
+table, under another heading. The docstring promises None when there is
+no table to append to.
+
+A table with no end pipes on any row, header included, was left alone and
+reported, as the docstring says, and still is.
+
+Exposure, measured the same day: all nine protocol papers' logs have a
+table directly under `## Batches` and write every row of it with both end
+pipes, and the 13 lines in them holding a pipe without a leading one are
+prose (`|coef|`, a regex alternation, a shell pipe). No paper reached any
+of the three; a log written or trimmed by hand could, and DSI's holds
+fourteen more five-column tables under later headings.
+
+**Fixed:** `log_batch` looks for the header only up to the next heading,
+and continues the table through every contiguous line that holds a `|`
+rather than only those that start with one. Tests in
+`test_revision_verdict.py`, seen red first, one per shape: the row lands
+below a pipe-less rule and below a pipe-less body row, and a heading with
+no table leaves a later section's table alone. The change was tried
+beforehand on eleven log shapes, those three and every shape the suite
+already held. The two `equivalents.toml` claims on the old walk, `>` and
+`continue`, went with the lines they argued about.
+
 ### ~~S4 — `replay_survivors` asks for an occurrence `kill_check` does not count when a line repeats DEEPER above it~~ — FIXED 14.09, `7633060`
 
 <!-- status: fixed -->

@@ -768,3 +768,49 @@ def test_a_batch_table_WIDER_than_five_columns_is_left_alone(tmp_path):
 
     assert revision.log_batch(paper, ROUND, note="R15") is None
     assert log.read_text(encoding="utf-8").splitlines() == theirs
+
+
+def test_a_rule_WITHOUT_END_PIPES_keeps_the_new_row_below_it(tmp_path):
+    """GitHub's Markdown makes a row's end pipes optional, so
+    `--- | ---` is a rule. Read as the end of the table it put the new
+    row between the header and the rule, and the table stopped being a
+    table (BACKLOG, 2026-09-14)."""
+    rule = "--- | --- | --- | --- | ---"
+    theirs = ["# Log", "", "## Batches", "", HEADER, rule, R14, "", "Prose."]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    at = theirs.index(R14) + 1
+    assert row is not None
+    assert log.read_text(encoding="utf-8").splitlines() == \
+        [*theirs[:at], row.rstrip("\n"), *theirs[at:]]
+
+
+def test_a_body_row_WITHOUT_END_PIPES_is_still_a_row_of_the_table(tmp_path):
+    """The same reading one row down: the new row landed above it, out of
+    date order."""
+    bare = "2026-08-08 | R14 | 1 ¶ changed | — | accepted in full → truth"
+    theirs = ["# Log", "", "## Batches", "", HEADER, RULE, R13, bare, "",
+              "Prose."]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    at = theirs.index(bare) + 1
+    assert row is not None
+    assert log.read_text(encoding="utf-8").splitlines() == \
+        [*theirs[:at], row.rstrip("\n"), *theirs[at:]]
+
+
+def test_a_heading_with_no_table_does_not_borrow_a_LATER_SECTION_s(tmp_path):
+    """The table is the one under `## Batches`. With nothing under the
+    heading, a five-column table in a later section took the row, under
+    another heading, as though it were a timing (BACKLOG, 2026-09-14)."""
+    theirs = ["# Log", "", "## Batches", "", "Nothing yet.", "",
+              "## Timings", "", "| step | run | cost | where | note |",
+              RULE, "| build | r1 | 20s | Word | slow |"]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    assert revision.log_batch(paper, ROUND, note="R15") is None
+    assert log.read_text(encoding="utf-8").splitlines() == theirs
