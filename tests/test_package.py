@@ -1054,3 +1054,156 @@ def test_the_entries_are_still_DEFLATED(simple_docx, tmp_path):
         kinds = {i.compress_type for i in z.infolist()}
 
     assert kinds == {zipfile.ZIP_DEFLATED}
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+#
+# The sweep of `package.py` left 39 real survivors, and 18 of them were in
+# `readable`, which nothing in this file called: `revision status` and
+# `revision ingest` use it, and are tested elsewhere.
+
+
+def test_readable_hands_over_an_UNLOCKED_file_as_it_is(simple_docx):
+    """Nothing holds the file, so there is nothing to copy: the path
+    itself, and `copied` False, which is what lets the caller say it read
+    the manuscript rather than a snapshot."""
+    from docxkit.package import readable
+
+    with readable(simple_docx) as (path, copied):
+        assert (path, copied) == (Path(simple_docx), False)
+
+
+def test_readable_SNAPSHOTS_a_file_another_process_holds(simple_docx,
+                                                         monkeypatch):
+    """Word holds `working.docx` while the author edits it, and a
+    read-only command still has to answer. It answers from a byte copy,
+    says so, and the copy is gone once the block ends."""
+    from docxkit import package as pkg
+
+    src = Path(simple_docx)
+    monkeypatch.setattr(pkg, "is_locked", lambda _path: True)
+
+    with pkg.readable(src) as (path, copied):
+        assert copied is True
+        assert path != src and path.name == src.name
+        assert path.read_bytes() == src.read_bytes()
+        snapshot = path
+
+    assert not snapshot.exists(), "the snapshot was cleaned up"
+
+
+def test_readable_falls_back_to_the_ORIGINAL_when_the_copy_fails(
+        simple_docx, monkeypatch):
+    """If the copy is refused too there is nothing better to offer: the
+    original path comes back with `copied` False, and the caller meets its
+    usual refusal rather than an OSError from inside the snapshot."""
+    from docxkit import package as pkg
+
+    def no_copy(*_a, **_k):
+        raise PermissionError("the copy was refused as well")
+
+    monkeypatch.setattr(pkg, "is_locked", lambda _path: True)
+    monkeypatch.setattr(pkg.shutil, "copy2", no_copy)
+
+    with pkg.readable(simple_docx) as (path, copied):
+        assert (path, copied) == (Path(simple_docx), False)
+
+
+def test_readable_does_not_fail_the_read_when_the_snapshot_will_not_GO(
+        simple_docx, monkeypatch):
+    """The snapshot's folder is removed on the way out, after the read it
+    served has succeeded, and Windows refuses that while anything still
+    has the copy open. A cleanup that fails is not a read that failed."""
+    from docxkit import package as pkg
+
+    removed: list[bool] = []
+    real = pkg.shutil.rmtree
+
+    def rmtree(path, ignore_errors=False, **_kw):
+        if not ignore_errors:
+            raise PermissionError("the copy is still open")
+        removed.append(True)
+        real(path, ignore_errors=True)
+
+    monkeypatch.setattr(pkg, "is_locked", lambda _path: True)
+    monkeypatch.setattr(pkg.shutil, "rmtree", rmtree)
+
+    with pkg.readable(simple_docx) as (_path, copied):
+        assert copied is True
+
+    assert removed == [True]
+
+
+def test_is_locked_says_TRUE_for_a_writable_file_another_process_holds(
+        simple_docx, monkeypatch):
+    """The other half of the read-only case above: the open is refused
+    and the file's mode says it is writable, so something holds it."""
+    from docxkit import package as pkg
+
+    def held(*_a, **_k):
+        raise PermissionError(13, "The process cannot access the file")
+
+    monkeypatch.setattr(pkg, "open", held, raising=False)
+
+    assert pkg.is_locked(simple_docx) is True
+
+
+def test_read_parts_retries_on_the_SAME_schedule_as_the_write_side():
+    """"On the same bounded schedule `_replace_atomically` uses for the
+    write side": one direction hardened and the other not is what made a
+    paper's suite randomly red. Pinned as that relation, not as numbers."""
+    import inspect
+
+    from docxkit import package as pkg
+
+    read = inspect.signature(pkg.read_parts).parameters
+    write = inspect.signature(pkg._replace_atomically).parameters
+
+    assert (read["retries"].default, read["delay"].default) == (
+        write["retries"].default, write["delay"].default)
+
+
+def test_clearing_read_only_that_the_SYSTEM_refuses_is_quiet(tmp_path,
+                                                            monkeypatch):
+    """It runs on the way to a retry, and a `chmod` the system refuses
+    must not end the write that was about to try again."""
+    from docxkit import package as pkg
+
+    target = tmp_path / "paper.docx"
+    target.write_bytes(b"content")
+
+    def refused(*_a, **_k):
+        raise PermissionError("access is denied")
+
+    monkeypatch.setattr(pkg.os, "chmod", refused)
+
+    pkg._clear_readonly(target)                     # must not raise
+
+
+def test_discarding_a_staging_file_that_will_not_GO_is_quiet(tmp_path,
+                                                            monkeypatch):
+    """`_discard` runs in the failure path of a write, and the error that
+    matters there is the write's: a staging file the system will not
+    remove must not replace it."""
+    from docxkit import package as pkg
+
+    staged = tmp_path / "paper.docx.tmp"
+    staged.write_bytes(b"half written")
+
+    def refused(self, missing_ok=False):
+        raise PermissionError("the file is in use")
+
+    monkeypatch.setattr(type(staged), "unlink", refused)
+
+    pkg._discard(staged)                            # must not raise
+
+
+def test_a_backup_into_a_folder_TWO_levels_down_creates_both(simple_docx,
+                                                            tmp_path):
+    """`into` names a folder "created if it is not there", and the one the
+    protocol uses, `build/rescue/`, sits under a `build/` that may not
+    exist yet either."""
+    dest = backup(simple_docx, "rescue", into=tmp_path / "build" / "rescue")
+
+    assert dest == tmp_path / "build" / "rescue" / "simple_rescue1.docx"
+    assert dest.read_bytes() == Path(simple_docx).read_bytes()

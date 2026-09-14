@@ -275,6 +275,17 @@ claims = [
   { was = "para = hits[0].group(0)", line = "para = hits[-1].group(0)", why = "Reached only when the two returns above it did not fire, which leaves exactly one hit: `hits[0]` and `hits[-1]` are the same match." },
 ]
 
+["package.py"]
+claims = [
+  { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) * 1:] \', why = "Reached only when `_core_re(tag)` found no element, and every element of a well-formed part matches it in one of its two forms, so `<tag` itself is not in `core`: a slice starting at `tag` rather than after it finds the same next element." },
+  { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) ** 1:] \', why = "Reached only when `_core_re(tag)` found no element, and every element of a well-formed part matches it in one of its two forms, so `<tag` itself is not in `core`: a slice starting at `tag` rather than after it finds the same next element." },
+  { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 0:] \', why = "Reached only when `_core_re(tag)` found no element, and every element of a well-formed part matches it in one of its two forms, so `<tag` itself is not in `core`: a slice starting at `tag` rather than after it finds the same next element." },
+  { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) // 1:] \', why = "Reached only when `_core_re(tag)` found no element, and every element of a well-formed part matches it in one of its two forms, so `<tag` itself is not in `core`: a slice starting at `tag` rather than after it finds the same next element." },
+  { was = 'after = CORE_ORDER[CORE_ORDER.index(tag) + 1:] \', line = 'after = CORE_ORDER[CORE_ORDER.index(tag) | 1:] \', why = "`index | 1` starts the slice at `tag` or just after it, and the first is harmless: reached only when `_core_re(tag)` found no element, so `<tag` itself is not in a well-formed `core`, and the search finds the same next element." },
+  { was = 'element + "</cp:coreProperties>", 1)', line = 'element + "</cp:coreProperties>", 2)', why = "A well-formed part closes its root once, so replacing the first `</cp:coreProperties>` and replacing up to two are the same edit." },
+  { was = 'path.unlink(missing_ok=True)', line = 'path.unlink(missing_ok=False)', why = "For a path already gone `missing_ok=False` raises FileNotFoundError, an OSError, which the `except OSError: pass` around the call swallows, so a missing staging file is ignored either way." },
+]
+
 ["_compare_diff.py"]
 claims = [
   { was = 'if tag == "replace":', line = 'if tag >= "replace":', why = "The `equal` opcodes have gone on above, so the tag is `replace`, `delete` or `insert`, and only `replace` sorts at or after `replace`." },
