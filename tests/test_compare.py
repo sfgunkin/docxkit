@@ -1939,6 +1939,115 @@ def test_marker_segments_falls_back_when_the_MARKERS_do_not_match_the_text():
     assert segs == [("x=y", "i", "i,up")]
 
 
+# --- the survivors of 2026-09-14 ------------------------------------------
+#
+# The sweep of `_compare_diff.py` left 43 real survivors, and those not
+# argued away share a cause: every edge case ADDS whitespace, every
+# equation is one bare run, whose skeleton is the empty string and so one
+# shared object, and nothing ran past 256 characters or 256 of anything.
+
+
+def test_marker_segments_falls_back_when_the_markers_OUTNUMBER_the_text():
+    """The same guard from the other side: markers are one per symbol,
+    and a list longer than the symbols is as far from that as a shorter
+    one."""
+    from docxkit._compare_diff import _marker_segments
+
+    segs = _marker_segments("xy", ["i", "i", "i"], ["i", "up", "i"])
+
+    assert segs == [("xy", "i", "i,up")]
+
+
+def test_a_leading_space_TAKEN_AWAY_is_reported_too(tmp_path):
+    """Every edge case in this file adds whitespace. Taking it away moves
+    the first word back to the margin, the same indent read the other way
+    round."""
+    indented = BASE.replace(run("The index rose to 0.35 in 2024."),
+                            run(" The index rose to 0.35 in 2024.",
+                                preserve=True))
+    a, b = docs(tmp_path, indented, BASE)
+
+    assert [t["word_diff"] for t in compare(a, b)["text"]] == [
+        ["EDGE leading: ' ' -> ''"]]
+
+
+def test_the_SAME_edge_on_both_sides_is_no_change(tmp_path):
+    """Two spaces in front on both sides is no edit, and each side's edge
+    is a slice of its own text: equal strings, different objects. One
+    space would not show it, since CPython keeps a single object for
+    every one-character string."""
+    indented = BASE.replace(run("The index rose to 0.35 in 2024."),
+                            run("  The index rose to 0.35 in 2024.",
+                                preserve=True))
+    a, b = docs(tmp_path, indented, indented)
+
+    assert compare(a, b)["text"] == []
+
+
+def test_a_formatting_change_in_a_paragraph_LONGER_than_256_characters(
+        tmp_path):
+    """The formatting walk runs only when both sides hold the same number
+    of characters, and that is a comparison of two ints: past 256 CPython
+    builds a new object for each, so two equal lengths compared by
+    identity differ and the change is never looked for."""
+    tail = " and the text runs on" * 15
+    plain = para(run(f"See the Journal of Things here{tail}."))
+    italic = ('<w:p><w:r><w:t xml:space="preserve">See the </w:t></w:r>'
+              "<w:r><w:rPr><w:i/></w:rPr><w:t>Journal of Things</w:t></w:r>"
+              f'<w:r><w:t xml:space="preserve"> here{tail}.</w:t></w:r>'
+              "</w:p>")
+    a, b = docs(tmp_path, plain, italic)
+
+    report = compare(a, b)
+
+    assert report["text"] == []
+    assert any("italic" in str(e) for e in report["format"]), report
+
+
+def _sup(base: str, sup: str) -> str:
+    """A superscript. `sSup` is a structural element with a name of more
+    than one character, so each side's skeleton is a string of its own."""
+    return (f"<m:sSup><m:e>{mrun(base)}</m:e>"
+            f"<m:sup>{mrun(sup)}</m:sup></m:sSup>")
+
+
+def test_a_TOKEN_change_inside_a_structure_is_not_a_structure_change(
+        tmp_path):
+    """The two skeletons are equal and are separate objects, read from
+    two documents, so a structure test by identity calls every token
+    change a rewrite of the formula's shape as well. The words moved, so
+    the kinds ride on the TEXT entry."""
+    report = compare(*docs(tmp_path, omath(_sup("x", "2")),
+                           omath(_sup("y", "2"))))
+
+    assert [t["formula"] for t in report["text"]] == [["tokens"]], report
+
+
+def test_a_GLYPH_change_inside_a_structure_is_still_a_glyph_artifact(
+        tmp_path):
+    """A math minus flattened to a hyphen in a superscript is Word's
+    artifact, not an edit. It is one only while the skeletons are equal,
+    and a test by identity finds two equal skeletons unequal and sends
+    the artifact to the gated FORMULA layer."""
+    report = compare(*docs(tmp_path, omath(_sup("x", "−1")),
+                           omath(_sup("x", "-1"))))
+
+    assert report["formula"] == [], report["formula"]
+    assert len(report["formula_glyph"]) == 1, report
+
+
+def test_an_id_OPENED_and_closed_300_times_is_balanced():
+    """Starts and ends are counted and the counts compared. Past 256
+    CPython builds a new object for each int, so two equal counts
+    compared by identity differ and a balanced id reads as unbalanced."""
+    pair = ('<w:bookmarkStart w:id="7" w:name="Table1"/>'
+            '<w:bookmarkEnd w:id="7"/>')
+
+    issues = _integrity(f"<w:p>{pair * 300}</w:p>")
+
+    assert not any("imbalance" in i for i in issues), issues
+
+
 # ---------------------------------------------- the INTEGRITY layer, alone --
 #
 # The one layer of the comparison that is a gate on the BUILT document
