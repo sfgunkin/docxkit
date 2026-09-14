@@ -404,6 +404,167 @@ def test_run_one_on_WINDOWS_starts_the_gate_in_its_own_PROCESS_GROUP(
     assert "start_new_session" not in sub.popen_kwargs
 
 
+# --- the platform branches OFF Windows, the clock, and the defaults --------
+#
+# The survivors of the 2026-09-14 replay: ten mutants alive against the
+# tests above. The fakes above held the Windows half of each branch and
+# nothing held the other; nothing read `seconds` against a clock it
+# controlled, or asked what a caller naming no timeout gets.
+
+
+class _FakeThreading:
+    """A reader that drains when started and records what each `join`
+    was allowed."""
+
+    def __init__(self) -> None:
+        self.joins: list[float | None] = []
+
+    def Thread(self, target, daemon):
+        joins = self.joins
+
+        class _Reader:
+            def start(self) -> None:
+                target()
+
+            def join(self, timeout: float | None = None) -> None:
+                joins.append(timeout)
+
+        return _Reader()
+
+
+class _HungProc(_FakeProc):
+    def wait(self, timeout: float) -> int:
+        raise _FakeSubprocess.TimeoutExpired
+
+
+class _HungSubprocess(_FakeSubprocess):
+    def Popen(self, _command, **kw):
+        self.popen_kwargs = kw
+        return _HungProc()
+
+
+def test_a_caller_naming_NO_TIMEOUT_gets_the_CLI_s_fifteen_minutes(
+        monkeypatch, tmp_path):
+    """`--gate-timeout` documents "default 900", and a paper's script
+    calling `run_gates` without the CLI gets the same bound."""
+    from docxkit.revision import _gates
+
+    given: list[float] = []
+
+    def run_one(command, cwd, timeout, subprocess, threading):
+        given.append(timeout)
+        return 0, "ok"
+
+    monkeypatch.setattr(_gates, "_run_one", run_one)
+
+    list(run_gates(paper_with(tmp_path, "echo hi")))
+
+    assert given == [900]
+
+
+def test_SECONDS_are_the_difference_of_two_clock_readings(monkeypatch,
+                                                          tmp_path):
+    """`time.monotonic` has no defined zero, and a real one has been
+    counting since boot: against it `now / started` is 1.0 to a decimal
+    for any gate shorter than the uptime, which reads as a plausible
+    second. `run_gates` imports `time` when it is called, so the clock
+    is handed over through `sys.modules`."""
+    from docxkit.revision import _gates
+
+    monkeypatch.setattr(_gates, "_run_one", lambda *_a: (0, "ok"))
+    paper = paper_with(tmp_path, "echo hi")
+    ticks = iter([2.0, 5.0])
+    monkeypatch.setitem(sys.modules, "time", types.SimpleNamespace(
+        monotonic=lambda: next(ticks)))
+
+    (gate,) = run_gates(paper)
+
+    assert gate.seconds == 3.0
+
+
+def test_kill_tree_off_WINDOWS_kills_the_SESSION_and_never_runs_taskkill(
+        monkeypatch):
+    """`os.killpg` is faked as well as the platform: CI's runner IS a
+    POSIX box, and a real `killpg` on the group of pid 4242 would kill
+    whatever holds it. `taskkill` does not exist there; asked for, it
+    fails quietly inside the suppress and the grandchild lives on."""
+    import os
+    import signal
+
+    from docxkit.revision._gates import _kill_tree
+
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid + 1, raising=False)
+    monkeypatch.setattr(os, "killpg",
+                        lambda pgid, sig: killed.append((pgid, sig)),
+                        raising=False)
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    sub, proc = _FakeSubprocess(), _FakeProc()
+
+    _kill_tree(proc, sub)
+
+    assert sub.runs == [], "taskkill is a Windows program"
+    assert killed == [(4243, 9)], "the group of the session it started"
+    assert proc.killed
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "x-after-win32"])
+def test_run_one_off_WINDOWS_starts_the_gate_in_a_NEW_SESSION(
+        monkeypatch, tmp_path, platform):
+    """The session is what `_kill_tree` kills by off Windows: without
+    it the gate shares the caller's group, and `killpg` ends the caller.
+
+    The third name is no platform's. None that CPython runs on sorts
+    after "win32", so no real name tells this equality from `>=`, and
+    the line is written twice in the module, so the equivalence cannot
+    be argued in `equivalents.toml`, which anchors a claim at exactly
+    one line."""
+    from docxkit.revision._gates import _run_one
+
+    monkeypatch.setattr(sys, "platform", platform)
+    sub = _FakeSubprocess()
+
+    assert _run_one("echo hi", tmp_path, 5, sub, threading) == (0, "hello\n")
+    assert sub.popen_kwargs["start_new_session"] is True
+    assert "creationflags" not in sub.popen_kwargs
+
+
+def test_the_platform_is_compared_by_VALUE_not_by_identity(monkeypatch,
+                                                           tmp_path):
+    """`sys.platform` is built when the interpreter starts, and it is not
+    the object a "win32" literal in this module is: `sys.platform is
+    "win32"` is False on this machine. The fake above IS that object,
+    interned, which is why `is` passed it. Built at run time here, as
+    the real one is."""
+    from docxkit.revision._gates import _run_one
+
+    monkeypatch.setattr(sys, "platform", "win" + str(32))
+    sub = _FakeSubprocess()
+
+    _run_one("echo hi", tmp_path, 5, sub, threading)
+
+    assert sub.popen_kwargs["creationflags"] == sub.CREATE_NEW_PROCESS_GROUP
+
+
+def test_the_reader_is_given_FIVE_seconds_on_BOTH_paths(monkeypatch,
+                                                        tmp_path):
+    """A gate that exits can leave a grandchild holding its pipe, and one
+    that timed out can leave a grandchild `taskkill` missed. Either way
+    the reader gets five seconds and no more. Pinned rather than argued
+    because the line is written twice."""
+    from docxkit.revision._gates import _run_one
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    reader = _FakeThreading()
+
+    _run_one("echo hi", tmp_path, 5, _FakeSubprocess(), reader)
+    code, _out = _run_one("sleep", tmp_path, 1, _HungSubprocess(), reader)
+
+    assert code == -1
+    assert reader.joins == [5, 5]
+
+
 # --- the verdict is the REPORT's -------------------------------------
 #
 # The exit codes above were a chain of returns in `cli.cmd_revision_

@@ -532,3 +532,239 @@ def test_a_batch_table_of_a_DIFFERENT_SHAPE_is_left_alone(cycle):
     revision.baseline(cycle, note="R15")
 
     assert log.read_text(encoding="utf-8") == theirs
+
+
+# --- the survivors of 2026-09-14 ------------------------------------------
+#
+# The mutation sweep of `_verdict.py` left 94 real survivors with one
+# cause: every case above is ONE round of one shape. None had no previous
+# truth, moved two links, hashed a redline of another size, or kept its
+# batch table above another table, so the defaults, the plurals, the
+# size check and the walk down the table were free to say anything.
+
+
+def _paper(tmp_path, body: str):
+    root = tmp_path / "P"
+    root.mkdir()
+    return revision.init(root, write(root / "P.docx", make_parts(body)))
+
+
+def test_a_paper_with_NO_PREVIOUS_TRUTH_reports_nothing_and_decides_nothing(
+        tmp_path):
+    """The first cycle of a paper migrated by hand has no `prev.docx` and
+    nothing to compare against. Every count is zero, field by field,
+    because each one is also a dataclass default a caller leans on: a
+    default of one writes a revision nobody proposed into the log."""
+    paper = _paper(tmp_path, para(run("The paper.")))
+    paper.prev.unlink()
+
+    result = verdict(paper)
+
+    assert (result.changed, result.added, result.removed) == (0, 0, 0)
+    assert (result.proposed, result.kept, result.reverted,
+            result.authored) == ((0, 0), 0, 0, 0)
+    assert (result.links, result.bookmarks) == ((0, 0), (0, 0))
+    assert result.batch is None
+    assert result.summary() == "no visible change"
+
+
+def test_a_round_with_NO_BATCH_counts_what_moved_and_nothing_else(tmp_path):
+    """An author's own Word round: text moved and no batch was put on the
+    paper. The row says exactly that, and nothing more: a clause added or
+    removed printed at zero, or a revision count, would be a claim about
+    a batch that does not exist."""
+    paper = _paper(tmp_path, para(run("the old sentence"))
+                   + para(run("an untouched paragraph")))
+    write(paper.working, make_parts(para(run("the new sentence"))
+                                    + para(run("an untouched paragraph"))))
+
+    result = verdict(paper)
+
+    assert result.batch is None
+    assert (result.proposed, result.kept, result.reverted,
+            result.authored) == ((0, 0), 0, 0, 0)
+    assert result.summary() == "1 ¶ changed", result.summary()
+    assert result.outcome == "adjudicated (no batch to compare against)"
+
+
+def test_the_summary_gives_every_count_its_own_PLURAL():
+    """Built directly, every count at once, and each apparatus count at
+    one AND at two, so a plural that tests the wrong number cannot print
+    the same cell. The log's `changes` column is this string, and no
+    round above moved two of anything."""
+    result = revision.Verdict(changed=2, added=1, removed=3,
+                              proposed=(4, 0), links=(1, 2),
+                              bookmarks=(2, 1))
+
+    assert result.summary() == (
+        "2 ¶ changed, 1 added, 3 removed, "
+        "from 4 revisions (4 ins, 0 del), "
+        "+1 link, -2 links, +2 bookmarks, -1 bookmark")
+
+
+def test_a_pass_that_adds_only_BOOKMARKS_is_an_apparatus_pass_too(tmp_path):
+    """Links OR bookmarks. Every apparatus case above moves both, since a
+    citation link arrives with the anchor it resolves to; a pass that
+    anchors cross-references before anything links to them moves only
+    the bookmarks, which Compare cannot serialize either."""
+    paper = _paper(tmp_path, para(run("Table 3 shows the split.")))
+    write(paper.working, make_parts(para(
+        '<w:bookmarkStart w:id="7" w:name="Table3"/>',
+        run("Table 3 shows the split."), '<w:bookmarkEnd w:id="7"/>')))
+
+    result = verdict(paper)
+
+    assert (result.links, result.bookmarks) == ((0, 0), (1, 0))
+    assert result.apparatus_only
+    assert result.outcome == "untracked apparatus pass (nothing to adjudicate)"
+
+
+def test_redlines_of_ANOTHER_SIZE_are_passed_over_UNHASHED(monkeypatch,
+                                                          tmp_path):
+    """"Sizes first, hashes only for a file that could match." A paper
+    keeps a redline per round and each is the whole manuscript, so a
+    hash of every one is a cost every verdict pays. A smaller and a
+    larger one sort ahead of the real copy here: the search goes past
+    both, hashing neither, and finds it."""
+    from docxkit import guard
+    from docxkit.revision._verdict import _promoted
+
+    made = revision_round(tmp_path)
+    batch, folder = made.paper.batch, made.paper.redline_dir
+    folder.mkdir(parents=True, exist_ok=True)
+    stem, size = made.paper.working.stem, batch.stat().st_size
+    (folder / f"{stem}_redline_a.docx").write_bytes(b"x" * (size - 1))
+    (folder / f"{stem}_redline_b.docx").write_bytes(b"x" * (size + 1))
+    (folder / f"{stem}_redline_c.docx").write_bytes(batch.read_bytes())
+    hashed: list[str] = []
+    real = guard.sha256
+
+    def sha256(path):
+        hashed.append(path.name)
+        return real(path)
+
+    monkeypatch.setattr(guard, "sha256", sha256)
+
+    assert _promoted(made.paper, batch)
+    assert hashed == ["batch.docx", f"{stem}_redline_c.docx"]
+
+
+def test_a_redline_of_the_SAME_SIZE_counts_only_if_its_hash_is_EQUAL(
+        monkeypatch, tmp_path):
+    """Digests are hex strings, and a comparison that orders them takes a
+    redline whose digest merely sorts first for a copy of the batch: a
+    batch never put on the paper, reported as promoted."""
+    from docxkit import guard
+    from docxkit.revision._verdict import _promoted
+
+    made = revision_round(tmp_path)
+    batch, folder = made.paper.batch, made.paper.redline_dir
+    folder.mkdir(parents=True, exist_ok=True)
+    decoy = folder / f"{made.paper.working.stem}_redline_a.docx"
+    decoy.write_bytes(b"x" * batch.stat().st_size)
+    monkeypatch.setattr(guard, "sha256", lambda path: (
+        "f" * 64 if path == batch else "0" * 64))
+
+    assert not _promoted(made.paper, batch)
+
+
+def test_a_proposal_needs_a_PREVIOUS_TRUTH_on_its_own_account(tmp_path):
+    """`verdict` returns before asking when `prev.docx` is missing, and
+    `_proposal` does not lean on that: with no truth for a batch to have
+    been built on it identifies nothing, rather than hashing a file that
+    is not there."""
+    from docxkit.revision._verdict import _proposal
+
+    made = revision_round(tmp_path)
+    made.paper.prev.unlink()
+
+    assert _proposal(made.paper) is None
+
+
+HEADER = "| date | batch | changes | gates | outcome |"
+RULE = "| --- | --- | --- | --- | --- |"
+R13 = "| 2026-08-01 | R13 | 2 ¶ changed | — | accepted in full → truth |"
+R14 = "| 2026-08-08 | R14 | 1 ¶ changed | — | accepted in full → truth |"
+ROUND = revision.Verdict(changed=1, added=0, removed=0)
+
+
+def _paper_with_log(tmp_path, lines: list[str]):
+    paper = _paper(tmp_path, para(run("The paper.")))
+    log = paper.config.parent / "log.md"
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return paper, log
+
+
+def test_the_row_follows_the_LAST_row_of_its_table_not_a_later_table(
+        tmp_path):
+    """A log carries more than one table, and every `|` line after the
+    heading looks like a row: DSI's holds fourteen more five-column
+    tables under later headings (measured 2026-09-14). The batch table
+    is the run of rows CONTIGUOUS with its header: the header is read
+    from that run's first row, and the new row goes after its last, not
+    after a table further down.
+
+    Two dated rows put the last one on an odd line, where `last | 1`
+    and `last ^ 1` are not `last + 1`; on an even line they are."""
+    theirs = ["# Log", "", "## Batches", "", HEADER, RULE, R13, R14, "",
+              "## Sources", "", "| file | from | note |",
+              "| --- | --- | --- |", "| data.xlsx | the author | v3 |"]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    at = theirs.index(R14) + 1
+    assert at % 2 == 0, "the last row sits on an odd line"
+    assert row is not None
+    assert log.read_text(encoding="utf-8").splitlines() == \
+        [*theirs[:at], row.rstrip("\n"), *theirs[at:]]
+
+
+def test_a_log_LONGER_than_256_lines_still_finds_the_end_of_its_table(
+        tmp_path):
+    """Line numbers are ints, and CPython keeps a single object only for
+    the ints up to 256. Every log above is a dozen lines, where two line
+    numbers compared by identity agree with the same two compared by
+    value. Aging_Well's log keeps its batch table below line 3,190
+    (measured 2026-09-14), and there they do not."""
+    theirs = (["# Log", ""]
+              + [f"- note {i} from an earlier round" for i in range(300)]
+              + ["", "## Batches", "", HEADER, RULE, R14, "", "Prose."])
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    at = theirs.index(R14) + 1
+    assert at > 257
+    assert row is not None
+    assert log.read_text(encoding="utf-8").splitlines() == \
+        [*theirs[:at], row.rstrip("\n"), *theirs[at:]]
+
+
+def test_a_table_of_only_its_HEADER_takes_the_row_under_it(tmp_path):
+    """The header is the FIRST row under the heading, and nothing else
+    is read before it. A header with nothing under it yet is still the
+    table this row is shaped for, and a second row that is not there is
+    not asked for."""
+    theirs = ["# Log", "", "## Batches", "", HEADER, "", "Nothing yet."]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    row = revision.log_batch(paper, ROUND, note="R15")
+
+    assert row is not None
+    assert log.read_text(encoding="utf-8").splitlines() == \
+        [*theirs[:5], row.rstrip("\n"), *theirs[5:]]
+
+
+def test_a_batch_table_WIDER_than_five_columns_is_left_alone(tmp_path):
+    """The shape check is exact. A six-column table, a paper that added a
+    reviewer column, takes a five-cell row as badly as a four-column one
+    does, and the case above asks only about a narrower table."""
+    theirs = ["# Log", "", "## Batches", "",
+              "| date | batch | changes | gates | outcome | reviewer |",
+              "| --- | --- | --- | --- | --- | --- |",
+              "| 2026-08-08 | R14 | 1 ¶ changed | — | accepted | R2 |"]
+    paper, log = _paper_with_log(tmp_path, theirs)
+
+    assert revision.log_batch(paper, ROUND, note="R15") is None
+    assert log.read_text(encoding="utf-8").splitlines() == theirs
