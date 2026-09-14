@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — a figure set with its caption in ONE table cell reads as a caption with no body~~ — FIXED 14.09
+### ~~S2 — a figure set with its caption in ONE table cell reads as a caption with no body~~ — FIXED 14.09, `a508984`
 
 <!-- status: fixed -->
 
