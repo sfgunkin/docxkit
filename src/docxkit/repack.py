@@ -448,7 +448,8 @@ def _move_span(kids: list[etree._Element], x: Exhibit,
     above, and stays where it stands; one above it alone opens a section
     it shares with what follows, and stays too. An exhibit alone in the
     FINAL section has the body's own `sectPr` for geometry, which cannot
-    travel.
+    travel. One with anything of its own after a break it does not own —
+    a panel, a note — cannot move without parting, and says so.
     """
     if x.body_at is None:
         return "has no table or image of its own"
@@ -470,6 +471,15 @@ def _move_span(kids: list[etree._Element], x: Exhibit,
     if opens and ends:
         return start - 1, last
     if breaks:
+        # What the exhibit has after a break it does not own stays behind
+        # when the part in front of the break moves, and the trial then
+        # renders the exhibit in two pieces as though it were a placement
+        # (BACKLOG, 2026-09-15).
+        if any(not _is_break(el) and not _is_blank(el)
+               for el in kids[breaks[0] + 1:last]):
+            return ("is parted by a section break it does not own: moving "
+                    "what stands before the break would leave the rest "
+                    "behind")
         stop = breaks[0]                     # the break is not the block's
     if opens and all(not (el.tag in (W + "p", W + "tbl")
                           and (text_of(el).strip() or el.tag == W + "tbl"))

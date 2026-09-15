@@ -913,14 +913,15 @@ def test_an_owner_in_PANELS_with_a_break_BETWEEN_them_moves_whole():
 def test_a_PANEL_after_the_last_break_leaves_the_section_OPEN():
     """The second panel shares its section with the prose after it, so no
     section closes on the exhibit's last break and the opening break is
-    not the exhibit's to take."""
+    not the exhibit's to take — and then neither is the break between its
+    panels, so the exhibit cannot move without parting them. This used to
+    assert only where the move STARTED, and the move it pinned was the one
+    that left Panel B behind (BACKLOG, 2026-09-15)."""
     doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
                 + P("Figure 1. Cap") + IMG + SECT(True) + P("Panel B.")
                 + IMG + P("After."))
 
-    span = _span(doc)
-
-    assert span[0] == 3, span
+    assert _span(doc) == PARTED_WHY
 
 
 def test_a_picture_straight_after_the_closing_break_does_not_REOPEN_it():
@@ -1506,3 +1507,42 @@ def test_a_move_with_NO_change_ranks_above_one_that_makes_it_worse():
         moves=[_move(underfull_after=2), _move(underfull_after=1)]))
 
     assert [m.gain for m in rep.moves] == [0, -1]
+
+
+# --- an exhibit a move would PART (BACKLOG, 2026-09-15) ---------------------
+
+PARTED_WHY = ("is parted by a section break it does not own: moving what "
+              "stands before the break would leave the rest behind")
+
+
+def test_an_exhibit_PARTED_by_a_break_it_does_not_own_is_left_where_it_is():
+    """S2, found triaging the whole sweep. The figure closes a section it
+    shares with the prose above, and its second panel sits after that
+    break. The move stopped at the first break the block did not own, so
+    a trial carried the caption and panel A away and left `Panel B.`,
+    its picture and the landscape break behind — and the report offered
+    it as a placement like any other. Refused now, and said."""
+    doc = parts(P("Figure 1 shows it.") + P("Main text ends.")
+                + P("Figure 1. Cap") + IMG + SECT() + P("Panel B.") + IMG
+                + SECT(True) + P("After.") + P("Later."))
+    render, seen = recording(lambda _o: [FULL, "Figure 1 shows it.",
+                                         "Figure 1. Cap Panel B.", FULL,
+                                         FULL])
+
+    rep = repack.repack(doc, render=render, max_drift=9)
+
+    assert rep.moves == [] and len(seen) == 1, "no trial may be rendered"
+    assert f"Figure 1 {PARTED_WHY} — left where it is" in rep.problems
+    with pytest.raises(PackageError, match="parted by a section break"):
+        repack._moved(doc, ("Figure", "1"), 9, labels=repack.LABELS,
+                      note=repack.NOTE)
+
+
+def test_a_TABLE_panel_after_the_break_parts_its_exhibit_as_a_picture_does():
+    """A table shows on the page as a picture does, so a table panel after
+    the last break keeps that section open and is the exhibit's own."""
+    doc = parts(P("Table 1 shows it.") + P("Before.") + SECT()
+                + P("Table 1. Cap") + table(row("a", "1")) + SECT(True)
+                + P("Panel B.") + table(row("b", "2")) + P("After."))
+
+    assert _span(doc, "Table 1") == PARTED_WHY

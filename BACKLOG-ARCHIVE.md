@@ -14,6 +14,41 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `repack` moved the part of an exhibit in front of a section break it does not own, and offered the trial as a placement~~ — FIXED 15.09
+
+<!-- status: fixed -->
+
+Found 2026-09-15 triaging the first whole mutation sweep of `repack.py`
+(85 real survivors of 1100, `stop = breaks[0]` among them), and measured
+on the live source before the fix:
+
+    Figure 1 shows it. | Main text ends. | Figure 1. Cap | IMG | SECT |
+    Panel B. | IMG | SECT (landscape) | After. | Later.
+
+    exhibits(...)           Figure 1 spans [2, 8)
+    _move_span(kids, x)     (2, 4)
+    _moved(..., 9)          ... | After. | Later. | Figure 1. Cap | IMG
+                            (Panel B., its picture and both breaks stay)
+    repack(...)             one move offered, no problem reported
+
+An exhibit that closes a section it shares with the prose above leaves
+that break where it stands, and `_move_span` stopped the block at the
+first such break. Whatever the exhibit had after it — a second panel,
+its heading, a note — was not part of the move, so the trial rendered
+the exhibit in two pieces and the report ranked it beside the real
+placements. `test_a_PANEL_after_the_last_break_leaves_the_section_OPEN`
+had the same shape and asserted only where the move started, the half
+that was right.
+
+**Fixed:** `_move_span` refuses when anything but a break or a blank lies
+between the first break the block does not own and the end of its span:
+the exhibit "is parted by a section break it does not own: moving what
+stands before the break would leave the rest behind". `repack` reports it
+as left where it is and renders no trial for it, and `_moved` raises.
+Seen red first on a picture panel and on a table panel; the panel test
+now asserts the refusal. A span that ends on breaks and blanks alone
+still moves without them.
+
 ### ~~S2 — a log or config that does not end in a newline gets the new line glued onto its last one: `log_batch`'s row, `_set_key`'s key~~ — FIXED 14.09, `049847e`
 
 <!-- status: fixed -->
