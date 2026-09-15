@@ -1097,3 +1097,412 @@ def test_a_place_after_a_break_that_ENDS_the_document_is_looked_up_there():
                 + table(row("cell")) + SECT(True))
 
     assert _places(doc, "Figure 1") == ["Portrait prose."]
+
+
+# --- the whole sweep of 2026-09-15 -----------------------------------------
+#
+# The first time the module was measured whole: 85 of 1100 real mutants
+# survived, most of them where no fixture had put the shape — an XML
+# comment in the body, a document past index 256, a paired end marker at
+# the tail of an owner's span, a box holding two tables. Three claims
+# argued on 2026-09-13 fell to the same shapes.
+
+
+def test_the_probe_is_the_WIDTH_placement_reads():
+    """Forty characters of a caption, a row or a mention: no fixture here
+    tells 39 from 40 from 41, and the width is placement's, described
+    word for word in both modules. Held equal, as `pages` is held."""
+    from docxkit import placement
+
+    assert repack._PROBE == placement._PROBE
+
+
+def test_a_sheet_and_a_report_start_from_ZERO():
+    """`_profile` always passes `chars` and `repack` always sets
+    `renders`, so only a caller building one by hand reads the defaults."""
+    assert repack.Sheet(1, 2).chars == 0
+    report = repack.RepackReport()
+    assert (report.renders, report.trials) == (0, 0)
+
+
+def test_a_move_that_made_it_WORSE_is_never_the_best():
+    """`gain > 0`, not `gain != 0`: a loss at the top of a list with
+    nothing better in it is reported and not advised."""
+    assert repack.RepackReport(moves=[_move(underfull_after=2)]).best is None
+
+
+def test_none_within_the_limit_is_said_only_of_TRIALS_that_found_none():
+    """A report with a move, or one that tried nothing, has no business
+    saying the drift limit turned everything away."""
+    sheets = [repack.Sheet(1, 1, chars=10)]
+    tried = repack.RepackReport(sheets=sheets, trials=1, moves=[_move()])
+    untried = repack.RepackReport(sheets=sheets)
+
+    assert "none within the drift limit" not in tried.format()
+    assert "none within the drift limit" not in untried.format()
+
+
+def test_an_XML_COMMENT_in_the_body_is_not_a_place_and_breaks_nothing():
+    """`exhibits` counts a comment as a body child, so every walk over
+    the body meets one — and a comment's `tag` is lxml's `Comment`
+    function, which `==` and `!=` answer and `<`, `<=`, `>`, `>=` refuse
+    with a TypeError. Word does not write one; other tools do."""
+    doc = parts(FIGURE + "<!-- generated -->" + P("prose"))
+
+    assert _places(doc, "Figure 1") == ["prose"]
+
+
+def test_a_comment_HOISTED_in_front_of_a_caption_leaves_the_end_readable():
+    """`_leading` takes the markers in front of a caption into the span, a
+    comment among them, so a table's end is read from a span opening on
+    one."""
+    doc = parts(P("Table 1 shows it. " + FULL) + "<!-- c -->"
+                + P("Table 1. X")
+                + table(row("Country", "Value"), row("Total", "1.0"))
+                + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 1 shows it. " + FULL,
+        "Table 1. X Country Value Total 1.0", "After. " + FULL])
+
+    assert [(z.name, z.first, z.last) for z in rep.landings] == [
+        ("Table 1", 3, 3)]
+
+
+@pytest.mark.parametrize(("opens", "closes"), [
+    ('<w:bookmarkStart w:id="7" w:name="_Ref1"/>',
+     '<w:bookmarkEnd w:id="7"/>'),
+    ('<w:permStart w:id="3" w:edGrp="everyone"/>', '<w:permEnd w:id="3"/>'),
+])
+def test_an_owner_ENDING_on_a_paired_marker_moves_with_it(opens, closes):
+    """`exhibits` gives a block the end marker under it when the marker's
+    start is inside the block, and `_move_span` trims only BLANK
+    paragraphs off the tail. Trimmed as one, the marker is left behind
+    and the pair inverts. `bookmarkEnd` sorts before `w:p` and `permEnd`
+    after it, which is why the test takes both."""
+    doc = parts(P("Figure 1 shows it.") + P("Before.") + SECT()
+                + P("Figure 1. Cap", opens) + IMG + SECT(True) + closes
+                + P("After.") + P("Later."))
+
+    assert _span(doc) == (2, 7)
+
+
+def test_a_box_ends_on_its_last_PARAGRAPH_not_on_its_last_row():
+    """A box's end probes are read by paragraph, a table's by row. With
+    one paragraph per cell the two agree, which is every box above; a
+    last cell of TWO paragraphs, the first longer than the probe, tells
+    them apart — by row the probe is the first paragraph, a sheet early."""
+    cap = "Capability: what a person is able to do and to be."
+    box = ("<w:tbl><w:tr><w:tc>" + P("Box 1. Terms") + "</w:tc></w:tr>"
+           "<w:tr><w:tc>" + P(cap) + P("Second para.") + "</w:tc></w:tr>"
+           "</w:tbl>")
+    doc = parts(P("Box 1 says so. " + FULL) + box + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Box 1 says so. " + FULL, "Box 1. Terms " + cap,
+        "Second para. After. " + FULL, FULL])
+
+    assert [(z.name, z.first, z.last) for z in rep.landings] == [
+        ("Box 1", 3, 4)]
+
+
+def test_a_box_holding_TWO_tables_ends_on_the_second():
+    """A panel heading lets a body that fits the box into its span, and
+    for a box a table holding a picture fits. The box then ends where
+    its LAST table does, and its first table's end is a sheet early."""
+    box = table(row("Box 1. Terms"), row("Capability: a thing."))
+    panel = ("<w:tbl><w:tr><w:tc>" + IMG + "</w:tc><w:tc>"
+             + P("Panel B data") + "</w:tc></w:tr></w:tbl>")
+    doc = parts(P("Box 1 says so. " + FULL) + box + P("Panel B.") + panel
+                + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Box 1 says so. " + FULL, "Box 1. Terms Capability: a thing.",
+        "Panel B. Panel B data After. " + FULL, FULL])
+
+    assert [(z.name, z.first, z.last) for z in rep.landings] == [
+        ("Box 1", 3, 4)]
+
+
+def test_a_tables_end_is_NOT_looked_for_past_its_last_five_rows():
+    """The other side of the five-row bound: a sixth row from the end
+    that IS on the page does not stand in for five that are not."""
+    doc = parts(P("Table 1 shows it. " + FULL) + P("Table 1. X")
+                + table(row("Head", "H"), row("Row two", "2"),
+                        *[row(f"r{k}", "σ") for k in range(3, 8)])
+                + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 1 shows it. " + FULL, "Table 1. X Head H",
+        "Row two 2 After. " + FULL, FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, None)
+
+
+def test_the_lead_is_the_paragraph_RIGHT_in_front_of_the_block():
+    """`x.start - 1` and nothing near it: two before is the note of the
+    exhibit above, which quotes this caption, and so is half the index;
+    twice the index is inside the exhibit below. Taken for covered, the
+    free lead is skipped and the table lands on the quote."""
+    doc = parts(P("Figure 1. A") + IMG
+                + P("Source: as Table 1. Levels shows.")
+                + P("Lead para before table.") + P("Table 1. Levels")
+                + table(row("Country", "Rate"), row("Serbia", "0.03"))
+                + P("Note: survey.") + P("Figure 2. B") + IMG + P("End."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        "Figure 1. A", "Source: as Table 1. Levels shows. " + FULL,
+        "Lead para before table. Table 1. Levels Country Rate Serbia 0.03 "
+        "Note: survey.", "Figure 2. B", "End. " + FULL])
+
+    assert [(z.name, z.first) for z in rep.landings] == [
+        ("Figure 1", 1), ("Table 1", 3), ("Figure 2", 4)]
+
+
+def test_an_exhibit_that_OPENS_the_body_has_no_lead_in_front_of_it():
+    """`x.start and …`: at index 0 nothing is in front, and index -1 is
+    the LAST paragraph — here one quoting the caption, where the exhibit
+    would then be found."""
+    doc = parts(P("Figure 1. Cap") + IMG + P("Prose.")
+                + P("As Figure 1. Cap shows."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        "Figure 1. Cap", "Prose. " + FULL, "As Figure 1. Cap shows. " + FULL])
+
+    assert [(z.name, z.first) for z in rep.landings] == [("Figure 1", 1)]
+
+
+def test_a_tables_end_is_the_sheet_of_its_LAST_character():
+    """Contrived on purpose: a render that breaks the sheet inside the
+    last row's final cell, so its last character opens the next sheet.
+    The end is where that character is, not the one before it."""
+    doc = parts(P("Table 1 shows it. " + FULL) + P("Table 1. X")
+                + table(row("Country", "Value"), row("N", "202"))
+                + P("After."))
+
+    rep = repack.repack(doc, render=lambda _p: [
+        FULL, "Table 1 shows it. " + FULL, "Table 1. X Country Value N 20",
+        "2 After. " + FULL, FULL])
+
+    (landing,) = rep.landings
+    assert (landing.first, landing.last) == (3, 4)
+
+
+def test_blame_past_sheet_256_compares_sheet_NUMBERS():
+    """`x.first == n + 1`: past 256 two equal ints computed apart are two
+    objects, and identity then blames nobody."""
+    blamed = repack._blame([int("280")],
+                           [repack.Landing("Figure 1", int("281"),
+                                           int("281"), int("280"))])
+
+    assert blamed == {280: "Figure 1"}
+
+
+def test_a_block_at_index_ZERO_does_not_read_the_last_child_as_its_break():
+    """`start > 0`: in a body with no `sectPr` of its own — the schema's
+    optional case, which Word never writes — the last child is the break
+    this exhibit closes, and reading it as the opening one makes the
+    exhibit an owner reaching back to index -1."""
+    assert _span(parts(P("Figure 1. Cap") + IMG + SECT())) == (0, 2)
+
+
+def test_an_owner_whose_opening_break_is_the_FIRST_child_takes_it():
+    """Every owner above opens at index 2 or 3."""
+    doc = parts(SECT() + P("Figure 1. Cap") + IMG + SECT(True) + P("After."))
+
+    assert _span(doc) == (0, 4)
+
+
+def test_a_span_ending_on_TWO_breaks_it_does_not_own_leaves_BOTH():
+    """The block stops at the FIRST break under it; from the last, it
+    would carry a section's close away with the figure."""
+    doc = parts(P("Figure 1 shows it.") + P("Main text ends.")
+                + P("Figure 1. Cap") + IMG + SECT() + SECT(True)
+                + P("After."))
+
+    assert _span(doc) == (2, 4)
+
+
+def test_an_exhibits_OWN_closing_break_is_not_offered_as_a_place():
+    """`y.key != x.key`: every OTHER block's end is a place. `Exhibit.key`
+    builds its tuple afresh, so identity would offer the exhibit's own
+    last index — here the break it closes, past the part that moves."""
+    doc = parts(P("Figure 1 shows it.") + P("Main text ends.")
+                + P("Figure 1. Cap") + IMG + SECT())
+
+    assert _places(doc, "Figure 1") == ["Figure 1 shows it."]
+
+
+def test_an_exhibit_INSIDE_the_reference_list_is_a_place_by_its_end_only():
+    """Its caption is in both sets a place must avoid, the blocks and the
+    reference list, so a place is outside EITHER, not outside exactly
+    one of them."""
+    doc = parts(FIGURE + P("Body prose.") + P("References", HEADING)
+                + P("Aaron, H. (2001). A paper.") + P("Table 1. T")
+                + table(row("cell")) + P("Zed, Q. (1999). Another.")
+                + P("Appendix A", HEADING) + P("Appendix prose."))
+
+    assert _places(doc, "Figure 1") == ["Body prose.",
+                                        "Table 1 and its notes",
+                                        "Appendix prose."]
+
+
+def test_the_paragraph_ALREADY_followed_is_skipped_past_256():
+    """`j == ms - 1`: that trial could only say "no change". Past index
+    256 the two numbers are two objects, and identity offers it first."""
+    filler = "".join(P(f"filler {k}") for k in range(300))
+    doc = parts(filler + P("Figure 1 shows it.") + P("Just before.")
+                + P("Figure 1. Cap") + IMG + P("After."))
+
+    assert _places(doc, "Figure 1") == ["Figure 1 shows it.", "After."]
+
+
+def test_a_BLANK_paragraph_between_two_places_is_not_one():
+    """A blank that belongs to no exhibit. One directly under a figure is
+    inside its span, which is why every fixture above missed it."""
+    doc = parts(FIGURE + P("prose") + P("") + P("more"))
+
+    assert _places(doc, "Figure 1") == ["prose", "more"]
+
+
+def test_a_block_ending_the_document_on_a_break_is_read_past_256():
+    """The break-at-the-end case above, behind 300 paragraphs: `j + 1 <
+    len(kids)` compares two ints past CPython's cache."""
+    filler = "".join(P(f"filler {k}") for k in range(300))
+    doc = parts(filler + P("Figure 1 and Table 1 show it.")
+                + P("Figure 1. Cap") + IMG + P("Portrait prose.") + SECT()
+                + P("Table 1. T") + table(row("cell")) + SECT(True))
+
+    assert _places(doc, "Figure 1") == ["Portrait prose."]
+
+
+def test_a_block_closing_SECOND_to_last_is_looked_up_one_child_along():
+    """The place after a block that ends on a break is in the section the
+    break OPENS: one child along, and still inside the body. Two along,
+    or twice the index, reads a different section or none."""
+    doc = parts(P("Figure 1 and Table 1 show it.") + P("Figure 1. Cap") + IMG
+                + P("Portrait prose.") + P("Table 1. T") + table(row("cell"))
+                + SECT() + P("Tail."))
+
+    assert _places(doc, "Figure 1") == ["Portrait prose."]
+
+
+def test_places_are_ordered_by_DISTANCE_on_both_sides():
+    """`abs(c[0] - ms)`. The distances in the ordering test above sort the
+    same by XOR; from index 4, with places on both sides, they do not."""
+    doc = parts(P("Figure 1 shows it.") + P("a") + P("b") + P("c")
+                + P("Figure 1. Cap") + IMG + P("d") + P("e"))
+
+    assert _places(doc, "Figure 1") == ["b", "d", "a", "e",
+                                        "Figure 1 shows it."]
+
+
+def test_the_exhibit_moved_is_the_one_ASKED_for_not_an_earlier_one():
+    """`e.key == key` over every exhibit in document order: a Table 1 in
+    front of Figure 1 sorts after it, and anything but equality takes
+    the table."""
+    doc = parts(P("Table 1. T") + table(row("cell")) + P("Figure 1. Cap")
+                + IMG + P("prose"))
+
+    assert moved(doc, 4) == ["Table 1. T", "cell", "prose", "Figure 1. Cap",
+                             "IMG"]
+
+
+@pytest.mark.parametrize("target", [1, 2])
+def test_a_target_INSIDE_the_block_is_refused_at_either_end(target):
+    """Never reached from `repack`, whose places skip the block, so the
+    guard is asked directly, at the block's first child and its last."""
+    with pytest.raises(PackageError, match="inside Figure 1's own block"):
+        repack._moved(parts(FIGURE + P("z")), ("Figure", "1"), target,
+                      labels=repack.LABELS, note=repack.NOTE)
+
+
+def test_the_default_drift_limit_is_ONE_sheet():
+    """Every search test above passes `max_drift` or starts a sheet from
+    its mention, where `max(max_drift, abs(before))` hides the default.
+    From a drift of 0 the default takes a move one sheet out and not one
+    two sheets out."""
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        if len(calls) == 1:
+            return [FULL, "short", "Figure 1 shows it. Figure 1. Cap", FULL,
+                    FULL]
+        if len(calls) == 2:                          # after "z": drift 1
+            return [FULL, "Figure 1 shows it. " + FULL, "Figure 1. Cap", FULL]
+        return [FULL, "Figure 1 shows it. " + FULL, FULL, "Figure 1. Cap"]
+
+    rep = repack.repack(parts(FIGURE + P("z") + P("w")), render=render)
+
+    assert rep.landings[0].drift == 0
+    assert [(m.after, m.drift) for m in rep.moves] == [("z", 1)]
+
+
+def test_a_render_that_WORKS_resets_the_count_of_failures_in_a_row():
+    """`failed = 0` after a success, so two failures AFTER one still end
+    the search; a count restarted below zero would take three."""
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        if len(calls) in (3, 4):
+            raise DocxKitError(f"render {len(calls)} failed")
+        return [FULL, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL]
+
+    rep = repack.repack(parts(FIGURE + P("a") + P("b") + P("c") + P("d")),
+                        render=render, max_drift=9)
+
+    assert len(calls) == 4, "the fourth candidate was never rendered"
+    assert any("two renders failed in a row" in p for p in rep.problems)
+
+
+def test_the_drift_reported_is_the_MOVED_exhibits_not_an_earlier_ones():
+    """`z.name == name` over the trial's landings in document order: a
+    Figure 1 in front of the blamed Table 1 sorts before it, and anything
+    but equality reads Figure 1's drift for Table 1's move."""
+    doc = parts(P("Figure 1 and Table 1 show it.") + P("Figure 1. Cap") + IMG
+                + P("prose z") + P("Table 1. T") + table(row("cell"))
+                + P("w"))
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        pages = [FULL, "Figure 1 and Table 1 show it. Figure 1. Cap",
+                 "Table 1. T cell", FULL, FULL]
+        if len(calls) == 1:
+            pages.insert(2, "prose z")
+        return pages
+
+    rep = repack.repack(doc, render=render, max_candidates=1)
+
+    assert rep.blamed == {3: "Table 1"}
+    assert [(m.name, m.drift) for m in rep.moves] == [("Table 1", 1)]
+
+
+def test_an_UNMEASURED_trial_does_not_end_the_search():
+    """The mention lost in one trial is reported, and the next candidate
+    is still rendered and measured."""
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        if len(calls) == 1:
+            return [FULL, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL]
+        if len(calls) == 2:                          # after "z": no mention
+            return [FULL, FULL, FULL, FULL, "Figure 1. Cap"]
+        return [FULL, "Figure 1 shows it. " + FULL, "Figure 1. Cap", FULL]
+
+    rep = repack.repack(parts(FIGURE + P("z") + P("w")), render=render)
+
+    assert [m.after for m in rep.moves] == ["w"]
+
+
+def test_a_move_with_NO_change_ranks_above_one_that_makes_it_worse():
+    """`-m.gain`: the larger gain first, and a loss below no change at
+    all. `not gain` ranks every non-zero gain alike and puts zero last."""
+    rep = repack._ranked(repack.RepackReport(
+        moves=[_move(underfull_after=2), _move(underfull_after=1)]))
+
+    assert [m.gain for m in rep.moves] == [0, -1]

@@ -658,7 +658,7 @@ def repack(parts: dict[str, bytes], *,
         for target, after in _candidates(kids, body, found, x, span=span,
                                          anchor=anchor, limit=max_candidates):
             if (x.key, target) in tried:
-                continue
+                continue                # tried for an earlier short sheet
             tried.add((x.key, target))
             try:
                 trial = _moved(parts, x.key, target, labels=labels, note=note)
