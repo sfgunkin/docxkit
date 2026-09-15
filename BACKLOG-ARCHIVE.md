@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 — `repack` moved the part of an exhibit in front of a section break it does not own, and offered the trial as a placement~~ — FIXED 15.09
+### ~~S2 — `repack` moved the part of an exhibit in front of a section break it does not own, and offered the trial as a placement~~ — FIXED 15.09, `1a00581`
 
 <!-- status: fixed -->
 
