@@ -1756,3 +1756,818 @@ def test_a_caption_set_with_a_TAB_is_found_and_its_straddle_reported():
 
     (straddle,) = rendered(placement.audit(doc, render=render))
     assert straddle.detail == "it starts on sheet 2 and ends on sheet 3"
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# 210 real survivors against dcbb6f7, most of them in `_locate`. The
+# argued ones are in the claims file beside the round, not here.
+
+
+def test_a_report_says_NOTHING_was_kept_together_when_fit_is_off():
+    """`Placement.kept_together` defaults to False because only the
+    branch that binds a block sets it — the shape `spaced` has, pinned
+    above. Defaulted the other way, a run called with `fit=False`
+    reports "1 kept together" over a table no property was written to,
+    and a paper reads that as the fit having been handled."""
+    out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок")
+              + TBL("шапка")), fit=False)
+
+    assert rep.placements[0].kept_together is False
+    assert rep.format().splitlines()[0] == (
+        "1 table(s): 0 moved, 0 kept together, 1 spaced, "
+        "0 given their own page")
+    assert tbl_of(body_of(out)).find(NS + "tr/" + NS + "trPr") is None
+
+
+def test_the_FIT_REPORT_prints_its_head_and_every_finding_WHOLE():
+    """`FitReport.format` had no test: every call to it in this file sat
+    in an assertion MESSAGE, which is evaluated only when the assertion
+    fails. So `[head] + findings` could be any operator — each of the
+    eleven others raises TypeError on two lists — and the "markup only"
+    tail could hang off the wrong condition, and nothing noticed. The
+    unrendered report is what `fit --check` prints for a hand-typed
+    table; a styled table measured whole has nothing to add to its head.
+    """
+    raw = parts(P("See table 1.") + P("Table 1. Heading")
+                + WIDE(("Capability", "Source"), ("Health", "Nussbaum")))
+
+    assert placement.audit(raw).format() == "\n".join([
+        "1 table(s): 3 fit finding(s) — markup only; pass a renderer to "
+        "see what STRADDLES",
+        "  ! table 1 (Table 1. Heading): its caption does not keep with "
+        "the table, so Word may leave the caption behind on the sheet "
+        "above",
+        "  ! table 1 (Table 1. Heading): 2 of 2 row(s) carry no "
+        "cantSplit — a tall one will break ACROSS a page, mid-row",
+        "  ! table 1 (Table 1. Heading): 1 row(s) do not keep with the "
+        "row after — the table may break BETWEEN rows"])
+
+    styled, _ = placement.place(dict(raw))
+    whole = placement.audit(styled, render=lambda _p: [
+        "See table 1.",
+        "Table 1. Heading Capability Source Health Nussbaum"])
+    assert whole.format() == "1 table(s): 0 fit finding(s)"
+
+
+def test_an_EMPTY_fit_report_counts_no_tables():
+    """`tables: int = 0`. `audit` always passes the count, so the default
+    is what a caller gets who builds a report to fill in — the audits of
+    several documents added up, say — and an empty report that says
+    "1 table(s)" or "-1 table(s)" is a gate that miscounts."""
+    report = placement.FitReport()
+
+    assert report.ok
+    assert report.format() == (
+        "0 table(s): 0 fit finding(s) — markup only; pass a renderer to "
+        "see what STRADDLES")
+
+
+def test_a_BLOCK_and_a_FIT_FINDING_are_FROZEN():
+    """Both are answers read after the tree they describe has moved on:
+    a Block says what moving a span WOULD cost, and a finding is what a
+    gate reported. Unfrozen, a caller that "fixes" a finding by editing
+    it turns the report green without touching the document — and a
+    finding stops being hashable, so two audits cannot be compared as
+    sets."""
+    import dataclasses
+
+    doc = parts(P("Prose.") + P("Table 3. Counts") + TBL("a"))
+    block = placement.exhibit_block(doc, "Table 3.")
+    finding = placement.audit(doc).findings[0]
+
+    for value in (block, finding):
+        first = dataclasses.fields(value)[0].name
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(value, first, None)
+    assert hash(finding) == hash(dataclasses.replace(finding))
+
+
+def test_the_probe_is_the_SAME_forty_characters_repack_reads_with():
+    """`_PROBE` sets how much of a caption, a row and a mention is looked
+    for on a sheet, and `repack` finds the same exhibits on the same
+    renders with a probe of its own. The tests beside `repack` and
+    `pages` hold theirs equal to this one; held from this side as well,
+    a probe changed here alone is caught by this module's own harness
+    rather than by a suite that does not measure it."""
+    from docxkit import repack
+
+    assert placement._PROBE == repack._PROBE
+
+
+def test_the_default_drift_limit_is_ONE_sheet():
+    """`max_drift: int = 1` — the limit a paper gets without naming one.
+    Every render test above passes it explicitly, so the default could
+    be two, and a table two sheets past its mention would read as
+    placed."""
+    def render(_parts):
+        return ["См. таблицу 1.", "x", "Таблица 1. Заголовок шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")),
+        render=render)
+
+    assert rep.placements[0].drift == 2
+    assert rep.problems == [
+        "table 1: 2 sheets after its mention (limit 1) — place it by hand"]
+
+
+def test_a_table_that_did_not_split_is_rendered_ONCE():
+    """`fixed = False`: the second render is bought only by a page break
+    this pass wrote. A render is Word laying out the whole document —
+    minutes on a real paper — and started True, every call pays for two,
+    the second measuring a document nothing changed."""
+    calls: list[int] = []
+
+    def render(_parts):
+        calls.append(1)
+        return ["См. таблицу 1. Таблица 1. Заголовок шапка"]
+
+    _out, rep = placement.place(
+        parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")),
+        render=render)
+
+    assert len(calls) == 1
+    assert rep.placements[0].own_page is False
+
+
+def test_a_whole_table_on_sheet_THREE_HUNDRED_neither_splits_nor_straddles():
+    """`last_sheet != caption_sheet` in `split`, and `last != first` in
+    the audit. Read as `is not`, each compares two sheet numbers computed
+    apart — and CPython shares int objects only up to 256, so every
+    table past sheet 256 reads as split: `place` gives it a page break
+    and reports "still splits across sheets 300-300", and the audit calls
+    a table that starts and ends on one sheet a straddle. A thesis with
+    its appendix is that long."""
+    sheets = (["См. таблицу 1."] + ["проза"] * 298
+              + ["Таблица 1. Заголовок шапка строка"])
+    doc = parts(P("См. таблицу 1.") + P("Таблица 1. Заголовок")
+                + TBL("шапка", "строка"))
+
+    _out, rep = placement.place(doc, render=lambda _p: sheets,
+                                max_drift=1000)
+
+    pl = rep.placements[0]
+    assert (pl.caption_sheet, pl.last_sheet) == (300, 300)
+    assert pl.split is False and pl.own_page is False
+    assert rep.problems == [], rep.problems
+    assert rendered(placement.audit(doc, render=lambda _p: sheets)) == []
+
+
+def test_a_measurement_that_ENDS_BEFORE_it_begins_is_not_a_whole_table():
+    """`split` is "the end is not on the caption's sheet", and an end
+    read on an EARLIER sheet is a measurement gone wrong — the row
+    matched in prose above the table, which the search from the caption
+    exists to prevent. Read as `>`, that answer comes back "whole" and
+    nothing escalates; as inequality it is a split, which is what the
+    test of the search from the caption has always called it."""
+    pl = placement.Placement(number=1, caption="Таблица 1.",
+                             caption_sheet=5, last_sheet=4)
+
+    assert pl.split is True
+
+
+def test_exhibit_block_steps_over_XML_COMMENTS_in_the_body():
+    """lxml gives a comment its Comment FUNCTION as a tag. `==` answers
+    False for it, and an ordering does not answer at all: `<=` raises
+    TypeError. The caption search reads every child of the body, so a
+    comment — which Word never writes and a converter does — stops the
+    call dead. `exhibits` keeps a comment in front of a caption as a
+    marker, which makes it the Block's FIRST element, and the
+    section-break test reads that one too."""
+    block = placement.exhibit_block(
+        parts("<!-- generated -->" + P("Prose.") + "<!-- figure -->"
+              + P("Figure 5. Curves") + DRAW + P("Source: mine.")),
+        "Figure 5.")
+
+    assert block.caption == "Figure 5. Curves"
+    assert [("comment" if isinstance(e, etree._Comment) else e.tag)
+            for e in block.elements] == ["comment", NS + "p", NS + "p",
+                                         NS + "p"]
+    assert not block.ends_a_section and not block.shares_a_page
+    assert block.last_in_body
+
+
+def test_the_block_IN_FRONT_is_the_element_just_above_the_caption():
+    """`kids[head - 1]`. Read as `kids[head >> 1]` it is the element
+    halfway up the body, which is the one just above only while the
+    caption sits at index one or two — where the tests above have it. At
+    index three the readings part: one sees the section break directly
+    in front, the other a paragraph further up, and each fixture here is
+    wrong under one of them."""
+    after_break = placement.exhibit_block(
+        parts(P("Prose.") + P("More prose.") + LANDSCAPE
+              + P("Figure 5. Curves") + DRAW), "Figure 5.")
+    after_prose = placement.exhibit_block(
+        parts(P("Prose.") + LANDSCAPE + P("More prose.")
+              + P("Figure 5. Curves") + DRAW), "Figure 5.")
+
+    assert after_break.shares_a_page
+    assert not after_prose.shares_a_page
+
+
+def test_exhibit_block_finds_a_caption_past_child_THREE_HUNDRED():
+    """`x.caption_at == i`: two indices counted apart, `exhibit_block`'s
+    own and `exhibits`', equal only by value. Read as `is`, they are one
+    object up to 256 and two after it, so every caption past the 256th
+    body child has "no table or image beside it" — the back half of any
+    real paper."""
+    prose = "".join(P(f"Prose {i}.") for i in range(300))
+
+    block = placement.exhibit_block(
+        parts(prose + P("Figure 5. Curves") + DRAW + P("After.")),
+        "Figure 5.")
+
+    assert block.caption == "Figure 5. Curves"
+    assert len(block.elements) == 2
+
+
+def test_the_LAST_block_is_judged_by_its_LAST_element_not_its_second():
+    """`content[-1] is block[-1]`. A caption and its image are two
+    elements, and there `block[1]` IS `block[-1]` — the shape of the test
+    above. A figure with its source line under it is three, and read as
+    `block[1]` the block that ends the body says it does not, so nobody
+    promotes its geometry and the move leaves a blank last page."""
+    block = placement.exhibit_block(
+        parts(P("Prose.") + P("Figure 5. Curves") + DRAW
+              + P("Source: World Bank.")), "Figure 5.")
+
+    assert len(block.elements) == 3
+    assert block.last_in_body
+
+
+def test_exhibit_block_never_answers_with_ANOTHER_captions_span():
+    """`x.caption_at == i`, read as `>=`, takes the first exhibit captioned
+    at or AFTER the paragraph asked about. The two agree wherever
+    `exhibits` reads that paragraph as a caption too, and part company
+    where it does not: a line break inside the number, "Table 1-" and
+    "A." — `_text` drops the break and sees a caption, `text_of` keeps it
+    and sees prose. The answer for Table 1-A may then be a refusal, but
+    it is never Table 2's span, which a caller would move."""
+    doc = parts(P("Prose.")
+                + "<w:p><w:r><w:t>Table 1-</w:t><w:br/>"
+                "<w:t>A. Counts</w:t></w:r></w:p>" + TBL("a")
+                + P("More prose.") + P("Table 2. Other") + TBL("b"))
+
+    try:
+        block = placement.exhibit_block(doc, "Table 1-A.")
+    except placement.PackageError as exc:
+        assert "Table 1-A." in str(exc)
+    else:
+        assert block.caption.startswith("Table 1-"), block.caption
+
+
+def test_a_table_of_PICTURES_under_a_caption_is_still_its_table():
+    """The step over blanks under a caption asks `kids[j].tag == W + "p"`
+    and whether the element has no text. A table whose cells hold only
+    pictures has no text either: read as `is not` (true of every tag) the
+    walk steps over the TABLE as though it were a blank paragraph, lands
+    on the note, finds no table, and the caption is not a block at all."""
+    pictures = ("<w:tbl><w:tr><w:tc><w:p><w:r><w:drawing/></w:r></w:p>"
+                "</w:tc></w:tr></w:tbl>")
+
+    out, rep = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + P("Таблица 1. Карта") + pictures
+        + P("Примечание. Картинки в ячейках.")))
+
+    assert [p.moved for p in rep.placements] == [True]
+    assert order(out) == [
+        "p:Как показано в таблице 1, вс", "p:Таблица 1. Карта", "tbl:",
+        "p:Примечание. Картинки в ячейк", "p:Совершенно другой абзац."]
+
+
+#: the last child of every body Word writes: the final section's geometry
+BODY_SECT = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>'
+COMMENT = "<!-- written by a converter -->"
+
+
+@pytest.mark.parametrize("note", ["", P("Примечание. Что-то.")],
+                         ids=["no note", "a note"])
+def test_the_BODY_sectPr_after_the_last_table_is_left_alone(note):
+    """A table at the end of the body has the body's `w:sectPr` as the
+    next element, and three tag tests stand between it and a write.
+
+    The note walk reads `kids[k].tag == W + "p"`: as `>=`, a sectPr sorts
+    above "p", carries no text, and is absorbed into the block — which
+    then "carries a section break" and is refused. The two gap branches
+    read `following.tag == W + "p"`: as `>=` or `is not`, the sectPr is
+    handed a `w:pPr` with spacing in it, which CT_SectPr has no place
+    for. One branch runs under a note and the other without one, which
+    is why there are two cases."""
+    out, rep = placement.place(parts(
+        P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")
+        + note + BODY_SECT))
+
+    assert rep.problems == [], rep.problems
+    sect = body_of(out)[-1]
+    assert sect.tag == NS + "sectPr"
+    assert [etree.QName(c).localname for c in sect] == ["pgSz"]
+
+
+def test_the_table_under_a_BOX_does_not_travel_as_its_body():
+    """`if el.tag != W + "p": continue`, ahead of the caption match. A box
+    is a TABLE whose first cell reads like a caption, and `exhibits`
+    makes it an exhibit of its own rather than the caption of what comes
+    next. Read as `is` (False for every tag, the right-hand side being a
+    fresh string) or as `<` (False for `w:tbl`), the box's text is
+    matched as a caption, the table under it becomes its body, and the
+    data table is moved to the box's mention and given row properties
+    nobody asked for."""
+    box = WIDE(("Таблица 2. Памятка", "Проверьте источники."))
+
+    out, _rep = placement.place(parts(
+        P("См. таблицу 2.") + P("Разделитель.") + box + P("")
+        + TBL("данные")))
+
+    seq = order(out)
+    assert seq[-1] == "tbl:данные"
+    assert seq.index("p:Разделитель.") < len(seq) - 1
+    data = body_of(out).findall(NS + "tbl")[-1]
+    assert data.find(NS + "tr/" + NS + "trPr") is None
+
+
+def test_an_XML_COMMENT_anywhere_in_the_body_is_stepped_over_by_place():
+    """lxml gives a comment its Comment FUNCTION as a tag: `==` answers
+    False, an ordering raises TypeError, and `_ppr` cannot give a
+    comment a child. Nearly every `el.tag == W + "p"` in this module
+    reads a comment somewhere — the caption walk, the step over blanks
+    under a caption, the note walk, the anchor search, the section
+    count, and the paragraph after a block that the gap goes on.
+
+    So one comment in front of everything, one under a note-less table,
+    one under a caption with no table, and one under a note."""
+    out, rep = placement.place(parts(
+        COMMENT
+        + P("Как показано в таблице 1, всё сходится.")
+        + P("Таблица 1. Первая") + TBL("шапка", "строка")
+        + COMMENT
+        + P("Следующий абзац.")
+        + P("Таблица 9. Подпись без таблицы")
+        + COMMENT
+        + P("См. таблицу 2.")
+        + P("Таблица 2. Вторая") + TBL("b")
+        + P("Примечание. Что-то.")
+        + COMMENT))
+
+    assert [(p.number, p.moved) for p in rep.placements] == [
+        (1, False), (2, False)]
+    assert rep.problems == [], rep.problems
+    assert spacing_of(out, "Примечание.")["after"] == "160"
+    assert sum(isinstance(el, etree._Comment) for el in body_of(out)) == 4
+    assert placement.audit(out).ok
+
+
+def test_the_block_writers_step_over_an_XML_COMMENT_in_the_block():
+    """`keep_together`, `space_block` and `own_page` are public and take
+    any list of elements — the tests here build theirs as `list(body)`.
+    Each asks `el.tag == W + "p"` or `== W + "tbl"` of every element; a
+    comment answers False, where an ordering raises TypeError and an
+    identity sends the comment on to `_ppr`. So a comment first, one
+    between the caption and the table, and one last."""
+    body = body_of(parts(COMMENT + P("Таблица 1. Заголовок") + COMMENT
+                         + TBL("шапка", "строка")
+                         + P("Примечание. Что-то.") + COMMENT))
+    block = list(body)
+
+    placement.keep_together(block)
+    placement.space_block(block, None)
+    placement.own_page(block)
+
+    caption, tbl, note = (el for el in block
+                          if not isinstance(el, etree._Comment))
+    assert [etree.QName(c).localname for c in caption[0]] == [
+        "keepNext", "pageBreakBefore", "spacing"]
+    assert note.find(NS + "pPr/" + NS + "keepNext") is None
+    rows = tbl.findall(NS + "tr")
+    assert [[etree.QName(c).localname for c in row[0]] for row in rows] == [
+        ["tblHeader"], []]
+    assert sum(isinstance(el, etree._Comment) for el in body) == 3
+
+
+def test_a_HOISTED_bookmark_is_never_taken_for_the_caption_paragraph():
+    """Word hoists a table's bookmarkStart to body level in front of the
+    caption, and the block takes it along, so the block's FIRST element
+    is not a paragraph. Five places look for "the first paragraph" with
+    `el.tag == W + "p"`, and `w:bookmarkStart` sorts below "p": read as
+    `<=` or as `is not`, each stops at the bookmark. The report's caption
+    is then empty; keepNext, the caption's spacing and the page break
+    are written INTO the bookmark, which CT_Bookmark has no room for;
+    and the audit reads the bookmark's missing pPr as a caption that
+    does not keep with its table.
+
+    The first render straddles, so that `own_page` runs as well."""
+    calls: list[int] = []
+
+    def render(_parts):
+        calls.append(1)
+        if len(calls) == 1:
+            return ["См. таблицу 1. Таблица 1. Заголовок шапка", "строка"]
+        return ["См. таблицу 1.", "Таблица 1. Заголовок шапка строка"]
+
+    out, rep = placement.place(parts(
+        P("См. таблицу 1.") + '<w:bookmarkStart w:id="7" w:name="T1"/>'
+        + P("Таблица 1. Заголовок") + TBL("шапка", "строка")
+        + '<w:bookmarkEnd w:id="7"/>'), render=render)
+
+    assert rep.placements[0].caption == "Таблица 1. Заголовок"
+    start = body_of(out).find(NS + "bookmarkStart")
+    assert start is not None and len(start) == 0
+    assert [etree.QName(c).localname for c in ppr_of(out, "Таблица 1.")] \
+        == ["keepNext", "pageBreakBefore", "spacing"]
+    assert "caption unbound" not in [
+        f.kind for f in placement.audit(out).findings]
+
+
+def test_keep_together_frees_the_note_ABOVE_an_exhibit_blocks_end_marker():
+    """`exhibit_block` hands back a span that can END with the bookmarkEnd
+    paired with a start in front of the caption, and says its elements go
+    straight to `keep_together`. The walk back from the end has to pass
+    that marker and free the note. `w:bookmarkEnd` sorts below "p": read
+    as `<=` or as `is not`, the walk stops at the marker, gives it an
+    empty `w:pPr`, and leaves the note bound to whatever follows."""
+    block = placement.exhibit_block(parts(
+        P("Prose.") + '<w:bookmarkStart w:id="5" w:name="T3"/>'
+        + P("Table 3. Counts") + TBL("a", "b") + P("Source: mine.")
+        + '<w:bookmarkEnd w:id="5"/>' + P("Prose after.")), "Table 3.")
+    start, caption, _tbl, note, end = block.elements
+
+    placement.keep_together(block.elements)
+
+    assert (len(start), len(end)) == (0, 0)
+    assert caption.find(NS + "pPr/" + NS + "keepNext") is not None
+    assert note.find(NS + "pPr/" + NS + "keepNext") is None
+
+
+def test_only_the_LAST_note_is_freed_the_notes_above_it_stay_bound():
+    """The walk back from the end clears keepNext on the first paragraph
+    it meets and STOPS. `continue` in place of the `break` clears every
+    note back to the table, so a note and the gloss under it can be
+    parted by a page — and DSI's таблица 4 has exactly those two."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.") + P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Примечание. Ориентация.") + P("* Высокая доля.")
+        + P("Следующий абзац.")))
+
+    def keeps(starts: str) -> bool:
+        return ppr_of(out, starts).find(NS + "keepNext") is not None
+
+    assert (keeps("Таблица 1."), keeps("Примечание."),
+            keeps("* Высокая")) == (True, True, False)
+
+
+@pytest.mark.parametrize("n", [2, 300])
+def test_the_LAST_row_is_freed_in_a_table_of_EVEN_or_huge_length(n):
+    """`last = n == len(rows) - 1`, and two readings the three-row test
+    above cannot see. `len(rows) ^ 1` is `len(rows) - 1` only when the
+    length is ODD: at two rows it is three, and no row is last. `is`
+    holds only while the index is a cached int, so row 300 of an
+    appendix table is never the last. Either way the last row keeps with
+    the paragraph after the table.
+
+    The first keep-together test looks for `w:p` as a CHILD of the row,
+    where a cell always stands between, which is why it never said so."""
+    out, _ = placement.place(parts(
+        P("См. таблицу 1.") + P("Таблица 1. Заголовок")
+        + TBL(*(f"строка {i}" for i in range(n)))))
+
+    rows = tbl_of(body_of(out)).findall(NS + "tr")
+    keeps = [row.find(f"{NS}tc/{NS}p/{NS}pPr/{NS}keepNext") is not None
+             for row in rows]
+    assert keeps == [True] * (n - 1) + [False]
+
+
+def test_a_move_from_the_MIDDLE_section_into_the_LAST_one_is_refused():
+    """`_section_of` answers the first section whose end is AT or after
+    the index. Read as `index > end` it answers the first whose end is
+    BEFORE it — zero for everything past the first break — so a table in
+    the middle section and its mention in the last read as one section,
+    and the move crosses a boundary. The fixtures above have a single
+    break, where the two readings merely swap and still agree that the
+    sections differ."""
+    out, rep = placement.place(parts(
+        P("Конец первого раздела.", SECT("portrait"))
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Конец второго раздела.", SECT("landscape"))
+        + P("См. таблицу 1 в последнем разделе.")))
+
+    assert rep.placements[0].moved is False
+    assert any("another section" in x for x in rep.problems), rep.problems
+    assert order(out)[1:3] == ["p:Таблица 1. Заголовок", "tbl:шапка"]
+
+
+def test_a_table_after_THREE_HUNDRED_section_breaks_still_moves():
+    """`here != there`: two section numbers from two calls, equal by
+    value. Read as `is not`, they are one object only below 257, and past
+    that every move is refused as crossing a section boundary it does
+    not cross."""
+    breaks = "".join(P(f"Раздел {i}.", SECT("portrait")) for i in range(300))
+
+    out, rep = placement.place(parts(
+        breaks + P("См. таблицу 1.") + P("Разделитель.")
+        + P("Таблица 1. Заголовок") + TBL("шапка")))
+
+    assert rep.problems == [], rep.problems
+    assert rep.placements[0].moved is True
+    assert order(out)[301] == "p:Таблица 1. Заголовок"
+
+
+def test_the_anchor_is_a_mention_of_THIS_number_however_large():
+    """`int(m.group(1)) == number`. Read as `>=`, a mention of a LATER
+    table is taken for this one: «см. таблицу 2» above «см. таблицу 1»
+    anchors table 1 under the wrong sentence. Read as `is`, the number
+    parsed from the mention and the one parsed from the caption are one
+    object only up to 256, and table 300 is mentioned by nothing in the
+    paper that mentions it."""
+    out, rep = placement.place(parts(
+        P("См. таблицу 2.") + P("См. таблицу 1.") + P("Разделитель.")
+        + P("Таблица 1. Заголовок") + TBL("шапка")))
+    assert rep.placements[0].anchor_text == "См. таблицу 1."
+    assert order(out)[2] == "p:Таблица 1. Заголовок"
+
+    _out, rep = placement.place(parts(
+        P("См. таблицу 300.") + P("Разделитель.")
+        + P("Таблица 300. Заголовок") + TBL("шапка")))
+    assert rep.placements[0].moved is True
+    assert rep.placements[0].anchor_text == "См. таблицу 300."
+
+
+def test_own_page_puts_a_NEW_trPr_first_in_a_row_of_TWO_cells():
+    """`rows[0].insert(0, trpr)`. The own-page tests above build one cell
+    per row, where `insert(-1)` — before the last child — is the same
+    position. A header row out of a paper has several cells, and a
+    `w:trPr` after the first of them is unreadable content that `find`
+    cannot see."""
+    body = body_of(parts(P("Таблица 1. Заголовок")
+                         + WIDE(("Страна", "Год"), ("Сербия", "2017"))))
+
+    placement.own_page(list(body))
+
+    tr = tbl_of(body).find(NS + "tr")
+    assert tr is not None
+    assert [etree.QName(c).localname for c in tr] == ["trPr", "tc", "tc"]
+
+
+def test_own_page_goes_on_PAST_a_table_with_no_rows():
+    """`if not rows: continue`. `own_page` takes whatever list it is
+    given, and a list can hold two tables; an empty one in front must not
+    stop the next one's header being marked. `break` there leaves every
+    table after the empty one without a header that repeats."""
+    body = body_of(parts(P("Таблица 1. Заголовок") + "<w:tbl/>"
+                         + TBL("шапка", "строка")))
+
+    placement.own_page(list(body))
+
+    rows = body.findall(NS + "tbl")[1].findall(NS + "tr")
+    assert rows[0].find(NS + "trPr/" + NS + "tblHeader") is not None
+
+
+def test_the_audit_reads_EVERY_row_but_the_last_not_just_the_first():
+    """`rows[:-1]`: every row but the last must bind to the next. Read as
+    `rows[:1]` only the first is asked, which agrees on the two-row
+    tables above; a three-row table unbound in the MIDDLE — a row pasted
+    in by hand after the writer ran — then audits clean."""
+    styled, _ = placement.place(parts(
+        P("See table 1.") + P("Table 1. Heading")
+        + WIDE(("Country", "Rate"), ("Serbia", "0.03"), ("Sweden", "0.02"))))
+    root = etree.fromstring(styled["word/document.xml"])
+    middle = root.findall(f"{NS}body/{NS}tbl/{NS}tr")[1]
+    for kn in list(middle.iter(NS + "keepNext")):
+        parent = kn.getparent()
+        assert parent is not None
+        parent.remove(kn)
+
+    report = placement.audit({"word/document.xml": etree.tostring(root)})
+
+    assert [(f.kind, f.detail) for f in report.findings] == [(
+        "row unbound",
+        "1 row(s) do not keep with the row after — the table may break "
+        "BETWEEN rows")]
+
+
+def test_the_MENTION_is_found_on_the_sheet_that_carries_it():
+    """`_sheet_of` answers the first sheet holding the needle, counted
+    from one. `needle or ...` answers the first sheet searched whatever
+    the needle, and `i ^ 1` and `i | 1` agree with `i + 1` only on the
+    first sheet — which is where every earlier test put its mention. On
+    the second, drift is reported from a sheet the mention is not on."""
+    def render(_parts):
+        return ["Проза.", "См. таблицу 1. Таблица 1. Заголовок шапка"]
+
+    _out, rep = placement.place(
+        parts(P("Проза.") + P("См. таблицу 1.") + P("Таблица 1. Заголовок")
+              + TBL("шапка")), render=render)
+
+    pl = rep.placements[0]
+    assert (pl.mention_sheet, pl.caption_sheet, pl.drift) == (2, 2, 0)
+
+
+def test_tables_are_measured_in_the_order_the_MOVES_left_them():
+    """`_locate_tables` walks the tables by their CURRENT position, and
+    each search starts where the table before it ended. A sort key that
+    is always 0 keeps the order the captions had BEFORE the moves —
+    table 2 first, here — and table 1, now in front of it, is looked for
+    after table 2's last row and is never found."""
+    def render(_parts):
+        return ["См. таблицу 1. Таблица 1. Первая a",
+                "Проза. См. таблицу 2. Таблица 2. Вторая b"]
+
+    _out, rep = placement.place(parts(
+        P("См. таблицу 1.") + P("Проза.") + P("См. таблицу 2.")
+        + P("Таблица 2. Вторая") + TBL("b")
+        + P("Таблица 1. Первая") + TBL("a")), render=render)
+
+    assert [(p.number, p.moved, p.caption_sheet, p.last_sheet)
+            for p in rep.placements] == [(1, True, 1, 1), (2, False, 2, 2)]
+
+
+def located(body: str, sheets: list[str],
+            ) -> list[tuple[int, int | None, int | None]]:
+    """Each table's (number, caption sheet, last sheet) as `place`
+    measures them on `sheets`, moving nothing.
+
+    `place` rather than `audit` because the audit says nothing about a
+    table it could not find at all — and a search that loses its cursor
+    loses the NEXT table, silently."""
+    _out, rep = placement.place(parts(body), render=lambda _p: sheets,
+                                move=False)
+    return [(p.number, p.caption_sheet, p.last_sheet)
+            for p in rep.placements]
+
+
+LEVELS = P("Table 1. Levels") + WIDE(HEAD, ("Serbia", "2017", "0.03"))
+TRENDS = P("Table 2. Trends") + WIDE(HEAD, ("Sweden", "2017", "0.02"))
+#: longer than the forty-character probe, so a tail stands between the
+#: probe and the header row
+LONG = "Table 1. Levels of mortality in the sample by country"
+PICTURES = ("<w:tbl><w:tr><w:tc><w:p><w:r><w:drawing/></w:r></w:p></w:tc>"
+            "</w:tr></w:tbl>")
+
+
+@pytest.mark.parametrize(("body", "sheets", "want"), [
+    # the quote comes first; every search that does not measure the
+    # distance to the rows takes it
+    pytest.param(LEVELS, [
+        "As Table 1. Levels shows, rates fell.", "prose",
+        "Table 1. Levels Country Year Rate Serbia 2017 0.03"],
+        [(1, 3, 3)], id="quoted before"),
+    # the quote is followed by the LAST row's values: measured to the
+    # last row instead of the first, the quote is the nearer one
+    pytest.param(LEVELS, [
+        "As Table 1. Levels shows, Serbia 2017 0.03 is the lowest.",
+        "Table 1. Levels Country Year Rate Serbia 2017 0.03"],
+        [(1, 2, 2)], id="quoted with its last row"),
+    # the header row is not on the page (set hidden), so the distance is
+    # taken to the last row — and without that fallback every occurrence
+    # is equally far and the first, the quote, wins
+    pytest.param(LEVELS, [
+        "As Table 1. Levels shows, rates fell.", "prose",
+        "Table 1. Levels Serbia 2017 0.03"],
+        [(1, 3, 3)], id="header not on the page"),
+    # quoted AFTER the table, just above a table with the same header row,
+    # and once more at the end with nothing under it
+    pytest.param(LEVELS + TRENDS, [
+        "Prose that runs on for a good while before any table at all.",
+        "Table 1. Levels Country Year Rate Serbia 2017 0.03",
+        "As Table 1. Levels showed,",
+        "Table 2. Trends Country Year Rate Sweden 2017 0.02",
+        "Table 1. Levels again, in the conclusion."],
+        [(1, 2, 2), (2, 4, 4)], id="quoted after"),
+    # the gap as a RATIO to the offset: the quote is further from a row
+    # than the caption is from its own header, but far down the text
+    pytest.param(P(LONG) + WIDE(HEAD, ("Serbia", "2017", "0.03")) + TRENDS, [
+        "Mortality is measured in two ways.",
+        LONG + " Country Year Rate Serbia 2017 0.03",
+        "The second table repeats the layout of " + LONG + ".",
+        "Table 2. Trends Country Year Rate Sweden 2017 0.02"],
+        [(1, 2, 2), (2, 4, 4)], id="a ratio takes the quote"),
+    # the gap as a floor division, an `|` or an `^` of the two offsets:
+    # thirty-four characters in front of the quote are where all three
+    # rank the quote above the caption
+    pytest.param(P(LONG) + WIDE(HEAD, ("Serbia", "2017", "0.03")), [
+        "Death rates fell at every age; again, see Table 1. Levels of "
+        "mortality in the sample, in all women and men.",
+        LONG + " Country Year Rate Serbia 2017 0.03"],
+        [(1, 2, 2)], id="a floor or a bit mix takes the quote"),
+])
+def test_the_caption_is_the_occurrence_its_ROWS_follow_most_closely(
+        body, sheets, want):
+    """`_locate` takes, of every place a caption's text appears, the one
+    whose table rows come soonest after it: `gap = body - after`, kept
+    while strictly smaller. Only the HCW fixture above had two
+    occurrences in reach of one search, and there the cursor had already
+    passed the quote — so the choice itself was never made by a test.
+
+    Every other reading of that arithmetic — the distance to the last row
+    instead of the first, a sum, a product, a ratio, a remainder, a bit
+    mix, a comparison that keeps the later of two or the larger — ranks
+    the occurrences by something that is not distance, and for some
+    spacing of the page picks the quote. Each layout here is a spacing
+    where some of them do; the sheet numbers are the table's own."""
+    assert located(body, sheets) == want
+
+
+@pytest.mark.parametrize(("body", "sheets", "want"), [
+    # a table of pictures: no row has text, so there is no end to find
+    pytest.param(P("Table 1. Map") + PICTURES + TRENDS, [
+        "prose", "Table 1. Map",
+        "Table 2. Trends Country Year Rate Sweden 2017 0.02",
+        "As Table 1. Map showed."],
+        [(1, 2, None), (2, 3, 3)], id="no text rows"),
+    # rows with text, and the render carries none of them
+    pytest.param(P("Table 1. Map") + WIDE(("Region", "Share"), ("North", "7"))
+                 + TRENDS, [
+        "prose", "Table 1. Map",
+        "Table 2. Trends Country Year Rate Sweden 2017 0.02"],
+        [(1, 2, None), (2, 3, 3)], id="rows not on the page"),
+])
+def test_a_table_whose_END_is_UNMEASURED_does_not_lose_the_next(
+        body, sheets, want):
+    """A table whose end is found on no sheet answers (caption sheet,
+    None), and the next table's search starts just past its caption. The
+    readings that break it do so quietly: a probe of nothing "found" at
+    offset 0 or 1 reports a last sheet for a table with no text; a
+    start of -1, or the caption's offset multiplied by its length, puts
+    the cursor past everything, and table 2 — whole on sheet 3 — is not
+    found at all; a tie between two equally unmeasurable occurrences
+    that goes to the LATER one does the same. None of that reaches
+    `audit`, which is silent about a table it cannot locate."""
+    assert located(body, sheets) == want
+
+
+@pytest.mark.parametrize(("body", "sheets", "want"), [
+    # the caption runs past the probe and its tail says "Total", which is
+    # also the last row: searched from the caption's probe instead of the
+    # header, the end is found inside the caption and the straddle is lost
+    pytest.param(P("Table 1. Mortality by country and year, with the Total")
+                 + WIDE(("Country", "Rate"), ("Serbia", "0.03"),
+                        ("Total", "")), [
+        "prose",
+        "Table 1. Mortality by country and year, with the Total Country "
+        "Rate Serbia 0.03", "Total"],
+        [(1, 2, 3)], id="the caption's tail holds the last row"),
+    # no row on the page, and "Total" in the caption itself: any start
+    # before the probe's end — a remainder, a difference, a floor, a bit
+    # mix of the caption's offset (29) and its length (12) — finds the
+    # end INSIDE the caption and calls an unmeasured table measured
+    pytest.param(P("Table 1. Total") + WIDE(("Region", "Share"),
+                                            ("Total", "")), [
+        "Every share is shown by its region.", "Table 1. Total"],
+        [(1, 2, None)], id="Total in the caption, no rows rendered"),
+])
+def test_the_last_row_is_looked_for_from_the_table_BODY_onward(
+        body, sheets, want):
+    """`start = body if body >= 0 else at + len(caption)`: the end search
+    starts at the table's first row, or — when no row was found — just
+    past the caption's probe, and never inside the caption. A caption is
+    a sentence and a last row is often one word; "Total" is both."""
+    assert located(body, sheets) == want
+
+
+@pytest.mark.parametrize(("body", "sheets", "want"), [
+    # the last row's final character is the last of sheet 2, at flat
+    # offset 49; the next sheet starts at 50, an EVEN number, where
+    # `stop ^ 1` is 51 and reads the table as ending on sheet 3
+    pytest.param(P("Table 1. Heading")
+                 + WIDE(("Capability", "Source"), ("Health", "Nussbaum")), [
+        "prose.", "Table 1. Heading Capability Source Health Nussbaum",
+        "Next sheet."],
+        [(1, 2, 2)], id="the table ends a sheet"),
+    # a last row of one figure, alone at the top of sheet 3, at flat offset
+    # 35: `stop - 2` and `end | 1` both land on the character before it,
+    # on sheet 2, and the straddle is lost
+    pytest.param(P("Table 1. Ranks")
+                 + WIDE(("Country", "Rank"), ("Serbia", "1"), ("", "2")), [
+        "prose", "Table 1. Ranks Country Rank Serbia 1", "2"],
+        [(1, 2, 3)], id="one figure on the next sheet"),
+])
+def test_the_last_sheet_is_the_one_holding_the_rows_LAST_character(
+        body, sheets, want):
+    """`_sheet_at(starts, stop - 1)` where `stop = end + len(last)`: the
+    sheet of the last character of the last row. Every render test
+    above ends its table somewhere in the middle of a sheet, where one
+    character either way is the same sheet. At a sheet boundary it is
+    the difference between a whole table and a straddle."""
+    assert located(body, sheets) == want
+
+
+def test_a_caption_at_the_very_TOP_of_the_first_sheet_is_found():
+    """`while at >= 0` and `cursor = 0`. Offset 0 of the flowed text is
+    a real place for a caption: a document that opens with its table, or
+    a render that starts at the table's sheet. Read as `at > 0`, or with
+    the first search starting at 1, that caption is on no sheet, and the
+    straddle it makes is not reported.
+
+    Last in the file, deliberately: three readings of `at + len(caption)`
+    multiply by a zero offset and search the same place forever. The
+    tests above kill those first, and `-x` stops there."""
+    doc = parts(P("Table 1. Heading")
+                + WIDE(("Capability", "Source"), ("Health", "Nussbaum")))
+
+    def render(_parts):
+        return ["Table 1. Heading Capability Source", "Health Nussbaum"]
+
+    (straddle,) = rendered(placement.audit(doc, render=render))
+    assert straddle.detail == "it starts on sheet 1 and ends on sheet 2"
