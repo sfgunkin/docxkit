@@ -1546,3 +1546,26 @@ def test_a_TABLE_panel_after_the_break_parts_its_exhibit_as_a_picture_does():
                 + P("Panel B.") + table(row("b", "2")) + P("After."))
 
     assert _span(doc, "Table 1") == PARTED_WHY
+
+
+def test_a_NOTE_right_after_a_break_it_does_not_own_parts_the_exhibit():
+    """The refusal looks at everything after the first break the block does
+    not own, starting with the element right after it — here the only one,
+    the figure's own note, which moving the caption and the picture would
+    leave behind in the next section (whole sweep of 2026-09-15, `+ 2`)."""
+    doc = parts(P("Figure 1 shows it.") + P("Main text ends.")
+                + P("Figure 1. Cap") + IMG + SECT()
+                + P("Note: drawn from the survey.") + P("After."))
+
+    assert _span(doc) == PARTED_WHY
+
+
+def test_a_figure_closing_a_shared_section_at_an_ODD_index_still_moves():
+    """Nothing after its break, so nothing is parted and the block moves
+    without the break. At an odd index, where `breaks[0] ^ 1` is the
+    picture in front of the break rather than what follows it: every
+    shared-break fixture above has its break at an even index."""
+    doc = parts(P("Figure 1 shows it.") + P("Main text ends.") + P("More.")
+                + P("Figure 1. Cap") + IMG + SECT() + P("After."))
+
+    assert _span(doc) == (3, 5)
