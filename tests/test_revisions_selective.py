@@ -159,3 +159,28 @@ def test_an_insertion_carrying_NO_TEXT_is_not_respacing_noise():
 
     assert counts(out) == (1, 0), "the new footnote is still pending"
     assert "<w:ins " in out
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_accepting_an_insertion_leaves_the_DELETION_inside_it_deleted():
+    """`if mode == ORIGINAL` guards the one conversion a kept wrapper's
+    unwrap makes: a rejected deletion's `w:delText` back to ordinary
+    text. Read as `<=`, "final" qualifies too, and accepting an
+    insertion converts every `w:delText` under it — including a
+    deletion someone ELSE made inside the inserted text, which the
+    predicate left pending. That deletion is still tracked and now reads
+    as visible prose.
+
+    Nested, and by two authors, because that is the only way a kept
+    insertion still holds a deletion: without a predicate the pass
+    removes the inner one before it unwraps the outer."""
+    nested = ('<w:ins w:id="4" w:author="Alice" '
+              'w:date="2026-07-30T00:00:00Z">'
+              + run("kept ") + del_by("Bob", "struck", 5) + "</w:ins>")
+
+    out = accept(doc(para(run("Base "), nested)), where=by_author("Alice"))
+
+    assert "<w:delText>struck</w:delText>" in out, out
+    assert counts(out) == (0, 1), "Bob's deletion is still pending"

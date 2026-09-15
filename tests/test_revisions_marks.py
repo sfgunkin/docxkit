@@ -181,3 +181,33 @@ def test_the_merged_children_land_AFTER_the_surviving_properties():
     body = out[out.index("<w:bookmarkStart"):]
     assert body.index("<w:pPr>") < body.index("First half"), body
     assert body.index("First half") < body.index("Second half")
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_a_paragraph_whose_mark_goes_is_never_merged_INTO_a_TABLE():
+    """`if nxt is None or nxt.tag != W + "p"`. The walk to the next block
+    stops at a paragraph or a table, and only a paragraph can take what
+    the dying one still holds. Read as `<`, the test is false for the
+    table too — its tag sorts above the paragraph's — and read as `is`
+    it is false for everything, a tag being a fresh string each time; so
+    the leftovers are inserted as the table's first children, ahead of
+    its `w:tblPr`, where no run or bookmark can stand.
+
+    The paragraph was INSERTED above the table and carries a bookmark,
+    which is what is left once its text goes: an anchor is lifted out of
+    a removed revision rather than removed with it."""
+    from docxkit.revisions import reject
+
+    tbl = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>'
+           f"<w:tr><w:tc><w:tcPr/>{para(run('cell'))}</w:tc></w:tr></w:tbl>")
+    inserted = (f'<w:p>{MARK_INS}<w:ins w:id="82" w:author="A" w:date="d">'
+                '<w:bookmarkStart w:id="5" w:name="Above"/>'
+                f'{run("A new sentence.")}<w:bookmarkEnd w:id="5"/>'
+                "</w:ins></w:p>")
+
+    out = reject(document(inserted + tbl))
+
+    assert tbl in out, out
+    assert "A new sentence." not in out

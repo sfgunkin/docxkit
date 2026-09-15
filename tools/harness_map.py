@@ -94,11 +94,16 @@ HARNESS: dict[str, list[str]] = {
                     "_gates",
                     "_ingest", "_registry", "_init", "_promote",
                     "_validate")},
+    # `test_cell_revisions.py` joined on 2026-09-16, measured: the whole
+    # sweep of 2026-09-15 left 155 replayable survivors in the cell and
+    # table walks, and that file alone killed 68 of them. It is where a
+    # revision inside a table is tested, and the module is what it tests.
     "revisions.py": ["tests/test_revisions.py",
                      "tests/test_revisions_marks.py",
                      "tests/test_revisions_selective.py",
                      "tests/test_revision_state.py", "tests/test_comments.py",
-                     "tests/test_value_types.py"],
+                     "tests/test_value_types.py",
+                     "tests/test_cell_revisions.py"],
     # `test_refstyle_layout.py` is where `paragraph_property` is tested,
     # because that is where the question comes up — refstyle asks "would
     # writing this value be redundant?". Leaving it out read the function

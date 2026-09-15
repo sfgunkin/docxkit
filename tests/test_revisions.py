@@ -893,13 +893,13 @@ def test_the_text_view_is_CACHED_between_identical_calls():
 # is materialised before any removal, so nothing in it is detached —
 # the guard cannot be observed from either side.
 #
-# `if mode == ORIGINAL` in `_simulate_where` -> `is`. This one is
-# reachable in principle — a runtime-built view name flows into
-# `_simulate` from `text()` — but the branch it guards converts
-# `w:delText` to `w:t`, and `visible_text` reads both, so the difference
-# cannot be seen through the only public caller that forwards the
-# string. `view_transform`'s two comparisons ARE tested, because their
-# answer is the transform itself.
+# `if mode == ORIGINAL` in `_simulate_where` -> `is` is no longer argued:
+# `test_a_view_name_BUILT_at_runtime_is_simulated_under_that_NAME` kills
+# it (2026-09-16) by clearing the view caches first. The argument once
+# written here was wrong on its facts — `visible_text` does NOT read
+# `w:delText`, so a restored deletion left in one is text no view shows.
+# `view_transform`'s two comparisons are tested too, because their answer
+# is the transform itself.
 
 
 def test_an_insertion_of_SEVERAL_runs_unwraps_them_in_order():
@@ -1080,3 +1080,261 @@ def test_the_parent_helper_names_a_ROOT_instead_of_crashing_on_None():
 # * the four `@lru_cache` mutants: the cached functions build a value
 #   from their argument and hold no state, so the size is a speed
 #   choice and the decorator itself is one too.
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# 156 real survivors, and 112 of them in the functions that apply CELL
+# revisions and in `rows_in_view`. Their tests live in
+# `test_cell_revisions.py` and the table suites, which are not this
+# module's harness, so the sweep measured them against a suite that
+# never accepted a deleted column or asked which rows a view keeps. The
+# tests below hold them from here; the spellings no input can tell apart
+# are argued as claims instead.
+
+_CELL_WHEN = 'w:author="A" w:date="2026-09-02T00:00:00Z"'
+
+
+def _tc(text: str, *, flag: str = "", span: str | None = None,
+        props: str = "") -> str:
+    """One `w:tc` as Compare writes a revised cell: `flag` is `cellDel`
+    or `cellIns`, with the content inside the matching `w:del`/`w:ins`.
+    `span` is the raw `w:gridSpan` value, written verbatim so that a
+    malformed one can be, and `props` any further `w:tcPr` content."""
+    grid = f'<w:gridSpan w:val="{span}"/>' if span is not None else ""
+    mark = f'<w:{flag} w:id="56" {_CELL_WHEN}/>' if flag else ""
+    if flag == "cellDel":
+        body = (f'<w:del w:id="57" {_CELL_WHEN}><w:r>'
+                f"<w:delText>{text}</w:delText></w:r></w:del>")
+    elif flag == "cellIns":
+        body = f'<w:ins w:id="57" {_CELL_WHEN}>{run(text)}</w:ins>'
+    else:
+        body = run(text)
+    return (f"<w:tc><w:tcPr>{grid}{mark}{props}</w:tcPr>"
+            f"<w:p>{body}</w:p></w:tc>")
+
+
+def _widths_table(rows: list[list[str]], widths: tuple[int, ...]) -> str:
+    """A table whose grid columns are each a DIFFERENT width, so which
+    column went can be read off the grid and not only how many."""
+    grid = "".join(f'<w:gridCol w:w="{w}"/>' for w in widths)
+    return (f"<w:tbl><w:tblPr/><w:tblGrid>{grid}</w:tblGrid>"
+            + "".join(f"<w:tr>{''.join(r)}</w:tr>" for r in rows)
+            + "</w:tbl>")
+
+
+def _grid_widths(xml: str) -> list[int]:
+    import re
+
+    return [int(w) for w in re.findall(r'<w:gridCol w:w="(\d+)"/>', xml)]
+
+
+@pytest.mark.parametrize(("widths", "doomed", "nrows", "left"), [
+    ((100, 200, 300), 2, 2, [100, 200]),
+    ((100, 200, 300, 400), 1, 3, [100, 300, 400]),
+    ((100, 200), 0, 1, [200]),
+], ids=["last-of-three", "second-of-four", "first-in-one-row"])
+def test_a_deleted_COLUMN_takes_THAT_column_out_of_the_grid(
+        widths, doomed, nrows, left):
+    """A column deletion is found by walking each row from `at = 0` and
+    collecting `range(at, at + span)` for every deleted cell, and most
+    ways of getting that arithmetic wrong still remove ONE grid entry:
+    starting the walk at -1 removes the column before the deleted one.
+    So every grid column here has its own width, and the assertion
+    names the ones that are left.
+
+    Three positions, because the wrong spellings each hide at one. At an
+    even column `at | span` and `at ^ span` are the sum, at column 1
+    `at << span` is, and only column 0 exposes that last one here. The
+    ONE-row table is there for `doomed[0]`: read as `doomed[1]`, it
+    raises when there is no second row."""
+    rows = [[_tc(f"r{r}c{c}", flag="cellDel" if c == doomed else "")
+             for c in range(len(widths))] for r in range(nrows)]
+
+    out = accept(document(_widths_table(rows, widths)))
+
+    assert _grid_widths(out) == left
+    assert out.count("<w:tc>") == nrows * (len(widths) - 1)
+    assert "<w:cellDel" not in out
+
+
+@pytest.mark.parametrize("span", [None, "1", "0", "-2", "", "two"],
+                         ids=["absent", "one", "zero", "negative", "empty",
+                              "not-a-number"])
+def test_a_cell_SPANNING_one_column_in_any_spelling_counts_as_one(span):
+    """`_grid_span` is how a column deletion learns WHERE each cell
+    sits, and nothing in this harness had a `w:gridSpan` in it. Each
+    spelling of "one column" goes through a different line: no element
+    returns 1 early, a number is clamped to at least 1, and a value
+    `int()` refuses is caught and read as 1. Get any of them wrong and
+    the first cell's width shifts the deleted cell along the grid, so
+    the wrong grid entry goes, or none does.
+
+    Word writes no `w:gridSpan` for a single column; a table that has
+    been through another tool can carry any of these."""
+    rows = [[_tc("a", span=span), _tc("b"), _tc("c", flag="cellDel")]
+            for _ in range(2)]
+
+    out = accept(document(_widths_table(rows, (100, 200, 300))))
+
+    assert _grid_widths(out) == [100, 200]
+
+
+def _rows_fragment() -> str:
+    """A table as `_table_core` hands one over — a FRAGMENT sliced out of
+    the part — holding a plain row, a deleted row and an inserted one."""
+    return ("<w:tbl><w:tblPr/><w:tblGrid/>"
+            + _row(_cell("plain")) + _row(_cell("deleted"), "del")
+            + _row(_cell("inserted"), "ins") + "</w:tbl>")
+
+
+@pytest.mark.parametrize(("view", "shown"), [
+    (FINAL, [True, False, True]),
+    (ORIGINAL, [True, True, False]),
+    ("".join(["fi", "nal"]), [True, False, True]),
+], ids=["final", "original", "final-built-at-runtime"])
+def test_rows_in_view_says_which_of_a_FRAGMENTs_rows_each_view_keeps(
+        view, shown):
+    """`rows_in_view` is how `reorder_rows` pairs a table's raw rows with
+    the rows a view reads, and nothing in this harness called it. Every
+    line of it is the answer: which flag makes a row vanish from which
+    view, whether the string is a fragment to look inside or the table
+    itself, and the per-row test. Swap the views and a sort pairs the
+    visible rows with the wrong raw ones; lose the fragment and every
+    table reads as having no rows at all.
+
+    A fragment, because that is what the one caller passes, and a view
+    name built at runtime, because the CLI's is: `view is FINAL` holds
+    for the constant and for nothing argparse hands over."""
+    from docxkit.revisions import rows_in_view
+
+    assert rows_in_view(_rows_fragment(), view) == shown
+
+
+@pytest.mark.parametrize("name", ["Original", "No Markup", "Final"])
+def test_a_view_name_that_only_SORTS_beside_a_real_one_is_refused(name):
+    """`view == FINAL` and `view == ORIGINAL`, read as `<=`. Word's
+    Review menu names its views "No Markup" and "Original", and older
+    versions "Final" — capitalised, and a capital sorts before every
+    lower-case letter. Under either spelling each of these is answered
+    with a transform instead of refused, and a caller who copied the
+    name from Word gets a view it did not ask for. The refusal above
+    used "sideways", which sorts after both names and cannot see it."""
+    from docxkit.revisions import view_transform
+
+    with pytest.raises(ValueError, match="view must be"):
+        view_transform(name)
+
+
+def _uncached() -> None:
+    from docxkit.revisions import _simulate_clean, _text_cached
+
+    _text_cached.cache_clear()
+    _simulate_clean.cache_clear()
+
+
+#: A cell whose formatting record's OLD properties carry a cell deletion
+#: the live ones do not: accepting the record keeps the cell, and
+#: restoring the old properties deletes it.
+_RESTYLED_CELL = document(_widths_table([[
+    _tc("kept"),
+    _tc("restyled", props=(f"<w:tcPrChange {D}><w:tcPr>"
+                           f'<w:cellDel w:id="58" {_CELL_WHEN}/>'
+                           "</w:tcPr></w:tcPrChange>"))]], (100, 200)))
+
+
+@pytest.mark.parametrize(("xml", "parts", "want"), [
+    (_redline(), ["fi", "nal"],
+     ["The estimate identifies the effect.", "Unchanged paragraph."]),
+    (_redline(), ["origi", "nal"],
+     ["The estimate recovers the effect.", "Unchanged paragraph."]),
+    (_RESTYLED_CELL, ["fi", "nal"], ["kept", "restyled"]),
+], ids=["final", "original", "final-over-a-formatting-record"])
+def test_a_view_name_BUILT_at_runtime_is_simulated_under_that_NAME(
+        xml, parts, want):
+    """The runtime-name test above is answered from the CACHES. `text`
+    and the simulation under it are both `lru_cache`d, keyed by value,
+    and the tests before it had already asked for both views of the same
+    redline with the module's own constants — so the built name never
+    reached `mode == FINAL`, `mode == ORIGINAL` or the formatting pass,
+    and each of them read as `is` survived it.
+
+    Cleared first, each gets something wrong that a reader sees. `is
+    FINAL` shows the final view the original side; `is ORIGINAL` leaves
+    the restored deletion in `w:delText`, which no view reads as text;
+    and the formatting pass REJECTS a record the final view accepts —
+    here one whose old properties deleted the cell."""
+    _uncached()
+    view = "".join(parts)
+    assert view is not FINAL and view is not ORIGINAL
+
+    assert text(xml, view) == want
+
+
+def test_an_EMPTY_math_text_beside_a_glyph_is_no_glyph_rather_than_None():
+    """`_glyphs` reads `t.text or ""`, and lxml gives None, not "", for
+    a self-closing `<m:t/>`. Read as `and`, the None goes into the join,
+    and the prune raises TypeError on any equation a deletion reached
+    into that holds one. The empty text sits beside a glyph in the same
+    math run, so that the run carrying it is not itself pruned."""
+    out = accept(_math_doc(
+        "<m:r><m:t>x</m:t><m:t/></m:r>",
+        f"<m:f><m:num>{_del(1, _mr('a'))}</m:num>"
+        f"<m:den>{_del(2, _mr('b'))}</m:den></m:f>"))
+
+    assert "<m:f>" not in out, "the emptied fraction is pruned"
+    assert "<m:r><m:t>x</m:t><m:t/></m:r>" in out
+
+
+def test_an_element_in_NO_NAMESPACE_does_not_stop_a_formatting_reject():
+    """`c.tag.rsplit("}", 1)[-1]`, read as `[1]`: the same for every
+    namespaced tag, which always splits into two pieces, and an
+    IndexError for a tag with no namespace at all — which is what lxml
+    gives an element a script appended without one. The carry filter
+    runs over every child of the live properties, so one such element
+    beside a formatting record made the whole reject raise."""
+    xml = document(
+        f'<w:p><w:pPr><w:jc w:val="center"/><keepTogether/>'
+        f'<w:pPrChange {D}><w:pPr><w:jc w:val="left"/></w:pPr>'
+        f"</w:pPrChange></w:pPr><w:r><w:t>x</w:t></w:r></w:p>")
+
+    out = reject(xml)
+
+    assert '<w:pPr><w:jc w:val="left"/></w:pPr>' in out, out
+
+
+def test_a_formatting_record_with_a_COMMENT_after_its_snapshot_restores_it():
+    """`snapshot[0]`, read as `snapshot[-1]`. The schema gives a
+    `w:rPrChange` one child, so every record above has exactly one and
+    the two readings agree. XML allows a comment anywhere — the carry
+    filter just above steps over non-elements for that reason — and
+    with one AFTER the snapshot the last child is the comment, which has
+    no properties: the rejected run comes back with none, its old size
+    gone without a word."""
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        '<w:rPr><w:sz w:val="24"/></w:rPr><!-- restyled in review -->'
+        "</w:rPrChange></w:rPr><w:t>note</w:t></w:r></w:p>")
+
+    out = reject(xml)
+
+    assert '<w:rPr><w:sz w:val="24"/></w:rPr>' in out, out
+
+
+def test_the_simulated_VIEW_is_CACHED_between_identical_calls():
+    """`@lru_cache(maxsize=4)` on `_simulate_clean`. Simulating a
+    1,400-revision redline costs ~50ms, and the audits ask for the same
+    view of the same document several times in a row. Removing the
+    decorator changes no answer, which is why nothing caught it: the
+    text view's cache is pinned above, and this one, under `accept` and
+    `reject` themselves, was not. The same object handed back twice is
+    what a hit looks like from outside."""
+    from docxkit.revisions import _simulate_clean
+
+    _simulate_clean.cache_clear()
+    xml = _redline()
+
+    first = accept(xml)
+
+    assert accept(xml) is first
+    assert _simulate_clean.cache_info().hits == 1
