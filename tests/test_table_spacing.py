@@ -686,3 +686,34 @@ def test_a_document_of_MORE_THAN_256_TABLES_reaches_its_last_one():
 
     assert len(report.spaced) == 300
     assert before_of(out, "After 299") == "120"
+
+
+# --- the survivor of 2026-09-15 ---------------------------------------------
+
+
+def test_the_spacing_written_back_is_ONE_well_formed_element():
+    """`_own_spacing` turns the tag it found into the self-closing form,
+    and every test above read the result by ATTRIBUTE: `w:before`,
+    `w:after` and `w:line` all present. With its test inverted both
+    spellings still passed that — the short form came back as
+    `…w:line="276"//>` and the long form as an opening tag never closed,
+    so the paragraph no longer parsed. Read here as the whole element, and
+    by parsing the paragraph it went into."""
+    import xml.etree.ElementTree as ET
+
+    for spacing, expected in (
+            ('<w:spacing w:after="240" w:line="276"/>',
+             '<w:spacing w:before="120" w:after="240" w:line="276"/>'),
+            ('<w:spacing w:after="0" w:line="240" w:lineRule="auto">'
+             "</w:spacing>",
+             '<w:spacing w:before="120" w:after="0" w:line="240" '
+             'w:lineRule="auto"/>')):
+        para_xml = (f"<w:p><w:pPr>{spacing}</w:pPr>"
+                    "<w:r><w:t>The table shows.</w:t></w:r></w:p>")
+
+        out, changed = _set_before(para_xml, 120)
+
+        assert changed
+        assert re.findall(r"<w:spacing\b[^>]*>", out) == [expected], out
+        assert "</w:spacing>" not in out, out
+        ET.fromstring(doc(out))                 # the paragraph still parses
