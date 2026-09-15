@@ -725,6 +725,27 @@ def test_a_core_part_with_no_CLOSE_tag_still_gets_the_property_inside():
     assert core_property(p, "dc:title") == "Salvaged"
 
 
+def test_a_root_OPENED_and_never_closed_takes_the_property_after_it():
+    """The other half of the same last resort: a root whose opening tag is
+    not self-closing and whose closing tag is missing — a truncated part,
+    which nothing Word writes. There is no inside to open up, so the
+    element goes straight after the opening tag, and the part stays as
+    unparseable as it arrived. No test reached that half, so every
+    mutation of it survived the sweep of 2026-09-14, a `group(2)` that
+    raises among them."""
+    from docxkit.package import set_core_property
+
+    p = {"docProps/core.xml": (
+        b'<?xml version="1.0"?><cp:coreProperties xmlns:cp="x" '
+        b'xmlns:dc="y">')}
+
+    assert set_core_property(p, "dc:title", "Truncated") is True
+
+    assert p["docProps/core.xml"] == (
+        b'<?xml version="1.0"?><cp:coreProperties xmlns:cp="x" '
+        b'xmlns:dc="y"><dc:title>Truncated</dc:title>')
+
+
 def test_an_UNCHANGED_part_does_not_stop_the_walk():
     """`continue`, not `break`: the parts are sorted by name, so the
     first unchanged one is usually `[Content_Types].xml` — stopping
