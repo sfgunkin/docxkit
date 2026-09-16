@@ -848,24 +848,6 @@ text that a reject would have brought back.
 Fix: admit `w:pict`, `w:object` and `w:sym` to the content test, and
 decide `w:delText` by the view the caller is on rather than by the tag.
 
-### S1 — `place` sets an exhibit's table flush against another table and reports no problem
-<!-- status: open -->
-
-Found 2026-09-16 triaging `placement.py`. A caption that mentions the
-OTHER table is read as the second table's own, so the move lands one
-`w:tbl` immediately after another with nothing between them:
-
-    in : … 'p:Таблица 1. Первая', 'tbl:a'
-    out: … 'p:Таблица 1. Первая', 'tbl:a', 'tbl:b', 'p:Проза.'
-    moved: [(1, True, 'Таблица 2. То же, что в таблиц'), …]  problems: []
-    audit of the result sees tables: 1 (the input had 2)
-
-The pass reports no problem, and docxkit's own audit then sees ONE
-exhibit where the manuscript had two. Two adjacent tables with no
-paragraph between them are the shape Word joins into a single table —
-worth confirming in Word before the fix is designed, because it decides
-whether this is a lost exhibit or only a lost audit.
-
 ### S2 — `place` writes a row's revision mark FIRST in `w:trPr`
 <!-- status: open -->
 

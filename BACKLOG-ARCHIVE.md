@@ -14,6 +14,24 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `place` sets an exhibit's table flush against another table and reports no problem~~ — FIXED 16.09, `48f17fd`
+
+<!-- status: fixed -->
+
+Found 2026-09-16 triaging `placement.py`. A caption that mentions the
+OTHER table is read as the second table's own, so the move lands one
+`w:tbl` immediately after another with nothing between them:
+
+    in : … 'p:Таблица 1. Первая', 'tbl:a'
+    out: … 'p:Таблица 1. Первая', 'tbl:a', 'tbl:b', 'p:Проза.'
+    moved: [(1, True, 'Таблица 2. То же, что в таблиц'), …]  problems: []
+    audit of the result sees tables: 1 (the input had 2)
+
+The pass reports no problem, and docxkit's own audit then sees ONE
+exhibit where the manuscript had two. Two adjacent tables with no
+paragraph between them are the shape Word joins into a single table —
+worth confirming in Word before the fix is designed, because it decides
+whether this is a lost exhibit or only a lost audit.
 ### ~~S2 — rejecting a moved paragraph that precedes a TABLE drops the move's bookmark pair~~ — FIXED 16.09, `e32d112`
 
 <!-- status: fixed -->
