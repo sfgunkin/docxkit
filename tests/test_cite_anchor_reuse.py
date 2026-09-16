@@ -370,3 +370,49 @@ def test_the_plan_says_WHICH_note_store_a_finding_is_in():
 #   in the signature is the same literal object the comparison names.
 # * `s, e, body = spans[0]` in `remove_outer_field`, written `spans[-1]`,
 #   under a guard that has already raised for anything but one span.
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_a_bookmark_from_a_LATER_year_is_not_taken_as_this_entry_s_either():
+    """The year has to MATCH, and the test above only ever offered an
+    earlier one. `Kanbur2005` sorts before 2007, so a comparison that
+    refused only the years below this one refused it as well;
+    `Kanbur2009` sorts after, and that comparison adopts it — every
+    "(Kanbur 2007)" then points at a marker for a different work, and
+    the report calls it linked.
+    """
+    parts = make_parts(
+        para(run("A point (Kanbur 2007)."))
+        + para(run("References")) + _marked("Kanbur2009", ENTRY))
+
+    link_all(parts)
+
+    assert "Kanbur2007" in _anchors(parts), _anchors(parts)
+    assert "Kanbur2009" not in _anchors(parts), "the stray anchor was reused"
+
+
+def test_a_TRUNCATED_own_bookmark_is_found_BEHIND_one_that_is_not_key_shaped():
+    """The two readers of an entry's markers do not agree, which is why
+    the first must read to the end before handing over. The key-shaped
+    one takes a PREFIX of the surname — `Kanb2007`, what a long name is
+    cut to — and the foreign-scheme one wants a whole WORD of it. Stop
+    the first at the `_Toc` anchor Word left on the paragraph and every
+    name goes to the second, which refuses `Kanb2007`: the entry reads
+    as unmarked and gets `Kanbur2007` beside its own marker.
+
+    Truncated on purpose. Under `Kanbur2007` the two readers agree, and
+    stopping early cannot be seen.
+    """
+    marked = ('<w:p><w:bookmarkStart w:id="8" w:name="_Toc12345"/>'
+              '<w:bookmarkEnd w:id="8"/>'
+              '<w:bookmarkStart w:id="9" w:name="Kanb2007"/>'
+              '<w:bookmarkEnd w:id="9"/>' + run(ENTRY) + "</w:p>")
+    parts = make_parts(para(run("Poverty fell (Kanbur 2007)."))
+                       + para(run("References")) + marked)
+
+    report = link_all(parts)
+
+    assert sorted(_names(parts)) == ["Kanb2007", "Kanb2007txt", "_Toc12345"]
+    assert report.linked == ["Kanb2007 @ ¶1"], report.linked

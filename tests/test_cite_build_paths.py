@@ -20,6 +20,8 @@ LI7 uses.
 """
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from conftest import make_parts, note, notes, para, run
 
@@ -433,3 +435,66 @@ def test_a_footnote_and_an_endnote_mention_are_both_seen():
            for m in _re.findall(r'<w:bookmarkStart w:id="(\d+)"',
                                 parts[part].decode("utf-8"))]
     assert len(set(ids)) == len(ids), f"a bookmark id is used twice: {ids}"
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_an_acronym_in_the_TITLE_is_not_a_name_the_entry_answers_to():
+    """The acronym rule reads the HEAD, the text before the year, where
+    "Health Promotion Board (HPB). (2023)." names itself. A title that
+    mentions "(OECD)" names somebody else: read the whole entry for
+    acronyms and Kanbur's paper is filed under OECD as well, so an
+    "(OECD 2007)" in the text links to a work ABOUT the OECD and the
+    report calls it linked.
+    """
+    assert _keys_for("Kanbur, R. (2007). Poverty in the Organisation for "
+                     "Economic Co-operation and Development (OECD). "
+                     "Journal.") == {"kanbur_2007"}
+
+
+def test_an_acronym_the_SURNAME_does_not_carry_is_still_a_key():
+    """Every fixture for the acronym rule had the acronym inside the
+    surname. "Health Promotion Board (HPB)" parses whole, so "(HPB)" is
+    one of its word runs as well, and the acronym rule could vanish with
+    nothing noticing. A body named after its parent, with a comma, is
+    filed under the part BEFORE the comma — and there the parenthesised
+    acronym is the only way "(BNS 2021)" finds its entry.
+    """
+    keys = _keys_for("Republic of Kazakhstan, Bureau of National "
+                     "Statistics (BNS). (2021). Multiple indicator "
+                     "cluster survey.")
+
+    assert "bns_2021" in keys, sorted(keys)
+    assert "bureau_2021" not in keys, "the fixture's premise has moved"
+
+
+def test_ONE_capital_among_several_words_is_not_an_initialism():
+    """"van Praag" is two words and one capital, so its initials are
+    "P" — and a one-letter key answers to "(P 2007)", which cites nobody.
+    `len(initials) >= 2` is what drops it, and every multi-word fixture
+    so far was an institution, where each word is capitalised.
+    """
+    keys = _keys_for("van Praag, B. (2007). Happiness quantified. Oxford.")
+
+    assert "vanpraag_2007" in keys, sorted(keys)
+    assert "p_2007" not in keys, sorted(keys)
+
+
+def test_the_scan_s_state_is_FROZEN():
+    """`_Mentions` is bound once by `link_all` and read through one
+    bound method by the body scan and by both note scans. What moves is
+    what is INSIDE the report and the claimed set; a field rebound
+    between the body and the notes would have the note scan read a
+    different state from the body's, and nothing else would say so.
+    """
+    import dataclasses
+
+    from docxkit._cite_build import _Mentions
+
+    # the point is the class, not the values it is built with
+    fields = dataclasses.fields(_Mentions)
+    value = cast(Any, _Mentions)(*[None] * len(fields))
+    first = dataclasses.fields(value)[0].name
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(value, first, None)

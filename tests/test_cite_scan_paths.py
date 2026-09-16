@@ -226,3 +226,87 @@ def test_a_citation_this_pass_cannot_choose_does_not_end_the_PARAGRAPH():
     assert report.linked == ["Kanbur2007 @ ¶1"], report.linked
     assert len(report.unmatched) == 1 and "matches 2 entries" \
         in report.unmatched[0]
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# Three more skips of the same shape — a work `only` leaves out, a
+# half-linked mention, a citation inside somebody else's link — each
+# with a citation the pass must still find AFTER it in the same
+# paragraph.
+
+LEAD = (para(run("Ageing raises the risk of isolation."))
+        + para(run("The gradient is steeper in the eastern countries."))
+        + para(run("Two mechanisms have been proposed for it.")))
+
+
+def test_a_work_OUTSIDE_only_does_not_stop_the_paragraph():
+    """`only` scopes a repair to the works named, and the sentence that
+    cites the one to repair routinely cites another first. Stepping over
+    the unwanted citation is the point; ending the paragraph there
+    leaves the wanted one plain, and the report — rightly silent about
+    works it was told to leave — says nothing at all.
+    """
+    parts = make_parts(
+        para(run("Both (Kanbur 2007) and (Ravallion 2016) hold."))
+        + ENTRIES)
+
+    report = link_all(parts, only=["Ravallion"])
+
+    assert report.linked == ["Ravallion2016 @ ¶1"], report.format()
+
+
+def test_a_HALF_LINKED_mention_does_not_stop_the_paragraph():
+    """A mention whose link survived a Word round while its bookmark did
+    not is planned as a repair, and a repair is not the last thing in
+    its sentence. The work cited after it is a first mention in its own
+    right: end the paragraph at the repair and it stays plain, its
+    entry's back-link is undone, and the report says only "repaired".
+
+    The entry still carries its back-link to `Kanbur2007txt` and no
+    such bookmark exists, which is what makes the mention half-linked
+    rather than merely linked.
+    """
+    link = ('<w:hyperlink w:anchor="Kanbur2007">'
+            '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+            "<w:t>Kanbur 2007</w:t></w:r></w:hyperlink>")
+    entry = ('<w:p><w:bookmarkStart w:id="2" w:name="Kanbur2007"/>'
+             '<w:bookmarkEnd w:id="2"/>'
+             '<w:hyperlink w:anchor="Kanbur2007txt">'
+             "<w:r><w:t>Kanbur, R. (2007)</w:t></w:r></w:hyperlink>"
+             + run(". Poverty and distribution. Journal of Development "
+                   "Economics.") + "</w:p>")
+    parts = make_parts(
+        para(run("As shown ("), link, run(") and (Ravallion 2016)."))
+        + para(run("References")) + entry
+        + para(run("Ravallion, M. (2016). The Economics of Poverty. Oxford "
+                   "University Press.")))
+
+    report = link_all(parts)
+
+    assert report.repaired == ["Kanbur2007 @ ¶1"], report.format()
+    assert report.linked == ["Ravallion2016 @ ¶1"], report.format()
+    assert report.backlinked == ["Ravallion2016"], report.format()
+
+
+def test_a_NESTING_refusal_names_its_paragraph_and_does_not_END_it():
+    """Two things about the refusal, and one fixture for both. The line
+    names ¶4, index 3, where `i << 1` and `i + 1` part company — the
+    first test of it sat at index 1, where they agree. And the citation
+    AFTER the refused one is another work with nothing wrong with it:
+    ending the paragraph at the refusal loses it silently.
+    """
+    outer = ('<w:hyperlink w:anchor="somewhere_else">'
+             "<w:r><w:t>(Kanbur 2007)</w:t></w:r></w:hyperlink>")
+    parts = make_parts(
+        LEAD
+        + para(run("As shown "), outer, run(", and (Ravallion 2016) agrees."))
+        + ENTRIES)
+
+    report = link_all(parts)
+
+    assert report.skipped[0] == (
+        "'Kanbur 2007' (¶4) is already inside a link — wrapping it would "
+        "nest one link in another, and the click goes to the outer one"), \
+        report.skipped
+    assert report.linked == ["Ravallion2016 @ ¶4"], report.format()

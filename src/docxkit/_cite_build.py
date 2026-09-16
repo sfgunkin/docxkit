@@ -228,7 +228,7 @@ def _pair_rule(entry: str, twin: str) -> tuple[str, str] | None:
 
 def _twin_of(entry: str, rule: tuple[str, str] | None) -> str:
     """The in-text bookmark this document would pair with `entry`."""
-    if rule is None or rule == ("", ""):
+    if rule is None or rule == ("", ""):  # no rule: the twin adds txt
         return entry + "txt"
     was, now = rule
     return now + entry[len(was):] if entry.startswith(was) else entry + "txt"
@@ -236,7 +236,7 @@ def _twin_of(entry: str, rule: tuple[str, str] | None) -> str:
 
 def _entry_of(twin: str, rule: tuple[str, str] | None) -> str | None:
     """…and back: the entry name whose twin is `twin`, if the rule says."""
-    if rule is None or rule == ("", ""):
+    if rule is None or rule == ("", ""):  # no rule: the entry drops txt
         return twin[:-3] if twin.endswith("txt") else None
     was, now = rule
     return was + twin[len(now):] if twin.startswith(now) else None

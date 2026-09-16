@@ -330,3 +330,162 @@ def test_add_style_styles_ONCE_a_run_carrying_a_format_change():
 
     assert out.count('<w:rStyle w:val="Hyperlink"/>') == 1
     assert out.startswith('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/><w:b/>')
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_the_CAP_is_forty_characters_with_the_TWIN_counted():
+    """Word's limit is 40, and the in-text twin meets it first: a
+    38-character name fits on the entry and is 41 on the mention, where
+    Word cuts it ON SAVE and orphans the link. Every other test here
+    reads the cap back through `_NAME_BUDGET`, so a limit of 41 moved
+    the budget with it and nothing noticed. This one states the number.
+    """
+    parts = make_parts(
+        para(run("A point (Kanbur 2007)."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty. Journal.")))
+
+    report = link_all(parts, naming=_fixed("K" * 38))
+
+    assert sorted(_names(parts)) == ["Kanbur2007", "Kanbur2007txt"]
+    assert any("would pass Word's 40-character cap" in note
+               for note in report.skipped), report.format()
+
+
+def test_the_NINETY_NINTH_candidate_is_still_cut_to_the_cap():
+    """`range(1, 100)` tries the suffixes `_2` to `_99` before the
+    fallback lets uniqueness beat the cap. With the first ninety-eight
+    taken, the ninety-ninth still fits; giving up one turn early hands
+    back the whole name, 51 characters, which Word truncates on save.
+
+    The surname is LONG on purpose. A short one fits whole, and the
+    fallback then counts its own way up to the same `_99`.
+    """
+    r = _entry("International Institute for Applied Systems Analysis. "
+               "(2020). Global population projections.")
+    taken = set()
+    for n in range(1, 99):
+        suffix = "" if n == 1 else f"_{n}"
+        keep = _NAME_BUDGET - len(r.year) - len(suffix)
+        taken.add(f"{_ascii(r)[:keep]}{r.year}{suffix}")
+
+    name = _mint_name(r, taken)
+
+    assert name == "InternationalInstituteforAppli2020_99", name
+
+
+@pytest.mark.parametrize("stray", ["Kanbur2005txt", "Smith2007txt"])
+def test_a_stray_TXT_bookmark_names_this_work_by_surname_AND_year(stray):
+    """An in-text bookmark with no entry marker beside it is evidence of
+    this work's scheme only when it names THIS work. A draft that cut
+    its citation of Kanbur (2005), or of Smith (2007), leaves the `txt`
+    bookmark behind, and read by one half of the rule alone it is
+    adopted: the entry is named `Kanbur2005` or `Smith2007`, the
+    mention of Kanbur (2007) links there, and the report says "linked 1".
+
+    One stray per half: the right surname in another year, and the
+    right year under another surname.
+    """
+    from docxkit._xml import internal_links
+
+    parts = make_parts(
+        para(run("A point (Kanbur 2007)."))
+        + para(f'<w:bookmarkStart w:id="5" w:name="{stray}"/>'
+               '<w:bookmarkEnd w:id="5"/>'
+               + run("A sentence an earlier draft cited from."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty. Journal.")))
+
+    report = link_all(parts)
+
+    assert report.linked == ["Kanbur2007 @ ¶1"], report.format()
+    assert [a for a, _ in internal_links(
+        parts["word/document.xml"].decode("utf-8"))] == [
+            "Kanbur2007", "Kanbur2007txt"]
+
+
+@pytest.mark.parametrize(("entry", "twin", "rule"), [
+    pytest.param("Kanbur2007", "Kanbur2007txt", ("", ""), id="suffix"),
+    pytest.param("ref_noone_2018", "cite_noone_2018", ("ref", "cite"),
+                 id="prefix"),
+    # 16 and 17 characters over a tail of 13, where `^` and `-` differ
+    pytest.param("ref_maestas_2023", "cite_maestas_2023", ("ref", "cite"),
+                 id="maestas"),
+    # prefixes LONGER than the tail, where `%` and `-` differ
+    pytest.param("reference_ho_2019", "citation_ho_2019",
+                 ("reference", "citation"), id="long-prefixes"),
+    # where the two names part, the entry's letter sorts first
+    pytest.param("bib_noone_2018", "cite_noone_2018", ("bib", "cite"),
+                 id="b-sorts-before-e"),
+    # a letter outside Latin-1: equal, and a fresh object each read
+    pytest.param("ref_miłosz_2018", "cite_miłosz_2018", ("ref", "cite"),
+                 id="outside-latin-1"),
+    # exactly FOUR shared, a letter among them
+    pytest.param("refWu19", "citeWu19", ("ref", "cite"), id="four"),
+    # the shorter name is the WHOLE tail, and the character before it in
+    # the longer name is the one it ends with
+    pytest.param("kanbur_2007_", "ref_kanbur_2007_", ("", "ref_"),
+                 id="whole-tail"),
+    pytest.param("x" * 300 + "kanbur_2007_",
+                 "ref_" + "x" * 300 + "kanbur_2007_", ("", "ref_"),
+                 id="whole-tail-past-256"),
+])
+def test_a_PAIR_RULE_is_the_two_prefixes_over_the_LONGEST_shared_tail(
+        entry, twin, rule):
+    """How `link_all` learns a document's naming, by majority over the
+    pairs still whole. Only its two ordinary shapes had been asked, and
+    seventeen mutants lived in it; each case is a pair where a slip
+    answers differently.
+
+    The tail is walked one character at a time from the END, comparing
+    by value, and stops at the shorter name's first character. One step
+    further reads index -1, which wraps round to that name's LAST
+    character, so the whole-tail cases end both names with the
+    character that stands before the shorter one in the longer — and
+    one of them is padded past 256, where the step count and the length
+    are equal ints and two objects. What is left in front of the tail is
+    the rule, which `%` and `^` reproduce only while a prefix is shorter
+    than the tail. Four shared characters with a letter among them is
+    the least that counts as a convention.
+    """
+    from docxkit._cite_build import _pair_rule
+
+    assert _pair_rule(entry, twin) == rule
+
+
+@pytest.mark.parametrize(("entry", "twin"), [
+    pytest.param("ref_2018", "cite_2018", id="the-year-alone"),
+    pytest.param("Kanbur2007txt", "Ravallion2016txt", id="three"),
+    pytest.param("ref_noone_2018a", "cite_noone_2018b", id="last-differs"),
+])
+def test_too_LITTLE_shared_is_NOT_a_convention(entry, twin):
+    """None, and the pass keeps the suffix rule. A shared year is five
+    characters with no letter in them; two in-text names share their
+    "txt" and nothing more; and two names whose LAST characters differ
+    share no tail at all, however alike the rest — a walk that began one
+    character in would find `_noone_2018` and learn ("ref", "cite") from
+    the names of two different works.
+    """
+    from docxkit._cite_build import _pair_rule
+
+    assert _pair_rule(entry, twin) is None
+
+
+def test_the_SUFFIX_rule_is_recognised_by_VALUE():
+    """`("", "")` stands for this module's own shape, and `_twin_of`
+    answers `<name>txt` for it. The rule a document teaches is not the
+    literal `_twin_of` compares against, though: for an entry whose own
+    link points at its own marker, `_pair_rule` BUILDS it from slices,
+    equal to the literal and a different object. Read by identity, or
+    by an ordering that nothing sorts below, the suffix rule turns into
+    a swap of one empty prefix for another, and the twin it names is the
+    entry's own name: two bookmarks called `Ravallion2016`.
+    """
+    from docxkit._cite_build import _pair_rule, _twin_of
+
+    built = _pair_rule("Kanbur2007", "Kanbur2007")
+
+    assert _twin_of("Ravallion2016", ("", "")) == "Ravallion2016txt"
+    assert _twin_of("Ravallion2016", built) == "Ravallion2016txt"

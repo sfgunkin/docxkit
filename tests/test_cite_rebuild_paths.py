@@ -145,3 +145,31 @@ def test_the_back_link_wraps_the_HEAD_and_not_the_whole_entry():
 # Recorded here so the next survivor report is not read as a gap. A test
 # for it would have to break the invariant to reach the line, and a test
 # that fakes its way into dead code proves nothing about the document.
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_a_citation_that_cannot_be_WRAPPED_does_not_stop_the_paragraph():
+    """The refusal is per mention. Kanbur is cited twice in the sentence
+    and refused; Ravallion is cited once, after it, in the same sentence,
+    and has nothing wrong with it. Ending the paragraph's wiring at the
+    first refusal leaves Ravallion plain AND undoes its back-link, while
+    the report explains only the Kanbur half.
+
+    The two works share a paragraph on purpose: the undo test in
+    `test_cite_build_paths.py` puts them in two, where stopping inside
+    one paragraph cannot reach the other.
+    """
+    parts = make_parts(
+        LEAD
+        + para(run("Kanbur (2007) and again Kanbur (2007), with "
+                   "Ravallion (2016)."))
+        + para(run("References"))
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal."))
+        + para(run("Ravallion, M. (2016). The Economics of Poverty. OUP.")))
+
+    report = link_all(parts)
+
+    assert report.linked == ["Ravallion2016 @ ¶4"], report.format()
+    assert report.backlinked == ["Ravallion2016"], report.format()

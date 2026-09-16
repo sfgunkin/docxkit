@@ -335,15 +335,19 @@ def test_a_citation_INSIDE_an_equation_is_reported_not_crashed():
     assert parts["word/document.xml"] == before, "the paragraph was rewritten"
 
 
-# `sorted(todo, reverse=True)` in `rewrite` is deliberately NOT pinned.
-# A mutation to `sorted(todo)` survives, and it survives because it is
-# EQUIVALENT: `wrap_visible_span` takes VISIBLE offsets and wrapping
-# changes no visible text, so applying the spans in either order gives
-# the same document for the non-overlapping spans this pass produces.
-# The reverse ordering is belt-and-braces against a future overlapping
-# case. Recorded here so the next reader does not write a contrived test
-# to kill an equivalent mutant -- which is how a suite gets slower
-# without getting stronger.
+# `sorted(todo, reverse=True)` in `rewrite` is deliberately NOT pinned,
+# and it is COSMETIC rather than equivalent — measured 2026-09-15, which
+# corrected what this note claimed before. `wrap_visible_span` takes
+# VISIBLE offsets and wrapping changes no visible text, so either order
+# links the same mentions and the reader sees the same page. The
+# documents are not byte for byte the same, though: which halves of a
+# split run inherit an `xml:space="preserve"` they do not need depends
+# on the order, and `report.linked` names a paragraph's mentions in the
+# order the spans were applied. The reverse ordering is belt-and-braces
+# against a future overlapping case. Recorded here, and claimed cosmetic
+# in tools/equivalents.toml, so the next reader does not write a
+# contrived test to kill it — which is how a suite gets slower without
+# getting stronger.
 
 
 def test_an_unmatched_mention_names_its_paragraph_and_does_not_END_it():
@@ -394,3 +398,25 @@ def test_a_LATER_mention_in_an_endnote_is_linked_like_one_in_a_footnote():
     assert report.linked == ["Kanbur2007 @ en¶1"], report.linked
     assert _linked(parts, "word/endnotes.xml") == [
         ("Kanbur2007", "Kanbur 2007")]
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_an_entry_with_NO_bookmark_does_not_stop_the_paragraph():
+    """The skip, in the order that shows it. The fixture above cites the
+    bookmarked work first, so that mention is linked before the refusal
+    and stopping afterwards loses nothing. A sentence citing the
+    unbookmarked work FIRST is just as ordinary, and the mention after it
+    has an entry, a bookmark and no reason to stay plain.
+    """
+    parts = make_parts(
+        para(run("First (Kanbur 2007) and (World Bank Group 2024)."))
+        + FILLER
+        + para(run("Again (World Bank Group 2024) and (Kanbur 2007)."))
+        + ENTRIES)
+    link_all(parts, only=["kanbur_2007"])
+
+    report = link_rest(parts)
+
+    assert report.linked == ["Kanbur2007 @ ¶4"], report.format()

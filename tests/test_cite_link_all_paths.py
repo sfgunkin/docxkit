@@ -423,3 +423,83 @@ def test_the_LONGEST_known_name_wins():
                               ("José", "de São José"))
 
     assert found.surname == "de São José"
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_a_foreign_own_marker_is_found_BEHIND_one_that_names_no_year():
+    """`_foreign_bookmark` steps over a name that does not end with the
+    work's year — a `_Toc` anchor, a comment range — and the entry's own
+    `ref_kanbur_2007` can come after it. Stopping there reads a fully
+    linked work as unmarked, and the pass mints `Kanbur2007` beside the
+    paper's own marker: the second apparatus this reader exists to
+    prevent. Every earlier fixture had the one name alone.
+    """
+    own = ('<w:bookmarkStart w:id="7" w:name="_Toc12345"/>'
+           '<w:bookmarkEnd w:id="7"/>'
+           '<w:bookmarkStart w:id="8" w:name="ref_kanbur_2007"/>'
+           '<w:bookmarkEnd w:id="8"/>')
+    linked = ('<w:hyperlink w:anchor="ref_kanbur_2007">'
+              "<w:r><w:t>Kanbur 2007</w:t></w:r></w:hyperlink>")
+    parts = make_parts(
+        para(run("A point ("), linked, run(")."))
+        + para(run("References")) + own
+        + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
+
+    report = link_all(parts)
+
+    assert report.already == ["ref_kanbur_2007"], report.format()
+    names = BOOKMARK_NAME_RE.findall(
+        parts["word/document.xml"].decode("utf-8"))
+    assert names == ["_Toc12345", "ref_kanbur_2007"], names
+
+
+def test_a_NEW_work_in_a_prefix_scheme_paper_gets_the_SUFFIX_twin():
+    """A paper wired as `ref_<work>` / `cite_<work>` teaches the rule
+    ("ref", "cite"), and a work added since has no name in that scheme:
+    it is minted `Ravallion2016`, which does not start with "ref", so
+    its twin is the suffix form. That branch of `_twin_of` had never
+    been reached — its `+` could have been any operator at all, and the
+    first document to need it would have stopped the pass with a
+    TypeError.
+    """
+    mention = ('<w:bookmarkStart w:id="1" w:name="cite_kanbur_2007"/>'
+               '<w:hyperlink w:anchor="ref_kanbur_2007">'
+               "<w:r><w:t>Kanbur 2007</w:t></w:r></w:hyperlink>"
+               '<w:bookmarkEnd w:id="1"/>')
+    entry = ('<w:p><w:bookmarkStart w:id="2" w:name="ref_kanbur_2007"/>'
+             '<w:bookmarkEnd w:id="2"/>'
+             '<w:hyperlink w:anchor="cite_kanbur_2007">'
+             "<w:r><w:t>Kanbur, R. (2007)</w:t></w:r></w:hyperlink>"
+             + run(". Poverty and distribution. Journal.") + "</w:p>")
+    parts = make_parts(
+        para(run("A point ("), mention, run(") and (Ravallion 2016)."))
+        + para(run("References")) + entry
+        + para(run("Ravallion, M. (2016). The Economics of Poverty. OUP.")))
+
+    report = link_all(parts)
+
+    assert report.linked == ["Ravallion2016 @ ¶1"], report.format()
+    assert sorted(BOOKMARK_NAME_RE.findall(
+        parts["word/document.xml"].decode("utf-8"))) == [
+            "Ravallion2016", "Ravallion2016txt",
+            "cite_kanbur_2007", "ref_kanbur_2007"]
+    assert ("Ravallion2016txt", "Ravallion, M. (2016)") in _links(parts)
+
+
+def test_the_HALF_LINKED_line_is_printed_only_when_something_WAS_repaired():
+    """`if self.repaired`, in both directions: a clean round must not
+    print the heading of a list with nothing after it, and a round that
+    rebuilt a bookmark must say which. Whole values, because a substring
+    test for the heading passes over its empty version too.
+    """
+    from docxkit._cite_build import LinkAllReport
+
+    counts = ("linked 0, already linked 0, back-links added 0, "
+              "unmatched 0, skipped 0")
+
+    assert LinkAllReport().format() == counts
+    assert LinkAllReport(repaired=["Kanbur2007 @ ¶1"]).format() == (
+        counts + "\n  half-linked, bookmark rebuilt under the surviving "
+        "link: Kanbur2007 @ ¶1")
