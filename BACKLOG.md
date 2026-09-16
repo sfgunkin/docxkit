@@ -811,40 +811,6 @@ Workaround: renumber the duplicate before running `repack`.
 
 ---
 
-### S1 — `mask_volatile_fields` masks from the WRONG separator when one field nests inside another's instruction half
-<!-- status: open -->
-
-Found 2026-09-16 triaging the mutation sweep of `_compare_read.py`.
-`sep = SEPARATE_RE.search(body)` takes the FIRST separator in a field's
-body. When another field sits in the outer field's INSTRUCTION half,
-that separator is the INNER field's, so the masked region starts too
-early — the inner field's visible text is overwritten, carrying the
-OUTER field's name, and the outer's own cached result is left as it
-was:
-
-    outer PAGEREF (volatile) with a nested REF
-      in :  …<w:fldChar w:fldCharType="separate"/>…<w:t>Table 3</w:t>
-      out:  …<w:fldChar w:fldCharType="separate"/>…<w:t>«F:PAGEREF»</w:t>
-
-    the same nesting, outer field NOT volatile  (the control)
-      out:  …<w:t>Table 3</w:t>                           — untouched
-
-The control is what makes this the NESTING and not masking in general.
-
-Why it is S1 rather than a cosmetic slip: `compare` masks both sides of
-a comparison identically, so an edit to that cross-reference's visible
-text cannot be seen by any layer — `--expect-clean` prints OK over it.
-That is a false negative in the one gate whose job is to certify
-nothing was lost, the same shape as the PARAGRAPH gap closed
-2026-08-31, where seven reference entries lost their hanging indent in
-silence.
-
-The fix, when it is taken up: pair the separator with the field's own
-`begin` by DEPTH rather than taking the first one in the body — the
-nesting is already walked elsewhere in the module. Evidence:
-`probe7.py` and its saved output from that round; a `PAGEREF` whose
-instruction half holds a `REF _Toc1`.
-
 ### S1 — `reject` restores the wrong run formatting when an XML comment sits before the `rPrChange` snapshot
 <!-- status: open -->
 
