@@ -1362,6 +1362,46 @@ def test_out_of_order_REFUSES_a_part_that_defines_one_id_TWICE():
         footnotes.out_of_order(_refs(2, 3), _notes_part(2, 3, 3))
 
 
+def _notes_part_of(kind: str, *ids: int) -> str:
+    """`_notes_part` for either kind — the endnotes part is the same
+    shape under a different name, and the refusal has to name the one it
+    actually read."""
+    return (f"<w:{kind}s>" + "".join(
+        f'<w:{kind} w:id="{i}"><w:p><w:r><w:t>note {i}</w:t></w:r></w:p>'
+        f"</w:{kind}>" for i in ids) + f"</w:{kind}s>")
+
+
+def _refs_of(kind: str, *ids: int) -> str:
+    return ("<w:document><w:body>" + "".join(
+        f'<w:p><w:r><w:{kind}Reference w:id="{i}"/></w:r></w:p>'
+        for i in ids) + "</w:body></w:document>")
+
+
+@pytest.mark.parametrize("kind,part", [("footnote", "word/footnotes.xml"),
+                                       ("endnote", "word/endnotes.xml")])
+def test_out_of_order_NAMES_the_doubled_id_and_its_PART(kind, part):
+    """The refusal above, as the author meets it.
+
+    `revision status` and `revision build` call this uncaught, so what a
+    person asking for a status was handed is zip's own sentence — "zip()
+    argument 2 is shorter than argument 1" — a message about an ARCHIVE,
+    naming neither the note to fix nor the file to open it in. The CLI
+    prints a `DocxKitError` as a clean line and lets everything else
+    traceback, so the refusal has to be one, and it has to say WHICH id
+    and WHICH part: a manuscript's notes part holds hundreds, and
+    "somewhere in this document" is not an instruction.
+    """
+    from docxkit.errors import DocxKitError
+
+    with pytest.raises(DocxKitError) as caught:
+        footnotes.out_of_order(_refs_of(kind, 2, 3),
+                               _notes_part_of(kind, 2, 3, 3), kind=kind)
+
+    said = str(caught.value)
+    assert f"{kind} 3" in said, said
+    assert part in said, said
+
+
 def test_out_of_order_compares_TWO_DIGIT_ids_by_value():
     """Every fixture above used ids under 10, and two regex matches of a
     one-character id are the same cached string, so `is not` agreed with

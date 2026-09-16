@@ -36,7 +36,7 @@ from ._xml import (
     visible_text,
 )
 from .edit import insert_in_para
-from .errors import AnchorError
+from .errors import AnchorError, PackageError
 from .find import para_slice
 from .styles import STYLE as _STYLE
 from .styles import Cascade
@@ -46,6 +46,7 @@ __all__ = [
     "FontReport",
     "Footnote",
     "Orphan",
+    "PackageError",
     "SizeOutlier",
     "SizeReport",
     "add",
@@ -142,6 +143,25 @@ def out_of_order(document_xml: str, notes_xml: str, *,
     defined = [f.id for f in find_all(notes_xml, kind=kind)]
     wanted = [i for i in seen if i in set(defined)]
     have = [i for i in defined if i in set(wanted)]
+    # An id the body references and the part defines TWICE. There is no
+    # order to report — the two definitions cannot both be where the one
+    # reference points — and the lists no longer pair up, so the strict
+    # zip below raises. Refused HERE, in this package's own words:
+    # `revision status` and `revision build` call this uncaught, and
+    # until 2026-09-16 an author asking for a status was handed
+    # "zip() argument 2 is shorter than argument 1" — a sentence about
+    # an archive, naming neither the note nor the file holding it.
+    doubled = [i for i in wanted if have.count(i) > 1]
+    if doubled:
+        part = FOOTNOTES if kind == "footnote" else ENDNOTES
+        raise PackageError(
+            f"{part} defines {kind} {', '.join(doubled)} more than once, "
+            f"and the body references it: Word stores ONE definition per "
+            f"id and numbers it by where its reference sits, so which of "
+            f"them the marker points at is not a question this file "
+            f"answers. Open the note in Word and delete the duplicate "
+            f"definition — or delete the note and add it again, which "
+            f"renumbers the part — before building.")
     return [i for i, j in zip(have, wanted, strict=True) if i != j]
 
 
@@ -172,6 +192,17 @@ class Orphan:
     def __str__(self) -> str:
         what = "empty" if self.empty else f"holds {self.text[:50]!r}"
         return f"{self.kind} {self.id} ({what})"
+
+
+def _orphan_of(kind: str, note: Footnote) -> Orphan:
+    """The orphan a DEFINITION makes: its own words, its own carriers.
+
+    One reader for that rule, because two places ask it — `orphans`,
+    which reports, and `prune_orphans`, which has to know whether the
+    definition in front of it is the shell it means to cut.
+    """
+    return Orphan(kind, note.id, note.text,
+                  len(_NOTE_CONTENT_RE.findall(note.xml)))
 
 
 def orphans(parts: dict[str, bytes], *,
@@ -205,8 +236,7 @@ def orphans(parts: dict[str, bytes], *,
             i for name, xml in parts.items()
             if name != part and name.endswith(".xml")
             for i in _REFERENCE_OF[k].findall(xml.decode("utf-8"))}
-        out += [Orphan(k, note.id, note.text,
-                       len(_NOTE_CONTENT_RE.findall(note.xml)))
+        out += [_orphan_of(k, note)
                 for note in find_all(blob.decode("utf-8"), kind=k)
                 if note.id not in referenced]
     return out
@@ -220,6 +250,12 @@ def prune_orphans(parts: dict[str, bytes]) -> list[Orphan]:
     report — while a shell is an artifact of accepting or rejecting part
     by part and says nothing about the manuscript. Read the ones left
     behind with :func:`orphans`.
+
+    WHICH definition goes is decided by that definition's own words and
+    carriers, never by its id alone. A malformed part can answer to one
+    id twice, and a cut keyed on the id took whichever was stored first
+    — the author's note, where that was the one in front — while `gone`
+    went on naming the shell that stayed (2026-09-16).
     """
     gone: list[Orphan] = []
     for orphan in orphans(parts):
@@ -228,7 +264,9 @@ def prune_orphans(parts: dict[str, bytes]) -> list[Orphan]:
         part = FOOTNOTES if orphan.kind == "footnote" else ENDNOTES
         xml = parts[part].decode("utf-8")
         for note in find_all(xml, kind=orphan.kind):
-            if note.id == orphan.id:
+            # The id names a note; only the definition itself says
+            # whether it is the shell this orphan stands for.
+            if note.id == orphan.id and _orphan_of(orphan.kind, note).empty:
                 xml = xml[:note.start] + xml[note.end:]
                 parts[part] = xml.encode("utf-8")
                 gone.append(orphan)

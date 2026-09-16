@@ -157,6 +157,64 @@ def test_prune_drops_the_SHELL_and_keeps_the_one_with_words():
     assert [o.id for o in fn.orphans(parts)] == ["3"]
 
 
+@pytest.mark.parametrize("order", ["worded first", "shell first"])
+def test_prune_cuts_the_SHELL_when_it_shares_an_id_with_a_WORDED_note(order):
+    """A part answering to ONE id twice is malformed, and the pruner
+    still may not cut the half with the words in it.
+
+    Measured 2026-09-16: the cut was looked up by id and took the FIRST
+    definition answering to it, while the orphan being pruned was the
+    second one. With the author's note stored first, the words went and
+    the shell stayed — and `gone` named the SHELL, so the record said
+    the harmless one had been removed:
+
+        orphans before:   [('12', 'The lost note.', False), ('12', '', True)]
+        reported gone:    [('12', '', True)]
+        left in the part: [('12', '')]
+
+    The order is parametrized because the order IS the defect: stored
+    shell-first the same call was already right, by accident. Emptiness
+    belongs to a DEFINITION, not to an id.
+    """
+    worded = _note(NOTE_MARK + run(" The lost note."), nid=12)
+    shell = _note(NOTE_MARK, nid=12)
+    items = (worded, shell) if order == "worded first" else (shell, worded)
+
+    parts = _paper(para(run("A claim.")), *items)
+    (gone,) = fn.prune_orphans(parts)
+
+    left = fn.find_all(parts["word/footnotes.xml"].decode("utf-8"))
+    assert [(f.id, f.text) for f in left] == [("12", "The lost note.")]
+    assert (gone.id, gone.text, gone.empty) == ("12", "", True)
+
+
+@pytest.mark.parametrize("spec,gone_ids,left", [
+    pytest.param((("12", ""), ("12", "")), ["12", "12"], [],
+                 id="two_shells_on_one_id"),
+    pytest.param((("12", " The lost note."), ("13", "")), ["13"],
+                 [("12", "The lost note.")], id="distinct_ids"),
+    pytest.param((("12", ""),), ["12"], [], id="one_ordinary_shell"),
+])
+def test_prune_leaves_the_inputs_that_were_ALREADY_right_ALONE(
+        spec, gone_ids, left):
+    """The three inputs the defect never touched.
+
+    Cutting by DEFINITION rather than by id could have moved any of
+    them — two shells sharing an id are pruned one after the other, and
+    the ordinary cases go through the same changed line — so all three
+    are pinned here rather than argued.
+    """
+    parts = _paper(para(run("A claim.")),
+                   *[_note(NOTE_MARK + (run(text) if text else ""),
+                           nid=int(nid)) for nid, text in spec])
+
+    gone = fn.prune_orphans(parts)
+
+    part = parts["word/footnotes.xml"].decode("utf-8")
+    assert [o.id for o in gone] == gone_ids
+    assert [(f.id, f.text) for f in fn.find_all(part)] == left
+
+
 def test_a_shell_holding_a_BOOKMARK_is_not_empty():
     """No visible text and still something to lose: a link elsewhere in
     the paper points at that anchor, and dropping the definition breaks
