@@ -779,3 +779,94 @@ def test_a_gate_timeout_that_IS_a_number_comes_back_as_one():
     against elapsed seconds and raise at the worst moment."""
     assert cli._seconds("90") == 90.0
     assert isinstance(cli._seconds("0.5"), float)
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_MINUS_ONE_is_a_negative_word_limit_too():
+    """`if n < 0`. The refusal above is tested at -5, where `n < -1`
+    refuses as well; -1 is the one negative number that reading lets
+    through, as a cap of minus one word."""
+    with pytest.raises(argparse.ArgumentTypeError, match="cannot be negative"):
+        cli._word_limit("-1")
+
+
+def test_an_IGNORE_word_the_defaults_already_hold_STAYS_ignored():
+    """`IGNORED_LEADS | extra`. A paper that names a word the engine
+    already ignores — two scripts sharing one list, or a list copied from
+    the defaults — is only repeating itself, and read as `^` the repeat
+    CANCELS: the word is ignored no longer, and the grammar reads it as
+    an author again."""
+    from docxkit.citations import IGNORED_LEADS
+
+    word = min(IGNORED_LEADS)
+
+    got = cli._ignore(args_with(ignore=f"{word},Surveys"))
+
+    assert got == IGNORED_LEADS | {"Surveys"}
+
+
+def test_a_CROSSREFS_dry_run_answers_from_a_snapshot_too(
+        monkeypatch, capsys, simple_docx, held_by_word):
+    """`read_only=audit or not write`. The sweep above runs `crossrefs`
+    with `--audit`, which is read-only under both spellings of that line;
+    the DRY run is the form that tells `or` from `and`, and it writes
+    nothing either, so it has no business refusing."""
+    code = _run(monkeypatch, "crossrefs", str(simple_docx))
+
+    captured = capsys.readouterr()
+    assert isinstance(code, int), code
+    assert cli._SNAPSHOT_NOTE in captured.out
+    assert "dry run" in captured.out
+
+
+def test_AUTHORS_called_without_a_write_flag_reads_a_snapshot(
+        capsys, simple_docx, held_by_word):
+    """`read_only=not getattr(args, "write", False)`: a caller that does
+    not mention writing is asking for the report, and the report reads a
+    snapshot while Word holds the file. With `True` as the default the
+    same call refuses — a script reading the credits list through
+    `cmd_authors` would stop working whenever the author had the paper
+    open."""
+    code = cli.cmd_authors(args_with(docx=str(simple_docx), set=None))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert cli._SNAPSHOT_NOTE in out
+    assert "(no tracked changes or comments)" in out
+
+
+def test_a_WRITE_reads_the_live_file_and_announces_NO_snapshot(
+        monkeypatch, capsys, tmp_path):
+    """`copied = False` before the branch. A writing command reads the
+    live file and never binds `copied` itself, so the initial value IS
+    its answer — and `True` there prints the snapshot banner over every
+    successful write, telling the author the edit was computed from a
+    copy of a file Word was holding."""
+    loose = write(tmp_path / "loose.docx",
+                  make_parts(para(run("A straight quote isn't smart."))))
+
+    code = _run(monkeypatch, "smarten", str(loose), "--write")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "written; previous version kept at" in out
+    assert cli._SNAPSHOT_NOTE not in out
+
+
+def test_a_docx_that_SORTS_before_the_paper_keeps_its_backup_beside_it(
+        monkeypatch, capsys, protocol_paper):
+    """`paper.working.resolve() == target`. The build artefact above sits
+    in `revision/build/`, which sorts AFTER `manuscript.docx`, so `>=` in
+    place of the equality answers it the same way; a draft beside the
+    manuscript whose name sorts first is sent to `build/rescue/` by it,
+    as though it were the paper."""
+    draft = write(protocol_paper.root / "a_draft.docx",
+                  make_parts(para(run("A draft isn't smart either."))))
+
+    code = _run(monkeypatch, "smarten", str(draft), "--write")
+
+    assert code == 0, capsys.readouterr().out
+    assert (protocol_paper.root / "a_draft_pre_smarten1.docx").is_file()
+    assert not list(protocol_paper.rescue_dir.glob("a_draft*"))

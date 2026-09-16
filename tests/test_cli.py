@@ -3040,3 +3040,475 @@ def test_the_CLI_defaults_are_repacks_own(monkeypatch):
     assert args.max_candidates == repack.DEFAULT_MAX_CANDIDATES
     assert tuple(args.labels.split(",")) == tuple(
         w for w in repack.LABELS if w.isascii())
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# 12.8 % real survival (175/1370) on the whole module. The shapes are the
+# ones this file already knows: a flag nothing held to its word, a width
+# or a cap nothing reached past, and an ordering test standing in for an
+# equality the fixtures could not tell apart.
+
+
+def _two_works(tmp_path):
+    """Two citations and the two entries they cite, neither linked."""
+    return write(tmp_path / "two.docx", make_parts(
+        para(run("Robots displace workers (Maestas et al. 2023), as "
+                 "Acemoglu and Restrepo (2020) found."))
+        + para(REF_HEAD_PPR, run("References"))
+        + para(REF_ENTRY_PPR,
+               run("Acemoglu, D., and P. Restrepo. (2020). “Robots and "
+                   "Jobs.” JPE."))
+        + para(REF_ENTRY_PPR,
+               run("Maestas, N., Mullen, K., and D. Powell. (2023). “The "
+                   "Effect of Population Aging.” AEJ: Macro."))))
+
+
+def test_link_ONLY_wires_the_works_it_names_and_no_others(monkeypatch,
+                                                          tmp_path, capsys):
+    """`(args.only or "")` and `only=only or None`. Read as `and`, the
+    first throws the names away and the second turns a list of them into
+    None — and None is the whole document, the pass that took one paper's
+    audit from 26 findings to 56. The run without the flag is held too:
+    `[] and None` is an empty list, and an empty list wires nothing."""
+    path = _two_works(tmp_path)
+
+    run_cli(monkeypatch, "link", path)
+    whole = capsys.readouterr().out.splitlines()[0]
+    run_cli(monkeypatch, "link", path, "--only", "Maestas")
+    scoped = capsys.readouterr().out.splitlines()[0]
+
+    assert whole.startswith("linked 2, "), whole
+    assert scoped.startswith("linked 1, "), scoped
+
+
+@pytest.mark.parametrize("pass_", ["entries", "layout"])
+def test_refstyle_fix_SAVES_when_only_one_of_its_passes_wrote(
+        monkeypatch, tmp_path, capsys, pass_):
+    """`written or filed or set_out`: any one of the three passes is a
+    change worth saving. Each fixture gives exactly one of them work — an
+    ampersand in an entry already set out in the house layout, or a clean
+    entry with no layout at all — because `written and filed or set_out`
+    saves the second and not the first, and `written or filed and
+    set_out` the first and not the second. Either way the report then
+    describes repairs that are in no file."""
+    cite = para(run("Robots displace workers (Maestas et al. 2023)."))
+    if pass_ == "entries":
+        body = (cite + para(REF_HEAD_PPR, run("References"))
+                + para(REF_ENTRY_PPR,
+                       run("Maestas, N., Mullen, K., &amp; D. Powell. (2023). "
+                           "“The Effect of Population Aging.” AEJ: Macro.")))
+    else:
+        body = (cite + para(run("References"))
+                + para(run("Maestas, N., Mullen, K., and D. Powell. (2023). "
+                           "“The Effect of Population Aging.” AEJ: Macro.")))
+    path = pathlib.Path(write(tmp_path / "one.docx", make_parts(body)))
+    before = path.read_bytes()
+
+    run_cli(monkeypatch, "refstyle", str(path), "--fix")
+
+    out = capsys.readouterr().out
+    assert "written; previous version kept at" in out, out
+    assert path.read_bytes() != before
+    (kept,) = path.parent.glob("*pre_refstyle*")
+    assert kept.read_bytes() == before
+
+
+def test_inspect_counts_TWO_nested_tables_as_two(monkeypatch, tmp_path,
+                                                 capsys):
+    """`doc.count("<w:tbl>") - top`. The questionnaire fixture in
+    test_cli_guards has one table inside another: two open tags, one at
+    the top, and `2 - 1` and `2 >> 1` are both 1. Two tables inside one
+    tell them apart, because `3 >> 1` is still 1."""
+    inner = ("<w:tbl><w:tr><w:tc>" + para(run("inner"))
+             + "</w:tc></w:tr></w:tbl>")
+    path = write(tmp_path / "nested.docx", make_parts(
+        para(run("x")) + "<w:tbl><w:tr><w:tc>" + inner + inner
+        + para(run("outer")) + "</w:tc></w:tr></w:tbl>"))
+
+    run_cli(monkeypatch, "inspect", path)
+
+    assert "  tables      1  (+2 nested)" in capsys.readouterr().out
+
+
+def test_inspect_lists_TWO_HUNDRED_revisions_and_stops(monkeypatch, tmp_path,
+                                                       capsys):
+    """`spans(doc)[:200]`. The listing is a structural summary, not the
+    redline, and a cap only shows past itself: 201 revisions, of which
+    exactly the first 200 are listed."""
+    from conftest import ins
+
+    path = write(tmp_path / "many.docx", make_parts(para("".join(
+        ins(f"change {i}", rid=i) for i in range(201)))))
+
+    run_cli(monkeypatch, "inspect", path, "--revisions")
+
+    listed = [ln for ln in capsys.readouterr().out.splitlines()
+              if ln.startswith("    [ins] ")]
+    assert len(listed) == 200
+    assert listed[-1] == "    [ins] 'change 199'"
+
+
+def test_text_MD_is_the_markdown_and_plain_text_is_not(monkeypatch, tmp_path,
+                                                       capsys):
+    """`if args.md`. Both views print something for any document, which
+    is all the test above asks of `--md`; a table is where they part — a
+    pipe row in one, a cell to a line in the other."""
+    path = write(tmp_path / "table.docx", make_parts(
+        para(run("Before the table.")) + "<w:tbl><w:tr><w:tc>"
+        + para(run("Country")) + "</w:tc><w:tc>" + para(run("0.31"))
+        + "</w:tc></w:tr></w:tbl>"))
+
+    run_cli(monkeypatch, "text", path)
+    plain = capsys.readouterr().out
+    run_cli(monkeypatch, "text", path, "--md")
+    markdown = capsys.readouterr().out
+
+    assert plain.splitlines() == ["Before the table.", "Country", "0.31"]
+    assert "| Country | 0.31 |" in markdown.splitlines()
+
+
+def test_api_leaves_out_PRIVATE_modules_and_the_CLI_whatever_they_export(
+        monkeypatch, capsys):
+    """`info.name.startswith("_") or info.name == "cli"`. The CLI exports
+    nothing today, so the second half is silent in the tree as it stands
+    — and a module name read off the disk is never the interned literal,
+    so `is "cli"` in its place excludes nothing. An `__all__` on the CLI
+    is the day it matters: its `cmd_*` functions would be listed as the
+    library's surface. Read as `and`, nothing is excluded at all, and
+    `_xml`, `_cite_build` and the rest come back as modules of their
+    own."""
+    import docxkit.cli
+
+    monkeypatch.setattr(docxkit.cli, "__all__", ["cmd_api"], raising=False)
+
+    code, _ = run_cli(monkeypatch, "api", "cmd_api")
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "nothing in the public surface mentions 'cmd_api'" in out
+
+    run_cli(monkeypatch, "api", "_xml")
+    headings = [ln for ln in capsys.readouterr().out.splitlines()
+                if ln and not ln.startswith(" ")]
+    assert headings, "public signatures take a doc_xml"
+    assert not [h for h in headings if h.startswith("_") or h == "cli"], \
+        headings
+
+
+def test_api_goes_PAST_a_module_that_will_not_import(monkeypatch, capsys):
+    """`continue`, not `break`, under `except ImportError`. An optional
+    extra that is not installed is one module's problem. `authors` is the
+    first public module in the walk, and under `break` a dependency
+    missing there empties the whole surface — which then reports that
+    nothing mentions a name `guard` exports."""
+    import importlib
+
+    real = importlib.import_module
+
+    def an_extra_is_missing(name, *args, **kw):
+        if name == "docxkit.authors":
+            raise ImportError("an optional dependency is not installed")
+        return real(name, *args, **kw)
+
+    monkeypatch.setattr(importlib, "import_module", an_extra_is_missing)
+
+    code, _ = run_cli(monkeypatch, "api", "restamp")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.startswith("guard\n"), out
+
+
+def test_api_quotes_the_FIRST_line_of_a_summary(monkeypatch, capsys):
+    """`doc.splitlines()[0]`. A summary is the first line of a docstring
+    by convention, and `restamp`'s runs to twenty-one: its last line is
+    the tail of a sentence, which on its own says nothing about what the
+    function is for."""
+    from docxkit import guard
+
+    summary = (guard.restamp.__doc__ or "").strip().splitlines()
+    assert len(summary) > 1 and summary[0] != summary[-1].strip()
+
+    run_cli(monkeypatch, "api", "restamp")
+
+    (line,) = [ln for ln in capsys.readouterr().out.splitlines()
+               if ln.startswith("  restamp ")]
+    assert line.endswith(f"  {summary[0]}"), line
+
+
+def test_api_lists_each_name_under_ITS_OWN_module_once(monkeypatch, capsys):
+    """`r[0] == module`. Hits are grouped by module, and an ordering test
+    in place of the equality puts every earlier module's names under each
+    later heading as well (`<=`), or every later one's under each earlier
+    (`>=`) — the same function listed two or three times, under modules
+    that do not export it. A topic that reaches one module cannot show
+    that, so this one reaches several, and the rows under each heading
+    are counted against the surface itself."""
+    from collections import Counter
+
+    from docxkit.cli import _public_surface
+
+    topic = "bookmark"
+    expected = Counter(r[0] for r in _public_surface()
+                       if any(topic in field.casefold() for field in r))
+    assert len(expected) >= 2, "the topic has to reach several modules"
+
+    run_cli(monkeypatch, "api", topic)
+
+    listed: Counter[str] = Counter()
+    module = ""
+    for line in capsys.readouterr().out.splitlines():
+        if line.startswith("  "):
+            listed[module] += 1
+        else:
+            module = line
+    assert listed == expected
+
+
+def test_math_says_a_file_is_TRACKED_only_when_it_is(monkeypatch, tmp_path,
+                                                     capsys):
+    """`if "<w:del " in doc`. The note explains why a deleted paragraph
+    is not a finding; printed over a clean file, it tells the author the
+    manuscript carries revisions, which is the first thing a hand-back is
+    checked for."""
+    from conftest import dele
+
+    plain = _math_doc(tmp_path, para(run("Prose only.")), "plain.docx")
+    tracked = _math_doc(tmp_path, para(run("Prose kept"), dele(" and cut")),
+                        "tracked.docx")
+
+    run_cli(monkeypatch, "math", str(plain))
+    assert "tracked file" not in capsys.readouterr().out
+
+    run_cli(monkeypatch, "math", str(tracked))
+    assert ("(tracked file — read on its ACCEPTED side"
+            in capsys.readouterr().out)
+
+
+def test_math_counts_the_CELLS_it_left_out_NET_of_the_body_display(
+        monkeypatch, tmp_path, capsys):
+    """`len(display_equations(doc, in_tables=True)) - len(displays)`. The
+    notation-table test above has no display in the body, and with
+    nothing to subtract every operator the mutation tried — `+`, `<<`,
+    `>>`, `^`, `|` — gives the same 3. One display in the body and three
+    cells makes it 4 - 1, which none of them gives."""
+    cell = ("<w:tc><w:tcPr/><w:p><m:oMath><m:r><m:t>α</m:t></m:r>"
+            "</m:oMath></w:p></w:tc>")
+    gloss = f"<w:tc><w:tcPr/>{para(run('what it means'))}</w:tc>"
+    rows = f"<w:tr>{cell}{gloss}</w:tr>" * 3
+    path = _math_doc(tmp_path, (para(OMATH)
+                                + f"<w:tbl><w:tblPr/>{rows}</w:tbl>"
+                                + para(run("Prose after the table."))),
+                     "mixed.docx")
+
+    run_cli(monkeypatch, "math", str(path))
+
+    out = capsys.readouterr().out
+    assert "1 display equation(s), 1 still in INLINE mode" in out
+    assert "  (3 maths-only paragraph(s) inside tables not counted" in out
+
+
+_WP_NS = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+          'wordprocessingDrawing" '
+          'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+          'relationships"')
+
+
+def _drawing(docpr: str, blip: str = '<a:blip r:embed="rId4"/>') -> str:
+    """An inline drawing in a paragraph of its own; `docpr` is whatever
+    follows the id on `wp:docPr`."""
+    return (f"<w:p><w:r><w:drawing><wp:inline {_WP_NS}>"
+            f'<wp:docPr id="1"{docpr}/>{blip}'
+            "</wp:inline></w:drawing></w:r></w:p>")
+
+
+@pytest.mark.parametrize(("caption_first", "sits"), [(True, "above"),
+                                                     (False, "below")])
+def test_figures_says_which_SIDE_its_captions_were_read_on(
+        monkeypatch, tmp_path, capsys, caption_first, sits):
+    """`"above" if caption_side(doc) == "after" else "below"`. The header
+    names the convention every attribution under it rests on, and both
+    are in use: a caption above its figure, and Aging_Well's diagrams,
+    captioned underneath. One fixture of each, because each wrong reading
+    of the comparison is right about one of them."""
+    caption = para(run("Figure 1. The trend"))
+    drawing = _drawing(' name="Chart 1"')
+    path = write(tmp_path / "side.docx", make_parts(
+        caption + drawing if caption_first else drawing + caption))
+
+    run_cli(monkeypatch, "figures", path)
+
+    assert (f"captions read as sitting {sits} their figures)"
+            in capsys.readouterr().out)
+
+
+def test_a_figure_line_falls_back_to_the_EMBED_and_then_to_a_QUESTION_MARK(
+        monkeypatch, tmp_path, capsys):
+    """`d.name or d.embed or "?"`, and the half the test above leaves
+    open: a drawing with no name. Read as `d.embed and "?"`, a drawing
+    whose relationship id is all there is to go by prints a question
+    mark, and one with neither prints "[None]"."""
+    path = write(tmp_path / "unnamed.docx", make_parts(
+        para(run("Figure 1. Unnamed"))
+        + _drawing("", '<a:blip r:embed="rId9"/>')
+        + para(run("Figure 2. Nothing to go by")) + _drawing("", "")))
+
+    run_cli(monkeypatch, "figures", path)
+
+    lines = [ln for ln in capsys.readouterr().out.splitlines()
+             if ln.startswith("  ! ")]
+    assert [ln.rsplit("  ", 1)[-1] for ln in lines] == ["[rId9]", "[?]"]
+
+
+#: A character style that raises whatever wears it, as Word's own
+#: footnote-reference style does.
+_RAISING_STYLES = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+    '2006/main"><w:style w:type="character" w:styleId="FootnoteReference">'
+    '<w:name w:val="footnote reference"/>'
+    '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style></w:styles>')
+
+
+def test_lint_quotes_SIXTY_characters_of_the_RAISED_prose(monkeypatch,
+                                                          tmp_path, capsys):
+    """`r.text[:60]` in the advisory. The finding names a run a person
+    has to find in the document, and the width keeps it to one line: the
+    sentence here wears the footnote mark's character style, which raises
+    it, and runs past the cut."""
+    raised = ("a sentence of prose that wears the footnote mark's style by "
+              "mistake")
+    assert len(raised) > 61
+    path = write(tmp_path / "raised.docx", make_parts(
+        para('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+             f"<w:t>{raised}</w:t></w:r>"),
+        extra={"word/styles.xml": _RAISING_STYLES}))
+
+    run_cli(monkeypatch, "lint", str(path))
+
+    (line,) = [ln for ln in capsys.readouterr().out.splitlines()
+               if "prose renders superscript" in ln]
+    assert line.endswith(f"no w:vertAlign of its own: {raised[:60]!r}"), line
+
+
+def test_repack_numbers_its_TRIALS_from_one_in_the_order_it_renders_them(
+        monkeypatch, tmp_path, capsys):
+    """`trials = [0]`, then `trials[0] += 1` before the path is built.
+    Each candidate is written to a file of its own, and the name is what
+    a render failure quotes: the second render fails here, and the report
+    has to name trial2 — not trial0, which no render wrote, nor a file
+    every candidate overwrote in turn."""
+    from docxkit.package import write_docx
+
+    paper = tmp_path / "paper.docx"
+    write_docx(paper, make_parts(
+        para(run("Figure 1 shows it.")) + "<w:p><w:r><w:drawing/></w:r></w:p>"
+        + para(run("Figure 1. Cap")) + para(run("Box text"))
+        + para(run("More text"))))
+    seen: list[str] = []
+
+    def page_texts(path):
+        seen.append(pathlib.Path(path).name)
+        if len(seen) == 2:
+            raise RuntimeError("(-2147352567, 'Exception occurred.')")
+        return [_FULL, "Figure 1 shows it.", "Figure 1. Cap", _FULL, _FULL]
+
+    monkeypatch.setattr("docxkit.pages.page_texts", page_texts)
+
+    code, _ = run_cli(monkeypatch, "repack", str(paper))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert seen == ["trial1.docx", "trial2.docx", "trial3.docx"]
+    assert "Word could not render trial2.docx" in out, out
+
+
+def test_repack_still_REPORTS_when_its_staging_folder_will_not_go(
+        monkeypatch, tmp_path, capsys):
+    """`shutil.rmtree(staging, ignore_errors=True)`. Word can still hold
+    the last trial it rendered when the search ends, and a folder in TEMP
+    that will not delete is no reason to lose the measurements: the
+    report is printed and the command exits 0."""
+    import shutil
+
+    real = shutil.rmtree
+
+    def held(path, ignore_errors=False, **kw):
+        if not ignore_errors:
+            raise PermissionError(13, "The process cannot access the file "
+                                      "because it is being used by another "
+                                      "process")
+        return real(path, ignore_errors=True, **kw)
+
+    monkeypatch.setattr(shutil, "rmtree", held)
+    monkeypatch.setattr("docxkit.pages.page_texts",
+                        lambda *_a, **_k: [_FULL, _FULL, _FULL])
+
+    code, _ = run_cli(monkeypatch, "repack", str(_repack_docx(tmp_path)))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "nothing to repack" in out
+
+
+def test_the_CLI_MAX_DRIFT_is_repacks_own_default():
+    """The test above pins the threshold and the candidate count; the
+    drift limit is restated in the parser the same way and was pinned by
+    nothing. `repack.repack` keeps it as a keyword default rather than a
+    named constant, so that default is what the parser has to agree
+    with."""
+    import inspect
+
+    from docxkit import repack
+    from docxkit.cli import build_parser
+
+    args = build_parser().parse_args(["repack", "x.docx"])
+
+    assert args.max_drift == \
+        inspect.signature(repack.repack).parameters["max_drift"].default == 1
+
+
+def _typed(text: str) -> str:
+    """`text` as a command line hands it over: a string built at run
+    time, which is never the interned literal."""
+    return "".join(list(text))
+
+
+@pytest.mark.parametrize(("corner", "flagged"), [
+    (None, "not lower right"),
+    ("lower centre", ""),
+    ("any", ""),
+    ("Lower right", "not Lower right"),
+])
+def test_pages_checks_the_CORNER_unless_told_ANY(monkeypatch, paper, capsys,
+                                                 corner, flagged):
+    """`None if corner == "any" else corner`. Only the word `any` turns
+    the check off: the default holds a sheet to the house corner, a named
+    corner holds it to that one, and a corner spelt any other way is
+    compared rather than waved through — "Lower right" sorts before
+    "any", the one kind of input an ordering test in place of the
+    equality misreads. Each `--corner` is built at run time, as argv is:
+    a literal in this file is interned, and `is "any"` would agree with
+    `==` on it."""
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    rows = [Sheet(n, "portrait", n, False, "lower centre") for n in (1, 2)]
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: (rows, ["", ""]))
+    argv = ["pages", str(paper), "--check"]
+    if corner is not None:
+        argv += ["--corner", _typed(corner)]
+
+    code, _ = run_cli(monkeypatch, *argv)
+
+    out = capsys.readouterr().out
+    found = [ln for ln in out.splitlines() if "prints its number" in ln]
+    if flagged:
+        assert code == 2, out
+        assert found == [f"  ** sheet {n} prints its number lower centre, "
+                         f"{flagged}" for n in (1, 2)], out
+    else:
+        assert code == 0, out
+        assert not found, out

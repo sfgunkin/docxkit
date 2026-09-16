@@ -2153,3 +2153,597 @@ def test_validate_says_so_when_the_MANUSCRIPT_is_missing_too(
     assert "no batch to validate" in out
     assert "pending revision(s)" not in out, "there is nothing to read"
     assert "Errno" not in out and "Traceback" not in out
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# The survey row was cli.py's largest cluster, 30 of 175: its name cut
+# and every one of its marks. The rest is free in the same way — the gate
+# block the ladder prints, the widths of two hashes, and the namespaces a
+# caller builds without a flag in them.
+
+
+@pytest.mark.parametrize(("name", "shown"), [
+    ("Short", "Short"),
+    ("N" * 32, "N" * 32),
+    ("N" * 33, "N" * 31 + "…"),
+])
+def test_a_survey_row_cuts_a_name_PAST_thirty_two_and_says_it_did(
+        tmp_path, name, shown):
+    """`name if len(name) <= 32 else name[:31] + "…"`. A bound is
+    invisible at any distance but one, so the cases are a short name,
+    thirty-two characters exactly — printed whole — and thirty-three,
+    cut to thirty-one and an ellipsis so the column is as wide either
+    way. Any other operator in the join raises on the cut, and `==` in
+    place of `<=` cuts "Short" to "Short…"."""
+    from docxkit.cli import _survey_row
+    from docxkit.revision import Survey
+
+    row = _survey_row(Survey(config=tmp_path / name / "revision"
+                             / "paper.toml", paper=None, state=None))
+
+    assert row == f"  unreadable {shown:<33}"
+
+
+def test_a_survey_row_carries_ONLY_the_marks_its_paper_has_earned(project):
+    """Every mark on the row is a branch, and each was free in one
+    direction: a settled paper printed "0 pending ()" under a flipped
+    `is_truth`, "baseline stale: " under a flipped `stale`, and a
+    trailing gap under a flipped `error` — rows that look busy for a
+    paper with nothing waiting. The pending mark names each part by its
+    LAST path segment; the first is `word` for all three of them."""
+    from docxkit.cli import _survey_row
+    from docxkit.revision import survey
+
+    def row() -> str:
+        (only,) = survey([project.config])
+        return _survey_row(only)
+
+    assert row() == f"  {'truth':<9} {'Test Paper':<33}"
+
+    write(project.working, make_parts(
+        para(run("x"), _ins("added")),
+        footnotes=FOOTNOTES.format(body=para(_ins("hidden")))))
+    assert row() == (f"  {'PROPOSAL':<9} {'Test Paper':<33}"
+                     "   2 pending (1 in document, 1 in footnotes)")
+
+    write(project.working, make_parts(para(run("Accepted, and settled."))))
+    assert row() == (f"  {'stale':<9} {'Test Paper':<33}"
+                     "   baseline stale: word/document.xml")
+
+
+def test_status_ALL_with_NOTHING_registered_says_so_and_exits_0(monkeypatch,
+                                                               capsys):
+    """Nothing registered is nothing waiting: exit 0, and the one line
+    that says how the list gets filled. The flipped test surveyed the
+    empty list instead, and printed "0 paper(s)" with no advice."""
+    code, _ = run_cli(monkeypatch, "revision", "status", "--all")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.startswith("no papers registered yet (")
+    assert "paper(s) ·" not in out
+
+
+def test_status_ALL_lists_every_registered_paper_ROW_by_row(monkeypatch,
+                                                            project, capsys):
+    """`status --all` alone is a survey — `all or scan`, where `and`
+    wanted a folder as well and fell through to one paper's status with
+    no paper to find — and a survey prints its rows. The loop over them
+    was free: the count line under it still said "1 paper(s)"."""
+    code, _ = run_cli(monkeypatch, "revision", "status", "--all")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.splitlines()[0] == f"  {'truth':<9} {'Test Paper':<33}"
+    assert "  1 paper(s) · " in out
+    assert "no papers registered" not in out
+
+
+def test_status_SCAN_registers_what_it_finds_and_then_surveys_it(
+        monkeypatch, project, capsys):
+    """`for root in args.scan or []`. `init` registers the paper it
+    scaffolds, so the registry is emptied first: the paper on the list
+    afterwards is the one the walk found, and a scan that walked nothing
+    leaves "no papers registered" behind it."""
+    from docxkit.revision import registered, registry_path
+
+    registry_path().write_text("", encoding="utf-8")
+    assert registered() == []
+
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--scan", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.splitlines()[0] == f"scanned {project.root}: 1 paper(s)"
+    assert f"  {'truth':<9} {'Test Paper':<33}" in out.splitlines()
+
+
+def test_status_called_with_ONLY_a_paper_answers_for_that_paper(project,
+                                                                capsys):
+    """`getattr(args, "all", False)`: a namespace a script builds, not the
+    parser, carries no `--all`, and no flag is the one-paper question.
+    Defaulted to `True`, the same call becomes a survey and dies reading
+    `args.scan`, which that namespace does not have either."""
+    import argparse
+
+    from docxkit.cli import cmd_revision_status
+
+    code = cmd_revision_status(argparse.Namespace(paper=str(project.root)))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.startswith(f"{project.name}\n  {project.working}\n"), out
+
+
+@pytest.mark.parametrize(("n", "shown"), [
+    (2, "3, 2"),
+    (6, "7, 6, 5, 4, 3, 2"),
+    (7, "8, 7, 6, 5, 4, 3 ..."),
+])
+def test_the_OUT_OF_ORDER_line_names_SIX_ids_and_says_when_there_are_more(
+        capsys, n, shown):
+    """`ids[:6]` and `" ..." if len(ids) > 6`. The test above has two ids
+    and asks only that they appear, so the cut and the ellipsis were both
+    free: two, six and seven are the three sides of a bound of six, and
+    the WHOLE line is asserted, so an ellipsis where none belongs is a
+    failure too."""
+    from docxkit.cli import _show_state
+    from docxkit.revision import State
+
+    ids = [str(i) for i in range(n + 1, 1, -1)]
+    _show_state("working", State(path=Path("working.docx"), by_part={},
+                                 by_author={},
+                                 notes_unordered={"footnote": ids}))
+
+    (line,) = [ln for ln in capsys.readouterr().out.splitlines()
+               if "NOT in document order" in ln]
+    assert line == ("      footnote definitions are NOT in document order: "
+                    f"{shown} — Word's Compare will rewrite them, and the "
+                    "next build reads the part as moved")
+
+
+def test_an_UNBALANCED_re_label_is_quoted_to_FORTY_EIGHT_characters(
+        monkeypatch, project, capsys):
+    """`change.now[:48]`. The label a person has to find and repair is
+    quoted on the line that says what is wrong with it, and the test
+    above uses one shorter than the cut, where every width agrees."""
+    label = "Klimaviciute, Pestieau and their many co-authors 2023)"
+    assert len(label) > 49
+    write(project.prev, make_parts(para(
+        run("As shown "),
+        '<w:hyperlink w:anchor="ref_Klim2023">'
+        "<w:r><w:t>Klimaviciute and Pestieau (2023)</w:t></w:r>"
+        "</w:hyperlink>")))
+    write(project.working, make_parts(para(
+        run("As shown ("),
+        '<w:hyperlink w:anchor="ref_Klim2023">'
+        f"<w:r><w:t>{label}</w:t></w:r></w:hyperlink>")))
+
+    run_cli(monkeypatch, "revision", "ingest", "--paper", str(project.root))
+
+    assert (f"     ref_Klim2023: {label[:48]!r} carries an unmatched ')'"
+            in capsys.readouterr().out.splitlines())
+
+
+def test_doctor_does_not_count_a_misspelt_KEY_among_the_literals(
+        monkeypatch, project, capsys):
+    """`d.kind == "literal"`. "key" sorts below "literal", so `<=` in its
+    place counts every config-key doubt a second time as a literal
+    selection — and the literals are the count a reader is told to
+    skim."""
+    cfg = project.config
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        "rescue_keep = 5", "rescue_kep = 3"), encoding="utf-8")
+    (project.root / "s2.py").write_text('P = "Report/le_v3.docx"\n',
+                                        encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "doctor",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "\n1 config key(s)" in out
+    assert "\n1 literal selection(s) not shown" in out, out
+
+
+def test_baseline_ECHOES_each_accepted_loss_and_the_row_it_LOGGED(
+        monkeypatch, project, capsys):
+    """Two lines an author reads to confirm the round: which losses they
+    signed off, one per flag, and the row that went into `log.md`. The
+    loop over the first was free, and a flipped `verdict is not None`
+    sent a logged round down the branch for a log with no table — telling
+    the author to record by hand a row that was already written."""
+    _ate_two_links(project)
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--accept-loss", "link:ref_Ritchie2023b",
+                      "--accept-loss", "link:ref_Kok2015",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert code == 0, out
+    assert [ln for ln in lines if ln.startswith("  accepted loss: ")] == [
+        "  accepted loss: link:ref_Ritchie2023b",
+        "  accepted loss: link:ref_Kok2015"]
+    assert any(ln.startswith("logged: ") for ln in lines), out
+    assert "no batch table" not in out
+
+
+def test_init_writes_the_NAME_it_is_given(monkeypatch, tmp_path):
+    """`name=args.name or ""`. Read as `and`, a name given on the command
+    line reaches `init` as the empty string, which is "not given": the
+    paper is filed under its folder's name instead, and every survey row
+    and log heading carries that."""
+    from docxkit.revision import load_paper
+
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "LE7.docx", make_parts(para(run("body"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src),
+                      "--root", str(tmp_path / "proj"),
+                      "--name", "Life Expectancy")
+
+    assert code == 0
+    assert load_paper(tmp_path / "proj").name == "Life Expectancy"
+
+
+def test_init_WORKING_that_SORTS_first_is_still_a_copy(monkeypatch, tmp_path,
+                                                       capsys):
+    """`adopted = paper.working == source`. The copy in the test above
+    lands in `Report/`, which sorts after `LE7.docx`, so `<=` answers it
+    the same way; a copy in `Copy/` sorts first, and `<=` calls it the
+    manuscript adopted in place — telling the author that the file they
+    will go on opening is the one nothing reads any more."""
+    (tmp_path / "proj").mkdir()
+    src = write(tmp_path / "proj" / "LE7.docx", make_parts(para(run("b"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src),
+                      "--root", str(tmp_path / "proj"),
+                      "--working", "Copy/LE.docx")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "COPIED, not moved" in out
+    assert "adopted in place" not in out
+
+
+def test_a_THIRD_init_names_the_NEWEST_saved_config(monkeypatch, tmp_path,
+                                                    capsys):
+    """`saved[-1]`, sorted by modification time. The second-init test
+    above leaves one saved config, where the first and the last are the
+    same file; a third run leaves two, and the one to name is the copy
+    this run has just taken."""
+    import os
+
+    (tmp_path / "proj").mkdir()
+    folder = tmp_path / "proj" / "revision"
+    src = write(tmp_path / "proj" / "LE7.docx", make_parts(para(run("body"))))
+    base = ["revision", "init", str(src), "--root", str(tmp_path / "proj")]
+    run_cli(monkeypatch, *base, "--name", "LE")
+    run_cli(monkeypatch, *base, "--name", "LE7", "--force")
+    (older,) = folder.glob("paper_pre_init*.toml")
+    stamp = older.stat().st_mtime - 3600
+    os.utime(older, (stamp, stamp))
+    capsys.readouterr()
+
+    code, _ = run_cli(monkeypatch, *base, "--name", "LE8", "--force")
+
+    out = capsys.readouterr().out
+    (newest,) = set(folder.glob("paper_pre_init*.toml")) - {older}
+    assert code == 0, out
+    assert f"  previous config: {newest.name}" in out.splitlines(), out
+
+
+def test_rescues_PRUNE_names_every_copy_it_removed(monkeypatch, project,
+                                                  capsys):
+    """The count line said "pruned 4" whether or not the four were named
+    above it. They are the undo copies of four promotes, and which ones
+    went is what a person checks before trusting the prune."""
+    from docxkit import revision
+
+    _seed(project, 6)
+    doomed = [p.name for p in revision.rescues(project)[:4]]
+
+    run_cli(monkeypatch, "revision", "rescues", "--prune", "2",
+            "--paper", str(project.root))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert [ln for ln in lines if ln.startswith("  removed ")] == [
+        f"  removed {name}" for name in doomed]
+
+
+def test_a_NEGATIVE_prune_keeps_none_and_SAYS_none(monkeypatch, project,
+                                                  capsys):
+    """`max(0, args.prune)`, beside `prune_rescues`, which reads a
+    negative depth as zero rather than slicing from the wrong end. The
+    line has to report the depth that was applied: "keeping -1" is not a
+    number of copies."""
+    _seed(project, 3)
+
+    code, _ = run_cli(monkeypatch, "revision", "rescues", "--prune", "-1",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "pruned 3, keeping 0" in out
+
+
+def test_a_BARE_prune_means_keep_NONE():
+    """`const=0`. The bare-prune test above finds every copy gone, which
+    a depth of -1 also produces — `prune_rescues` reads it as zero — so
+    it is the parser's own value that is asserted: the help says
+    "default 0: all"."""
+    from docxkit.cli import build_parser
+
+    args = build_parser().parse_args(["revision", "rescues", "--prune"])
+
+    assert args.prune == 0
+
+
+@pytest.mark.parametrize(("configured", "passed"), [("600", 600.0),
+                                                    ("0", None)])
+def test_validate_hands_the_papers_WORD_DEADLINE_to_the_ladder(
+        monkeypatch, project, capsys, configured, passed):
+    """`word_deadline=paper.word_deadline or None`: a ceiling in seconds,
+    where 0 is "no ceiling" and `word.session` spells that None. Read as
+    `and`, a paper's 600 arrives as None — the one Word session in the
+    ladder left unbounded — and its 0 as a deadline of no seconds."""
+    from docxkit import revision
+
+    project.config.write_text(project.config.read_text(
+        encoding="utf-8").replace("word_deadline = 600",
+                                  f"word_deadline = {configured}"),
+        encoding="utf-8")
+    seen: dict[str, object] = {}
+    real = revision.validate
+
+    def spy(*args, **kw):
+        seen.update(kw)
+        return real(*args, **kw)
+
+    monkeypatch.setattr(revision, "validate", spy)
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+
+    assert seen["word_deadline"] == passed, capsys.readouterr().out
+
+
+def test_the_BASELINE_abort_quotes_SIXTEEN_characters_of_both_hashes(
+        monkeypatch, project, capsys):
+    """Two prefixes a person compares by eye, so they are as long as each
+    other and as every other hash this package prints. The test above
+    stamps a hash of zeros, and sixteen zeros read the same as fifteen or
+    seventeen to an `in` check; a hash whose digits all differ does
+    not."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("an older truth"))))
+    guard.stamp(project.batch, base_sha256="0123456789abcdef" * 4)
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+
+    assert ("   it says it was built on 0123456789abcdef, and prev.docx is "
+            f"{guard.sha256(project.prev)[:16]}"
+            in capsys.readouterr().out.splitlines())
+
+
+def test_promote_quotes_SIXTEEN_characters_of_the_landed_hash(monkeypatch,
+                                                              project,
+                                                              capsys):
+    """The promote test above asks that sixteen characters appear, and
+    seventeen contain sixteen. The width is the one `validate` prints and
+    the one a person re-hashes against."""
+    from docxkit.guard import sha256
+
+    write(project.batch, make_parts(para(run("the batch"))))
+
+    run_cli(monkeypatch, "revision", "promote", "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    landed = sha256(project.working)[:16]
+    assert f"(sha256 {landed}, the batch's own bytes)" in out, out
+
+
+def _with_gates(project, *commands: str) -> None:
+    """The paper's own `[verify] commands`, as `paper.toml` spells them."""
+    listed = ", ".join(json.dumps(command) for command in commands)
+    project.config.write_text(project.config.read_text(
+        encoding="utf-8").replace("commands = []", f"commands = [{listed}]"),
+        encoding="utf-8")
+
+
+def _fake_gates(monkeypatch, *results) -> None:
+    """`run_gates`, replaced: each result announced and then yielded, as
+    the real one streams them."""
+    from docxkit import revision
+
+    def run_gates(paper, *, timeout, progress=None):
+        for result in results:
+            if progress is not None:
+                progress(f"gate: {result.command}")
+            yield result
+
+    monkeypatch.setattr(revision, "run_gates", run_gates)
+
+
+def test_run_gates_prints_each_VERDICT_and_the_output_of_ONLY_the_failures(
+        monkeypatch, project, capsys):
+    """The block a person reads when `--run-gates` goes red, whole. Three
+    gates with the failure in the middle, so every decision in it shows:
+    the loop over what ran (nothing, under `for gate in []`), whose
+    output is printed (the passing gates' chatter, under `not gate.ok`),
+    and the count of failures — two passes and one failure, because with
+    one of each `sum(1 for ... if gate.ok)` counts the same 1."""
+    from docxkit.revision import GateResult
+
+    _with_gates(project, "gate one", "gate two", "gate three")
+    _fake_gates(monkeypatch,
+                GateResult("gate one", 0, 1.5, "passing chatter"),
+                GateResult("gate two", 3, 2.0,
+                           "Traceback\nAssertionError: 41 != 42"),
+                GateResult("gate three", 0, 0.5, "more chatter"))
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins("and more"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--run-gates", "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 5, out
+    assert out[out.index("== the paper's own gates =="):].splitlines() == [
+        "== the paper's own gates ==  3, from the project root",
+        "   · gate one",
+        "     [pass] 1.5s",
+        "   · gate two",
+        "     [FAIL (3)] 2.0s",
+        "        Traceback",
+        "        AssertionError: 41 != 42",
+        "   · gate three",
+        "     [pass] 0.5s",
+        "",
+        "1 of 3 of the paper's gates failed.",
+        "",
+        "VERDICT: FAIL",
+    ], out
+
+
+def test_the_gate_HEARTBEAT_is_flushed_as_it_is_printed(monkeypatch,
+                                                        project):
+    """`flush=True`. Through a pipe stdout is block-buffered, and a
+    heartbeat printed but not flushed arrives with everything else when
+    the suite ends — the twelve silent minutes it was added to end. So
+    the console here records what it held at each flush, and the
+    heartbeat has to be the last thing in one of them."""
+    import argparse
+    import io
+
+    from docxkit.cli import _paper_gates
+    from docxkit.revision import GateResult, ValidateReport
+
+    class Console(io.StringIO):
+        def __init__(self) -> None:
+            super().__init__()
+            self.flushed: list[str] = []
+
+        def flush(self) -> None:
+            self.flushed.append(self.getvalue())
+            super().flush()
+
+    _with_gates(project, "python -m pytest")
+    _fake_gates(monkeypatch, GateResult("python -m pytest", 0, 720.0, ""))
+    console = Console()
+    monkeypatch.setattr("sys.stdout", console)
+
+    _paper_gates(argparse.Namespace(paper=str(project.root), run_gates=True,
+                                    gate_timeout=900.0),
+                 ValidateReport(path=project.batch, baseline=None))
+
+    assert any(held.endswith("   · python -m pytest\n")
+               for held in console.flushed), console.flushed
+
+
+def test_a_namespace_that_does_not_ASK_to_run_gates_runs_none(project,
+                                                              capsys):
+    """`getattr(args, "run_gates", False)`, three times over. A caller that
+    builds its own namespace and says nothing about gates has not asked
+    for them: a paper that lists none gets silence rather than "none
+    listed", a paper that lists some gets the reminder rather than a run,
+    and an aborted ladder says nothing about gates nobody wanted.
+    Defaulted to `True`, the second call reaches for a timeout the
+    namespace never had."""
+    import argparse
+
+    from docxkit.cli import _paper_gates, _skipped_gates
+    from docxkit.revision import ValidateReport
+
+    bare = argparse.Namespace(paper=str(project.root))
+    report = ValidateReport(path=project.batch, baseline=None)
+
+    _paper_gates(bare, report)
+    assert capsys.readouterr().out == ""
+
+    _with_gates(project, "python scripts/verify_tables.py")
+    _paper_gates(bare, report)
+    assert capsys.readouterr().out == (
+        "\n== the paper's own gates ==  1 listed, NOT run (--run-gates)\n"
+        "   · python scripts/verify_tables.py\n")
+
+    assert _skipped_gates(bare, 2) == 2
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("asked", [False, True])
+def test_an_ABORTED_ladder_mentions_the_gates_only_when_they_were_ASKED_for(
+        monkeypatch, project, capsys, asked):
+    """`run_gates and paper.gates`. A paper with gates of its own whose
+    ladder aborts says they did not run only when the run asked for them:
+    `or` says it on every abort, and `not` says it exactly when nobody
+    asked."""
+    _with_gates(project, "python scripts/verify_tables.py")
+    write(project.batch, make_parts(
+        para(run("The paper as it stands."), _ins(" and more"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      *(["--run-gates"] if asked else []),
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert ("NOT run: the ladder aborted above" in out) is asked, out
+
+
+def test_ship_stops_on_a_NEGATIVE_build_code_as_well(monkeypatch, project,
+                                                    capsys):
+    """`!= 0`, not `> 0`. The test above returns 4; any code that is not
+    a success stops the ship, and a negative one read through `> 0`
+    would go on to validate whatever the previous batch left in
+    build/."""
+    from docxkit import cli
+
+    monkeypatch.setattr(cli, "cmd_revision_build", lambda args: -1)
+
+    code, _ = run_cli(monkeypatch, "revision", "ship", str(project.working),
+                      "--paper", str(project.root), "--no-word")
+
+    assert code == -1
+    assert "== lint ==" not in capsys.readouterr().out
+
+
+def test_a_glyph_difference_is_EXCUSED_only_when_the_report_says_so(capsys):
+    """`getattr(report, "glyph_math_only", False)`. The excuse is the
+    report's own claim, read off it; a report that makes no claim about
+    maths gets its GLYPH lines and nothing to explain them away."""
+    from types import SimpleNamespace
+
+    from docxkit.cli import _say_glyphs
+
+    _say_glyphs(SimpleNamespace(glyph_diff=["U+2212 -> U+002D"]))
+
+    assert capsys.readouterr().out == (
+        "   GLYPH (reject-all vs baseline) U+2212 -> U+002D\n")
+
+
+@pytest.mark.parametrize("verb", ["validate", "ship"])
+def test_the_GATE_TIMEOUT_defaults_to_run_gates_own(verb):
+    """`default=900` on both parsers, restated from `run_gates`, which is
+    what a caller outside the CLI gets. The help says "default 900", and
+    a parser that drifted from the function would give a CLI run a
+    different bound from a script's."""
+    import inspect
+
+    from docxkit.cli import build_parser
+    from docxkit.revision import run_gates
+
+    argv = ["revision", verb, *(["revised.docx"] if verb == "ship" else [])]
+
+    args = build_parser().parse_args(argv)
+
+    assert args.gate_timeout == \
+        inspect.signature(run_gates).parameters["timeout"].default == 900
