@@ -63,9 +63,14 @@ HARNESS: dict[str, list[str]] = {
                      "tests/test_prose_math.py", "tests/test_to_latex.py",
                      "tests/test_value_types.py",
                       "tests/test_equations_typography.py"],
+    # `test_note_orphans.py` joined on 2026-09-16, measured: of the 95
+    # replayable survivors the whole sweep of 2026-09-15 left, that file
+    # alone kills 44, nearly all of them in `orphans` and `prune_orphans`.
+    # It is where a note whose reference is gone is tested.
     "footnotes.py": ["tests/test_footnotes.py", "tests/test_footnote_ids.py",
                      "tests/test_parts_gaps.py",
-                     "tests/test_value_types.py"],
+                     "tests/test_value_types.py",
+                     "tests/test_note_orphans.py"],
     # `revision.py` became `revision/` on 2026-08-30, and each of the
     # fourteen halves gets the harness the whole module had. That is
     # deliberately a SUPERSET, not a measurement: these files certainly

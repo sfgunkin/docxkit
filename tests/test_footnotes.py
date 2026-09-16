@@ -1104,3 +1104,390 @@ def test_the_FIRST_real_note_in_a_part_of_separators_lands_INSIDE_it():
     assert notes.endswith("</w:footnotes>"), notes[-60:]
     assert notes.count("</w:footnotes>") == 1
     assert find(notes, "very first").text == "The very first note."
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# 97 real survivors, and more than half of them in `orphans` and
+# `prune_orphans`: their tests live in test_note_orphans.py, which the
+# footnotes harness does not run, so every mutant of the reader and the
+# pruner lived here. Most of the rest are fixtures one shape short —
+# one-digit ids, where two regex matches share a cached string; an
+# anchor at offset 0, where `+` and `^` agree; an equation with nothing
+# on its far side.
+
+
+#: Word's separator and continuation notes, as every document carries
+#: them: referenced by nothing, and never orphans.
+_SEPARATORS = ('<w:footnote w:id="-1"><w:p><w:r><w:continuationSeparator/>'
+               '</w:r></w:p></w:footnote><w:footnote w:id="0"><w:p><w:r>'
+               "<w:separator/></w:r></w:p></w:footnote>")
+
+
+def _definition(nid: int, words: str = "", *, kind: str = "footnote",
+                extra: str = "") -> str:
+    """A note definition as Word writes one: the mark, then the words.
+
+    With no `words` it is a SHELL — what an XML accept leaves of a note
+    whose reference was deleted.
+    """
+    said = f"<w:r><w:t>{words}</w:t></w:r>" if words else ""
+    return (f'<w:{kind} w:id="{nid}"><w:p><w:r><w:{kind}Ref/></w:r>'
+            f"{said}{extra}</w:p></w:{kind}>")
+
+
+def _paper(refs: tuple[int, ...], *definitions: str,
+           kind: str = "footnote", prose: str = "") -> dict[str, bytes]:
+    """A body referencing `refs` in order, then `prose` as one bare
+    paragraph; and a notes part of the separators and `definitions`."""
+    body = "".join(f"<w:p><w:r><w:t>Claim {i}.</w:t></w:r>"
+                   f'<w:r><w:{kind}Reference w:id="{i}"/></w:r></w:p>'
+                   for i in refs)
+    if prose:
+        body += (f'<w:p><w:r><w:t xml:space="preserve">{prose}</w:t>'
+                 "</w:r></w:p>")
+    head = _SEPARATORS.replace("footnote", kind)
+    return {
+        "word/document.xml":
+            f"<w:document {NS}><w:body>{body}</w:body></w:document>".encode(),
+        f"word/{kind}s.xml": (f"<w:{kind}s {NS}>{head}"
+                              f"{''.join(definitions)}</w:{kind}s>").encode()}
+
+
+def test_orphans_names_the_definition_NO_REFERENCE_points_at():
+    """The reader itself, which this harness had never called. Every
+    wrong spelling of the part choice, of the loop over the two kinds
+    and of the missing-part skip answers `[]` here or raises: a footnote
+    looked for in the endnotes part is not there, and a missing part
+    decoded is an AttributeError. `empty` is asserted as the very
+    `False`, because a property that lost its decorator is a bound
+    method, and a method is truthy."""
+    parts = _paper((2,), _definition(2, "Kept."),
+                   _definition(3, "Lost its marker."))
+
+    found = footnotes.orphans(parts)
+
+    assert found == [footnotes.Orphan("footnote", "3", "Lost its marker.", 0)]
+    assert found[0].empty is False
+
+
+@pytest.mark.parametrize("words,carriers,empty,said", [
+    ("", 0, True, "footnote 3 (empty)"),
+    ("Lost its marker.", 0, False, "footnote 3 (holds 'Lost its marker.')"),
+    ("", 1, False, "footnote 3 (holds '')"),
+    ("A link, and words.", 1, False,
+     "footnote 3 (holds 'A link, and words.')"),
+])
+def test_an_orphan_is_EMPTY_only_with_no_words_AND_no_carriers(
+        words, carriers, empty, said):
+    """`not text and not carriers`, and either half alone is wrong: a
+    definition holding only a bookmark has nothing to read and a link
+    still points at it, and one holding words is the real loss the
+    pruner leaves for its caller. All four corners, because each mutant
+    of the expression is right on some of them. The string says `empty`
+    for the shell alone — the word a refusal prints."""
+    orphan = footnotes.Orphan("footnote", "3", words, carriers)
+
+    assert orphan.empty is empty
+    assert str(orphan) == said
+
+
+def test_an_ENDNOTES_ONLY_paper_is_read_and_its_shell_pruned():
+    """A journal that sets endnotes has no footnotes part at all, so the
+    reader's first kind finds nothing, and `continue` there is what
+    reaches the second — under `break` the whole paper has no orphans.
+    The pruner then has to write to the endnotes part: a kind test that
+    sends an endnote to `word/footnotes.xml` asks for a part that is not
+    there."""
+    parts = _paper((2,), _definition(2, "Kept.", kind="endnote"),
+                   _definition(3, kind="endnote"), kind="endnote")
+    shell = footnotes.Orphan("endnote", "3", "", 0)
+
+    assert "word/footnotes.xml" not in parts
+    assert footnotes.orphans(parts) == [shell]
+    assert footnotes.prune_orphans(parts) == [shell]
+    left = parts["word/endnotes.xml"].decode("utf-8")
+    assert [n.id for n in footnotes.find_all(left, kind="endnote")] == ["2"]
+
+
+def test_a_definition_cannot_vouch_for_ITSELF():
+    """Only the OTHER parts are searched for references. Reading the
+    notes part as well — which `or` does, and `is not` does too, since a
+    package's key is never the very string `_xml` holds — lets a shell
+    whose one run names its own id keep itself, and the pruner never
+    takes it."""
+    selfish = _definition(
+        3, extra='<w:r><w:footnoteReference w:id="3"/></w:r>')
+    parts = _paper((2,), _definition(2, "Kept."), selfish)
+
+    (orphan,) = footnotes.orphans(parts)
+
+    assert (orphan.id, orphan.empty) == ("3", True)
+    assert footnotes.prune_orphans(parts) == [orphan]
+
+
+def test_the_package_MEDIA_is_never_decoded_for_references():
+    """Only `.xml` parts are read. A package carries images, and under
+    `or` the name test admits every one of them — a PNG is not UTF-8."""
+    parts = _paper((2,), _definition(2, "Kept."))
+    parts["word/media/image1.png"] = b"\x89PNG\r\n\x1a\n\x00\x00"
+
+    assert footnotes.orphans(parts) == []
+
+
+def test_a_KIND_built_at_run_time_reads_the_footnotes_part():
+    """`kind` is compared with `==`, not `is`. A kind that arrives from a
+    command line or a config file is a string made at run time, not the
+    interned literal, and under `is` it reads the endnotes part."""
+    parts = _paper((2,), _definition(2, "Kept."), _definition(3, "Lost."))
+
+    kind = "".join(["foot", "note"])
+
+    assert [o.id for o in footnotes.orphans(parts, kind=kind)] == ["3"]
+
+
+def test_prune_takes_the_SHELL_and_leaves_every_other_definition_whole():
+    """The shell is found by EQUAL id, and the fixture is built so that
+    every other comparison picks a different note: a lower id (10) and a
+    higher one (15) stand in front of the shell (12), and the ids have
+    two digits, because two regex matches of a one-digit id are the same
+    cached string and `is` would agree with `==`. An orphan WITH words
+    (11) comes first, so a `break` where the pruner passes it stops
+    before the shell. The part is compared whole: the shell's bytes, and
+    only those, are gone."""
+    kept = (_definition(10, "Referenced."),
+            _definition(11, "Lost its marker."),
+            _definition(15, "Referenced as well."))
+    parts = _paper((10, 15), *kept, _definition(12))
+    want = _paper((10, 15), *kept)["word/footnotes.xml"]
+
+    gone = footnotes.prune_orphans(parts)
+
+    assert gone == [footnotes.Orphan("footnote", "12", "", 0)]
+    assert parts["word/footnotes.xml"] == want
+
+
+def test_two_SHELLS_on_one_id_both_go_and_the_part_still_parses():
+    """`break` after the cut, not `continue`: the notes were located in
+    the part as it stood BEFORE the cut, so every offset after it is
+    stale. A second definition on the same id — what a raw splice
+    leaves, since Word renumbers ids on save — is then cut at the wrong
+    place, and the part loses its closing tag."""
+    parts = _paper((10,), _definition(10, "Referenced."), _definition(12),
+                   _definition(12))
+    want = _paper((10,), _definition(10, "Referenced."))["word/footnotes.xml"]
+
+    gone = footnotes.prune_orphans(parts)
+
+    assert gone == [footnotes.Orphan("footnote", "12", "", 0)] * 2
+    assert parts["word/footnotes.xml"] == want
+    assert parses(parts["word/footnotes.xml"].decode("utf-8"))
+
+
+def test_the_reference_follows_an_anchor_in_the_MIDDLE_of_its_paragraph():
+    """`index + len`, and every fixture above anchors at offset 0, where
+    `^` and `|` agree with `+`. Here the anchor starts at 15 and is 17
+    long: 32 is its end, while 30 and 31 put the marker inside `show.`,
+    in front of its last letter or of the full stop it belongs after."""
+    parts = _paper(
+        (), prose="Growth slowed, as the data show. Prices did not.")
+
+    new = footnotes.add(parts, after="as the data show.", text="Eurostat.")
+
+    from docxkit._xml import visible_text
+    doc = parts["word/document.xml"].decode("utf-8")
+    before, after = doc.split(f'<w:footnoteReference w:id="{new}"/>')
+    assert visible_text(before) == "Growth slowed, as the data show."
+    assert visible_text(after) == " Prices did not."
+
+
+def test_a_FIRST_note_is_stored_AFTER_the_separator_notes():
+    """With no real note in the part the definition goes at its end,
+    which is the end MINUS the closing tag. Every other spelling of that
+    subtraction by the tag's length (`%`, `&`, `//`, `>>`) answers a far
+    smaller number, which lands in front of the separators or inside the
+    root's opening tag. The earlier test of this branch asked only that
+    the note be found and the part closed, and a note written inside a
+    bare `<w:footnotes>` tag passes both."""
+    parts = _paper((), prose="The first sentence to carry a note.")
+
+    footnotes.add(parts, after="carry a note.", text="The first note.")
+
+    notes_xml = parts["word/footnotes.xml"].decode("utf-8")
+    assert [f.id for f in footnotes.find_all(
+        notes_xml, include_reserved=True)] == ["-1", "0", "1"]
+    assert parses(notes_xml)
+
+
+def test_add_finds_its_predecessor_by_EQUAL_id_not_by_where_ids_sort():
+    """The LI7 shape: a restored note took a free id, 15, while its
+    reference sits in front of 12's, so a part in reference order stores
+    15 before 12. The new note goes after 12. The first note at or past
+    "12" as a STRING is 15, which is where `>=` puts it; and with two
+    digits no two regex matches are one cached string, so `is` finds no
+    predecessor at all."""
+    parts = _paper((15, 12), _definition(15, "Restored."),
+                   _definition(12, "Original."), prose="A third claim.")
+
+    new = footnotes.add(parts, after="A third claim.", text="A new note.")
+
+    assert new == "16"
+    refs, defs = _order(parts)
+    assert refs == defs == ["15", "12", "16"]
+
+
+def test_out_of_order_places_a_note_by_its_FIRST_reference():
+    """A note whose reference appears twice in the body is placed where
+    it first appears, and counted once. Under `or` the second appearance
+    is counted again, the two lists no longer pair up, and the strict
+    zip raises on a document whose order is right."""
+    assert footnotes.out_of_order(_refs(2, 3, 2), _notes_part(2, 3)) == []
+
+
+def test_out_of_order_REFUSES_a_part_that_defines_one_id_TWICE():
+    """The two lists are zipped STRICTLY. A doubled definition makes the
+    stored side one longer, and a zip that stopped at the shorter would
+    answer `[]` — "in reference order" — for a part that is not a
+    well-formed notes part at all.
+
+    The refusal is caught by PAIR, not by `ValueError` alone: what this
+    test is for is that a doubled definition is refused, and the toolkit's
+    own `DocxKitError` is not a `ValueError`, so naming one type here
+    would make a friendlier refusal a failing test. `revision status` and
+    `revision build` call this uncaught, so today the reader meets zip's
+    own words."""
+    from docxkit.errors import DocxKitError
+
+    with pytest.raises((ValueError, DocxKitError)):
+        footnotes.out_of_order(_refs(2, 3), _notes_part(2, 3, 3))
+
+
+def test_out_of_order_compares_TWO_DIGIT_ids_by_value():
+    """Every fixture above used ids under 10, and two regex matches of a
+    one-character id are the same cached string, so `is not` agreed with
+    `!=`. From 10 up each match is its own string, and under `is not` a
+    part in perfect order names every note as moved."""
+    assert footnotes.out_of_order(_refs(10, 11, 12),
+                                  _notes_part(10, 11, 12)) == []
+
+
+def test_the_font_audit_leaves_the_SEPARATOR_notes_out_by_default():
+    """As `set_font` does: ids 0 and -1 are Word's furniture, and each
+    one's run states nothing, so counting them would add two "inherited"
+    runs to every document's tally."""
+    xml = part(_SEPARATORS, note(2, run("x", SZ10)))
+
+    assert footnotes.fonts(xml) == {"inherited face 10pt": 1}
+    assert footnotes.fonts(xml, include_reserved=True) == {
+        "inherited face 10pt": 1, "inherited": 2}
+
+
+def test_the_font_audit_goes_on_PAST_an_equation():
+    """`continue` after the skip, not `break`: the earlier fixture put
+    the equation LAST, where stopping and carrying on look the same."""
+    seen = footnotes.fonts(part(note(2, MATH_WITH_A_TEXT_RUN
+                                     + run("after", SZ10))))
+
+    assert seen == {"inherited face 10pt": 1}
+
+
+def test_the_font_report_compares_as_a_WHOLE():
+    """A dataclass: built from its fields and compared by them. Without
+    the decorator it takes no arguments and equals only itself."""
+    _, rep = footnotes.set_font(part(note(2, run("a")
+                                          + MATH_WITH_A_TEXT_RUN)))
+
+    assert rep == footnotes.FontReport(notes=1, runs_set=1,
+                                       math_runs_skipped=1)
+
+
+def test_a_report_BUILT_BY_HAND_counts_nothing_until_it_is_told():
+    """The head line of an empty report, whole. `counted` is filled in by
+    `sizes()`, and a caller that builds the report itself has counted
+    zero footnotes, not one and not minus one."""
+    assert footnotes.SizeReport().format() == (
+        "0 footnote(s), house size none stated, 0 disagreeing")
+
+
+def test_a_house_source_READ_BACK_as_text_still_says_STYLE():
+    """`==`, not `is`. Through `sizes()` the word is the interned literal
+    `_judge_marks` assigns, and identity happens to agree; a report
+    rebuilt from a saved one holds the same word as a string made at run
+    time, and under `is` a styled house reads as "the commonest
+    value"."""
+    report = footnotes.SizeReport(mark_house=20,
+                                  mark_house_from="".join(["sty", "le"]))
+    report.mark_outliers = [footnotes.SizeOutlier(
+        "9 (reference mark)", (24,), "x", "the document default")]
+
+    line = report.format()
+
+    assert "resolve through a STYLE" in line
+    assert "commonest value" not in line
+
+
+def test_a_mark_SMALLER_than_the_rest_is_reported_too():
+    """`!=`, not `>`. Every mark finding above was a mark drawn LARGER;
+    one set a size smaller disagrees just the same."""
+    small = '<w:sz w:val="16"/>'
+    report = footnotes.sizes(part(note(2, _mark(SZ10) + run("a", SZ10)),
+                                  note(3, _mark(SZ10) + run("b", SZ10)),
+                                  note(4, _mark(small) + run("c", SZ10))))
+
+    assert report.mark_house == 20
+    assert [(o.id, o.stated) for o in report.mark_outliers] == [
+        ("4 (reference mark)", (16,))]
+
+
+def test_marks_past_256_half_points_are_compared_by_VALUE():
+    """Each size is an `int` parsed afresh, and CPython shares an int
+    object only up to 256. Three marks at 150pt agree; under `is not`
+    every one but the first is another object and reads as an
+    outlier."""
+    big = '<w:sz w:val="300"/>'
+    report = footnotes.sizes(part(*(note(n, _mark(big) + run("x", SZ10))
+                                    for n in (2, 3, 4))))
+
+    assert report.mark_house == 300
+    assert report.mark_outliers == []
+
+
+def test_a_run_BEFORE_an_equation_is_still_sized():
+    """The span is asked `s <= at`, so a run in front of the equation is
+    outside it. Under `s != at` everything before an equation reads as
+    inside it, and a note whose wrong size sits there says nothing."""
+    before = run("set in the wrong size, then ", SZ12) + MATH_WITH_A_TEXT_RUN
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, before)))
+
+    (odd,) = report.outliers
+    assert (odd.id, odd.stated) == ("4", (24,))
+
+
+def test_a_run_WELL_AFTER_an_equation_is_still_sized():
+    """And `at < e`. The run straight after an equation starts AT its
+    end, where `at != e` agrees, so the fixture for that edge could not
+    tell them apart; a second run after it can. Under `!=` it reads as
+    inside the equation, and the note's second size goes unseen."""
+    later = (MATH_WITH_A_TEXT_RUN + run("prose resumes", SZ10)
+             + run(" and changes size", SZ12))
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, later)))
+
+    (odd,) = report.outliers
+    assert (odd.id, odd.stated) == ("4", (20, 24))
+
+
+def test_a_half_SILENT_note_lists_its_stated_size_before_NOTHING():
+    """`None` sorts last. The silent run comes first in the note, so the
+    order asserted is the sort's and not the document's."""
+    report = footnotes.sizes(part(note(2, run("a", SZ10)),
+                                  note(3, run("b", SZ10)),
+                                  note(4, run("silent")
+                                       + run(" sized", SZ10))))
+
+    (odd,) = report.outliers
+    assert odd.stated == (20, None)
+    assert "states 10pt, nothing" in str(odd)
