@@ -866,20 +866,6 @@ paragraph between them are the shape Word joins into a single table —
 worth confirming in Word before the fix is designed, because it decides
 whether this is a lost exhibit or only a lost audit.
 
-### S2 — an XML comment inside a touched equation crashes `accept` with lxml's own words
-<!-- status: open -->
-
-Found 2026-09-16, `revisions.py`:
-
-    RAISES AttributeError: '_cython_3_2_9.cython_function_or_method'
-    object has no attribute 'rsplit'
-
-An XML comment element answers a callable for `.tag`, and `_local` does
-`.rsplit` on it. An author's file can carry comments inside an equation
-— Word writes them, and so do the tools that edit OOXML by hand. The
-message names cython, which tells the author nothing about their
-manuscript.
-
 ### S2 — rejecting a moved paragraph that precedes a TABLE drops the move's bookmark pair
 <!-- status: open -->
 

@@ -14,6 +14,20 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — an XML comment inside a touched equation crashes `accept` with lxml's own words~~ — FIXED 16.09, `e32d112`
+
+<!-- status: fixed -->
+
+Found 2026-09-16, `revisions.py`:
+
+    RAISES AttributeError: '_cython_3_2_9.cython_function_or_method'
+    object has no attribute 'rsplit'
+
+An XML comment element answers a callable for `.tag`, and `_local` does
+`.rsplit` on it. An author's file can carry comments inside an equation
+— Word writes them, and so do the tools that edit OOXML by hand. The
+message names cython, which tells the author nothing about their
+manuscript.
 ### ~~S2 — `accept` refuses a document whose equation holds an empty run, calling it impossible~~ — FIXED 16.09, `e32d112`
 
 <!-- status: fixed -->
