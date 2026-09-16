@@ -811,6 +811,200 @@ Workaround: renumber the duplicate before running `repack`.
 
 ---
 
+### S1 — `mask_volatile_fields` masks from the WRONG separator when one field nests inside another's instruction half
+<!-- status: open -->
+
+Found 2026-09-16 triaging the mutation sweep of `_compare_read.py`.
+`sep = SEPARATE_RE.search(body)` takes the FIRST separator in a field's
+body. When another field sits in the outer field's INSTRUCTION half,
+that separator is the INNER field's, so the masked region starts too
+early — the inner field's visible text is overwritten, carrying the
+OUTER field's name, and the outer's own cached result is left as it
+was:
+
+    outer PAGEREF (volatile) with a nested REF
+      in :  …<w:fldChar w:fldCharType="separate"/>…<w:t>Table 3</w:t>
+      out:  …<w:fldChar w:fldCharType="separate"/>…<w:t>«F:PAGEREF»</w:t>
+
+    the same nesting, outer field NOT volatile  (the control)
+      out:  …<w:t>Table 3</w:t>                           — untouched
+
+The control is what makes this the NESTING and not masking in general.
+
+Why it is S1 rather than a cosmetic slip: `compare` masks both sides of
+a comparison identically, so an edit to that cross-reference's visible
+text cannot be seen by any layer — `--expect-clean` prints OK over it.
+That is a false negative in the one gate whose job is to certify
+nothing was lost, the same shape as the PARAGRAPH gap closed
+2026-08-31, where seven reference entries lost their hanging indent in
+silence.
+
+The fix, when it is taken up: pair the separator with the field's own
+`begin` by DEPTH rather than taking the first one in the body — the
+nesting is already walked elsewhere in the module. Evidence:
+`probe7.py` and its saved output from that round; a `PAGEREF` whose
+instruction half holds a `REF _Toc1`.
+
+### S1 — `reject` restores the wrong run formatting when an XML comment sits before the `rPrChange` snapshot
+<!-- status: open -->
+
+Found 2026-09-16 triaging the mutation sweep of `revisions.py`. One
+paragraph, one run sized 24, its `w:rPrChange` holding the snapshot to
+restore, and an XML comment placed on either side of that snapshot:
+
+    comment BEFORE the snapshot -> <w:r><w:rPr/><w:t>note</w:t></w:r>
+    comment AFTER  the snapshot -> <w:r><w:rPr><w:sz w:val="24"/>…
+
+The same reject, the same document, and the size is kept or lost
+according to where a comment sits. Nothing raises and nothing reports
+it: the author gets back a paragraph in a formatting they never had,
+and only a compare against the original would say so.
+
+### S1 — `prune_orphans` cuts the note that still has its WORDS and keeps the empty shell
+<!-- status: open -->
+
+Found 2026-09-16, same sweep, in `footnotes.py`. Two orphaned
+definitions carrying ONE id — the author's note, and an empty shell an
+XML accept left behind:
+
+    orphans before:   [('12', 'The lost note.', False), ('12', '', True)]
+    reported gone:    [('12', '', True)]
+    left in the part: [('12', '')]
+    the words survived: False
+
+`prune_orphans` is documented to drop the shells and to leave a note
+that kept its words — `orphans` reports that one as a LOST FOOTNOTE
+rather than litter. With the id shared it does the exact opposite, and
+its report names the shell it did not remove, so the record says the
+harmless one went.
+
+### S1 — `place` sets an exhibit's table flush against another table and reports no problem
+<!-- status: open -->
+
+Found 2026-09-16 triaging `placement.py`. A caption that mentions the
+OTHER table is read as the second table's own, so the move lands one
+`w:tbl` immediately after another with nothing between them:
+
+    in : … 'p:Таблица 1. Первая', 'tbl:a'
+    out: … 'p:Таблица 1. Первая', 'tbl:a', 'tbl:b', 'p:Проза.'
+    moved: [(1, True, 'Таблица 2. То же, что в таблиц'), …]  problems: []
+    audit of the result sees tables: 1 (the input had 2)
+
+The pass reports no problem, and docxkit's own audit then sees ONE
+exhibit where the manuscript had two. Two adjacent tables with no
+paragraph between them are the shape Word joins into a single table —
+worth confirming in Word before the fix is designed, because it decides
+whether this is a lost exhibit or only a lost audit.
+
+### S2 — `accept` refuses a document whose equation holds an empty run, calling it impossible
+<!-- status: open -->
+
+Found 2026-09-16, `revisions.py`. An equation with an empty `m:t` run
+beside a real one, accepted:
+
+    RAISES DocxKitError: revisions: pruning an empty equation shell
+    changed the glyphs 'x\x00' -> 'x'
+
+The guard is written as a thing that can never happen (`# never
+possible; never silent`), and an empty run in an equation makes it
+happen. The same document with no deletion in the equation is left
+alone, so the refusal depends on a revision elsewhere in the maths.
+
+### S2 — an XML comment inside a touched equation crashes `accept` with lxml's own words
+<!-- status: open -->
+
+Found 2026-09-16, `revisions.py`:
+
+    RAISES AttributeError: '_cython_3_2_9.cython_function_or_method'
+    object has no attribute 'rsplit'
+
+An XML comment element answers a callable for `.tag`, and `_local` does
+`.rsplit` on it. An author's file can carry comments inside an equation
+— Word writes them, and so do the tools that edit OOXML by hand. The
+message names cython, which tells the author nothing about their
+manuscript.
+
+### S2 — rejecting a moved paragraph that precedes a TABLE drops the move's bookmark pair
+<!-- status: open -->
+
+Found 2026-09-16, `revisions.py`. The same reject, with only what
+FOLLOWS the moved paragraph changed:
+
+    followed by a PARAGRAPH: bookmarkStart x1, bookmarkEnd x1
+    followed by a TABLE:     bookmarkStart x0, bookmarkEnd x0
+    (the baseline has one of each)
+
+What those bookmarks anchor decides the severity: a move marker of
+Word's own is litter, an author's bookmark is a cross-reference target
+and every field pointing at it breaks. That is the first thing to
+establish when this is taken up.
+
+### S2 — `place` writes a row's revision mark FIRST in `w:trPr`
+<!-- status: open -->
+
+Found 2026-09-16, `placement.py`. Every row docxkit marks comes out in
+one order:
+
+    place,    row marked ins        trPr children: ['ins', 'cantSplit']
+    own_page, row marked ins        trPr children: ['ins', 'tblHeader']
+    place,    row marked del        trPr children: ['del', 'cantSplit']
+    own_page, row marked trPrChange trPr children: ['trPrChange', 'tblHeader']
+
+`CT_TrPr` extends `CT_TrPrBase`, so the schema's sequence has
+`cantSplit` and `tblHeader` first and appends `ins`, `del` and
+`trPrChange` after them — the reverse of what is written. Confirm by
+opening a marked row in Word (it repairs silently where it can, which
+is why no gate here has ever said anything) before deciding whether
+this is a repair Word performs or a file it refuses.
+
+### S2 — a marker between a caption and its table hides the exhibit from `place`
+<!-- status: open -->
+
+Found 2026-09-16, `placement.py`. One caption, one table, and one
+element between them:
+
+    none             place: 1 placement(s); audit tables=1
+    bookmarkEnd      place: 0 placement(s); audit tables=0
+    commentRangeEnd  place: 0 placement(s); audit tables=0
+    XML comment      place: 0 placement(s); audit tables=0
+
+The exhibit list still names `Таблица 1` in all four, so the caption is
+found and only the table is lost. A bookmarkEnd there is what a
+cross-reference to the caption leaves behind, and a commentRangeEnd is
+what a reviewer's comment on it leaves — both are ordinary in a
+manuscript under revision, and both make the pass do nothing at all
+while saying nothing at all. The paired half of the same probe: a block
+that ENDS with its own bookmarkEnd no longer sees the note that follows
+it (`note after=None` against `160`).
+
+### S2 — `out_of_order` raises zip's own error out of `revision status` and `revision build`
+<!-- status: open -->
+
+Found 2026-09-16 while widening the footnotes refusal test. A part that
+defines one note id TWICE reaches `out_of_order`, which lets the bare
+`ValueError` zip raises travel up through `revision/_state.py` and
+`revision/_build.py` uncaught. The author asked for a status and is
+handed a stdlib message about an archive. The refusal itself is right;
+what is missing is a `DocxKitError` that names the id and the part. The
+test now accepts either, so a friendlier refusal will not fail it.
+
+### S4 — a read-only CLI question opens the manuscript for writing
+<!-- status: open -->
+
+Found 2026-09-16 triaging `cli.py`. With the paper open in Word:
+
+    paper.docx  (12 pages)
+    docxkit: paper.docx is locked (open in Word). Close it and retry.
+    NOT FOUND line printed: no
+    --json written: False
+
+The command only reads the file to answer, but takes the write path
+(`read_only` defaults to False), so the author gets no report at all —
+not even the part already computed, and no `--json` — for a question
+that never needed the file writable. Workaround: close Word and retry.
+
+---
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
