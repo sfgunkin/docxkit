@@ -1010,3 +1010,25 @@ def test_an_anchor_NEAR_THE_START_of_the_part_is_still_seen():
 
     assert start < 60, "the fixture must sit inside the slack window"
     assert _already_anchored(doc, start, end)
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# 30 real survivors, and one of them a question: the table policy in
+# `annotate`. The other 29 are the equivalences recorded in prose above,
+# and the id bases beside them, now argued one by one as claims.
+
+
+def test_a_POLICY_made_at_run_time_still_coalesces_the_table():
+    """`tables == COALESCE`, not `is`. The guard above it accepts the
+    policy with `in`, which compares by value, so a "coalesce" a paper's
+    script read from its own settings passes the guard; under `is` it is
+    not the very constant, falls through, and each of the forty cells
+    gets a balloon of its own. The default IS the constant, which is why
+    no test that leaves `tables` alone could see it."""
+    parts = make_parts(_table_doc(40), comment_items=(comment(1, "seed"),))
+    policy = "".join(["coal", "esce"])
+
+    added, _ = annotate(parts, always("R7: table regenerated"), tables=policy)
+
+    assert added == 2, "one table balloon and one prose balloon"
