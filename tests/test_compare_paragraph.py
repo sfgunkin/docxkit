@@ -287,3 +287,29 @@ def test_identical_documents_have_nothing_on_the_layer(tmp_path):
 
     assert report["paragraph"] == []
     assert _rendered(report)[0] == 0
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+
+
+def test_EVERY_presence_property_is_read_and_not_just_the_first(tmp_path):
+    """Four of the seven properties are read by PRESENCE rather than by
+    value, and the walk has to reach all four. `keepNext` is the first of
+    them, so a walk that stopped there would report a paragraph that lost
+    `keepLines`, `pageBreakBefore` and `contextualSpacing` as having lost
+    nothing at all — and every one of those three is a page-break
+    decision, which shows in the PDF and nowhere else.
+
+    All four on one paragraph, because the walk is per property: the
+    tests above take them one at a time, and one at a time is exactly
+    what a stop after the first cannot be seen through.
+    """
+    every = _para("<w:keepNext/><w:keepLines/><w:pageBreakBefore/>"
+                  "<w:contextualSpacing/>")
+
+    report = compare(*_pair(tmp_path, every, _para()))
+
+    (entry,) = report["paragraph"]
+    assert set(entry["from"]) == {"keepNext", "keepLines", "pageBreakBefore",
+                                  "contextualSpacing"}
+    assert entry["to"] == []

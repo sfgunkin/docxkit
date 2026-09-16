@@ -3832,22 +3832,23 @@ def test_a_paragraph_carries_WORDS_id_not_the_attribute_it_sits_in():
 # * `score = 0.0` written `-1.0` in `pair_parts`. A part scoring 0.0
 #   becomes `best` under the lower start where it did not before, and
 #   is then refused by `score >= 0.6` just the same.
-# * `result_at = start + sep.end()` written `|`. `a | b` is never
-#   below `a` and never above `a + b`, so the mutant's region begins
-#   somewhere between the field's own start and the end of its
-#   separator — a span holding `fldChar` and `instrText` elements and
-#   no `<w:t>` at all. `_mask_text` masks the FIRST `<w:t>` in the
-#   region it is given, which is the cached result either way.
-#
-#   READ THIS ONE AGAIN before relying on it (noted 2026-08-20, when
-#   two arguments of exactly this shape turned out to be wrong): the
-#   second half is a claim about the DOCUMENT, not about the code, and
-#   what it excludes is a field whose instruction section carries a
-#   `<w:t>`. `crossrefs.dead_links` says that shape occurs — "an edit
-#   across a link leaves the replacement text in the run holding the
-#   start of the match". If it is wrong the cost is a spurious diff
-#   line rather than damage, which is why it is annotated rather than
-#   chased.
+# * `result_at = start + sep.end()` written `|` — OVERTURNED 2026-09-16.
+#   Kept here because the correction is worth more than the argument
+#   was. It ran: `a | b` is never below `a` and never above `a + b`, so
+#   the mutant's region begins between the field's own start and the end
+#   of its separator, a span holding `fldChar` and `instrText` and no
+#   `<w:t>` at all, and `_mask_text` masks the FIRST `<w:t>` in the
+#   region it is given — the cached result either way. Its own note then
+#   asked the next reader to check what that excluded: a field whose
+#   INSTRUCTION half carries a `<w:t>`, which `crossrefs.dead_links`
+#   records. It occurs. Measured, with a 103-character lead the two
+#   spellings differ — the mutant masks the leftover text and blanks the
+#   cached page number — so this was never an equivalence. It is killed
+#   now by
+#   test_the_mask_lands_on_the_RESULT_when_the_instruction_holds_text_too,
+#   and the lesson is the one the 2026-08-20 note already gave: an
+#   argument about the DOCUMENT rather than the code is a guess until
+#   someone builds the document it excludes.
 # * the four remaining mutants on `result_at < regions[-1][1]` — `<=`,
 #   `==`, `is`, and `regions[not 1]` — for the reason the nested-field
 #   test above already gives: regions are masked right to left, so a
@@ -4365,3 +4366,208 @@ def test_a_BLANK_paragraph_gaining_a_space_is_not_a_change(tmp_path):
     report = compare(a, b)
 
     assert report["text"] == [] and report["structure"] == [], report
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# 15.2 % real survival (70/460), and half of it in `_media_labels` — the
+# walk that gives a changed figure the caption a reader can find it by.
+# It arrived on 2026-08-24 with the MEDIA layer above and was reached
+# only through fixtures whose caption sits immediately under the
+# drawing, where every spelling of its window agrees with every other.
+
+_VERT_STYLES = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/'
+    'wordprocessingml/2006/main">'
+    '<w:style w:type="character" w:styleId="Sup">'
+    '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>'
+    '<w:style w:type="character" w:styleId="Base">'
+    '<w:rPr><w:vertAlign w:val="baseline"/></w:rPr></w:style>'
+    "</w:styles>")
+
+
+@pytest.mark.parametrize(("rpr", "flags"), [
+    ('<w:vertAlign w:val="superscript"/>', {"superscript"}),
+    ('<w:vertAlign w:val="subscript"/>', {"subscript"}),
+    ('<w:rStyle w:val="Sup"/>', {"superscript"}),
+    ('<w:vertAlign w:val="baseline"/>', set()),
+    ('<w:rStyle w:val="Base"/>', set()),
+])
+def test_a_resolved_vertAlign_is_the_VALUE_unless_it_is_baseline(rpr, flags):
+    """A vertical alignment is a VALUE, not a toggle, and `baseline` is
+    the value that means "not raised at all". Reporting it as a flag
+    makes the run that states the default differ from the run that
+    inherits it — the crying wolf this whole layer resolves to avoid —
+    and refusing every value at or below `baseline` throws away
+    superscript and subscript with it, since both sort after it.
+
+    Asked THROUGH a cascade, because that is the half nothing reached:
+    the four vertAlign fixtures elsewhere in this file compare documents
+    with no styles.xml, where `_flags` answers instead and this line
+    never runs.
+    """
+    from docxkit._compare_read import _resolved_flags
+    from docxkit.styles import Cascade
+
+    assert _resolved_flags(Cascade(_VERT_STYLES), f"<w:rPr>{rpr}</w:rPr>",
+                           None) == flags
+
+
+def test_an_indent_AS_LONG_as_the_line_it_indents_is_still_an_EDGE(tmp_path):
+    """`raw[:len(raw) - len(raw.lstrip())]`, the whitespace a paragraph
+    opens with. A remainder IS that subtraction whenever the indent is
+    shorter than what follows it, which is every fixture in the section
+    above — one space in front of a sentence. Four spaces in front of
+    two characters is where the two part company, and a short indented
+    line is what a table cell or a hand-set label is.
+
+    Under the other spelling the edge reads empty, the stripped texts
+    are equal, and `--expect-clean` says the documents match.
+    """
+    a, b = docs(tmp_path, BASE + para(run("Hi")),
+                BASE + para(run("    Hi", preserve=True)))
+
+    report = compare(a, b)
+
+    assert [t["word_diff"] for t in report["text"]] == [
+        ["EDGE leading: '' -> '    '"]]
+    assert render(report, expect_clean=True) == 1
+
+
+def test_the_mask_lands_on_the_RESULT_when_the_instruction_holds_text_too():
+    """A `w:t` between a field's begin and its separate is not
+    hypothetical: `crossrefs.dead_links` records the shape — an edit
+    across a link leaves the replacement text in the run that held the
+    start of the match. The argued list above says `start | sep.end()`
+    cannot be told from `start + sep.end()` because the span OR can land
+    in holds fldChar and instrText and no text, and asks the next reader
+    to check what that excludes. This is that span with text in it, and
+    the two spellings differ.
+
+    The lead's LENGTH is load-bearing, which is why it is asserted: an
+    OR equals a sum only while the two offsets share no bit, so a
+    fixture has to put one there. At this length the other spelling
+    masks the leftover text and BLANKS the cached page number — after
+    which two copies of the document agree about a page number by
+    accident, and a paragraph that really lost a word reports as a
+    masked field.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    lead = ("An edit across this field left the replacement text inside "
+            "the instruction half, where Word ignores it.")
+    assert len(lead) == 103, "the offsets are what tell the two apart"
+    xml = ("<w:p>" + run(lead)
+           + '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+           + run("left over")
+           + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           + run("7")
+           + '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+
+
+def _captioned(texts: list[str | None]) -> dict[str, bytes]:
+    """A document whose `None` paragraph draws image1.png.
+
+    An empty string is an EMPTY paragraph and never `<w:p/>`: the walk
+    reads `P_RE`, which skips the self-closing form on purpose, so the
+    two spellings are documents with different paragraph INDICES — and
+    the indices are the whole question below.
+    """
+    body = "".join(_DRAWING if t is None else para(run(t)) if t else para()
+                   for t in texts)
+    parts = make_parts(body)
+    parts["word/_rels/document.xml.rels"] = _RELS.encode("utf-8")
+    return parts
+
+
+@pytest.mark.parametrize(("texts", "caption"), [
+    # the caption two BELOW, past the spacer a figure usually sits on
+    pytest.param(["Title of the paper", "Some prose here.",
+                  "More prose here.", "Above two.", "Above one.", None,
+                  "", "Figure 1. The caption", "Body text after."],
+                 "Figure 1. The caption", id="two-below"),
+    # nothing below within reach, and the caption directly above: three
+    # paragraphs down is OUTSIDE the window and must not be taken
+    pytest.param(["Title of the paper", "Some prose here.",
+                  "More prose here.", "Above two.", "The caption above",
+                  None, "", "", "Three below."],
+                 "The caption above", id="above-with-text-three-below"),
+    # the caption two above, with the paragraph between them blank
+    pytest.param(["Title of the paper", "Some prose here.",
+                  "More prose here.", "Caption above two", "", None,
+                  "", ""],
+                 "Caption above two", id="two-above"),
+    # nothing within two either way: the label is empty rather than
+    # something fetched from further off
+    pytest.param(["Title of the paper", "Some prose here.", "Further up",
+                  "", "", None, "", ""],
+                 "", id="neither-within-two"),
+    # the drawing in the SECOND paragraph, where the window above it
+    # runs off the start of the document
+    pytest.param(["Caption above", None, "", ""],
+                 "Caption above", id="second-paragraph"),
+])
+def test_the_caption_a_FIGURE_is_NAMED_by(texts, caption):
+    """The window is the drawing's own paragraph, then the two below it,
+    then the two above, nearest first — below first because that is
+    where a figure's caption sits in these manuscripts, and above
+    because some journals' styles put it there.
+
+    Thirty of this module's seventy survivors are that window's
+    arithmetic, every one alive because the fixtures reaching it put the
+    caption immediately under the drawing, where `i + 1` agrees with
+    `i * 1`, `i << 1`, `i ^ 1` and the rest. Each case here puts the
+    nearest text at one END of the window, or one paragraph outside it,
+    so a window that reaches too far answers with the wrong line and one
+    that stops too soon answers with none.
+
+    The label is the whole output of this walk: without it a changed
+    figure is reported as `word/media/image1.png`, which sends a reader
+    to a folder rather than to the page.
+    """
+    from docxkit._compare_read import _media_labels
+
+    assert _media_labels(_captioned(texts)) == {
+        "word/media/image1.png": caption}
+
+
+def test_a_part_with_NO_rels_does_not_stop_the_label_walk():
+    """The walk reads every text part in NAME order, and the rels it
+    needs are a part of their own. A part without them is ordinary —
+    `word/document.xml` sorts first, and a body that draws nothing has
+    no image relationships at all — so stopping there leaves every
+    figure in the notes and the headers unlabelled, with nothing in the
+    report to say which exhibit changed.
+    """
+    from docxkit._compare_read import _media_labels
+
+    parts = make_parts(para(run("The figure is in the note below.")))
+    parts["word/footnotes.xml"] = notes(
+        "footnotes", '<w:footnote w:id="2">' + _DRAWING
+        + para(run("Figure 1. In a note")) + "</w:footnote>").encode("utf-8")
+    parts["word/_rels/footnotes.xml.rels"] = _RELS.encode("utf-8")
+
+    assert _media_labels(parts) == {
+        "word/media/image1.png": "Figure 1. In a note"}
+
+
+def test_a_drawing_whose_rId_the_rels_do_not_NAME_is_not_a_figure():
+    """`targets.get(rid)` answers None for an id the rels do not carry —
+    a drawing left behind by an edit that took its relationship with it.
+    The set of drawn parts then holds None, and asking whether None
+    matches the media pattern raises TypeError: a comparison that stops
+    on a document Word opens without complaint.
+    """
+    from docxkit._compare_read import _media_labels
+
+    parts = _captioned(["Figure 1. The caption", None, ""])
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b'r:embed="rId7"', b'r:embed="rId9"')
+
+    assert _media_labels(parts) == {}

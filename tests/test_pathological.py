@@ -643,3 +643,46 @@ def test_malformed_parts_names_the_offender():
         "word/footnotes.xml": b"<w:footnotes><w:footnote></w:footnotes>",
     })
     assert len(bad) == 1 and bad[0].startswith("word/footnotes.xml")
+
+
+# --- the whole sweep of 2026-09-15 ------------------------------------
+#
+# A `.rels` part is XML like any other and arrives from packages docxkit
+# did not write. `_compare_read._rel_targets` reads one to learn which
+# file a drawing's rId names — that is what gives a changed figure the
+# caption a reader can find it by — and its two guards had never been
+# handed anything but the tidy shape.
+
+REL_PART = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+    '2006/relationships">'
+    # no Target at all — half of `if not rid or not target`
+    '<Relationship Id="rId1" Type="http://x/image"/>'
+    # an ABSOLUTE target, which is its own branch and is what several
+    # producers write for a part outside the reading part's folder
+    '<Relationship Id="rId2" Type="http://x/image" '
+    'Target="/word/media/image1.png"/>'
+    '<Relationship Id="rId3" Type="http://x/image" '
+    'Target="media/image2.png"/>'
+    "</Relationships>")
+
+
+def test_a_relationship_with_NO_TARGET_is_stepped_over_not_crashed_on():
+    """One dictionary, four claims, and the incomplete element FIRST so
+    that each of them is about the walk rather than about the tidy row.
+
+    The element with no Target is skipped — reading its target anyway
+    raises `AttributeError` on None, out of a comparison whose document
+    opens perfectly well in Word — and the walk CARRIES ON, because the
+    relationships that name the figures are the ones after it. The
+    absolute target keeps its path without the leading slash and does
+    not end the walk either. And the key is the id itself, `rId2`: the
+    group that holds it, not the whole `Id="rId2"` the match spans, or
+    every drawing's lookup misses and the figures go unnamed.
+    """
+    from docxkit._compare_read import _rel_targets
+
+    assert _rel_targets(REL_PART, "word/") == {
+        "rId2": "word/media/image1.png",
+        "rId3": "word/media/image2.png"}
