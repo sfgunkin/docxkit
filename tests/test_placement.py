@@ -2571,3 +2571,281 @@ def test_a_caption_at_the_very_TOP_of_the_first_sheet_is_found():
 
     (straddle,) = rendered(placement.audit(doc, render=render))
     assert straddle.detail == "it starts on sheet 1 and ends on sheet 2"
+
+
+# ------------------------------------------ what a move must never JOIN --
+#
+# Three defects out of one triage of this module, 2026-09-16. The first is
+# only as bad as Word makes it, so it was measured THROUGH Word before it
+# was fixed: two `w:tbl` with nothing between them open as one table of
+# every row, and Word writes the package back that way. That measurement is
+# `test_WORD_reads_two_ADJACENT_tables_as_ONE`, kept rather than quoted.
+
+CONTINUED = "Таблица 2. Продолжение таблицы 1"
+
+
+def names_of(out: dict[str, bytes]) -> list[str]:
+    """Каждый body child by its local name, an XML comment as `comment`.
+
+    `order` above labels every child that is not a table `p:`, which was
+    fine while a block held only paragraphs and a bookmark. These tests
+    are about the MARKERS, and a bookmarkEnd reported as a paragraph
+    hides the one thing they check."""
+    return ["comment" if isinstance(el, etree._Comment)
+            else etree.QName(el).localname for el in body_of(out)]
+
+
+def test_the_caption_of_ANOTHER_exhibit_is_not_a_mention_that_anchors():
+    """«Таблица 2. Продолжение таблицы 1» mentions table 1 by the letter
+    of `MENTION`, and it is a CAPTION. Anchored on it, table 1's block
+    lands just after it — which is between that caption and its own
+    table — and the two tables come to rest against each other. Word
+    reads those as ONE table (the `word` test below), so the second
+    exhibit is not misplaced but gone, its caption still in the text
+    naming it.
+
+    Measured before the fix: `moved` True, `problems` empty, and
+    `audit` counting one table where the manuscript had two."""
+    doc = (P(CONTINUED) + TBL("b") + P("Проза.")
+           + P("Таблица 1. Первая") + TBL("a"))
+
+    out, rep = placement.place(parts(doc))
+
+    assert [p.moved for p in rep.placements] == [False, False]
+    assert any("table 1" in x and "nothing in the prose mentions it" in x
+               for x in rep.problems), rep.problems
+    assert placement.audit(out).tables == 2
+    tags = names_of(out)
+    assert not any(tags[i] == tags[i + 1] == "tbl"
+                   for i in range(len(tags) - 1)), tags
+
+
+def test_a_move_that_would_land_the_table_against_another_is_REFUSED():
+    """The anchor is prose this time, and the table under it is a layout
+    table no caption owns. Moving the block to its mention sets the
+    exhibit's own table immediately in front of that one — the same
+    joined table by another route. So the move is refused and SAID,
+    rather than performed and reported as a success."""
+    doc = (P("Как показано в таблице 1, всё сходится.")
+           + TBL("макет")
+           + P("Совершенно другой абзац.")
+           + P("Таблица 1. Заголовок") + TBL("шапка"))
+
+    out, rep = placement.place(parts(doc))
+
+    assert [p.moved for p in rep.placements] == [False]
+    assert any("against that one" in x for x in rep.problems), rep.problems
+    assert order(out) == ["p:Как показано в таблице 1, вс", "tbl:макет",
+                          "p:Совершенно другой абзац.",
+                          "p:Таблица 1. Заголовок", "tbl:шапка"]
+
+
+def test_a_move_that_would_JOIN_the_tables_it_leaves_behind_is_refused():
+    """The other side of the same rule. The block lands against nothing,
+    but a layout table stands above it and another below it, and taking
+    the block away closes those two together."""
+    doc = (P("Прочая проза.") + TBL("верхний макет")
+           + P("Таблица 1. Заголовок") + TBL("шапка")
+           + P("Примечание. Что-то.")
+           + TBL("нижний макет")
+           + P("Как показано в таблице 1, всё сходится."))
+
+    out, rep = placement.place(parts(doc))
+
+    assert [p.moved for p in rep.placements] == [False]
+    assert any("against each other" in x for x in rep.problems), rep.problems
+    assert names_of(out) == ["p", "tbl", "p", "tbl", "p", "tbl", "p"]
+
+
+def _word_shells():
+    """A real package for Word to open. The synthetic fixtures in this
+    file are not ones Word will open — "The file appears to be
+    corrupted" — which is why this test builds on a manuscript."""
+    from pathlib import Path
+    for candidate in Path(r"F:\OneDrive\__Documents").glob("*.docx"):
+        if not candidate.name.startswith("~$"):
+            yield candidate
+            return
+
+
+@pytest.mark.word
+def test_WORD_reads_two_ADJACENT_tables_as_ONE(tmp_path):
+    """Why the two refusals above are refusals and not warnings.
+
+    This is the measurement that decided it, kept runnable: two tables
+    of two rows each, written with nothing between them, and the same
+    two with one empty paragraph between. Word answers `Tables.Count` 1
+    and four rows for the first, and 2 and two rows for the second. A
+    marker between them does not help — a bookmarkEnd, a
+    commentRangeEnd and an XML comment each merged too, which is why the
+    guard compares the neighbours `_next_content` finds."""
+    from docxkit import package
+    from docxkit.word import open_doc, session
+
+    shell = next(_word_shells(), None)
+    if shell is None:
+        pytest.skip("no real .docx available as a package shell")
+
+    def grid(*rows: str) -> str:
+        return TBL(*rows).replace(
+            "<w:tbl>", '<w:tbl><w:tblPr/><w:tblGrid>'
+                       '<w:gridCol w:w="4000"/></w:tblGrid>')
+
+    def built(body: str, name: str):
+        made = package.read_parts(shell)
+        doc = made["word/document.xml"].decode("utf-8")
+        at = doc.index("<w:body>") + len("<w:body>")
+        stop = doc.rindex("</w:body>")
+        sect = re.search(r"<w:sectPr\b.*?</w:sectPr>",
+                         doc[at:stop], re.DOTALL)
+        made["word/document.xml"] = (
+            doc[:at] + body + (sect.group(0) if sect else "")
+            + doc[stop:]).encode()
+        path = tmp_path / name
+        package.write_docx(path, made, order=list(made))
+        return path
+
+    caption = P("Table 1. First")
+    adjacent = caption + grid("a-head", "a-row") + grid("b-head", "b-row")
+    apart = (caption + grid("a-head", "a-row") + P("")
+             + grid("b-head", "b-row"))
+
+    with session() as word:
+        with open_doc(word, built(adjacent, "adjacent.docx")) as doc:
+            joined = (doc.Tables.Count, doc.Tables(1).Rows.Count)
+        with open_doc(word, built(apart, "apart.docx")) as doc:
+            kept = (doc.Tables.Count, doc.Tables(1).Rows.Count)
+
+    assert joined == (1, 4), "Word no longer joins two adjacent tables"
+    assert kept == (2, 2)
+
+
+# ------------------------------- markers between a caption and its table --
+
+
+@pytest.mark.parametrize("marker, name", [
+    ('<w:bookmarkEnd w:id="1"/>', "bookmarkEnd"),
+    ('<w:commentRangeEnd w:id="1"/>', "commentRangeEnd"),
+    ("<!-- a converter wrote this -->", "comment"),
+], ids=["bookmarkEnd", "commentRangeEnd", "XML comment"])
+def test_a_MARKER_between_a_caption_and_its_TABLE_keeps_the_exhibit(
+        marker, name):
+    """A cross-reference to the caption leaves a `bookmarkEnd` under it,
+    and a reviewer's comment on the caption a `commentRangeEnd`; both are
+    ordinary in a manuscript under revision. The walk from a caption to
+    its table stopped at either, so the caption owned no table at all:
+    `place` made no placement and `audit` counted no table, while the
+    exhibit list still named the caption — nothing done, and nothing
+    said.
+
+    The marker travels with the block, because an element standing
+    between a caption and its own table belongs to that exhibit."""
+    out, rep = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + P("Таблица 1. Заголовок") + marker + TBL("шапка")
+        + P("Примечание. Что-то.")))
+
+    assert [p.moved for p in rep.placements] == [True]
+    assert placement.audit(out).tables == 1
+    assert names_of(out) == ["p", "p", name, "tbl", "p", "p"]
+
+
+def test_a_block_that_ENDS_with_its_own_bookmarkEnd_still_takes_its_note():
+    """The paired half of the same walk. The bookmarkEnd closing the
+    block's own hoisted start sits between the table and its note, and
+    the note walk stopped there — so the note was not the block's, did
+    not travel with it, and never got the gap the block owns: `after`
+    None where it is 160 twips (8 pt) without the marker."""
+    out, _ = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + '<w:bookmarkStart w:id="7" w:name="tbl1"/>'
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + '<w:bookmarkEnd w:id="7"/>'
+        + P("Примечание. Что-то.")))
+
+    assert spacing_of(out, "Примечание.")["after"] == "160"
+    assert names_of(out) == ["p", "bookmarkStart", "p", "tbl",
+                             "bookmarkEnd", "p", "p"]
+
+
+def test_an_end_marker_the_block_does_NOT_open_is_left_where_it_is():
+    """`_closes_inside`, the branch the two tests above do not reach. A
+    bookmarkEnd under the table can close something that opened far
+    above the caption — a range over the whole section. Taking it along
+    would put the end before its start, the inversion the walk in FRONT
+    of the caption exists to prevent; so it stays, and what follows it
+    is not the block's either."""
+    out, _ = placement.place(parts(
+        '<w:bookmarkStart w:id="4" w:name="section"/>'
+        + P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + '<w:bookmarkEnd w:id="4"/>'
+        + P("Примечание. Что-то.")))
+
+    assert names_of(out) == ["bookmarkStart", "p", "p", "tbl", "p",
+                             "bookmarkEnd", "p"]
+
+
+# ----------------------------------- where a row's revision mark belongs --
+
+ROW_MARK = {
+    "ins": '<w:ins w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z"/>',
+    "del": '<w:del w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z"/>',
+    "trPrChange": ('<w:trPrChange w:id="9" w:author="A" '
+                   'w:date="2026-01-01T00:00:00Z"><w:trPr/>'
+                   "</w:trPrChange>"),
+}
+
+
+def MARKED(mark: str, *rows: str) -> str:
+    """A table whose FIRST row already carries a revision mark in its
+    `w:trPr` — what a manuscript under revision hands this module."""
+    head = (f"<w:tr><w:trPr>{mark}</w:trPr><w:tc><w:p><w:r>"
+            f"<w:t>{rows[0]}</w:t></w:r></w:p></w:tc></w:tr>")
+    tail = "".join(
+        f"<w:tr><w:tc><w:p><w:r><w:t>{r}</w:t></w:r></w:p></w:tc></w:tr>"
+        for r in rows[1:])
+    return f"<w:tbl>{head}{tail}</w:tbl>"
+
+
+@pytest.mark.parametrize("mark", ["ins", "del", "trPrChange"])
+def test_a_rows_revision_mark_stays_AFTER_what_CT_TrPrBase_owns(mark):
+    """`CT_TrPr` extends `CT_TrPrBase`: `cantSplit` and `tblHeader`
+    belong to the base, and `ins`, `del` and `trPrChange` are appended
+    after it. Every row this module marked came out the other way round —
+    `['ins', 'cantSplit']` — because `_in_order` ranked a `w:trPr` child
+    by the PARAGRAPH order table, where none of these appears: all of
+    them ranked last, nothing sorted above anything, and the new
+    property was appended behind the revision mark.
+
+    Word repairs it rather than refusing it, which is why no gate here
+    ever said anything: measured through Word on 2026-09-16, the row
+    still read as a tracked insertion and still honoured `cantSplit`,
+    and Word wrote it back as `['cantSplit', 'ins']`. A repair one
+    consumer performs is not a reason to emit the file."""
+    out, _ = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Таблица 1. Заголовок")
+        + MARKED(ROW_MARK[mark], "шапка", "строка")))
+
+    head = tbl_of(body_of(out)).findall(NS + "tr")[0].find(NS + "trPr")
+    assert head is not None
+    assert [etree.QName(c).localname for c in head] == ["cantSplit", mark]
+
+
+@pytest.mark.parametrize("mark", ["ins", "del", "trPrChange"])
+def test_own_page_writes_tblHeader_BEFORE_the_rows_revision_mark(mark):
+    """`own_page` writes the other property of the base sequence, on a
+    row that may carry the same marks — the header row of a tracked
+    table is exactly where both meet."""
+    body = body_of(parts(P("Таблица 1. Заголовок")
+                         + MARKED(ROW_MARK[mark], "шапка", "строка")))
+
+    placement.own_page(list(body))
+
+    head = tbl_of(body).findall(NS + "tr")[0].find(NS + "trPr")
+    assert head is not None
+    assert [etree.QName(c).localname for c in head] == ["tblHeader", mark]

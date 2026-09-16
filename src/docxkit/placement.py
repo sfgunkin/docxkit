@@ -92,6 +92,39 @@ CAPTION_AFTER_PT = 2.0
 
 _PPR_RANK = {name: i for i, name in enumerate(PPR_ORDER)}
 
+#: `CT_TrPrBase`'s children, and the three `CT_TrPr` appends after them.
+#:
+#: The base is an unbounded CHOICE, so the order among its own children is
+#: free; what the extension fixes is that `w:ins`, `w:del` and
+#: `w:trPrChange` follow every one of them. This module wrote the revision
+#: mark FIRST — `['ins', 'cantSplit']` on every row it marked — which is
+#: that sequence backwards.
+#:
+#: Word repairs it rather than refusing it, which is why no gate here ever
+#: said anything: measured through Word automation on 2026-09-16, a row
+#: written `['ins', 'cantSplit']` still reads as a tracked insertion
+#: (`Revisions.Count` 1), still honours `cantSplit`
+#: (`AllowBreakAcrossPages` false), and comes back out of Word as
+#: `['cantSplit', 'ins']`. A repair performed by one consumer is not a
+#: licence to emit the file: it happens only once Word has opened and
+#: saved it, and every other reader of the package sees the invalid order.
+#:
+#: The home for this is beside `_xml.PPR_ORDER`, with the order tables the
+#: other writers share. It is here because this is the only module in the
+#: package that writes a `w:trPr` child today — and PRIVATE because of
+#: that: published from `placement`, the name would have to be WITHDRAWN
+#: from the public surface when it moves, which breaks a caller where an
+#: internal rename does not.
+_TRPR_ORDER = (
+    "cnfStyle", "divId", "gridBefore", "gridAfter", "wBefore", "wAfter",
+    "cantSplit", "trHeight", "tblHeader", "tblCellSpacing", "jc", "hidden",
+    "ins", "del", "trPrChange",
+)
+_TRPR_RANK = {name: i for i, name in enumerate(_TRPR_ORDER)}
+
+#: which schema order governs the children of a properties element
+_RANKS = {"pPr": _PPR_RANK, "trPr": _TRPR_RANK}
+
 
 def _twips(pt: float) -> str:
     """Word measures paragraph spacing in twentieths of a point."""
@@ -208,6 +241,61 @@ def _row_text(row: etree._Element) -> str:
     return " ".join(_text(tc) for tc in row.findall(W + "tc"))
 
 
+#: Body-level elements that carry no content of their own: the halves of a
+#: bookmark, a comment range, a tracked move and a permission range. An XML
+#: comment is one too, and `_is_marker` answers for it.
+#:
+#: `exhibits` has called these TRANSPARENT since it was written, and the
+#: walk here ended at them. Both are ordinary in a manuscript under
+#: revision — a cross-reference to the caption leaves a `bookmarkEnd`
+#: under it, a reviewer's comment on the caption a `commentRangeEnd` — and
+#: one of them between a caption and its table hid the exhibit from this
+#: module entirely: 1 placement to 0, `audit` tables 1 to 0, while the
+#: exhibit list still named the caption.
+_MARKER_TAGS = frozenset(W + t for t in (
+    "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd",
+    "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart",
+    "moveToRangeEnd", "permStart", "permEnd"))
+#: the halves that CLOSE something. One of these under a block belongs to
+#: it only when what it closes opened inside it.
+_END_MARKER_TAGS = frozenset(W + t for t in (
+    "bookmarkEnd", "commentRangeEnd", "moveFromRangeEnd", "moveToRangeEnd",
+    "permEnd"))
+
+
+def _is_marker(el: etree._Element) -> bool:
+    """Does this body child carry no content of its own?
+
+    An XML COMMENT answers True: lxml gives a comment the factory that
+    makes one as its `.tag`, so `isinstance(el.tag, str)` is False for it.
+    That is the same shape that ends a walk written `el.tag == W + "p"` —
+    quietly, since comparing a callable with a string raises nothing and
+    is simply never true.
+    """
+    return not isinstance(el.tag, str) or el.tag in _MARKER_TAGS
+
+
+def _closes_inside(kids: list[etree._Element], start: int, at: int) -> bool:
+    """Is `kids[at]` an end marker whose start lies inside the block?
+
+    `exhibits._paired_end`, which this deliberately agrees with. An end
+    marker under a block is the block's own only when what it closes
+    opened inside it; one closing a bookmark from further up the document
+    stays where it is, because moving it would put the end before the
+    start — the inversion the leading walk below exists to prevent, in
+    the other direction.
+    """
+    el = kids[at]
+    if not isinstance(el.tag, str) or el.tag not in _END_MARKER_TAGS:
+        return False
+    ident = el.get(W + "id")
+    if ident is None:
+        return False
+    opener = el.tag.replace("End", "Start")
+    return any(node.get(W + "id") == ident
+               for e in kids[start:at] for node in e.iter(opener))
+
+
 def _blocks(body: etree._Element, caption: re.Pattern[str],
             note: re.Pattern[str] = NOTE) -> dict[int, list[etree._Element]]:
     """Каждый table's block: its caption, the table, and any notes under it.
@@ -215,6 +303,13 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
     A caption sits ABOVE its table, and a note BELOW — get that backwards
     and every table moves with the wrong words. The block ends at the
     first paragraph that is neither a note nor empty.
+
+    MARKERS ARE TRANSPARENT, on both sides: they carry nothing, and a walk
+    that stops at one loses the exhibit under it (between the caption and
+    the table) or the notes under it (below the table). They travel with
+    the block, since an element standing inside an exhibit's span is that
+    exhibit's — except an end marker closing something from outside the
+    block, which stays put and ends the walk.
     """
     kids = list(body)
     out: dict[int, list[etree._Element]] = {}
@@ -225,8 +320,9 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
         if not m:
             continue
         j = i + 1
-        while (j < len(kids) and kids[j].tag == W + "p"
-               and not _text(kids[j]).strip()):
+        while j < len(kids) and (_is_marker(kids[j])
+                                 or (kids[j].tag == W + "p"
+                                     and not _text(kids[j]).strip())):
             j += 1
         if j >= len(kids) or kids[j].tag != W + "tbl":
             continue                      # a caption with no table under it
@@ -246,12 +342,22 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
         # A BODY is never absorbed, whatever it looks like: an image is a
         # paragraph with no text, and without this clause the next
         # figure's picture travelled with the table's notes.
-        while (k < len(kids) and kids[k].tag == W + "p"
-               and not is_body(kids[k])):
-            txt = _text(kids[k]).strip()
-            if txt and not note.match(txt):
+        while k < len(kids):
+            under = kids[k]
+            if _is_marker(under):
+                # one the block closes goes with it; one that closes
+                # something further up, or opens something for what comes
+                # next, stays — and what follows it is no longer the
+                # block's either
+                if not _closes_inside(kids, head, k):
+                    break
+            elif under.tag != W + "p" or is_body(under):
                 break
-            block.append(kids[k])
+            else:
+                txt = _text(under).strip()
+                if txt and not note.match(txt):
+                    break
+            block.append(under)
             k += 1
         out[int(m.group(1))] = block
     return out
@@ -374,10 +480,24 @@ def _caption_of(block: list[etree._Element]) -> str:
     return ""
 
 
-def _anchor(body: etree._Element, number: int, block: list[etree._Element],
+def _anchor(body: etree._Element, number: int, owned: set[int],
             mention: re.Pattern[str]) -> etree._Element | None:
-    """The first paragraph that mentions this table and is not part of it."""
-    owned = {id(e) for e in block}
+    """The first paragraph of PROSE that mentions this table.
+
+    `owned` holds every element of every block, not just this table's own.
+    A caption is not prose and neither is a note: «Таблица 2. Продолжение
+    таблицы 1» mentions table 1 by the letter of the pattern, and reading
+    it as the sentence that introduces table 1 does two things at once —
+    it anchors the table on a caption belonging to another exhibit, and it
+    lands this block INSIDE that exhibit, between its caption and its own
+    table. Measured on 2026-09-16: `moved` True, `problems` empty, and
+    `audit` then saw one table where the manuscript had two, because the
+    two tables ended up against each other (see `_would_join_tables`).
+
+    A table whose only mention is inside another exhibit is now reported
+    as one nothing mentions and left where it is, which is the truth and
+    is visible.
+    """
     for el in body:
         if el.tag != W + "p" or id(el) in owned:
             continue
@@ -395,29 +515,39 @@ def _ppr(el: etree._Element) -> etree._Element:
     return ppr
 
 
-def _in_order(ppr: etree._Element, tag: str) -> etree._Element:
-    """Find or create a `w:pPr` child, in the position CT_PPr requires.
+def _in_order(props: etree._Element, tag: str) -> etree._Element:
+    """Find or create a properties child, where its schema puts it.
 
-    The rank table is `_xml.PPR_ORDER`, shared with the four other writers
-    that need it, so this is not a fifth private copy of the schema's order —
-    only the lxml insertion, which those do on strings.
+    The rank table is `_xml.PPR_ORDER` for a `w:pPr`, shared with the four
+    other writers that need it, so this is not a fifth private copy of the
+    schema's order — only the lxml insertion, which those do on strings — and
+    `_TRPR_ORDER` for a `w:trPr`.
 
     Inserting at index 0 (which this did) is right for `pStyle` and wrong for
     everything else: it puts `keepNext` AHEAD of a `pStyle` that is already
     there. `lint` did not catch it, because its CT_PPr check asks only that
     nothing which must precede `w:rPr` follows it.
+
+    ONE rank table was as wrong for a `w:trPr` as index 0 was for a `w:pPr`,
+    and silently: `cantSplit`, `tblHeader`, `ins`, `del` and `trPrChange` are
+    none of them in `PPR_ORDER`, so every one of them ranked last, no
+    sibling ever sorted above another, and the new property was appended —
+    behind the `w:ins` or `w:del` marking a tracked row. Which is the one
+    order `CT_TrPr` does not allow.
     """
-    node = ppr.find(W + tag)
+    node = props.find(W + tag)
     if node is not None:
         return node
     node = etree.Element(W + tag)
-    rank = _PPR_RANK.get(tag, len(PPR_ORDER))
-    for sib in ppr:
+    rank_of = _RANKS.get(etree.QName(props).localname, _PPR_RANK)
+    last = len(rank_of)
+    rank = rank_of.get(tag, last)
+    for sib in props:
         name = etree.QName(sib).localname
-        if _PPR_RANK.get(name, len(PPR_ORDER)) > rank:
+        if rank_of.get(name, last) > rank:
             sib.addprevious(node)
             return node
-    ppr.append(node)
+    props.append(node)
     return node
 
 
@@ -495,12 +625,57 @@ def _next_content(el: etree._Element) -> etree._Element | None:
     nothing at all, silently. DSI's таблица 11 is followed by таблица 7's
     hoisted bookmark, and that is exactly how its caption kept the 8 pt
     before-spacing this function exists to zero.
+
+    Every marker, not the two halves of a bookmark alone: a reviewer's
+    `commentRangeEnd` and a converter's XML comment sit in the same place
+    and carry as little.
     """
     nxt = el.getnext()
-    while nxt is not None and nxt.tag in (W + "bookmarkStart",
-                                          W + "bookmarkEnd"):
+    while nxt is not None and _is_marker(nxt):
         nxt = nxt.getnext()
     return nxt
+
+
+def _content_before(el: etree._Element) -> etree._Element | None:
+    """The previous sibling that carries content. `_next_content` backwards."""
+    prev = el.getprevious()
+    while prev is not None and _is_marker(prev):
+        prev = prev.getprevious()
+    return prev
+
+
+def _would_join_tables(block: list[etree._Element],
+                       anchor: etree._Element) -> str | None:
+    """Would this move leave one `w:tbl` directly against another?
+
+    **WORD READS TWO ADJACENT TABLES AS ONE**, and that is why this
+    refuses rather than reports. Measured through Word automation on
+    2026-09-16: two `w:tbl` of two rows each, written with nothing
+    between them, open as `Tables.Count` 1 — a single table of four rows
+    — and Word writes the package back holding one `w:tbl`. The second
+    exhibit is not misplaced, it is GONE, with its caption still in the
+    text naming it. A marker between them does not save it: a
+    `bookmarkEnd`, a `commentRangeEnd` and an XML comment each merged
+    too, and only a PARAGRAPH between kept the two apart — which is why
+    the neighbours here are the ones `_next_content` finds.
+
+    Two ways a move does it: the block LANDS against the table that
+    follows its mention, or the hole it leaves closes a table above the
+    block onto a table below it.
+    """
+    tail = next((e for e in reversed(block) if not _is_marker(e)), None)
+    landing = _next_content(anchor)
+    if (tail is not None and tail.tag == W + "tbl"
+            and landing is not None and landing.tag == W + "tbl"):
+        return ("the paragraph that mentions it is followed by a table, so "
+                "the move would set this table against that one")
+    before = _content_before(block[0])
+    after = _next_content(block[-1])
+    if (before is not None and before.tag == W + "tbl"
+            and after is not None and after.tag == W + "tbl"):
+        return ("a table stands above this block and another below it, so "
+                "moving it away would set those two against each other")
+    return None
 
 
 def space_block(block: list[etree._Element],
@@ -541,7 +716,10 @@ def space_block(block: list[etree._Element],
     heading = (style is not None
                and str(style.get(W + "val")).lower().startswith("heading"))
 
-    last = paras[-1] if block and block[-1].tag == W + "p" else None
+    # the last element that CARRIES something: a block ending with its own
+    # bookmarkEnd still ends with its note, and the gap belongs on the note
+    tail = next((e for e in reversed(block) if not _is_marker(e)), None)
+    last = paras[-1] if tail is not None and tail.tag == W + "p" else None
     if last is not None and last is not paras[0]:
         _in_order(_ppr(last), "spacing").set(W + "after", _twips(gap_pt))
         if following is not None and following.tag == W + "p" and not heading:
@@ -734,11 +912,17 @@ def place(parts: dict[str, bytes], *,
     wanted = set(blocks) if only is None else set(only) & set(blocks)
     wanted -= set(skip or ())
     report = PlacementReport()
+    # EVERY block's elements, and not only the one being placed: a caption,
+    # a note or a blank paragraph belonging to another exhibit is not the
+    # prose that introduces this one. `only` and `skip` do not narrow this
+    # — a block this call is not placing is still an exhibit, and its
+    # caption is still not a sentence.
+    owned = {id(e) for b in blocks.values() for e in b}
 
     for number in sorted(wanted):
         block = blocks[number]
         pl = Placement(number=number, caption=_caption_of(block))
-        anchor = _anchor(body, number, block, mention)
+        anchor = _anchor(body, number, owned, mention)
         if anchor is None:
             report.problems.append(
                 f"table {number}: nothing in the prose mentions it"
@@ -773,13 +957,20 @@ def place(parts: dict[str, bytes], *,
                     f"section boundary")
             else:
                 already = anchor.getnext() is block[0]
-                if not already:
-                    at = anchor
-                    for el in block:
-                        at.addnext(el)
-                        at = el
-                    pl.moved = True
-                pl.anchor_text = _text(anchor).strip()[:70]
+                joins = None if already else _would_join_tables(block, anchor)
+                if joins is not None:
+                    report.problems.append(
+                        f"table {number}: {joins} — left where it is, "
+                        f"because Word reads two tables with nothing "
+                        f"between them as ONE table")
+                else:
+                    if not already:
+                        at = anchor
+                        for el in block:
+                            at.addnext(el)
+                            at = el
+                        pl.moved = True
+                    pl.anchor_text = _text(anchor).strip()[:70]
         if fit:
             keep_together(block)
             pl.kept_together = True
