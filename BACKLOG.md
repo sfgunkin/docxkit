@@ -860,24 +860,6 @@ according to where a comment sits. Nothing raises and nothing reports
 it: the author gets back a paragraph in a formatting they never had,
 and only a compare against the original would say so.
 
-### S1 — `prune_orphans` cuts the note that still has its WORDS and keeps the empty shell
-<!-- status: open -->
-
-Found 2026-09-16, same sweep, in `footnotes.py`. Two orphaned
-definitions carrying ONE id — the author's note, and an empty shell an
-XML accept left behind:
-
-    orphans before:   [('12', 'The lost note.', False), ('12', '', True)]
-    reported gone:    [('12', '', True)]
-    left in the part: [('12', '')]
-    the words survived: False
-
-`prune_orphans` is documented to drop the shells and to leave a note
-that kept its words — `orphans` reports that one as a LOST FOOTNOTE
-rather than litter. With the id shared it does the exact opposite, and
-its report names the shell it did not remove, so the record says the
-harmless one went.
-
 ### S1 — `place` sets an exhibit's table flush against another table and reports no problem
 <!-- status: open -->
 

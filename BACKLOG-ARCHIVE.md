@@ -14,6 +14,24 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `prune_orphans` cuts the note that still has its WORDS and keeps the empty shell~~ — FIXED 16.09, `0d1c460`
+
+<!-- status: fixed -->
+
+Found 2026-09-16, same sweep, in `footnotes.py`. Two orphaned
+definitions carrying ONE id — the author's note, and an empty shell an
+XML accept left behind:
+
+    orphans before:   [('12', 'The lost note.', False), ('12', '', True)]
+    reported gone:    [('12', '', True)]
+    left in the part: [('12', '')]
+    the words survived: False
+
+`prune_orphans` is documented to drop the shells and to leave a note
+that kept its words — `orphans` reports that one as a LOST FOOTNOTE
+rather than litter. With the id shared it does the exact opposite, and
+its report names the shell it did not remove, so the record says the
+harmless one went.
 ### ~~S4 — a read-only CLI question opens the manuscript for writing~~ — FIXED 16.09, `414a463`
 
 <!-- status: fixed -->
