@@ -811,21 +811,6 @@ Workaround: renumber the duplicate before running `repack`.
 
 ---
 
-### S1 — `reject` restores the wrong run formatting when an XML comment sits before the `rPrChange` snapshot
-<!-- status: open -->
-
-Found 2026-09-16 triaging the mutation sweep of `revisions.py`. One
-paragraph, one run sized 24, its `w:rPrChange` holding the snapshot to
-restore, and an XML comment placed on either side of that snapshot:
-
-    comment BEFORE the snapshot -> <w:r><w:rPr/><w:t>note</w:t></w:r>
-    comment AFTER  the snapshot -> <w:r><w:rPr><w:sz w:val="24"/>…
-
-The same reject, the same document, and the size is kept or lost
-according to where a comment sits. Nothing raises and nothing reports
-it: the author gets back a paragraph in a formatting they never had,
-and only a compare against the original would say so.
-
 ### S1 — `prune_orphans` cuts an orphan whose only content is a legacy picture, an OLE object or a symbol
 <!-- status: open -->
 
