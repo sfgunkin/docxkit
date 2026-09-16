@@ -866,26 +866,6 @@ opening a marked row in Word (it repairs silently where it can, which
 is why no gate here has ever said anything) before deciding whether
 this is a repair Word performs or a file it refuses.
 
-### S2 — a marker between a caption and its table hides the exhibit from `place`
-<!-- status: open -->
-
-Found 2026-09-16, `placement.py`. One caption, one table, and one
-element between them:
-
-    none             place: 1 placement(s); audit tables=1
-    bookmarkEnd      place: 0 placement(s); audit tables=0
-    commentRangeEnd  place: 0 placement(s); audit tables=0
-    XML comment      place: 0 placement(s); audit tables=0
-
-The exhibit list still names `Таблица 1` in all four, so the caption is
-found and only the table is lost. A bookmarkEnd there is what a
-cross-reference to the caption leaves behind, and a commentRangeEnd is
-what a reviewer's comment on it leaves — both are ordinary in a
-manuscript under revision, and both make the pass do nothing at all
-while saying nothing at all. The paired half of the same probe: a block
-that ENDS with its own bookmarkEnd no longer sees the note that follows
-it (`note after=None` against `160`).
-
 ---
 
 ## Where the fixed entries are
