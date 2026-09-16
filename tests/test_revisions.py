@@ -1272,11 +1272,13 @@ def test_a_view_name_BUILT_at_runtime_is_simulated_under_that_NAME(
 
 
 def test_an_EMPTY_math_text_beside_a_glyph_is_no_glyph_rather_than_None():
-    """`_glyphs` reads `t.text or ""`, and lxml gives None, not "", for
-    a self-closing `<m:t/>`. Read as `and`, the None goes into the join,
-    and the prune raises TypeError on any equation a deletion reached
-    into that holds one. The empty text sits beside a glyph in the same
-    math run, so that the run carrying it is not itself pruned."""
+    """`_glyphs` reads `if (text := t.text)`, and lxml gives None, not
+    "", for a self-closing `<m:t/>`. The empty text is skipped for the
+    glyph it does not carry — it was `t.text or ""` until 2026-09-16,
+    where an `and` in place of the `or` put the None into the join and
+    raised TypeError on any equation a deletion reached into that held
+    one. The empty text sits beside a glyph in the same math run, so
+    that the run carrying it is not itself pruned."""
     out = accept(_math_doc(
         "<m:r><m:t>x</m:t><m:t/></m:r>",
         f"<m:f><m:num>{_del(1, _mr('a'))}</m:num>"
@@ -1319,6 +1321,79 @@ def test_a_formatting_record_with_a_COMMENT_after_its_snapshot_restores_it():
     out = reject(xml)
 
     assert '<w:rPr><w:sz w:val="24"/></w:rPr>' in out, out
+
+
+# --- what the triage of 2026-09-16 found -------------------------------
+
+
+def test_a_formatting_record_with_a_COMMENT_before_its_snapshot_restores_it():
+    """The mirror of the test above, and the one that is a DEFECT rather
+    than a mutant: `snapshot[0]` is the first CHILD, and lxml counts a
+    comment as one.
+
+    With a comment AFTER the snapshot the size comes back; with one
+    BEFORE it, the restore reads the comment's children — a comment has
+    none — so the live properties are emptied and nothing is put back:
+    `<w:r><w:rPr/><w:t>note</w:t></w:r>`, a paragraph in a formatting the
+    author never had. Nothing raises and nothing reports it; only a
+    compare against the original would say so.
+    """
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        '<!-- restyled in review --><w:rPr><w:sz w:val="24"/></w:rPr>'
+        "</w:rPrChange></w:rPr><w:t>note</w:t></w:r></w:p>")
+
+    out = reject(xml)
+
+    assert '<w:rPr><w:sz w:val="24"/></w:rPr>' in out, out
+    assert '<w:sz w:val="20"/>' not in out
+
+
+def test_an_EMPTY_math_run_does_not_make_the_prune_refuse_the_document():
+    """`_glyphs` joined every `m:t` including the empty ones, so the
+    count of runs was part of the invariant `_has_glyph` is written
+    against — and the two disagreed about what a glyph IS. An author's
+    empty run in an equation a deletion reached into is pruned as the
+    shell it is, the join loses its separator, and `accept` refuses the
+    whole document:
+
+        DocxKitError: revisions: pruning an empty equation shell changed
+        the glyphs 'x\\x00' -> 'x'
+
+    written as a thing that can never happen. An empty run contributes
+    no glyph a reader sees, so it is the invariant that was wrong.
+    """
+    out = accept(_math_doc(
+        _mr("x"), "<m:r><m:t/></m:r>",
+        f"<m:f><m:num>{_del(1, _mr('a'))}</m:num>"
+        f"<m:den>{_del(2, _mr('b'))}</m:den></m:f>"))
+
+    assert "<m:f>" not in out, "the emptied fraction is still pruned"
+    assert out.count("<m:t") == 1, out
+    assert "<m:t>x</m:t>" in out
+
+
+def test_an_XML_COMMENT_in_a_touched_equation_is_not_an_equation_OBJECT():
+    """An lxml comment answers a CALLABLE for `.tag`, and `_local` calls
+    `.rsplit` on it:
+
+        AttributeError: '_cython_3_2_9.cython_function_or_method' object
+        has no attribute 'rsplit'
+
+    — lxml's own words, naming cython to an author whose manuscript is
+    the thing that failed. Word writes comments into OOXML and so does
+    every tool that edits it by hand. A comment is not one of
+    `MATH_OBJECTS`, so the prune has no business reading its name: it
+    stays where it is, and the emptied fraction beside it still goes.
+    """
+    out = accept(_math_doc(
+        _mr("x"), "<!-- typeset by hand -->",
+        f"<m:f><m:num>{_del(1, _mr('a'))}</m:num>"
+        f"<m:den>{_del(2, _mr('b'))}</m:den></m:f>"))
+
+    assert "<m:f>" not in out, "the emptied fraction is still pruned"
+    assert "<m:t>x</m:t>" in out
+    assert "<!-- typeset by hand -->" in out, out
 
 
 def test_the_simulated_VIEW_is_CACHED_between_identical_calls():

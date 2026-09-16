@@ -181,8 +181,17 @@ _FLAG_PARENTS = (W + "rPr", W + "trPr")
 _ANCHOR_TAGS = ("bookmarkStart", "bookmarkEnd", "commentRangeStart",
                 "commentRangeEnd", "commentReference")
 
+#: Of those, the markers a BLOCK may hold. The four range markers are
+#: `EG_RangeMarkupElements`, which `EG_BlockLevelElts` admits directly —
+#: Word writes a `w:bookmarkStart` between two block elements itself.
+#: `w:commentReference` is not one: it is run INNER content, valid only
+#: inside a `w:r`, so lifting one to where a dropped PARAGRAPH stood
+#: would put an element where the schema has no place for it.
+_BLOCK_ANCHORS = tuple(t for t in _ANCHOR_TAGS if t != "commentReference")
 
-def _lift_anchors(el: _Element) -> None:
+
+def _lift_anchors(el: _Element,
+                  tags: tuple[str, ...] = _ANCHOR_TAGS) -> None:
     """Move `el`'s position markers out to where `el` stands.
 
     Called before a revision element is REMOVED. The markers keep their
@@ -193,8 +202,11 @@ def _lift_anchors(el: _Element) -> None:
     the count (`structure_counts`) and the empty paragraph left behind
     (`_paras`), which is the honest answer for a move this tool cannot
     undo cleanly.
+
+    `tags` narrows what is lifted to what the destination can legally
+    hold — see :data:`_BLOCK_ANCHORS`.
     """
-    wanted = {W + tag for tag in _ANCHOR_TAGS}
+    wanted = {W + tag for tag in tags}
     # `iter()` walks in document order, so the markers keep theirs and a
     # start still precedes its end
     markers = [m for m in el.iter() if m.tag in wanted]
@@ -339,8 +351,22 @@ def _enclosing_math(el: _Element) -> _Element | None:
 
 
 def _glyphs(root: _Element) -> str:
-    """Every math glyph in document order — the pruning invariant."""
-    return "\x00".join(t.text or "" for t in root.iter(MATH + "t"))
+    r"""Every math glyph in document order — the pruning invariant.
+
+    An ``m:t`` with no text carries no glyph, and is skipped for the
+    same reason :func:`_has_glyph` reads plain truthiness: the two have
+    to agree about what a GLYPH is. They did not, and an author's empty
+    run in an equation was the difference — `_has_glyph` called it a
+    shell and the prune removed it, `_glyphs` counted it and the guard
+    below then reported the removal as a change to the maths, so
+    `accept` refused the whole document (2026-09-16).
+
+    The ``\x00`` between them is still load-bearing: it keeps one run
+    holding `ab` distinct from two holding `a` and `b`, so a prune that
+    regrouped the glyphs a reader sees would not pass unnoticed.
+    """
+    return "\x00".join(text for t in root.iter(MATH + "t")
+                       if (text := t.text))
 
 
 def _has_glyph(el: _Element) -> bool:
@@ -376,7 +402,13 @@ def _prune_math(maths: list[_Element]) -> None:
         for el in reversed(list(om.iter())):
             if el is om or el.getparent() is None:
                 continue             # om itself, or gone with an ancestor
-            if _local(el.tag) in MATH_OBJECTS and not _has_glyph(el):
+            # A comment or a processing instruction answers a CALLABLE
+            # for `.tag`, and `_local` then `rsplit`s it — an
+            # AttributeError naming cython, raised at an author whose
+            # manuscript is the thing that failed (2026-09-16). Neither
+            # is an equation object, so neither is the prune's business.
+            if (isinstance(el.tag, str) and _local(el.tag) in MATH_OBJECTS
+                    and not _has_glyph(el)):
                 _parent(el).remove(el)
         if _glyphs(om) != before:          # never possible; never silent
             raise DocxKitError(
@@ -547,6 +579,15 @@ def _merge_into_next(para: _Element) -> None:
     while nxt is not None and nxt.tag not in (W + "p", W + "tbl"):
         nxt = nxt.getnext()
     if nxt is None or nxt.tag != W + "p":
+        # Nothing can take what it holds — but the position markers are
+        # the DOCUMENT's, not the dying paragraph's, so they stay where
+        # it stood rather than going with it. Rejecting a moved
+        # paragraph that preceded a TABLE dropped the pair Word had put
+        # inside the `w:moveTo`: bookmarkStart x0 where the same
+        # document followed by a PARAGRAPH keeps x1, and where the
+        # baseline has one of each. In this corpus that bookmark is a
+        # live `HYPERLINK` target, not litter (2026-09-16).
+        _lift_anchors(para, _BLOCK_ANCHORS)
         parent.remove(para)
         return
     at = 0
@@ -689,10 +730,16 @@ def _apply_property_changes(root: _Element, mode: str,
             carried = [c for c in parent if c is not change
                        and isinstance(c.tag, str)
                        and c.tag.rsplit("}", 1)[-1] in names]
-            # the snapshot is the change's only child; a change element
-            # with none records "there were no properties", and emptying
-            # the parent is then exactly right
-            snapshot = list(change)
+            # the snapshot is the change's only ELEMENT child; a change
+            # element with none records "there were no properties", and
+            # emptying the parent is then exactly right. XML allows a
+            # comment anywhere and lxml counts one as a child, so with a
+            # comment AHEAD of the snapshot `list(change)[0]` was the
+            # comment — whose children, of which it has none, were then
+            # restored in the snapshot's place, and the run came back
+            # with no properties at all (2026-09-16). The carry filter
+            # just above steps over non-elements for the same reason.
+            snapshot = [c for c in change if isinstance(c.tag, str)]
             for child in list(parent):
                 parent.remove(child)
             for child in (snapshot[0] if snapshot else ()):

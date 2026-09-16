@@ -7,6 +7,10 @@ counts came out 928 against 926. Both were artifacts of these rules.
 """
 from __future__ import annotations
 
+import re
+import zipfile
+
+import pytest
 from conftest import document, para, run
 
 from docxkit.revisions import FINAL, ORIGINAL, text
@@ -211,3 +215,204 @@ def test_a_paragraph_whose_mark_goes_is_never_merged_INTO_a_TABLE():
 
     assert tbl in out, out
     assert "A new sentence." not in out
+
+
+# --- what the triage of 2026-09-16 found -------------------------------
+
+
+MARK_MOVE = ('<w:pPr><w:rPr><w:moveTo w:id="83" w:author="A" w:date="d"/>'
+             "</w:rPr></w:pPr>")
+
+
+def test_the_ANCHORS_of_a_paragraph_that_cannot_MERGE_are_kept():
+    r"""The test above, with the bookmark counted rather than the table.
+
+    A paragraph whose mark goes and whose next block is a TABLE has
+    nothing to merge into, so it is removed outright — and the anchors
+    `_lift_anchors` had just moved into it, out of the revision being
+    rejected, go with it. Followed by a PARAGRAPH the same document
+    keeps the pair (bookmarkStart x1, bookmarkEnd x1), followed by a
+    table it keeps neither, and the baseline has one of each. Nothing
+    reads a bookmark on the way past, so nothing said anything.
+
+    What those anchors ARE decides whether that is litter, and it was
+    measured rather than assumed (2026-09-16): of 301 manuscripts in the
+    corpus, 28 carry moves and exactly one carries a bookmark INSIDE a
+    move — `Brown2019txt`, in Aging_Well's own redline, with no leading
+    underscore, so `_xml.word_minted` reads it as the author's. The
+    reference list's entry for it holds `HYPERLINK \l "Brown2019txt"`:
+    it is the back half of the paper's bidirectional citation pair, and
+    a link that resolves to nothing is what dropping it costs. Word's
+    OWN move markers are `w:moveToRangeStart` elements, which this
+    module already removes by name.
+    """
+    from docxkit.revisions import reject
+
+    tbl = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>'
+           f"<w:tr><w:tc><w:tcPr/>{para(run('cell'))}</w:tc></w:tr></w:tbl>")
+    moved = (f'<w:p>{MARK_MOVE}<w:moveTo w:id="84" w:author="A" w:date="d">'
+             '<w:bookmarkStart w:id="9" w:name="Brown2019txt"/>'
+             f'{run("As Brown et al. (2019) showed.")}'
+             '<w:bookmarkEnd w:id="9"/></w:moveTo></w:p>')
+    elsewhere = ('<w:p><w:moveFrom w:id="85" w:author="A" w:date="d">'
+                 f'{run("As Brown et al. (2019) showed.")}'
+                 "</w:moveFrom></w:p>")
+
+    out = reject(document(moved + tbl + elsewhere))
+
+    assert out.count("<w:bookmarkStart") == 1, out
+    assert out.count("<w:bookmarkEnd") == 1
+    assert 'w:name="Brown2019txt"' in out
+    assert out.index("<w:bookmarkStart") < out.index("<w:tbl>"), out
+    assert tbl in out, "the table itself is untouched"
+
+
+# --- what WORD makes of the anchors the fix leaves ---------------------
+#
+# The fix WRITES `commentRangeStart`/`commentRangeEnd` at block level
+# where nothing stood before, and the failure this toolkit has already
+# paid for twice is a file Word refuses or silently repairs. The repo
+# has the opposite direction Word-verified three times — a reference
+# pointing at a definition that is gone is "unreadable content"
+# (`comments.py`, DSI) and "the file appears to be corrupted"
+# (`hygiene.py`, Health Capacity to Work, bisected) — and none of them
+# covers a BALANCED range at block level whose definition is intact.
+# So it is measured through Word rather than argued, and kept runnable.
+
+
+def _commented_shells():
+    """A real package for Word to open, carrying a comments part.
+
+    The synthetic fixtures in this file are not ones Word will open —
+    "The file appears to be corrupted" — which is why this builds on a
+    manuscript, as `test_WORD_reads_two_ADJACENT_tables_as_ONE` does.
+    It must already HAVE `word/comments.xml`: adding one means adding
+    the content-type override and the relationship with it, and a shell
+    assembled wrong would produce the very refusal this test exists to
+    rule out.
+    """
+    from pathlib import Path
+
+    for candidate in Path(r"F:\OneDrive\__Documents").rglob("*.docx"):
+        if candidate.name.startswith("~$"):
+            continue
+        try:
+            with zipfile.ZipFile(candidate) as z:
+                if "word/comments.xml" in z.namelist():
+                    yield candidate
+                    return
+        except (zipfile.BadZipFile, OSError):
+            continue
+
+
+def _first_comment_id(parts: dict[str, bytes]) -> str | None:
+    com = parts.get("word/comments.xml", b"").decode("utf-8", "replace")
+    m = re.search(r'<w:comment w:id="(\d+)"', com)
+    return m.group(1) if m else None
+
+
+@pytest.mark.word
+def test_WORD_reads_a_LIFTED_comment_range_as_CONTENT_not_damage(tmp_path):
+    """Three bodies on one real shell, so a difference is attributable.
+
+    `lifted` is the shape the fix leaves: a balanced range at BLOCK
+    level, in order, its definition intact in `comments.xml`, and no
+    `commentReference` — because run-inner content has no place at block
+    level, so :data:`_BLOCK_ANCHORS` leaves it behind. `orphan` is the
+    same document with no range at all, which isolates "a definition
+    nothing references" from "a bare range". `anchored` is the control
+    that proves this harness can see a comment at all.
+
+    What is being asked: does Word OPEN it without repairing, what is
+    `Comments.Count`, and does a save keep the range or drop it. The
+    third is the one that says whether Word reads a bare range as
+    content or as litter.
+
+    Measured 2026-09-16. All three opened with no repair, the table and
+    the prose intact:
+
+        lifted    comments 0; saved back with range 0, reference 0,
+                  definitions 0
+        orphan    identical, to the number
+        anchored  comments 1; range 1, reference 1, definitions 1
+
+    So Word reads a comment as its REFERENCE. With none, the definition
+    is not a comment it counts or shows, and it collects both that
+    definition and the bare range on the next save. The shape the fix
+    leaves is litter to Word rather than content — and litter Word
+    clears itself, not damage it refuses or repairs. `lifted` and
+    `orphan` agreeing to the number is what makes that attributable:
+    the markers the fix writes change nothing Word sees.
+    """
+    from docxkit import package
+    from docxkit.word import WD_FORMAT_DOCX, open_doc, session
+
+    shell = next(_commented_shells(), None)
+    if shell is None:
+        pytest.skip("no real .docx with a comments part to build on")
+    cid = _first_comment_id(package.read_parts(shell))
+    if cid is None:
+        pytest.skip("the shell's comments part holds no comment")
+
+    tbl = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>'
+           f"<w:tr><w:tc><w:tcPr/>{para(run('cell'))}</w:tc></w:tr></w:tbl>")
+    tail = para(run("After the table."))
+    bodies = {
+        "lifted": (f'<w:commentRangeStart w:id="{cid}"/>'
+                   f'<w:commentRangeEnd w:id="{cid}"/>' + tbl + tail),
+        "orphan": tbl + tail,
+        "anchored": (para(run("Before. "),
+                          f'<w:commentRangeStart w:id="{cid}"/>',
+                          run("commented text"),
+                          f'<w:commentRangeEnd w:id="{cid}"/>',
+                          f'<w:r><w:commentReference w:id="{cid}"/></w:r>')
+                     + tbl + tail),
+    }
+
+    def built(body: str, name: str):
+        made = package.read_parts(shell)
+        doc = made["word/document.xml"].decode("utf-8")
+        at = doc.index("<w:body>") + len("<w:body>")
+        stop = doc.rindex("</w:body>")
+        sect = re.search(r"<w:sectPr\b.*?</w:sectPr>", doc[at:stop], re.DOTALL)
+        made["word/document.xml"] = (
+            doc[:at] + body + (sect.group(0) if sect else "")
+            + doc[stop:]).encode()
+        path = tmp_path / name
+        package.write_docx(path, made, order=list(made))
+        return path
+
+    seen: dict[str, dict[str, object]] = {}
+    with session(deadline=240) as word:
+        for label, body in bodies.items():
+            with open_doc(word, built(body, f"{label}.docx")) as doc:
+                # AS OPENED, before any save: a repair would show here
+                opened = {"comments": doc.Comments.Count,
+                          "tables": doc.Tables.Count,
+                          "text": "After the table." in doc.Range().Text}
+                saved = tmp_path / f"{label}-saved.docx"
+                doc.SaveAs2(str(saved), FileFormat=WD_FORMAT_DOCX)
+            with zipfile.ZipFile(saved) as z:
+                back = z.read("word/document.xml").decode("utf-8", "replace")
+                com = z.read("word/comments.xml").decode("utf-8", "replace") \
+                    if "word/comments.xml" in z.namelist() else ""
+            opened["range_after_save"] = back.count("<w:commentRangeStart")
+            opened["reference_after_save"] = back.count("<w:commentReference")
+            opened["definitions_after_save"] = com.count("<w:comment ")
+            seen[label] = opened
+    print("\nWord's answers:", *seen.items(), sep="\n  ")
+
+    # Word opened all three and kept the document: no repair, nothing lost
+    for label, got in seen.items():
+        assert got["tables"] == 1, (label, got)
+        assert got["text"] is True, (label, got)
+    # the control proves the harness can see a comment when one is anchored
+    assert seen["anchored"]["comments"] == 1, seen
+    assert seen["anchored"]["range_after_save"] == 1, seen
+    # A comment is its REFERENCE: with none, Word counts no comment and
+    # drops the definition and the bare range together on the next save.
+    assert seen["lifted"]["comments"] == 0, seen
+    assert seen["lifted"]["range_after_save"] == 0, seen
+    assert seen["lifted"]["definitions_after_save"] == 0, seen
+    # and the markers the fix writes change nothing Word sees
+    assert seen["lifted"] == seen["orphan"], seen
