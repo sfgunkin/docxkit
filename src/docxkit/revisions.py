@@ -375,7 +375,7 @@ def _prune_math(maths: list[_Element]) -> None:
         before = _glyphs(om)
         for el in reversed(list(om.iter())):
             if el is om or el.getparent() is None:
-                continue
+                continue             # om itself, or gone with an ancestor
             if _local(el.tag) in MATH_OBJECTS and not _has_glyph(el):
                 _parent(el).remove(el)
         if _glyphs(om) != before:          # never possible; never silent
@@ -750,7 +750,7 @@ def _apply_content(root: _Element, vanish: tuple[str, ...],
     for tag in keep:
         for el in _content_elements(root, tag):
             if selective and tag in ("moveFrom", "moveTo"):
-                continue
+                continue           # the pair is left whole; see accept()
             if not wants(el, tag):
                 continue
             if mode == ORIGINAL:
