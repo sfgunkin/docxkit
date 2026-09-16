@@ -988,21 +988,6 @@ handed a stdlib message about an archive. The refusal itself is right;
 what is missing is a `DocxKitError` that names the id and the part. The
 test now accepts either, so a friendlier refusal will not fail it.
 
-### S4 — a read-only CLI question opens the manuscript for writing
-<!-- status: open -->
-
-Found 2026-09-16 triaging `cli.py`. With the paper open in Word:
-
-    paper.docx  (12 pages)
-    docxkit: paper.docx is locked (open in Word). Close it and retry.
-    NOT FOUND line printed: no
-    --json written: False
-
-The command only reads the file to answer, but takes the write path
-(`read_only` defaults to False), so the author gets no report at all —
-not even the part already computed, and no `--json` — for a question
-that never needed the file writable. Workaround: close Word and retry.
-
 ---
 
 ## Where the fixed entries are

@@ -14,6 +14,21 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — a read-only CLI question opens the manuscript for writing~~ — FIXED 16.09, `414a463`
+
+<!-- status: fixed -->
+
+Found 2026-09-16 triaging `cli.py`. With the paper open in Word:
+
+    paper.docx  (12 pages)
+    docxkit: paper.docx is locked (open in Word). Close it and retry.
+    NOT FOUND line printed: no
+    --json written: False
+
+The command only reads the file to answer, but takes the write path
+(`read_only` defaults to False), so the author gets no report at all —
+not even the part already computed, and no `--json` — for a question
+that never needed the file writable. Workaround: close Word and retry.
 ### ~~S2 — `repack` moved the part of an exhibit in front of a section break it does not own, and offered the trial as a placement~~ — FIXED 15.09, `1a00581`
 
 <!-- status: fixed -->
