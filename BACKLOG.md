@@ -866,20 +866,6 @@ paragraph between them are the shape Word joins into a single table —
 worth confirming in Word before the fix is designed, because it decides
 whether this is a lost exhibit or only a lost audit.
 
-### S2 — `accept` refuses a document whose equation holds an empty run, calling it impossible
-<!-- status: open -->
-
-Found 2026-09-16, `revisions.py`. An equation with an empty `m:t` run
-beside a real one, accepted:
-
-    RAISES DocxKitError: revisions: pruning an empty equation shell
-    changed the glyphs 'x\x00' -> 'x'
-
-The guard is written as a thing that can never happen (`# never
-possible; never silent`), and an empty run in an equation makes it
-happen. The same document with no deletion in the equation is left
-alone, so the refusal depends on a revision elsewhere in the maths.
-
 ### S2 — an XML comment inside a touched equation crashes `accept` with lxml's own words
 <!-- status: open -->
 

@@ -14,6 +14,20 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `accept` refuses a document whose equation holds an empty run, calling it impossible~~ — FIXED 16.09, `e32d112`
+
+<!-- status: fixed -->
+
+Found 2026-09-16, `revisions.py`. An equation with an empty `m:t` run
+beside a real one, accepted:
+
+    RAISES DocxKitError: revisions: pruning an empty equation shell
+    changed the glyphs 'x\x00' -> 'x'
+
+The guard is written as a thing that can never happen (`# never
+possible; never silent`), and an empty run in an equation makes it
+happen. The same document with no deletion in the equation is left
+alone, so the refusal depends on a revision elsewhere in the maths.
 ### ~~S1 — `reject` restores the wrong run formatting when an XML comment sits before the `rPrChange` snapshot~~ — FIXED 16.09, `e32d112`
 
 <!-- status: fixed -->
