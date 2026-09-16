@@ -14,6 +14,21 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — rejecting a moved paragraph that precedes a TABLE drops the move's bookmark pair~~ — FIXED 16.09, `e32d112`
+
+<!-- status: fixed -->
+
+Found 2026-09-16, `revisions.py`. The same reject, with only what
+FOLLOWS the moved paragraph changed:
+
+    followed by a PARAGRAPH: bookmarkStart x1, bookmarkEnd x1
+    followed by a TABLE:     bookmarkStart x0, bookmarkEnd x0
+    (the baseline has one of each)
+
+What those bookmarks anchor decides the severity: a move marker of
+Word's own is litter, an author's bookmark is a cross-reference target
+and every field pointing at it breaks. That is the first thing to
+establish when this is taken up.
 ### ~~S2 — an XML comment inside a touched equation crashes `accept` with lxml's own words~~ — FIXED 16.09, `e32d112`
 
 <!-- status: fixed -->

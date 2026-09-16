@@ -866,21 +866,6 @@ paragraph between them are the shape Word joins into a single table —
 worth confirming in Word before the fix is designed, because it decides
 whether this is a lost exhibit or only a lost audit.
 
-### S2 — rejecting a moved paragraph that precedes a TABLE drops the move's bookmark pair
-<!-- status: open -->
-
-Found 2026-09-16, `revisions.py`. The same reject, with only what
-FOLLOWS the moved paragraph changed:
-
-    followed by a PARAGRAPH: bookmarkStart x1, bookmarkEnd x1
-    followed by a TABLE:     bookmarkStart x0, bookmarkEnd x0
-    (the baseline has one of each)
-
-What those bookmarks anchor decides the severity: a move marker of
-Word's own is litter, an author's bookmark is a cross-reference target
-and every field pointing at it breaks. That is the first thing to
-establish when this is taken up.
-
 ### S2 — `place` writes a row's revision mark FIRST in `w:trPr`
 <!-- status: open -->
 
