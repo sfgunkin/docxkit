@@ -959,17 +959,6 @@ while saying nothing at all. The paired half of the same probe: a block
 that ENDS with its own bookmarkEnd no longer sees the note that follows
 it (`note after=None` against `160`).
 
-### S2 — `out_of_order` raises zip's own error out of `revision status` and `revision build`
-<!-- status: open -->
-
-Found 2026-09-16 while widening the footnotes refusal test. A part that
-defines one note id TWICE reaches `out_of_order`, which lets the bare
-`ValueError` zip raises travel up through `revision/_state.py` and
-`revision/_build.py` uncaught. The author asked for a status and is
-handed a stdlib message about an archive. The refusal itself is right;
-what is missing is a `DocxKitError` that names the id and the part. The
-test now accepts either, so a friendlier refusal will not fail it.
-
 ---
 
 ## Where the fixed entries are
