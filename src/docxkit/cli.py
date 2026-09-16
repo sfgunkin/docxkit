@@ -456,10 +456,36 @@ def _anchor_rows(doc: object, anchors: list[str], ordered: bool
 
 def _bookmarks_in(path: str) -> frozenset[str]:
     """Every bookmark name in the package, for telling a reader that the
-    "phrase" they asked for is one."""
+    "phrase" they asked for is one.
+
+    Read-only, and NON-FATAL, because this is an EMBELLISHMENT on a
+    report that has already been computed. `locate` asks Word for the
+    layout — which works on a file Word has open — prints the page
+    count, and only then comes here to explain a miss. Opened for
+    writing, as the `read_only` default does, this refused the moment
+    Word held the file and took the whole report down with it:
+
+        paper.docx  (12 pages)
+        docxkit: paper.docx is locked (open in Word). Close it and retry.
+
+    and no NOT FOUND lines, no `--json`, for a hint on a question that
+    never needed the file writable (S4, 2026-09-16).
+
+    So both halves. The snapshot is what keeps the hint working in the
+    case it was WRITTEN for — a bookmark a hand-back had lost, asked
+    for while the paper is open — and the refusal is swallowed so that
+    whatever else stops this read (a zip that is not a manuscript, a
+    file that has since moved) costs the reader a parenthesis rather
+    than the answer. `DocxKitError` and not `Exception`: a hint may go
+    missing quietly, a bug in the toolkit may not.
+    """
     from ._xml import BOOKMARK_NAME_RE
     from .package import text_parts
-    return frozenset(name for _part, xml in text_parts(_package(path))
+    try:
+        parts = _package(path, read_only=True)
+    except DocxKitError:
+        return frozenset()
+    return frozenset(name for _part, xml in text_parts(parts)
                      for name in BOOKMARK_NAME_RE.findall(xml))
 
 
@@ -1227,7 +1253,6 @@ def cmd_pages(args: argparse.Namespace) -> int:
         print(page_count(args.docx))
         return 0
 
-    from .package import read_parts
     from .pages import caption_problems, problems, sheets_and_texts
     # ONE render for both: the rows say what each sheet looks like and the
     # texts say where each caption landed, and Word takes seconds a paper.
@@ -1238,7 +1263,15 @@ def cmd_pages(args: argparse.Namespace) -> int:
     corner = getattr(args, "corner", "lower right")
     found = problems(rows, corner=None if corner == "any" else corner,
                      expect_sheets=expect)
-    found += caption_problems(read_parts(args.docx), rows, texts)
+    # Through `_package`, read-only. This was a bare `read_parts` on the
+    # live path — the one package read in the CLI that never went near
+    # `_package` at all — so it refused the moment Word held the file,
+    # AFTER the render had been paid for and the sheet table printed,
+    # and the verdict a caller gates on was lost to a check that only
+    # reads (S4, 2026-09-16). Word renders a document it already has
+    # open; nothing on this path writes.
+    found += caption_problems(_package(args.docx, read_only=True),
+                              rows, texts)
     for note in found:
         print(f"  ** {note}")
     if not check:

@@ -446,14 +446,21 @@ LOCK_EXEMPT = {
               "back, and Word already has this file open",
     "pdf": "renders through Word; a snapshot would answer about a "
            "generation the author cannot see on their screen",
-    "pages": "renders through Word, same as `pdf`",
+    "pages": "renders through Word, same as `pdf` — but its CAPTION "
+             "checks read the package, and that read falls back to a "
+             "snapshot like every other: it was a bare `read_parts` on "
+             "the live path until 2026-09-16, which threw the verdict "
+             "away after paying for the render. Its own test is below",
     "repack": "REFUSES under a lock, by its own `is_locked` check before "
               "`_package`, and test_cli.py holds it to that: every number "
               "it prints is about the page layout, and a snapshot would "
               "report which sheets are empty in a generation the author "
               "cannot see, which is worse than refusing",
     "locate": "drives Word to lay the document out — the page a phrase "
-              "lands on is Word's answer, not the package's",
+              "lands on is Word's answer, not the package's. The one "
+              "thing it reads from the package, the bookmark names "
+              "behind a NOT FOUND hint, falls back to a snapshot and "
+              "is non-fatal besides; its own test is below",
     "api": "prints the package's own API surface and never opens a "
            "manuscript",
     "revision": "its subcommands take a PAPER rather than a docx, and "
@@ -575,6 +582,152 @@ def test_COMPARE_diffs_a_side_the_author_has_open(
     assert cli._SNAPSHOT_NOTE in captured.out
     assert "[INSERT] Second paragraph" in captured.out, \
         "the snapshot's own content is what was diffed"
+
+
+@pytest.fixture
+def fake_word(monkeypatch):
+    """Word's side of the boundary, with nothing behind it.
+
+    `test_cli.py` has the same seam and this is a second copy of it on
+    purpose: the lock lives HERE, in `held_by_word`, and a fixture
+    cannot be borrowed across two test modules without moving it into
+    `conftest.py` — which would put a COM fake in front of every suite
+    in the repository to save fifteen lines.
+
+    The two commands below are `LOCK_EXEMPT` because Word lays the
+    document out for them, and Word opens a document it already holds.
+    That is the whole point: the Word half of these commands works
+    under a lock, and it was the PACKAGE half that refused.
+    """
+    import contextlib
+
+    from docxkit import word
+
+    class Doc:
+        def ComputeStatistics(self, which):
+            return 12
+
+    @contextlib.contextmanager
+    def session(**kw):
+        yield object()
+
+    @contextlib.contextmanager
+    def open_doc(w, path, **kw):
+        yield Doc()
+
+    monkeypatch.setattr(word, "session", session)
+    monkeypatch.setattr(word, "open_doc", open_doc)
+    monkeypatch.setattr(word, "locate_in", lambda doc, anchors, **kw: [])
+    return word
+
+
+def test_LOCATE_still_reports_its_MISSES_while_Word_holds_the_file(
+        monkeypatch, capsys, tmp_path, simple_docx, held_by_word, fake_word):
+    """The report is computed and then thrown away (S4, 2026-09-16).
+
+    `locate` asks Word for the layout — which works on a file Word has
+    open — prints the page count, and only then reads the package, to
+    say whether a phrase that was not found is really a BOOKMARK name.
+    That read took the WRITE path, so the author got:
+
+        paper.docx  (12 pages)
+        docxkit: paper.docx is locked (open in Word). Close it and retry.
+
+    and nothing else: no NOT FOUND line, no `--json`, for a hint on a
+    question that never needed the file writable. What is asserted here
+    is the answer, not the absence of the message — a refusal that
+    printed the header has the same shape as a clean run.
+    """
+    dest = tmp_path / "loc.json"
+    outcome = _run(monkeypatch, "locate", str(simple_docx), "no such phrase",
+                   "--json", str(dest))
+    out = capsys.readouterr().out
+
+    assert "(12 pages)" in out, out
+    assert "NOT FOUND" in out and "no such phrase" in out, out
+    assert dest.exists(), f"--json was not written: {out}"
+    assert json.loads(dest.read_text(encoding="utf-8")) == []
+    assert outcome == 1, f"exited {outcome!r} instead of reporting the miss"
+
+
+def test_PAGES_check_still_reports_its_VERDICT_while_Word_holds_the_file(
+        monkeypatch, capsys, simple_docx, held_by_word):
+    """The same defect one command over, and the more expensive one.
+
+    `pages --check` renders the document through Word — seconds a paper
+    — prints one row per sheet, and then reads the package for the
+    caption checks through a bare `read_parts` that never went near
+    `_package`. Locked, it refused there: the render paid for, the
+    sheet table printed, and the verdict the caller gates on lost.
+    """
+    from docxkit import pages as pages_mod
+    from docxkit.pages import Sheet
+
+    rows = [Sheet(1, "portrait", 1, False),
+            Sheet(2, "landscape", None, True),
+            Sheet(3, "portrait", 3, False)]
+    monkeypatch.setattr(pages_mod, "sheets_and_texts",
+                        lambda docx, keep_pdf=None: (rows, [""] * 3))
+
+    outcome = _run(monkeypatch, "pages", str(simple_docx), "--check")
+    out = capsys.readouterr().out
+
+    assert "3 sheet(s)" in out, out
+    assert "sheet 2 is BLANK" in out, f"the verdict was lost: {out}"
+    assert outcome == 2, f"exited {outcome!r} instead of gating"
+
+
+def test_LOCATE_still_answers_when_the_bookmark_HINT_cannot_be_read(
+        monkeypatch, capsys, tmp_path, fake_word):
+    """The OTHER half of the fix: the read is non-fatal, not just
+    read-only.
+
+    `_bookmarks_in` explains a miss — it says that the "phrase" nobody
+    could find is really a BOOKMARK name. It is an embellishment on a
+    report that has already been computed, and the whole defect it was
+    part of was an embellishment taking the report down with it. So a
+    read that fails for ANY reason it is allowed to fail for has to
+    cost the reader the parenthesis and nothing else.
+
+    A lock is the case the snapshot handles; this is everything else.
+    A zip that is not a manuscript is the cheapest real one — the same
+    package `_package` refuses two tests below — and it stands for the
+    file that moved between the render and the read.
+    """
+    not_a_paper = tmp_path / "notes.docx"
+    with zipfile.ZipFile(not_a_paper, "w") as z:
+        z.writestr("hello.txt", "not a manuscript")
+
+    dest = tmp_path / "loc.json"
+    outcome = _run(monkeypatch, "locate", str(not_a_paper),
+                   "no such phrase", "--json", str(dest))
+    out = capsys.readouterr().out
+
+    assert "(12 pages)" in out, out
+    assert "NOT FOUND" in out and "no such phrase" in out, out
+    assert dest.exists(), f"--json was not written: {out}"
+    assert outcome == 1, f"exited {outcome!r} instead of reporting the miss"
+    # Absent, not invented: the hint is what the failed read was FOR.
+    assert "BOOKMARK" not in out, out
+
+
+def test_a_BUG_behind_the_bookmark_hint_is_NOT_swallowed(monkeypatch,
+                                                         simple_docx):
+    """The swallow is `DocxKitError` and stays that way.
+
+    `except Exception` here would be the defect one level down: a hint
+    that goes missing forever because a real fault in the toolkit reads
+    exactly like a locked file. The refusals `_package` raises are all
+    `DocxKitError` — `PackageError` for a missing, unreadable or
+    non-manuscript package, `DocumentLocked` for the lock — so nothing
+    legitimate needs a wider net, and this fails the moment one is cast.
+    """
+    def boom(*_args, **_kw):
+        raise RuntimeError("a bug in the toolkit, not a locked file")
+
+    monkeypatch.setattr(cli, "_package", boom)
+    with pytest.raises(RuntimeError):
+        cli._bookmarks_in(str(simple_docx))
 
 
 def test_the_snapshot_banner_is_not_printed_when_the_read_FAILS(
