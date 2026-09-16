@@ -848,24 +848,6 @@ text that a reject would have brought back.
 Fix: admit `w:pict`, `w:object` and `w:sym` to the content test, and
 decide `w:delText` by the view the caller is on rather than by the tag.
 
-### S2 — `place` writes a row's revision mark FIRST in `w:trPr`
-<!-- status: open -->
-
-Found 2026-09-16, `placement.py`. Every row docxkit marks comes out in
-one order:
-
-    place,    row marked ins        trPr children: ['ins', 'cantSplit']
-    own_page, row marked ins        trPr children: ['ins', 'tblHeader']
-    place,    row marked del        trPr children: ['del', 'cantSplit']
-    own_page, row marked trPrChange trPr children: ['trPrChange', 'tblHeader']
-
-`CT_TrPr` extends `CT_TrPrBase`, so the schema's sequence has
-`cantSplit` and `tblHeader` first and appends `ins`, `del` and
-`trPrChange` after them — the reverse of what is written. Confirm by
-opening a marked row in Word (it repairs silently where it can, which
-is why no gate here has ever said anything) before deciding whether
-this is a repair Word performs or a file it refuses.
-
 ---
 
 ## Where the fixed entries are

@@ -14,6 +14,24 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `place` writes a row's revision mark FIRST in `w:trPr`~~ — FIXED 16.09, `48f17fd`
+
+<!-- status: fixed -->
+
+Found 2026-09-16, `placement.py`. Every row docxkit marks comes out in
+one order:
+
+    place,    row marked ins        trPr children: ['ins', 'cantSplit']
+    own_page, row marked ins        trPr children: ['ins', 'tblHeader']
+    place,    row marked del        trPr children: ['del', 'cantSplit']
+    own_page, row marked trPrChange trPr children: ['trPrChange', 'tblHeader']
+
+`CT_TrPr` extends `CT_TrPrBase`, so the schema's sequence has
+`cantSplit` and `tblHeader` first and appends `ins`, `del` and
+`trPrChange` after them — the reverse of what is written. Confirm by
+opening a marked row in Word (it repairs silently where it can, which
+is why no gate here has ever said anything) before deciding whether
+this is a repair Word performs or a file it refuses.
 ### ~~S2 — a marker between a caption and its table hides the exhibit from `place`~~ — FIXED 16.09, `48f17fd`
 
 <!-- status: fixed -->
