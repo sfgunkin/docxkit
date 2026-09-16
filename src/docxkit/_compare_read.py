@@ -23,11 +23,11 @@ from typing import TypedDict
 
 from ._xml import (
     COMMENTS,
+    FLDCHAR_RE,
     INSTR_RE,
     MT_RE,
     OMML_STRUCT_RE,
     PARA_RE,
-    SEPARATE_RE,
     T_PARTS_RE,
     WT_RE,
     field_spans,
@@ -587,6 +587,46 @@ def _mask_text(xml: str, token: str) -> str:
     return T_PARTS_RE.sub(sub, xml)
 
 
+def _own_separator(body: str) -> re.Match[str] | None:
+    r"""The ``separate`` that belongs to THIS field, not to a nested one.
+
+    This was ``SEPARATE_RE.search(body)`` — the FIRST separator in the
+    span — and a field Word writes inside another's INSTRUCTION half
+    puts its own separator there first. The mask then began at the INNER
+    field's cached result, so on a `PAGEREF` whose instruction half
+    holds a `REF _Toc1`:
+
+        in :  …<w:fldChar separate/>…<w:t>Table 3</w:t>…<w:t>17</w:t>
+        out:  …<w:fldChar separate/>…<w:t>«F:PAGEREF»</w:t>…<w:t></w:t>
+
+    The cross-reference a reader sees was overwritten with the OUTER
+    field's name, and the outer's own page number — the one thing here
+    exists to neutralise — was blanked instead of masked. `compare`
+    mangles both sides identically, so an edit turning that "Table 3"
+    into "Table 5" reached no layer and `--expect-clean` printed OK over
+    it: a false negative in the gate the revision protocol rests on
+    (backlog S1, 2026-09-16). The same nesting under a NON-volatile
+    outer comes back untouched, which is what pins it to the nesting
+    rather than to masking in general.
+
+    So the separator is paired with the field's own ``begin`` by DEPTH,
+    the way :func:`_xml.field_spans` pairs its ``end`` — the same walk
+    over the same `FLDCHAR_RE`, asked a different question. A span from
+    `field_spans` opens on this field's begin and closes on its end, so
+    depth 1 is this field and anything deeper belongs to somebody else.
+    """
+    depth = 0
+    for m in FLDCHAR_RE.finditer(body):
+        kind = m.group(1)
+        if kind == "begin":
+            depth += 1
+        elif kind == "end":
+            depth -= 1
+        elif kind == "separate" and depth == 1:
+            return m
+    return None
+
+
 def mask_volatile_fields(xml: str) -> str:
     """Neutralise cached PAGE/DATE/... results, leaving the field intact."""
     regions: list[tuple[int, int, str]] = []
@@ -594,17 +634,23 @@ def mask_volatile_fields(xml: str) -> str:
         kw = _keyword(" ".join(INSTR_RE.findall(body)))
         if kw not in VOLATILE_FIELDS:
             continue
-        sep = SEPARATE_RE.search(body)
+        sep = _own_separator(body)
         if not sep:                      # no cached result to mask
             continue
         result_at = start + sep.end()
-        # field_spans yields outermost-first, so a nested field inside a
-        # region already claimed is covered by it.
-        if regions and result_at < regions[-1][1]:
+        # field_spans yields outermost-first, so a nested field whose
+        # result falls INSIDE a region already claimed is covered by it.
+        # One in the parent's INSTRUCTION half is not: it sits before
+        # that region and carries a cached value of its own, which two
+        # copies of a document disagree about like any other. So this
+        # asks every claimed region rather than only the last — with an
+        # instruction-half region in the list, the last is no longer the
+        # rightmost, and the regions are no longer in document order.
+        if any(s <= result_at < e for s, e, _ in regions):
             continue
         regions.append((result_at, end, kw))
     out = xml
-    for s, e, kw in reversed(regions):   # right to left: offsets stay valid
+    for s, e, kw in sorted(regions, reverse=True):  # right to left
         out = out[:s] + _mask_text(out[s:e], f"«F:{kw}»") + out[e:]
 
     def simple(m: re.Match[str]) -> str:

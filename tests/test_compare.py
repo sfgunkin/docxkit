@@ -1019,20 +1019,29 @@ def test_a_field_AFTER_a_nested_one_is_masked_too():
     against — which is what a real page footer holds: a PAGE, then a
     "page N of { NUMPAGES }" whose result carries a field of its own.
 
-    The direction of `result_at < regions[-1][1]` is what one region
-    cannot show. Reversed, the guard skips the field that comes AFTER
-    the nested one instead of the nested one itself, and a footer keeps
-    a cached page number that every save rewrites — the difference this
-    whole layer exists to erase.
+    What this pins is the half of the guard that did not change on
+    2026-09-16: a field coming AFTER a nested one is covered by nothing
+    and must still be masked, or a footer keeps a cached page number
+    that every save rewrites — the difference this whole layer exists
+    to erase.
 
-    What this does NOT pin, and why no fixture is contrived for it:
-    `regions[0]`, `==` and `is` all let the inner field register as its
-    own region, and the output is unchanged, because the outer mask
-    then empties everything the inner one touched and the offsets it
-    shifts by are smaller than the tags they fall inside. The same for
-    `start | sep.end()`: OR is never below `start` and never above the
-    sum, so it always lands inside the field's own header, which holds
-    fldChar and instrText and never a `w:t`.
+    The guard itself is now `any(s <= result_at < e for s, e, _ in
+    regions)`, and the paragraph that stood here is withdrawn with the
+    line it described. It argued that `regions[0]`, `==` and `is` were
+    equivalent because a nested field allowed to register its own region
+    was covered by the outer mask anyway. A field in the INSTRUCTION
+    half is never covered by its parent: it claims a region of its own,
+    letting it through is deliberate rather than harmless, and once such
+    a region is in the list `regions[-1]` is no longer the rightmost —
+    which is why the masking is applied `sorted(regions, reverse=True)`
+    and not `reversed(regions)`. See backlog S1 and
+    `test_a_VOLATILE_field_in_the_instruction_half_is_masked_as_itself`.
+
+    That same paragraph's `start | sep.end()` argument was overturned
+    separately and on the same day. The correction is in the argued list
+    below, and it is killed by
+    `test_the_mask_lands_on_the_RESULT_when_the_instruction_holds_text_
+    too`.
     """
     from docxkit._compare_read import mask_volatile_fields
 
@@ -2848,20 +2857,27 @@ def test_a_field_nested_in_a_claimed_region_does_not_end_the_scan():
     nested one and they part company — `break` leaves the page count
     unmasked, and a redline then reports "12" against "14".
 
-    The two mutants this does NOT kill are equivalent by construction,
-    argued rather than assumed (`tools/kill_check.py`, expect_kill=False):
+    The two mutants this did NOT kill were both argued equivalent
+    (`tools/kill_check.py`, expect_kill=False). Both arguments are dead
+    as of 2026-09-16, and neither line survives:
 
-    * `regions[-1]` -> `regions[0]` registers the inner field as a region
-      of its own, and the right-to-left rewrite then cuts the outer slice
-      seven characters early — but those seven characters are TAG text
-      either side of the split, `_mask_text` rewrites only `w:t` content,
-      and the concatenation puts the same string back. It stops being
-      equivalent the moment a boundary falls inside a `w:t`, which no
-      field Word writes does.
-    * `start + sep.end()` -> `start | sep.end()` moves the region's start
-      EARLIER (an OR is never larger than the sum) into the field's code
-      region, which holds `instrText` and no `w:t` — so the first `w:t`
-      the mask finds is the cached result either way."""
+    * `regions[-1]` -> `regions[0]`. The argument ran that a nested
+      field allowed its own region is covered by the outer mask anyway,
+      the outer slice cutting seven characters early into TAG text that
+      the concatenation puts back unchanged. It named its own limit —
+      "it stops being equivalent the moment a boundary falls inside a
+      `w:t`" — and that is exactly what happens: a long cached result
+      shifts the stale slice far enough to clear `</w:r><w:r><w:t>`, and
+      the outer field's own result is then left in the document.
+      Measured, and pinned by
+      `test_the_regions_are_masked_RIGHT_TO_LEFT`. The guard reads
+      `any(s <= result_at < e for s, e, _ in regions)` now and a field
+      in the INSTRUCTION half claims a region of its own on purpose, so
+      the line these mutants respelled is gone.
+    * `start + sep.end()` -> `start | sep.end()` was overturned the same
+      day by measurement — a field whose instruction half carries a
+      `w:t` tells the two spellings apart. The correction is in the
+      argued list below; do not re-derive the old argument."""
     from lxml import etree
 
     from docxkit._compare_read import mask_volatile_fields
@@ -3264,12 +3280,14 @@ def test_a_SECOND_field_after_a_nested_one_is_still_masked():
     the walk has to mask two of the three: the nested one is inside a
     region already claimed and the one after it is not.
 
-    The two index mutants on that guard (`regions[0]` for `regions[-1]`,
-    and the region's start for its end) both SURVIVE this and are argued
-    equivalent rather than pinned: letting the nested field through
-    appends a region the outer one covers exactly, and masking it first
-    leaves the same string. What the guard buys is the work, not the
-    output."""
+    The two index mutants once argued equivalent here (`regions[0]` for
+    `regions[-1]`, and the region's start for its end) are gone with the
+    line they respelled, 2026-09-16. Their argument — letting the nested
+    field through appends a region the outer one covers exactly — holds
+    only for a field in the outer's RESULT half, which is the nesting
+    this fixture has. It is false for one in the INSTRUCTION half, which
+    no parent covers, so the guard now buys the output and not only the
+    work."""
     from docxkit._compare_read import mask_volatile_fields
 
     nested = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
@@ -3850,10 +3868,19 @@ def test_a_paragraph_carries_WORDS_id_not_the_attribute_it_sits_in():
 #   argument about the DOCUMENT rather than the code is a guess until
 #   someone builds the document it excludes.
 # * the four remaining mutants on `result_at < regions[-1][1]` — `<=`,
-#   `==`, `is`, and `regions[not 1]` — for the reason the nested-field
-#   test above already gives: regions are masked right to left, so a
+#   `==`, `is`, and `regions[not 1]` — GONE 2026-09-16, with the line
+#   itself. The argument ran that regions are masked right to left, so a
 #   nested one the guard lets through is masked first and then covered
-#   entirely by the outer one. The guard buys the work, not the output.
+#   entirely by the outer one, and that the guard therefore buys the
+#   work and not the output. Backlog S1 made it false: a field in the
+#   INSTRUCTION half is covered by no parent, so it claims a region of
+#   its own deliberately, and `regions[-1]` is then no longer the
+#   rightmost — hence `any(s <= result_at < e for s, e, _ in regions)`
+#   and `sorted(regions, reverse=True)`. The six claims keyed on the old
+#   line were deleted from `tools/equivalents.toml` rather than
+#   reworded: a claim whose argument died is not a claim that needs new
+#   wording. Nothing replaces them here — respelling the new guard needs
+#   arguing from scratch against the new code.
 
 
 # _compare_render measured 1.4 % (3/207) on the same day, and all three
@@ -4469,6 +4496,199 @@ def test_the_mask_lands_on_the_RESULT_when_the_instruction_holds_text_too():
     out = mask_volatile_fields(xml)
 
     assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+
+
+#: Lead lengths, because every arithmetic bug this function has had was
+#: offset arithmetic and a single fixture decides those by luck — the
+#: argument overturned above survived on exactly that.
+_LEADS = ["", "A", "ABC", "A longer opening line. ",
+          "Prose of some other length entirely, so the offsets are "
+          "nothing like round. "]
+
+
+def _nested_in_instruction(outer: str, inner: str, inner_result: str,
+                           outer_result: str) -> str:
+    """A field whose INSTRUCTION half carries a field of its own.
+
+    `_wrapping` above is the OTHER nesting — a field inside the outer's
+    cached result — and until 2026-09-16 it was the only one any fixture
+    here held. Word writes this one too: what a cross-reference resolves
+    can itself be a field, and `{ PAGEREF { REF _Toc1 } }` puts the
+    INNER field's separator in front of the outer's.
+    """
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> {outer} '
+            "</w:instrText></w:r>"
+            + field(inner, inner_result)
+            + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(outer_result)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_the_mask_opens_on_THIS_field_s_separator_not_a_nested_one(lead):
+    """Backlog S1, 2026-09-16. `SEPARATE_RE.search(body)` took the FIRST
+    separator in the span, and a field nested in the INSTRUCTION half
+    puts its own there first, so the mask opened on the INNER field's
+    cached result. Measured on `{ PAGEREF { REF _Toc1 } }`:
+
+        Table 3  ->  «F:PAGEREF»   the reader's cross-reference, gone
+        17       ->  <w:t></w:t>   the page number, blanked, not masked
+
+    Both of those are wrong in the same direction. `compare` masks both
+    sides alike, so an edit turning that "Table 3" into "Table 5" left
+    two identical strings behind and reached no layer at all — which
+    `test_an_edit_inside_a_nested_cross_reference_is_SEEN` below states
+    as the loss it is.
+
+    One equality, like `test_the_mask_replaces_the_cached_RESULT_and_
+    nothing_else`: "the document with the OUTER field's cached value
+    replaced" says both halves at once — what was masked, and what was
+    left alone.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _nested_in_instruction("PAGEREF _Toc1", "REF _Toc1",
+                                    "Table 3", "17") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>17</w:t>", "<w:t>«F:PAGEREF»</w:t>"), out
+    assert "<w:t>Table 3</w:t>" in out, "the cross-reference a reader sees"
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_VOLATILE_field_in_the_instruction_half_is_masked_as_itself(lead):
+    """The same nesting with a volatile field inside, which is what the
+    coverage guard decides.
+
+    The inner field's cached page number sits BEFORE the region its
+    parent claims, so the parent does not cover it and it claims one of
+    its own. A guard that asks only the LAST claimed region — as this
+    one did until 2026-09-16 — leaves that `7` in the document:
+    measured, that spelling returns ['7', '«F:PAGEREF»'] where this
+    asserts ['«F:PAGE»', '«F:PAGEREF»'].
+
+    What it does NOT pin is the ORDER the two regions are applied in.
+    `test_the_regions_are_masked_RIGHT_TO_LEFT` below does, and says why
+    a fixture this size cannot.
+
+    It has to be masked rather than merely left alone: a `w:t` in an
+    instruction half is text this comparison reads (see
+    `test_the_mask_lands_on_the_RESULT_when_the_instruction_holds_text_
+    too`), so an unmasked page number there is a difference on every
+    pair of copies — the crying wolf this whole layer exists to stop.
+    """
+    from lxml import etree
+
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _nested_in_instruction("PAGEREF _Toc1", "PAGE", "7", "17")
+           + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace(
+        "<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>").replace(
+        "<w:t>17</w:t>", "<w:t>«F:PAGEREF»</w:t>"), out
+    assert re.findall(r"«F:\w+»", out) == ["«F:PAGE»", "«F:PAGEREF»"], out
+    etree.fromstring(('<w:p xmlns:w="http://schemas.openxmlformats.org/'
+                      'wordprocessingml/2006/main">'
+                      + out[len("<w:p>"):]).encode())
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_the_regions_are_masked_RIGHT_TO_LEFT(lead):
+    r"""`sorted(regions, reverse=True)`, and why `reversed(regions)` is
+    not the same walk once a field nests in an INSTRUCTION half.
+
+    Regions used to be appended in document order, so reversing the list
+    took them right to left and every stored offset stayed valid while
+    the ones behind it were rewritten. An instruction-half region breaks
+    that: it is appended AFTER its parent's and lies BEFORE it, so
+    append order rewrites the earlier one first and the parent's offsets
+    go stale by whatever length that rewrite changed.
+
+    The SIZE of that shift is the whole question, which is why this
+    fixture's nested result is long. Masking `7` as `«F:PAGE»` shifts by
+    seven characters, and seven characters before a region's start is
+    still inside `separate"/>` — tag text, which `_mask_text` leaves
+    alone and the concatenation puts back unchanged. That is the same
+    accident that makes the `regions[0]` mutant equivalent, and it means
+    a short fixture decides this by luck. A 35-character cached date
+    shifts 27 the other way, which clears `</w:r><w:r><w:t>` and the
+    page number behind it: the stale slice then holds no `<w:t>` at all
+    and the outer field's cached result is left in the document.
+    Measured — append order returns ['«F:DATE»', '17'] here.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    stamp = "Tuesday, 15 September 2026 at 22:01"
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _nested_in_instruction(
+               "PAGEREF _Toc1", 'DATE \\@ "dddd, d MMMM yyyy"', stamp, "17")
+           + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace(
+        f"<w:t>{stamp}</w:t>", "<w:t>«F:DATE»</w:t>").replace(
+        "<w:t>17</w:t>", "<w:t>«F:PAGEREF»</w:t>"), out
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_NON_volatile_field_wrapping_another_is_left_untouched(lead):
+    """The control, and what pins the two tests above to the NESTING
+    rather than to masking in general: the same shape with a TOC outside
+    instead of a PAGEREF. Nothing in it is volatile, and it comes back
+    byte for byte — before the fix as well as after."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _nested_in_instruction('TOC \\o "1-3"', "REF _Toc1",
+                                    "Table 3", "17") + "</w:p>")
+
+    assert mask_volatile_fields(xml) == xml
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_volatile_field_under_a_NON_volatile_parent_is_still_masked(lead):
+    """The fourth corner of the same square: a parent that claims no
+    region of its own must not shield the volatile field in its
+    instruction half either. A TOC is exactly where Word keeps page
+    numbers it recalculates, so this is the shape that would fill a
+    redline with page numbers nobody typed."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _nested_in_instruction('TOC \\o "1-3"', "PAGE", "7", "17")
+           + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+
+
+def test_an_edit_inside_a_nested_cross_reference_is_SEEN(tmp_path):
+    """What the S1 above cost, stated as the gate rather than as the
+    masked XML: two documents differing in one cross-reference's visible
+    text and in nothing else.
+
+    Masking runs on both sides alike, so a mask that lands on the wrong
+    text does not report the difference — it ERASES it. `--expect-clean`
+    exited 0 over this pair, which is a false negative in the one gate
+    whose job is to certify that no edit was lost."""
+    nested = _nested_in_instruction("PAGEREF _Toc1", "REF _Toc1",
+                                    "Table 3", "17")
+    a, b = docs(tmp_path, BASE + para(nested),
+                BASE + para(nested.replace(">Table 3<", ">Table 5<")))
+
+    report = compare(a, b)
+
+    assert report["text"], "the edit reached no layer"
+    assert render(report, expect_clean=True) == 1
 
 
 def _captioned(texts: list[str | None]) -> dict[str, bytes]:

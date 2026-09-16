@@ -558,8 +558,12 @@ INSTR_REF_RE = re.compile(r'\bREF\s+(?:"([^"]+)"|([^\s\\"]+))')
 #: different question and the one `crossrefs` asks before removing one.
 REF_HYPERLINK_SWITCH_RE = re.compile(r"\\h(?![A-Za-z])")
 
-#: Public: `_compare_read` masks a volatile field's cached RESULT, which
-#: starts here, and kept its own copy of this until it was promoted.
+#: Public: `edit` finds a field's cached RESULT, which starts here.
+#: `_compare_read` was the reason it was promoted out of a private copy
+#: and is no longer a user: since 2026-09-16 it pairs a separator with
+#: its own field's `begin` by DEPTH, through `FLDCHAR_RE`, because the
+#: FIRST separator in a field's body belongs to a field nested in the
+#: instruction half when there is one.
 SEPARATE_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>')
 _SEPARATE_RE = SEPARATE_RE
 
