@@ -14,6 +14,59 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — harness_for silently scanned when the .py was dropped, and could scan NARROWER~~ — FIXED 18.09, `a94ac3a`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 by an agent chasing a discrepancy between two OTHER agents'
+numbers for the same module — which is the only way this one surfaces.
+
+`harness_for` falls back to scanning `tests/` for files that import the
+module when the name has no entry. That is right for a module nobody has
+mapped yet. The map is keyed on the FILE name, so a bare stem misses and
+triggers the same scan — and nothing in the output says which answer you
+got.
+
+**The direction is not fixed**, which is what makes it a defect rather than
+untidiness. Measured across three modules the same afternoon:
+
+    harness_for("lint")   6 files   harness_for("lint.py")   3    WIDER
+    harness_for("edit")  17 files   harness_for("edit.py")   9    WIDER
+    harness_for("find")   7 files   harness_for("find.py")   8    NARROWER
+    harness_for("word")  15 files   harness_for("word.py")   7    neither —
+        the scan misses `test_equations.py` while pulling in `test_cli.py`,
+        `test_pages.py` and `test_placement.py`, so it is not even a
+        superset of the entry.
+
+Wider is harmless to a census: a bigger harness kills more, never fewer, so
+a survivor found against it is a floor. **Narrower is the defect.** A round
+measured that way runs against a harness missing a mapped file and INVENTS
+survivors — the instrument defect of `edit.py` and `revision/_common.py`
+arriving by a third road. Not a wrong entry, and not a stale one: a caller
+who never reached the entry at all.
+
+Nothing in `tools/` is affected — `mutation_survivors` uses
+`Path(src_path).name`, `replay_survivors` and `verify_equivalents` use the
+module key, `measure_all` takes the file name. It bites the hand-written
+scripts a survivor round runs, which is most of what this campaign is made
+of: one round's whole census went against the wider six, and another's
+`kill_check` driver against the fallback's fifteen. Both verdicts survive —
+wider in one case, and every kill in the other attributed to a test in a
+mapped file — but neither round knew which harness it was describing.
+
+**Fixed 18.09 in `a94ac3a`**: a bare stem that names a mapped module is
+refused, with the message naming the right key. The fallback stays exactly
+as it was for a module with no entry, which is what it is for.
+
+**And a test that was asserting the map while calling it the fallback.**
+`test_a_module_with_no_entry_falls_back_to_what_NAMES_it` read
+`harness_for("styles.py")  # deliberately unmapped`. That comment was true
+when it was written; `styles.py` has had an entry since. So the test took
+the `if module in HARNESS` branch, returned the mapped list, found
+`tests/test_styles.py` in it, and passed — and would have gone on passing if
+the fallback had been deleted outright. It removes the entry for the
+duration now. That is the sixth test found this day to be green for a reason
+unrelated to what it names.
 ### ~~S3 — four source-grep tests cannot fail, and one leaves 17 modules unchecked~~ — FIXED 18.09, `c911c38`
 <!-- status: fixed -->
 
