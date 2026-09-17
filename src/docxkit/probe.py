@@ -177,7 +177,11 @@ def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
     # bookmarks, and whether they sit between paragraphs (body-level) --
     # a block move has to carry those, and they are invisible to a
     # paragraph-oriented edit
-    body = doc[doc.find("<w:body>"):]
+    # The body's open tag in any spelling. Found as the exact string
+    # `<w:body>`, `find` answered -1 for `<w:body >`, and the slice from
+    # -1 is the document's last character: no bookmark was reported.
+    opened = re.search(r"<w:body\b[^>]*(?<!/)>", doc)
+    body = doc[opened.start():] if opened else ""
     for m in BOOKMARK_NAME_RE.finditer(body):
         before = body.rfind("<w:p", 0, m.start())
         closed = body.rfind("</w:p>", 0, m.start())

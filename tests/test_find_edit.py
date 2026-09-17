@@ -921,6 +921,30 @@ def test_body_elements_are_in_DOCUMENT_order_not_by_kind():
     assert [kind for kind, _s, _e in body_elements(xml)] == ["tbl", "p"]
 
 
+#: A table open tag carrying its own namespace declaration, as a
+#: generated manuscript writes it (9 tables in 1 of 2,954 corpus packages).
+_DECLARED_TBL = ('<w:tbl xmlns:w="http://schemas.openxmlformats.org/'
+                 'wordprocessingml/2006/main">')
+
+
+def test_body_elements_find_a_table_whose_open_tag_carries_ATTRIBUTES():
+    """Tables were found as the exact string `<w:tbl>`. One opened with
+    attributes was not a table at all to this walk, and its cells'
+    paragraphs were listed as body paragraphs one by one."""
+    xml = document(table(row("a")).replace("<w:tbl>", _DECLARED_TBL, 1)
+                   + para(run("after the table")))
+
+    assert [kind for kind, _s, _e in body_elements(xml)] == ["tbl", "p"]
+
+
+def test_read_all_finds_a_table_whose_open_tag_carries_ATTRIBUTES():
+    from docxkit.tables import read_all
+
+    xml = document(table(row("a", "b")).replace("<w:tbl>", _DECLARED_TBL, 1))
+
+    assert [t.rows for t in read_all(xml)] == [[["a", "b"]]]
+
+
 def test_rep_refuses_MORE_anchors_than_it_was_told_to_expect():
     """`!= n`, not `< n`. Too many hits is the dangerous direction: the
     replace succeeds, silently edits a sentence nobody looked at, and

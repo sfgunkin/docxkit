@@ -1090,7 +1090,7 @@ def refile(parts: dict[str, bytes], *,
             # sentence: `_xml.PARA_RE` skips a self-closing `<w:p …/>` on
             # purpose, so a blank line pasted into a reference list is
             # invisible to every text-layer check and turns up here.
-            blank = "<w:p " in gap or "<w:p/>" in gap
+            blank = re.search(r"<w:p[\s/]", gap) is not None
             report.refused = (
                 f"an empty paragraph sits above ¶{r.index + 1}; delete it "
                 f"first, or sorting moves a blank line into the middle of "

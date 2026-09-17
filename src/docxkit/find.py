@@ -16,8 +16,8 @@ from functools import lru_cache
 from ._xml import (
     NOTE_REF_RE,
     PARA_RE,
+    element_spans,
     internal_links,
-    matching_close,
     normalize_glyphs,
     set_para_property,
     visible_text,
@@ -298,12 +298,10 @@ def body_elements(xml: str) -> list[tuple[str, int, int]]:
     offset lookups), so a nested table rides along inside its outer one
     rather than truncating it.
     """
-    tables: list[tuple[int, int]] = []
-    pos = 0
-    while (at := xml.find("<w:tbl>", pos)) != -1:
-        end = matching_close(xml, at + len("<w:tbl>"), "tbl")
-        tables.append((at, end))
-        pos = end
+    # `element_spans` reads the table's open tag in any spelling; found as
+    # the exact string `<w:tbl>`, a table whose tag carried a namespace
+    # declaration was walked as loose paragraphs (2026-09-17).
+    tables = element_spans(xml, "tbl")
     out: list[tuple[str, int, int]] = [("tbl", s, e) for s, e in tables]
     out += [("p", m.start(), m.end()) for m in PARA_RE.finditer(xml)
             if table_index_at(tables, m.start()) is None]

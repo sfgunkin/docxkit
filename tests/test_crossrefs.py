@@ -689,6 +689,21 @@ def test_unlink_restores_a_plain_document():
         "As Table 1 shows, employment rises.Table 1. Employment"
 
 
+def test_link_finds_the_label_run_whatever_follows_its_NAME():
+    """The run holding a mention or a caption label was found as the
+    last `<w:r>` or `<w:r ` before its text. A run opened `<w:r\\n…` —
+    legal XML, though no corpus package writes one — was no run, and
+    neither the mention nor the caption was linked."""
+    xml = doc(
+        para(run("As Table 1 shows, employment rises.")),
+        para(run("Table 1. Employment")),
+    ).replace("<w:r>", '<w:r\nw:rsidR="00A1B2C3">')
+
+    linked, _ = crossrefs.link(xml)
+
+    assert linked.count("<w:hyperlink") == 2, linked
+
+
 #: A linked document as other producers spell it. Each is the same
 #: markup Word would read identically; each was read by one spelling.
 _RESPELLED = {

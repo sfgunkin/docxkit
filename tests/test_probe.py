@@ -234,6 +234,20 @@ def test_an_EMPTY_table_does_not_swallow_the_next_exhibit(tmp_path):
                             ("Table 2", "table, 3 rows", "")]
 
 
+def test_a_body_whose_open_tag_is_spelled_OTHERWISE_is_still_read(tmp_path):
+    """The body was found as the exact string `<w:body>`; `find` answered
+    -1 for `<w:body >`, and the slice from -1 is the document's last
+    character — every bookmark in the body went unreported."""
+    path = write(tmp_path / "probe.docx", {
+        name: (blob.replace(b"<w:body>", b"<w:body >")
+               if name == "word/document.xml" else blob)
+        for name, blob in make_parts(BODY).items()})
+
+    rep = probe(path)
+
+    assert ("Table1", "body") in rep.bookmarks
+
+
 def test_a_caption_whose_table_follows_IMMEDIATELY(tmp_path):
     """The other edge of the same window: `i + 1` is the first block it
     looks at, and a caption sitting directly on its table is the

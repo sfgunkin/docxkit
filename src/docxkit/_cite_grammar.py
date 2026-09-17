@@ -18,8 +18,11 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from ._xml import (
+    RUN_OPEN_RE,
     RUN_RE,
     escape,
+    live_properties,
+    own_properties,
     run_holds_content,
     run_spans,
     set_run_text,
@@ -882,13 +885,20 @@ def _add_style(run_xml: str, style: str) -> str:
     """Add a character style to a run, text untouched (rStyle is FIRST
     in the rPr sequence, so insertion is unambiguous)."""
     tag = f'<w:rStyle w:val="{style}"/>'
-    if "<w:rStyle" in run_xml:
+    # The run's OWN properties, in any spelling. Asked for the exact
+    # string `<w:rPr>`, an EMPTY `<w:rPr/>` — 18,172 in 248 of 2,954
+    # corpus packages — was not found, and a second `w:rPr` went in front
+    # of it; and a style only in a `w:rPrChange` snapshot, what the run
+    # USED to wear, read as present and left it unstyled (2026-09-17).
+    own = own_properties(run_xml, "rPr")
+    if own is None:
+        m = RUN_OPEN_RE.search(run_xml)
+        assert m is not None
+        return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
+    start, end, inner = own
+    if "<w:rStyle" in live_properties(inner):
         return run_xml
-    if "<w:rPr>" in run_xml:
-        return run_xml.replace("<w:rPr>", f"<w:rPr>{tag}", 1)
-    m = re.search(r"<w:r\b[^>]*>", run_xml)
-    assert m is not None
-    return run_xml[:m.end()] + f"<w:rPr>{tag}</w:rPr>" + run_xml[m.end():]
+    return run_xml[:start] + f"<w:rPr>{tag}{inner}</w:rPr>" + run_xml[end:]
 
 
 def bookmark(name: str, bookmark_id: int, inner: str = "") -> str:

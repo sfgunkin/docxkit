@@ -59,6 +59,7 @@ from ._xml import (
     field_anchors,
     live_properties,
     own_properties,
+    run_open_before,
     visible_text,
 )
 from .citations import delete_bookmark, next_bookmark_id, wrap_link_in_bookmark
@@ -419,8 +420,10 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
         m = pattern.search(tm.group(1))
         if m is None:
             continue
-        r_open = max(para_xml.rfind("<w:r>", 0, tm.start()),
-                     para_xml.rfind("<w:r ", 0, tm.start()))
+        # The run's open tag in any spelling (`_xml.RUN_OPEN_RE`): found as
+        # the last `<w:r>` or `<w:r ` before the text, a run whose name a
+        # tab or a newline ended was no run at all (2026-09-17).
+        r_open = run_open_before(para_xml, tm.start())
         if r_open < 0:
             continue
         r_close = para_xml.find("</w:r>", tm.end()) + len("</w:r>")
@@ -502,8 +505,7 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
         raw_label = content.lstrip()[:len(label)]
         rest = content.lstrip()[len(label):]
 
-        r_open = max(para_xml.rfind("<w:r>", 0, tm.start()),
-                     para_xml.rfind("<w:r ", 0, tm.start()))
+        r_open = run_open_before(para_xml, tm.start())   # see _link_mention
         if r_open < 0:
             continue
         r_close = para_xml.find("</w:r>", tm.end()) + len("</w:r>")

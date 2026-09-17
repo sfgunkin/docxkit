@@ -332,6 +332,34 @@ def test_add_style_styles_ONCE_a_run_carrying_a_format_change():
     assert out.startswith('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/><w:b/>')
 
 
+def test_add_style_fills_an_EMPTY_rPr_instead_of_adding_a_second():
+    """`<w:rPr/>` is a run's properties, empty — 18,172 of them in 248 of
+    2,954 corpus packages. Asked for the exact string `<w:rPr>`, the
+    styler found none and put a second `w:rPr` in front of it, which
+    CT_R does not allow."""
+    from docxkit._cite_grammar import _add_style
+
+    out = _add_style("<w:r><w:rPr/><w:t>x</w:t></w:r>", "Hyperlink")
+
+    assert out == ('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+                   "<w:t>x</w:t></w:r>")
+
+
+def test_add_style_reads_the_LIVE_style_not_the_one_a_change_recorded():
+    """A style only in the `w:rPrChange` snapshot is what the run USED to
+    wear; read as present, the live run was left unstyled."""
+    from docxkit._cite_grammar import _add_style
+
+    run = ('<w:r><w:rPr><w:rPrChange w:id="1" w:author="A"><w:rPr>'
+           '<w:rStyle w:val="Emphasis"/></w:rPr></w:rPrChange></w:rPr>'
+           "<w:t>x</w:t></w:r>")
+
+    out = _add_style(run, "Hyperlink")
+
+    assert out.startswith('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/>'
+                          "<w:rPrChange"), out
+
+
 # --- the whole sweep of 2026-09-15 ------------------------------------
 
 

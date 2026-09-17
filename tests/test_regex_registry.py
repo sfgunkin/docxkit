@@ -720,10 +720,6 @@ NOT_AN_OPENING_TAG: dict[tuple[str, str], str] = {
     ("_cite_grammar.py", r"\S+"): (
         "generic tokenizer: splits VISIBLE text on whitespace to find the "
         "capitalised word a name starts on; it never sees markup"),
-    ("_cite_grammar.py", r"<w:r\b[^>]*>"): (
-        "isolated input: `_add_style` gets a run matched by the guarded "
-        "RUN_RE, or a half `split_run` rebuilt from one, which always "
-        "carries that run's open tag and a `</w:r>`"),
     ("_cite_repair.py", r"<w:p\b[^>]*>"): (
         "isolated input: `_mark_para_head` gets a paragraph matched by the "
         "guarded PARA_RE, through `para_slice` or `_cite_build`'s rebuild, "

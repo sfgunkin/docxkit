@@ -580,6 +580,26 @@ def test_an_EMPTY_paragraph_above_an_entry_gets_its_own_sentence():
     assert "delete it first" in report.refused
 
 
+@pytest.mark.parametrize("blank", ["<w:p />", '<w:p\tw:rsidR="00A1B2C3"/>'])
+def test_an_EMPTY_paragraph_in_ANOTHER_spelling_gets_its_sentence_too(blank):
+    """The blank was recognised as `"<w:p "` or `"<w:p/>"` only, so a
+    self-closing paragraph whose name is followed by a tab or a newline \u2014
+    legal XML, though no package of the 2,954 in the corpus writes one \u2014
+    fell through to "has '<w:p \u2026/>' above it, which is not a bookmark",
+    naming markup instead of the blank line it is."""
+    parts = _list_with(
+        para(run("Body one.")), para(run("Body two.")),
+        para(run("References")),
+        para(run(ENTRY_A)), blank, para(run(ENTRY_B)),
+        para(run(ENTRY_C)))
+
+    report = refile(parts)
+
+    assert not report.moved
+    assert report.refused.startswith(
+        "an empty paragraph sits above \u00b6"), report.refused
+
+
 
 # --- WHERE a finding points, and what it quotes (2026-08-24) -------------
 

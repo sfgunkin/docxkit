@@ -23,7 +23,6 @@ from typing import Any, Literal, NamedTuple, overload
 from ._xml import (
     PARA_RE,
     element_spans,
-    matching_close,
     normalize_glyphs,
     set_run_text,
     visible_text,
@@ -339,13 +338,13 @@ def _table_spans(xml: str) -> list[tuple[int, int]]:
     meets, which for a table containing another table is the INNER one —
     the fragment then ends mid-cell. Questionnaires nest tables freely,
     and that is where this first bit.
+
+    Through `element_spans`, which reads the open tag in any spelling: a
+    table found as the exact string `<w:tbl>` was no table when its tag
+    carried a namespace declaration, as a generated manuscript's did (9
+    tables in 1 of 2,954 corpus packages; 2026-09-17).
     """
-    spans, pos = [], 0
-    while (at := xml.find("<w:tbl>", pos)) != -1:
-        end = matching_close(xml, at + len("<w:tbl>"), "tbl")
-        spans.append((at, end))
-        pos = end                      # nested tables ride along inside
-    return spans
+    return element_spans(xml, "tbl")
 
 
 def _cell_text(tc_xml: str) -> str:

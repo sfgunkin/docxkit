@@ -125,9 +125,14 @@ MUTATIONS = [
              '.replace(">", "&gt;")',
              "    return text"),
     # --- tables ---------------------------------------------------------
-    Mutation("_table_core.py", "nested tables close on the first end tag",
-             '        end = matching_close(xml, at + len("<w:tbl>"), "tbl")',
-             '        end = xml.index("</w:tbl>", at) + len("</w:tbl>")'),
+    # Re-anchored 2026-09-17: `_table_core._table_spans` found tables as
+    # the exact string `<w:tbl>` and now reads them through
+    # `_xml.element_spans`, which carries the depth count this tests —
+    # for tables, rows and cells alike.
+    Mutation("_xml.py", "nested tables close on the first end tag",
+             "        end = matching_close(xml, m.end(), tag)",
+             '        end = xml.index(f"</w:{tag}>", m.end()) '
+             '+ len(f"</w:{tag}>")'),
     # Two, because the guard is now two questions. The first says "is
     # this the document it was read from"; the second, reached only when
     # it is not, says "are this table's own bytes still at its offsets".
