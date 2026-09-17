@@ -231,7 +231,7 @@ def test_a_TEST_FILE_the_run_NEVER_HAD_is_replayed_not_refused(
     rs = _tree(tmp_path, monkeypatch)
     ran: list[list[str]] = []
 
-    def check(module: str, tests: list[str], cases: list) -> int:
+    def check(module: str, tests: list[str], cases: list[object]) -> int:
         ran.append(tests)
         return 0
 

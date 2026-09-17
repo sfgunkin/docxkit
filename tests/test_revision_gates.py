@@ -99,6 +99,30 @@ def test_a_passing_gate_and_a_failing_one_are_told_apart(tmp_path):
     assert not bad.ok and bad.code == 3 and bad.verdict == "FAIL (3)"
 
 
+def test_a_code_BELOW_the_TIMEOUT_sentinel_is_a_failure_not_a_timeout():
+    """`ok` and `verdict` compare by `==`, and both halves matter.
+
+    -1 is this module's own sentinel for "ran out of time" and the only
+    negative code `_run_one` produces itself: a gate that exits -1
+    reports 4294967295 on Windows, where an exit code is an unsigned
+    DWORD (measured 2026-09-17), and 128+N through a POSIX shell when
+    the work is killed by a signal. What IS negative off Windows is the
+    SHELL killed by a signal — `proc.returncode` is then -SIGNAL — so a
+    paper's pytest gate cut down by the OOM killer arrives here as -9.
+    It failed; the ladder did not time it out, and `--gate-timeout` is
+    not the thing to reach for.
+
+    Written because the 2026-09-17 replay found `code == 0 -> <= 0` and
+    `code == -1 -> <= -1` alive against the whole revision suite, on a
+    session that had recorded both as kills — by TIMEOUT.
+    """
+    killed = revision.GateResult(command="pytest -q", code=-9, seconds=0.2,
+                                 output="Killed")
+
+    assert not killed.ok, "a gate the kernel killed did not pass"
+    assert killed.verdict == "FAIL (-9)"
+
+
 def test_the_gate_runs_from_the_PROJECT_ROOT(tmp_path):
     """A paper's gates are written relative to it — "pytest tests/",
     "python scripts/qa_links.py". Run from anywhere else they do not
@@ -133,6 +157,7 @@ def test_a_gate_that_HANGS_is_a_gate_that_fails(tmp_path):
     elapsed = time.monotonic() - started
 
     assert gate.code == -1 and gate.verdict == "TIMED OUT"
+    assert not gate.ok, "and a gate that timed out is not a gate that passed"
     assert f"within {timeout:g}s" in gate.output
     assert elapsed < 15, (
         f"the gate slept 30s and the timeout was {timeout:g}s; run_gates "
