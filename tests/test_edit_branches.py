@@ -588,6 +588,74 @@ def test_links_to_hands_back_the_label_and_the_whole_link_BY_VALUE(lead):
     assert p[fl.outer[0]:fl.outer[1]] == fld
 
 
+# --- a link whose field holds another field (BACKLOG S7) ----------------
+#
+# Word nests fields wherever the text it copied held one: a SEQ number
+# inside a caption's link, a PAGEREF inside a TOC entry, a HYPERLINK
+# inside a REF. `_links_to` paired begin-to-first-end, so the outer
+# field ENDED at the inner field's end marker.
+
+
+def _nested_seq_link() -> str:
+    """A caption link whose label carries the SEQ field that numbers it."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l "Table5" '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run("Table ") + field("SEQ Table \\* ARABIC", "5")
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_a_link_whose_result_holds_another_field_ends_at_its_OWN_end():
+    """The outer span is what `remove_link` cuts. Ended at the SEQ
+    field's `end` marker, the cut left the link's own `end` fldChar
+    standing in the paragraph with no `begin` — a broken field, which
+    reads as ordinary prose to every text gate."""
+    link = _nested_seq_link()
+    p = para(run("See "), link, run("."))
+
+    (found,) = _links_to(p, "Table5")
+
+    assert p[found.outer[0]:found.outer[1]] == link
+    assert visible_text(p[found.label[0]:found.label[1]]) == "Table 5"
+
+
+def test_removing_that_link_leaves_no_field_marker_UNPAIRED():
+    """The damage the span above decides. Whatever `_plain_runs` keeps of
+    the nested SEQ field, the paragraph must be left with as many `begin`
+    markers as `end` markers — an `end` on its own is a field Word cannot
+    read, and the words in front of it look untouched."""
+    p = para(run("See "), _nested_seq_link(), run("."))
+
+    out, label = remove_link(p, "Table5")
+
+    assert label == "Table 5"
+    assert visible_text(out) == "See Table 5."
+    assert out.count('w:fldCharType="begin"') == \
+        out.count('w:fldCharType="end"')
+    assert "HYPERLINK" not in out, "the link's own instruction is gone"
+
+
+def test_a_link_INSIDE_another_field_is_reported_as_itself():
+    """A `REF … \\h` whose text held a link of its own: Word copies the
+    link into the result. Paired begin-to-first-end, the outer REF was
+    read as the HYPERLINK — one link, spanning from the REF's `begin` —
+    so unwrapping it took the cross-reference field with it."""
+    inner = field('HYPERLINK \\l "Sen1985"', "Sen (1985)")
+    p = para(run("See "),
+             '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> REF _Ref1 \\h '
+             "</w:instrText></w:r>"
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + inner + '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+             run("."))
+
+    (found,) = _links_to(p)
+
+    assert found.anchor == "Sen1985"
+    assert p[found.outer[0]:found.outer[1]] == inner, "the inner field only"
+
+
 def _sweep_para() -> str:
     """Two links to unwrap, one of each form, and a kept one LAST — the
     sweep walks back to front, so the kept link is the first it meets."""

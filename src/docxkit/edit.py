@@ -12,7 +12,6 @@ from html import unescape
 from typing import NamedTuple
 
 from ._xml import (
-    _FIELD_RE,
     _HYPERLINK_EL_RE,
     _T_EMPTY_RE,
     HYPERLINK_ANY_RE,
@@ -20,12 +19,12 @@ from ._xml import (
     INSTR_RE,
     RUN_OPEN_RE,
     RUN_RE,
-    SEPARATE_RE,
     T_RUN_RE,
     XML_WS,
     editable_text,
     escape,
     field_spans,
+    fields,
     in_span,
     internal_links,
     live_properties,
@@ -1092,10 +1091,22 @@ def _links_to(para_xml: str, anchor: str | None = None) -> list[_Link]:
     still live was found much later and by hand (Parental_style).
 
     The OUTER span is run-aligned for a field, and it has to be: a field
-    is four runs — begin, instruction, separate, end — and `_FIELD_RE`
-    matches from the `begin` fldChar to the `end` one, INSIDE the runs
-    that hold them. Cutting at the match leaves two empty `w:r` shells
-    around the words.
+    is four runs — begin, instruction, separate, end — and the markers
+    live INSIDE the runs that hold them. Cutting at the markers leaves
+    two empty `w:r` shells around the words.
+
+    **The markers are paired by DEPTH**, through :func:`_xml.fields`, and
+    the pairing is the whole of BACKLOG S7. Fields NEST: Word writes the
+    SEQ that numbers a caption inside the caption's own link, a PAGEREF
+    inside each TOC entry, a HYPERLINK inside a REF whose text held one.
+    A begin-to-first-end regex ends the OUTER field at the inner field's
+    `end` marker, and this function's two answers were then both wrong on
+    the same paragraph: `remove_link` cut at that marker and left the
+    link's own `end` fldChar standing with no `begin` — a field Word
+    cannot read, in front of words that look untouched — and a REF
+    holding a link was reported as being that link, so unwrapping it took
+    the cross-reference with it. A nested field is its own entry now,
+    with its own instruction and its own extent.
     """
     out: list[_Link] = []
     for m in _HYPERLINK_EL_RE.finditer(para_xml):
@@ -1103,20 +1114,21 @@ def _links_to(para_xml: str, anchor: str | None = None) -> list[_Link]:
         if anchor is None or found == anchor:
             out.append(_Link(found, (m.start(2), m.end(2)),
                              (m.start(), m.end()), field=False))
-    for m in _FIELD_RE.finditer(para_xml):
-        instr = unescape("".join(INSTR_RE.findall(m.group(1))))
-        am = INSTR_ANCHOR_RE.search(instr)
-        sep = SEPARATE_RE.search(m.group(1))
-        if am is None or sep is None:
+    for f in fields(para_xml):
+        am = INSTR_ANCHOR_RE.search(f.instr)
+        if am is None or f.result is None or f.end < 0:
             continue
         if anchor is not None and am.group(1) != anchor:
             continue
-        start = run_open_before(para_xml, m.start())
-        end = para_xml.find("</w:r>", m.end())
-        if start < 0 or end < 0:            # pragma: no cover - defensive
-            continue
-        out.append(_Link(am.group(1), (m.start(1) + sep.end(), m.end(1)),
-                         (start, end + len("</w:r>")), field=True))
+        start = run_open_before(para_xml, f.start)
+        close = para_xml.find("</w:r>", f.end)
+        # where the field's own `end` marker opens: `f.end` is past that
+        # marker's attribute, and the result runs up to the marker
+        marker = para_xml.rfind("<w:fldChar", f.start, f.end)
+        if start < 0 or close < 0 or marker < 0:
+            continue                        # pragma: no cover - defensive
+        out.append(_Link(am.group(1), (marker - len(f.result), marker),
+                         (start, close + len("</w:r>")), field=True))
     return sorted(out, key=lambda link: link.label)
 
 
