@@ -23,6 +23,8 @@ question.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from conftest import make_parts, para, revision_round, run, write
 
@@ -287,6 +289,182 @@ def test_WITHDRAW_refuses_while_word_holds_the_manuscript(promoted_round,
         revision.withdraw(paper, why="open in Word")
 
     assert paper.working.read_bytes() == before
+
+
+# --- which digest sorts first, and which redline is read -----------------
+#
+# From the first valid `revision/_promote` sweep (2026-09-18). Every
+# check `withdraw` makes compares two hex digests with `==` or `!=`, and
+# an ordering in place of either still holds for whichever half of all
+# content a single fixture happens to land in — so these build the half
+# the fixtures above do not, on both sides where both are reachable.
+
+
+def _content_hashing(build, *, below: str | None = None,
+                     above: str | None = None) -> bytes:
+    """Bytes from `build(n)` whose sha256 sorts as asked.
+
+    `build` is called with 0, 1, 2 … until one lands on the named side
+    of the digests given, which is at most a few tries and is the same
+    content on every run.
+    """
+    import hashlib
+
+    for n in range(1000):
+        blob = build(n)
+        digest = hashlib.sha256(blob).hexdigest()
+        if ((below is None or digest < below)
+                and (above is None or digest > above)):
+            return blob
+    raise AssertionError("no content hashed to the side asked for")
+
+
+def _a_docx(scratch: Path, text: str):
+    """A builder for `_content_hashing`: a one-paragraph .docx."""
+    def build(n: int) -> bytes:
+        write(scratch, make_parts(para(run(f"{text} {n}"))))
+        return scratch.read_bytes()
+    return build
+
+
+def _some_bytes(n: int) -> bytes:
+    """A builder for `_content_hashing`: what a failed copy left."""
+    return b"a copy that stopped part way %d" % n
+
+
+def test_WITHDRAW_takes_back_the_NEWEST_of_several_kept_redlines(
+        promoted_round):
+    """`build/redlines/` is the record of every round, so from the second
+    promote on it holds more than one — and the manuscript carries the
+    last of them. Reading the first instead refuses a withdrawal that is
+    in order, and says the author saved a file they never opened."""
+    paper = promoted_round.paper
+    revision.withdraw(paper, why="the first proposal was wrong")
+    write(paper.batch, make_parts(para(run("the corrected proposal"))))
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+    kept = paper.redlines()
+    assert len(kept) == 2 and kept[0].read_bytes() != kept[1].read_bytes()
+
+    report = revision.withdraw(paper, why="wrong as well")
+
+    assert report.withdrawn == kept[-1]
+    assert paper.working.read_bytes() == paper.prev.read_bytes()
+
+
+def test_WITHDRAW_refuses_a_saved_manuscript_that_sorts_BELOW_the_redline(
+        promoted_round, tmp_path):
+    """A manuscript that is not the promoted bytes has been opened and
+    saved, and which of the two digests sorts first says nothing about
+    that. `!=` read as `<` refuses only where the redline sorts first —
+    the half every other fixture here lands in — and on this one it
+    restores the baseline over the author's own work without a word."""
+    paper = promoted_round.paper
+    (newest,) = paper.redlines()
+    saved = _content_hashing(_a_docx(tmp_path / "scratch.docx",
+                                     "the author's own sentence"),
+                             below=guard.sha256(newest))
+    paper.working.write_bytes(saved)
+    lines = len(_ledger_lines(paper))
+
+    with pytest.raises(ProtocolError, match="no longer the batch"):
+        revision.withdraw(paper, why="too late")
+
+    assert paper.working.read_bytes() == saved
+    assert len(_ledger_lines(paper)) == lines
+
+
+@pytest.mark.parametrize("side", ["below", "above"])
+def test_WITHDRAW_refuses_a_RESCUE_that_is_not_the_baselines_bytes(
+        held_round, tmp_path, side):
+    """The rescue stands in for a missing stamp only while it holds the
+    BASELINE's bytes — that is the promote saying what it replaced.
+    `==` read as an ordering takes every rescue on one side of the
+    baseline's digest as that proof, so the baseline here is built on
+    both sides of it; `is not` takes any rescue at all, and this refuses
+    on either. The message is the unstamped one, which is also what
+    reading `built_on is not None` backwards turns into a TypeError."""
+    paper = held_round.paper
+    guard.stamp_path(paper.batch).unlink()       # the hand-authored vehicle
+    revision.promote(paper)
+    (rescue,) = revision.rescues(paper)
+    bound = {"below": {"below": guard.sha256(rescue)},
+             "above": {"above": guard.sha256(rescue)}}[side]
+    paper.prev.write_bytes(_content_hashing(
+        _a_docx(tmp_path / "scratch.docx", "another generation"), **bound))
+    before = paper.working.read_bytes()
+
+    with pytest.raises(ProtocolError, match="was not built on") as refused:
+        revision.withdraw(paper, why="the rescue is of another generation")
+
+    assert "carries no stamp" in str(refused.value), refused.value
+    assert paper.working.read_bytes() == before
+
+
+def test_WITHDRAW_does_not_let_a_rescue_OVERRIDE_a_stamp(promoted_round):
+    """A rescue is proof for the unstamped vehicle, and only for that. A
+    proposal whose stamp names another baseline was built somewhere
+    else, and a rescue holding these bytes does not make `prev` the file
+    that promote replaced — `and` read as `or` makes the rescue proof
+    for a stamped proposal too, and puts a generation on the paper."""
+    paper = promoted_round.paper
+    assert any(guard.sha256(r) == guard.sha256(paper.prev)
+               for r in revision.rescues(paper)), "the rescue is the baseline"
+    guard.stamp(paper.working, base_sha256="0" * 64)   # another --base
+    before = paper.working.read_bytes()
+
+    with pytest.raises(ProtocolError, match="was not built on") as refused:
+        revision.withdraw(paper, why="the stamp names another baseline")
+
+    assert "its stamp names" in str(refused.value), refused.value
+    assert paper.working.read_bytes() == before
+
+
+@pytest.mark.parametrize("side", ["below", "above"])
+def test_WITHDRAW_that_did_not_land_refuses_whichever_way_it_hashes(
+        promoted_round, monkeypatch, tmp_path, side):
+    """The copy that did not land, on both sides of the baseline's
+    digest. `!=` read as an ordering refuses one side and, on the other,
+    leaves the manuscript holding bytes neither generation wrote while
+    the ledger records a withdrawal and the staged batch goes."""
+    import shutil
+
+    paper = promoted_round.paper
+    base_hash = guard.sha256(paper.prev)
+    bound = {"below": {"below": base_hash}, "above": {"above": base_hash}}
+    landed = _content_hashing(_some_bytes, **bound[side])
+    lines = len(_ledger_lines(paper))
+    monkeypatch.setattr(shutil, "copyfile",
+                        lambda _s, d, *a, **k: d.write_bytes(landed))
+
+    with pytest.raises(ProtocolError, match="still holds the proposal"):
+        revision.withdraw(paper, why="bad disk")
+
+    assert len(_ledger_lines(paper)) == lines
+    assert paper.batch.exists()
+    assert guard.stamp_path(paper.working).exists(), \
+        "nothing after the landing check ran"
+
+
+def test_WITHDRAW_leaves_a_REBUILT_batch_that_sorts_ABOVE_the_proposal(
+        promoted_round, tmp_path):
+    """Only the withdrawn proposal is unstaged, and `==` is the whole of
+    "the same bytes". `>=` in its place unstages every rebuilt batch
+    whose digest sorts above the proposal's — the next round's work
+    deleted, and the ledger saying this round did it."""
+    paper = promoted_round.paper
+    rebuilt = _content_hashing(_a_docx(tmp_path / "scratch.docx",
+                                       "already rebuilt"),
+                               above=guard.sha256(paper.working))
+    paper.batch.write_bytes(rebuilt)
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+
+    report = revision.withdraw(paper, why="rebuilt first")
+
+    assert not report.removed_batch
+    assert paper.batch.read_bytes() == rebuilt
+    assert guard.stamp_path(paper.batch).exists()
+    assert _ledger_lines(paper)[-1]["removed_batch"] is False
 
 
 # ------------------------------------------------------------- accepted

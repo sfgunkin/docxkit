@@ -1704,6 +1704,78 @@ def test_promote_refuses_when_the_PROMOTE_itself_did_not_land(
         revision.promote(project)
 
 
+def _bytes_hashing(*, below: str) -> bytes:
+    """What a failed copy left behind, hashing BELOW `below`.
+
+    Both landing checks compare two hex digests with `!=`, and an
+    ordering in place of it still refuses every copy that falls on one
+    side of the file it is compared with. The payloads above all fall on
+    the same side, so the mutant reads as the real check; this picks one
+    from the other side, deterministically and in a few tries.
+    """
+    import hashlib
+
+    for n in range(1000):
+        blob = b"a copy that stopped part way %d" % n
+        if hashlib.sha256(blob).hexdigest() < below:
+            return blob
+    raise AssertionError("no payload hashed below the file")
+
+
+def test_promote_refuses_a_RESCUE_that_hashes_BELOW_the_live_file(
+        project, monkeypatch):
+    """The other half of the rescue check. `b"not the file"` above sorts
+    above working.docx's digest, so `!=` read as `>` refuses it and
+    looks like the real post-condition; a copy that sorts below is let
+    through, and the manuscript is then overwritten with nothing to undo
+    it — which is the one thing this check exists to prevent."""
+    import shutil
+
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the batch"))))
+    landed = _bytes_hashing(below=guard.sha256(project.working))
+    before = project.working.read_bytes()
+    monkeypatch.setattr(shutil, "copy2",
+                        lambda _s, d, *a, **k: Path(d).write_bytes(landed))
+
+    with pytest.raises(ProtocolError, match="rescue copy did not land"):
+        revision.promote(project)
+
+    assert project.working.read_bytes() == before
+    assert project.redlines() == [], "a refused promote kept no redline"
+
+
+def test_promote_refuses_ITS_OWN_copy_that_hashes_BELOW_the_batch(
+        project, monkeypatch):
+    """And the other half of the check on the copy onto working.docx.
+    The four payloads parametrised above all sort above the batch, so
+    `>` refuses all four; one that sorts below leaves the manuscript
+    holding bytes nobody built, with the batch's stamp carried beside it
+    to say they were reviewed."""
+    import shutil
+
+    from docxkit import guard
+
+    real = shutil.copyfile
+    write(project.batch, make_parts(para(run("the batch"))))
+    landed = _bytes_hashing(below=guard.sha256(project.batch))
+
+    def _bad_onto_live(src, dst, *a, **k):
+        if Path(dst) == project.working:
+            return Path(dst).write_bytes(landed)
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(shutil, "copyfile", _bad_onto_live)
+
+    with pytest.raises(ProtocolError, match="copy did not land"):
+        revision.promote(project)
+
+    assert project.working.read_bytes() == landed
+    assert not guard.stamp_path(project.working).exists(), \
+        "no stamp certifies bytes the promote refused"
+
+
 def test_promote_lands_and_leaves_a_rescue_copy(project):
     write(project.batch, make_parts(para(run("the batch"))))
     original = project.working.read_bytes()
