@@ -378,7 +378,13 @@ def integrity(xml: str, label: str,
 #: author saves (Parental Style, 2026-08-05: three false positives, and
 #: the machine build showed none only because it had never been through
 #: Word).
-_FIELD_END_RE = (r'<w:r\b[^>]*>(?:<w:rPr\b(?:[^<]|<(?!/w:rPr>))*</w:rPr>|'
+#:
+#: `(?<!/)>` on both openings: the open-and-shut branch comes first, and
+#: an EMPTY `<w:rPr/>` read as its opening ran on to the next `</w:rPr>`
+#: — the next field's end run's, when nothing between carries properties
+#: — so the match swallowed that field and its label was never read.
+_FIELD_END_RE = (r"<w:r\b[^>]*(?<!/)>"
+                 r"(?:<w:rPr\b[^>]*(?<!/)>(?:[^<]|<(?!/w:rPr>))*</w:rPr>|"
                  r'<w:rPr\b[^>]*/>)?<w:fldChar\b[^>]*\bw:fldCharType="end"'
                  r"[^>]*/>")
 

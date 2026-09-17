@@ -2346,6 +2346,30 @@ def test_a_field_LABEL_is_read_whatever_its_markers_spelling(marker):
     assert hyperlink_labels(f"<w:p>{field}</w:p>") == {"Hao et al. (2008)": 1}
 
 
+def _link_field(anchor: str, label: str, end_rpr: str) -> str:
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l "{anchor}"'
+            " </w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f"<w:r><w:t>{label}</w:t></w:r>"
+            f'<w:r>{end_rpr}<w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_an_EMPTY_rPr_on_a_field_s_end_run_does_not_swallow_the_next():
+    """The end run's properties were read open-and-shut first, and an
+    EMPTY `<w:rPr/>` taken for that opening ran on to the next
+    `</w:rPr>` — here the next field's end run's — so one match covered
+    both fields and the second label was never read."""
+    from docxkit._compare_diff import hyperlink_labels
+
+    xml = ("<w:p>" + _link_field("Hao2008", "Hao (2008)", "<w:rPr/>")
+           + "<w:r><w:t>; </w:t></w:r>"
+           + _link_field("Sen1999", "Sen (1999)",
+                         "<w:rPr><w:noProof/></w:rPr>") + "</w:p>")
+
+    assert hyperlink_labels(xml) == {"Hao (2008)": 1, "Sen (1999)": 1}
+
+
 def test_a_GHOST_link_does_not_lend_its_label_to_the_prose_after_it():
     """`<w:hyperlink w:anchor="…"/>` is an empty ghost Word leaves behind
     (49 in 35 corpus packages). Read as an open tag it ran on to the NEXT
