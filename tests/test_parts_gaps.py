@@ -95,6 +95,42 @@ def test_remove_nothing_is_a_noop():
     assert parts == before
 
 
+def _emptied(parts: dict[str, bytes], cid: int) -> dict[str, bytes]:
+    """`parts` with comment `cid` written EMPTY, as CT_Comment allows."""
+    com = parts["word/comments.xml"].decode("utf-8")
+    full = comment(cid, f"note {cid}", para_id=f"AAAA{cid:04d}")
+    assert full in com
+    parts["word/comments.xml"] = com.replace(
+        full, f'<w:comment w:id="{cid}" w:author="Tester" '
+              f'w:date="2026-07-29T00:00:00Z" w:initials="T"/>').encode()
+    return parts
+
+
+def test_read_all_lists_an_EMPTY_comment_and_the_one_after_it():
+    """`<w:comment .../>` opens nothing. Read as an open tag it ran on to
+    comment 2's close, and the list said comment 1 held comment 2's
+    words while comment 2 was not in it at all."""
+    parts = _emptied(_commented(1, 2), 1)
+
+    assert read_all(parts) == [("1", "Tester", ""), ("2", "Tester", "note 2")]
+
+
+@pytest.mark.parametrize("gone,left", [("1", "2"), ("2", "1")])
+def test_removing_one_comment_beside_an_EMPTY_one_removes_only_it(gone, left):
+    """Removing the empty comment cut comment 2's definition with it,
+    leaving comment 2's anchors in the body pointing at nothing — what
+    Word calls unreadable content. Removing comment 2 found no comment 2
+    to cut, and reported 0."""
+    parts = _emptied(_commented(1, 2), 1)
+
+    assert remove(parts, [gone]) == 1
+
+    assert [c[0] for c in read_all(parts)] == [left]
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert f'<w:commentReference w:id="{left}"/>' in doc
+    assert f'<w:commentReference w:id="{gone}"/>' not in doc
+
+
 # -------------------------------------------------------------- footnotes ---
 
 FOOTNOTES = (

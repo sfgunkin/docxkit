@@ -70,6 +70,24 @@ def test_done_is_the_roots_flag():
     assert not by_cid["1"].done
 
 
+def test_an_EMPTY_comment_is_a_thread_and_the_next_keeps_its_own_flag():
+    """`<w:comment .../>` opens nothing. Read as an open tag it ran on to
+    comment 2's close, so comment 1 carried comment 2's text, paraId and
+    done flag, and the RESOLVED comment 2 was not listed at all."""
+    parts = make_parts()
+    com = parts["word/comments.xml"].decode("utf-8")
+    full = comment(1, "Please clarify.", "AAAA0001")
+    assert full in com
+    parts["word/comments.xml"] = com.replace(
+        full, '<w:comment w:id="1" w:author="Referee" w:initials="R" '
+              'w:date="2026-07-30T01:00:00Z"/>').encode("utf-8")
+
+    by_cid = {t.comment.cid: t.comment for t in threads(parts)}
+
+    assert (by_cid["1"].text, by_cid["1"].done) == ("", False)
+    assert (by_cid["2"].text, by_cid["2"].done) == ("Fixed typo?", True)
+
+
 def test_anchor_text_is_the_ranged_visible_text():
     by_cid = {t.comment.cid: t for t in threads(make_parts())}
     assert by_cid["2"].comment.anchor == "first anchored bit"

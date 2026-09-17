@@ -257,6 +257,49 @@ def test_reclassify_is_a_noop_when_nothing_is_generic():
     assert reclassify(parts, always("other")) == (0, [])
 
 
+_EMPTY_SEED = ('<w:comment w:id="1" w:author="Tester" '
+               'w:date="2026-07-29T00:00:00Z" w:initials="T"/>')
+
+
+def test_reclassify_repairs_the_generic_comment_AFTER_an_empty_one():
+    """`<w:comment .../>` opens nothing. Read as an open tag it ran on to
+    the generic comment's close, so the EMPTY comment was the stale one:
+    its id has no range in the body, the repair reported it as still
+    generic, and the comment that did say GENERIC was never touched."""
+    parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
+    annotate(parts, lambda ctx: None)              # comment 2 is generic
+    parts["word/comments.xml"] = _com(parts).replace(
+        comment(1, "seed"), _EMPTY_SEED).encode("utf-8")
+
+    done, still = reclassify(parts, always("R8: repaired"))
+
+    assert (done, still) == (1, [])
+    com = _com(parts)
+    assert GENERIC not in com and "R8: repaired" in com
+    assert com.count(_EMPTY_SEED) == 1, "the empty comment is left as it was"
+    MD.parseString(com)
+
+
+def test_a_new_comment_is_cloned_from_a_comment_with_TEXT_not_an_empty_one():
+    """The scaffold is the first comment Word wrote. An EMPTY first one
+    read as an open tag took the next comment with it, and the clone of
+    that pair was TWO elements — the second under the id of the comment
+    it was copied from."""
+    parts = _scaffolded(para(run("the sorting gap is unchanged here")))
+    parts["word/comments.xml"] = _com(parts).replace(
+        "<w:comments " + NS + ">",
+        "<w:comments " + NS + ">" + _EMPTY_SEED.replace('"1"', '"7"')
+    ).encode("utf-8")
+
+    cid = add_at(parts, "sorting gap", "please re-read this")
+
+    assert cid == 8
+    com = _com(parts)
+    assert re.findall(r'<w:comment w:id="(\d+)"', com) == ["7", "1", "8"], com
+    assert "please re-read this" in com and com.count("seed") == 1
+    MD.parseString(com)
+
+
 # A seed Word did not write by itself: a comment somebody edited with
 # track-changes on, in two paragraphs. Both are ordinary in a manuscript
 # that has been round a review, and the clone is a COPY of whatever the

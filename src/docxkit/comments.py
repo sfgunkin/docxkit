@@ -64,8 +64,17 @@ GENERIC = "Revision (unclassified)"
 COALESCE = "coalesce"   # one balloon per distinct comment text per table
 ALL = "all"             # comment every changed cell (pre-coalescing builds)
 
+# CT_Comment's content is optional, so `<w:comment w:id="1" .../>` is a
+# comment with nothing in it — and read as an open tag it ran on to the
+# NEXT comment's close: that comment's words were filed under the empty
+# one's id, and whatever this module did to "comment 1" it did to both
+# (2026-09-17). Every comment pattern here now reads the empty form for
+# what it is: PARA_RE's `(?<!/)>` guard where the caller wants a comment
+# with text, as this one does, and a captured slash where the caller must
+# still see the comment (`_comment_records`, `remove`).
 _COMMENT_RE = re.compile(
-    r'(<w:comment [^>]*w:id="(\d+)"[^>]*>)(.*?)(</w:comment>)', re.DOTALL)
+    r'(<w:comment [^>]*w:id="(\d+)"[^>]*(?<!/)>)(.*?)(</w:comment>)',
+    re.DOTALL)
 _ANCHOR_SLACK = 60          # chars scanned either side for an existing range
 _WINDOW_BACK = 3000         # context behind the anchor, in chars of markup
 
@@ -241,7 +250,10 @@ class _Scaffold(NamedTuple):
     @classmethod
     def read(cls, parts: dict[str, bytes]) -> _Scaffold:
         com = parts[COMMENTS].decode("utf-8")
-        tm = re.search(r"<w:comment .*?</w:comment>", com, re.DOTALL)
+        # A comment WITH content: an empty one has no paragraph to carry
+        # the new text, and read as an open tag it cloned as two.
+        tm = re.search(r"<w:comment [^>]*(?<!/)>.*?</w:comment>", com,
+                       re.DOTALL)
         if not tm:
             raise ScaffoldMissing(
                 "no comment scaffold - Word must create at least one comment "
@@ -406,7 +418,7 @@ def add_at(parts: dict[str, bytes], anchor: str, comment: str, *,
 
 def _set_comment_text(com: str, cid: str, new_text: str) -> str:
     m = re.search(
-        f'(<w:comment [^>]*w:id="{cid}"[^>]*>)(.*?)(</w:comment>)',
+        f'(<w:comment [^>]*w:id="{cid}"[^>]*(?<!/)>)(.*?)(</w:comment>)',
         com, re.DOTALL)
     if m is None:
         raise PackageError(
@@ -468,7 +480,12 @@ def reclassify(parts: dict[str, bytes],
 _PARA_ID_RE = re.compile(r'<w:p [^>]*w14:paraId="([0-9A-Fa-f]+)"')
 
 
-_RUN_START_RE = re.compile(r"<w:r(?:\s[^>]*)?>")
+# `(?<!/)>`: `<w:r w:rsidR="00A1B2C3"/>` is an empty run, and it encloses
+# nothing. Taken as the run around a bare mark after it, the cut ran from
+# it to the next run's close; `_carries_more_than` refuses that cut on
+# every well-formed body, so the guard is here for the walk to be right
+# rather than rescued.
+_RUN_START_RE = re.compile(r"<w:r(?:\s[^>]*)?(?<!/)>")
 
 
 def _drop_reference_run(doc: str, cid: str) -> str:
@@ -584,16 +601,21 @@ _ON_VALUES = frozenset({"1", "true", "on"})
 
 def _comment_records(com: str) -> list[dict[str, str]]:
     out = []
-    for m in re.finditer(r"<w:comment ([^>]*)>(.*?)</w:comment>", com,
+    # An EMPTY comment is still a comment — it has an id, an author and a
+    # thread — so the slash is captured, not guarded away (see
+    # `_COMMENT_RE`), and its body reads as "".
+    for m in re.finditer(r"<w:comment ([^>]*?)"
+                         r"(?:(/)>|(?<!/)>(.*?)</w:comment>)", com,
                          re.DOTALL):
         def attr(name: str, head: str = m.group(1)) -> str:
             a = re.search(rf'w:{name}="([^"]*)"', head)
             return a.group(1) if a else ""
-        para_ids = _PARA_ID_RE.findall(m.group(2))
+        body = m.group(3) or ""
+        para_ids = _PARA_ID_RE.findall(body)
         out.append({
             "cid": attr("id"), "author": attr("author"),
             "initials": attr("initials"), "date": attr("date"),
-            "text": delta_text(m.group(2)).strip(),
+            "text": delta_text(body).strip(),
             "para_id": para_ids[-1] if para_ids else "",
         })
     return out
@@ -735,8 +757,11 @@ def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
     doc = parts[DOCUMENT].decode("utf-8")
 
     para_ids, durable_ids, removed = set(), set(), 0
-    for m in list(re.finditer(r"<w:comment [^>]*w:id=\"(\d+)\"[^>]*>.*?"
-                              r"</w:comment>", com, re.DOTALL)):
+    # The whole element, an EMPTY one included: removing it must cut
+    # exactly it (see `_COMMENT_RE`).
+    for m in list(re.finditer(r"<w:comment [^>]*w:id=\"(\d+)\"[^>]*?"
+                              r"(?:(/)>|(?<!/)>.*?</w:comment>)", com,
+                              re.DOTALL)):
         if m.group(1) not in wanted:
             continue
         removed += 1
