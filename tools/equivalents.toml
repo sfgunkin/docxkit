@@ -19,6 +19,25 @@
 # which applies it and expects it to SURVIVE. A claim that starts being
 # killed is not a victory: it means the code or the harness moved and
 # the argument no longer describes them. Delete it and look again.
+#
+# A SECOND KEY, for the mutants the first cannot name. A mutation that
+# REMOVES a line produces no line to key on — `became()` answers "" for
+# a removed decorator — and a claim keyed on "" would settle every
+# lineless mutant the module ever has, which is the ambiguity the line
+# keying refuses by demanding a unique anchor. So such a claim carries
+# `operator` in place of `line`, and the key is the pair: which
+# operator, and which line (`was`) it was applied to.
+#
+# The two schemes do not overlap and are not a choice. Line keying stays
+# authoritative wherever a mutant names itself: only a mutant `became()`
+# has no answer for is matched by operator. `operator` is restricted to
+# `mutation_survivors.LINELESS_OPERATORS`, because the verifier applies
+# such a claim by DELETING the anchored line — the right mutation for a
+# removed decorator and the wrong one for an operator that rewrites —
+# and a claim naming any other operator is refused rather than
+# approximated. Where one pair names two surviving mutants, the report
+# settles NEITHER and says so: what a quiet over-match hides is not a
+# wrong line in the list, it is a missing one.
 
 ["timings.py"]
 claims = [
@@ -1131,4 +1150,7 @@ claims = [
   { was = '+ (f" (and {self.matches - 1} more match)" if self.matches > 1', line = '+ (f" (and {self.matches - 1} more match)" if self.matches != 1', why = "An argument from the CODE. `format` returns its no-match sentence at the top when `matches` is 0, so this line runs only at one match or more, where `!= 1` holds exactly where `> 1` does." },
   { was = 'trailing_space=text != text.rstrip())', line = 'trailing_space=text > text.rstrip())', why = "An argument from the CODE. `text.rstrip()` is `text` without its trailing whitespace: either `text` itself, which is equal and not greater, or a proper prefix of it, and a string always sorts above its own prefix. So `>` is true exactly when there is trailing whitespace, which is what `!=` asks. Measured 2026-09-18 over plain, empty, spaced, tabbed and no-break-space texts." },
   { was = 'trailing_space=text != text.rstrip())', line = 'trailing_space=text is not text.rstrip())', why = "An argument from the CODE. CPython's `str.rstrip` hands back the very object when it strips nothing (measured 2026-09-18), so identity is false exactly where equality is true. `text` is `visible_text`'s return, a plain `str` and never a subclass — which is what makes the identity reliable rather than incidental." },
+  { was = '@lru_cache(maxsize=8)', operator = 'core/RemoveDecorator', why = "Removing the cache cannot change an answer, and cannot even change the OBJECT: `caption_re` compiles one pattern from its arguments, and `re.compile` keeps a cache of its own (512 patterns), so the undecorated builder hands back the very object the decorated one would. Measured 2026-09-18, twice over — `re.compile` with one pattern string gives the same object, and a test written to KILL this mutant by asking for identity passed with the decorator removed, which is what showed the argument. What the decorator buys is one dict lookup instead of two; what it cannot buy is a different answer. An argument from the CODE." },
+  { was = '@lru_cache(maxsize=256)                      # one per mention grammar', operator = 'core/RemoveDecorator', why = "Removing the cache cannot change an answer, and cannot even change the OBJECT: `mention_re` compiles one pattern from its arguments, and `re.compile` keeps a cache of its own (512 patterns), so the undecorated builder hands back the very object the decorated one would. Measured 2026-09-18, twice over — `re.compile` with one pattern string gives the same object, and a test written to KILL this mutant by asking for identity passed with the decorator removed, which is what showed the argument. What the decorator buys is one dict lookup instead of two; what it cannot buy is a different answer. An argument from the CODE." },
+  { was = '@lru_cache(maxsize=256)                      # one per continuation grammar', operator = 'core/RemoveDecorator', why = "Removing the cache cannot change an answer, and cannot even change the OBJECT: `continuation_re` compiles one pattern from its arguments, and `re.compile` keeps a cache of its own (512 patterns), so the undecorated builder hands back the very object the decorated one would. Measured 2026-09-18, twice over — `re.compile` with one pattern string gives the same object, and a test written to KILL this mutant by asking for identity passed with the decorator removed, which is what showed the argument. What the decorator buys is one dict lookup instead of two; what it cannot buy is a different answer. An argument from the CODE." },
 ]

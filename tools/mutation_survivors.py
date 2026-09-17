@@ -365,7 +365,48 @@ def claimed_equivalents(src_path: str,
         doc = tomllib.load(fh)
     entry = doc.get(claims_key(src_path), {})
     return {c["line"].strip(): c["why"] for c in entry.get("claims", ())
-            if c.get("kind", "equivalent") == kind}
+            if "line" in c and c.get("kind", "equivalent") == kind}
+
+
+#: The operators a claim may key on instead of a line. ONLY those whose
+#: mutation adds no line at all: a claim is keyed on what the mutation
+#: PRODUCED, and there is nothing to key on when the answer is a
+#: deletion. Kept to an allowlist rather than admitting any operator,
+#: because `verify_equivalents` applies such a claim by deleting the
+#: anchored line, which is the right mutation for these and the wrong
+#: one for an operator that rewrites.
+LINELESS_OPERATORS = ("core/RemoveDecorator",)
+
+
+def claimed_by_operator(src_path: str,
+                        kind: str = "equivalent") -> dict[tuple[str, str], str]:
+    """Settled mutants keyed on the OPERATOR and the line it stood on.
+
+    The second keying scheme, and it exists because the first cannot
+    reach a mutation that REMOVES a line. `became` reads the first added
+    line of the stored diff, so a removed decorator renders as the empty
+    string — and a claim keyed on "" would settle every lineless mutant
+    the module ever has, which is the ambiguity the line keying refuses
+    by demanding a unique anchor.
+
+    So the key is the pair: which operator, and which line it was
+    applied to. That names one mutation the way `line` does for the
+    rest, and where it does NOT — where two survivors answer to the same
+    pair — `classify` settles neither and says so. Over-matching
+    quietly is worse than reporting three mutants nobody can act on.
+
+    Three of find.py's survivors are this shape (2026-09-18): the
+    `@lru_cache` on each pattern builder, removed outright, which cannot
+    change an answer because `re.compile` caches behind it.
+    """
+    if not CLAIMS.exists():
+        return {}
+    with CLAIMS.open("rb") as fh:
+        doc = tomllib.load(fh)
+    entry = doc.get(claims_key(src_path), {})
+    return {(c["operator"], c["was"].strip()): c["why"]
+            for c in entry.get("claims", ())
+            if "operator" in c and c.get("kind", "equivalent") == kind}
 
 
 def became(diff: str | None) -> str:
@@ -398,6 +439,9 @@ class Counts(NamedTuple):
     real: list[tuple[int, int, str, str, str | None]]
     lines: list[str]
     tree: ast.Module
+    #: operator-keyed claims that name more than one surviving mutant,
+    #: as (operator, line) — settled by nobody, reported by `main`
+    ambiguous: tuple[tuple[str, str], ...] = ()
 
     @property
     def partial(self) -> bool:
@@ -522,6 +566,31 @@ def classify(db_path: str, src_path: str) -> Counts | None:
     claims = claimed_equivalents(src_path)
     open_ = [r for r in survived if r not in unreached]
     settled = [r for r in open_ if became(r[4]) in claims]
+    # …and the mutants no line can name. A claim may key on the OPERATOR
+    # and the line it stood on instead, for the mutations that REMOVE a
+    # line and so render as nothing at all. Line keying stays
+    # authoritative: only a row `became` has no answer for is eligible,
+    # so a claim cannot reach past a mutant that names itself.
+    lines = text.splitlines()
+    by_operator = claimed_by_operator(src_path)
+    wanted: dict[tuple[str, str], list[tuple[int, int, str, str, str | None]]]
+    wanted = {}
+    for row in open_:
+        if row in settled or became(row[4]):
+            continue
+        key = (row[2], lines[row[0] - 1].strip() if row[0] <= len(lines)
+               else "")
+        if key in by_operator:
+            wanted.setdefault(key, []).append(row)
+    # A key that names more than one mutant settles NEITHER. Quietly
+    # covering both is the hazard the line keying refuses by demanding a
+    # unique anchor, and it would be worse here: the reader cannot see
+    # the over-match, because what is missing from the list is what the
+    # claim swallowed.
+    ambiguous = tuple(sorted(k for k, rows_ in wanted.items()
+                             if len(rows_) > 1))
+    settled += [r for k, rows_ in wanted.items() if len(rows_) == 1
+                for r in rows_]
     skin_of = claimed_equivalents(src_path, "cosmetic")
     skin = [r for r in open_ if r not in settled and became(r[4]) in skin_of]
     return Counts(
@@ -531,7 +600,7 @@ def classify(db_path: str, src_path: str) -> Counts | None:
         in_marker=len(unreached) - annotated - in_guard - in_nocov,
         in_nocov=in_nocov, claimed=len(settled), skin=skin,
         real=[r for r in open_ if r not in settled and r not in skin],
-        lines=text.splitlines(), tree=tree)
+        lines=lines, tree=tree, ambiguous=ambiguous)
 
 
 def main() -> int:
@@ -603,6 +672,11 @@ def main() -> int:
               f"tools/equivalents.toml — a claim that\n  starts being "
               f"killed is a claim that expired, and "
               f"`verify_equivalents.py` says so")
+    for operator, anchor in counts.ambiguous:
+        print(f"  !! an operator-keyed claim on {operator.replace('core/', '')}"
+              f" names MORE THAN ONE\n  surviving mutant of `{anchor[:50]}` — "
+              f"it settles none of them. Give the\n  line a trailing comment "
+              f"so each mutant has a key of its own")
     # An annotation mutant cannot be killed, so every one that ran also
     # survived: taking them out of the numerator means taking the same
     # count out of the denominator, or the rate is quietly deflated.

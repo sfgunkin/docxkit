@@ -42,12 +42,15 @@ def widen(x: int) -> int:
 
 def _database(path: Path,
               *rows: (tuple[int, str] | tuple[int, str, int]
-                      | tuple[int, str, int, str])) -> Path:
+                      | tuple[int, str, int, str]
+                      | tuple[int, str, int, str, str])) -> Path:
     """A cosmic-ray database holding just what the report reads.
 
     A row is (line, outcome); where the COLUMN is what the report
-    classifies on, (line, outcome, column); and where the report quotes
-    the mutation itself, (line, outcome, column, diff).
+    classifies on, (line, outcome, column); where the report quotes the
+    mutation itself, (line, outcome, column, diff); and where the
+    OPERATOR is what settles it, (line, outcome, column, diff,
+    operator).
     """
     db = sqlite3.connect(path)
     db.execute("CREATE TABLE mutation_specs (job_id TEXT, "
@@ -59,8 +62,9 @@ def _database(path: Path,
         col = spec[2] if len(spec) > 2 else 0
         diff = spec[3] if len(spec) > 3 else ""
         job = f"job{i}"
+        operator = spec[4] if len(spec) > 4 else "core/NumberReplacer"
         db.execute("INSERT INTO mutation_specs VALUES (?, ?, ?, ?)",
-                   (job, row, col, "core/NumberReplacer"))
+                   (job, row, col, operator))
         db.execute("INSERT INTO work_results VALUES (?, ?, ?)",
                    (job, outcome, diff))
     db.commit()
@@ -603,6 +607,17 @@ def _claims_file(tmp_path, module, *lines):
     return path
 
 
+def _operator_claims_file(tmp_path, module, *pairs):
+    """Claims keyed the second way: `operator` and the line it stood on."""
+    text = ['["' + module + '"]', "claims = ["]
+    text += ['  { was = "' + was + '", operator = "' + operator
+             + '", why = "argued" },' for operator, was in pairs]
+    text.append("]")
+    path = tmp_path / "equivalents.toml"
+    path.write_text(chr(10).join(text), encoding="utf-8")
+    return path
+
+
 def _claimed_counts(tmp_path, monkeypatch, *rows, claims=(MUTANT,)):
     """`classify` in process, so the claims file can be swapped."""
     tool = _tool_module()
@@ -733,6 +748,112 @@ def test_the_annotation_discount_covers_STAR_ARGS_too(source, wanted):
     assert sorted(found) == sorted(wanted)
 
 
+# --- the second key: an operator, for the mutants no line can name ------
+
+DECORATED = """\
+from functools import lru_cache
+
+
+@lru_cache(maxsize=8)
+def widen(x: int) -> int:
+    return x + 1
+
+
+@lru_cache(maxsize=8)
+def narrow(x: int) -> int:
+    return x - 1
+"""
+
+REMOVE = "core/RemoveDecorator"
+
+
+def _operator_counts(tmp_path, monkeypatch, *rows, claims):
+    tool = _tool_module()
+    src = tmp_path / "cached.py"
+    src.write_text(DECORATED, encoding="utf-8")
+    monkeypatch.setattr(tool, "CLAIMS",
+                        _operator_claims_file(tmp_path, "cached.py", *claims))
+    return tool.classify(str(_database(tmp_path / "run.sqlite", *rows)),
+                         str(src))
+
+
+def test_a_mutant_that_REMOVES_a_line_is_settled_by_its_OPERATOR(
+        tmp_path, monkeypatch):
+    """A removed decorator produces no line, so `became` answers "" and
+    the line keying has nothing to key on. Three of find.py's survivors
+    are this shape and would be reported by every sweep for ever —
+    which teaches a reader to skim the list, the same way a gate that
+    cannot fail stops being read."""
+    counts = _operator_counts(
+        tmp_path, monkeypatch, (4, "SURVIVED", 0, "", REMOVE),
+        claims=[(REMOVE, "@lru_cache(maxsize=8)")])
+
+    assert counts.claimed == 1
+    assert counts.real == []
+    assert counts.ambiguous == ()
+
+
+def test_an_operator_key_naming_TWO_mutants_settles_NEITHER(tmp_path,
+                                                            monkeypatch):
+    """The hazard the line keying refuses by demanding a unique anchor,
+    one level up: this module writes `@lru_cache(maxsize=8)` twice, so
+    the pair (operator, line) names two mutations and cannot mean one.
+
+    Settling both would hide a mutant nobody argued about, and what is
+    missing from a survivor list is exactly what its reader cannot see.
+    So neither is settled, and the report says which key over-matched.
+    """
+    counts = _operator_counts(
+        tmp_path, monkeypatch,
+        (4, "SURVIVED", 0, "", REMOVE), (9, "SURVIVED", 0, "", REMOVE),
+        claims=[(REMOVE, "@lru_cache(maxsize=8)")])
+
+    assert counts.claimed == 0
+    assert len(counts.real) == 2
+    assert counts.ambiguous == ((REMOVE, "@lru_cache(maxsize=8)"),)
+
+
+def test_an_operator_claim_does_not_reach_a_mutant_that_NAMES_itself(
+        tmp_path, monkeypatch):
+    """Line keying stays authoritative. A mutant with a rendering of its
+    own is matched on that rendering and by nothing else — otherwise an
+    operator claim would quietly cover every OTHER mutation the same
+    operator makes on that line, which for a NumberReplacer is several.
+    """
+    counts = _operator_counts(
+        tmp_path, monkeypatch,
+        (4, "SURVIVED", 0, "+@lru_cache(maxsize= 9)", REMOVE),
+        claims=[(REMOVE, "@lru_cache(maxsize=8)")])
+
+    assert counts.claimed == 0
+    assert len(counts.real) == 1
+
+
+def test_the_report_SAYS_when_an_operator_key_over_matches(
+        tmp_path, monkeypatch, capsys):
+    """The refusal reaches the person reading the list, with the remedy:
+    the same trailing comment that makes a repeated line claimable.
+
+    Counting it apart is not enough — a mutant that is neither settled
+    nor explained reads as an ordinary survivor, and the next round
+    re-argues a claim that is already written."""
+    tool = _tool_module()
+    src = tmp_path / "cached.py"
+    src.write_text(DECORATED, encoding="utf-8")
+    monkeypatch.setattr(tool, "CLAIMS", _operator_claims_file(
+        tmp_path, "cached.py", (REMOVE, "@lru_cache(maxsize=8)")))
+    db = _database(tmp_path / "run.sqlite", (4, "SURVIVED", 0, "", REMOVE),
+                   (9, "SURVIVED", 0, "", REMOVE))
+    monkeypatch.setattr(sys, "argv", ["mutation_survivors", str(db),
+                                      str(src)])
+
+    assert tool.main() == 0
+    out = capsys.readouterr().out
+
+    assert "MORE THAN ONE" in out, out
+    assert "trailing comment" in out
+
+
 def test_the_verifier_REFUSES_a_claim_whose_line_is_ambiguous(tmp_path):
     """`kill_check` needs the line as it really appears, and insists its
     anchor occur exactly once. A stripped claim matching two lines would
@@ -776,12 +897,23 @@ def test_the_SHIPPED_claims_file_parses_and_every_claim_is_complete():
                 ).is_file(), f"{module} is not a path under src/docxkit"
         assert entry.get("claims"), f"{module} has no claims"
         for claim in entry["claims"]:
-            assert set(claim) <= {"was", "line", "why", "kind"}, claim
-            assert {"was", "line", "why"} <= set(claim), claim
+            assert set(claim) <= {"was", "line", "operator", "why",
+                                  "kind"}, claim
+            assert {"was", "why"} <= set(claim), claim
             assert claim.get("kind", "equivalent") in {"equivalent",
                                                        "cosmetic"}, claim
-            assert claim["was"] != claim["line"], claim
             assert len(claim["why"]) > 40, claim["why"]
+            # exactly one key, and the second only for the operators
+            # whose mutation removes its line — see the file's header
+            assert ("line" in claim) != ("operator" in claim), claim
+            if "line" in claim:
+                assert claim["was"] != claim["line"], claim
+            else:
+                _tools_on_path()
+                from mutation_survivors import (  # pyright: ignore[reportMissingImports]
+                    LINELESS_OPERATORS,
+                )
+                assert claim["operator"] in LINELESS_OPERATORS, claim
 
 
 def test_classify_reads_the_SNAPSHOT_even_when_handed_the_live_file(tmp_path):

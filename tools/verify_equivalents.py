@@ -55,6 +55,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kill_check  # pyright: ignore[reportMissingImports]
 from harness_map import harness_for  # pyright: ignore[reportMissingImports]
 from kill_check import check  # pyright: ignore[reportMissingImports]
+from mutation_survivors import (  # pyright: ignore[reportMissingImports]
+    LINELESS_OPERATORS,
+)
 
 from docxkit.console import utf8_stdout
 
@@ -105,6 +108,21 @@ def cases_for(module: str, claims: list[dict[str, str]],
             # not pass quietly as "survived, as claimed".
             say(f"ANCHOR GONE  {module}: {claim['was'][:60]!r} is no "
                 f"longer a line of that file, or is now several")
+            continue
+        if "operator" in claim:
+            # The second keying scheme. Its mutants REMOVE their line —
+            # which is why no `line` can name them — so applying one is
+            # deleting the anchor. Only the operators on the allowlist
+            # are deletions, and applying the wrong mutation would check
+            # an argument nobody made: a claim naming any other operator
+            # is refused rather than approximated.
+            if claim["operator"] not in LINELESS_OPERATORS:
+                say(f"CANNOT APPLY {module}: {claim['operator']} is not an "
+                    f"operator a claim may key on — only "
+                    f"{', '.join(LINELESS_OPERATORS)} remove their line")
+                continue
+            cases.append((f"{claim['operator'].replace('core/', '')} on "
+                          f"{claim['was'][:40]}", old, "", False))
             continue
         indent = old[:len(old) - len(old.lstrip())]
         cases.append((f"{claim['was'][:40]} -> {claim['line'][:40]}",
