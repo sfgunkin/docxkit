@@ -14,6 +14,56 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `revision/_gates` compares a gate's exit code by `==` and nothing held it to a value; a gate killed by a signal read as PASSED under the mutant~~ — FIXED 18.09, `0a5d998`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 in the same round. `revision/_gates.py` compared a gate's exit
+code with `==` in both halves — `ok` (L29 `code == 0`) and `verdict` (L33
+`== -1`) — and nothing held either to a value: the mutants `<= 0` and `<= -1`
+survive, and the sweep of 2026-09-13 had recorded both as KILLED, by timeout,
+because the harness then ran 29 s against a 30 s deadline.
+
+What a gate can actually report was measured before writing the tests: through
+`_run_one`, a gate exiting `-1` reports 4294967295 on Windows (an unsigned
+DWORD) and 128+N through a POSIX shell, so the only negative code the module
+mints is its own `-1` timeout sentinel — and the negative code that arrives off
+Windows is the SHELL killed by a signal (`proc.returncode == -SIGNAL`), such as
+a paper's pytest gate cut down by the OOM killer as `-9`. Under `<= 0` a gate
+that exits -9 reads as PASSED; under `<= -1` it is reported as the timeout it
+is not.
+
+**Fixed 17.09 in `0a5d998`** (tests, no behaviour change): `assert not gate.ok`
+where the hang is already tested, and a new test pinning `GateResult(code=-9)`
+as `not ok` with `verdict == "FAIL (-9)"`. Both mutants die against that file
+alone, in a second. The timeout that hid them is refused since `2820489`.
+### ~~S3 — `replay_survivors --tests` refuses whenever a named file is outside the session's snapshot, and voids the check that catches a moved module~~ — FIXED 18.09, `db47fec`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 while making the `revision/` halves measurable. `replay_survivors
+--tests` exists to ask a stored survivor list against a DIFFERENT harness — and it
+refused whenever a named file was not in the session's snapshot, which is every
+file the run did not hold:
+
+    python tools/replay_survivors.py src/docxkit/revision/_gates.py --tests <the 12 superset files>
+    REFUSING: revision/_gates.py itself has moved since the run.
+
+`moved_by_content` answered None for a snapshot that lacks the file, and the mtime
+fallback then called the MODULE moved after any commit. So the flag could not do
+the one thing it is for; the narrowing had to be verified by replaying survivors
+by text anchor instead. The same voiding was worse in the other direction: with
+the content answer gone, a module that HAD moved read `fresh` off its mtime and was
+replayed — the wrong-line verdict the refusal exists to prevent.
+
+**Fixed 17.09 in `db47fec`.** `moved_by_content` answers None only when the
+snapshot lacks the MODULE (a survivor is a line number into it); a test file the
+snapshot never held is reported as a difference, so the run reads `stale`, names
+it, and replays. End to end on the real session: "the run is stale (… moved
+since) / replaying 10 survivor(s) against 12 test file(s) / 10 now KILLED, 0
+still alive". Tests seen red: `test_a_file_the_run_NEVER_HAD_is_a_difference_not_a_
+refusal`, `test_a_TEST_FILE_the_run_NEVER_HAD_is_replayed_not_refused`,
+`test_a_moved_MODULE_refuses_however_the_harness_is_named`.
 ### ~~S2 — an XML comment inside a properties element crashes `place` with lxml's own words~~ — FIXED 17.09, `57ed7df`
 
 <!-- status: fixed -->
