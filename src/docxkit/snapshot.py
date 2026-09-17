@@ -53,13 +53,13 @@ from ._xml import (
     INSTR_ANCHOR_RE,
     INSTR_RE,
     PARA_RE,
-    RUN_RE,
     element_spans,
     internal_links,
     live_properties,
     normalize_glyphs,
     overlaps,
     own_properties,
+    printed_text,
     ref_anchor,
     run_spans,
     span_holding,
@@ -110,10 +110,12 @@ KINDS = ("replace", "append", "insert_after", "present")
 #: note by id), or ``*`` (the whole document).
 _SCOPE_RE = re.compile(r"\*|P\d+[a-z]*|T\d+(?::\d+,\d+)?|FN\d+|EN\d+")
 
-#: A tab CHARACTER is a run child. The same element spelled inside
-#: ``w:pPr/w:tabs`` is a tab STOP, which prints nothing — so text is read
-#: run by run, never off the whole paragraph.
-_RUN_TEXT_RE = re.compile(r"<w:t\b[^>]*(?<!/)>([^<]*)</w:t>|<w:tab\b[^>]*/>")
+#: What the dump prints beside ``w:t``: a tab CHARACTER, and nothing else
+#: `printed_text` knows — a protocol copies its anchors out of this
+#: reading and they are matched against `visible_text`, so a no-break
+#: hyphen or a line break here would be a character no anchor can hold.
+#: `printed_text` is also what tells a tab character from a tab STOP.
+_DUMP_CHILDREN = {"tab": "\t"}
 #: A body paragraph Word wrote EMPTY. `PARA_RE` cannot see one, which is
 #: what keeps the package's paragraph numbering stable; counted apart.
 _EMPTY_PARA_RE = re.compile(r"<w:p\b[^>]*/>")
@@ -129,13 +131,8 @@ _NOTE_KIND = {FOOTNOTES: ("footnote", "FN"), ENDNOTES: ("endnote", "EN")}
 
 
 def _prose(xml: str) -> str:
-    """The text of the runs in `xml`: ``w:t``, and a tab as ``\\t``."""
-    out: list[str] = []
-    for r in RUN_RE.finditer(xml):
-        for m in _RUN_TEXT_RE.finditer(r.group(0)):
-            out.append("\t" if m.group(1) is None
-                       else html.unescape(m.group(1)))
-    return "".join(out)
+    """The text of `xml`: ``w:t``, and a tab character as ``\\t``."""
+    return printed_text(xml, printing=_DUMP_CHILDREN)
 
 
 def _reading(para_xml: str) -> str:

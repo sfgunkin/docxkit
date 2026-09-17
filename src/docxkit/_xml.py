@@ -14,7 +14,7 @@ from __future__ import annotations
 import html
 import re
 import zipfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 
 __all__ = [
     "BOOKMARK_END_ID_RE",
@@ -593,12 +593,25 @@ PRINTED_CHILDREN = {
     "cr": "\n",
 }
 
+#: The first alternative is consumed and yields nothing: `w:tabs`, the
+#: paragraph property that DEFINES tab stops. Its children are spelled
+#: `<w:tab …/>` exactly as the tab CHARACTER a run holds is, and the
+#: pattern matched them wherever they stood — so every stop a paragraph
+#: defined read as a tab at its start, and a paragraph whose stops changed
+#: failed `compare --expect-clean` as a TEXT edit (2026-09-17). Matched as
+#: an element rather than as "inside `w:pPr`", because `w:pPrChange` holds
+#: a second `w:pPr` and the snapshot's stops are the same shape one level
+#: down. `(?<!/)` because `<w:tabs/>` opens nothing: read as an opening
+#: tag it would pair with the next paragraph's `</w:tabs>` and every word
+#: between the two would drop out of the comparison.
 _PRINTED_RE = re.compile(
-    r"<w:t[^>]*>([^<]*)</w:t>"
-    r"|<w:(noBreakHyphen|softHyphen|tab|br|cr)\b[^>]*/?>")
+    r"<w:tabs\b[^>]*(?<!/)>.*?</w:tabs>"
+    r"|<w:t[^>]*>([^<]*)</w:t>"
+    r"|<w:(noBreakHyphen|softHyphen|tab|br|cr)\b[^>]*/?>", re.DOTALL)
 
 
-def printed_text(xml: str) -> str:
+def printed_text(xml: str, *,
+                 printing: Mapping[str, str] = PRINTED_CHILDREN) -> str:
     """Everything a reader SEES in `xml`, in document order.
 
     :func:`visible_text` walks `w:t`, which is the right reading for an
@@ -614,16 +627,23 @@ def printed_text(xml: str) -> str:
     the defect that put them there shipped through four rounds — every
     pass reported `TEXT: (none)` and was believed (backlog S1).
 
-    Used by `compare`'s TEXT layer and nothing else so far. It is
-    deliberately NOT what `visible_text` returns: every anchor in four
-    paper trees is written against that reading, and a tab appearing in
-    it would move every offset after it.
+    Used by `compare`'s TEXT layer. It is deliberately NOT what
+    `visible_text` returns: every anchor in four paper trees is written
+    against that reading, and a tab appearing in it would move every
+    offset after it.
+
+    `printing` narrows which of :data:`PRINTED_CHILDREN` are rendered,
+    and to what; a child it does not name renders as nothing. `snapshot`
+    asks for the tab alone — its dump is the reading a protocol copies
+    anchors out of, so it has to be `visible_text`'s plus a tab — and
+    asking here rather than walking runs of its own keeps one answer to
+    "is this `<w:tab/>` a character or a tab stop".
     """
     out = []
     for m in _PRINTED_RE.finditer(xml):
         if m.group(2) is not None:
-            out.append(PRINTED_CHILDREN[m.group(2)])
-        else:
+            out.append(printing.get(m.group(2), ""))
+        elif m.group(1) is not None:
             out.append(html.unescape(m.group(1)))
     return "".join(out)
 

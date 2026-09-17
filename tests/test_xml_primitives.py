@@ -1096,3 +1096,109 @@ def test_the_TEXT_layer_compares_the_printed_reading():
 
     assert clean.text != strayed.text
     assert "(\u2011Rowe" in strayed.text
+
+
+# --- a tab STOP is not a printed tab ------------------------------------
+#
+# `<w:tab/>` is two elements. As a RUN child it is a tab character on the
+# page; inside `w:pPr/w:tabs` it DEFINES a tab stop and prints nothing.
+# The printing-children pattern matched the tag wherever it stood, so
+# every tab stop a paragraph defined read as a tab at its start, and a
+# paragraph whose stops changed \u2014 a formatting edit \u2014 was reported by
+# `compare` as a TEXT edit that failed `--expect-clean` (2026-09-17).
+
+_LEFT_RIGHT = "<w:r><w:t>Left</w:t><w:tab/><w:t>Right</w:t></w:r>"
+_ONE_STOP = '<w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs>'
+_TWO_STOPS = ('<w:tabs><w:tab w:val="left" w:pos="720"/>'
+              '<w:tab w:val="right" w:pos="9000"/></w:tabs>')
+
+
+@pytest.mark.parametrize("stops", [_ONE_STOP, _TWO_STOPS],
+                         ids=["one_stop", "two_stops"])
+def test_a_tab_STOP_in_the_paragraph_properties_prints_nothing(stops):
+    xml = f"<w:p><w:pPr>{stops}</w:pPr>{_LEFT_RIGHT}</w:p>"
+
+    assert printed_text(xml) == "Left\tRight"
+
+
+def test_the_stops_in_a_TRACKED_formatting_snapshot_print_nothing_either():
+    """`w:pPrChange` keeps the OLD properties, tab stops included, inside
+    the live `w:pPr` \u2014 the same element one level deeper."""
+    xml = (f"<w:p><w:pPr>{_ONE_STOP}<w:pPrChange w:id=\"4\" w:author=\"A\">"
+           f"<w:pPr>{_TWO_STOPS}</w:pPr></w:pPrChange></w:pPr>"
+           f"{_LEFT_RIGHT}</w:p>")
+
+    assert printed_text(xml) == "Left\tRight"
+
+
+def test_an_EMPTY_tabs_element_does_not_swallow_the_text_after_it():
+    """`<w:tabs/>` defines no stops and opens nothing: read as an opening
+    tag, it would pair with the next paragraph's `</w:tabs>` and every
+    word between the two would vanish from the comparison."""
+    xml = (f"<w:p><w:pPr><w:tabs/></w:pPr>{_LEFT_RIGHT}</w:p>"
+           f"<w:p><w:pPr>{_ONE_STOP}</w:pPr>{run('Next')}</w:p>")
+
+    assert printed_text(xml) == "Left\tRightNext"
+
+
+def test_a_tab_CHARACTER_still_prints_beside_a_paragraph_with_stops():
+    """The fix may not buy its silence by going blind: the run's own tab
+    is still a character, and two of them are still two."""
+    xml = (f"<w:p><w:pPr>{_ONE_STOP}</w:pPr><w:r><w:t>a</w:t><w:tab/>"
+           f"<w:tab/><w:t>b</w:t></w:r></w:p>")
+
+    assert printed_text(xml) == "a\t\tb"
+
+
+def test_printed_text_can_be_asked_for_SOME_of_the_children():
+    """`snapshot` reads a paragraph as `visible_text` does plus a tab \u2014
+    the reading a protocol copies its anchors out of \u2014 and asks this
+    function for exactly that, so the tab-stop guard lives in one place."""
+    xml = ("<w:p><w:pPr>" + _ONE_STOP + "</w:pPr><w:r><w:t>trade</w:t>"
+           "<w:noBreakHyphen/><w:t>offs</w:t><w:tab/><w:t>x</w:t><w:br/>"
+           "</w:r></w:p>")
+
+    assert printed_text(xml, printing={"tab": "\t"}) == "tradeoffs\tx"
+
+
+def _compare_exit(monkeypatch, tmp_path, a_ppr: str, b_ppr: str,
+                  b_run: str = _LEFT_RIGHT) -> int | str | None:
+    from conftest import make_parts, write
+
+    from docxkit.cli import main
+
+    a = write(tmp_path / "a.docx",
+              make_parts(f"<w:p><w:pPr>{a_ppr}</w:pPr>{_LEFT_RIGHT}</w:p>"))
+    b = write(tmp_path / "b.docx",
+              make_parts(f"<w:p><w:pPr>{b_ppr}</w:pPr>{b_run}</w:p>"))
+    monkeypatch.setattr("sys.argv", ["docxkit", "compare", a, b,
+                                     "--expect-clean"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    return exc.value.code
+
+
+def test_COMPARE_passes_a_pair_that_differs_only_in_TAB_STOPS(
+        monkeypatch, tmp_path, capsys):
+    """The end-to-end shape: one stop against two, the same words. It
+    printed `EDGE leading: '\\t' -> '\\t\\t'` under TEXT and exited 1."""
+    code = _compare_exit(monkeypatch, tmp_path, _ONE_STOP, _TWO_STOPS)
+    out = capsys.readouterr().out
+
+    assert code in (0, None), out
+    assert "EDGE leading" not in out
+
+
+def test_COMPARE_still_fails_a_pair_whose_TAB_CHARACTERS_differ(
+        monkeypatch, tmp_path, capsys):
+    """The control: the same stops on both sides, and a real tab CHARACTER
+    opening the paragraph on one of them — which Word prints as an indent
+    and the TEXT layer reads at the paragraph's edge."""
+    indented = "<w:r><w:tab/><w:t>Left</w:t><w:tab/><w:t>Right</w:t></w:r>"
+
+    code = _compare_exit(monkeypatch, tmp_path, _ONE_STOP, _ONE_STOP,
+                         b_run=indented)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "EDGE leading: '' -> '\\t'" in out

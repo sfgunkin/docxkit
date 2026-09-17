@@ -118,6 +118,17 @@ def test_the_dump_numbers_paragraphs_and_cells_in_DOCUMENT_order():
     )
 
 
+def test_the_dump_prints_ONLY_the_tab_of_the_printing_children():
+    """A protocol copies anchors out of the dump and they are matched
+    against `visible_text`, which holds no no-break hyphen and no line
+    break. Printed here, `trade‑offs` would be an anchor nothing finds."""
+    parts = make_parts(para("<w:r><w:t>trade</w:t><w:noBreakHyphen/>"
+                            "<w:t>offs</w:t><w:br/><w:t>a</w:t><w:tab/>"
+                            "<w:t>b</w:t></w:r>"))
+
+    assert snap.snapshot(parts).lines == ("[P1] tradeoffsa\tb",)
+
+
 def test_an_EMPTY_self_closing_paragraph_is_counted_and_not_numbered():
     """The package numbers ¶ the way `find.body_elements` walks them, which
     every report it prints shares. Word writes an empty paragraph as
