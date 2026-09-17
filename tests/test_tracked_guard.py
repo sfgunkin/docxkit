@@ -333,6 +333,34 @@ def test_carry_treats_a_stamp_that_certifies_nothing_as_none(
     assert not _stamp_path(copy).exists()
 
 
+@pytest.mark.parametrize("stamp_text", [
+    pytest.param(None, id="no_stamp"),
+    pytest.param('{"sha256": "a", "base_sha', id="unparseable"),
+    pytest.param('["not", "a", "stamp"]', id="not_an_object"),
+    pytest.param('{"original": "prev.docx"}', id="no_hash"),
+])
+def test_carry_with_nothing_to_carry_onto_a_target_with_NO_stamp_either(
+        tmp_path, stamp_text):
+    """The first promote of a hand-authored batch: the batch has no
+    stamp that certifies anything, and neither does the manuscript. For
+    the three `target.unlink(missing_ok=True)` in `carry`, each read as
+    `missing_ok=False` — every earlier carry test put a stale stamp
+    beside the target, so the removal always found a file. Here there is
+    none, and the mutant raises FileNotFoundError after `promote` has
+    already replaced the manuscript. One case per early return."""
+    from docxkit.guard import carry
+
+    batch, live = tmp_path / "v.docx", tmp_path / "manuscript.docx"
+    write(batch, make_parts(para(run("hand-authored"))))
+    live.write_bytes(batch.read_bytes())
+    if stamp_text is not None:
+        _stamp_path(batch).write_text(stamp_text, encoding="utf-8")
+
+    assert carry(batch, live) is None
+
+    assert not _stamp_path(live).exists()
+
+
 def test_restamp_records_a_repair_on_a_deliverable_with_NO_stamp(tmp_path):
     """The branch where there is nothing to carry forward. `was` is
     empty because there is no previous hash — not omitted, because the
