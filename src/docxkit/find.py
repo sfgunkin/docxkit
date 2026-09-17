@@ -136,7 +136,7 @@ def label_form(label: str) -> str:
     return LABEL_FORMS.get(label, re.escape(label) + "s?")
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=256)                      # one per mention grammar
 def mention_re(label: str, number: str) -> re.Pattern[str]:
     """``Figure 1`` but never ``Figure 10``, ``Figure 1.1`` or ``Figure 1A``.
 
@@ -149,7 +149,7 @@ def mention_re(label: str, number: str) -> re.Pattern[str]:
         re.IGNORECASE)
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=256)                      # one per continuation grammar
 def continuation_re(label: str, number: str) -> re.Pattern[str]:
     """The bare number of a range or list mention: the "5" of "Tables 3
     to 5", "Tables 3–5" or "Tables 3, 4 and 5".

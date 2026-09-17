@@ -16,10 +16,13 @@ from docxkit.edit import insert_in_para, relabel_link, replace_in_para
 from docxkit.errors import AnchorError
 from docxkit.find import (
     body_elements,
+    caption_re,
+    continuation_re,
     edit_para,
     find_para,
     heading_level,
     internal_links,
+    mention_re,
     page_break_before,
     para_text_at,
     site,
@@ -60,6 +63,46 @@ def test_table_spans_counts_and_expect_guard():
     assert len(table_spans(xml)) == 2
     with pytest.raises(AnchorError, match="expected 3"):
         table_spans(xml, expect=3)
+
+
+def test_table_spans_counts_past_the_small_int_cache():
+    """`len(out) != expect` respelled `is not expect`.
+
+    Every fixture here counts two or three tables, and CPython hands out
+    one object for every int from -5 to 256 — so identity answers as
+    equality does, and the two spellings cannot be told apart. Past that
+    the count is an object of its own: `is not` is then true of two
+    equal numbers, and a document with exactly as many tables as the
+    caller expects is refused as if it had the wrong number.
+
+    257 rather than 300 because the boundary is the point, and the
+    guard is what every `expect=` caller in the package leans on.
+    """
+    xml = document(table(row("cell")) * 257)
+
+    assert len(table_spans(xml)) == 257
+    assert len(table_spans(xml, expect=257)) == 257
+    with pytest.raises(AnchorError, match="expected 256"):
+        table_spans(xml, expect=256)
+
+
+def test_the_pattern_builders_answer_with_ONE_compiled_pattern():
+    """What the three `@lru_cache` decorators are for, and the limit of
+    what any test can say about them.
+
+    Asking twice gives the same object — but that is true with the
+    decorators removed as well, because `re.compile` keeps a cache of
+    its own (512 patterns) and answers the same pattern string with the
+    same object. Measured 2026-09-18, which is why the three
+    `RemoveDecorator` mutants are equivalent rather than killable: no
+    caller can tell the two spellings apart, by value or by identity.
+    This pins the property callers actually have.
+    """
+    labels = ("Figure", "Table")
+
+    assert caption_re(labels) is caption_re(labels)
+    assert mention_re("Figure", "1") is mention_re("Figure", "1")
+    assert continuation_re("Table", "3") is continuation_re("Table", "3")
 
 
 def test_table_index_at_locates_the_right_table():
@@ -1289,19 +1332,70 @@ def test_site_matches_the_glyphs_as_written_unless_told_otherwise():
     assert site(doc, "author’s own").matches == 1
 
 
-# `site`'s remaining survivors from the same round, argued:
+def test_the_report_counts_the_other_matches_when_there_are_exactly_TWO():
+    """Two matches is where the arithmetic can be told apart, and the
+    fixture above has three.
+
+    `self.matches - 1` respelled `self.matches ^ 1` is 2 at three
+    matches, exactly what the subtraction gives, so the older test
+    passes on both. At two it is 3, and the report offers a reader
+    three other paragraphs that are not there. `> 1` respelled `> 2`
+    prints no suffix at all here, which reads as a unique signature —
+    the one thing this line exists to deny.
+    """
+    doc = document(para(run("a poverty line")) + para(run("poverty again")))
+
+    text = site(doc, "poverty").format()
+
+    assert text.splitlines()[0] == "paragraph 0 (and 1 more match)"
+
+
+def test_the_report_names_double_spaces_only_when_there_ARE_some():
+    """Inverted, the line appears on every clean paragraph — "0 double
+    space(s)" — and vanishes from the one paragraph whose spacing a
+    caller has to know about before writing an anchor through it."""
+    doubled = document(para(run("poverty  fell in 2019")))
+    single = document(para(run("poverty fell in 2019")))
+
+    assert "1 double space(s)" in site(doubled, "poverty").format()
+    assert "double space" not in site(single, "poverty").format()
+
+
+def test_a_site_cannot_be_EDITED_after_the_survey():
+    """`@dataclass(frozen=True)`, mutated to `frozen=False`.
+
+    A Site is the answer a caller carries to the edit it is about to
+    write: `matches` decides whether the anchor can be used at all, and
+    `labels` is the set `replace_in_para` refuses to cut across. A
+    survey that can be rewritten after the fact is one a caller can
+    silently talk itself into, and the frozen dataclass is what makes
+    "what is AT this site" a fact rather than a suggestion.
+    """
+    from dataclasses import FrozenInstanceError
+
+    found = site(_site_doc(), "poverty")
+
+    with pytest.raises(FrozenInstanceError):
+        found.matches = 1                                # type: ignore[misc]
+    assert found.matches == 2
+
+
+# `site`'s remaining survivors from the same round are argued in
+# `tools/equivalents.toml` now rather than here — the prose that stood in
+# this place named three of them and settled none, because a survivor
+# list reads claims and not comments, and all three came back in the
+# round of 2026-09-18. The arguments themselves are unchanged: the
+# `!= 1` threshold cannot be reached at zero matches, the cache sizes
+# decide evictions rather than answers, and `str.find` returns -1 or an
+# index with nothing in between.
 #
-# `if self.matches > 1` -> `!= 1`. The two differ only at 0, and 0 is
-# the empty Site, whose `format` returns "no paragraph matches that
-# signature" three lines earlier and never reaches this.
-#
-# `@lru_cache(maxsize=8)` on `caption_re`, mutated to 7, to 9 and
-# removed outright: the cache is a speed decision over a handful of
-# label tuples, and every spelling returns the same expression.
-#
-# `while (at := xml.find("<w:tbl>", pos)) != -1` -> `> -1` in
-# `body_elements`: `str.find` answers -1 or an index, and there is no
-# value between them.
+# Three survivors of that round are argued and CANNOT be claimed:
+# `RemoveDecorator` on each of the three `@lru_cache` builders. A claim
+# is keyed on the line the mutation produced, and removing a decorator
+# produces no line at all — an empty key would settle every lineless
+# mutant this module ever has. They are equivalent for the reason
+# `test_the_pattern_builders_answer_with_ONE_compiled_pattern` records:
+# `re.compile` caches, so both spellings answer with the same object.
 
 
 def test_relabel_link_rewrites_the_FIELD_the_anchor_names_and_no_other():
