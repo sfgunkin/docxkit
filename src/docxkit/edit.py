@@ -622,6 +622,27 @@ def _run_walk(para_xml: str) -> tuple[list[re.Match[str]],
     return runs, spans
 
 
+def _field_instruction(para_xml: str, span: tuple[int, int]) -> str:
+    r"""What a field's instruction SAYS, cut for a refusal to quote.
+
+    Both refusals that name a field quote it — the one for a cached
+    result a write would destroy, and the one for a field showing
+    nothing yet — and forty characters is a ``REF _Ref…`` or a
+    ``HYPERLINK \l "…"`` with its bookmark name, which is what a reader
+    deciding where to anchor next is looking for.
+
+    One function because it is one answer, and the reading was written
+    out twice: the second copy made a LINE occur twice in the module,
+    and a line written twice is a line no equivalence argument can be
+    anchored on (`tools/verify_equivalents.py` refuses it by design). So
+    the duplication cost more than its four lines — it cost the two
+    mutants on each copy their verdict.
+    """
+    lo, hi = span
+    return " ".join(unescape(t).strip()
+                    for t in INSTR_RE.findall(para_xml[lo:hi]))[:40]
+
+
 def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
                   spans: list[tuple[int, int]], match: tuple[int, int],
                   new: str, *, allow_hyperlink: bool, grow_link_label: bool,
@@ -665,9 +686,7 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
         label = label_of.get(idx)
         if a_hyperlink(run) or label is None or label.field is None:
             return None
-        lo, hi = label.field
-        return " ".join(unescape(t).strip()
-                        for t in INSTR_RE.findall(para_xml[lo:hi]))[:40]
+        return _field_instruction(para_xml, label.field)
 
     def label_end(idx: int, run: re.Match[str]) -> int:
         if field_only(idx, run) is not None:
@@ -810,8 +829,7 @@ def _refuse_crossed_empty_field(para_xml: str, runs: list[re.Match[str]],
         where = spans[held[0]][0]
         if not at < where < end:
             continue                # beside the match, not across it
-        instruction = " ".join(unescape(t).strip()
-                               for t in INSTR_RE.findall(para_xml[lo:hi]))[:40]
+        instruction = _field_instruction(para_xml, (lo, hi))
         raise AnchorError(
             f"{who}: the match crosses a field that shows nothing yet "
             f"({instruction}) -- the replacement goes into the run "
