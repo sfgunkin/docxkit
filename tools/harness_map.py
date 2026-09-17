@@ -357,11 +357,21 @@ HARNESS: dict[str, list[str]] = {
                    "tests/test_cli.py"],
     "console.py": ["tests/test_console.py", "tests/test_cli_guards.py"],
     "timings.py": ["tests/test_timings.py"],
+    # `test_remove_link.py` and `test_insert_spans.py` are named after
+    # FUNCTIONS of this module rather than after the module, so nothing
+    # pulled them in and the sweep of 2026-09-17 measured `edit.py`
+    # without the tests written for its link removal and its inserts.
+    # Measured that day, replaying the sweep's 389 survivors against
+    # these two files added: 158 of them die — 152 by
+    # `test_remove_link.py`, 6 by `test_insert_spans.py` — every one to
+    # a test that already existed. A harness gap does not read as a gap;
+    # it reads as a module nobody tested.
     "edit.py": ["tests/test_find_edit.py", "tests/test_edit_boundaries.py",
                 "tests/test_edit_branches.py",
                 "tests/test_normalize_anchors.py",
                 "tests/test_locate_spans.py", "tests/test_replace_spans.py",
-                "tests/test_edit_links_replace.py"],
+                "tests/test_edit_links_replace.py",
+                "tests/test_remove_link.py", "tests/test_insert_spans.py"],
     # The exit CODES are this module's contract with the paper
     # projects' scripts, and the tests that read them live with the
     # protocol they belong to. Without them `errors.py` measured
