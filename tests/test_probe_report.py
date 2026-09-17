@@ -20,10 +20,14 @@ citation reports are.
 """
 from __future__ import annotations
 
+import json
+import sys
+from pathlib import Path
+
 import pytest
 from conftest import make_parts, para, run, write
 
-from docxkit.probe import probe
+from docxkit.probe import Probe, probe
 
 ELEMENT_LINK = ('<w:hyperlink w:anchor="Table1txt">'
                 '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
@@ -122,6 +126,34 @@ def test_bookmarks_are_counted_WITH_how_many_are_body_level(tmp_path):
     line = next(ln for ln in probe(_doc(tmp_path, body)).report().splitlines()
                 if "bookmarks" in ln)
 
+    assert line == "  bookmarks   3 (2 body-level)"
+
+
+def test_body_level_is_counted_by_VALUE_not_by_the_literal_s_identity():
+    """`w == "body"`, mutated to `w is "body"` (2026-09-17 sweep).
+
+    Every fixture above goes through `probe`, which writes the literal,
+    and CPython interns an identifier-like string constant — so each
+    `where` it records is the very object `report` compares against and
+    identity agrees with equality. `Probe` is exported, though, and one
+    built from anywhere else holds strings EQUAL to "body" that are not
+    that object: here, the bookmark list of a saved answer read back
+    with `json.loads`, which makes fresh strings. Under `is` its report
+    says no bookmark is body-level.
+
+    Two body-level against one nested, for the reason the test above
+    gives: a count of the wrong kind would otherwise read the same.
+    """
+    saved = json.dumps([["Hoisted", "body"], ["Inside", "nested"],
+                        ["AlsoHoisted", "body"]])
+    rebuilt = [(name, where) for name, where in json.loads(saved)]
+    # the fixture's whole point, checked rather than trusted: had the
+    # reader handed back interned strings, both spellings would pass
+    assert all(where is not sys.intern(where) for _, where in rebuilt)
+
+    got = Probe(path=Path("paper.docx"), bookmarks=rebuilt)
+
+    line = next(ln for ln in got.report().splitlines() if "bookmarks" in ln)
     assert line == "  bookmarks   3 (2 body-level)"
 
 
