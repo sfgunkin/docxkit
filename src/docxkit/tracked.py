@@ -560,7 +560,6 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             cmp_ = _word.compare_documents(
                 word, orig, rev, author=author,
                 whitespace=whitespace, formatting=formatting, moves=moves)
-            report.body_revisions = int(cmp_.Revisions.Count)
             report.mark("compared")
             _word.draft_view(cmp_)
 
@@ -588,6 +587,20 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 say("math left tracked (resolve_math=False)")
             for note in report.suppressed:
                 say(f"  WARNING: {note}")
+
+            # Word's body count, of the document about to be EXTRACTED —
+            # the one the package is counted from below. It was read
+            # straight after the Compare, and every revision the math
+            # pass accepted then counted in Word's figure and in no
+            # element of the package: the note compared two documents,
+            # its grouping remainder came out short by the math
+            # accepted, and when that equalled the footnote and grouping
+            # gap it said nothing at all. Re-read from Word rather than
+            # decremented, because an accept applies its whole span and
+            # can take other revisions with it (see
+            # `_accept_math_via_equations`), and Word's grouping is what
+            # the note exists to report.
+            report.body_revisions = int(cmp_.Revisions.Count)
 
             # NOTE: keep orig/rev OPEN until after the extraction — the
             # compare result lazily references their parts, and closing

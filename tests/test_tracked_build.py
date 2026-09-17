@@ -1553,20 +1553,25 @@ def test_a_clean_build_reports_nothing_dropped(monkeypatch, sources):
 
 # --- the survivors of the first whole `tracked` sweep (2026-09-17) -------
 #
-# Five, and none of them needed Word: a count read BEFORE the math pass
-# and compared with one read after it, the one refusal that runs after
-# the glyph restore, two progress lines the report fields beside them
-# hid, and the tidy-up in `build`'s `finally`.
+# Five, and none of them needed Word: the count note's comparison, the
+# one refusal that runs after the glyph restore, two progress lines the
+# report fields beside them hid, and the tidy-up in `build`'s `finally`.
+# The first also exposed a defect, fixed in the section after it.
 
 
 def test_Word_counting_MORE_than_the_package_is_said_aloud_too(
         monkeypatch, sources):
-    """`body_revisions` is read straight after the Compare, BEFORE the
-    math pass accepts anything, and the package is counted after it — so
-    on a default build every resolved equation makes Word's figure the
-    HIGHER one. The note is for a difference either way; `<` in place of
-    `!=` kept it only for the footnote direction, which is the one every
-    earlier fixture here built (a compare result reporting 0)."""
+    """The note is for a difference either way; `<` in place of `!=`
+    kept it only for the footnote direction, which is the one every
+    earlier fixture here built (a compare result reporting 0).
+
+    Word's figure being the HIGHER one is not hypothetical: until
+    2026-09-17 it was read before the math pass, and every accepted
+    equation revision raised it above the package (the section below).
+    Read of one document state it is usually the lower, but Word's
+    collection is its own idea of one revision and the package's is
+    seven element kinds, and nothing makes the first a subset of the
+    second."""
     said: list[str] = []
     counted = _FakeDoc()
     counted.Revisions = type("R", (), {"Count": 2})()
@@ -1581,6 +1586,142 @@ def test_Word_counting_MORE_than_the_package_is_said_aloud_too(
     assert (report.body_revisions, report.revisions) == (2, 0)
     assert ("  (Word counts 2 in the body; the package holds 0 revision "
             "elements)") in said, said
+
+
+# --- the two counts the note compares, taken of ONE document state --------
+#
+# Word's body count used to be read straight after the Compare, and the
+# package's after the math pass had accepted what it accepts — so on a
+# default build the note compared two different documents. Word's figure
+# came out high by exactly the math accepted: the grouping remainder was
+# understated by that much or vanished, and when the two errors cancelled
+# the note was not printed at all.
+
+
+class _LiveRevisions:
+    """A Revisions collection whose `Count` is read when it is asked, so
+    an accepted revision is gone from it — `_Count` fixes it at build."""
+
+    def __init__(self, items: list[Any]) -> None:
+        self.items = items
+
+    @property
+    def Count(self) -> int:
+        return len(self.items)
+
+    def __call__(self, i: int) -> Any:
+        return self.items[i - 1]
+
+
+class _Leaves:
+    """A revision at `span` that leaves every list holding it on Accept."""
+
+    def __init__(self, span: tuple[int, int], *holders: list[Any]) -> None:
+        self.Range = type("R", (), {"Start": span[0], "End": span[1]})()
+        self.holders = holders
+
+    def Accept(self) -> None:
+        for held in self.holders:
+            held.remove(self)
+
+
+def _compared_with_math(prose: int, in_math: int) -> _FakeDoc:
+    """A compare result reporting `prose + in_math` body revisions, the
+    last `in_math` of them inside its one equation at 100–120 — which
+    the default math pass accepts, leaving Word `prose`."""
+    doc = _FakeDoc()
+    body: list[Any] = []
+    math: list[Any] = []
+    math += [_Leaves((102 + 2 * k, 103 + 2 * k), body, math)
+             for k in range(in_math)]
+    body += [_Leaves((k, k + 1), body) for k in range(prose)] + math
+    doc.Revisions = _LiveRevisions(body)
+    equation = type("OMath", (), {"Range": type("R", (), {
+        "Start": 100, "End": 120, "Revisions": _LiveRevisions(math)})()})()
+    doc.OMaths = _Count([equation])
+    return doc
+
+
+FOOTNOTES_PART = """
+  <pkg:part pkg:name="/word/footnotes.xml" pkg:contentType=\
+"application/vnd.openxmlformats-officedocument.wordprocessingml.\
+footnotes+xml">
+    <pkg:xmlData>{notes}</pkg:xmlData>
+  </pkg:part>
+"""
+
+
+class _FakeWordAfterMath(_FakeWordModule):
+    """Compare hands back `doc`; the package carries `body` and, when
+    `footnote` is given, a footnotes part holding it."""
+
+    def __init__(self, body: str, doc: _FakeDoc,
+                 footnote: str | None = None) -> None:
+        super().__init__(body)
+        self.doc, self.footnote = doc, footnote
+
+    def compare_documents(self, word, orig, rev, **kw):
+        self.compared = kw
+        return self.doc
+
+    def extract_flat_opc(self, doc, flat: Path) -> None:
+        super().extract_flat_opc(doc, flat)
+        if self.footnote is None:
+            return
+        xml = notes("footnotes", f'<w:footnote w:id="2">{self.footnote}'
+                                 "</w:footnote>")
+        part = FOOTNOTES_PART.format(notes=xml[xml.index("<w:footnotes"):])
+        text = Path(flat).read_text(encoding="utf-8")
+        Path(flat).write_text(text.replace("</pkg:package>",
+                                           part + "</pkg:package>"),
+                              encoding="utf-8")
+
+
+@pytest.mark.parametrize(("in_math", "footnote", "note"), [
+    (2, None,
+     "  (Word counts 3 in the body; the package holds 4 revision elements)\n"
+     "  (the remaining 1 are in word/document.xml too: Word GROUPS adjacent "
+     "revisions, so one thing to accept can be several elements)"),
+    (1, para(ins("in a note", rid=5), pid="33333333"),
+     "  (Word counts 3 in the body; the package holds 4 revision elements)\n"
+     "  (1 of them are in word/footnotes.xml, where Word's own count and "
+     "Review > Next do not go)"),
+], ids=["the grouping remainder, understated by the math accepted",
+        "a footnote revision, silent when the two errors cancelled"])
+def test_the_count_note_reads_Word_AFTER_the_math_pass(
+        monkeypatch, sources, in_math, footnote, note):
+    """Word's body count and the package's, of the document that is
+    EXTRACTED. Three body revisions Word keeps, and `in_math` more inside
+    an equation that the math pass accepts.
+
+    With two accepted and four elements in the body — `a` and `b`
+    adjacent, which Word counts as one — the note used to say "Word
+    counts 5" and name no cause. With one accepted and a footnote
+    revision beside three body elements, the stale 4 equalled the
+    package's 4 and the note, whose first job is a footnote Word's count
+    does not reach, said nothing."""
+    kept = para(run("Kept ", preserve=True), ins("a", rid=1),
+                ins("b", rid=2), pid="11111111")
+    also = para(run("Also ", preserve=True), ins("c", rid=3),
+                pid="22222222")
+    more = "" if footnote else para(run("More ", preserve=True),
+                                    ins("d", rid=4), pid="44444444")
+    body = f"<w:document {NS}><w:body>{kept}{also}{more}</w:body></w:document>"
+    doc = _compared_with_math(prose=3, in_math=in_math)
+    fake = _FakeWordAfterMath(body, doc, footnote)
+    monkeypatch.setattr(tracked, "_word", fake)
+    original, revised, out = sources
+    said: list[str] = []
+
+    # the gates are not the subject, and the conftest inputs are not
+    # what this redline rejects or accepts to
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           reject_check=False, accept_check=False,
+                           progress=said.append)
+
+    assert report.math_resolved == in_math
+    assert [line for line in said if "in the body" in line] == [note], said
+    assert (report.body_revisions, report.revisions) == (3, 4)
 
 
 def _equation_para(number: str, inserted: str = "") -> str:

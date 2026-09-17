@@ -1077,12 +1077,19 @@ def test_a_build_verifies_in_word_and_closes_the_compare_UNSAVED(
 #   caller asking for more than 256 findings has already given up on
 #   reading them.
 #
-#   `if report.body_revisions != report.revisions` -> `<`. Word's count
-#   walks the main story and the package's counts every text-bearing
-#   part, so the body count is a subset by construction: it can be
-#   lower, never higher. The identity spelling of the same comparison
-#   IS tested, above the small-int cache, because that one differs on
-#   any batch of 257 revisions or more.
+#   `if report.body_revisions != report.revisions` -> `<`. ARGUED WRONG,
+#   and killed on 2026-09-17. The argument was "Word's count walks the
+#   main story and the package's counts every text-bearing part, so the
+#   body count is a subset by construction: it can be lower, never
+#   higher" — but Word's figure was read BEFORE the math pass and the
+#   package's after it, so every accepted equation revision made Word's
+#   the higher one. That was a defect in the note as well as a hole in
+#   the argument; both are in test_tracked_build.py
+#   (`test_Word_counting_MORE_than_the_package_is_said_aloud_too`,
+#   `test_the_count_note_reads_Word_AFTER_the_math_pass`). The identity
+#   spelling of the same comparison is tested too, above the small-int
+#   cache, because that one differs on any batch of 257 revisions or
+#   more.
 
 
 # --- the parts the gates SIMULATE, and the parts they used to READ -------
@@ -1462,10 +1469,14 @@ def test_the_MATH_ONLY_refusal_speaks_only_about_the_maths():
 
 # tracked's other survivors from the 2026-08-21 round, argued:
 #
-# `if grouped > 0` -> `!= 0` in `_revision_gap`. Word's count walks the
-# main story and the package's counts every element in it, so the body
-# figure is a subset by construction — the same argument the note above
-# makes for the comparison that produced it, one line further on.
+# `if grouped > 0` -> `!= 0` in `_revision_gap`. Argued as "the body
+# figure is a subset by construction", the same argument as the note
+# above, and WRONG for the same reason: the body figure was read before
+# the math pass, so it could exceed the body's elements and `!= 0` would
+# name a negative remainder. Killed by the tests that give Word the
+# higher number: `test_Word_counting_MORE_than_the_package_is_said_
+# aloud_too` in test_tracked_build.py, and `test_Word_counting_MORE_
+# body_revisions_than_the_package_groups_none` in test_tracked_edges.py.
 #
 # `zip(was, now, strict=True)` -> `strict=False` in `accepted_math`: the
 # length check three lines above has already returned when they differ,
