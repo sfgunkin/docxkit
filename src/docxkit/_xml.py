@@ -721,8 +721,9 @@ def split_run(run_xml: str, at: int) -> tuple[str, str]:
             right.append(_t(open_t, tail))
         seen += len(text)
         cut = True
-    if not cut and at > seen:
-        pass                          # past the end: everything rides left
+    # An offset at or past the end never cuts, and everything has ridden
+    # left already — there is nothing to do about it, which is why the
+    # `if` that used to say so here was ten mutants and no behaviour.
     return (open_tag + rpr + "".join(left) + close,
             open_tag + rpr + "".join(right) + close if right else "")
 
@@ -937,7 +938,8 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
     for m in _HYPERLINK_EL_RE.finditer(xml):
         out.append((html.unescape(m.group(1)), visible_text(m.group(2))))
     for m in _FIELD_RE.finditer(xml):
-        instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
+        instr = html.unescape(
+            "".join(INSTR_RE.findall(m.group(1))))  # the code of a LINK
         # Three forms reach a bookmark, not two. The third is Word's own
         # CROSS-REFERENCE — `REF _Ref211944524 \h` — and reading only the
         # first two made `citations` report four working mentions on HCW
@@ -1025,7 +1027,8 @@ def dead_links(xml: str) -> list[str]:
         if _shows_nothing(m.group(2)):
             out.append(html.unescape(m.group(1)))
     for m in _FIELD_RE.finditer(xml):
-        instr = html.unescape("".join(INSTR_RE.findall(m.group(1))))
+        instr = html.unescape(
+            "".join(INSTR_RE.findall(m.group(1))))  # the code of a CANDIDATE
         am = INSTR_ANCHOR_RE.search(instr)
         sep = _SEPARATE_RE.search(m.group(1))
         # No `separate` means the field has no result yet — an unrendered
@@ -1076,7 +1079,7 @@ def element_spans(xml: str, tag: str) -> list[tuple[int, int]]:
     """
     spans: list[tuple[int, int]] = []
     open_re = re.compile(rf"<w:{tag}\b[^>]*?(/?)>")
-    pos = 0
+    pos = 0                             # from the top of the fragment
     while (m := open_re.search(xml, pos)) is not None:
         if m.group(1) == "/":
             pos = m.end()               # self-closing: no content, no close
@@ -1202,7 +1205,7 @@ def _own_children(inner: str) -> Iterator[tuple[str, int, int]]:
     ranking `w:top` inside `w:pBdr` as an unknown property and inserting
     the new one INSIDE the border definition.
     """
-    pos = 0
+    pos = 0                             # from the first of those children
     while (m := _CHILD_OPEN_RE.search(inner, pos)) is not None:
         tag = m.group(1)
         end = m.end() if m.group(2) == "/" else matching_close(
