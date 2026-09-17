@@ -11,6 +11,7 @@ its LINES.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -40,8 +41,26 @@ def _run(*gate_list):
     return code, "\n".join(said)
 
 
+def _gate_saw_pythonpath(tmp_path: Path) -> str:
+    """What `PYTHONPATH` a gate is actually run with.
+
+    Through a FILE rather than the gate's printed line, because the
+    runner truncates that line: the first version of these tests read it
+    and so passed in a short checkout and failed in one whose path was
+    long — the same shape of environment-dependent answer the fix below
+    is about.
+    """
+    out = tmp_path / "pythonpath.txt"
+    gates.run((("env", [sys.executable, "-c",
+                        "import os, pathlib; pathlib.Path(r'" + str(out) +
+                        "').write_text(os.environ.get('PYTHONPATH', ''),"
+                        " encoding='utf-8')"], False),),
+              say=lambda _line: None)
+    return out.read_text(encoding="utf-8")
+
+
 def test_a_gate_imports_THIS_checkouts_source_not_the_installed_one(
-        monkeypatch):
+        monkeypatch, tmp_path):
     """The defect this closes is the worst shape a gate can have: it did
     not fail, it answered a different question.
 
@@ -56,28 +75,21 @@ def test_a_gate_imports_THIS_checkouts_source_not_the_installed_one(
     chain without setting `PYTHONPATH` by hand gated master and said ok.
     """
     monkeypatch.setenv("PYTHONPATH", ELSEWHERE)
-    said: list[str] = []
-    first_entry = [sys.executable, "-c",
-                   "import os; print(os.environ.get('PYTHONPATH', '')"
-                   ".split(os.pathsep)[0])"]
 
-    gates.run((("env", first_entry, False),), say=said.append)
+    got = _gate_saw_pythonpath(tmp_path)
 
-    assert str(gates.ROOT / "src") in "\n".join(said), (
-        "this checkout's src must come FIRST in a gate's PYTHONPATH")
+    assert got.split(os.pathsep)[0] == str(gates.ROOT / "src"), (
+        f"this checkout's src must come FIRST in a gate's PYTHONPATH; "
+        f"the gate saw {got!r}")
 
 
-def test_a_gate_KEEPS_a_PYTHONPATH_the_caller_already_set(monkeypatch):
+def test_a_gate_KEEPS_a_PYTHONPATH_the_caller_already_set(
+        monkeypatch, tmp_path):
     """Prepended, not replaced. The mutation tools point `PYTHONPATH` at
     a measurement worktree, and a gate run under one must not lose it."""
     monkeypatch.setenv("PYTHONPATH", ELSEWHERE)
-    said: list[str] = []
-    show = [sys.executable, "-c",
-            "import os; print(os.environ['PYTHONPATH'])"]
 
-    gates.run((("env", show, False),), say=said.append)
-
-    assert ELSEWHERE in "\n".join(said)
+    assert ELSEWHERE in _gate_saw_pythonpath(tmp_path).split(os.pathsep)
 
 
 def test_all_green_is_zero():
