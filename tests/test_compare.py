@@ -1654,7 +1654,12 @@ def _marks(value: object) -> set[str]:
 @pytest.mark.parametrize("bucket", [
     "structure", "text", "glyph", "formula", "formula_glyph",
     "formula_format", "format", "hyperlinks", "integrity",
-    "stripped_fields", "comments"])
+    "stripped_fields", "comments",
+    # PARAGRAPH and MEDIA were not on this list, and every mutant the
+    # 2026-09-17 sweep left alive in the renderer was in those two
+    # sections. A layer missing from a list of layers is the one defect
+    # this file cannot see by reading itself.
+    "paragraph", "media"])
 def test_every_layer_prints_every_part_of_its_entry(bucket):
     """Each layer must SAY what it found, in full. Eleven mutants
     emptied one loop apiece and survived: the summary count was still
@@ -1686,6 +1691,77 @@ def test_a_format_change_prints_both_sides_and_names_the_empty_one():
     assert "∅" in body, body
 
 
+def test_a_paragraph_change_prints_both_sides_and_names_the_empty_one():
+    """The same `'∅'` the FORMAT test pins, one layer down. A PARAGRAPH
+    entry is a property stated on one side and not the other — "hanging
+    indent 720 -> ∅" — and the empty side is an empty LIST inside the
+    layer. Printed as `[]` it is the layer's own spelling showing
+    through, which a reader cannot tell from a value the document
+    states.
+    """
+    body = _section(_out(_filled(paragraph=1))[1], "PARAGRAPH")
+
+    assert "MARK-paragraph-from" in body, body
+    assert "-> ∅" in body, body
+    assert "[]" not in body, body
+
+
+def _media_entries(*entries: dict[str, object]) -> Report:
+    report = _empty_report()
+    report["media"] = list(entries)
+    return report
+
+
+def test_a_media_entry_prints_bytes_by_WHAT_HAPPENED_to_it():
+    """Nothing here diffs pixels, so the sizes ARE the finding: a
+    changed figure prints both of them. An added or removed one carries
+    a zero on the side it does not exist on — `_compare_diff` writes it
+    — and printing the pair would offer that zero to a reader as a size.
+    One number each, and it is the one that exists.
+
+    Three entries, because the type test is an equality between strings
+    that sort MEDIA ADDED < MEDIA CHANGED < MEDIA REMOVED: a fixture
+    with only the changed one cannot tell `==` from `<=`, and one
+    without the removed one cannot tell it from `>=`.
+    """
+    base = {"part": "word/media/image1.png", "label": ""}
+    report = _media_entries(
+        {**base, "type": "MEDIA CHANGED", "from": 66203, "to": 69327},
+        {**base, "type": "MEDIA ADDED", "from": 0, "to": 12003},
+        {**base, "type": "MEDIA REMOVED", "from": 40960, "to": 0})
+
+    body = _section(_out(report)[1], "MEDIA")
+
+    part = "word/media/image1.png"
+    assert f"[MEDIA CHANGED] {part}  (66,203 -> 69,327 bytes)" in body, body
+    assert f"[MEDIA ADDED] {part}  (12,003 bytes)" in body, body
+    assert f"[MEDIA REMOVED] {part}  (40,960 bytes)" in body, body
+
+
+def test_a_media_entry_names_the_exhibit_only_when_one_is_KNOWN():
+    """`label` is "Figure 8.a. Mortality and LFP" when the document
+    names the figure and "" when nothing nearby does — the same walk
+    answers both ways. The em-dash suffix belongs to the first: drawn
+    over an empty label it reads as a figure whose caption went
+    missing, and left off a known one it sends the reader to a folder
+    instead of to the page."""
+    base = {"type": "MEDIA CHANGED", "from": 100, "to": 200}
+    report = _media_entries(
+        {**base, "part": "word/media/image1.png",
+         "label": "Figure 8.a. Mortality and LFP"},
+        {**base, "part": "word/media/image2.png", "label": ""})
+
+    body = _section(_out(report)[1], "MEDIA")
+
+    lines = {p: [ln for ln in body.splitlines() if p in ln]
+             for p in ("image1.png", "image2.png")}
+    assert lines["image1.png"] == [
+        "  [MEDIA CHANGED] word/media/image1.png  (100 -> 200 bytes)"
+        "  — Figure 8.a. Mortality and LFP"], lines
+    assert lines["image2.png"] == [
+        "  [MEDIA CHANGED] word/media/image2.png  (100 -> 200 bytes)"], lines
+
+
 def test_the_integrity_line_claims_clean_only_when_it_is():
     """INTEGRITY is the one section whose empty state is a CLAIM rather
     than a blank — "(clean: bookmarks balanced, no dangling anchors)" is
@@ -1700,7 +1776,11 @@ def test_the_integrity_line_claims_clean_only_when_it_is():
     ("structure", "STRUCTURE"), ("text", "TEXT"), ("formula", "FORMULA"),
     ("formula_format", "FORMULA TYPOGRAPHY"), ("format", "FORMAT"),
     ("hyperlinks", "HYPERLINK"), ("comments", "COMMENTS"),
-    ("stripped_fields", "FIELD DIFFERENCES")])
+    ("stripped_fields", "FIELD DIFFERENCES"),
+    # the two the list was missing: four mutants of their `(none)` tests
+    # survived the sweep, and a section that says "(none)" over a
+    # replaced figure is the sentence a reader ships on
+    ("paragraph", "PARAGRAPH"), ("media", "MEDIA")])
 def test_a_layer_with_nothing_in_it_says_so(bucket, heading):
     """"(none)" under a heading is how a reader tells "clean" from
     "this layer did not run". Printing it over a list of real
