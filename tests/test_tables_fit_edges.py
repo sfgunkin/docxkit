@@ -350,6 +350,25 @@ def test_a_value_with_a_trailing_note_is_not_treated_as_stars():
 # ------------------------------------------------------ border variants ----
 
 
+def test_a_bottom_rule_already_there_in_ANOTHER_spelling_is_not_redone():
+    """The rule was looked for as the exact string this writes. The same
+    edge spelled another way — closed ` />`, attributes reordered — was
+    rewritten and counted as a change on every pass, so the pass was not
+    idempotent in what it reported."""
+    d = doc(tbl([800, 800], "<w:tr>" + cell(frun("x"), w=800)
+                + cell(frun("y"), w=800) + "</w:tr>"))
+    once, n = bottom_border(d, read_all(d)[0])
+    assert n == 2
+    respelled = once.replace(
+        '<w:bottom w:val="double" w:sz="4" w:space="0" w:color="auto"/>',
+        '<w:bottom w:color="auto" w:space="0" w:sz="4" w:val="double" />')
+    assert respelled != once
+
+    _, again = bottom_border(respelled, read_all(respelled)[0])
+
+    assert again == 0
+
+
 def test_border_is_added_to_tcborders_that_lack_a_bottom():
     tcpr = ('<w:tcPr><w:tcW w:w="800" w:type="dxa"/>'
             '<w:tcBorders><w:top w:val="single"/></w:tcBorders></w:tcPr>')

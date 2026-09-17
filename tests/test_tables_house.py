@@ -104,6 +104,27 @@ def test_an_EMPTY_trPr_is_FILLED_rather_than_doubled():
     assert report.rows == 3
 
 
+@pytest.mark.parametrize("stated", ["<w:trPr><w:cantSplit /></w:trPr>",
+                                    '<w:trPr><w:cantSplit w:val="0"/>'
+                                    "</w:trPr>",
+                                    "<w:trPr/>"])
+def test_a_row_s_own_trPr_in_ANOTHER_spelling_gets_ONE_cantSplit(stated):
+    """The row was asked `"<w:cantSplit/>" not in row`. Closed ` />` (637
+    in 5 of 2,954 corpus packages) or stated OFF, it was not, and a
+    SECOND `w:cantSplit` went in beside the first; an empty `<w:trPr/>`
+    was not found as a trPr, and a second `w:trPr` went in beside it —
+    both schema-invalid, the second what `lint` reports."""
+    xml = _doc().replace("<w:tr>", f"<w:tr>{stated}", 1)
+    out, _ = house(xml, read_all(xml)[0])
+
+    body = out[out.index("<w:tbl"):]
+    first = body[:body.index("</w:tr>")]
+    assert first.count("<w:cantSplit") == 1, first
+    assert 'w:val="0"' not in first, "the row still splits"
+    assert first.count("<w:trPr") == 1, first
+    assert body.count("<w:cantSplit") == 3
+
+
 def test_the_table_is_set_to_full_width_and_autofit():
     xml = _doc()
     out, report = house(xml, read_all(xml)[0])

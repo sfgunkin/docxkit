@@ -1592,6 +1592,39 @@ def test_track_changes_is_carried_back_when_compare_turned_it_off():
     assert b"<w:trackRevisions/>" in parts[SETTINGS]
 
 
+@pytest.mark.parametrize("on", ["<w:trackRevisions />",
+                                '<w:trackRevisions w:val="true"/>'])
+def test_track_changes_ON_in_ANOTHER_spelling_is_carried_back(on):
+    """Tracking is ON in any spelling of CT_OnOff; the source was asked
+    for the exact string `<w:trackRevisions/>`, and a baseline that
+    spelled it otherwise lost it across the rebuild."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings('<w:defaultTabStop w:val="720"/>')}
+
+    assert keep_tracking(parts, {SETTINGS: _settings(on)}) is True
+    assert parts[SETTINGS].count(b"<w:trackRevisions") == 1
+
+
+@pytest.mark.parametrize("stated", ["<w:trackRevisions />",
+                                    '<w:trackRevisions w:val="1"/>',
+                                    '<w:trackRevisions w:val="false" />'])
+def test_track_changes_already_STATED_gets_no_second_element(stated):
+    """Already ON in another spelling, it was put in again; stated OFF
+    (15 settings parts of 2,954 write `<w:trackRevisions w:val="false"
+    />`), the ON element went in BESIDE the off one. Either way two
+    `w:trackRevisions`, which CT_Settings does not allow."""
+    from docxkit.hygiene import keep_tracking
+
+    parts = {SETTINGS: _settings(stated)}
+
+    keep_tracking(parts, {SETTINGS: _settings("<w:trackRevisions/>")})
+
+    xml = parts[SETTINGS].decode("utf-8")
+    assert xml.count("<w:trackRevisions") == 1, xml
+    assert 'w:val="false"' not in xml, "carried back means ON"
+
+
 def test_the_element_is_trackREVISIONS_not_trackChanges():
     """Word reads `w:trackRevisions`. `w:trackChanges` leaves Track
     Changes OFF with no error and no complaint about an unknown

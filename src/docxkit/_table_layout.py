@@ -1325,10 +1325,16 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
         raise AnchorError(f"table {table.index} has no rows")
     last = trs[-1]
     edge = f'<w:bottom w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+    # The edge already there, in any attribute order or close: asked for
+    # the exact string this writes, one spelled otherwise was rewritten
+    # and counted as a change on every pass (2026-09-17).
+    already = re.compile(rf'<w:bottom\b(?=[^>]*\bw:val="{re.escape(val)}")'
+                         rf'(?=[^>]*\bw:sz="{sz}")(?=[^>]*\bw:space="0")'
+                         r'(?=[^>]*\bw:color="auto")[^>]*/>')
     edits: list[tuple[int, int, str]] = []
     for tc in cells_of(last.group(0)):
         cell = tc.group(0)
-        if edge in cell:
+        if already.search(cell):
             continue
         # keep whatever other edges the cell states, replace the bottom
         existing = _EDGE_RE.search(cell)
@@ -1767,16 +1773,23 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 #: Word stores a point size doubled, and the complex-script mirror has
 #: to move with it or a run reads at two sizes in one cell.
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
-_TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
+#: The row's first `w:trPr`, the slash CAPTURED: an empty `<w:trPr/>`
+#: (139 in 16 of 2,954 corpus packages) is still the row's properties,
+#: and a pattern that skipped it gave the row a SECOND `w:trPr`. The
+#: capture is what `_TRPR_EMPTY_RE` was: one pattern reads both forms.
+_TRPR_RE = re.compile(r"<w:trPr\b[^>]*?(/?)>")
 #: A row's table-property EXCEPTIONS, whole: CT_Row sequences them before
 #: the row properties, so a `w:trPr` written for a row that has one goes
 #: after it — and after the WHOLE element, since `w:tblPrEx` holds
 #: properties of its own and writing past its open tag lands inside it.
 _TBLPREX_RE = re.compile(r"<w:tblPrEx\b[^>]*/>|<w:tblPrEx\b.*?</w:tblPrEx>",
                          re.DOTALL)
-#: the SELF-CLOSING form of the row properties, which `_TRPR_RE` cannot
-#: merge into: it is filled rather than written beside
-_TRPR_EMPTY_RE = re.compile(r"<w:trPr\b[^>]*/>")
+#: `w:cantSplit` in any spelling, and ON (CT_OnOff). Asked for the exact
+#: string `<w:cantSplit/>`, a row closing it ` />` (637 in 5 corpus
+#: packages) or stating it OFF got a second one beside it (2026-09-17).
+_CANT_SPLIT_ANY_RE = re.compile(r"<w:cantSplit\b[^>]*/>")
+_CANT_SPLIT_ON_RE = re.compile(
+    r'<w:cantSplit\b(?![^>]*\bw:val="(?:0|false|off)")[^>]*/>')
 
 
 @dataclass
@@ -1864,19 +1877,16 @@ def house(xml: str, table: Table, *, font: str = "Arial Narrow",
             report.runs += runs
             report.paragraphs += paras
             new_row = new_row[:tc.start()] + cell + new_row[tc.end():]
-        if "<w:cantSplit/>" not in new_row:
-            if (m := _TRPR_RE.search(new_row)) is not None:
-                new_row = (new_row[:m.end()] + "<w:cantSplit/>"
-                           + new_row[m.end():])
-            elif (m := _TRPR_EMPTY_RE.search(new_row)) is not None:
-                # `<w:trPr/>` is row properties too — the shape `_xml`
-                # records for `<w:pPr/>`, and real Word output. The
-                # search above cannot merge into it, and writing beside
-                # it left the row with TWO `w:trPr`, which `lint`
-                # reports and CT_Row does not allow.
+        if not _CANT_SPLIT_ON_RE.search(new_row):
+            if (m := _TRPR_RE.search(new_row)) is not None and m.group(1):
                 new_row = (new_row[:m.start()]
                            + "<w:trPr><w:cantSplit/></w:trPr>"
                            + new_row[m.end():])
+            elif m is not None:
+                shut = new_row.index("</w:trPr>", m.end())
+                own = _CANT_SPLIT_ANY_RE.sub("", new_row[m.end():shut])
+                new_row = (new_row[:m.end()] + "<w:cantSplit/>" + own
+                           + new_row[shut:])
             else:
                 # AFTER a `w:tblPrEx`, which CT_Row sequences before the
                 # row properties — Word writes one on every row whose

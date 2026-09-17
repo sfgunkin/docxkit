@@ -588,6 +588,15 @@ def _restore_section_references(parts: dict[str, bytes],
 #: measured twice, in two sessions. In `CT_Settings` order it sits after
 #: `w:revisionView` and before `w:defaultTabStop`.
 _TRACK = "<w:trackRevisions/>"
+#: The element in ANY spelling, and ON: CT_OnOff reads `w:val="true"` and
+#: `<w:trackRevisions />` as on, and 0/false/off as off. Asked for the
+#: exact string `_TRACK`, a baseline that spelled it otherwise (3 of
+#: 2,954 corpus settings parts) lost it across the rebuild, and a part
+#: already stating it — on in another spelling, or OFF (12 of them) — got
+#: a second element beside the first (2026-09-17).
+_TRACK_ANY_RE = re.compile(r"<w:trackRevisions\b[^>]*/>")
+_TRACK_ON_RE = re.compile(
+    r'<w:trackRevisions\b(?![^>]*\bw:val="(?:0|false|off)")[^>]*/>')
 _SETTINGS = "word/settings.xml"
 #: `CT_Settings` is a SEQUENCE, and Word refuses a settings part whose
 #: children are out of order — so the position is decided by both
@@ -653,11 +662,15 @@ def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
     whose setting is being preserved — the baseline the redline was
     built from.
     """
-    if _TRACK in parts.get(_SETTINGS, b"").decode("utf-8", "replace"):
+    if _TRACK_ON_RE.search(parts.get(_SETTINGS, b"").decode("utf-8",
+                                                            "replace")):
         return False
-    if _TRACK not in source.get(_SETTINGS, b"").decode("utf-8", "replace"):
+    if not _TRACK_ON_RE.search(source.get(_SETTINGS, b"").decode("utf-8",
+                                                                 "replace")):
         return False
-    xml = parts.get(_SETTINGS, b"").decode("utf-8", "replace")
+    # An element stating it OFF goes first: carried back means ON, once.
+    xml = _TRACK_ANY_RE.sub("", parts.get(_SETTINGS, b"").decode("utf-8",
+                                                                  "replace"))
     if not xml:
         return False
     # After the elements that precede it in CT_Settings, or first in the
