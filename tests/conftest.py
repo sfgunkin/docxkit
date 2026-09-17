@@ -48,6 +48,40 @@ if TYPE_CHECKING:
 
     from docxkit.revision import Paper
 
+#: The package every source-walking test reads.
+PACKAGE = Path(_SRC) / "docxkit"
+
+
+def source_files(*, include_init: bool = False) -> list[Path]:
+    """Every module in the package, SUBPACKAGES INCLUDED.
+
+    One walk, because `SRC.glob("*.py")` does not see a directory and
+    four tests learned that separately. `revision.py` became `revision/`
+    on 2026-08-30 and its sixteen halves dropped out of every scan that
+    day: `test_layering`, `test_api_surface` and `test_harness_map` each
+    noticed, each wrote a comment about it, and each fixed itself.
+    `test_part_names` did not, so its rule — a part name is spelled in
+    `_xml` and nowhere else — went unenforced over a sixth of the
+    package for three weeks, GREEN throughout (BACKLOG, 2026-09-18).
+
+    A test that wants a narrower set filters this one, which is the
+    point: the narrowing is then a line someone wrote rather than a
+    consequence of the glob they reached for.
+    """
+    return sorted(p for p in PACKAGE.rglob("*.py")
+                  if "__pycache__" not in p.parts
+                  and (include_init or p.name != "__init__.py"))
+
+
+def module_name(path: Path) -> str:
+    """The importable suffix: ``find``, or ``revision._promote``.
+
+    Not `path.stem`: two subpackages may hold a `_state.py`, and a name
+    that does not say which one is a name a failure cannot be traced
+    from.
+    """
+    return ".".join(path.relative_to(PACKAGE).with_suffix("").parts)
+
 NS = (
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
     'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '

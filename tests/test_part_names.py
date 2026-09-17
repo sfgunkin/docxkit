@@ -27,38 +27,67 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import module_name, source_files
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "docxkit"
-
-#: modules that may spell a part name, and the reason each may
+#: modules that may spell a part name, and the reason each may. Keyed by
+#: the importable name, so a half of a subpackage can be named without
+#: exempting another module that happens to share its file name.
 ALLOWED = {
-    "_xml.py": "defines them",
+    "_xml": "defines them",
     # the packaging layer works in part names by nature: it reads, writes
     # and rewrites the zip container itself
-    "package.py": "reads and writes the container",
+    "package": "reads and writes the container",
     # the CLI names parts in help text and argument defaults, where a
     # symbol would be less readable than the string the user types
-    "cli.py": "user-facing strings",
+    "cli": "user-facing strings",
 }
 
-PART_RE = re.compile(r'"word/(document|footnotes|endnotes|comments)\.xml"')
+#: Either quote, because both are a spelling of the same literal: ruff
+#: settles on double quotes in this package, and a rule that only sees
+#: the style the linter happens to enforce is a rule that stops working
+#: the day the style does.
+PART_RE = re.compile(
+    r"""["']word/(document|footnotes|endnotes|comments)\.xml["']""")
 
 
 def modules() -> list[Path]:
-    return sorted(p for p in SRC.glob("*.py") if p.name != "__init__.py")
+    """Every module, SUBPACKAGES INCLUDED — see `conftest.source_files`.
+
+    This asked `SRC.glob("*.py")` until 2026-09-18, so the sixteen
+    halves of `revision/` were never parametrized and the rule below
+    could not fail for any of them. Demonstrated by putting a part name
+    in `revision/_promote.py` and watching this file stay green.
+    """
+    return source_files()
 
 
-@pytest.mark.parametrize("path", modules(), ids=lambda p: p.name)
+@pytest.mark.parametrize("path", modules(), ids=module_name)
 def test_a_part_is_named_in_one_place(path: Path):
-    if path.name in ALLOWED:
+    name = module_name(path)
+    if name in ALLOWED:
         return
     text = path.read_text(encoding="utf-8")
     hits = sorted({m.group(0) for m in PART_RE.finditer(text)})
     assert not hits, (
-        f"{path.name} spells a part name itself: {hits}. Import DOCUMENT / "
+        f"{name} spells a part name itself: {hits}. Import DOCUMENT / "
         f"FOOTNOTES / ENDNOTES / COMMENTS from ._xml, and if the operation "
         f"describes the whole document, iterate text_parts(parts) instead of "
         f"naming one part.")
+
+
+def test_the_pattern_catches_a_part_name_in_EITHER_quote():
+    """The other canary. A rule over source can fail by reading nothing
+    — `test_the_walk_finds_the_package` covers that — or by matching
+    nothing, which looks exactly the same from here: every module clean,
+    every time. So the pattern is held to a specimen of what it is for.
+    """
+    assert PART_RE.search('parts["word/document.xml"]')
+    assert PART_RE.search("parts['word/footnotes.xml']")
+    assert PART_RE.search('name = "word/endnotes.xml"')
+    assert not PART_RE.search('parts["word/styles.xml"]')
+    assert not PART_RE.search('f"word/{name}.xml"'), (
+        "a built name is not a spelling this rule can read; it is caught "
+        "by the reader, not here")
 
 
 def test_text_parts_covers_what_a_reader_reads():
@@ -77,5 +106,5 @@ def test_text_parts_skips_absent_parts_and_keeps_reading_order():
 def test_the_allowlist_names_only_modules_that_exist():
     """An allowlist entry for a module that has been renamed or split stops
     guarding anything, and reads as though it still does."""
-    names = {p.name for p in modules()}
+    names = {module_name(p) for p in modules()}
     assert set(ALLOWED) <= names, set(ALLOWED) - names
