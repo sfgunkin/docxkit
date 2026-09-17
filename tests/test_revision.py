@@ -3796,6 +3796,12 @@ _FOOTNOTE_REF = '<w:r><w:footnoteReference w:id="2"/></w:r>'
      True),
     # a real edit whose downgraded text sorts BELOW the baseline's — `>=`
     ("gap − 0.19", "gap - 0.15", None, None, False),
+    # and one that sorts ABOVE it — `<=`. The mirror of the line above,
+    # and the only case that tells `==` from `<=` on the BODY: the
+    # 2026-09-17 replay found it alive here and killed only by
+    # `test_cli_revision.py::test_a_REAL_edit_is_not_called_a_math_
+    # downgrade`, which is the CLI's rendering of this same decision.
+    ("gap − 0.15", "gap - 0.19", None, None, False),
     # the body is only the substitution and the NOTE really changed, in
     # both orders — `>=` and `<=` on the notes
     ("gap − 0.15", "gap - 0.15", "note b", "note a", False),

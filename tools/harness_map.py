@@ -23,6 +23,25 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests"
 
+#: What every `revision/` half ran until 2026-09-17, kept because the
+#: figures recorded against it are only comparable with it, and because
+#: the narrowing below is a claim ABOUT it: each half's entry is the
+#: subset of these twelve files that covers what they cover of it and
+#: kills what they kill of it. Re-measure against this list, not against
+#: today's superset of the entries.
+REVISION_SUPERSET = ["tests/test_revision.py",
+                     "tests/test_revision_doctor.py",
+                     "tests/test_revision_state.py",
+                     "tests/test_revision_survey.py",
+                     "tests/test_revision_verdict.py",
+                     "tests/test_revision_gates.py",
+                     "tests/test_revision_ledger.py",
+                     "tests/test_revision_status.py",
+                     "tests/test_cli_revision.py",
+                     "tests/test_workflow_states.py",
+                     "tests/test_rescue_pruning.py",
+                     "tests/test_value_types.py"]
+
 #: module file name -> the test files that exercise it
 HARNESS: dict[str, list[str]] = {
     "_compare_read.py": ["tests/test_compare.py",
@@ -71,34 +90,168 @@ HARNESS: dict[str, list[str]] = {
                      "tests/test_parts_gaps.py",
                      "tests/test_value_types.py",
                      "tests/test_note_orphans.py"],
-    # `revision.py` became `revision/` on 2026-08-30, and each of the
-    # fourteen halves gets the harness the whole module had. That is
-    # deliberately a SUPERSET, not a measurement: these files certainly
-    # reach each half, and narrowing one without running it would be
-    # inventing a harness — the mistake `_table_core` paid 216 phantom
-    # survivors for, in the other direction.
+    # `revision.py` became `revision/` on 2026-08-30, and until
+    # 2026-09-17 each of the sixteen halves ran the harness the whole
+    # module had — the twelve files of `REVISION_SUPERSET` above, 737
+    # tests, 27-29 s single-process on a QUIET machine. A mutant gets 30 s
+    # (`mutation_session.MUTANT_SECONDS`) and a mutant that SURVIVES is
+    # the one whose tests all had to run, so every survivor crossed the
+    # deadline and was graded KILLED: `revision/_promote.py` read "killed
+    # 24, survived 0 (0.0% survive)" on 2026-09-17 and had measured
+    # nothing. No half could be measured at all, which is what the
+    # superset cost and why it is gone.
     #
-    # So the per-half figures are NOT comparable with the `revision.py`
-    # line in CONTRIBUTING's calibration table, which was a figure over
-    # 3,118 lines against this same suite. Re-measure before quoting one,
-    # and narrow an entry once a run says which files actually reach it.
-    **{f"revision/{half}.py": ["tests/test_revision.py",
-                               "tests/test_revision_doctor.py",
-                               "tests/test_revision_state.py",
-                               "tests/test_revision_survey.py",
-                               "tests/test_revision_verdict.py",
-                               "tests/test_revision_gates.py",
-                               "tests/test_revision_ledger.py",
-                               "tests/test_revision_status.py",
-                               "tests/test_cli_revision.py",
-                               "tests/test_workflow_states.py",
-                               "tests/test_rescue_pruning.py",
-                               "tests/test_value_types.py"]
-       for half in ("_common", "_config", "_ledger", "_losses", "_state",
-                    "_verdict", "_timing", "_baseline", "_build", "_doctor",
-                    "_gates",
-                    "_ingest", "_registry", "_init", "_promote",
-                    "_validate")},
+    # Each entry is MEASURED, twice over (2026-09-17):
+    #
+    #   COVERAGE — `pytest --cov=docxkit.revision --cov-branch <file>`
+    #   per file, less a `--collect-only` run over all twelve (the
+    #   import-only baseline). Every file kept covers a line or branch of
+    #   that half that the others do not; every file dropped covers none.
+    #   The counts below are lines+branches BEYOND import.
+    #
+    #   KILLS — every mutant the half's stored session graded KILLED,
+    #   replayed against the narrowed harness (`replay_survivors` is the
+    #   survivor half of the same question; this is the other half, and
+    #   it is the one narrowing can break). A session TIMEOUT is not a
+    #   kill — it is the artefact this narrowing exists to end — so those
+    #   are counted apart. Where a mutant the superset really killed got
+    #   away, the file that kills it is back in the entry, and the note
+    #   says which mutant put it there.
+    #
+    # Coverage alone would have been wrong in both directions, so neither
+    # measurement is optional. It cannot see a line executed at IMPORT —
+    # `@dataclass(frozen=True)`, a default argument, `RESCUE_KEEP = 5` —
+    # which is what `test_value_types.py` and `_common`'s whole entry
+    # hold; and a file can cover nothing the others do not and still be
+    # the only one that ASSERTS on what it covers:
+    # `test_revision_ledger.py` covers no line of `_baseline` that
+    # `test_revision.py` misses, and is the only file in the package that
+    # kills `L200 or -> and`.
+    #
+    # The per-half figures are NOT comparable with the `revision.py` line
+    # in CONTRIBUTING's calibration table (3,118 lines against the
+    # superset), nor with any figure measured against the superset
+    # before today.
+    #
+    # 4 mutants, all of them import-level constants (`RESCUE_KEEP`,
+    # `WORD_DEADLINE`) that coverage cannot attribute: measured by
+    # mutating the module as it stands, `test_revision.py` kills 4 of 4,
+    # `test_cli_revision.py` 4 (dearer), `test_revision_doctor.py` 2.
+    "revision/_common.py": ["tests/test_revision.py"],
+    # 39 lines+branches, all of them in test_revision.py; the other ten
+    # files reach at most 37 and add none. 133 session-KILLED replayed:
+    # 92 killed, 41 were session TIMEOUTS. value_types: `Paper` is frozen.
+    "revision/_config.py": ["tests/test_revision.py",
+                            "tests/test_value_types.py"],
+    # 12 lines+branches, all here; six other files cover 9-10 and add
+    # none. 35 session-KILLED replayed, all 35 still killed.
+    "revision/_ledger.py": ["tests/test_revision_ledger.py"],
+    # 177 lines+branches: 175 in test_revision.py (25 of them nowhere
+    # else), 152 in test_cli_revision.py (2 nowhere else). 523
+    # session-KILLED replayed: 489 killed, 34 were session TIMEOUTS.
+    # value_types: `Loss` and `Relabelled` are frozen.
+    "revision/_losses.py": ["tests/test_revision.py",
+                            "tests/test_cli_revision.py",
+                            "tests/test_value_types.py"],
+    # 71 lines+branches: 63 in test_revision_status.py (21 nowhere else),
+    # 50 in test_revision_state.py (8 nowhere else). 78 session-KILLED
+    # replayed: 24 killed, 36 session TIMEOUTS — and 18 that the superset
+    # does kill got away, every one of them `L107` (the `+` and the
+    # numbers of the age arithmetic) plus `L55` and `L97`.
+    # `test_revision.py` kills all 18 and nothing cheaper kills any
+    # (test_cli_revision.py kills 13), so it stays. value_types: `State`
+    # and `StatusReport` are frozen.
+    "revision/_state.py": ["tests/test_revision_state.py",
+                           "tests/test_revision_status.py",
+                           "tests/test_revision.py",
+                           "tests/test_value_types.py"],
+    # 147 lines+branches, all in test_revision_verdict.py;
+    # test_workflow_states.py reaches 119 and adds none — and kills
+    # `L129 ins + dele -> <<` in the summary line, which nothing else
+    # does. 376 session-KILLED replayed: 371 killed, 3 session TIMEOUTS,
+    # and that one plus `L333 AddNot` on the log row, which
+    # test_revision_ledger.py kills (the cheapest of the four files that
+    # do). value_types: `Verdict` is frozen.
+    "revision/_verdict.py": ["tests/test_revision_verdict.py",
+                             "tests/test_workflow_states.py",
+                             "tests/test_revision_ledger.py",
+                             "tests/test_value_types.py"],
+    # 36 lines+branches, all here; seven other files reach 18-32 and add
+    # none. 44 session-KILLED replayed, all 44 still killed.
+    "revision/_timing.py": ["tests/test_revision.py"],
+    # 43 lines+branches: 41 in test_revision.py (25 nowhere else), 18 in
+    # test_revision_state.py (2 nowhere else). 45 session-KILLED
+    # replayed and TEN got away — the verdict written into the log:
+    # `test_revision_verdict.py` kills 9 of them (`L52`, `L183-L199`) and
+    # `test_revision_ledger.py` the tenth (`L200 or -> and`), and NEITHER
+    # covers a line of this half the kept files miss. The clearest case
+    # in the package for replaying kills rather than trusting coverage.
+    # value_types: `BaselineReport` is frozen.
+    "revision/_baseline.py": ["tests/test_revision.py",
+                              "tests/test_revision_state.py",
+                              "tests/test_revision_verdict.py",
+                              "tests/test_revision_ledger.py",
+                              "tests/test_value_types.py"],
+    # 90 lines+branches: 88 in test_revision.py (80 nowhere else), 10 in
+    # test_workflow_states.py (2 nowhere else). 91 session-KILLED
+    # replayed, all 91 still killed.
+    "revision/_build.py": ["tests/test_revision.py",
+                           "tests/test_workflow_states.py"],
+    # 100 lines+branches, all in test_revision_doctor.py;
+    # test_cli_revision.py reaches 86 and adds none. 105 session-KILLED
+    # replayed and one got away: `L72 or -> and`, the glob reading of
+    # `[paper] working`, killed by `test_revision.py::test_a_GLOB_selects
+    # _the_manuscript_by_either_reading` and by no other file.
+    "revision/_doctor.py": ["tests/test_revision_doctor.py",
+                            "tests/test_revision.py"],
+    # 53 lines+branches, all here; test_cli_revision.py reaches 4 and
+    # adds none. 88 session-KILLED replayed: 77 killed, 11 were session
+    # TIMEOUTS — and two of those eleven (`code == 0 -> <= 0`,
+    # `code == -1 -> <= -1`) survive the SUPERSET today, so the session
+    # recorded kills that were never made. value_types: `GateResult` is
+    # frozen.
+    "revision/_gates.py": ["tests/test_revision_gates.py",
+                           "tests/test_value_types.py"],
+    # 11 lines+branches, all here; test_cli_revision.py covers the same
+    # 11 and adds none. 27 of its 30 graded mutants replayed (three
+    # anchors could not be placed): the 5 the session killed still
+    # killed, its 22 survivors still alive.
+    # value_types: `IngestReport` is frozen.
+    "revision/_ingest.py": ["tests/test_revision.py",
+                            "tests/test_value_types.py"],
+    # 95 lines+branches, all in test_revision_survey.py;
+    # test_cli_revision.py reaches 79 and adds none. 131 session-KILLED
+    # replayed, all 131 still killed. value_types: `Survey` is frozen.
+    "revision/_registry.py": ["tests/test_revision_survey.py",
+                              "tests/test_value_types.py"],
+    # 132 lines+branches, all in test_revision.py; test_cli_revision.py
+    # reaches 105 and adds none. 244 session-KILLED replayed and one got
+    # away: `L351 language or "en" -> and`, the default written into a
+    # new paper's config, killed by `test_revision_doctor.py` — which
+    # reads that key back — and by no other file.
+    "revision/_init.py": ["tests/test_revision.py",
+                          "tests/test_revision_doctor.py"],
+    # 133 lines+branches: 105 in test_workflow_states.py (43 nowhere
+    # else), 88 in test_revision.py (18), 72 in test_rescue_pruning.py
+    # (2). 42 session-KILLED replayed: 29 killed, 12 session TIMEOUTS,
+    # and `L339 != -> <` — two sha256 hexes, so its kill is a coin flip
+    # on the digest — killed on all six re-runs, in both file orders.
+    # value_types: `PromoteReport` and `WithdrawReport` are frozen.
+    "revision/_promote.py": ["tests/test_workflow_states.py",
+                             "tests/test_rescue_pruning.py",
+                             "tests/test_revision.py",
+                             "tests/test_value_types.py"],
+    # 157 lines+branches: 143 in test_revision.py (51 nowhere else), 106
+    # in test_revision_gates.py (14 nowhere else — the `--run-gates`
+    # ladder). 255 session-KILLED replayed and one got away: `L453
+    # == -> <=`, the body half of the math-downgrade comparison, which
+    # only `test_cli_revision.py` killed. The engine-level test of that
+    # decision is in test_revision.py and carried the `>=` direction but
+    # not the `<=` one, so the missing case joined it there rather than
+    # the 4.8 s file joining this entry — a kill kept where the decision
+    # is made.
+    "revision/_validate.py": ["tests/test_revision.py",
+                              "tests/test_revision_gates.py"],
     # `test_cell_revisions.py` joined on 2026-09-16, measured: the whole
     # sweep of 2026-09-15 left 155 replayable survivors in the cell and
     # table walks, and that file alone killed 68 of them. It is where a
@@ -362,8 +515,17 @@ def named_after(module: str) -> list[str]:
     `test_word_open.py` are claims about `word.py`, and
     `test_wordcount.py` is not — it is a claim about `wordcount.py`,
     which has an entry of its own.
+
+    **A subpackage half is named with its folder**, as its session is:
+    `test_revision_gates.py` is the claim about `revision/_gates.py`.
+    The stem was the key itself until 2026-09-17, `revision/_gates`, and
+    a glob for `test_revision/_gates*.py` looks in a folder that does not
+    exist — so the rule held nothing over the sixteen halves, which was
+    harmless only while every half ran the same superset.
     """
-    stem = FACADE.get(module, module.removesuffix(".py").lstrip("_"))
+    folder, _, name = module.rpartition("/")
+    base = name.removesuffix(".py").lstrip("_")
+    stem = FACADE.get(module, f"{folder}_{base}" if folder else base)
     return [f"tests/{p.name}" for p in sorted(TESTS.glob(f"test_{stem}*.py"))
             if p.stem == f"test_{stem}" or p.stem.startswith(f"test_{stem}_")]
 

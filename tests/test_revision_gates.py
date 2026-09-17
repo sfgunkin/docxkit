@@ -53,6 +53,39 @@ def paper_with(tmp_path, *commands):
     return revision.load_paper(root)
 
 
+#: The timeouts `_timed_out_once_started` tries, shortest first.
+_UNTIL_STARTED = (0.5, 2, 8)
+
+
+def _timed_out_once_started(paper, started):
+    """`run_gates` under the shortest of `_UNTIL_STARTED` that let the
+    gate get going: `(gate, the timeout it ran under)`.
+
+    `started` is a file the gate writes once it is doing its work. A
+    timeout counts from `Popen`, and cmd.exe and then Python have to
+    start before that — 56-80 ms on this machine beside a mutation
+    sweep, measured 2026-09-17. So the first rung is short, and an
+    attempt whose kill landed before `started` existed proves nothing
+    either way: it is run again under a longer timeout, rather than
+    passing by default — which is what a single fixed timeout did
+    whenever the kill reached a shell that had not started its child
+    yet — or failing a test about what a kill leaves behind for being
+    slow to begin.
+
+    The tests that use this used to buy the same margin from the clock —
+    a 1 s and a 2 s timeout, and a 5 s wait for an orphan — and were
+    10.3 s of the 11.5 s this file cost, in a harness a mutant has 30 s
+    to finish (`mutation_session.MUTANT_SECONDS`). They are 3.2 s now,
+    and prove more: that the kill landed on a gate that was RUNNING.
+    """
+    for timeout in _UNTIL_STARTED:
+        (gate,) = run_gates(paper, timeout=timeout)
+        if started.exists():
+            return gate, timeout
+    pytest.fail(f"the gate did not start within {_UNTIL_STARTED[-1]}s, so "
+                f"nothing can be read from how it was stopped")
+
+
 # ----------------------------------------------------------- run_gates
 
 def test_a_passing_gate_and_a_failing_one_are_told_apart(tmp_path):
@@ -90,17 +123,20 @@ def test_a_gate_that_HANGS_is_a_gate_that_fails(tmp_path):
     the surviving grandchild held the pipes open. A test that certifies
     a timeout has to fail when the timeout does not fire.
     """
-    paper = paper_with(tmp_path, _py("import time; time.sleep(30)"))
+    hanging = tmp_path / "hanging.txt"
+    paper = paper_with(tmp_path, _py(
+        f"open('{hanging.as_posix()}','w').close(); "
+        f"import time; time.sleep(30)"))
 
     started = time.monotonic()
-    (gate,) = run_gates(paper, timeout=1)
+    gate, timeout = _timed_out_once_started(paper, hanging)
     elapsed = time.monotonic() - started
 
     assert gate.code == -1 and gate.verdict == "TIMED OUT"
-    assert "within 1s" in gate.output
+    assert f"within {timeout:g}s" in gate.output
     assert elapsed < 15, (
-        f"the gate slept 30s and the timeout was 1s; run_gates took "
-        f"{elapsed:.1f}s, so it waited for the child rather than "
+        f"the gate slept 30s and the timeout was {timeout:g}s; run_gates "
+        f"took {elapsed:.1f}s, so it waited for the child rather than "
         f"killing it")
     assert gate.seconds < 15, "and the report agrees with the clock"
 
@@ -115,17 +151,27 @@ def test_a_timed_out_gate_leaves_NO_ORPHAN_behind(tmp_path):
     stops waiting either way. Only the orphan's own side effect can,
     which is what this watches for. A mutant that downgraded the tree
     kill to `proc.kill()` survived every other test here.
-    """
-    marker = tmp_path / "the_orphan_was_here.txt"
-    paper = paper_with(tmp_path, _py(
-        f"import time; time.sleep(3); "
-        f"open('{marker.as_posix()}','w').write('still running')"))
 
-    (gate,) = run_gates(paper, timeout=1)
+    **A HEARTBEAT, not a write at a set time.** The first version slept
+    3 s and then wrote once, which cost a 5 s wait on every run to be
+    sure the write was due. A grandchild that beats every 50 ms is seen
+    within the second either way — and the file existing at all says the
+    kill landed on the work, not on a shell still starting it. The beats
+    stop by themselves after 300, so the orphan a broken kill leaves
+    does not outlive the run by more than that.
+    """
+    beats = tmp_path / "heartbeat.txt"
+    paper = paper_with(tmp_path, _py(
+        f"import time; [(open('{beats.as_posix()}','a').write('.'), "
+        f"time.sleep(0.05)) for _ in range(300)]"))
+
+    gate, _ = _timed_out_once_started(paper, beats)
     assert gate.code == -1
 
-    time.sleep(5)                     # past when the orphan would write
-    assert not marker.exists(), (
+    time.sleep(0.2)                   # a write already under way lands
+    before = beats.stat().st_size
+    time.sleep(0.8)                   # sixteen beats, if anything is alive
+    assert beats.stat().st_size == before, (
         "the gate was killed but its grandchild kept running — "
         "`proc.kill()` reaches the shell, not the work")
 
@@ -133,16 +179,20 @@ def test_a_timed_out_gate_leaves_NO_ORPHAN_behind(tmp_path):
 def test_a_timed_out_gate_keeps_WHAT_IT_PRINTED(tmp_path):
     """The lines before the hang are the diagnosis. A pytest gate wedged
     on test 340 of 500 names that test; the first version replaced it
-    with the literal string "no output within 1s"."""
+    with the literal string "no output within 1s".
+
+    The file is written AFTER the flush, so once it exists the line is
+    in the pipe whatever moment the kill lands at."""
+    printed = tmp_path / "printed.txt"
     paper = paper_with(tmp_path, _py(
         "import sys, time; print('phase 1 ok'); sys.stdout.flush(); "
-        "time.sleep(30)"))
+        f"open('{printed.as_posix()}','w').close(); time.sleep(30)"))
 
-    (gate,) = run_gates(paper, timeout=2)
+    gate, timeout = _timed_out_once_started(paper, printed)
 
     assert gate.code == -1
     assert "phase 1 ok" in gate.output, gate.output
-    assert "no further output within 2s" in gate.output
+    assert f"no further output within {timeout:g}s" in gate.output
 
 
 def test_a_gate_whose_PROJECT_ROOT_is_gone_says_so(tmp_path, monkeypatch):
@@ -198,10 +248,12 @@ def test_each_gate_is_REPORTED_before_the_next_one_starts(tmp_path):
     as they arrive is the only thing standing between the author and a
     silent terminal for the length of a pytest suite. The list version
     announced every gate up front and delivered every verdict at the
-    end."""
-    paper = paper_with(tmp_path,
-                       _py("import time; time.sleep(0.6); print('one')"),
-                       _py("print('two')"))
+    end.
+
+    No sleep in the first gate: `run_gates` runs one gate at a time, so
+    the order below is the same however long a gate takes, and the
+    0.6 s one used to take bought nothing a replay could find."""
+    paper = paper_with(tmp_path, _py("print('one')"), _py("print('two')"))
     seen: list[str] = []
 
     for gate in run_gates(paper, progress=seen.append):

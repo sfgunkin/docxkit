@@ -116,6 +116,43 @@ def test_a_test_file_NAMED_after_a_module_is_in_its_harness(module):
         f"invents survivors in whatever it covers")
 
 
+@pytest.mark.parametrize("module", sorted(
+    m for m in HARNESS_MAP.HARNESS if m.startswith("revision/")))
+def test_a_HALF_runs_a_SUBSET_of_the_superset_it_was_measured_against(module):
+    """Each half's entry is a claim about `REVISION_SUPERSET`: these are
+    the files of it that cover what it covers of the half and kill what
+    it kills of the half (see the notes in the map). A file from outside
+    that list is not narrowing, it is a different measurement — and the
+    figures recorded per half are comparable only with this one.
+    """
+    outside = sorted(set(HARNESS_MAP.HARNESS[module])
+                     - set(HARNESS_MAP.REVISION_SUPERSET))
+
+    assert not outside, (
+        f"{module}: {outside} is not in REVISION_SUPERSET, so this entry "
+        f"is no longer the measured subset of it — add the file there "
+        f"too, with what it was measured to cover or kill")
+
+
+def test_a_HALF_s_tests_are_named_with_its_FOLDER():
+    """`revision/_gates.py` is claimed by `test_revision_gates.py`, the
+    way its session is `revision_gates`. The key itself as the stem
+    globbed `test_revision/_gates*.py`, found nothing for every half, and
+    the gate above held no half to its own test file — harmless while
+    all of them ran one superset, and not once they were narrowed."""
+    assert HARNESS_MAP.named_after("revision/_gates.py") == [
+        "tests/test_revision_gates.py"]
+    assert HARNESS_MAP.named_after("revision/_verdict.py") == [
+        "tests/test_revision_verdict.py"]
+
+
+def test_a_HALF_is_not_claimed_by_a_TOP_LEVEL_module_s_tests():
+    """`revision/_ingest.py` and `ingest.py` share a basename, and
+    `test_ingest.py` is about the second."""
+    assert HARNESS_MAP.named_after("revision/_ingest.py") == []
+    assert HARNESS_MAP.named_after("ingest.py") == ["tests/test_ingest.py"]
+
+
 # --- the session name a module measures into -----------------------------
 
 

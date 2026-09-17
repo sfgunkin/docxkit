@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import io
+import itertools
 import sys
 import zipfile
 from typing import TYPE_CHECKING
@@ -223,8 +224,18 @@ def tracked_docx(tmp_path):
                  make_parts(body, comment_items=(comment(1, "seed comment"),)))
 
 
+@pytest.fixture(scope="session")
+def _registries(tmp_path_factory):
+    """One directory for every test's registry file."""
+    return tmp_path_factory.mktemp("registries")
+
+
+#: Numbers each test's registry file within `_registries`.
+_REGISTRY_IDS = itertools.count()
+
+
 @pytest.fixture(autouse=True)
-def _isolated_paper_registry(tmp_path_factory, monkeypatch):
+def _isolated_paper_registry(_registries, monkeypatch):
     """No test writes to the author's real paper registry.
 
     `revision.init` registers the paper it scaffolds, and this file's
@@ -232,9 +243,37 @@ def _isolated_paper_registry(tmp_path_factory, monkeypatch):
     throwaway tmp_path project to `%LOCALAPPDATA%\\docxkit\\papers.txt`
     — a machine-wide file, growing by a few dozen dead entries per run,
     and `status --all` reporting them as papers that have gone missing.
+
+    **A file of its own per test, in a directory they share.** This was
+    `tmp_path_factory.mktemp("registry")` per test, and a numbered
+    `mktemp` lists the whole base directory to pick its number, makes a
+    `-current` symlink and resolves the path — and every test's registry
+    directory joined that listing, so the cost grew with the square of
+    the tests run. Measured 2026-09-17 on the 737-test revision harness:
+    273,236 calls into pytest's prefix matching, 1.6 s, for directories
+    that each held one file.
     """
-    registry = tmp_path_factory.mktemp("registry") / "papers.txt"
+    registry = _registries / f"papers-{next(_REGISTRY_IDS)}.txt"
     monkeypatch.setenv("DOCXKIT_PAPERS", str(registry))
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_translation_lookups():
+    """argparse asks gettext for a translation of every string it holds,
+    and `gettext.find` answers a MISS from the disk, uncached: four path
+    checks per string with `LANG=en`, which is what this machine's user
+    environment sets. The CLI tests build the whole parser for every
+    invocation, so that was 19,490 lookups and 81,588 checks for the
+    catalogues of a package that ships none — 2.3 s of 12 over
+    `test_cli_revision.py` and `test_revision.py`, measured 2026-09-17.
+
+    `LANGUAGE=C` is the lookup's own answer for "untranslated", reached
+    before any path is checked, and it is what every one of those checks
+    returned. Nothing in the suite reads a translated message.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("LANGUAGE", "C")
+        yield
 
 @pytest.fixture(autouse=True)
 def _no_real_word(request, monkeypatch):
