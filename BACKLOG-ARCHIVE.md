@@ -14,6 +14,48 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — withdraw read the last kept redline from a string-sorted listing~~ — FIXED 18.09, `f856e4d`
+
+<!-- status: fixed -->
+
+Found by the `revision/_promote.py` survivor round, 2026-09-18. `rescues()`
+had been taught on 2026-08-31 that a folder holds files this tool did not
+write, and that sorting their NAMES reads the newest as the oldest —
+`working_rescue_20260831-235728-542622.docx` (23:57) sorts after
+`working_rescue_20260831_pre_COMP.docx` (18:44) because `-` is 0x2D and `_`
+is 0x5F. `Paper.redlines()` was written from the same shape and never
+learned it: it returned `sorted(glob(...))`, the plain string sort.
+
+Two things read that listing, and both took the wrong file:
+
+* `verdict` compares the manuscript against **the last redline** to say
+  what the author did with the batch. A hand-named copy in
+  `build/redlines/` — `working_redline_R1_sent.docx`, the one a session
+  makes before mailing a round out — sorts after every stamped name, so
+  the verdict was computed against a copy nobody promoted.
+* `withdraw` restores the manuscript from the redline that promote wrote,
+  and it is the one command here that TOUCHES the manuscript. Taking a
+  hand-named copy meant withdrawing to bytes that were never promoted,
+  silently, with the ledger recording the right intention over the wrong
+  file.
+
+The fix puts the reading in one place. `_stamp_of(path, kind)` and
+`_written_at(path, kind)` move into `_common` with the single regex
+`_(rescue|redline)_(\d{8}-\d{6}-\d{6})`, and `rescues()` and
+`Paper.redlines()` both order by the parsed stamp, unstamped copies last.
+`withdraw` then goes further than ordering, because ordering alone is not
+enough for a command that writes: it considers only redlines this tool
+stamped —
+
+    kept = [r for r in paper.redlines() if _stamp_of(r, "redline") is not None]
+
+— so a folder holding nothing but hand-named copies makes `withdraw`
+refuse rather than restore a file whose provenance it cannot state.
+
+Tests seen red before the fix:
+`test_a_redline_is_ordered_by_its_STAMP_like_a_rescue`,
+`test_WITHDRAW_reads_the_last_PROMOTE_not_the_last_name_in_the_folder`,
+`test_WITHDRAW_does_not_take_a_hand_named_copy_for_a_promote`.
 ### ~~S2 — the annotation discount misses `*args` and `**kwargs`, so a third of lint.py's survivor list was never a question~~ — FIXED 18.09, `1b8fa1a`
 
 <!-- status: fixed -->
