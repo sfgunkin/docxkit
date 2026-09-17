@@ -21,6 +21,7 @@ promises the module makes about HOW:
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 import types
@@ -294,6 +295,46 @@ def test_several_texts_are_measured_in_one_pass():
         assert measure("Arial", ["a", "bb", "ccc"]) == [
             PT_PER_CHAR * 20.0, 2 * PT_PER_CHAR * 20.0,
             3 * PT_PER_CHAR * 20.0]
+
+
+class _LineNumbers(FakeDoc):
+    """A measuring document whose line numbers the test dictates: one
+    answer for a paragraph's first character, another for its last."""
+
+    def __init__(self, head: int, tail: int) -> None:
+        super().__init__()
+        self._head, self._tail = head, tail
+
+    def line_of(self, pos: int) -> int:
+        at_start = pos == self._starts()[self._index(pos)]
+        return self._head if at_start else self._tail
+
+
+def test_ends_on_DIFFERENT_lines_are_refused_whichever_way_round():
+    """`!=`, not `<`. A width is the difference of two horizontal
+    positions, which means something only when both were read off the
+    SAME line. `<` asks something weaker — that the end is not before
+    the start — and lets through a pair whose numbers went DOWN, which
+    is what a paragraph running on to the next page answers, since the
+    line number starts again there. The width it returns is then the
+    distance between two places on two different pages."""
+    doc = _LineNumbers(head=45, tail=1)
+
+    with ruler_over(doc) as measure, pytest.raises(AnchorError,
+                                                  match="one line"):
+        measure("Arial", ["abc"])
+
+
+def test_the_two_ends_are_compared_by_VALUE_past_256():
+    """`is not`: every `Information` call is a fresh int from Word, and
+    CPython keeps one object only for the small ones. A line 300 lines
+    down is ordinary in a document measured on a page 1584 points wide,
+    and identity there reads two equal answers as a wrap and refuses
+    every text it is handed."""
+    doc = _LineNumbers(head=int("300"), tail=int("300"))
+
+    with ruler_over(doc) as measure:
+        assert measure("Arial", ["abc"]) == [3 * PT_PER_CHAR * 20.0]
 
 
 def test_a_font_word_would_substitute_is_refused():
@@ -916,33 +957,161 @@ def test_a_shared_session_that_cannot_be_bounded_RAISES_not_None(
         pass                                         # pragma: no cover
 
 
+def test_a_Word_that_CLOSED_during_the_start_is_not_a_new_one(com,
+                                                              monkeypatch):
+    """`_winword_pids() - before`: the difference, and not the symmetric
+    one. Another Word closing while this one starts leaves a pid in
+    `before` that is not in the new list, and `^` counts that departure
+    as an arrival: two "new" pids, so the session refuses to bound a
+    start that was perfectly ordinary. The second list here is the one
+    to read — 99 went away, 42 arrived."""
+    com(FakeWord())
+    lists = iter([frozenset({11, 99}), frozenset({11, 42})])
+    monkeypatch.setattr(W, "_winword_pids", lambda: next(lists))
+    monkeypatch.setattr(W, "_kill", lambda pid: None)
+
+    with W.session(deadline=5, doing="a probe"):
+        assert W._WATCHDOG[0].pid == 42
+
+
+def test_NO_new_Word_at_all_is_refused_with_the_SAME_message(com,
+                                                             monkeypatch):
+    """`!= 1`, not `> 1`. Zero new pids is the other half of the
+    refusal: a list that could not be read, or a Word COM handed back
+    from a process that was already running. `> 1` lets zero through to
+    `next(iter(appeared))`, which raises StopIteration out of a context
+    manager — no message, no remedy, and the instance already started is
+    still quit only because the refusal below is what unwinds it."""
+    word = com(FakeWord())
+    lists = iter([frozenset({11}), frozenset({11})])
+    monkeypatch.setattr(W, "_winword_pids", lambda: next(lists))
+
+    with pytest.raises(DocxKitError, match=r"cannot bound x: .*found \[\]"), \
+            W.session(deadline=5, doing="x"):
+        pass                                         # pragma: no cover
+
+    assert word.quits == 1
+
+
+def test_the_watchdog_TIMER_does_not_hold_the_interpreter_open(com, bounded):
+    """`daemon=True`. The timer is armed for the whole deadline — a
+    revision batch sets fifteen minutes from `[batch] word_deadline` —
+    and a non-daemon timer is waited for at interpreter exit. A command
+    that finished its work in four seconds would then sit there until
+    the ceiling it never reached expired."""
+    com(FakeWord())
+
+    with W.session(deadline=30, doing="a probe"):
+        assert W._WATCHDOG[0]._timer.daemon is True
+
+
+class FakeRun:
+    """`subprocess.run` as it really answers, for the keywords the three
+    calls in this module pass.
+
+    The fakes here took `(*a, **k)` and handed back one
+    `SimpleNamespace(stdout=text)` whatever they were asked for, which
+    is why nine mutants of those three lines were alive after the sweep
+    of 2026-09-17: every one of them changes what `run` RETURNS or
+    RAISES, and nothing modelled that. Measured against the real
+    `subprocess.run` on CPython 3.14.7 (2026-09-18):
+
+      * `capture_output=False` -> `stdout` is None, and the parse that
+        follows raises AttributeError;
+      * `text=False` -> `stdout` is bytes, and a str pattern against it
+        raises TypeError;
+      * `check=True` -> `CalledProcessError` on a non-zero exit, where
+        `check=False` simply hands the code back.
+    """
+
+    def __init__(self, stdout: str = "", returncode: int = 0) -> None:
+        self.stdout, self.returncode = stdout, returncode
+        self.calls: list[list[str]] = []
+        self.kwargs: list[dict[str, object]] = []
+
+    def __call__(self, argv, *, capture_output: bool = False,
+                 text: bool = False, check: bool = False, **_kw):
+        self.calls.append(list(argv))
+        self.kwargs.append({"capture_output": capture_output, "text": text,
+                            "check": check})
+        if check and self.returncode:
+            raise subprocess.CalledProcessError(self.returncode, argv)
+        out: str | bytes | None = None
+        if capture_output:
+            out = self.stdout if text else self.stdout.encode("utf-8")
+        return types.SimpleNamespace(stdout=out, returncode=self.returncode)
+
+
+#: A listing with every shape the guard in `_winword_pids` exists for.
+_TASKLIST = "\n".join([
+    "INFO: No tasks are running which match the specified criteria.",
+    '"EXCEL.EXE","1111","Console","1","10,000 K"',
+    '"WINWORD.EXE","31952","Console","1","123,456 K"',
+    '"WORDPAD.EXE","2222","Console","1","20,000 K"',
+    '"WINWORD.EXE"',
+    '"WINWORD.EXE","11564"',
+]) + "\n"
+
+
 def test_the_process_list_is_parsed_from_tasklist_CSV(monkeypatch):
-    csv = ('"WINWORD.EXE","31952","Console","1","123,456 K"\n'
-           '"WINWORD.EXE","11564","Console","1","98,304 K"\n')
+    """Two Words, and every other line in the listing left alone.
 
-    def listing(text: str):
-        return lambda *_a, **_k: types.SimpleNamespace(stdout=text)
+    Each line is a way the guard can be got wrong, and each was a live
+    mutant: a name sorting BEFORE `WINWORD.EXE` and one sorting after
+    (`<=`, `>=`); a line the name test never decides (`or`, and `is
+    not`, which is true of every computed string); a line with no
+    separator to index into (`> 0`, `>= 1`); and a row cut short after
+    its name and pid, which is still a Word to be bounded (`> 2`).
+    """
+    run = FakeRun(stdout=_TASKLIST)
+    monkeypatch.setattr(W.subprocess, "run", run)
 
-    monkeypatch.setattr(W.subprocess, "run", listing(csv))
     assert W._winword_pids() == frozenset({31952, 11564})
+    assert run.calls == [["tasklist", "/FI", "IMAGENAME eq WINWORD.EXE",
+                          "/FO", "CSV", "/NH"]]
 
+
+def test_a_process_list_with_NO_Word_in_it_is_empty(monkeypatch):
     none = "INFO: No tasks are running which match the specified criteria.\n"
-    monkeypatch.setattr(W.subprocess, "run", listing(none))
+    monkeypatch.setattr(W.subprocess, "run", FakeRun(stdout=none))
+
+    assert W._winword_pids() == frozenset()
+
+
+def test_a_process_list_that_CANNOT_BE_READ_is_empty_not_an_error(
+        monkeypatch):
+    """`check=False`. tasklist answers 0 even when nothing matches
+    (measured 2026-09-18), so a non-zero code is the list failing to be
+    read at all — a case `_Watchdog` already handles and names in its
+    refusal. Under `check=True` a CalledProcessError comes out of here
+    instead, from inside a `session` that has already started Word."""
+    monkeypatch.setattr(W.subprocess, "run", FakeRun(returncode=1))
+
     assert W._winword_pids() == frozenset()
 
 
 def test_kill_asks_taskkill_for_the_TREE_by_pid(monkeypatch):
-    calls: list[list[str]] = []
-
-    def run(argv, **_k):
-        calls.append(argv)
-        return types.SimpleNamespace(stdout="")
-
+    run = FakeRun()
     monkeypatch.setattr(W.subprocess, "run", run)
 
     W._kill(42)
 
-    assert calls == [["taskkill", "/PID", "42", "/T", "/F"]]
+    assert run.calls == [["taskkill", "/PID", "42", "/T", "/F"]]
+    assert run.kwargs[0]["capture_output"] is True, (
+        "taskkill's SUCCESS line is not part of a command's own output")
+
+
+def test_a_kill_of_a_process_ALREADY_GONE_is_not_an_error(monkeypatch):
+    """`check=False`. taskkill exits non-zero when the pid is not there,
+    which is the ordinary case for a watchdog firing on a Word that has
+    just quit. `_kill` is called from a timer thread and from the
+    broken-cache recovery, and an exception raised in either reaches
+    nobody who could act on it — it would end the timer thread silently
+    and the recovery loudly, in place of a kill that simply had nothing
+    to do."""
+    monkeypatch.setattr(W.subprocess, "run", FakeRun(returncode=128))
+
+    W._kill(4242)                       # no raise
 
 
 @pytest.mark.word
@@ -1055,6 +1224,24 @@ def test_a_cache_that_stays_broken_is_a_DocxKitError_naming_the_folder(
     assert word.quits == 0, "nothing was ever handed out"
 
 
+def test_a_cache_folder_ALREADY_GONE_does_not_stop_the_retry(com, monkeypatch,
+                                                             tmp_path):
+    """`ignore_errors=True`. The folder named in the refusal may be gone
+    by the time the recovery runs — a parallel command, or an author who
+    moved it aside on the advice of the message — and the retry still
+    has to happen. Without the flag `rmtree` raises FileNotFoundError
+    and the recovery dies on its housekeeping step, one line before the
+    `DispatchEx` that would have worked."""
+    word = com(FakeWord())
+    monkeypatch.setattr(W, "_automation_words_since", lambda since: [])
+    monkeypatch.setattr(W, "_kill", lambda pid: None)
+
+    got = W._restart_after_broken_cache(sys.modules["win32com.client"],
+                                        tmp_path / "gone", 0.0)
+
+    assert got is word
+
+
 def test_an_AttributeError_that_is_not_the_cache_passes_through(
         com, monkeypatch):
     com(FakeWord())
@@ -1080,11 +1267,33 @@ def test_the_orphan_query_keeps_automation_servers_started_SINCE(monkeypatch):
         r"400|1700000010|C:\Office\WINWORD.EXE -Embedding",
         "not a process line",
     ])
-    monkeypatch.setattr(W.subprocess, "run",
-                        lambda *_a, **_k: types.SimpleNamespace(
-                            stdout=listing))
+    monkeypatch.setattr(W.subprocess, "run", FakeRun(stdout=listing))
 
     assert W._automation_words_since(1700000000.7) == [100]
+
+
+def test_a_server_started_in_the_SAME_second_is_one_of_OURS(monkeypatch):
+    """`>=`, not `>`. `since` is `time.time()` read immediately before
+    `DispatchEx`, and CIM reports whole seconds, so the Word a failed
+    start leaks usually reports the very second the call began — the
+    fractional part of `since` is dropped by `int()` on the line above.
+    `>` leaves that one running, and it is the orphan this query exists
+    to find: one more `WINWORD.EXE /Automation -Embedding` per retry."""
+    listing = r"100|1700000000|C:\Office\WINWORD.EXE /Automation -Embedding"
+    monkeypatch.setattr(W.subprocess, "run", FakeRun(stdout=listing))
+
+    assert W._automation_words_since(1700000000.7) == [100]
+
+
+def test_a_query_that_FAILS_finds_no_orphans_rather_than_raising(monkeypatch):
+    """`check=False`. PowerShell may answer nothing at all — an
+    execution policy, a missing CIM provider — and this query runs
+    inside the recovery from a broken wrapper cache, where a
+    CalledProcessError replaces a retry that works with a traceback
+    about PowerShell."""
+    monkeypatch.setattr(W.subprocess, "run", FakeRun(returncode=1))
+
+    assert W._automation_words_since(0.0) == []
 
 
 def test_the_folder_is_read_out_of_the_message(monkeypatch):

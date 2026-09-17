@@ -237,6 +237,39 @@ def test_the_find_is_configured_before_it_is_ever_used():
     assert find.cleared == 1, "and the leftovers are cleared first"
 
 
+def test_a_search_that_starts_AT_the_end_asks_Word_nothing():
+    """`start >= self.end`, decided by VALUE. The uniqueness check
+    searches on from the end of the hit, so an anchor that ends the
+    document hands it exactly `self.end` — and the two are ints computed
+    apart, one from `len()` through `Content.End` and one from the
+    Range the Find rewrote, so past 256 they are two objects and
+    identity says the guard does not apply. Word is then asked to Find
+    inside a range collapsed at the end of the document: a COM round
+    trip per anchor to be told what the guard already knew."""
+    doc = FakeDoc("." * 300 + "alpha")
+
+    (loc,) = locate_in(doc, ["alpha"])
+
+    assert loc.repeats is False
+    assert doc.finds == 1, "the second Find was never worth attempting"
+
+
+@pytest.mark.parametrize("count,cut", [(2, False), (6, True)])
+def test_the_missing_ANCHORS_say_there_are_more_only_when_there_are(count,
+                                                                    cut):
+    """`len(missing) > 5`: five are named and the trailing " ..." says
+    the list was cut short. `!= 5` prints it for two missing anchors as
+    well — a refusal that sends the author looking for anchors it has
+    already shown them in full."""
+    doc = make_doc((250, "alpha"))
+    anchors = [f"missing {i}" for i in range(count)]
+
+    with pytest.raises(AnchorError) as refused:
+        locate_in(doc, anchors)
+
+    assert ("..." in str(refused.value)) is cut, str(refused.value)
+
+
 def test_the_layout_measures_the_document_it_was_given():
     """`self.end = int(doc.Content.End)` is the bound every forward
     search is capped by; read from anywhere else it either cuts the

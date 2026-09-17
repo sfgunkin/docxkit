@@ -194,9 +194,14 @@ def _winword_pids() -> frozenset[int]:
 
 
 def _kill(pid: int) -> None:
-    """End one process and its children, without asking."""
+    """End one process and its children, without asking.
+
+    Best effort, and its answer is never read: the pid may be gone
+    already — the ordinary case for a watchdog firing on a Word that has
+    just quit — which taskkill reports as a failure.
+    """
     subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                   capture_output=True, text=True, check=False)
+                   capture_output=True, text=True, check=False)  # ignored
 
 
 _GEN_PY_RE = re.compile(r"win32com\.gen_py\.([0-9A-Fa-f-]+x\d+x\d+x\d+)")
@@ -384,7 +389,7 @@ def shared_session(*, fast: bool = True, deadline: float | None = None,
     ceiling.
     """
     if _SHARED:
-        yield _SHARED[0]
+        yield _SHARED[0]        # not ours, and nothing to quit
         return
     try:
         opened = session(fast=fast, deadline=deadline, doing=doing)
@@ -429,7 +434,7 @@ def session(*, fast: bool = True, deadline: float | None = None,
     one from ``[batch] word_deadline``.
     """
     if _SHARED:
-        yield _SHARED[0]
+        yield _SHARED[0]        # the shared_session instance, not a new one
         return
     # The `word` extra, Windows-only, so it is absent wherever CI runs.
     # No pyright directive needed and none wanted: pyright BUNDLES stubs
@@ -936,7 +941,7 @@ def search_text(anchor: str) -> str:
         piece = "^^" if ch == "^" else ch
         budget -= len(piece)
         if budget < 0:
-            break
+            break                 # and no later piece can fit either
         out.append(piece)
     return "".join(out)
 
