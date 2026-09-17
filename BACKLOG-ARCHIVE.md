@@ -14,6 +14,30 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the annotation discount misses `*args` and `**kwargs`, so a third of lint.py's survivor list was never a question~~ — FIXED 18.09, `1b8fa1a`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the `lint.py` survivor round, which was briefed on a figure
+that was not the module's. `annotation_spans` takes every annotation out of the
+denominator — PEP 563 never evaluates one, so a mutant inside it is equivalent
+by construction — and it built the list from
+`args.args + args.posonlyargs + args.kwonlyargs`, never `args.vararg` or
+`args.kwarg`. So the annotations on
+
+    def lint(*roots: _Element | None) -> list[str]:
+    def audit(*roots: _Element | None) -> list[str]:
+
+were presented as questions: 22 of `lint.py`'s 65 listed survivors, a third of
+the list. Its real survival is 43/866 = 5.0 %, not the 7.5 % the round was told
+to work. The direction matters: an incomplete discount does not read as
+incomplete, it reads as a module with more to answer for, and an agent spends
+its round arguing mutants nobody had to answer for.
+
+**Fixed 17.09 in `1b8fa1a`**: `vararg` and `kwarg` join the walk. Test:
+`test_the_annotation_discount_covers_STAR_ARGS_too`, parametrised over an
+ordinary parameter, a `*args` and a `**kwargs` — the first passed before the
+fix, the other two did not.
 ### ~~S1 — `edit.py` was swept without the two test files written for it, so 158 survivors were the harness, not the code~~ — FIXED 18.09, `741dba4`
 
 <!-- status: fixed -->
