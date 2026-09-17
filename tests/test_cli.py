@@ -2457,6 +2457,32 @@ def test_allow_existing_lint_WRITES_and_still_refuses_a_NEW_finding(
     assert target.read_bytes() == before
 
 
+def test_a_file_that_cannot_be_RE_READ_counts_every_finding_as_NEW(
+        capsys, monkeypatch, tmp_path):
+    """Whether a finding was already there is answered by reading the
+    file again, and Word can take the file between the command's read
+    and the refusal. With no answer to that question there is only the
+    conservative one: the findings are treated as this edit's, so the
+    flag cannot write a file nobody was able to check.
+    """
+    from docxkit import package
+    from docxkit.cli import _save
+    from docxkit.errors import PackageError
+
+    def locked(*_args, **_kw):
+        raise PackageError("paper.docx is locked (open in Word)")
+
+    target = _already_broken(tmp_path)
+    parts = package.read_parts(target)
+    before = target.read_bytes()
+    monkeypatch.setattr(package, "read_parts", locked)
+
+    assert _save(target, parts, "test", allow_existing=True) is False
+
+    assert "this edit" in capsys.readouterr().out
+    assert target.read_bytes() == before
+
+
 def test_every_command_that_WRITES_offers_the_same_escape():
     """One route, not six: `_save` is the shared write path, so the flag
     belongs to all of its commands or to none. `crossrefs` reaches it
