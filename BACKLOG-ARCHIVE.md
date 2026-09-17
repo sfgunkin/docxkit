@@ -14,6 +14,36 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `edit.py` was swept without the two test files written for it, so 158 survivors were the harness, not the code~~ — FIXED 18.09, `741dba4`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the two agents working `edit.py`'s survivors, and measured
+before anything was committed. `tests/test_remove_link.py` and
+`tests/test_insert_spans.py` are named after FUNCTIONS of the module rather than
+after the module, so `harness_map`'s named-after fallback never pulled them in
+and every sweep of `edit.py` has been taken without them:
+
+    replaying the sweep's 389 survivors with the two files added, on a clean
+    master worktree (no new tests):  158 now KILLED
+      152 by tests/test_remove_link.py
+        6 by tests/test_insert_spans.py
+
+Every one of those kills is a test that already existed. The module read as the
+least-tested in the package — 17.3 % real survival, the worst figure of the
+day — because its harness was wrong, and `remove_link`, `remove_links`,
+`_drop_bookmark` and parts of `insert_in_para` survived in bulk for that reason
+alone. Both agents wrote their rounds against that reading, and the rounds had
+to be trimmed to what the corrected harness does not already kill.
+
+This is the third shape of the same hazard `harness_map` was built for: after
+`errors.py` (exit codes pinned in `test_revision.py`, 100 % survival) and
+`footnotes.py` + `test_note_orphans.py` (44 of 95). A MENTION is not coverage
+and a NAME is not a harness: the file's own rule — measure the entry — has to
+be asked of what is missing, not only of what is listed.
+
+**Fixed 17.09 in `741dba4`**: both files are in `edit.py`'s entry with the
+measurement in a comment beside it.
 ### ~~S1 — `wrap_visible_span` drops a tab, no-break hyphen or line break that opens the first run it wraps~~ — FIXED 18.09, `4ce85a7`
 
 <!-- status: fixed -->
