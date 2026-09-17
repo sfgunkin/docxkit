@@ -24,10 +24,8 @@ import ast
 import pathlib
 
 import pytest
-
-import docxkit
-
-SRC = pathlib.Path(docxkit.__file__).parent
+from conftest import PACKAGE as SRC
+from conftest import source_files
 
 #: Top first. A module may import anything BELOW it and nothing above.
 #: Names on one line are siblings and must not import each other, with
@@ -92,9 +90,16 @@ SUBPACKAGE_HALVES = {
                  "_ingest", "_registry", "_init", "_promote", "_validate"),
 }
 
-MODULES = ({p.stem for p in SRC.glob("*.py") if p.stem != "__init__"}
-           | {p.name for p in SRC.iterdir()
-              if p.is_dir() and (p / "__init__.py").is_file()})
+#: The nodes of the graph: every top-level module, plus each subpackage
+#: as ONE node (its halves are ordered among themselves further down).
+#: Both halves are filters over `conftest.source_files`, which is the
+#: package's one walk since 2026-09-18 — the narrowing to the top level
+#: is a line written here rather than a property of the glob, which is
+#: how `test_part_names` lost a sixth of the package without noticing.
+_TOP = [p for p in source_files() if p.parent == SRC]
+MODULES = ({p.stem for p in _TOP}
+           | {p.parent.name for p in source_files(include_init=True)
+              if p.parent != SRC and p.name == "__init__.py"})
 
 
 def _imports(path: pathlib.Path, *, depth: int = 1) -> set[str]:
@@ -125,13 +130,17 @@ def _package_imports(folder: pathlib.Path) -> set[str]:
     edge the facade owns.
     """
     out: set[str] = set()
-    for path in sorted(folder.glob("*.py")):
+    for path in _halves_of(folder.name):
         out |= _imports(path, depth=2)
     return out - {folder.name}
 
 
-GRAPH = {p.stem: _imports(p) for p in sorted(SRC.glob("*.py"))
-         if p.stem != "__init__"}
+def _halves_of(facade: str) -> list[pathlib.Path]:
+    """The subpackage's own modules, off the shared walk."""
+    return [p for p in source_files() if p.parent.name == facade]
+
+
+GRAPH = {p.stem: _imports(p) for p in _TOP}
 GRAPH |= {name: _package_imports(SRC / name)
           for name in sorted(SUBPACKAGE_HALVES)}
 
@@ -206,8 +215,7 @@ def test_a_SUBPACKAGE_holds_exactly_the_halves_declared(facade, halves):
     """A half added to `revision/` without a line here is a half in no
     layer — the same hole `test_every_module_is_placed` closes upstairs,
     one directory down."""
-    on_disk = tuple(sorted(p.stem for p in (SRC / facade).glob("*.py")
-                           if p.stem != "__init__"))
+    on_disk = tuple(sorted(p.stem for p in _halves_of(facade)))
 
     assert on_disk == tuple(sorted(halves)), (
         f"docxkit/{facade}/ holds {on_disk}; SUBPACKAGE_HALVES declares "

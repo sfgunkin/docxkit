@@ -12,11 +12,12 @@ import importlib.util
 import pathlib
 
 import pytest
+from conftest import PACKAGE as SRC
+from conftest import source_files
 
 import docxkit
 
 ROOT = pathlib.Path(docxkit.__file__).resolve().parents[2]
-SRC = ROOT / "src" / "docxkit"
 
 
 def _harness_map():
@@ -51,15 +52,15 @@ def test_every_module_has_an_ENTRY_so_the_TABLE_can_see_it():
     was new — the fallback is how a module gets its FIRST run, not
     somewhere to leave one.
     """
-    modules = {p.name for p in SRC.glob("*.py") if p.name != "__init__.py"}
-    # and the subpackages' halves, which are modules a run mutates like
+    # Subpackage halves included — they are modules a run mutates like
     # any other. `revision/` arrived on 2026-08-30 and a top-level glob
-    # stopped seeing fourteen of them at once — every one silently
-    # unmapped, which this test exists to refuse.
-    modules |= {f"{folder.name}/{p.name}"
-                for folder in SRC.iterdir()
-                if folder.is_dir() and (folder / "__init__.py").is_file()
-                for p in folder.glob("*.py") if p.name != "__init__.py"}
+    # stopped seeing fourteen of them at once, every one silently
+    # unmapped, which this test exists to refuse. The walk is
+    # `conftest.source_files` since 2026-09-18, so the four tests that
+    # read the package share one definition of what is in it; HARNESS
+    # keys a module by its path under docxkit/, which is what
+    # `relative_to` spells.
+    modules = {p.relative_to(SRC).as_posix() for p in source_files()}
 
     unmapped = sorted(modules - set(HARNESS_MAP.HARNESS))
 

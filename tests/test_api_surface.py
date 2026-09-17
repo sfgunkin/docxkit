@@ -14,24 +14,24 @@ import ast
 import pathlib
 
 import pytest
+from conftest import PACKAGE as SRC
+from conftest import source_files
 
 import docxkit
 import docxkit.revision  # a subpackage is not imported by the package
-
-SRC = pathlib.Path(docxkit.__file__).parent
 
 #: A public SUBPACKAGE is a public module: `revision` became `revision/`
 #: on 2026-08-30 and a `*.py` glob stopped seeing it, so its 53-name
 #: `__all__` — the largest in the package — went unchecked by every test
 #: in this file on the day it was split. Its `__init__.py` is the
 #: surface, exactly as `citations.py` is for its halves.
-PACKAGES = sorted(p / "__init__.py" for p in SRC.iterdir()
-                  if p.is_dir() and not p.name.startswith("_")
-                  and (p / "__init__.py").is_file())
+PACKAGES = sorted(p for p in source_files(include_init=True)
+                  if p.name == "__init__.py" and p.parent != SRC
+                  and not p.parent.name.startswith("_"))
 
 MODULES = sorted(
-    [p for p in SRC.glob("*.py")
-     if p.name != "__init__.py" and not p.name.startswith("_")] + PACKAGES,
+    [p for p in source_files()
+     if p.parent == SRC and not p.name.startswith("_")] + PACKAGES,
     key=lambda p: p.parent.name if p.name == "__init__.py" else p.stem)
 
 
@@ -147,8 +147,7 @@ def test_the_walk_reaches_a_SUBPACKAGE_and_not_the_package_itself():
 #: too — `revision/` added fourteen modules on 2026-08-30, holding
 #: `use_word`, `allow_stale_baseline` and `force`, which are precisely
 #: the shape this refuses.
-ALL_MODULES = sorted((p for p in SRC.rglob("*.py")
-                      if p.name != "__init__.py"),
+ALL_MODULES = sorted(source_files(),
                      key=lambda p: (p.parent.name, p.name))
 
 
@@ -334,10 +333,10 @@ def _on_disk() -> set[str]:
     unchanged — `docxkit.revision` — so the row is right and the glob
     was wrong.
     """
-    return ({p.stem for p in SRC.glob("*.py")
-             if p.stem not in {"__init__", "__main__"}}
-            | {p.name for p in SRC.iterdir()
-               if p.is_dir() and (p / "__init__.py").is_file()})
+    return ({p.stem for p in source_files()
+             if p.parent == SRC and p.stem != "__main__"}
+            | {p.parent.name for p in source_files(include_init=True)
+               if p.name == "__init__.py" and p.parent != SRC})
 
 
 def test_the_README_table_names_no_module_that_is_GONE():
