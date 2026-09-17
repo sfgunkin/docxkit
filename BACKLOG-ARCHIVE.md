@@ -14,6 +14,53 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — a nested field made `unlink` remove a live caption's bookmark~~ — FIXED 18.09, `effef6c`
+
+<!-- status: fixed -->
+
+Found by the `_xml.py` field-walk survivor round, 2026-09-18. Word fields
+NEST — a HYPERLINK sits inside a REF whenever the text the REF copies held a
+link of its own, and a TOC is nothing but nested fields — and `_FIELD_RE`
+paired a `begin` with the FIRST `end` after it. So the OUTER field ended at
+the INNER field's end, and the two instructions were read as one string:
+
+    REF Table1 \h HYPERLINK \l "Appendix"
+
+which names one anchor, the HYPERLINK's. `crossrefs.field_targets` therefore
+never held `Table1`, `unlink`'s `ConversionGap` guard did not fire, and
+`unlink` removed the caption's bookmark, reported a healthy count, and left
+the REF dangling — the exact outcome that guard exists to refuse, produced
+silently and with a clean report over it.
+
+The fix is one walk, `_xml.fields`, paired by DEPTH: every field in document
+order with its own instruction, its own offset and its own result.
+`field_spans`, `field_anchors`, `internal_links` and `dead_links` all ask it
+now, and `snapshot._record` — which had the only walk that got this right,
+in a private copy — imports it instead of keeping a second reading. One
+reader, so the next shape of this bug can only be wrong in one place.
+
+Three further shapes came with it:
+
+* a field whose `end` an edit cut no longer swallows the next field whole;
+* a switchless `REF` is no longer read as clickable on a `\h` that belongs
+  to the field INSIDE it;
+* a result ends at its own end marker, so a label sitting after a nested
+  field is no longer invisible — `dead_links` had been reporting the outer
+  link of such a pair as empty while missing the inner one that really was.
+
+The curated mutation "a field ends at the first end tag" is re-anchored on
+the shared walk (`tools/mutate.py`), where one mutation now covers all four
+readers instead of one.
+
+Tests seen red before the fix are in `tests/test_field_walk.py` and
+`tests/test_crossrefs_field_form.py`:
+`test_fields_gives_a_NESTED_field_its_own_instruction_and_result`,
+`test_a_field_NESTED_in_another_is_read_as_a_LINK_OF_ITS_OWN`,
+`test_a_switchless_REF_is_not_made_clickable_by_the_field_INSIDE_it`,
+`test_a_field_that_lost_its_END_does_not_swallow_the_NEXT_one`,
+`test_internal_links_reads_the_NESTED_field_as_a_link_of_its_own`,
+`test_a_field_an_edit_TRUNCATED_is_not_a_link_a_reader_can_CLICK`,
+`test_dead_links_sees_the_label_that_follows_a_nested_field`.
 ### ~~S2 — withdraw read the last kept redline from a string-sorted listing~~ — FIXED 18.09, `f856e4d`
 
 <!-- status: fixed -->
