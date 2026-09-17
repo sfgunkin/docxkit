@@ -36,6 +36,25 @@ def _fake_run(returncode: int, stdout: str = ""):
     return run
 
 
+def test_a_TEST_file_in_the_report_is_not_a_module_with_a_floor(tmp_path):
+    """The report is shared. Since 2026-09-18 the `pytest` gate measures
+    `--cov=docxkit --cov=tests`, so `unrun_assertions` can ask which
+    assertion did not run — and every test file then arrived here to be
+    judged against DEFAULT. Four were under it and the chain went red
+    over the coverage of test files, which is not a thing this tool has
+    an opinion about.
+    """
+    report = tmp_path / "cov.json"
+    report.write_text(json.dumps({"files": {
+        "src/docxkit/_table_core.py": {"summary": {"percent_covered": 99.0}},
+        "tests/test_width_model.py": {"summary": {"percent_covered": 31.5}},
+    }}), encoding="utf-8")
+
+    measured = coverage_floor.measure(from_json=report)
+
+    assert measured == {"_table_core.py": 99.0}
+
+
 def test_a_RED_suite_measures_NOTHING(monkeypatch):
     """Seen once, 2026-08-21: one failing test in the tables suite, and
     the tool reported `_table_core.py: 55.8% is below its floor of 85%`

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -148,8 +149,7 @@ def measure(from_json: Path | None = None) -> dict[str, float]:
             sys.exit(f"no coverage report at {from_json} — the run that was "
                      f"supposed to write it did not")
         data = json.loads(from_json.read_text(encoding="utf-8"))
-        return {_key(name): info["summary"]["percent_covered"]
-                for name, info in data["files"].items()}
+        return _measured(data)
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "cov.json"
         done = subprocess.run(
@@ -184,8 +184,22 @@ def measure(from_json: Path | None = None) -> dict[str, float]:
             sys.exit("coverage produced no report; is pytest-cov installed? "
                      "(pip install -e .[dev])")
         data = json.loads(out.read_text(encoding="utf-8"))
+    return _measured(data)
+
+
+def _measured(data: dict[str, Any]) -> dict[str, float]:
+    """The PACKAGE's files, by floor key.
+
+    Filtered, because the report is shared: the `pytest` gate measures
+    `--cov=docxkit --cov=tests` so that `unrun_assertions` can ask which
+    assertion did not run (2026-09-18), and every test file then arrived
+    here to be judged against DEFAULT. Four were under it and the gate
+    went red over the coverage of test files, which is not a thing this
+    tool has an opinion about: a test file is not a module with a floor.
+    """
     return {_key(name): info["summary"]["percent_covered"]
-            for name, info in data["files"].items()}
+            for name, info in data["files"].items()
+            if "docxkit" in Path(name).parts}
 
 
 def _key(path: str) -> str:

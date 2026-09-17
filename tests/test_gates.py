@@ -145,9 +145,18 @@ def test_mypy_is_judged_on_its_LINES_not_its_exit_code():
     assert "FAILED  mypy" in said
 
 
-def test_the_real_list_is_the_ten_CONTRIBUTING_names():
+def test_the_real_list_is_the_eleven_CONTRIBUTING_names():
     """A runner that drifts from the documented gates is worse than
     none: it would report a pass over a gate nobody ran.
+
+    `unrun` joined on 2026-09-18, beside `floors` because it reads the
+    same coverage report and asks the other question: which ASSERTION
+    did not run. Nothing else in the chain can — `pytest` reports the
+    pass, `floors` reads percentages of the SOURCE, and mutation testing
+    is blind to it, since a test that asserts nothing kills nothing and
+    does not move the figure. Five such tests were found by hand that
+    day, and the sixth was written by the author of the detector an hour
+    after building it.
 
     `optionals` joined on 2026-09-18: it asks whether an `X | None` can
     ever BE None, which no type checker asks — mypy and pyright both
@@ -177,8 +186,8 @@ def test_the_real_list_is_the_ten_CONTRIBUTING_names():
     corpus on every single chain.
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
-        "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "api",
-        "deps", "sweep", "committed"]
+        "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "unrun",
+        "api", "deps", "sweep", "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
 
@@ -191,6 +200,20 @@ def test_sweep_runs_AFTER_the_suite_and_BEFORE_committed():
 
     assert names.index("sweep") > names.index("pytest")
     assert names.index("sweep") < names.index("committed")
+
+
+def test_the_two_readers_of_the_coverage_report_run_AFTER_it_is_written():
+    """`floors` and `unrun` both read the JSON the `pytest` gate writes,
+    so either one standing in front of it would judge the PREVIOUS run's
+    report — or no report at all, on a first chain. The pytest gate
+    measures the tests as well (`--cov=tests`), which is what `unrun`
+    needs and what `floors` ignores."""
+    names = [name for name, _argv, _reads in gates.GATES]
+    argv = {name: args for name, args, _reads in gates.GATES}
+
+    assert names.index("floors") > names.index("pytest")
+    assert names.index("unrun") > names.index("pytest")
+    assert "--cov=tests" in argv["pytest"]
 
 
 # --- a gate that did not run --------------------------------------------

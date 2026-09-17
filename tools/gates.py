@@ -152,12 +152,31 @@ GATES: list[Gate] = [
     # optional, so a field added before its first test is not a toll.
     ("optionals", [sys.executable, "tools/optional_audit.py",
                    "--callers", "tests"], False),
+    # `--cov=tests` measures the TEST files as well, for `unrun` below.
+    # It costs 14.5 s of this gate's 57 (measured 2026-09-18, alternating
+    # arms at `-n 8`), and it is the price of the one question nothing
+    # else in the chain can ask: did that assertion RUN. `floors` ignores
+    # the extra entries — it walks its own declared list — so the two
+    # readers of this report do not have to agree about what is in it.
     ("pytest", [sys.executable, "-m", "pytest", "-q", "-n", _workers(),
                 "--durations=25", "--durations-min=0.05",
-                "--cov=docxkit", f"--cov-report=json:{COVERAGE_JSON}"],
+                "--cov=docxkit", "--cov=tests",
+                f"--cov-report=json:{COVERAGE_JSON}"],
      False),
     ("floors", [sys.executable, "tools/coverage_floor.py",
                 "--from-json", str(COVERAGE_JSON)], False),
+    # The same report, the other question. `floors` asks whether a
+    # module is still as covered as it was, in percentages; this asks
+    # which ASSERTION did not run, in file:line — a test that passes
+    # without asserting anything, which no other gate here can see and
+    # mutation testing cannot either, since a test that asserts nothing
+    # kills nothing and does not move the figure. One tool, one
+    # question, which is why `sweep`, `api` and `deps` are three lines.
+    # It refuses (exit 3) rather than passing if the report holds no
+    # test files, because "0 findings" over nothing read is the failure
+    # it exists to catch.
+    ("unrun", [sys.executable, "tools/unrun_assertions.py",
+               "--from-json", str(COVERAGE_JSON)], False),
     # Cheap (2 s) and about the OTHER consumer: nine papers import this
     # package from an editable install, so they run the tip, and a
     # signature that moved under a name `test_api_surface` still finds
