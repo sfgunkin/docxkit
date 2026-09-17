@@ -670,6 +670,60 @@ def _sweep_para() -> str:
 # 2026-09-18), so the test written here for them is not repeated.
 
 
+# --- a link INSIDE another link (BACKLOG S8) -----------------------------
+
+
+def _nested_links() -> str:
+    """A field-form link inside an element-form one — the shape a re-wire
+    leaves when it wraps words that were already a field's result."""
+    return para(run("See "),
+                '<w:hyperlink w:anchor="Keep">'
+                + field('HYPERLINK \\l "Sen1985"', "Sen (1985)")
+                + "</w:hyperlink>", run("."))
+
+
+def test_the_sweep_unwraps_a_link_INSIDE_another_and_leaves_the_part_WHOLE():
+    """The sweep spliced by each link's original offsets, so the inner
+    one — spliced first, being further right — moved everything after it
+    and the outer cut then ran PAST the link: `_plain_runs` kept the runs
+    it found there and the paragraph lost its own `</w:p>`. A part that
+    is no longer well-formed XML is a document Word refuses to open, and
+    the sweep reported success.
+
+    Both links go, and the words stay exactly as they read."""
+    p = _nested_links()
+
+    out, gone = remove_links(p, keep=())
+
+    assert out.endswith("</w:p>"), out
+    assert visible_text(out) == "See Sen (1985)."
+    assert "w:hyperlink" not in out and "fldChar" not in out
+    assert gone == ["Keep", "Sen1985"], "document order, outermost first"
+
+
+def test_the_sweep_REFUSES_to_unwrap_a_link_around_one_it_must_KEEP():
+    """Unwrapping the outer link takes the inner link's markup with it —
+    the inner anchor is in `keep`, so the caller has said that link must
+    survive, and there is no order of splices that does both. The refusal
+    names them; silently unwrapping a kept link is the failure the whole
+    `keep` set exists to prevent."""
+    with pytest.raises(AnchorError, match=r"'Sen1985'.*inside.*'Keep'"):
+        remove_links(_nested_links(), keep={"Sen1985"})
+
+
+def test_a_splice_that_removes_NOTHING_says_so_instead_of_looping(monkeypatch):
+    """The sweep ends because every splice takes one link away, and what
+    a splice leaves is `_plain_runs`' answer, not this walk's. Were that
+    ever to hand the link back, the loop would not end — and a build that
+    hangs with nothing on the screen is the worst way to learn it."""
+    import docxkit.edit as E
+
+    monkeypatch.setattr(E, "_plain_runs", lambda span_xml: span_xml)
+
+    with pytest.raises(AnchorError, match="would not end"):
+        remove_links(_nested_links(), keep=())
+
+
 def test_remove_links_keeps_a_FIELD_link_by_its_anchor_name():
     """`keep` holds bookmark NAMES, so a field link is kept by the name
     inside its instruction — not by the instruction text around it."""

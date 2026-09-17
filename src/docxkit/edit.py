@@ -7,6 +7,7 @@ loudly instead of producing a subtly wrong manuscript.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable, Collection, Mapping
 from html import unescape
 from typing import NamedTuple
@@ -1292,17 +1293,61 @@ def remove_links(xml: str, *, keep: Collection[str]) -> tuple[str, list[str]]:
     Unlike :func:`remove_link` this touches no bookmark: the anchors
     here are the ones being KEPT somewhere, and a sweep that also
     deleted their in-text twins would take the targets with the links.
+
+    **One splice, then look again** (BACKLOG S8). Links NEST — a re-wire
+    that wraps words which were already a field's result leaves a field
+    inside a ``w:hyperlink`` — and a walk that spliced by the offsets of
+    one scan cut the outer link at bounds the inner splice had already
+    moved. `_plain_runs` then kept whole runs of whatever the overlong
+    cut took, and the paragraph lost its own ``</w:p>``: a part that is
+    not well-formed XML, reported as a clean sweep. Re-reading after
+    every splice costs one scan per link removed and is the only way the
+    offsets can be right, since what an unwrap leaves is exactly what
+    `_plain_runs` decides to keep.
+
+    A link inside one being unwrapped goes WITH it, and is reported when
+    it does. One that is in `keep` there is refused instead: no order of
+    splices both unwraps the outer link and leaves the inner one
+    standing, and unwrapping a kept link silently is what `keep` exists
+    to prevent.
     """
     gone: list[str] = []
-    # Last first, so an earlier link's offsets are still good after a
-    # later one is spliced out.
-    for link in sorted(_links_to(xml), key=lambda lk: -lk.outer[0]):
-        if link.anchor in keep:
-            continue
-        lo, hi = link.outer
+    links = _outermost_first(xml)
+    while (target := next((lk for lk in links if lk.anchor not in keep),
+                          None)) is not None:
+        lo, hi = target.outer
+        inside = [lk for lk in links if lk is not target
+                  and lo <= lk.outer[0] and lk.outer[1] <= hi]
+        if held := [lk.anchor for lk in inside if lk.anchor in keep]:
+            raise AnchorError(
+                f"remove_links: {held[0]!r} is in `keep` and sits inside "
+                f"the link to {target.anchor!r}, which is not — unwrapping "
+                f"the outer one takes the inner link's markup with it. Keep "
+                f"both or neither, or unwrap the inner link first with "
+                f"remove_link.")
+        was = Counter(lk.anchor for lk in links)
         xml = xml[:lo] + _plain_runs(xml[lo:hi]) + xml[hi:]
-        gone.append(link.anchor)
-    return xml, gone[::-1]
+        after = _outermost_first(xml)
+        lost = was - Counter(lk.anchor for lk in after)
+        if not lost:
+            # The loop ends because each splice takes one link away. A
+            # splice that took none would run for ever, which in a build
+            # is a hang with nothing on the screen — so say so instead.
+            raise AnchorError(
+                f"remove_links: unwrapping the link to {target.anchor!r} "
+                f"left it in the paragraph. Nothing here can remove it, "
+                f"and asking again would not end.")
+        for lk in links:                    # the target, in document order,
+            if lost[lk.anchor]:             # and whatever went with it
+                lost[lk.anchor] -= 1
+                gone.append(lk.anchor)
+        links = after
+    return xml, gone
+
+
+def _outermost_first(xml: str) -> list[_Link]:
+    """Every link, in document order, each before any link it holds."""
+    return sorted(_links_to(xml), key=lambda lk: (lk.outer[0], -lk.outer[1]))
 
 
 def relabel_link(para_xml: str, anchor: str, new_label: str) -> str:
