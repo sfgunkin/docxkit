@@ -968,6 +968,24 @@ def test_package_counts_includes_the_footnotes():
                                      "comments": 0, "revisions": 2}
 
 
+def test_package_counts_counts_a_revision_whose_name_ENDS_ANOTHER_WAY():
+    """Insertions and deletions were counted as the strings `<w:ins ` and
+    `<w:del `, a space after the name. A tab or a newline there is the
+    same element — legal XML, though no package of the 2,954 in the
+    corpus writes one — and counted zero."""
+    from docxkit.tracked import package_counts
+    parts = {
+        "word/document.xml": (
+            b'<w:document><w:body><w:ins\nw:id="1"><w:r><w:t>a</w:t></w:r>'
+            b'</w:ins><w:del\tw:id="2"><w:r><w:delText>b</w:delText></w:r>'
+            b"</w:del></w:body></w:document>"),
+    }
+
+    counts = package_counts(parts)
+
+    assert (counts["insertions"], counts["deletions"]) == (1, 1), counts
+
+
 def test_package_counts_sees_a_formatting_only_batch():
     """`insertions` and `deletions` are both zero for a batch of nothing
     but property revisions, and the build printed that zero as its

@@ -1081,7 +1081,9 @@ def _accepted_side(para_xml: str) -> str:
     inside a deletion, with a stray "G. " live), and it was reported as
     a stranded display too.
     """
-    if "<w:del " not in para_xml:
+    # Any spelling of a deletion's name: asked for `<w:del ` with a space,
+    # one whose name a tab or a newline ended was left in (2026-09-17).
+    if not re.search(r"<w:del(?=[\s/>])", para_xml):
         return para_xml
     for lo, hi in reversed(element_spans(para_xml, "del")):
         para_xml = para_xml[:lo] + para_xml[hi:]

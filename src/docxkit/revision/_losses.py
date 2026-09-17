@@ -573,7 +573,10 @@ def moved_footnotes(parts: dict[str, bytes],
         nid, body = int(m.group(1)), m.group(2)
         if nid < 1 or not was.get(nid, "").strip():
             continue                    # separators, and notes that are new
-        if "<w:ins " in body and "<w:del " not in body:
+        # Either name in any spelling: asked for `<w:ins ` and `<w:del `,
+        # an insertion whose name a tab or a newline ended was none.
+        if re.search(r"<w:ins(?=[\s/>])", body) \
+                and not re.search(r"<w:del(?=[\s/>])", body):
             out.append(nid)
     return out
 

@@ -74,6 +74,18 @@ def test_a_paragraph_on_its_way_OUT_is_not_a_stranded_display():
     assert inline_display(body(going)) == []
 
 
+def test_a_deletion_whose_NAME_ends_another_way_is_still_resolved():
+    """The accepted side was taken only when the paragraph held the
+    string `<w:del `. A deletion written `<w:del\\n…` — legal XML, though
+    no corpus package writes one — was left in, and its maths read as a
+    stranded display."""
+    going = para(struck("The capability set is ").replace("<w:del ",
+                                                          "<w:del\n"),
+                 struck_maths().replace("<w:del ", "<w:del\n"))
+
+    assert is_display(going) is False
+
+
 def test_the_remedy_it_printed_would_have_edited_a_DELETION():
     """Which is why this is worth a gate rather than a note: the report
     named `equations.display(para)`, and applying it to a paragraph

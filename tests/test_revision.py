@@ -2836,6 +2836,22 @@ def test_a_moved_footnote_numbered_ONE_is_named_too():
     assert revision.moved_footnotes(batch, base) == [1]
 
 
+def test_a_moved_footnote_is_named_whatever_follows_its_insertion_NAME():
+    """The note's body was asked for `<w:ins ` and `<w:del `. An insertion
+    written `<w:ins\\n…` (legal XML; no corpus package writes one) was no
+    insertion, and a note Compare re-emitted went unnamed."""
+    notes = (f"<w:footnotes {_NS}>"
+             '<w:footnote w:id="2"><w:p><w:r><w:ins\nw:id="8" w:author="W">'
+             "<w:t>a moved note</w:t></w:ins></w:r></w:p></w:footnote>"
+             "</w:footnotes>")
+    baseline = (f"<w:footnotes {_NS}>"
+                '<w:footnote w:id="2"><w:p><w:r><w:t>a moved note</w:t>'
+                "</w:r></w:p></w:footnote></w:footnotes>")
+
+    assert moved_footnotes({"word/footnotes.xml": notes.encode()},
+                           {"word/footnotes.xml": baseline.encode()}) == [2]
+
+
 def test_an_ordinary_footnote_edit_is_not_called_a_moved_anchor():
     """Insertions AND deletions is someone editing the note, which
     rejects cleanly. Naming it would send a reader hunting for a moved

@@ -204,6 +204,18 @@ def test_the_two_definitions_of_a_revision_cannot_drift():
             f"but `revision.state` will count 0 of them and call it truth")
 
 
+def test_a_content_revision_is_seen_whatever_follows_its_NAME():
+    """Read as `<w:ins `/`<w:ins/`, an insertion whose name was followed
+    by a tab or a newline was not a revision, and a table holding one was
+    fitted and ruled as though clean. `<w:insideH`, a table BORDER, is
+    still not one."""
+    assert _has_revisions(f'<w:p><w:ins\n{D}>{run("added")}</w:ins></w:p>')
+    assert _has_revisions(f'<w:p><w:del\t{D}><w:r><w:delText>x</w:delText>'
+                          "</w:r></w:del></w:p>")
+    assert not _has_revisions('<w:tblBorders><w:insideH w:val="single"/>'
+                              "</w:tblBorders>")
+
+
 @pytest.mark.parametrize("kind", sorted(KINDS))
 def test_anything_has_revisions_calls_dirty_is_something_state_counts(kind):
     """The property the guard above protects, checked on real markup."""

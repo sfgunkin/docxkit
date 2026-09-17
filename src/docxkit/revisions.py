@@ -628,9 +628,14 @@ def _merge_into_next(para: _Element) -> None:
     parent.remove(para)
 
 
-#: Content revisions — an insertion, a deletion, a move.
-_CONTENT_MARKERS = ("<w:ins ", "<w:del ", "<w:ins/", "<w:del/",
-                    "w:moveFrom", "w:moveTo")
+#: Content revisions — an insertion, a deletion, a move. Read through
+#: `_CONTENT_RE`, the insertion and deletion NAMES whole and in any
+#: spelling: as the strings `<w:ins ` and `<w:ins/` a name a tab or a
+#: newline ended was no revision (2026-09-17), and `<w:ins` alone also
+#: begins `<w:insideH`, a table border. `test_revision_state` holds this
+#: list and `_REVISION_NAMES` together.
+_CONTENT_MARKERS = ("<w:ins", "<w:del", "w:moveFrom", "w:moveTo")
+_CONTENT_RE = re.compile(r"<w:(?:ins|del)(?=[\s/>])|w:moveFrom|w:moveTo")
 #: FORMATTING revisions. Word records a property change as a snapshot of
 #: the OLD properties nested inside the new ones — `w:tcPrChange` holds a
 #: whole `w:tcPr`. A cell whose only revision is one of these carries no
@@ -715,7 +720,7 @@ def revision_kinds(xml: str) -> dict[str, int]:
 
 def _has_content_revisions(xml: str) -> bool:
     """An insertion, deletion or move — what accept/reject simulate."""
-    return any(marker in xml for marker in _CONTENT_MARKERS)
+    return _CONTENT_RE.search(xml) is not None
 
 
 def _has_revisions(xml: str) -> bool:

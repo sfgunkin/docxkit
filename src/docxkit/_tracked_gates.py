@@ -427,8 +427,11 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
     text_xml = "".join(xml for _name, xml in text_parts(parts))
     com_xml = parts.get(COMMENTS, b"").decode("utf-8")
     return {
-        "insertions": text_xml.count("<w:ins "),
-        "deletions": text_xml.count("<w:del "),
+        # The name, then anything that ends it: counted as `<w:ins ` with
+        # a space, an insertion whose name a tab or a newline ended was
+        # counted zero (2026-09-17).
+        "insertions": len(re.findall(r"<w:ins(?=[\s/>])", text_xml)),
+        "deletions": len(re.findall(r"<w:del(?=[\s/>])", text_xml)),
         # not count("<w:comment w:id=") — attribute order is not
         # meaningful in XML, and the id-second form counted as zero
         "comments": len(COMMENT_ID_RE.findall(com_xml)),
