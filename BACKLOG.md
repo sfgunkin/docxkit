@@ -46,6 +46,51 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — the lint refusal may be FALSE for three classes, and the check needs Word
+
+<!-- status: open -->
+
+Split out of the stuck-refusal entry (closed 18.09 in `b579523`) so it is
+findable on its own. That entry gave both refusals a ROUTE; this one asks
+whether the refusal should be there at all, and it is blocked on a
+measurement rather than on a decision.
+
+**The premise.** `cli._save` and `tracked.py:666` both refuse with
+
+    the package would not open cleanly in Word
+
+for an empty `w:ins`, an empty `w:del` or an empty `m:oMath` shell. Measured
+over 400 real manuscripts under `F:\...\Papers`, **20 of them (5.0 %) carry
+such a finding** — including `ROIW_submission_revised.docx` and the whole
+Missing Market series. Those are live papers, one of them a submission, and
+they evidently DO open in Word. If that holds, the message is not merely
+unhelpful, it is FALSE — and a gate nobody can satisfy under a claim that is
+untrue of the file in front of them is the bookmark check's S3 shape again.
+
+**What the fix would be.** Move those three classes from `lint` (refusal) to
+`audit` (advisory). That retires both stuck cases at the ROOT rather than
+routing around them, which is what `--allow-existing-lint` and `lint_check`
+now do.
+
+**Why it is not done.** The premise is unconfirmed, and confirming it needs
+Word. On 2026-09-18 Word was open on this machine with a document in
+Protected View, and driving automation into a live session is not worth the
+risk for a gate that now has a route out. A gate must not be weakened on an
+assumption, least of all one this convenient.
+
+**The measurement, when Word is free.** `docxkit verify` on a COPY of
+`ROIW_submission_revised.docx` — the submission, and so the strongest case —
+and one Missing Market file. That is Word opening the package and saying
+whether it repaired anything. `scratchpad\agents\audit\measure_save_refusals.py`
+names all 20 candidates.
+
+**Three outcomes, and what each means.** If Word opens both cleanly and
+repairs nothing, the classes move to `audit` and both refusals lose their
+reason to exist. If Word repairs something silently, the refusal is right
+and the MESSAGE is what needs correcting — it should say what Word will do,
+not that the file will not open. If Word refuses a file outright, the gate is
+correct as written and this entry closes as not-a-defect.
+
 ### S3 — four source-grep tests cannot fail, and one leaves 17 modules unchecked
 
 <!-- status: open -->
