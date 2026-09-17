@@ -14,6 +14,60 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — verify_equivalents exited 0 while reporting killed claims~~ — FIXED 18.09, `723ebe5`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 while adding `--jobs` to the same tool, and worth more than
+the speed it was found beside.
+
+`check()` returns how many cases did not match their expectation.
+`verify_equivalents` threw that number away. So a run in which three claims
+had been KILLED printed three `!!` lines and **exited 0**.
+
+The printed lines are what a person reads; the exit code is what a script
+reads. They disagreed, on the one tool in this repo whose entire subject is
+a claim that has quietly stopped being true. A `0` from it meant "I ran",
+not "they hold" — and those are the two readings a caller cannot tell apart
+without looking at the text.
+
+**Fixed 18.09 in `723ebe5`**: the total counts killed claims beside anchors
+that could not be found, and the closing line says which it is.
+
+Two further silences in the same tool, closed with it and the same shape:
+
+* `verify_equivalents.py wordcount.py` printed NOTHING and exited 0 while
+  verifying nothing, because that module has no claims. A mistyped module
+  name gave exactly the same answer. A module with no claims is now named
+  and refused.
+* Several modules can be named in one run, which is what the scoped path
+  needed to be usable in the first place.
+
+**Why the scoped path matters, measured rather than asserted.** The
+docstring promised minutes; the whole file is 897 claims across 45 modules,
+at one harness run per claim plus one unmutated run per harness, about ten
+seconds each here — hours. The docstring now says so. That cost is why the
+unscoped run was killed once during this session's campaign and never
+restarted, and why ten claims orphaned by `effef6c` sat unnoticed until
+somebody ran the whole file deliberately.
+
+`--jobs N` is the other half: N workers, each with a kill_check checkout of
+its own and therefore a lock of its own; modules dealt longest-first to the
+lightest worker; the report assembled in the file's own order so two runs
+over one tree print the same thing. `--jobs 1` is the default and spawns
+nothing. A worker reports its per-module total in a trailer the parent
+strips — counting `!!` lines would have missed the one case they cannot
+show, where the UNMUTATED harness fails and `check` writes off every case at
+once in a single line about the harness.
+
+The measured figure, labelled as what it is: 341 claims over 18 modules took
+12 minutes at four workers, of which `cli.py` alone was 7. That is the run
+taken by hand before the flag existed, not a promise about the new path.
+
+One thing deliberately left alone: applying an `is`-literal claim makes the
+child emit a `SyntaxWarning`, so a parallel run collects a few of them. They
+are the MUTANT's, not the code's — silencing them would hide a real warning
+about the tree.
 ### ~~S1 — revision build asks about 2 of the 14 revision kinds, so baseline refuses what build allowed~~ — FIXED 18.09, `4241b86`
 <!-- status: fixed -->
 
