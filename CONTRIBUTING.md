@@ -77,10 +77,10 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Ten gates, all of which must pass:
+Eleven gates, all of which must pass:
 
 ```
-python tools/gates.py   # all ten, in order, first failure stops
+python tools/gates.py   # all eleven, in order, first failure stops
 ```
 
 Two of them can SKIP rather than pass: `sweep` needs a corpus of real
@@ -98,6 +98,7 @@ python -m mypy
 python -m pyright       # what Pylance shows in the editor
 python tools/optional_audit.py --callers tests   # can this `| None` ever BE None?
 python tools/coverage_floor.py
+python tools/unrun_assertions.py   # which assertion did not RUN?
 python tools/api_check.py          # did this break the API the papers call?
 python -m deptry src               # does the SHIPPED package declare what it imports?
 python tools/sweep.py              # needs DOCXKIT_CORPUS; skips without
@@ -241,6 +242,53 @@ it produced were the tool's ignorance rather than the code's — lxml's
 a classmethod, a tuple unpacked or indexed out of a call, a loop variable
 drawn from a `list[int | None]` — and `tests/test_optional_audit.py`
 keeps one fixture per rule so the next one added cannot quietly lose one.
+
+### Which assertion did not RUN?
+
+```
+python tools/unrun_assertions.py                     # measure and check
+python tools/unrun_assertions.py --from-json PATH    # the gate's report
+```
+
+A test can PASS without making its assertions: a loop body that never
+had an item, the `else` of a try whose `except` is the path that runs, a
+branch no fixture reaches. Nothing else in the chain sees it. `pytest`
+reports the pass; `floors` reads percentages of the SOURCE; mutation
+testing is blind to it, because a test that asserts nothing kills
+nothing and so does not move the figure. The evidence is in the coverage
+report all along, about the test files rather than the package, which is
+why the `pytest` gate now measures `--cov=tests` — 14.5 s of its 57
+(measured 2026-09-18, alternating arms at `-n 8`).
+
+**The defect that put it here** is the one worth reading. `can_it_fail.py`
+was written that morning to settle "this test cannot fail". An hour
+later its author used it on a test he had just written to FIX one of
+these — a happy-path version of
+`test_exhibit_block_never_answers_with_ANOTHER_captions_span` — and it
+could not fail for the mutant in its own docstring: `==` and `>=` agree
+wherever `exhibits` reads the paragraph as a caption and differ exactly
+where `==` finds nothing, so the refusal is the whole of the guarantee
+and a returned block can never show it. A test that cannot fail, written
+by the person holding the detector, an hour after building it. Five
+others were found by hand the same day, in tests, tools, gates and
+documents. That is how ordinary this is, and why it is a gate and not a
+habit.
+
+Three answers, kept apart:
+
+* a test the run never ENTERED — deselected by `-m "not word"`, skipped,
+  or a parametrize with no cases — is not a finding, because the run
+  summary already says so. Read off the report rather than off markers: a
+  test that ran has its first statement covered;
+* a test that stands down IN THE OPEN, with `pytest.skip` or
+  `importorskip`, is not a finding either. That is what the empty-`DEBT`
+  tests in `test_complexity_debt.py` were changed to;
+* an unrun assertion in a test that RAN and passed is the finding.
+
+It exits 3 rather than 0 when the report holds no test files, because
+"0 findings" over nothing read is the failure it exists to catch, one
+level up. `ALLOWED` in the tool is the written-down exception list, one
+entry today; adding to it is defending a sentence, which is the point.
 
 ### A test that reads SOURCE carries two canaries
 
