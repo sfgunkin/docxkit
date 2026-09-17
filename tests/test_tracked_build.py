@@ -22,6 +22,7 @@ import pytest
 from conftest import (
     NS,
     clean_document,
+    comment,
     dele,
     document,
     ins,
@@ -1548,6 +1549,166 @@ def test_a_clean_build_reports_nothing_dropped(monkeypatch, sources):
     report, _ = _build(monkeypatch, clean_document(), sources)
     assert report.dropped == []
     assert "dropped" not in report.format()
+
+
+# --- the survivors of the first whole `tracked` sweep (2026-09-17) -------
+#
+# Five, and none of them needed Word: a count read BEFORE the math pass
+# and compared with one read after it, the one refusal that runs after
+# the glyph restore, two progress lines the report fields beside them
+# hid, and the tidy-up in `build`'s `finally`.
+
+
+def test_Word_counting_MORE_than_the_package_is_said_aloud_too(
+        monkeypatch, sources):
+    """`body_revisions` is read straight after the Compare, BEFORE the
+    math pass accepts anything, and the package is counted after it — so
+    on a default build every resolved equation makes Word's figure the
+    HIGHER one. The note is for a difference either way; `<` in place of
+    `!=` kept it only for the footnote direction, which is the one every
+    earlier fixture here built (a compare result reporting 0)."""
+    said: list[str] = []
+    counted = _FakeDoc()
+    counted.Revisions = type("R", (), {"Count": 2})()
+    fake = _FakeWordModule(clean_document())
+    fake.compare_documents = lambda word, o, r, **kw: counted  # type: ignore
+    monkeypatch.setattr(tracked, "_word", fake)
+    original, revised, out = sources
+
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           progress=said.append)
+
+    assert (report.body_revisions, report.revisions) == (2, 0)
+    assert ("  (Word counts 2 in the body; the package holds 0 revision "
+            "elements)") in said, said
+
+
+def _equation_para(number: str, inserted: str = "") -> str:
+    """One paragraph: an inline equation, then prose that never changes.
+
+    `inserted` goes in as a tracked insertion INSIDE the `m:oMath`, after
+    the old digits — the shape AFI R3/T3.2 came back in."""
+    tracked_digits = (f'<w:ins w:id="7" w:author="R" '
+                      f'w:date="2026-01-01T00:00:00Z"><m:r><m:t>{inserted}'
+                      f"</m:t></m:r></w:ins>") if inserted else ""
+    return (f"<w:p><m:oMath><m:r><m:t>{number}</m:t></m:r>{tracked_digits}"
+            "</m:oMath><w:r><w:t xml:space=\"preserve\"> in every year."
+            "</w:t></w:r></w:p>")
+
+
+def _mangled_equation_sources(sources) -> tuple[Path, Path, Path, str]:
+    """(original, revised, out, redline body) for a mangled number.
+
+    Rejecting the redline reads `-0.20`, which is the original — so the
+    reject gate is right to pass. Accepting reads `-0.20398` where the
+    clean copy says `-0.398`, and neither the paragraph text (`w:t`
+    only) nor the anchors nor the counts can see it: the equation gate
+    is the only one that refuses this build."""
+    original, revised, out = sources
+    for path, number in ((original, "-0.20"), (revised, "-0.398")):
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("word/document.xml",
+                       document(_equation_para(number)))
+    body = (f"<w:document {NS}><w:body>"
+            f"{_equation_para('-0.20', inserted='398')}</w:body>"
+            "</w:document>")
+    return original, revised, out, body
+
+
+def test_a_mangled_equation_REFUSES_the_build_while_accept_check_is_on(
+        monkeypatch, sources):
+    """The equation gate runs apart from the other accept-side refusals,
+    after the glyph restore, under its own `if accept_check`. Inverted,
+    it lets the wrong number through on every default build and refuses
+    the one build that asked not to be refused — so both halves are
+    here, on the one fixture where this gate alone decides."""
+    original, revised, out, body = _mangled_equation_sources(sources)
+    monkeypatch.setattr(tracked, "_word", _FakeWordModule(body))
+
+    with pytest.raises(PackageError, match="EQUATIONS") as refused:
+        tracked.build(original, revised, out, verify_in_word=False)
+
+    assert "'-0.20398' accepted" in str(refused.value), refused.value
+    assert not out.exists(), "a refused build must not publish"
+
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           accept_check=False)
+
+    assert out.is_file()
+    (finding,) = report.accepted_math
+    assert finding.startswith("equation 1: '-0.398' in the clean copy, "
+                              "'-0.20398' accepted"), finding
+
+
+def test_a_part_carried_from_the_BASELINE_is_said_part_by_part(
+        monkeypatch, sources):
+    """The clean copy had lost the data store too, so it comes back from
+    the baseline — "this build went back a version for these", the one
+    sentence an author might want to act on. The report field holds the
+    names either way; only the progress line says it DURING the build,
+    and the fixture has two parts so the line is one per part."""
+    original, revised, out = sources
+    with zipfile.ZipFile(original, "w") as z:
+        z.writestr("word/document.xml", clean_document())
+        z.writestr("customXml/item1.xml",
+                   '<b:Sources xmlns:b="http://schemas.openxmlformats.org'
+                   '/officeDocument/2006/bibliography"/>')
+        z.writestr("customXml/itemProps1.xml",
+                   '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats'
+                   '.org/officeDocument/2006/customXml"/>')
+    said: list[str] = []
+    monkeypatch.setattr(tracked, "_word", _FakeWordModule(clean_document()))
+
+    report = tracked.build(original, revised, out, verify_in_word=False,
+                           progress=said.append)
+
+    assert report.carried == []
+    assert report.carried_from_baseline == ["customXml/item1.xml",
+                                            "customXml/itemProps1.xml"]
+    baseline = [line for line in said if "from the BASELINE" in line]
+    assert baseline == [
+        f"  carried from the BASELINE: {name} (the clean copy no longer "
+        f"has it either — `strip_parts` is how to mean its removal)"
+        for name in report.carried_from_baseline], said
+
+
+def test_a_comment_de_duplicated_across_the_Compare_is_said_by_name(
+        sources):
+    """Compare hands the author their own note twice when both inputs
+    carry it, and the build drops one copy. Dropping an author's comment
+    is not something to do silently: the progress line names it, and the
+    report field beside it cannot stand in for that line."""
+    parts = make_parts(para(run("Employment rises.")), comment_items=(
+        comment(1, "Check this number against Table 3."),
+        comment(2, "Check this number against Table 3.")))
+    report = tracked.BuildReport()
+    said: list[str] = []
+
+    tracked._carry_rewrites(parts, sources[0], report, said.append)
+
+    (note,) = report.deduped_comments
+    assert "Check this number" in note, note
+    assert said == [f"  de-duplicated a comment present in BOTH inputs: "
+                    f"{note}"], said
+
+
+def test_tidying_a_staging_directory_already_gone_raises_nothing(tmp_path):
+    """The tidy-up runs in `build`'s `finally`, so whatever it raises
+    REPLACES the build's own outcome — a refusal's PackageError, or the
+    return of a deliverable already published. A temp cleaner, or Word
+    still holding `flat.xml` open on Windows, is enough to fail the
+    removal; an absent directory fails it on every platform. What comes
+    after it must still happen: the refused build is named."""
+    building = tmp_path / "~redline.building.docx"
+    building.write_bytes(b"what Word was given")
+    said: list[str] = []
+
+    tracked._clear_staging(tmp_path / "gone", building, False, said.append)
+
+    assert building.exists()
+    assert said == [
+        "  the refused build is kept at ~redline.building.docx — open it "
+        "to see what Word was given; the next build overwrites it"]
 
 
 # ------------------------------------- the gate the deliverable exists for --
