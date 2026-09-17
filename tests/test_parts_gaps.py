@@ -115,6 +115,53 @@ def test_read_all_lists_an_EMPTY_comment_and_the_one_after_it():
     assert read_all(parts) == [("1", "Tester", ""), ("2", "Tester", "note 2")]
 
 
+#: One comment's three extension entries, each in the attribute order
+#: Word does NOT write. The schema fixes no order, and a reader that
+#: insists on Word's finds nothing to remove.
+_REORDERED = {
+    "word/commentsExtended.xml": (
+        '<w15:commentEx w15:paraId="AAAA0001" w15:done="0"/>',
+        '<w15:commentEx w15:done="0" w15:paraId="AAAA0001"/>'),
+    "word/commentsIds.xml": (
+        '<w16cid:commentId w16cid:paraId="AAAA0001" '
+        'w16cid:durableId="00000001"/>',
+        '<w16cid:commentId w16cid:durableId="00000001" '
+        'w16cid:paraId="AAAA0001"/>'),
+    "word/commentsExtensible.xml": (
+        '<w16cex:commentExtensible w16cex:durableId="00000001" '
+        'w16cex:dateUtc="2026-07-29T00:00:00Z"/>',
+        '<w16cex:commentExtensible w16cex:dateUtc="2026-07-29T00:00:00Z" '
+        'w16cex:durableId="00000001"/>'),
+}
+
+
+@pytest.mark.parametrize("part", sorted(_REORDERED))
+def test_remove_clears_extension_entries_written_in_ANOTHER_attribute_order(
+        part):
+    """`<w15:commentEx w15:paraId=…`, `<w16cid:commentId w16cid:paraId=…
+    w16cid:durableId=…` and `<w16cex:commentExtensible w16cex:durableId=…`
+    each insisted on Word's order. An entry written otherwise was not
+    removed — and a commentsIds entry written durableId-first gave no
+    durableId, so the commentsExtensible entry stayed too: extension
+    records for a comment that no longer exists."""
+    parts = _commented(1, 2)
+    word, other = _REORDERED[part]
+    xml = parts[part].decode("utf-8")
+    assert word in xml
+    parts[part] = xml.replace(word, other).encode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    for name, needle in (("word/commentsExtended.xml", "AAAA0001"),
+                         ("word/commentsIds.xml", "AAAA0001"),
+                         ("word/commentsExtensible.xml", "00000001")):
+        assert needle not in parts[name].decode("utf-8"), f"{name} kept it"
+    for name, needle in (("word/commentsExtended.xml", "AAAA0002"),
+                         ("word/commentsIds.xml", "AAAA0002"),
+                         ("word/commentsExtensible.xml", "00000002")):
+        assert needle in parts[name].decode("utf-8"), f"{name} lost comment 2"
+
+
 @pytest.mark.parametrize("gone,left", [("1", "2"), ("2", "1")])
 def test_removing_one_comment_beside_an_EMPTY_one_removes_only_it(gone, left):
     """Removing the empty comment cut comment 2's definition with it,

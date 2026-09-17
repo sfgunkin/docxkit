@@ -769,10 +769,18 @@ def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
             para_ids.add(pid.group(1))
         com = com.replace(m.group(0), "", 1)
 
+    # The extension entries in EITHER attribute order. The schema fixes
+    # none, and each of these patterns insisted on Word's — the paraId
+    # first, the durableId after it — so an entry another producer wrote
+    # was left behind for a comment that no longer exists, and a
+    # commentsIds entry written durableId-first gave no durableId, which
+    # left its commentsExtensible entry too (2026-09-17).
     ids_xml = parts.get("word/commentsIds.xml", b"").decode("utf-8")
     for para_id in para_ids:
-        dm = re.search(rf'<w16cid:commentId w16cid:paraId="{para_id}"[^>]*'
-                       r'w16cid:durableId="([0-9A-Fa-f]+)"[^>]*/>', ids_xml)
+        dm = re.search(rf'<w16cid:commentId\b'
+                       rf'(?=[^>]*\bw16cid:paraId="{para_id}")'
+                       r'[^>]*\bw16cid:durableId="([0-9A-Fa-f]+)"[^>]*/>',
+                       ids_xml)
         if dm:
             durable_ids.add(dm.group(1))
 
@@ -783,22 +791,26 @@ def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
     parts[DOCUMENT] = doc.encode("utf-8")
     parts[COMMENTS] = com.encode("utf-8")
 
-    for name, pattern in (
-            ("word/commentsExtended.xml",
-             r'<w15:commentEx w15:paraId="{key}"[^>]*/>'),
-            ("word/commentsIds.xml",
-             r'<w16cid:commentId w16cid:paraId="{key}"[^>]*/>')):
-        if name in parts:
-            xml = parts[name].decode("utf-8")
-            for key in para_ids:
-                xml = re.sub(pattern.format(key=key), "", xml)
-            parts[name] = xml.encode("utf-8")
-
+    # Spelled out per part rather than looped over a table of templates:
+    # a pattern built by `.format` at run time is one the regex registry
+    # cannot read, and these are exactly the ones that were order-bound.
+    if "word/commentsExtended.xml" in parts:
+        xml = parts["word/commentsExtended.xml"].decode("utf-8")
+        for key in para_ids:
+            xml = re.sub(rf'<w15:commentEx\b[^>]*\bw15:paraId="{key}"[^>]*/>',
+                         "", xml)
+        parts["word/commentsExtended.xml"] = xml.encode("utf-8")
+    if "word/commentsIds.xml" in parts:
+        xml = parts["word/commentsIds.xml"].decode("utf-8")
+        for key in para_ids:
+            xml = re.sub(
+                rf'<w16cid:commentId\b[^>]*\bw16cid:paraId="{key}"[^>]*/>',
+                "", xml)
+        parts["word/commentsIds.xml"] = xml.encode("utf-8")
     if "word/commentsExtensible.xml" in parts:
         xml = parts["word/commentsExtensible.xml"].decode("utf-8")
         for key in durable_ids:
-            xml = re.sub(
-                rf'<w16cex:commentExtensible w16cex:durableId="{key}"[^>]*/>',
-                "", xml)
+            xml = re.sub(rf'<w16cex:commentExtensible\b[^>]*'
+                         rf'\bw16cex:durableId="{key}"[^>]*/>', "", xml)
         parts["word/commentsExtensible.xml"] = xml.encode("utf-8")
     return removed
