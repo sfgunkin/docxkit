@@ -847,3 +847,144 @@ def test_a_COSMETIC_claim_leaves_the_list_and_stays_in_the_rate(tmp_path,
     assert counts.claimed == 0, "it is not equivalent, and must not say so"
     assert counts.base == 1, "the denominator keeps it"
     assert counts.share == 100.0, "and so does the rate"
+
+
+# --- verify_equivalents: what a run of 897 claims needs ------------------
+#
+# The tool is scoped to a module in everyday use and that is minutes. The
+# WHOLE file is hours, which is why the run that would have caught ten
+# claims orphaned by effef6c was never made (2026-09-18). `--jobs N` is
+# the answer, and what it needs from this file is that the dealing, the
+# per-worker checkout and the splitting-back are right — the timing is
+# not a thing to assert.
+
+
+def _verifier():
+    _tools_on_path()
+    import verify_equivalents  # pyright: ignore[reportMissingImports]
+
+    return verify_equivalents
+
+
+def test_the_workers_get_roughly_equal_CLAIM_counts_not_module_counts():
+    """A run is as long as its longest group, and the file's shape is one
+    module of 62 claims beside nineteen of two — dealt by module count,
+    three workers would idle while the 62 ran alone."""
+    tool = _verifier()
+    sizes = {"big.py": 62, "mid.py": 20, "a.py": 3, "b.py": 3, "c.py": 2}
+
+    dealt = tool.groups(sizes, 3)
+
+    assert sorted(m for g in dealt for m in g) == sorted(sizes), "each once"
+    loads = sorted(sum(sizes[m] for m in g) for g in dealt)
+    assert loads[-1] == 62, "the longest module sets the floor"
+    assert loads[0] >= 8, loads
+    assert dealt == tool.groups(sizes, 3), "the same tree deals the same way"
+
+
+def test_a_group_is_never_EMPTY_when_there_are_fewer_modules_than_workers():
+    """An empty group would spawn a worker to check nothing, take a
+    checkout for it, and print a block nobody can read."""
+    dealt = _verifier().groups({"one.py": 4}, 4)
+
+    assert dealt == [["one.py"]]
+
+
+def test_each_worker_is_pointed_at_a_CHECKOUT_OF_ITS_OWN():
+    """`kill_check` states the rule for itself: one caller per checkout,
+    or each reads the other's mutations and both finish with a plausible
+    number. The lock is named after the directory, so distinct
+    directories are also distinct locks."""
+    tool = _verifier()
+    base = Path("D:/docxkit-kc")
+
+    first = tool.worker_env(base, 1)["DOCXKIT_KILL_CHECK_WORKTREE"]
+    second = tool.worker_env(base, 2)["DOCXKIT_KILL_CHECK_WORKTREE"]
+
+    assert first != second
+    assert first.endswith("-1") and second.endswith("-2")
+    assert "PATH" in tool.worker_env(base, 1), "the rest of the env stays"
+
+
+def test_a_workers_output_is_split_back_into_the_module_blocks():
+    """The parent prints in the file's own order, so two runs over one
+    tree print the same thing whatever order the workers finished in."""
+    tool = _verifier()
+    text = ("--- a.py: 1 claim(s)\n  OK one: SURVIVED (wanted equivalent)\n"
+            "--- b.py: 1 claim(s)\n  !! two: killed (wanted equivalent)\n")
+
+    found = tool.by_module(text, ["a.py", "b.py"])
+
+    assert "OK one" in found["a.py"] and "!! two" not in found["a.py"]
+    assert "!! two" in found["b.py"]
+    assert found[""] == "", "nothing was said before the first block"
+
+
+def test_what_a_worker_says_BEFORE_its_first_block_is_not_dropped():
+    """A worker that cannot take its checkout says so once and exits —
+    `kill_check` refuses rather than sharing one. Dropped, the parent
+    reports silence about a module nothing ran."""
+    tool = _verifier()
+
+    found = tool.by_module("another caller holds D:/docxkit-kc-2\n",
+                           ["a.py"])
+
+    assert "another caller holds" in found[""]
+    assert found["a.py"] == ""
+
+
+def test_the_parent_totals_a_worker_from_its_TRAILER_not_its_bang_lines():
+    """The worst case is the one `!!` lines cannot see: when the
+    UNMUTATED harness fails in a checkout, `check` writes off every case
+    at once and says so in ONE line about the harness. Its return value
+    knows that, so the worker prints it and the parent adds it up."""
+    tool = _verifier()
+
+    block, said = tool.tally_of(
+        "--- a.py: 9 claim(s)\n  ?? the UNMUTATED harness fails in kc\n"
+        f"{tool.TALLY} a.py 9\n")
+
+    assert said == 9
+    assert tool.TALLY not in block
+    assert block.endswith("harness fails in kc"), "the block is untouched"
+
+
+def test_a_claim_that_is_no_longer_what_it_was_argued_to_be_EXITS_nonzero(
+        tmp_path, monkeypatch):
+    """`check` returns how many cases did not match their expectation and
+    the caller threw it away, so a run in which three claims were killed
+    exited 0. The `!!` lines said so and the exit code did not, which is
+    the half a script reads (2026-09-18)."""
+    tool = _verifier()
+    src = tmp_path / "src" / "docxkit" / "widen.py"
+    src.parent.mkdir(parents=True)
+    src.write_text("def f():\n    return 1\n", encoding="utf-8")
+    claims = tmp_path / "equivalents.toml"
+    claims.write_text('["widen.py"]\nclaims = [\n'
+                      '  { was = "return 1", line = "return 2", '
+                      'why = "an argument long enough to be a sentence" },\n'
+                      "]\n", encoding="utf-8")
+    monkeypatch.setattr(tool, "ROOT", tmp_path)
+    monkeypatch.setattr(tool, "CLAIMS", claims)
+    monkeypatch.setattr(tool, "harness_for", lambda module: ["tests/t.py"])
+
+    monkeypatch.setattr(tool, "check", lambda *a, **kw: 0)
+    assert tool.main(["widen.py"]) == 0, "a claim that survives is the norm"
+
+    monkeypatch.setattr(tool, "check", lambda *a, **kw: 1)
+    assert tool.main(["widen.py"]) == 1
+
+
+def test_asking_for_a_module_with_NO_claims_is_refused_not_silent(tmp_path,
+                                                                  monkeypatch):
+    """It printed nothing and exited 0, which reads exactly like "every
+    claim holds" — and is what a mistyped module name gives you."""
+    tool = _verifier()
+    claims = tmp_path / "equivalents.toml"
+    claims.write_text('["widen.py"]\nclaims = []\n', encoding="utf-8")
+    monkeypatch.setattr(tool, "CLAIMS", claims)
+
+    with pytest.raises(SystemExit) as exc:
+        tool.main(["widen.pyc"])
+
+    assert exc.value.code == 2
