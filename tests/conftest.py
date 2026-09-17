@@ -12,9 +12,36 @@ import io
 import itertools
 import sys
 import zipfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-import pytest
+# THIS checkout's src, in front of the editable install, before anything
+# imports `docxkit`. The package is installed editable, so `import
+# docxkit` otherwise resolves through a plain-path `.pth` to whichever
+# checkout the install points at — for every process, in every
+# directory. A worktree therefore ran its own tests against ANOTHER
+# checkout's source and said they passed: measured 2026-09-18, with a
+# worktree's own `wordcount.py` renamed out from under its tests, a bare
+# `pytest` there reported `18 passed`.
+#
+# `tools/gates.py` closes that for the gate CHAIN by setting PYTHONPATH
+# for every gate it spawns. This closes it for everything else — a bare
+# pytest, one test file, an editor's runner — and it bites twice, since
+# several tests resolve `tools/` through `docxkit.__file__` (tools is
+# not a package and is not installed), so the wrong docxkit loads the
+# wrong tools.
+#
+# It lives HERE rather than in a root conftest.py because a second
+# module named `conftest` shadows this one: pyright then resolves
+# `from conftest import make_parts, para, run` against the root file and
+# fails every test module that imports these fixtures. Measured the same
+# day, by the gate.
+_SRC = str(Path(__file__).resolve().parents[1] / "src")
+if _SRC in sys.path:
+    sys.path.remove(_SRC)
+sys.path.insert(0, _SRC)
+
+import pytest  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
