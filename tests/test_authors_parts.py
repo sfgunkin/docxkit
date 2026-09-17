@@ -107,9 +107,19 @@ def test_the_document_itself_is_restamped():
 
 
 def test_a_people_part_with_nothing_to_dedupe_is_not_rewritten():
-    """`if out != text` — rewriting an unchanged part churns bytes for
-    no reason, and a package diff then reports a part that did not
-    change."""
+    """The part a `set_author` had nothing to do to comes back as it
+    was, byte for byte.
+
+    What this does NOT pin is the `if out != text` guard itself. This
+    docstring used to say that rewriting an unchanged part makes "a
+    package diff report a part that did not change", and that is not
+    so: `package.changed_parts` compares CONTENT, so a rewrite with
+    equal bytes is invisible to it — and to every other reader here.
+    Only `is` can see the difference, which is why the two mutants on
+    that line are claimed equivalent in `tools/equivalents.toml` rather
+    than killed. A test that could tell them apart would be pinning
+    object identity, which this package deliberately does not promise.
+    """
     people = (f'<w15:people {NS}><w15:person w15:author="Solo">'
               f'<w15:presenceInfo w15:providerId="None" '
               f'w15:userId="Solo"/></w15:person></w15:people>').encode()
