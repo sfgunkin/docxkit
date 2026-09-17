@@ -1872,10 +1872,15 @@ PREFIX_READS: dict[tuple[str, str], str] = {
         "deliberate, and said beside it: `m:oMathPara` begins with the "
         "name too, and the FIRST occurrence at an offset is the outermost "
         "element, before which a run goes"),
-    ("edit.py", "_plain_runs: in(<w:t)"): (
-        "deliberate in effect: the run children whose names begin `t` are "
-        "`w:t` and `w:tab`, and a label run holding only a tab prints it, "
-        "so it is a visible run to keep"),
+    # `edit.py _plain_runs: in(<w:t)` stood here until 2026-09-18, with a
+    # deliberate-in-effect argument: the run children beginning `t` are
+    # `w:t` and `w:tab`, and a label run holding only a tab prints it. The
+    # read is GONE — 9402cd1 rewrote `_plain_runs` to name what the LINK
+    # owns and keep every other byte, so it no longer asks what a run
+    # contains. This registry caught the declaration outliving its
+    # subject, which is the same shape as an expired equivalence claim and
+    # for the same reason: an argument about code that has moved reads as
+    # a guarantee and is not one.
     ("probe.py", "probe: startswith(<w:tbl)"): (
         "same answer: `_blocks` yields whole paragraphs and whole tables, "
         "so a block beginning `<w:tbl` is a table; no `w:tblPr` or kin ever "
