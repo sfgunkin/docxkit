@@ -243,13 +243,19 @@ MUTATIONS = [
     # is unchanged, which is why this drifted silently — the module name
     # is the part that went stale, and nothing checks a module still holds
     # the code its mutation names.
+    #
+    # Re-anchored again 2026-09-17: the pairing moved out of `field_spans`
+    # into `fields`, which every reader of a field now shares — so this
+    # one mutation covers `field_anchors`, `internal_links` and
+    # `dead_links` too, which is what it could never reach while each of
+    # them paired begin-to-first-end on its own.
     Mutation("_xml.py",
              "a field ends at the first end tag, so a nested field "
              "closes its parent",
-             '        elif kind == "end" and open_marks:\n'
-             "            bm = open_marks.pop()",
-             '        elif kind == "end" and open_marks:\n'
-             "            bm = open_marks.pop(0)"),
+             '        elif m.group(1) == "end" and stack:\n'
+             "            top = stack.pop()",
+             '        elif m.group(1) == "end" and stack:\n'
+             "            top = stack.pop(0)"),
     # --- equation skeletons ----------------------------------------------
     Mutation("revisions.py",
              "accepting a deletion leaves the emptied equation shell "

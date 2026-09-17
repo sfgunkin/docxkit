@@ -212,6 +212,52 @@ def test_unlink_refuses_a_ref_field_as_it_refuses_a_hyperlink_one():
     assert "Table1" in str(exc.value)
 
 
+def ref_field_holding(anchor: str, inner: str) -> str:
+    r"""A REF whose cached RESULT is another field.
+
+    What Word copies into the result when the bookmarked text held a
+    link of its own — the shape `_xml.field_spans` documents as "a
+    HYPERLINK inside a REF"."""
+    return (
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        f'<w:r><w:instrText xml:space="preserve">'
+        rf' REF {anchor} \h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        + inner
+        + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+NESTED_CAPTION_AND_MENTION = (
+    para(run("As reported in ")).replace("</w:p>", "")
+    + ref_field_holding("Table1", field_link("Appendix", "Table 1"))
+    + "<w:r><w:t>, rates differ.</w:t></w:r></w:p>"
+    + para(run("Table 1: Descriptive statistics.")))
+
+
+def test_field_targets_sees_the_REF_AROUND_a_hyperlink_field():
+    """Paired begin-to-first-end, the outer REF ended at the INNER
+    field's end and the two instructions were read as one string: it
+    named the HYPERLINK and lost `Table1` entirely."""
+    xml = doc(NESTED_CAPTION_AND_MENTION)
+
+    assert crossrefs.field_targets(xml) == {"Table1", "Appendix"}
+
+
+def test_unlink_refuses_a_REF_whose_RESULT_holds_a_hyperlink_field():
+    """The cost of losing it: `Table1` was not in the field targets, so
+    the guard did not fire, `unlink` removed the caption's bookmark and
+    reported a healthy count, and the REF was left dangling — the exact
+    answer this guard exists to refuse, arriving through a nested
+    field."""
+    xml = doc(NESTED_CAPTION_AND_MENTION)
+
+    with pytest.raises(ConversionGap) as exc:
+        crossrefs.unlink(xml)
+
+    assert "FIELD form" in str(exc.value)
+    assert "Table1" in str(exc.value)
+
+
 def test_a_switchless_ref_is_still_a_dependency_unlink_must_see():
     # not clickable, so not a link — but removing the bookmark still
     # breaks it into "Error! Reference source not found"

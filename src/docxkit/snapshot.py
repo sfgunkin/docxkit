@@ -47,13 +47,12 @@ from ._xml import (
     BOOKMARK_NAME_RE,
     DOCUMENT,
     ENDNOTES,
-    FLDCHAR_RE,
     FOOTNOTES,
     HYPERLINK_ANY_RE,
     INSTR_ANCHOR_RE,
-    INSTR_RE,
     PARA_RE,
     element_spans,
+    fields,
     internal_links,
     live_properties,
     normalize_glyphs,
@@ -262,10 +261,12 @@ def _record(xml: str) -> dict[str, Any]:
     Form by form because Word turns a field-form link into an element
     when the author saves — the churn a before/after record exists to
     show. `_xml.field_anchors` reads both field forms as one list and
-    `internal_links` both forms as one; neither says which a target
-    was in, so the fields are walked here, with a STACK: fields nest, and
-    an instruction belongs to the innermost field still open and not yet
-    past its separator.
+    `internal_links` both forms as one; neither says which a target was
+    in, so the fields are walked here — through `_xml.fields`, which
+    pairs their markers by DEPTH. That walk was written here, because
+    this was the only reader that needed a nested field's own
+    instruction; it now lives beside the readers that turned out to
+    need it too.
     """
     elements: Counter[str] = Counter()
     for m in HYPERLINK_ANY_RE.finditer(xml):
@@ -273,40 +274,24 @@ def _record(xml: str) -> dict[str, Any]:
         if (a := _ANCHOR_ATTR_RE.search(head)) is not None:
             elements[html.unescape(a.group(1))] += 1
 
-    fields: Counter[str] = Counter()
+    hyperlinks: Counter[str] = Counter()
     refs: Counter[str] = Counter()
 
     def classify(instr: str) -> None:
         if (h := INSTR_ANCHOR_RE.search(instr)) is not None:
-            fields[h.group(1)] += 1
+            hyperlinks[h.group(1)] += 1
         elif (target := ref_anchor(instr)) is not None:
             refs[target] += 1
 
-    marks = sorted([*FLDCHAR_RE.finditer(xml), *INSTR_RE.finditer(xml)],
-                   key=lambda m: m.start())
-    # (the instruction so far, past the separator yet) per open field
-    stack: list[tuple[list[str], bool]] = []
-    for m in marks:
-        if m.re is INSTR_RE:
-            if stack and not stack[-1][1]:
-                stack[-1][0].append(html.unescape(m.group(1)))
-            else:
-                # belongs to no open instruction — a field an edit cut the
-                # `begin` off. Read on its own, as `field_anchors` reads
-                # one: it still names the bookmark it depends on.
-                classify(html.unescape(m.group(1)))
-        elif m.group(1) == "begin":
-            stack.append(([], False))
-        elif m.group(1) == "separate" and stack:
-            stack[-1] = (stack[-1][0], True)
-        elif m.group(1) == "end" and stack:
-            classify("".join(stack.pop()[0]))
-    for instr, _past in stack:           # left open: still names a target
-        classify("".join(instr))
+    # Every field, its own instruction, nested ones included — and a
+    # stray instruction on its own, which is a field an edit cut the
+    # `begin` off and still names the bookmark it depends on.
+    for f in fields(xml):
+        classify(f.instr)
 
     return {"oMath": len(OMATH_RE.findall(xml)),
             "bookmarks": sorted(BOOKMARK_NAME_RE.findall(xml)),
-            "hyperlink_fields": dict(sorted(fields.items())),
+            "hyperlink_fields": dict(sorted(hyperlinks.items())),
             "hyperlink_elements": dict(sorted(elements.items())),
             "ref_fields": dict(sorted(refs.items()))}
 

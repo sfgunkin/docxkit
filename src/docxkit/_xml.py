@@ -15,6 +15,7 @@ import html
 import re
 import zipfile
 from collections.abc import Iterable, Iterator, Mapping
+from typing import NamedTuple
 
 __all__ = [
     "BOOKMARK_END_ID_RE",
@@ -44,6 +45,7 @@ __all__ = [
     "WORD_ANCHOR",
     "XML_WS",
     "ZIP_STAMP",
+    "Field",
     "delta_text",
     "editable_text",
     "element_spans",
@@ -51,6 +53,7 @@ __all__ = [
     "escape_attr",
     "field_anchors",
     "field_spans",
+    "fields",
     "in_span",
     "internal_links",
     "live_properties",
@@ -776,6 +779,106 @@ def run_open_before(xml: str, pos: int) -> int:
     return starts[-1] if starts else -1
 
 
+class Field(NamedTuple):
+    """One fldChar field, its markers paired by DEPTH.
+
+    ``instr`` is the field's OWN instruction, joined across the runs
+    Word split it into and unescaped; a NESTED field's instruction
+    belongs to that field's own entry, not to this one. ``at`` is where
+    that instruction starts — the offset the link readers report, a few
+    runs later than the ``begin`` and always still inside the field, so
+    a bookmark that legitimately wraps the whole field cannot be read as
+    sitting after it. It is -1 for a field with no instruction at all.
+
+    ``result`` is the XML between the field's own ``separate`` and its
+    ``end``: what the field SHOWS, nested fields and all. It is None
+    when there is no result to read — no separator (an unrendered field,
+    which Word fills on open) or no end (one an edit truncated). That is
+    a different answer from an EMPTY result, which is the damage
+    :func:`dead_links` exists to report.
+
+    ``start`` is the ``begin`` marker, or the instruction itself for one
+    whose ``begin`` an edit cut off; ``end`` is past the ``end`` marker's
+    attribute, or -1 where nothing closed the field.
+    """
+    at: int
+    instr: str
+    result: str | None
+    start: int
+    end: int
+
+
+class _Open:
+    """A field on the walk's stack: its `end` has not been reached."""
+    __slots__ = ("at", "pieces", "sep_end", "start")
+
+    def __init__(self, start: int) -> None:
+        self.start = start
+        self.pieces: list[str] = []
+        self.at = -1
+        self.sep_end = -1
+
+
+def fields(xml: str) -> list[Field]:
+    r"""Every fldChar field, in document order, paired by DEPTH.
+
+    THE pairing, and the reason it is a function: fields NEST. Word
+    writes a HYPERLINK inside a REF whenever the text the REF copies
+    held a link of its own, and everything inside a TOC. A begin-to-end
+    regex, however lazily it is matched, ends the outer field at the
+    INNER field's end — and every reader built on one then read the two
+    instructions as a single string. ``REF Table1 \h HYPERLINK \l
+    "Appendix"`` names ONE anchor, the HYPERLINK, so `crossrefs` never
+    held Table1: `unlink` removed that bookmark, reported a healthy
+    count and left the REF dangling, which is the exact answer its
+    ConversionGap guard exists to refuse. The same mispairing ended a
+    field whose ``end`` an edit had cut at the NEXT field's end,
+    swallowing that field whole, and read a switchless REF as clickable
+    because the ``\h`` it was judged by belonged to the field inside it.
+
+    An instruction outside any open field is read ON ITS OWN, as before:
+    it is a field an edit cut the ``begin`` off, and it still names the
+    bookmark it depends on. So is one that follows its field's
+    ``separate``, which belongs to no instruction at all.
+
+    `snapshot._record` had the only walk that got this right and kept a
+    copy of it to do so; this is that walk, in the module the readers
+    live in.
+    """
+    out: list[Field] = []
+    stack: list[_Open] = []
+    marks = sorted([*FLDCHAR_RE.finditer(xml), *INSTR_RE.finditer(xml)],
+                   key=lambda m: m.start())
+    for m in marks:
+        if m.re is INSTR_RE:
+            if stack and stack[-1].sep_end < 0:
+                top = stack[-1]
+                top.pieces.append(html.unescape(m.group(1)))
+                if top.at < 0:
+                    top.at = m.start()
+            else:
+                out.append(Field(m.start(), html.unescape(m.group(1)),
+                                 None, m.start(), -1))
+        elif m.group(1) == "begin":
+            stack.append(_Open(m.start()))
+        elif m.group(1) == "separate" and stack:
+            # Past the whole marker, not just the attribute this mark
+            # matched: the caller reads the result as XML. A part
+            # truncated mid-tag has no `>` to get past, and then the
+            # marker itself is where the result starts.
+            close = xml.find(">", m.end())
+            stack[-1].sep_end = close + 1 if close >= 0 else m.end()
+        elif m.group(1) == "end" and stack:
+            top = stack.pop()
+            out.append(Field(top.at, "".join(top.pieces),
+                             xml[top.sep_end:m.start()] if top.sep_end > 0
+                             else None, top.start, m.end()))
+    for top in stack:                  # never closed: an edit cut the end
+        out.append(Field(top.at, "".join(top.pieces), None, top.start, -1))
+    out.sort(key=lambda f: f.start)
+    return out
+
+
 def field_spans(xml: str) -> list[tuple[int, int, str]]:
     """Every fldChar field as ``(start, end, body)``, run boundaries in.
 
@@ -798,21 +901,20 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
     order, each with its own correct extent. The callers here all
     demand a UNIQUE match and raise otherwise, so a nested hit surfaces
     as a loud "found 2 fields" rather than a quiet half-field splice.
+
+    The pairing itself is :func:`fields`, which every reader of a field
+    shares; this asks it the one question about RUNS.
     """
     out: list[tuple[int, int, str]] = []
-    open_marks: list[re.Match[str]] = []
-    for m in FLDCHAR_RE.finditer(xml):
-        kind = m.group(1)
-        if kind == "begin":
-            open_marks.append(m)
-        elif kind == "end" and open_marks:
-            bm = open_marks.pop()
-            r_start = run_open_before(xml, bm.start())
-            close = xml.find("</w:r>", m.end())
-            if r_start < 0 or close < 0:
-                continue
-            r_end = close + len("</w:r>")
-            out.append((r_start, r_end, xml[r_start:r_end]))
+    for f in fields(xml):
+        if f.end < 0:
+            continue                 # no end marker: nothing to close on
+        r_start = run_open_before(xml, f.start)
+        close = xml.find("</w:r>", f.end)
+        if r_start < 0 or close < 0:
+            continue
+        r_end = close + len("</w:r>")
+        out.append((r_start, r_end, xml[r_start:r_end]))
     out.sort(key=lambda span: (span[0], -span[1]))
     return out
 
@@ -875,36 +977,20 @@ def field_anchors(xml: str, *,
     legitimately wraps the whole field cannot be read as sitting after
     it. Instructions are joined across runs before matching, because
     Word splits them at rsid boundaries — and an instruction outside any
-    matched begin/end pair is read on its own, so a field truncated by
-    an edit still reports the bookmark it depends on.
+    begin/end pair is read on its own, so a field truncated by an edit
+    still reports the bookmark it depends on.
+
+    One entry per FIELD, which is what pairing by depth buys: a field
+    nested in another names its own bookmark at its own offset, instead
+    of both instructions being read as one string that names whichever
+    anchor comes first.
     """
     out: list[tuple[str, int]] = []
-    seen: set[tuple[str, int]] = set()
-
-    def add(name: str | None, at: int) -> None:
-        if name is not None and (name, at) not in seen:
-            seen.add((name, at))
-            out.append((name, at))
-
-    covered: list[tuple[int, int]] = []
-    for m in _FIELD_RE.finditer(xml):
-        body = m.group(1)
-        covered.append((m.start(1), m.end(1)))
-        im = INSTR_RE.search(body)
-        if im is None:
-            continue
-        at = m.start(1) + im.start()
-        instr = html.unescape("".join(INSTR_RE.findall(body)))
-        hm = INSTR_ANCHOR_RE.search(instr)
-        add(hm.group(1) if hm else ref_anchor(instr, clickable=clickable), at)
-
-    for im in INSTR_RE.finditer(xml):
-        if any(lo <= im.start() < hi for lo, hi in covered):
-            continue
-        instr = html.unescape(im.group(1))
-        hm = INSTR_ANCHOR_RE.search(instr)
-        add(hm.group(1) if hm else ref_anchor(instr, clickable=clickable),
-            im.start())
+    for f in fields(xml):
+        hm = INSTR_ANCHOR_RE.search(f.instr)
+        name = hm.group(1) if hm else ref_anchor(f.instr, clickable=clickable)
+        if name is not None:
+            out.append((name, f.at))
     return out
 
 
@@ -917,9 +1003,9 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
     documented on the LE rounds. An audit that reads one form misses half
     the links depending on who saved the file last, so this reads both.
 
-    Field spans are matched begin-to-end non-greedily, which mispairs
-    NESTED fields; a citation or cross-reference link never nests, so
-    that stays out of scope here.
+    Fields NEST, and are paired by depth in :func:`fields`: a link
+    inside another field is a link of its own, with its own label, and
+    the field around it keeps its own anchor.
 
     ONE part's XML, not the parts mapping almost every sibling in this
     namespace takes — and the mapping is refused by name rather than by
@@ -937,9 +1023,13 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for m in _HYPERLINK_EL_RE.finditer(xml):
         out.append((html.unescape(m.group(1)), visible_text(m.group(2))))
-    for m in _FIELD_RE.finditer(xml):
-        instr = html.unescape(
-            "".join(INSTR_RE.findall(m.group(1))))  # the code of a LINK
+    for f in fields(xml):
+        if f.end < 0:
+            # A field an edit cut the `begin` or the `end` off is not
+            # something a reader can click, whatever bookmark its
+            # instruction still names. `field_anchors` answers that
+            # other question — what would BREAK if the bookmark went.
+            continue
         # Three forms reach a bookmark, not two. The third is Word's own
         # CROSS-REFERENCE — `REF _Ref211944524 \h` — and reading only the
         # first two made `citations` report four working mentions on HCW
@@ -948,13 +1038,11 @@ def internal_links(xml: str) -> list[tuple[str, str]]:
         # fine, and neither was reading what a reader clicks
         # (2026-08-22). The repair the finding implied would have traded
         # Word's automatic renumbering for a static label.
-        hm = INSTR_ANCHOR_RE.search(instr)
-        anchor = hm.group(1) if hm else ref_anchor(instr)
+        hm = INSTR_ANCHOR_RE.search(f.instr)
+        anchor = hm.group(1) if hm else ref_anchor(f.instr)
         if anchor is None:
             continue        # PAGEREF, external link, TOC, no \h…
-        sep = _SEPARATE_RE.search(m.group(1))
-        label = visible_text(m.group(1)[sep.end():]) if sep else ""
-        out.append((anchor, label))
+        out.append((anchor, visible_text(f.result) if f.result else ""))
     return out
 
 
@@ -1018,23 +1106,23 @@ def dead_links(xml: str) -> list[str]:
     deletion (four in le12) is NOT reported: it is not in the final
     document at all.
 
-    The field grammar is shared with :func:`internal_links` and carries
-    its limitation — begin-to-end matched non-greedily, so a NESTED
-    field mispairs. `citations` reports that separately as DOUBLED LINK.
+    The field walk is :func:`fields`, shared with :func:`internal_links`
+    — and a field's result ends at ITS end, not at the first one after
+    it. Cut short at a NESTED field's end, a label sitting after that
+    field was invisible and its link read as empty: damage reported
+    where there is none, which is the costly direction here.
     """
     out: list[str] = []
     for m in _HYPERLINK_EL_RE.finditer(xml):
         if _shows_nothing(m.group(2)):
             out.append(html.unescape(m.group(1)))
-    for m in _FIELD_RE.finditer(xml):
-        instr = html.unescape(
-            "".join(INSTR_RE.findall(m.group(1))))  # the code of a CANDIDATE
-        am = INSTR_ANCHOR_RE.search(instr)
-        sep = _SEPARATE_RE.search(m.group(1))
-        # No `separate` means the field has no result yet — an unrendered
-        # field, not an emptied one. Word fills it on open.
-        if am is not None and sep is not None \
-                and _shows_nothing(m.group(1)[sep.end():]):
+    for f in fields(xml):
+        am = INSTR_ANCHOR_RE.search(f.instr)
+        # No result means the field has no result YET — no separator, an
+        # unrendered field Word fills on open, or no end. Not the same
+        # question as a result that shows nothing.
+        if am is not None and f.result is not None \
+                and _shows_nothing(f.result):
             out.append(am.group(1))
     return out
 

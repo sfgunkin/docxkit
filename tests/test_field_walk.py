@@ -23,8 +23,11 @@ from __future__ import annotations
 import re
 
 from docxkit._xml import (
+    dead_links,
     field_anchors,
     field_spans,
+    fields,
+    internal_links,
     ref_anchor,
     run_open_before,
 )
@@ -446,3 +449,140 @@ def test_a_STRAY_instruction_is_read_from_its_TEXT_not_its_tags():
 #   `covered`: the range grows by the `begin` or the `end` tag, and a
 #   tag cannot hold a `<` in well-formed XML;
 # * `< hi` -> `<= hi`: `hi` is where the `end` tag's `<w:fldChar` starts.
+# ------------------------------------------- fields NEST: paired by DEPTH --
+#
+# The readers on top of the walk — `field_anchors`, `internal_links`,
+# `dead_links` — paired a `begin` with the FIRST `end` after it, which is
+# not the field's end when another field sits inside it. Word writes one
+# inside another whenever the text a REF copies held a link of its own,
+# and everything inside a TOC. The instructions then joined into ONE
+# string and the pair reported ONE anchor.
+
+
+def _code(text: str) -> str:
+    """One run of a field's CODE — Word splits it at rsid boundaries."""
+    return _run(f'<w:instrText xml:space="preserve">{text}</w:instrText>')
+
+
+def _code_offsets(xml: str) -> list[int]:
+    return [m.start() for m in re.finditer("<w:instrText", xml)]
+
+
+def _around(instr: str, inner: str) -> str:
+    """A field whose cached RESULT is the field `inner` — what Word
+    writes when the bookmark a REF points at held a field itself."""
+    return _run(BEGIN) + _code(instr) + _run(SEP) + inner + _run(END)
+
+
+def _link(anchor: str, shown: str) -> str:
+    return (_run(BEGIN) + _code(f' HYPERLINK \\l "{anchor}" ') + _run(SEP)
+            + _run(f"<w:t>{shown}</w:t>") + _run(END))
+
+
+def test_fields_gives_a_NESTED_field_its_own_instruction_and_result():
+    """The primitive under all three readers. The outer field's
+    instruction is its own — the inner one's belongs to the inner
+    entry — and its result is everything it SHOWS, the nested field
+    included, because that is what the reader sees."""
+    inner = _link("Appendix", "Appendix A")
+    xml = "<w:p>" + _around(r" REF Table1 \h ", inner) + "</w:p>"
+
+    outer, nest = fields(xml)
+
+    assert outer.instr == r" REF Table1 \h "
+    assert nest.instr == ' HYPERLINK \\l "Appendix" '
+    assert outer.start < nest.start and outer.end > nest.end
+    sep_at = xml.index(SEP, nest.start) + len(SEP)
+    assert nest.result == xml[sep_at:xml.index(END, sep_at)], \
+        "a result runs from past its own separator to its own end marker"
+    assert "instrText" not in (nest.result or ""), "a result is what it SHOWS"
+    assert inner in (outer.result or ""), "and the outer shows the inner one"
+
+
+def test_a_field_NESTED_in_another_is_read_as_a_LINK_OF_ITS_OWN():
+    r"""Both anchors, each at its own instruction. Joined, the two codes
+    read `REF Table1 \h HYPERLINK \l "Appendix"`, which names the
+    HYPERLINK and loses the REF — so `crossrefs.field_targets` did not
+    hold Table1, `unlink` removed that bookmark and reported a healthy
+    count, and the REF was left dangling.
+    """
+    xml = ("<w:p>" + _around(r" REF Table1 \h ", _link("Appendix", "A"))
+           + "</w:p>")
+    outer_at, inner_at = _code_offsets(xml)
+
+    assert field_anchors(xml, clickable=False) == [
+        ("Table1", outer_at), ("Appendix", inner_at)]
+    assert field_anchors(xml) == [("Table1", outer_at), ("Appendix", inner_at)]
+
+
+def test_a_switchless_REF_is_not_made_clickable_by_the_field_INSIDE_it():
+    r"""The `\h` a field is judged by has to be its own. Read as one
+    string, the inner field's switch made the static outer REF look
+    like a link a reader can follow — and the inner field, the one that
+    really is a link, was not reported at all.
+    """
+    xml = ("<w:p>" + _around(" REF Table1 ", _link("Appendix", "A"))
+           + "</w:p>")
+    outer_at, inner_at = _code_offsets(xml)
+
+    assert field_anchors(xml) == [("Appendix", inner_at)], \
+        "a REF with no switch is not a link a reader can click"
+    assert field_anchors(xml, clickable=False) == [
+        ("Table1", outer_at), ("Appendix", inner_at)], \
+        "both still DEPEND on their bookmarks"
+
+
+def test_a_field_that_lost_its_END_does_not_swallow_the_NEXT_one():
+    """The other half of pairing by depth. A field an edit truncated
+    used to take the next field's `end` for its own, so the whole field
+    after it disappeared into it — instruction, anchor and all.
+    """
+    cut = (_run(BEGIN) + _code(r" REF Table1 \h ") + _run(SEP)
+           + _run("<w:t>Table 1</w:t>"))
+    whole = _run(BEGIN) + _code(r" REF Table2 \h ") + _run(SEP) \
+        + _run("<w:t>Table 2</w:t>") + _run(END)
+    xml = "<w:p>" + cut + whole + "</w:p>"
+    first, second = _code_offsets(xml)
+
+    assert field_anchors(xml) == [("Table1", first), ("Table2", second)]
+
+
+def test_internal_links_reads_the_NESTED_field_as_a_link_of_its_own():
+    """The same pairing, one reader further out: the label is what the
+    field SHOWS, and the nested link is a link in its own right."""
+    xml = ("<w:p>" + _around(r" REF Table1 \h ", _link("Appendix", "A"))
+           + "</w:p>")
+
+    assert internal_links(xml) == [("Table1", "A"), ("Appendix", "A")]
+
+
+def test_a_field_an_edit_TRUNCATED_is_not_a_link_a_reader_can_CLICK():
+    """Two questions, and the walk answers both. `field_anchors` reports
+    the bookmark a cut field still DEPENDS on — removing it is what
+    turns the field into "Error! Reference source not found" — while
+    `internal_links` and `dead_links` report what is on the PAGE, and a
+    field with no end is not something Word renders as a link at all.
+    """
+    cut = (_run(BEGIN) + _code(' HYPERLINK \\l "Appendix" ') + _run(SEP)
+           + _run("<w:t>A</w:t>"))
+    xml = "<w:p>" + cut + "</w:p>"
+    at, = _code_offsets(xml)
+
+    assert field_anchors(xml) == [("Appendix", at)]
+    assert internal_links(xml) == []
+    assert dead_links(xml) == []
+
+
+def test_dead_links_sees_the_label_that_follows_a_nested_field():
+    """A field's result ends at ITS end, not at the first one. Cut short
+    at the nested field's end, the label after it was invisible and the
+    link read as empty — a report of damage where there is none, which
+    is the costly direction for a gate nobody can check by eye.
+    """
+    shown = _link("Appendix", "")            # emptied by an edit: really dead
+    live = ("<w:p>" + _run(BEGIN) + _code(' HYPERLINK \\l "Table1" ')
+            + _run(SEP) + shown + _run("<w:t>Table 1</w:t>") + _run(END)
+            + "</w:p>")
+
+    assert dead_links(live) == ["Appendix"], \
+        "only the emptied inner link is dead; the outer one shows a label"
