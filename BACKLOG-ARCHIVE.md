@@ -14,6 +14,53 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — a gate run in a worktree tested the INSTALLED checkout, and said ok~~ — FIXED 18.09, `32dd39d`
+
+<!-- status: fixed -->
+
+Found 2026-09-18, reported by an agent that noticed its first gate run in a
+worktree had tested the wrong tree. Verified and measured before filing.
+
+`tools/gates.py:44` puts its own checkout's `src` on `sys.path` — for
+ITSELF. A gate is a SUBPROCESS, and it inherited none of that. The package
+is installed editable, so `import docxkit` in that child resolved through
+the install, to the one checkout the install points at, whatever worktree
+the chain was started from.
+
+**So a worktree gated another checkout's source while reporting on its
+own.** Measured: with a worktree's own `wordcount.py` renamed out from under
+its tests, a bare pytest in that worktree reported
+
+    18 passed
+
+because it imported `D:/docxkit/src`. With `PYTHONPATH` pointed at that
+worktree's `src` the same command failed collection, as it must.
+
+This is the worst shape a gate can have, and worse than a gate that cannot
+fail. It does not fail — it answers a DIFFERENT QUESTION, and the answer
+looks exactly like the one the reader wanted. A fix round in a worktree
+whose new tests were red before the fix would, run this way, report those
+tests passing against a tree that does not contain the fix.
+
+Its blast radius today: every branch in this session's campaign that ran
+`python tools/gates.py` in its worktree without setting `PYTHONPATH` by hand
+gated master. Several agents did set it — the one that found this did — so
+the reports are not uniformly void, but they are not uniformly trustworthy
+either, and the merges are being re-gated centrally in a worktree that does
+set it.
+
+**The fix** is `_child_env()`: the gate's environment gets this checkout's
+`src` PREPENDED to `PYTHONPATH`. Prepended rather than replaced, because the
+mutation tools point `PYTHONPATH` at a measurement worktree and a gate run
+under one must not lose it.
+
+Tests seen red before the fix, both of which set `PYTHONPATH` to a foreign
+path FIRST so that neither can pass by inheriting the runner's own
+environment — the first version of the first test passed without the fix for
+exactly that reason, which is the same trap one level up:
+
+* `test_a_gate_imports_THIS_checkouts_source_not_the_installed_one`
+* `test_a_gate_KEEPS_a_PYTHONPATH_the_caller_already_set`
 ### ~~S1 — a cell merge is counted as pending and cannot be cleared by any toolkit path~~ — FIXED 18.09, `89afbbf`
 <!-- status: fixed -->
 
