@@ -672,6 +672,42 @@ that says "the document unchanged" is only as good as the fixture that
 made it: give it the `w:val="0"` copy and the same code answers with
 the stale element first.
 
+### A figure says nothing about behaviour that lives in a REGEX
+
+The sharpest limit of this whole campaign, found 2026-09-18 by the
+`footnotes.py` round, which had nothing to work on.
+
+`footnotes.py` read **REAL SURVIVAL 0.6 % (4/679)**, and all four were
+cosmetic quote widths already claimed. An empty list. But
+`_NOTE_CONTENT_RE` — the four lines that decide WHICH carriers make a
+note more than a shell — had no mutant planned on it at all, and neither
+did `_orphan_of`. Cosmic-ray mutates operators, comparisons and numbers.
+The carrier list is a pattern STRING, so there is nothing in it for a
+mutation operator to take hold of.
+
+Hand-mutated instead, with `kill_check` over twelve cases — each
+deleting ONE alternative or one `delText` guard, and each checked to
+still compile as a regex, so an import error could not read as a kill —
+**four survived**: `w:hyperlink`, `w:drawing`, `w:tbl` and `m:oMath`.
+Delete any one of them and a note holding only a link, a figure, a table
+or an equation reads as a shell, and `prune_orphans` CUTS it off the
+page. That is the exact defect the pattern was widened for on 09-17, and
+the sweep could not see it. Every legacy twin added that day (`w:pict`,
+`w:object`, `w:sym`, `w:contentPart`) was killed by the test that
+motivated it; it was the four the pattern had named since it was written
+that nothing pinned.
+
+**So a low figure on a regex-driven module is not evidence.** It is the
+absence of a question. Two other modules carry the same shape and are
+worth the same treatment before their figures are believed: `lint.py`
+and `_cite_audit.py`.
+
+The method, which is cheap: take the pattern apart one alternative at a
+time, delete exactly one, confirm the result still COMPILES, and run the
+harness. A fixture for a survivor must hold ONE carrier and nothing else
+a reader sees — with two, dropping either alternative leaves the note
+occupied by the other and the case proves nothing.
+
 ### A figure is void when the HARNESS moves, too
 
 The rule above checks the source's commit time against the session file.
