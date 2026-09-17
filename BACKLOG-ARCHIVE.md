@@ -14,6 +14,51 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — a sweep that graded a chunk and then refused threw away the reason~~ — FIXED 18.09, `dad12ee`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 while running five sweep streams at once. `word.py` stopped
+at 205/878 and `revision/_validate.py` at 125/398, and each printed exactly
+this and nothing else:
+
+    word.py     REFUSED (exit 1) — no measurement taken, and the existing
+                session is untouched.
+
+The reason the session gave was thrown away. `run()` keeps the child's
+non-progress lines in `others` — deliberately, forty of them, whole, because
+a truncated traceback once reported a lost stream as `ath, target) | ...
+CopyFile2(src_, dst_, flags)` (BACKLOG S4, 2026-09-12) — but it prints them
+only under `if not last`, that is, only when NO chunk ever graded. A session
+that ran a while and THEN stopped falls past that branch into the refusal
+message, which says that a refusal happened and not one word about what it
+was.
+
+That is the worst case to lose it in. A session that dies before its first
+print is usually something blunt — a lock, a missing worktree — and is
+reproduced by running it again. A session that grades two chunks and then
+stops has already proved the harness imports, the lock was free and the
+worktree is there, so the reason is something the second run may well not
+reproduce. It was the only place that reason was ever printed.
+
+It is also the same swallow this file already warns about one branch above,
+where a `NOTE:` about a harness that moved mid-run used to land in `others`
+and go unprinted beside a clean figure — "a sweep whose module was edited
+mid-run printed a clean figure and swallowed the one line saying what the
+figure was of".
+
+The fix prints those lines whenever the child exits NONZERO, and only then.
+The successful run must stay quiet: `verifying the unmutated harness...`
+printed under a final figure reads as the state the run ended in, which is
+what `test_a_graded_run_does_NOT_repeat_the_diagnosis_line` exists to pin.
+
+Test seen red before the fix:
+`test_a_run_that_GRADED_and_then_refused_still_says_WHY` — a child that
+emits the ordinary chunk lines and then exits 1, asserting the reason is
+printed AND that it comes before the `REFUSED` line.
+
+Both refusals are being re-measured with the fix in place, to recover the
+reason they were carrying.
 ### ~~S1 — an edit after a volatile field's end was masked, so it passed --expect-clean~~ — FIXED 18.09, `ccc3478`
 
 <!-- status: fixed -->
