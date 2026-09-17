@@ -578,9 +578,30 @@ def harness_for(module: str) -> list[str]:
     The fallback is a starting point, not an entry: it finds the files
     that NAME the module, which is neither everything that exercises it
     (a facade hides its halves) nor only what does.
+
+    **A bare stem that names a mapped module is REFUSED**, because the
+    fallback is indistinguishable from a hit when the miss is only a
+    dropped extension, and the difference is not always safe. Measured
+    2026-09-18: `harness_for("lint")` scanned up 6 files where the entry
+    names 3, `harness_for("edit")` 17 against 9 — harmless to a census,
+    which a wider harness only makes stricter. But `harness_for("find")`
+    scanned DOWN, 7 against the entry's 8, and a round measured that way
+    is measured against a harness missing a mapped file: it INVENTS
+    survivors. That is the instrument defect of `edit.py` and
+    `revision/_common.py` arriving by a third road — not a wrong entry,
+    but a caller who never reached the entry.
+
+    Nothing in `tools/` is affected: every one of them passes a `.py`
+    name. It bites the hand-written scripts a survivor round runs, which
+    is where this was found.
     """
     if module in HARNESS:
         return HARNESS[module]
+    if f"{module}.py" in HARNESS:
+        raise SystemExit(
+            f"no module {module!r}; did you mean {module}.py? "
+            f"The map is keyed on the file name, and scanning for a "
+            f"module that HAS an entry is never what the caller meant.")
     stem = module.removesuffix(".py")
     found = [f"tests/{p.name}" for p in sorted(TESTS.glob("test_*.py"))
              if _imports(p, stem)]

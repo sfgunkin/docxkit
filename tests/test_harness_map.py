@@ -80,12 +80,43 @@ def test_every_test_file_in_a_harness_exists(module, files):
         f"a run against the rest is not comparable with the recorded one")
 
 
-def test_a_module_with_no_entry_falls_back_to_what_NAMES_it():
+def test_a_module_with_no_entry_falls_back_to_what_NAMES_it(monkeypatch):
     """The fallback is what keeps a new module measurable at all; it is
-    a starting point, not a checked harness."""
-    found = HARNESS_MAP.harness_for("styles.py")     # deliberately unmapped
+    a starting point, not a checked harness.
+
+    The entry is REMOVED for the test rather than naming a module that
+    happens to be unmapped today. This test read
+    `harness_for("styles.py")  # deliberately unmapped` until
+    2026-09-18, by which time styles.py had an entry — so it asserted
+    the MAP and called it the fallback, and would have gone on passing
+    if the fallback were deleted outright.
+    """
+    without = {k: v for k, v in HARNESS_MAP.HARNESS.items()
+               if k != "styles.py"}
+    monkeypatch.setattr(HARNESS_MAP, "HARNESS", without)
+
+    found = HARNESS_MAP.harness_for("styles.py")
 
     assert "tests/test_styles.py" in found
+
+
+def test_a_BARE_STEM_that_names_a_mapped_module_is_REFUSED():
+    """The fallback is indistinguishable from a hit when the miss is
+    only a dropped extension, and the difference is not always safe.
+
+    Measured 2026-09-18: `harness_for("lint")` scanned up to 6 files
+    where the entry names 3 and `"edit"` to 17 against 9 — harmless to
+    a census, which a wider harness only makes stricter. But `"find"`
+    scanned DOWN, 7 against the entry's 8, and a round measured that
+    way runs against a harness missing a mapped file and INVENTS
+    survivors. Every tool passes a `.py` name; it was the hand-written
+    scripts of a survivor round that met it.
+    """
+    with pytest.raises(SystemExit) as refused:
+        HARNESS_MAP.harness_for("lint")
+
+    assert "did you mean lint.py" in str(refused.value)
+    assert HARNESS_MAP.harness_for("lint.py"), "the right key still works"
 
 
 def test_a_module_nothing_names_is_an_ERROR_not_an_empty_run():
