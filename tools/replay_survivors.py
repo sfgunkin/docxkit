@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -59,6 +60,7 @@ from kill_check import (  # pyright: ignore[reportMissingImports]
     check,
 )
 from mutation_survivors import (  # pyright: ignore[reportMissingImports]
+    LINELESS_OPERATORS,
     became,
     classify,
 )
@@ -90,7 +92,8 @@ def module_key(module: Path) -> str:
 
 
 def cases_for(module: Path, db: Path | None = None,
-              src: Path | None = None) -> list[Case]:
+              src: Path | None = None,
+              say: Callable[[str], None] | None = None) -> list[Case]:
     """Every real survivor, as a `kill_check` case expecting a KILL.
 
     The anchor is the whole line INCLUDING its indentation, and the
@@ -99,6 +102,15 @@ def cases_for(module: Path, db: Path | None = None,
     `return None` — and `kill_check` skips an ambiguous anchor rather
     than mutating the wrong one. Thirteen of `_compare_diff`'s sixty
     went unanswered on the first pass for exactly that reason.
+
+    A survivor this cannot build a case for is REPORTED through `say`,
+    never dropped in silence. It dropped them for as long as this tool
+    existed, and the cost is a report that covers less than it claims:
+    `cite_grammar` has 35 open survivors and one of them renders no
+    line, so a replay answered for 34 and said nothing about the 35th,
+    leaving its own count quietly disagreeing with the survivor list. A
+    tool that reports nothing gets questioned; one that is
+    nearly-complete gets believed.
     """
     # `session_file` already answers with an absolute path; `db` and
     # `src` are for a test, which cannot use this repo's own session.
@@ -115,10 +127,29 @@ def cases_for(module: Path, db: Path | None = None,
         # `continue` paired with `if tag is "equal":`.
         old = counts.lines[row - 1]
         new = became(diff)
-        if not new or new.strip() == old.strip():
+        if not new and operator in LINELESS_OPERATORS:
+            # A mutation that REMOVES its line renders none, which is
+            # why no claim can key on one by `line` — and applying it is
+            # deleting the anchor. `equivalents.toml` settled that
+            # spelling for these operators and `verify_equivalents`
+            # applies a claim exactly this way; two tools beside each
+            # other cannot answer one question differently. `kill_check`
+            # compiles before it runs, so the shape this cannot express
+            # — a decorator spread over several lines — is refused
+            # loudly there rather than replayed as some other mutation.
+            new = ""
+        elif not new or new.strip() == old.strip():
+            what = ("renders no line, and "
+                    f"{operator.split('/')[-1]} is not one of the "
+                    f"operators a deletion can stand for"
+                    if not new else "renders the line it replaces")
+            _tell(say, f"  -- L{row} {operator.split('.')[-1]}: SKIPPED, it "
+                       f"{what}")
             continue
-        # `became` gives the line unparsed, so it carries no indentation.
-        new = old[:len(old) - len(old.lstrip())] + new.strip()
+        else:
+            # `became` gives the line unparsed, so it carries no
+            # indentation.
+            new = old[:len(old) - len(old.lstrip())] + new.strip()
         # Counted by the function that then matches the anchor. `count`
         # also finds an indented line inside a DEEPER copy of it, where
         # `kill_check` takes an indented anchor only as a whole line, and
@@ -129,6 +160,14 @@ def cases_for(module: Path, db: Path | None = None,
         cases.append((f"L{row} {operator.split('.')[-1]}",
                       old, new, True, nth))
     return cases
+
+
+def _tell(say: Callable[[str], None] | None, line: str) -> None:
+    """Say it, where a caller asked to be told. Default silence is for
+    the callers that only want the cases — a test, and the script a
+    round writes to ask a session one question."""
+    if say is not None:
+        say(line)
 
 
 def source_moved(module: Path, moved: list[str]) -> bool:
@@ -258,12 +297,24 @@ def main() -> int:
                   f"        --src <the tree it measured>/{module}")
         return 2
 
-    cases = cases_for(module, args.db, args.src)
+    skipped: list[str] = []
+    # positionally, as `verify_equivalents` passes its own `say`: the
+    # tests here stand in for this function with `lambda module, *named`,
+    # and a keyword argument would be the one shape those cannot take.
+    cases = cases_for(module, args.db, args.src, skipped.append)
+    for line in skipped:
+        print(line)
     if not cases:
-        print("nothing to replay — no real survivors on record")
+        # NOT "no real survivors on record" when some were skipped: that
+        # is a count covering less than it claims, and it reads as a
+        # clean module. The lines above say which and why.
+        print(f"nothing to replay — {len(skipped)} real survivor(s) on "
+              f"record, none of them replayable" if skipped else
+              "nothing to replay — no real survivors on record")
         return 0
     print(f"replaying {len(cases)} survivor(s) against {len(tests)} test "
-          f"file(s)\n")
+          f"file(s)"
+          + (f", {len(skipped)} skipped above" if skipped else "") + "\n")
 
     # `check` returns how many did NOT match their expectation, and every
     # case here expects a KILL — so its return value IS the number still

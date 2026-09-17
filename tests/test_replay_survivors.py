@@ -27,20 +27,32 @@ from replay_survivors import (  # noqa: E402  # pyright: ignore[reportMissingImp
 )
 
 
-def _session(tmp_path: Path, rows: list[tuple[int, str]]) -> Path:
-    """A session file holding one SURVIVED row per (line, became)."""
+def _session(tmp_path: Path,
+             rows: list[tuple[int, str]] | list[tuple[int, str, str]]) -> Path:
+    """A session file holding one SURVIVED row per (line, became).
+
+    A row may name its operator as a third element; without one it is a
+    comparison-operator swap, which is what most of this file is about.
+    A produced line of "" writes a diff with no ADDED line at all —
+    cosmic-ray's shape for a mutation that removes what it mutates, and
+    the one `became` answers with the empty string.
+    """
     db = tmp_path / "session.sqlite"
     con = sqlite3.connect(db)
     con.execute("CREATE TABLE mutation_specs (job_id TEXT, "
                 "start_pos_row INT, start_pos_col INT, operator_name TEXT)")
     con.execute("CREATE TABLE work_results (job_id TEXT, test_outcome TEXT, "
                 "diff TEXT)")
-    for i, (row, produced) in enumerate(rows):
+    for i, row_spec in enumerate(rows):
+        row, produced = row_spec[0], row_spec[1]
+        operator = (row_spec[2] if len(row_spec) > 2
+                    else "core/ReplaceComparisonOperator_Eq_Is")
         job = f"job{i}"
         con.execute("INSERT INTO mutation_specs VALUES (?, ?, 4, ?)",
-                    (job, row, "core/ReplaceComparisonOperator_Eq_Is"))
+                    (job, row, operator))
+        made = f"+{produced}\n" if produced else ""
         con.execute("INSERT INTO work_results VALUES (?, 'SURVIVED', ?)",
-                    (job, f"--- a\n+++ b\n@@\n-was\n+{produced}\n"))
+                    (job, f"--- a\n+++ b\n@@\n-was\n{made}"))
     con.commit()
     con.close()
     return db
@@ -137,6 +149,69 @@ def test_a_mutation_that_changes_NOTHING_is_not_replayed(tmp_path):
     db = _session(tmp_path, [(2, 'if tag == "equal":')])
 
     assert cases_for(Path("compare.py"), db=db, src=src) == []
+
+
+DECORATED = '''from functools import lru_cache
+
+
+@lru_cache(maxsize=8)
+def build(kind):
+    return kind
+'''
+
+
+def test_a_survivor_that_REMOVES_its_line_is_replayed_as_a_DELETION(tmp_path):
+    """A mutation that removes its line renders none — which is why no
+    claim can key on one by `line`, and why this dropped it in silence
+    for as long as the tool existed.
+
+    `equivalents.toml` settled the spelling on 2026-09-18: a lineless
+    claim is applied by DELETING the anchor, bounded to the operators
+    that really do remove one. `verify_equivalents` applies a claim that
+    way, and two tools that sit beside each other cannot answer one
+    question differently — so the replay applies it that way too, and
+    the mutant is asked whether a test has started killing it like any
+    other.
+    """
+    src = tmp_path / "build.py"
+    src.write_text(DECORATED, encoding="utf-8")
+    db = _session(tmp_path, [(4, "", "core/RemoveDecorator")])
+
+    told: list[str] = []
+    cases = cases_for(Path("build.py"), db=db, src=src, say=told.append)
+
+    assert told == [], "it is replayable, so there is nothing to report"
+    (label, old, new, expect_kill, nth), = cases
+    assert old == "@lru_cache(maxsize=8)"
+    assert new == "", "applying it is deleting the anchored line"
+    assert expect_kill is True and nth == 1
+    assert "RemoveDecorator" in label
+
+
+def test_a_lineless_survivor_of_ANOTHER_operator_is_skipped_AND_NAMED(
+        tmp_path):
+    """The half that will matter in a year. Only the operators that
+    remove their line can be stood for by a deletion; applying that to
+    an operator which REWRITES would replay some other mutation and
+    report a confident verdict about it.
+
+    So it is still skipped — and now said out loud. A survivor list of
+    35 with one dropped in silence is worse than one that reports
+    nothing: the count quietly disagrees with the list, and a
+    nearly-complete answer is the kind that gets believed.
+    """
+    src = tmp_path / "build.py"
+    src.write_text(DECORATED, encoding="utf-8")
+    db = _session(tmp_path, [(4, "", "core/NumberReplacer")])
+
+    told: list[str] = []
+    cases = cases_for(Path("build.py"), db=db, src=src, say=told.append)
+
+    assert cases == []
+    (said,) = told
+    assert "SKIPPED" in said and "L4" in said
+    assert "NumberReplacer" in said, "which mutation went unanswered"
+    assert "renders no line" in said, "and why it could not be applied"
 
 
 def test_a_session_that_graded_NOTHING_yields_no_cases(tmp_path):
@@ -376,7 +451,10 @@ def test_a_session_ELSEWHERE_is_named_rather_than_copied(
 
     assert rs.main() == 0
 
-    assert asked == [(db, None)], "the session named is the one replayed"
+    assert [where[:2] for where in asked] == [(db, None)], \
+        "the session named is the one replayed"
+    assert callable(asked[0][2]), \
+        "and it is handed somewhere to say what it could not replay"
     out = capsys.readouterr().out
     assert "REFUSING" not in out
     assert "named on the command line" in out and str(db) in out
