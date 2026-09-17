@@ -763,14 +763,15 @@ def _order_bound(source: str) -> list[tuple[str, str]]:
 #: Elements the schema gives exactly ONE attribute, so naming it first
 #: binds no order. Each is its complex type's only attribute in ECMA-376
 #: (CT_String, CT_DecimalNumber, CT_OnOff, CT_HpsMeasure,
-#: CT_VerticalAlignRun, CT_TblGridCol, CT_NumLvl, CT_Markup, CT_OMathJc).
-#: `w:bookmarkEnd` and `w:commentRangeStart` are NOT here: CT_MarkupRange
-#: adds `w:displacedByCustomXml`, which a real draft carries after `w:id`.
+#: CT_VerticalAlignRun, CT_TblGridCol, CT_NumLvl, CT_Markup, CT_OMathJc,
+#: CT_VMerge). `w:bookmarkEnd` and `w:commentRangeStart` are NOT here:
+#: CT_MarkupRange adds `w:displacedByCustomXml`, which a real draft
+#: carries after `w:id`.
 ONE_ATTRIBUTE = frozenset({
     "w:pStyle", "w:rStyle", "w:basedOn", "w:numStyleLink",
     "w:numId", "w:ilvl", "w:outlineLvl", "w:abstractNumId", "w:gridSpan",
-    "w:i", "w:sz", "w:vertAlign", "w:gridCol", "w:lvlOverride",
-    "w:commentReference", "m:jc"})
+    "w:b", "w:i", "w:sz", "w:vertAlign", "w:gridCol", "w:lvlOverride",
+    "w:vMerge", "w:commentReference", "m:jc"})
 
 #: A tag whose FIRST attribute the pattern names: `<w15:commentEx
 #: w15:paraId=`. Over masked text, so `\s+` between them counts.
@@ -783,6 +784,33 @@ def _pinned_first(source: str) -> list[tuple[str, str]]:
     return [(m.group(1), m.group(2))
             for m in _PINNED.finditer(_masked(source))
             if m.group(1) not in ONE_ATTRIBUTE]
+
+
+#: An attribute value that CLOSES its tag: `w:name="X"\s*/>`, room for a
+#: space and for nothing else.
+_VALUE_CLOSES = re.compile(r'"\)?\??\s*/>')
+
+
+def _pinned_last(source: str) -> list[tuple[str, str]]:
+    r"""(element, attribute) for each attribute `source` demands comes
+    LAST, on an element that can carry others — the mirror of a pin.
+
+    `<w:bookmarkStart[^>]*w:name="X"\s*/>` let anything stand before the
+    name and nothing after it, so `crossrefs.unlink` could not see a
+    start written name-first, and `<w:bookmarkEnd w:id="N"\s*/>` missed
+    an end carrying `w:displacedByCustomXml` (2026-09-17).
+    """
+    text = _masked(source)
+    out = []
+    for close in _VALUE_CLOSES.finditer(text):
+        opener = text.rfind("<", 0, close.start())
+        tag = (re.match(rf"<({_NAME})(?![\w.:-])", text[opener:])
+               if opener != -1 else None)
+        if tag is None or tag.group(1) in ONE_ATTRIBUTE:
+            continue
+        if attrs := _ATTR.findall(text[opener:close.end()]):
+            out.append((tag.group(1), attrs[-1][:-1]))
+    return out
 
 
 #: What may stand before a tag's `/>` so that a space can: `\s*`, `\s+`,
@@ -871,6 +899,32 @@ def test_the_detector_sees_an_attribute_PINNED_first():
         ("Override", "PartName")]
     assert _pinned_first(r'<w:rStyle w:val="Hyperlink"/>') == []
     assert _pinned_first(r'<w:fldChar\b[^>]*\bw:fldCharType="end"') == []
+
+
+def test_the_detector_sees_an_attribute_PINNED_last():
+    assert _pinned_last(r'<w:bookmarkStart[^>]*w:name="\w+"\s*/>') == [
+        ("w:bookmarkStart", "w:name")]
+    assert _pinned_last(r'<w:bookmarkEnd w:id="(\d+)"\s*/>') == [
+        ("w:bookmarkEnd", "w:id")]
+    assert _pinned_last(r'<wp:extent cx="(\d+)" cy="(\d+)"/>') == [
+        ("wp:extent", "cy")]
+    for free in (r'<w:bookmarkEnd\b[^>]*\bw:id="(\d+)"[^>]*/>',
+                 r'<w:vMerge(?:\s+w:val="(\w+)")?\s*/>',
+                 r'<w:\w+(?:\s*/>|\s+w:val="([^"]*)"\s*/>)',
+                 r'<w:vertAlign w:val="[^"]*"\s*/>'):
+        assert _pinned_last(free) == [], free
+
+
+def test_no_pattern_pins_an_attribute_LAST_on_an_element_with_others():
+    pinned = sorted({f"{module}:{line} {name} pins {pairs}"
+                     for module, name, _source, probe, line in ALL_PATTERNS
+                     if (pairs := _pinned_last(probe))})
+    assert pinned == [], (
+        "`w:attr=\"…\"\\s*/>` demands that attribute come LAST, and "
+        "another producer need not write it there (a bookmark end "
+        "carrying `w:displacedByCustomXml` after its id). Close the tag "
+        "`[^>]*/>`, or add the element to ONE_ATTRIBUTE if the schema "
+        "gives it no other attribute:\n  " + "\n  ".join(pinned))
 
 
 def test_the_detector_sees_a_self_close_with_no_room_for_a_SPACE():
