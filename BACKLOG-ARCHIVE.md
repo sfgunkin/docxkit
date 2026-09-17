@@ -14,6 +14,34 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `reject` restores NO formatting when an element sits ahead of the formatting snapshot~~ — FIXED 17.09, `0719950`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the survivor round of the first whole `revisions.py`
+sweep since `e32d112`, one step past that commit's comment fix. A reject
+restores a formatting change from its snapshot, and the snapshot was the
+record's first ELEMENT child — so an element AHEAD of the `w:rPr` (an
+extension from a namespace the document declares ignorable, or one a script
+appended) was read as the snapshot. It has no properties: the live ones were
+emptied, nothing was put back, and the run came back `<w:rPr/>` with its old
+12 pt gone, nothing raised.
+
+    extension AFTER the snapshot     ok
+    extension BEFORE the snapshot    WRONG  <w:r><w:rPr/><w:t>note</w:t></w:r>
+    no-namespace element BEFORE      WRONG  <w:r><w:rPr/><w:t>note</w:t></w:r>
+
+Exposure, measured: 81,736 formatting records in 2,954 local manuscripts
+(document, notes, headers, footers), every one holding exactly one element,
+the expected snapshot. Latent, and filed at S1 all the same because the
+failure is silent and the sibling was.
+
+**Fixed 17.09 in `0719950`.** The snapshot is `change.find(W +
+tag.removesuffix("Change"))`, the child the record's schema names; the first
+of two is the one Word reads, and a record with none still restores "no
+properties". Tests: `test_an_ELEMENT_ahead_of_a_formatting_snapshot_is_not_the_snapshot`
+(run and paragraph × extension and no-namespace element) and
+`test_a_formatting_record_with_TWO_snapshots_restores_the_FIRST`.
 ### ~~S2 — `repack` blames one exhibit by NAME and moves another when two share it~~ — FIXED 17.09, `e590f23`
 
 <!-- status: fixed -->
