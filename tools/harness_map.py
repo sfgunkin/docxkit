@@ -396,9 +396,25 @@ HARNESS: dict[str, list[str]] = {
     "export.py": ["tests/test_export_md.py"],
     "figures.py": ["tests/test_figures.py", "tests/test_alt_text.py",
                    "tests/test_value_types.py"],
+    # Checked by COVERAGE CONTEXT (`--cov-context=test`), so this is what
+    # executes the module, not what mentions it. The suite runs 92 lines
+    # of find.py; the six files listed here ran 51. The four added below
+    # are where the other 41 come from, and `test_probe.py` and
+    # `test_wordcount.py` ran ZERO — they named the module and never
+    # reached it, so every kill_check and replay paid for them.
+    #
+    # The shortfall was real and small: of 21 survivors, applying the 11
+    # that only the unmapped files reach, ONE dies with them added
+    # (`if self.matches > 2`, the "(and N more match)" threshold, killed
+    # by test_cli). The other eight testable that way survive the
+    # extended harness too — the CLI and snapshot tests EXECUTE those
+    # lines and assert nothing about what they produce. Coverage without
+    # assertions is not a harness, which is why a map cannot be built
+    # from a coverage number alone.
     "find.py": ["tests/test_find_edit.py", "tests/test_body.py",
-                "tests/test_probe.py", "tests/test_crossrefs.py",
-                "tests/test_export_md.py", "tests/test_wordcount.py"],
+                "tests/test_crossrefs.py", "tests/test_export_md.py",
+                "tests/test_cli.py", "tests/test_cli_guards.py",
+                "tests/test_snapshot.py", "tests/test_note_parts.py"],
     "guard.py": ["tests/test_tracked_guard.py", "tests/test_cli_guards.py"],
     "hygiene.py": ["tests/test_smarten.py", "tests/test_properties.py",
                    "tests/test_parts_gaps.py", "tests/test_pathological.py",
