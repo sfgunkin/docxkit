@@ -92,6 +92,29 @@ def test_a_gate_KEEPS_a_PYTHONPATH_the_caller_already_set(
     assert ELSEWHERE in _gate_saw_pythonpath(tmp_path).split(os.pathsep)
 
 
+def test_the_docxkit_UNDER_TEST_is_this_checkouts():
+    """The other half of the same defect, and the one a gate cannot fix.
+
+    `tools/gates.py` sets `PYTHONPATH` for the gates it spawns, which
+    makes the CHAIN right. A bare `pytest`, a single test file or an
+    editor's runner spawns no gate and got the editable install's
+    checkout instead — so a worktree ran its own tests against another
+    checkout's source. The root `conftest.py` puts this checkout's `src`
+    at `sys.path[0]`, which wins over a `.pth`.
+
+    It bites twice: `TOOLS` above is resolved through `docxkit.__file__`,
+    because `tools` is not a package and is not installed, so the wrong
+    `docxkit` also loads the wrong `tools` — and a new flag's tests could
+    pass in a worktree before the flag existed there.
+    """
+    here = Path(__file__).resolve().parents[1]
+
+    assert Path(docxkit.__file__).resolve().parents[1] == here / "src", (
+        f"tests are importing docxkit from "
+        f"{Path(docxkit.__file__).resolve().parents[1]}, not {here / 'src'}")
+    assert here / "tools" == TOOLS, f"and tools from {TOOLS}"
+
+
 def test_all_green_is_zero():
     code, said = _run(("first", OK, False), ("second", OK, False))
 
