@@ -1063,21 +1063,54 @@ _HYPERLINK_STYLE_RE = re.compile(
     r'<w:rStyle\b[^>]*\bw:val="Hyperlink"[^>]*/>')
 
 
-def _plain_runs(span_xml: str) -> str:
-    """The label's runs, with the link styling taken off them.
+def _renders_nothing(run_xml: str) -> bool:
+    """A run with properties and NO content — the shell a label leaves."""
+    found = own_properties(run_xml, "rPr")
+    start = found[1] if found else run_xml.index(">") + 1
+    return not run_xml[start:len(run_xml) - len(_RUN_CLOSE)].strip(XML_WS)
 
-    Runs carrying VISIBLE text only: a field's label span can still hold
-    the run that closes the field, and carrying that over would rebuild
-    the thing being removed.
+
+def _plain_runs(span_xml: str) -> str:
+    """The span with what makes it a LINK gone, and everything else kept.
+
+    Three things are the link's own: the ``w:hyperlink`` element's own
+    tags, a field's four machinery runs (begin, instruction, separate,
+    end — :func:`is_field_run`, so a run carrying words is never one),
+    and the Hyperlink style with the empty ``w:rPr`` shell it leaves
+    behind. Everything else the span holds is the PARAGRAPH's, whatever
+    it is, and a reader keeps it when the link goes.
+
+    Until 2026-09-18 this kept the runs holding ``<w:t`` and dropped
+    every other byte, which took away with the link: a footnote
+    reference inside a label — its note then orphaned in footnotes.xml,
+    no marker in the body, and no gate that reads one — a line break
+    inside a two-line caption's label, a bookmark, and, an element being
+    no run, the ``w:ins`` round a tracked insertion, whose words then
+    read as the author's own. A field span that crosses one ``w:ins``
+    tag and not the other lost that tag alone, which Word calls an
+    unreadable part.
+
+    A run that renders NOTHING still goes: a styled run with no content
+    is a label Word has already emptied, and keeping it would leave
+    `<w:r></w:r>` standing in the prose.
     """
-    kept = [r.group(0) for r in RUN_RE.finditer(span_xml)
-            if "<w:t" in r.group(0) and "<w:instrText" not in r.group(0)
-            and "<w:fldChar" not in r.group(0)]
-    # …and the shell the style left behind. A run whose only property
+    if span_xml.startswith("<w:hyperlink") \
+            and span_xml.endswith("</w:hyperlink>"):
+        # the ELEMENT's own tags — and only the outermost pair, so a
+        # link nested inside a field's result keeps its own
+        span_xml = span_xml[span_xml.index(">") + 1:-len("</w:hyperlink>")]
+    kept, at = [], 0
+    for r in RUN_RE.finditer(span_xml):
+        if is_field_run(r.group(0)) or _renders_nothing(r.group(0)):
+            kept.append(span_xml[at:r.start()])
+            at = r.end()
+    kept.append(span_xml[at:])
+    # …and the shell the style leaves behind. A run whose only property
     # WAS the link style now carries `<w:rPr></w:rPr>`, which Word opens
     # and a diff reports; an rPr that was empty before this is empty
     # after it, so removing the shell says nothing new either way.
-    return _EMPTY_RPR_RE.sub("", _HYPERLINK_STYLE_RE.sub("", "".join(kept)))
+    return _EMPTY_RPR_RE.sub(
+        "", _HYPERLINK_STYLE_RE.sub("", "".join(kept)))
 
 
 _EMPTY_RPR_RE = re.compile(r"<w:rPr\s*/>|<w:rPr>\s*</w:rPr>")

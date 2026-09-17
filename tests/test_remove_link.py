@@ -26,9 +26,9 @@ from conftest import field, para, run
 from docxkit.edit import relabel_link, remove_link, remove_links
 from docxkit.errors import AnchorError
 
-LINKED = ('<w:hyperlink w:anchor="Sen1985"><w:r><w:rPr>'
-          '<w:rStyle w:val="Hyperlink"/></w:rPr>'
-          "<w:t>Sen (1985)</w:t></w:r></w:hyperlink>")
+LINKED_RUN = ('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+              "<w:t>Sen (1985)</w:t></w:r>")
+LINKED = f'<w:hyperlink w:anchor="Sen1985">{LINKED_RUN}</w:hyperlink>'
 MARK = '<w:bookmarkStart w:id="9" w:name="Sen1985txt"/>'
 MARK_END = '<w:bookmarkEnd w:id="9"/>'
 
@@ -210,6 +210,74 @@ def test_keeping_NOTHING_unwraps_them_all():
 
     assert gone == ["Sen1985", "Fig2", "Keep"]
     assert "w:hyperlink" not in out and "instrText" not in out
+
+
+# ------------------------------------------------ what a label may HOLD
+#
+# A label is a span of the paragraph, and a span holds whatever the
+# author put there. Until 2026-09-18 unwrapping kept the runs carrying
+# `<w:t` and dropped every other byte of it.
+
+FN_REF = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+          '<w:footnoteReference w:id="11"/></w:r>')
+
+
+def _element_holding(*inner: str) -> str:
+    return para(run("See "),
+                f'<w:hyperlink w:anchor="Sen1985">{"".join(inner)}'
+                "</w:hyperlink>", run("."))
+
+
+def test_a_note_REFERENCE_inside_a_label_stays_on_the_page():
+    """A footnote's marker inside the words a link shows belongs to the
+    paragraph, not to the link. Taken away with the link, the note is
+    orphaned in footnotes.xml and the body has no marker for it — and
+    nothing says so, because the words read exactly as before."""
+    out, _ = remove_link(_element_holding(LINKED_RUN, FN_REF), "Sen1985")
+
+    assert '<w:footnoteReference w:id="11"/>' in out
+    assert "w:hyperlink" not in out and 'w:val="Hyperlink"' not in out
+
+
+def test_a_line_BREAK_inside_a_label_stays_too():
+    """The second half of a two-line caption's label is not optional."""
+    out, _ = remove_link(
+        _element_holding(LINKED_RUN, "<w:r><w:br/></w:r>",
+                         LINKED_RUN.replace("Sen (1985)", "(2nd ed.)")),
+        "Sen1985")
+
+    assert out.count("<w:br/>") == 1
+    assert "Sen (1985)" in out and "(2nd ed.)" in out
+
+
+def test_the_sweep_keeps_them_as_well():
+    out, gone = remove_links(_element_holding(LINKED_RUN, FN_REF), keep=())
+
+    assert gone == ["Sen1985"]
+    assert '<w:footnoteReference w:id="11"/>' in out
+
+
+def test_a_TRACKED_label_stays_tracked_when_the_field_goes():
+    """A field's span is run-aligned and takes in everything between its
+    machinery runs — here the `w:ins` round a label somebody inserted.
+    Kept only as runs, the wrapper went with the field and the words
+    became the author's own; and a field whose span crosses only ONE of
+    the two `w:ins` tags left the paragraph unbalanced."""
+    tracked = ('<w:ins w:id="7" w:author="A" w:date="2026-09-16T00:00:00Z">'
+               "<w:r><w:t>Sen (1985)</w:t></w:r></w:ins>")
+    p = para(run("See "),
+             '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l '
+             '"Sen1985" </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             f'{tracked}<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+             run("."))
+
+    out, label = remove_link(p, "Sen1985")
+
+    assert label == "Sen (1985)"
+    assert tracked in out
+    assert "fldChar" not in out and "instrText" not in out
 
 
 # ----------------------------------------------------- the shared reader
