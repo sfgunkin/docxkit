@@ -46,6 +46,34 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S1 — `citations.remove_outer_field` deletes the prose sharing a field's run
+
+<!-- status: open -->
+
+Found 2026-09-18 beside the `_compare_read` masking defects, by the same
+question: what else in this package assumes a field OWNS the runs its
+markers sit in?
+
+`remove_outer_field` splices out `xml[s:e]` of a `_xml.field_spans` span.
+Those bounds are RUN boundaries — which is the right answer to what
+`field_spans` is asked, and the wrong question for a caller that deletes
+what it gets back. When the begin or end marker shares its run with
+prose, that prose goes with the field:
+
+    "As Smith (2020) found, the index rose."   ->   "Smith (2020)"
+
+Silent, in a write path, with no diff to show for it — and the words are
+simply gone from the manuscript. `_xml.field_spans` is NOT the thing to
+change: its run boundaries are correct for what it answers, and the
+nested-field fix (`effef6c`) already gave the package a walk that reports
+each field's own marker offsets. This caller has to ask that one instead,
+and splice from the markers rather than from the runs.
+
+Repro: `scratchpad\agents\compare_read\defect_3_field_spans_callers.py`.
+The other callers of `field_spans` still need the same audit — the round
+found this one by reading, not by a sweep, so the list is not known to be
+complete.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

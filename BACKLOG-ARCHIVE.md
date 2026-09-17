@@ -14,6 +14,55 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — an edit after a volatile field's end was masked, so it passed --expect-clean~~ — FIXED 18.09, `ccc3478`
+
+<!-- status: fixed -->
+
+Found by the `_compare_read.py` survivor round, 2026-09-18. `compare` masks
+VOLATILE fields before it diffs — a cached PAGE or DATE result is whatever
+page an instance last rendered on, and two copies of one document disagree
+about it — and it was masking by RUN rather than by the field's own
+`fldChar` markers. Two defects fell out of that, and the first is the one
+that matters:
+
+**S1 — prose after a volatile field's `end`, in the same run, was masked
+too.** So an author's edit to that prose was invisible to every layer, and
+`docxkit compare BUILT.docx EDITED.docx --expect-clean` printed OK over it.
+That is the gate the whole integration procedure rests on: it exists to say
+"nothing changed except what I changed", and here it said so about a
+document that had changed. Repro:
+`scratchpad\agents\compare_read\defect_1.py`.
+
+**S2 — `_own_separator` counted depth from the BEGIN's run**, so an earlier
+`fldChar` in that run hid the field's own separator: a cached page number
+stayed unmasked and reported as a TEXT change, and in the nested case the
+function returned the PARENT's separator. A regression from dc8bdc8. Repro:
+`defect_2.py`.
+
+The fix reads a part's field marks directly (`_field_marks`) and masks each
+field from its own `begin`/`separate`/`end`, so a run that carries two
+fields, or a field's marker plus prose, is no longer treated as one
+indivisible thing. `_own_separator` is gone.
+
+**Exposure**, measured over `F:/OneDrive/__Documents` read-only: 2,958
+`.docx`, 15,471 text parts (10,484 distinct), 4 unreadable. 188 runs hold two
+or more `fldChar`s (170 distinct parts, 19 files); 66 runs hold an element
+after a field's `end`, all `w:t`, in one file. The fix changes no masked part
+on that corpus — those runs belong to fields the masking does not touch. So
+the SHAPE is in these manuscripts and the damage is not, yet; it is reachable
+in generated documents, which is what the tests hold.
+
+Tests seen red before the fix: 26 new cases in `tests/test_compare.py`, 24 of
+them red on the pre-fix source — five leads × three masking shapes, three
+gate tests, five leads on the two-fields-in-one-run shape, one gate. The
+remaining two (a part whose marks do not balance) were written after, to kill
+the `and open_fields` → `or` respelling.
+
+Claims: five expired with this fix and were deleted in its own commit — three
+on `elif kind == "separate" and depth == 1:`, one on `elif kind == "end":`
+(those lines are gone), and the `result_at <= e` one, whose line is unchanged
+but whose argument named a `field_spans` span end. The `if kind <= "begin":`
+claim is kept: line and argument both survive the fix.
 ### ~~S2 — placement and _table_layout write a row's w:trPr in front of its w:tblPrEx~~ — FIXED 18.09, `0bdae9f`
 
 <!-- status: fixed -->
