@@ -1081,17 +1081,12 @@ def test_a_NEGATIVE_offset_is_outside_the_paragraph():
         edit.insert_in_para(para(run("abc")), -1, "X")
 
 
-def test_an_offset_inside_a_BOOKMARK_needs_its_flag():
-    """Between two runs a bookmark spans, the bookmark would grow over
-    the new text — refused unless `allow_bookmark=True` says so."""
-    p = para('<w:bookmarkStart w:id="1" w:name="Result"/>', run("abc"),
-             run("def"), '<w:bookmarkEnd w:id="1"/>')
-
-    with pytest.raises(AnchorError, match="bookmark"):
-        edit.insert_in_para(p, 3, "X")
-
-    out = edit.insert_in_para(p, 3, "X", allow_bookmark=True)
-    assert visible_text(out) == "abcXdef"
+# `test_an_offset_inside_a_BOOKMARK_needs_its_flag` was deleted here on
+# 2026-09-18 with the two above: the `allow_bookmark` default it was
+# written for is killed by `test_edit_boundaries.py`'s
+# `test_an_insert_INSIDE_the_outer_bookmark_is_still_refused`, measured
+# with this one deselected, and that file states the bookmark refusals
+# of `insert_in_para` in full.
 
 
 def test_words_passed_as_a_StrEnum_member_get_a_plain_w_t():
