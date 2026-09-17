@@ -656,6 +656,94 @@ def test_a_link_INSIDE_another_field_is_reported_as_itself():
     assert p[found.outer[0]:found.outer[1]] == inner, "the inner field only"
 
 
+# --- what the fixes of 2026-09-18 left untested -------------------------
+#
+# A fix arrives as new branches, and a test written for the DEFECT pins
+# what the code now does about that one paragraph, not the shape of the
+# reader that does it. These are the questions the new code asks.
+
+
+def test_a_link_field_with_no_CACHED_RESULT_is_not_a_link_yet():
+    """`fields` answers None for the result of a field with no
+    `separate` marker — one Word has not rendered, which it fills on
+    open. There is no label to keep and no cut to make, so the scan
+    passes it by: reading its result as empty text would subtract a
+    length from the `end` marker's offset and hand back a label span
+    the field does not have."""
+    unrendered = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                  '<w:r><w:instrText xml:space="preserve"> HYPERLINK '
+                  '\\l "Sen1985" </w:instrText></w:r>'
+                  '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    p = para(run("See "), unrendered, run("."))
+
+    assert _links_to(p) == []
+    with pytest.raises(AnchorError, match="no link to 'Sen1985'"):
+        remove_link(p, "Sen1985")
+
+
+@pytest.mark.parametrize(
+    "shell", ["<w:r></w:r>", '<w:r w:rsidR="00AB12CD"></w:r>'],
+    ids=["bare", "with-attributes"])
+def test_unwrapping_drops_a_run_the_link_had_already_EMPTIED(shell):
+    """`_renders_nothing` measures from the end of the run's OPEN TAG,
+    which is `index(">") + 1` when the run states no properties — and
+    the tag is as long as its attributes, so a run carrying an `w:rsidR`
+    answers a different offset from a bare one. Word leaves these
+    shells behind when it empties a label; kept, they stand in the prose
+    as `<w:r></w:r>`."""
+    p = para(run("See "), '<w:hyperlink w:anchor="Sen1985">' + shell
+             + run("Sen (1985)") + "</w:hyperlink>", run("."))
+
+    out, _ = remove_link(p, "Sen1985")
+
+    assert out == para(run("See "), run("Sen (1985)"), run("."))
+
+
+def test_unwrapping_KEEPS_a_run_that_has_attributes_AND_words():
+    """The other side of that measurement. Read past the content, an
+    ordinary run answers "renders nothing" and the words go with the
+    link — which `visible_text` would report, and no fixture with a
+    bare `<w:r>` can tell apart."""
+    # an rsid as Word writes one, eight hex digits: the open tag is then
+    # long enough that a start read as TWICE its length lands past the
+    # content, where a shorter fixture still lands inside it
+    kept = '<w:r w:rsidR="00AB12CD"><w:t>Sen (1985)</w:t></w:r>'
+    p = para(run("See "), '<w:hyperlink w:anchor="Sen1985">' + kept
+             + "</w:hyperlink>", run("."))
+
+    out, _ = remove_link(p, "Sen1985")
+
+    assert out == para(run("See "), kept, run("."))
+
+
+def test_the_sweep_reports_a_repeated_anchor_ONCE_PER_LINK():
+    """`gone` is what a dry run prints, and two mentions of one work
+    really are two links. The bookkeeping that decides it counts each
+    vanished anchor down; counting it wrong prints three removals for
+    two links, which reads as a link removed twice."""
+    p = para(run("See "), _SEN, run(" and "), _SEN, run("."))
+
+    out, gone = remove_links(p, keep=())
+
+    assert gone == ["Sen1985", "Sen1985"]
+    assert visible_text(out) == "See Sen (1985) and Sen (1985)."
+
+
+def test_a_kept_link_inside_an_unwrapped_one_is_found_by_IDENTITY():
+    """The nested-link refusal asks which links sit inside the one being
+    unwrapped, and the answer is about POSITION. Asked as a comparison,
+    it is answered by the anchor STRING — `_Link` sorts on its anchor
+    first — so an inner link whose anchor sorts before the outer one's
+    is not seen at all, and the sweep unwraps a link the caller asked to
+    keep."""
+    inner = field('HYPERLINK \\l "Abc1"', "Abc (2001)")
+    p = para(run("See "), '<w:hyperlink w:anchor="Zed9">' + inner
+             + "</w:hyperlink>", run("."))
+
+    with pytest.raises(AnchorError, match=r"'Abc1'.*inside.*'Zed9'"):
+        remove_links(p, keep={"Abc1"})
+
+
 def _sweep_para() -> str:
     """Two links to unwrap, one of each form, and a kept one LAST — the
     sweep walks back to front, so the kept link is the first it meets."""

@@ -1142,10 +1142,14 @@ def _links_to(para_xml: str, anchor: str | None = None) -> list[_Link]:
         start = run_open_before(para_xml, f.start)
         close = para_xml.find("</w:r>", f.end)
         # where the field's own `end` marker opens: `f.end` is past that
-        # marker's attribute, and the result runs up to the marker
+        # marker's attribute, and the result runs up to the marker.
+        # The guard below is for a fragment an edit cut the runs off:
+        # no document reaches it, which is what the pragma says — and
+        # saying it on the `continue` instead left fourteen mutants on
+        # a line no test can execute (2026-09-18).
         marker = para_xml.rfind("<w:fldChar", f.start, f.end)
-        if start < 0 or close < 0 or marker < 0:
-            continue                        # pragma: no cover - defensive
+        if start < 0 or close < 0 or marker < 0:  # pragma: no cover
+            continue
         out.append(_Link(am.group(1), (marker - len(f.result), marker),
                          (start, close + len("</w:r>")), field=True))
     return sorted(out, key=lambda link: link.label)
