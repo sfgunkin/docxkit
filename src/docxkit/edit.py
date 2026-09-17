@@ -1644,16 +1644,31 @@ def _shielded(runs: list[re.Match[str]], at: int, pos: int,
     At an edge the same place on the page is available outside the link,
     field or bookmark; strictly inside, with its content on both sides,
     it is refused unless that region's flag allows it.
+
+    **Asked until nothing encloses it** (BACKLOG S6). Regions of one kind
+    NEST — a caption carries the exhibit's own bookmark round the whole
+    of it and Word's ``_Ref…`` round its number, and `_bookmark_spans`
+    lists them in the order their ENDS appear, so the inner one comes
+    first. One pass moved `pos` to that inner bookmark's start, which is
+    still inside the caption's, and never asked the caption's: the words
+    went in where the outer anchor grew to cover them, and where the
+    same insert into a caption WITHOUT the nested bookmark had been
+    refused. Each move goes to a region's edge, so the walk is asked
+    again from there; a position it has already answered for ends it.
     """
-    for regions, allowed, what in protected:
-        if (span := _enclosing(regions, pos)) is None:
-            continue
-        if (edge := _outside(runs, span, pos)) is not None:
-            pos = edge              # an EDGE is not "inside": go outside
-        elif not allowed:
-            raise AnchorError(
-                f"insert_in_para: offset {at} falls inside {what}. Insert "
-                f"on one side of it, or pass the matching allow_ flag.")
+    seen: set[int] = set()
+    while pos not in seen:
+        seen.add(pos)
+        for regions, allowed, what in protected:
+            if (span := _enclosing(regions, pos)) is None:
+                continue
+            if (edge := _outside(runs, span, pos)) is not None:
+                pos = edge          # an EDGE is not "inside": go outside
+            elif not allowed:
+                raise AnchorError(
+                    f"insert_in_para: offset {at} falls inside {what}. "
+                    f"Insert on one side of it, or pass the matching "
+                    f"allow_ flag.")
     return pos
 
 

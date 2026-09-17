@@ -591,6 +591,43 @@ def test_words_at_the_end_leave_the_OUTER_bookmark_not_just_the_inner():
     assert out == p[:-len("</w:p>")] + "<w:r><w:t>X</w:t></w:r></w:p>"
 
 
+def test_an_insert_leaves_the_OUTER_bookmark_as_well_as_the_inner():
+    """BACKLOG S6. A caption carries two bookmarks that open at offset 0:
+    the exhibit's own, round the whole caption, and Word's `_Ref…` round
+    "Table 5". `_bookmark_spans` lists them in the order their ENDS
+    appear, so the INNER one comes first — and the guard asked only the
+    first. Moved to the inner bookmark's start, the words were still
+    inside the caption's, which then grew to cover them.
+
+    With the caption bookmark alone the same insert lands in front of
+    it; the answer must not depend on a bookmark nested inside."""
+    caption = '<w:bookmarkStart w:id="1" w:name="Table5"/>'
+    ref = '<w:bookmarkStart w:id="2" w:name="_Ref1"/>'
+    rest = ('<w:r><w:t>Table 5</w:t></w:r><w:bookmarkEnd w:id="2"/>'
+            '<w:r><w:t>. Employment</w:t></w:r>'
+            '<w:bookmarkEnd w:id="1"/></w:p>')
+
+    out = insert_in_para("<w:p>" + caption + ref + rest, 0, "New ")
+
+    assert out.index("New ") < out.index('w:name="Table5"'), out
+    assert text_of(out) == "New Table 5. Employment"
+
+
+def test_an_insert_INSIDE_the_outer_bookmark_is_still_refused():
+    """The other side of that walk. The offset has text on both sides
+    within the caption's bookmark, so there is no place outside it that
+    is the same place on the page — the refusal — and the inner `_Ref`
+    bookmark must not answer for it just by being listed first."""
+    p = ('<w:p><w:bookmarkStart w:id="1" w:name="Table5"/>'
+         '<w:r><w:t>xx</w:t></w:r>'
+         '<w:bookmarkStart w:id="2" w:name="_Ref1"/>'
+         '<w:r><w:t>yy</w:t></w:r><w:bookmarkEnd w:id="2"/>'
+         '<w:r><w:t>zz</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>')
+
+    with pytest.raises(AnchorError, match="inside a bookmark"):
+        insert_in_para(p, 2, "N")
+
+
 def test_a_bookmark_the_id_reader_cannot_pair_does_not_unguard_the_rest():
     """The `continue` in `_bookmark_spans`. Attribute quoting is the
     writer's choice in XML, and the id pattern reads the double-quoted
