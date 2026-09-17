@@ -1062,25 +1062,15 @@ def test_insert_before_an_equation_PAST_256_characters():
             < out.index("<m:oMath>"))
 
 
-def test_a_run_boundary_and_the_END_past_256_characters():
-    """The two ordinary offsets — where one run starts, and the end —
-    past the cache. Asked by identity, the first was taken for maths
-    (or found no run starting there at all) and so was the second."""
-    p = para(run(PAST_THE_CACHE), run("tail."))
-    n = len(PAST_THE_CACHE)
-
-    assert visible_text(edit.insert_in_para(p, n, "MID ")) \
-        == PAST_THE_CACHE + "MID tail."
-    assert visible_text(edit.insert_in_para(p, n + 5, " END")) \
-        == PAST_THE_CACHE + "tail. END"
-
-
-def test_the_END_of_a_paragraph_is_after_its_LAST_run():
-    """Three runs: with two, "the second run" and "the last run" are the
-    same run."""
-    out = edit.insert_in_para(para(run("a"), run("b"), run("c")), 3, "X")
-
-    assert visible_text(out) == "abcX"
+# Two tests of this round's first half were deleted here on 2026-09-18,
+# measured rather than argued: the ordinary offsets past 256 characters
+# (`test_insert_spans.py::test_the_END_of_a_LONG_paragraph_is_still_its_end`
+# and `..._a_run_BOUNDARY_in_a_long_paragraph_is_still_a_boundary` pin
+# both) and the append that must land after the LAST of three runs
+# (`test_insert_spans.py::test_an_insert_at_the_END_goes_after_the_LAST_run`
+# is the same fixture). With both of them and the other round's
+# end-of-paragraph test deselected, every mutant they were written for is
+# still killed — by tests that predate both rounds.
 
 
 def test_a_NEGATIVE_offset_is_outside_the_paragraph():
