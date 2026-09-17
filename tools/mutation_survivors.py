@@ -259,7 +259,17 @@ def pristine_source(db_path: str, src_path: str) -> tuple[str, str]:
             f"  (no pristine copy — {why}. The lines below index into "
             f"the LIVE file: if it has changed since the run was "
             f"planned, they name the wrong ones.)")
-    if inside.read_bytes() == Path(src_path).read_bytes():
+    # `lines_of`, like the three other places that ask whether a file has
+    # moved since the run. Nothing turns on it HERE — the snapshot holds
+    # the same lines either way, so the report quotes the same text and
+    # names the same rows — and it is folded in for the next reader, who
+    # will find a fourth spelling of one rule and have to work out
+    # whether it is an exception on purpose. Imported inside the
+    # function, as `staleness` below imports `state`: these tools are
+    # each other's, and nothing here is needed at import time.
+    from stale_figures import lines_of  # noqa: PLC0415
+
+    if lines_of(inside) == lines_of(Path(src_path)):
         return str(inside), ""
     return str(inside), (
         f"  (quoting {inside.name} as it was when the run was planned — "
