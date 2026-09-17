@@ -171,8 +171,23 @@ def out_of_order(document_xml: str, notes_xml: str, *,
 #: anchor a link still points at. `w:footnoteRef` is deliberately not
 #: here — it is the mark Word puts at the head of EVERY definition, so
 #: counting it would make every note look occupied.
+#:
+#: The LEGACY carriers too: `w:pict` (a VML picture), `w:object` (an OLE
+#: object — an Equation Editor 3.0 equation is one), `w:sym` (a symbol
+#: glyph, which has no `w:t`) and `w:contentPart` (ink). Named only
+#: beside their modern twins until 2026-09-17, a note holding one of
+#: them read as a shell and was cut.
+#:
+#: And DELETED words, when they are words: a `w:delText` with something
+#: other than blanks in it. The package's own callers prune a simulated
+#: view, where none survives — accepting removes the deletion, rejecting
+#: renames it `w:t` — so a pruner meets one only on a RAW tracked
+#: document, and there a reject brings the words back. The lookbehind
+#: keeps `<w:delText/>` out: it opens nothing.
 _NOTE_CONTENT_RE = re.compile(
-    r"<(?:w:bookmarkStart|w:hyperlink|w:drawing|w:tbl|m:oMath)\b")
+    r"<(?:w:bookmarkStart|w:hyperlink|w:drawing|w:tbl|m:oMath"
+    r"|w:pict|w:object|w:sym|w:contentPart)\b"
+    r"|<w:delText\b[^>]*(?<!/)>(?!\s*</w:delText>)")
 
 
 @dataclass(frozen=True)
@@ -182,7 +197,8 @@ class Orphan:
     kind: str               # "footnote" or "endnote"
     id: str
     text: str               # what the definition says, "" for a shell
-    carriers: int           # bookmarks, links, drawings, tables, equations
+    carriers: int           # bookmarks, links, pictures, tables, equations,
+                            # symbols, deleted words
 
     @property
     def empty(self) -> bool:
@@ -190,7 +206,16 @@ class Orphan:
         return not self.text and not self.carriers
 
     def __str__(self) -> str:
-        what = "empty" if self.empty else f"holds {self.text[:50]!r}"
+        # A note with no words says what it DOES hold. `holds ''` was
+        # what a refusal printed for a note carrying an equation, which
+        # reads as an empty note and is the opposite of the finding.
+        if self.empty:
+            what = "empty"
+        elif self.text:
+            what = f"holds {self.text[:50]!r}"
+        else:
+            what = (f"holds no words, and {self.carriers} other "
+                    f"item{'' if self.carriers == 1 else 's'}")
         return f"{self.kind} {self.id} ({what})"
 
 

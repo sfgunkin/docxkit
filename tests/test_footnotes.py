@@ -1174,7 +1174,8 @@ def test_orphans_names_the_definition_NO_REFERENCE_points_at():
 @pytest.mark.parametrize("words,carriers,empty,said", [
     ("", 0, True, "footnote 3 (empty)"),
     ("Lost its marker.", 0, False, "footnote 3 (holds 'Lost its marker.')"),
-    ("", 1, False, "footnote 3 (holds '')"),
+    ("", 1, False, "footnote 3 (holds no words, and 1 other item)"),
+    ("", 2, False, "footnote 3 (holds no words, and 2 other items)"),
     ("A link, and words.", 1, False,
      "footnote 3 (holds 'A link, and words.')"),
 ])

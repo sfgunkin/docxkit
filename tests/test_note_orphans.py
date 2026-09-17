@@ -229,6 +229,74 @@ def test_a_shell_holding_a_BOOKMARK_is_not_empty():
     assert fn.prune_orphans(parts) == []
 
 
+#: Content Word still writes that has no `w:t` and none of the modern
+#: carriers. Each was cut as litter on ordinary DISTINCT ids until
+#: 2026-09-17 — `_NOTE_CONTENT_RE` named `w:drawing` and `m:oMath` and not
+#: their legacy twins.
+LEGACY = {
+    "vml_picture": ('<w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-'
+                    'com:vml" id="_x0000_i1025"/></w:pict></w:r>'),
+    # an Equation Editor 3.0 equation, which these papers carry
+    "ole_equation": ('<w:r><w:object w:dxaOrig="1200" w:dyaOrig="400">'
+                     '<o:OLEObject xmlns:o="urn:schemas-microsoft-com:office'
+                     ':office" Type="Embed" ProgID="Equation.3"/>'
+                     "</w:object></w:r>"),
+    "symbol": '<w:r><w:sym w:font="Symbol" w:char="F062"/></w:r>',
+    "ink": '<w:r><w:contentPart r:id="rId9"/></w:r>',
+}
+
+
+@pytest.mark.parametrize("inner", LEGACY.values(), ids=LEGACY.keys())
+def test_an_orphan_holding_LEGACY_content_is_not_a_shell(inner):
+    """The note that holds only an old picture, an OLE equation, a
+    symbol glyph or ink has nothing `visible_text` reads, and it is not
+    a shell: pruning it takes a picture or an equation off the page, and
+    `orphans` — which exists to report the note that KEPT its content —
+    said nothing about it."""
+    parts = _paper(para(run("A claim.")), _note(NOTE_MARK + inner))
+
+    (orphan,) = fn.orphans(parts)
+
+    assert (orphan.text, orphan.carriers, orphan.empty) == ("", 1, False)
+    assert fn.prune_orphans(parts) == []
+    assert b'w:id="2"' in parts["word/footnotes.xml"]
+
+
+def test_an_orphan_whose_words_are_all_DELETED_is_not_a_shell():
+    """Deleted words are content on every document `prune_orphans` can
+    meet. The package's own callers simulate a view first, and neither
+    view keeps a `w:delText` — accepting removes the deletion, rejecting
+    turns it back into `w:t` — so the only file where the pruner sees
+    one is a RAW tracked document, and there rejecting the revision
+    brings the words back. Cutting the definition loses them."""
+    parts = _paper(para(run("A claim.")),
+                   _note(NOTE_MARK + dele(" Words a reject restores.")))
+
+    (orphan,) = fn.orphans(parts)
+
+    assert orphan.text == "" and not orphan.empty
+    assert fn.prune_orphans(parts) == []
+
+
+@pytest.mark.parametrize("deleted", [
+    pytest.param('<w:del w:id="5" w:author="A" w:date="2026-09-17T00:00:00Z">'
+                 '<w:r><w:delText xml:space="preserve">  </w:delText></w:r>'
+                 "</w:del>", id="blank"),
+    pytest.param('<w:del w:id="5" w:author="A" w:date="2026-09-17T00:00:00Z">'
+                 "<w:r><w:delText/></w:r></w:del>", id="self_closing"),
+])
+def test_a_DELETION_of_nothing_visible_still_leaves_a_shell(deleted):
+    """The other side of counting deleted words: a deletion of blanks is
+    a shell the same way a run of blanks is (`text` is stripped), and
+    `<w:delText/>` is an element with nothing in it — read as an opening
+    tag, it would keep every such shell forever."""
+    parts = _paper(para(run("A claim.")), _note(NOTE_MARK + deleted))
+
+    (gone,) = fn.prune_orphans(parts)
+
+    assert (gone.id, gone.empty) == ("2", True)
+
+
 def test_an_ENDNOTE_orphan_is_the_same_object():
     """Which store a paper uses is a journal's house style. A gate that
     covered only the footnotes cannot fail for the other half of them."""
