@@ -48,8 +48,9 @@ from .errors import PackageError
 # THE exhibit definition, from one layer down: which caption owns which
 # body, on either side, with the notes and hoisted bookmarks that travel
 # with it. `NOTE` lived here and is re-exported; `exhibit_block` is that
-# engine asked about one caption.
-from .exhibits import NOTE, exhibits, is_body
+# engine asked about one caption. What a MARKER is comes from there too:
+# this module kept a list of its own, and the two disagreed.
+from .exhibits import NOTE, exhibits, is_body, is_end_marker, is_marker
 
 # THE caption definition, from one layer down: `crossrefs` classifies by
 # the same regex and is this module's SIBLING, which the layering gate
@@ -241,38 +242,14 @@ def _row_text(row: etree._Element) -> str:
     return " ".join(_text(tc) for tc in row.findall(W + "tc"))
 
 
-#: Body-level elements that carry no content of their own: the halves of a
-#: bookmark, a comment range, a tracked move and a permission range. An XML
-#: comment is one too, and `_is_marker` answers for it.
-#:
-#: `exhibits` has called these TRANSPARENT since it was written, and the
-#: walk here ended at them. Both are ordinary in a manuscript under
-#: revision — a cross-reference to the caption leaves a `bookmarkEnd`
-#: under it, a reviewer's comment on the caption a `commentRangeEnd` — and
-#: one of them between a caption and its table hid the exhibit from this
-#: module entirely: 1 placement to 0, `audit` tables 1 to 0, while the
-#: exhibit list still named the caption.
-_MARKER_TAGS = frozenset(W + t for t in (
-    "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd",
-    "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart",
-    "moveToRangeEnd", "permStart", "permEnd"))
-#: the halves that CLOSE something. One of these under a block belongs to
-#: it only when what it closes opened inside it.
-_END_MARKER_TAGS = frozenset(W + t for t in (
-    "bookmarkEnd", "commentRangeEnd", "moveFromRangeEnd", "moveToRangeEnd",
-    "permEnd"))
-
-
-def _is_marker(el: etree._Element) -> bool:
-    """Does this body child carry no content of its own?
-
-    An XML COMMENT answers True: lxml gives a comment the factory that
-    makes one as its `.tag`, so `isinstance(el.tag, str)` is False for it.
-    That is the same shape that ends a walk written `el.tag == W + "p"` —
-    quietly, since comparing a callable with a string raises nothing and
-    is simply never true.
-    """
-    return not isinstance(el.tag, str) or el.tag in _MARKER_TAGS
+# MARKERS — body children that carry no content of their own — are
+# `exhibits.is_marker`, and the ones that CLOSE something
+# `exhibits.is_end_marker`. This module had its own list of ten tags,
+# written when a `bookmarkEnd` between a caption and its table hid the
+# exhibit (1 placement to 0, `audit` tables 1 to 0, while the exhibit list
+# still named the caption). The list fixed the ten and left the rest: a
+# body-level `w:proofErr` did the same thing again, and `_next_content`
+# stopped at one and took it for what keeps two tables apart.
 
 
 def _closes_inside(kids: list[etree._Element], start: int, at: int) -> bool:
@@ -286,7 +263,7 @@ def _closes_inside(kids: list[etree._Element], start: int, at: int) -> bool:
     the other direction.
     """
     el = kids[at]
-    if not isinstance(el.tag, str) or el.tag not in _END_MARKER_TAGS:
+    if not is_end_marker(el):
         return False
     ident = el.get(W + "id")
     if ident is None:
@@ -320,7 +297,7 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
         if not m:
             continue
         j = i + 1
-        while j < len(kids) and (_is_marker(kids[j])
+        while j < len(kids) and (is_marker(kids[j])
                                  or (kids[j].tag == W + "p"
                                      and not _text(kids[j]).strip())):
             j += 1
@@ -344,7 +321,7 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
         # figure's picture travelled with the table's notes.
         while k < len(kids):
             under = kids[k]
-            if _is_marker(under):
+            if is_marker(under):
                 # one the block closes goes with it; one that closes
                 # something further up, or opens something for what comes
                 # next, stays — and what follows it is no longer the
@@ -628,7 +605,7 @@ def _section_of(ends: list[int], index: int) -> int:
 
 
 def _next_content(el: etree._Element) -> etree._Element | None:
-    """The next sibling that is a paragraph or a table.
+    """The next sibling that carries content: past every marker.
 
     NOT simply `getnext()`. Word hoists a table's bookmark to body level, so
     the element after a block is very often the NEXT table's `bookmarkStart`
@@ -638,21 +615,26 @@ def _next_content(el: etree._Element) -> etree._Element | None:
     before-spacing this function exists to zero.
 
     Every marker, not the two halves of a bookmark alone: a reviewer's
-    `commentRangeEnd` and a converter's XML comment sit in the same place
-    and carry as little.
+    `commentRangeEnd`, a converter's XML comment and Word's spelling marks
+    sit in the same place and carry as little.
     """
     nxt = el.getnext()
-    while nxt is not None and _is_marker(nxt):
+    while nxt is not None and is_marker(nxt):
         nxt = nxt.getnext()
     return nxt
 
 
-def _content_before(el: etree._Element) -> etree._Element | None:
-    """The previous sibling that carries content. `_next_content` backwards."""
-    prev = el.getprevious()
-    while prev is not None and _is_marker(prev):
-        prev = prev.getprevious()
-    return prev
+def _paragraph_or_table(el: etree._Element | None, *,
+                        backwards: bool = False) -> etree._Element | None:
+    """`el`, or the nearest sibling past it, that is a `w:p` or a `w:tbl`.
+
+    The neighbour that decides whether two tables JOIN, which is not
+    `_next_content`'s: see `_would_join_tables`. Everything else is stepped
+    over, because only a paragraph was seen to keep two tables apart.
+    """
+    while el is not None and el.tag not in (W + "p", W + "tbl"):
+        el = el.getprevious() if backwards else el.getnext()
+    return el
 
 
 def _would_join_tables(block: list[etree._Element],
@@ -667,21 +649,29 @@ def _would_join_tables(block: list[etree._Element],
     exhibit is not misplaced, it is GONE, with its caption still in the
     text naming it. A marker between them does not save it: a
     `bookmarkEnd`, a `commentRangeEnd` and an XML comment each merged
-    too, and only a PARAGRAPH between kept the two apart — which is why
-    the neighbours here are the ones `_next_content` finds.
+    too, and only a PARAGRAPH between kept the two apart.
+
+    **So the neighbours compared are the nearest paragraph or table**,
+    and everything between is stepped over. They were `_next_content`'s,
+    which stepped over this module's own list of ten marker tags and
+    stopped at anything else — so a body-level `w:proofErr` or an element
+    in an extension namespace passed for a separator, and the move set
+    the table against another with only that between them. A content
+    control or a `w:customXml` is stepped over as well: it was not
+    measured, and refusing is the side that loses nothing.
 
     Two ways a move does it: the block LANDS against the table that
     follows its mention, or the hole it leaves closes a table above the
     block onto a table below it.
     """
-    tail = next((e for e in reversed(block) if not _is_marker(e)), None)
-    landing = _next_content(anchor)
+    tail = next((e for e in reversed(block) if not is_marker(e)), None)
+    landing = _paragraph_or_table(anchor.getnext())
     if (tail is not None and tail.tag == W + "tbl"
             and landing is not None and landing.tag == W + "tbl"):
         return ("the paragraph that mentions it is followed by a table, so "
                 "the move would set this table against that one")
-    before = _content_before(block[0])
-    after = _next_content(block[-1])
+    before = _paragraph_or_table(block[0].getprevious(), backwards=True)
+    after = _paragraph_or_table(block[-1].getnext())
     if (before is not None and before.tag == W + "tbl"
             and after is not None and after.tag == W + "tbl"):
         return ("a table stands above this block and another below it, so "
@@ -729,7 +719,7 @@ def space_block(block: list[etree._Element],
 
     # the last element that CARRIES something: a block ending with its own
     # bookmarkEnd still ends with its note, and the gap belongs on the note
-    tail = next((e for e in reversed(block) if not _is_marker(e)), None)
+    tail = next((e for e in reversed(block) if not is_marker(e)), None)
     last = paras[-1] if tail is not None and tail.tag == W + "p" else None
     if last is not None and last is not paras[0]:
         _in_order(_ppr(last), "spacing").set(W + "after", _twips(gap_pt))

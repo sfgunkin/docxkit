@@ -56,6 +56,8 @@ __all__ = [
     "Exhibit",
     "exhibits",
     "is_body",
+    "is_end_marker",
+    "is_marker",
     "mention_of",
     "text_of",
 ]
@@ -92,13 +94,17 @@ NOTE = re.compile(
 PANEL = re.compile(r"^\s*(?:Panel|Панель)\s+[A-Za-zА-Яа-я0-9]{1,3}[.:)]",  # noqa: RUF001
                    re.IGNORECASE)
 
-#: body-level elements that carry no content of their own: the halves of
-#: a bookmark, a comment range, a tracked move, a permission range, and
-#: Word's spelling marks. Transparent between a caption and its body.
+#: the halves of a range marker that CLOSE something: a bookmark, a comment
+#: range, a tracked move, a permission range. One of these beside a span is
+#: the span's own only when what it closes opened inside it.
 _END_TAGS = frozenset(W + t for t in (
     "bookmarkEnd", "commentRangeEnd", "moveFromRangeEnd", "moveToRangeEnd",
     "permEnd"))
+#: body-level wrappers that hold content of their own, which no walk here
+#: reads into
 _OPAQUE_TAGS = frozenset(W + t for t in ("sdt", "customXml"))
+#: what a body child must be to carry content — see :func:`is_marker`
+_CONTENT_TAGS = frozenset({W + "p", W + "tbl"}) | _OPAQUE_TAGS
 
 # what one body-level element IS, decided once per element
 _CAPTION, _BOX, _FRAME, _BODY = "caption", "box", "frame", "body"
@@ -168,6 +174,32 @@ def is_body(el: etree._Element) -> bool:
             and _has_picture(el))
 
 
+def is_marker(el: etree._Element) -> bool:
+    """Does this body-level element carry no content of its own?
+
+    THE definition: everything that is not a paragraph, a table or a
+    content wrapper (`w:sdt`, `w:customXml`). The halves of a bookmark, a
+    comment range, a tracked move and a permission range; Word's spelling
+    marks; an element in an extension namespace; and an XML comment or a
+    processing instruction, whose `.tag` is the factory that makes one and
+    so is in no set of names.
+
+    A walk steps over these between a caption and its body, and a span
+    takes them along. `placement` kept a second list — ten tags and the
+    comment — and the two disagreed about everything else: a body-level
+    `w:proofErr` between a caption and its table was transparent here and
+    opaque there, so `exhibits` named the table while `place` made no
+    placement and `audit` counted no table. It imports this one.
+    """
+    return el.tag not in _CONTENT_TAGS
+
+
+def is_end_marker(el: etree._Element) -> bool:
+    """Is this a marker that CLOSES something — the half that belongs to a
+    span only when its start lies inside the span?"""
+    return el.tag in _END_TAGS
+
+
 def _first_cell_text(tbl: etree._Element) -> str:
     cell = tbl.find(f"{W}tr/{W}tc")
     return text_of(cell) if cell is not None else ""
@@ -176,12 +208,12 @@ def _first_cell_text(tbl: etree._Element) -> str:
 def _classify(el: etree._Element, caption: re.Pattern[str],
               note: re.Pattern[str]) -> tuple[str, re.Match[str] | None]:
     """What this body-level element is, and the caption match if any."""
-    if isinstance(el, etree._Comment):
+    if is_marker(el):
         return _MARKER, None
     if el.tag == W + "tbl":
         return _classify_table(el, caption)
-    if el.tag != W + "p":
-        return (_OPAQUE if el.tag in _OPAQUE_TAGS else _MARKER), None
+    if el.tag in _OPAQUE_TAGS:
+        return _OPAQUE, None
     return _classify_paragraph(el, caption, note)
 
 

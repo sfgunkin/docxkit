@@ -2659,7 +2659,7 @@ def test_WORD_reads_two_ADJACENT_tables_as_ONE(tmp_path):
     and four rows for the first, and 2 and two rows for the second. A
     marker between them does not help — a bookmarkEnd, a
     commentRangeEnd and an XML comment each merged too, which is why the
-    guard compares the neighbours `_next_content` finds."""
+    guard compares the nearest PARAGRAPH or table on each side."""
     from docxkit import package
     from docxkit.word import open_doc, session
 
@@ -2942,14 +2942,16 @@ def test_CUSTOM_XML_under_a_table_is_not_absorbed_as_a_blank_line():
 
 
 def test_a_caption_over_a_FOREIGN_element_and_no_table_is_not_a_block():
-    """`kids[j].tag != W + "tbl"` decides that what the walk reached is no
-    table. Read as `<`, it asks whether the tag sorts BELOW `w:tbl`,
-    which a paragraph and every W element at body level do, so only an
-    element whose namespace sorts after W's tells the two apart: an
-    extension in a `urn:` namespace, which Markup Compatibility lets a
-    producer write there. Read so, that element IS the table — a block
-    with no `w:tbl`, a table in `audit`'s count and a placement for a
-    table the document does not have."""
+    """An extension element in a `urn:` namespace, which Markup
+    Compatibility lets a producer write at body level, is a MARKER
+    (`exhibits.is_marker`): the walk steps over it, and what decides is
+    what comes after — here prose, which is no table.
+
+    Written for `kids[j].tag != W + "tbl"` read as `<`, when this module
+    stopped at such an element and the mutant read it as the table
+    itself. Since the marker definition is `exhibits`', the walk never
+    stops at one, and what it can stop at — a paragraph, a table, a
+    content wrapper — sorts below `w:tbl` unless it is one."""
     doc = parts(P("Как показано в таблице 1, всё сходится.")
                 + P("Таблица 1. Заголовок")
                 + '<x:extension xmlns:x="urn:vendor:extension"/>'
@@ -3109,6 +3111,65 @@ def test_the_RENDERED_audit_steps_over_an_XML_COMMENT_before_the_table():
 #
 # Found working the survivors above: each was a survivor the fixture could
 # not kill because the REAL code gave the wrong answer there.
+
+#: body children `exhibits` reads as carrying nothing, and `placement` did not
+UNLISTED = [
+    pytest.param('<w:proofErr w:type="gramEnd"/>', "proofErr",
+                 id="a spelling mark"),
+    pytest.param('<x:extension xmlns:x="urn:vendor:extension"/>',
+                 "extension", id="an extension element"),
+]
+
+
+@pytest.mark.parametrize(("marker", "name"), UNLISTED)
+def test_what_EXHIBITS_calls_a_marker_does_not_hide_the_table_under_a_caption(
+        marker, name):
+    """`placement` kept its own list of ten marker tags, and `exhibits`
+    reads every body child that is not a paragraph, a table or a content
+    wrapper as a marker — Word's spelling marks among them. One of those
+    between a caption and its table hid the exhibit from this module as a
+    `bookmarkEnd` did before 48f17fd: `exhibits` named the table, `place`
+    made no placement and `audit` counted no table. One definition now,
+    imported."""
+    out, rep = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + P("Таблица 1. Заголовок") + marker + TBL("шапка")
+        + P("Примечание. Что-то.")))
+
+    assert [p.moved for p in rep.placements] == [True]
+    assert placement.audit(out).tables == 1
+    assert names_of(out) == ["p", "p", name, "tbl", "p", "p"]
+
+
+@pytest.mark.parametrize(("marker", "name"), UNLISTED)
+@pytest.mark.parametrize(("layout", "said"), [
+    pytest.param(lambda m: (P("Как показано в таблице 1, всё сходится.") + m
+                            + TBL("макет") + P("Совершенно другой абзац.")
+                            + P("Таблица 1. Заголовок") + TBL("шапка")),
+                 "against that one", id="where it lands"),
+    pytest.param(lambda m: (P("Прочая проза.") + TBL("верхний макет") + m
+                            + P("Таблица 1. Заголовок") + TBL("шапка") + m
+                            + TBL("нижний макет")
+                            + P("Как показано в таблице 1, всё сходится.")),
+                 "against each other", id="the hole it leaves"),
+])
+def test_only_a_PARAGRAPH_keeps_two_tables_apart(marker, name, layout, said):
+    """`_would_join_tables`' measurement through Word: a bookmarkEnd, a
+    commentRangeEnd and an XML comment between two tables each merged
+    them, and only a paragraph kept them apart. The neighbours it
+    compared were `_next_content`'s, which stepped over this module's
+    ten marker tags and stopped at anything else — so a spelling mark
+    or an extension element passed for a separator, and the move set
+    the table against another with nothing but that between them.
+    Not measured through Word for these two; the rule is the one that
+    was, and refusing is the side that loses nothing."""
+    out, rep = placement.place(parts(layout(marker)))
+
+    assert [p.moved for p in rep.placements] == [False]
+    assert any(said in x for x in rep.problems), rep.problems
+    assert name in names_of(out)
+
 
 def children_of(el: etree._Element) -> list[str]:
     """Each child by local name, an XML comment as `comment`."""
