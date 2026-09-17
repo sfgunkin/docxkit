@@ -208,3 +208,69 @@ def test_where_two_walks_MEET_the_later_exhibit_keeps_its_own_body():
 
     assert found == {"Table 1": ["p:Table 1. Rates", "tbl:a", "p:Panel B."],
                      "Table 2": ["tbl:b", "p:Table 2. Under"]}
+
+
+# --- the whole sweep of 2026-09-17 -------------------------------------------
+
+
+def test_is_body_refuses_a_tag_sorting_AFTER_a_table_and_a_comment():
+    """`is_body` is public and the package hands it only paragraphs, so
+    only its own test can ask. A tag in a namespace after
+    WordprocessingML's sorts after `w:tbl`, and a comment's tag is a
+    function that sorts against no string: neither is a body."""
+    kids = list(body('<x:mark xmlns:x="urn:x"/><!-- a note to self -->'))
+
+    assert [ex.is_body(k) for k in kids] == [False, False]
+
+
+def test_a_picture_in_a_CONTENT_CONTROL_is_a_wall_and_not_the_figure():
+    """`_scan` stops at a content control, so the caption has no body, and
+    the picture behind the control is out of reach. `w:sdt` sorts after
+    `w:p`, and read as a paragraph it is a picture with no words — the
+    body the caption would take; the one other-namespace tag the edges
+    had before read as a blank paragraph, transparent like a marker."""
+    sdt = "<w:sdt><w:sdtContent>" + IMG + "</w:sdtContent></w:sdt>"
+
+    (x,) = ex.exhibits(body(P("Figure 1. Map") + sdt + IMG + P("Prose.")))
+
+    assert (x.body_at, x.start, x.stop) == (None, 0, 1)
+
+
+def test_a_table_AFTER_the_last_panel_with_no_heading_of_its_own_stays_out():
+    """A panel heading lets ONE body in, its panel; a table straight after
+    that panel has no heading and is somebody else's. Every panel fixture
+    before ended in a note, prose or a caption, where a heading that let
+    in every later body read the same."""
+    found = spans(P("Table 9. Estimates") + P("Panel A. Health") + TBL("a")
+                  + P("Panel B. Mortality") + TBL("b") + TBL("stray")
+                  + P("Prose."))
+
+    assert found == {"Table 9": ["p:Table 9. Estimates", "p:Panel A. Health",
+                                 "tbl:a", "p:Panel B. Mortality", "tbl:b"]}
+
+
+def test_the_257TH_exhibit_is_the_LAST_and_ends_where_its_walk_does():
+    """`n + 1` and `len(spans)` are equal ints computed apart, and past 256
+    they are different objects: only comparing them by value tells the
+    last span there is no next one to stop at. 257 captions with no body
+    between them are the cheapest such document."""
+    layout = "".join(P(f"Table {n}. Cap") for n in range(1, 258))
+
+    found = ex.exhibits(body(layout + TBL("last")))
+
+    assert len(found) == 257
+    last = found[-1]
+    assert (last.name, last.start, last.stop, last.body_at) == (
+        "Table 257", 256, 258, 257)
+
+
+def test_a_BOX_of_two_rows_is_captioned_by_its_FIRST_CELL_alone():
+    """A box's caption is its first cell's text. A one-cell box holds
+    nothing else, so on every box before the whole table's text read the
+    same; the second row here is the box's own words, not its title."""
+    box = ("<w:tbl><w:tr>" + cell("Box 1. Key terms") + "</w:tr><w:tr>"
+           + cell("Capability: what a person can do.") + "</w:tr></w:tbl>")
+
+    (x,) = ex.exhibits(body(P("Box 1 lists them.") + box), labels=LABELS)
+
+    assert (x.kind, x.caption) == ("box", "Box 1. Key terms")
