@@ -672,7 +672,38 @@ that says "the document unchanged" is only as good as the fixture that
 made it: give it the `w:val="0"` copy and the same code answers with
 the stale element first.
 
-### A figure says nothing about behaviour that lives in a REGEX
+### A figure says nothing about behaviour that lives in DATA
+
+Widened 2026-09-18 from the version below, by the `lint.py` census, and
+the correction matters: the class is not "a regex". It is any behaviour
+living in data the mutation operators cannot reach, and a TAG TUPLE is
+the commonest shape of it in this package — invisible to anyone
+filtering for `re.compile`, which is what the first version of this
+section would have had them do.
+
+`lint.py` holds no regex at all; it walks lxml. Its behaviour lives in
+ten tag constants, and cosmic-ray can no more take `"tc"` out of a tuple
+than it can drop an alternative from a pattern. Deleting one member at a
+time — 51 cases through `kill_check`, each compiled first so a broken
+import could not read as a kill — left **36 survivors**, against a
+harness that was if anything too wide.
+
+Two of the 36 are worse than a quiet check:
+
+* `_PARTS` decides which parts are read AT ALL. Drop `endnotes.xml` or
+  `comments.xml` and a paper using either gets NO structural lint — and
+  a journal that sets endnotes is an ordinary paper.
+* `_MARKER_PARENTS` fails the other way. A row-level revision is a
+  self-closing `w:ins` inside `w:trPr`, so with that half gone every
+  tracked table row reads as an empty revision — and three callers
+  refuse a WRITE on lint's answer. A gate nobody can pass on any redline
+  that touches a table.
+
+The fix is a parametrisation per constant, so that THE PARAMETRISATION
+IS THE CONSTANT and a tag added without a case is a tag the census
+finds.
+
+### And the first instance of it: a REGEX
 
 The sharpest limit of this whole campaign, found 2026-09-18 by the
 `footnotes.py` round, which had nothing to work on.
