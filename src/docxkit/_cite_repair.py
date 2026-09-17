@@ -130,15 +130,22 @@ def wrap_link_in_bookmark(xml: str, anchor: str, name: str, bid: int,
 
 
 def delete_bookmark(xml: str, name: str) -> str:
-    """Remove the Start/End pair `name` (id read off the Start)."""
-    m = re.search(rf'<w:bookmarkStart w:id="(\d+)" w:name="{name}"/>', xml)
+    """Remove the Start/End pair `name` (id read off the Start).
+
+    Either attribute order and either close, `/>` or ` />`, as
+    `respan_link` reads them: a pair another producer wrote was "not
+    found" here while it sat in the file.
+    """
+    m = re.search(rf'<w:bookmarkStart\b(?=[^>]*\bw:name="{re.escape(name)}")'
+                  r'[^>]*\bw:id="(\d+)"[^>]*/>', xml)
     if m is None:
         raise AnchorError(f"delete_bookmark: {name} not found")
     xml = xml[:m.start()] + xml[m.end():]
-    endtag = f'<w:bookmarkEnd w:id="{m.group(1)}"/>'
-    if xml.count(endtag) != 1:
+    ends = list(re.finditer(rf'<w:bookmarkEnd\b[^>]*\bw:id="{m.group(1)}"'
+                            r"[^>]*/>", xml))
+    if len(ends) != 1:
         raise AnchorError(f"delete_bookmark: end of {name} not unique")
-    return xml.replace(endtag, "")
+    return xml[:ends[0].start()] + xml[ends[0].end():]
 
 
 def remove_outer_field(xml: str, outer: str, inner: str) -> str:
@@ -287,13 +294,20 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
     # bookmark that no longer wraps its mention is still a bookmark. The
     # per-paper repair this replaces dropped and re-added it for the
     # same reason.
-    carried = ""
-    bm = re.search(r'<w:bookmarkStart w:id="(\d+)" w:name="[^"]+"/>\s*$',
-                   para[:s])
+    #
+    # Either attribute order and either close, `/>` or ` />`: other
+    # producers write `w:name` first with a space before the slash (97
+    # starts in 7 of 2,954 corpus packages), and a pair spelled only Word's
+    # way was not found there, so it was not carried. Both tags go back
+    # as they were written.
+    carried = shut = ""
+    bm = re.search(r'<w:bookmarkStart\b(?=[^>]*\bw:name="[^"]+")'
+                   r'[^>]*\bw:id="(\d+)"[^>]*/>\s*$', para[:s])
     if bm is not None:
-        shut = f'<w:bookmarkEnd w:id="{bm.group(1)}"/>'
-        if para[e:].startswith(shut):
-            carried = bm.group(0)
+        bm_end = re.match(rf'<w:bookmarkEnd\b[^>]*\bw:id="{bm.group(1)}"'
+                          r"[^>]*/>", para[e:])
+        if bm_end is not None:
+            carried, shut = bm.group(0), bm_end.group(0)
             para = para[:bm.start()] + para[bm.end():s] + para[s:]
             s -= len(carried)
             e -= len(carried)
@@ -322,7 +336,6 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
     fixed = wrap_visible_span(bare, new_at, new_end, anchor)
 
     if carried:
-        shut = f'<w:bookmarkEnd w:id="{bm.group(1)}"/>'  # type: ignore[union-attr]
         link = re.search(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"'
                          r'[^>]*(?<!/)>.*?</w:hyperlink>', fixed, re.DOTALL)
         if link is None:                     # pragma: no cover - defensive

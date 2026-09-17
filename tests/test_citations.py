@@ -4526,6 +4526,49 @@ def test_respan_link_CARRIES_the_back_link_bookmark_over_the_new_edge():
     assert out.count("bookmarkStart") == 1 and out.count("bookmarkEnd") == 1
 
 
+# The bookmark as OTHER producers write it: 97 starts in 7 of the 2,954
+# corpus packages put `w:name` before `w:id`, and they close the tag with
+# a space before the slash. The pair is the same bookmark; the patterns
+# that found it were spelled for one attribute order and no space.
+_START_SPELLINGS = [
+    ('<w:bookmarkStart w:name="{name}" w:id="7"/>',
+     '<w:bookmarkEnd w:id="7"/>'),
+    ('<w:bookmarkStart w:id="7" w:name="{name}" />',
+     '<w:bookmarkEnd w:id="7" />'),
+]
+
+
+@pytest.mark.parametrize(("start", "end"), _START_SPELLINGS)
+def test_respan_link_CARRIES_a_back_link_bookmark_in_another_spelling(
+        start, end):
+    """Not found, it was not carried: the link's new edge reached past a
+    bookmark that no longer wrapped its mention, and every count passed."""
+    from docxkit.citations import respan_link
+
+    xml = _one_para(
+        R("following ") + start.format(name="Mod1986txt")
+        + _linked("Mod1986", "Modigliani (1986") + end + R("). Labor"))
+
+    out = respan_link(xml, "Mod1986", "Modigliani (1986)")
+
+    assert out.index("bookmarkStart") < out.index("<w:hyperlink")
+    assert out.index("bookmarkEnd") > out.index("</w:hyperlink>")
+    assert out.count("bookmarkStart") == 1 and out.count("bookmarkEnd") == 1
+
+
+@pytest.mark.parametrize(("start", "end"), _START_SPELLINGS)
+def test_delete_bookmark_removes_a_pair_in_another_spelling(start, end):
+    """Spelled only Word's way, the repair answered "not found" for a
+    bookmark that is in the file."""
+    from docxkit.citations import delete_bookmark
+
+    xml = P(start.format(name="gone") + R("text") + end)
+
+    out = delete_bookmark(xml, "gone")
+
+    assert out == P(R("text"))
+
+
 def test_respan_link_moves_the_edge_of_a_FIELD_form_link_too():
     """The form that matters, and the one the first version refused.
 
