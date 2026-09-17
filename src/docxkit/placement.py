@@ -534,6 +534,17 @@ def _in_order(props: etree._Element, tag: str) -> etree._Element:
     sibling ever sorted above another, and the new property was appended —
     behind the `w:ins` or `w:del` marking a tracked row. Which is the one
     order `CT_TrPr` does not allow.
+
+    **A child is not always a property.** An XML comment a converter left
+    inside the properties is a child like any other, its `.tag` is the
+    factory that makes one, and `etree.QName` refuses that with
+    `ValueError: Invalid input tag` — out of `place`, `keep_together`,
+    `space_block` and `own_page` alike, before anything was reported. It
+    has no rank, so it is stepped over: the new property goes in front of
+    the first PROPERTY that outranks it, wherever the comment stands. The
+    test is fused positive rather than a `continue` on the negative, for
+    the reason `revisions` gives: lxml-stubs types `.tag` as `str`, and
+    mypy's `warn_unreachable` refuses the branch.
     """
     node = props.find(W + tag)
     if node is not None:
@@ -543,8 +554,8 @@ def _in_order(props: etree._Element, tag: str) -> etree._Element:
     last = len(rank_of)
     rank = rank_of.get(tag, last)
     for sib in props:
-        name = etree.QName(sib).localname
-        if rank_of.get(name, last) > rank:
+        if (isinstance(sib.tag, str)
+                and rank_of.get(etree.QName(sib).localname, last) > rank):
             sib.addprevious(node)
             return node
     props.append(node)

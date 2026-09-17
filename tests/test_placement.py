@@ -3105,6 +3105,56 @@ def test_the_RENDERED_audit_steps_over_an_XML_COMMENT_before_the_table():
     assert straddle.detail == "it starts on sheet 1 and ends on sheet 2"
 
 
+# ------------------------------------ three defects of the 2026-09-17 round --
+#
+# Found working the survivors above: each was a survivor the fixture could
+# not kill because the REAL code gave the wrong answer there.
+
+def children_of(el: etree._Element) -> list[str]:
+    """Each child by local name, an XML comment as `comment`."""
+    return ["comment" if isinstance(c, etree._Comment)
+            else etree.QName(c).localname for c in el]
+
+
+#: a one-row table whose row properties carry a converter's comment
+COMMENTED_ROW = (f"<w:tbl><w:tr><w:trPr>{COMMENT}"
+                 '<w:jc w:val="center"/></w:trPr>'
+                 "<w:tc><w:p><w:r><w:t>шапка</w:t></w:r></w:p></w:tc>"
+                 "</w:tr></w:tbl>")
+
+
+def test_a_COMMENT_inside_properties_is_stepped_over_not_ranked():
+    """`_in_order` ranked every child of a `w:pPr` or `w:trPr` through
+    `etree.QName`, and a comment's tag is the factory that makes one:
+    `ValueError: Invalid input tag of type cython_function_or_method`,
+    out of `place` before anything was reported. A comment is no
+    property and has no rank; the new one goes in front of the first
+    PROPERTY that outranks it, as it would without the comment."""
+    out, _ = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Таблица 1. Заголовок",
+            f'<w:pPr>{COMMENT}<w:jc w:val="left"/></w:pPr>')
+        + COMMENTED_ROW))
+
+    assert children_of(ppr_of(out, "Таблица 1.")) == [
+        "comment", "keepNext", "spacing", "jc"]
+    trpr = tbl_of(body_of(out)).find(f"{NS}tr/{NS}trPr")
+    assert trpr is not None
+    assert children_of(trpr) == ["comment", "cantSplit", "jc"]
+
+
+def test_own_page_steps_over_a_COMMENT_in_the_header_rows_properties():
+    """`own_page` writes `tblHeader` through the same `_in_order`, on the
+    row whose properties a converter is likeliest to have annotated."""
+    body = body_of(parts(P("Таблица 1. Заголовок") + COMMENTED_ROW))
+
+    placement.own_page(list(body))
+
+    trpr = tbl_of(body).find(f"{NS}tr/{NS}trPr")
+    assert trpr is not None
+    assert children_of(trpr) == ["comment", "tblHeader", "jc"]
+
+
 # ---------------------------------------------------------- keep LAST --
 
 
