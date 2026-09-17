@@ -2166,6 +2166,100 @@ def test_promote_needs_its_inputs(project):
         revision.promote(project)          # no batch was ever built
 
 
+# ------------------------------------ whose copy is it? the KIND in a name
+#
+# `_stamp_of` reads the stamp out of a copy's name, and the answer is
+# also "did this tool write it?" — what `prune_rescues` asks before it
+# deletes anything and what `withdraw` asks before it takes a file for
+# the last promote. Both folders name their copies the same way, so the
+# reader takes the KIND as well: `<stem>_rescue_<stamp>` under
+# build/rescue/, `<stem>_redline_<stamp>` under build/redlines/.
+#
+# All four survivors of the first `revision/_common` sweep (2026-09-18)
+# sat on that one comparison, and nothing here had ever asked it: the
+# function moved out of `_promote` that morning, and the tests that
+# exercise it stayed in test_rescue_pruning.py, which is not this
+# module's harness. A name quoting the other folder's kind is the case
+# the comparison exists for, and neither folder is pruned OF such a
+# copy — build/redlines/ is not pruned at all.
+
+
+@pytest.mark.parametrize(("name", "kind", "stamp"), [
+    ("working_rescue_20260918-004209-873509.docx", "rescue",
+     "20260918-004209-873509"),
+    ("working_redline_20260918-004209-873509.docx", "redline",
+     "20260918-004209-873509"),
+    # the same names read for the OTHER folder's kind: not ours
+    ("working_redline_20260918-004209-873509.docx", "rescue", None),
+    ("working_rescue_20260918-004209-873509.docx", "redline", None),
+    # and the copies a session names itself, which carry no stamp at all
+    ("working_rescue_pre_COMP.docx", "rescue", None),
+    ("working_redline_R1_withdrawn.docx", "redline", None),
+])
+def test_a_stamped_name_is_read_only_for_its_OWN_kind(name, kind, stamp):
+    """`rescue` and `redline` are the only two words the pattern knows,
+    and `redline` sorts below `rescue`: an ordering in place of the
+    equality answers for one kind with the other's copies, and identity
+    answers for every copy there is. A name with no stamp in it has to
+    come back None rather than reaching for a group that is not there.
+    """
+    from docxkit.revision._common import _stamp_of
+
+    assert _stamp_of(Path(name), kind) == stamp
+
+
+def test_prune_leaves_a_rescue_named_after_a_REDLINE_alone(project):
+    """Only copies this tool wrote are ever deleted (the S1 of
+    2026-08-31), and a copy a session named itself is somebody's
+    deliberate undo whatever is quoted in the name. One here quotes the
+    redline it was taken before — read as a rescue stamp, that copy
+    joins the deletable set with a date older than every real one, which
+    puts it first in the doomed slice."""
+    made = _seed_rescues(project, 3)          # 2026-08-07 10:00:00..02
+    by_hand = [
+        project.rescue_dir
+        / "working_rescue_before_redline_20260807-090000-000000.docx",
+        project.rescue_dir / "working_rescue_pre_COMP.docx",
+    ]
+    for path in by_hand:
+        path.write_bytes(b"somebody's own undo")
+
+    gone = revision.prune_rescues(project, keep=3)
+
+    assert gone == made[:2], gone
+    assert all(path.is_file() for path in by_hand), \
+        "a copy this tool did not write was deleted"
+
+
+def test_withdraw_does_not_take_a_redline_named_after_a_RESCUE(project):
+    """The same reading in the other folder, where it decides what the
+    last promote put on the manuscript. Nothing prunes build/redlines/,
+    so a copy left there stays — and this one quotes a rescue stamp
+    later than the promote's own, which is what it takes to become the
+    last entry of a listing that believes it. `withdraw` would then
+    compare the manuscript with somebody's copy and tell the author
+    they had saved a proposal they never opened."""
+    from datetime import timedelta
+
+    from docxkit import guard
+    from docxkit.revision._common import _RESCUE_STAMP
+
+    write(project.batch, make_parts(para(run("the proposal"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    revision.promote(project)
+    (promoted,) = project.redlines()
+    later = (datetime.now() + timedelta(days=1)).strftime(_RESCUE_STAMP)
+    quoting = (project.redline_dir /
+               f"{project.working.stem}_redline_of_rescue_{later}.docx")
+    quoting.write_bytes(b"a copy somebody kept")
+
+    report = revision.withdraw(project, why="wrong before the author saw it")
+
+    assert report.withdrawn == promoted
+    assert project.working.read_bytes() == project.prev.read_bytes()
+    assert quoting.is_file(), "the session's own copy is not this to touch"
+
+
 # ----------------------------------------------------------- validate
 
 class _FakeDoc:
