@@ -14,6 +14,57 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `prune_orphans` cuts an orphan whose only content is a legacy picture, an OLE object or a symbol~~ — FIXED 17.09, `a8143a1`
+
+<!-- status: fixed -->
+
+Found 2026-09-16 while deciding the fix for the doubled-id entry below,
+by asking whether "empty and unreferenced" is ever the wrong test for a
+shell. It is, for content Word still writes. `_NOTE_CONTENT_RE` admits
+`w:bookmarkStart|w:hyperlink|w:drawing|w:tbl|m:oMath` and misses three
+things, measured on constructed notes:
+
+    drawing, a modern image        carriers=1  empty=False  -> kept
+    bookmark / hyperlink / OMML    carriers=1  empty=False  -> kept
+    pict, a LEGACY VML image       carriers=0  empty=True   -> PRUNED
+    object, a LEGACY OLE equation  carriers=0  empty=True   -> PRUNED
+    sym, a symbol glyph            carriers=0  empty=True   -> PRUNED
+    a tracked DELETION only        carriers=0  empty=True   -> PRUNED
+
+So an orphaned note whose whole content is a legacy picture, or an
+Equation Editor 3.0 equation — which is stored as `w:object`, and which
+these papers carry — is removed as litter, and `orphans`, which exists
+to report the note that KEPT its content as a lost footnote rather than
+litter, does not report it. The words of the contract are "drops the
+SHELLS"; a note holding an equation is not a shell.
+
+This is on ordinary DISTINCT ids. It is not the doubled-id defect below
+and no fix there reaches it: that one is a lookup keyed on the id, this
+one is the emptiness test itself.
+
+The `w:delText` row is caller-dependent and should be decided, not
+widened blindly: in-package `prune_orphans` runs on the simulated
+ACCEPTED view, where deletions are already resolved, so a
+deletion-only note there is genuinely empty — but the function is
+public, and a caller running it on a raw tracked document would lose
+text that a reject would have brought back.
+
+Fix: admit `w:pict`, `w:object` and `w:sym` to the content test, and
+decide `w:delText` by the view the caller is on rather than by the tag.
+
+**Fixed 17.09 in `a8143a1`.** `_NOTE_CONTENT_RE` admits `w:pict`,
+`w:object`, `w:sym` and `w:contentPart` (ink, found on the way), and a
+`w:delText` holding more than blanks. The `w:delText` row was decided by
+the views, as asked: both simulations the package prunes leave none —
+accepting removes the deletion, rejecting renames it `w:t` — so the only
+document where `prune_orphans` meets one is a raw tracked file, where a
+reject brings the words back, and they are content. A deletion of blanks
+and a self-closing `<w:delText/>` are still shells. `Orphan.__str__` said
+`holds ''` for a note carrying an equation; it says `holds no words, and
+N other items` now. Tests: `test_an_orphan_holding_LEGACY_content_is_not_a_shell`
+(four shapes), `test_an_orphan_whose_words_are_all_DELETED_is_not_a_shell`,
+`test_a_DELETION_of_nothing_visible_still_leaves_a_shell` (two); the two
+cosmetic claims on the rewritten `__str__` line were deleted.
 ### ~~S2 — `place` writes a row's revision mark FIRST in `w:trPr`~~ — FIXED 16.09, `48f17fd`
 
 <!-- status: fixed -->

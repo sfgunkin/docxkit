@@ -853,45 +853,6 @@ prev. Then copy `build/rescue/mb1_rescue_20260915-220117-827975.docx` over
 
 ---
 
-### S1 — `prune_orphans` cuts an orphan whose only content is a legacy picture, an OLE object or a symbol
-<!-- status: open -->
-
-Found 2026-09-16 while deciding the fix for the doubled-id entry below,
-by asking whether "empty and unreferenced" is ever the wrong test for a
-shell. It is, for content Word still writes. `_NOTE_CONTENT_RE` admits
-`w:bookmarkStart|w:hyperlink|w:drawing|w:tbl|m:oMath` and misses three
-things, measured on constructed notes:
-
-    drawing, a modern image        carriers=1  empty=False  -> kept
-    bookmark / hyperlink / OMML    carriers=1  empty=False  -> kept
-    pict, a LEGACY VML image       carriers=0  empty=True   -> PRUNED
-    object, a LEGACY OLE equation  carriers=0  empty=True   -> PRUNED
-    sym, a symbol glyph            carriers=0  empty=True   -> PRUNED
-    a tracked DELETION only        carriers=0  empty=True   -> PRUNED
-
-So an orphaned note whose whole content is a legacy picture, or an
-Equation Editor 3.0 equation — which is stored as `w:object`, and which
-these papers carry — is removed as litter, and `orphans`, which exists
-to report the note that KEPT its content as a lost footnote rather than
-litter, does not report it. The words of the contract are "drops the
-SHELLS"; a note holding an equation is not a shell.
-
-This is on ordinary DISTINCT ids. It is not the doubled-id defect below
-and no fix there reaches it: that one is a lookup keyed on the id, this
-one is the emptiness test itself.
-
-The `w:delText` row is caller-dependent and should be decided, not
-widened blindly: in-package `prune_orphans` runs on the simulated
-ACCEPTED view, where deletions are already resolved, so a
-deletion-only note there is genuinely empty — but the function is
-public, and a caller running it on a raw tracked document would lose
-text that a reject would have brought back.
-
-Fix: admit `w:pict`, `w:object` and `w:sym` to the content test, and
-decide `w:delText` by the view the caller is on rather than by the tag.
-
----
-
 ### S2 — `revision promote` refuses on the stamp AFTER it has overwritten the manuscript
 <!-- status: open -->
 
