@@ -444,6 +444,24 @@ has not been vindicated — the code or the harness moved and the argument
 no longer describes them. Delete it and decide afresh. Run it after
 changing a module whose claims touch the lines you moved.
 
+**What it costs, and the two things that went wrong for being unsaid.**
+One harness run per claim: scoped to the module you moved that is
+minutes, which is the everyday use above. The whole file was 899 claims
+across 46 modules on 2026-09-18 — hours, and this is the run nobody
+makes. Ten claims orphaned by `effef6c` sat unreported for exactly that
+reason, found later by a round doing it by hand. `--jobs N` deals the
+modules out to N workers, each with a `kill_check` checkout of its own
+(and so a lock of its own), longest module first: 341 claims over 18
+modules took 12 minutes at four workers against an hour and more
+sequentially.
+
+And the EXIT CODE now carries the finding. `check` returns how many
+cases did not match their expectation, and the tool threw that away: a
+run in which three claims were killed printed three `!!` lines and
+exited 0. The lines are what a person reads, the code is what a script
+reads, and they disagreed — on the one tool whose whole subject is a
+claim that has quietly stopped being true.
+
 ### Many survivors on ONE line is a design question, not a missing test
 
 The usual survivor is a line whose behaviour no test happens to reach,

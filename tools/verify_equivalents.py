@@ -21,7 +21,8 @@ worktree, plus one unmutated run per harness — about ten seconds each on
 this machine, and more for the heaviest harnesses. Scoped to a module
 that is minutes, which is the everyday use CONTRIBUTING calls for after
 changing a module whose claims touch the lines you moved. The WHOLE file
-is 897 claims across 45 modules: hours, not minutes. This docstring said
+was 899 claims across 46 modules on 2026-09-18: hours, not minutes, and
+the count only grows. This docstring said
 "a minutes-long job" until 2026-09-18, the day a whole-file run went
 unmade for that reason and ten claims orphaned by `effef6c` sat
 unreported.
