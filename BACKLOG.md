@@ -46,6 +46,86 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — four source-grep tests cannot fail, and one leaves 17 modules unchecked
+
+<!-- status: open -->
+
+Found 2026-09-18 by auditing every test in the suite that asserts on SOURCE
+or documentation TEXT rather than on behaviour — 19 of them. Four cannot
+fail for the change they exist to catch. Each was demonstrated rather than
+argued: break the thing, watch the test stay green, and show a control that
+goes red. `scratchpad\agents\audit\demo_source_greps.py` runs all twelve
+cases and reverts each file with `git checkout`.
+
+**The pattern behind all four**, which is what makes this one entry rather
+than four: each reads a REGION and matches a SPELLING, and both halves are
+silently narrower than the rule they stand for.
+
+* Trap A, the region — a glob that stops at a directory, a slice keyed to
+  where a function happens to sit in a file.
+* Trap B, the spelling — one of two call forms, one of several ways a
+  command can be written down, one flag name standing in for all flags.
+
+**A source-grep with neither canary cannot tell "nothing wrong" from
+"nothing read".**
+
+**1. `test_part_names.py::test_a_part_is_named_in_one_place`** — and this
+one is a live hole, not merely a weak test. Its parametrize list is
+`SRC.glob("*.py")`, so the SEVENTEEN modules of `revision/` are not in it at
+all. A part-name literal in `revision/_promote.py` stays green; the same
+literal in `find.py` goes red.
+
+This is the trap `test_layering.py`, `test_api_surface.py` and
+`test_harness_map.py` EACH carry a comment about, naming the day
+`revision.py` became `revision/` and their glob stopped seeing it. Three
+files learned it; this one never got the fix. It does not read as vacuous,
+because its neighbour `test_the_allowlist_names_only_modules_that_exist`
+would go red if the glob found nothing — so the gap looks covered.
+(Smaller second hole: `PART_RE` matches double quotes only.)
+
+**2. `test_cli_guards.py::test_every_json_report_goes_through_the_resilient_encoder`**
+— two blind spots. It slices
+`text.split("def _write_json",1)[1].split("\ndef ",1)[1]`, so everything
+ABOVE `_write_json` (cli.py:96) is never read, and it matches the literal
+`json.dumps`, so `json.dump(payload, fh)` — the file form, the natural
+spelling when you hold a handle, and equally uncovered by `_json_default` —
+passes anywhere in the file.
+
+**3. `test_cli_revision.py::test_the_two_parsers_come_from_ONE_declaration`**
+— its second half hardcodes ONE flag name. A new flag declared inline on
+`build` and not on `ship`, which is exactly the drift it exists to prevent,
+passes. (Its `count("_build_args(r)") == 2` half is sound.)
+
+**4. `test_cli.py::test_no_command_is_written_down_that_the_parser_does_not_HAVE`**
+— the regex is `^\s*docxkit ([a-z]+)`, so it sees only line-initial forms. A
+command named in prose — "Run `docxkit frobnicate` to…" — is invisible, and
+a removed or renamed command whose prose mention survives is precisely its
+subject. Its sibling direction is sound: adding a `frobnicate` subcommand to
+the parser turns `test_every_command_is_written_down` red.
+
+**FRAGILE (3), recorded and not fixed.** The json test's region is keyed to
+a function's POSITION, so moving `_write_json` lower silently shrinks what
+is checked. `test_api_surface.py::test_the_README_table_names_no_module_that_is_GONE`
+requires rows starting ``| ` ``, so a table reformat empties the set and it
+passes vacuously — safe only because its partner goes red loudly in the same
+situation, so it is sound as a PAIR and not alone.
+`test_complexity_debt.py` fails loudly on a rename (`ValueError`) but its
+per-name regex could match a coincidental number, and its loop is vacuous if
+`DEBT` empties.
+
+**SOUND (12), and one is the model to copy.**
+`test_control_characters.py` carries BOTH canaries — that the scan found
+files to read, and that the pattern can fire at all. That is exactly the
+shape the four above are missing. Also sound: the `test_regex_registry`
+"there are patterns to check" canary, `test_consumers`'
+`len(PAIRS) > 100, "was it refreshed?"`, `test_layering`'s ast walk,
+`test_api_surface`'s `__all__` walks, `test_harness_map`, both
+every-command-is-written-down directions, and the tools tests that read
+files a tool WROTE into a temp tree — which are behaviour, not grep.
+
+Scan: `scratchpad\agents\audit\find_source_greps.py` and
+`source_greps.txt`.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
