@@ -1107,6 +1107,73 @@ def test_a_claim_that_is_no_longer_what_it_was_argued_to_be_EXITS_nonzero(
     assert tool.main(["widen.py"]) == 1
 
 
+def test_the_key_a_module_in_a_SUBPACKAGE_is_named_by():
+    """`Path(src_path).name` is what `staleness` read, and
+    `revision/_gates.py` reduces to `_gates.py` — no HARNESS key and no
+    session name, so it looked for `.mutation-gates.sqlite`, found
+    nothing, read "never measured" and printed no banner. Every module
+    in a subpackage was exempt from the staleness warning, silently
+    (noticed 2026-09-18, mining `revision/_gates.py` against a run that
+    WAS stale in its tests)."""
+    tool = _tool_module()
+
+    assert tool.harness_key("src/docxkit/revision/_gates.py") == \
+        "revision/_gates.py"
+    assert tool.harness_key("src/docxkit/word.py") == "word.py"
+    assert tool.harness_key("widths.py") == "widths.py"
+
+
+def _drift(monkeypatch, *, planned: list[str] | None, now: list[str]):
+    """The banner for a module whose session planned `planned` and whose
+    map names `now`."""
+    _tools_on_path()
+    import harness_map  # pyright: ignore[reportMissingImports]
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(harness_map, "harness_for", lambda mod: now)
+    monkeypatch.setattr(stale_figures, "planned_tests", lambda mod: planned)
+    return _tool_module().harness_drift("src/docxkit/thing.py")
+
+
+def test_a_harness_that_GAINED_a_test_calls_the_figure_an_upper_bound(
+        monkeypatch):
+    """An added test can only KILL, so the run is safe to mine and its
+    rate is conservative — but a survivor on the list may already be
+    dead, which is the thing to know before spending the afternoon."""
+    lines = _drift(monkeypatch, planned=["tests/test_thing.py"],
+                   now=["tests/test_thing.py", "tests/test_new.py"])
+
+    assert any("HARNESS DRIFT" in ln for ln in lines)
+    assert any("ADDED since" in ln and "KILL" in ln for ln in lines)
+    assert any("upper bound" in ln for ln in lines)
+    assert any("tests/test_new.py" in ln for ln in lines), "by NAME"
+    assert not any("DROPPED" in ln for ln in lines)
+
+
+def test_a_harness_that_LOST_a_test_says_the_QUESTION_has_changed(
+        monkeypatch):
+    """The alarming direction: the figure was measured against a test
+    this module's harness no longer names, so a replay or a kill_check
+    run today is not asking what the session asked."""
+    lines = _drift(monkeypatch,
+                   planned=["tests/test_thing.py", "tests/test_gone.py"],
+                   now=["tests/test_thing.py"])
+
+    assert any("DROPPED since" in ln for ln in lines)
+    assert any("tests/test_gone.py" in ln for ln in lines), "by NAME"
+    assert any("different question" in ln for ln in lines)
+    assert not any("ADDED" in ln for ln in lines)
+
+
+def test_a_harness_that_has_not_moved_prints_NOTHING(monkeypatch):
+    """A banner over every list is one nobody reads — the same rule the
+    staleness banner keeps."""
+    assert _drift(monkeypatch, planned=["tests/test_thing.py"],
+                  now=["tests/test_thing.py"]) == []
+    assert _drift(monkeypatch, planned=None,
+                  now=["tests/test_thing.py"]) == []
+
+
 def test_asking_for_a_module_with_NO_claims_is_refused_not_silent(tmp_path,
                                                                   monkeypatch):
     """It printed nothing and exited 0, which reads exactly like "every

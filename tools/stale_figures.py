@@ -34,9 +34,11 @@ the package as of right now, in one screen.
 from __future__ import annotations
 
 import argparse
+import re
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from functools import cache
 from pathlib import Path
 
@@ -104,6 +106,64 @@ def newer_than(when: float, paths: list[Path]) -> list[Path]:
 def snapshot_of(module: str) -> Path:
     """Where the session kept the source and harness it planned against."""
     return ROOT / f".mutation-{session_stem(module)}.pristine"
+
+
+#: A test file named in a session's recorded command. The command is one
+#: string — the interpreter, `mutant_tests.py`, its flags, then pytest's
+#: — and the test files are the only `tests/...py` words in it.
+_TEST_FILE_RE = re.compile(r"tests/[\w.\-/]+\.py")
+
+
+def planned_tests(module: str) -> list[str] | None:
+    """The test files the session for `module` was PLANNED against.
+
+    `mutation_session.write_config` writes the whole test command into
+    `.mutation-<stem>.toml`, so the harness of the day is recorded
+    beside the verdicts it produced. None when no config sits beside the
+    session: a run from before it was written, or one driven by hand.
+    """
+    config = ROOT / f".mutation-{session_stem(module)}.toml"
+    if not config.is_file():
+        return None
+    with config.open("rb") as fh:
+        command = tomllib.load(fh).get("cosmic-ray", {}).get(
+            "test-command", "")
+    return sorted(set(_TEST_FILE_RE.findall(command.replace("\\", "/"))))
+
+
+def drifted(module: str, tests: list[str]) -> tuple[list[str], list[str]]:
+    """``(added, dropped)``: how the harness `tests` names TODAY differs
+    from the one the session was planned against. Two empty lists when
+    they agree, or when there is no config to read.
+
+    The two directions are different findings, and only the first is
+    safe:
+
+    * ADDED — the map names tests the run never used. An added test can
+      only KILL, so every figure the run produced is an upper bound and
+      a survivor on the list may already be dead.
+    * DROPPED — the map no longer names a test the run used. The figure
+      was measured against a harness this module no longer has, so a
+      replay or a `kill_check` run today asks a different question than
+      the session did, and a claim verified now is not the claim the
+      session's survivor list was drawn against.
+
+    Nothing reported this before. `state` compares TIMES — the module
+    and the named tests against the snapshot — so a harness that gained
+    a file, or swapped one for a renamed copy, looks exactly like a
+    harness that did not move: the files it compares are the ones it is
+    told to compare. Worked example, and how this was noticed: word.py's
+    session was planned against seven test files, and the map named
+    fifteen by the time the round was mined — `test_equations.py`
+    renamed to `test_equations_typography.py`, and eight files added —
+    all of it invisible, and found only because the round happened to
+    read the toml (2026-09-18).
+    """
+    planned = planned_tests(module)
+    if planned is None:
+        return [], []
+    now = {t.replace("\\", "/") for t in tests}
+    return sorted(now - set(planned)), sorted(set(planned) - now)
 
 
 def lines_of(path: Path) -> bytes:
@@ -267,6 +327,14 @@ def main() -> int:
             print(f"{module:24s} {got:>18s}  {verdict}")
             continue
         detail = f": {', '.join(moved)}" if moved else ""
+        # In the listing rather than in `--figures`: the figures table is
+        # one screen of numbers and these are names, which is what makes
+        # them worth printing at all.
+        added, dropped = drifted(module, tests)
+        for label, files in (("dropped", dropped), ("added", added)):
+            if files:
+                detail += (f"{';' if detail else ':'} harness {label} "
+                           f"{', '.join(files)}")
         print(f"{module:24s} {verdict}{detail}")
     return worst
 

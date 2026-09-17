@@ -453,3 +453,94 @@ def test_a_snapshot_without_the_MODULE_still_answers_nothing(tmp_path,
      / "thing.py").unlink()
 
     assert sf.moved_by_content("thing.py", ["tests/test_thing.py"]) is None
+
+
+# --- the harness a session was PLANNED with (2026-09-18) -------------------
+#
+# `state` above asks whether the module and the named tests have CHANGED.
+# It cannot see the set of NAMES itself moving: a test added to the map
+# after a run, or one the map has since dropped, leaves every file it
+# compares untouched. The session records the command it was planned
+# with, so the two lists can simply be compared. Three of this repo's 66
+# configured sessions disagree with the map today, one of them in the
+# direction that makes its figure an answer to a different question.
+
+_COMMAND = ("python tools/mutant_tests.py --deadline 30 thing "
+            "src/docxkit/thing.py -- -q -x tests/test_thing.py "
+            "tests/test_other.py")
+_CONFIG = ('[cosmic-ray]\n'
+           'module-path = "src/docxkit/thing.py"\n'
+           f'test-command = "{_COMMAND}"\n')
+
+
+def _planned(tmp_path, monkeypatch, config: str = _CONFIG):
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    if config:
+        (tmp_path / ".mutation-thing.toml").write_text(config,
+                                                       encoding="utf-8")
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    return stale_figures
+
+
+def test_the_PLANNED_harness_is_read_out_of_the_session_config(tmp_path,
+                                                               monkeypatch):
+    """The test files are the only `tests/...py` words in the command —
+    the rest is the interpreter, the wrapper, its deadline and pytest's
+    own flags."""
+    sf = _planned(tmp_path, monkeypatch)
+
+    assert sf.planned_tests("thing.py") == ["tests/test_other.py",
+                                            "tests/test_thing.py"]
+
+
+def test_a_session_with_NO_config_beside_it_plans_nothing(tmp_path,
+                                                          monkeypatch):
+    """Sessions older than the config, and runs driven by hand. Not an
+    error and not a drift: there is nothing to compare against."""
+    sf = _planned(tmp_path, monkeypatch, config="")
+
+    assert sf.planned_tests("thing.py") is None
+    assert sf.drifted("thing.py", ["tests/test_thing.py"]) == ([], [])
+
+
+def test_a_harness_that_GAINED_a_file_is_reported_as_ADDED(tmp_path,
+                                                           monkeypatch):
+    sf = _planned(tmp_path, monkeypatch)
+
+    added, dropped = sf.drifted("thing.py", ["tests/test_thing.py",
+                                             "tests/test_other.py",
+                                             "tests/test_new.py"])
+
+    assert (added, dropped) == (["tests/test_new.py"], [])
+
+
+def test_a_harness_that_LOST_a_file_is_reported_as_DROPPED(tmp_path,
+                                                           monkeypatch):
+    """The direction that matters most: the figure was measured against
+    a test this module's harness no longer names, so a replay today asks
+    a different question than the session answered."""
+    sf = _planned(tmp_path, monkeypatch)
+
+    added, dropped = sf.drifted("thing.py", ["tests/test_thing.py"])
+
+    assert (added, dropped) == ([], ["tests/test_other.py"])
+
+
+def test_a_harness_that_has_not_moved_drifts_in_NEITHER_direction(
+        tmp_path, monkeypatch):
+    sf = _planned(tmp_path, monkeypatch)
+
+    assert sf.drifted("thing.py", ["tests/test_other.py",
+                                   "tests/test_thing.py"]) == ([], [])
+
+
+def test_a_BACKSLASHED_test_path_is_the_SAME_file(tmp_path, monkeypatch):
+    """The map is written with forward slashes and a Windows caller may
+    hand over the other kind; a separator is not a difference between
+    two harnesses."""
+    sf = _planned(tmp_path, monkeypatch)
+    windows = ["tests" + chr(92) + "test_thing.py",
+               "tests" + chr(92) + "test_other.py"]
+
+    assert sf.drifted("thing.py", windows) == ([], [])

@@ -31,6 +31,7 @@ import ast
 import re
 import sqlite3
 import sys
+import textwrap
 import tomllib
 from collections import Counter
 from pathlib import Path
@@ -295,7 +296,7 @@ def staleness(src_path: str) -> list[str]:
         from stale_figures import state  # noqa: PLC0415
     except ImportError:                      # pragma: no cover
         return []
-    module = Path(src_path).name
+    module = harness_key(src_path)
     try:
         how, moved = state(module, harness_for(module))
     except SystemExit:                       # no harness for this module
@@ -306,6 +307,76 @@ def staleness(src_path: str) -> list[str]:
             "  survivors below may already be dead. Re-measure, or let",
             "  kill_check dispose of each one before writing a test.",
             ""]
+
+
+def harness_key(src_path: str) -> str:
+    """How `harness_map` names this module: its path under
+    ``src/docxkit``, so a subpackage half keeps its folder.
+
+    `Path(src_path).name` is what this file read, and it is the same
+    defect `replay_survivors.module_key` exists for: `revision/
+    _gates.py` reduces to `_gates.py`, which is no HARNESS key and no
+    session name, so `staleness` looked for `.mutation-gates.sqlite`,
+    found nothing, read "never measured" and printed no banner at all.
+    Every module in a subpackage was silently exempt from the staleness
+    warning (noticed 2026-09-18, mining `revision/_gates.py`: the run
+    was stale in its tests and the list said nothing).
+    """
+    marker = "src/docxkit/"
+    posix = Path(src_path).as_posix()
+    return posix.split(marker, 1)[1] if marker in posix else Path(
+        src_path).name
+
+
+def harness_drift(src_path: str) -> list[str]:
+    """A banner when the harness has MOVED since the run was planned.
+
+    `staleness` above asks whether the module or its tests have CHANGED.
+    This asks the other question, which nothing asked before: whether
+    the set of test files is still the same set. A session records the
+    command it was planned with, so the two can simply be compared —
+    and they disagree more often than anyone expected, because a test
+    file renamed or added is not a file anything watches.
+
+    Both directions are printed, and they are named rather than counted:
+    a count says something moved without saying what, which is the shape
+    this package has spent a day removing. See
+    :func:`stale_figures.drifted` for what each direction means.
+    """
+    try:
+        from harness_map import harness_for  # noqa: PLC0415
+        from stale_figures import drifted  # noqa: PLC0415
+    except ImportError:                      # pragma: no cover
+        return []
+    module = harness_key(src_path)
+    try:
+        added, dropped = drifted(module, harness_for(module))
+    except SystemExit:                       # no harness for this module
+        return []
+    if not added and not dropped:
+        return []
+    out = ["  HARNESS DRIFT: this run was planned against a different set "
+           "of test",
+           "  files than harness_map names for the module today."]
+    if added:
+        out += _named(
+            ["  ADDED since — an added test can only KILL, so the figure",
+             "  below is an upper bound and a survivor may already be dead:"],
+            added)
+    if dropped:
+        out += _named(
+            ["  DROPPED since — the figure was measured against tests this",
+             "  module no longer has, so a replay or a kill_check run today",
+             "  asks a different question than the session did:"],
+            dropped)
+    return [*out, ""]
+
+
+def _named(head: list[str], files: list[str]) -> list[str]:
+    """A heading as written, then the file names, wrapped and indented."""
+    return head + textwrap.wrap(", ".join(files), width=72,
+                                initial_indent="    ",
+                                subsequent_indent="    ")
 
 
 #: Where the argued equivalences live. Beside the tooling that reads
@@ -627,6 +698,8 @@ def main() -> int:
               f".mutation-{session_stem(src_path)}.sqlite")
         return 2
     for banner in staleness(src_path):
+        print(banner)
+    for banner in harness_drift(src_path):
         print(banner)
     src_path, note = pristine_source(db_path, src_path)
     counts = classify(db_path, src_path)
