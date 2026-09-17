@@ -235,7 +235,10 @@ they do.
   inverse — the link goes, the words stay — and it reads BOTH forms, which
   matters more than it sounds: measured over 120 manuscripts, **7,317 of
   9,728 internal links are Word FIELD form**, and `crossrefs.unlink`
-  refuses those rather than remove half of one.
+  refuses those rather than remove half of one. When the words AROUND a
+  link change and the link stays, `edit.replace_keeping_links(para, old,
+  new)` does the split the refusal asks for: `new` must carry every label
+  in `old`, in order, and the pieces between them are edited by offset.
 - **Word renumbers footnote ids on save**, so an author's paragraph XML
   cannot be spliced raw — `ingest` remaps ids by definition text.
 - **A self-closing `<w:ins/>` is a property-level mark** (paragraph mark,

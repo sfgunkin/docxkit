@@ -14,6 +14,7 @@ from typing import NamedTuple
 from ._xml import (
     _FIELD_RE,
     _HYPERLINK_EL_RE,
+    _T_EMPTY_RE,
     HYPERLINK_ANY_RE,
     INSTR_ANCHOR_RE,
     INSTR_RE,
@@ -45,16 +46,22 @@ __all__ = [
     "T_RUN_RE",
     "AnchorError",
     "editable_text",
+    "field_spans",
     "find_normalized",
     "insert_in_para",
+    "internal_links",
     "is_field_run",
     "italicize",
+    "own_properties",
     "preserve_space",
     "relabel_link",
     "remove_link",
     "remove_links",
     "rep",
     "replace_in_para",
+    "replace_keeping_links",
+    "rstrip_para",
+    "run_spans",
     "set_run_properties",
     "set_run_text",
     "subscript",
@@ -369,7 +376,8 @@ def superscript(para_xml: str, text: str, *, normalize: bool = False,
 
 
 def _locate_anchor(para_xml: str, visible: str, old: str, *,
-                   normalize: bool) -> tuple[int, int]:
+                   normalize: bool, who: str = "replace_in_para",
+                   ) -> tuple[int, int]:
     """Where `old` sits in the paragraph's EDITABLE text.
 
     Raises rather than returning a sentinel, and names the confusing
@@ -380,11 +388,11 @@ def _locate_anchor(para_xml: str, visible: str, old: str, *,
     def missing(reason: str) -> AnchorError:
         if old in visible_text(para_xml):
             return AnchorError(
-                f"replace_in_para: {old[:60]!r} {reason} — it IS in the "
+                f"{who}: {old[:60]!r} {reason} — it IS in the "
                 f"paragraph a reader sees, but it spans an equation "
                 f"(m:oMath), which this pass rewrites nothing inside. "
                 f"Anchor on prose either side of the maths.")
-        return AnchorError(f"replace_in_para: {old[:60]!r} {reason}")
+        return AnchorError(f"{who}: {old[:60]!r} {reason}")
 
     if normalize:
         hits = find_normalized(visible, old)
@@ -392,13 +400,13 @@ def _locate_anchor(para_xml: str, visible: str, old: str, *,
             raise missing("not in paragraph")
         if len(hits) > 1:
             raise AnchorError(
-                f"replace_in_para: {old[:60]!r} occurs twice")
+                f"{who}: {old[:60]!r} occurs twice")
         return hits[0]
     at = visible.find(old)
     if at < 0:
         raise missing("not in paragraph")
     if visible.find(old, at + 1) >= 0:
-        raise AnchorError(f"replace_in_para: {old[:60]!r} occurs twice")
+        raise AnchorError(f"{who}: {old[:60]!r} occurs twice")
     return at, at + len(old)
 
 
@@ -437,7 +445,8 @@ def _label_end(idx: int, runs: list[re.Match[str]],
 
 def _refuse_crossed_note(runs: list[re.Match[str]],
                          spans: list[tuple[int, int]],
-                         match: tuple[int, int], new: str) -> None:
+                         match: tuple[int, int], new: str,
+                         who: str = "replace_in_para") -> None:
     """Refuse a match that CROSSES a footnote/endnote/comment reference.
 
     A note reference is a run of ZERO visible width, so overlapping the
@@ -453,7 +462,7 @@ def _refuse_crossed_note(runs: list[re.Match[str]],
     for i in touched:
         if (note := _note_in(runs[i].group(0))) is not None:
             raise AnchorError(
-                f"replace_in_para: the match crosses {note} — the "
+                f"{who}: the match crosses {note} — the "
                 f"replacement goes into the run holding the start of "
                 f"the match and the text after the marker is emptied, "
                 f"so the marker MOVES to the end of {new[:30]!r}. "
@@ -537,12 +546,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
     straight quotes, dash variants) — see :func:`find_normalized`. `new` is
     written verbatim either way.
     """
-    runs, spans, cursor = [], [], 0
-    for r in RUN_RE.finditer(para_xml):
-        body = visible_text(r.group(0))
-        runs.append(r)
-        spans.append((cursor, cursor + len(body)))
-        cursor += len(body)
+    runs, spans = _run_walk(para_xml)
 
     # `editable_text`, NOT `visible_text`: this pass rewrites w:r runs,
     # and an equation's text is in an m:r inside a sibling m:oMath. The
@@ -552,7 +556,46 @@ def replace_in_para(para_xml: str, old: str, new: str,
     visible = editable_text(para_xml)
 
     at, end = _locate_anchor(para_xml, visible, old, normalize=normalize)
+    return _rewrite_span(para_xml, runs, spans, (at, end), new,
+                         allow_hyperlink=allow_hyperlink,
+                         grow_link_label=grow_link_label,
+                         allow_notes=allow_notes)
 
+
+def _run_walk(para_xml: str) -> tuple[list[re.Match[str]],
+                                      list[tuple[int, int]]]:
+    """Each ``w:r`` and its span in EDITABLE text — the runs alone.
+
+    Not :func:`run_spans`, whose cursor also crosses the maths between
+    runs: these offsets index :func:`editable_text`, the string
+    `replace_in_para` matches in, and a span that counted an equation
+    would write one glyph early per maths character before it.
+    """
+    runs: list[re.Match[str]] = []
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for r in RUN_RE.finditer(para_xml):
+        body = visible_text(r.group(0))
+        runs.append(r)
+        spans.append((cursor, cursor + len(body)))
+        cursor += len(body)
+    return runs, spans
+
+
+def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
+                  spans: list[tuple[int, int]], match: tuple[int, int],
+                  new: str, *, allow_hyperlink: bool, grow_link_label: bool,
+                  allow_notes: bool, who: str = "replace_in_para") -> str:
+    """Write `new` over the EDITABLE span `match`: the write of
+    :func:`replace_in_para`, addressed by offset rather than by text.
+
+    Split out so that a caller which already KNOWS where the words are —
+    :func:`replace_keeping_links`, editing the pieces between labels —
+    need not find them again by a text search, which cannot tell two
+    equal pieces of one paragraph apart. Every guard is the same one:
+    this is where they live.
+    """
+    at, end = match
     link_spans = [(m.start(), m.end())
                   for m in HYPERLINK_ANY_RE.finditer(para_xml)]
 
@@ -564,7 +607,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
         return _label_end(idx, runs, spans, link_spans)
 
     if not allow_notes:
-        _refuse_crossed_note(runs, spans, (at, end), new)
+        _refuse_crossed_note(runs, spans, (at, end), new, who)
 
     edits, first = [], True
     for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
@@ -576,7 +619,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
         if first:
             if not allow_hyperlink and labels_a_link(run):
                 raise AnchorError(
-                    "replace_in_para: the match starts inside a hyperlink "
+                    f"{who}: the match starts inside a hyperlink "
                     "run -- the replacement would bleed into the link. "
                     "Anchor on plain text outside the link, or pass "
                     "allow_hyperlink=True if the replacement lies wholly "
@@ -590,7 +633,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
             if (labels_a_link(run) and not grow_link_label
                     and end > label_end(idx)):
                 raise AnchorError(
-                    "replace_in_para: the match starts in a hyperlink's "
+                    f"{who}: the match starts in a hyperlink's "
                     f"label and ends outside it -- writing {new[:40]!r} "
                     "into the label would make the link swallow the text "
                     "beyond it, which no text diff and no anchor check "
@@ -603,7 +646,7 @@ def replace_in_para(para_xml: str, old: str, new: str,
         else:
             if not allow_hyperlink and labels_a_link(run):
                 raise AnchorError(
-                    "replace_in_para: the match spans a hyperlink -- "
+                    f"{who}: the match spans a hyperlink -- "
                     f"emptying {visible_text(run_xml)[:30]!r} would leave "
                     "the link with no label, which no text diff shows and "
                     "no link check catches. Replace on each side of the "
@@ -616,6 +659,251 @@ def replace_in_para(para_xml: str, old: str, new: str,
     for run, replacement in reversed(edits):
         out = out[:run.start()] + replacement + out[run.end():]
     return out
+
+
+def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
+                    spans: list[tuple[int, int]],
+                    ) -> list[tuple[int, int, int, int]]:
+    """``(start, end, first run, last run)`` of every LABEL, in order.
+
+    A label is the text a link or a field SHOWS: the visible runs inside
+    one ``w:hyperlink`` element, the visible runs of one fldChar field
+    (its cached result — the outermost field, when fields nest), or a
+    run styled ``Hyperlink`` that is in neither, together with its
+    styled neighbours. Runs of ONE link merge into one label; two links
+    side by side stay two, so words can still go between them.
+
+    Wider than `replace_in_para`'s refusal, deliberately: that one asks
+    for the Hyperlink style or an element, and an unstyled result of
+    Word's own ``REF _Ref… \\h`` is neither. A field's result is what
+    Word regenerates on update, so words written into it were never the
+    author's to keep — a label, for the purpose of editing around one.
+    Offsets are EDITABLE, the spans `runs` / `spans` carry.
+    """
+    elements = [(m.start(), m.end())
+                for m in HYPERLINK_ANY_RE.finditer(para_xml)]
+    # outermost first: `field_spans` sorts by (start, -end), so the first
+    # holding span of a nested pair is the parent
+    fields = [(lo, hi) for lo, hi, _ in field_spans(para_xml)]
+    out: list[tuple[int, int, int, int]] = []
+    last_key: object = None
+    for idx, (run, (start, stop)) in enumerate(zip(runs, spans, strict=True)):
+        if start == stop:
+            continue                # zero width: never splits a label
+        key: object
+        if (element := span_holding(run.start(), elements)) is not None:
+            key = ("element", element)
+        elif (fld := span_holding(run.start(), fields)) is not None:
+            key = ("field", fld)
+        elif _HYPERLINK_RUN in run.group(0):
+            key = ("styled",)
+        else:
+            last_key = None
+            continue
+        if out and key == last_key and out[-1][1] == start:
+            lo, _hi, first, _last = out[-1]
+            out[-1] = (lo, stop, first, idx)
+        else:
+            out.append((start, stop, idx, idx))
+        last_key = key
+    return out
+
+
+def _live_rpr(run_xml: str) -> str:
+    """A run's properties as they are NOW, as an element — or ``""``."""
+    found = own_properties(run_xml, "rPr")
+    if found is None:
+        return ""
+    live = live_properties(found[2])
+    return f"<w:rPr>{live}</w:rPr>" if live else ""
+
+
+def replace_keeping_links(para_xml: str, old: str, new: str, *,
+                          normalize: bool = False,
+                          allow_notes: bool = False) -> str:
+    """Replace `old` by `new` in one paragraph, editing AROUND every link.
+
+    What :func:`replace_in_para`'s refusal asks for — "replace on each
+    side of the link separately" — done for the caller. `old` is split
+    at every link label inside it, `new` must carry each of those labels
+    in the same order, and each piece between two labels is edited on
+    its own. The labels, their ``w:hyperlink`` elements or fields, and
+    the bookmarks round them are never written to. DSI's UNFPA batch
+    (2026-09-16) replaced two paragraphs holding linked citations this
+    way, in ninety hand-written lines.
+
+    A label here is what a link or a FIELD shows — see
+    :func:`_label_spans_in` for why that is wider than the Hyperlink
+    style `replace_in_para` asks about. An `old` that crosses no label
+    is handed to `replace_in_para` itself, so the answer is identical.
+
+    **Pieces are edited by OFFSET, right to left.** The version this
+    replaces found each piece again by a text search and refused a bare
+    ``").`` because the paragraph held another. A changed piece is
+    written the way `replace_in_para` writes — all of it into the run
+    holding its start, the rest of its runs emptied — so it keeps that
+    run's face. An EMPTY piece (`old` opens or closes on a label, or two
+    labels touch) has no run to write into: the new words go in as a
+    run of their own through :func:`insert_in_para`, OUTSIDE the link and
+    its bookmark, carrying the live properties of the nearest plain run
+    (a bare run would drop the direct formatting a manuscript sets on
+    every run).
+
+    **Which occurrence of a label in `new` is the link** is decided by
+    position: a label whose text occurs k times in `old` and is the j-th
+    of them must occur k times in `new`, and becomes the j-th there. A
+    different count is AMBIGUOUS — `new` mentioning "Sen 1999" twice
+    where `old` did once cannot say which one is the link — and refused
+    rather than guessed. Refused too, with :class:`AnchorError`:
+
+    * `old` is not in the paragraph, or is there more than once;
+    * a label STRADDLES an edge of `old` (half of it cannot be kept);
+    * `new` drops a label, or carries them in a different order;
+    * new words for an empty piece would land where an EQUATION sits
+      between two labels, or straight after a label an equation follows;
+    * a note, endnote or comment REFERENCE is crossed by a rewritten
+      piece — the same refusal, for the same reason, as
+      `replace_in_para`'s — or sits exactly where an empty piece's new
+      words go, where "Sen 1999¹ and others" and "Sen 1999 and others¹"
+      are both readings of one `new`. ``allow_notes=True`` accepts both:
+      a crossed marker moves to the end of the piece, and inserted words
+      go after a marker at their offset.
+
+    `normalize` matches `old`, and the labels inside `new`, through
+    Word's glyph substitutions (:func:`find_normalized`); `new` is
+    written verbatim, and a label keeps the glyphs the document has.
+    """
+    runs, spans = _run_walk(para_xml)
+    visible = editable_text(para_xml)
+    at, end = _locate_anchor(para_xml, visible, old, normalize=normalize,
+                             who="replace_keeping_links")
+    labels = [lab for lab in _label_spans_in(para_xml, runs, spans)
+              if overlaps(lab[:2], (at, end))]
+    if not labels:
+        return replace_in_para(para_xml, old, new, allow_notes=allow_notes,
+                               normalize=normalize)
+
+    for lo, hi, _first, _last in labels:
+        if lo < at or hi > end:
+            raise AnchorError(
+                f"replace_keeping_links: the link label "
+                f"{visible[lo:hi]!r} straddles the "
+                f"{'start' if lo < at else 'end'} of {old[:60]!r} — half "
+                f"a label cannot be kept whole by editing around it. "
+                f"Widen `old` to take the whole label, or narrow it to "
+                f"leave the label out.")
+
+    old_text = visible[at:end]
+    placed: list[tuple[int, int]] = []          # each label's span in `new`
+    after = 0
+    for lo, hi, _first, _last in labels:
+        label = visible[lo:hi]
+        in_old = [s for s, _e in _hits(old_text, label, normalize)]
+        in_new = _hits(new, label, normalize)
+        if not in_new:
+            raise AnchorError(
+                f"replace_keeping_links: the replacement drops the link "
+                f"label {label!r}. Keep it in `new`, or remove the link "
+                f"first (remove_link) if it is meant to go.")
+        if len(in_new) != len(in_old):
+            raise AnchorError(
+                f"replace_keeping_links: {label!r} is a link label, and it "
+                f"occurs {len(in_old)} time(s) in `old` and {len(in_new)} "
+                f"in `new` — which of them is the link is ambiguous. Make "
+                f"the counts agree, or split the call.")
+        where = in_new[in_old.index(lo - at)]
+        if where[0] < after:
+            raise AnchorError(
+                f"replace_keeping_links: the replacement carries the link "
+                f"labels in a different order ({label!r} comes earlier) — "
+                f"a link cannot be moved by editing around it. Keep the "
+                f"order, or move the link in Word.")
+        placed.append(where)
+        after = where[1]
+
+    # the pieces: before the first label, between labels, after the last
+    bounds = [at] + [x for lab in labels for x in lab[:2]] + [end]
+    cuts = [0] + [x for span in placed for x in span] + [len(new)]
+    pieces = [((bounds[2 * i], bounds[2 * i + 1]),
+               new[cuts[2 * i]:cuts[2 * i + 1]])
+              for i in range(len(labels) + 1)]
+
+    out = para_xml
+    for (lo, hi), words in reversed(pieces):
+        if visible[lo:hi] == words:
+            continue
+        runs, spans = _run_walk(out)
+        if lo < hi:
+            out = _rewrite_span(out, runs, spans, (lo, hi), words,
+                                allow_hyperlink=False, grow_link_label=False,
+                                allow_notes=allow_notes,
+                                who="replace_keeping_links")
+        else:
+            out = _insert_between_labels(out, runs, spans, lo, words,
+                                         allow_notes=allow_notes)
+    return out
+
+
+def _insert_between_labels(para_xml: str, runs: list[re.Match[str]],
+                           spans: list[tuple[int, int]], at: int, words: str,
+                           *, allow_notes: bool) -> str:
+    """New words for an EMPTY piece at editable offset `at`, as a run.
+
+    The piece is empty because a label begins or ends there, so the
+    offset is converted to the reader's through that LABEL's own runs —
+    the start of the label after it, the end of the label before it.
+    With both, and an equation between them, the two answers differ and
+    the words have no one place to go.
+    """
+    labels = _label_spans_in(para_xml, runs, spans)
+    left = right = None
+    for lo, hi, first, last in labels:
+        if hi == at:
+            left = last
+        if lo == at:
+            right = first
+    _vruns, vspans, cursor = run_spans(para_xml)
+    places = ({vspans[left][1]} if left is not None else set()) \
+        | ({vspans[right][0]} if right is not None else set())
+    if len(places) != 1:
+        raise AnchorError(
+            f"replace_keeping_links: {words[:40]!r} would go between two "
+            f"link labels with an equation between them — before the "
+            f"maths or after it is not something the text can say. Edit "
+            f"that gap by hand, or anchor on one label.")
+    (place,) = places
+    if place != cursor and not any(lo == place for lo, _hi in vspans):
+        # the reader's offset has no run starting at it: an equation (or
+        # other between-run content) follows the label directly, and
+        # `insert_in_para` has no answer there but a bare ValueError
+        raise AnchorError(
+            f"replace_keeping_links: {words[:40]!r} would go straight "
+            f"after a link label that an equation follows, where no run "
+            f"starts to insert beside. Put the words after the maths in "
+            f"a separate edit, or insert a run by hand.")
+    if not allow_notes:
+        for run, (lo, hi) in zip(runs, spans, strict=True):
+            if lo == hi == at and (note := _note_in(run.group(0))):
+                raise AnchorError(
+                    f"replace_keeping_links: {note} sits exactly where "
+                    f"{words[:40]!r} would go, and whether the words go "
+                    f"before the marker or after it is not something the "
+                    f"text can say. Anchor so the marker is outside `old`, "
+                    f"or pass allow_notes=True (the words then go after "
+                    f"it).")
+    # the face the words take: the nearest PLAIN run, before them if
+    # there is one — prose the sentence already has, never a label
+    in_label = {i for _lo, _hi, first, last in labels
+                for i in range(first, last + 1)}
+    plain = [i for i, (lo, hi) in enumerate(spans)
+             if lo < hi and i not in in_label]
+    before = [i for i in plain if spans[i][1] <= at]
+    source = before[-1] if before else (plain[0] if plain else None)
+    rpr = _live_rpr(runs[source].group(0)) if source is not None else ""
+    space = ' xml:space="preserve"' if words != words.strip() else ""
+    return insert_in_para(
+        para_xml, place,
+        f"<w:r>{rpr}<w:t{space}>{escape(words)}</w:t></w:r>")
 
 
 class _Link(NamedTuple):
@@ -1058,6 +1346,74 @@ def is_field_run(run_xml: str) -> bool:
     """
     return (_FIELD_MACHINERY_RE.search(run_xml) is not None
             and not visible_text(run_xml).strip())
+
+
+#: What may sit between a paragraph's last run and its close without
+#: being content: the ends of ranges, which render nothing. Anything
+#: else there — an equation, the close of a link, a tracked insertion or
+#: a content control — means the last run is not the paragraph's end.
+_EMPTY_MARKER_RE = re.compile(
+    r"<w:(?:bookmarkStart|bookmarkEnd|commentRangeStart|commentRangeEnd"
+    r"|proofErr|permStart|permEnd)\b[^>]*/>")
+_RUN_CLOSE = "</w:r>"
+
+
+def _plain_run(run_xml: str) -> bool:
+    """A run holding nothing but properties and text, and not a label.
+
+    Everything else a run can hold renders or means something — a tab,
+    a break, a drawing, a symbol, a note or comment reference, a field's
+    machinery, deleted text — and a trim that took the run would take it.
+    """
+    if _HYPERLINK_RUN in run_xml:
+        return False
+    body_start = run_xml.index(">") + 1
+    body_end = len(run_xml) - len(_RUN_CLOSE)
+    found = own_properties(run_xml, "rPr")
+    body = (run_xml[body_start:body_end] if found is None
+            else run_xml[found[1]:body_end])
+    return not _T_EMPTY_RE.sub("", T_RUN_RE.sub("", body)).strip(XML_WS)
+
+
+def rstrip_para(para_xml: str) -> str:
+    """The paragraph with its TRAILING whitespace gone.
+
+    Whole runs of blanks at the end are removed — empty runs too, which
+    hide nothing — and the last run with words in it loses its trailing
+    blanks. Only real XML whitespace (:data:`XML_WS`), as
+    :func:`preserve_space` counts it: a no-break space is a glyph
+    somebody typed.
+
+    **Never past anything that is not plain prose.** The walk stops at a
+    run holding more than properties and text (a note or comment
+    reference, a tab, a drawing, a field's machinery), at a link label,
+    and at anything between the last run and the paragraph's close that
+    is not the end of a range (an equation, the close of a
+    ``w:hyperlink``, a tracked insertion): the space before a footnote
+    marker is the author's, a label's own trailing space belongs to the
+    link, and trimming inside a ``w:ins`` edits a revision in place.
+
+    DSI's UNFPA batch (2026-09-16) needed exactly this for ¶43 and wrote
+    it by hand; `replace_in_para` cannot, since a trailing space run is
+    not addressable by a unique anchor.
+    """
+    out = para_xml
+    while runs := list(RUN_RE.finditer(out)):
+        last = runs[-1]
+        rest = _EMPTY_MARKER_RE.sub("", out[last.end():])
+        if rest.replace("</w:p>", "", 1).strip(XML_WS) \
+                or not _plain_run(last.group(0)):
+            break
+        text = visible_text(last.group(0))
+        kept = text.rstrip(XML_WS)
+        if not kept:
+            out = out[:last.start()] + out[last.end():]
+            continue
+        if kept != text:
+            out = (out[:last.start()] + set_run_text(last.group(0), kept)
+                   + out[last.end():])
+        break
+    return out
 
 
 def set_run_properties(para_xml: str, props: Mapping[str, str], *,
