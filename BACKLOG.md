@@ -46,6 +46,56 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S1 — a cell merge is counted as pending and cannot be cleared by any toolkit path
+
+<!-- status: open -->
+
+Found 2026-09-18 by a parametrized-list audit — the follow-on from the
+`_compare_render` round, which had found fourteen survivors with one cause:
+a list of layers cannot notice the layer it does not name.
+
+`tests/test_revision_state.py`'s `KINDS` holds eight documents.
+`revisions._REVISION_NAMES` holds fourteen. The three guards in that file
+parametrize over `KINDS`, so the six TABLE kinds are never asked the
+property those guards exist to enforce. Five of the six behave when probed
+(`cellIns`, `cellDel`, `tblPrChange`, `tblGridChange`, `trPrChange`: counted,
+and accept or reject leaves nothing behind). `cellMerge` does not.
+
+**`w:cellMerge` is counted as pending, and survives BOTH accept and
+reject.** Verified in the source: it is a member of `_REVISION_NAMES`, so
+`revision_elements` counts it, and it is deliberately absent from
+`_CELL_FLAG`, so neither verb can apply it.
+
+The exclusion itself is right, and `revisions.py:463` argues it well — a
+merge or a split is not an appearance or a disappearance, applying one means
+recomputing `gridSpan` and `vMerge` across the row, and no manuscript in the
+corpus carries one to measure against. Nothing here proposes implementing
+it.
+
+The defect is the COLLISION between that exclusion and the counting
+contract. A document whose only tracked change is a cell merge reads as a
+proposal permanently: `state` says pending, `revision/_baseline.py` refuses
+to promote while anything is pending, and no path through this toolkit can
+clear it. `accept` reports success and changes nothing — a silent wrong
+answer, which is what makes this S1 rather than an ergonomics note. The
+author's only way out is to open the file in Word, and the refusal does not
+say so.
+
+The shape of the fix, which is a judgement about the protocol rather than a
+test gap:
+
+* `state` reports a kind this toolkit cannot apply SEPARATELY from the
+  pending count — pending, and not this tool's to clear.
+* the `_baseline` refusal NAMES that kind and says Word is the way out,
+  instead of repeating a count the author cannot act on.
+* `KINDS` then carries all fourteen, with `cellMerge` declared as the
+  documented exception, so the guard covers the set instead of a subset of
+  it — which is the whole point of the audit that found this.
+
+Probe: `scratchpad\agents\compare_read\revision_kinds_probe.py`. The audit
+scripts are `list_audit.py` and `unnamed_members.py` beside it; they run over
+the whole package in about two seconds and are worth keeping.
+
 ### S1 — eight defects in edit.py's link and insertion readers
 
 <!-- status: open -->
