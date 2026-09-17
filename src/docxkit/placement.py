@@ -472,7 +472,7 @@ def _caption_of(block: list[etree._Element]) -> str:
     """The block may open with the markers Word hoisted in front of it;
     the caption is the first paragraph in it."""
     for el in block:
-        if el.tag == W + "p":
+        if el.tag == W + "p":  # the caption, past any leading marker
             return _text(el).strip()[:70]
     return ""
 
@@ -580,7 +580,7 @@ def keep_together(block: list[etree._Element], *, on: bool = True) -> None:
     for el in block:
         if el.tag == W + "p":
             _flag(_ppr(el), "keepNext", on)
-    for tbl in (e for e in block if e.tag == W + "tbl"):
+    for tbl in (e for e in block if e.tag == W + "tbl"):  # bind every row
         rows = tbl.findall(W + "tr")
         for n, row in enumerate(rows):
             trpr = row.find(W + "trPr")
@@ -760,7 +760,7 @@ def own_page(block: list[etree._Element]) -> None:
         if el.tag == W + "p":
             _flag(_ppr(el), "pageBreakBefore", True)
             break
-    for tbl in (e for e in block if e.tag == W + "tbl"):
+    for tbl in (e for e in block if e.tag == W + "tbl"):  # its header repeats
         rows = tbl.findall(W + "tr")
         if not rows:
             continue
@@ -860,7 +860,7 @@ def audit(parts: dict[str, bytes], *,
         text = _caption_of(block)
         tbl = next((e for e in block if e.tag == W + "tbl"), None)
         if tbl is None:
-            continue
+            continue  # no table, so no rule to read back
         head = next((e for e in block if e.tag == W + "p"), None)
         if head is not None and not _has(head.find(W + "pPr"), "keepNext"):
             report.findings.append(FitFinding(
