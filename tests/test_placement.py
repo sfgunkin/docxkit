@@ -510,7 +510,7 @@ def test_the_document_is_written_back_with_the_declaration_word_wants():
         "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"), head
 
 
-# Four spellings in this module are equivalent by construction, each
+# Three spellings in this module are equivalent by construction, each
 # confirmed with `tools/kill_check.py` (expect_kill=False) rather than
 # assumed, and each looks like a gap:
 #
@@ -519,11 +519,6 @@ def test_the_document_is_written_back_with_the_declaration_word_wants():
 #   test above still earns its place: what it pins is that a caption
 #   mid-sentence is not a block, which is the reason the anchoring
 #   matters however it is written.
-# * `_in_order`'s `> rank` as `>=`. `_PPR_RANK` gives every known tag a
-#   distinct index and the function returns early when the tag is
-#   already there, so equal ranks mean the same tag — and two UNKNOWN
-#   tags share the fallback rank, where the order between them is not
-#   something CT_PPr has an opinion about.
 # * the fallback rank itself, `len(PPR_ORDER)` as `0`. Every tag this
 #   module writes — keepNext, spacing, pageBreakBefore — is in the
 #   table, so nothing reaches it.
@@ -531,6 +526,12 @@ def test_the_document_is_written_back_with_the_declaration_word_wants():
 #   whenever `standalone` is set, which it is on the line above; the
 #   flag is the belt to that brace, and the test pins the prolog Word
 #   actually needs.
+#
+# `_in_order`'s `> rank` as `>=` was listed as a fourth, on the argument
+# that equal ranks mean the same tag. They mean the same LOCAL name, and
+# the early return looks the tag up in W's namespace, so a namesake in
+# another namespace ties:
+# `test_a_property_goes_AFTER_a_sibling_it_ranks_WITH` holds that one.
 
 
 def test_a_custom_caption_pattern_overrides_the_default():
@@ -2553,26 +2554,6 @@ def test_the_last_sheet_is_the_one_holding_the_rows_LAST_character(
     assert located(body, sheets) == want
 
 
-def test_a_caption_at_the_very_TOP_of_the_first_sheet_is_found():
-    """`while at >= 0` and `cursor = 0`. Offset 0 of the flowed text is
-    a real place for a caption: a document that opens with its table, or
-    a render that starts at the table's sheet. Read as `at > 0`, or with
-    the first search starting at 1, that caption is on no sheet, and the
-    straddle it makes is not reported.
-
-    Last in the file, deliberately: three readings of `at + len(caption)`
-    multiply by a zero offset and search the same place forever. The
-    tests above kill those first, and `-x` stops there."""
-    doc = parts(P("Table 1. Heading")
-                + WIDE(("Capability", "Source"), ("Health", "Nussbaum")))
-
-    def render(_parts):
-        return ["Table 1. Heading Capability Source", "Health Nussbaum"]
-
-    (straddle,) = rendered(placement.audit(doc, render=render))
-    assert straddle.detail == "it starts on sheet 1 and ends on sheet 2"
-
-
 # ------------------------------------------ what a move must never JOIN --
 #
 # Three defects out of one triage of this module, 2026-09-16. The first is
@@ -2849,3 +2830,299 @@ def test_own_page_writes_tblHeader_BEFORE_the_rows_revision_mark(mark):
     head = tbl_of(body).findall(NS + "tr")[0].find(NS + "trPr")
     assert head is not None
     assert [etree.QName(c).localname for c in head] == ["tblHeader", mark]
+
+
+# ------------------------------------------- where a block's walks END --
+#
+# Survivors of the 2026-09-17 sweep, in the code 48f17fd wrote: every
+# fixture above that reached these branches held a marker the block
+# closes, or a table on both sides, or a single-digit id.
+
+
+@pytest.mark.parametrize(("marker", "name"), [
+    ('<w:bookmarkStart w:id="8" w:name="next"/>', "bookmarkStart"),
+    ('<w:bookmarkStart w:id="3" w:name="copied"/>', "bookmarkStart"),
+    ("<w:bookmarkEnd/>", "bookmarkEnd"),
+], ids=["a START", "a START repeating the block's id", "an END with no id"])
+def test_a_marker_under_the_table_that_closes_NOTHING_inside_ends_the_block(
+        marker, name):
+    """`_closes_inside` answers False, and the walk under the table stops,
+    for the three markers the paired-`bookmarkEnd` tests never reach. The
+    block's own `bookmarkEnd 3` stands in front of each, so the walk is
+    past the table when it meets them.
+
+    A START opens something for what follows, whatever its id. Read with
+    `and` for `or`, the tag test lets a start through to the id match,
+    and a start REPEATING an id the block opened — duplicated ids are
+    what a paste or a merge leaves — matches as though it closed it;
+    with `return True` for `return False`, any start is the block's. An
+    END with no `w:id` closes nothing that can be found. Taken along,
+    each carries the note under it up the document with the table."""
+    out, _ = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + '<w:bookmarkStart w:id="3" w:name="tbl1"/>'
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + '<w:bookmarkEnd w:id="3"/>'
+        + marker
+        + P("Примечание. Что-то.")))
+
+    assert names_of(out) == ["p", "bookmarkStart", "p", "tbl", "bookmarkEnd",
+                             "p", name, "p"]
+
+
+#: a caption paragraph carrying a bookmark of its own, `70`
+BOOKMARKED_CAPTION = ('<w:p><w:bookmarkStart w:id="70" w:name="cap"/>'
+                      "<w:r><w:t>Таблица 1. Заголовок</w:t></w:r>"
+                      '<w:bookmarkEnd w:id="70"/></w:p>')
+
+
+def test_an_end_marker_is_the_blocks_own_only_on_an_EQUAL_id():
+    """`node.get(W + "id") == ident`, on the fixture where every other
+    comparison answers differently. The block opens `12` (hoisted) and
+    `70` (inside its caption); under its table stand its own
+    `bookmarkEnd 12`, then `bookmarkEnd 40`, which closes a range opened
+    above the mention.
+
+    `<=` matches `40` against `12`, and `>=` against `70`, so the outer
+    end and the note under it travel with the table. `is` loses the
+    block's OWN end, because an id of two characters is a new string on
+    every `get`. One character is not — CPython keeps those — which is
+    how `is` passed the paired test above, whose id is `7`."""
+    out, _ = placement.place(parts(
+        '<w:bookmarkStart w:id="40" w:name="section"/>'
+        + P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + '<w:bookmarkStart w:id="12" w:name="tbl1"/>'
+        + BOOKMARKED_CAPTION + TBL("шапка")
+        + '<w:bookmarkEnd w:id="12"/>'
+        + '<w:bookmarkEnd w:id="40"/>'
+        + P("Примечание. Что-то.")))
+
+    assert names_of(out) == ["bookmarkStart", "p", "bookmarkStart", "p",
+                             "tbl", "bookmarkEnd", "p", "bookmarkEnd", "p"]
+
+
+#: a picture in custom XML markup: content, and not one `w:t` of text
+WRAPPED = ('<w:customXml w:element="chart"><w:p><w:r><w:drawing/></w:r>'
+           "</w:p></w:customXml>")
+
+
+def test_CUSTOM_XML_between_a_caption_and_a_table_is_not_a_blank_line():
+    """The walk from a caption to its table steps over markers and over a
+    `w:p` with no text — `kids[j].tag == W + "p"`. A wrapper holding no
+    `w:t` is not a blank paragraph: this `w:customXml` holds a picture.
+    Read as `<=`, every tag sorting below `w:p` qualifies, `customXml`
+    among them, and the caption takes the table beyond the picture as
+    its own. `exhibits` stops at a wrapper too."""
+    doc = parts(P("Как показано в таблице 1, всё сходится.")
+                + P("Совершенно другой абзац.")
+                + P("Таблица 1. Заголовок") + WRAPPED + TBL("шапка"))
+
+    out, rep = placement.place(doc)
+
+    assert rep.placements == []
+    assert placement.audit(doc).tables == 0
+    assert names_of(out) == ["p", "p", "p", "customXml", "tbl"]
+
+
+def test_CUSTOM_XML_under_a_table_is_not_absorbed_as_a_blank_line():
+    """The same element on the other side. The note walk ends at what is
+    not a paragraph — `under.tag != W + "p"` — and read as `>`, a tag
+    sorting below `w:p` falls through to the text test, where no text
+    reads as a blank line: the picture travels with the table, away
+    from the paragraph it stands under."""
+    out, _ = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + WRAPPED + P("Следующий абзац.")))
+
+    assert names_of(out) == ["p", "p", "tbl", "p", "customXml", "p"]
+
+
+def test_a_caption_over_a_FOREIGN_element_and_no_table_is_not_a_block():
+    """`kids[j].tag != W + "tbl"` decides that what the walk reached is no
+    table. Read as `<`, it asks whether the tag sorts BELOW `w:tbl`,
+    which a paragraph and every W element at body level do, so only an
+    element whose namespace sorts after W's tells the two apart: an
+    extension in a `urn:` namespace, which Markup Compatibility lets a
+    producer write there. Read so, that element IS the table — a block
+    with no `w:tbl`, a table in `audit`'s count and a placement for a
+    table the document does not have."""
+    doc = parts(P("Как показано в таблице 1, всё сходится.")
+                + P("Таблица 1. Заголовок")
+                + '<x:extension xmlns:x="urn:vendor:extension"/>'
+                + P("Проза под подписью."))
+
+    _out, rep = placement.place(doc)
+
+    assert rep.placements == []
+    assert placement.audit(doc).tables == 0
+
+
+def test_a_property_goes_AFTER_a_sibling_it_ranks_WITH():
+    """`_in_order` inserts in front of the first sibling that ranks
+    strictly HIGHER — `>`, so the insertion is stable, as `bisect_right`
+    is — and `>=` puts it in front of the first one of its own rank.
+
+    Ranks go by local name and the early return by qualified name, so
+    the only sibling that ties is a namesake in another namespace: a
+    producer's `x:keepNext`. What the paragraph already carries stays in
+    front of what this module adds."""
+    body = body_of(parts(
+        P("Таблица 1. Заголовок",
+          '<w:pPr><x:keepNext xmlns:x="urn:vendor:extension"/>'
+          '<w:jc w:val="left"/></w:pPr>')
+        + TBL("шапка")))
+
+    placement.keep_together(list(body))
+
+    ppr = body[0].find(NS + "pPr")
+    assert ppr is not None
+    assert [c.tag for c in ppr] == ["{urn:vendor:extension}keepNext",
+                                    NS + "keepNext", NS + "jc"]
+
+
+@pytest.mark.parametrize(("body", "want"), [
+    # the block ends in its NOTE, and a table follows the mention
+    pytest.param(P("Как показано в таблице 1, всё сходится.") + TBL("макет")
+                 + P("Совершенно другой абзац.")
+                 + P("Таблица 1. Заголовок") + TBL("шапка")
+                 + P("Примечание. Что-то."),
+                 ["p:Как показано в таблице 1, вс", "p:Таблица 1. Заголовок",
+                  "tbl:шапка", "p:Примечание. Что-то.", "tbl:макет",
+                  "p:Совершенно другой абзац."],
+                 id="a note between it and the table it lands on"),
+    # prose ABOVE the block, and a table under its note
+    pytest.param(P("Как показано в таблице 1, всё сходится.")
+                 + P("Совершенно другой абзац.")
+                 + P("Таблица 1. Заголовок") + TBL("шапка")
+                 + P("Примечание. Что-то.") + TBL("макет"),
+                 ["p:Как показано в таблице 1, вс", "p:Таблица 1. Заголовок",
+                  "tbl:шапка", "p:Примечание. Что-то.",
+                  "p:Совершенно другой абзац.", "tbl:макет"],
+                 id="prose above the hole, a table below"),
+    # a table above the block, and prose under it
+    pytest.param(P("Как показано в таблице 1, всё сходится.")
+                 + P("Совершенно другой абзац.") + TBL("макет")
+                 + P("Таблица 1. Заголовок") + TBL("шапка")
+                 + P("Примечание. Что-то.") + P("Проза после таблицы."),
+                 ["p:Как показано в таблице 1, вс", "p:Таблица 1. Заголовок",
+                  "tbl:шапка", "p:Примечание. Что-то.",
+                  "p:Совершенно другой абзац.", "tbl:макет",
+                  "p:Проза после таблицы."],
+                 id="a table above the hole, prose below"),
+])
+def test_a_PARAGRAPH_on_one_side_is_all_a_move_needs(body, want):
+    """`_would_join_tables` refuses only where a TABLE would meet a TABLE,
+    and in each of these a paragraph stands on one side.
+
+    The two refusal tests above put a table on BOTH sides, which cannot
+    tell `== W + "tbl"` from `<=` — a paragraph sorts below `w:tbl` — nor
+    from `is not`, true of everything against a freshly built string;
+    nor the hole measured at the block's LAST element instead of its
+    first, whose neighbour above is the block's own table whenever the
+    block has a note. Each of those refuses one of these moves, saying
+    two tables would join where a paragraph keeps them apart."""
+    out, rep = placement.place(parts(body))
+
+    assert [p.moved for p in rep.placements] == [True]
+    assert rep.problems == []
+    assert order(out) == want
+
+
+@pytest.mark.parametrize("note", [True, False], ids=["a note", "no note"])
+def test_space_block_handed_the_COMMENT_under_a_block_writes_nothing_past_it(
+        note):
+    """`following` is the caller's, and `getnext()` is the obvious thing
+    to hand in — a converter's XML comment, when one sits under the
+    block. It is not a paragraph, so no gap is written through it, and
+    nothing raises: `following.tag == W + "p"` asks whether a factory
+    equals a string, which is simply False, where an ordering — `<=`,
+    `>=` — raises TypeError. Three places ask: the heading lookup, and
+    the gap under a note and under a table with none."""
+    body = body_of(parts(
+        P("Таблица 1. Заголовок") + TBL("шапка")
+        + (P("Примечание. Что-то.") if note else "")
+        + COMMENT + P("Следующий абзац.")))
+    kids = list(body)
+    block = kids[:-2]
+    following = block[-1].getnext()
+    assert isinstance(following, etree._Comment)
+
+    placement.space_block(block, following)
+
+    assert kids[-1].find(NS + "pPr") is None
+    if note:
+        gap = kids[2].find(f"{NS}pPr/{NS}spacing")
+        assert gap is not None
+        assert gap.get(NS + "after") == "160"
+
+
+def test_a_block_ending_in_what_is_NOT_a_paragraph_takes_its_gap_below_it():
+    """`last` is the block's last paragraph only when the last element
+    that carries something IS one — `tail.tag == W + "p"`. A caller's
+    block can end in something else: here a source line in custom XML
+    markup under the note. Then no paragraph is last, and the gap goes
+    where it goes under a table with no note, on the paragraph that
+    resumes. Read as `<=`, `customXml` passes for a paragraph: the gap
+    lands on the NOTE above the wrapper, and the paragraph after it is
+    zeroed."""
+    body = body_of(parts(
+        P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Примечание. Что-то.")
+        + '<w:customXml w:element="source">'
+        + P("Источник: Росстат.") + "</w:customXml>"
+        + P("Следующий абзац.")))
+    kids = list(body)
+
+    placement.space_block(kids[:4], kids[4])
+
+    assert kids[2].find(NS + "pPr") is None
+    resumed = kids[4].find(f"{NS}pPr/{NS}spacing")
+    assert resumed is not None
+    assert resumed.get(NS + "before") == "160"
+
+
+def test_the_RENDERED_audit_steps_over_an_XML_COMMENT_before_the_table():
+    """Both render-side lookups of a block's table — `audit`'s and
+    `_locate`'s — ask `e.tag == W + "tbl"` of each element in front of
+    it, and since 48f17fd an XML comment between the caption and the
+    table is one of those. Asked as `>=`, a comment's tag — the factory
+    that makes one — cannot be ordered against a string, and the audit
+    raises instead of reporting the straddle."""
+    def render(_parts):
+        return ["See table 1. Table 1. Heading Capability Source",
+                "Health Nussbaum"]
+
+    report = placement.audit(
+        parts(P("See table 1.") + P("Table 1. Heading") + COMMENT
+              + WIDE(("Capability", "Source"), ("Health", "Nussbaum"))),
+        render=render)
+
+    (straddle,) = rendered(report)
+    assert straddle.detail == "it starts on sheet 1 and ends on sheet 2"
+
+
+# ---------------------------------------------------------- keep LAST --
+
+
+def test_a_caption_at_the_very_TOP_of_the_first_sheet_is_found():
+    """`while at >= 0` and `cursor = 0`. Offset 0 of the flowed text is
+    a real place for a caption: a document that opens with its table, or
+    a render that starts at the table's sheet. Read as `at > 0`, or with
+    the first search starting at 1, that caption is on no sheet, and the
+    straddle it makes is not reported.
+
+    Last in the file, deliberately: three readings of `at + len(caption)`
+    multiply by a zero offset and search the same place forever. The
+    tests above kill those first, and `-x` stops there."""
+    doc = parts(P("Table 1. Heading")
+                + WIDE(("Capability", "Source"), ("Health", "Nussbaum")))
+
+    def render(_parts):
+        return ["Table 1. Heading Capability Source", "Health Nussbaum"]
+
+    (straddle,) = rendered(placement.audit(doc, render=render))
+    assert straddle.detail == "it starts on sheet 1 and ends on sheet 2"
