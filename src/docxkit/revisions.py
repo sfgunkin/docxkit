@@ -67,6 +67,7 @@ __all__ = [
     "counts",
     "reject",
     "revision_elements",
+    "revision_kinds",
     "revision_text",
     "rows_in_view",
     "spans",
@@ -683,6 +684,33 @@ def revision_elements(xml: str) -> list[str]:
     which is the whole reason the narrower copy existed.
     """
     return REVISION_RE.findall(xml)
+
+
+#: The element's own name, off an opening tag :func:`revision_elements`
+#: hands back.
+_KIND_RE = re.compile(r"<w:(\w+)")
+
+
+def revision_kinds(xml: str) -> dict[str, int]:
+    """Those elements grouped by NAME: `{"rPrChange": 35, "ins": 2}`.
+
+    `revision_elements` answers which elements are pending; a REFUSAL
+    has to answer of what kind, because "36 revision(s) pending" over a
+    file whose changes are all `w:rPrChange` sends an author through the
+    body looking for an insertion that is not there — and ten of the
+    fourteen kinds are invisible in Word's Simple Markup until they look
+    for them. Read off the same tags as the count, so the two can never
+    disagree about what is pending.
+
+    Written once here rather than beside each reader: `_state` had this
+    regex for `word_only` and `revision/_build` needed it for the
+    refusal that BACKLOG S1 is about, which is two copies of one rule.
+    """
+    found: dict[str, int] = {}
+    for tag in revision_elements(xml):
+        if named := _KIND_RE.match(tag):
+            found[named.group(1)] = found.get(named.group(1), 0) + 1
+    return found
 
 
 def _has_content_revisions(xml: str) -> bool:

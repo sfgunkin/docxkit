@@ -68,10 +68,6 @@ class State:
 
 
 _AUTHOR_RE = re.compile(r'w:author="([^"]*)"')
-#: The element's own name, off the opening tag `revision_elements`
-#: hands back — read here for the same reason the author is, and with
-#: the same shape.
-_KIND_RE = re.compile(r"<w:(\w+)")
 
 
 def state(path: str | Path) -> State:
@@ -122,9 +118,12 @@ def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
             who = _AUTHOR_RE.search(chunk)
             if who:
                 by_author[who.group(1)] = by_author.get(who.group(1), 0) + 1
-            named = _KIND_RE.match(chunk)
-            if named and (tag := named.group(1)) in revisions.WORD_ONLY:
-                word_only[tag] = word_only.get(tag, 0) + 1
+        # `revisions` names the kinds; reading them off the tag here as
+        # well was one rule in two places, and `revision/_build` wanted
+        # the third copy (BACKLOG S1).
+        for kind, n in revisions.revision_kinds(xml).items():
+            if kind in revisions.WORD_ONLY:
+                word_only[kind] = word_only.get(kind, 0) + n
     unordered = {}
     doc = parts.get(DOCUMENT, b"").decode("utf-8", "replace")
     for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import footnotes, package, revisions, tracked
-from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
+from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES, text_parts
 from ..errors import (
     BaselinePending,
     MathResolved,
@@ -29,6 +29,69 @@ from ._losses import (
 from ._state import drift
 
 # ---------------------------------------------------------------- build
+
+
+def _pending(parts: dict[str, bytes]) -> dict[str, int]:
+    """What is pending in this package, by kind — EVERY kind.
+
+    Both of this module's pending refusals read
+    `tracked.package_counts(...)["insertions"]` and `["deletions"]`
+    until 2026-09-18, and those are two substring counts: `<w:ins ` and
+    `<w:del `. There are fourteen kinds in
+    :data:`revisions._REVISION_NAMES`, so a baseline or a manuscript
+    whose only open change was a move, a formatting change or one of the
+    cell revisions passed BOTH refusals — while `baseline`, which asks
+    `state`, refused the same file. Compare was then handed an
+    unadjudicated verdict and flattened it: the author was never offered
+    the change, and the redline that came back did not contain it as a
+    proposal (BACKLOG S1).
+
+    The same question `state` answers, over parts already read — the
+    caller has them, and reading the file twice to ask one question of
+    it is how the two counts drifted apart in the first place.
+    """
+    found: dict[str, int] = {}
+    for _name, xml in text_parts(parts):
+        for kind, n in revisions.revision_kinds(xml).items():
+            found[kind] = found.get(kind, 0) + n
+    return found
+
+
+def _listed(kinds: dict[str, int]) -> str:
+    """`w:pPrChange (1), w:rPrChange (35)` — what a refusal must name.
+
+    "36 pending revision(s)" over a file whose changes are all
+    formatting sends an author through the body hunting for an
+    insertion that is not there: ten of the fourteen kinds are
+    invisible in Simple Markup until they go looking. The same reason
+    `baseline`'s refusal names them (2026-09-18).
+    """
+    return ", ".join(f"w:{kind} ({n})" for kind, n in sorted(kinds.items()))
+
+
+def _word_only_note(kinds: dict[str, int]) -> str:
+    """The sentence for pending kinds no path through this tool clears.
+
+    `accept` and `reject` leave a `w:cellMerge` exactly where it was
+    (:data:`docxkit.revisions.WORD_ONLY`), so "have the author accept or
+    reject first" is advice they cannot take, and the reader goes
+    looking for the docxkit flag that settles it. There is none.
+    `--allow-pending-*` is not it either: that builds ON the open
+    verdict, which is what the refusal is about.
+
+    Empty when the file carries none, because a sentence about a kind
+    that is not there sends a reader to Word for an insertion they can
+    resolve where they are.
+    """
+    only = _listed({k: n for k, n in kinds.items()
+                    if k in revisions.WORD_ONLY})
+    if not only:
+        return ""
+    return (f"\nOf those, only Word can clear {only}: `accept` and "
+            f"`reject` here leave that kind standing, so no docxkit "
+            f"command settles it. Open the file in Word, accept or "
+            f"reject the table change there, and save.")
+
 
 @_timing.timed("build")
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
@@ -115,16 +178,16 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
             f"the clean edit anywhere else in build/ (build/clean.docx is "
             f"the usual name) and pass that.")
 
-    counts = tracked.package_counts(package.read_parts(paper.prev))
-    if (counts["insertions"] or counts["deletions"]) \
-            and not allow_pending_baseline:
+    pending = _pending(package.read_parts(paper.prev))
+    if pending and not allow_pending_baseline:
         raise BaselinePending(
-            f"{paper.prev.name} still carries {counts['insertions']} "
-            f"insertion(s) and {counts['deletions']} deletion(s). Word "
+            f"{paper.prev.name} still carries {sum(pending.values())} "
+            f"pending revision(s) — {_listed(pending)}. Word "
             f"Compare rebuilds the redline from ACCEPTED content, so "
             f"those would be flattened into plain text and could never "
             f"be rejected — the author's open verdicts decided for them. "
-            f"Have them accept or reject first.")
+            f"Have them accept or reject first."
+            + _word_only_note(pending))
 
     # The same question of the LIVE file, and it is the commoner way to
     # the same harm. Promote a batch, have the author not adjudicate it
@@ -141,21 +204,22 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # says the wrong thing about it. Measured 2026-09-02: `StaleBatch`
     # sends the reader to `revision baseline`, and `baseline` REFUSES a
     # file carrying a proposal. The advice was a loop.
-    live = tracked.package_counts(package.read_parts(paper.working)) \
-        if paper.working.exists() else {"insertions": 0, "deletions": 0}
-    if (live["insertions"] or live["deletions"]) and not allow_pending_working:
+    live = _pending(package.read_parts(paper.working)) \
+        if paper.working.exists() else {}
+    if live and not allow_pending_working:
         raise WorkingPending(
-            f"{paper.working.name} still carries {live['insertions']} "
-            f"insertion(s) and {live['deletions']} deletion(s) — a batch "
+            f"{paper.working.name} still carries {sum(live.values())} "
+            f"pending revision(s) — {_listed(live)} — a batch "
             f"the author has not adjudicated. Building the next round now "
             f"either drops it from the redline (if the clean edit came "
             f"from {paper.prev.name}) or flattens it in as accepted, "
             f"unreviewable text (if it came from {paper.working.name}). "
-            f"Either way their open verdict is decided for them.\n"
-            f"    docxkit revision status     (where this round stands)\n"
-            f"then have the author accept or reject, and\n"
-            f"    docxkit revision baseline   (adopt the result)\n"
-            f"before building again.")
+            f"Either way their open verdict is decided for them."
+            + _word_only_note(live) + "\n"
+            "    docxkit revision status     (where this round stands)\n"
+            "then have the author accept or reject, and\n"
+            "    docxkit revision baseline   (adopt the result)\n"
+            "before building again.")
 
     # Is the baseline still the file the manuscript grew out of? The
     # check above asks whether `prev` carries a proposal; this asks

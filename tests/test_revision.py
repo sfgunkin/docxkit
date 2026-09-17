@@ -1442,6 +1442,138 @@ def test_build_asks_the_pending_question_only_of_a_manuscript_THAT_EXISTS(
     assert project.batch.exists()
 
 
+# --- the twelve kinds the two counts could not see (BACKLOG S1) --------
+#
+# `build` asked `package_counts`'s `insertions` and `deletions`, which
+# are the substring counts `<w:ins ` and `<w:del `. Word has fourteen
+# ways to leave a verdict open, so a file whose only change was a move,
+# a formatting change or a cell revision passed BOTH refusals here while
+# `baseline` — which asks `state` — refused the same file. Compare then
+# flattened an open verdict the author was never offered.
+#
+# Measured on the corpus before the fix (2,958 .docx under
+# F:\OneDrive\__Documents, 2026-09-18): 759 carry a tracked change, 452
+# carry a kind these two counts cannot see, and ELEVEN carry only such
+# kinds — none of them a file `build` gates, so nothing that builds
+# today starts refusing. One of the eleven is a promoted-shaped batch
+# whose changes are 35 `w:rPrChange` and one `w:pPrChange`: promote that
+# and the manuscript is exactly the state this refusal is for.
+
+#: One document body per kind those counts miss, minimal and complete.
+INVISIBLE = {
+    "rPrChange": ('<w:p><w:r><w:rPr><w:i/><w:rPrChange w:id="7" '
+                  'w:author="Reviewer" w:date="2026-09-18T00:00:00Z">'
+                  "<w:rPr/></w:rPrChange></w:rPr><w:t>styled</w:t>"
+                  "</w:r></w:p>"),
+    "pPrChange": ('<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange '
+                  'w:id="7" w:author="Reviewer" '
+                  'w:date="2026-09-18T00:00:00Z"><w:pPr/></w:pPrChange>'
+                  "</w:pPr>" + run("aligned") + "</w:p>"),
+    "moveTo": ('<w:p><w:moveTo w:id="7" w:author="Reviewer" '
+               'w:date="2026-09-18T00:00:00Z">' + run("moved")
+               + "</w:moveTo></w:p>"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(INVISIBLE))
+def test_build_refuses_a_BASELINE_whose_only_change_is_one_of_those(
+        project, monkeypatch, kind):
+    """`baseline` refused these and `build` did not, which is the whole
+    defect: the two verbs disagreed about what "pending" means, and the
+    one that hands the file to Word was the lax one."""
+    write(project.prev, make_parts(INVISIBLE[kind]))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    with pytest.raises(BaselinePending, match=f"w:{kind}"):
+        revision.build(project, clean)
+
+    assert not fake.called_with, "Word Compare ran on a pending baseline"
+    assert not project.batch.exists()
+
+
+@pytest.mark.parametrize("kind", sorted(INVISIBLE))
+def test_build_refuses_a_MANUSCRIPT_whose_only_change_is_one_of_those(
+        project, monkeypatch, kind):
+    """The commoner way to the same harm: a promoted batch the author
+    has not adjudicated. A formatting-only batch is a real shape — one
+    on Parental Style is 35 `w:rPrChange` and a `w:pPrChange` — and
+    promoting it left a manuscript this gate called clean."""
+    write(project.working, make_parts(INVISIBLE[kind]))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    with pytest.raises(WorkingPending, match="not adjudicated") as exc:
+        revision.build(project, clean)
+
+    assert f"w:{kind} (1)" in str(exc.value), str(exc.value)
+    assert not fake.called_with, "Word Compare ran on a pending manuscript"
+
+
+def test_the_pending_refusal_NAMES_the_kinds_and_counts_them(project,
+                                                             monkeypatch):
+    """"36 pending revision(s)" over a file whose changes are all
+    formatting sends an author through the body hunting for an
+    insertion that is not there. Both counts and both names, because a
+    refusal that says "pending" and stops is the shape that sent
+    somebody to copy a rescue over the manuscript by hand."""
+    write(project.prev, make_parts(INVISIBLE["rPrChange"]
+                                   + INVISIBLE["pPrChange"]
+                                   + para(run("x "), ins("added"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    with pytest.raises(BaselinePending) as exc:
+        revision.build(project, project.working)
+
+    assert "3 pending revision(s)" in str(exc.value), str(exc.value)
+    assert "w:ins (1), w:pPrChange (1), w:rPrChange (1)" in str(exc.value)
+
+
+def test_the_refusal_says_which_kind_only_WORD_can_clear(project,
+                                                         monkeypatch):
+    """`accept` and `reject` leave a `w:cellMerge` where it was
+    (`revisions.WORD_ONLY`), so "have the author accept or reject
+    first" is advice they cannot take, and `--allow-pending-working`
+    builds ON the open verdict instead of settling it. `baseline` says
+    this already; the verb that hands the file to Compare must too."""
+    merged = ('<w:tbl><w:tr><w:tc><w:tcPr><w:cellMerge w:id="7" '
+              'w:author="Reviewer" w:date="2026-09-18T00:00:00Z" '
+              'w:vMerge="cont"/></w:tcPr>' + para(run("cell"))
+              + "</w:tc></w:tr></w:tbl>")
+    write(project.working, make_parts(merged))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    with pytest.raises(WorkingPending) as exc:
+        revision.build(project, clean)
+
+    assert "only Word can clear w:cellMerge (1)" in str(exc.value)
+    assert "Open the file in Word" in str(exc.value)
+
+
+@pytest.mark.parametrize("kind", sorted(INVISIBLE))
+def test_the_OVERRIDES_still_absorb_one_of_those_deliberately(
+        project, monkeypatch, kind):
+    """The flags mean "I know, build anyway", and they have to mean it
+    for every kind the refusal now sees — or the fix would leave a
+    formatting-only round with no way through at all."""
+    write(project.prev, make_parts(INVISIBLE[kind]))
+    write(project.working, make_parts(INVISIBLE[kind]))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    revision.build(project, clean, allow_pending_baseline=True,
+                   allow_pending_working=True)
+
+    assert project.batch.exists()
+
+
 def test_build_pending_baseline_can_be_absorbed_deliberately(project,
                                                              monkeypatch):
     write(project.prev, make_parts(para(run("x "), ins("unadjudicated"))))

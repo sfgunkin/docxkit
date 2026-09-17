@@ -63,7 +63,11 @@ def test_a_promoted_batch_awaiting_a_verdict_stops_the_next_build(
         revision.build(paper, clean_edit(paper))
 
     said = str(exc.value)
-    assert "2 insertion(s)" in said
+    # by KIND since 2026-09-18: the refusal counted `<w:ins ` and
+    # `<w:del ` and named those two, and it now counts all fourteen
+    # kinds and names the ones it found (BACKLOG S1).
+    assert "4 pending revision(s)" in said
+    assert "w:ins (2)" in said and "w:del (2)" in said
     assert paper.working.name in said
     assert "not adjudicated" in said
 
@@ -83,10 +87,13 @@ def test_the_message_names_BOTH_ways_it_goes_wrong(promoted_round):
 
 
 def test_a_DELETION_pending_counts_too(paper):
+    """Either half of a batch is a batch. The message spells the kind as
+    the element — `w:del (1)` — since the refusal started counting all
+    fourteen of them (BACKLOG S1, 2026-09-18)."""
     write(paper.working, make_parts(
         para(run("The paper "), dele("as it was "), run("stands."))))
 
-    with pytest.raises(WorkingPending, match="1 deletion"):
+    with pytest.raises(WorkingPending, match=r"w:del \(1\)"):
         revision.build(paper, clean_edit(paper))
 
 
