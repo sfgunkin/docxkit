@@ -20,6 +20,7 @@ from conftest import para, run
 
 from docxkit import text_of
 from docxkit.edit import insert_in_para
+from docxkit.errors import AnchorError
 
 FN_REF = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
           '<w:footnoteReference w:id="11"/></w:r>')
@@ -79,6 +80,61 @@ def test_the_END_of_a_paragraph_counts_the_equation_too():
     out = insert_in_para(p, len("where τxyz is time"), " in years")
 
     assert text_of(out) == "where τxyz is time in years"
+
+
+def test_a_paragraph_that_ENDS_on_an_equation_has_an_end_AFTER_it():
+    """The bound is measured by the run walk, whose cursor stops at the
+    last `w:r` — so an equation AFTER the last run is visible text the
+    count does not reach. Measured 2026-09-18: the paragraph reads seven
+    characters and its own end was refused as "outside the paragraph's 6
+    visible characters"."""
+    p = "<w:p>" + run("where ") + MATH.format("x") + "</w:p>"
+
+    out = insert_in_para(p, len("where x"), " holds")
+
+    assert text_of(out) == "where x holds"
+    assert out.index("</m:oMath>") < out.index("holds")
+
+
+def test_words_still_go_BEFORE_a_trailing_equation_at_its_own_offset():
+    """The offset where the equation BEGINS is still the equation's, and
+    the words go before it — the end of the last run and the end of the
+    paragraph are two different places now."""
+    p = "<w:p>" + run("where ") + MATH.format("x") + "</w:p>"
+
+    out = insert_in_para(p, len("where "), "now ")
+
+    assert text_of(out) == "where now x"
+    assert out.index("now ") < out.index("<m:oMath")
+
+
+def test_an_offset_inside_a_TRAILING_equation_is_still_refused():
+    p = "<w:p>" + run("where ") + MATH.format("xy") + "</w:p>"
+
+    with pytest.raises(AnchorError, match="inside an equation"):
+        insert_in_para(p, len("where x"), "now ")
+
+
+@pytest.mark.parametrize("maths", [
+    pytest.param(MATH.format("x"), id="inline"),
+    pytest.param(f"<m:oMathPara>{MATH.format('x')}</m:oMathPara>",
+                 id="display"),
+])
+def test_a_paragraph_that_is_ONLY_an_equation_has_BOTH_its_edges(maths):
+    """Every display equation is such a paragraph. With no runs the
+    cursor is 0, so offset 0 was the paragraph's END as well as its
+    start: the words went in through the `not runs` branch, before
+    `</w:p>` and AFTER the maths, and the search for an equation
+    beginning at the offset was never reached."""
+    p = "<w:p>" + maths + "</w:p>"
+
+    before = insert_in_para(p, 0, "Let ")
+    after = insert_in_para(p, 1, " holds")
+
+    assert text_of(before) == "Let x"
+    assert before.index("Let ") < before.index("<m:oMath")
+    assert text_of(after) == "x holds"
+    assert after.index("</m:oMath>") < after.index(" holds")
 
 
 def test_the_run_SPANS_are_measured_from_the_running_cursor():

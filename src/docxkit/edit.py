@@ -1315,12 +1315,29 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
     ``allow_hyperlink`` / ``allow_bookmark`` are the deliberate escapes.
     A fldChar FIELD is never split, flag or no flag: the halves are not
     two fields, they are one broken one.
+
+    **The paragraph ENDS where its text ends, not where its last run
+    does.** An ``m:oMath`` after the last ``w:r`` is text a reader sees,
+    so the offset after it is the paragraph's end and the offset before
+    it is the equation's: words go after the maths at the one and before
+    it at the other. The paragraph that is only an equation — every
+    display one — has both.
     """
     runs, spans, cursor = run_spans(para_xml)
-    if at < 0 or at > cursor:
+    # Where the RUNS end is not where the PARAGRAPH ends. `run_spans`
+    # advances its cursor across what sits between runs, so it stops at
+    # the last `w:r` — and an equation AFTER that run is visible text no
+    # run covers. Measured 2026-09-18, all three offsets past it wrong:
+    # the paragraph's own end refused as "outside the paragraph's 6
+    # visible characters" of a paragraph that reads seven, and — in the
+    # paragraph that is ONLY an equation, which is every display
+    # equation — offset 0 taken for the end, so the words went in
+    # through the `not runs` branch AFTER the maths.
+    end = len(visible_text(para_xml))
+    if at < 0 or at > end:
         raise AnchorError(
             f"insert_in_para: offset {at} is outside the paragraph's "
-            f"{cursor} visible characters")
+            f"{end} visible characters")
     if not content.lstrip().startswith("<"):
         tag = ('<w:t xml:space="preserve">'
                if content != content.strip() else "<w:t>")
@@ -1342,19 +1359,23 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
         return _split_run(para_xml, runs[inside[0]], at - inside[1], content,
                           protected=protected,
                           allow_hyperlink=allow_hyperlink, at=at)
-    if at != cursor and not any(s == at < e for s, e in spans):
-        # No run holds the offset and no VISIBLE one starts there, so the
-        # next thing a reader sees is MATHS: the reader's offsets count an
-        # equation and it lives in no w:r. `_between_runs` asked for the
-        # last run starting here and raised a bare ValueError when there
-        # was none (2026-09-17) — the ordinary case of "insert before the
-        # maths" — and, with only a zero-width marker starting here, put
-        # the words BEFORE the marker it means to go after.
+    if not any(s == at < e for s, e in spans) and (at != cursor or not runs):
+        # No run holds the offset and no VISIBLE one starts there, so
+        # what a reader sees next is MATHS — the reader's offsets count
+        # an equation and it lives in no w:r — or nothing at all, the
+        # offset being the paragraph's own end past a trailing one.
+        # `_between_runs` asked for the last run starting here and raised
+        # a bare ValueError when there was none (2026-09-17) — the
+        # ordinary case of "insert before the maths" — and, with only a
+        # zero-width marker starting here, put the words BEFORE the
+        # marker it means to go after. `at == cursor` stays with the runs
+        # (after the last one, before any equation that follows it);
+        # only a paragraph with NO runs takes its offset 0 to the maths.
+        if at == end:
+            close = para_xml.rindex("</w:p>")
+            return para_xml[:close] + content + para_xml[close:]
         pos = _shielded(runs, at, _maths_start(para_xml, at), protected)
         return para_xml[:pos] + content + para_xml[pos:]
-    if not runs:
-        close = para_xml.rindex("</w:p>")
-        return para_xml[:close] + content + para_xml[close:]
     pos = _between_runs(runs, spans, at, cursor, protected)
     return para_xml[:pos] + content + para_xml[pos:]
 
