@@ -133,11 +133,21 @@ HARNESS: dict[str, list[str]] = {
     # superset), nor with any figure measured against the superset
     # before today.
     #
-    # 4 mutants, all of them import-level constants (`RESCUE_KEEP`,
-    # `WORD_DEADLINE`) that coverage cannot attribute: measured by
-    # mutating the module as it stands, `test_revision.py` kills 4 of 4,
-    # `test_cli_revision.py` 4 (dearer), `test_revision_doctor.py` 2.
-    "revision/_common.py": ["tests/test_revision.py"],
+    # WAS 4 mutants, all import-level constants (`RESCUE_KEEP`,
+    # `WORD_DEADLINE`) that coverage cannot attribute: `test_revision.py`
+    # killed 4 of 4, `test_cli_revision.py` 4 (dearer),
+    # `test_revision_doctor.py` 2.
+    #
+    # It is 31 now. `f856e4d` moved `_stamp_of` and `_written_at` here so
+    # `rescues()` and `Paper.redlines()` could share one reading of a
+    # stamp — and the tests that exercise them stayed in
+    # `test_rescue_pruning.py`, their old home. This entry was not
+    # updated, so the module was measured against a harness that barely
+    # touched its new half: 12.9 % survival, every survivor of it on the
+    # ONE line `m.group(1) == kind`. Code that moves house leaves its
+    # tests behind, and this map is the only place that shows.
+    "revision/_common.py": ["tests/test_revision.py",
+                            "tests/test_rescue_pruning.py"],
     # 39 lines+branches, all of them in test_revision.py; the other ten
     # files reach at most 37 and add none. 133 session-KILLED replayed:
     # 92 killed, 41 were session TIMEOUTS. value_types: `Paper` is frozen.
