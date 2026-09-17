@@ -444,3 +444,70 @@ def test_a_span_of_ONE_or_less_writes_no_gridSpan():
 #   length check four lines above has already raised for a table where
 #   they differ, so the strictness is a second lock on a door that
 #   cannot open.
+
+
+# --- the pPr normalisation nothing had asked about (2026-09-18) ---------
+#
+# `para` learned to accept a bare pPr on 2026-09-01, after Parental_style
+# shipped a title block Word had silently discarded. Three mutants lived
+# on that one guard: the tests above pass a wrapped pPr to `table` and
+# read `prose_props` back, and none of them asks what `para` itself
+# writes for each of the three shapes of `ppr`.
+
+
+def _children(para_xml: str) -> list[str]:
+    """The DIRECT child tags of the `w:p`, which is the whole question:
+    Word keeps schema-invalid children of `w:p` out of the render."""
+    doc = MD.parseString(
+        f"<w:document {NS}><w:body>{para_xml}</w:body></w:document>")
+    p = doc.getElementsByTagName("w:p")[0]
+    return [n.tagName for n in p.childNodes if n.nodeType == n.ELEMENT_NODE]
+
+
+def test_NO_ppr_writes_no_properties_element_at_all():
+    """`if ppr and …`, mutated to `if not ppr and …` and to
+    `if ppr or …`. Both wrap the EMPTY string, so every paragraph this
+    package builds without properties — which is nearly all of them —
+    opens with an empty `<w:pPr></w:pPr>`.
+
+    Asserted as the whole string: the mutants' paragraph is well-formed
+    and reads right, so a shape test cannot see them.
+    """
+    assert para(run("hello")) == "<w:p><w:r><w:t>hello</w:t></w:r></w:p>"
+    assert para() == "<w:p></w:p>"
+
+
+def test_a_BARE_pPr_is_WRAPPED_so_Word_does_not_discard_it():
+    """The defect the guard was written for (Parental_style, 2026-09-01):
+    spliced in verbatim, a bare fragment became a direct child of `w:p`,
+    which Word drops silently — the supplement's title block shipped
+    left-aligned at 16pt and only a PDF raster caught it.
+
+    `if ppr and not …` mutated to `if ppr and …` leaves the bare
+    fragment unwrapped, which is that defect again.
+    """
+    p = para(run("Title"), '<w:jc w:val="center"/>')
+
+    assert p == ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+                 "<w:r><w:t>Title</w:t></w:r></w:p>")
+    _wellformed(p)
+    assert _children(p) == ["w:pPr", "w:r"]
+
+
+def test_a_pPr_that_ARRIVES_WRAPPED_is_not_wrapped_again():
+    """The other half of the same guard, and the shape `prose_props`
+    hands back — the pair is documented to go straight into `para`.
+
+    Under `if ppr and ppr.lstrip().startswith("<w:pPr")` (the `not`
+    dropped) and under `if ppr or not …`, it is wrapped a second time:
+    `<w:pPr><w:pPr>…</w:pPr></w:pPr>` parses, so only counting the
+    element says so, and a nested pPr is the discarded-properties defect
+    one level down.
+    """
+    ppr = '<w:pPr><w:spacing w:after="120"/></w:pPr>'
+
+    p = para(run("Body text"), ppr)
+
+    assert p == f"<w:p>{ppr}<w:r><w:t>Body text</w:t></w:r></w:p>"
+    assert p.count("<w:pPr>") == 1
+    assert _children(p) == ["w:pPr", "w:r"]
