@@ -4691,6 +4691,179 @@ def test_an_edit_inside_a_nested_cross_reference_is_SEEN(tmp_path):
     assert render(report, expect_clean=True) == 1
 
 
+# --- what the _compare_read sweep of 2026-09-17 found ---------------------
+#
+# Twelve survivors, all in the code dc8bdc8 wrote. Four respell the
+# coverage guard so that a field nested in a RESULT half is never covered
+# (`result_at == e`, `result_at is e`, `s == result_at`, `s is result_at`),
+# and every fixture above that nests there gives the inner field a
+# one-character page number, whose seven-character growth leaves the
+# parent's stale end inside tag text. Two more need a RUN that holds more
+# than one `fldChar`, which no fixture here had: CT_R is a sequence of any
+# number of run-content elements, and writers other than Word use that.
+# The other six are argued equivalent.
+
+#: A cached date long enough that masking it SHRINKS the text by 27
+#: characters — the distance a stale region end then overshoots by.
+_STAMP = "Tuesday, 15 September 2026 at 22:01"
+
+
+def _covered(tail: str) -> str:
+    """A DATE nested in a PAGEREF's RESULT half, then prose."""
+    return (_wrapping("PAGEREF _Toc1",
+                      field('DATE \\@ "dddd, d MMMM yyyy"', _STAMP))
+            + run(tail))
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_field_in_a_claimed_region_claims_no_region_of_its_own(lead):
+    """`any(s <= result_at < e ...)` respelled as `s <= result_at == e`,
+    `result_at is e`, `s == result_at` or `s is result_at`: each is false
+    for a field nested in its parent's RESULT, so the nested field claims
+    a region too.
+
+    That region lies inside the parent's and is applied first, and the
+    parent's stored end goes stale by however much the inner rewrite
+    changed the length. With a one-character page number the end lands
+    seven characters early, in tag text, and nothing shows. With this
+    35-character date it lands 27 characters LATE, and the whole
+    ` (draft)` run after the field — 24 characters of markup and text —
+    falls inside the parent's mask and is blanked. The length assertions
+    are what keep the fixture able to see that.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    assert len(_STAMP) - len("«F:DATE»") == 27
+    assert len(run(" (draft)")) - len("</w:r>") <= 27
+    xml = ("<w:p>" + (run(lead) if lead else "") + _covered(" (draft)")
+           + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace(f"<w:t>{_STAMP}</w:t>",
+                              "<w:t>«F:PAGEREF»</w:t>"), out
+
+
+def test_an_edit_just_after_a_field_that_wraps_another_is_SEEN(tmp_path):
+    """The test above as the gate sees it. The overshooting mask blanks
+    the prose after the field on BOTH sides, so "(draft)" against
+    "(final)" leaves two identical strings and `--expect-clean` passes a
+    real edit."""
+    a, b = docs(tmp_path, BASE + para(_covered(" (draft)")),
+                BASE + para(_covered(" (final)")))
+
+    report = compare(a, b)
+
+    assert report["text"], "the edit reached no layer"
+    assert render(report, expect_clean=True) == 1
+
+
+def _sharing_a_run(outer: str, shown: str, inner: str, result: str, *,
+                   whole: bool = False) -> str:
+    """A field nested in `outer`'s RESULT, its `begin` in the run that
+    holds the outer `separate` and the text `shown` after it — and, with
+    `whole`, the outer `begin` and instruction as well.
+
+    Word gives every `fldChar` a run of its own; the schema does not ask
+    for that, and a generated document puts them together. `field_spans`
+    opens the inner span at that run's `<w:r>`, so the walk in
+    `_own_separator` meets the OUTER field's separator before this
+    field's begin.
+    """
+    begin = '<w:fldChar w:fldCharType="begin"/>'
+    instr = f'<w:instrText xml:space="preserve"> {outer} </w:instrText>'
+    opening = (f"<w:r>{begin}{instr}" if whole
+               else f"<w:r>{begin}</w:r><w:r>{instr}</w:r><w:r>")
+    return (opening
+            + '<w:fldChar w:fldCharType="separate"/>'
+            f'<w:t xml:space="preserve">{shown}</w:t>'
+            + begin + "</w:r>"
+            f'<w:r><w:instrText xml:space="preserve"> {inner} '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(result)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_separator_ahead_of_the_field_s_begin_is_not_its_own(lead):
+    """`kind == "separate" and depth == 1` respelled `depth <= 1`.
+
+    The walk starts at the `<w:r>` of the run holding the begin, so a
+    parent's separator in that run is met at depth 0, before the begin.
+    `== 1` passes over it; `<= 1` returns it, and the PAGEREF's mask then
+    opens at the TOC's separator — the entry text a reader sees becomes
+    `«F:PAGEREF»` and the page number is blanked. The TOC is not volatile
+    and claims no region, so nothing else would have masked that text.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _sharing_a_run('TOC \\o "1-3"', "Introduction, page ",
+                            "PAGEREF _Toc1", "17") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>17</w:t>", "<w:t>«F:PAGEREF»</w:t>"), out
+
+
+def test_an_edit_in_the_run_a_nested_field_begins_in_is_SEEN(tmp_path):
+    """The `depth <= 1` spelling at the gate: the entry text masked on
+    both sides, and a renamed section passes `--expect-clean`."""
+    def entry(title: str) -> str:
+        return _sharing_a_run('TOC \\o "1-3"', f"{title}, page ",
+                              "PAGEREF _Toc1", "17")
+
+    a, b = docs(tmp_path, BASE + para(entry("Introduction")),
+                BASE + para(entry("Background")))
+
+    report = compare(a, b)
+
+    assert report["text"], "the edit reached no layer"
+    assert render(report, expect_clean=True) == 1
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_field_whose_walk_lands_on_its_PARENT_s_separator_is_covered(lead):
+    """`s <= result_at < e` respelled `s < result_at < e`.
+
+    The PAGEREF's begin, instruction and separator all share the run the
+    nested PAGE begins in, so the PAGE's walk meets the parent's begin
+    first and returns the PARENT's separator at depth 1. Its `result_at`
+    is then exactly the start of the region the parent claimed, and `<=`
+    calls it covered — the right answer, since the page number is in the
+    parent's result. `<` lets it claim that start a second time, and the
+    second mask runs on offsets the first has moved.
+
+    Both regions carry the same keyword (the span's first instruction is
+    the parent's), so the damage shows only through the stale end, and
+    the length of the parent's cached text is what decides it: masking
+    it shrinks the text by far more than the 43-character end run and
+    the ` (draft)` run after it, so the second mask reaches that prose
+    and blanks it — an edit there would reach no layer. With a run per
+    `fldChar` the inner field finds its own separator strictly inside
+    the region and the two spellings agree.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    shown = ("Why the index moved in 2024, and what it measures across "
+             "the regions and the years, p. ")
+    end_run = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+    overshoot = len(shown) + len("7") - len("«F:PAGEREF»")
+    assert overshoot >= len(end_run) + len(run(" (draft)")) - len("</w:r>")
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _sharing_a_run("PAGEREF _Toc1", shown, "PAGE", "7", whole=True)
+           + run(" (draft)") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace(
+        f'<w:t xml:space="preserve">{shown}</w:t>',
+        '<w:t xml:space="preserve">«F:PAGEREF»</w:t>').replace(
+        "<w:t>7</w:t>", "<w:t></w:t>"), out
+
+
 def _captioned(texts: list[str | None]) -> dict[str, bytes]:
     """A document whose `None` paragraph draws image1.png.
 
