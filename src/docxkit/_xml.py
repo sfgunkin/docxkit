@@ -140,12 +140,20 @@ def zip_entry(name: str,
 #: with the id beside it — the ingest remap, and the walk that finds a
 #: note Compare emitted as one insertion. Written twice until
 #: 2026-08-20, in the two modules that do those two things.
+#:
+#: `(?<!/)>`, PARA_RE's guard: both readers want a note with TEXT, and
+#: an EMPTY `<w:footnote w:id="3"/>` has none. Without it the `/>` read
+#: as an open tag and ran on to the next note's close, so note 4's words
+#: were filed under id 3 — the remap repointed a reference at the wrong
+#: note, and a moved note was reported under the empty one's id
+#: (2026-09-17).
 NOTE_DEF_RE = {
     FOOTNOTES: re.compile(
-        r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>',
+        r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*(?<!/)>(.*?)</w:footnote>',
         re.DOTALL),
     ENDNOTES: re.compile(
-        r'<w:endnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:endnote>', re.DOTALL),
+        r'<w:endnote\b[^>]*w:id="(-?\d+)"[^>]*(?<!/)>(.*?)</w:endnote>',
+        re.DOTALL),
 }
 
 

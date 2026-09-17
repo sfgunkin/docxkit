@@ -4367,6 +4367,25 @@ def test_a_SEPARATOR_note_is_not_a_moved_footnote():
                            {"word/footnotes.xml": baseline.encode()}) == [2]
 
 
+def test_a_moved_footnote_after_an_EMPTY_one_is_named_by_its_OWN_id():
+    """`<w:footnote w:id="1"/>` opens nothing. Read as an open tag it ran
+    on to note 2's close, in both parts, so note 2's insertion and its
+    baseline text were filed under id 1 — and the finding named a note
+    with nothing in it while the one that moved went unnamed."""
+    notes = (f"<w:footnotes {_NS}>"
+             '<w:footnote w:id="1"/>'
+             '<w:footnote w:id="2"><w:p><w:r><w:ins w:id="8" w:author="W">'
+             "<w:t>a moved note</w:t></w:ins></w:r></w:p></w:footnote>"
+             "</w:footnotes>")
+    baseline = (f"<w:footnotes {_NS}>"
+                '<w:footnote w:id="1"/>'
+                '<w:footnote w:id="2"><w:p><w:r><w:t>a moved note</w:t>'
+                "</w:r></w:p></w:footnote></w:footnotes>")
+
+    assert moved_footnotes({"word/footnotes.xml": notes.encode()},
+                           {"word/footnotes.xml": baseline.encode()}) == [2]
+
+
 def test_two_relabelled_mentions_of_one_anchor_pair_off_ONE_FOR_ONE():
     """The docstring's promise: each gone label consumes one gained
     label for the same anchor. The consumption is a separate line from

@@ -686,6 +686,30 @@ def test_ENDNOTE_ids_are_remapped_by_definition_text_too(tmp_path):
     assert 'w:endnoteReference w:id="4"' not in joined
 
 
+def test_a_note_after_an_EMPTY_definition_is_remapped_by_its_OWN_text(
+        tmp_path):
+    """`<w:footnote w:id="3"/>` opens nothing. Read as an open tag it ran
+    on to note 4's close, so the author's id 3 carried "First note." and
+    id 4 carried no definition at all — the reference to 4 was spliced
+    raw, pointing at whatever the build numbers 4."""
+    fn = ('<w:footnotes>{empty}<w:footnote w:id="{a}"><w:p><w:r><w:t>'
+          "First note.</w:t></w:r></w:p></w:footnote>"
+          '<w:footnote w:id="{b}"><w:p><w:r><w:t>Second note.</w:t></w:r>'
+          "</w:p></w:footnote></w:footnotes>")
+    base = write(tmp_path / "base.docx", make_parts(
+        para(run("body ")), footnotes=fn.format(empty="", a="6", b="7")))
+    edited_body = (para(run("body edited "))
+                   + '<w:p><w:r><w:footnoteReference w:id="4"/></w:r></w:p>')
+    edited = write(tmp_path / "edited.docx", make_parts(
+        edited_body, footnotes=fn.format(
+            empty='<w:footnote w:id="3"/>', a="4", b="5")))
+
+    joined = "".join(n for _, n in build_overrides(base, edited))
+
+    assert 'w:footnoteReference w:id="6"' in joined, joined
+    assert 'w:footnoteReference w:id="4"' not in joined
+
+
 def test_a_document_with_NEITHER_note_store_still_builds_overrides(tmp_path):
     """The stores are read for the remap alone, and most manuscripts
     have only one of them — the reader has to answer for a part that is
