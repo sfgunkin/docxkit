@@ -42,6 +42,7 @@ from docxkit._xml import (
     matching_close,
     own_properties,
     printed_text,
+    run_holds_content,
     set_para_property,
     set_run_property,
     set_run_text,
@@ -1516,6 +1517,30 @@ def test_a_PAIRED_run_property_present_TWICE_comes_out_in_full():
     _parsed(out)
     assert out == ('<w:r><w:rPr><w:i/><w:sz w:val="20"/></w:rPr>'
                    "<w:t>x</w:t></w:r>")
+
+
+@pytest.mark.parametrize("run_xml,holds", [
+    pytest.param("", False, id="nothing_at_all"),
+    pytest.param("   ", False, id="whitespace"),
+    pytest.param("<w:r></w:r>", False, id="an_empty_run"),
+    pytest.param('<w:r><w:rPr><w:b/></w:rPr></w:r>', False,
+                 id="only_its_own_properties"),
+    pytest.param('<w:r><w:rPr><w:b/></w:rPr><w:tab/></w:r>', True,
+                 id="a_tab_in_front_of_no_text"),
+    pytest.param("<w:r><w:t>x</w:t></w:r>", True, id="text"),
+])
+def test_run_holds_content_asks_PAST_the_runs_own_properties(run_xml, holds):
+    """What a caller of `split_run` has to know before throwing a half
+    away: a run that is nothing but its own `w:rPr` is the zero-width
+    formatting island the next edit inherits, and one holding a tab, a
+    no-break hyphen or a break in front of no text is a character on the
+    page that dropping would delete.
+
+    The properties are cut OUT before the question is asked, so both
+    ends of that cut matter: left in, every formatted run looks like
+    content, and the island reads as something to keep.
+    """
+    assert run_holds_content(run_xml) is holds
 
 
 def test_a_PAIRED_property_does_not_move_where_a_NEW_one_lands():

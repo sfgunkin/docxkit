@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from docxkit._xml import (
     dead_links,
     field_anchors,
@@ -571,6 +573,114 @@ def test_a_field_an_edit_TRUNCATED_is_not_a_link_a_reader_can_CLICK():
     assert field_anchors(xml) == [("Appendix", at)]
     assert internal_links(xml) == []
     assert dead_links(xml) == []
+
+
+def test_the_SENTINELS_a_cut_field_and_a_codeless_one_report():
+    """`Field.end` is -1 where nothing closed the field and `Field.at` is
+    -1 where the field has no instruction at all. Both are read as
+    `< 0` — here, in `field_spans` and in `internal_links` — so a
+    sentinel that drifts to 0 or 1 makes a field those two then try to
+    close, and an offset of -2 is a documented value that is not the
+    documented one."""
+    stray = _code(' HYPERLINK \\l "Cut" ')            # its `begin` cut off
+    cut = (_run(BEGIN) + _code(r" REF Table1 \h ") + _run(SEP)
+           + _run("<w:t>T</w:t>"))                    # its `end` cut off
+    codeless = _run(BEGIN) + _run(SEP) + _run("<w:t>x</w:t>") + _run(END)
+
+    (orphan,) = fields("<w:p>" + stray + "</w:p>")
+    (unclosed,) = fields("<w:p>" + cut + "</w:p>")
+    (quiet,) = fields("<w:p>" + codeless + "</w:p>")
+
+    assert (orphan.end, orphan.at) == (-1, orphan.start)
+    assert unclosed.end == -1
+    assert (quiet.at, quiet.instr) == (-1, "")
+    assert quiet.end > 0, "it closed; only its instruction is missing"
+
+
+def test_an_instruction_PAST_its_field_SEPARATOR_belongs_to_no_field():
+    """`sep_end` is what says a field has stopped collecting code. An
+    instruction in the RESULT half is one whose `begin` an edit cut off,
+    and joining it to the field that shows it reads two codes as one —
+    the defect the depth pairing exists for, one level in."""
+    xml = ("<w:p>" + _run(BEGIN) + _code(r" REF Table1 \h ") + _run(SEP)
+           + _code(' HYPERLINK \\l "Orphan" ') + _run("<w:t>T</w:t>")
+           + _run(END) + "</w:p>")
+
+    outer, orphan = fields(xml)
+
+    assert outer.instr == r" REF Table1 \h "
+    assert orphan.instr == ' HYPERLINK \\l "Orphan" '
+    assert orphan.end == -1, "it is not a field a reader can click"
+
+
+@pytest.mark.parametrize("pad", ["", "x"], ids=["even", "odd"])
+def test_a_RESULT_starts_past_the_WHOLE_separator_marker(pad):
+    """`close + 1` is the byte after the marker's `>`, not after the
+    attribute the pattern matched: the caller reads a result as XML, and
+    one that starts inside `/>` is not.
+
+    Two fixtures a byte apart because `close ^ 1` and `close | 1` both
+    give `close + 1` whenever that offset is EVEN, so a single fixture
+    can only see them half the time — which is how both survived a
+    suite that already pins a nested field's result exactly.
+    """
+    xml = ("<w:p>" + _run(f"<w:t>{pad}</w:t>") + _run(BEGIN)
+           + _code(r" REF Table1 \h ") + _run(SEP)
+           + _run("<w:t>Table 1</w:t>") + _run(END) + "</w:p>")
+
+    (field,) = fields(xml)
+
+    assert field.result == xml[xml.index(SEP) + len(SEP):xml.index(END)]
+
+
+def test_field_spans_SKIPS_a_field_that_never_closed_and_walks_ON():
+    """A field with no `end` has nothing to close on, and the walk has to
+    step OVER it rather than stop: the cut one comes first here, so a
+    `break` where the `continue` is loses the whole field behind it.
+
+    Only that. The `f.end < 0` test above it decides nothing on its own —
+    `xml.find("</w:r>", -1)` searches the last character alone and cannot
+    match a six-character close tag, so the very same field is refused a
+    line later by `close < 0`. Measured, not assumed: both halves of that
+    sentinel survive every test in this file. `internal_links` writes the
+    same line and there it IS load-bearing, which is why the two readers
+    disagree about how much that guard is worth.
+    """
+    cut = (_run(BEGIN) + _code(r" REF Table1 \h ") + _run(SEP)
+           + _run("<w:t>T</w:t>"))
+    whole = _link("Appendix", "A")
+    xml = "<w:p>" + cut + whole + "</w:p>"
+
+    spans = field_spans(xml)
+
+    assert len(spans) == 1, "one span: the field that closed"
+    assert spans[0][0] >= xml.index(whole), "and it is the second one"
+
+
+def test_internal_links_walks_PAST_a_field_that_never_closed():
+    """Same step, the other reader: a cut field is not a link on the
+    page, and the link after it still is."""
+    cut = (_run(BEGIN) + _code(' HYPERLINK \\l "Cut" ') + _run(SEP)
+           + _run("<w:t>C</w:t>"))
+    xml = "<w:p>" + cut + _link("Appendix", "A") + "</w:p>"
+
+    assert internal_links(xml) == [("Appendix", "A")]
+
+
+def test_spans_that_TIE_are_wider_first_when_the_NARROW_one_is_found_first():
+    """The other side of `-span[1]`. Where two fields merely open in one
+    run the outer is found first anyway, so the tie-break decides
+    nothing; here the first field CLOSES inside the run the second opens
+    in, so the narrower span is found first and the key is the only
+    thing that puts the wider one in front of it."""
+    xml = ("<w:p><w:r>" + BEGIN + END + BEGIN + "</w:r>"
+           + _run("<w:t>x</w:t>") + _run(END) + "</w:p>")
+
+    spans = field_spans(xml)
+
+    assert len(spans) == 2
+    assert spans[0][0] == spans[1][0], "the fixture no longer ties"
+    assert spans[0][1] > spans[1][1], "wider first, however it was found"
 
 
 def test_dead_links_sees_the_label_that_follows_a_nested_field():
