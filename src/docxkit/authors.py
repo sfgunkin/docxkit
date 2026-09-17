@@ -153,7 +153,7 @@ def set_author(parts: dict[str, bytes], name: str, *,
         out = _AUTHOR_ATTR_RE.sub(rename, text)
         if only is None:
             out = _INITIALS_ATTR_RE.sub(restamp, out)
-        if out != text:
+        if out != text:         # only the parts that named somebody
             parts[part] = out.encode("utf-8")
 
     # dc:creator and cp:lastModifiedBy — what File > Info shows, and what
@@ -194,6 +194,6 @@ def _collapse_people(parts: dict[str, bytes]) -> int:
         return m.group(0)
 
     out = _PERSON_RE.sub(keep, text)
-    if out != text:
+    if out != text:             # only when a duplicate was folded away
         parts[PEOPLE_PART] = out.encode("utf-8")
     return len(kept)
