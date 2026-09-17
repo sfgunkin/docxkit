@@ -135,7 +135,8 @@ def run(module: str, minutes: float, sample: int = 0, *,
         elif line:
             others.append(line)
     code = proc.wait()
-    if not last:                 # no chunk ever graded: say why, not "0%"
+    said_why = not last
+    if said_why:                 # no chunk ever graded: say why, not "0%"
         # Every line kept, each one WHOLE. The last six cut to their final
         # 300 characters reported a lost stream as `ath, target) | ...
         # CopyFile2(src_, dst_, flags)`: the end of one call, and no
@@ -145,6 +146,19 @@ def run(module: str, minutes: float, sample: int = 0, *,
             say(f"    {line}")
 
     if code:
+        if not said_why:
+            # A session that graded a while and THEN stopped had its
+            # reason swallowed: the diagnosis above prints only when no
+            # chunk graded, so `word.py` and `revision/_validate.py`
+            # each reported a bare "REFUSED (exit 1)" over two graded
+            # chunks and nothing to say what stopped them
+            # (2026-09-18). A refusal is worth the same lines whether
+            # it arrives first or last — the successful run is the one
+            # that must not carry them, since "verifying the unmutated
+            # harness..." under a final figure reads as the state the
+            # run ended in.
+            for line in others or ["no output"]:
+                say(f"    {line}")
         # A session that REFUSED is not a measurement, and returning here
         # is the whole point. `mutation_session` guards `--fresh --sample
         # N` against discarding a session that graded more than N, and it

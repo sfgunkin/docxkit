@@ -148,6 +148,21 @@ def test_a_graded_run_does_NOT_repeat_the_diagnosis_line(sweep):
     assert "verifying the unmutated harness" not in said
 
 
+def test_a_run_that_GRADED_and_then_refused_still_says_WHY(sweep):
+    """The diagnosis above prints only when NO chunk graded, so a
+    session that ran a while and then stopped reported a bare "REFUSED
+    (exit 1)" with nothing to say what stopped it — `word.py` and
+    `revision/_validate.py` both did, over two graded chunks each
+    (2026-09-18). The successful run is the one that must stay quiet;
+    a refusal is worth the same lines whether it arrives first or last,
+    and it is the only place the reason is ever printed."""
+    said = _said(sweep([*CHUNKS, "the worktree is gone"], code=1))
+
+    assert "the worktree is gone" in said
+    assert "REFUSED (exit 1)" in said
+    assert said.index("the worktree is gone") < said.index("REFUSED")
+
+
 def test_the_module_HEADING_names_the_harness_it_was_measured_against(sweep):
     """Every figure is a statement about a module AND a set of test
     files — the reason `stale_figures` exists. The count is what a
