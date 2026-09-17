@@ -356,6 +356,34 @@ is indistinguishable from a report of "nothing was done", and the way to tell
 them apart is to look for the artefact in every part of the package, not in the
 one the work happened to touch.
 
+### Two guards in `_xml.fields` decide nothing, and are kept anyway
+<!-- status: not-a-defect -->
+
+Found 2026-09-18 by the `fields()` round, and found by mutants that would
+not die rather than by reading — which is why they are recorded here: the
+next person to notice them will reach for the delete key, and should know
+this was examined.
+
+**`close + 1 if close >= 0 else m.end()`** (the mid-tag fallback). `close`
+is `-1` only when no `>` follows the separator's attribute — which means no
+end marker can follow either, so the field is never closed and its result
+comes from the leftover loop as `None` whatever `sep_end` holds. The other
+reader, `sep_end < 0` on a later instruction, reads `0` and `m.end()` alike.
+So four of the six survivors on that line are equivalent, not killable.
+
+**`field_spans`' own `if f.end < 0: continue`.** A field with `end == -1` is
+refused a line later by `close < 0`, because `xml.find("</w:r>", -1)`
+searches the last character alone and cannot match a six-character tag.
+
+The second is the more interesting one: `internal_links` writes the SAME
+line, and THERE it is load-bearing — the mutants that break it were killed
+by tests that already existed. One line, two readers, two different worths.
+The test's docstring now says so.
+
+Neither is wrong; both are belt-and-braces. Removing them would be a
+readability argument, not a correctness one, and this entry exists so that
+argument starts from what is known rather than from a survivor list.
+
 ### Not a defect — recorded so it is not chased twice
 <!-- status: not-a-defect -->
 
