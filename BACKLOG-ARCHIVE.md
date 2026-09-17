@@ -42,6 +42,17 @@ looks exactly like the one the reader wanted. A fix round in a worktree
 whose new tests were red before the fix would, run this way, report those
 tests passing against a tree that does not contain the fix.
 
+**The mutation tooling was never exposed to it**, which is the half a later
+reader will want and which was checked rather than assumed:
+`mutation_session._env()` sets `PYTHONPATH` to `WORKTREE/src` and
+`kill_check._env()` to `ROOT/src`, both noting that the editable install is
+a plain-path `.pth` so `PYTHONPATH` wins. So every kill, every claim
+verified SURVIVED and every sweep figure in the campaign was measured
+against the mutated checkout. There is a second argument to the same end:
+had the tools resolved elsewhere, a mutant would have had no effect at all
+and EVERY mutant would have read as survived — the 0.0 % modules are
+themselves evidence the mutation reached the code.
+
 Its blast radius today: every branch in this session's campaign that ran
 `python tools/gates.py` in its worktree without setting `PYTHONPATH` by hand
 gated master. Several agents did set it — the one that found this did — so
