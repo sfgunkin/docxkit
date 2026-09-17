@@ -1450,6 +1450,21 @@ def _bookmark_spans(xml: str) -> list[tuple[int, int]]:
     return out
 
 
+#: A tracked revision's WRAPPER, holding the runs it applies to. The
+#: `(?<!/)>` is the ghost guard `HYPERLINK_ANY_RE` carries, and it earns
+#: its place twice here: `w:ins` and `w:del` are ALSO written
+#: self-closing inside `w:rPr` (a run's properties were changed) and
+#: inside `w:trPr` (a table row was inserted), where they wrap nothing
+#: and pairing one with the next close tag downstream would span half a
+#: table.
+_REVISION_RE = re.compile(r"<w:(ins|del)\b[^>]*(?<!/)>.*?</w:\1>", re.DOTALL)
+
+
+def _revision_spans(xml: str) -> list[tuple[int, int]]:
+    """Each ``w:ins`` / ``w:del`` wrapper, whole."""
+    return [(m.start(), m.end()) for m in _REVISION_RE.finditer(xml)]
+
+
 def _outside(runs: list[re.Match[str]], span: tuple[int, int],
              pos: int) -> int | None:
     """The edge of `span` that holds `pos`'s VISIBLE position, or None.
@@ -1518,6 +1533,22 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
     it is the equation's: words go after the maths at the one and before
     it at the other. The paragraph that is only an equation — every
     display one — has both.
+
+    **A tracked revision is the third protected family**, and the
+    content lands outside it at an edge as it does outside a link. The
+    end of a paragraph whose last run is inside one is such an edge, and
+    it was the one place this got it wrong (measured 2026-09-18): the
+    new run went in beside that run, INSIDE the wrapper. Inside a
+    ``w:ins`` the words become that author's insertion, so rejecting the
+    round deletes them; inside a ``w:del`` they are a ``w:t`` where the
+    schema wants ``w:delText``, so accepting the deletion takes them.
+    Both are silent — the words read in order, the revision resolves,
+    and `revision validate` counts what it counted before. A deletion
+    shows nothing, so the text ends BEFORE it and so do the words; an
+    insertion shows its own, so they go after it. Strictly INSIDE a
+    revision is allowed and has no flag: a review round's paragraphs are
+    inside ``w:ins`` whole, and refusing to write in them would refuse
+    the round.
     """
     runs, spans, cursor = run_spans(para_xml)
     # Where the RUNS end is not where the PARAGRAPH ends. `run_spans`
@@ -1548,6 +1579,13 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
           "would be one broken one")),
         (_bookmark_spans(para_xml), allow_bookmark,
          "a bookmark — the anchor would grow to cover the new text"),
+        # The third member of the family, and the only one whose inside
+        # is ALLOWED: a manuscript in a review round has whole
+        # paragraphs inside `w:ins`, and refusing to write in one would
+        # refuse the round. Only the EDGE is corrected, which is where
+        # the damage was — see the note in the docstring.
+        (_revision_spans(para_xml), True,
+         "a tracked revision — the content would join it"),
     )
 
     if (inside := next(((i, s) for i, (s, e) in enumerate(spans)

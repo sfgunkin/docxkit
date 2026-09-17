@@ -16,7 +16,7 @@ sees and a "did it raise?" assertion does not.
 from __future__ import annotations
 
 import pytest
-from conftest import para, run
+from conftest import dele, ins, para, run
 
 from docxkit import text_of
 from docxkit.edit import insert_in_para
@@ -220,6 +220,41 @@ def test_the_END_of_a_LONG_paragraph_is_still_its_end():
     out = insert_in_para(p, len(LONG), "Table 4 has it.")
 
     assert text_of(out) == LONG + "Table 4 has it."
+
+
+@pytest.mark.parametrize("lead", [
+    pytest.param("", id="short"),
+    pytest.param(LONG, id="past_256"),
+])
+def test_the_end_of_a_paragraph_is_OUTSIDE_a_trailing_tracked_insertion(lead):
+    """The third member of the family the hyperlink and the bookmark are
+    in: at the EDGE of a wrapper the same place on the page is available
+    outside it. Inside the `w:ins` the new words are that author's
+    insertion — rejecting the round deletes them — and nothing says so:
+    the words read in order and the revision still resolves."""
+    p = para(run(lead + "A claim"), ins(" here"))
+
+    out = insert_in_para(p, len(lead) + len("A claim here"), " now")
+
+    assert text_of(out) == lead + "A claim here now"
+    assert out.index("</w:ins>") < out.index(" now")
+
+
+@pytest.mark.parametrize("lead", [
+    pytest.param("", id="short"),
+    pytest.param(LONG, id="past_256"),
+])
+def test_the_end_of_a_paragraph_is_BEFORE_a_trailing_tracked_deletion(lead):
+    """A deletion shows nothing, so the paragraph's text ends BEFORE it
+    and so do the new words. Inside the `w:del` they are a `w:t` where
+    the schema wants `w:delText`, and accepting the deletion takes them
+    with it."""
+    p = para(run(lead + "A claim"), dele(" here"))
+
+    out = insert_in_para(p, len(lead) + len("A claim"), " now")
+
+    assert text_of(out) == lead + "A claim now"
+    assert out.index(" now") < out.index("<w:del ")
 
 
 def test_the_END_of_a_long_paragraph_that_ENDS_on_an_equation():
