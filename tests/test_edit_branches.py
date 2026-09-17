@@ -59,6 +59,51 @@ def test_a_run_that_states_italics_off_is_turned_on_in_place(off):
     assert got.count("<w:i") == 1
 
 
+@pytest.mark.parametrize("off", ['<w:i w:val="0" />',
+                                 '<w:i w:val="0"></w:i>'])
+def test_italics_stated_off_in_ANOTHER_spelling_are_turned_on_too(off):
+    """`<w:i w:val="0" />` is the same override (2,469 `w:i` closed ` />`
+    in 30 of 2,954 corpus packages), and so is the open-and-close form
+    `_ITALIC_ANY_RE` already reads. Read as `…"/>` only, neither counted
+    as OFF, so the run read as already italic and was left upright — the
+    edit reported done and nothing on the page changed."""
+    p = para(run("word", rpr=f"<w:rPr>{off}</w:rPr>"))
+
+    got = italicize(p, "word")
+
+    assert "<w:i/>" in got and 'w:val="0"' not in got, got
+    assert got.count("<w:i") == 1
+
+
+def test_italics_go_AFTER_a_bold_closed_WITH_A_SPACE():
+    """EG_RPrBase puts `w:i` after `w:b` and `w:bCs`. The head of the
+    properties was read with `<w:b/>` only, so after `<w:b />` (6,459 in
+    32 corpus packages) the new `<w:i/>` went in FRONT of it, out of
+    schema order."""
+    p = para(run("word", rpr='<w:rPr><w:b /><w:bCs w:val="1"/>'
+                              '<w:sz w:val="20"/></w:rPr>'))
+
+    got = italicize(p, "word")
+
+    assert '<w:b /><w:bCs w:val="1"/><w:i/><w:sz w:val="20"/>' in got, got
+
+
+def test_a_vertical_alignment_WITH_A_SPACE_is_replaced_not_doubled():
+    """`<w:vertAlign w:val="subscript" />` is a run's alignment (67 closed
+    ` />` in 22 corpus packages). Not seen, it was left in place and a
+    SECOND `w:vertAlign` added beside it — schema-invalid, and Word takes
+    one of the two."""
+    from docxkit.edit import superscript
+
+    p = para(run("word", rpr='<w:rPr><w:vertAlign w:val="subscript" />'
+                              "</w:rPr>"))
+
+    got = superscript(p, "word")
+
+    assert got.count("<w:vertAlign") == 1, got
+    assert 'w:val="superscript"' in got
+
+
 def test_the_off_tag_is_replaced_where_it_stood_not_appended():
     """Schema order: `w:i` sits between `w:b` and `w:sz`, and the off tag
     was already in the right place."""

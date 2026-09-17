@@ -248,11 +248,19 @@ def _locate(para_xml: str, old: str, *, normalize: bool = False,
     return runs, spans, base + hits[0][0], base + hits[0][1]
 
 
-# EG_RPrBase orders run properties; italics goes after these.
+# EG_RPrBase orders run properties; italics goes after these. Each in any
+# spelling: `<w:b />` and `<w:b w:val="1"/>` are the bold `<w:b/>` is,
+# and read as `<w:b/>` alone the head stopped short and `<w:i/>` went in
+# front of them, out of schema order. The same `\s*/>` on the off tag and
+# on `_VERT_ALIGN_RE` below: other producers close these ` />` (of 2,954
+# corpus packages, 32 hold such a `w:b`, 30 a `w:i`, 22 a `w:vertAlign`),
+# and unread, an OFF italic read as ON and a second alignment was added
+# beside the first (2026-09-17).
 _RPR_HEAD_RE = re.compile(
     r"<w:rPr>(?:<w:rStyle [^>]*/>)?(?:<w:rFonts [^>]*/>)?"
-    r"(?:<w:b/>)?(?:<w:bCs/>)?")
-_ITALIC_OFF_RE = re.compile(r'<w:i w:val="(?:0|false|none)"/>')
+    r"(?:<w:b(?: [^>]*)?/>)?(?:<w:bCs(?: [^>]*)?/>)?")
+_ITALIC_OFF_RE = re.compile(
+    r'<w:i w:val="(?:0|false|none)"\s*(?:/>|></w:i>)')
 #: Any `w:i`, on or off, in either spelling Word writes.
 _ITALIC_ANY_RE = re.compile(r"<w:i(?: [^>]*)?(?:/>|></w:i>)")
 _RUN_OPEN_RE = RUN_OPEN_RE             # the shared definition
@@ -290,7 +298,7 @@ def _run_italic(run_xml: str) -> str:
     return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
 
 
-_VERT_ALIGN_RE = re.compile(r'<w:vertAlign w:val="[^"]*"/>')
+_VERT_ALIGN_RE = re.compile(r'<w:vertAlign w:val="[^"]*"\s*/>')
 # vertAlign sorts late in EG_RPrBase: after sz/szCs, before rtl and lang.
 _RPR_TAIL_RE = re.compile(r"(?=(?:<w:rtl[/ >]|<w:lang[ /]|</w:rPr>))")
 
