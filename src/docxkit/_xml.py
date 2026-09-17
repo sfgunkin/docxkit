@@ -535,6 +535,12 @@ _HYPERLINK_EL_RE = re.compile(
     re.DOTALL)
 _HYPERLINK_GHOST_RE = re.compile(
     r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*/>')
+#: A link element's OPENING, by anchor, with the same ghost guard: for a
+#: caller that wants where a link to X STARTS rather than what it wraps.
+#: `probe` and `crossrefs` compiled one each, and the ghost guard is
+#: exactly the kind of detail that gets fixed in one copy.
+HYPERLINK_OPEN_RE = re.compile(
+    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>')
 #: Any hyperlink ELEMENT, whatever it points at. Public because
 #: :func:`docxkit.edit.replace_in_para` needs the wider question — is
 #: this run somebody's LABEL — and an external link's label is destroyed
