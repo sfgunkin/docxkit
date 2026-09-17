@@ -455,9 +455,10 @@ def reclassify(parts: dict[str, bytes],
     for cid in stale:
         # anchor on the range START, not the reference run: for a revision
         # spanning a table row Word puts the reference past the table,
-        # which would classify it by the following paragraph
-        m = (re.search(f'<w:commentRangeStart w:id="{cid}"/>', doc)
-             or re.search(f'<w:commentReference w:id="{cid}"/>', doc))
+        # which would classify it by the following paragraph. Either
+        # anchor in any spelling (`_anchor_re`).
+        m = (_anchor_re("commentRangeStart", cid).search(doc)
+             or _anchor_re("commentReference", cid).search(doc))
         if not m:
             still.append(cid)
             continue
@@ -488,6 +489,21 @@ _PARA_ID_RE = re.compile(r'<w:p [^>]*w14:paraId="([0-9A-Fa-f]+)"')
 _RUN_START_RE = re.compile(r"<w:r(?:\s[^>]*)?(?<!/)>")
 
 
+def _anchor_re(tag: str, cid: str) -> re.Pattern[str]:
+    """Comment `cid`'s `tag` — a range start or end, or its reference —
+    in any spelling.
+
+    Every reader here matched the exact string `<w:{tag} w:id="{cid}"/>`,
+    and other producers close the tag ` />` (30 of each anchor in 4 of
+    2,954 corpus packages) or give a range `w:displacedByCustomXml` after
+    the id. Not found, an anchor was not repaired, read or removed:
+    `reclassify` left a generic comment generic, `threads` read no anchor
+    text and sorted the comment last, and `remove` left a range and a
+    reference to a comment that no longer exists (2026-09-17).
+    """
+    return re.compile(rf'<w:{tag}\b[^>]*\bw:id="{re.escape(cid)}"[^>]*/>')
+
+
 def _drop_reference_run(doc: str, cid: str) -> str:
     """Remove the run carrying comment `cid`'s reference mark.
 
@@ -495,9 +511,10 @@ def _drop_reference_run(doc: str, cid: str) -> str:
     pattern around the mark: a regex written that way clipped the run
     short and left `Reference w:id="1"/></w:r>` behind in the document.
     """
-    needle = f'<w:commentReference w:id="{cid}"/>'
+    mark = _anchor_re("commentReference", cid)
     out, pos = [], 0
-    while (at := doc.find(needle, pos)) != -1:
+    while (hit := mark.search(doc, pos)) is not None:
+        at, needle = hit.start(), hit.group(0)
         starts = [m.start() for m in _RUN_START_RE.finditer(doc, pos, at)]
         # The last run to START before the mark encloses it only if that
         # run is still OPEN there. A run that closed before the mark is a
@@ -655,16 +672,16 @@ def threads(parts: dict[str, bytes]) -> list[Thread]:
     for r in records:
         done, parent_pid = flags.get(r["para_id"], (False, None))
         cid = r["cid"]
-        anchor_m = re.search(f'<w:commentRangeStart w:id="{cid}"/>', doc)
+        anchor_m = _anchor_re("commentRangeStart", cid).search(doc)
         anchor = ""
         if anchor_m:
-            close = doc.find(f'<w:commentRangeEnd w:id="{cid}"/>',
-                             anchor_m.end())
-            if close != -1:
-                anchor = visible_text(doc[anchor_m.end():close]).strip()
+            shut = _anchor_re("commentRangeEnd", cid).search(doc,
+                                                             anchor_m.end())
+            if shut is not None:
+                anchor = visible_text(doc[anchor_m.end():shut.start()]).strip()
             position[cid] = anchor_m.start()
         else:
-            ref = re.search(f'<w:commentReference w:id="{cid}"/>', doc)
+            ref = _anchor_re("commentReference", cid).search(doc)
             position[cid] = ref.start() if ref else len(doc)
         comments[cid] = Comment(
             cid=cid, author=r["author"], initials=r["initials"],
@@ -785,8 +802,8 @@ def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
             durable_ids.add(dm.group(1))
 
     for cid in wanted:
-        doc = doc.replace(f'<w:commentRangeStart w:id="{cid}"/>', "")
-        doc = doc.replace(f'<w:commentRangeEnd w:id="{cid}"/>', "")
+        doc = _anchor_re("commentRangeStart", cid).sub("", doc)
+        doc = _anchor_re("commentRangeEnd", cid).sub("", doc)
         doc = _drop_reference_run(doc, cid)
     parts[DOCUMENT] = doc.encode("utf-8")
     parts[COMMENTS] = com.encode("utf-8")

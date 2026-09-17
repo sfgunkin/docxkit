@@ -70,6 +70,24 @@ def test_done_is_the_roots_flag():
     assert not by_cid["1"].done
 
 
+def test_an_anchor_closed_WITH_A_SPACE_still_gives_the_anchor_and_order():
+    """The range was found as the exact strings `<w:commentRangeStart
+    w:id="2"/>` and its end; closed ` />` by another producer, comment 2
+    read back with no anchor text and sorted LAST, past the comment
+    whose anchor follows it."""
+    parts = make_parts()
+    doc = parts["word/document.xml"].decode("utf-8")
+    for tag in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+        doc = doc.replace(f'<w:{tag} w:id="2"/>', f'<w:{tag} w:id="2" />')
+    assert doc.count(" />") == 3
+    parts["word/document.xml"] = doc.encode("utf-8")
+
+    found = threads(parts)
+
+    assert [t.comment.cid for t in found] == ["2", "1"]
+    assert found[0].comment.anchor == "first anchored bit"
+
+
 def test_an_EMPTY_comment_is_a_thread_and_the_next_keeps_its_own_flag():
     """`<w:comment .../>` opens nothing. Read as an open tag it ran on to
     comment 2's close, so comment 1 carried comment 2's text, paraId and

@@ -119,12 +119,16 @@ def strip_parts(parts: dict[str, bytes],
     for name in dropped:
         del parts[name]
 
+    # An Override in either attribute order: 517 in 50 of 2,954 corpus
+    # packages put `ContentType` before `PartName`, and `<Override
+    # PartName=` left theirs behind — a content type for a part that is
+    # gone (2026-09-17). `restore_parts` reads them the same way.
     for prefix in prefixes:
         if _CONTENT_TYPES in parts:
             quoted = re.escape(prefix)
             xml = parts[_CONTENT_TYPES].decode("utf-8")
-            xml = re.sub(rf'<Override PartName="/{quoted}[^"]*"[^>]*/>',
-                         "", xml)
+            xml = re.sub(rf'<Override\b[^>]*\bPartName="/{quoted}[^"]*"'
+                         r"[^>]*/>", "", xml)
             parts[_CONTENT_TYPES] = xml.encode("utf-8")
 
     # EVERY rels part, and the Target RESOLVED rather than pattern
@@ -223,7 +227,8 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
         add = [m.group(0) for name in missing
                if f'PartName="/{name}"' not in types
                and (m := re.search(
-                   rf'<Override PartName="/{re.escape(name)}"[^>]*/>', src))]
+                   rf'<Override\b[^>]*\bPartName="/{re.escape(name)}"'
+                   r"[^>]*/>", src))]
         if add:
             parts[_CONTENT_TYPES] = _append_before_close(
                 types, "</Types>", "".join(add)).encode("utf-8")
@@ -782,11 +787,20 @@ def _drop_comment_anchors(parts: dict[str, bytes], ids: list[str]) -> None:
     # below, which is the costliest regex in this module. Measured at
     # 71 ms for forty ids on a small body — nobody was waiting on it.
     # What earns the change is that the shape invites being copied.
+    #
+    # Any spelling of an anchor: another producer closes it ` />` or
+    # gives a range `w:displacedByCustomXml` after the id, and an exact
+    # `w:id="…"/>` left those behind pointing at a dropped comment. And
+    # `(?<!/)>` on the run: `<w:r w:rsidR="…"/>` is an EMPTY run, and taken
+    # as the reference run's open tag the cut ran from it across whatever
+    # lay between — a paragraph boundary, merging two paragraphs
+    # (2026-09-17).
     which = "|".join(re.escape(cid) for cid in ids)
-    anchor = re.compile(rf'<w:commentRange(?:Start|End) w:id="(?:{which})"/>')
+    anchor = re.compile(rf'<w:commentRange(?:Start|End)\b[^>]*'
+                        rf'\bw:id="(?:{which})"[^>]*/>')
     reference = re.compile(
-        rf"<w:r(?: [^>]*)?>(?:(?!</w:r>).)*?"
-        rf'<w:commentReference w:id="(?:{which})"/>'
+        rf"<w:r(?: [^>]*)?(?<!/)>(?:(?!</w:r>).)*?"
+        rf'<w:commentReference\b[^>]*\bw:id="(?:{which})"[^>]*/>'
         rf"(?:(?!</w:r>).)*?</w:r>", re.DOTALL)
     for name, xml in text_parts(parts):
         _put_back(parts, name, xml, reference.sub("", anchor.sub("", xml)))

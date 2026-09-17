@@ -261,6 +261,24 @@ _EMPTY_SEED = ('<w:comment w:id="1" w:author="Tester" '
                'w:date="2026-07-29T00:00:00Z" w:initials="T"/>')
 
 
+def test_reclassify_finds_an_anchor_closed_WITH_A_SPACE():
+    """The range start and the reference were found as the exact strings
+    `<w:… w:id="2"/>`. Written ` />` by another producer (30 of each in
+    4 of 2,954 corpus packages), neither was found, and the generic
+    comment was reported as still generic — unrepaired, for want of an
+    anchor sitting in the body."""
+    parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
+    annotate(parts, lambda ctx: None)              # comment 2 is generic
+    doc = _doc(parts)
+    for tag in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+        doc = doc.replace(f'<w:{tag} w:id="2"/>', f'<w:{tag} w:id="2" />')
+    assert doc.count(" />") == 3
+    parts["word/document.xml"] = doc.encode("utf-8")
+
+    assert reclassify(parts, always("R8: repaired")) == (1, [])
+    assert "R8: repaired" in _com(parts)
+
+
 def test_reclassify_repairs_the_generic_comment_AFTER_an_empty_one():
     """`<w:comment .../>` opens nothing. Read as an open tag it ran on to
     the generic comment's close, so the EMPTY comment was the stale one:

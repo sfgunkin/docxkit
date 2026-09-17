@@ -162,6 +162,33 @@ def test_remove_clears_extension_entries_written_in_ANOTHER_attribute_order(
         assert needle in parts[name].decode("utf-8"), f"{name} lost comment 2"
 
 
+def _spaced(xml: str, cid: int) -> str:
+    """Comment `cid`'s three anchors closed ` />`, as another producer
+    writes them (30 of each in 4 of 2,954 corpus packages)."""
+    out = xml
+    for tag in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+        out = out.replace(f'<w:{tag} w:id="{cid}"/>',
+                          f'<w:{tag} w:id="{cid}" />')
+    assert out.count(" />") == 3, out
+    return out
+
+
+def test_remove_drops_anchors_closed_WITH_A_SPACE():
+    """Each anchor was matched as the exact string `<w:… w:id="1"/>`, so
+    a ` />` spelling survived the removal: a range and a reference to a
+    comment that is gone."""
+    parts = _commented(1, 2)
+    parts["word/document.xml"] = _spaced(
+        parts["word/document.xml"].decode("utf-8"), 1).encode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert 'w:id="1"' not in doc, doc
+    assert "text 1" in doc and "text 2" in doc, "the author's prose"
+    assert '<w:commentReference w:id="2"/>' in doc
+
+
 @pytest.mark.parametrize("gone,left", [("1", "2"), ("2", "1")])
 def test_removing_one_comment_beside_an_EMPTY_one_removes_only_it(gone, left):
     """Removing the empty comment cut comment 2's definition with it,
@@ -301,6 +328,43 @@ def test_restore_parts_puts_the_tree_back_with_its_references():
     assert 'PartName="/customXml/itemProps1.xml"' in ct
     assert 'Target="../customXml/item1.xml"' in rels
     assert ct.count("</Types>") == 1 and rels.count("</Relationships>") == 1
+
+
+def _content_type_first(parts: dict[str, bytes]) -> dict[str, bytes]:
+    """The same `[Content_Types].xml`, each Override written ContentType
+    first — as 517 Overrides in 50 of 2,954 corpus packages are."""
+    ct = parts["[Content_Types].xml"].decode("utf-8")
+    parts["[Content_Types].xml"] = re.sub(
+        r'<Override (PartName="[^"]*") (ContentType="[^"]*")/>',
+        r"<Override \2 \1/>", ct).encode("utf-8")
+    assert parts["[Content_Types].xml"] != ct.encode("utf-8")
+    return parts
+
+
+def test_strip_parts_removes_an_Override_written_CONTENT_TYPE_FIRST():
+    """`<Override PartName=` demanded the PartName first. The Override of
+    a part that is gone stayed — a content type for nothing, which Word
+    calls unreadable content."""
+    parts = _content_type_first(_with_custom_xml())
+
+    strip_parts(parts)
+
+    ct = parts["[Content_Types].xml"].decode("utf-8")
+    assert "customXml" not in ct
+    assert "/word/document.xml" in ct, "unrelated overrides must survive"
+
+
+def test_restore_parts_carries_an_Override_written_CONTENT_TYPE_FIRST():
+    """...and on the way back the source's Override was not found, so the
+    restored part came back with no content type at all."""
+    source = _content_type_first(_with_custom_xml())
+    rebuilt = _with_custom_xml()
+    strip_parts(rebuilt)
+
+    restore_parts(rebuilt, source)
+
+    ct = rebuilt["[Content_Types].xml"].decode("utf-8")
+    assert 'PartName="/customXml/itemProps1.xml"' in ct
 
 
 def test_a_relationship_ALREADY_pointing_at_the_tree_is_not_doubled():
@@ -1696,6 +1760,55 @@ def test_the_reference_RUN_goes_and_not_just_the_reference():
     doc = parts["word/document.xml"].decode("utf-8")
     assert "CommentReference" in doc, "the survivor keeps its run"
     assert doc.count("<w:rStyle") == 1, doc
+
+
+def test_a_duplicate_s_anchors_closed_WITH_A_SPACE_go_too():
+    """The anchor patterns read `w:id="…"/>` only, so a duplicate whose
+    anchors another producer closed ` />` left its range and its
+    reference behind, pointing at a comment that is gone."""
+    from docxkit.hygiene import dedupe_comments
+
+    body = _body(_anchored(1, "a") + _anchored(2, "b")).decode("utf-8")
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "R", "One note."), _comment(2, "R", "One note.")),
+        "word/document.xml": _spaced(body, 2).encode("utf-8"),
+    }
+
+    dedupe_comments(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert 'w:id="2"' not in doc, doc
+    assert '<w:commentReference w:id="1"/>' in doc
+
+
+def test_an_EMPTY_run_before_the_reference_run_is_not_its_start():
+    """`<w:r w:rsidR="…"/>` is an empty run (266 with attributes in 18
+    corpus packages). Read as the reference run's open tag, the cut ran
+    from it across everything up to the reference — here a paragraph
+    boundary, and two paragraphs became one."""
+    from docxkit.hygiene import dedupe_comments
+
+    body = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<w:document xmlns:w="http://schemas.openxmlformats.org/'
+            f'wordprocessingml/2006/main"><w:body>'
+            f"<w:p>{_anchored(1, 'a')}</w:p>"
+            f'<w:p><w:r><w:t>First paragraph.</w:t></w:r>'
+            f'<w:r w:rsidR="00A1B2C3"/></w:p>'
+            f'<w:p><w:r><w:commentReference w:id="2"/></w:r>'
+            f"<w:r><w:t>Second paragraph.</w:t></w:r></w:p>"
+            f"</w:body></w:document>")
+    parts = {
+        "word/comments.xml": _comments_part(
+            _comment(1, "R", "One note."), _comment(2, "R", "One note.")),
+        "word/document.xml": body.encode("utf-8"),
+    }
+
+    dedupe_comments(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert doc.count("<w:p>") == 3, doc
+    assert 'w:id="2"' not in doc
 
 
 def test_an_anchor_in_a_FOOTNOTE_is_dropped_too():
