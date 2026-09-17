@@ -811,6 +811,48 @@ Workaround: renumber the duplicate before running `repack`.
 
 ---
 
+### S4 — no supported path to replace a promoted batch the author has not opened
+<!-- status: open -->
+
+Found 2026-09-15 on Month_of_birth_and_school_outcomes. R1 was promoted, and
+then three statements in it turned out to be wrong before the author had
+opened the file. The author chose to have the proposal rebuilt rather than
+receive a second round stacked on it. The manuscript was provably untouched:
+
+    mb1.docx             a8d4245cdcd26865…  == its stamp's sha256 == the build/redlines copy
+    stamp base_sha256    55cd0cb68b69b7c2…  == sha256(build/prev.docx)
+    ledger               built -> promoted, nothing after
+
+Every route the CLI offers refuses, and one of the refusals points the wrong
+way:
+
+* `revision ship edited_r1b.docx --allow-pending-working`. This flag was
+  written for exactly this case ("build over a promoted batch the author has
+  not adjudicated"). It clears the pending check, and then
+  `drift(working, prev)` fires: exit 4, "prev.docx is no longer what
+  mb1.docx grew out of … ingest, baseline, then build again". Baselining
+  would adopt the unaccepted proposal as the truth. The drift check never
+  consults the manuscript's own stamp, so `--allow-pending-working` cannot
+  succeed without `--allow-stale-baseline`, whose help text warns of the
+  opposite hazard.
+* `revision promote` cannot take the rebuilt batch, whatever `--base` names.
+  Its first guard wants `sha256(live) == sha256(base)`, and its second wants
+  `base_of(batch) == base_hash`. The live file is the old batch and the new
+  batch was built on prev, so no single base satisfies both.
+
+Suggested fix: treat "live is byte for byte the last promoted batch, and
+that batch was built on prev" as a state of its own; the stamp and the
+ledger already record it. Either let `build --allow-pending-working` skip
+`drift` in that state and let `promote` accept it, recording the proposal as
+`replaced`, or add a `revision withdraw` that verifies the state and restores
+the promote's rescue copy.
+
+Workaround in use: check both hashes above, and that the rescue copy equals
+prev. Then copy `build/rescue/mb1_rescue_20260915-220117-827975.docx` over
+`mb1.docx`, and ship and promote as usual.
+
+---
+
 ### S1 — `prune_orphans` cuts an orphan whose only content is a legacy picture, an OLE object or a symbol
 <!-- status: open -->
 
@@ -847,6 +889,107 @@ text that a reject would have brought back.
 
 Fix: admit `w:pict`, `w:object` and `w:sym` to the content test, and
 decide `w:delText` by the view the caller is on rather than by the tag.
+
+---
+
+### S2 — `revision promote` refuses on the stamp AFTER it has overwritten the manuscript
+<!-- status: open -->
+
+**Observed** (DSI, UNFPA-definition round, 16.09.2026). `docxkit revision
+promote` printed
+
+    docxkit: batch.docx.buildinfo.json does not describe working.docx: the
+    stamp records 3579fb8f181e6b21 and the file hashes to 62253fa0ae24e8f9.
+    A stamp is carried only onto the bytes it was written for.
+
+and exited 1 — but `working.docx` had ALREADY been replaced by the batch
+(hash-verified), the rescue taken and the redline kept. What did not run:
+the stamp carry (so `working.docx.buildinfo.json` went on naming the
+previous round's `edited_ABC.docx`), the ledger's `promoted` line, and
+`prune_rescues`. `revision status` then reported a 71-revision proposal —
+correctly — after a command that had reported failure.
+
+**Cause.** `promote` checks the stamp inside `guard.carry`, which it calls
+after `shutil.copyfile(batch, live)`. The paper's protocol runs a CLEAN tool
+pass over `build/batch.docx` after `revision build` — DSI's
+`revision/scripts/relink.py` (citation links, no visible character, glyphs and
+revision counts asserted) — and nothing in that cycle calls `guard.restamp`,
+so the batch's stamp still described Compare's bytes. `revision validate` does
+not look at the stamp, so the linked batch passed every rung first.
+
+**Repro.** `revision build E.docx` → change `build/batch.docx` with any tool
+(e.g. `citations.link_all` + `write_docx`) → `revision validate` (PASS) →
+`revision promote`.
+
+**Workaround used** (`DSI/revision/scripts/finish_promote_unfpa.py`, archived
+to `D:\PaperAttic\DSI\revision_applied\`): prove the stamp hash is the
+pre-tool batch, `working == batch == kept redline`, `rescue == prev`; then
+`guard.restamp(batch, why=…)`, `guard.carry`, `_ledger.record(PROMOTED, …)`,
+`_promote.prune_rescues(protect=rescue)` — promote's own tail, by hand, through
+two private modules.
+
+**Fix sketch.** (1) In `promote`, check `stamp.sha256 == sha256(batch)` BEFORE
+the rescue/redline/copy, and refuse with the restamp instruction — nothing
+written. (2) `revision validate` could warn when the batch no longer matches
+its stamp, since that is the moment a tool pass has just happened. (3) Offer
+`docxkit revision restamp --why` (or a `--restamp-why` on the relink path) so
+a paper's cycle need not import `guard`. DSI's `relink.py` should then restamp
+when its output is the batch.
+
+---
+
+### S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported
+<!-- status: open -->
+
+**Observed** (DSI, UNFPA-definition batch A, 16.09.2026). A protocol replaces a
+whole paragraph whose text contains a linked citation (¶29 «…(Sen 1999).»,
+¶43 «…(Bongaarts and Bulatao 1999).»). `edit.replace_in_para` rightly refuses a
+match that crosses a link and says *split the replacement into one call on each
+side of the link* — and every caller then hand-rolls the split: find the label
+spans inside the anchor, require the replacement to carry each label in order,
+edit the segments right to left, and turn "segment only grows" into an
+`insert_in_para` rather than a replace (a bare `").")` segment is not unique).
+The same batch also needed "drop the trailing whitespace-only runs" (¶43's
+trailing space), which nothing offers.
+
+To write it, the paper imported `edit.run_spans`, `edit.field_spans`,
+`edit.own_properties` and `edit.internal_links` — public names, documented,
+and **not in `edit.__all__`**, so Pyright reports `reportPrivateImportUsage` on
+each (`is_field_run` is the only one exported).
+
+**Workaround:** `replace_around_links`, `link_label_spans` and
+`strip_trailing_whitespace_runs` in `DSI/revision/scripts/apply_unfpa_A.py`
+(archived to `D:\PaperAttic\DSI\revision_applied\`), guarded by a per-paragraph
+contract (text after == text before with Old swapped for New).
+
+**Fix sketch:** `edit.replace_keeping_links(para_xml, old, new)` doing exactly the
+above and refusing when `new` drops or reorders a label; `edit.rstrip_para`;
+add the four helpers to `__all__` (or re-export them where they are meant to be
+used from).
+
+---
+
+### S4 — every protocol round re-writes the same snapshot and anchor-index scripts
+<!-- status: open -->
+
+**Observed** (DSI, twice: `snapshot_t6.py` / `anchor_index_t6.py` on 07.09,
+`snapshot_unfpa.py` / `anchor_index_unfpa.py` on 16.09; both still in
+`DSI/revision/scripts/`). Each round's P-steps need (1) a text dump in document
+order — body ¶ numbered as `Document.paragraphs`, table cells as `[T<k>:r,c]`,
+footnotes, one `⟦MATH⟧` per `m:oMath` — plus a structure record (¶/table/oMath/
+footnote counts, bookmark names, internal link targets in BOTH forms with
+instructions reassembled per paragraph); and (2) resolution of every protocol
+anchor over body + table cells + footnotes, "exactly once, inside the named ¶".
+The second round also needed the dump in BASELINE numbering after inserts
+(`[P31a]`), or a text diff is all label noise.
+
+**Workaround:** the four scripts above; `docxkit compare` answers "what changed"
+but not "freeze this state as text + structure" or "does this anchor resolve
+where the protocol says".
+
+**Fix sketch:** `docxkit snapshot PAPER.docx OUT_STEM [--accepted]` and
+`docxkit anchors PAPER.docx PROTOCOL.md` (quoted `>` blocks and «…» anchors with
+their ¶ scope), with a `--insertions 31,98` relabel for the post-batch dump.
 
 ---
 
