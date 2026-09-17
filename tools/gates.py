@@ -135,6 +135,23 @@ GATES: list[Gate] = [
     # prints ABOVE the summary line, so `_summary` still finds the
     # count — checked, because that function takes the LAST matching
     # line and a durations line says "call".
+    # A static read of the package — two seconds — asking the one
+    # question the type checkers cannot: not "is this Optional handled"
+    # but "can it ever BE None". `PromoteReport.redline` was
+    # `Path | None = None` while `promote` either raised or returned a
+    # real path, so `cmd_revision_promote` grew an `is not None` branch
+    # nothing could take; the second of that shape turned up in the same
+    # file the same afternoon. mypy and pyright pass over both, because
+    # neither is a type error — it is a claim about the code that is not
+    # true. In front of the suite because it costs two seconds and
+    # answers about the source alone.
+    #
+    # `--callers tests`: the suite is a caller like any other, and a
+    # default no shipped code omits but one test does is a live branch.
+    # Expected answer 0; it fails only on an Optional something READS as
+    # optional, so a field added before its first test is not a toll.
+    ("optionals", [sys.executable, "tools/optional_audit.py",
+                   "--callers", "tests"], False),
     ("pytest", [sys.executable, "-m", "pytest", "-q", "-n", _workers(),
                 "--durations=25", "--durations-min=0.05",
                 "--cov=docxkit", f"--cov-report=json:{COVERAGE_JSON}"],

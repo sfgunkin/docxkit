@@ -1,4 +1,4 @@
-"""`tools/gates.py` — the seven gates, run so the answer cannot be lost.
+"""`tools/gates.py` — the ten gates, run so the answer cannot be lost.
 
 The runner exists because the CHAIN is where they go wrong, and every
 failure it guards against has happened here: a piped gate whose status
@@ -122,9 +122,19 @@ def test_mypy_is_judged_on_its_LINES_not_its_exit_code():
     assert "FAILED  mypy" in said
 
 
-def test_the_real_list_is_the_nine_CONTRIBUTING_names():
+def test_the_real_list_is_the_ten_CONTRIBUTING_names():
     """A runner that drifts from the documented gates is worse than
     none: it would report a pass over a gate nobody ran.
+
+    `optionals` joined on 2026-09-18: it asks whether an `X | None` can
+    ever BE None, which no type checker asks — mypy and pyright both
+    pass over `PromoteReport.redline: Path | None = None`, written
+    beside a `promote` that either raised or returned a real path, and
+    over the `if report.redline is not None:` that grew in
+    `cmd_revision_promote` and could not be taken. The second of that
+    shape was found in the same file the same afternoon, which is what
+    makes it a gate and not a note. Mutation testing cannot see it
+    either: a branch no input reaches has no mutant that dies.
 
     `deps` joined on 2026-09-02: it asks whether the SHIPPED package
     imports anything it does not declare, which no other gate sees and
@@ -144,8 +154,8 @@ def test_the_real_list_is_the_nine_CONTRIBUTING_names():
     corpus on every single chain.
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
-        "ruff", "mypy", "pyright", "pytest", "floors", "api", "deps",
-        "sweep", "committed"]
+        "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "api",
+        "deps", "sweep", "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
 

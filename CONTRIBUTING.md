@@ -77,10 +77,10 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Nine gates, all of which must pass:
+Ten gates, all of which must pass:
 
 ```
-python tools/gates.py   # all nine, in order, first failure stops
+python tools/gates.py   # all ten, in order, first failure stops
 ```
 
 Two of them can SKIP rather than pass: `sweep` needs a corpus of real
@@ -96,6 +96,7 @@ python -m pytest        # synthetic fixtures, no Word required
 python -m ruff check .
 python -m mypy
 python -m pyright       # what Pylance shows in the editor
+python tools/optional_audit.py --callers tests   # can this `| None` ever BE None?
 python tools/coverage_floor.py
 python tools/api_check.py          # did this break the API the papers call?
 python -m deptry src               # does the SHIPPED package declare what it imports?
@@ -206,6 +207,40 @@ every time can never find anything it has not already found.
 
 For anything Word-backed, the real check is `docxkit verify` — does Word
 read the file back as written, or repair it on open?
+
+### Can this `| None` ever BE None?
+
+```
+python tools/optional_audit.py --callers tests   # the gate, expects 0
+python tools/optional_audit.py                   # src alone, to read
+```
+
+An Optional the constructor cannot produce is a claim about the code
+that is not true, and every reader of it grows an `is not None` branch
+nothing can take. `PromoteReport.redline` was `Path | None = None` beside
+a `promote` that either raised or returned the redline it had made, so
+`cmd_revision_promote` tested it for None forever; the second of that
+shape turned up in the same file the same afternoon (2026-08-24). Neither
+type checker sees it — it is not a type error — and mutation testing
+cannot either, because a branch no input reaches has no mutant that dies.
+
+It fails only on an Optional something READS as optional, so a field
+added today, before the test that exercises it, is not a toll: it is
+listed as "nothing has been misled yet" and the gate stays green. The
+suite counts as a caller (`--callers tests`) because a default no shipped
+code omits but one test does is a live branch.
+
+The src-only run is the review tool and is NOT gated: it stands at 2 —
+`Table.source` and `Table.body`, which are None on a hand-built Table, a
+documented contract for callers outside this package — and a gate on it
+would need an allowlist of exactly those two.
+
+Read its docstring before adding a rule. Nine of the first ten candidates
+it produced were the tool's ignorance rather than the code's — lxml's
+`getnext()`, an Optional `@property` read as an attribute, `cls(...)` in
+a classmethod, a tuple unpacked or indexed out of a call, a loop variable
+drawn from a `list[int | None]` — and `tests/test_optional_audit.py`
+keeps one fixture per rule so the next one added cannot quietly lose one.
 
 ### Mutation testing
 
