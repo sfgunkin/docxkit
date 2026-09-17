@@ -1519,6 +1519,30 @@ def test_restamp_without_WHY_is_refused_by_the_parser(monkeypatch, project,
     assert "--why" in capsys.readouterr().err
 
 
+def test_restamp_prints_the_HASH_that_promote_prints_next(monkeypatch,
+                                                          project, capsys):
+    """`sha256(target)[:16]`, the prefix `promote` and `validate` quote
+    too. The restamp line exists so that the next command's line can be
+    held against it — "is the manuscript promote just wrote the batch I
+    restamped" — and a prefix one character longer or shorter matches
+    neither. Nothing read the hash in the line before: the tests above
+    assert the reason and the stamp."""
+    from docxkit import guard
+
+    _changed_since_build(project)
+    expected = guard.sha256(project.batch)[:16]
+
+    run_cli(monkeypatch, "revision", "restamp", "--why", "relink",
+            "--paper", str(project.root))
+    said = re.findall(r"\(sha256 ([0-9a-f]+)", capsys.readouterr().out)
+    code, _ = run_cli(monkeypatch, "revision", "promote",
+                      "--paper", str(project.root))
+    said += re.findall(r"\(sha256 ([0-9a-f]+)", capsys.readouterr().out)
+
+    assert code == 0
+    assert said == [expected, expected]
+
+
 def test_validate_WARNS_that_promote_will_refuse_a_changed_batch(
         monkeypatch, project, capsys):
     """Warned, not failed: every gate reads the bytes that are there, and
@@ -1608,6 +1632,30 @@ def test_withdraw_REFUSES_with_nothing_promoted(monkeypatch, project):
 
     assert code == 1
     assert project.working.read_bytes() == before
+
+
+def test_withdraw_without_WHY_is_refused_by_the_parser(monkeypatch, project,
+                                                       capsys):
+    """`required=True` on withdraw's `--why`, the second of two identical
+    lines — `restamp`'s is the first, and its test above says nothing
+    about this one. The reason is what the ledger keeps beside the
+    hashes, so a withdraw without one is refused before anything moves.
+    A proposal IS promoted here: with nothing promoted the command
+    refuses anyway, with exit 1, and the flag would never be the reason."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the proposal"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    run_cli(monkeypatch, "revision", "promote", "--paper", str(project.root))
+    proposal = project.working.read_bytes()
+    capsys.readouterr()
+
+    code, _ = run_cli(monkeypatch, "revision", "withdraw",
+                      "--paper", str(project.root))
+
+    assert code == 2
+    assert "--why" in capsys.readouterr().err
+    assert project.working.read_bytes() == proposal, "the withdraw ran"
 
 
 def test_promote_takes_explicit_paths(monkeypatch, project, tmp_path):

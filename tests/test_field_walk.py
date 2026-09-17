@@ -12,10 +12,22 @@ One test reached it, in `test_pathological.py`, and it asks about
 nesting. Nothing asked what a span IS, what the sentinel is when there
 is no run, or what happens to the walk when a field cannot be closed.
 Those are the three things the survivors sat on.
+
+The whole sweep of 2026-09-17 added the readers on top of the walk,
+`field_anchors` and `ref_anchor`: 66 survivors, and no test in this
+harness had handed either one a field at all — a mutant that asked for
+a regex group that does not exist lived. They are the last section.
 """
 from __future__ import annotations
 
-from docxkit._xml import field_spans, run_open_before
+import re
+
+from docxkit._xml import (
+    field_anchors,
+    field_spans,
+    ref_anchor,
+    run_open_before,
+)
 
 BEGIN = '<w:fldChar w:fldCharType="begin"/>'
 END = '<w:fldChar w:fldCharType="end"/>'
@@ -30,6 +42,22 @@ def _field(anchor: str, label: str) -> str:
     return (_run(BEGIN)
             + _run(f'<w:instrText> HYPERLINK \\l "{anchor}" </w:instrText>')
             + _run(SEP) + _run(f"<w:t>{label}</w:t>") + _run(END))
+
+
+def _instr(text: str) -> str:
+    return _run(f'<w:instrText xml:space="preserve">{text}</w:instrText>')
+
+
+def _field_of(*pieces: str, shown: str = "Table 1") -> str:
+    """A whole field whose instruction is split into ``pieces``, one run
+    each — which is how Word writes one that was edited at an rsid
+    boundary."""
+    return (_run(BEGIN) + "".join(_instr(p) for p in pieces)
+            + _run(SEP) + _run(f"<w:t>{shown}</w:t>") + _run(END))
+
+
+def _instr_offsets(xml: str) -> list[int]:
+    return [m.start() for m in re.finditer("<w:instrText", xml)]
 
 
 # ------------------------------------------------------ run_open_before --
@@ -189,14 +217,31 @@ def test_two_fields_OPENING_IN_ONE_RUN_sort_wider_first():
     assert spans[0][1] > spans[1][1], "the wider span must come first"
 
 
-# Three mutants in this walk are EQUIVALENT and left alive, each because
-# the values reaching the comparison are a closed set:
+def test_a_fldCharType_OUTSIDE_the_schema_opens_and_closes_nothing():
+    """For `kind == "begin"` -> `kind <= "begin"`, and `kind == "end"`
+    -> `kind <= "end"` in the `elif`.
+
+    These were written off here as equivalent because "`FLDCHAR_RE`
+    captures only begin, end and separate". It does not: it captures
+    `(\\w+)`, any word. The schema allows three values, and a writer that
+    capitalised one (`Begin`, `End` — both sort BELOW the lower-case
+    words) is exactly the input a `<=` reads as a marker. Each half of
+    the fixture pairs the odd value with a real one, so that inventing
+    the odd marker is what produces a span.
+    """
+    odd_begin = '<w:fldChar w:fldCharType="Begin"/>'
+    odd_end = '<w:fldChar w:fldCharType="End"/>'
+    label = _run("<w:t>x</w:t>")
+
+    assert field_spans("<w:p>" + _run(odd_begin) + label + _run(END)
+                       + "</w:p>") == [], "`Begin` opened a field"
+    assert field_spans("<w:p>" + _run(BEGIN) + label + _run(odd_end)
+                       + "</w:p>") == [], "`End` closed a field"
+
+
+# The rest of this walk's survivors are EQUIVALENT, claimed as such and
+# left alive:
 #
-# * `kind == "begin"` -> `kind <= "begin"`. `FLDCHAR_RE` captures only
-#   "begin", "end" and "separate", and of those only "begin" sorts at or
-#   below it;
-# * `kind == "end"` -> `kind <= "end"`, in the `elif` — so "begin" is
-#   already excluded and "separate" sorts above;
 # * `close < 0` -> `close <= 0`, and `-> close < 1` with it. `close` is
 #   `xml.find(..., m.end())` and `m.end()` is past the start of the
 #   string, so a hit is never 0 and only the -1 miss is negative. The
@@ -222,3 +267,182 @@ def test_a_field_whose_BEGIN_RUN_starts_at_offset_ZERO():
     assert start == 0, "the field opens at the first byte and is real"
     assert end == len(xml)
     assert "Table 3" in body
+
+
+# ----------------------------------------------------------- ref_anchor --
+
+def test_ref_anchor_by_DEFAULT_answers_only_a_REF_a_reader_can_click():
+    """The default is `clickable=True`, and it is the reader's question:
+    without `\\h` Word renders the reference as static text. Both halves,
+    because each of the guard's mutants errs in ONE direction — dropping
+    the `not` loses the clickable one, `or` and a `False` default keep
+    the static one."""
+    assert ref_anchor(r" REF _Ref211944524 \h \* MERGEFORMAT ") \
+        == "_Ref211944524"
+    assert ref_anchor(r" REF _Ref211944524 \* MERGEFORMAT ") is None
+
+
+def test_ref_anchor_NOT_clickable_answers_every_REF_that_depends():
+    """`clickable=False` is the question `crossrefs` asks before it
+    removes a bookmark, and a switchless field still breaks when its
+    target goes. `not clickable and ...` would answer None for exactly
+    that field."""
+    assert ref_anchor(r" REF _Ref211944524 \* MERGEFORMAT ",
+                      clickable=False) == "_Ref211944524"
+    assert ref_anchor(r" REF _Ref211944524 \h ",
+                      clickable=False) == "_Ref211944524"
+
+
+def test_ref_anchor_reads_the_name_BARE_and_QUOTED():
+    """Group 1 is the quoted name, group 2 the bare one, and exactly one
+    of them is set. A fixture in one form hides every mutant that reads
+    the other group twice, so both forms, and the bare form is what
+    catches the whole-match `group(0)` ("REF _Ref…")."""
+    assert ref_anchor(r" REF _Ref211944524 \h ") == "_Ref211944524"
+    assert ref_anchor(r' REF "_Ref211944524" \h ') == "_Ref211944524"
+
+
+# -------------------------------------------------------- field_anchors --
+
+def test_field_anchors_reports_the_anchor_at_its_INSTRUCTION_offset():
+    """The name and the offset the docstring promises: the instruction's,
+    not the `begin`'s. The offset is built as the body's start plus the
+    instruction's place in the body, so the fixture puts both away from
+    zero and makes them share a bit — two addends with no bit in common
+    cannot tell `+` from `|` or `^`. The lead run is what moves the body
+    start; the begin in a run of its own is what moves the instruction
+    into the body.
+    """
+    lead = "<w:p>" + _run("<w:t>see </w:t>")
+    xml = lead + _field_of(' HYPERLINK \\l "Table3txt" ') + "</w:p>"
+    at, = _instr_offsets(xml)
+    body_start = xml.index(BEGIN) + len(BEGIN)
+    assert body_start & (at - body_start), \
+        "the fixture no longer tells + from |"
+
+    assert field_anchors(xml) == [("Table3txt", at)]
+
+
+def test_field_anchors_by_DEFAULT_reads_a_switchless_REF_as_no_link():
+    """The same default as `ref_anchor`, passed through — and a field
+    that names nothing a reader can reach adds NOTHING, not a `None`
+    entry: the guard in `add` is what keeps the list to names."""
+    xml = ("<w:p>" + _field_of(r" REF _Ref211944524 \* MERGEFORMAT ")
+           + "</w:p>")
+    at, = _instr_offsets(xml)
+
+    assert field_anchors(xml) == []
+    assert field_anchors(xml, clickable=False) == [("_Ref211944524", at)]
+
+
+def test_an_instruction_SPLIT_across_runs_is_read_JOINED():
+    """Word splits an instruction wherever an edit left an rsid boundary,
+    and retargeting a cross-reference by retyping its digit leaves
+    exactly this: ` REF Table`, `2`, ` \\h `. No piece names the target
+    on its own, so only the joined read gets `Table2` — reading the
+    pieces one by one (the stray-instruction loop, if the field loop
+    never ran) says `Table`, a bookmark that does not exist, or nothing.
+    """
+    xml = "<w:p>" + _field_of(" REF Table", "2", r" \h ") + "</w:p>"
+    first = _instr_offsets(xml)[0]
+
+    assert field_anchors(xml) == [("Table2", first)]
+    assert field_anchors(xml, clickable=False) == [("Table2", first)]
+
+
+def test_a_field_is_reported_ONCE_however_many_runs_its_instruction_has():
+    """The pieces of a field's instruction are covered, so the loop for
+    stray instructions skips them. Word writes the padding of a
+    cross-reference in runs of its own — ` `, `REF _Ref… \\h`, ` ` — and
+    the MIDDLE piece names the target by itself: any coverage test that
+    stops covering the inside of the field reports it a second time, at
+    its own offset. (Only the first piece sits at the body's start, so
+    the one mutant that differs there needs the next test.)
+    """
+    xml = ("<w:p>" + _field_of(" ", r"REF _Ref211944524 \h", " ")
+           + "</w:p>")
+    first = _instr_offsets(xml)[0]
+
+    assert field_anchors(xml) == [("_Ref211944524", first)]
+
+
+def test_an_instruction_opening_AT_the_body_start_is_covered_too():
+    """`lo <= start`, not `lo < start`. Word puts the `begin` in a run of
+    its own, but the python-docx field recipe appends the `fldChar` and
+    the `instrText` to ONE run, and then the instruction opens on the
+    very first byte of the field body. Split as a retargeting edit
+    splits it, that first piece read on its own names `Table` — a second
+    entry at the same offset, which `seen` cannot fold into `Table2`.
+    """
+    xml = ("<w:p><w:r>" + BEGIN
+           + '<w:instrText xml:space="preserve"> REF Table</w:instrText></w:r>'
+           + _instr("2") + _instr(r" \h ") + _run(SEP)
+           + _run("<w:t>Table 2</w:t>") + _run(END) + "</w:p>")
+    first = _instr_offsets(xml)[0]
+    assert first == xml.index(BEGIN) + len(BEGIN), \
+        "the instruction no longer opens where the field body does"
+
+    assert field_anchors(xml, clickable=False) == [("Table2", first)]
+
+
+def test_a_field_with_NO_instruction_does_not_stop_the_walk():
+    """The skip is a `continue`. An empty `<w:instrText/>` matches no
+    instruction, and the field after it has its instruction split so
+    that only the field loop can read it: stopped early, that field is
+    left to the stray loop, which reads ` REF _Ref… ` without its `\\h`
+    and reports nothing a reader can click."""
+    empty = _run(BEGIN) + _run("<w:instrText/>") + _run(SEP) + _run(END)
+    xml = ("<w:p>" + empty + _field_of(" REF _Ref211944524 ", r"\h ")
+           + "</w:p>")
+    first = _instr_offsets(xml)[1]
+
+    assert field_anchors(xml) == [("_Ref211944524", first)]
+
+
+def test_an_instruction_whose_field_was_CUT_is_still_reported():
+    """The docstring's promise: "a field truncated by an edit still
+    reports the bookmark it depends on". One field lost its `begin`
+    (BEFORE a whole one), one lost its `end` (AFTER it) — the order is
+    the fixture: a stray on each side of a covered range, so a coverage
+    test that leaks leftward or rightward swallows one, and the covered
+    instruction sits between them, so stopping at it loses the last.
+    The first stray is HYPERLINK form and the second REF form, so each
+    loop's reading of each form is exercised. The END-cut field comes
+    last because one before a whole field would pair its `begin` with
+    the whole field's `end`.
+    """
+    cut_begin = (_instr(' HYPERLINK \\l "Before" ') + _run(SEP)
+                 + _run("<w:t>Figure 1</w:t>") + _run(END))
+    whole = _field_of(' HYPERLINK \\l "Table3txt" ')
+    cut_end = (_run(BEGIN) + _instr(r" REF After \h ") + _run(SEP)
+               + _run("<w:t>Table 9</w:t>"))
+    xml = "<w:p>" + cut_begin + whole + cut_end + "</w:p>"
+    before, middle, after = _instr_offsets(xml)
+
+    assert sorted(field_anchors(xml), key=lambda a: a[1]) == [
+        ("Before", before), ("Table3txt", middle), ("After", after)]
+
+
+def test_a_STRAY_instruction_is_read_from_its_TEXT_not_its_tags():
+    """Group 1 of `INSTR_RE`, not the whole match. The two read alike
+    wherever the name is followed by a space — the bare-name pattern
+    stops there — so the fixture ends a piece ON the name, as Word does
+    when it puts the `\\h` switch in a run of its own: read with its
+    tags, the name runs on into `</w:instrText>`.
+    """
+    cut_begin = (_instr(" REF _Ref211944524") + _instr(r" \h ") + _run(SEP)
+                 + _run("<w:t>Table 1</w:t>") + _run(END))
+    xml = "<w:p>" + cut_begin + "</w:p>"
+    first = _instr_offsets(xml)[0]
+
+    assert field_anchors(xml, clickable=False) == [("_Ref211944524", first)]
+
+
+# `field_anchors` survivors EQUIVALENT and claimed rather than tested —
+# all three rest on the same fact, that a coverage range's ends are
+# `fldChar` tags and an `<w:instrText` cannot start on one:
+#
+# * `m.start(1)` -> `m.start(0)` and `m.end(1)` -> `m.end(0)` in
+#   `covered`: the range grows by the `begin` or the `end` tag, and a
+#   tag cannot hold a `<` in well-formed XML;
+# * `< hi` -> `<= hi`: `hi` is where the `end` tag's `<w:fldChar` starts.

@@ -3512,3 +3512,224 @@ def test_pages_checks_the_CORNER_unless_told_ANY(monkeypatch, paper, capsys,
     else:
         assert code == 0, out
         assert not found, out
+
+
+# ------------------------------------------ SNAPSHOT and ANCHORS ------
+# The two commands a protocol runs before a round edits anything. The
+# guard sweep runs both under a lock and accepts any exit they ran with,
+# which is its question; what a round script reads — the files a stem
+# writes, the tally, the exit code, a refused flag — was held by nothing.
+
+
+def _numbered(tmp_path, *texts: str, name: str = "numbered.docx") -> str:
+    """One body paragraph per text, and nothing else to number."""
+    return write(tmp_path / name,
+                 make_parts("".join(para(run(t)) for t in texts)))
+
+
+def test_snapshot_with_a_STEM_writes_its_three_files_and_names_each(
+        monkeypatch, tmp_path, capsys):
+    """`for path in got.write(args.stem)`, and `return 0`: a stem that
+    wrote nothing, or a clean run exiting 1, passed every test there was.
+    The stem has a dot in it because that is the name a round gives one,
+    and the files are asserted on disk as well as in the listing."""
+    doc = _numbered(tmp_path, "Alpha one.", "Beta two.")
+    stem = tmp_path / "out" / "round.v2"
+
+    code, _ = run_cli(monkeypatch, "snapshot", doc, str(stem))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    written = [tmp_path / "out" / name for name in (
+        "round.v2.txt", "round.v2_notes.txt", "round.v2_structure.json")]
+    for path in written:
+        assert path.is_file(), out
+        assert f"  wrote {path}" in out.splitlines(), out
+    assert written[0].read_text(encoding="utf-8").splitlines() == [
+        "[P1] Alpha one.", "[P2] Beta two."]
+    assert "[P1]" not in out, "with a stem the dump goes to the file"
+    assert "2 paragraphs (0 empty, unnumbered)" in out, out
+
+
+def test_snapshot_takes_an_insertion_after_P0_and_after_a_LATER_one(
+        monkeypatch, tmp_path, capsys):
+    """`if any(n < 0 for n in got)`. ¶0 is legal — a paragraph put
+    before the first — and so is any later number; seven mutants of the
+    bound refused `0`, `2` or both, and no test passed the flag a value.
+    Both kinds are in one list, and the LABELS are asserted, because they
+    are what a refused list never produces."""
+    doc = _numbered(tmp_path, "new first", "one", "two", "new after two",
+                    "three")
+
+    code, _ = run_cli(monkeypatch, "snapshot", doc, "--insertions", "0,2")
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.splitlines()[:5] == [
+        "[P0a] new first", "[P1] one", "[P2] two", "[P2a] new after two",
+        "[P3] three"], out
+
+
+def test_a_NEGATIVE_insertion_is_refused_by_the_PARSER(monkeypatch, tmp_path,
+                                                      capsys):
+    """`n < 0`, and not `n < -1` or `n == 0`: ``-1`` is the value those
+    let through, and `snapshot` then refuses it itself, after reading the
+    package — a `DocxKitError` exit carrying a message instead of the
+    usage error, exit 2, that a flag with a bad value is everywhere else.
+    Written ``--insertions=-1`` so argparse cannot read the value as an
+    option."""
+    doc = _numbered(tmp_path, "one", "two")
+
+    code, _ = run_cli(monkeypatch, "snapshot", doc, "--insertions=-1")
+
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "a paragraph is inserted after ¶0 or a later one" in err, err
+
+
+def test_insertions_that_are_not_NUMBERS_say_what_the_flag_takes(
+        monkeypatch, tmp_path, capsys):
+    """`except ValueError` in `_insertions`. Uncaught, `int("x")` still
+    exits 2 — argparse catches a ValueError from a type function itself —
+    but as "invalid _insertions value", which names a private function
+    and not the form the flag wants. The code cannot tell the two apart,
+    so the message is what is asserted."""
+    doc = _numbered(tmp_path, "one")
+
+    code, _ = run_cli(monkeypatch, "snapshot", doc, "--insertions", "31,x")
+
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "baseline paragraph numbers, comma-separated" in err, err
+
+
+def test_an_unreadable_ANCHOR_is_a_usage_error_and_not_a_TRACEBACK(
+        monkeypatch, tmp_path, capsys):
+    """`except DocxKitError` in `_anchor_arg`. `AnchorError` is not a
+    ValueError, so argparse does not catch it for us: let through, it
+    leaves `parse_args` — which `main` calls outside its own `try` — as
+    a traceback."""
+    doc = _numbered(tmp_path, "one")
+
+    code, _ = run_cli(monkeypatch, "anchors", doc, "--anchor", "P1 the words")
+
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "want [kind@]scope=anchor" in err, err
+
+
+def test_anchors_with_NOTHING_to_resolve_is_a_usage_error(monkeypatch,
+                                                         tmp_path, capsys):
+    """Exit 2, the code argparse gives every other usage error: 1 is a
+    STOP, and a round script branching on the code must not read a
+    command called wrong as an anchor that failed."""
+    doc = _numbered(tmp_path, "one")
+
+    code, _ = run_cli(monkeypatch, "anchors", doc)
+
+    captured = capsys.readouterr()
+    assert code == 2, captured
+    assert "give a SPEC file or --anchor" in captured.err
+    assert not captured.out, "nothing was resolved, so nothing is tallied"
+
+
+@pytest.mark.parametrize(("anchors", "verdicts", "tally", "exit_code"), [
+    (("P1=Alpha", "P2=Beta", "P3=Gamma", "P4=Alpha"),
+     ["OK", "OK", "OK", "STOP"], "4 anchors: 3 OK, 1 STOP", 1),
+    (("P1=Alpha", "append@P2=two."),
+     ["OK", "OK"], "2 anchors: 2 OK, 0 STOP", 0),
+])
+def test_anchors_prints_every_VERDICT_and_a_TALLY_that_adds_up(
+        monkeypatch, tmp_path, capsys, anchors, verdicts, tally, exit_code):
+    """Each verdict line, the tally, and the exit code a round gates on.
+
+    FOUR anchors and ONE stop, because the OK count is `len - stops` and
+    smaller pairs hide operators: 3 and 1 give 2 under `^` as under `-`,
+    2 and 1 give 1 under `>>`; 4 and 1 separate all eight. The all-OK
+    case is the one that holds exit 0, and the STOP is the fourth anchor
+    so a verdict loop that dropped lines cannot keep the count right."""
+    doc = _numbered(tmp_path, "Alpha one.", "Beta two.", "Gamma three.",
+                    "Delta four.")
+    argv = [arg for anchor in anchors for arg in ("--anchor", anchor)]
+
+    code, _ = run_cli(monkeypatch, "anchors", doc, *argv)
+
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert [ln.split()[0] for ln in lines
+            if ln.startswith(("OK ", "STOP "))] == verdicts, out
+    assert lines[-1] == tally, out
+    assert code == exit_code, out
+
+
+def _held_by_word(monkeypatch, docx: str) -> None:
+    """Word has `docx` open: `is_locked` says so, a direct read of the
+    live path fails the way Windows fails it, and a COPY still reads.
+
+    `test_cli_guards.py` keeps this as a fixture for its lock sweep. It
+    is restated here rather than moved into `conftest.py`, for the reason
+    that file gives for its own `fake_word`."""
+    import zipfile
+
+    import docxkit.package as pkg
+
+    live, real = pathlib.Path(docx).resolve(), zipfile.ZipFile
+
+    def held(file, *args, **kw):
+        mode = args[0] if args else kw.get("mode", "r")
+        if (mode == "r" and isinstance(file, str | pathlib.Path)
+                and pathlib.Path(file).resolve() == live):
+            raise PermissionError(13, "The process cannot access the file "
+                                      "because it is being used by another "
+                                      "process")
+        return real(file, *args, **kw)
+
+    monkeypatch.setattr(pkg, "is_locked", lambda _path: True)
+    monkeypatch.setattr(zipfile, "ZipFile", held)
+    monkeypatch.setattr(pkg.time, "sleep", lambda _seconds: None)
+
+
+def test_locate_names_a_BOOKMARK_while_Word_holds_the_file(
+        monkeypatch, paper, fake_word, capsys):
+    """`_bookmarks_in` reads with `read_only=True`, and the hint is the
+    reason: a bookmark a hand-back lost is asked about while the author
+    has the paper open. Read live, the lock is a `DocxKitError` the hint
+    swallows by design, so the guard sweep's locked `locate` — asking for
+    a phrase that names no bookmark — cannot tell a snapshot from no read
+    at all. Here the phrase IS a bookmark."""
+    from docxkit import read_parts, write_docx
+
+    monkeypatch.setattr(fake_word, "locate_in", lambda doc, anchors, **kw: [])
+    parts = read_parts(paper)
+    doc = parts["word/document.xml"].decode("utf-8")
+    parts["word/document.xml"] = doc.replace(
+        "<w:body>",
+        '<w:body><w:bookmarkStart w:id="90" w:name="cite_kakwani_1977"/>'
+        '<w:bookmarkEnd w:id="90"/>', 1).encode("utf-8")
+    write_docx(paper, parts)
+    _held_by_word(monkeypatch, paper)
+
+    code, _ = run_cli(monkeypatch, "locate", str(paper), "cite_kakwani_1977")
+
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "that is a BOOKMARK name" in out, out
+
+
+def test_a_read_that_does_not_say_READ_ONLY_is_of_the_LIVE_file(
+        monkeypatch, paper, capsys):
+    """`_package(path, *, read_only=False)`, and the default is the rule
+    its docstring states: a command that goes on to WRITE must read the
+    live file, "or it would compute its edit from one generation and save
+    it over another". No command run can see the default flip — `repack`
+    is the one caller that leaves it, and it refuses under a lock before
+    it reads — so the default is held where it is set."""
+    from docxkit import cli
+    from docxkit.errors import PackageError
+
+    _held_by_word(monkeypatch, paper)
+
+    with pytest.raises(PackageError, match="locked"):
+        cli._package(paper)
+
+    assert cli._SNAPSHOT_NOTE not in capsys.readouterr().out

@@ -24,11 +24,16 @@ times over.
 """
 from __future__ import annotations
 
+import io
+import zipfile
+
 import pytest
 from conftest import NS, field
 
 from docxkit._xml import (
     PARA_RE,
+    ZIP_STAMP,
+    append_before_close,
     dead_links,
     element_spans,
     internal_links,
@@ -42,6 +47,7 @@ from docxkit._xml import (
     split_run,
     used_prefixes,
     visible_text,
+    zip_entry,
 )
 
 
@@ -619,10 +625,12 @@ def test_set_run_text_adds_xml_space_ONLY_for_an_edge_space():
 # * `internal_links` and `dead_links` slicing `m.group(1)` -> `group(0)`.
 #   Group 0 adds the `fldChar` and `instrText` markup around the field's
 #   content, and neither carries visible text, so the label is the same
-#   string either way;
+#   string either way; [WRONG for the two SLICES, killed 2026-09-17 —
+#   see the begin-marker tests at the foot of this file]
 # * `set_run_property`'s `_RPR_RANK.get(name, ...) > rank` -> `>=`. An
 #   equal rank means the same property name, and that case returns above
-#   this line by replacing in place;
+#   this line by replacing in place; [WRONG for two unknown names, killed
+#   2026-09-17]
 # * `body != body.strip()` -> `body is not body.strip()`, in
 #   `set_run_text`. CPython's `str.strip()` returns the SAME OBJECT
 #   when it removes nothing, so identity and equality agree at both
@@ -954,7 +962,10 @@ def test_a_run_property_is_placed_before_the_FIRST_child_it_outranks():
 #   tag — 34 characters for the bare form, against the 37 of the
 #   separate marker it lands inside. The window therefore opens in the
 #   middle of a `w:fldChar` tag, and `visible_text` needs a matched
-#   `w:t` pair to read anything at all.
+#   `w:t` pair to read anything at all. [The findall half holds. The
+#   slice half does NOT: a begin marker with attributes is longer than
+#   the separate one, and the window then opens before it — killed
+#   2026-09-17, in `dead_links` as well.]
 # * `not inner and ... endswith("/>")` read as `or` in
 #   `set_para_property`. The two differ only for `<w:pPr></w:pPr>` —
 #   empty but paired — and there the expand branch writes the same text
@@ -963,7 +974,8 @@ def test_a_run_property_is_placed_before_the_FIRST_child_it_outranks():
 #   names, which the branch above has already returned on, or two
 #   properties the table does not know — and RPR_ORDER is the COMPLETE
 #   EG_RPrBase, so a second unranked child is one that cannot be in a
-#   run's properties in the first place.
+#   run's properties in the first place. [The TAG is the caller's, and
+#   need not be in the table: killed 2026-09-17, both writers.]
 #
 # From the re-measurement:
 #
@@ -1202,3 +1214,205 @@ def test_COMPARE_still_fails_a_pair_whose_TAB_CHARACTERS_differ(
 
     assert code == 1
     assert "EDGE leading: '' -> '\\t'" in out
+
+
+# --- the sweep of 2026-09-17: what the writers stand on ------------------
+#
+# A whole sweep left `zip_entry` and `append_before_close` alive in every
+# mutation — nothing in this harness called either by name, and every
+# package writer goes through both — and `split_run` alive wherever its
+# TAGS changed, because the tests above read the halves through
+# `visible_text`, which cannot see a tag.
+
+
+def test_ZIP_STAMP_is_the_zip_EPOCH():
+    """Pinned by value, because the value is the zip format's and not
+    this package's. A member's timestamp is an MS-DOS date: years count
+    from 1980, months and days from 1, so 1980-01-01 00:00:00 is the
+    earliest stamp a member can carry, and `zipfile` refuses a year
+    before it. Any fixed stamp makes the bytes reproducible; the source
+    comment promises this one."""
+    assert ZIP_STAMP == (1980, 1, 1, 0, 0, 0)
+    with pytest.raises(ValueError, match="before 1980"):
+        zipfile.ZipInfo("x", date_time=(1979, 12, 31, 23, 59, 58))
+
+
+def test_a_zip_entry_writes_what_writestr_writes_for_a_BARE_NAME(
+        monkeypatch):
+    """`zip_entry` promises everything `writestr` sets from a bare string
+    name, with the clock taken out — and CPython can be asked for that
+    reading directly: it stamps a bare-name member with
+    `SOURCE_DATE_EPOCH` when one is set. At the zip epoch the two
+    archives must be the same bytes.
+
+    The permission bits are compared on the entry too, before anything
+    writes it: `zipfile` fills in `0o600 << 16` for an entry whose
+    `external_attr` is ZERO, so an entry that lost them altogether would
+    still write this archive."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "315532800")   # 1980-01-01 UTC
+    name, data = "word/document.xml", b"<w:document/>"
+
+    def archive(member: str | zipfile.ZipInfo) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(member, data)
+        return buf.getvalue()
+
+    bare = archive(name)
+
+    assert archive(zip_entry(name)) == bare
+    with zipfile.ZipFile(io.BytesIO(bare)) as z:
+        assert zip_entry(name).external_attr == z.getinfo(name).external_attr
+
+
+def test_append_before_close_writes_the_addition_as_the_LAST_child():
+    """The splice `hygiene` and `comments` add relationships, overrides
+    and comments with. A close tag spelled with a prefix other than `w:`
+    is the ordinary case for the comment side parts."""
+    ex = '<w15:commentsEx><w15:commentEx w15:paraId="1"/></w15:commentsEx>'
+
+    assert append_before_close(ex, "</w15:commentsEx>",
+                               '<w15:commentEx w15:paraId="2"/>') == (
+        '<w15:commentsEx><w15:commentEx w15:paraId="1"/>'
+        '<w15:commentEx w15:paraId="2"/></w15:commentsEx>')
+
+
+def test_a_split_at_the_run_END_gives_the_whole_run_back_BYTE_for_byte():
+    """`wrap_visible_span` cuts the last run it wraps at the wrap's end,
+    and when the wrap reaches the end of that run it throws the RIGHT
+    half away. So at that offset the right half has to be empty and the
+    left the whole run — the tab after the last `w:t` included, which
+    stands exactly at the cut. Handed to the right half there, the tab
+    is deleted by the caller.
+
+    Compared as bytes, and with a property element in the run: a left
+    half that carried the run's own close tag inside its content, or its
+    properties twice, reads the same through `visible_text`."""
+    run_xml = '<w:r><w:rPr><w:i/></w:rPr><w:t>Rowe 1987</w:t><w:tab/></w:r>'
+
+    assert split_run(run_xml, 9) == (run_xml, "")
+
+
+def test_a_cut_w_t_keeps_its_OWN_open_tag_in_both_halves():
+    """Each half of a cut `w:t` is still that element, attributes and
+    all. Rebuilt from a bare `<w:t>`, "Neith" loses nothing a text
+    comparison sees, which is why the offset tests above cannot."""
+    left, right = split_run(HYPHEN_RUN, 5)
+
+    assert left == ('<w:r><w:rPr><w:b/></w:rPr>'
+                    '<w:t xml:space="preserve">Neith</w:t></w:r>')
+    assert right == ('<w:r><w:rPr><w:b/></w:rPr>'
+                     '<w:t xml:space="preserve">er trade</w:t>'
+                     "<w:noBreakHyphen/>"
+                     '<w:t xml:space="preserve">offs and more</w:t></w:r>')
+
+
+@pytest.mark.parametrize(("at", "left", "right"), [
+    (3, "<w:t>one</w:t>", '<w:t xml:space="preserve"> two</w:t>'),
+    (4, '<w:t xml:space="preserve">one </w:t>', "<w:t>two</w:t>"),
+], ids=["space_leads_the_right", "space_ends_the_left"])
+def test_a_half_gets_xml_space_ONLY_where_the_cut_leaves_an_edge_space(
+        at, left, right):
+    """The halves' own space guard. A BARE `<w:t>` cut beside its space,
+    at both of its sides: the half with the space at its edge needs the
+    attribute or Word drops the space on save, and the other must not
+    get it. Both sides, because a leading space sorts BELOW the stripped
+    text and a trailing one above it, so an ordering reading of "differs
+    from its strip" holds on one side only."""
+    assert split_run("<w:r><w:t>one two</w:t></w:r>", at) == (
+        f"<w:r>{left}</w:r>", f"<w:r>{right}</w:r>")
+
+
+def test_a_run_cut_off_before_its_close_is_split_as_if_it_closed_at_the_end():
+    """No caller hands over such a fragment today; the branch for it is
+    there, and what it prevents is `rfind`'s -1 used as a slice end,
+    which eats the fragment's last character — the `>` of its `w:t` —
+    and leaves a text node no pattern reads."""
+    assert split_run("<w:r><w:t>abcd</w:t>", 2) == (
+        "<w:r><w:t>ab</w:t></w:r>", "<w:r><w:t>cd</w:t></w:r>")
+
+
+def test_the_run_properties_come_out_of_its_content_ONCE():
+    """The run's own `w:rPr` is copied to both halves and taken out of
+    the content once. A text box anchored in the run holds runs of its
+    own, and their properties can read exactly as the anchoring run's
+    do — taken out a second time, the box loses its formatting.
+
+    The cut is in the run's own text, before the box, so the box rides
+    right whole."""
+    box = ("<w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r>"
+           "<w:rPr><w:b/></w:rPr><w:t>box</w:t></w:r></w:p>"
+           "</w:txbxContent></v:textbox></v:shape></w:pict>")
+    run_xml = f"<w:r><w:rPr><w:b/></w:rPr><w:t>ab</w:t>{box}</w:r>"
+
+    assert split_run(run_xml, 1) == (
+        "<w:r><w:rPr><w:b/></w:rPr><w:t>a</w:t></w:r>",
+        f"<w:r><w:rPr><w:b/></w:rPr><w:t>b</w:t>{box}</w:r>")
+
+
+def _field_with_code_text(result: str) -> str:
+    """A HYPERLINK field whose begin marker carries `w:fldLock` and
+    `w:dirty` — 29 characters more than the separate marker — and whose
+    code half holds a `w:t` just before the separate. Word writes the
+    code as `w:instrText`; the `w:t` is schema-valid, and it is what
+    makes a window that opens early SHOW something."""
+    return ('<w:r><w:fldChar w:fldCharType="begin" w:fldLock="true" '
+            'w:dirty="true"/></w:r>'
+            '<w:r><w:instrText>HYPERLINK \\l "Table1"</w:instrText>'
+            '<w:t>code</w:t><w:fldChar w:fldCharType="separate"/></w:r>'
+            + result
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_a_field_label_is_read_from_the_SEPARATE_whatever_the_begin_holds():
+    """The separator is found in the field's CONTENT, so its offset is
+    into the content. Applied to the whole match, which starts at the
+    begin marker, the window opens as many characters early as that
+    marker is long — harmless for the bare marker, which is shorter than
+    the separate one the window then opens inside, and not for a marker
+    with attributes."""
+    xml = _field_with_code_text("<w:r><w:t>Table 1</w:t></w:r>")
+
+    assert internal_links(xml) == [("Table1", "Table 1")]
+
+
+def test_a_field_whose_RESULT_is_empty_is_dead_whatever_its_code_holds():
+    """The same offset, in `dead_links`: read from the begin marker, the
+    window reaches back into the code half, finds text there, and calls
+    an emptied link alive."""
+    xml = _field_with_code_text('<w:bookmarkEnd w:id="7"/>')
+
+    assert dead_links(xml) == ["Table1"]
+
+
+def test_a_run_property_AFTER_a_duplicate_pair_is_kept_whole():
+    """The later copies come out back to front and the first is replaced
+    last, so by then the text after the first copy has shrunk by every
+    later one — and reading the tail from the LAST copy's old end cuts
+    into whatever follows it. The twin test above has nothing after the
+    pair, which is the one shape where the two readings agree."""
+    run_xml = ('<w:r><w:rPr><w:i/><w:i w:val="0"/><w:sz w:val="20"/>'
+               "</w:rPr><w:t>x</w:t></w:r>")
+
+    assert set_run_property(run_xml, "i", "<w:i/>") == (
+        '<w:r><w:rPr><w:i/><w:sz w:val="20"/></w:rPr><w:t>x</w:t></w:r>')
+
+
+def test_a_property_the_ORDER_does_not_know_is_written_after_EVERY_child():
+    """"An unknown property sorts LAST", in `RPR_ORDER`'s own words, and
+    `set_para_property` places by the same rule. Last is after a live
+    child the order does not know either: two unknowns RANK equal, and
+    the slot walk must not stop in front of the first one it meets.
+
+    Both writers take the tag from the caller — `edit`'s run sweep from
+    a paper script's mapping — so a name newer than the order is theirs
+    to pass."""
+    run_xml = '<w:r><w:rPr><w:b/><w:newerA/></w:rPr><w:t>x</w:t></w:r>'
+    para = '<w:p><w:pPr><w:jc w:val="left"/><w:newerA/></w:pPr></w:p>'
+
+    assert set_run_property(run_xml, "newerB", "<w:newerB/>") == (
+        "<w:r><w:rPr><w:b/><w:newerA/><w:newerB/></w:rPr>"
+        "<w:t>x</w:t></w:r>")
+    assert set_para_property(para, "newerB", "<w:newerB/>") == (
+        '<w:p><w:pPr><w:jc w:val="left"/><w:newerA/><w:newerB/></w:pPr>'
+        "</w:p>")
