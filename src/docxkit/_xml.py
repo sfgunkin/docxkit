@@ -1263,7 +1263,6 @@ RPR_ORDER = (
     "eastAsianLayout", "specVanish", "oMath",
 )
 _RPR_RANK = {name: i for i, name in enumerate(RPR_ORDER)}
-_RPR_CHILD_RE = re.compile(r"<w:(\w+)\b[^>]*?(/?)>")
 
 
 def set_run_property(run_xml: str, tag: str, element: str) -> str:
@@ -1271,7 +1270,9 @@ def set_run_property(run_xml: str, tag: str, element: str) -> str:
 
     Replaces the run's existing ``w:tag`` if it has one, otherwise
     inserts it at its ``EG_RPrBase`` position. Pass ``element=""`` to
-    REMOVE the property.
+    REMOVE the property. An existing one written PAIRED
+    (``<w:b></w:b>``, which is the same element as ``<w:b/>``) is taken
+    whole, close tag and all.
 
     Confined to the run's OWN, LIVE properties. A tracked formatting
     change nests a snapshot of the old ``w:rPr`` inside the new one, so
@@ -1293,21 +1294,30 @@ def set_run_property(run_xml: str, tag: str, element: str) -> str:
     live = live_properties(inner)
     rank = _RPR_RANK.get(tag, len(RPR_ORDER))
 
-    mine = [m for m in _RPR_CHILD_RE.finditer(live) if m.group(1) == tag]
+    # `_own_children`, as the paragraph writer does it, and not a scan
+    # for opening tags: `<w:b></w:b>` is the same element as `<w:b/>` and
+    # Word writes both, and a scan matches only the OPEN tag of the pair.
+    # Cutting at its end left the `</w:b>` standing — properties that no
+    # longer parse, which Word reports as unreadable content, from a call
+    # that returned a string and looked like it had worked.
+    # `set_para_property` was fixed for exactly this shape; this writer,
+    # the same shape by its own docstring, was not.
+    mine = [(c_start, c_end) for name, c_start, c_end in _own_children(live)
+            if name == tag]
     if mine:                                # replace in place
         # Back to front, so the earlier offsets stay good. All of them:
         # a run salvaged out of two carries `w:sz` twice as often as not,
         # and leaving the second is a REMOVE that does not remove and a
         # SET that Word may read either way round.
-        for m in reversed(mine[1:]):
-            inner = inner[:m.start()] + inner[m.end():]
-        inner = inner[:mine[0].start()] + element + inner[mine[0].end():]
+        for c_start, c_end in reversed(mine[1:]):
+            inner = inner[:c_start] + inner[c_end:]
+        inner = inner[:mine[0][0]] + element + inner[mine[0][1]:]
         return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
 
     at = len(live)                          # default: after every live child
-    for m in _RPR_CHILD_RE.finditer(live):
-        if _RPR_RANK.get(m.group(1), len(RPR_ORDER)) > rank:
-            at = m.start()
+    for name, c_start, _c_end in _own_children(live):
+        if _RPR_RANK.get(name, len(RPR_ORDER)) > rank:
+            at = c_start
             break
 
     if not element:

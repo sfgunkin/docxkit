@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from xml.etree import ElementTree
 
 import pytest
 from conftest import NS, field
@@ -1416,3 +1417,79 @@ def test_a_property_the_ORDER_does_not_know_is_written_after_EVERY_child():
     assert set_para_property(para, "newerB", "<w:newerB/>") == (
         '<w:p><w:pPr><w:jc w:val="left"/><w:newerA/><w:newerB/></w:pPr>'
         "</w:p>")
+
+
+# --- a run property written as a PAIR (2026-09-17) ----------------------
+#
+# S1: `<w:b></w:b>` is the same element as `<w:b/>`, and Word writes
+# both. `set_run_property` found its own property with a scan for
+# OPENING tags, so a replace wrote the new element over the open tag and
+# left `</w:b>` standing, and a remove left the close alone. Properties
+# like that do not parse, which is what Word calls unreadable content —
+# reported by a call that returned a string and looked like it worked.
+#
+# `set_para_property` was fixed for this exact shape (see
+# `test_a_PAIRED_property_element_is_replaced_WHOLE` above, whose
+# docstring is the one that says Word writes both forms). The run
+# writer, "the same shape" by its own docstring, was not: the fix is
+# `_own_children`, which is how the paragraph writer reads a child.
+
+PAIRED_RUN = ('<w:r><w:rPr><w:b></w:b><w:sz w:val="20"></w:sz></w:rPr>'
+              "<w:t>x</w:t></w:r>")
+
+
+def _parsed(fragment: str) -> ElementTree.Element:
+    """The fragment PARSED, its namespaces declared on its own root.
+
+    Every text assertion in this file passed while the writer was
+    emitting `<w:b w:val="0"/></w:b>`: reading the result as a string
+    cannot see a close tag that belongs to nothing. A parser sees it at
+    once, and it is the reading Word performs on open.
+    """
+    return ElementTree.fromstring(fragment.replace(">", f" {NS}>", 1))
+
+
+@pytest.mark.parametrize(("tag", "element", "want"), [
+    ("b", '<w:b w:val="0"/>',
+     '<w:r><w:rPr><w:b w:val="0"/><w:sz w:val="20"></w:sz></w:rPr>'
+     "<w:t>x</w:t></w:r>"),
+    ("b", "",
+     '<w:r><w:rPr><w:sz w:val="20"></w:sz></w:rPr><w:t>x</w:t></w:r>'),
+    ("sz", '<w:sz w:val="24"/>',
+     '<w:r><w:rPr><w:b></w:b><w:sz w:val="24"/></w:rPr><w:t>x</w:t></w:r>'),
+], ids=["replace_the_first", "remove_it", "replace_a_later_one"])
+def test_a_PAIRED_run_property_is_taken_WHOLE(tag, element, want):
+    """All three doors into the same cut: the first child, its removal,
+    and a child the walk reaches past another paired one."""
+    out = set_run_property(PAIRED_RUN, tag, element)
+
+    _parsed(out)
+    assert out == want
+
+
+def test_a_PAIRED_run_property_present_TWICE_comes_out_in_full():
+    """The duplicate copies are cut by the same reading, so they left a
+    close tag each. A run salvaged out of two carries `w:sz` twice as
+    often as not, and either spelling of the pair is one Word wrote."""
+    run_xml = ('<w:r><w:rPr><w:i></w:i><w:i w:val="0"></w:i>'
+               '<w:sz w:val="20"/></w:rPr><w:t>x</w:t></w:r>')
+
+    out = set_run_property(run_xml, "i", "<w:i/>")
+
+    _parsed(out)
+    assert out == ('<w:r><w:rPr><w:i/><w:sz w:val="20"/></w:rPr>'
+                   "<w:t>x</w:t></w:r>")
+
+
+def test_a_PAIRED_property_does_not_move_where_a_NEW_one_lands():
+    """The slot walk reads the same children, and a paired one must be
+    stepped over whole: ranking its close tag as a child of its own put
+    the new property inside the pair it had just walked past."""
+    run_xml = ('<w:r><w:rPr><w:i></w:i><w:sz w:val="24"></w:sz></w:rPr>'
+               "<w:t>x</w:t></w:r>")
+
+    out = set_run_property(run_xml, "b", "<w:b/>")
+
+    _parsed(out)
+    assert out == ('<w:r><w:rPr><w:b/><w:i></w:i><w:sz w:val="24"></w:sz>'
+                   "</w:rPr><w:t>x</w:t></w:r>")
