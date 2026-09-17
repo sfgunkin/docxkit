@@ -1089,6 +1089,51 @@ def test_a_field_that_is_not_volatile_keeps_its_result():
     assert mask_volatile_fields(simple) == simple
 
 
+#: Every field whose cached result Word recomputes from where the
+#: document happens to sit: the page it was laid out on, the day it was
+#: opened or saved, the file it was saved as, what it counts inside
+#: itself. Written out here in full and NOT imported from the module,
+#: because a test that reads the set it is checking cannot notice a
+#: member dropped from it — the shape the renderer lists had, and both
+#: were found by a mutation sweep rather than by this suite.
+_RECALCULATED_BY_WORD = {
+    # where the field sits on the page
+    "PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF",
+    # when the document was opened, saved or printed, and for how long
+    "DATE", "TIME", "CREATEDATE", "SAVEDATE", "PRINTDATE", "EDITTIME",
+    # what the file is called, how big it is, who last touched it
+    "FILENAME", "FILESIZE", "LASTSAVEDBY", "REVNUM",
+    # what it holds, counted afresh on every save
+    "NUMCHARS", "NUMWORDS",
+}
+
+
+def test_every_field_word_RECALCULATES_is_masked():
+    """The SET, not a member of it.
+
+    Masking a cached result is what keeps a page number out of a
+    redline: two copies of one document disagree about the page a field
+    was last laid out on, and comparing those raw failed every paper's
+    `--expect-clean` on the day headers were included. Every test above
+    exercises one member, so dropping any other from `VOLATILE_FIELDS`
+    breaks that for a whole class of field and fails nothing.
+
+    Equality rather than containment, in both directions. A member
+    removed is a cached value that starts being compared by content; a
+    member added is a field whose result stops being compared at all,
+    which is the same gate going quiet the other way round. Either way
+    the list here is where the reason gets written down.
+    """
+    from docxkit._compare_read import VOLATILE_FIELDS, mask_volatile_fields
+
+    assert set(VOLATILE_FIELDS) == _RECALCULATED_BY_WORD
+
+    for kw in sorted(_RECALCULATED_BY_WORD):
+        out = mask_volatile_fields("<w:p>" + field(kw, "cached") + "</w:p>")
+        assert f"«F:{kw}»" in out, f"{kw} was not masked:\n{out}"
+        assert ">cached<" not in out, f"{kw} kept its cached value:\n{out}"
+
+
 def test_a_volatile_fldSimple_is_masked():
     from docxkit._compare_read import mask_volatile_fields
     simple = ('<w:p><w:fldSimple w:instr=" PAGE  \\* MERGEFORMAT ">'
@@ -1651,15 +1696,16 @@ def _marks(value: object) -> set[str]:
     return set()
 
 
-@pytest.mark.parametrize("bucket", [
-    "structure", "text", "glyph", "formula", "formula_glyph",
-    "formula_format", "format", "hyperlinks", "integrity",
-    "stripped_fields", "comments",
-    # PARAGRAPH and MEDIA were not on this list, and every mutant the
-    # 2026-09-17 sweep left alive in the renderer was in those two
-    # sections. A layer missing from a list of layers is the one defect
-    # this file cannot see by reading itself.
-    "paragraph", "media"])
+# PARAGRAPH and MEDIA were on neither of the two lists below, and every
+# mutant the 2026-09-17 sweep left alive in the renderer was in those two
+# sections. A hand-written list of layers cannot notice the layer it does
+# not name, and it was the second time that shape cost a round — so both
+# lists are derived from BUCKETS now, the way
+# `test_the_headline_total_is_every_gated_layer_summed` derives its own
+# from GATED. A layer added to the report joins these tests with it.
+
+
+@pytest.mark.parametrize("bucket", list(BUCKETS))
 def test_every_layer_prints_every_part_of_its_entry(bucket):
     """Each layer must SAY what it found, in full. Eleven mutants
     emptied one loop apiece and survived: the summary count was still
@@ -1772,15 +1818,47 @@ def test_the_integrity_line_claims_clean_only_when_it_is():
     assert "(clean:" not in _section(_out(_filled(integrity=1))[1], head)
 
 
-@pytest.mark.parametrize("bucket,heading", [
-    ("structure", "STRUCTURE"), ("text", "TEXT"), ("formula", "FORMULA"),
-    ("formula_format", "FORMULA TYPOGRAPHY"), ("format", "FORMAT"),
-    ("hyperlinks", "HYPERLINK"), ("comments", "COMMENTS"),
-    ("stripped_fields", "FIELD DIFFERENCES"),
-    # the two the list was missing: four mutants of their `(none)` tests
-    # survived the sweep, and a section that says "(none)" over a
-    # replaced figure is the sentence a reader ships on
-    ("paragraph", "PARAGRAPH"), ("media", "MEDIA")])
+#: The heading each bucket prints under, for the layers whose empty
+#: state is the word "(none)".
+_SECTION_HEADING = {
+    "structure": "STRUCTURE", "text": "TEXT", "formula": "FORMULA",
+    "formula_format": "FORMULA TYPOGRAPHY", "format": "FORMAT",
+    "paragraph": "PARAGRAPH", "media": "MEDIA", "hyperlinks": "HYPERLINK",
+    "comments": "COMMENTS", "stripped_fields": "FIELD DIFFERENCES",
+}
+
+#: The buckets that are NOT a section of their own with a "(none)" of
+#: their own — each with the test that covers its empty state instead.
+#: Declared, so that an exception is a statement about where the layer IS
+#: covered rather than a hole in the list nobody can see.
+_NOT_A_NONE_SECTION = {
+    "glyph": "test_a_clean_glyph_layer_says_none_only_when_both_halves_"
+             "are_empty",
+    "formula_glyph": "test_a_clean_glyph_layer_says_none_only_when_both_"
+                     "halves_are_empty",
+    "integrity": "test_the_integrity_line_claims_clean_only_when_it_is",
+}
+
+
+def test_every_bucket_is_a_section_here_or_a_declared_exception():
+    """The guard on the two lists above, and the point of deriving them.
+
+    A bucket added to the report joins `_SECTION_HEADING` — or, if its
+    empty state is not a "(none)" under a heading of its own, it is
+    written into `_NOT_A_NONE_SECTION` against the test that does cover
+    it. Both are a sentence somebody has to write; neither is silence.
+    """
+    covered = set(_SECTION_HEADING) | set(_NOT_A_NONE_SECTION)
+    assert covered == set(BUCKETS), (
+        f"buckets nobody placed: {sorted(set(BUCKETS) - covered)}; "
+        f"names that are not buckets: {sorted(covered - set(BUCKETS))}")
+    assert not set(_SECTION_HEADING) & set(_NOT_A_NONE_SECTION)
+    for bucket, covering in _NOT_A_NONE_SECTION.items():
+        assert covering in globals(), (
+            f"{bucket} names {covering}, which is not a test in this file")
+
+
+@pytest.mark.parametrize("bucket,heading", sorted(_SECTION_HEADING.items()))
 def test_a_layer_with_nothing_in_it_says_so(bucket, heading):
     """"(none)" under a heading is how a reader tells "clean" from
     "this layer did not run". Printing it over a list of real

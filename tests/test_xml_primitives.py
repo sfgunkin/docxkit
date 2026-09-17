@@ -1084,6 +1084,43 @@ def test_printed_text_unescapes_like_visible_text_does():
     assert printed_text(xml) == "Rowe & Kahn"
 
 
+def test_a_SOFT_hyphen_is_its_own_printed_character():
+    """The fifth member of `PRINTED_CHILDREN`, and the one no test named
+    — found by auditing the package's own sets for members the suite
+    never mentions (2026-09-18), which is the same audit the renderer's
+    missing layers came out of.
+
+    A soft hyphen is not a no-break hyphen with a different name: Word
+    breaks a line at `w:softHyphen` and draws a hyphen there, and draws
+    nothing when the line does not break, while `w:noBreakHyphen` is a
+    hyphen that is always there and never breaks. They are different
+    characters standing in the same place, so the two readings must
+    differ — and neither may read as nothing, which is what the whole
+    table exists to stop.
+    """
+    xml = "<w:r><w:t>man</w:t><w:softHyphen/><w:t>uscript</w:t></w:r>"
+
+    assert printed_text(xml) == "man­uscript"
+    assert visible_text(xml) == "manuscript", "the reading that is blind"
+    assert printed_text(xml) != printed_text(
+        xml.replace("softHyphen", "noBreakHyphen"))
+
+
+def test_a_deleted_SOFT_hyphen_reaches_the_TEXT_layer():
+    """Why the character is in the table at all: `compare` reads this
+    stream, so a hyphenation point removed from a word has to be a
+    difference. Under `visible_text` it was not, and six printed hyphens
+    deleted from Aging_Well's citations reported `REAL change locations:
+    0` (backlog S1)."""
+    from docxkit._compare_read import Para
+
+    before = Para("<w:p><w:r><w:t>man</w:t><w:softHyphen/>"
+                  "<w:t>uscript</w:t></w:r></w:p>")
+    after = Para("<w:p><w:r><w:t>man</w:t><w:t>uscript</w:t></w:r></w:p>")
+
+    assert before.text != after.text
+
+
 def test_a_w_sym_is_NOT_rendered():
     """Its character lives in an attribute against a font, so rendering
     one is a lookup and not a constant — and a wrong guess would report
