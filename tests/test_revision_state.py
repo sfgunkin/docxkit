@@ -312,6 +312,63 @@ def test_definitions_in_reference_order_report_NOTHING(tmp_path):
     assert revision.state(path).notes_unordered == {}
 
 
+def _end_noted(order: tuple[int, ...],
+               refs: tuple[int, ...]) -> dict[str, bytes]:
+    """The same document with ENDNOTES and no footnotes part at all.
+
+    The shape matters: the order check walks footnotes first, and a
+    document that has none is exactly the one that proves the walk goes
+    on to the endnotes rather than stopping at the first part it cannot
+    read.
+    """
+    notes_xml = ("<w:endnotes>" + "".join(
+        f'<w:endnote w:id="{i}"><w:p><w:r><w:t>note {i}</w:t></w:r>'
+        f"</w:p></w:endnote>" for i in order) + "</w:endnotes>")
+    body = "".join(
+        para(run(f"Sentence {i}."),
+             f'<w:r><w:endnoteReference w:id="{i}"/></w:r>') for i in refs)
+    return make_parts(body, extra={"word/endnotes.xml": notes_xml})
+
+
+def test_an_ENDNOTE_out_of_order_is_reported_by_a_file_with_no_footnotes(
+        tmp_path):
+    """`continue`, not `break`, when a part is missing.
+
+    Both kinds are walked in one loop, footnotes first, and a document
+    with endnotes and no footnotes part is the only shape that can tell
+    the two apart: with `break` the walk stops at the missing footnotes
+    and the endnote order goes unasked — the whole warning silently off
+    for a paper that uses endnotes, which is what Word's Compare then
+    rewrites into document order. Every fixture here had footnotes, so
+    the skipped kind had to come FIRST. Found by mutation, 2026-09-18.
+    """
+    path = write(tmp_path / "working.docx", _end_noted((2, 3), (3, 2)))
+
+    st = revision.state(path)
+
+    assert st.notes_unordered == {"endnote": ["2", "3"]}
+    assert st.pending == 0, "and it is not a pending revision"
+
+
+def test_a_STATE_nobody_told_about_a_snapshot_is_not_from_one(tmp_path):
+    """The default of `from_snapshot`, which decides whether every
+    reader of a State says "read from a copy while Word held the file".
+
+    `_state` always passes the flag, so the default is only ever taken
+    by a State built directly — which the CLI's own renderer tests do,
+    and which is how a paper's script would hold one. Defaulting to True
+    would have `status` print the mid-edit caveat over counts read from
+    the file itself: a report that says it might be out of date when it
+    is not, which is the direction nobody checks. Found by mutation,
+    2026-09-18 — the `_state` harness never built one by hand.
+    """
+    st = revision.State(path=tmp_path / "working.docx", by_part={},
+                        by_author={})
+
+    assert st.from_snapshot is False
+    assert st.notes_unordered == {}, "and nothing is out of order either"
+
+
 def test_a_definition_nothing_REFERENCES_is_not_an_order_problem(tmp_path):
     """It is a different defect — a note the body lost its marker for —
     and reporting it here would make the order line fire on documents

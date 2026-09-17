@@ -495,6 +495,13 @@ claims = [
   { was = 'if path.stat().st_size == 0:', line = 'if path.stat().st_size <= 0:', why = "A file size is never negative, so `<= 0` and `== 0` hold for exactly the same files. The spellings that CAN differ — `!= 0`, `>= 0`, `== 1` — are killed by the test that registers three papers and counts the header." },
 ]
 
+["revision/_state.py"]
+claims = [
+  { was = 'return self.pending == 0', line = 'return self.pending <= 0', why = "`pending` sums `by_part`'s values, and `_state` is the only writer of that dict: `by_part[name] = len(found)` under `if found:`, so every value is a count of one or more and the sum is zero or positive. `<= 0` is then true for exactly the States `== 0` is true for, and `label`, `status().exit_code` and `verdict` read the same answer. Only a State built by hand with a negative count would tell them apart. An argument from the CODE." },
+  { was = 'if part != DOCUMENT)', line = 'if part > DOCUMENT)', why = "`by_part` is keyed from TEXT_PARTS and nothing else — `for name in TEXT_PARTS` is the only line that writes it — so the keys are word/document.xml, word/footnotes.xml and word/endnotes.xml. Both note parts sort after the document part ('e' and 'f' follow 'd'), so `>` picks out exactly the parts `!=` does and `hidden` counts the same revisions. An argument from the CODE." },
+  { was = 'if part != DOCUMENT)', line = 'if part is not DOCUMENT)', why = "The keys are the TEXT_PARTS objects themselves, and TEXT_PARTS holds `DOCUMENT`, so a document key IS that object and identity answers as equality does for every State this module builds. Only a State built by hand with a key computed at run time would tell them apart, and neither the package nor a paper's script builds one — they read the State `state()` returns. An argument from the CALLERS." },
+]
+
 ["revision/_validate.py"]
 claims = [
   { was = "and self.reject_matches_baseline is not False", line = "and self.reject_matches_baseline != False", why = "The field is `bool | None` and `validate` assigns it nothing else: None when there is no baseline, else `all(...)`. On those three values `is not False` and `!= False` agree — None and True differ from False both ways, False is and equals itself. They part company only on 0 or 0.0, which nothing puts there; test_revision.py records the same argument for `word_opened is not False`." },
