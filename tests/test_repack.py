@@ -207,6 +207,39 @@ def test_a_short_sheet_before_an_exhibit_is_measured_by_RENDERING_the_move():
     assert "1 placement(s) tried, 2 render(s)" in rep.format()
 
 
+def test_two_exhibits_sharing_a_NAME_are_each_moved_as_THEMSELVES():
+    """BACKLOG S2, 2026-09-15. Blame was resolved by name, so the LAST
+    "Figure 1" answered for both short sheets; the move was resolved by
+    key, so the FIRST one moved — to a place chosen for the other — or,
+    when that place was just above it, the manuscript was rendered
+    unchanged and ranked as a placement. Every trial here has to move the
+    exhibit it was rendered for, and no trial may be the original."""
+    doc = parts(P("Figure 1 shows it.") + P("Figure 1. First") + IMG
+                + P("z") + P("Figure 1. Second") + IMG + P("y"))
+    original = order(doc)
+    render, seen = recording(lambda o: [
+        FULL, "Figure 1 shows it.", "Figure 1. First", "z",
+        "Figure 1. Second", "y"] if o == original else [FULL] * 6)
+
+    rep = repack.repack(doc, render=render, max_drift=9)
+
+    assert rep.blamed == {2: "Figure 1", 4: "Figure 1"}
+    trials = seen[1:]
+    assert trials and original not in trials, \
+        "a trial rendered the manuscript unchanged"
+    moved = set()
+    for trial in trials:
+        for caption in ("Figure 1. First", "Figure 1. Second"):
+            at, was = trial.index(caption), original.index(caption)
+            # the picture travels with its own caption, whichever moved
+            assert trial[at + 1] == "IMG"
+            if (trial[:at] != original[:was]
+                    and trial[at - 1] != original[was - 1]):
+                moved.add(caption)
+    assert moved == {"Figure 1. First", "Figure 1. Second"}, \
+        "one of the two was never tried as itself"
+
+
 def test_a_move_beyond_the_drift_limit_is_not_offered():
     calls = []
 
@@ -418,9 +451,18 @@ def test_a_failing_trial_is_reported_and_two_in_a_row_stop_the_search():
 
 # ---------------------------------------------------------- sections
 
+def caption_of(doc: dict[str, bytes], name: str = "Figure 1") -> int:
+    """The body index of `name`'s caption: how `_moved` is told WHICH
+    exhibit, since two can share a name."""
+    return next(x.caption_at for x in repack.exhibits(
+        repack._body(doc), labels=repack.LABELS, note=repack.NOTE)
+        if x.name == name)
+
+
 def moved(doc: dict[str, bytes], target: int) -> list[str]:
-    return order(repack._moved(doc, ("Figure", "1"), target,
-                               labels=repack.LABELS, note=repack.NOTE))
+    out, _at = repack._moved(doc, caption_of(doc), target,
+                             labels=repack.LABELS, note=repack.NOTE)
+    return order(out)
 
 
 def test_an_exhibit_that_OWNS_its_section_moves_with_both_breaks():
@@ -494,7 +536,7 @@ def test_an_exhibit_alone_in_the_FINAL_section_cannot_move():
     assert rep.renders == 1 and rep.moves == []
     assert any("alone in the final section" in p for p in rep.problems)
     with pytest.raises(PackageError, match="final section"):
-        repack._moved(doc, ("Figure", "1"), 1, labels=repack.LABELS,
+        repack._moved(doc, caption_of(doc), 1, labels=repack.LABELS,
                       note=repack.NOTE)
 
 
@@ -834,16 +876,17 @@ def test_a_BOX_whose_end_is_on_no_sheet_is_said_so_too():
                for p in rep.problems)
 
 
-def test_moving_an_exhibit_that_is_not_there_NAMES_it():
+def test_moving_an_exhibit_that_is_not_there_NAMES_the_place():
     with pytest.raises(PackageError,
-                       match="no exhibit Figure 7 with a caption"):
-        repack._moved(parts(FIGURE), ("Figure", "7"), 0,
+                       match="no exhibit is captioned at body child 7"):
+        repack._moved(parts(FIGURE), 7, 0,
                       labels=repack.LABELS, note=repack.NOTE)
 
 
 def test_a_moved_document_keeps_its_XML_DECLARATION():
-    out = repack._moved(parts(FIGURE + P("z")), ("Figure", "1"), 3,
-                        labels=repack.LABELS, note=repack.NOTE)
+    doc = parts(FIGURE + P("z"))
+    out, _at = repack._moved(doc, caption_of(doc), 3,
+                             labels=repack.LABELS, note=repack.NOTE)
 
     assert out["word/document.xml"].startswith(b"<?xml")
 
@@ -1297,7 +1340,7 @@ def test_blame_past_sheet_256_compares_sheet_NUMBERS():
                            [repack.Landing("Figure 1", int("281"),
                                            int("281"), int("280"))])
 
-    assert blamed == {280: "Figure 1"}
+    assert blamed == {280: 0}
 
 
 def test_a_block_at_index_ZERO_does_not_read_the_last_child_as_its_break():
@@ -1415,7 +1458,8 @@ def test_a_target_INSIDE_the_block_is_refused_at_either_end(target):
     """Never reached from `repack`, whose places skip the block, so the
     guard is asked directly, at the block's first child and its last."""
     with pytest.raises(PackageError, match="inside Figure 1's own block"):
-        repack._moved(parts(FIGURE + P("z")), ("Figure", "1"), target,
+        doc = parts(FIGURE + P("z"))
+        repack._moved(doc, caption_of(doc), target,
                       labels=repack.LABELS, note=repack.NOTE)
 
 
@@ -1534,7 +1578,7 @@ def test_an_exhibit_PARTED_by_a_break_it_does_not_own_is_left_where_it_is():
     assert rep.moves == [] and len(seen) == 1, "no trial may be rendered"
     assert f"Figure 1 {PARTED_WHY} — left where it is" in rep.problems
     with pytest.raises(PackageError, match="parted by a section break"):
-        repack._moved(doc, ("Figure", "1"), 9, labels=repack.LABELS,
+        repack._moved(doc, caption_of(doc), 9, labels=repack.LABELS,
                       note=repack.NOTE)
 
 

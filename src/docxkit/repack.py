@@ -335,9 +335,11 @@ def _end_probes(x: Exhibit) -> list[str]:
 
 
 def _land(sheets: list[str], kids: list[etree._Element],
-          found: list[Exhibit], mentions: dict[tuple[str, str], int | None],
+          found: list[Exhibit], mentions: list[int | None],
           ) -> list[Landing]:
-    """Where each exhibit sits in this render, in document order.
+    """Where each exhibit sits in this render, in document order: one
+    landing per exhibit, at the exhibit's own index in `found` — which is
+    how the search tells two exhibits that share a name apart.
 
     The cursor never moves backwards: each exhibit is looked for from
     where the previous one ended, and from the prose paragraph in front
@@ -349,8 +351,8 @@ def _land(sheets: list[str], kids: list[etree._Element],
     covered = _covered(found)
     out: list[Landing] = []
     cursor = 0
-    for x in found:
-        mention = _mention_sheet(text, starts, kids, mentions.get(x.key))
+    for x, index in zip(found, mentions, strict=True):
+        mention = _mention_sheet(text, starts, kids, index)
         probe = _flat(x.caption[:_PROBE])
         at = -1
         if x.start and x.start - 1 not in covered:
@@ -427,12 +429,18 @@ def _verdict(profile: list[Sheet], threshold: float) -> tuple[list[int], int]:
 
 
 def _blame(underfull: list[int],
-           landings: list[Landing]) -> dict[int, str | None]:
+           landings: list[Landing]) -> dict[int, int | None]:
     """The exhibit whose forced break ended each short sheet: the one
     that STARTS on the sheet after it. A short sheet followed by prose —
     a heading with a page break before it, a section's last page — is
-    nobody's, and says so rather than nominating the next exhibit down."""
-    return {n: next((x.name for x in landings if x.first == n + 1), None)
+    nobody's, and says so rather than nominating the next exhibit down.
+
+    By INDEX into `landings`, not by name. Two exhibits can share a
+    name — a numbering defect, and an ordinary one mid-revision — and a
+    name resolved to one of them blamed the other's sheet on it and
+    moved it (BACKLOG S2, 2026-09-15)."""
+    return {n: next((i for i, x in enumerate(landings) if x.first == n + 1),
+                    None)
             for n in underfull}
 
 
@@ -540,7 +548,7 @@ def _candidates(kids: list[etree._Element], body: etree._Element,
     sections = _sections(kids)
     home = _geometry_of(kids, body, ms) if owns else sections[x.start]
     ends = {y.stop - 1: f"{y.name} and its notes" for y in found
-            if y.key != x.key}
+            if y is not x}
     covered = _covered(found) | _reference_zone(kids)
     out: list[tuple[int, str]] = []
     for j in range(anchor, len(kids)):
@@ -566,18 +574,26 @@ def _candidates(kids: list[etree._Element], body: etree._Element,
     return out[:limit]
 
 
-def _moved(parts: dict[str, bytes], key: tuple[str, str], target: int, *,
-           labels: tuple[str, ...], note: re.Pattern[str]) -> dict[str, bytes]:
-    """A copy of `parts` with the exhibit at `key` moved to just after
-    body child `target`. By INDEX, not by text: three figures each
-    followed by the same `Source:` line put Figure 2 under Figure 1's."""
+def _moved(parts: dict[str, bytes], caption_at: int, target: int, *,
+           labels: tuple[str, ...], note: re.Pattern[str],
+           ) -> tuple[dict[str, bytes], int]:
+    """A copy of `parts` with the exhibit captioned at body child
+    `caption_at` moved to just after body child `target`, and where its
+    caption now sits.
+
+    By INDEX, not by text: three figures each followed by the same
+    `Source:` line put Figure 2 under Figure 1's. And not by name or key
+    either — two exhibits can share one, and the first with the key moved
+    to a place chosen for the other (BACKLOG S2, 2026-09-15). The caption's
+    new index is what finds the SAME exhibit in the trial's render."""
     out = dict(parts)
     body = _body(out)
     kids = list(body)
     x = next((e for e in exhibits(body, labels=labels, note=note)
-              if e.key == key), None)
+              if e.caption_at == caption_at), None)
     if x is None:
-        raise PackageError(f"no exhibit {key[0]} {key[1]} with a caption")
+        raise PackageError(f"no exhibit is captioned at body child "
+                           f"{caption_at}")
     span = _move_span(kids, x)
     if isinstance(span, str):
         raise PackageError(f"{x.name} {span}")
@@ -593,21 +609,24 @@ def _moved(parts: dict[str, bytes], key: tuple[str, str], target: int, *,
     out[DOCUMENT] = etree.tostring(body.getroottree().getroot(),
                                    xml_declaration=True, encoding="UTF-8",
                                    standalone=True)
-    return out
+    return out, at + 1 + (x.caption_at - ms)
 
 
 def _measure(parts: dict[str, bytes], render: Callable[[dict[str, bytes]],
                                                        list[str]], *,
              labels: tuple[str, ...], note: re.Pattern[str],
-             threshold: float) -> tuple[list[str], list[Landing], list[int]]:
-    """One render: its sheets, where every exhibit landed, what is short."""
+             threshold: float,
+             ) -> tuple[list[str], list[Landing], list[int], list[Exhibit]]:
+    """One render: its sheets, where every exhibit landed, what is short,
+    and the exhibits the landings belong to, index for index."""
     body = _body(parts)
     kids = list(body)
     found = exhibits(body, labels=labels, note=note)
-    mentions = {x.key: mention_of(body, x) for x in found}
+    mentions = [mention_of(body, x) for x in found]
     sheets = render(parts)
     landings = _land(sheets, kids, found, mentions)
-    return sheets, landings, _verdict(_profile(sheets, landings), threshold)[0]
+    return (sheets, landings,
+            _verdict(_profile(sheets, landings), threshold)[0], found)
 
 
 def repack(parts: dict[str, bytes], *,
@@ -631,7 +650,7 @@ def repack(parts: dict[str, bytes], *,
     body = _body(parts)
     kids = list(body)
     found = exhibits(body, labels=labels, note=note)
-    mentions = {x.key: mention_of(body, x) for x in found}
+    mentions = [mention_of(body, x) for x in found]
     sheets = render(parts)
     rep.renders = 1
     rep.landings = _land(sheets, kids, found, mentions)
@@ -640,26 +659,30 @@ def repack(parts: dict[str, bytes], *,
     _unlocated(rep, found)
     if not rep.underfull:
         return rep
-    rep.blamed = _blame(rep.underfull, rep.landings)
-    by_name = {x.name: x for x in found}
-    landed = {x.name: x for x in rep.landings}
-    tried: set[tuple[tuple[str, str], int]] = set()
+    # Everything below is keyed on the exhibit's POSITION — its index in
+    # `found`, and in the trial its caption's body index — and the name is
+    # only what the report prints. Two exhibits can share a name.
+    blamed = _blame(rep.underfull, rep.landings)
+    rep.blamed = {n: None if i is None else found[i].name
+                  for n, i in blamed.items()}
+    tried: set[tuple[int, int]] = set()
     failed = 0
     for n in rep.underfull:
-        name = rep.blamed[n]
-        if name is None:
+        i = blamed[n]
+        if i is None:
             continue
-        x = by_name[name]
+        x = found[i]
+        name = x.name
         span = _move_span(kids, x)
         if isinstance(span, str):
             rep.problems.append(f"{name} {span} — left where it is")
             continue
-        anchor = mentions[x.key]
+        anchor = mentions[i]
         if anchor is None:
             rep.problems.append(f"{name} is mentioned nowhere, so it has no "
                                 "anchor to drift from and will not be moved")
             continue
-        before = landed[name].drift
+        before = rep.landings[i].drift
         # an exhibit already twenty sheets from its mention — every one
         # grouped at the back of a paper — may move as long as it comes
         # no further away; the absolute limit is for the rest
@@ -667,12 +690,13 @@ def repack(parts: dict[str, bytes], *,
             max_drift)
         for target, after in _candidates(kids, body, found, x, span=span,
                                          anchor=anchor, limit=max_candidates):
-            if (x.key, target) in tried:
+            if (x.caption_at, target) in tried:
                 continue                # tried for an earlier short sheet
-            tried.add((x.key, target))
+            tried.add((x.caption_at, target))
             try:
-                trial = _moved(parts, x.key, target, labels=labels, note=note)
-                out, landings, under = _measure(
+                trial, moved_to = _moved(parts, x.caption_at, target,
+                                         labels=labels, note=note)
+                out, landings, under, shown = _measure(
                     trial, render, labels=labels, note=note,
                     threshold=threshold)
             except WordTimeout:
@@ -691,7 +715,8 @@ def repack(parts: dict[str, bytes], *,
             failed = 0
             rep.renders += 1
             rep.trials += 1
-            there = next(z for z in landings if z.name == name)
+            there = next(z for z, y in zip(landings, shown, strict=True)
+                         if y.caption_at == moved_to)
             if there.drift is None:
                 what = "its caption" if there.first is None else "its mention"
                 rep.problems.append(
