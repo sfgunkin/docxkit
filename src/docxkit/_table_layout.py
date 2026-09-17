@@ -1773,23 +1773,36 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 #: Word stores a point size doubled, and the complex-script mirror has
 #: to move with it or a run reads at two sizes in one cell.
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
-#: The row's first `w:trPr`, the slash CAPTURED: an empty `<w:trPr/>`
-#: (139 in 16 of 2,954 corpus packages) is still the row's properties,
-#: and a pattern that skipped it gave the row a SECOND `w:trPr`. The
-#: capture is what `_TRPR_EMPTY_RE` was: one pattern reads both forms.
-_TRPR_RE = re.compile(r"<w:trPr\b[^>]*?(/?)>")
-#: A row's table-property EXCEPTIONS, whole: CT_Row sequences them before
-#: the row properties, so a `w:trPr` written for a row that has one goes
-#: after it — and after the WHOLE element, since `w:tblPrEx` holds
-#: properties of its own and writing past its open tag lands inside it.
-_TBLPREX_RE = re.compile(r"<w:tblPrEx\b[^>]*/>|<w:tblPrEx\b.*?</w:tblPrEx>",
-                         re.DOTALL)
+#: The row's `w:trPr`, the slash CAPTURED: an empty `<w:trPr/>` (139 in
+#: 16 of 2,954 corpus packages) is still the row's properties, and a
+#: pattern that skipped it gave the row a SECOND `w:trPr`. MATCHED at the
+#: row's properties slot (`_row_properties_at`), never searched for.
+_TRPR_RE = re.compile(r"\s*<w:trPr\b[^>]*?(/?)>")
 #: `w:cantSplit` in any spelling, and ON (CT_OnOff). Asked for the exact
 #: string `<w:cantSplit/>`, a row closing it ` />` (637 in 5 corpus
 #: packages) or stating it OFF got a second one beside it (2026-09-17).
 _CANT_SPLIT_ANY_RE = re.compile(r"<w:cantSplit\b[^>]*/>")
 _CANT_SPLIT_ON_RE = re.compile(
     r'<w:cantSplit\b(?![^>]*\bw:val="(?:0|false|off)")[^>]*/>')
+
+
+def _row_properties_at(row: str) -> int:
+    """Where `row`'s OWN `w:trPr` sits, or would go.
+
+    CT_Row is ``tblPrEx?, trPr?, tc*``: straight after the open tag, or
+    after the row's table-property exceptions when it has them — past the
+    WHOLE element, since `w:tblPrEx` holds properties of its own and
+    writing past its open tag lands inside it. Word writes one on every
+    row whose borders or width differ from the table's, and a `w:trPr` in
+    front of one is the order the schema does not allow; the lxml twin is
+    `placement._trpr`.
+
+    Asked of the whole row string instead, `w:trPr` and `w:cantSplit`
+    answer from a NESTED table's rows whenever the row's own are missing
+    (2026-09-17).
+    """
+    exceptions = own_properties(row, "tblPrEx")
+    return exceptions[1] if exceptions is not None else row.index(">") + 1
 
 
 @dataclass
@@ -1877,27 +1890,18 @@ def house(xml: str, table: Table, *, font: str = "Arial Narrow",
             report.runs += runs
             report.paragraphs += paras
             new_row = new_row[:tc.start()] + cell + new_row[tc.end():]
-        if not _CANT_SPLIT_ON_RE.search(new_row):
-            if (m := _TRPR_RE.search(new_row)) is not None and m.group(1):
-                new_row = (new_row[:m.start()]
-                           + "<w:trPr><w:cantSplit/></w:trPr>"
-                           + new_row[m.end():])
-            elif m is not None:
-                shut = new_row.index("</w:trPr>", m.end())
-                own = _CANT_SPLIT_ANY_RE.sub("", new_row[m.end():shut])
-                new_row = (new_row[:m.end()] + "<w:cantSplit/>" + own
-                           + new_row[shut:])
-            else:
-                # AFTER a `w:tblPrEx`, which CT_Row sequences before the
-                # row properties — Word writes one on every row whose
-                # borders or width differ from the table's, and a
-                # `w:trPr` in front of it is the one order the schema
-                # does not allow. The lxml twin is `placement._trpr`.
-                prex = _TBLPREX_RE.search(new_row)
-                at = (prex.end() if prex is not None
-                      else new_row.index(">") + 1)
-                new_row = (new_row[:at] + "<w:trPr><w:cantSplit/></w:trPr>"
-                           + new_row[at:])
+        at = _row_properties_at(new_row)
+        m = _TRPR_RE.match(new_row, at)
+        if m is not None and not m.group(1):
+            shut = new_row.index("</w:trPr>", m.end())
+            own = new_row[m.end():shut]
+            if not _CANT_SPLIT_ON_RE.search(own):
+                new_row = (new_row[:m.end()] + "<w:cantSplit/>"
+                           + _CANT_SPLIT_ANY_RE.sub("", own) + new_row[shut:])
+                report.rows += 1
+        else:                           # none, or an empty `<w:trPr/>`
+            new_row = (new_row[:at] + "<w:trPr><w:cantSplit/></w:trPr>"
+                       + new_row[at if m is None else m.end():])
             report.rows += 1
         if new_row != row:
             edits.append((tr.start(), tr.end(), new_row))

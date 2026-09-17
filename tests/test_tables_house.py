@@ -125,6 +125,56 @@ def test_a_row_s_own_trPr_in_ANOTHER_spelling_gets_ONE_cantSplit(stated):
     assert body.count("<w:cantSplit") == 3
 
 
+def _holding_a_table(inner_trpr: str, head: str = "") -> str:
+    """One outer row, with properties `head`, whose cell holds a table
+    whose one row carries `inner_trpr`."""
+    inner = table(f"<w:tr>{inner_trpr}<w:tc>{para(run('x'))}</w:tc></w:tr>")
+    return document(para(run("Table A4: Data sources"))
+                    + table(f"<w:tr>{head}<w:tc>{inner}{para(run('y'))}"
+                            "</w:tc></w:tr>"))
+
+
+@pytest.mark.parametrize("inner_trpr", ["<w:trPr><w:cantSplit/></w:trPr>",
+                                        "<w:trPr><w:tblHeader/></w:trPr>",
+                                        "<w:trPr/>"])
+def test_a_row_holding_a_NESTED_table_gets_its_OWN_cantSplit(inner_trpr):
+    """`house` asked the whole row string, nested tables included. A
+    nested row already cantSplit answered for the OUTER row, which was
+    left free to break across a page; any other nested `w:trPr` was taken
+    for the outer row's, and the outer row's cantSplit was written into
+    the nested row instead."""
+    xml = _holding_a_table(inner_trpr)
+    out, report = house(xml, read_all(xml)[0])
+
+    outer = out[out.index("<w:tbl>"):]
+    assert outer[:outer.index("<w:tc>")].endswith(
+        "<w:tr><w:trPr><w:cantSplit/></w:trPr>"), outer
+    assert report.rows == 1
+    nested = outer[outer.index("<w:tbl>", 1):outer.index("</w:tbl>")]
+    assert nested.count("<w:cantSplit") == inner_trpr.count("<w:cantSplit")
+    assert nested.count("<w:trPr") == 1, "the nested row is not this table's"
+
+
+_EXCEPTIONS = '<w:tblPrEx><w:tblW w:w="0" w:type="auto"/></w:tblPrEx>'
+
+
+@pytest.mark.parametrize("own", ["", "<w:trPr/>",
+                                 "<w:trPr><w:tblHeader/></w:trPr>"])
+def test_a_row_s_trPr_goes_AFTER_its_tblPrEx(own):
+    """CT_Row is `tblPrEx?, trPr?, tc*`, so a row's own properties sit
+    after its table-property exceptions. A `w:trPr` written straight after
+    the open tag lands in front of them, which the schema refuses."""
+    xml = _holding_a_table("<w:trPr><w:tblHeader/></w:trPr>",
+                           head=_EXCEPTIONS + own)
+    out, _ = house(xml, read_all(xml)[0])
+
+    outer = out[out.index("<w:tbl>"):]
+    head = outer[outer.index("<w:tr>"):outer.index("<w:tc>")]
+    assert head.startswith("<w:tr>" + _EXCEPTIONS + "<w:trPr>"), head
+    assert head.count("<w:cantSplit/>") == 1, head
+    assert head.count("<w:tblHeader/>") == own.count("<w:tblHeader/>"), head
+
+
 def test_the_table_is_set_to_full_width_and_autofit():
     xml = _doc()
     out, report = house(xml, read_all(xml)[0])
