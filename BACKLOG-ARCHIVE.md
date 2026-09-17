@@ -14,6 +14,53 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `anchors` reports no crossing for an anchor across the unstyled result of Word's REF \h cross-reference, which `replace_in_para` refuses~~ — FIXED 17.09, `d04b973`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the survivor round of the first `snapshot.py` sweep.
+`_span_facts` counted a run as a link label only when it was
+Hyperlink-styled or inside a `w:hyperlink`. Word's own cross-reference,
+`REF _Ref… \h`, writes its RESULT unstyled, and `edit` has refused an edit
+through it since `e495ee1`:
+
+    "Table 1 shows"  with "Table 1" the result of REF _Ref123 \h
+    anchors:          OK, crossing ()
+    replace_in_para:  AnchorError, "the match starts in the result of a field (REF _Ref123 \h)"
+
+The protocol author is told nothing is in the way, then the edit refuses.
+
+**Fixed 17.09 in `d04b973`**, by the same change as the merged-labels entry:
+one label definition, `edit`'s. Tests:
+`test_CROSSING_names_the_unstyled_RESULT_of_a_CROSS_REFERENCE`, and
+`test_CROSSING_agrees_with_replace_in_para_on_EVERY_anchor` — nine paragraph
+shapes, every once-occurring substring, crossing non-empty exactly when
+`replace_in_para(..., allow_notes=True)` refuses. That guard found one more
+disagreement, inside `edit` itself (an emptied link), filed on its own.
+### ~~S2 — `anchors` names ONE crossing label for two links with nothing visible between them~~ — FIXED 17.09, `d04b973`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the survivor round of the first `snapshot.py` sweep.
+`_span_facts` built `anchors`' `crossing` from runs it judged link runs
+itself, and extended the last label whenever a link run started where that
+label ended (`labels[-1][1] == s`) — never asking whether it was the SAME
+link. Zero-width runs are skipped first, so two citations separated by
+nothing visible became one label:
+
+    "(Sen 1999" + <w:del>"; "</w:del> + "Deaton 2013) argue"   (or a tab, or a note marker)
+    anchors: 'Deaton 2013) argue'  → OK, crossing «Sen 1999Deaton 2013»
+
+a label that does not exist, while `edit`'s own label reader keeps (4,12) and
+(12,23) apart.
+
+**Fixed 17.09 in `d04b973`.** `_span_facts` takes its labels from
+`edit._label_spans_in` — the definition `replace_in_para` refuses by — and
+keeps no label logic of its own; each label's reader span comes from its
+first and last run, since both walks number the same `RUN_RE` runs. Test:
+`test_CROSSING_keeps_two_links_APART_with_nothing_visible_between` (three
+separators × element and field links). The claim on the deleted
+`labels[-1][1] == s` line expired with it.
 ### ~~S1 — a sweep over a harness near the 30 s deadline grades every survivor KILLED and prints the figure~~ — FIXED 17.09, `2820489`
 
 <!-- status: fixed -->
