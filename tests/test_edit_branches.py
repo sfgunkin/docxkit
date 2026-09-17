@@ -15,9 +15,21 @@ and a replacement that ends in the middle of a run.
 from __future__ import annotations
 
 import pytest
+from conftest import field
 
-from docxkit._xml import RUN_RE, visible_text
-from docxkit.edit import italicize, preserve_space, replace_in_para, subscript
+from docxkit._xml import RUN_RE, internal_links, visible_text
+from docxkit.edit import (
+    _links_to,
+    find_normalized,
+    italicize,
+    preserve_space,
+    relabel_link,
+    remove_link,
+    remove_links,
+    rep,
+    replace_in_para,
+    subscript,
+)
 from docxkit.errors import AnchorError
 
 
@@ -453,3 +465,207 @@ def test_a_missing_anchor_is_quoted_to_SIXTY_characters():
 #
 # The three `zip(..., strict=True)` as `strict=False`: every pair is
 # built from one walk over the same runs.
+
+
+# --- link removal, asserted as the paragraph it leaves (2026-09-17) ------
+#
+# A whole sweep of `edit.py` left `remove_link`, `remove_links` and
+# `_drop_bookmark` with 142 survivors between them, most of them `+` on a
+# string turned into `%` or `-` — mutants that raise the moment the line
+# runs. Nothing in this harness ran it: the tests of link removal live in
+# `test_remove_link.py`, which measures no module. These are the same
+# operations asked for by VALUE, so that a removal which takes one
+# bookmark too many, or leaves one behind, fails here.
+
+_SEN = ('<w:hyperlink w:anchor="Sen1985"><w:r><w:rPr>'
+        '<w:rStyle w:val="Hyperlink"/></w:rPr>'
+        "<w:t>Sen (1985)</w:t></w:r></w:hyperlink>")
+_TWIN = ('<w:bookmarkStart w:id="9" w:name="Sen1985txt"/>',
+         '<w:bookmarkEnd w:id="9"/>')
+_OTHER = ('<w:bookmarkStart w:id="3" w:name="Other"/>',
+          '<w:bookmarkEnd w:id="3"/>')
+
+
+def test_remove_link_takes_the_link_and_its_twin_and_NOTHING_else():
+    """Another bookmark opens the paragraph, BEFORE the twin, because
+    that is where `_drop_bookmark`'s walk decides things: it has to step
+    over a Start that is not the twin (`continue`, not `break`), and over
+    the End of that other bookmark (the `or` in its test, not `and` — with
+    `and` the first Start it meets is taken whatever its name).
+
+    The paragraph is asserted whole: the twin's END must go with its
+    Start, the other pair must stay, and the label's run must come back
+    as a plain run, its link style and the empty `w:rPr` shell gone."""
+    p = para(_OTHER[0], run("See "), _OTHER[1],
+             _TWIN[0], _SEN, _TWIN[1], run("."))
+
+    out, label = remove_link(p, "Sen1985")
+
+    assert label == "Sen (1985)"
+    assert out == para(_OTHER[0], run("See "), _OTHER[1],
+                       run("Sen (1985)"), run("."))
+
+    kept, _ = remove_link(p, "Sen1985", drop_twin=False)
+    assert kept == para(_OTHER[0], run("See "), _OTHER[1],
+                        _TWIN[0], run("Sen (1985)"), _TWIN[1], run("."))
+
+
+def test_remove_link_and_relabel_link_say_what_the_paragraph_DOES_link_to():
+    """Both refusals build their message from the links that ARE there,
+    and the two halves of that sentence are chosen by whether there are
+    any. A caller reading "it has no links" beside a paragraph full of
+    them goes looking in the wrong place."""
+    linked = para(run("See "), _SEN, run("."))
+    plain = para(run("Plain prose."))
+
+    for undo in (remove_link, lambda p, a: relabel_link(p, a, "x")):
+        with pytest.raises(AnchorError, match=(
+                r"no link to 'Rowe1987' — it links to \['Sen1985'\]$")):
+            undo(linked, "Rowe1987")
+        with pytest.raises(AnchorError,
+                           match=r"no link to 'Sen1985' — it has no links$"):
+            undo(plain, "Sen1985")
+
+
+def test_remove_link_counts_the_links_to_ITS_anchor_in_both_forms():
+    """One link to the anchor among others: removed. Two: refused, and
+    the count is exactly two, which is the smallest number `> 1` and a
+    wrong `> 2` disagree on.
+
+    The fixture's other links are the ones a sloppy anchor test would
+    count: an element and a field whose anchors sort AFTER the target
+    ("Zed…" > "Sen…"), so an ordering comparison in place of `==` sees
+    three links. And a PAGE field — a field with a result and no
+    HYPERLINK — comes FIRST, because the field walk must step over it
+    (`continue`, not `break`) before it reaches the link."""
+    zed_element = ('<w:hyperlink w:anchor="Zed1990"><w:r>'
+                   "<w:t>Zed (1990)</w:t></w:r></w:hyperlink>")
+    p = para(field("PAGE", "4"), run(" See "),
+             field('HYPERLINK \\l "Sen1985"', "Sen (1985)"), run(", "),
+             zed_element, run(", "),
+             field('HYPERLINK \\l "Zed2000"', "Zed (2000)"), run("."))
+
+    out, label = remove_link(p, "Sen1985")
+
+    assert label == "Sen (1985)"
+    assert visible_text(out) == visible_text(p)
+    assert sorted(a for a, _ in internal_links(out)) == ["Zed1990", "Zed2000"]
+
+    twice = para(run("See "), _SEN, run(" and "), _SEN, run("."))
+    with pytest.raises(AnchorError, match="links to 'Sen1985' 2 times"):
+        remove_link(twice, "Sen1985")
+
+
+@pytest.mark.parametrize("lead", ["See ", "As in "])
+def test_links_to_hands_back_the_label_and_the_whole_link_BY_VALUE(lead):
+    """`_Link.label` and `_Link.outer` are offsets, and `_cite_audit` and
+    `_cite_repair` slice the paragraph with them directly — so what they
+    cover is the contract, not merely the words they contain.
+
+    The element's label is its content and its outer span is the element.
+    The field's label is everything between its `separate` and `end`
+    markers, and its outer span is run-aligned: all four runs of the
+    field, no shell left on either side.
+
+    Two leads, two characters apart, because `end + 6` and `end ^ 6`
+    (or `| 6`) are the same number whenever bits 1 and 2 of `end` are
+    clear — and no two offsets two apart both have them clear."""
+    label_runs = "<w:r><w:t>Sen (1985)</w:t></w:r>"
+    element = f'<w:hyperlink w:anchor="Sen1985">{label_runs}</w:hyperlink>'
+    fld = field('HYPERLINK \\l "Rowe1987"', "Rowe (1987)")
+    p = para(run(lead), element, run(" and "), fld, run("."))
+
+    el, fl = _links_to(p)
+
+    assert (el.anchor, el.field) == ("Sen1985", False)
+    assert p[el.label[0]:el.label[1]] == label_runs
+    assert p[el.outer[0]:el.outer[1]] == element
+
+    assert (fl.anchor, fl.field) == ("Rowe1987", True)
+    assert p[:fl.label[0]].endswith('<w:fldChar w:fldCharType="separate"/>')
+    assert p[fl.label[1]:].startswith('<w:fldChar w:fldCharType="end"/>')
+    assert visible_text(p[fl.label[0]:fl.label[1]]) == "Rowe (1987)"
+    assert p[fl.outer[0]:fl.outer[1]] == fld
+
+
+def _sweep_para() -> str:
+    """Two links to unwrap, one of each form, and a kept one LAST — the
+    sweep walks back to front, so the kept link is the first it meets."""
+    return para(run("See "), _SEN, run(", "),
+                field('HYPERLINK \\l "Fig2"', "Figure 2"), run(" and "),
+                '<w:hyperlink w:anchor="Keep"><w:r><w:t>Table 2</w:t></w:r>'
+                "</w:hyperlink>", run("."))
+
+
+# The sweep's own order, splice and report — `test_remove_link.py`
+# already pins all of them (it is in this module's harness since
+# 2026-09-18), so the test written here for them is not repeated.
+
+
+def test_remove_links_keeps_a_FIELD_link_by_its_anchor_name():
+    """`keep` holds bookmark NAMES, so a field link is kept by the name
+    inside its instruction — not by the instruction text around it."""
+    out, gone = remove_links(_sweep_para(), keep={"Fig2"})
+
+    assert gone == ["Sen1985", "Keep"]
+    assert 'HYPERLINK \\l "Fig2"' in out
+
+
+# --- matching, past the edges the fixtures sat inside (2026-09-17) -------
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_rep_counts_MORE_than_256_occurrences(normalize):
+    """`len(spans) != n` and `count != n`, against `is not`. CPython keeps
+    one object per integer up to 256, so every count a fixture had used
+    compared by identity as well as by value. A build script replacing a
+    token across a whole document passes counts in the hundreds."""
+    xml = "<w:t>" + "ab;" * 300 + "</w:t>"
+
+    out = rep(xml, "ab", "cd", n=300, normalize=normalize)
+
+    assert out == "<w:t>" + "cd;" * 300 + "</w:t>"
+
+
+def test_find_normalized_reports_OVERLAPPING_occurrences():
+    """The search resumes one character after the last hit, so a needle
+    that overlaps itself is found at every place it starts — which is
+    what makes "occurs twice" a refusal rather than a guess."""
+    assert find_normalized("’’’", "''") == [(0, 2), (1, 3)]
+
+
+def test_a_style_anchor_that_OVERLAPS_itself_is_refused_as_twice():
+    """`_hits`, the unnormalised half, resumes one character on as well.
+    Two apart, "aaa" holds "aa" once, and `italicize` would style the
+    first pair of a run the caller never pinned down."""
+    with pytest.raises(AnchorError, match="occurs twice"):
+        italicize(para(run("aaa")), "aa")
+
+
+@pytest.mark.parametrize("style", [italicize, subscript])
+def test_styles_do_NOT_fold_typography_unless_asked(style):
+    """`normalize: bool = False` on both public doors. Folding glyphs
+    silently is how an anchor matches a phrase the caller did not type."""
+    p = para(run("the authors’ note"))
+
+    with pytest.raises(AnchorError):
+        style(p, "authors' note")
+
+    assert visible_text(style(p, "authors' note", normalize=True)) == \
+        "the authors’ note"
+
+
+def test_styling_a_whole_LONG_run_leaves_its_tab_where_it_was():
+    """`hi == len(body)`, against `is`. Past 256 characters the two
+    lengths are different objects, and the identity test sends a
+    whole-run span down the SPLITTING path — which rebuilds the run
+    through `set_run_text`, putting all its text into the first `w:t`
+    and so moving the tab from between the two texts to after both.
+    The words read the same and the page does not."""
+    head, tail = "x" * 200, "y" * 100
+    p = para(f"<w:r><w:t>{head}</w:t><w:tab/><w:t>{tail}</w:t></w:r>")
+
+    out = italicize(p, head + tail)
+
+    assert out == para(f"<w:r><w:rPr><w:i/></w:rPr><w:t>{head}</w:t>"
+                       f"<w:tab/><w:t>{tail}</w:t></w:r>")

@@ -28,6 +28,7 @@ from docxkit.edit import (
     _outside,
     insert_in_para,
     italicize,
+    rep,
     replace_in_para,
     superscript,
 )
@@ -481,11 +482,11 @@ def test_LEADING_whitespace_keeps_its_xml_space_preserve():
 # * `base = scope[0][0]` written `scope[-1][0]`, and `hits[0][1]` written
 #   `hits[-1][1]`: both sit under a guard that has already raised for
 #   anything but one hit, so the first IS the last.
-# * `if lo == 0 and hi == len(body):` written `is`. Above 256 the
-#   identity fails and the walk takes the slow path — which rebuilds the
-#   same run: the empty pieces are dropped by `if part`, and
-#   `set_run_text(run_xml, visible_text(run_xml))` round-trips a run
-#   byte for byte (measured on a 300-character body).
+# * `if lo == 0 and hi == len(body):` written `is` was argued here as
+#   round-tripping the run through the slow path. It does only for a run
+#   with ONE `w:t`: `set_run_text` puts all the text into the first, so a
+#   run holding a tab between two texts comes back with the tab moved.
+#   Killed on 2026-09-17 by the long-run test in `test_edit_branches`.
 # * `visible.find(old, at + 1) >= 0` written `>= 1`. The search starts at
 #   `at + 1`, so a second occurrence cannot be found at offset 0.
 # * `len(touched) > 1` written `> 0`. A marker is a run of zero visible
@@ -502,3 +503,121 @@ def test_LEADING_whitespace_keeps_its_xml_space_preserve():
 # * `zip(spans, runs, strict=True)` in the edit loop written
 #   `strict=False`: `run_spans` returns one span per run by
 #   construction.
+
+
+# --- the insert guards at a region's EDGE (2026-09-17) -------------------
+#
+# `_enclosing` asks for the region STRICTLY around a position, and both
+# of its edges were free: every fixture put the position well inside a
+# region or well outside one. The position an insert computes is a run's
+# open tag or the last run's close, and a bookmark's tags sit flush
+# against both.
+
+
+def test_words_after_an_EMPTY_bookmark_go_after_it():
+    """`lo < pos < hi`, against `pos <= hi`. Between two runs the offset
+    means "after everything that ended here" (`_between_runs`), and an
+    empty bookmark — Word's `_GoBack` is one — ends exactly where the
+    next run opens. Counted as enclosing it, it holds no text, `_outside`
+    answers its START, and the words jump in front of it."""
+    mark = ('<w:bookmarkStart w:id="1" w:name="_GoBack"/>'
+            '<w:bookmarkEnd w:id="1"/>')
+    p = f"<w:p><w:r><w:t>A</w:t></w:r>{mark}<w:r><w:t>B</w:t></w:r></w:p>"
+
+    out = insert_in_para(p, 1, "X")
+
+    assert out == (f"<w:p><w:r><w:t>A</w:t></w:r>{mark}"
+                   "<w:r><w:t>X</w:t></w:r><w:r><w:t>B</w:t></w:r></w:p>")
+
+
+def test_words_at_the_end_leave_the_OUTER_bookmark_not_just_the_inner():
+    """`lo < pos < hi`, against `lo <= pos`. The paragraph's last run
+    closes flush against an empty inner bookmark, so the end-of-paragraph
+    position IS that bookmark's start — and it is listed before the outer
+    one, whose End comes later. Counted as enclosing, the inner bookmark
+    answers "stay where you are", the outer one is never asked, and the
+    words land inside the caption's bookmark, which grows to cover them."""
+    p = ('<w:p><w:bookmarkStart w:id="1" w:name="Caption"/>'
+         "<w:r><w:t>xx</w:t></w:r>"
+         '<w:bookmarkStart w:id="2" w:name="_GoBack"/>'
+         '<w:bookmarkEnd w:id="2"/><w:bookmarkEnd w:id="1"/></w:p>')
+
+    out = insert_in_para(p, 2, "X")
+
+    assert out == p[:-len("</w:p>")] + "<w:r><w:t>X</w:t></w:r></w:p>"
+
+
+def test_a_bookmark_the_id_reader_cannot_pair_does_not_unguard_the_rest():
+    """The `continue` in `_bookmark_spans`. Attribute quoting is the
+    writer's choice in XML, and the id pattern reads the double-quoted
+    form Word writes; a bookmark it cannot read an id from is skipped. A
+    `break` there skips every bookmark AFTER it too, and an insert into
+    the middle of a caption's bookmark stops being refused."""
+    p = ("<w:p><w:bookmarkStart w:id='7' w:name='Legacy'/>"
+         "<w:bookmarkEnd w:id='7'/>"
+         '<w:bookmarkStart w:id="1" w:name="Table5"/>'
+         '<w:r><w:t xml:space="preserve">Table </w:t></w:r>'
+         '<w:r><w:t>5</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>')
+
+    with pytest.raises(AnchorError, match="inside a bookmark"):
+        insert_in_para(p, 6, "X")
+
+
+# --- labels, past the fixtures' sizes and styles (2026-09-17) ------------
+
+
+def test_a_label_ending_a_paragraph_of_MORE_than_256_runs_stops_the_walk():
+    """`i < len(runs)` in `styled`, against `is not`. The walk climbs to
+    the end of a styled label and asks about the index one past the last
+    run; up to 256 runs those two integers are one cached object and the
+    identity test agrees. Past it — a reference list Word fragmented at
+    every rsid — `is not` says "keep going" and indexes past the end."""
+    words = "".join(f"<w:r><w:t xml:space=\"preserve\">w{i} </w:t></w:r>"
+                    for i in range(300))
+    p = "<w:p>" + words + _styled("Kan") + _styled("bur") + "</w:p>"
+
+    out = replace_in_para(p, "Kanbur", "Kanbur (2007)", allow_hyperlink=True)
+
+    assert text_of(out).endswith("w299 Kanbur (2007)")
+
+
+# `labels_a_link`'s `or` written `and` — a match that starts in an
+# unstyled `REF \h` result and ends outside it — is killed by
+# `test_edit_links_replace.py`, in
+# `test_an_EMPTY_link_inside_a_rewritten_piece_is_refused` — written by
+# the replace half of this round. The test that stood here for it is not
+# repeated; if that one goes, this mutant needs one again.
+
+
+# --- what the other refusals quote (2026-09-17) --------------------------
+
+
+def test_a_PLAIN_anchor_that_misses_is_quoted_at_ninety_too():
+    """`rep` without `normalize`: the other branch, with its own copy of
+    the ninety-character cut."""
+    anchor = _long("a sentence the author has since rewritten", 90)
+
+    with pytest.raises(AnchorError) as exc:
+        rep(para(run("Nothing like it.")), anchor, "x")
+
+    assert repr(anchor[:90]) in str(exc.value)
+    assert anchor[:91] not in str(exc.value)
+
+
+def test_an_anchor_that_SPANS_an_equation_is_quoted_at_sixty():
+    """The refusal that explains itself: the phrase IS on the page, and
+    is not in the runs `replace_in_para` rewrites because an equation
+    sits inside it. Its own sixty-character cut, and the message a caller
+    most needs to recognise."""
+    tail = " is the rate of growth of the whole economy over the period"
+    p = para(run("where ", preserve=True),
+             "<m:oMath><m:r><m:t>g</m:t></m:r></m:oMath>",
+             run(tail, preserve=True))
+    anchor = "where g" + tail
+    assert len(anchor) > 61
+
+    with pytest.raises(AnchorError, match="spans an equation") as exc:
+        replace_in_para(p, anchor, "x")
+
+    assert repr(anchor[:60]) in str(exc.value)
+    assert anchor[:61] not in str(exc.value)
