@@ -14,6 +14,35 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the revision-count note compared Word's count from BEFORE the math pass with the package after it~~ — FIXED 17.09, `ef3036a`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the survivor round of the first whole `tracked.py` sweep.
+The build's note on the gap between Word's revision count and the package's
+compared two counts of two different documents: `report.body_revisions` was
+Word's `Revisions.Count` read straight after the Compare, BEFORE `_resolve_math`
+accepted anything, and the package was counted after that pass. On a default
+build (`resolve_math=True`) Word's figure was too high by the math revisions
+accepted, so the note named no cause, its "the remaining N … Word GROUPS"
+figure was too low or missing, and where the two errors cancelled no note was
+printed at all:
+
+    Compare: 5 body revisions, 2 of them math, accepted; package: 4 elements
+    said:    "Word counts 5 in the body; the package holds 4"   (no cause)
+    true:    Word held 3 → "the remaining 1 … Word GROUPS"
+
+The gates were not affected; only this note reads the count. Two comments in
+`tests/test_tracked_gates.py` argued "the body count is a subset by
+construction, never higher" — false, as the repro showed.
+
+**Fixed 17.09 in `ef3036a`.** The count is RE-READ from Word after the math pass,
+just before extraction, so both counts describe the extracted document — re-read
+rather than decremented, because an accept applies its whole span and can take
+other revisions with it. Test: `test_the_count_note_reads_Word_AFTER_the_math_pass`
+(the grouping case, and the case where the errors used to cancel); the two
+comments now say the subset argument was false and name the tests that kill
+their mutants. No claim rested on it.
 ### ~~S2 — `anchors` reports no crossing for an anchor across the unstyled result of Word's REF \h cross-reference, which `replace_in_para` refuses~~ — FIXED 17.09, `d04b973`
 
 <!-- status: fixed -->
