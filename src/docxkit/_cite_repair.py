@@ -331,7 +331,9 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
         cut = run_open_before(inner, inner.rindex("fldCharType=\"end\""))
         sep = inner.index("fldCharType=\"separate\"")
         inner = inner[inner.index("</w:r>", sep) + len("</w:r>"):cut]
-    inner = re.sub(r'<w:rStyle w:val="Hyperlink"/>', "", inner)
+    # `\s*/>`: the style closed ` />` (739 in 20 of 2,954 corpus packages)
+    # stayed on the surrendered character otherwise (2026-09-17).
+    inner = re.sub(r'<w:rStyle w:val="Hyperlink"\s*/>', "", inner)
     bare = para[:s] + inner + para[e:]
     fixed = wrap_visible_span(bare, new_at, new_end, anchor)
 

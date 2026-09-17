@@ -4502,6 +4502,23 @@ def test_respan_link_TRIMS_and_leaves_no_blue_behind():
         "the surrendered ')' must not stay styled as a link")
 
 
+def test_respan_link_TRIMS_the_blue_off_a_style_closed_WITH_A_SPACE():
+    """`<w:rStyle w:val="Hyperlink" />` is the same style (739 closed
+    ` />` in 20 of 2,954 corpus packages). The unwrap removed only
+    `…"/>`, so the surrendered ')' kept it: blue, underlined, linking
+    nowhere."""
+    from docxkit.citations import respan_link
+
+    inner = ('<w:hyperlink w:anchor="Klim2023"><w:r><w:rPr>'
+             '<w:rStyle w:val="Hyperlink" /></w:rPr><w:t>'
+             "Klimaviciute and Pestieau 2023)</w:t></w:r></w:hyperlink>")
+    xml = _one_para(R("As shown (") + inner + R(" the effect holds."))
+
+    fixed = respan_link(xml, "Klim2023", "Klimaviciute and Pestieau 2023")
+
+    assert fixed.count('w:val="Hyperlink"') == 1, fixed
+
+
 def test_respan_link_CARRIES_the_back_link_bookmark_over_the_new_edge():
     """The `<key>txt` bookmark is the reference entry's back-link target
     and the house convention puts it around the first mention — this

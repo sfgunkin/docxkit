@@ -255,6 +255,20 @@ def test_diagnose_names_the_HYPERLINK_LABEL_the_match_meets():
     assert "allow_hyperlink=True" in said
 
 
+def test_diagnose_names_a_label_whose_style_is_closed_WITH_A_SPACE():
+    """`<w:rStyle w:val="Hyperlink" />` (739 closed ` />` in 20 of 2,954
+    corpus packages) was not read as a label, and the refusal fell
+    through to "a reason preflight does not model"."""
+    spaced = LINK_LABEL.replace('"Hyperlink"/>', '"Hyperlink" />')
+    assert spaced != LINK_LABEL
+    xml = document(para(f"{spaced}<w:r><w:t> shows where older "
+                        "workers are.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "shows where", "Table 3")
+
+    assert "hyperlink label 'Table 3'" in said, said
+
+
 def test_diagnose_names_the_EQUATION_a_match_spans():
     """The other cause that reads as an anchor typo: the words are on
     the page, and half of them are inside `m:oMath`, which this module

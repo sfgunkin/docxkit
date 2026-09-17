@@ -689,6 +689,44 @@ def test_unlink_restores_a_plain_document():
         "As Table 1 shows, employment rises.Table 1. Employment"
 
 
+#: A linked document as other producers spell it. Each is the same
+#: markup Word would read identically; each was read by one spelling.
+_RESPELLED = {
+    "bookmarkStart name-first": (
+        r'<w:bookmarkStart w:id="(\d+)" w:name="([^"]+)"/>',
+        r'<w:bookmarkStart w:name="\2" w:id="\1"/>'),
+    "bookmarkEnd displaced": (
+        r'<w:bookmarkEnd w:id="(\d+)"/>',
+        r'<w:bookmarkEnd w:id="\1" w:displacedByCustomXml="next"/>'),
+    "rStyle closed with a space": (
+        r'<w:rStyle w:val="Hyperlink"/>', r'<w:rStyle w:val="Hyperlink" />'),
+}
+
+
+@pytest.mark.parametrize("spelling", sorted(_RESPELLED))
+def test_unlink_restores_a_plain_document_in_ANOTHER_spelling(spelling):
+    """Name-first starts (97 in 7 of 2,954 corpus packages), ends with
+    `w:displacedByCustomXml` (3 in 1), and a Hyperlink style closed ` />`
+    (739 in 20). The start was read with `w:name` LAST, the end with
+    `w:id` alone, the style as `…"/>`: each left behind what unlink
+    exists to remove — a bookmark, its end, or blue text linking
+    nowhere."""
+    xml = doc(
+        para(run("As Table 1 shows, employment rises.")),
+        para(run("Table 1. Employment")),
+    )
+    linked, _ = crossrefs.link(xml)
+    pattern, spelled = _RESPELLED[spelling]
+    respelled = re.sub(pattern, spelled, linked)
+    assert respelled != linked
+
+    plain, removed = crossrefs.unlink(respelled)
+
+    assert removed == 2
+    assert "bookmarkStart" not in plain and "bookmarkEnd" not in plain
+    assert "Hyperlink" not in plain and "w:hyperlink" not in plain
+
+
 def test_unlink_leaves_other_hyperlinks_alone():
     xml = doc(
         para('<w:hyperlink r:id="rId9">', run("a citation"), "</w:hyperlink>",

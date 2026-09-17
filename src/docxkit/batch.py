@@ -92,8 +92,10 @@ __all__ = [
 # empty-element branch is appended AFTER it. The order is load-bearing: putting
 # an unguarded branch first makes `<w:p/><w:p>x</w:p>` read as one paragraph.
 _PARA = re.compile(PARA_RE.pattern + r"|<w:p\b[^>]*/>", re.DOTALL)
+# `\s*/>`: a Hyperlink style closed ` />` (739 in 20 of 2,954 corpus
+# packages) is a label too, and unread the refusal named no cause.
 _LABEL = re.compile(
-    r'<w:rStyle w:val="Hyperlink"/></w:rPr><w:t[^>]*>([^<]*)</w:t>')
+    r'<w:rStyle w:val="Hyperlink"\s*/></w:rPr><w:t[^>]*>([^<]*)</w:t>')
 _TRACKED = re.compile(r"<w:(ins|del)\b")
 
 

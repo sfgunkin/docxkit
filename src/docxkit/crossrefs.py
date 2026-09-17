@@ -1087,8 +1087,14 @@ def unlink(xml: str, *,
         # same `w:id` — so a paper that has been through one round of
         # move-tracking holds the pair. Taking one of each left a
         # bookmarkStart and its End standing, and reported "1 removed".
-        pattern = re.compile(
-            rf'<w:bookmarkStart[^>]*w:name="{re.escape(name)}"\s*/>')
+        #
+        # Each tag in any spelling: `w:name` read LAST missed a start
+        # written name-first, `w:id` read alone missed an end carrying
+        # `w:displacedByCustomXml`, and the Hyperlink style below was
+        # read `…"/>` only — each left behind what this exists to remove
+        # (2026-09-17).
+        pattern = re.compile(rf'<w:bookmarkStart\b[^>]*'
+                             rf'\bw:name="{re.escape(name)}"[^>]*/>')
         ids: list[str] = []
         while (m := pattern.search(xml)) is not None:
             bid = re.search(r'w:id="(\d+)"', m.group(0))
@@ -1100,14 +1106,14 @@ def unlink(xml: str, *,
         # bookmark this pass does not own is a document defect of its
         # own, and cutting its close would turn it into two.
         for bid_val in ids:
-            xml = re.sub(rf'<w:bookmarkEnd w:id="{bid_val}"\s*/>', "",
-                         xml, count=1)
+            xml = re.sub(rf'<w:bookmarkEnd\b[^>]*\bw:id="{bid_val}"[^>]*/>',
+                         "", xml, count=1)
 
     def _unwrap(m: re.Match[str]) -> str:
         anchor = re.search(r'w:anchor="([^"]+)"', m.group(0))
         if anchor is None or anchor.group(1) not in ours:
             return m.group(0)
         inner = re.sub(r"</?w:hyperlink[^>]*>", "", m.group(0))
-        return re.sub(r'<w:rStyle w:val="Hyperlink"/>', "", inner)
+        return re.sub(r'<w:rStyle w:val="Hyperlink"\s*/>', "", inner)
 
     return _HYPERLINK_RE.sub(_unwrap, xml), removed
