@@ -750,6 +750,17 @@ replay refused with *"authors.py itself has moved since the run"*
 anyway. The re-sweep is part of the price of disambiguating, and belongs
 in the decision rather than in the next reader's afternoon.
 
+**COPY THE SESSION ASIDE before that re-sweep**, when the point of it is
+to measure what a change was worth. A re-sweep writes over the session
+the old figure came from, so it destroys the evidence for its own
+effect: the new number can be CONFIRMED against a prediction and cannot
+be SCORED against one. `find.py` came back at 1.0 % (3/288) against a
+predicted 3 and a previous 21 (2026-09-18), and the split — thirteen
+claims that now anchor, five mutants the round's own tests kill, three
+that no claim could key on — had to be read out of the round's commit
+message, because the before-state was gone. `.mutation-<stem>.sqlite`
+and its `.pristine/` beside it are the whole of what to keep.
+
 **The harness only GAINED tests: the figure is an UPPER BOUND**, and
 usually good enough to act on. A test added after a run can only KILL
 mutants; it can never raise a survivor. So a module that has not moved,
