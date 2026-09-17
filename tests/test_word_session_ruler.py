@@ -1309,6 +1309,74 @@ def test_the_folder_is_read_out_of_the_message(monkeypatch):
     assert W._broken_wrapper(AttributeError("no attribute 'Visible'")) is None
 
 
+#: The argument shapes the six parked survivors of `_Layout.__init__`
+#: hand to Word's own `Document.Range`, and that no fake can answer for.
+_RANGE_SHAPES = ((-1, 0), (0, -1), (1, 0))
+
+
+@pytest.mark.word
+def test_what_WORD_does_with_the_RANGE_shapes_no_fake_can_answer():
+    """THIS TEST HAS NEVER BEEN RUN. It needs a real Word, and the
+    machine it was written on had one open with a document in Protected
+    View, so it is written from the argument rather than from an answer.
+    Whoever runs it first: put what Word said into
+    `tools/equivalents.toml` or into a test, and replace this paragraph
+    with it.
+
+    It exists to settle six survivors of the 2026-09-17 sweep, parked
+    rather than argued. `_Layout.__init__` builds two probes as
+    `doc.Range(0, 0)`, and the mutants make that `Range(-1, 0)`,
+    `Range(0, -1)` and `Range(1, 0)`, on each of the two lines. The
+    module's half of the question is settled and needs no Word: `find`
+    re-aims the search range with `SetRange(start, self.end)` before
+    every `Execute`, `at` re-collapses the probe with `SetRange(pos,
+    pos)` before every page question, and nothing else reads either
+    object — so the extent they are born with cannot reach an answer.
+    What is open is Word's half: whether `Document.Range` accepts a
+    negative offset, or a Start past its End, at all.
+
+    Both outcomes are findings, and they point opposite ways:
+
+    * Word REFUSES those shapes -> the six mutants raise in
+      `_Layout.__init__` on the first `locate` against a real document.
+      They are killable by this harness, the `locate_in` call below is
+      what kills them, and no claim should ever be written for them.
+    * Word ACCEPTS them, clamping or swapping the pair -> all six are
+      equivalent by the argument above and can be claimed in one go.
+
+    It is the same call on both lines, so one run settles all six. The
+    answers are printed (`-s`, or `-rA` on a failure) because a passing
+    test is otherwise silent, and the point of this one is the finding.
+    """
+    answers: dict[tuple[int, int], str] = {}
+    with W.session() as word:
+        doc = word.Documents.Add()
+        try:
+            doc.Content.Text = "The paper says something measurable."
+            for shape in _RANGE_SHAPES:
+                try:
+                    rng = doc.Range(*shape)
+                    answers[shape] = (f"accepted: Start={rng.Start} "
+                                      f"End={rng.End}")
+                except Exception as exc:              # whatever COM says
+                    answers[shape] = f"refused: {type(exc).__name__}: {exc}"
+            found = W.locate_in(doc, ["says something"])
+        finally:
+            doc.Close(SaveChanges=0)
+
+    print("\n".join(f"  Range{shape}: {answer}"
+                    for shape, answer in answers.items()))
+
+    assert found and found[0].page >= 1, (
+        "the probes as the module builds them must work against a real "
+        "document — and this is the assertion that kills the six mutants "
+        "if Word refuses the shapes above")
+    verdicts = {answer.split(":")[0] for answer in answers.values()}
+    assert len(verdicts) == 1, (
+        f"Word answered differently for different shapes, so the six "
+        f"parked mutants do not share one verdict: {answers}")
+
+
 @pytest.mark.word
 def test_a_REAL_automation_Word_is_seen_by_the_orphan_query():
     """The query against the real thing: the session's own hidden
