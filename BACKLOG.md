@@ -853,52 +853,6 @@ prev. Then copy `build/rescue/mb1_rescue_20260915-220117-827975.docx` over
 
 ---
 
-### S2 — `revision promote` refuses on the stamp AFTER it has overwritten the manuscript
-<!-- status: open -->
-
-**Observed** (DSI, UNFPA-definition round, 16.09.2026). `docxkit revision
-promote` printed
-
-    docxkit: batch.docx.buildinfo.json does not describe working.docx: the
-    stamp records 3579fb8f181e6b21 and the file hashes to 62253fa0ae24e8f9.
-    A stamp is carried only onto the bytes it was written for.
-
-and exited 1 — but `working.docx` had ALREADY been replaced by the batch
-(hash-verified), the rescue taken and the redline kept. What did not run:
-the stamp carry (so `working.docx.buildinfo.json` went on naming the
-previous round's `edited_ABC.docx`), the ledger's `promoted` line, and
-`prune_rescues`. `revision status` then reported a 71-revision proposal —
-correctly — after a command that had reported failure.
-
-**Cause.** `promote` checks the stamp inside `guard.carry`, which it calls
-after `shutil.copyfile(batch, live)`. The paper's protocol runs a CLEAN tool
-pass over `build/batch.docx` after `revision build` — DSI's
-`revision/scripts/relink.py` (citation links, no visible character, glyphs and
-revision counts asserted) — and nothing in that cycle calls `guard.restamp`,
-so the batch's stamp still described Compare's bytes. `revision validate` does
-not look at the stamp, so the linked batch passed every rung first.
-
-**Repro.** `revision build E.docx` → change `build/batch.docx` with any tool
-(e.g. `citations.link_all` + `write_docx`) → `revision validate` (PASS) →
-`revision promote`.
-
-**Workaround used** (`DSI/revision/scripts/finish_promote_unfpa.py`, archived
-to `D:\PaperAttic\DSI\revision_applied\`): prove the stamp hash is the
-pre-tool batch, `working == batch == kept redline`, `rescue == prev`; then
-`guard.restamp(batch, why=…)`, `guard.carry`, `_ledger.record(PROMOTED, …)`,
-`_promote.prune_rescues(protect=rescue)` — promote's own tail, by hand, through
-two private modules.
-
-**Fix sketch.** (1) In `promote`, check `stamp.sha256 == sha256(batch)` BEFORE
-the rescue/redline/copy, and refuse with the restamp instruction — nothing
-written. (2) `revision validate` could warn when the batch no longer matches
-its stamp, since that is the moment a tool pass has just happened. (3) Offer
-`docxkit revision restamp --why` (or a `--restamp-why` on the relink path) so
-a paper's cycle need not import `guard`. DSI's `relink.py` should then restamp
-when its output is the batch.
-
----
-
 ### S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported
 <!-- status: open -->
 
