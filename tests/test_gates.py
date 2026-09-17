@@ -29,11 +29,55 @@ RED = [sys.executable, "-c", "import sys; print('boom'); sys.exit(1)"]
 NOTES = [sys.executable, "-c", "print('note: a note is not an error')"]
 ERRORS = [sys.executable, "-c", "print('x.py:1: error: no')"]
 
+#: Any path that is NOT this checkout's src, so the assertions below
+#: cannot pass by inheriting the runner's own environment.
+ELSEWHERE = "/some/other/checkout/src"
+
 
 def _run(*gate_list):
     said: list[str] = []
     code = gates.run(gate_list, say=said.append)
     return code, "\n".join(said)
+
+
+def test_a_gate_imports_THIS_checkouts_source_not_the_installed_one(
+        monkeypatch):
+    """The defect this closes is the worst shape a gate can have: it did
+    not fail, it answered a different question.
+
+    `gates.py` puts its own `src` on `sys.path`, but a gate is a
+    SUBPROCESS and inherited none of that. The package is installed
+    editable, so `import docxkit` in the child resolved through the
+    install — to the one checkout the install points at — whatever
+    worktree the chain was started from. Measured 2026-09-18: with a
+    worktree's own `wordcount.py` deliberately broken, a bare pytest in
+    that worktree reported 18 passed, because it imported another
+    checkout's source. Every branch in that day's campaign that ran this
+    chain without setting `PYTHONPATH` by hand gated master and said ok.
+    """
+    monkeypatch.setenv("PYTHONPATH", ELSEWHERE)
+    said: list[str] = []
+    first_entry = [sys.executable, "-c",
+                   "import os; print(os.environ.get('PYTHONPATH', '')"
+                   ".split(os.pathsep)[0])"]
+
+    gates.run((("env", first_entry, False),), say=said.append)
+
+    assert str(gates.ROOT / "src") in "\n".join(said), (
+        "this checkout's src must come FIRST in a gate's PYTHONPATH")
+
+
+def test_a_gate_KEEPS_a_PYTHONPATH_the_caller_already_set(monkeypatch):
+    """Prepended, not replaced. The mutation tools point `PYTHONPATH` at
+    a measurement worktree, and a gate run under one must not lose it."""
+    monkeypatch.setenv("PYTHONPATH", ELSEWHERE)
+    said: list[str] = []
+    show = [sys.executable, "-c",
+            "import os; print(os.environ['PYTHONPATH'])"]
+
+    gates.run((("env", show, False),), say=said.append)
+
+    assert ELSEWHERE in "\n".join(said)
 
 
 def test_all_green_is_zero():

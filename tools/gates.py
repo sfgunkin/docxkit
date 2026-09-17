@@ -47,6 +47,30 @@ from docxkit.console import utf8_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def _child_env() -> dict[str, str]:
+    """The environment for a gate, with THIS checkout's `src` in front.
+
+    The line above puts it on `sys.path` for this process; a gate is a
+    SUBPROCESS and inherited none of it. The package is installed
+    editable, so `import docxkit` in a child resolved through the
+    install — to `D:/docxkit/src` — whatever checkout the chain was
+    started from. A worktree therefore gated the source of ANOTHER
+    checkout while reporting on its own: every branch in the 2026-09-18
+    campaign that ran this chain without setting `PYTHONPATH` by hand
+    tested master's `src` against its own tests, and said `ok`.
+
+    That is the worst shape a gate can have. It does not fail, it
+    answers a different question — and the answer it gives is the one
+    the reader wanted for a different tree.
+    """
+    env = dict(os.environ)
+    ahead = str(ROOT / "src")
+    have = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{ahead}{os.pathsep}{have}" if have else ahead
+    return env
+
+
 #: (name, argv, reads-stdout). The third says the gate is judged by its
 #: OUTPUT rather than its exit code — `mypy` is the only one.
 Gate = tuple[str, list[str], bool]
@@ -345,7 +369,8 @@ def run(gates: Sequence[Gate] = tuple(GATES),
             began = time.perf_counter()
             done = subprocess.run(argv, cwd=ROOT, capture_output=True,
                                   text=True, encoding="utf-8",
-                                  errors="replace", check=False)
+                                  errors="replace", check=False,
+                                  env=_child_env())
             seconds = round(time.perf_counter() - began, 2)
             out = done.stdout + done.stderr
             entry: dict[str, object] = {"name": name, "seconds": seconds}
