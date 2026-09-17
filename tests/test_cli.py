@@ -2381,6 +2381,101 @@ def test_a_refused_WRITE_prints_what_it_refused_over(capsys, tmp_path):
     assert target.read_bytes() == before, "and nothing was written"
 
 
+def _already_broken(tmp_path, text: str = "prose"):
+    """A manuscript that ALREADY carries a lint finding, before any edit.
+
+    An empty `w:ins` that is not a paragraph-mark marker: lint check 2,
+    and one of the classes 20 of 400 real manuscripts on this machine
+    carry — with the empty `m:oMath` shells, the classes no docxkit verb
+    repairs. The finding is in the file on disk, so nothing a command
+    does to `parts` can be blamed for it.
+    """
+    empty_ins = ('<w:p><w:ins w:id="9" w:author="A. Editor" '
+                 'w:date="2026-09-01T00:00:00Z"></w:ins></w:p>')
+    write(tmp_path / "paper.docx", make_parts(para(run(text)) + empty_ins))
+    return tmp_path / "paper.docx"
+
+
+def test_a_PRE_EXISTING_finding_is_named_as_one_and_the_repair_with_it(
+        capsys, tmp_path):
+    """The refusal audit's first stuck case. Measured over 400 real
+    manuscripts: 20 carry a finding that survives `preserve_space`, and
+    on those every one of the six mutating commands refused with "the
+    package would not open cleanly in Word; nothing was written" — no
+    action named, about a defect the command did not cause and cannot
+    repair. The command reports its own work one line above, so it reads
+    as the edit having broken the file.
+    """
+    from docxkit import package
+    from docxkit.cli import _save
+
+    target = _already_broken(tmp_path)
+    parts = package.read_parts(target)
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b"prose", b"prose, relinked")
+    before = target.read_bytes()
+
+    assert _save(target, parts, "test") is False
+
+    out = capsys.readouterr().out
+    assert "empty w:ins" in out
+    assert "already" in out, "it was not this edit that put it there"
+    assert "Word" in out, "the repair, since docxkit has no verb for it"
+    assert "--allow-existing-lint" in out, "and the route through"
+    assert target.read_bytes() == before
+
+
+def test_allow_existing_lint_WRITES_and_still_refuses_a_NEW_finding(
+        capsys, tmp_path):
+    """What makes the escape safe is the distinction, not the flag: a
+    finding the EDIT introduced refuses whatever was passed, so the
+    switch can only leave a file as damaged as it already was. The
+    precedent is `preserve_space`, which clears check 3b outright rather
+    than waving it through.
+    """
+    from docxkit import package
+    from docxkit.cli import _save
+
+    target = _already_broken(tmp_path)
+    parts = package.read_parts(target)
+
+    assert _save(target, parts, "kept", allow_existing=True) is True
+    assert "written; previous version kept at" in capsys.readouterr().out
+
+    parts = package.read_parts(target)
+    parts["word/document.xml"] = (
+        parts["word/document.xml"].decode("utf-8")
+        .replace("<w:body>", "<w:body><w:p><w:pPr/><w:pPr/></w:p>")
+        .encode("utf-8"))
+    before = target.read_bytes()
+
+    assert _save(target, parts, "new", allow_existing=True) is False
+
+    out = capsys.readouterr().out
+    assert "2 w:pPr" in out and "REFUSED" in out
+    assert "this edit" in out, "which of the findings the flag cannot cover"
+    assert target.read_bytes() == before
+
+
+def test_every_command_that_WRITES_offers_the_same_escape():
+    """One route, not six: `_save` is the shared write path, so the flag
+    belongs to all of its commands or to none. `crossrefs` reaches it
+    through `_write_document`, which is why a hand-written list of five
+    would have missed it.
+    """
+    import argparse
+
+    from docxkit.cli import build_parser
+
+    sub = next(a for a in build_parser()._actions
+               if isinstance(a, argparse._SubParsersAction))
+    for name in ("link", "refstyle", "crossrefs", "tasks", "smarten",
+                 "authors"):
+        flags = {s for action in sub.choices[name]._actions
+                 for s in action.option_strings}
+        assert "--allow-existing-lint" in flags, name
+
+
 def test_authors_says_so_when_there_are_NONE(capsys, monkeypatch,
                                             tmp_path):
     """`if not read_authors(parts)`, mutated to `not not`. The line it

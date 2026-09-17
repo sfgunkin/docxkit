@@ -421,7 +421,11 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"({newest.name}): it has been opened and saved since, or that "
             f"proposal was adjudicated already, and whatever the author did "
             f"in it is theirs. Withdrawing is only for a proposal nobody has "
-            f"opened.")
+            f"opened. The route from here is the ordinary one: have the "
+            f"author accept or reject in Word — rejecting all of it is what "
+            f"withdrawing would have done — and then\n"
+            f"    docxkit revision baseline   (record what they decided)\n"
+            f"{newest.name} keeps this proposal's markup either way.")
     if package.is_locked(live):
         raise DocumentLocked(
             f"{live.name} is open in Word. Close it first — a copy made "

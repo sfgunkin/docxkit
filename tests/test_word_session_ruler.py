@@ -867,6 +867,23 @@ def test_an_ambiguous_process_list_REFUSES_and_still_quits(com, monkeypatch):
     assert W._WATCHDOG == []
 
 
+def test_the_ambiguous_list_SPELLS_running_with_no_deadline(com, monkeypatch):
+    """"Retry, or run with no deadline" named no way to do either half
+    of the second option: the deadline a `revision` command uses comes
+    from `[batch] word_deadline`, and 0 there is what "no ceiling"
+    is spelled as (`_common.WORD_DEADLINE`). A reader who cannot find
+    the setting retries the thing that just refused."""
+    com(FakeWord())
+    lists = iter([frozenset({11}), frozenset({11, 42, 43})])
+    monkeypatch.setattr(W, "_winword_pids", lambda: next(lists))
+
+    with pytest.raises(DocxKitError) as refused, \
+            W.session(deadline=5, doing="x"):
+        pass                                         # pragma: no cover
+
+    assert "[batch] word_deadline = 0" in str(refused.value)
+
+
 def test_a_shared_session_renames_the_timeout_TOO(com, bounded):
     """`shared_session` exits the inner session with no exception, so the
     body's failure never reaches the generator that armed the watchdog;

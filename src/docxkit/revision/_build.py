@@ -380,7 +380,8 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
             f"to accept or reject, and reject-all will not restore the "
             f"baseline. This batch has NO reviewable redline as built. "
             f"Three ways on, in order: rebuild with "
-            f"resolve_math=False, which keeps them tracked and is what "
+            f"`docxkit revision build --keep-math` (resolve_math=False "
+            f"from Python), which keeps them tracked and is what "
             f"the Flat OPC route measured on LI7 supports; ship the batch "
             f"clean and record that in the log; or make the edit by "
             f"hand-authored markup on working.docx (the DSI vehicle).")

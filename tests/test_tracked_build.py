@@ -481,6 +481,63 @@ def test_a_failed_lint_leaves_the_previous_deliverable_untouched(
     assert out.read_bytes() == before
 
 
+def test_the_lint_refusal_NAMES_an_escape_like_its_three_siblings(
+        monkeypatch, sources):
+    """The refusal audit's second stuck case. This gate named no action,
+    no command and no switch, and it takes no parameter either — while
+    the three gates one screen below each name one (`reject_check`,
+    `accept_check`, and `_ACCEPT_ESCAPE`'s sentence about the CLI). A
+    build refused here had nowhere to go: nothing is written, so there
+    is not even an artefact to look at.
+
+    Spelled like theirs, including the CLI sentence, because a Python
+    keyword argument quoted at a CLI reader is the defect `_ACCEPT_ESCAPE`
+    was written to fix.
+    """
+    with pytest.raises(PackageError, match="would not open cleanly") as bad:
+        _build(monkeypatch, _broken_document(), sources)
+
+    said = str(bad.value)
+    assert "lint_check=False" in said, said
+    assert "the CLI has no flag for this on purpose" in said, said
+    assert "will not open" in said, "and what the escape costs"
+
+
+def test_lint_check_False_BUILDS_it_and_KEEPS_the_finding(monkeypatch,
+                                                          sources):
+    """An escape has to exist, not merely be named — and what it turns
+    off is the REFUSAL, not the check: `reject_check` is the precedent
+    (`revision._build` passes it False and the finding still reaches the
+    report and the reader). The sibling gates are off here because the
+    fixture's broken body is not this build's baseline either, and this
+    test is about the lint gate alone.
+    """
+    seen: list[str] = []
+    report, _ = _build(monkeypatch, _broken_document(), sources,
+                       lint_check=False, reject_check=False,
+                       accept_check=False, progress=seen.append)
+
+    assert sources[2].is_file(), "the whole point: an artefact to look at"
+    assert report.lint == ["w:body has run-level child r (must be inside w:p)"]
+    assert any("run-level child" in line for line in seen), seen
+
+
+def test_the_EQUATION_refusal_names_the_escape_like_its_siblings(
+        monkeypatch, sources):
+    """It said "pass accept_check=False" — a Python keyword argument,
+    quoted at a reader whose CLI has no such flag. That is the exact
+    wording `_ACCEPT_ESCAPE` was written to replace, left behind in the
+    one accept-side refusal that does not append it.
+    """
+    original, revised, out, body = _mangled_equation_sources(sources)
+    monkeypatch.setattr(tracked, "_word", _FakeWordModule(body))
+
+    with pytest.raises(PackageError, match="EQUATIONS") as refused:
+        tracked.build(original, revised, out, verify_in_word=False)
+
+    assert "the CLI has no flag for this on purpose" in str(refused.value)
+
+
 def test_a_failed_build_KEEPS_its_artefact_to_be_looked_at(monkeypatch,
                                                           sources):
     """It used to delete it, and that cost two diagnoses in one day.

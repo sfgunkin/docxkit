@@ -191,6 +191,24 @@ def test_WITHDRAW_refuses_once_the_author_has_SAVED_the_proposal(
     assert len(_ledger_lines(paper)) == lines
 
 
+def test_the_WITHDRAW_refusal_NAMES_the_route_that_is_left(promoted_round):
+    """Withdrawing is gone the moment the manuscript stops being the
+    promoted bytes — which happens when the author opens it to LOOK at
+    it and Word saves — and the refusal named nothing after that, though
+    the protocol has a route: the author adjudicates, and `baseline`
+    records what they decided. Refusing correctly and saying nothing is
+    how a state reads as a dead end when it is not.
+    """
+    promoted_round.hand_back(*promoted_round.partly)
+
+    with pytest.raises(ProtocolError) as refused:
+        revision.withdraw(promoted_round.paper, why="too late")
+
+    said = str(refused.value)
+    assert "accept or reject" in said, said
+    assert "docxkit revision baseline" in said, said
+
+
 def test_WITHDRAW_refuses_a_manuscript_nothing_was_promoted_onto(
         held_round):
     paper = held_round.paper

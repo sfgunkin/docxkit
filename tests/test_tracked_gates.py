@@ -1581,21 +1581,35 @@ def test_the_accept_refusal_does_not_name_a_flag_the_CLI_LACKS():
 
 
 def test_every_accept_side_refusal_carries_the_same_escape():
-    """One sentence, not two that can drift. Both refusals used to spell
-    it out separately and both were wrong the same way.
+    """One sentence, not four that can drift.
 
     Counted against the RAISES rather than pinned at a number: it was
     pinned, and a third refusal — the orphan note — then failed this
     test for carrying the escape correctly, which is the opposite of
-    what it is for. The math refusal is the one exception and names
-    itself, because its repair is a math edit rather than a switch."""
+    what it is for.
+
+    The math refusal used to be an exception here, on the grounds that
+    its repair is a math edit rather than a switch. It named the switch
+    anyway — "or pass accept_check=False to build the file anyway" — so
+    the exception's own reason did not hold, and the wording was the
+    Python keyword argument `_ACCEPT_ESCAPE` exists to stop quoting at a
+    CLI reader. The refusal audit of 2026-09-18 found it standing.
+
+    This test did not, because it read the SOURCE and the sentence was
+    split across two lines: `accept_check=` ended one and `False to
+    build` began the next, so neither the substring nor the regex could
+    match what the message actually says. The lines are joined first
+    now — a search for what a reader sees has to read what a reader
+    sees.
+    """
     import re as _re
 
     from docxkit import _tracked_report  # the refusal's home since 09-11
 
     src = Path(_tracked_report.__file__).read_text(encoding="utf-8")
     body = src.split("def _refuse_accept_side")[1].split("\ndef ")[0]
+    said = _re.sub(r'"\s*\n\s*(?:\+ )?f?"', "", body)     # as it prints
 
-    assert "accept_check=False to build" not in body
-    assert body.count("_ACCEPT_ESCAPE") == body.count("raise PackageError") - 1
-    assert not _re.search(r"Pass accept_check", body)
+    assert "accept_check=False to build" not in said
+    assert body.count("_ACCEPT_ESCAPE") == body.count("raise PackageError")
+    assert not _re.search(r"(?i)pass accept_check", said)

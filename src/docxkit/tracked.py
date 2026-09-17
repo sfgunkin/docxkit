@@ -72,6 +72,7 @@ from ._tracked_gates import structure_diff as structure_diff
 from ._tracked_gates import unaccepted as unaccepted
 from ._tracked_gates import untracked as untracked
 from ._tracked_report import _ACCEPT_ESCAPE as _ACCEPT_ESCAPE
+from ._tracked_report import _LINT_ESCAPE as _LINT_ESCAPE
 from ._tracked_report import BuildReport as BuildReport
 from ._tracked_report import MathOutcome as MathOutcome
 from ._tracked_report import _also_unaccepted as _also_unaccepted
@@ -453,7 +454,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           whitespace: bool = True, formatting: bool = True,
           moves: bool = True,
           resolve_math: bool = True, reject_check: bool = True,
-          accept_check: bool = True,
+          accept_check: bool = True, lint_check: bool = True,
           verify_in_word: bool = True, force: bool = False,
           carry: tuple[str, ...] = CARRIED_PARTS,
           progress: Callable[[str], None] | None = None,
@@ -509,6 +510,18 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     runs of whitespace collapsed, because Word then treats respacing as
     no revision and accepting legitimately leaves the original's
     spacing. See :func:`unaccepted`.
+
+    `lint_check` is the offline gate on the package itself — the
+    "unreadable content" classes, caught here rather than in a dialog
+    on a reader's screen. It is the strongest claim the build makes, so
+    it is the last one to turn off; pass ``False`` only to obtain the
+    artefact for diagnosis. It had no switch at all until 2026-09-18,
+    which made a refusal here the one dead end in this function: the
+    two gates below can be turned off, the findings this one reports
+    are classes no docxkit verb repairs, and nothing is written, so the
+    round produced nothing to look at either. Like them, it turns off
+    the REFUSAL and not the check — `report.lint` carries the findings
+    and the progress line says them.
 
     `verify_in_word` reopens the result and fails the build if Word had to
     repair it. `force` overrides the refusal to overwrite a deliverable
@@ -663,10 +676,14 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
 
         # catch the "Word says unreadable content" classes offline,
         # before the file is written and long before anyone opens it
-        if problems := lint_parts(parts):
-            listed = "\n  - ".join(problems)
+        report.lint = lint_parts(parts)
+        if report.lint and lint_check:
+            listed = "\n  - ".join(report.lint)
             raise PackageError(
-                f"the package would not open cleanly in Word:\n  - {listed}")
+                f"the package would not open cleanly in Word:\n  - {listed}\n"
+                + _LINT_ESCAPE)
+        for problem in report.lint:
+            say(f"  LINT (kept, lint_check=False): {problem}")
 
         # The gate the whole deliverable exists for: everything in it
         # must be REFUSABLE. A redline that cannot be rejected back to

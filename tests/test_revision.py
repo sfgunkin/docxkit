@@ -1656,6 +1656,23 @@ def test_build_no_longer_advises_a_path_that_does_not_exist(project,
     assert "no reviewable redline" in str(exc.value).lower()
 
 
+def test_the_math_refusal_names_the_CLI_FLAG_for_its_first_way_on(
+        project, monkeypatch):
+    """Its first way on was "rebuild with resolve_math=False", a Python
+    keyword argument — and the reader has just run `docxkit revision
+    build`, whose spelling of it is `--keep-math`. The convention is two
+    files away: the moves refusal in `tracked.py` names "`revision build
+    --no-moves`". Same defect as the path that did not exist, one layer
+    down: advice that cannot be followed from where it is read.
+    """
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild(math=5))
+
+    with pytest.raises(MathResolved) as exc:
+        revision.build(project, project.working)
+
+    assert "--keep-math" in str(exc.value)
+
+
 def test_a_paper_can_declare_the_PART_its_Compare_eats(project, monkeypatch):
     """Word's Compare drops Aging_Well's first-page footer on every
     rebuild — part, relationship AND the sectPr reference — and the

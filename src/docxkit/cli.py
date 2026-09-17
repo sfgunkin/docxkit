@@ -234,7 +234,8 @@ def cmd_link(args: argparse.Namespace) -> int:
     # Link surgery splices hyperlink and bookmark elements across runs,
     # which is precisely the class that has produced an unopenable file
     # here before — and lint is the only gate that catches it offline.
-    return 0 if _save(args.docx, parts, "pre_link") else 1
+    return 0 if _save(args.docx, parts, "pre_link",
+                      allow_existing=args.allow_existing_lint) else 1
 
 
 def cmd_linkfix(args: argparse.Namespace) -> int:
@@ -272,7 +273,8 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
         set_out = layout(parts)
         print("  " + set_out.format().replace("\n", "\n  "))
         if ((written or filed or set_out)
-                and not _save(args.docx, parts, "pre_refstyle")):
+                and not _save(args.docx, parts, "pre_refstyle",
+                              allow_existing=args.allow_existing_lint)):
             return 1
     report = audit(parts, style, aliases=_aliases(args),
                    ignore=_ignore(args))
@@ -366,7 +368,8 @@ def cmd_crossrefs(args: argparse.Namespace) -> int:
         print("  (dry run - pass --write to save)")
         return 0 if report.complete else 1
 
-    if not _write_document(args.docx, parts, linked, "pre_crossrefs"):
+    if not _write_document(args.docx, parts, linked, "pre_crossrefs",
+                           allow_existing=args.allow_existing_lint):
         return 1
     return 0 if report.complete else 1
 
@@ -804,7 +807,84 @@ def _prior_generations(path: str) -> Path | None:
     return paper.rescue_dir if paper.working.resolve() == target else None
 
 
-def _save(path: str, parts: dict[str, bytes], tag: str) -> bool:
+def _writes_the_file(p: argparse.ArgumentParser) -> None:
+    """The escape every command on the shared write path offers.
+
+    One helper rather than six copies, for the reason `_save` itself is
+    one function: a route out that only five of them had would be a
+    route that depends on which command the author reached for.
+    """
+    p.add_argument("--allow-existing-lint", action="store_true",
+                   help="write even though the file ALREADY carried lint "
+                        "findings: this edit did not cause them and no "
+                        "docxkit verb repairs them. A finding the edit "
+                        "INTRODUCES is still refused")
+
+
+def _already_carried(path: str, problems: list[str]) -> set[str]:
+    """Which of these findings the file on disk ALREADY had.
+
+    Read again rather than remembered: `_save` is handed parts a command
+    has edited, and the file is still exactly what it was read from —
+    nothing is written until every gate has passed. Only ever on a
+    refusal, so an ordinary write pays nothing for it.
+
+    Matched on the finding TEXT, which quotes its specimen, so a finding
+    whose specimen this edit rewrote reads as a new one. That is the
+    conservative direction: the file is refused rather than written.
+    """
+    from .lint import lint_parts
+    from .package import read_parts
+    try:
+        return set(lint_parts(read_parts(path))) & set(problems)
+    except (PackageError, OSError):
+        return set()              # cannot tell; every finding counts as new
+
+
+def _refused_by_lint(path: str, problems: list[str], *,
+                     allow_existing: bool) -> bool:
+    """Say what was found, whose doing it is, and what to do about it.
+
+    The refusal audit of 2026-09-18 found this one stuck: "the package
+    would not open cleanly in Word; nothing was written" names no
+    action, and it is printed one line under the command's report of
+    its own work, so it reads as the edit having broken the file. It
+    usually has not — over 400 real manuscripts here, 20 already carry
+    a finding of a class `preserve_space` does not clear and no docxkit
+    verb repairs, and on those every one of the six commands that write
+    refused, whatever it was asked to do.
+
+    So the two cases are told apart. A finding this EDIT introduced is
+    refused as before and `--allow-existing-lint` does not cover it —
+    that distinction is what makes the flag safe, since the most it can
+    do is leave a file as damaged as it already was.
+    """
+    existing = _already_carried(path, problems)
+    fresh = [p for p in problems if p not in existing]
+    for problem in problems:
+        print(f"  - {problem}"
+              f"{'' if problem in fresh else '   (already in the file)'}")
+    if fresh:
+        print("REFUSED: this edit would leave markup Word will not open; "
+              "nothing was written")
+        return True
+    name = Path(path).name
+    if allow_existing:
+        print(f"  {len(existing)} finding(s) above were already in {name} "
+              f"and are left as they are (--allow-existing-lint)")
+        return False
+    print(f"REFUSED: {name} already carried the finding(s) above before "
+          f"this run, and nothing was written. This edit did not cause "
+          f"them, and no docxkit verb repairs these classes: open {name} "
+          f"in Word, resolve what the finding names — an empty tracked "
+          f"change, an empty equation shell — and save; `docxkit lint "
+          f"{name}` says whether it is clear. To write this edit and "
+          f"leave them as they are, pass --allow-existing-lint.")
+    return True
+
+
+def _save(path: str, parts: dict[str, bytes], tag: str, *,
+          allow_existing: bool = False) -> bool:
     """THE save path: preserve_space, lint, back up, write.
 
     Every mutating command lands here, because the three that did not
@@ -821,7 +901,9 @@ def _save(path: str, parts: dict[str, bytes], tag: str) -> bool:
       catches spliced markup Word will not open, offline.
 
     Returns False when the lint refused, in which case nothing was
-    written and the previous file stands.
+    written and the previous file stands. `allow_existing` is
+    ``--allow-existing-lint``: see :func:`_refused_by_lint`, which is
+    where it is decided and where the refusal's wording lives.
     """
     from .edit import preserve_space
     from .lint import lint_parts
@@ -834,11 +916,8 @@ def _save(path: str, parts: dict[str, bytes], tag: str) -> bool:
         print(f"  protected {protected} edge-whitespace run(s) "
               f"(preserve_space)")
     parts[DOCUMENT] = fixed.encode("utf-8")
-    if problems := lint_parts(parts):
-        for problem in problems:
-            print(f"  - {problem}")
-        print("REFUSED: the package would not open cleanly in Word; "
-              "nothing was written")
+    if (problems := lint_parts(parts)) and _refused_by_lint(
+            path, problems, allow_existing=allow_existing):
         return False
     kept = _write_back(path, parts, tag)
     print(f"  written; previous version kept at {kept}")
@@ -846,10 +925,10 @@ def _save(path: str, parts: dict[str, bytes], tag: str) -> bool:
 
 
 def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
-                    tag: str) -> bool:
+                    tag: str, *, allow_existing: bool = False) -> bool:
     """:func:`_save`, for a command holding an edited ``document.xml``."""
     parts[DOCUMENT] = doc_xml.encode("utf-8")
-    return _save(path, parts, tag)
+    return _save(path, parts, tag, allow_existing=allow_existing)
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:
@@ -862,7 +941,8 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         if n == 0:
             print("no comment matched those ids; nothing written")
             return 1
-        if not _save(args.docx, parts, "pre_tasks"):
+        if not _save(args.docx, parts, "pre_tasks",
+                     allow_existing=args.allow_existing_lint):
             return 1
         print(f"marked {n} comment(s) done")
         return 0
@@ -1078,7 +1158,8 @@ def cmd_smarten(args: argparse.Namespace) -> int:
     if parts == before:
         print("  nothing to write")
         return 0
-    return 0 if _save(args.docx, parts, "pre_smarten") else 1
+    return 0 if _save(args.docx, parts, "pre_smarten",
+                      allow_existing=args.allow_existing_lint) else 1
 
 
 def cmd_authors(args: argparse.Namespace) -> int:
@@ -1104,7 +1185,8 @@ def cmd_authors(args: argparse.Namespace) -> int:
     if not args.write:
         print("  (dry run - pass --write to save)")
         return 0
-    return 0 if _save(args.docx, parts, "pre_authors") else 1
+    return 0 if _save(args.docx, parts, "pre_authors",
+                      allow_existing=args.allow_existing_lint) else 1
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
@@ -2388,6 +2470,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="wire these works only — key, surname or bookmark "
                         "name. A repair is usually six citations, not a "
                         "document")
+    _writes_the_file(p)
     p.set_defaults(fn=cmd_link)
 
     p = sub.add_parser(
@@ -2419,6 +2502,7 @@ def build_parser() -> argparse.ArgumentParser:
                         '"and" — "<Word> and <Source> (Year)" reads as a '
                         "two-author citation, and an UNLINKED manuscript "
                         "has no apparatus to settle it with")
+    _writes_the_file(p)
     p.set_defaults(fn=cmd_refstyle)
 
     p = sub.add_parser(
@@ -2433,6 +2517,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="what THIS paper calls its exhibits — "
                         "\"Figure,Table,Box\". Default: "
                         "Figure,Table and the Russian pair")
+    _writes_the_file(p)
     p.set_defaults(fn=cmd_crossrefs)
 
     p = sub.add_parser(
@@ -2544,6 +2629,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="mark these comment ids resolved and save "
                         "(a backup is taken first)")
     p.add_argument("--json", metavar="PATH")
+    _writes_the_file(p)
     p.set_defaults(fn=cmd_tasks)
 
     p = sub.add_parser(
@@ -2605,6 +2691,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("docx")
     p.add_argument("--write", action="store_true",
                    help="save the result; without it this is a dry run")
+    _writes_the_file(p)
     p.set_defaults(fn=cmd_smarten)
 
     p = sub.add_parser(
@@ -2620,6 +2707,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "real co-author's edits credited to them")
     p.add_argument("--write", action="store_true",
                    help="save the result; without it this is a dry run")
+    _writes_the_file(p)
     p.set_defaults(fn=cmd_authors)
 
     p = sub.add_parser("verify",

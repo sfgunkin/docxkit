@@ -37,6 +37,27 @@ _ACCEPT_ESCAPE = (
     "purpose. The refusal is usually right, and the repair is usually "
     "in the manuscript rather than in the switch.")
 
+#: The same sentence for the LINT gate, which had no escape at all.
+#:
+#: Found by the refusal audit of 2026-09-18: it named no action, no
+#: command and no switch, and unlike its three siblings it took no
+#: parameter either, so there was nothing to pass even from Python —
+#: and a refused build writes nothing, so it left not so much as an
+#: artefact to look at. Measured over 400 real manuscripts, 20 carry a
+#: finding of a class no docxkit verb repairs (empty `m:oMath` shells,
+#: empty `w:ins`/`w:del`), which is how reachable the dead end was.
+#:
+#: What the escape COSTS is spelled out rather than implied, because
+#: this gate's claim is the strongest one in the build: not that the
+#: deliverable is wrong, but that Word will refuse to open it.
+_LINT_ESCAPE = (
+    "To build it anyway and look at it, call `tracked.build(..., "
+    "lint_check=False)` from Python; the CLI has no flag for this on "
+    "purpose. What that costs is this gate's whole claim: the package "
+    "may be one Word will not open at all, and the findings above are "
+    "the classes that say so here rather than in a dialog on a "
+    "reader's screen.")
+
 
 def _also_unaccepted(report: BuildReport) -> str:
     """The paragraphs, when the ANCHOR refusal fires ahead of them.
@@ -117,8 +138,7 @@ def _refuse_accept_side(report: BuildReport, revised: str, *,
             f"Word's Compare diffs inside an inline m:oMath at character "
             f"level, so a changed number can come out as the old digits "
             f"with the new ones inserted beside them. Apply the math "
-            f"edit to the built batch instead, or pass accept_check="
-            f"False to build the file anyway and inspect it.")
+            f"edit to the built batch instead. " + _ACCEPT_ESCAPE)
 
 
 class BuildReport:
@@ -154,6 +174,13 @@ class BuildReport:
         #: bookmarks, links. See :func:`compare_collateral`. Advisory:
         #: some of it is legitimate tidying, and only a person can tell.
         self.dropped: list[str] = []
+        #: What the offline lint found in the assembled package — the
+        #: "Word says the file is corrupted" classes, caught before
+        #: anything is written. Always computed, like the two gates
+        #: below: `lint_check` turns off the REFUSAL, not the check, so
+        #: a build that asked for the artefact still carries the reason
+        #: it was refused.
+        self.lint: list[str] = []
         #: Paragraphs a reject-all does not restore. Always computed, so
         #: the report carries the finding either way; NOT advisory when
         #: `reject_check` is on, which is the default — the build then

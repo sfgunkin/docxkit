@@ -307,7 +307,9 @@ class _Watchdog:
                 f"cannot bound {doing}: expected exactly one new WINWORD "
                 f"process after starting Word, found {sorted(appeared)} — "
                 f"another Word started in the same second, or the process "
-                f"list could not be read. Retry, or run with no deadline.")
+                f"list could not be read. Retry, or run with no ceiling: "
+                f"`[batch] word_deadline = 0` in paper.toml is how that is "
+                f"spelled for a revision command.")
         self.pid = next(iter(appeared))
         self.deadline = deadline
         self.doing = doing
