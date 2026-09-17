@@ -1655,6 +1655,41 @@ def test_remove_outer_field_unnests_and_still_parses():
         remove_outer_field(out, "Stale2021txt", "Fresh2022txt")
 
 
+def test_remove_outer_field_keeps_the_PROSE_that_SHARES_the_fields_runs():
+    r"""`field_spans` answers in RUN boundaries, and Word writes a field's
+    `begin` into the run that already holds the words before it as often
+    as not — its `end` into the one that carries the words after. Cutting
+    the span out took the sentence with the field:
+
+        "As Smith (2020) found, the index rose."  ->  "Smith (2020)"
+
+    Silent, in a write path, with no diff to show for it. The markers are
+    what the repair removes; the prose beside them is the author's.
+    """
+    from lxml import etree
+
+    from docxkit.citations import remove_outer_field
+    shared = (
+        '<w:r><w:t xml:space="preserve">As </w:t>'
+        '<w:fldChar w:fldCharType="begin"/></w:r>'
+        r'<w:r><w:instrText> HYPERLINK \l "Stale2021txt" </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        '<w:hyperlink w:anchor="Fresh2022txt">' + R("Smith (2020)")
+        + "</w:hyperlink>"
+        '<w:r><w:fldChar w:fldCharType="end"/>'
+        '<w:t xml:space="preserve"> found, the index rose.</w:t></w:r>')
+
+    out = remove_outer_field(P(shared), "Stale2021txt", "Fresh2022txt")
+
+    assert visible_text(out) == "As Smith (2020) found, the index rose."
+    for marker in ("fldChar", "instrText"):
+        assert marker not in out, marker
+    etree.fromstring(
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+        'wordprocessingml/2006/main"><w:body>' + out
+        + "</w:body></w:document>")
+
+
 def test_repair_plan_names_the_unnest_call():
     from docxkit.citations import repair_plan
     fld = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'

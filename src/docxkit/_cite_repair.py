@@ -18,7 +18,9 @@ from ._xml import (
     BOOKMARK_START_ID_RE,
     HYPERLINK_ANY_RE,
     PARA_RE,
+    _shows_nothing,
     field_spans,
+    fields,
     internal_links,
     own_properties,
     run_open_before,
@@ -148,17 +150,43 @@ def remove_outer_field(xml: str, outer: str, inner: str) -> str:
     back-link buried in a dead OneDrive-URL field, LI7's Hudiyana
     back-link inside a typo'd predecessor and its OECD source note
     inside a link to the WRONG entry. Third paper's need moved it here.
+
+    Cut at the MARKERS, not at `field_spans`' run boundaries. Word writes
+    a field's `begin` into the run that already holds the words before
+    it as often as not, and its `end` into the one carrying the words
+    after: splicing the span out deleted the sentence around the field —
+    "As Smith (2020) found, the index rose." came back as "Smith
+    (2020)", silently, in a write path (S1, 2026-09-18). What goes is the
+    field: its markers, its instruction, and the cached result it
+    wrapped around the link. What stays is the link, and every character
+    of prose that was only keeping it company in a run.
     """
-    spans = [(s, e, body) for s, e, body in field_spans(xml)
-             if f'"{outer}"' in body and f'w:anchor="{inner}"' in body]
-    if len(spans) != 1:
+    found = [f for f in fields(xml)
+             if f'"{outer}"' in f.instr and f.result is not None
+             and f'w:anchor="{inner}"' in f.result]
+    if len(found) != 1:
         raise AnchorError(
-            f"remove_outer_field: {outer}>{inner}: {len(spans)} fields")
-    s, e, body = spans[0]
+            f"remove_outer_field: {outer}>{inner}: {len(found)} fields")
+    field = found[0]
     m = re.search(rf'<w:hyperlink\b[^>]*w:anchor="{inner}"[^>]*(?<!/)>'
-                  r".*?</w:hyperlink>", body, re.DOTALL)
+                  r".*?</w:hyperlink>", field.result or "", re.DOTALL)
     assert m is not None
-    return xml[:s] + m.group(0) + xml[e:]
+
+    # The two runs the field shares with the paragraph: the one its
+    # `begin` sits in and the one its `end` sits in. Each is kept, less
+    # its marker, when anything a reader sees is left of it — and
+    # dropped whole when the marker was all it held, so the ordinary
+    # field (every marker in a run of its own) leaves nothing behind.
+    end_at = xml.rindex("<w:fldChar", field.start, field.end)
+    past_end = xml.index(">", field.end) + 1
+    head = xml[run_open_before(xml, field.start):field.start] + "</w:r>"
+    tail = (xml[run_open_before(xml, end_at):end_at]
+            + xml[past_end:xml.index("</w:r>", past_end) + len("</w:r>")])
+    return (xml[:run_open_before(xml, field.start)]
+            + ("" if _shows_nothing(head) else head)
+            + m.group(0)
+            + ("" if _shows_nothing(tail) else tail)
+            + xml[xml.index("</w:r>", past_end) + len("</w:r>"):])
 
 
 def respan_link(xml: str, anchor: str, want: str) -> str:
