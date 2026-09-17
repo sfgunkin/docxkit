@@ -14,6 +14,162 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — the lint gate refuses six write commands and a tracked build, with no route out~~ — FIXED 18.09, `b579523`
+<!-- status: fixed -->
+
+Found 2026-09-18 by an audit of every refusal this package raises, asking
+of each: does it name a concrete next action, can that action actually be
+taken, and is there a reachable state where every route out refuses?
+
+**Two refusals have no route out at all, and both are the lint gate.**
+
+**STUCK 1 — every mutating CLI command refuses on a lint finding it did not
+cause and cannot repair.** `cli._save` (`cli.py:837`) is THE shared write
+path for `link --write`, `refstyle --fix`, `crossrefs --write`,
+`tasks --done`, `smarten --write` and `authors --set --write`. It lints the
+WHOLE package after the edit and prints
+
+    REFUSED: the package would not open cleanly in Word; nothing was written
+
+naming no command, no tool and no Word step. `preserve_space` runs first and
+clears exactly ONE lint class (check 3b) — which is this same defect, fixed
+for that class alone; `_save`'s own docstring records it.
+
+Measured over 400 real manuscripts under `F:\...\Papers`: **20 of them
+(5.0 %) carry a finding that survives `preserve_space`** — 15 an empty
+`m:oMath` shell, 10 an empty `w:ins`, 5 an empty math object, 2 an empty
+`w:del` — including `ROIW_submission_revised.docx` and the whole Missing
+Market series. **No docxkit verb repairs any of those classes.** `hygiene`
+and `edit` have nothing for them and there is no repair command. So on one
+paper in twenty, every one of those six commands reports its work and then
+refuses, leaving the file byte-identical. Repro:
+`scratchpad\agents\audit\stuck_1_lint_bricks_every_write.py`, where
+`smarten` and `authors` both do exactly that.
+
+**STUCK 2 — the tracked build's lint gate has no action, no flag and no
+parameter.** `tracked.py:666` raises "the package would not open cleanly in
+Word" and writes nothing, so the round leaves no artefact to look at either.
+Its three sibling gates one screen below EACH name an escape
+(`reject_check=False`, `accept_check=False`, `_ACCEPT_ESCAPE`); this one
+takes no parameter at all, and none of `revision build`'s nine flags reaches
+it. The repro refused under defaults, `force`, `resolve_math`, `moves`,
+`reject_check` and `accept_check`:
+`scratchpad\agents\audit\stuck_2_build_lint_has_no_escape.py`.
+
+**The premise is the thing to fix first.** Those 20 files OPEN in Word —
+they are live papers and one is a submission — so for an empty `w:ins`,
+an empty `w:del` or an empty `m:oMath` shell, "the package would not open
+cleanly in Word" looks simply FALSE. That is the bookmark check's S3 shape
+again: a gate nobody can satisfy, under a message that is not true of the
+file in front of them. Moving those classes from `lint` (refusal) to `audit`
+(advisory) retires STUCK 1 and STUCK 2 together. **Confirm with
+`docxkit verify` on a copy of one of the 20 first** — the audit did not run
+Word.
+
+Failing that, the fallback is to give both refusals a route: lint's own
+check-3b message already carries one, and for the rest say plainly that Word
+is the repair.
+
+**Two dead ends, one line each.** `_tracked_report.py:120` tells the reader
+to "pass `accept_check=False` to build the file anyway" while its three
+siblings append `_ACCEPT_ESCAPE`, which says the CLI has no flag for this on
+purpose — so a CLI user reads it as a flag that exists. And
+`revision/_build.py:319` (`MathResolved`) says "rebuild with
+`resolve_math=False`" and never names the CLI spelling `--keep-math`,
+although the convention exists two files away (`tracked.py:734` names
+`revision build --no-moves`).
+
+**What the audit found to be sound.** A mechanical pass first checked that
+every `docxkit ...` command, `--flag`, `[section] key` and
+`module.function()` named in any refusal resolves against the real argparse
+tree, `_config.KNOWN` and the package: **zero dangling references**. So
+these are not typos. And no "makes it worse" case survives — the archived
+drift→baseline one is closed, because `baseline` now refuses a pending
+working file, which is what `withdraw` was added for.
+
+About twenty further refusals are merely TERSE — correct but naming no
+action. They are listed in the audit report and deliberately NOT filed: a
+package full of chatty errors is not the goal. The ones worth a line
+eventually are `_promote.py:413`/`:419` (withdraw becomes unreachable once
+the author opens the file in Word and saves, and the remaining route —
+reject-all then baseline — is named nowhere) and `word.py:306` ("run with no
+deadline", whose spelling is `[batch] word_deadline = 0`).
+
+Scripts: `scratchpad\agents\audit\advice_check.py`, `cli_map.py`,
+`measure_save_refusals.py`, and the two repros above.
+
+**FIXED 18.09 in `4417a4e`, `d885fa3` and `b579523`** — both stuck cases now
+have a route, and the two dead ends are corrected. The gate's JUDGEMENT is
+untouched: no lint class moved to `audit`, and `revision build` behaves
+exactly as before, since it never passes the new switch.
+
+**STUCK 2** — `tracked.py:666` takes `lint_check`, spelled and documented
+like `reject_check` and `accept_check`. It turns off the REFUSAL, not the
+check: findings stay on the new `report.lint` and are still said as progress
+lines, which is how `revision._build` already runs with
+`reject_check=False`. The message gains `_LINT_ESCAPE`, written beside
+`_ACCEPT_ESCAPE`, naming the switch, the CLI sentence and what it costs —
+the package may be one Word will not open at all.
+
+**STUCK 1** — `cli._save` got BOTH halves, and the reason is worth keeping:
+an explanation the author cannot act on THIS round is still a dead end for
+this round. So the message says the finding was already there and that Word
+is the repair, and `--allow-existing-lint` is what actually removes the
+wall. It reaches all six commands through one helper (`_writes_the_file`),
+with `crossrefs` arriving via `_write_document` rather than by hand-listing
+five.
+
+**What makes the flag safe is the DISTINCTION, not the switch.**
+`_already_carried` re-reads the file on disk — nothing is written until
+every gate has passed — and any finding the EDIT introduced refuses whatever
+was passed. Demonstrated in `agents\audit\try_the_route.py`, where the flag
+writes over a pre-existing duplicate revision id and then refuses a spliced
+second `w:pPr` on the same file. Matching is on the finding TEXT, which
+quotes its specimen, so a finding whose specimen the edit rewrote reads as
+NEW and refuses: the conservative direction. If the re-read itself fails —
+Word takes the file between the command's read and the refusal — every
+finding counts as new, a branch the coverage floor caught before a reader
+would have, now its own test.
+
+**The dead ends**: the equation refusal gains `_ACCEPT_ESCAPE`;
+`MathResolved` names `docxkit revision build --keep-math` with the Python
+spelling in brackets; the watchdog spells `[batch] word_deadline = 0`. And
+`withdraw` now names the route that is left once the author has opened the
+file — adjudicate, rejecting all of it being what withdrawing would have
+done, then `docxkit revision baseline` — and says the kept redline holds the
+proposal either way.
+
+**A test that could not fail, found on the way.**
+`test_every_accept_side_refusal_carries_the_same_escape` had been GREEN over
+the `_tracked_report` dead end since the day it was written. It reads the
+SOURCE, and that sentence is split across two lines — `accept_check=` ends
+one and `False to build` begins the next — so neither its substring nor its
+`Pass accept_check` regex ever matched what the message actually prints. It
+joins the lines first now, and the count covers all four raises, so the math
+refusal stops being an exception to a rule it was already breaking.
+
+**A test that greps source for user-visible wording is a shape worth looking
+for elsewhere.** That is the third gate-that-cannot-fail of the day, after
+the corpus sweep skipping on the one machine that has a corpus, and
+`verify_equivalents` exiting 0 while printing `!!`.
+
+Still open, deliberately: moving the empty `w:ins`, `w:del` and `m:oMath`
+classes from `lint` (refusal) to `audit` (advisory), which would retire both
+stuck cases at the root rather than routing around them. That rests on the
+premise that those 20 files open cleanly in Word, and the premise is
+unconfirmed — Word was in use on this machine and driving automation into a
+live session is not worth it. The measurement plan stands: `docxkit verify`
+on a COPY of `ROIW_submission_revised.docx`, the submission and so the
+strongest case, and one Missing Market file.
+`agents\audit\measure_save_refusals.py` names all 20.
+
+Eight behaviour changes, each with its test seen red first, in
+`tests/test_cli.py` (5), `test_tracked_build.py` (3), `test_revision.py`,
+`test_workflow_states.py` and `test_word_session_ruler.py`, plus the
+rewritten escape test in `test_tracked_gates.py`. The corpus sweep skips
+in-chain, so it was run by hand over 120 real manuscripts: SWEPT 120,
+FAILED 0.
+
 ### ~~S3 — a bare pytest in a worktree tested the installed checkout~~ — FIXED 18.09, `6d501a8`
 
 <!-- status: fixed -->
