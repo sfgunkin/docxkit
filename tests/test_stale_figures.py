@@ -365,15 +365,43 @@ def test_a_session_with_NO_snapshot_falls_back_to_timestamps(
     assert verdict in {"fresh", "stale"}
 
 
-def test_a_PARTIAL_snapshot_answers_nothing(tmp_path, monkeypatch):
-    """A run measured against a NARROWER harness than the map declares
-    leaves a snapshot that does not cover it — `revision/_build.py` is
-    one. Comparing the files that happen to be there would report
-    `fresh` over a harness the run never used."""
+def test_a_file_the_run_NEVER_HAD_is_a_difference_not_a_refusal(
+        tmp_path, monkeypatch):
+    """A run measured against a NARROWER harness than the question names
+    leaves a snapshot that does not cover it — every `revision/` half is
+    one since 2026-09-17, and `replay_survivors --tests` names such a
+    file BY DESIGN: asking a stored survivor list against a different
+    harness is what the flag is for.
+
+    Answering None there voided the module comparison too, and the
+    timestamp fallback then called the module moved (a commit re-dates
+    every file), so the replay refused outright — measured on
+    `revision/_gates.py` and `revision/_doctor.py`, both of which
+    replayed fine against their own harness.
+
+    The answer is `stale` NAMING the file: nothing reads `fresh` over a
+    harness the run never used, and the question about the module is
+    still answered.
+    """
     sf = _session(tmp_path, monkeypatch, module_now="x = 1",
                   module_then="x = 1")
 
-    got = sf.moved_by_content(
+    verdict, moved = sf.state(
         "thing.py", ["tests/test_thing.py", "tests/test_other.py"])
 
-    assert got is None, "a snapshot missing a harness file cannot answer"
+    assert verdict == "stale"
+    assert moved == ["tests/test_other.py"], (
+        "the module and the file the run did have are unchanged")
+
+
+def test_a_snapshot_without_the_MODULE_still_answers_nothing(tmp_path,
+                                                             monkeypatch):
+    """The module is what a survivor's line numbers index into, so its
+    absence is the one that cannot be answered by content — the eight
+    sessions here that predate the snapshot, and a pruned one."""
+    sf = _session(tmp_path, monkeypatch, module_now="x = 1",
+                  module_then="x = 1")
+    (tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+     / "thing.py").unlink()
+
+    assert sf.moved_by_content("thing.py", ["tests/test_thing.py"]) is None

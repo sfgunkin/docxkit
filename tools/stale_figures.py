@@ -113,9 +113,26 @@ def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
     applies to the same question, with the same reason: *"a file
     rewritten with identical content has not moved for this purpose"*.
 
-    None when the session kept no snapshot, which is the eight runs here
-    that predate the mechanism; the caller falls back to timestamps and
-    says so.
+    None when the session kept no snapshot OF THE MODULE, which is the
+    eight runs here that predate the mechanism; the caller falls back to
+    timestamps and says so.
+
+    **A test file the snapshot does not hold is a DIFFERENCE, not an
+    unanswerable question.** It used to void the whole answer, and the
+    cost was `replay_survivors --tests`: naming any file outside the
+    harness of the day — which is the one thing that flag exists for,
+    asking a stored survivor list against a different harness — made
+    this return None, and the timestamp fallback then called the MODULE
+    moved (a commit re-dates every file), so the replay refused to run
+    at all. Measured 2026-09-17 on `revision/_gates.py` and
+    `revision/_doctor.py`: both replayed fine against their own
+    harnesses and refused against the superset, and the comparison had
+    to be done by hand.
+
+    The concern that put it there is kept: a file the run never had is
+    reported, so nothing reads `fresh` over a harness the run did not
+    use. What it no longer does is answer a question about the module
+    with silence about the module.
 
     **A COMMIT is not a change, and the timestamp rule cannot tell.**
     `last_touched` is `max(mtime, last commit time)`, so committing a
@@ -126,20 +143,28 @@ def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
     makes the tool's real signal unreadable exactly when it matters.
     """
     kept = snapshot_of(module)
-    if not kept.is_dir():
+    # the MODULE is what the answer is about — a survivor is a line
+    # number into it — so its absence is the one that answers nothing
+    if not (kept / f"src/docxkit/{module}").is_file():
         return None
     out: list[str] = []
     for rel in [f"src/docxkit/{module}", *tests]:
         was, now = kept / rel, ROOT / rel
-        if not was.is_file():
-            return None                 # a partial snapshot answers nothing
-        if not now.is_file() or was.read_bytes() != now.read_bytes():
+        if (not was.is_file()                    # the run never had it
+                or not now.is_file()
+                or was.read_bytes() != now.read_bytes()):
             out.append(rel)
     return out
 
 
 def state(module: str, tests: list[str]) -> tuple[str, list[str]]:
-    """``("fresh" | "stale" | "never measured", what changed since)``."""
+    """``("fresh" | "stale" | "never measured", what changed since)``.
+
+    "Changed since" includes a file the run did not have: asked about a
+    harness other than the one measured — `replay_survivors --tests` —
+    the honest answer is that this is not the run's harness, which is
+    `stale` naming that file, not a refusal to answer.
+    """
     db = session_file(module)
     if not db.exists():
         return "never measured", []

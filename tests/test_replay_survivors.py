@@ -179,6 +179,89 @@ def test_a_moved_SOURCE_file_means_re_sweep_not_replay():
         "a test file whose name ENDS with the module's is not the module")
 
 
+# --- asking the list against ANOTHER harness, which is what `--tests` is --
+
+
+def _tree(tmp_path, monkeypatch, *, module_now="x = 1", module_then="x = 1"):
+    """A measured module with a snapshot that holds ONE of two test files.
+
+    Which is every narrowed harness: a session is a photograph of the
+    files it ran, and `--tests` exists to ask its list against others.
+    """
+    import replay_survivors as rs  # pyright: ignore[reportMissingImports]
+    import stale_figures as sf  # pyright: ignore[reportMissingImports]
+
+    (tmp_path / "src" / "docxkit").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "docxkit" / "thing.py").write_text(module_now)
+    for name in ("test_thing.py", "test_other.py"):
+        (tmp_path / "tests" / name).write_text("t")
+    (tmp_path / ".mutation-thing.sqlite").write_text("")
+
+    kept = tmp_path / ".mutation-thing.pristine"
+    (kept / "src" / "docxkit").mkdir(parents=True)
+    (kept / "tests").mkdir(parents=True)
+    (kept / "src" / "docxkit" / "thing.py").write_text(module_then)
+    (kept / "tests" / "test_thing.py").write_text("t")
+
+    monkeypatch.setattr(sf, "ROOT", tmp_path)
+    monkeypatch.setattr(rs, "ROOT", tmp_path)
+    monkeypatch.setattr(rs, "cases_for",
+                        lambda module: [("L2 Eq_Is", "x = 1", "x = 2", True,
+                                         1)])
+    return rs
+
+
+def _argv(monkeypatch, *args: str) -> None:
+    monkeypatch.setattr(sys, "argv", ["replay_survivors.py", *args])
+
+
+def test_a_TEST_FILE_the_run_NEVER_HAD_is_replayed_not_refused(
+        tmp_path, monkeypatch, capsys):
+    """The flag's whole purpose, and it could not do it.
+
+    A snapshot holds the harness of its day, so naming any other file —
+    what `--tests` is for — made `moved_by_content` answer None, and the
+    timestamp fallback then called the MODULE moved, because a commit
+    re-dates every file. The replay refused outright. Measured
+    2026-09-17 while narrowing the `revision/` halves: `_gates` and
+    `_doctor` both replayed against their own harness and refused
+    against the superset, and the comparison had to be done by hand.
+    """
+    rs = _tree(tmp_path, monkeypatch)
+    ran: list[list[str]] = []
+
+    def check(module: str, tests: list[str], cases: list) -> int:
+        ran.append(tests)
+        return 0
+
+    monkeypatch.setattr(rs, "check", check)
+    _argv(monkeypatch, "src/docxkit/thing.py", "--tests",
+          "tests/test_thing.py", "tests/test_other.py")
+
+    assert rs.main() == 0
+    assert ran == [["tests/test_thing.py", "tests/test_other.py"]]
+    out = capsys.readouterr().out
+    assert "REFUSING" not in out
+    # and it still says the harness is not the one measured
+    assert "the run is stale" in out and "tests/test_other.py" in out
+
+
+def test_a_moved_MODULE_refuses_however_the_harness_is_named(
+        tmp_path, monkeypatch, capsys):
+    """The refusal this must not cost: the survivors are line numbers
+    into a file that no longer has those lines, and `--tests` says
+    nothing about that."""
+    rs = _tree(tmp_path, monkeypatch, module_now="x = 9",
+               module_then="x = 1")
+    monkeypatch.setattr(rs, "check", lambda *a: 0)
+    _argv(monkeypatch, "src/docxkit/thing.py", "--tests",
+          "tests/test_thing.py", "tests/test_other.py")
+
+    assert rs.main() == 2
+    assert "REFUSING" in capsys.readouterr().out
+
+
 # --- a module in a SUBPACKAGE (BACKLOG, 2026-09-13) ---------------------
 #
 # `revision/_timing.py` was read as `_timing.py`: "the run is never
