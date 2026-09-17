@@ -14,6 +14,82 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — an XML comment inside a properties element crashes `place` with lxml's own words~~ — FIXED 17.09, `57ed7df`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the same round. `_in_order` called `etree.QName(sib)` on
+every child of a properties element, and an XML comment's `.tag` is lxml's
+Comment factory, not a string:
+
+    ValueError: Invalid input tag of type cython_function_or_method
+
+so `place` raised before reporting anything — as did `place(move=False,
+space=False)` — while `audit` ran fine. A converter's comment inside a
+caption's `w:pPr` is enough, and one in a `w:trPr` crashes `keep_together` /
+`own_page` the same way. Same shape as the three lxml defects fixed in
+`e32d112` on 09-16.
+
+**Fixed 17.09 in `57ed7df`.** Non-elements are stepped over wherever placement
+ranks or reads properties, the way `revisions` does since 09-16. Tests:
+`..._COMMENT_inside_properties_is_stepped_over_not_ranked` and
+`..._own_page_steps_over_a_COMMENT...`.
+### ~~S1 — `placement` knows fewer markers than `exhibits`, so a body-level `w:proofErr` hides an exhibit and passes for what keeps two tables apart~~ — FIXED 17.09, `d44b7cb`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the same round. `placement` knew ten `w:` tags and XML
+comments as markers; `exhibits` treats every body child that is not a `w:p`,
+`w:tbl`, `w:sdt` or `w:customXml` as one. A body-level `w:proofErr` — which
+the schema allows — showed the gap twice, and nothing was reported either
+time:
+
+    between a caption and its table: exhibits lists Таблица 1, `place` makes
+      0 placements, `audit` counts 0 tables  (the bookmarkEnd defect of
+      48f17fd, arriving through the other list)
+    beside a table: it counts as what keeps two tables apart, so a move
+      leaves `tbl, proofErr, tbl` — and `_would_join_tables`' own Word
+      measurement says only a PARAGRAPH separates them
+
+**Fixed 17.09 in `d44b7cb`.** `exhibits.is_marker` / `is_end_marker` are the
+one definition, read by `placement._classify` too, and the join guard compares
+the nearest `w:p`/`w:tbl` on each side, stepping over everything else. Tests:
+`..._what_EXHIBITS_calls_a_marker_does_not_hide_the_table...` and
+`..._only_a_PARAGRAPH_keeps_two_tables_apart`, each with a `w:proofErr` and an
+extension element, on both sides. Word was not driven for the join rule (a
+WINWORD session was open), so it rests on the measurement already in the
+docstring. The `>=` survivors at L669/L674/L675 stood on this and are claimed
+now.
+### ~~S1 — two exhibit blocks share one `bookmarkEnd`, so a move puts an END before its START and a table is measured out of order~~ — FIXED 17.09, `341f455`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the survivor round of the first whole `placement.py`
+sweep since `48f17fd`. Where a bookmark closes on one exhibit and the next
+caption follows — ordinary Word output — two blocks claimed the same
+`w:bookmarkEnd`: the first table's note walk took it because it closes that
+table's own hoisted `bookmarkStart`, and the next caption's leading walk took
+it again because it accepted any bookmark marker in front of a caption.
+`exhibits._leading` leaves an END marker where it is and `_spans` never lets
+two spans share an element, so the two layers disagreed. Nothing was reported
+either way:
+
+    (A) move the second table only → bookmark 5's END travels above its START
+        ("start at 5, end at 1 -> END BEFORE START", problems: [])
+    (B) move both → `_position` sorts by `index(block[0])`, the shared element
+        lands wherever the last move put it, the tables are measured out of
+        document order and `_locate_tables` loses one: "moved True, caption
+        sheet None" for a table the render holds whole on sheet 1.
+
+**Fixed 17.09 in `341f455`.** The walk in front of a caption is
+`exhibits._leading`'s (back over every marker, forward past the front END
+markers), so a block never takes a marker that closes the block before it, and
+a caption is never read as the previous exhibit's note either — the other road
+to a shared element. Tests: `..._where_two_exhibits_MEET_stays_with_the_one_it_
+closes`, `..._are_both_measured_after_both_move`, `..._note_pattern_that_
+matches_a_CAPTION_does_not_share_it`, `..._marker_in_FRONT_of_the_caption_is_
+not_taken_for_it`. The two survivors that stood on it (`block[-1]`, `block[1]`)
+are equivalent now and claimed.
 ### ~~S2 — the revision-count note compared Word's count from BEFORE the math pass with the package after it~~ — FIXED 17.09, `ef3036a`
 
 <!-- status: fixed -->
