@@ -113,6 +113,23 @@ def test_self_link_spans_skips_a_NAMELESS_start_and_Words_own_bookmarks():
     assert repair._self_link_spans(word) == []
 
 
+def test_a_GHOST_link_inside_its_own_bookmark_is_no_SELF_LINK():
+    """`<w:hyperlink w:anchor="…"/>` is the shell Word leaves of a link it
+    emptied: it lands no reader anywhere. Read as a link's opening, alone
+    in its own bookmark it was a SELF LINK the audit reported; beside a
+    real one, `retarget_self_link` counted two links and refused the very
+    repair the audit proposes."""
+    ghost = '<w:hyperlink w:anchor="Adams2001txt"/>'
+    alone = _doc(P(bookmark("Adams2001txt", 60, ghost + R("Adams (2001)"))))
+    beside = _doc(P(bookmark("Adams2001txt", 60,
+                             ghost + _link("Adams2001txt", "Adams (2001)"))),
+                  P(bookmark("Adams2001", 61, R("A."))))
+
+    assert repair._self_link_spans(alone) == []
+    out = retarget_self_link(beside, "Adams2001txt")
+    assert [a for a, _ in internal_links(out)] == ["Adams2001"]
+
+
 # --- rewrap_marker: what it refuses, and its guards ----------------------
 
 

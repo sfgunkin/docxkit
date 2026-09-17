@@ -113,8 +113,9 @@ def cell(content: str, *, span: int = 1, tcpr: str = "", rpr: str = "",
     # `<w:p` alone also matches <w:pPr, <w:pict and <w:proofErr, any of
     # which would be taken for a ready-made paragraph and left unwrapped
     # — landing a w:tc with no w:p, the exact "unreadable" failure above.
+    # And ANY end to the name: `[ >]` took an empty `<w:p/>` for text.
     stripped = content.lstrip()
-    body = (content if re.match(r"<w:p[ >]", stripped)
+    body = (content if re.match(r"<w:p(?=[\s/>])", stripped)
             else para(run(content, rpr), ppr))
     props = tcpr or '<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>'
     if span > 1:

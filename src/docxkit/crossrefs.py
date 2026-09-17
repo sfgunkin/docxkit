@@ -109,6 +109,14 @@ _BOOKMARK_RE = BOOKMARK_ID_RE          # the shared definition
 # and the ghost guard is exactly the kind of detail that gets fixed in
 # one copy.
 _HYPERLINK_RE = HYPERLINK_ANY_RE
+# A link element's OPENING, by anchor, with the same guard: a self-closing
+# `<w:hyperlink w:anchor="…"/>` is the shell Word leaves of a link it
+# emptied. Nothing on the page shows it and nothing clicks it, so it
+# neither reaches a bookmark nor mentions an exhibit; read as a link it
+# did both (18 anchors in 18 of 2,954 corpus packages are reached by
+# nothing else, 2026-09-17).
+_LINK_OPEN_RE = re.compile(
+    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>')
 _PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
 # `(?<!/)>`: the pre-fix PARA_RE spelling, which reads a self-closing
 # `<w:p/>` as an open tag — 32 of 899 manuscripts carry one. Latent
@@ -620,8 +628,9 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
                 xml = wrap_link_in_bookmark(xml, cap.name, cap.mention_name,
                                             bid, which="first")
             except AnchorError as exc:
-                # A GHOST link — self-closing, no span to wrap — is not
-                # one the helper will take, and it RAISES rather than
+                # A link the helper cannot wrap — one living in a note
+                # while the marker is rebuilt here, or a REF field, which
+                # names its bookmark unquoted — RAISES rather than
                 # declining. This module reports rather than raises: a
                 # paper legitimately holds one, and failing the whole
                 # linking run over it would be worse than saying so.
@@ -888,7 +897,7 @@ def _mention_offsets(xml: str) -> dict[str, list[int]]:
     sitting after it.
     """
     out: dict[str, list[int]] = defaultdict(list)
-    for m in re.finditer(r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"', xml):
+    for m in _LINK_OPEN_RE.finditer(xml):
         out[m.group(1)].append(m.start())
     for name, at in field_anchors(xml, clickable=False):
         out[name].append(at)
@@ -1023,8 +1032,7 @@ def reaching(*parts: str) -> set[str]:
     believed the work was done. Both forms, because the same link can be
     an element or a field and a manuscript holds both at once.
     """
-    return ({a for part in parts
-             for a in re.findall(r'<w:hyperlink[^>]*w:anchor="([^"]+)"', part)}
+    return ({a for part in parts for a in _LINK_OPEN_RE.findall(part)}
             | {a for part in parts for a in field_targets(part)})
 
 

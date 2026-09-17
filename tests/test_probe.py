@@ -234,6 +234,25 @@ def test_an_EMPTY_table_does_not_swallow_the_next_exhibit(tmp_path):
                             ("Table 2", "table, 3 rows", "")]
 
 
+def test_a_table_holding_a_NESTED_table_is_one_block_with_its_OWN_rows(
+        tmp_path):
+    """A table was the non-greedy `<w:tbl>.*?</w:tbl>`, closed by the
+    NESTED table's end tag: the exhibit's block stopped inside its own
+    first cell, its rows were every `<w:tr` in that stretch — its first
+    row and all of the nested table's — and the rest of it was walked as
+    paragraphs, where a caption-shaped cell reads as an exhibit."""
+    nested = ("<w:tbl><w:tr><w:tc>" + _table(4) + "<w:p/></w:tc></w:tr>"
+              "<w:tr><w:tc>" + _caption_para("Table 9: Inside a cell.")
+              + "</w:tc></w:tr></w:tbl>")
+    body = (_caption_para() + nested
+            + _caption_para("Table 2: Regressions.") + _table(3))
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.exhibits == [("Table 1", "table, 2 rows", ""),
+                            ("Table 2", "table, 3 rows", "")]
+
+
 def test_a_body_whose_open_tag_is_spelled_OTHERWISE_is_still_read(tmp_path):
     """The body was found as the exact string `<w:body>`; `find` answered
     -1 for `<w:body >`, and the slice from -1 is the document's last

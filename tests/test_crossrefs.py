@@ -2389,20 +2389,68 @@ def test_half_linked_is_repaired_with_no_field_in_the_document_at_all():
     assert 'w:name="Figure2txt"' in out
 
 
-def test_a_GHOST_forward_link_is_reported_rather_than_called_repaired():
-    """A self-closing `<w:hyperlink/>` is an empty shell Word leaves
-    behind, with no span to wrap a bookmark around, and
-    `wrap_link_in_bookmark` will not take one. Saying so beats reporting
-    a repair that did not happen."""
+_FIGURE2_CAPTION = para('<w:bookmarkStart w:id="9" w:name="Figure2"/>',
+                        run("Figure 2: The gap over time."),
+                        '<w:bookmarkEnd w:id="9"/>')
+
+
+def test_a_GHOST_forward_link_is_no_link_and_the_mention_is_linked():
+    """A self-closing `<w:hyperlink/>` is the empty shell Word leaves of a
+    link it emptied: nothing on the page shows it, nothing clicks it.
+    `reaching` read it as a link, so the caption counted as half-linked,
+    the repair raised on a link with no span, and the report said
+    "half-linked, not repaired" beside "linked 1" for the mention it had
+    just linked. The ghost is no link, so nothing is half-linked."""
     xml = doc(
         para(run("As shown in "), '<w:hyperlink w:anchor="Figure2"/>',
              run("Figure 2, the gap widens.")),
-        para('<w:bookmarkStart w:id="9" w:name="Figure2"/>',
-             run("Figure 2: The gap over time."),
-             '<w:bookmarkEnd w:id="9"/>'))
+        _FIGURE2_CAPTION)
 
-    _, report = crossrefs.link(xml, labels=("Figure",))
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.repaired == [] and report.notes == {}, report.format()
+    marked = ('<w:bookmarkStart w:id="10" w:name="Figure2txt"/>'
+              '<w:hyperlink w:anchor="Figure2"><w:r>')
+    assert marked in out, out
+
+
+def test_a_forward_link_it_cannot_WRAP_is_reported_not_called_repaired():
+    """The surviving forward link sits in a NOTE, and the marker is rebuilt
+    in the body `link` was handed, where `wrap_link_in_bookmark` finds no
+    link and raises. Saying so beats reporting a repair that did not
+    happen."""
+    note = ('<w:footnotes><w:footnote w:id="1"><w:p>'
+            '<w:hyperlink w:anchor="Figure2">' + run("Figure 2")
+            + "</w:hyperlink></w:p></w:footnote></w:footnotes>")
+    xml = doc(para(run("As shown below, the gap widens.")), _FIGURE2_CAPTION)
+
+    _, report = crossrefs.link(xml, labels=("Figure",), other_parts=[note])
 
     assert report.repaired == [], report.format()
-    note = report.notes.get("Figure2", "")
-    assert "half-linked, not repaired" in note, report.format()
+    assert "half-linked, not repaired" in report.notes.get("Figure2", ""), \
+        report.format()
+
+
+def test_a_GHOST_link_neither_REACHES_nor_MENTIONS_an_exhibit():
+    """The same shell, asked by `audit`. Read as a link, it reached the
+    caption, so an exhibit nothing on the page links to was filed under
+    `linked`; and it was a MENTION, so a marker on the first mention a
+    reader can see was reported as sitting past an earlier one."""
+    ghost = '<w:hyperlink w:anchor="Table5"/>'
+    caption = para('<w:bookmarkStart w:id="1" w:name="Table5"/>'
+                   '<w:hyperlink w:anchor="Table5txt">' + run("Table 5")
+                   + '</w:hyperlink><w:bookmarkEnd w:id="1"/>'
+                   + run(". The caption"))
+    unreached = doc(
+        para('<w:bookmarkStart w:id="9" w:name="Table5txt"/>' + ghost
+             + run("Table 5") + '<w:bookmarkEnd w:id="9"/>'),
+        caption)
+    first = doc(para(run("See ") + ghost + run("the discussion.")),
+                _mention("Table5", "Table 5", mark="Table5txt"),
+                caption)
+
+    assert "Table5" not in crossrefs.reaching(unreached)
+    got = crossrefs.audit(unreached)
+    assert got["linked"] == [], got
+    assert got["unreached"] == ["Table5: nothing links to the caption"], got
+    assert crossrefs.audit(first)["misplaced_anchor"] == []

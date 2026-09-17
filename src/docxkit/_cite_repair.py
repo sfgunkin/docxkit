@@ -636,10 +636,15 @@ def _pair_of(name: str) -> str:
 def _link_openings(name: str) -> re.Pattern[str]:
     """Where a link to `name` STARTS: an element's opening tag, or the
     instruction of a HYPERLINK field. Group 1 or 2 is what precedes the
-    name, so a rewrite keeps it."""
+    name, so a rewrite keeps it.
+
+    Not a self-closing `<w:hyperlink …/>`: that is the shell Word leaves
+    of a link it emptied, which starts nothing a reader can click. Taken
+    for one, a ghost inside its own bookmark was a SELF LINK, and beside a
+    real one it made the repair count two links and refuse."""
     n = re.escape(name)
     return re.compile(
-        rf'(<w:hyperlink\b[^>]*w:anchor="){n}(?=")'
+        rf'(<w:hyperlink\b[^>]*w:anchor="){n}(?="[^>]*(?<!/)>)'
         rf'|(<w:instrText\b[^>]*>[^<]*HYPERLINK[^<]*\\l\s+"){n}(?=")')
 
 

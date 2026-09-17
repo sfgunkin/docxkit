@@ -32,6 +32,8 @@ from ._xml import (
     SECTPR_RE,
     T_RE,
     editable_text,
+    element_spans,
+    matching_close,
     visible_text,
 )
 from .package import read_parts
@@ -46,7 +48,6 @@ __all__ = ["Probe", "probe"]
 # self-closing `<w:p/>` it runs on to the NEXT paragraph's close tag and
 # reports the two as one.
 _EL_LINK_RE = re.compile(r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>')
-_TR_RE = re.compile(r"<w:tr\b")
 _PGSZ_RE = re.compile(r'<w:pgSz[^>]*w:orient="([^"]+)"')
 _CAPTION_RE = re.compile(
     r"^\s*((?:Table|Figure|Таблица|Рисунок)\s+[A-Z]?\d+)\s*[:.]")
@@ -55,8 +56,28 @@ _CAPTION_RE = re.compile(
 #: The table half carries the paragraph's `(?<!/)>` guard too: an empty
 #: `<w:tbl/>` read as an open tag ran on to the next table's close and
 #: took the caption between into a block that is never read as one.
-_BLOCK_RE = re.compile(rf"{PARA_RE.pattern}|<w:tbl\b[^>]*(?<!/)>.*?</w:tbl>",
-                       re.DOTALL)
+_BLOCK_RE = re.compile(
+    rf"{PARA_RE.pattern}|(?P<table><w:tbl\b[^>]*(?<!/)>).*?</w:tbl>",
+    re.DOTALL)
+
+
+def _blocks(doc: str) -> list[str]:
+    """`_BLOCK_RE`'s blocks, each table WHOLE.
+
+    Its table half closes on the first `</w:tbl>` it meets, which for a
+    table holding another is the NESTED one's: the exhibit's block ended
+    inside its own cell, its rows were counted with the nested table's,
+    and the rest of it was walked as paragraphs (3 captioned tables in 3
+    of 2,954 corpus packages, 2026-09-17).
+    """
+    out: list[str] = []
+    pos = 0
+    while (m := _BLOCK_RE.search(doc, pos)) is not None:
+        end = (m.end() if m.group("table") is None
+               else matching_close(doc, m.end("table"), "tbl"))
+        out.append(doc[m.start():end])
+        pos = end
+    return out
 
 
 @dataclass
@@ -199,7 +220,7 @@ def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
         rep.sections.append(o.group(1) if o else "portrait")
 
     # exhibit captions, what follows them, and the section they close
-    blocks = _BLOCK_RE.findall(doc)
+    blocks = _blocks(doc)
     for i, blk in enumerate(blocks):
         if blk.startswith("<w:tbl"):
             continue
@@ -209,7 +230,7 @@ def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
         follows = "(no table follows)"
         for nxt in blocks[i + 1:i + 3]:
             if nxt.startswith("<w:tbl"):
-                follows = f"table, {len(_TR_RE.findall(nxt))} rows"
+                follows = f"table, {len(element_spans(nxt, 'tr'))} rows"
                 break
         orient = ""
         for nxt in blocks[i:i + 8]:

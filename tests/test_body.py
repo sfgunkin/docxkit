@@ -186,6 +186,18 @@ def test_cell_wraps_content_whose_tag_merely_starts_like_a_paragraph():
     assert "&lt;" not in passthrough
 
 
+@pytest.mark.parametrize("ready", ["<w:p/>", "<w:p\n  w:rsidR=\"1\"></w:p>"])
+def test_cell_passes_through_a_paragraph_in_EVERY_spelling(ready):
+    """The name was ended by a space or `>` only, so an EMPTY paragraph
+    `<w:p/>` — the ordinary blank cell — or one whose name a newline
+    ends was not a paragraph: it was escaped into a text run, and the
+    cell showed its markup."""
+    from docxkit.body import cell
+    out = cell(ready)
+
+    assert ready in out and "&lt;" not in out, out
+
+
 def test_a_template_without_a_table_style_is_refused():
     """The equation-number carriers in a manuscript are borderless 1x2
     tables with no w:tblStyle. Cloning tables[-1] therefore hands back a
