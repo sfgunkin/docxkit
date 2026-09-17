@@ -286,7 +286,13 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
     the table) or the notes under it (below the table). They travel with
     the block, since an element standing inside an exhibit's span is that
     exhibit's — except an end marker closing something from outside the
-    block, which stays put and ends the walk.
+    block, which stays put: under the table it ends the walk, and in
+    front of the caption it is not taken.
+
+    TWO BLOCKS NEVER SHARE AN ELEMENT, as two `exhibits` spans never do.
+    Both roads to one element in two blocks ran through where exhibits
+    MEET: an end marker there, closing the upper exhibit's bookmark, and
+    a caption a caller's `note` pattern also matches.
     """
     kids = list(body)
     out: dict[int, list[etree._Element]] = {}
@@ -310,10 +316,21 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
         # with END BEFORE START, and `citations.audit_links` reported no
         # issue, because it checks that a bookmark is PAIRED and that links
         # resolve, not that it opens before it closes.
+        #
+        # The walk is `exhibits._leading`: back over every marker, then
+        # forward past the END markers at the front of that run. One of
+        # those closes something opened EARLIER — where two exhibits meet,
+        # the bookmark around the one above, whose note walk takes it. It
+        # was taken here too, by a walk that took any bookmarkStart or
+        # bookmarkEnd, so both blocks held it and it went wherever the last
+        # move put it: END BEFORE START again when only this block moved,
+        # and when both did, a block whose first element stood behind the
+        # other block, measured out of order and lost.
         head = i
-        while head > 0 and kids[head - 1].tag in (W + "bookmarkStart",
-                                                  W + "bookmarkEnd"):
+        while head > 0 and is_marker(kids[head - 1]):
             head -= 1
+        while head < i and is_end_marker(kids[head]):
+            head += 1
         block = kids[head:j + 1]
         k = j + 1
         # A BODY is never absorbed, whatever it looks like: an image is a
@@ -332,7 +349,10 @@ def _blocks(body: etree._Element, caption: re.Pattern[str],
                 break
             else:
                 txt = _text(under).strip()
-                if txt and not note.match(txt):
+                # a CAPTION is never a note, whatever `note` matches: the
+                # next block begins with it (`exhibits` reads a caption
+                # first, and a note only after)
+                if txt and (caption.match(txt) or not note.match(txt)):
                     break
             block.append(under)
             k += 1
@@ -449,8 +469,8 @@ def exhibit_block(parts: dict[str, bytes], caption: str, *,
 
 
 def _caption_of(block: list[etree._Element]) -> str:
-    """The block may open with hoisted bookmarks; the caption is the
-    first paragraph in it."""
+    """The block may open with the markers Word hoisted in front of it;
+    the caption is the first paragraph in it."""
     for el in block:
         if el.tag == W + "p":
             return _text(el).strip()[:70]

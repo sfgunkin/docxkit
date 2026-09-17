@@ -3112,6 +3112,80 @@ def test_the_RENDERED_audit_steps_over_an_XML_COMMENT_before_the_table():
 # Found working the survivors above: each was a survivor the fixture could
 # not kill because the REAL code gave the wrong answer there.
 
+#: Word's hoisting where two exhibits meet: table 2's bookmark opens in
+#: front of its caption and closes behind its table, and table 1's caption
+#: follows at once — so that bookmarkEnd stands IN FRONT of table 1's
+#: caption, closing something table 2 opened
+MEETING = ('<w:bookmarkStart w:id="5" w:name="_Ref_table2"/>'
+           + P("Таблица 2. Вторая") + TBL("row-b")
+           + '<w:bookmarkEnd w:id="5"/>'
+           + P("Таблица 1. Первая") + TBL("row-a"))
+
+
+def test_a_bookmarkEnd_where_two_exhibits_MEET_stays_with_the_one_it_closes():
+    """Two walks took it. Table 2's note walk takes it because it closes
+    table 2's own bookmark, and table 1's walk in FRONT of its caption
+    took any bookmarkStart or bookmarkEnd — so both blocks held it, and
+    it went wherever the last move put it. `exhibits` never lets two
+    spans share an element, and leaves an END marker in front of a
+    caption where it is: it closes something opened earlier.
+
+    Table 2 is mentioned nowhere and stays; table 1 moves up to its
+    mention. Measured before the fix: bookmark 5 came back END at child
+    1 and START at child 5, and the report said only that nothing
+    mentions table 2."""
+    out, rep = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.") + MEETING + P("Конец.")))
+
+    assert [p.moved for p in rep.placements] == [True, False]
+    assert names_of(out) == ["p", "p", "tbl", "p", "bookmarkStart", "p",
+                             "tbl", "bookmarkEnd", "p"]
+
+
+def test_two_exhibits_that_MEET_are_both_measured_after_both_move():
+    """The same shared element, both tables moving. Table 1 moves first
+    and takes the bookmarkEnd; table 2 moves second and takes it back —
+    so table 1's block still named it as its FIRST element, now standing
+    after table 2. `_position` orders the render search by a block's
+    first element, table 2 was searched first, and table 1's caption was
+    behind the cursor: measured before the fix, `caption_sheet None` for
+    a table the one-sheet render holds whole, and no problem said so."""
+    doc = parts(P("Как показано в таблице 1, всё сходится.")
+                + P("Как показано в таблице 2, тоже.")
+                + P("Совершенно другой абзац.") + MEETING + P("Конец."))
+
+    def render(now):
+        return ["".join(t.text or "" for t in body_of(now).iter(NS + "t"))]
+
+    _out, rep = placement.place(doc, render=render)
+
+    assert [(p.number, p.moved, p.caption_sheet, p.last_sheet)
+            for p in rep.placements] == [(1, True, 1, 1), (2, True, 1, 1)]
+    assert rep.problems == []
+
+
+def test_a_note_pattern_that_matches_a_CAPTION_does_not_share_it():
+    """The other road to one element in two blocks. A caller's `note`
+    written for notes that open «Таблица составлена…» matches the next
+    caption too, and the note walk took that caption into the block
+    above it — while the caption's own block began with it. `exhibits`
+    reads a caption first and a note only after, so a caption ends the
+    walk there; it does here."""
+    out, rep = placement.place(
+        parts(P("Как показано в таблице 1, всё сходится.")
+              + P("Совершенно другой абзац.")
+              + P("Таблица 1. Первая") + TBL("row-a")
+              + P("Таблица 2. Вторая") + TBL("row-b")),
+        note=re.compile(r"^\s*(?:Примечание|Таблица)"))
+
+    assert [p.moved for p in rep.placements] == [True, False]
+    assert order(out) == ["p:Как показано в таблице 1, вс",
+                          "p:Таблица 1. Первая", "tbl:row-a",
+                          "p:Совершенно другой абзац.",
+                          "p:Таблица 2. Вторая", "tbl:row-b"]
+
+
 #: body children `exhibits` reads as carrying nothing, and `placement` did not
 UNLISTED = [
     pytest.param('<w:proofErr w:type="gramEnd"/>', "proofErr",
@@ -3214,6 +3288,60 @@ def test_own_page_steps_over_a_COMMENT_in_the_header_rows_properties():
     trpr = tbl_of(body).find(f"{NS}tr/{NS}trPr")
     assert trpr is not None
     assert children_of(trpr) == ["comment", "tblHeader", "jc"]
+
+
+@pytest.mark.parametrize("marker", [
+    COMMENT, '<w:proofErr w:type="gramEnd"/>'],
+    ids=["an XML comment", "a spelling mark"])
+def test_a_marker_in_FRONT_of_the_caption_is_not_taken_for_it(marker):
+    """The walk in front of a caption takes every marker now, not only
+    bookmarks, so a block can open with a comment or a spelling mark —
+    and both readings of «the caption is the first paragraph» ask
+    `e.tag == W + "p"`: `_caption_of`, which names the placement, and
+    `audit`, which reads the caption's `keepNext`. As `>=`, a comment's
+    tag cannot be ordered against a string, and `proofErr` sorts above
+    `p`: the placement is named "" and the caption reads as unbound."""
+    out, rep = placement.place(parts(
+        P("Как показано в таблице 1, всё сходится.")
+        + P("Совершенно другой абзац.")
+        + marker + P("Таблица 1. Заголовок") + TBL("шапка")))
+
+    assert [p.caption for p in rep.placements] == ["Таблица 1. Заголовок"]
+    assert placement.audit(out).ok
+
+
+def test_the_walk_in_front_of_a_caption_stops_at_the_TOP_of_the_body():
+    """`head > 0`. A caption at child 0 has nothing in front of it, and
+    a walk reading `>= 0` (or `> -1`) asks about `kids[-1]` — the LAST
+    child of the body, which in a manuscript under revision is often a
+    marker. The walk then runs backwards from the END of the document
+    and the block comes out of a slice that begins behind its own
+    table: empty here, and `place` raises on it."""
+    out, rep = placement.place(parts(
+        P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Как показано в таблице 1, всё сходится.")
+        + '<w:bookmarkEnd w:id="4"/>'))
+
+    assert [p.moved for p in rep.placements] == [True]
+    assert names_of(out) == ["p", "p", "tbl", "bookmarkEnd"]
+
+
+def test_the_table_ABOVE_the_hole_is_looked_for_BACKWARDS():
+    """`_paragraph_or_table(..., backwards=True)`. The block opens at its
+    caption here, because the `bookmarkEnd` in front of it closes a range
+    opened above the upper table and stays; so the walk for the neighbour
+    ABOVE starts at that marker, and read forwards it arrives at the
+    block's own caption — no table above, no refusal, and the two layout
+    tables close together when the block leaves."""
+    _out, rep = placement.place(parts(
+        P("Прочая проза.") + '<w:bookmarkStart w:id="4" w:name="range"/>'
+        + TBL("верхний макет") + '<w:bookmarkEnd w:id="4"/>'
+        + P("Таблица 1. Заголовок") + TBL("шапка")
+        + P("Примечание. Что-то.") + TBL("нижний макет")
+        + P("Как показано в таблице 1, всё сходится.")))
+
+    assert [p.moved for p in rep.placements] == [False]
+    assert any("against each other" in x for x in rep.problems), rep.problems
 
 
 # ---------------------------------------------------------- keep LAST --
