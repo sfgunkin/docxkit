@@ -14,6 +14,60 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — revision/_common was measured against a harness missing the tests its code arrived with~~ — FIXED 18.09, `7a76b27`
+
+<!-- status: fixed -->
+
+The second instrument defect of this shape in one day, and the reason it is
+worth an entry rather than a commit on its own: a module measured against a
+harness that does not cover it produces a figure nobody can act on, and the
+figure looks exactly like a figure that can be.
+
+`f856e4d` moved `_stamp_of` and `_written_at` out of `revision/_promote.py`
+into `revision/_common.py`, so that `rescues()` and `Paper.redlines()` could
+share one reading of a stamp. The tests that exercise them stayed in
+`tests/test_rescue_pruning.py` — their old home — and `harness_map`'s entry
+still read
+
+    "revision/_common.py": ["tests/test_revision.py"],
+
+with a comment saying the module had four mutants, all import-level
+constants. It had thirty-one. So the half that had just arrived was measured
+against tests that barely touch it: **12.9 % (4/31)**, and every survivor of
+it on the ONE line `m.group(1) == kind`.
+
+None of the four was an equivalence. Working them produced three tests and
+two near-misses worth recording, because both are defects this backlog has
+already paid for once:
+
+* `== kind` → `<=`: a copy a session named itself, quoting the redline it was
+  taken before, joins the deletable set with a date older than every real
+  rescue — first into `prune_rescues`' doomed slice. That is the S1 of
+  2026-08-31, where `promote` twice deleted the rescue it had just written,
+  reached by another road.
+* `== kind` → `>=`: a copy in `build/redlines/` quoting a rescue stamp
+  becomes a promote's own record, and `withdraw` then compares the
+  manuscript against it — the defect fixed in `f856e4d` itself, re-entered
+  through the kind parameter.
+
+So the harness gap was hiding the return of two known data-loss defects.
+
+**Fixed 18.09 in `7a76b27`**: the entry names `tests/test_rescue_pruning.py`
+as well, and the comment says what happened rather than quoting a
+measurement from before the move.
+
+The first of the two today was `edit.py`, whose entry was missing
+`tests/test_remove_link.py` and `tests/test_insert_spans.py` — which is what
+made 158 of its 389 survivors the harness rather than the module, and sent
+two rounds to argue mutants nobody had to answer for.
+
+**The general rule, which is what this entry is for.** Code that moves house
+leaves its tests behind, and `harness_map` is the only place that shows. A
+module whose survival rate jumps after a refactor should be suspected of a
+map gap BEFORE its survivors are worked: the cheap check is whether the
+tests that exercise the moved function are in the files the map names. Both
+of today's gaps were found by an agent asking why a module that small had
+the highest survival in its subpackage.
 ### ~~S3 — a gate run in a worktree tested the INSTALLED checkout, and said ok~~ — FIXED 18.09, `32dd39d`
 
 <!-- status: fixed -->
