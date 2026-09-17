@@ -14,6 +14,79 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — the package read Word markup by one spelling, and Word writes several~~ — FIXED 18.09, `4ed7fd6`
+
+<!-- status: fixed -->
+
+Thirty-one commits over four rounds, 2026-09-17/18, closing a whole class
+rather than a defect — and the class is the one this package is most exposed
+to, because every module reads OOXML and Word writes the same element more
+ways than any of them expected.
+
+**The habit.** A reader written as a literal string — `"<w:tbl>"`,
+`'<w:bookmarkStart w:id="'`, `"<w:ins "` — answers only for the spelling its
+author happened to meet. Word writes attributes in any order, closes an
+empty element as `/>` or as ` />`, adds attributes nobody anticipated
+(`w:rsidR`, `w:fldLock`), and writes an empty container either paired or
+self-closing. Every one of those is a SILENT MISS: the reader finds nothing,
+reports nothing, and the caller carries on with an answer that is simply
+short.
+
+**The instrument, which is the durable half.**
+`tests/test_regex_registry.py` reads every literal markup pattern in the
+package and holds each one to a rule, with anything that cannot comply
+DECLARED rather than excused. It grew through the rounds as each round found
+a new way to be wrong:
+
+* every literal pattern is read and either widened or declared;
+* built patterns are folded, every attribute read, and what cannot be read
+  is declared;
+* an attribute pinned LAST is seen;
+* every plain-string read of markup is widened or declared;
+* every container a pattern OPENS is exercised, or declared;
+* an element name read without an END is fixed or declared;
+* a container that holds NOTHING is a reading too — an empty body is a
+  shape, and a probe that always fills the body never asks the question.
+
+**What it found, by module.** Empty note definitions and empty comments
+(which open nothing and are still a note, still a comment, and were read as
+absent); widths, merges, grids, sizes, bold and superscript in tables;
+bookmarks and Hyperlink styles when a link is undone; a drawing's extents
+and its relationship; comment anchors and `[Content_Types]` Overrides; Track
+Changes, `cantSplit` and a rule; italics and alignment in `edit`; field
+markers, ghost links and name-first bookmarks in `compare`; insertions and
+deletions read by their NAME whatever ends them; a run's properties, a
+table, a run and the body in `structure`; move-range markers; and `probe`'s
+paragraph offset lists carrying their type.
+
+**Two fixes in it are defects in their own right.** `compare`: a field's end
+run with an EMPTY `w:rPr` no longer swallows the next field. And
+`tables.house` reads and writes the row's OWN `w:trPr`, after its
+`w:tblPrEx` — a SUPERSET of `0bdae9f`, which fixed the order this morning
+and was blind to nesting. Measured over the 2,954-package corpus: **52 rows
+in 11 packages** had the outer row's `cantSplit` written into a NESTED row,
+**2 rows in 2** were left breakable, and **418 rows in 28** got `trPr`
+before `tblPrEx`. `0bdae9f`'s two tests are kept unchanged and its reasoning
+moved into `_row_properties_at`'s docstring.
+
+**And the registry caught a stale declaration on its first run against a
+tree it had not seen.** `("edit.py", "_plain_runs: in(<w:t)")` was declared
+deliberate-in-effect; `9402cd1` had rewritten `_plain_runs` that morning and
+the read was gone. It reported "declared, but gone or now ended". That is
+the same shape as an expired equivalence claim, and the registry is the only
+instrument here that asks it of READS rather than of arguments — in both
+directions: a new undeclared read appearing, and a declared one
+disappearing.
+
+**A hazard found while rebasing, worth more than the commit it came from.**
+Rebasing a long branch onto an older base RESURRECTED five `_compare_read`
+claims that a newer master commit had expired — at that base they were still
+live. The later rebase dropped them again, and the round verified 0 extra
+rather than assuming. A claim brought back to life argues about code that no
+longer exists, and nobody would see it without checking. The remedy — after
+rebasing a branch that touches `equivalents.toml`, diff the claims against
+master's rather than trusting the rebase — is going into
+`docs/mutation-testing.md` beside the three kinds of stale.
 ### ~~S3 — harness_for silently scanned when the .py was dropped, and could scan NARROWER~~ — FIXED 18.09, `a94ac3a`
 
 <!-- status: fixed -->
