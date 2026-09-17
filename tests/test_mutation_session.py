@@ -194,6 +194,32 @@ def test_a_tree_that_did_NOT_move_says_nothing(one_chunk, tree):
     assert "changed since" not in said
 
 
+@pytest.mark.parametrize("took,refused", [
+    pytest.param(ms.BASELINE_SHARE * ms.MUTANT_SECONDS, False,
+                 id="exactly_the_share"),
+    pytest.param(ms.BASELINE_SHARE * ms.MUTANT_SECONDS + 0.5, True,
+                 id="past_the_share"),
+])
+def test_a_harness_too_SLOW_for_the_mutant_deadline_is_refused(
+        one_chunk, tree, monkeypatch, took, refused):
+    """A survivor is a mutant whose tests ALL ran, so a harness near the
+    deadline turns survivors into timeouts, and a timeout is graded
+    KILLED. The revision/ superset ran 29.4 s beside three other streams
+    (2026-09-17) and `revision/_promote.py` read 0.0 %, 24 of 24 killed —
+    a figure that looked like the best in the package and measured
+    nothing. The share itself is allowed; only past it is refused."""
+    root, _module, _tests = tree
+    clock = iter([1000.0, 1000.0 + took])
+    monkeypatch.setattr(ms.time, "monotonic", lambda: next(clock))
+
+    if refused:
+        with pytest.raises(SystemExit, match="deadline every mutant gets"):
+            one_chunk(snapshot=root / ".mutation-thing.pristine")
+    else:
+        _copied, said = one_chunk(snapshot=root / ".mutation-thing.pristine")
+        assert "8/8 run — killed 7" in said
+
+
 # --- the seeded sample, which has to be the SAME draw twice -------------
 
 

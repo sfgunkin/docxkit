@@ -78,6 +78,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -109,6 +110,14 @@ _WINDOWS = sys.platform == "win32"
 #: reaches.
 MUTANT_SECONDS = 30
 BACKSTOP = 10
+#: How much of `MUTANT_SECONDS` the UNMUTATED harness may take. A mutant
+#: that survives is one whose tests all had to run, so a harness near the
+#: deadline turns survivors into timeouts, and a timeout reads KILLED.
+#: Measured 2026-09-17: the revision/ superset harness ran 29.4 s single-
+#: process on a loaded machine, and `revision/_promote.py` graded 24 of 24
+#: killed, "0.0% survive", with nothing said. The headroom is for the load
+#: a sweep runs beside — other streams, a gate run, a replay.
+BASELINE_SHARE = 0.6
 #: A chunk this long has room to end any mutant twice over, so one that
 #: ends none is stuck, not slow.
 _STUCK_AFTER = 2 * (MUTANT_SECONDS + BACKSTOP)
@@ -512,12 +521,22 @@ def chunk(module: Path, tests: list[str], config: Path, session: Path,
               f"re-run with --fresh to measure it as it is now.", flush=True)
     print(f"  verifying the unmutated harness ({len(tests)} files)...",
           flush=True)
+    started = time.monotonic()
     baseline = _run([sys.executable, "-m", "pytest", "-q", *tests],
                     cwd=WORKTREE, env=_env())
+    took = time.monotonic() - started
     if baseline.returncode:
         sys.exit("the UNMUTATED harness fails — refusing to mutate, because "
                  "every mutant would then read KILLED:\n"
                  + baseline.stdout[-2000:])
+    if took > BASELINE_SHARE * MUTANT_SECONDS:
+        sys.exit(f"the UNMUTATED harness took {took:.1f} s, more than "
+                 f"{BASELINE_SHARE:.0%} of the {MUTANT_SECONDS} s deadline "
+                 f"every mutant gets — refusing to mutate, because a "
+                 f"survivor has to run the whole harness, crosses the "
+                 f"deadline on a busy machine, and reads KILLED. The figure "
+                 f"would be an artefact. Measure it when the machine is "
+                 f"quiet, or with a harness that runs faster.")
 
     # bounded on purpose: the timeout IS the chunk, and the next call
     # picks up where this one stopped
