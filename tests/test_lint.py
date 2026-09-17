@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import NS, dele, ins, make_parts, para, run
+from conftest import NS, dele, ins, make_parts, para, para_mark_ins, run
 
 from docxkit.body import para as bpara
 from docxkit.body import run as brun
@@ -74,6 +74,48 @@ def test_paragraph_mark_revision_is_a_legitimate_marker():
     body = ('<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="A" w:date="d"/>'
             "</w:rPr></w:pPr>" + run("tail") + "</w:p>")
     assert audit_parts(_parts(body)) == []
+
+
+def test_a_paragraph_mark_MARKER_is_not_an_empty_revision_TO_LINT():
+    """For `parent.tag if parent is not None else None` read as `parent
+    is None`: `parent_tag` is then None for every revision, no revision
+    matches `_MARKER_PARENTS`, and the markers stop being skipped.
+
+    The marker test above asks `audit_parts`, which never runs check 2
+    at all — so nothing in this harness put a self-closing `w:ins`
+    inside a `w:rPr` through `lint`. Every tracked paragraph mark in
+    every redline is that shape, and reported as an empty w:ins they
+    would fail `revision validate`'s first gate on every round.
+    """
+    body = para_mark_ins() + para(run("ordinary prose"))
+
+    assert lint_parts(_parts(body)) == []
+
+
+@pytest.mark.parametrize("name,stray", [
+    ("jc", '<w:jc w:val="center"/>'),
+    ("shd", '<w:shd w:val="clear" w:fill="D9D9D9"/>'),
+])
+def test_a_paragraph_PROPERTY_sitting_directly_in_the_paragraph(name, stray):
+    """Check 1b, which had no test in this harness at all, and
+    `_PPR_STRAYS = frozenset(W + t for t in _PPR_BEFORE_RPR | {...})`
+    read as `&` (the two halves are disjoint, so the set empties and 1b
+    sees nothing ever again) and as `-` (the second half goes).
+
+    One tag from each half, because only a tag from the second can tell
+    `-` from the union: `w:jc` is in `_PPR_BEFORE_RPR` and `w:shd` is
+    named only in the rest of CT_PPr beside it. Word keeps the runs and
+    DISCARDS the property without a word — Parental_style's supplement
+    shipped a title block at the default style for it.
+    """
+    body = ('<w:p><w:pPr><w:jc w:val="both"/></w:pPr>'
+            + stray + run("a title") + "</w:p>")
+
+    problems = lint_parts(_parts(body))
+
+    assert len(problems) == 1, problems
+    assert problems[0].startswith(f"w:{name} sits directly in w:p")
+    assert "Word drops it silently" in problems[0]
 
 
 def test_deleted_text_must_be_delText():
@@ -584,6 +626,90 @@ def test_the_worst_offender_is_never_the_one_elided():
     assert "hMild" not in listed    # and the truncation drops the mild
 
 
+def _defined_twice(*names: str) -> str:
+    """One paragraph per definition, every name defined exactly twice."""
+    body, mark_id = "", 0
+    for name in names:
+        for _ in range(2):
+            mark_id += 1
+            body += para(_mark(name, mark_id) + run("x"))
+    return body
+
+
+def test_DISTINCT_bookmark_names_are_clean_TO_AUDIT():
+    """For `c > 1` read as `c > 0` and as `c >= 1`, which report every
+    name a document defines once as "defined more than once".
+
+    The clean case above asks `lint_parts`, which never runs the
+    bookmark walk, so nothing held the AUDIT to silence on an ordinary
+    document — and this is the finding `revision validate` prints to an
+    author, about a manuscript with nothing wrong with it.
+    """
+    body = (para(_mark("Table1", 1) + run("a caption"))
+            + para(_mark("Table1txt", 2) + run("a mention")))
+
+    assert audit_parts(_parts(body)) == []
+
+
+@pytest.mark.parametrize("how_many", [3, 8])
+def test_a_list_that_FITS_names_every_repeat_and_elides_nothing(how_many):
+    """For `repeated[:8]` read as `[: 7]`, and the `len(repeated) > 8`
+    behind the ellipsis read as `!= 8`, `> 7` and `>= 8`. The ten-name
+    test above steps over every one of those: `> 7` and `>= 8` differ
+    only at EXACTLY eight, and `!= 8` only BELOW it — where it appends
+    an ellipsis to a list that is already complete.
+
+    An ellipsis is a claim that there are more names than the reader can
+    see, and eight `x2` entries is the shape the paper this check was
+    written for actually had.
+    """
+    names = ("aOne", "bTwo", "cThree", "dFour",
+             "eFive", "fSix", "gSeven", "hEight")[:how_many]
+
+    (problem,) = audit_parts(_parts(_defined_twice(*names)))
+
+    assert problem.startswith(
+        f"{how_many} bookmark name(s) defined more than once")
+    listed = problem.split(": ", 1)[1]
+    assert all(f"{n} x2" in listed for n in names), listed
+    assert "..." not in listed, "nothing is hidden, so nothing is claimed"
+
+
+def test_the_NINTH_repeated_name_is_HIDDEN_and_the_ellipsis_says_so():
+    """For `repeated[:8]` read as `[: 9]`, which names all nine, and
+    `len(repeated) > 8` read as `> 9`, which drops the ninth in silence.
+
+    Nine equal counts, so the order is alphabetical and the name left
+    out is known: a reader who is shown eight of nine and told nothing
+    reads the message as the whole list.
+    """
+    names = ("aOne", "bTwo", "cThree", "dFour", "eFive",
+             "fSix", "gSeven", "hEight", "iNine")
+
+    (problem,) = audit_parts(_parts(_defined_twice(*names)))
+
+    assert problem.startswith("9 bookmark name(s) defined more than once")
+    listed = problem.split(": ", 1)[1]
+    assert listed.count(" x2") == 8, listed
+    assert "iNine" not in listed
+    assert "..." in listed
+
+
+def test_names_with_the_SAME_count_are_listed_ALPHABETICALLY():
+    """For `key=lambda item: (-item[1], item[0])` read as `item[ 1]` and
+    as `item[ -1]`: both of those are the COUNT a second time, so ties
+    fall back on `sorted`'s stability — the order the names were first
+    MET. The ten-name test above defines its eight tied names
+    alphabetically, so insertion order and name order agree there and
+    neither mutant can show. Here they are defined backwards.
+    """
+    (problem,) = audit_parts(_parts(_defined_twice("zTie", "mTie", "aTie")))
+
+    listed = problem.split(": ", 1)[1]
+
+    assert listed.startswith("aTie x2, mTie x2, zTie x2"), listed
+
+
 # ------------------------------------- a field with no end (2026-08-27) ---
 #
 # Aging_Well, dropping a figure whose in-text mention was a field-form
@@ -672,6 +798,22 @@ def test_a_fldSimple_pairs_with_NOTHING_and_is_not_reported():
     assert audit_parts(_parts(body)) == []
 
 
+def test_a_fldChar_with_NO_TYPE_is_NEITHER_half_of_a_field():
+    """For `kind == "begin"` and `kind == "end"` read as `<=`. A
+    `w:fldChar` with no `w:fldCharType` gives `kind is None`, and
+    `None <= "begin"` raises TypeError inside an advisory walk — in a
+    function whose whole job is to describe a file that is already
+    damaged, and which `validate` runs over whatever it is handed.
+
+    The attribute is what a half is paired on, so one without it pairs
+    with nothing, and the whole field beside it still balances.
+    """
+    body = para(run("prose ") + "<w:r><w:fldChar/></w:r>"
+                + _field(r' HYPERLINK \l "Figure2" ', "Figure 2"))
+
+    assert audit_parts(_parts(body)) == []
+
+
 def test_an_orphan_in_the_FOOTNOTES_is_found_too():
     """Compare rewrites every part it touches, and a figure mention in a
     note is as ordinary as one in the body."""
@@ -724,3 +866,61 @@ def test_a_FOOTNOTE_opening_on_a_space_is_NOT_reported():
             + "</w:p></w:footnote></w:footnotes>")
 
     assert audit_parts(make_parts(para(run("body")), footnotes=foot)) == []
+
+
+def test_a_package_with_NO_document_part_reads_NO_OTHER_part_as_the_body():
+    """For `r.tag == W + "document"` read as `<=`, `>=` and `is not`.
+    Each of them picks a root when there is no document part to pick:
+    `w:comments` sorts BEFORE `w:document` and `w:footnotes` after it,
+    and `is not` is true of every tag, since the tag it is compared with
+    is built right there and is never the same object.
+
+    Both parts here open on the space a note and a comment are typed
+    with — 11 of 12 on Aging_Well — so a part read as the body reports
+    every note in the paper as an indent the author made.
+    """
+    foot = (f'<w:footnotes {NS}><w:footnote w:id="2"><w:p>'
+            + run(" A note, as typed.", preserve=True)
+            + "</w:p></w:footnote></w:footnotes>")
+    note = (f'<w:comments {NS}><w:comment w:id="1"><w:p>'
+            + run(" A comment, as typed.", preserve=True)
+            + "</w:p></w:comment></w:comments>")
+
+    parts = {"word/footnotes.xml": foot.encode("utf-8"),
+             "word/comments.xml": note.encode("utf-8")}
+
+    assert audit_parts(parts) == []
+
+
+def test_lint_SKIPS_a_MISSING_part_and_reads_THE_ONES_AFTER_IT():
+    """For the `continue` on a None root read as `break`, which stops at
+    the first part a caller does not have. `lint` takes one root per
+    part and its signature accepts None for each, so which part is
+    absent would decide whether the parts after it are linted at all.
+    The None goes FIRST, or the mutant has nothing to stop early.
+    """
+    from docxkit.lint import lint
+
+    root = lxml_etree.fromstring(
+        _parts(para(run(" leading whitespace")))["word/document.xml"])
+
+    assert any("edge whitespace" in p for p in lint(None, root))
+
+
+def test_audit_SKIPS_a_MISSING_part_and_reads_THE_ONES_AFTER_IT():
+    """The same `continue` read as `break` in BOTH of audit's walks —
+    the bookmark tally and the field balance. One document after the
+    None, carrying one finding of each kind, so either walk stopping
+    early shows.
+    """
+    from docxkit.lint import audit
+
+    body = (para(_mark("WorldBank2024txt", 1) + run("first mention"))
+            + para(_mark("WorldBank2024txt", 2) + run("second mention"))
+            + para(_fld("begin") + _instr(r' HYPERLINK \l "Figure2" ')))
+    root = lxml_etree.fromstring(_parts(body)["word/document.xml"])
+
+    findings = audit(None, root)
+
+    assert any("defined more than once" in f for f in findings), findings
+    assert any(f.startswith("field BEGIN with no end") for f in findings)
