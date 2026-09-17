@@ -14,6 +14,39 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — a fresh worktree reads as a module that changed, because Windows git writes CRLF~~ — FIXED 18.09, `7f0de64`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 by the `pages.py` round, in a worktree where nothing had
+been edited. `mutation_survivors` printed `STALE: src/docxkit/pages.py
+changed after this run` and a replay there would have refused — correctly,
+by its own rule, and for a reason nowhere near the tools.
+
+Git for Windows sets `core.autocrlf=true` in its SYSTEM config, and this
+repo had no `.gitattributes`. So a plain `git worktree add` wrote the whole
+tree with CRLF while `D:/docxkit` itself was LF. The mutation tools compare
+a module's BYTES against the `.pristine` snapshot taken when the session was
+planned, so a worktree that differs only in line endings reads as a module
+that changed under the run.
+
+The round's own workaround was `git -C D:/docxkit -c core.autocrlf=false
+worktree add …`, which is correct and which nobody will remember. Pinning it
+in `.gitattributes` is the version that does not have to be remembered:
+
+    * text=auto eol=lf
+
+Verified before committing: with the index already LF throughout, adding the
+file makes git normalize on comparison, so `git status` reports ZERO changed
+files. It changes what a future checkout WRITES, not what is stored.
+
+Measured state of `D:/docxkit`'s own tree at the time: mixed.
+`src/docxkit/edit.py` and `tests/test_compare.py` were CRLF in the working
+tree, `tools/gates.py` was LF, `.gitignore` was mixed within one file — the
+index LF for all of them. That mix is left alone here on purpose: a
+renormalization rewrites every file in the tree, and four sweeps were
+mirroring `src/` from it. It is normalized separately, when nothing is
+reading it.
 ### ~~S3 — a sweep that graded a chunk and then refused threw away the reason~~ — FIXED 18.09, `dad12ee`
 
 <!-- status: fixed -->
