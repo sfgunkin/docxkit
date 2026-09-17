@@ -14,6 +14,68 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — four note carriers nothing pinned, on lines no mutant can reach~~ — FIXED 18.09, `052388e`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 by the `footnotes.py` round, which had nothing to work on —
+and that emptiness was the finding.
+
+`footnotes.py` read **REAL SURVIVAL 0.6 % (4/679)**. All four survivors were
+cosmetic quote widths already claimed (`Footnote.__repr__`'s `text[:40]` and
+`Orphan.__str__`'s `text[:50]`). An empty list, on a module whose orphan
+detection had been widened the day before.
+
+**The sweep planned no mutant on lines 187-190 at all** — the four lines
+`_NOTE_CONTENT_RE` spans — and none on `_orphan_of` either. Cosmic-ray
+mutates operators, comparisons and numbers. The carrier list is a pattern
+STRING; there is nothing in it for a mutation operator to take hold of. So
+the figure said nothing about the part of the module that decides whether a
+note is cut.
+
+**Hand-mutated instead**, with `kill_check` over twelve cases — each
+deleting ONE alternative or one `delText` guard, and each verified to still
+COMPILE as a regex, so an import error could not read as a kill. **Four
+survived, all four of them alternatives the pattern has named since it was
+written:**
+
+* `w:hyperlink` — a note holding a link whose words are gone
+* `w:drawing` — a note holding only a figure
+* `w:tbl` — a note holding only a table
+* `m:oMath` — a note holding only an equation
+
+Under any of those deletions such a note reads as a shell and
+`prune_orphans` CUTS it: the link, the figure, the grid or the equation off
+the page. That is the exact defect the widening was written for. Every
+legacy twin added on 09-17 (`w:pict`, `w:object`, `w:sym`, `w:contentPart`)
+was killed by the test that motivated it, as were both `w:delText` guards
+and the bookmark — it was the four oldest alternatives that nothing pinned.
+
+**Fixed 18.09 in `052388e`**: four tests in `tests/test_note_orphans.py`,
+each fixture holding ONE carrier and nothing else a reader sees — with two,
+dropping either alternative leaves the note occupied by the other and the
+case proves nothing. The table case is built without `_note`, because a
+`w:tbl` is a sibling of the paragraphs rather than a child of one. Re-ran
+the twelve cases after: 12 of 12 KILLED, each by the test aimed at it.
+
+**One weak spot, stated by the round rather than found later.** The
+`m:oMath` fixture carries an equation with no glyph (`<m:t/>`), which is the
+only shape that reaches the question — `visible_text` reads `m:t` as well as
+`w:t`, so an equation WITH glyphs gives the note text and is not a shell for
+that reason instead. No Word-written document could be found where the
+`m:oMath` alternative changes the answer, and none was invented: that is the
+argument-from-the-DOCUMENT kind this backlog has had wrong twice. Treat that
+one case as pinning the module's stated intent rather than a manuscript we
+have met. The other three are ordinary shapes.
+
+**The general lesson is in `docs/mutation-testing.md`** ("A figure says
+nothing about behaviour that lives in a REGEX", `717e165`): a low figure on
+a regex-driven module is not evidence, it is the absence of a question.
+`lint.py` and `_cite_audit.py` carry the same shape and are named there so
+their figures are not believed either.
+
+Scripts: `scratchpad\agents\footnotes\regex_check.py` (the twelve cases) and
+`session_read.py`.
 ### ~~S3 — the lint gate refuses six write commands and a tracked build, with no route out~~ — FIXED 18.09, `b579523`
 <!-- status: fixed -->
 
