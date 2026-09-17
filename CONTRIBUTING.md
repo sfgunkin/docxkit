@@ -242,6 +242,39 @@ a classmethod, a tuple unpacked or indexed out of a call, a loop variable
 drawn from a `list[int | None]` — and `tests/test_optional_audit.py`
 keeps one fixture per rule so the next one added cannot quietly lose one.
 
+### A test that reads SOURCE carries two canaries
+
+A test that reads the package's own text — a grep over a module, a
+pattern over the README, a rule about how something is spelled — can
+fail in a way no assertion catches: it can read NOTHING, or match
+NOTHING, and both look exactly like a tree with nothing wrong in it.
+Four in this suite did (BACKLOG, 2026-09-18). One had been green over a
+live defect since the day it was written, because the sentence it looked
+for is split across two source lines — `accept_check=` ending one and
+`False to build` beginning the next — so neither its substring nor its
+regex ever matched what the message prints. A test that cannot fail is
+worse than no test: it occupies the place where a real one would go.
+
+So write both canaries, which `tests/test_control_characters.py` has
+carried all along: one that the scan FOUND something, and one that the
+pattern can FIRE, on a specimen of what it is for. Walk the package with
+`conftest.source_files()` — `SRC.glob("*.py")` does not see a directory,
+and `revision/`'s sixteen halves were outside one rule for three weeks
+because of it; `tests/test_source_walk.py` is that walk's own pair of
+canaries.
+
+Before writing one at all, ask whether the question can be put to the
+OBJECT instead: three of the four were greps standing in for something
+the parser, the ast or the module could answer directly, and each was
+narrower than the question it stood in for.
+
+Settle it the same way either time, and in one sitting: BREAK the thing
+the test checks — put the part name in the subpackage, declare the flag
+inline, write the call the other way — run that test alone, and watch
+whether it goes red. Put the file back with `git checkout`. A claim that
+a test cannot fail needs showing rather than arguing, and it takes a
+minute.
+
 ### Mutation testing
 
 Coverage says a line RAN. Mutation testing says a test would NOTICE if

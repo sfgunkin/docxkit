@@ -312,7 +312,14 @@ def test_a_PRIMITIVE_a_public_module_hands_out_is_declared_THERE():
 
 
 def test_every_module_has_a_row_in_the_README_table():
-    """The table is the map of the package, and ten modules were not on
+    """SOUND AS A PAIR with the GONE test below, and only as a pair:
+    `_documented_modules` reads rows beginning '| `', so a table
+    reformat returns an empty set — which makes THIS test fail loudly
+    (every module missing) and the other one pass over nothing. Do not
+    simplify one of them away; the loud half is what says the pattern
+    stopped matching.
+
+    The table is the map of the package, and ten modules were not on
     it — `placement`, `probe`, `revision`, `cli`, and the two private
     families the citation and table facades are built from. A module
     nobody can find gets rewritten by the next person who needs it.
@@ -342,7 +349,13 @@ def _on_disk() -> set[str]:
 def test_the_README_table_names_no_module_that_is_GONE():
     """The direction a deletion breaks. A row for a module that no
     longer exists is worse than no row: it sends a reader looking for
-    a file, and the search returns nothing to correct them with."""
+    a file, and the search returns nothing to correct them with.
+
+    SOUND AS A PAIR with the test above, and not on its own: this half
+    reads "nothing documented" and "the pattern stopped matching" the
+    same way, and passes over both. The other half is what goes red
+    when the table's shape changes, which is the only reason this one
+    may stay a set difference (BACKLOG, 2026-09-18)."""
     documented = {n for n in _documented_modules() if "." not in n}
 
     gone = sorted(documented - _on_disk())
