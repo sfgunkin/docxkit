@@ -14,6 +14,32 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `printed_text` reads a paragraph's tab STOPS as printed tabs, so `compare --expect-clean` fails a formatting-only change~~ — FIXED 17.09, `942df35`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 while building `snapshot`. `_PRINTED_RE` matched `<w:tab …/>`
+anywhere in a paragraph, including the tab STOPS `w:pPr/w:tabs` defines:
+
+    <w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr>
+    <w:r><w:t>Left</w:t><w:tab/><w:t>Right</w:t></w:r>
+    printed_text → '\tLeft\tRight'      (two stops: '\t\tLeft\tRight')
+
+So two documents differing only in tab stops made `docxkit compare A B
+--expect-clean` report `TEXT … EDGE leading: '\t' -> '\t\t'` and exit 1 — a
+formatting change gated as a text edit — and every paragraph with stops was
+quoted with phantom leading tabs. Exposure: a strided 156 of 2,958 local
+manuscripts, 50 define tab stops, 9,323 paragraphs quoted wrongly.
+
+**Fixed 17.09 in `942df35`.** `_PRINTED_RE` swallows a whole `w:tabs` element
+and yields nothing — the stops inside a `w:pPrChange` snapshot included — and
+steps over a self-closing `<w:tabs/>`, which would otherwise pair with the next
+paragraph's `</w:tabs>`. `br`, `cr`, `noBreakHyphen` and `softHyphen` occur
+only as run content. `printed_text` gained `printing=` and `snapshot._prose`
+calls it, so one function decides character or stop. `_compare_read.py` itself
+is unchanged; its TEXT layer and media-caption lookup are corrected through
+`_xml`. Tests: eight in `test_xml_primitives.py`, including `compare
+--expect-clean` OK on a stops-only pair and still FAILED on a real leading tab.
 ### ~~S4 — every protocol round re-writes the same snapshot and anchor-index scripts~~ — FIXED 17.09, `fcfbd31`
 
 <!-- status: fixed -->
