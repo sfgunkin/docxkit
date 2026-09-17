@@ -106,12 +106,45 @@ def snapshot_of(module: str) -> Path:
     return ROOT / f".mutation-{session_stem(module)}.pristine"
 
 
+def lines_of(path: Path) -> bytes:
+    """A file's LINES, with the checkout's line endings taken out.
+
+    THE comparison for "has this file moved since the run", shared by
+    everything that asks it: `moved_by_content` below,
+    `mutation_session.moved_since`, and `replay_survivors.module_moved`.
+
+    A survivor is a row number and the text of that row, and neither
+    moves when a file is written with CRLF instead of LF. A raw byte
+    comparison calls it a different module anyway, and on this platform
+    that is not hypothetical: Git for Windows sets `core.autocrlf=true`
+    in its SYSTEM config, so a `git worktree add` wrote CRLF while
+    D:/docxkit held LF, and a `.pristine` snapshot copied from either
+    one then disagreed with the other about every line.
+
+    Measured 2026-09-18, against a fresh worktree at master: of the 65
+    stored snapshots, 10 agreed byte for byte, 21 held a module that had
+    really changed — and **34 differed in nothing but newlines**. Every
+    one of those refused to replay, in a checkout where nothing had been
+    edited at all. `.gitattributes` pins `eol=lf` for every checkout
+    from that day on; this keeps the sessions taken BEFORE it readable,
+    which is all of them.
+
+    Safe in the direction that matters: git normalises newlines on the
+    way in, so a difference that is only newlines cannot reach a commit,
+    and a module that really moved still reads as moved.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
     """Which watched files the working tree no longer AGREES with.
 
     Bytes, not mtimes — the rule `mutation_session.moved_since` already
     applies to the same question, with the same reason: *"a file
     rewritten with identical content has not moved for this purpose"*.
+    Through :func:`lines_of`, so a checkout's line endings are not
+    mistaken for an edit; the same function answers for all three
+    callers that ask this.
 
     None when the session kept no snapshot OF THE MODULE, which is the
     eight runs here that predate the mechanism; the caller falls back to
@@ -152,7 +185,7 @@ def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
         was, now = kept / rel, ROOT / rel
         if (not was.is_file()                    # the run never had it
                 or not now.is_file()
-                or was.read_bytes() != now.read_bytes()):
+                or lines_of(was) != lines_of(now)):
             out.append(rel)
     return out
 

@@ -64,6 +64,7 @@ from mutation_survivors import (  # pyright: ignore[reportMissingImports]
 )
 from stale_figures import (  # pyright: ignore[reportMissingImports]
     ROOT,
+    lines_of,
     session_file,
     snapshot_of,
     state,
@@ -178,24 +179,13 @@ def module_moved(module: Path, moved: list[str], *,
     """
     here = ROOT / module
     if was is not None and here.is_file():
-        return _lines_of(was) != _lines_of(here), "bytes"
+        # `lines_of`, not a byte comparison and not a copy of one: the
+        # same question is asked by `stale_figures.moved_by_content` and
+        # by `mutation_session.moved_since`, and three spellings of it
+        # is three places for a checkout's line endings to read as an
+        # edit. It lives where `state` does.
+        return lines_of(was) != lines_of(here), "bytes"
     return source_moved(module, moved), "timestamps"
-
-
-def _lines_of(path: Path) -> bytes:
-    """A file's LINES, with the checkout's line endings taken out.
-
-    A survivor is a row number and the text of that row, and neither
-    moves when a file is written with CRLF instead of LF — but a raw
-    byte comparison calls it a different module. It is not a hypothetical
-    difference here: Git for Windows sets `core.autocrlf=true` in its
-    SYSTEM config, so worktrees were written CRLF while D:/docxkit was
-    LF, and a `.pristine` snapshot copied from either one then disagrees
-    with the other about every line. `.gitattributes` pins `eol=lf` for
-    every checkout from 2026-09-18 on; this keeps the sessions taken
-    BEFORE it readable, which is all of them.
-    """
-    return path.read_bytes().replace(b"\r\n", b"\n")
 
 
 def main() -> int:

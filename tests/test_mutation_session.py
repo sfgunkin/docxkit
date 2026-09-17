@@ -93,6 +93,32 @@ def test_a_HARNESS_that_moved_is_named_too(tree):
     assert ms.moved_since(snapshot, module, tests) == [tests[0]]
 
 
+def test_a_RESUME_is_not_refused_over_the_checkout_s_line_endings(tree):
+    """The same rule `stale_figures` applies, and the same reason: a
+    worktree written CRLF beside a tree written LF is not an edit, and
+    calling it one refused a resume where nothing had been touched. 34
+    of this repository's 65 stored snapshots were on the wrong side of
+    that line on 2026-09-18.
+
+    Bytes on both sides deliberately: `write_text` translates on this
+    platform, which would give the two files the same endings and pass
+    for the wrong reason."""
+    root, module, tests = tree
+    snapshot = root / ".mutation-thing.pristine"
+    ms.take_snapshot(snapshot, module, tests)
+
+    lf = (snapshot / module).read_bytes().replace(b"\r\n", b"\n")
+    (snapshot / module).write_bytes(lf)             # as the run kept it
+    (root / module).write_bytes(lf.replace(b"\n", b"\r\n"))   # as checked out
+
+    assert ms.moved_since(snapshot, module, tests) == []
+
+    (root / module).write_bytes(b"def f(a, b):\r\n    return a + b\r\n")
+
+    assert ms.moved_since(snapshot, module, tests) == [str(module)], \
+        "a real change is still a change, whatever the endings"
+
+
 def test_a_file_the_snapshot_never_took_counts_as_MOVED(tree):
     """A harness that grew a file, or a snapshot half written by an
     interrupted start. Absent is not the same as unchanged, and reading

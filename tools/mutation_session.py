@@ -237,12 +237,22 @@ def moved_since(snapshot: Path, module: Path, tests: list[str]) -> list[str]:
     Bytes, not mtimes: a file rewritten with identical content has not
     moved for this purpose, and `shutil.copy2` preserves the mtime
     anyway.
+
+    Through `stale_figures.lines_of`, which is where that comparison
+    lives for every caller that asks this question — a resume here, a
+    figure there, a replay in the third place. A checkout's line endings
+    are not an edit, and answering otherwise refused a resume in a
+    worktree where nothing had been touched. Imported inside the
+    function, the way `kill_check` reaches back into this module: these
+    tools are each other's, and nothing here is needed at import time.
     """
+    from stale_figures import lines_of  # noqa: PLC0415
+
     out = []
     for rel in [str(module), *tests]:
         kept = snapshot / rel
         if (not kept.exists()
-                or kept.read_bytes() != (ROOT / rel).read_bytes()):
+                or lines_of(kept) != lines_of(ROOT / rel)):
             out.append(rel)
     return out
 

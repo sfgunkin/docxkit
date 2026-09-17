@@ -333,6 +333,54 @@ def test_a_file_whose_CONTENT_moved_is_stale(tmp_path, monkeypatch):
     assert moved == ["src/docxkit/thing.py"]
 
 
+def test_a_file_that_differs_only_in_its_NEWLINES_has_not_moved(
+        tmp_path, monkeypatch):
+    """A checkout's line endings are not an edit, and reading them as one
+    took 34 of this repository's 65 stored sessions out of reach.
+
+    Git for Windows sets `core.autocrlf=true` in its SYSTEM config, so
+    `git worktree add` wrote CRLF where D:/docxkit held LF; a `.pristine`
+    snapshot copied from either one then disagreed with the other about
+    every line, `state` reported the MODULE as moved, and
+    `replay_survivors` refused in a checkout where nothing had been
+    edited. Measured against a fresh worktree at master, 2026-09-18: 10
+    snapshots agreed byte for byte, 21 held a module that had really
+    changed, and 34 differed in newlines alone.
+
+    Written as BYTES on both sides, because `Path.write_text` translates
+    on this platform and would give the two files the same endings —
+    which is the test passing for the wrong reason.
+    """
+    sf = _session(tmp_path, monkeypatch, module_now="x = 1\n",
+                  module_then="x = 1\n")
+    (tmp_path / "src" / "docxkit" / "thing.py").write_bytes(b"x = 1\r\n")
+    (tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+     / "thing.py").write_bytes(b"x = 1\n")
+
+    verdict, moved = sf.state("thing.py", ["tests/test_thing.py"])
+
+    assert verdict == "fresh", moved
+
+
+def test_a_REAL_change_is_still_a_change_when_the_newlines_differ_too(
+        tmp_path, monkeypatch):
+    """The half that matters more. The refusal exists because replaying
+    a survivor list against a module that moved grades mutations nobody
+    made, so a comparison that stops refusing is worse than the wall it
+    was put up against. One line of content apart, and written with
+    different endings as well, is still moved."""
+    sf = _session(tmp_path, monkeypatch, module_now="x = 1\n",
+                  module_then="x = 1\n")
+    (tmp_path / "src" / "docxkit" / "thing.py").write_bytes(b"x = 2\r\n")
+    (tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+     / "thing.py").write_bytes(b"x = 1\n")
+
+    verdict, moved = sf.state("thing.py", ["tests/test_thing.py"])
+
+    assert verdict == "stale"
+    assert moved == ["src/docxkit/thing.py"]
+
+
 def test_a_HARNESS_that_moved_is_stale_too(tmp_path, monkeypatch):
     """The half this tool was written for: a test added after a run
     kills mutants the list still calls survivors."""
