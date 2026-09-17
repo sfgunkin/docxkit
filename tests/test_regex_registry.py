@@ -532,6 +532,146 @@ def test_every_pattern_the_walk_cannot_read_is_DECLARED():
         assert len(reason) > 40, (key, reason)
 
 
+# --- plain string READS of markup ----------------------------------------
+#
+# The gates above read patterns. A literal handed to `in`, `find`, `index`,
+# `count`, `replace` and their kin reads markup too, with no pattern
+# syntax to widen it: `"<w:cantSplit/>" not in row` gave a row closing it
+# ` />` a second one, `"<w:trackRevisions/>" in settings` lost Track
+# Changes spelled otherwise, and `"<w:rPr>" in run` gave a run with an
+# EMPTY `<w:rPr/>` — 18,172 of them in 248 of 2,954 corpus packages — a
+# second properties element (2026-09-17). Every such read is enumerated,
+# and one bound to a spelling is either widened or declared here.
+
+#: The `str` methods whose first argument is text to FIND.
+_STR_READS = frozenset({"find", "rfind", "index", "rindex", "count",
+                        "replace", "startswith", "endswith", "split",
+                        "rsplit", "partition", "rpartition",
+                        "removeprefix", "removesuffix"})
+
+#: Markup, as opposed to a `<` in prose, in a pattern's `(?<=`, or in an
+#: XML declaration. f-string holes read as `{}`.
+_MARKUP_LITERAL = re.compile(r"</?(?:[A-Za-z]|\{\})")
+
+#: A literal no producer can spell another way: an element NAME prefix
+#: (`<w:ins`, `<w:{}Reference`) or a closing tag (`</w:p>`). Whether a
+#: name prefix also begins another element's name is a different
+#: question, and not this gate's.
+_SPELLING_FREE = re.compile(r"^(?:<[\w.:{}-]+|</[\w.:{}-]+>)$")
+
+
+def _literal_texts(folder: _Folder, node: ast.expr) -> list[str]:
+    """Every literal string `node` can be, f-string holes as `{}`."""
+    if isinstance(node, ast.Tuple | ast.List):
+        return [t for e in node.elts for t in _literal_texts(folder, e)]
+    if isinstance(node, ast.JoinedStr):
+        return ["".join(str(v.value) if isinstance(v, ast.Constant) else "{}"
+                        for v in node.values)]
+    if (folded := folder.fold(node)) is not None:
+        return folded
+    if isinstance(node, ast.Name):
+        bound = folder._binding(node, 0)
+        if bound is not None and bound[1] == "value" and isinstance(
+                bound[2], ast.JoinedStr | ast.Tuple | ast.List):
+            return _literal_texts(bound[0], bound[2])
+    return []
+
+
+def _markup_reads(module: str) -> list[tuple[str, int]]:
+    """(description, line) for each read of a spelling-bound markup
+    literal: the function, the operation, and the literal."""
+    folder = _Folder.of(module)
+    functions: dict[int, str] = {}
+    for node in ast.walk(folder.tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for inner in ast.walk(node):
+                functions[id(inner)] = node.name
+    out = []
+    for node in ast.walk(folder.tree):
+        if not isinstance(node, ast.Compare | ast.Call):
+            continue
+        checked: list[tuple[str, ast.expr]] = []
+        if isinstance(node, ast.Compare):
+            for op, right in zip(node.ops, node.comparators, strict=True):
+                if isinstance(op, ast.In | ast.NotIn):
+                    checked.append(("in", node.left))
+                elif isinstance(op, ast.Eq | ast.NotEq):
+                    checked += [("==", node.left), ("==", right)]
+        elif (isinstance(node, ast.Call)
+              and isinstance(node.func, ast.Attribute)
+              and node.func.attr in _STR_READS and node.args
+              and not _is_re_call(node, *_STR_READS)):
+            checked.append((node.func.attr, node.args[0]))
+        for how, arg in checked:
+            for text in _literal_texts(folder, arg):
+                if _MARKUP_LITERAL.search(text) \
+                        and not _SPELLING_FREE.match(text):
+                    where = functions.get(id(node), "<module>")
+                    out.append((f"{where}: {how}({text})", node.lineno))
+    return out
+
+
+#: Every spelling-bound read of a markup literal in the package.
+ALL_MARKUP_READS = sorted({(module, what, line) for module in _TREES
+                           for what, line in _markup_reads(module)})
+
+#: The reads that are exact ON PURPOSE, each with the reason: the text
+#: searched is markup docxkit itself built, whose spelling is ours, or
+#: the literal is not markup at all. A read of what an author's Word or
+#: another producer wrote belongs in the code, widened — not here.
+EXACT_READS: dict[tuple[str, str], str] = {
+    ("body.py", "cell: in(<w:tcPr>)"): (
+        "builder input: `body.cell` checks the `tcpr` a paper hands a "
+        "builder that writes a new cell, markup the paper spelled for "
+        "docxkit, never read out of a document"),
+    ("body.py", "cell: replace(<w:tcPr>)"): (
+        "builder input: the same `tcpr`, rewritten to carry a gridSpan "
+        "into a cell docxkit is building from scratch"),
+    ("equations.py", "_char: startswith(<font> )"): (
+        "not markup: `unicodedata.decomposition` of a math-alphanumeric "
+        "glyph begins `<font> ` followed by the base code point"),
+}
+
+
+def test_every_EXACT_markup_read_is_DECLARED():
+    """A new spelling-bound read fails until it is widened or listed
+    with its reason, and a listed one that is gone fails too."""
+    found = {(module, what) for module, what, _line in ALL_MARKUP_READS}
+    assert found - set(EXACT_READS) == set(), (
+        "these read markup by one exact spelling. Another producer writes "
+        "` />`, other attribute orders, `w:val` forms and empty elements: "
+        "read with a pattern (`<w:tag\\b[^>]*/>`, a shared `_xml` reader) "
+        "or, for markup docxkit itself built, declare it in EXACT_READS:"
+        "\n  " + "\n  ".join(
+            f"{module}:{line} {what}" for module, what, line
+            in ALL_MARKUP_READS if (module, what) not in EXACT_READS))
+    assert set(EXACT_READS) - found == set(), "declared, but no longer read"
+    for key, reason in EXACT_READS.items():
+        assert len(reason) > 40, (key, reason)
+
+
+def test_the_markup_read_walk_sees_a_bound_literal_and_not_a_free_one():
+    """The walk's own instrument."""
+    _TREES["_probe_.py"] = ast.parse(
+        'TAG = "<w:cantSplit/>"\n'
+        "def f(row, cid, spans):\n"
+        '    a = TAG not in row\n'
+        '    b = row.find(f\'<w:bookmarkEnd w:id="{cid}"/>\')\n'
+        '    c = row.count("<w:ins ")\n'
+        '    d = "<w:ins" in row and row.rfind("</w:p>")\n'
+        '    e = "(?<=[.:])" in row and row.startswith("<?xml")\n'
+        '    g = any(m in row for m in ("<w:del/", "<w:pPrChange"))\n')
+    _Folder._cache.pop("_probe_.py", None)
+    try:
+        found = sorted(what for what, _ in _markup_reads("_probe_.py"))
+    finally:
+        del _TREES["_probe_.py"]
+        _Folder._cache.pop("_probe_.py", None)
+    assert found == ["f: count(<w:ins )",
+                     'f: find(<w:bookmarkEnd w:id="{}"/>)',
+                     "f: in(<w:cantSplit/>)", "f: in(<w:del/)"]
+
+
 #: The attributes a pattern may REQUIRE before it will match at all. Probed
 #: with none, the note-definition patterns (`w:id="(-?\d+)"`) matched no
 #: healthy spelling, were read as "not about this element", and skipped —
