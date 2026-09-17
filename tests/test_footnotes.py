@@ -1268,6 +1268,27 @@ def test_prune_takes_the_SHELL_and_leaves_every_other_definition_whole():
     assert parts["word/footnotes.xml"] == want
 
 
+def test_prune_passes_over_REFERENCED_shells_on_either_side_of_the_orphan():
+    """The id half of the cut, once the definition's own emptiness joined
+    it (2026-09-16). The fixture above can no longer test that half: its
+    neighbours hold words, so a comparison that reaches them is turned
+    down by `.empty` whatever it says about the id, and `<=` and `>=`
+    both lived. Here the neighbours are shells too, and still REFERENCED
+    — a note whose marker stayed and whose words were deleted — so only
+    the id tells them from the orphan. One id sorts below the orphan's
+    (10) and one above it (15), both stored in front of it (12): `<=`
+    cuts the first, `>=` the second, and each takes a note the body
+    still numbers while the orphan stays."""
+    referenced = (_definition(10), _definition(15))
+    parts = _paper((10, 15), *referenced, _definition(12))
+    want = _paper((10, 15), *referenced)["word/footnotes.xml"]
+
+    gone = footnotes.prune_orphans(parts)
+
+    assert gone == [footnotes.Orphan("footnote", "12", "", 0)]
+    assert parts["word/footnotes.xml"] == want
+
+
 def test_two_SHELLS_on_one_id_both_go_and_the_part_still_parses():
     """`break` after the cut, not `continue`: the notes were located in
     the part as it stood BEFORE the cut, so every offset after it is
@@ -1401,6 +1422,26 @@ def test_out_of_order_NAMES_the_doubled_id_and_its_PART(kind, part):
     said = str(caught.value)
     assert f"{kind} 3" in said, said
     assert part in said, said
+
+
+def test_the_doubled_refusal_names_FOOTNOTES_for_a_KIND_built_at_run_time():
+    """`kind == "footnote"` picks the part the refusal names, and the
+    test above passes the interned literal, where `is` agrees. A kind
+    that arrives from a command line or a config file is a string made
+    at run time: the reference pattern and `find_all` look it up by
+    equality, so the footnotes are read and the doubled id is found —
+    and under `is` the author is then sent to open `word/endnotes.xml`,
+    a part that may not even exist."""
+    from docxkit.errors import DocxKitError
+
+    kind = "".join(["foot", "note"])
+
+    with pytest.raises(DocxKitError) as caught:
+        footnotes.out_of_order(_refs(2, 3), _notes_part(2, 3, 3), kind=kind)
+
+    said = str(caught.value)
+    assert "word/footnotes.xml" in said, said
+    assert "endnotes" not in said, said
 
 
 def test_out_of_order_compares_TWO_DIGIT_ids_by_value():
