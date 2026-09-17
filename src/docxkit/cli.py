@@ -875,11 +875,12 @@ def _refused_by_lint(path: str, problems: list[str], *,
         return False
     print(f"REFUSED: {name} already carried the finding(s) above before "
           f"this run, and nothing was written. This edit did not cause "
-          f"them, and no docxkit verb repairs these classes: open {name} "
-          f"in Word, resolve what the finding names — an empty tracked "
-          f"change, an empty equation shell — and save; `docxkit lint "
-          f"{name}` says whether it is clear. To write this edit and "
-          f"leave them as they are, pass --allow-existing-lint.")
+          f"them and no docxkit verb repairs these classes, so Word is "
+          f"the repair: open {name}, resolve what the finding names — "
+          f"accepting or deleting the thing it points at — and save; "
+          f"`docxkit lint {name}` then says whether it is clear. To "
+          f"write this edit and leave the findings as they are, pass "
+          f"--allow-existing-lint.")
     return True
 
 
