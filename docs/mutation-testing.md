@@ -670,6 +670,48 @@ most likely to have picked up by accident. Run against the package at
 the end of this round, 36 of 38 entries are stale and two modules have
 never been measured at all.
 
+### Three kinds of stale, and only one of them is void
+
+`stale_figures.py` prints the same word — `stale`, with the files that
+moved — for three situations that cost very different amounts. Which one
+it is decides whether the answer is an hour of a stream or a sentence.
+
+**The module moved: the figure is void.** A survivor is a line number
+into a file that no longer has those lines, so the mutants are different
+mutants and nothing carries over. `replay_survivors` refuses by design
+rather than anchoring a case on whatever line has since slid into place.
+Re-sweep.
+
+**A claim needed a source edit to anchor: also void, and the edit looks
+harmless.** `verify_equivalents.anchored` insists a claim's `was` be
+exactly one line of the module, so a line the module writes TWICE cannot
+be claimed until it is made unique — the trailing-comment convention,
+00ca560 for `_xml.py`'s two `INSTR_RE.findall` lines and e4a050a for
+`authors.py`'s two `if out != text:`. The comment changes the module,
+and the session then renders its mutants from a source that no longer
+exists: `authors.py` went from four argued survivors to "2 to actually
+look at" — 1.9 % (2/105) — the moment the comments landed, and the
+replay refused with *"authors.py itself has moved since the run"*
+(2026-09-18). Nothing is wrong with the claims and the figure is wrong
+anyway. The re-sweep is part of the price of disambiguating, and belongs
+in the decision rather than in the next reader's afternoon.
+
+**The harness only GAINED tests: the figure is an UPPER BOUND**, and
+usually good enough to act on. A test added after a run can only KILL
+mutants; it can never raise a survivor. So a module that has not moved,
+under a harness that only grew, is at most the rate on record, and
+re-running it buys a number that can only be lower. On 2026-09-18 that
+stood behind `revision/_init.py` at 0.0 % (0/269) and `exhibits.py` at
+0.2 % (1/643), both reported OF THE TREE AS PLANNED after tests landed
+under them — a bound of zero IS the figure, and "at most 0.2 %" was
+worth more than an hour of a stream.
+
+Two limits, and they are what makes the bound honest. It does not hold
+when tests were REMOVED: a trim that deletes a test can raise a
+survivor, so a round that deletes one is re-swept rather than bounded.
+And it does not hold when the module moved as well — `revision/_promote.py`
+changed in f856e4d, which is the first case, whatever its harness did.
+
 ### And void when the tree moves DURING the run — the worst kind
 
 `tracked.py` stands at 4.9 % (29/589), verified, every remaining

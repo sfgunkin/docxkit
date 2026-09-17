@@ -253,7 +253,9 @@ body of method in this repository and it now lives in its own file:
 `kill_check.py`, `stale_figures.py`), the eight measured sweeps, the
 calibration table, and the 32 lessons that came out of them: what an
 equivalent mutant is and how to argue one, why a figure is void when the
-harness moves, and the instrument defects that made whole rounds
+harness moves, which of the three kinds of stale a figure has — void, or
+merely an upper bound — and what a claim that needs a source edit to
+anchor costs, and the instrument defects that made whole rounds
 incomparable.
 
 Split out on 2026-08-30. It was 1,942 of CONTRIBUTING's 2,341 lines
