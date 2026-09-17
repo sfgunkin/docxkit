@@ -1306,13 +1306,13 @@ def test_an_element_in_NO_NAMESPACE_does_not_stop_a_formatting_reject():
 
 
 def test_a_formatting_record_with_a_COMMENT_after_its_snapshot_restores_it():
-    """`snapshot[0]`, read as `snapshot[-1]`. The schema gives a
-    `w:rPrChange` one child, so every record above has exactly one and
-    the two readings agree. XML allows a comment anywhere — the carry
-    filter just above steps over non-elements for that reason — and
-    with one AFTER the snapshot the last child is the comment, which has
-    no properties: the rejected run comes back with none, its old size
-    gone without a word."""
+    """Written for `snapshot[0]` read as `snapshot[-1]`, when the snapshot
+    was the record's first CHILD. The schema gives a `w:rPrChange` one
+    child, so every record above has exactly one and the two readings
+    agree; XML allows a comment anywhere, and with one AFTER the snapshot
+    the last child was the comment, which has no properties. Since
+    2026-09-17 the snapshot is found by its tag and there is no index to
+    mutate: this stays as the guard on the shape."""
     xml = document(
         f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
         '<w:rPr><w:sz w:val="24"/></w:rPr><!-- restyled in review -->'
@@ -1420,10 +1420,9 @@ def test_the_simulated_VIEW_is_CACHED_between_identical_calls():
 
 def test_an_EXTENSION_after_a_formatting_SNAPSHOT_does_not_replace_it():
     """`snapshot[0]`, read as `snapshot[-1]` — the mutant the COMMENT test
-    above was written for, alive again. On 2026-09-16 the snapshot became
-    the record's ELEMENT children, so a comment is no longer one of them:
-    the list holds the `w:rPr` alone, its first is its last, and the
-    comment tells the two readings apart no longer.
+    above was written for, alive again after 09-16 made the snapshot the
+    record's ELEMENT children. (Since 09-17 it is found by its tag, the
+    index is gone, and this is the guard on the extension's shape.)
 
     A second ELEMENT does. Markup compatibility lets an element from a
     namespace the document declares ignorable stand where the schema has
@@ -1441,3 +1440,56 @@ def test_an_EXTENSION_after_a_formatting_SNAPSHOT_does_not_replace_it():
 
     assert '<w:rPr><w:sz w:val="24"/></w:rPr>' in out, out
     assert '<w:sz w:val="20"/>' not in out
+
+
+@pytest.mark.parametrize("ahead", [
+    pytest.param("<w14:ext/>", id="ignorable_extension"),
+    pytest.param("<note/>", id="no_namespace_element"),
+])
+@pytest.mark.parametrize("record,live,old,wrapper", [
+    pytest.param("rPrChange", '<w:sz w:val="20"/>', '<w:sz w:val="24"/>',
+                 "<w:p><w:r><w:rPr>{live}<w:rPrChange {d}>{inner}"
+                 "</w:rPrChange></w:rPr><w:t>note</w:t></w:r></w:p>",
+                 id="run"),
+    pytest.param("pPrChange", '<w:jc w:val="center"/>',
+                 '<w:jc w:val="left"/>',
+                 "<w:p><w:pPr>{live}<w:pPrChange {d}>{inner}"
+                 "</w:pPrChange></w:pPr><w:r><w:t>note</w:t></w:r></w:p>",
+                 id="paragraph"),
+])
+def test_an_ELEMENT_ahead_of_a_formatting_snapshot_is_not_the_snapshot(
+        ahead, record, live, old, wrapper):
+    """The snapshot is the child the record's schema names — `w:rPr` in a
+    `w:rPrChange`, `w:pPr` in a `w:pPrChange` — and not whichever element
+    comes first. Found by the survivor round of 2026-09-17, one step past
+    the comment fixed on 09-16: that fix skipped NON-elements, and an
+    element ahead of the snapshot (an ignorable extension, or one a
+    script appended) was still read as it. It has no properties, so the
+    live ones were emptied and nothing put back — the old formatting
+    gone, nothing raised. Measured over 81,736 records in 2,954 local
+    manuscripts, none has the shape today; a reject that silently empties
+    formatting is the shape worth refusing to allow anyway."""
+    tag = record.removesuffix("Change")
+    inner = f"{ahead}<w:{tag}>{old}</w:{tag}>"
+    xml = document(wrapper.format(live=live, d=D, inner=inner))
+
+    out = reject(xml)
+
+    assert f"<w:{tag}>{old}</w:{tag}>" in out, out
+    assert live not in out
+
+
+def test_a_formatting_record_with_TWO_snapshots_restores_the_FIRST():
+    """Malformed, and ordinary in the way two copies of one property are
+    (a record salvaged out of two): Word reads the first, as it reads the
+    first of two `w:sz`. Restoring the second would be a formatting the
+    author's Word never showed."""
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        '<w:rPr><w:sz w:val="24"/></w:rPr><w:rPr><w:sz w:val="28"/></w:rPr>'
+        "</w:rPrChange></w:rPr><w:t>note</w:t></w:r></w:p>")
+
+    out = reject(xml)
+
+    assert '<w:rPr><w:sz w:val="24"/></w:rPr>' in out, out
+    assert '<w:sz w:val="28"/>' not in out

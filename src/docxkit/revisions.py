@@ -730,19 +730,20 @@ def _apply_property_changes(root: _Element, mode: str,
             carried = [c for c in parent if c is not change
                        and isinstance(c.tag, str)
                        and c.tag.rsplit("}", 1)[-1] in names]
-            # the snapshot is the change's only ELEMENT child; a change
-            # element with none records "there were no properties", and
-            # emptying the parent is then exactly right. XML allows a
-            # comment anywhere and lxml counts one as a child, so with a
-            # comment AHEAD of the snapshot `list(change)[0]` was the
-            # comment — whose children, of which it has none, were then
-            # restored in the snapshot's place, and the run came back
-            # with no properties at all (2026-09-16). The carry filter
-            # just above steps over non-elements for the same reason.
-            snapshot = [c for c in change if isinstance(c.tag, str)]
+            # the snapshot is the child the record's schema NAMES — `w:rPr`
+            # in a `w:rPrChange`, `w:tblGrid` in a `w:tblGridChange` — and a
+            # record with none says "there were no properties", for which
+            # emptying the parent is exactly right. Not the first child:
+            # XML allows a comment anywhere (2026-09-16), and markup
+            # compatibility an ignorable extension element (2026-09-17),
+            # and with either AHEAD of the snapshot the first child was
+            # restored in its place — no properties, so the run came back
+            # with none and nothing said. The first of two snapshots is
+            # the one Word reads.
+            snapshot = change.find(W + tag.removesuffix("Change"))
             for child in list(parent):
                 parent.remove(child)
-            for child in (snapshot[0] if snapshot else ()):
+            for child in (snapshot if snapshot is not None else ()):
                 parent.append(child)
             for i, child in enumerate(carried):
                 if side == "first":
