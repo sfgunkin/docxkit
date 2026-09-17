@@ -1371,6 +1371,17 @@ def _show_state(label: str, st: object) -> None:
     if st.by_author:
         who = ", ".join(f"{a} ({n})" for a, n in st.by_author.items())
         print(f"      by: {who}")
+    if st.word_only:
+        # "1 pending" reads as "the author has not finished". For these
+        # it also means "and nothing here will ever finish it": accept
+        # and reject leave a `w:cellMerge` standing, so the file is a
+        # proposal until somebody opens it in Word. Said where the
+        # author looks first, because the alternative is a count with no
+        # act that clears it (BACKLOG S1, 2026-09-18).
+        listed = ", ".join(f"w:{kind} ({n})"
+                           for kind, n in sorted(st.word_only.items()))
+        print(f"      {listed}: only Word can clear that — accept and "
+              f"reject here leave it standing")
     for kind, ids in st.notes_unordered.items():
         # Nothing else says this. The file renders correctly, the counts
         # are right and every text gate passes — and the next Compare

@@ -185,6 +185,27 @@ def test_status_exits_1_on_a_proposal(monkeypatch, project, capsys):
     assert "by: Revision (1)" in out
 
 
+def test_status_names_a_pending_kind_only_WORD_can_clear(monkeypatch,
+                                                         project, capsys):
+    """"1 pending" reads as "the author has not finished", and for a
+    cell merge it also means "and nothing here will ever finish it":
+    `accept` and `reject` leave a `w:cellMerge` standing, so the line
+    that sends the author to Word is the whole repair (BACKLOG S1)."""
+    merge = ('<w:tbl><w:tr><w:tc><w:tcPr><w:cellMerge w:id="8" '
+             'w:author="Revision" w:date="2026-01-01T00:00:00Z" '
+             'w:vMerge="cont"/></w:tcPr>'
+             + para(run("cell")) + "</w:tc></w:tr></w:tbl>")
+    write(project.working, make_parts(merge))
+
+    code, _ = run_cli(monkeypatch, "revision", "status",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "w:cellMerge" in out, out
+    assert "only Word can" in out, out
+
+
 def test_status_names_the_part_the_author_cannot_see(monkeypatch, project,
                                                      capsys):
     """Review > Next walks the body only, so "1 pending" sends an author

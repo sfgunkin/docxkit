@@ -331,6 +331,43 @@ def test_force_does_not_override_the_lock(tmp_path, monkeypatch):
         revision.baseline(paper, force=True)
 
 
+def test_the_pending_refusal_NAMES_a_kind_only_word_can_clear(tmp_path):
+    """It quoted a count and said "the author accepts or rejects them;
+    this tool never does" — true, and useless for a cell merge, because
+    accepting or rejecting one HERE leaves it standing. The author is
+    left looking for a flag that does not exist, and there is none to
+    find: the way out is Word. So the refusal names the kind and says
+    so (BACKLOG S1, 2026-09-18)."""
+    from docxkit.errors import BaselinePending
+
+    paper = _scaffold(tmp_path, KINDS["cellMerge"])
+
+    with pytest.raises(BaselinePending) as refused:
+        revision.baseline(paper)
+
+    said = str(refused.value)
+    assert "1 revision(s) pending" in said, said
+    assert "w:cellMerge" in said, said
+    assert "Word" in said, said
+    assert not paper.prev.exists()
+
+
+def test_the_pending_refusal_says_nothing_about_word_when_it_need_not(
+        tmp_path):
+    """The common refusal stays the one it was. A sentence about a kind
+    the file does not carry is a sentence that sends the reader to Word
+    for an insertion they can resolve where they are."""
+    from docxkit.errors import BaselinePending
+
+    paper = _scaffold(tmp_path, KINDS["ins"])
+
+    with pytest.raises(BaselinePending) as refused:
+        revision.baseline(paper)
+
+    assert "w:cellMerge" not in str(refused.value)
+    assert "only Word" not in str(refused.value)
+
+
 def test_an_unlocked_settled_file_still_baselines(tmp_path):
     paper = _scaffold(tmp_path, para(run("settled prose")))
     written = revision.baseline(paper).prev

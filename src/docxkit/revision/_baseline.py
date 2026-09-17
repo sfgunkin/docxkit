@@ -15,7 +15,7 @@ from ..hygiene import restore_math_glyphs
 from . import _ledger, _timing
 from ._config import Paper
 from ._losses import _names, _unmet, losses
-from ._state import state
+from ._state import State, state
 from ._verdict import Verdict, log_batch, verdict
 
 
@@ -43,6 +43,36 @@ class BaselineReport:
     no verdict to write, or when the log has no table to take it — the
     caller says so, rather than this writing a table nobody asked for
     (see :func:`log_batch`)."""
+
+
+def _only_in_word(current: State) -> str:
+    """The sentence for pending kinds no path through this tool clears.
+
+    The refusal below says "the author accepts or rejects them; this
+    tool never does", which is true of every kind and useless for one
+    of them: `accept` and `reject` leave a `w:cellMerge` exactly where
+    it was (:data:`docxkit.revisions.WORD_ONLY`), so a manuscript
+    carrying one reads as a proposal for ever and the reader goes
+    looking for the flag that clears it. There is none, and the answer
+    is not `force` either — that adopts the merge as the truth, and the
+    next Compare rebuilds from accepted content and flattens it.
+
+    Empty when the file carries none, because a sentence about a kind
+    that is not there sends a reader to Word for an insertion they can
+    resolve where they are.
+    """
+    if not current.word_only:
+        return ""
+    listed = ", ".join(f"w:{kind} ({n})"
+                       for kind, n in sorted(current.word_only.items()))
+    return (f"\nOf those, only Word can clear {listed}: `accept` and "
+            f"`reject` here leave that kind standing, so no docxkit "
+            f"command and no flag will settle it (see "
+            f"`docxkit.revisions.WORD_ONLY` for why applying one is a "
+            f"different operation). Open {current.path.name} in Word, "
+            f"accept or reject the table change there, save, and run "
+            f"this again. `force` would adopt it as the truth instead, "
+            f"and the next Compare flattens what it adopts.")
 
 
 @_timing.timed("baseline")
@@ -170,7 +200,8 @@ def baseline(paper: Paper, *, force: bool = False,
         raise BaselinePending(
             f"{paper.working.name} is a proposal, not the truth: "
             f"{current.pending} revision(s) pending ({where}). The "
-            f"author accepts or rejects them; this tool never does.")
+            f"author accepts or rejects them; this tool never does."
+            + _only_in_word(current))
     if repaired is not None:
         # `state` above read the file on disk, which is the unrepaired
         # one — and reads the same either way: restoring a glyph rewrites
