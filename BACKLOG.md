@@ -46,6 +46,77 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S1 — eight defects in edit.py's link and insertion readers
+
+<!-- status: open -->
+
+Eight defects, found 2026-09-18 by the two `edit.py` survivor rounds
+(389 survivors between them, against the corrected harness). They are filed
+together because they are one cluster: every one of them is a reader of
+`edit.py`'s link and insertion machinery answering a question about a RUN
+when the question was about a construct that does not respect run
+boundaries. Repros are in `scratchpad\agents\edit_links\defect_1..5.py` and
+`scratchpad\agents\edit_replace\defect_1..4.py`.
+
+**S1 — `insert_in_para` puts words AFTER a paragraph that is only an
+equation, and refuses that paragraph's true end.** `run_spans`' cursor stops
+at the last `w:r`, so maths after it is outside the paragraph as
+`insert_in_para` counts. A display-equation paragraph
+(`<w:p><m:oMathPara>…</m:oMathPara></w:p>`) has cursor 0, offset 0 falls to
+the `not runs` branch, and the words land before `</w:p>` — after the
+equation, silently, never reaching the `_maths_start` branch that e495ee1
+added for exactly this. In `"where [x]"` the end offset 7 is refused as
+"outside the paragraph's 6 visible characters". Measured `'xLet '` for both
+the display and the inline case. `test_insert_spans.py::
+test_the_END_of_a_paragraph_counts_the_equation_too` states the intent this
+violates — with a paragraph that ends on a run. (edit_replace defect_3.py)
+
+**S2 — `_plain_runs` deletes everything in a label that is not a `w:t`
+run.** A `footnoteReference` inside an element label or a field result, and a
+`w:br` inside a label, are dropped by `remove_link` and by the `remove_links`
+sweep, leaving the note orphaned in `footnotes.xml`. Found independently by
+both rounds. (edit_links defect_4.py, edit_replace defect_1.py — one defect,
+counted once)
+
+**S3 — a field with an EMPTY cached result is crossed and moved.**
+`_label_spans_in` skips zero-width runs, so a REF field whose result is empty
+is neither a label nor a marker: the match is written into the run before it
+and the field's four zero-width runs stay after the new words, so Word writes
+`"Table 3"` back in the wrong place on its next update. Measured through both
+`replace_in_para` and `replace_keeping_links`. An empty `w:hyperlink` element
+in the same position IS refused, so the two forms of one construct get
+opposite answers. (edit_replace defect_2.py)
+
+**S4 — the "a marker sits exactly where the new words go" refusal only sees
+a marker with a run to itself.** `_insert_between_labels` tests
+`lo == hi == at`, so a reference sharing a run with prose at that offset is
+missed: one ENDING the prose run before the label gets no refusal and the
+words go after it; one STARTING the run after the label gets no refusal and
+the words go BEFORE it — the reading `allow_notes=True` promises it never
+picks. The same two paragraphs with the marker in its own run are refused.
+(edit_replace defect_4.py)
+
+**S5 — `_restyle` duplicates a run's tab or note reference.** (edit_links
+defect_1.py)
+
+**S6 — `_shielded` asks only the FIRST enclosing bookmark.** (edit_links
+defect_3.py)
+
+**S7 — `_links_to` mispairs a nested field.** It still pairs with
+`_FIELD_RE`, the first-`end` pairing that `effef6c` replaced everywhere else
+with the depth-paired `_xml.fields`. Re-verified after that landed: it
+still reproduces. (edit_links defect_5.py — numbering per that round)
+
+**S8 — `remove_links` splices nested links with stale offsets.** (edit_links
+defect_5.py)
+
+The through-line is the one the open `citations.remove_outer_field` entry
+names too: a span whose bounds are RUN boundaries is the right answer to
+"where is this, roughly" and the wrong one for any caller that SPLICES,
+DELETES or INSERTS at those bounds. `_xml.fields` (effef6c) is the reader
+that answers with the construct's own offsets, and the callers here have not
+been moved onto it.
+
 ### S1 — `citations.remove_outer_field` deletes the prose sharing a field's run
 
 <!-- status: open -->
