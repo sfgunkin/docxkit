@@ -271,9 +271,25 @@ narrower than the question it stood in for.
 Settle it the same way either time, and in one sitting: BREAK the thing
 the test checks — put the part name in the subpackage, declare the flag
 inline, write the call the other way — run that test alone, and watch
-whether it goes red. Put the file back with `git checkout`. A claim that
-a test cannot fail needs showing rather than arguing, and it takes a
-minute.
+whether it goes red.
+
+```
+python tools/can_it_fail.py tests/test_part_names.py::test_a_part_is_named_in_one_place \
+    --in src/docxkit/revision/_promote.py \
+    --insert "_ = 'word/document.xml'" --before "# ---- promote"
+```
+
+It runs the one test, applies the break, runs it again and restores the
+file with `git checkout` whichever way it went: `0` it can fail, `1` it
+CANNOT fail for that change, `2` refused or could not answer — a test
+already red answers nothing, and an anchor that is not in the file is
+not a verdict. It refuses over a file with uncommitted work in it, for
+the reason the restore is what it is.
+
+Not a gate, and not a suite: there is nothing to run it over until you
+suspect something, and the thing being asked is about ONE test. A claim
+that a test cannot fail needs showing rather than arguing, and this
+makes it a minute.
 
 ### Mutation testing
 
