@@ -817,6 +817,33 @@ def test_a_marker_INSIDE_the_prose_run_before_the_words_is_not_in_the_way():
     assert visible_text(out) == "A claim here (see Sen 1999)."
 
 
+@pytest.mark.parametrize("before,after,new,want", [
+    pytest.param('<w:r><w:t xml:space="preserve">A claim (</w:t>'
+                 '<w:footnoteReference w:id="11"/></w:r>', run(")."),
+                 "see Sen 1999", "A claim (see Sen 1999).",
+                 id="ENDS_the_run_before"),
+    pytest.param(run("A claim ("),
+                 '<w:r><w:footnoteReference w:id="11"/><w:t>).</w:t></w:r>',
+                 "Sen 1999 and others", "A claim (Sen 1999 and others).",
+                 id="STARTS_the_run_after"),
+])
+def test_a_marker_where_the_words_go_is_seen_WHEREVER_it_sits(before, after,
+                                                              new, want):
+    """Whether the marker has a run to itself is a fact about the
+    producer, not about the sentence. Word gives a reference its own
+    run; a build script need not, and then the same marker at the same
+    offset — closing the prose run before the label, or opening the one
+    after it — went unseen, and "Sen 1999¹ and others" against "Sen 1999
+    and others¹" was decided in silence."""
+    p = para(before, SEN, after)
+
+    with pytest.raises(AnchorError, match="footnote 11 sits exactly where"):
+        replace_keeping_links(p, "Sen 1999", new)
+
+    out = replace_keeping_links(p, "Sen 1999", new, allow_notes=True)
+    assert visible_text(out) == want
+
+
 def test_a_marker_where_new_words_go_PAST_256_characters_is_refused():
     """The marker's zero width is `start == stop` of ONE run, and its
     place is an offset computed elsewhere: past 256, identity says

@@ -92,12 +92,26 @@ _NOTE_REF_RE = re.compile(r"<w:(footnote|endnote|comment)Reference\b[^>]*/>")
 _ID_ATTR_RE = re.compile(r'\bw:id="([^"]+)"')
 
 
+def _notes_in(run_xml: str) -> list[tuple[int, str]]:
+    """Every note this run anchors: where it SITS in the run, and its name.
+
+    Where, because a reference need not have a run to itself. Word gives
+    it one — it carries the FootnoteReference character style — but a
+    build script writes ``<w:t>A claim (</w:t><w:footnoteReference/>``
+    in one run as readily, and the marker is then at the run's end, not
+    at its start. The offset is in the run's own visible text, so a
+    caller adds the run's start to place it in the paragraph.
+    """
+    return [(len(visible_text(run_xml[:m.start()])),
+             f"{m.group(1)} {nid.group(1)}"
+             if (nid := _ID_ATTR_RE.search(m.group(0))) else m.group(1))
+            for m in _NOTE_REF_RE.finditer(run_xml)]
+
+
 def _note_in(run_xml: str) -> str | None:
     """``"footnote 11"`` if this run anchors a note, else None."""
-    if (m := _NOTE_REF_RE.search(run_xml)) is None:
-        return None
-    nid = _ID_ATTR_RE.search(m.group(0))
-    return f"{m.group(1)} {nid.group(1)}" if nid else m.group(1)
+    found = _notes_in(run_xml)
+    return found[0][1] if found else None
 
 
 def rep(xml: str, old: str, new: str, n: int = 1, tag: str = "",
@@ -902,9 +916,13 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
       piece — the same refusal, for the same reason, as
       `replace_in_para`'s — or sits exactly where an empty piece's new
       words go, where "Sen 1999¹ and others" and "Sen 1999 and others¹"
-      are both readings of one `new`. ``allow_notes=True`` accepts both:
-      a crossed marker moves to the end of the piece, and inserted words
-      go after a marker at their offset.
+      are both readings of one `new`. Wherever the marker SITS — in a
+      run of its own, as Word writes it, or beside prose in one run —
+      the offset is what it is asked about. ``allow_notes=True`` accepts
+      both: a crossed marker moves to the end of the piece, and inserted
+      words go after a marker at their offset, except where the marker
+      OPENS the run of prose after them; that run is not split, so there
+      the words go before it.
 
     `normalize` matches `old`, and the labels inside `new`, through
     Word's glyph substitutions (:func:`find_normalized`); `new` is
@@ -1012,8 +1030,15 @@ def _insert_between_labels(para_xml: str, runs: list[re.Match[str]],
             f"that gap by hand, or anchor on one label.")
     (place,) = places
     if not allow_notes:
-        for run, (lo, hi) in zip(runs, spans, strict=True):
-            if lo == hi == at and (note := _note_in(run.group(0))):
+        # WHERE the marker sits, not what shape its run has: Word gives a
+        # reference a run of its own, and a run holding one beside prose
+        # puts the same marker at the same offset with `lo == hi` false.
+        # Both were silent until 2026-09-18 — the marker closing the run
+        # before the label took the words after it, the one opening the
+        # run after it took them before, and neither said so.
+        for run, (lo, _hi) in zip(runs, spans, strict=True):
+            if note := next((n for offset, n in _notes_in(run.group(0))
+                             if lo + offset == at), None):
                 raise AnchorError(
                     f"replace_keeping_links: {note} sits exactly where "
                     f"{words[:40]!r} would go, and whether the words go "
