@@ -35,8 +35,10 @@ from .revisions import FINAL, _has_revisions, rows_in_view, view_transform
 _TR_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>", re.DOTALL)
 _TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
 # a merged cell: structure, which is why it lives here and
-# not with the width fitting that also consumes it
-_SPAN_RE = re.compile(r'<w:gridSpan w:val="(\d+)"/>')
+# not with the width fitting that also consumes it. `\s*/>`: other
+# producers close it ` />` (5,183 in 8 of 2,954 corpus packages), and read
+# only as `…"/>` such a merge counted as one column
+_SPAN_RE = re.compile(r'<w:gridSpan w:val="(\d+)"\s*/>')
 # the vertical half of the same story: a continuation cell carries no
 # text, so only the flag distinguishes "empty" from "merged upward"
 _VMERGE_RE = re.compile(r'<w:vMerge(?:\s+w:val="(\w+)")?\s*/>')

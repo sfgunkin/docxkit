@@ -579,3 +579,40 @@ def test_a_TAB_in_a_cell_measures_four_spaces_wide():
 
     assert spaced > plain, "the fixture has to measure a space at all"
     assert tabbed - plain == pytest.approx(4 * (spaced - plain))
+
+
+# --- the same table, its properties closed ` />` -----------------------
+#
+# `<w:sz w:val="20" />` is the element `<w:sz w:val="20"/>` is. Other
+# producers write the space: of 2,954 corpus packages, 32 hold such a
+# `w:sz` (16,373 of them), 32 a `w:b`, 22 a `w:vertAlign`, 13 a
+# `w:gridCol` and 8 a `w:gridSpan` (5,183). The width model read each
+# property only as `…"/>`, so on those documents a size fell back to the
+# table's commonest, a bold or superscript run measured plain, a merged
+# cell counted as one column, and a grid read as absent.
+
+
+def _every_measure() -> str:
+    """A table whose fit depends on each property the model reads."""
+    return doc(tbl(
+        [2000, 1000, 1000],
+        "<w:tr>" + cell(frun("Row label"), w=2000)
+        + cell(frun("A heading spanning both data columns"), w=2000, span=2)
+        + "</w:tr>",
+        "<w:tr>" + cell(frun("A long wrappable label for the row"), w=2000)
+        + cell(frun("-0.250", bold=True) + frun("***", va="superscript"),
+               w=1000)
+        + cell(frun("0.047", sz=28), w=1000) + "</w:tr>"))
+
+
+@pytest.mark.parametrize("element", ["sz", "b", "vertAlign", "gridCol",
+                                     "gridSpan"])
+def test_a_table_fits_the_same_whatever_its_self_close_SPELLING(element):
+    xml = _every_measure()
+    spaced = re.sub(rf"(<w:{element}\b[^>]*?)/>", r"\1 />", xml)
+    assert spaced != xml
+
+    _, want = fit_columns(xml, read_all(xml)[0])
+    _, got = fit_columns(spaced, read_all(spaced)[0])
+
+    assert [c.new for c in got.columns] == [c.new for c in want.columns]

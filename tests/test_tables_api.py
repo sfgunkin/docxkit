@@ -7,6 +7,8 @@ they were the last uncovered branches in the module.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import document, ins, para, row, run, table
 
@@ -365,6 +367,18 @@ def test_grid_columns_exposes_where_the_two_systems_diverge():
     t = read_all(xml)[0]
     assert t.grid_columns(xml, 0) == [0, 1, 3]   # cell 2 starts at column 3
     assert t.grid_columns(xml, 1) == [0, 1, 2, 3]   # no span: they coincide
+
+
+def test_grid_columns_reads_a_span_closed_WITH_A_SPACE():
+    """`<w:gridSpan w:val="2" />` is the same merge (5,183 in 8 corpus
+    packages are written so). Read only as `…"/>`, the merged cell
+    counted as one column and every cell after it sat one column early."""
+    xml = re.sub(r'(<w:gridSpan w:val="\d+")/>', r"\1 />", _spanned_table())
+    assert '" />' in xml
+    t = read_all(xml)[0]
+
+    assert t.grid_columns(xml, 0) == [0, 1, 3]
+    assert t.grid_rows(xml)[0] == ["LABEL", "MERGED", "MERGED", "LAST"]
 
 
 def test_grid_columns_rejects_a_row_that_is_not_there():

@@ -68,9 +68,14 @@ from .revisions import _has_revisions
 # render — it approximates the layout engine, it is not the layout
 # engine.
 
-_GRIDCOL_RE = re.compile(r'<w:gridCol w:w="(\d+)"/>')
+# Every property the width model reads is closed `\s*/>`: other producers
+# write `<w:sz w:val="20" />`, and of 2,954 corpus packages 32 hold such a
+# `w:sz`, 32 a `w:b`, 22 a `w:vertAlign` and 13 a `w:gridCol`. Read only
+# as `…"/>`, a size fell back to the table's commonest, a bold or raised
+# run measured plain, and a grid read as absent (2026-09-17).
+_GRIDCOL_RE = re.compile(r'<w:gridCol w:w="(\d+)"\s*/>')
 _RUN_RE = RUN_RE                       # the shared definition
-_SZ_RE = re.compile(r'<w:sz w:val="(\d+)"/>')
+_SZ_RE = re.compile(r'<w:sz w:val="(\d+)"\s*/>')
 _ASCII_RE = re.compile(r'<w:rFonts[^>]*w:ascii="([^"]+)"')
 # Word writes w:ascii and w:hAnsi together, but a document from another
 # producer may state only the latter — and the two cover the same Latin
@@ -83,8 +88,9 @@ _HANSI_RE = re.compile(r'<w:rFonts[^>]*w:hAnsi="([^"]+)"')
 # order-bound spelling saw no width in those cells — so `_set_tc_w`
 # wrote a second one beside the one it could not see.
 _TCW_RE = re.compile(r"<w:tcW\b[^>]*/>")
-_BOLD_RE = re.compile(r'<w:b(?: w:val="(?:1|true|on)")?/>')
-_VERT_RE = re.compile(r'<w:vertAlign w:val="(?:superscript|subscript)"/>')
+_BOLD_RE = re.compile(r'<w:b(?: w:val="(?:1|true|on)")?\s*/>')
+_VERT_RE = re.compile(
+    r'<w:vertAlign w:val="(?:superscript|subscript)"\s*/>')
 
 
 _TBLGRID_RE = re.compile(r"<w:tblGrid\b[^>]*>.*?</w:tblGrid>", re.DOTALL)
