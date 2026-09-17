@@ -14,6 +14,11 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — a bare pytest in a worktree tested the installed checkout~~ — FIXED 18.09, `6d501a8`
+
+<!-- status: fixed -->
+
+**FIXED 18.09 in `6d501a8`.** A root `conftest.py` puts this checkout's `src` at `sys.path[0]`, which wins over the editable install's `.pth`. `32dd39d` had closed the same defect for the gate CHAIN only; this closes it for a bare `pytest`, a single test file and an editor's runner. It bites twice, which is why it is a conftest rather than another line in the gate runner: several tests resolve `tools/` through `docxkit.__file__`, since `tools` is not a package and is not installed, so the wrong `docxkit` loads the wrong `tools` — which is how one agent's new-flag tests first `passed` in a worktree before the flag existed there. Measured both ways: a worktree with its own `wordcount.py` renamed reported `18 passed` without the file and fails collection with it. Test: `test_the_docxkit_UNDER_TEST_is_this_checkouts`, pinning the package and the tools directory.
 ### ~~S3 — verify_equivalents exited 0 while reporting killed claims~~ — FIXED 18.09, `723ebe5`
 
 <!-- status: fixed -->
