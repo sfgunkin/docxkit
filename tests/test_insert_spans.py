@@ -257,6 +257,21 @@ def test_the_end_of_a_paragraph_is_BEFORE_a_trailing_tracked_deletion(lead):
     assert out.index(" now") < out.index("<w:del ")
 
 
+def test_an_insert_INSIDE_a_tracked_insertion_joins_it():
+    """The allowance the edge rule does not extend, and the reason the
+    third family has no flag: a manuscript in a review round has whole
+    paragraphs inside `w:ins`, and refusing to write in one would refuse
+    the round. Strictly inside, with the insertion's own words on both
+    sides, the new words join it — which is what a caller editing
+    tracked text is asking for."""
+    p = para(run("A claim ", preserve=True), ins("here and now"))
+
+    out = insert_in_para(p, len("A claim here and"), " right")
+
+    assert text_of(out) == "A claim here and right now"
+    assert out.index(" right") < out.index("</w:ins>")
+
+
 def test_the_END_of_a_long_paragraph_that_ENDS_on_an_equation():
     """The paragraph's end is `len(visible_text(...))` and the caller's
     offset is its own int: equal past 256 and not the same object, where
