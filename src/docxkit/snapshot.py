@@ -16,8 +16,8 @@ round's name in them (BACKLOG S4). What each is FOR:
   after its first new paragraph.
 * :func:`resolve` — does each anchor a protocol quotes occur exactly once,
   inside the paragraph it names; and what does its span meet there — the
-  equations, the links, a link LABEL it crosses (which
-  :func:`docxkit.edit.replace_in_para` refuses), the run formats, the
+  equations, the links, a LABEL it crosses — a link's or a field's result,
+  which :func:`docxkit.edit.replace_in_para` refuses — the run formats, the
   trailing whitespace. A protocol states anchors as :class:`Anchor`
   lines, :func:`parse_spec` reads a file of them.
 
@@ -62,10 +62,9 @@ from ._xml import (
     printed_text,
     ref_anchor,
     run_spans,
-    span_holding,
     visible_text,
 )
-from .edit import _HYPERLINK_RUN
+from .edit import _label_spans_in, _run_walk
 from .equations import OMATH_RE
 from .errors import AnchorError
 from .find import body_elements, table_index_at
@@ -413,7 +412,8 @@ class Resolution:
     links: tuple[str, ...]
     """The targets of the internal links in the target paragraph."""
     crossing: tuple[str, ...]
-    """Each link LABEL the anchor's span overlaps, whole."""
+    """Each LABEL the anchor's span overlaps, whole: a link's, or a
+    field's result — what `replace_in_para` refuses to write across."""
     formats: int
     """Distinct run properties across the span."""
     trailing: str
@@ -451,16 +451,24 @@ def _spread(where: Iterable[tuple[str, int]]) -> str:
 
 def _span_facts(xml: str, span: tuple[int, int]
                 ) -> tuple[tuple[str, ...], int]:
-    """The link labels a span crosses, and how many run formats it covers.
+    """The labels a span crosses, and how many run formats it covers.
 
-    A run is a label on `replace_in_para`'s own definition — styled as a
-    hyperlink, or inside a ``w:hyperlink`` — because the question is
-    whether that edit will refuse. Offsets are the READER's
-    (:func:`docxkit._xml.run_spans`), the ones the anchor was found at.
+    The question is whether `replace_in_para` will refuse, so a label is
+    ITS label — :func:`docxkit.edit._label_spans_in`, read here and not
+    restated: a link's text styled or not, a field's result (Word's own
+    ``REF … \\h`` styles none), and two links side by side kept two. The
+    copy this held until 2026-09-17 knew the style and the element only,
+    and joined any label runs that touched: an anchor across an unstyled
+    cross-reference read ``crossing ()`` and the edit refused it, and two
+    citations with only a tracked deletion of "; " between them crossed
+    one label, «Sen 1999Deaton 2013», that no link has.
+
+    Edit groups the runs in EDITABLE offsets and the anchor was found at
+    the READER's (:func:`docxkit._xml.run_spans`), which also count the
+    maths. Both walks number the same `RUN_RE` runs, so each label is
+    measured back from its first run and its last.
     """
     runs, spans, _end = run_spans(xml)
-    links = [(m.start(), m.end()) for m in HYPERLINK_ANY_RE.finditer(xml)]
-    labels: list[list[int]] = []
     formats: set[str] = set()
     for run, (s, e) in zip(runs, spans, strict=True):
         if e <= s:
@@ -469,12 +477,8 @@ def _span_facts(xml: str, span: tuple[int, int]
             own = own_properties(run.group(0), "rPr")
             formats.add(" ".join(live_properties(own[2]).split())
                         if own else "")
-        if (_HYPERLINK_RUN in run.group(0)
-                or span_holding(run.start(), links) is not None):
-            if labels and labels[-1][1] == s:
-                labels[-1][1] = e
-            else:
-                labels.append([s, e])
+    labels = [(spans[label.first][0], spans[label.last][1])
+              for label in _label_spans_in(xml, *_run_walk(xml))]
     text = visible_text(xml)
     crossing = tuple(text[s:e] for s, e in labels if overlaps((s, e), span))
     return crossing, len(formats)

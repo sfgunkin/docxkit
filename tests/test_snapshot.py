@@ -32,7 +32,9 @@ from conftest import (
 )
 
 from docxkit import snapshot as snap
+from docxkit._xml import PARA_RE, visible_text
 from docxkit.cli import main
+from docxkit.edit import replace_in_para
 from docxkit.errors import AnchorError
 
 #: Word's separator notes, in every notes part.
@@ -763,10 +765,10 @@ FILLER = "word " * 60
 
 def test_CROSSING_names_each_of_TWO_links_whole_far_into_a_paragraph():
     """Two links, the second fragmented across runs, and an anchor that
-    crosses only the second. Its runs are one label because the second
-    starts where the LAST label ended — not the first label, and not
-    merely somewhere after the last, which would swallow the prose
-    between the two links into one label. Past offset 256 for `is`."""
+    crosses only the second: its two runs are one label, named whole, and
+    neither the first link nor the prose between the two joins it. Past
+    offset 256, where an identity test on two offsets stops reading as
+    `==`."""
     fragmented = ('<w:hyperlink w:anchor="Deaton2013">'
                   + LINK_RUN.format("Deaton ") + LINK_RUN.format("2013")
                   + "</w:hyperlink>")
@@ -778,6 +780,111 @@ def test_CROSSING_names_each_of_TWO_links_whole_far_into_a_paragraph():
     (r,) = _resolve("P1=and Deaton 2013 agree", parts=parts)
 
     assert r.crossing == ("Deaton 2013",)
+
+
+#: What can stand between two citations and put nothing in the reader's
+#: text: a "; " the author deleted with tracking on, a tab, a note marker.
+UNSEEN = {
+    "tracked_deletion": dele("; "),
+    "tab": "<w:r><w:tab/></w:r>",
+    "note_marker": ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+                    '</w:rPr><w:footnoteReference w:id="2"/></w:r>'),
+}
+#: Word's own cross-reference, as Insert ▸ Cross-reference writes it: a
+#: `REF … \h` field whose result states no style at all.
+CROSS_REFERENCE = para(run("As "), field("REF _Ref123 \\h", "Table 1"),
+                       run(" shows.", preserve=True))
+
+
+def two_citations(between: str, *, fields: bool = False) -> str:
+    """`As (Sen 1999|Deaton 2013) argue.`, the two links touching in the
+    reader's text with `between` — which prints nothing — at the bar."""
+    link = hyperlink_field if fields else element_link
+    return para(run("As ("), link("Sen1999", "Sen 1999"), between,
+                link("Deaton2013", "Deaton 2013"), run(") argue."))
+
+
+@pytest.mark.parametrize("fields", [False, True], ids=["elements", "fields"])
+@pytest.mark.parametrize("between", sorted(UNSEEN))
+def test_CROSSING_keeps_two_links_APART_with_nothing_visible_between(
+        between, fields):
+    """Two citations whose labels touch in the reader's text are still two
+    links. Joined into one because the second starts where the first
+    ended, an anchor across either names «Sen 1999Deaton 2013» — a label
+    no link has, and not the one `replace_in_para` would refuse by."""
+    parts = make_parts(two_citations(UNSEEN[between], fields=fields))
+
+    second, first, both = _resolve("P1=Deaton 2013) argue", "P1=As (Sen",
+                                   "P1=1999Deaton", parts=parts)
+
+    assert second.crossing == ("Deaton 2013",)
+    assert first.crossing == ("Sen 1999",)
+    assert both.crossing == ("Sen 1999", "Deaton 2013")
+
+
+def test_CROSSING_names_the_unstyled_RESULT_of_a_CROSS_REFERENCE():
+    """`replace_in_para` refuses a match in a field's result — Word writes
+    the result back on its next update, beside the new words — and Word's
+    own `REF … \\h` styles its result not at all. Read by the style alone,
+    the anchor was `crossing ()`: the way reported clear, and the edit the
+    protocol then wrote refused."""
+    parts = make_parts(CROSS_REFERENCE)
+
+    across, into, after = _resolve("P1=Table 1 shows", "P1=As Tab",
+                                   "P1=shows.", parts=parts)
+
+    assert across.crossing == into.crossing == ("Table 1",)
+    assert after.crossing == ()
+
+
+SHAPES = {
+    **{f"elements_{k}": two_citations(v) for k, v in UNSEEN.items()},
+    **{f"fields_{k}": two_citations(v, fields=True)
+       for k, v in UNSEEN.items()},
+    "cross_reference": CROSS_REFERENCE,
+    "styled_field_link": para(run("A claim ("),
+                              hyperlink_field("Sen1999", "Sen 1999"),
+                              run(").")),
+    "fragmented_element": para(run("As "),
+                               '<w:hyperlink w:anchor="Sen1999">'
+                               + LINK_RUN.format("Sen ")
+                               + LINK_RUN.format("1999") + "</w:hyperlink>",
+                               run(" argues.", preserve=True)),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_CROSSING_agrees_with_replace_in_para_on_EVERY_anchor(shape):
+    """`crossing` is a prediction of one refusal, so it is held to that
+    refusal rather than to a list of labels written out by hand: every
+    anchor the paragraph can hold — each substring occurring once — crosses
+    a label exactly when `replace_in_para` refuses to write over it. Notes
+    are allowed, because crossing a marker is a refusal of its own that
+    `crossing` does not report."""
+    parts = make_parts(SHAPES[shape])
+    (para_xml,) = [m.group(0) for m in PARA_RE.finditer(
+        parts["word/document.xml"].decode("utf-8"))]
+    text = visible_text(para_xml)
+    anchors = sorted({text[i:j] for i in range(len(text))
+                      for j in range(i + 1, len(text) + 1)
+                      if text.find(text[i:j]) == i
+                      and text.find(text[i:j], i + 1) < 0})
+
+    resolved = snap.resolve(parts, [snap.Anchor("P1", "present", a)
+                                    for a in anchors])
+
+    disagree = []
+    for anchor, r in zip(anchors, resolved, strict=True):
+        try:
+            replace_in_para(para_xml, anchor, "X", allow_notes=True)
+        except AnchorError:
+            refused = True
+        else:
+            refused = False
+        if bool(r.crossing) != refused:
+            disagree.append((anchor, r.crossing, refused))
+    assert len(anchors) > 100
+    assert not disagree
 
 
 def test_a_note_MARKER_inside_the_span_is_not_a_FORMAT():
