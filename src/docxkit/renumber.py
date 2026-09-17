@@ -430,8 +430,12 @@ def remap(xml: str, label: str, mapping: dict[int, int], *,
 
 _FN_REF_RE = re.compile(r'(<w:footnoteReference\b[^>]*?w:id=")(-?\d+)(")')
 _FN_NOTE_RE = re.compile(r'(<w:footnote\b[^>]*?w:id=")(-?\d+)(")')
-_FN_EL_RE = re.compile(r'<w:footnote\b[^>]*?w:id="(-?\d+)".*?</w:footnote>',
-                       re.DOTALL)
+# A whole note element, the EMPTY `<w:footnote w:id="1"/>` included: it
+# holds an id and a place in the order like any other. Read as an open
+# tag it ran on to the next note's close, so the note after it was never
+# counted as stored and moved only as the empty one's tail (2026-09-17).
+_FN_EL_RE = re.compile(r'<w:footnote\b[^>]*?w:id="(-?\d+)"[^>]*?'
+                       r"(?:(/)>|(?<!/)>.*?</w:footnote>)", re.DOTALL)
 #: Word's separator and continuation notes. They have no reference, so
 #: they are never renumbered and never sorted into the sequence.
 _RESERVED = {0, -1}

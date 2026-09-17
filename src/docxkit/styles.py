@@ -807,8 +807,11 @@ def raised_prose(parts: dict[str, bytes]) -> list[Raised]:
 #: Word's separator and continuation notes sit at the head of the part
 #: and a long note runs to several paragraphs, so "note 7" was footnote
 #: 5. The id is what every other message in the package names a note by.
+#: `(?<!/)>`: an EMPTY `<w:footnote w:id="4"/>` holds no run to name,
+#: and read as an open tag its span ran on to note 5's close, so note
+#: 5's finding was labelled "fn 4" (2026-09-17).
 _NOTE_EL_RE = re.compile(r'<w:(footnote|endnote)\b[^>]*w:id="(-?\d+)"'
-                         r"[^>]*>.*?</w:\1>", re.DOTALL)
+                         r"[^>]*(?<!/)>.*?</w:\1>", re.DOTALL)
 
 
 def _note_at(spans: list[tuple[int, int, str]], at: int) -> str | None:

@@ -147,6 +147,16 @@ def test_an_ENDNOTE_is_read_too():
         ("word/endnotes.xml", "en 5")]
 
 
+def test_a_finding_names_its_OWN_note_after_an_EMPTY_one():
+    """`<w:footnote w:id="4"/>` opens nothing. Read as an open tag, the
+    span labelled 4 ran on to note 5's close, and the finding sent the
+    reader to a note with nothing in it."""
+    found = raised_prose(parts('<w:footnote w:id="4"/>'
+                               + note(MARK + styled(PROSE))))
+
+    assert [r.where for r in found] == ["fn 5"]
+
+
 # --------------------------------------------------- what it stays quiet on
 
 

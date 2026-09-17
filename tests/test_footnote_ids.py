@@ -167,3 +167,26 @@ def test_notes_STORED_out_of_order_come_back_in_id_order():
     real = [int(i) for i in ids if int(i) > 0]
     assert real == sorted(real), ids
     assert real == [1, 2, 3], ids
+
+
+def test_an_EMPTY_note_is_an_element_of_its_own_and_moves_whole():
+    """`<w:footnote w:id="1"/>` has no body and no close tag. Read as an
+    open tag it ran on to note 2's close, so the part stored ONE note:
+    the audit reported the body's reference to note 2 as pointing at
+    nothing, and the renumbering refused a document it can reorder.
+    The empty element is kept, whole, under its new id."""
+    parts = _parts([2, 1])
+    stored = parts["word/footnotes.xml"].decode("utf-8")
+    parts["word/footnotes.xml"] = stored.replace(
+        note("note text 1", nid=1), '<w:footnote w:id="1"/>').encode("utf-8")
+
+    assert renumber.footnote_order(parts) == ([2, 1], [1, 2])
+    (finding,) = renumber.footnote_audit(parts)
+    assert "do not follow reference order" in finding
+
+    assert renumber.footnotes(parts) == {2: 1, 1: 2}
+
+    xml = parts["word/footnotes.xml"].decode("utf-8")
+    assert renumber.footnote_order(parts) == ([1, 2], [1, 2])
+    assert xml.count('<w:footnote w:id="2"/>') == 1
+    assert xml.index("note text 2") < xml.index('<w:footnote w:id="2"/>')

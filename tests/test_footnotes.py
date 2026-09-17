@@ -1573,3 +1573,53 @@ def test_a_half_SILENT_note_lists_its_stated_size_before_NOTHING():
     (odd,) = report.outliers
     assert odd.stated == (20, None)
     assert "states 10pt, nothing" in str(odd)
+
+
+# --- an EMPTY definition is a note, and only that note ---------------------
+#
+# `<w:footnote w:id="3"/>` is a definition with no body. The pattern read
+# its `/>` as an open tag and ran on to the NEXT note's close, so note 4
+# was read as note 3's body and never listed at all: the orphan check
+# named the wrong note, the pruner could not see the shell, and `add`
+# handed out an id the part already held. Found by widening the regex
+# registry (2026-09-17); no package of the 2,954 in the corpus holds one.
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_an_EMPTY_definition_is_listed_and_does_not_swallow_the_next(kind):
+    xml = (f'<w:{kind}s><w:{kind} w:id="3"/><w:{kind} w:id="4"><w:p><w:r>'
+           f"<w:t>four</w:t></w:r></w:p></w:{kind}></w:{kind}s>")
+
+    found = footnotes.find_all(xml, kind=kind)
+
+    assert [(n.id, n.text) for n in found] == [("3", ""), ("4", "four")]
+    assert xml[found[0].start:found[0].end] == f'<w:{kind} w:id="3"/>'
+    assert found[1].xml.startswith(f'<w:{kind} w:id="4">')
+
+
+def test_a_SELF_CLOSING_shell_is_pruned_and_the_note_after_it_kept():
+    """The shell is the orphan, not the note behind it. Read as one
+    element, the pair was an orphan 3 holding note 4's words — a real
+    loss by `empty`, so nothing was pruned and the report named a note
+    that says nothing."""
+    parts = _paper((4,), '<w:footnote w:id="3"/>', _definition(4, "Four."))
+    want = _paper((4,), _definition(4, "Four."))["word/footnotes.xml"]
+    shell = footnotes.Orphan("footnote", "3", "", 0)
+
+    assert footnotes.orphans(parts) == [shell]
+    assert footnotes.prune_orphans(parts) == [shell]
+    assert parts["word/footnotes.xml"] == want
+
+
+def test_add_does_not_reuse_the_id_of_a_note_behind_an_EMPTY_one():
+    """"One past the highest" over the ids the part holds. With note 4
+    swallowed into the shell before it, the highest seen was 3 and the
+    new note was given 4 — a second definition under an id in use."""
+    parts = _paper((4,), '<w:footnote w:id="3"/>', _definition(4, "Four."),
+                   prose="A new claim.")
+
+    new = footnotes.add(parts, after="A new claim.", text="Five.")
+
+    assert new == "5"
+    notes_xml = parts["word/footnotes.xml"].decode("utf-8")
+    assert [f.id for f in footnotes.find_all(notes_xml)] == ["3", "4", "5"]
+    assert parses(notes_xml)

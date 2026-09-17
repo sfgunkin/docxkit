@@ -63,10 +63,15 @@ __all__ = [
     "sizes",
 ]
 
-_FOOTNOTE_RE = re.compile(r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)'
-                          r"</w:footnote>", re.DOTALL)
-_ENDNOTE_RE = re.compile(r'<w:endnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)'
-                         r"</w:endnote>", re.DOTALL)
+# A definition may be EMPTY — `<w:footnote w:id="3"/>` — and is still a
+# note: `orphans` must see its id, `prune_orphans` must cut exactly it,
+# and `add` must not hand its id out again. So the slash is CAPTURED,
+# not guarded away. Read as an open tag, the empty one ran on to the
+# NEXT note's close and note 4 was never listed at all (2026-09-17).
+_FOOTNOTE_RE = re.compile(r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*'
+                          r"(?:(/)>|(?<!/)>(.*?)</w:footnote>)", re.DOTALL)
+_ENDNOTE_RE = re.compile(r'<w:endnote\b[^>]*w:id="(-?\d+)"[^>]*'
+                         r"(?:(/)>|(?<!/)>(.*?)</w:endnote>)", re.DOTALL)
 #: An endnote is a footnote at the back of the paper: same element shape,
 #: same reserved ids, same reason a lost one is invisible. A check that
 #: covered only the footnotes would be a gate that cannot fail for any
