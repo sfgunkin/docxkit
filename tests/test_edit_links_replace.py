@@ -18,6 +18,10 @@ imported four run-walk helpers `edit` hands out without declaring them.
 """
 from __future__ import annotations
 
+import threading
+from collections.abc import Callable
+from enum import StrEnum
+
 import pytest
 from conftest import para, run
 
@@ -577,3 +581,420 @@ def test_the_helpers_a_paper_needs_are_DECLARED(name):
     assert name in edit.__all__
     if hasattr(_xml, name):
         assert getattr(edit, name) is getattr(_xml, name)
+
+
+# =============================== the survivors of the 2026-09-17 sweep
+#
+# The code above landed the same day as the sweep, and the sweep found
+# where its tests had not been: offsets past CPython's small-int cache,
+# a label that is not the only one, a note marker that is not where the
+# words go, the face a new run takes when the nearest prose is not the
+# run beside it, and an equation that is not the paragraph's only one.
+
+#: Long enough that every offset after it is a fresh int object: `is`
+#: and `==` agree on 0..256 and nowhere else. It holds none of the
+#: anchors the tests below look for.
+PAST_THE_CACHE = ("Discipline practices vary widely across the region; "
+                  "the gradient by education is steeper in the countries "
+                  "that reformed their family codes earliest, which the "
+                  "next table sets out in full for each of the "
+                  "twenty-eight countries in the sample, alongside the "
+                  "standard errors of every estimate reported. ")
+
+
+def sized(text: str, size: int) -> str:
+    """A prose run with a direct face, as manuscripts carry on every run."""
+    return (f'<w:r><w:rPr><w:sz w:val="{size}"/></w:rPr>'
+            f'<w:t xml:space="preserve">{text}</w:t></w:r>')
+
+
+# ------------------------------------------ replace_keeping_links, again
+
+
+def test_normalize_is_OFF_unless_asked_for():
+    """A straight apostrophe does not find a curly one by default: the
+    flag is the caller's to set, as it is on `replace_in_para`."""
+    p = para(run("The workers’ view ("), SEN, run(")."))
+
+    with pytest.raises(AnchorError, match="not in paragraph"):
+        replace_keeping_links(p, "workers' view (Sen 1999)",
+                              "workers' own view (Sen 1999)")
+
+
+@pytest.mark.parametrize("old,edge", [
+    pytest.param("1999), and more", "start", id="label_starts_before"),
+    pytest.param("(Sen 19", "end", id="label_ends_after"),
+    pytest.param("Sen 19", "end", id="label_starts_WITH_old"),
+])
+def test_the_straddle_refusal_names_the_EDGE_it_crosses(old, edge):
+    """Which edge to widen is the whole of the advice. The third case
+    starts `old` exactly on the label's first character: it straddles
+    the END, and an `<=` in place of `<` calls it the start."""
+    p = para(run("A claim ("), SEN, run("), and more."))
+
+    with pytest.raises(AnchorError, match=f"straddles the {edge} of"):
+        replace_keeping_links(p, old, "anything")
+
+
+def test_a_label_the_replacement_says_LESS_often_than_old_is_ambiguous():
+    """The other direction of "more often": `new` drops the prose mention
+    of "Sen 1999" and keeps the link. Which of old's two it kept is not
+    something the text says, and asked only whether `new` has MORE, the
+    call reached for the second of one and fell over."""
+    p = para(run("Sen 1999 is cited ("), SEN, run(")."))
+
+    with pytest.raises(AnchorError, match="ambiguous"):
+        replace_keeping_links(p, "Sen 1999 is cited (Sen 1999).",
+                              "It is cited (Sen 1999).")
+
+
+def test_label_COUNTS_past_256_are_compared_by_value():
+    """301 mentions of the label's text in `old` and in `new` — the counts
+    agree, and `len()` hands back a fresh object for each past 256."""
+    prose = "ab " * 300
+    link = link_element("Ab", "ab")
+    p = para(run(prose + "("), link, run(")."))
+
+    out = replace_keeping_links(p, prose + "(ab).", prose + "[ab].")
+
+    assert visible_text(out) == prose + "[ab]."
+    assert link in out
+
+
+def test_labels_that_OVERLAP_in_new_are_refused_as_out_of_order():
+    """"ab" then "bc" in `old`; in `new` they share the "b". Neither can
+    be kept whole beside the other. Measured with the order test asked
+    of the label's END, or with `after` set to the previous START: no
+    refusal, three empty pieces, and the paragraph came back UNCHANGED —
+    "abbc" — from a call asked for "abc"."""
+    p = para(run("x "), link_element("A", "ab"), link_element("B", "bc"),
+             run(" y"))
+
+    with pytest.raises(AnchorError, match="order"):
+        replace_keeping_links(p, "abbc", "abc")
+
+
+def test_an_UNCHANGED_piece_is_left_alone_even_across_a_marker():
+    """Only the piece after the link changes. The piece before it crosses
+    footnote 11 and is the same text in `new` — so it is not rewritten,
+    and nothing about the marker is at stake. Rewriting an equal piece
+    would put it through the note guard, which refuses."""
+    p = para(run("A claim"), FN_REF, run(" here ("), SEN, run(")."))
+
+    out = replace_keeping_links(p, "claim here (Sen 1999).",
+                                "claim here (Sen 1999), again.")
+
+    assert visible_text(out) == "A claim here (Sen 1999), again."
+    assert (out.index("A claim") < out.index("footnoteReference")
+            < out.index(" here ("))
+
+
+def test_an_EMPTY_link_inside_a_rewritten_piece_is_refused():
+    """An empty `w:hyperlink` has no label, so it is no piece boundary;
+    it is a zero-width marker inside the piece, and rewriting the piece
+    moves it to the end of the new words the way a note marker moves.
+    The pieces are written with `allow_hyperlink=False` for exactly
+    this."""
+    ghost = ('<w:hyperlink w:anchor="Table3"><w:r><w:rPr><w:rStyle '
+             'w:val="Hyperlink"/></w:rPr><w:t></w:t></w:r></w:hyperlink>')
+    p = para(run("A claim"), ghost, run(" here ("), SEN, run(")."))
+
+    with pytest.raises(AnchorError, match="link"):
+        replace_keeping_links(p, "claim here (Sen 1999)",
+                              "point made (Sen 1999)")
+
+
+@pytest.mark.parametrize("new,want", [
+    pytest.param("see Sen 1999", "(see Sen 1999).", id="before_the_label"),
+    pytest.param("Sen 1999 and others", "(Sen 1999 and others).",
+                 id="after_the_label"),
+])
+def test_an_EMPTY_piece_past_256_characters_still_gets_its_words(new, want):
+    """The piece's two ends are one offset reached two ways — `old`'s
+    start and the label's, or the label's end in two run walks — and
+    past 256 they are equal and not identical. Asked by identity, the
+    words before the label were silently dropped and the words after it
+    were refused as "between two labels with an equation"."""
+    p = para(run(PAST_THE_CACHE + "("), SEN, run(")."))
+
+    out = replace_keeping_links(p, "Sen 1999", new)
+
+    assert visible_text(out) == PAST_THE_CACHE + want
+    assert SEN in out
+
+
+def test_new_words_beside_ONE_of_two_links_go_beside_THAT_one():
+    """Words for the empty piece before Table 4 go before Table 4, and
+    words after Table 3 go after Table 3 — the OTHER label, with prose
+    between, is not a neighbour. `lab.end <= at` made Table 3 the left
+    neighbour of the first; `lab.start >= at` made Table 4 the right
+    neighbour of the second; both then refused as an equation gap."""
+    p = para(run("See "), link_element("Table3", "Table 3"), run(" and "),
+             link_element("Table4", "Table 4"), run(" below."))
+
+    out = replace_keeping_links(p, "Table 4", "also Table 4")
+    assert visible_text(out) == "See Table 3 and also Table 4 below."
+
+    out = replace_keeping_links(p, "Table 3", "Table 3 (left)")
+    assert visible_text(out) == "See Table 3 (left) and Table 4 below."
+
+
+def test_note_markers_ELSEWHERE_in_the_paragraph_do_not_block_new_words():
+    """The marker check asks about the OFFSET the words go to. Footnote 11
+    sits before it and footnote 12 after it; neither is in the way."""
+    later = FN_REF.replace('w:id="11"', 'w:id="12"')
+    p = para(run("A claim"), FN_REF, run(" here ("), SEN, run(") and more"),
+             later, run("."))
+
+    out = replace_keeping_links(p, "Sen 1999", "see Sen 1999")
+
+    assert visible_text(out) == "A claim here (see Sen 1999) and more."
+
+
+def test_a_marker_INSIDE_the_prose_run_before_the_words_is_not_in_the_way():
+    """The run before the label holds footnote 11 between "A claim" and
+    " here (" — seven characters before the words go in, not at their
+    offset. The check is for a marker AT the offset; with `lo == hi` read
+    as `lo <= hi`, every text run merely ENDING there was searched for a
+    marker anywhere inside it, and this edit was refused."""
+    prose = ('<w:r><w:t>A claim</w:t><w:footnoteReference w:id="11"/>'
+             '<w:t xml:space="preserve"> here (</w:t></w:r>')
+    p = para(prose, SEN, run(")."))
+
+    out = replace_keeping_links(p, "Sen 1999", "see Sen 1999")
+
+    assert visible_text(out) == "A claim here (see Sen 1999)."
+
+
+def test_a_marker_where_new_words_go_PAST_256_characters_is_refused():
+    """The marker's zero width is `start == stop` of ONE run, and its
+    place is an offset computed elsewhere: past 256, identity says
+    neither, and the words went in with no refusal."""
+    p = para(run(PAST_THE_CACHE + "("), SEN, FN_REF, run(")."))
+
+    with pytest.raises(AnchorError, match="footnote 11"):
+        replace_keeping_links(p, "Sen 1999", "Sen 1999 and others")
+
+
+# -------------------------------------------- the face new words take
+
+#: Five runs, each a different answer to "which run's face": prose far
+#: back (20), prose right before the link (24), a zero-width page-break
+#: mark Word leaves in a run of its own (bold), the link at run index 3
+#: (odd), prose right after it (28). Past the cache, so the zero-width
+#: mark and the offsets are fresh objects.
+FACES = para(sized(PAST_THE_CACHE, 20), sized("claim (", 24),
+             '<w:r><w:rPr><w:b/></w:rPr><w:lastRenderedPageBreak/></w:r>',
+             link_element("Sen1999", "Sen 1999"), sized(").", 28))
+
+
+def test_words_BEFORE_a_link_take_the_face_of_the_prose_ending_there():
+    """The run ending exactly where the words go is "before them" —
+    `<=`, not `<` — and a zero-width mark after it is no prose at all."""
+    out = replace_keeping_links(FACES, "Sen 1999", "see Sen 1999")
+
+    assert visible_text(out) == PAST_THE_CACHE + "claim (see Sen 1999)."
+    assert sized("see ", 24) + "<w:hyperlink" in out
+
+
+def test_words_AFTER_a_link_take_the_face_of_the_NEAREST_prose_before():
+    """Not the link's own run (it is a label, whatever index it sits at),
+    not the prose that STARTS where the words go, not the first prose
+    run of the paragraph: the nearest one ending before. A leading space
+    in the words needs `xml:space`, as a trailing one does."""
+    out = replace_keeping_links(FACES, "Sen 1999", "Sen 1999 and others")
+
+    assert visible_text(out) == (PAST_THE_CACHE
+                                 + "claim (Sen 1999 and others).")
+    assert "</w:hyperlink>" + sized(" and others", 24) + sized(").", 28) \
+        in out
+
+
+def test_words_before_a_link_that_OPENS_the_paragraph_take_the_next_prose():
+    """No prose before the words, so the FIRST prose run after them — the
+    one right after the link, not the one after that, and never the link
+    itself at run index 0. Words with no edge whitespace get a bare
+    `<w:t>`."""
+    p = para(link_element("Table3", "Table 3"), sized(") is new.", 24),
+             sized(" Here.", 20))
+
+    out = replace_keeping_links(p, "Table 3", "(Table 3")
+
+    assert visible_text(out) == "(Table 3) is new. Here."
+    assert ('<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>(</w:t></w:r>'
+            "<w:hyperlink") in out
+
+
+# ------------------------------------------------- insert_in_para, again
+
+
+#: Two equations; the first starts late enough that searching on from
+#: TWICE its offset skips the second.
+TWO_EQUATIONS = para(run("where the rate of growth ", preserve=True),
+                     "<m:oMath><m:r><m:t>xy</m:t></m:r></m:oMath>",
+                     run(" and the level ", preserve=True), OMATH,
+                     run(" are set."))
+
+
+def _settled(call: Callable[[], object], seconds: float = 10.0
+             ) -> dict[str, object]:
+    """`call()`'s value or exception — and a FAILURE if it never returns.
+
+    A search loop that stops advancing hangs rather than fails, and a
+    hang stops a suite (and a mutation replay) instead of reporting.
+    The call runs on a daemon thread, so a spinning one dies with the
+    process."""
+    box: dict[str, object] = {}
+
+    def target() -> None:
+        try:
+            box["value"] = call()
+        except Exception as exc:          # the caller asserts on it
+            box["error"] = exc
+
+    worker = threading.Thread(target=target, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    assert not worker.is_alive(), f"the call did not return in {seconds}s"
+    return box
+
+
+def test_insert_before_the_SECOND_equation_of_a_paragraph():
+    """The search walks every equation until one starts at the offset;
+    the first one it meets starts EARLIER, which is not a reason to
+    stop, and the next search starts just past it."""
+    first = TWO_EQUATIONS.index("<m:oMath")
+    second = TWO_EQUATIONS.index("<m:oMath", first + 1)
+    assert second < 2 * first, "the fixture no longer tests what it says"
+
+    out = edit.insert_in_para(TWO_EQUATIONS, 42, "now ")
+
+    assert visible_text(out) == ("where the rate of growth xy and the level "
+                                 "now x are set.")
+    assert out.index("now ") < out.index(OMATH)
+
+
+def test_an_offset_inside_the_FIRST_of_two_equations_is_refused_promptly():
+    """Offset 26 is inside "xy". The search passes that equation, meets
+    the next one starting LATER, and stops: refused, as for a lone
+    equation. Not placed before the second one, and not a loop that
+    stays on it forever."""
+    got = _settled(lambda: edit.insert_in_para(TWO_EQUATIONS, 26, "now "))
+
+    assert isinstance(got.get("error"), AnchorError), got
+    assert "inside an equation" in str(got["error"])
+
+
+def test_insert_before_an_equation_PAST_256_characters():
+    """A zero-width marker at the offset and an equation after it, both
+    past the cache: the marker's start and stop, and the equation's
+    offset and the caller's, are equal and not identical."""
+    lead = PAST_THE_CACHE + "where"
+    p = para(run(lead), FN_REF, OMATH, run(" is it."))
+
+    out = edit.insert_in_para(p, len(lead), " now ")
+
+    assert visible_text(out) == lead + " now x is it."
+    assert (out.index("footnoteReference") < out.index(" now ")
+            < out.index("<m:oMath>"))
+
+
+def test_a_run_boundary_and_the_END_past_256_characters():
+    """The two ordinary offsets — where one run starts, and the end —
+    past the cache. Asked by identity, the first was taken for maths
+    (or found no run starting there at all) and so was the second."""
+    p = para(run(PAST_THE_CACHE), run("tail."))
+    n = len(PAST_THE_CACHE)
+
+    assert visible_text(edit.insert_in_para(p, n, "MID ")) \
+        == PAST_THE_CACHE + "MID tail."
+    assert visible_text(edit.insert_in_para(p, n + 5, " END")) \
+        == PAST_THE_CACHE + "tail. END"
+
+
+def test_the_END_of_a_paragraph_is_after_its_LAST_run():
+    """Three runs: with two, "the second run" and "the last run" are the
+    same run."""
+    out = edit.insert_in_para(para(run("a"), run("b"), run("c")), 3, "X")
+
+    assert visible_text(out) == "abcX"
+
+
+def test_a_NEGATIVE_offset_is_outside_the_paragraph():
+    """-1 is refused as what it is. Let through, it reached the maths
+    search and was refused as an offset "inside an equation" in a
+    paragraph that has none."""
+    with pytest.raises(AnchorError, match="outside the paragraph"):
+        edit.insert_in_para(para(run("abc")), -1, "X")
+
+
+def test_an_offset_inside_a_BOOKMARK_needs_its_flag():
+    """Between two runs a bookmark spans, the bookmark would grow over
+    the new text — refused unless `allow_bookmark=True` says so."""
+    p = para('<w:bookmarkStart w:id="1" w:name="Result"/>', run("abc"),
+             run("def"), '<w:bookmarkEnd w:id="1"/>')
+
+    with pytest.raises(AnchorError, match="bookmark"):
+        edit.insert_in_para(p, 3, "X")
+
+    out = edit.insert_in_para(p, 3, "X", allow_bookmark=True)
+    assert visible_text(out) == "abcXdef"
+
+
+def test_words_passed_as_a_StrEnum_member_get_a_plain_w_t():
+    """`content != content.strip()` decides `xml:space`, and a caller's
+    words need not be an exact `str`: a `StrEnum` member is a subclass,
+    and `strip()` on one returns a NEW string even when nothing was
+    stripped. Compared by identity, such words always got
+    `xml:space="preserve"`."""
+    class Phrase(StrEnum):
+        NOW = "now"
+
+    out = edit.insert_in_para(para(run("ab")), 1, Phrase.NOW)
+
+    assert "<w:r><w:t>now</w:t></w:r>" in out
+
+
+# ---------------------------------------------- remove_link's label runs
+
+
+def test_remove_link_on_a_FIELD_keeps_only_the_label_run_unstyled():
+    """Begin, instruction, separate and end go; the result run stays, with
+    the Hyperlink style and the empty `w:rPr` shell it leaves taken off."""
+    p = para(run("See "), link_field("Sen1999", "Sen 1999"), run("."))
+
+    out, label = edit.remove_link(p, "Sen1999")
+
+    assert out == para(run("See "), run("Sen 1999"), run("."))
+    assert label == "Sen 1999"
+
+
+def test_remove_link_drops_an_EMPTY_run_the_label_left_behind():
+    """A styled run with no text in it — Word leaves these at a label's
+    edge — carries nothing to keep. Kept, it came out as `<w:r></w:r>`."""
+    link = ('<w:hyperlink w:anchor="Sen1999" w:history="1"><w:r><w:rPr>'
+            '<w:rStyle w:val="Hyperlink"/></w:rPr><w:t>Sen 1999</w:t></w:r>'
+            '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr></w:r>'
+            "</w:hyperlink>")
+
+    out, _ = edit.remove_link(para(run("See "), link, run(".")), "Sen1999")
+
+    assert out == para(run("See "), run("Sen 1999"), run("."))
+
+
+# ------------------------------------------------------ rstrip_para, again
+
+
+def test_a_run_with_ATTRIBUTES_is_trimmed_like_a_bare_one():
+    """Where the run's body starts is read off its opening tag's `>`. A
+    bare `<w:r>` puts that at index 4, and `4 + 1`, `4 ^ 1` and `4 | 1`
+    are all 5 — an rsid attribute moves it to an odd index, where they
+    are not."""
+    tagged = ('<w:r w:rsidR="00AB12CD"><w:t xml:space="preserve">'
+              "A claim. </w:t></w:r>")
+    assert tagged.index(">") % 2 == 1, "the fixture no longer tests it"
+
+    out = rstrip_para(para(tagged))
+
+    assert out == para('<w:r w:rsidR="00AB12CD"><w:t xml:space="preserve">'
+                       "A claim.</w:t></w:r>")

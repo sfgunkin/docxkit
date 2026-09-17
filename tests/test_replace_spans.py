@@ -28,7 +28,7 @@ import pytest
 from conftest import para, run
 
 from docxkit import text_of
-from docxkit.edit import replace_in_para
+from docxkit.edit import replace_in_para, visible_text
 from docxkit.errors import AnchorError
 
 FN_REF = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
@@ -246,3 +246,169 @@ def test_a_note_reference_with_NO_id_is_named_by_its_kind():
         == "footnote 11"
     assert _note_in("<w:r><w:footnoteReference/></w:r>") == "footnote"
     assert _note_in("<w:r><w:t>plain</w:t></w:r>") is None
+
+
+# --- the run of 2026-09-17: fields, notes and maths at their edges -------
+#
+# Three guards met on 2026-09-17: a cross-reference's result is a label
+# even with no style on it, a match may not cross an inline equation, and
+# the note guard `_rewrite_span` inherited. The survivors the sweep left
+# in them sat exactly where the fixtures never went — a marker sharing a
+# run with words, a field result at an ODD run index or split across two
+# runs, an equation at the second seam, offsets past CPython's small-int
+# cache.
+
+#: Long enough that every offset after it is a fresh int object: `is`
+#: and `==` agree on 0..256 and nowhere else. No "see", " and ", "where"
+#: or "Table" in it, so the anchors after it stay unique.
+_PAST_THE_CACHE = ("Discipline practices vary widely across the region; "
+                   "the gradient by education is steeper in the countries "
+                   "that reformed their family codes earliest, which the "
+                   "next table sets out in full for each of the "
+                   "twenty-eight countries in the sample, alongside the "
+                   "standard errors of every estimate reported. ")
+_EQ = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+
+
+def _ref(name: str, *result: str) -> str:
+    """Word's Insert > Cross-reference: `REF name \\h`, result unstyled."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> REF {name} \\h '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + "".join(result)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+_REF3 = _ref("_Ref1", run("Table 3"))
+_REF4_SPLIT = _ref("_Ref2", run("Table"), run(" 4", preserve=True))
+
+
+def test_a_marker_SHARING_a_run_with_the_words_is_not_crossed():
+    """One touched run cannot move a marker: the words are rewritten
+    where they stand and the reference after them stays after them. That
+    is what `len(touched) <= 1` says, and it is invisible unless the
+    marker lives in the very run the match is in — Word gives a reference
+    a run of its own, a build script need not."""
+    p = para(run("The "), "<w:r><w:t>claim stands</w:t>"
+             '<w:footnoteReference w:id="11"/></w:r>', run(" firm."))
+
+    out = replace_in_para(p, "claim", "point")
+
+    assert text_of(out) == "The point stands firm."
+    assert out.index("point stands") < out.index("footnoteReference")
+
+
+def test_a_marker_in_the_SECOND_of_two_touched_runs_is_crossed():
+    """Two touched runs are enough to move one: the replacement goes into
+    the first, the second is emptied around its reference, and the marker
+    ends up after the new words. Every other fixture gives the marker a
+    run of its own, so THREE runs were touched and a guard asking for
+    more than two passed them all."""
+    p = para(run("The claim"), '<w:r><w:footnoteReference w:id="11"/>'
+             '<w:t xml:space="preserve"> stands</w:t></w:r>', run(" firm."))
+
+    with pytest.raises(AnchorError, match="crosses footnote 11"):
+        replace_in_para(p, "claim stands", "point holds")
+
+
+@pytest.mark.parametrize("before,old,verb", [
+    pytest.param((), "Table 3 for", "starts in", id="starts_in"),
+    pytest.param((run("see "),), "see Table 3 for", "crosses", id="crosses"),
+])
+def test_the_field_refusal_says_where_the_match_MEETS_the_result(
+        before, old, verb):
+    """"starts in" and "crosses" ask for different anchors, so the
+    refusal has to say which one it is.
+
+    With nothing before the field its result is run 3 — begin,
+    instruction, separate, result. `range(first, last + 1)` written as
+    `last ^ 1` or `last | 1` leaves an ODD last index out of the label,
+    and a lead-in run had put every earlier result at an even one."""
+    p = para(*before, _REF3, run(" for detail"))
+
+    with pytest.raises(AnchorError,
+                       match=f"the match {verb} the result of a field"):
+        replace_in_para(p, old, "x for")
+
+
+@pytest.mark.parametrize("lead", [
+    pytest.param("", id="short"),
+    pytest.param(_PAST_THE_CACHE, id="past_256"),
+])
+def test_a_field_result_SPLIT_across_runs_is_ONE_label(lead):
+    """Word fragments a field's result as freely as prose. The two runs
+    of "Table 4" are one label: filling it with `allow_hyperlink=True`
+    is the deliberate retitle, not a match that "ends outside" a label
+    one run long. The prose between two fields is nobody's label. And a
+    match crossing a field is refused on the RESULT, quoting its words —
+    not on the begin marker, which shows nothing.
+
+    Two fields, because merging a run into "the last label" and into
+    "the first label" are the same thing while there is only one; and
+    past 256 characters, because a merge that asks whether two offsets
+    are the SAME int object, or a zero-width run whose start and stop
+    are, answers differently there."""
+    assert len(_PAST_THE_CACHE) > 256, "the fixture no longer tests it"
+    p = para(run(lead + "see ", preserve=True), _REF3,
+             run(" and ", preserve=True), _REF4_SPLIT, run(" below."))
+
+    out = replace_in_para(p, "Table 4", "Table 5", allow_hyperlink=True)
+    assert visible_text(out) == lead + "see Table 3 and Table 5 below."
+    assert "REF _Ref2" in out
+
+    out = replace_in_para(p, " and ", " or ")
+    assert visible_text(out) == lead + "see Table 3 or Table 4 below."
+
+    with pytest.raises(AnchorError) as crossed:
+        replace_in_para(p, "see Table 3", "consult Table 3")
+    assert "'Table 3' would return beside" in str(crossed.value)
+
+
+@pytest.mark.parametrize("old,new,want", [
+    pytest.param("rate", "level", "where x is the level.", id="after_it"),
+    pytest.param("wher", "Wher", "Where x is the rate.", id="before_it"),
+])
+def test_an_equation_wholly_OUTSIDE_the_match_is_not_crossed(old, new, want):
+    """The guard's two inequalities, each from the side the touching
+    cases leave open: an equation that ENDS before the match starts, and
+    one that STARTS after it ends. Neither is crossed, and both sit on a
+    run seam the loop inspects."""
+    p = para(run("where "), _EQ, run(" is the rate."))
+
+    assert visible_text(replace_in_para(p, old, new)) == want
+
+
+@pytest.mark.parametrize("head,tail", [
+    pytest.param((), (" is", " it."), id="first_seam"),
+    pytest.param(("a ",), (" is it.",), id="second_seam"),
+])
+def test_the_maths_refusal_NAMES_the_equation_at_any_seam(head, tail):
+    """The equation is read off the gap between run i and run i + 1.
+
+    Three runs either way. At the SECOND seam `i ^ 1` and `i | 1` point
+    back at the first run and see no gap, and `range(len(runs) >> 1)`
+    never reaches it. At the FIRST, with a run beyond the one after the
+    maths, `runs[i - 1]` wraps to the last run and quotes prose as the
+    equation — and every other rewrite of `i + 1` quotes nothing."""
+    p = para(*(run(t, preserve=True) for t in head),
+             run("where ", preserve=True), _EQ,
+             *(run(t, preserve=True) for t in tail))
+
+    with pytest.raises(AnchorError, match=r"crosses an equation \('x'\)"):
+        replace_in_para(p, "where  is", "here, is")
+
+
+def test_a_seam_past_256_characters_is_compared_by_VALUE():
+    """Past the small-int cache, two equal offsets computed apart are two
+    objects. The match crosses a plain seam (no maths: the reader's
+    offsets do not jump there) and ENDS on the equation (touching it,
+    not crossing it) — and both answers are "not crossed" only when the
+    offsets are compared with `>` and `<`, not by identity."""
+    assert len(_PAST_THE_CACHE) > 256, "the fixture no longer tests it"
+    p = para(run(_PAST_THE_CACHE), run("where ", preserve=True), _EQ,
+             run(" is it."))
+
+    out = replace_in_para(p, "ported. where ", "ported. here ")
+
+    assert visible_text(out) == _PAST_THE_CACHE + "here x is it."
