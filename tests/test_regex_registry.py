@@ -556,7 +556,7 @@ _MARKUP_LITERAL = re.compile(r"</?(?:[A-Za-z]|\{\})")
 #: A literal no producer can spell another way: an element NAME prefix
 #: (`<w:ins`, `<w:{}Reference`) or a closing tag (`</w:p>`). Whether a
 #: name prefix also begins another element's name is a different
-#: question, and not this gate's.
+#: question, asked by the name-END gate at the bottom of this file.
 _SPELLING_FREE = re.compile(r"^(?:<[\w.:{}-]+|</[\w.:{}-]+>)$")
 
 
@@ -580,6 +580,12 @@ def _literal_texts(folder: _Folder, node: ast.expr) -> list[str]:
 def _markup_reads(module: str) -> list[tuple[str, int]]:
     """(description, line) for each read of a spelling-bound markup
     literal: the function, the operation, and the literal."""
+    return [(what, line) for what, text, line in _literal_reads(module)
+            if not _SPELLING_FREE.match(text)]
+
+
+def _literal_reads(module: str) -> list[tuple[str, str, int]]:
+    """(description, literal, line) for each read of a markup literal."""
     folder = _Folder.of(module)
     functions: dict[int, str] = {}
     for node in ast.walk(folder.tree):
@@ -604,16 +610,20 @@ def _markup_reads(module: str) -> list[tuple[str, int]]:
             checked.append((node.func.attr, node.args[0]))
         for how, arg in checked:
             for text in _literal_texts(folder, arg):
-                if _MARKUP_LITERAL.search(text) \
-                        and not _SPELLING_FREE.match(text):
+                if _MARKUP_LITERAL.search(text):
                     where = functions.get(id(node), "<module>")
-                    out.append((f"{where}: {how}({text})", node.lineno))
+                    out.append((f"{where}: {how}({text})", text,
+                                node.lineno))
     return out
 
 
-#: Every spelling-bound read of a markup literal in the package.
-ALL_MARKUP_READS = sorted({(module, what, line) for module in _TREES
-                           for what, line in _markup_reads(module)})
+#: Every read of a markup literal in the package, and the spelling-bound
+#: ones among them.
+ALL_LITERAL_READS = sorted({(module, what, text, line) for module in _TREES
+                            for what, text, line in _literal_reads(module)})
+ALL_MARKUP_READS = sorted({(module, what, line)
+                           for module, what, text, line in ALL_LITERAL_READS
+                           if not _SPELLING_FREE.match(text)})
 
 #: The reads that are exact ON PURPOSE, each with the reason: the text
 #: searched is markup docxkit itself built, whose spelling is ours, or
@@ -1450,3 +1460,465 @@ def test_no_pattern_closes_a_tag_with_no_room_for_a_SPACE():
         "w:val=\"20\"/>`, and other producers write the space (32 of 2,954 "
         "corpus packages). Close the tag `\\s*/>`, or `[^>]*/>` where "
         "other attributes may follow:\n  " + "\n  ".join(tight))
+
+
+# --- element NAMES read without an END ----------------------------------
+#
+# `<w:t` also begins `<w:tab`, `<w:tbl` and forty more names; `<w:p`
+# begins `<w:pPr`, `<w:proofErr` and `<w:permStart`; `w:moveFrom` begins
+# `w:moveFromRangeStart`. A pattern or a plain read that spells a name
+# and nothing to END it — `\b`, `[\s/>]`, a space, `>`, `/` — reads the
+# longer names too. `probe` placed bookmarks by `rfind("<w:p")` and called
+# 347 of them in 98 corpus packages nested (2026-09-17).
+
+#: Each element name the package spells that begins a LONGER name, and
+#: those names: every element name found in at least two of 2,954 corpus
+#: packages (2026-09-17), by the name it begins with.
+LONGER_NAMES: dict[str, str] = {
+    "Relationship": "Relationships",
+    "a:ext": "a:extLst a:extraClrSchemeLst",
+    "m:acc": "m:accPr",
+    "m:bar": "m:barPr",
+    "m:box": "m:boxPr",
+    "m:d": "m:dPr m:defJc m:deg m:degHide m:den m:dispDef",
+    "m:eqArr": "m:eqArrPr",
+    "m:f": "m:fName m:fPr m:func m:funcPr",
+    "m:func": "m:funcPr",
+    "m:groupChr": "m:groupChrPr",
+    "m:limLow": "m:limLowPr",
+    "m:limUpp": "m:limUppPr",
+    "m:m": "m:mPr m:mathFont m:mathPr m:maxDist m:mc m:mcJc m:mcPr m:mcs m:mr",
+    "m:nary": "m:naryLim m:naryPr",
+    "m:oMath": "m:oMathPara m:oMathParaPr",
+    "m:oMathPara": "m:oMathParaPr",
+    "m:r": "m:rMargin m:rPr m:rad m:radPr",
+    "m:rad": "m:radPr",
+    "m:sSub": "m:sSubPr m:sSubSup m:sSubSupPr",
+    "m:sSubSup": "m:sSubSupPr",
+    "m:sSup": "m:sSupPr",
+    "m:t": "m:type",
+    "w:abstractNum": "w:abstractNumId",
+    "w:b": (
+        "w:bCs w:background w:balanceSingleByteDoubleByteWidth w:bar "
+        "w:basedOn w:bdr w:behavior w:behaviors w:between w:bidi "
+        "w:blockQuote w:body w:bodyDiv w:bookmarkEnd w:bookmarkStart "
+        "w:bordersDoNotSurroundFooter w:bordersDoNotSurroundHeader w:bottom "
+        "w:br"),
+    "w:body": "w:bodyDiv",
+    "w:comment": (
+        "w:commentRangeEnd w:commentRangeStart w:commentReference "
+        "w:comments"),
+    "w:del": "w:delInstrText w:delText",
+    "w:document": "w:documentProtection",
+    "w:drawing": "w:drawingGridHorizontalSpacing w:drawingGridVerticalSpacing",
+    "w:endnote": "w:endnotePr w:endnoteRef w:endnoteReference w:endnotes",
+    "w:endnoteRef": "w:endnoteReference",
+    "w:footnote": "w:footnotePr w:footnoteRef w:footnoteReference w:footnotes",
+    "w:footnoteRef": "w:footnoteReference",
+    "w:i": (
+        "w:iCs w:id w:ilvl w:ind w:ins w:insideH w:insideV w:instrText "
+        "w:isLgl"),
+    "w:ins": "w:insideH w:insideV w:instrText",
+    "w:lvl": "w:lvlJc w:lvlOverride w:lvlRestart w:lvlText",
+    "w:moveFrom": "w:moveFromRangeEnd w:moveFromRangeStart",
+    "w:moveTo": "w:moveToRangeEnd w:moveToRangeStart",
+    "w:num": (
+        "w:numFmt w:numId w:numIdMacAtCleanup w:numPr w:numRestart "
+        "w:numbering"),
+    "w:numId": "w:numIdMacAtCleanup",
+    "w:p": (
+        "w:pBdr w:pPr w:pPrChange w:pPrDefault w:pStyle w:pageBreakBefore "
+        "w:panose1 w:pgBorders w:pgMar w:pgNum w:pgNumType w:pgSz w:pict "
+        "w:pitch w:placeholder w:pos w:position w:proofErr w:proofState "
+        "w:ptab"),
+    "w:pPr": "w:pPrChange w:pPrDefault",
+    "w:r": (
+        "w:rFonts w:rPr w:rPrChange w:rPrDefault w:rStyle w:relyOnVML "
+        "w:removeDateAndTime w:removePersonalInformation w:revisionView "
+        "w:right w:rsid w:rsidRoot w:rsids w:rtl"),
+    "w:rPr": "w:rPrChange w:rPrDefault",
+    "w:sdt": "w:sdtContent w:sdtEndPr w:sdtPr",
+    "w:sectPr": "w:sectPrChange",
+    "w:space": "w:spaceForUL",
+    "w:style": (
+        "w:styleLink w:stylePaneFormatFilter w:stylePaneSortMethod w:styles"),
+    "w:sz": "w:szCs",
+    "w:t": (
+        "w:tab w:tabs w:tag w:tbl w:tblBorders w:tblCellMar "
+        "w:tblCellSpacing w:tblGrid w:tblGridChange w:tblHeader w:tblInd "
+        "w:tblLayout w:tblLook w:tblOverlap w:tblPr w:tblPrChange w:tblPrEx "
+        "w:tblPrExChange w:tblStyle w:tblStyleColBandSize w:tblStylePr "
+        "w:tblStyleRowBandSize w:tblW w:tblpPr w:tc w:tcBorders w:tcMar "
+        "w:tcPr w:tcPrChange w:tcW w:text w:textAlignment w:textDirection "
+        "w:themeFontLang w:titlePg w:tl2br w:tmpl w:top w:tr w:tr2bl "
+        "w:trHeight w:trPr w:trPrChange w:trackRevisions w:txbxContent "
+        "w:type w:types"),
+    "w:tab": "w:tabs",
+    "w:tbl": (
+        "w:tblBorders w:tblCellMar w:tblCellSpacing w:tblGrid "
+        "w:tblGridChange w:tblHeader w:tblInd w:tblLayout w:tblLook "
+        "w:tblOverlap w:tblPr w:tblPrChange w:tblPrEx w:tblPrExChange "
+        "w:tblStyle w:tblStyleColBandSize w:tblStylePr "
+        "w:tblStyleRowBandSize w:tblW w:tblpPr"),
+    "w:tblGrid": "w:tblGridChange",
+    "w:tblPr": "w:tblPrChange w:tblPrEx w:tblPrExChange",
+    "w:tblStyle": "w:tblStyleColBandSize w:tblStylePr w:tblStyleRowBandSize",
+    "w:tc": "w:tcBorders w:tcMar w:tcPr w:tcPrChange w:tcW",
+    "w:tcPr": "w:tcPrChange",
+    "w:tr": "w:trHeight w:trPr w:trPrChange w:trackRevisions",
+    "w:trPr": "w:trPrChange",
+}
+
+#: An element name as pattern or literal text spells it: qualified, a
+#: group of names (`w:(?:ins|del)`), a name with a group of endings
+#: (`w:bookmark(?:Start|End)`), or an unprefixed name after `<`. An `=`
+#: after it makes it an attribute.
+_ELEMENT_NAME = re.compile(
+    r"(?<![\w.-])(?P<prefix>[A-Za-z]\w*|\((?:\?:)?\w+(?:\|\w+)+\)):"
+    r"(?:(?P<name>[A-Za-z]\w*+)(?:\((?:\?:)?(?P<tails>\w+(?:\|\w+)*)\))?"
+    r"|\((?:\?:)?(?P<names>\w+(?:\|\w+)*)\)(?P<suffix>\w*+))(?!=)"
+    r"|</?(?:\(\?:)?(?P<bare>[A-Z][A-Za-z]*+)(?![\w:])")
+
+#: A character a name may hold, and so one that does not END it.
+_NAME_CHAR = re.compile(r"[\w.-]")
+
+#: Pattern escapes that end a name (`\b`, `\s`, `\W`, `\Z`, whitespace),
+#: and those that may continue one.
+_ENDS = frozenset("bsWZntrfv")
+_CONTINUES = frozenset("BSwdDA")
+
+_QUANTIFIER = re.compile(r"\?|\*\??|\+\??|\{\d*(?:,\d*)?\}\??")
+
+
+def _names_spelled(text: str) -> list[tuple[str, int]]:
+    """(name, the index just past it) for each element name `text` spells,
+    over `_hole_masked` pattern text or a plain literal."""
+    out = []
+    for m in _ELEMENT_NAME.finditer(text):
+        if m.group("bare"):
+            out.append((m.group("bare"), m.end("bare")))
+            continue
+        prefixes = m.group("prefix").strip("()?:").split("|")
+        if m.group("tails"):
+            names = [m.group("name") + t for t in m.group("tails").split("|")]
+            end = m.end()
+        elif m.group("name"):
+            names, end = [m.group("name")], m.end("name")
+        else:
+            names = [n + m.group("suffix")
+                     for n in m.group("names").split("|")]
+            end = m.end()
+        out += [(f"{p}:{n}", end) for p in prefixes for n in names]
+    return out
+
+
+def _class_end(src: str, at: int) -> int:
+    """The index of the `]` closing the class `src` opens at `at`."""
+    at += 2 if src.startswith("[^", at) else 1
+    at += 1 if src.startswith("]", at) else 0   # a `]` first is a member
+    while at < len(src) and src[at] != "]":
+        at += 2 if src[at] == "\\" else 1
+    return at
+
+
+def _group_end(src: str, at: int) -> int:
+    """The index of the `)` closing the group `src` opens at `at`."""
+    depth = 0
+    while at < len(src):
+        if src[at] == "\\":
+            at += 2
+            continue
+        if src[at] == "[":
+            at = _class_end(src, at) + 1
+            continue
+        if src[at] in "()":
+            depth += 1 if src[at] == "(" else -1
+            if not depth:
+                return at
+        at += 1
+    return len(src)
+
+
+def _class_takes_name_chars(body: str) -> bool:
+    """Can the class `[body]` match a character a name holds?"""
+    if body.startswith("^"):
+        return "\\w" not in body            # only `[^\w…]` refuses them all
+    at = 0
+    while at < len(body):
+        if body[at] == "\\":
+            escape = body[at + 1:at + 2]
+            if escape in _CONTINUES or (_NAME_CHAR.match(escape)
+                                        and escape not in _ENDS
+                                        and escape != "W"):
+                return True
+            at += 2
+            continue
+        if body[at + 1:at + 2] == "-" and at + 2 < len(body):
+            if any(body[at] <= c <= body[at + 2] for c in "aA0_"):
+                return True
+            at += 3
+            continue
+        if _NAME_CHAR.match(body[at]):
+            return True
+        at += 1
+    return False
+
+
+def _optional(src: str, at: int) -> tuple[bool, int]:
+    """(may the atom ending at `at` be absent, the index past its
+    quantifier)."""
+    m = _QUANTIFIER.match(src, at)
+    if m is None:
+        return False, at
+    return m.group(0)[0] in "?*" or m.group(0).startswith("{0"), m.end()
+
+
+def _alternatives(body: str) -> list[str]:
+    """`body`'s alternatives at its own level."""
+    out, start, at = [], 0, 0
+    while at < len(body):
+        if body[at] == "\\":
+            at += 2
+            continue
+        if body[at] in "[(":
+            at = (_class_end if body[at] == "[" else _group_end)(body, at)
+        elif body[at] == "|":
+            out.append(body[start:at])
+            start = at + 1
+        at += 1
+    return [*out, body[start:]]
+
+
+def _enclosing_end(src: str, at: int) -> int:
+    """Past the `)`, and its quantifier, closing the group that holds
+    `at`; the end of `src` when no group does."""
+    while at < len(src):
+        if src[at] == "\\":
+            at += 2
+            continue
+        if src[at] in "[(":
+            at = (_class_end if src[at] == "[" else _group_end)(src, at)
+        elif src[at] == ")":
+            return _optional(src, at + 1)[1]
+        at += 1
+    return len(src)
+
+
+def _name_ends(src: str, at: int, *, enclosed: bool = True) -> bool:
+    """Does the pattern `src` END the name it spells up to `at`?
+
+    One construct at a time: an escape, a literal or a class decides; a
+    lookbehind is stepped over; a lookahead decides when it ends the name;
+    a group ends it only when every alternative does, and what follows it
+    too when it may be absent; the end of an alternative reads on from
+    where its group closes. The end of the pattern ends nothing.
+    """
+    while at < len(src):
+        step = _read_construct(src, at, enclosed=enclosed)
+        if isinstance(step, bool):
+            return step
+        at = step
+    return False
+
+
+def _read_construct(src: str, at: int, *, enclosed: bool) -> bool | int:
+    """Whether the construct at `at` ends the name, or where to read on."""
+    char = src[at]
+    if char == "\\":
+        escape = src[at + 1:at + 2]
+        return escape in _ENDS or (escape not in _CONTINUES
+                                   and not _NAME_CHAR.match(escape))
+    if char == "[":
+        end = _class_end(src, at)
+        takes = _class_takes_name_chars(src[at + 1:end])
+        optional, after = _optional(src, end + 1)
+        return after if optional and not takes else not takes
+    if char == "(":
+        return _read_group(src, at, enclosed=enclosed)
+    if char == "|":
+        return enclosed and _name_ends(src, _enclosing_end(src, at))
+    if char == ")":
+        return _optional(src, at + 1)[1]
+    return char not in ".?*+{^" and not _NAME_CHAR.match(char)
+
+
+def _read_group(src: str, at: int, *, enclosed: bool) -> bool | int:
+    """`_read_construct` for a group, a lookahead or a lookbehind."""
+    end = _group_end(src, at)
+    inner = src[at + 3:end]
+    if src.startswith(("(?<=", "(?<!"), at):
+        return end + 1
+    if src.startswith("(?=", at):
+        return _name_ends(inner, 0, enclosed=False) or end + 1
+    if src.startswith("(?!", at):
+        return bool(re.match(r"\[?\\w|\[(?:A-Za-z|a-zA-Z)", inner)) or end + 1
+    opener = re.match(r"\((?:\?:|\?P<\w+>)?", src[at:])
+    body = src[at + (len(opener.group(0)) if opener else 1):end]
+    optional, after = _optional(src, end + 1)
+    rest = src[after:]
+    return all(_name_ends(alternative + rest, 0, enclosed=enclosed)
+               for alternative in _alternatives(body)) and (
+        not optional or _name_ends(rest, 0, enclosed=enclosed))
+
+
+def _literal_name_ends(text: str, at: int) -> bool:
+    """Does a plain literal END the name it spells up to `at`? A hole
+    (`{}`) may be empty, and the end of the literal ends nothing."""
+    return at < len(text) and text[at] in " \t\r\n/>\"'"
+
+
+def _endless_names(text: str, *, pattern: bool) -> set[str]:
+    """The names `text` spells with no end, where a longer one exists."""
+    spelled = _names_spelled(_hole_masked(text) if pattern else text)
+    return {name for name, end in spelled
+            if name in LONGER_NAMES and not (
+                _name_ends(text, end) if pattern
+                else _literal_name_ends(text, end))}
+
+
+def _prefix_readers() -> dict[tuple[str, str], set[str]]:
+    """(module, source or read) -> the names it reads with no end."""
+    out: dict[tuple[str, str], set[str]] = {}
+    for module, _, source, probe, _ in ALL_PATTERNS:
+        if names := _endless_names(probe, pattern=True):
+            out.setdefault((module, source), set()).update(names)
+    for module, what, text, _ in ALL_LITERAL_READS:
+        if names := _endless_names(text, pattern=False):
+            out.setdefault((module, what), set()).update(names)
+    return out
+
+
+#: Reads that spell a name with no end ON PURPOSE, or where the longer
+#: names cannot change the answer, each with why. Keyed by (module,
+#: pattern source) or (module, read), like the lists above.
+_TEXT_THEN_CLOSE = (
+    "same answer: the name's `[^>]*>` must be followed by text and at once "
+    "by `</w:t>`, and no other element — tab, tbl, tc, tr, tag, type — "
+    "can stand straight before that close; only a `w:t` holds text")
+_MATH_PRESENCE = (
+    "same answer: a presence test, and `m:oMathPara` and `m:oMathParaPr` "
+    "exist only around an `m:oMath`, so the prefix is there exactly when "
+    "the name is")
+_FIRST_ROW = (
+    "same answer: the first `<w:tr` in a table's own markup is its first "
+    "row, since `w:trPr` and `w:trHeight` sit inside rows and no table "
+    "property or grid child begins `tr`")
+PREFIX_READS: dict[tuple[str, str], str] = {
+    ("_compare_diff.py", r"<w:t[^>]*>[^<]*HYPERLINK[^<]*</w:t>"):
+        _TEXT_THEN_CLOSE,
+    ("_xml.py", r"(<w:t[^>]*>)([^<]*)(</w:t>)"): _TEXT_THEN_CLOSE,
+    ("_xml.py", r"(<w:t[^>]*>)[^<]*(</w:t>)"): _TEXT_THEN_CLOSE,
+    ("_xml.py",
+     r"<(?:w|m):(?:t|delText)[^>]*>([^<]*)</(?:w|m):(?:t|delText)>"):
+        _TEXT_THEN_CLOSE + " (`m:type` holds no text either)",
+    ("_xml.py", r"<(?:w|m):t[^>]*>([^<]*)</(?:w|m):t>"):
+        _TEXT_THEN_CLOSE + " (`m:type` holds no text either)",
+    ("_xml.py", r"<m:t[^>]*>([^<]*)</m:t>"):
+        _TEXT_THEN_CLOSE + " (`m:type` holds no text either)",
+    ("_xml.py", r"<w:t[^>]*>([^<]*)</w:t>"): _TEXT_THEN_CLOSE,
+    ("_xml.py", r"<w:tabs\b[^>]*(?<!/)>.*?</w:tabs>|<w:t[^>]*>([^<]*)</w:t>"
+                r"|<w:(noBreakHyphen|softHyphen|tab|br|cr)\b[^>]*/?>"):
+        _TEXT_THEN_CLOSE,
+    ("batch.py", r'<w:rStyle w:val="Hyperlink"\s*/></w:rPr><w:t[^>]*>'
+                 r"([^<]*)</w:t>"): _TEXT_THEN_CLOSE,
+    ("batch.py", r"<w:t[^>]*>([^<]*)</w:t>"): _TEXT_THEN_CLOSE,
+    ("hygiene.py", r"(<m:t[^>]*>)([^<]*)(</m:t>)"):
+        _TEXT_THEN_CLOSE + " (`m:type` holds no text either)",
+    ("_table_layout.py", "_own_grid: find(<w:tr)"): _FIRST_ROW,
+    ("_table_layout.py", "_own_tblpr: find(<w:tr)"): _FIRST_ROW,
+    ("_table_layout.py", "_set_tbl_pr: find(<w:tr)"): _FIRST_ROW,
+    ("_table_layout.py", "drop_blank_rows: in(<w:drawing)"): (
+        "same answer: the longer names are `w:drawingGrid…Spacing`, which "
+        "live in settings and never in a table row"),
+    ("_table_layout.py", "drop_blank_rows: in(<w:sdt)"): (
+        "same answer: `w:sdtPr`, `w:sdtContent` and `w:sdtEndPr` occur "
+        "only inside a `w:sdt`, so a row holds the prefix exactly when it "
+        "holds a content control"),
+    ("_xml.py", "split_run: startswith(<w:t)"): (
+        "same answer: a piece beginning `<w:tab` or another `t` name fails "
+        "`_SPLIT_T_RE.fullmatch`, reads as no text, and rides left or "
+        "right exactly as a non-text piece does"),
+    ("batch.py", "diagnose: in(<m:oMath)"): _MATH_PRESENCE,
+    ("equations.py", "is_display: in(<m:oMath)"): _MATH_PRESENCE,
+    ("find.py", "site: in(<m:oMath)"): _MATH_PRESENCE,
+    ("body.py", "para: startswith(<w:pPr)"): (
+        "builder input: the properties a caller spells for a new paragraph "
+        "never begin with `w:pPrChange`, the LAST child of a pPr, or "
+        "`w:pPrDefault`, which lives in styles' docDefaults"),
+    ("cli.py", "cmd_inspect: ==(<w:ins)"): (
+        "same answer: the slice starts where `revisions.spans` found "
+        "`<w:(ins|del)\\b`, so it is never `<w:insideH` or `<w:instrText`"),
+    ("edit.py", "_maths_start: find(<m:oMath)"): (
+        "deliberate, and said beside it: `m:oMathPara` begins with the "
+        "name too, and the FIRST occurrence at an offset is the outermost "
+        "element, before which a run goes"),
+    ("edit.py", "_plain_runs: in(<w:t)"): (
+        "deliberate in effect: the run children whose names begin `t` are "
+        "`w:t` and `w:tab`, and a label run holding only a tab prints it, "
+        "so it is a visible run to keep"),
+    ("probe.py", "probe: startswith(<w:tbl)"): (
+        "same answer: `_blocks` yields whole paragraphs and whole tables, "
+        "so a block beginning `<w:tbl` is a table; no `w:tblPr` or kin ever "
+        "starts one"),
+    ("refstyle.py", "_starts_a_page: in(<w:sectPr)"): (
+        "same answer: `w:sectPrChange` exists only inside a `w:sectPr`, so "
+        "the prefix is there exactly when a section break is"),
+    ("revisions.py", "_parse: startswith(<w:document)"): (
+        "same answer: this asks for the part's ROOT, and "
+        "`w:documentProtection` is a settings child, never a root"),
+}
+
+
+def test_no_read_spells_an_element_name_without_an_END():
+    new = {key: sorted(names) for key, names in _prefix_readers().items()
+           if key not in PREFIX_READS}
+    assert not new, (
+        "these spell an element name and nothing to END it, so they read "
+        "every longer name it begins (`<w:t` reads `<w:tab`, `<w:p` reads "
+        "`<w:pPr`). End it — `\\b`, `(?=[\\s/>])`, or a space, `>` or `/` "
+        "in a literal — or declare in PREFIX_READS why the longer names "
+        "cannot change the answer:\n  " + "\n  ".join(
+            f"{module}: {what!r} reads {names}"
+            for (module, what), names in sorted(new.items())))
+
+
+def test_every_PREFIX_READ_is_still_one():
+    readers = _prefix_readers()
+    for key, reason in PREFIX_READS.items():
+        assert len(reason) > 40, (key, reason)
+        assert key in readers, f"declared, but gone or now ended: {key}"
+
+
+def test_every_name_that_begins_a_longer_one_is_LISTED():
+    """A name the package spells that begins another name the list knows
+    must be in it, and every name listed must still be spelled."""
+    spelled = {name for *_, probe, _ in ALL_PATTERNS
+               for name, _ in _names_spelled(_hole_masked(probe))}
+    spelled |= {name for _, _, text, _ in ALL_LITERAL_READS
+                for name, _ in _names_spelled(text)}
+    known = spelled | set(LONGER_NAMES) | {
+        name for names in LONGER_NAMES.values() for name in names.split()}
+    unlisted = sorted(
+        name for name in spelled - set(LONGER_NAMES)
+        if any(other != name and other.startswith(name)
+               and _NAME_CHAR.match(other[len(name)]) for other in known))
+    assert unlisted == [], f"begin a longer name, not listed: {unlisted}"
+    assert set(LONGER_NAMES) <= spelled, sorted(set(LONGER_NAMES) - spelled)
+
+
+def test_the_name_END_detector_both_ways_round():
+    """The gate's own instrument."""
+    ended = [r"<w:t\b", r"<w:t[ >]", r"<w:t>", r"<w:t(?=[\s/>])",
+             r"<w:t(?:\s|>)", r"<w:r(?: [^>]*)?(?<!/)>", r"<w:p\s*/>",
+             r"<w:(?:ins|del)(?=[\s/>])", r"(<w:ins)\b", r"<w:p[\s/]",
+             r"<w:t(?![\w.-])", r"<w:t [^>]*>", r"<w:tab(?:s)?\b"]
+    for source in ended:
+        assert not _endless_names(source, pattern=True), source
+    endless = [r"<w:t[^>]*>", r"<w:t", r"<w:(?:ins|del)", r"<w:ins|<w:del\b",
+               r"<w:t[^>]*?(/?)>", r"<w:tbl.*?>", r"<w:t\w*", r"w:moveFrom",
+               r"(?:<w:ins)+x"]
+    for source in endless:
+        assert _endless_names(source, pattern=True), source
+    assert _endless_names("<w:t", pattern=False) == {"w:t"}
+    assert not _endless_names("<w:t>", pattern=False)
+    assert not _endless_names("<w:ins ", pattern=False)
