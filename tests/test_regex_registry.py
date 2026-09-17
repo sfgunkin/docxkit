@@ -1078,7 +1078,7 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
     ("revision/_losses.py", r"<w:del(?=[\s/>])"): (
         "name reader: the other half of `moved_footnotes`' candidate shape; "
         "a paragraph mark's empty deletion is a deletion there too"),
-    ("revisions.py", r"<w:(?:ins|del)(?=[\s/>])|w:moveFrom|w:moveTo"): (
+    ("revisions.py", r"<w:(?:ins|del|moveFrom|moveTo)(?=[\s/>])"): (
         "name reader: `_has_content_revisions` asks whether there is any "
         "insertion, deletion or move to simulate, and a paragraph mark's "
         "empty insertion is one"),

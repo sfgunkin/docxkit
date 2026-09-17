@@ -164,7 +164,10 @@ def table(headers: list[str], rows: list[list[str]], *,
     render. Pass ``require_style=False`` when a borderless table is
     what you actually want.
     """
-    if require_style and "<w:tblStyle" not in tblpr:
+    # The name ENDED: `<w:tblStyle` alone also begins the band sizes
+    # `w:tblStyleRowBandSize` and `w:tblStyleColBandSize`, which a tblPr
+    # can carry without any style.
+    if require_style and not re.search(r"<w:tblStyle\b", tblpr):
         raise AnchorError(
             "table: the tblPr carries no w:tblStyle, so this table would "
             "render unstyled - clone a DATA table's properties, or pass "

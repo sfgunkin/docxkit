@@ -210,6 +210,16 @@ def test_a_template_without_a_table_style_is_refused():
         table(["A", "B"], [["1", "2"]], tblpr=carrier)
 
 
+def test_a_template_with_only_a_tblStyle_BAND_SIZE_is_refused_too():
+    """Asked `"<w:tblStyle" in tblpr`, a tblPr whose only mention of a
+    style is `w:tblStyleRowBandSize` — a sibling whose name begins with
+    `tblStyle` — passed as styled, and the table rendered unstyled."""
+    carrier = ('<w:tblPr><w:tblStyleRowBandSize w:val="1"/>'
+               '<w:tblW w:w="5000" w:type="pct"/></w:tblPr>')
+    with pytest.raises(AnchorError, match="w:tblStyle"):
+        table(["A", "B"], [["1", "2"]], tblpr=carrier)
+
+
 def test_a_deliberately_borderless_table_is_allowed():
     carrier = '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>'
     out = table(["A", "B"], [["1", "2"]], tblpr=carrier,

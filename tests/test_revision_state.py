@@ -216,6 +216,18 @@ def test_a_content_revision_is_seen_whatever_follows_its_NAME():
                               "</w:tblBorders>")
 
 
+def test_a_move_s_RANGE_markers_alone_are_not_a_move():
+    """`w:moveFrom` read as a bare name also begins `w:moveFromRangeStart`,
+    so markup holding a move's range markers and no moved content was
+    dirty to `_has_revisions` while `revision_elements` counted nothing —
+    the drift the test above exists to stop."""
+    ranges = (f'<w:p><w:moveFromRangeStart {D} w:name="move1"/>{run("x")}'
+              '<w:moveToRangeEnd w:id="7"/></w:p>')
+
+    assert revision_elements(ranges) == []
+    assert not _has_revisions(ranges)
+
+
 @pytest.mark.parametrize("kind", sorted(KINDS))
 def test_anything_has_revisions_calls_dirty_is_something_state_counts(kind):
     """The property the guard above protects, checked on real markup."""

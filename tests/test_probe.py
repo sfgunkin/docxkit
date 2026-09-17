@@ -391,6 +391,26 @@ def test_a_bookmark_ABOVE_every_paragraph_is_body_level(tmp_path):
     assert rep.bookmarks == [("doc_top", "body")]
 
 
+@pytest.mark.parametrize("between", ['<w:proofErr w:type="gramStart"/>',
+                                     '<w:permStart w:id="0" w:edGrp="x"/>',
+                                     "<w:p/>"])
+def test_a_bookmark_after_a_tag_that_is_NO_paragraph_opening_is_body_level(
+        tmp_path, between):
+    """The last paragraph opening before a bookmark was `rfind("<w:p")`,
+    which also finds `<w:proofErr` and `<w:permStart` — both of which
+    stand between paragraphs as bookmarks do — and an empty `<w:p/>`,
+    which opens nothing. A bookmark after any of them read as INSIDE a
+    paragraph, and a block move would leave it behind."""
+    body = ("<w:p><w:r><w:t>Before.</w:t></w:r></w:p>" + between
+            + '<w:bookmarkStart w:id="1" w:name="between_paras"/>'
+            '<w:bookmarkEnd w:id="1"/>'
+            "<w:p><w:r><w:t>After.</w:t></w:r></w:p>")
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.bookmarks == [("between_paras", "body")]
+
+
 # --- counting, not just noticing (2026-08-19) ---------------------------
 #
 # Every link in this file's fixtures is one link to one anchor, and
