@@ -27,6 +27,22 @@ move.
 
 With 39 of this package's 42 modules holding a stale figure, replaying
 is the difference between minutes and re-sweeping everything.
+
+A session that is NOT beside this tree is named with `--db`, and the
+source it measured with `--src`:
+
+    python tools/replay_survivors.py src/docxkit/revision/_config.py \
+        --db D:/docxkit/.mutation-revision_config.sqlite
+
+Which is the branch-worktree case, and it is the ordinary one during a
+campaign: the tests being replayed are on a branch, the session is in
+the checkout that measured it, and a worktree holds neither the session
+nor its snapshot. Three people hit that wall on 2026-09-18 — once as
+`no session at <worktree>/.mutation-<stem>.sqlite`, and twice more as a
+refusal saying the module had moved when it had not, because
+`git worktree add` stamps every file's mtime to now. `cases_for` took
+both paths already, "for a test, which cannot use this repo's own
+session"; only the command line did not.
 """
 from __future__ import annotations
 
@@ -49,6 +65,7 @@ from mutation_survivors import (  # pyright: ignore[reportMissingImports]
 from stale_figures import (  # pyright: ignore[reportMissingImports]
     ROOT,
     session_file,
+    snapshot_of,
     state,
 )
 
@@ -124,6 +141,63 @@ def source_moved(module: Path, moved: list[str]) -> bool:
     return any(m == key or m.endswith(f"/{key}") for m in moved)
 
 
+def measured_source(key: str, db: Path | None = None,
+                    src: Path | None = None) -> Path | None:
+    """The module AS THE RUN MEASURED IT, where the run kept a copy.
+
+    `--src` names it; otherwise it is the copy `mutation_session` keeps
+    beside its session, in ``.mutation-<stem>.pristine/``. None when
+    there is neither — the runs that predate the snapshot mechanism, and
+    a session handed over without its folder.
+    """
+    if src is not None:
+        return src if src.is_file() else None
+    kept = (db.with_suffix(".pristine") if db is not None
+            else snapshot_of(key)) / "src" / "docxkit" / key
+    return kept if kept.is_file() else None
+
+
+def module_moved(module: Path, moved: list[str], *,
+                 was: Path | None) -> tuple[bool, str]:
+    """Has the MODULE itself changed since the run — and by which test?
+
+    BYTES wherever the run kept the source it measured, because
+    timestamps answer this question wrongly in the place it is now asked
+    from: a fresh `git worktree add` stamps every file's mtime to now,
+    so an unchanged module reads as moved and the replay refuses for a
+    reason that is not true. `stale_figures.moved_by_content` already
+    applies the byte rule inside `state`; this brings it to the sessions
+    `state` cannot see — one named with `--db`, and one whose snapshot
+    predates the mechanism.
+
+    Timestamps remain the fallback, and the refusal NAMES which test it
+    applied. The refusal itself must keep refusing: replaying a list
+    against a moved module grades mutations nobody made, and a false
+    refusal costs a re-sweep while a false pass costs a wrong answer
+    nobody can see.
+    """
+    here = ROOT / module
+    if was is not None and here.is_file():
+        return _lines_of(was) != _lines_of(here), "bytes"
+    return source_moved(module, moved), "timestamps"
+
+
+def _lines_of(path: Path) -> bytes:
+    """A file's LINES, with the checkout's line endings taken out.
+
+    A survivor is a row number and the text of that row, and neither
+    moves when a file is written with CRLF instead of LF — but a raw
+    byte comparison calls it a different module. It is not a hypothetical
+    difference here: Git for Windows sets `core.autocrlf=true` in its
+    SYSTEM config, so worktrees were written CRLF while D:/docxkit was
+    LF, and a `.pristine` snapshot copied from either one then disagrees
+    with the other about every line. `.gitattributes` pins `eol=lf` for
+    every checkout from 2026-09-18 on; this keeps the sessions taken
+    BEFORE it readable, which is all of them.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def main() -> int:
     utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -131,6 +205,12 @@ def main() -> int:
     ap.add_argument("module", help="e.g. src/docxkit/guard.py")
     ap.add_argument("--tests", nargs="+", default=[],
                     help="override the harness from harness_map.py")
+    ap.add_argument("--db", type=Path, default=None,
+                    help="the session to replay, when it is not the one "
+                         "beside this tree — a branch worktree's case")
+    ap.add_argument("--src", type=Path, default=None,
+                    help="the module as that session measured it; what the "
+                         "moved check compares against")
     args = ap.parse_args()
 
     module = Path(args.module)
@@ -142,9 +222,18 @@ def main() -> int:
     # module, which is the right answer and not this tool's to reword.
     tests = args.tests or harness_for(key)
 
-    verdict, moved = state(key, tests)
-    print(f"{key}: the run is {verdict}"
-          + (f" ({', '.join(moved)} moved since)" if moved else ""))
+    # `state` asks about the session beside THIS tree. A session named on
+    # the command line is one this tree does not have, so there is no
+    # freshness to report about it — what still has to hold is that the
+    # module has not moved, which is asked below against the source that
+    # session measured.
+    if args.db is None:
+        verdict, moved = state(key, tests)
+        print(f"{key}: the run is {verdict}"
+              + (f" ({', '.join(moved)} moved since)" if moved else ""))
+    else:
+        verdict, moved = "named on the command line", []
+        print(f"{key}: the run is {verdict} ({args.db})")
 
     # Replay answers "did the TESTS catch up with this list". It cannot
     # answer anything once the SOURCE has moved: the survivors are line
@@ -154,16 +243,32 @@ def main() -> int:
     # shifted underneath it, and the verdict is about a mutation the
     # session never ran. That is the wrong-line failure this tool's own
     # test exists for, arriving through the other door.
-    if source_moved(module, moved):
-        print(f"\nREFUSING: {key} itself has moved since the run.\n"
+    gone, how = module_moved(module, moved,
+                             was=measured_source(key, args.db, args.src))
+    if gone:
+        print(f"\nREFUSING: {key} itself has moved since the run, by "
+              f"{how}.\n"
               f"  A survivor is a line number, and they are line numbers "
               f"into a file that no longer\n  has those lines. Re-sweep "
               f"instead:\n"
               f"    python tools/mutation_session.py {module} --tests "
               f"{' '.join(tests)} --fresh --fast --chunks 0")
+        if how == "timestamps":
+            # The false refusal, and the one shape it takes. Said here
+            # rather than left to be rediscovered: it cost three people
+            # an afternoon between them on 2026-09-18.
+            print(f"\n  Read by TIMESTAMPS, because nothing holds the "
+                  f"module as that run measured it\n  to compare against. "
+                  f"A fresh `git worktree add` stamps every file's mtime "
+                  f"to now,\n  so an UNCHANGED module reads as moved in "
+                  f"one. If it is unchanged, say so by\n  naming the "
+                  f"session and that source:\n"
+                  f"    python tools/replay_survivors.py {module} "
+                  f"--db <the session>.sqlite \\\n"
+                  f"        --src <the tree it measured>/{module}")
         return 2
 
-    cases = cases_for(module)
+    cases = cases_for(module, args.db, args.src)
     if not cases:
         print("nothing to replay — no real survivors on record")
         return 0

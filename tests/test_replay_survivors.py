@@ -207,8 +207,8 @@ def _tree(tmp_path, monkeypatch, *, module_now="x = 1", module_then="x = 1"):
     monkeypatch.setattr(sf, "ROOT", tmp_path)
     monkeypatch.setattr(rs, "ROOT", tmp_path)
     monkeypatch.setattr(rs, "cases_for",
-                        lambda module: [("L2 Eq_Is", "x = 1", "x = 2", True,
-                                         1)])
+                        lambda module, *named: [("L2 Eq_Is", "x = 1", "x = 2",
+                                                 True, 1)])
     return rs
 
 
@@ -311,7 +311,7 @@ def test_main_asks_the_harness_and_the_run_by_that_same_KEY(monkeypatch,
 
     monkeypatch.setattr(rs, "harness_for", harness_for)
     monkeypatch.setattr(rs, "state", state)
-    monkeypatch.setattr(rs, "cases_for", lambda module: [])
+    monkeypatch.setattr(rs, "cases_for", lambda module, *named: [])
     monkeypatch.setattr(sys, "argv", ["replay_survivors.py",
                                       "src/docxkit/revision/_timing.py"])
 
@@ -327,3 +327,171 @@ def test_a_moved_SUBPACKAGE_half_is_known_by_its_folder_too():
     assert source_moved(half, ["src/docxkit/revision/_ingest.py"])
     assert not source_moved(half, ["src/docxkit/_ingest.py"]), (
         "a file of the same name OUTSIDE its folder is another module")
+
+
+# --- a session that is not beside this tree (2026-09-18) ----------------
+#
+# The campaign's ordinary shape: the tests being replayed are on a branch
+# in a worktree, and the session that measured the module is in the
+# checkout it was measured in. A worktree holds neither the session nor
+# its snapshot, so the tool died on `no session at
+# <worktree>/.mutation-<stem>.sqlite` — and the two people who copied the
+# session in met the next wall, a refusal saying the module had moved
+# when it had not: `git worktree add` stamps every file's mtime to now.
+
+
+def _elsewhere(tmp_path: Path, *, snapshot: bool = True) -> Path:
+    """A session in ANOTHER checkout, optionally with its snapshot."""
+    other = tmp_path / "other-checkout"
+    other.mkdir()
+    db = other / ".mutation-thing.sqlite"
+    db.write_text("")
+    if snapshot:
+        kept = other / ".mutation-thing.pristine" / "src" / "docxkit"
+        kept.mkdir(parents=True)
+        (kept / "thing.py").write_text("x = 1")
+    return db
+
+
+def test_a_session_ELSEWHERE_is_named_rather_than_copied(
+        tmp_path, monkeypatch, capsys):
+    """`--db`: the session the branch's tests are replayed against lives
+    in the checkout that measured it. `cases_for` took a `db` and a
+    `src` from the day it was written — "for a test, which cannot use
+    this repo's own session" — and the command line did not pass them
+    on, so every caller outside this repo's own tree wrote the same
+    twelve-line script instead."""
+    rs = _tree(tmp_path, monkeypatch)
+    (tmp_path / ".mutation-thing.sqlite").unlink()   # a fresh worktree
+    db = _elsewhere(tmp_path)
+    asked: list[tuple[object, ...]] = []
+
+    def cases_for(module: Path, *named: object) -> list[object]:
+        asked.append(named)
+        return [("L1", "x = 1", "x = 2", True, 1)]
+
+    monkeypatch.setattr(rs, "cases_for", cases_for)
+    monkeypatch.setattr(rs, "check", lambda *a: 0)
+    _argv(monkeypatch, "src/docxkit/thing.py", "--db", str(db))
+
+    assert rs.main() == 0
+
+    assert asked == [(db, None)], "the session named is the one replayed"
+    out = capsys.readouterr().out
+    assert "REFUSING" not in out
+    assert "named on the command line" in out and str(db) in out
+
+
+def test_a_WORKTREES_fresh_mtimes_are_not_a_moved_module(
+        tmp_path, monkeypatch, capsys):
+    """The false refusal, and the half that matters most.
+
+    Nothing here has changed: the module is byte for byte the source the
+    run measured. Only the timestamps say otherwise, because every file
+    in a new worktree was written a moment ago — so the answer has to
+    come from the BYTES, which is the rule `moved_by_content` already
+    applies to the sessions `state` can see.
+    """
+    rs = _tree(tmp_path, monkeypatch)
+    (tmp_path / ".mutation-thing.sqlite").unlink()
+    (tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+     / "thing.py").unlink()                          # no snapshot here
+    db = _elsewhere(tmp_path)
+    monkeypatch.setattr(rs, "state", lambda key, tests: (
+        "stale", ["src/docxkit/thing.py"]))
+    monkeypatch.setattr(rs, "check", lambda *a: 0)
+    _argv(monkeypatch, "src/docxkit/thing.py", "--db", str(db))
+
+    assert rs.main() == 0, "the module is unchanged; only its mtime moved"
+    assert "REFUSING" not in capsys.readouterr().out
+
+
+def test_a_module_that_REALLY_moved_still_refuses_and_says_by_what(
+        tmp_path, monkeypatch, capsys):
+    """The refusal is worth a false one and never a false pass: replaying
+    a list against a moved module grades mutations nobody made. So the
+    bytes deciding the easy case must not soften the real one."""
+    rs = _tree(tmp_path, monkeypatch, module_now="x = 9")
+    (tmp_path / ".mutation-thing.sqlite").unlink()
+    db = _elsewhere(tmp_path)                        # snapshot says x = 1
+    monkeypatch.setattr(rs, "check", lambda *a: 0)
+    _argv(monkeypatch, "src/docxkit/thing.py", "--db", str(db))
+
+    assert rs.main() == 2
+
+    out = capsys.readouterr().out
+    assert "REFUSING" in out and "by bytes" in out
+    assert "mutation_session.py" in out, "and what to do instead"
+
+
+def test_with_NOTHING_to_compare_against_it_refuses_by_TIMESTAMPS_and_says_so(
+        tmp_path, monkeypatch, capsys):
+    """The runs that predate the snapshot mechanism, and a session handed
+    over without its folder. The verdict is then a timestamp's, which is
+    exactly the one that is wrong in a worktree — so the message names
+    the cause and the way through instead of leaving a wall."""
+    rs = _tree(tmp_path, monkeypatch)
+    (tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+     / "thing.py").unlink()
+    monkeypatch.setattr(rs, "state", lambda key, tests: (
+        "stale", ["src/docxkit/thing.py"]))
+    monkeypatch.setattr(rs, "check", lambda *a: 0)
+    _argv(monkeypatch, "src/docxkit/thing.py")
+
+    assert rs.main() == 2
+
+    out = capsys.readouterr().out
+    assert "by timestamps" in out
+    assert "git worktree add" in out, "the cause of the false refusal"
+    assert "--db" in out and "--src" in out, "and the way past it"
+
+
+def test_a_snapshot_written_CRLF_is_the_same_module_as_one_written_LF(
+        tmp_path, monkeypatch, capsys):
+    """The second false refusal, and the one that actually fired here.
+
+    Git for Windows sets `core.autocrlf=true` in its SYSTEM config, so
+    `git worktree add` wrote CRLF while D:/docxkit was LF, and a
+    `.pristine` snapshot taken in one disagrees with the other about
+    every line of every module. `.gitattributes` pins `eol=lf` from
+    2026-09-18 on; every session measured before that is still on the
+    other side of it. A row number and the text of a row are what a
+    survivor is, and neither changes with the line ending.
+    """
+    rs = _tree(tmp_path, monkeypatch)
+    (tmp_path / ".mutation-thing.sqlite").unlink()
+    # written as BYTES on both sides: `write_text` on Windows would
+    # translate the newlines and the two files would agree by accident
+    (tmp_path / "src" / "docxkit" / "thing.py").write_bytes(b"x = 1\ny = 2\n")
+    db = _elsewhere(tmp_path, snapshot=False)
+    kept = db.with_suffix(".pristine") / "src" / "docxkit"
+    kept.mkdir(parents=True)
+    (kept / "thing.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+    monkeypatch.setattr(rs, "check", lambda *a: 0)
+    _argv(monkeypatch, "src/docxkit/thing.py", "--db", str(db))
+
+    assert rs.main() == 0
+    assert "REFUSING" not in capsys.readouterr().out
+
+
+def test_the_source_the_run_measured_is_NAMED_then_KEPT_then_neither(
+        tmp_path, monkeypatch):
+    """Where `--src` sits among the answers: what the caller names beats
+    the copy beside the session, which beats the copy beside this tree's
+    own session, and none of the three is not an error — it is the
+    timestamp fallback, said out loud."""
+    rs = _tree(tmp_path, monkeypatch)
+    db = _elsewhere(tmp_path)
+    named = tmp_path / "named.py"
+    named.write_text("x = 1")
+
+    assert rs.measured_source("thing.py", db, named) == named
+    assert rs.measured_source("thing.py", db) == (
+        db.with_suffix(".pristine") / "src" / "docxkit" / "thing.py")
+    assert rs.measured_source("thing.py") == (
+        tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+        / "thing.py"), "this tree's own snapshot, when no session is named"
+
+    (tmp_path / ".mutation-thing.pristine" / "src" / "docxkit"
+     / "thing.py").unlink()
+    assert rs.measured_source("thing.py") is None
